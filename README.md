@@ -88,3 +88,4 @@ The editor is planned for Cloudflare Pages and Workers, with sign-in and saved r
 
 - [docs/plan.md](docs/plan.md): the editor's version-one plan. The shareable page version is at https://claude.ai/code/artifact/c9403706-378d-475b-8599-48f4b0c6f569.
 - [docs/decisions/](docs/decisions/): the decision records.
+- [AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md): the short rules AI coding agents follow here.
