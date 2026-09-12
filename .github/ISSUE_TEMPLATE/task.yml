@@ -1,0 +1,25 @@
+name: Task
+description: A piece of work to do
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - editor
+        - ats
+        - shared
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: What should exist or be different when this is done?
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Links, constraints, open questions.

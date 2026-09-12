@@ -1,0 +1,9 @@
+# GitHub requests a review from the owners of every path a pull request touches.
+# Last matching line wins.
+
+*                                @makis4n @keaenlim
+/apps/editor/                    @makis4n
+/apps/editor/src/features/ats/   @makis4n @keaenlim
+/apps/ats/                       @keaenlim
+/packages/                       @makis4n @keaenlim
+/docs/                           @makis4n @keaenlim

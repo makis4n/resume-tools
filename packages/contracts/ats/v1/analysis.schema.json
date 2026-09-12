@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/makis4n/resume-tools/packages/contracts/ats/v1/analysis.schema.json",
+  "title": "ATS analysis, v1 (draft)",
+  "description": "Response of POST /v1/analyze. The request is multipart/form-data with one field, `file`, containing a PDF. Draft: expect changes until both owners mark it stable.",
+  "type": "object",
+  "required": ["contract", "score", "findings"],
+  "additionalProperties": false,
+  "properties": {
+    "contract": {
+      "const": "ats/v1"
+    },
+    "score": {
+      "description": "Overall score from 0 to 100, or null when the analyser could not produce one.",
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 100
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["id", "severity", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable identifier for the kind of finding, e.g. missing-contact-email."
+        },
+        "severity": {
+          "enum": ["info", "warning", "critical"]
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain-English explanation shown to the user."
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "suggestion": {
+          "type": "string",
+          "description": "What to change, if the analyser has a concrete suggestion."
+        }
+      }
+    }
+  }
+}
