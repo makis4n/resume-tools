@@ -273,6 +273,7 @@ Everything is written in one language, TypeScript, and runs in three places: the
 | Files and the server | Cloudflare: Pages for the app, R2 for the engine, fonts, TeX Live files and uploads, a Worker for the model endpoint, KV for the cache | Downloads are not metered, and the free tier never sleeps |
 | Testing | The same WebAssembly engines run headless in Node; Vitest for units, Playwright for click-and-type flows, GitHub Actions running the corpus nightly | One pipeline in the browser and in continuous integration, as the plan requires |
 | Repository | A pnpm monorepo with packages for the engines, the converter, the template packages, the pipeline, the app and the API | Clean lines between the four parts written from scratch |
+| Containers | Docker for two jobs only: building the TeX engines and the TeX Live bundle, and deploying the ATS service later. Everyday development runs natively. Any Docker-compatible runtime works, such as Docker Desktop or OrbStack | Pinned Node, pnpm, uv and Python already make both laptops and CI match; the Emscripten build is the one thing they cannot pin, and a Python host takes a container anyway |
 
 ### 8.2 Hosting
 
@@ -307,7 +308,7 @@ The first two milestones need no services at all: the spike and the curated edit
 
 ### 8.4 The hard parts of the stack
 
-- **Getting XeTeX into the browser.** XeTeX brings ICU, HarfBuzz and FreeType with it, and pushing all of that through Emscripten is the heaviest single engineering item. BusyTeX has done it, so the spike starts from its scripts rather than from zero.
+- **Getting XeTeX into the browser.** XeTeX brings ICU, HarfBuzz and FreeType with it, and pushing all of that through Emscripten is the heaviest single engineering item. BusyTeX has done it, so the spike starts from its scripts rather than from zero. The build lives in a Dockerfile so it is reproducible on any machine, and CI publishes the resulting WebAssembly files so nobody rebuilds them unless the engine changes.
 - **Licences on the engine builds.** pdfTeX is under the GPL and SwiftLaTeX's ready-made engines are, as far as can be told, under the AGPL. Building from TeX Live sources sidesteps the second, and the first needs a one-time read for a product that might charge money.
 - **XeTeX's output dialect.** dvi2html understands classic DVI. XDV adds instructions for native fonts, and the converter has to learn them before templates with custom fonts display.
 

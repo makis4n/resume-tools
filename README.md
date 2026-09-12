@@ -27,7 +27,7 @@ docs/
 
 ## Getting started
 
-You need Node 24, pnpm 11 and uv. `.node-version` and `apps/ats/.python-version` pin the runtimes. `corepack enable` gives you the right pnpm, and uv fetches its Python by itself.
+You need Node 24, pnpm 11 and uv. `.node-version` and `apps/ats/.python-version` pin the runtimes. `corepack enable` gives you the right pnpm, and uv fetches its Python by itself. Docker is not needed for development; it comes in later for building the TeX engines and for deploying the ATS service, and any Docker-compatible runtime works, such as Docker Desktop, OrbStack or Colima.
 
 Editor, from the repository root:
 
