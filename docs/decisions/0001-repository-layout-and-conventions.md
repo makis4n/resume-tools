@@ -18,6 +18,6 @@ Two people are building two products that share one moment of contact: the edito
 
 ## Consequences
 
-- Branch protection cannot be enforced on a private free-plan repository, so it is a convention until the repository goes public or moves to a paid plan.
+- `main` is protected on GitHub: pull requests only, with no required approvals and no required status checks. Reviews are requested through CODEOWNERS and required by convention, and a required check would block merges on pull requests whose paths never trigger that workflow.
 - Two toolchains in one repository. Each CI workflow runs only for its own paths, so neither slows the other down.
 - Contract changes cost two reviews by design.

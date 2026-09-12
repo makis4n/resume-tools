@@ -57,7 +57,7 @@ CI runs exactly these commands. If they pass on your machine they pass there.
 
 ## How we work
 
-**Branches.** `main` is always releasable. Work happens on short-lived branches named `<you>/<topic>`, for example `waikin/overlay-editor` or `keaen/pdf-text-layer`. GitHub only enforces branch protection on public repositories or paid plans, so here it is a convention: nobody pushes to `main` directly.
+**Branches.** `main` is always releasable and is protected on GitHub: changes reach it through pull requests only. The repository owner can bypass that, and that is reserved for emergencies. Work happens on short-lived branches named `<you>/<topic>`, for example `waikin/overlay-editor` or `keaen/pdf-text-layer`.
 
 **Pull requests.** Every change to `main` goes through a pull request, squash-merged, with CI green. A review is required when a change touches the other person's area, `packages/`, `docs/decisions/` or `.github/`. Changes inside your own app can be self-merged once CI passes. Keep a pull request small enough to read in ten minutes, and split it otherwise.
 
