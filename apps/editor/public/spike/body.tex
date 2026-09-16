@@ -1,0 +1,56 @@
+\begin{document}
+
+%----------HEADING----------
+\begin{center}
+    \textbf{\Huge \scshape \rtfield{name}{Mara Quist}} \\ \vspace{1pt}
+    \small \rtfield{phone}{415-555-0132} $|$ \href{mailto:mara@example.com}{\underline{\rtfield{email}{mara@example.com}}} $|$
+    \href{https://quist.example.com}{\underline{\rtfield{site}{quist.example.com}}}
+\end{center}
+
+%-----------EDUCATION-----------
+\section{\rtfield{sec-edu}{Education}}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {\rtfield{edu1-school}{Northgate University}}{\rtfield{edu1-place}{Portland, OR}}
+      {\rtfield{edu1-degree}{Bachelor of Science in Computer Science}}{\rtfield{edu1-dates}{Sep. 2016 -- Jun. 2020}}
+  \resumeSubHeadingListEnd
+
+%-----------EXPERIENCE-----------
+\section{\rtfield{sec-exp}{Experience}}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {\rtfield{exp1-title}{Software Engineer}}{\rtfield{exp1-dates}{Jul. 2020 -- Present}}
+      {\rtfield{exp1-org}{Fennel Systems}}{\rtfield{exp1-place}{Remote}}
+      \resumeItemListStart
+        \resumeItem{\rtfield{exp1-i1}{Built a document pipeline that turns structured data into typeset pages, cutting the office's turnaround from days to minutes and removing a whole class of formatting errors, then wrote the runbook so the next team could operate it without help.}}
+        \resumeItem{\rtfield{exp1-i2}{Led the migration of three services to a shared queue, which halved on-call pages.}}
+        \resumeItem{\rtfield{exp1-i3}{Mentored two interns through their first production releases.}}
+      \resumeItemListEnd
+    \resumeSubheading
+      {\rtfield{exp2-title}{Research Assistant}}{\rtfield{exp2-dates}{Jan. 2019 -- Jun. 2020}}
+      {\rtfield{exp2-org}{Northgate University}}{\rtfield{exp2-place}{Portland, OR}}
+      \resumeItemListStart
+        \resumeItem{\rtfield{exp2-i1}{Wrote the evaluation harness for a typesetting study and ran it across 400 documents.}}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+
+%-----------PROJECTS-----------
+\section{\rtfield{sec-proj}{Projects}}
+    \resumeSubHeadingListStart
+      \resumeProjectHeading
+          {\textbf{\rtfield{proj1-name}{Marginalia}} $|$ \emph{\rtfield{proj1-tech}{TypeScript, WebAssembly}}}{\rtfield{proj1-dates}{2023 -- 2024}}
+          \resumeItemListStart
+            \resumeItem{\rtfield{proj1-i1}{An in-browser editor for typeset pages where the page itself is the editing surface.}}
+          \resumeItemListEnd
+    \resumeSubHeadingListEnd
+
+%-----------SKILLS-----------
+\section{\rtfield{sec-skills}{Technical Skills}}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+     \textbf{Languages}{: \rtfield{skills-lang}{TypeScript, Python, Rust, SQL}} \\
+     \textbf{Tools}{: \rtfield{skills-tools}{Git, Docker, Postgres, Vite}}
+    }}
+ \end{itemize}
+
+\end{document}

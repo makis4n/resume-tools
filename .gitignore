@@ -24,3 +24,9 @@ __pycache__/
 
 # Logs
 *.log
+
+# Engine and TeX Live bundles staged for the spike; hundreds of MB, fetched by scripts
+apps/editor/public/spike-assets/
+
+# Spike harness inputs and outputs: engine, bundles, fonts, templates (hundreds of MB)
+apps/editor/spike/assets/
