@@ -4,7 +4,7 @@
 
 *A browser editor for one-page LaTeX resumes, where you edit the typeset page itself and never see a line of TeX.*
 
-Version one plan · revised 13 September 2026 · decisions settled, no code written
+Version one plan · revised 16 September 2026 · decisions settled, no code written
 
 ## 1. Key terms
 
@@ -36,7 +36,7 @@ An engine is the program that does the compiling. LaTeX has three in common use,
 ### 1.3 Inside this plan
 
 - **Template package**: Everything the editor needs to know about one template: its preamble, its macros, where markers go, and how its fields map onto the canonical model. Curated and imported templates both end up as one of these.
-- **Canonical model**: The one structure every resume is stored in, whatever template it uses: contact details, then sections of entries and lists. It is what lets content survive a switch of template.
+- **Canonical model**: The one structure every resume is stored in, whatever template it uses: contact details, then sections of entries and lists. It is also what will make switching templates possible later without a migration.
 - **Style control**: A setting the user can change without touching the template, such as margins or font size. Each one is a parameter the template package declares, with a fixed range.
 - **Marker**: An invisible note the template writes into the output before and after each editable field. It is how the page knows which glyphs belong to which field.
 - **Overlay**: The editable box that appears over a field while it is being typed into, set in the same font as the page. It makes typing feel instant while the real compile catches up.
@@ -75,7 +75,7 @@ BaKoMa TeX Word did direct page editing on real TeX in the 2000s for any LaTeX d
 
 ## 3. Decisions
 
-Everything settled so far, including the defaults chosen on 12 September and the two revisions of 13 September. Rows carrying the default tag were recommendations accepted without discussion, so they are the first to revisit if something feels wrong in practice.
+Everything settled so far, including the defaults chosen on 12 September the two revisions of 13 September, and the revision of 16 September that moved template switching out of version one. Rows carrying the default tag were recommendations accepted without discussion, so they are the first to revisit if something feels wrong in practice.
 
 | Question | Decision | What it changes |
 |---|---|---|
@@ -92,7 +92,7 @@ Everything settled so far, including the defaults chosen on 12 September and the
 | Languages | English first | Latin fonts only; pdfTeX suffices for curated templates |
 | Storage | Browser storage plus accounts with cloud save | A document store, not a live sync engine |
 | Collaboration | None in real time | No shared editing state, no presence, no merging |
-| Template switching | Yes, with content kept | One canonical resume model and a mapping per package |
+| Template switching | Later. Version one keeps one template per document | The canonical model stays, so switching can be added later without a migration |
 | LaTeX or Typst | LaTeX, because importing LaTeX templates is the point | Settled and not raised again |
 | Engines at launch | pdfTeX and XeTeX *(default)* | LuaTeX imports are refused with a clear message |
 | Import intake | A single `.tex` or a zip *(default)* | Overleaf links later; Overleaf exports a zip anyway |
@@ -111,7 +111,6 @@ Everything settled so far, including the defaults chosen on 12 September and the
 - Import of a single `.tex` file, or a zip holding the document with its class files, style files and images.
 - Text editing in place on the typeset page, with instant feedback in an overlay and the true page following within the target time.
 - Adding, removing and reordering entries and sections from a side panel.
-- Switching templates with content preserved.
 - Style controls: page size, margins, font size, font, accent colour, density and date format, plus a fit-to-one-page action.
 - PDF download.
 - Documents saved in the browser, and in the user's account once they sign in.
@@ -120,6 +119,7 @@ Everything settled so far, including the defaults chosen on 12 September and the
 ### 4.2 Out, with the door left open
 
 - Cheat sheets, and the visual math editor they would need.
+- Switching templates with content preserved. The canonical model is built so this can be added later.
 - Style controls beyond the version-one set, such as heading styles, bullet shapes and column widths.
 - Icon fonts and system fonts beyond what the launch templates use. XeTeX ships at launch, so this is a template question rather than an engine question.
 - Non-Latin scripts.
@@ -148,15 +148,15 @@ A template package is the one artefact everything else consumes. It holds the pr
 
 > **Note.** Whether XeTeX can keep system fonts inside a format file is the first thing the spike answers, because it decides how fast icon templates can ever compile.
 
-### 5.2 The canonical model and template switching
+### 5.2 The canonical model
 
-Template switching means every document is stored in one model regardless of template: a header with contact fields, then sections, each holding either entries with a title, subtitle, place, date range and bullets, or a plain list such as skills. Each package maps its macros onto that model, and the generator walks the model to emit the template's LaTeX. Fields an imported template has and the model lacks are kept as template-specific extras, so nothing is lost on import. Switching to a template that cannot show them drops them, with a warning that names exactly what will go.
+Every document is stored in one model regardless of template: a header with contact fields, then sections, each holding either entries with a title, subtitle, place, date range and bullets, or a plain list such as skills. Each package maps its macros onto that model, and the generator walks the model to emit the template's LaTeX. Fields an imported template has and the model lacks are kept as template-specific extras, so nothing is lost on import. Template switching is not in version one, but because every document already lives in this model, adding it later is a feature rather than a migration.
 
 > **Note.** RenderCV is an open-source tool that renders a YAML resume through LaTeX themes. It is the closest existing example of a canonical model with a mapping per template, and worth reading before designing ours.
 
 ### 5.3 Client
 
-The page is an SVG built by us from the engine's output, one element per glyph, so a hit test is a DOM lookup. Clicking a glyph finds its field through the markers around it and opens an editable overlay positioned exactly over the field, set in the document's own font served as a web font. Keystrokes land in the overlay instantly. The edit is applied to the model after a short debounce, and when the recompile lands, the fresh page replaces the old one and the overlay closes. A side panel holds structure: add or remove an entry, reorder sections, switch template. Documents live in a local-first store in the browser and sync to the account when one exists.
+The page is an SVG built by us from the engine's output, one element per glyph, so a hit test is a DOM lookup. Clicking a glyph finds its field through the markers around it and opens an editable overlay positioned exactly over the field, set in the document's own font served as a web font. Keystrokes land in the overlay instantly. The edit is applied to the model after a short debounce, and when the recompile lands, the fresh page replaces the old one and the overlay closes. A side panel holds structure: add or remove an entry, reorder sections. Documents live in a local-first store in the browser and sync to the account when one exists.
 
 ### 5.4 Style controls
 
@@ -322,7 +322,7 @@ Built in this order because each step removes the biggest remaining unknown befo
    - [ ] Output converts to SVG with every marker preserved, and clicking twenty different fields resolves the right field and character offset every time.
    - [ ] The overlay uses the same font as the page, and the shift when a three-line bullet swaps from overlay to page is measured in pixels.
    - [ ] First load, engine plus format plus fonts, is under 30 MB.
-2. **Curated editor.** The package format, the three ported templates, page plus side-panel editing, template switching, the style controls and fit to one page, browser storage, PDF export, and a warning when content spills onto a second page.
+2. **Curated editor.** The package format, the three ported templates, page plus side-panel editing, the style controls and fit to one page, browser storage, PDF export, and a warning when content spills onto a second page.
    *Done means:* All three templates edit end to end within the targets, every style control works on all three, and the validation harness runs on every change.
 3. **Import.** Intake, parser, probes, model step, validation, locked chunks, cache, the import report, and the generic style controls on imported templates.
    *Done means:* A corpus of at least 200 public resumes imports through the pipeline, the editable rate is reported and tracked, page size, margins and font size work on every successful import, and a cached template imports in under 5 seconds.
@@ -330,7 +330,7 @@ Built in this order because each step removes the biggest remaining unknown befo
    *Done means:* A document saved on one device opens on another, and an original upload is visible only to its owner.
 5. **Launch.** Polish, the pre-warmed cache for the top templates, and the corpus number published internally as the import quality metric.
 
-After launch, in roughly this order: in-page structure editing if the side panel proves limiting, more style controls, cheat sheets with a visual math editor, LuaTeX, other scripts.
+After launch, in roughly this order: template switching with content preserved, in-page structure editing if the side panel proves limiting, more style controls, cheat sheets with a visual math editor, LuaTeX, other scripts.
 
 ## 10. Risks
 
@@ -353,6 +353,7 @@ Each one is marked the way TeX marks an overfull line, and each carries its miti
 Parked on purpose. None of them blocks version one, and each is cheaper to decide with a working editor in hand.
 
 - In-page structure editing, such as dragging entries around the typeset page.
+- Template switching with content preserved; the canonical model already supports it.
 - Which language model to standardise on, decided by running candidates over the corpus.
 - A review loop for cached packages, including whether users can report a wrong field name and whether the report reaches the cache.
 - Overleaf link intake.
@@ -365,4 +366,4 @@ Parked on purpose. None of them blocks version one, and each is cheaper to decid
 
 ---
 
-*Written on 12 September 2026 from a design conversation and revised on 13 September to bring style controls into version one, leave the model choice open, and add the stack and hosting choices. Decisions carrying the default tag were proposed and accepted without further discussion, and are the first to revisit if practice disagrees.*
+*Written on 12 September 2026 from a design conversation and revised on 13 September to bring style controls into version one, leave the model choice open, and add the stack and hosting choices, and on 16 September to move template switching out of version one. Decisions carrying the default tag were proposed and accepted without further discussion, and are the first to revisit if practice disagrees.*
