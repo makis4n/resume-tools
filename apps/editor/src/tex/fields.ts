@@ -17,6 +17,8 @@ export interface FieldGlyph {
   text: string | undefined;
   /** Offset of the glyph's first character in the field's source text, once aligned. */
   offset: number;
+  /** True for a hyphen TeX added at a line break, which has no source character. */
+  inserted?: boolean;
 }
 
 export interface Field {
@@ -90,6 +92,7 @@ export function alignGlyphs(field: Field, text: string): number {
     } else if (g === "-") {
       // A hyphen TeX inserted at a line break: it belongs to the character before it.
       glyph.offset = Math.max(0, pos - 1);
+      glyph.inserted = true;
     } else {
       // Try to resynchronise a little further on; otherwise count it as unmatched.
       const ahead = text.indexOf(g, pos);

@@ -37,7 +37,9 @@ Everything large lives outside git, in `spike/assets/` for the scripts and in
    results copied to `public/spike-assets/fonts/*.json`, `public/spike-assets/tfm/*.tfm` and
    `public/spike-assets/webfonts/*.otf`. Python stays out of this app on purpose; the
    production path will read Type 1 fonts in TypeScript.
-5. `public/spike-assets/` also needs the engine files from step 1 copied in.
+5. `public/spike-assets/` also needs the engine files from step 1 copied in. Vite copies all of
+   `public/` into `dist/` on `pnpm build`, so remove `public/spike-assets/` before building the
+   editor for real. Nothing deploys the build today.
 
 ## The page
 

@@ -74,15 +74,16 @@ const COMMON = [
 ];
 
 onmessage = async ({ data }) => {
+  const reply = (msg, transfer) => postMessage({ id: data.id, ...msg }, transfer);
   try {
     if (data.type === "init") {
       const ms = await init(data.packages);
-      postMessage({ type: "ready", ms, heapMb: M.HEAPU8.length / 2 ** 20 });
+      reply({ type: "ready", ms, heapMb: M.HEAPU8.length / 2 ** 20 });
     } else if (data.type === "dump") {
       M.FS.writeFile("pre.tex", `${data.preamble}\n\\dump\n`);
       const r = run(["pdflatex", "-ini", "-jobname=pre", ...COMMON, "&pdflatex", "pre.tex"]);
       const fmt = readBytes(`${PROJECT}/pre.fmt`);
-      postMessage({
+      reply({
         type: "dumped",
         ...r,
         size: fmt ? fmt.length : 0,
@@ -94,12 +95,12 @@ onmessage = async ({ data }) => {
       const fmt = data.stock ? STOCK_FORMAT : `${PROJECT}/pre.fmt`;
       const r = run(["pdflatex", ...COMMON, "--fmt", fmt, "body.tex"]);
       const dvi = readBytes(`${PROJECT}/body.dvi`);
-      postMessage(
+      reply(
         { type: "compiled", ...r, dvi, log: readText(`${PROJECT}/body.log`) },
         dvi ? [dvi.buffer] : [],
       );
     }
   } catch (e) {
-    postMessage({ type: "error", message: String(e && e.stack ? e.stack : e) });
+    reply({ type: "error", message: String(e && e.stack ? e.stack : e) });
   }
 };

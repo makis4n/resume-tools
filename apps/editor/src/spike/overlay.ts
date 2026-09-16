@@ -19,6 +19,7 @@ export interface ShiftReport {
   font: string;
   fontPx: number;
   lineHeightPx: number;
+  align: string;
   glyphs: number;
   svgLines: number;
   overlayLines: number;
@@ -81,6 +82,12 @@ export function openOverlay(
   // The measure: the widest full line, or the only line.
   const fullLines = lines > 1 ? glyphs.filter((g) => g.line < lines - 1) : glyphs;
   const right = Math.max(...fullLines.map((g) => g.x + g.width));
+  // TeX justified the paragraph only if every full line ends at the same edge; ragged-right
+  // paragraphs (Jake's preamble sets \raggedright) must not be stretched by the overlay.
+  const lineRight = (line: number) =>
+    Math.max(...glyphs.filter((g) => g.line === line).map((g) => g.x + g.width));
+  const rights = Array.from({ length: Math.max(0, lines - 1) }, (_, i) => lineRight(i));
+  const justified = rights.length > 1 && Math.max(...rights) - Math.min(...rights) < 1;
   // With our fonts' ascent 0.8em and descent 0.2em the baseline sits this far below the line top.
   const baselineInLine = (lineHeightPx - fontPx) / 2 + 0.8 * fontPx;
 
@@ -98,7 +105,7 @@ export function openOverlay(
     fontFamily: `"${font}"`,
     fontSize: `${fontPx}px`,
     lineHeight: `${lineHeightPx}px`,
-    textAlign: lines > 1 ? "justify" : "left",
+    textAlign: justified ? "justify" : "left",
     whiteSpace: "pre-wrap",
     hyphens: "manual",
     margin: "0",
@@ -143,6 +150,7 @@ export function openOverlay(
       font,
       fontPx,
       lineHeightPx,
+      align: el.style.textAlign,
       glyphs: glyphs.length,
       svgLines: lines,
       overlayLines: overlayLines.length,

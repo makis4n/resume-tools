@@ -105,4 +105,6 @@
 
 %-------------------------
 % Spike: field markers. The generator will emit these around every editable field.
-\newcommand{\rtfield}[2]{\leavevmode\special{rt:b:#1}#2\special{rt:e:#1}}
+% In PDF-string contexts (bookmarks, metadata) hyperref must see only the text.
+\providecommand{\texorpdfstring}[2]{#1}
+\newcommand{\rtfield}[2]{\texorpdfstring{\leavevmode\special{rt:b:#1}#2\special{rt:e:#1}}{#2}}

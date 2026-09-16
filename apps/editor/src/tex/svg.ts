@@ -87,7 +87,10 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
         const id = `g${item.font}-${item.code}`;
         if (!defs.has(id)) {
           const s = (font.scale * pt) / 1000;
-          defs.set(id, `<path id="${id}" d="${glyph.d}" transform="matrix(${s} 0 0 ${-s} 0 0)"/>`);
+          defs.set(
+            id,
+            `<path id="${id}" d="${escape(glyph.d)}" transform="matrix(${s} 0 0 ${-s} 0 0)"/>`,
+          );
         }
         const x = INCH + item.h * pt;
         const y = INCH + item.v * pt;

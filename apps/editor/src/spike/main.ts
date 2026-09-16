@@ -62,6 +62,7 @@ let doc: DviDocument | undefined;
 let fields: Map<string, Field> | undefined;
 let texts: Map<string, string> | undefined;
 let overlay: OverlayHandle | undefined;
+let preamble = "";
 
 const svgEl = () => $("page").querySelector("svg") as SVGSVGElement | null;
 
@@ -78,7 +79,7 @@ async function showOverlay(id: string) {
   await document.fonts.ready;
   const r = overlay.report();
   log(
-    `overlay ${r.field}: font ${r.font} ${r.fontPx.toFixed(2)}px, line ${r.lineHeightPx.toFixed(2)}px; ${r.glyphs} glyphs on ${r.svgLines} line(s) (overlay: ${r.overlayLines}); ${r.lineMismatches} on a different line; dx max ${r.maxDx.toFixed(2)}px mean ${r.meanDx.toFixed(2)}px; dy max ${r.maxDy.toFixed(2)}px`,
+    `overlay ${r.field}: font ${r.font} ${r.fontPx.toFixed(2)}px, line ${r.lineHeightPx.toFixed(2)}px, align ${r.align}; ${r.glyphs} glyphs on ${r.svgLines} line(s) (overlay: ${r.overlayLines}); ${r.lineMismatches} on a different line; dx max ${r.maxDx.toFixed(2)}px mean ${r.meanDx.toFixed(2)}px; dy max ${r.maxDy.toFixed(2)}px`,
   );
 }
 
@@ -122,7 +123,8 @@ async function compile(body: string, times: number, stock = false) {
   const ms: number[] = [];
   let last: WorkerMessage | undefined;
   for (let i = 0; i < times; i++) {
-    last = await call({ type: "compile", body, stock });
+    // The stock format knows nothing of the template, so it gets the whole document.
+    last = await call({ type: "compile", body: stock ? `${preamble}\n${body}` : body, stock });
     ms.push(Number(last.ms));
     if (last.code !== 0 || !last.dvi) {
       log(`compile failed (exit ${String(last.code)}):\n${String(last.log).slice(-1500)}`);
@@ -180,18 +182,19 @@ $("hit").addEventListener("click", () => {
 
 $("check").addEventListener("click", () => {
   if (!fields || !texts || !doc) return;
-  let ok = 0;
+  let ok_ = 0;
   const bad: string[] = [];
   for (const f of fields.values()) {
     const text = texts.get(f.id) ?? "";
     for (const g of f.glyphs) {
-      const want = g.text ?? "";
-      const alternatives = want === "--" ? ["--", "–"] : [want];
-      if (
-        alternatives.some((w) => text.startsWith(w, g.offset)) ||
-        (want === "-" && !text.startsWith("-", g.offset))
-      )
-        ok++;
+      const want = g.text;
+      if (want === undefined) {
+        bad.push(`${f.id}@${g.offset} glyph with no text`);
+        continue;
+      }
+      const alternatives = want === "--" ? ["--", "\u2013"] : [want];
+      const ok = g.inserted ? want === "-" : alternatives.some((w) => text.startsWith(w, g.offset));
+      if (ok) ok_++;
       else
         bad.push(
           `${f.id}@${g.offset} glyph "${want}" text "${text.slice(g.offset, g.offset + 3)}"`,
@@ -199,15 +202,16 @@ $("check").addEventListener("click", () => {
     }
   }
   log(
-    `check: ${ok} glyphs resolve to their own character, ${bad.length} do not${bad.length ? `\n${bad.slice(0, 10).join("\n")}` : ""}`,
+    `check: ${ok_} glyphs resolve to their own character, ${bad.length} do not${bad.length ? `\n${bad.slice(0, 10).join("\n")}` : ""}`,
   );
 });
 
 (async () => {
-  const [preamble, body] = await Promise.all([
+  const [pre, body] = await Promise.all([
     fetch("/spike/jake-preamble.tex").then((r) => r.text()),
     fetch("/spike/body.tex").then((r) => r.text()),
   ]);
+  preamble = pre;
   status("loading engine and TeX Live bundles…");
   const ready = await call({
     type: "init",
@@ -225,7 +229,8 @@ $("check").addEventListener("click", () => {
     return;
   }
   status("compiling…");
-  await compile(body, 1);
+  // Two passes: the first writes .aux/.out, the second is the converged page.
+  await compile(body, 2);
   status("ready");
   $("compile").addEventListener("click", () => compile(body, 5));
   $("stock").addEventListener("click", () => compile(body, 2, true));
