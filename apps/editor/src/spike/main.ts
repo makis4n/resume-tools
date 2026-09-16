@@ -21,11 +21,25 @@ const median = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor(a.length
 
 const worker = new Worker("/spike/engine-worker.js");
 type WorkerMessage = { type: string; [k: string]: unknown };
+// Replies carry the id of the request they answer, so overlapping calls cannot settle each other.
+let nextId = 0;
+const pending = new Map<
+  number,
+  { resolve: (m: WorkerMessage) => void; reject: (e: Error) => void }
+>();
+worker.onmessage = (e: MessageEvent<WorkerMessage>) => {
+  const id = Number(e.data.id);
+  const p = pending.get(id);
+  if (!p) return;
+  pending.delete(id);
+  if (e.data.type === "error") p.reject(new Error(String(e.data.message)));
+  else p.resolve(e.data);
+};
 const call = (msg: object, transfer: Transferable[] = []) =>
   new Promise<WorkerMessage>((resolve, reject) => {
-    worker.onmessage = (e: MessageEvent<WorkerMessage>) =>
-      e.data.type === "error" ? reject(new Error(String(e.data.message))) : resolve(e.data);
-    worker.postMessage(msg, transfer);
+    const id = ++nextId;
+    pending.set(id, { resolve, reject });
+    worker.postMessage({ ...msg, id }, transfer);
   });
 
 const outlines = new Map<string, FontOutlines>();
