@@ -46,6 +46,9 @@ Everything large lives outside git, in `spike/assets/` for the scripts and in
 6. For the on-demand mode (`spike.html?ondemand=1`), `node spike/extract-texlive.cjs` unpacks
    the bundles into `spike/web/assets/texlive/` as individual files (13,840 files, 257 MB)
    and writes `spike/web/assets/texlive-manifest.json`, the path and size of every file.
+7. To draw XeTeX output, copy `assets/out/acv-loop.xdv` (from `xetex-loop.cjs`) to
+   `spike/web/assets/xdv/` and the Roboto, Source Sans 3 and Font Awesome files from step 3
+   to `spike/web/assets/xdv/fonts/`.
 
 ## The page
 
@@ -59,11 +62,13 @@ content, 30 marked fields) and draws the DVI. With `?ondemand=1` the worker
 loads no bundle: every file in the manifest becomes an empty file that knows its size, and
 its contents are fetched with one synchronous request the first time TeX reads it; the log
 then says what each step fetched, and `window.fetchedFiles` lists the paths for
-`spike/fetched-size.cjs`. Buttons: compile five times and print the
+`spike/fetched-size.cjs`. The native-font glyph runs of an XDV are drawn through opentype.js
+(`src/spike/opentype.ts`), the only dependency the spike adds. Buttons: compile five times and print the
 median, compile from the stock format, check that every glyph resolves to its own character,
 hit-test every field from a click at a glyph centre, and open the overlay on the three-line
 bullet and measure its drift, with TeX's line breaker (`src/tex/linebreak.ts`) or with the
-browser's own breaks for comparison. Clicking any glyph opens the overlay on that field; Escape
+browser's own breaks for comparison, and draw page one of the Awesome-CV XDV from step 7.
+Clicking any glyph opens the overlay on that field; Escape
 closes it.
 
 ## The scripts
