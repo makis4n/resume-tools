@@ -4,7 +4,7 @@
 
 *A browser editor for one-page LaTeX resumes, where you edit the typeset page itself and never see a line of TeX.*
 
-Version one plan · revised 16 September 2026 · decisions settled, no code written
+Version one plan · revised 17 September 2026 · spike done, follow-ups merged
 
 ## 1. Key terms
 
@@ -75,7 +75,7 @@ BaKoMa TeX Word did direct page editing on real TeX in the 2000s for any LaTeX d
 
 ## 3. Decisions
 
-Everything settled so far, including the defaults chosen on 12 September the two revisions of 13 September, and the revision of 16 September that moved template switching out of version one. Rows carrying the default tag were recommendations accepted without discussion, so they are the first to revisit if something feels wrong in practice.
+Everything settled so far, including the defaults chosen on 12 September the two revisions of 13 September, the revision of 16 September that moved template switching out of version one, and the revision of 17 September that records what the spike measured. Rows carrying the default tag were recommendations accepted without discussion, so they are the first to revisit if something feels wrong in practice.
 
 | Question | Decision | What it changes |
 |---|---|---|
@@ -102,6 +102,8 @@ Everything settled so far, including the defaults chosen on 12 September the two
 | Launch templates | Jake's Resume, AltaCV, Awesome-CV *(default)* | Covers pdfTeX, icons, two columns and XeTeX |
 | Tech stack | TypeScript throughout, React, TeX engines built to WebAssembly from TeX Live sources *(default)* | Four parts are written from scratch; everything else is assembled, see section 8 |
 | Hosting | Cloudflare for files and the model endpoint, Supabase for sign-in and saved resumes *(default)* | Downloads are free on one, accounts are nearly free to build on the other |
+| XeTeX fonts | Declared in the format by file name, with fontspec removed from the class at import time (decision 0003) | A format cannot hold a loaded system font, so nothing loads until the first compile; Awesome-CV compiles in about half a second instead of ten |
+| Overlay line breaking | The overlay breaks lines with TeX's own algorithm and the font's metrics (decision 0004) | A multi-line field sits within a pixel of the page; the template package carries each field's paragraph settings |
 
 ## 4. Scope of version one
 
@@ -140,13 +142,15 @@ These are the bar the spike has to clear, not measurements. A slow laptop means 
 | Import, cache miss including the model call | under 60 s |
 | First load, cached afterwards | under 30 MB |
 
+Measured on 17 September on an M4 Pro, with the slow laptop still to come: the page updates in 100 to 110 ms for Jake's Resume and 459 ms for Awesome-CV, the first load is about 14 MB compressed, and the overlay sits within a pixel of the page.
+
 ## 5. Architecture
 
 ### 5.1 The template package
 
 A template package is the one artefact everything else consumes. It holds the preamble verbatim, a schema for each custom macro and environment the template defines, a marker strategy for each editable argument, the parameters a future style panel will expose, and a mapping from the template's fields onto the canonical model. Curated packages are written by hand. Imported packages are produced by the pipeline in section 6 and cached. The editor cannot tell the difference, which is what lets an imported package that a person has reviewed simply become a curated template.
 
-> **Note.** Whether XeTeX can keep system fonts inside a format file is the first thing the spike answers, because it decides how fast icon templates can ever compile.
+> **Note.** The spike answered the first question it was asked: XeTeX cannot keep system fonts inside a format file. The format holds font declarations that name the files instead, and nothing loads until the first compile, which brings Awesome-CV to about half a second (decision 0003).
 
 ### 5.2 The canonical model
 
@@ -156,7 +160,7 @@ Every document is stored in one model regardless of template: a header with cont
 
 ### 5.3 Client
 
-The page is an SVG built by us from the engine's output, one element per glyph, so a hit test is a DOM lookup. Clicking a glyph finds its field through the markers around it and opens an editable overlay positioned exactly over the field, set in the document's own font served as a web font. Keystrokes land in the overlay instantly. The edit is applied to the model after a short debounce, and when the recompile lands, the fresh page replaces the old one and the overlay closes. A side panel holds structure: add or remove an entry, reorder sections. Documents live in a local-first store in the browser and sync to the account when one exists.
+The page is an SVG built by us from the engine's output, one element per glyph, so a hit test is a DOM lookup. Clicking a glyph finds its field through the markers around it and opens an editable overlay positioned exactly over the field, set in the document's own font served as a web font. The overlay breaks its lines with TeX's own algorithm and the font's metrics, so a multi-line field sits within a pixel of the page (decision 0004). Keystrokes land in the overlay instantly. The edit is applied to the model after a short debounce, and when the recompile lands, the fresh page replaces the old one and the overlay closes. A side panel holds structure: add or remove an entry, reorder sections. Documents live in a local-first store in the browser and sync to the account when one exists.
 
 ### 5.4 Style controls
 
@@ -184,6 +188,8 @@ Fit to one page runs a short search in the worker: one step of density, then one
 ### 5.5 Compile worker
 
 A Web Worker hosts pdfTeX and XeTeX compiled to WebAssembly. TeX Live files are fetched on demand from a CDN and cached locally, so the first compile of a template pulls what it needs and later ones pull nothing. Each preamble is compiled once into a format file and cached, which removes most of the cost of every later compile. Output is DVI, or XDV from XeTeX, rather than PDF. Our converter turns it into SVG with the markers preserved. The PDF for download comes from the same output through the engines' standard drivers, also compiled to WebAssembly.
+
+The spike built this loop and measured it: pdfTeX from a saved format in about 100 ms, XeTeX with fontspec removed and the fonts declared in the format in about 460 ms, TeX Live files fetched one by one as TeX opens them so a first load is about 14 MB compressed and a body compile fetches 0.06 MB, Type 1 fonts read in the browser, and XDV's native-font runs drawn from the font files. The stock format is fetched only to build a template's own format; serving template formats from the cache would remove it from the first load.
 
 > **Note.** Markers written with `\special` pass through DVI untouched, and the on-screen page and the downloaded PDF come from the same output, so the two cannot disagree.
 
@@ -264,7 +270,7 @@ Everything is written in one language, TypeScript, and runs in three places: the
 | Engine host | One Web Worker, one engine loaded at a time, files fed on demand | Keeps memory down on old laptops |
 | TeX Live on demand | A static copy of the needed TeX Live files in object storage behind a CDN, with a manifest | Fetch only what a document uses, then cache it for good |
 | Page rendering | An own DVI and XDV to SVG converter in TypeScript, started from dvi2html | Exact per-glyph positions, markers preserved, an SVG the browser can hit-test |
-| Web fonts | WOFF2 versions of each template's fonts made at build time, with Latin Modern standing in for Computer Modern | Needed for both the SVG text and the overlay |
+| Web fonts | Web fonts made from each template's own font files, Computer Modern's Type 1 outlines included, so the overlay uses the page's exact glyphs | Needed for the overlay; the SVG draws the outlines directly |
 | PDF export | dvipdfmx and xdvipdfmx built to WebAssembly | The download comes from the same output as the screen, so the two cannot differ |
 | LaTeX parsing | unified-latex | The only serious JavaScript parser with a forgiving tree and a printer |
 | Model endpoint | A small HTTP function on the Vercel AI SDK's provider layer, asking for a structured answer against a fixed schema | The model is undecided; switching providers is a one-line change |
@@ -279,13 +285,13 @@ Everything is written in one language, TypeScript, and runs in three places: the
 
 Two services, split by what each is good at. Cloudflare serves everything large, because it does not meter downloads: the app itself, the engine, the fonts, the TeX Live files and uploaded originals, plus the model endpoint and its cache, which sit next to those files in a Worker. Supabase holds sign-in and saved resumes, because its sign-in, database and storage come already wired together and the app talks to them directly with no server code in between. The two never talk to each other. Each is reached from the browser, so there is nothing to integrate.
 
-The split follows from one number. A first visit downloads about 25 MB, the engine plus a template's precompiled preamble and fonts, and then keeps it cached. Supabase's free tier allows 5 GB of downloads a month, which about 200 first-time visitors would use up, and shipping a new engine build makes everyone download it again. Cloudflare's Pages and R2 do not charge for downloads at any volume. Saved resumes are about 100 KB each and are the only thing that leaves Supabase, so its limit is never approached.
+The split follows from one number. A first visit downloads about 14 MB compressed (measured in the spike; 25 MB was the estimate), the engine plus a template's precompiled preamble and fonts, and then keeps it cached. Supabase's free tier allows 5 GB of downloads a month, which about 350 first-time visitors would use up, and shipping a new engine build makes everyone download it again. Cloudflare's Pages and R2 do not charge for downloads at any volume. Saved resumes are about 100 KB each and are the only thing that leaves Supabase, so its limit is never approached.
 
 | Download | Per visitor | 300 visitors in a month |
 |---|---|---|
-| The engine, a format and fonts, once, from Cloudflare | 25 MB | 7.5 GB, free |
+| The engine, a format and fonts, once, from Cloudflare | 14 MB | 4.2 GB, free |
 | A saved resume, twenty opens, from Supabase | 2 MB | 0.6 GB, inside the free tier |
-| The same engine files if they lived on Supabase | 25 MB | 7.5 GB, over the limit at visitor 200 |
+| The same engine files if they lived on Supabase | 14 MB | 4.2 GB, over the limit at visitor 350 |
 
 ### 8.3 What it costs
 
@@ -308,20 +314,20 @@ The first two milestones need no services at all: the spike and the curated edit
 
 ### 8.4 The hard parts of the stack
 
-- **Getting XeTeX into the browser.** XeTeX brings ICU, HarfBuzz and FreeType with it, and pushing all of that through Emscripten is the heaviest single engineering item. BusyTeX has done it, so the spike starts from its scripts rather than from zero. The build lives in a Dockerfile so it is reproducible on any machine, and CI publishes the resulting WebAssembly files so nobody rebuilds them unless the engine changes.
+- **Getting XeTeX into the browser.** XeTeX brings ICU, HarfBuzz and FreeType with it, and pushing all of that through Emscripten is the heaviest single engineering item. BusyTeX has done it, so the spike ran on its prebuilt binary, which holds all three engines in 30 MB; the own per-engine build is still to do. The build lives in a Dockerfile so it is reproducible on any machine, and CI publishes the resulting WebAssembly files so nobody rebuilds them unless the engine changes.
 - **Licences on the engine builds.** pdfTeX is under the GPL and SwiftLaTeX's ready-made engines are, as far as can be told, under the AGPL. Building from TeX Live sources sidesteps the second, and the first needs a one-time read for a product that might charge money.
-- **XeTeX's output dialect.** dvi2html understands classic DVI. XDV adds instructions for native fonts, and the converter has to learn them before templates with custom fonts display.
+- **XeTeX's output dialect.** Done in the spike: the converter reads XDV's native-font instructions and draws the glyphs from the font files, with fake stretch and slant applied and emboldened runs still to draw.
 
 ## 9. Milestones
 
 Built in this order because each step removes the biggest remaining unknown before the next step depends on it.
 
-1. **Spike, about two weeks.** Answer the questions the plan rests on. If any of the first three fail, the plan changes before anything else is built.
-   - [ ] Jake's Resume compiles in browser pdfTeX from a precompiled format in 300 ms or less, typical, on the slow laptop.
-   - [ ] Awesome-CV compiles in browser XeTeX. The time is recorded with and without a format, and whether system fonts can live in the format is answered yes or no.
-   - [ ] Output converts to SVG with every marker preserved, and clicking twenty different fields resolves the right field and character offset every time.
-   - [ ] The overlay uses the same font as the page, and the shift when a three-line bullet swaps from overlay to page is measured in pixels.
-   - [ ] First load, engine plus format plus fonts, is under 30 MB.
+1. **Spike, done 16 and 17 September 2026.** Answer the questions the plan rests on. None of the first three failed; the findings are in decision records 0003 and 0004, and the follow-ups they called for are merged.
+   - [x] Jake's Resume compiles in browser pdfTeX from a precompiled format in 100 to 110 ms on an M4 Pro. The slow-laptop number is still to be taken.
+   - [x] Awesome-CV compiles in browser XeTeX: 10.2 s with fontspec, 459 ms from a format with the fonts declared by file. System fonts cannot live in the format; the declarations can.
+   - [x] Output converts to SVG with every marker preserved; on a 30-field page every glyph resolves to its own character and every field resolves from a click.
+   - [x] The overlay uses the same font as the page. A three-line bullet shifted by up to 36 pt with the browser's line breaks and by at most 1 px with TeX's own breaker, which the overlay now uses.
+   - [x] First load is about 14 MB compressed with TeX Live fetched on demand, two thirds of it the engine binary.
 2. **Curated editor.** The package format, the three ported templates, page plus side-panel editing, the style controls and fit to one page, browser storage, PDF export, and a warning when content spills onto a second page.
    *Done means:* All three templates edit end to end within the targets, every style control works on all three, and the validation harness runs on every change.
 3. **Import.** Intake, parser, probes, model step, validation, locked chunks, cache, the import report, and the generic style controls on imported templates.
@@ -336,11 +342,11 @@ After launch, in roughly this order: template switching with content preserved, 
 
 Each one is marked the way TeX marks an overfull line, and each carries its mitigation.
 
-- **XeTeX cannot store system fonts in a format file.** Icon templates would then take a second or more per compile. The spike answers this first. If it is true, pdfTeX templates stay the fast path, XeTeX templates get a longer debounce, and LuaTeX with its own font cache moves up the list.
+- **XeTeX cannot store system fonts in a format file.** Answered: it cannot, but the font declarations can live there and nothing loads until the first compile, so Awesome-CV takes about half a second rather than the second or more feared. pdfTeX templates stay the fast path and XeTeX templates keep a longer debounce; unicode-math is the exception at 3.6 s and stays in the body only for templates that typeset real mathematics.
 - **Markers are defeated by some macros.** An argument used twice, placed in a moving argument such as a header, tested for emptiness, or set in verbatim will confuse or break marking. The probe detects each case and the field falls back to locked. The generator emits truly empty arguments so emptiness tests keep working.
-- **The overlay shifts when the real page swaps in.** The browser and TeX break lines differently, so multi-line fields may move a few pixels. The spike measures it. If it is more than a few pixels, the overlay gets its own line breaker using the TeX font metrics.
+- **The overlay shifts when the real page swaps in.** Measured: a three-line bullet moved by up to 36 pt with the browser's breaks. The overlay now has its own line breaker, a port of TeX's, and the shift is at most 1 px (decision 0004).
 - **Messy forks produce poor schemas.** Per-macro caching, the corpus metric, human review of the top twenty templates, and the locked fallback bound the damage. The success bar keeps a bad import from looking like a good one.
-- **Low-end devices run out of memory.** Two engines plus fonts is a lot for an old laptop. Load only the engine the document needs, unload the other, and measure on the slow laptop from the spike onward.
+- **Low-end devices run out of memory.** Two engines plus fonts is a lot for an old laptop. Load only the engine the document needs, unload the other, and measure on the slow laptop from the spike onward. The spike's numbers are all from an M4 Pro; the slow-laptop run is still owed.
 - **The model call is slow on a cache miss.** Tens of seconds is normal for careful analysis of a class file. A progress display that names each step, and a pre-warmed cache for the top templates, keep it from feeling broken.
 - **Personal data reaches the shared cache.** Someone types their name into a macro definition. Stripping before upload, placeholders instead of call-site text, definitions-only storage, and a scheduled audit of entries cover it.
 - **A ported template's licence is misread.** Confirm each licence before porting, rename anything under LPPL, and keep attribution in the package.
