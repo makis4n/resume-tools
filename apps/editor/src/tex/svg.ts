@@ -7,7 +7,7 @@
  * corner; the DVI origin sits one inch in from that.
  */
 
-import type { DviDocument, DviPage } from "./dvi";
+import type { DviDocument, DviPage, NativeFont } from "./dvi";
 import { pointsPerUnit } from "./dvi";
 import type { Field } from "./fields";
 import type { FontOutlines } from "./glyphs";
@@ -20,8 +20,17 @@ export interface PageSize {
 export const US_LETTER: PageSize = { width: 614.295, height: 794.97 };
 const INCH = 72.27;
 
+/** Outlines of an OpenType or TrueType font XeTeX used directly, by glyph index. */
+export interface NativeOutlines {
+  unitsPerEm: number;
+  /** SVG path data in font units, y up, or undefined for an empty or missing glyph. */
+  pathOf: (glyphId: number) => string | undefined;
+}
+
 export interface RenderOptions {
   outlines: (fontName: string) => FontOutlines | undefined;
+  /** Outlines for XeTeX's native fonts; runs whose font is missing are drawn as boxes. */
+  native?: (font: NativeFont) => NativeOutlines | undefined;
   fields?: Map<string, Field>;
   size?: PageSize;
 }
@@ -101,12 +110,55 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
         return;
       }
       case "native": {
-        // XeTeX glyph runs need the font file's outlines; drawn as boxes until that lands.
-        const x = INCH + item.h * pt;
-        const y = INCH + item.v * pt;
-        body.push(
-          `<rect x="${x.toFixed(3)}" y="${(y - 7).toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="9" fill="none" stroke="rgb(200,60,60)" stroke-width="0.3"${fieldAttrs(index)}/>`,
-        );
+        const font = doc.nativeFonts.get(item.font);
+        const outlines = font && options.native?.(font);
+        // Emboldening is a stroke xdvipdfmx adds; until that is drawn too, such runs stay
+        // boxes rather than shapes that differ from the PDF. So does a font with no usable em.
+        const drawable =
+          outlines &&
+          Number.isFinite(outlines.unitsPerEm) &&
+          outlines.unitsPerEm > 0 &&
+          !font.embolden;
+        if (!font || !outlines || !drawable) {
+          // Without the font file's outlines the run is drawn as a box.
+          const x = INCH + item.h * pt;
+          const y = INCH + item.v * pt;
+          body.push(
+            `<rect x="${x.toFixed(3)}" y="${(y - 7).toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="9" fill="none" stroke="rgb(200,60,60)" stroke-width="0.3"${fieldAttrs(index)}/>`,
+          );
+          return;
+        }
+        // A font's own colour (\color inside fontspec's features) beats the dvips stack.
+        let own = fill();
+        if (font.rgba !== undefined) {
+          const alpha = font.rgba & 0xff;
+          own = ` fill="rgb(${(font.rgba >>> 24) & 0xff},${(font.rgba >>> 16) & 0xff},${(font.rgba >>> 8) & 0xff})"`;
+          if (alpha < 255) own += ` fill-opacity="${(alpha / 255).toFixed(3)}"`;
+        }
+        // Font units to points, with xdvipdfmx's fake stretch (x scale) and slant (x shear),
+        // which the XDV carries as 16.16 fixed values (65536 is 1.0).
+        const s = (font.size * pt) / outlines.unitsPerEm;
+        const extend = (font.extend ?? 65536) / 65536;
+        const slant = (font.slant ?? 0) / 65536;
+        const matrix = `matrix(${s * extend} 0 ${s * slant} ${-s} 0 0)`;
+        for (const g of item.glyphs) {
+          const id = `n${item.font}-${g.id}`;
+          if (!defs.has(id)) {
+            let d: string | undefined;
+            try {
+              d = outlines.pathOf(g.id);
+            } catch {
+              d = undefined; // a glyph the font file cannot deliver is left out, not the page
+            }
+            if (d === undefined) continue;
+            defs.set(id, `<path id="${id}" d="${escape(d)}" transform="${matrix}"/>`);
+          }
+          const x = INCH + (item.h + g.x) * pt;
+          const y = INCH + (item.v + g.y) * pt;
+          body.push(
+            `<use href="#${id}" x="${x.toFixed(3)}" y="${y.toFixed(3)}" data-glyph="${g.id}" data-font="${escape(font.name)}" data-size="${(font.size * pt).toFixed(3)}"${fieldAttrs(index)}${own}/>`,
+          );
+        }
         return;
       }
       case "rule": {

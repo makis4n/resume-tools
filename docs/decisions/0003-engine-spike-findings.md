@@ -67,8 +67,14 @@ build from TeX Live sources is still to do; nothing below depends on it except s
   since a differently broken line moves whole words. Within a line the drift is a few
   points, and single-line fields are within a point, so they need nothing. Decision 0004
   gives the overlay TeX's own line breaker and measures the drift at a pixel.
-- XDV rendering of native-font runs is parsed but not yet drawn; it needs the font files'
-  outlines in the browser and comes with the XeTeX work above.
+- XDV native-font runs are drawn from the font files' outlines: the renderer takes a source
+  of outlines per native font (glyph paths in font units and the em size) and draws each
+  glyph of a run at its own position, scaled to the font's size with xdvipdfmx's fake stretch
+  and slant applied and the font's colour and opacity when it has one. The spike reads the
+  files through opentype.js, a spike-only dependency; the editor will need its own reader or
+  keep it. Emboldened runs, faces other than the first of a collection, and fonts whose
+  outlines cannot be read are drawn as boxes rather than as shapes that differ from the PDF.
+  Awesome-CV's first page draws in about 100 ms.
 
 ## Consequences
 

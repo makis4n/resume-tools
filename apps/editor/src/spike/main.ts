@@ -7,9 +7,11 @@ import { type DviDocument, type DviFont, type PageItem, parseDvi } from "../tex/
 import { alignGlyphs, collectFields, type Field } from "../tex/fields";
 import { type FontOutlines, glyphText, textToCode } from "../tex/glyphs";
 import { FIL_GLUE, LATEX_PARAMS } from "../tex/linebreak";
+import type { NativeOutlines } from "../tex/svg";
 import { renderPage } from "../tex/svg";
 import { parseTfm, scaleTfm } from "../tex/tfm";
 import { parseType1 } from "../tex/type1";
+import { nativeOutlines } from "./opentype";
 import { type Layout, type OverlayHandle, openOverlay } from "./overlay";
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
@@ -225,6 +227,59 @@ $("overlay").addEventListener("click", () => {
 $("overlay-browser").addEventListener("click", () => {
   useBreaker = false;
   showOverlay("exp1-i1");
+});
+
+// Draw the Awesome-CV page XeTeX produced (spike/xetex-loop.cjs) from its XDV and font files.
+const nativeFonts = new Map<string, Promise<NativeOutlines>>();
+/** The file a native font came from: its base name, whatever the template's path looked like. */
+const fontFile = (name: string) => name.split(/[\\/]/).pop() || name;
+const loadNativeFont = (file: string) => {
+  let loading = nativeFonts.get(file);
+  if (!loading) {
+    loading = fetch(`/spike/assets/xdv/fonts/${encodeURIComponent(file)}`).then(async (r) => {
+      if (!r.ok) throw new Error(`${file}: ${r.status}`);
+      return nativeOutlines(await r.arrayBuffer());
+    });
+    nativeFonts.set(file, loading);
+  }
+  return loading;
+};
+async function drawXdv() {
+  const t0 = performance.now();
+  const r = await fetch("/spike/assets/xdv/acv-loop.xdv");
+  if (!r.ok) throw new Error(`acv-loop.xdv: ${r.status} (see spike/README.md, step 7)`);
+  const xdv = new Uint8Array(await r.arrayBuffer());
+  const names = parseDvi(xdv, () => undefined);
+  const loaded = new Map<string, NativeOutlines>();
+  await Promise.all([
+    loadFonts(names), // the odd Type 1 glyph, such as Awesome-CV's centred dot in cmsy8
+    ...[...new Set([...names.nativeFonts.values()].map((f) => fontFile(f.name)))].map(
+      async (file) => loaded.set(file, await loadNativeFont(file)),
+    ),
+  ]);
+  const xdoc = parseDvi(xdv, widthsFor);
+  const t1 = performance.now();
+  const page = xdoc.pages[0];
+  if (!page) return;
+  // The XDV says pdf:pagesize A4; the spike hard-codes it.
+  const svg = renderPage(xdoc, page, {
+    outlines: (n) => outlines.get(n),
+    // Only face 0 of a file: the adapter reads single-face fonts.
+    native: (f) => (f.index === 0 ? loaded.get(fontFile(f.name)) : undefined),
+    size: { width: 597.508, height: 845.047 },
+  });
+  const t2 = performance.now();
+  $("page").innerHTML = svg;
+  const runs = page.items.filter((i) => i.kind === "native").length;
+  const drawn = (svg.match(/<use href="#n/g) ?? []).length;
+  const type1 = (svg.match(/<use href="#g/g) ?? []).length;
+  const boxes = (svg.match(/stroke="rgb\(200,60,60\)"/g) ?? []).length;
+  log(
+    `xdv: page 1 of ${xdoc.pages.length}, ${runs} glyph runs, ${drawn} native glyphs and ${type1} Type 1 glyphs drawn from ${loaded.size} font files, ${boxes} runs left as boxes; fonts ${(t1 - t0).toFixed(0)} ms, svg ${(t2 - t1).toFixed(0)} ms, DOM ${(performance.now() - t2).toFixed(0)} ms`,
+  );
+}
+$("xdv").addEventListener("click", () => {
+  drawXdv().catch((e) => log(`xdv failed: ${e}`));
 });
 
 $("hit").addEventListener("click", () => {

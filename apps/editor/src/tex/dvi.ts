@@ -26,7 +26,9 @@ export interface NativeFont {
   /** Size in scaled points. */
   size: number;
   flags: number;
+  /** Packed as (r << 24) | (g << 16) | (b << 8) | a. */
   rgba?: number;
+  /** 16.16 fixed values as XeTeX wrote them: 65536 is 1.0. */
   extend?: number;
   slant?: number;
   embolden?: number;
