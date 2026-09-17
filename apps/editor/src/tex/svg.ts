@@ -1,0 +1,143 @@
+/**
+ * Draw a DVI page as SVG, one element per glyph.
+ *
+ * Every glyph becomes a `<use>` of a shared outline in `<defs>`, carrying the field id
+ * and character offset it resolves to as data attributes, so a click on the page is a
+ * DOM lookup. Coordinates are in TeX points with the origin at the page's top-left
+ * corner; the DVI origin sits one inch in from that.
+ */
+
+import type { DviDocument, DviPage } from "./dvi";
+import { pointsPerUnit } from "./dvi";
+import type { Field } from "./fields";
+import type { FontOutlines } from "./glyphs";
+
+export interface PageSize {
+  width: number;
+  height: number;
+}
+
+export const US_LETTER: PageSize = { width: 614.295, height: 794.97 };
+const INCH = 72.27;
+
+export interface RenderOptions {
+  outlines: (fontName: string) => FontOutlines | undefined;
+  fields?: Map<string, Field>;
+  size?: PageSize;
+}
+
+const escape = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+
+/** Parse a dvips `color push ...` special into a CSS colour, or undefined if unknown. */
+export function dvipsColor(spec: string): string | undefined {
+  const parts = spec.trim().split(/\s+/);
+  const nums = parts.slice(1).map(Number);
+  switch (parts[0]) {
+    case "rgb": {
+      const [r = 0, g = 0, b = 0] = nums;
+      return `rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)})`;
+    }
+    case "gray": {
+      const v = Math.round((nums[0] ?? 0) * 255);
+      return `rgb(${v},${v},${v})`;
+    }
+    case "cmyk": {
+      const [c = 0, m = 0, y = 0, k = 0] = nums;
+      const f = (x: number) => Math.round(255 * (1 - Math.min(1, x + k)));
+      return `rgb(${f(c)},${f(m)},${f(y)})`;
+    }
+    case "Black":
+      return "rgb(0,0,0)";
+    case "White":
+      return "rgb(255,255,255)";
+    default:
+      return undefined;
+  }
+}
+
+export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptions): string {
+  const size = options.size ?? US_LETTER;
+  const pt = pointsPerUnit(doc);
+  const defs = new Map<string, string>();
+  const body: string[] = [];
+  const colors: string[] = [];
+  const fieldOfItem = new Map<number, { id: string; offset: number }>();
+  for (const field of options.fields?.values() ?? []) {
+    for (const g of field.glyphs) fieldOfItem.set(g.item, { id: field.id, offset: g.offset });
+  }
+  const fill = () => {
+    const c = colors[colors.length - 1];
+    return c && c !== "rgb(0,0,0)" ? ` fill="${c}"` : "";
+  };
+  const fieldAttrs = (index: number) => {
+    const f = fieldOfItem.get(index);
+    return f ? ` data-field="${escape(f.id)}" data-offset="${f.offset}"` : "";
+  };
+
+  page.items.forEach((item, index) => {
+    switch (item.kind) {
+      case "glyph": {
+        const font = doc.fonts.get(item.font);
+        const outlines = font && options.outlines(font.name);
+        if (!font || !outlines) return;
+        const name = outlines.encoding[item.code];
+        const glyph = name && outlines.glyphs[name];
+        if (!glyph) return;
+        const id = `g${item.font}-${item.code}`;
+        if (!defs.has(id)) {
+          const s = (font.scale * pt) / 1000;
+          defs.set(
+            id,
+            `<path id="${id}" d="${escape(glyph.d)}" transform="matrix(${s} 0 0 ${-s} 0 0)"/>`,
+          );
+        }
+        const x = INCH + item.h * pt;
+        const y = INCH + item.v * pt;
+        const w = item.width * pt;
+        body.push(
+          `<use href="#${id}" x="${x.toFixed(3)}" y="${y.toFixed(3)}" data-code="${item.code}" data-w="${w.toFixed(3)}" data-font="${escape(font.name)}" data-size="${(font.scale * pt).toFixed(3)}"${fieldAttrs(index)}${fill()}/>`,
+        );
+        return;
+      }
+      case "native": {
+        // XeTeX glyph runs need the font file's outlines; drawn as boxes until that lands.
+        const x = INCH + item.h * pt;
+        const y = INCH + item.v * pt;
+        body.push(
+          `<rect x="${x.toFixed(3)}" y="${(y - 7).toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="9" fill="none" stroke="rgb(200,60,60)" stroke-width="0.3"${fieldAttrs(index)}/>`,
+        );
+        return;
+      }
+      case "rule": {
+        if (item.width <= 0 || item.height <= 0) return;
+        const x = INCH + item.h * pt;
+        const y = INCH + (item.v - item.height) * pt;
+        body.push(
+          `<rect x="${x.toFixed(3)}" y="${y.toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="${(item.height * pt).toFixed(3)}"${fill()}/>`,
+        );
+        return;
+      }
+      case "special": {
+        if (item.text.startsWith("color push ")) {
+          colors.push(
+            dvipsColor(item.text.slice("color push ".length)) ??
+              colors[colors.length - 1] ??
+              "rgb(0,0,0)",
+          );
+        } else if (item.text === "color pop") {
+          colors.pop();
+        }
+        return;
+      }
+    }
+  });
+
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size.width} ${size.height}" width="${size.width}pt" height="${size.height}pt">`,
+    `<defs>${[...defs.values()].join("")}</defs>`,
+    `<rect width="${size.width}" height="${size.height}" fill="white"/>`,
+    ...body,
+    "</svg>",
+  ].join("\n");
+}

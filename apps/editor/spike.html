@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Engine spike</title>
+    <style>
+      @font-face { font-family: "cmr10"; src: url("/spike-assets/webfonts/cmr10.otf"); }
+      @font-face { font-family: "cmbx10"; src: url("/spike-assets/webfonts/cmbx10.otf"); }
+      @font-face { font-family: "cmbx12"; src: url("/spike-assets/webfonts/cmbx12.otf"); }
+      @font-face { font-family: "cmcsc10"; src: url("/spike-assets/webfonts/cmcsc10.otf"); }
+      @font-face { font-family: "cmti10"; src: url("/spike-assets/webfonts/cmti10.otf"); }
+      @font-face { font-family: "cmsy10"; src: url("/spike-assets/webfonts/cmsy10.otf"); }
+      @font-face { font-family: "cmsy6"; src: url("/spike-assets/webfonts/cmsy6.otf"); }
+      @font-face { font-family: "cmr7"; src: url("/spike-assets/webfonts/cmr7.otf"); }
+      @font-face { font-family: "cmr8"; src: url("/spike-assets/webfonts/cmr8.otf"); }
+      @font-face { font-family: "cmr9"; src: url("/spike-assets/webfonts/cmr9.otf"); }
+      @font-face { font-family: "cmr12"; src: url("/spike-assets/webfonts/cmr12.otf"); }
+      @font-face { font-family: "cmr17"; src: url("/spike-assets/webfonts/cmr17.otf"); }
+      @font-face { font-family: "cmbx8"; src: url("/spike-assets/webfonts/cmbx8.otf"); }
+      @font-face { font-family: "cmtt10"; src: url("/spike-assets/webfonts/cmtt10.otf"); }
+      body { margin: 0; font: 14px/1.4 system-ui, sans-serif; display: grid; grid-template-columns: 1fr 360px; height: 100vh; }
+      #page { position: relative; overflow: auto; background: #777; padding: 16px; }
+      #page svg { width: 614px; height: auto; background: white; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
+      #page use { pointer-events: bounding-box; }
+      #page [data-field]:hover { fill: #0a7; }
+      #page .hit { fill: #d33; }
+      aside { padding: 12px; border-left: 1px solid #ccc; overflow: auto; }
+      pre { white-space: pre-wrap; font-size: 12px; margin: 0 0 8px; }
+      button { margin: 2px 4px 8px 0; }
+      #overlay { position: absolute; margin: 0; padding: 0; border: 1px solid #0a7; background: rgba(255,255,255,.9); outline: none; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <div id="page"></div>
+    <aside>
+      <div>
+        <button id="compile">Compile ×5</button>
+        <button id="stock">Compile from stock format ×2</button>
+        <button id="check">Check every glyph</button>
+        <button id="hit">Hit-test every field</button>
+        <button id="overlay">Overlay test (exp1-i1)</button>
+      </div>
+      <pre id="status">starting…</pre>
+      <pre id="click">click a glyph</pre>
+      <pre id="log"></pre>
+    </aside>
+    <script type="module" src="/src/spike/main.ts"></script>
+  </body>
+</html>
