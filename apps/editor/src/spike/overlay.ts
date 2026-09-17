@@ -1,9 +1,18 @@
 /**
  * Spike: an editable overlay set in the page's own font, and a measurement of how far
- * its characters sit from the glyphs TeX placed. The browser and TeX break lines
- * differently, so the interesting numbers are the horizontal shift per glyph and how
- * many glyphs land on a different line.
+ * its characters sit from the glyphs TeX placed. Given a `Layout`, the overlay breaks
+ * its lines with TeX's own algorithm and metrics instead of the browser's, and sets
+ * each line's word spacing the way TeX set its glue, so only the browser's glyph
+ * placement within a line remains as drift.
  */
+
+import {
+  type BreakParams,
+  breakLines,
+  type Face,
+  lineRanges,
+  paragraphNodes,
+} from "../tex/linebreak";
 
 interface GlyphBox {
   offset: number;
@@ -28,6 +37,14 @@ export interface ShiftReport {
   maxDx: number;
   meanDx: number;
   maxDy: number;
+}
+
+/** How to break the field's text the way TeX did. */
+export interface Layout {
+  face: Face;
+  params: BreakParams;
+  /** CSS pixels per scaled point. */
+  pxPerSp: number;
 }
 
 const FIELD_GLYPHS = (svg: SVGSVGElement, id: string) => [
@@ -56,6 +73,8 @@ export interface OverlayHandle {
   element: HTMLDivElement;
   report: () => ShiftReport;
   close: () => void;
+  /** The field's text as edited so far. */
+  text: () => string;
 }
 
 /**
@@ -66,8 +85,10 @@ export function openOverlay(
   svg: SVGSVGElement,
   container: HTMLElement,
   id: string,
-  text: string,
+  initialText: string,
+  layout?: Layout,
 ): OverlayHandle {
+  let text = initialText;
   const glyphs = glyphBoxes(svg, id);
   const first = FIELD_GLYPHS(svg, id)[0];
   if (glyphs.length === 0 || !first) throw new Error(`field ${id} has no glyphs on the page`);
@@ -96,7 +117,6 @@ export function openOverlay(
   el.id = "overlay";
   el.contentEditable = "true";
   el.spellcheck = false;
-  el.textContent = text;
   Object.assign(el.style, {
     position: "absolute",
     left: `${left - containerRect.left + container.scrollLeft}px`,
@@ -105,8 +125,8 @@ export function openOverlay(
     fontFamily: `"${font}"`,
     fontSize: `${fontPx}px`,
     lineHeight: `${lineHeightPx}px`,
-    textAlign: justified ? "justify" : "left",
-    whiteSpace: "pre-wrap",
+    textAlign: justified && !layout ? "justify" : "left",
+    whiteSpace: layout ? "pre" : "pre-wrap",
     hyphens: "manual",
     margin: "0",
     padding: "0",
@@ -117,22 +137,96 @@ export function openOverlay(
   });
   container.appendChild(el);
 
+  /** The text's lines, as TeX would break them (one line when there is no layout). */
+  type Row = { from: number; to: number; wordSpacingPx: number };
+  let rows: Row[] = [];
+  const layOut = () => {
+    if (!layout) {
+      rows = [{ from: 0, to: text.length, wordSpacingPx: 0 }];
+      return;
+    }
+    const nodes = paragraphNodes(text, layout.face);
+    const broken = breakLines(nodes, layout.params);
+    const { leftSkip, rightSkip, parFillSkip } = layout.params;
+    rows = lineRanges(nodes, broken, text.length).map((range, i) => {
+      const line = broken[i];
+      if (!line) return { ...range, wordSpacingPx: 0 };
+      // Glue is set only when TeX had to shrink the line, or to stretch a justified one:
+      // fil glue in the margins, or \parfillskip on the last line, takes all the stretch.
+      const spaces = nodes.slice(line.from, line.breakAt).filter((n) => n.kind === "glue").length;
+      const shortfall = line.width - line.natural;
+      const last = i === broken.length - 1;
+      const stretchable =
+        rightSkip.stretchOrder === 0 &&
+        leftSkip.stretchOrder === 0 &&
+        !(last && parFillSkip.stretchOrder > 0);
+      const setBy = shortfall < 0 ? shortfall : stretchable ? shortfall : 0;
+      return { ...range, wordSpacingPx: spaces ? (setBy / spaces) * layout.pxPerSp : 0 };
+    });
+  };
+  const render = () => {
+    layOut();
+    el.replaceChildren(
+      ...rows.map((row) => {
+        const div = document.createElement("div");
+        div.textContent = text.slice(row.from, row.to);
+        div.style.wordSpacing = `${row.wordSpacingPx}px`;
+        div.style.minHeight = `${lineHeightPx}px`;
+        return div;
+      }),
+    );
+  };
+  render();
+
+  /** Text node and local offset for a character offset; the text's length is its end. */
+  const locate = (offset: number): { node: Text; at: number } | undefined => {
+    let i = rows.findIndex((r) => offset >= r.from && offset < r.to);
+    if (i < 0 && offset >= text.length) i = rows.length - 1;
+    const row = rows[i];
+    const node = el.children[i]?.firstChild;
+    if (!row || !(node instanceof Text)) return undefined;
+    return { node, at: Math.min(offset - row.from, node.length) };
+  };
+
+  // After each edit, rebuild the text from whatever the browser left in the element (the
+  // rows tile the text, so the join loses nothing), break it again, and put the caret back.
+  el.addEventListener("input", () => {
+    const sel = document.getSelection();
+    let caret = text.length;
+    if (sel?.anchorNode && el.contains(sel.anchorNode)) {
+      const before = document.createRange();
+      before.setStart(el, 0);
+      before.setEnd(sel.anchorNode, sel.anchorOffset);
+      caret = before.toString().length;
+    }
+    text = [...el.childNodes].map((n) => n.textContent ?? "").join("");
+    render();
+    const where = locate(Math.min(caret, text.length));
+    if (where && sel) {
+      const range = document.createRange();
+      range.setStart(where.node, where.at);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  });
+
   const report = (): ShiftReport => {
-    const node = el.firstChild;
-    if (!node) throw new Error("overlay has no text");
     const range = document.createRange();
     const charRect = (offset: number) => {
-      range.setStart(node, offset);
-      range.setEnd(node, Math.min(offset + 1, text.length));
+      const where = locate(offset);
+      if (!where) return undefined;
+      range.setStart(where.node, where.at);
+      range.setEnd(where.node, Math.min(where.at + 1, where.node.length));
       return range.getClientRects()[0];
     };
     const tops = new Set<number>();
-    const rows: { dx: number; dy: number; svgLine: number; overlayTop: number }[] = [];
+    const measured: { dx: number; dy: number; svgLine: number; overlayTop: number }[] = [];
     for (const g of glyphs) {
       const r = charRect(g.offset);
       if (!r) continue;
       tops.add(Math.round(r.top));
-      rows.push({
+      measured.push({
         dx: r.left - g.x,
         dy: r.top + 0.8 * fontPx - g.baseline,
         svgLine: g.line,
@@ -140,17 +234,17 @@ export function openOverlay(
       });
     }
     const overlayLines = [...tops].sort((a, b) => a - b);
-    const lineMismatches = rows.filter(
+    const lineMismatches = measured.filter(
       (r) => overlayLines.indexOf(r.overlayTop) !== r.svgLine,
     ).length;
-    const same = rows.filter((r) => overlayLines.indexOf(r.overlayTop) === r.svgLine);
+    const same = measured.filter((r) => overlayLines.indexOf(r.overlayTop) === r.svgLine);
     const abs = (a: number[]) => a.map(Math.abs);
     return {
       field: id,
       font,
       fontPx,
       lineHeightPx,
-      align: el.style.textAlign,
+      align: layout ? `tex (${rows.length} lines)` : el.style.textAlign,
       glyphs: glyphs.length,
       svgLines: lines,
       overlayLines: overlayLines.length,
@@ -163,5 +257,5 @@ export function openOverlay(
     };
   };
 
-  return { element: el, report, close: () => el.remove() };
+  return { element: el, report, close: () => el.remove(), text: () => text };
 }

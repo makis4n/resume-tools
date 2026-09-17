@@ -5,11 +5,12 @@
 
 import { type DviDocument, type DviFont, type PageItem, parseDvi } from "../tex/dvi";
 import { alignGlyphs, collectFields, type Field } from "../tex/fields";
-import { type FontOutlines, glyphText } from "../tex/glyphs";
+import { type FontOutlines, glyphText, textToCode } from "../tex/glyphs";
+import { FIL_GLUE, LATEX_PARAMS } from "../tex/linebreak";
 import { renderPage } from "../tex/svg";
 import { parseTfm, scaleTfm } from "../tex/tfm";
 import { parseType1 } from "../tex/type1";
-import { type OverlayHandle, openOverlay } from "./overlay";
+import { type Layout, type OverlayHandle, openOverlay } from "./overlay";
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
 const status = (s: string) => {
@@ -86,12 +87,42 @@ let preamble = "";
 
 const svgEl = () => $("page").querySelector("svg") as SVGSVGElement | null;
 
+/**
+ * The paragraph TeX set a field in, for the overlay's line breaker. The spike knows only
+ * Jake's bullets: \parshape 1 with LaTeX's list indentation and \raggedright, measured
+ * with \message inside \resumeItem. A template package will carry this per field.
+ */
+const PT = 65536;
+const BULLET_LINES = [{ indent: Math.round(34.93008 * PT), width: Math.round(507.09492 * PT) }];
+function layoutFor(svg: SVGSVGElement, id: string): Layout | undefined {
+  const first = svg.querySelector<SVGUseElement>(`use[data-field="${CSS.escape(id)}"]`);
+  const name = first?.dataset.font;
+  const size = Number(first?.dataset.size);
+  const tfmBytes = name && tfms.get(name);
+  const encoding = name && outlines.get(name)?.encoding;
+  if (!tfmBytes || !encoding || !size) return undefined;
+  const tfm = parseTfm(tfmBytes);
+  const codes = textToCode(encoding);
+  const ctm = svg.getScreenCTM();
+  return {
+    face: {
+      tfm,
+      metrics: scaleTfm(tfm, size * PT),
+      codeFor: (ch) => codes.get(ch),
+      hyphenChar: 45,
+    },
+    params: { ...LATEX_PARAMS, lines: BULLET_LINES, rightSkip: FIL_GLUE, parFillSkip: FIL_GLUE },
+    pxPerSp: (ctm ? ctm.a : 1) / PT,
+  };
+}
+
+let useBreaker = true;
 async function showOverlay(id: string) {
   const svg = svgEl();
   const text = texts?.get(id);
   if (!svg || text === undefined) return;
   overlay?.close();
-  overlay = openOverlay(svg, $("page"), id, text);
+  overlay = openOverlay(svg, $("page"), id, text, useBreaker ? layoutFor(svg, id) : undefined);
   // The web font loads lazily on first use; measure only once it is in.
   await document.fonts.load(
     `${overlay.element.style.fontSize} ${overlay.element.style.fontFamily}`,
@@ -174,7 +205,14 @@ $("page").addEventListener("click", (e) => {
   showOverlay(id);
 });
 
-$("overlay").addEventListener("click", () => showOverlay("exp1-i1"));
+$("overlay").addEventListener("click", () => {
+  useBreaker = true;
+  showOverlay("exp1-i1");
+});
+$("overlay-browser").addEventListener("click", () => {
+  useBreaker = false;
+  showOverlay("exp1-i1");
+});
 
 $("hit").addEventListener("click", () => {
   // For every field, take its middle glyph and ask the DOM what sits at its centre.

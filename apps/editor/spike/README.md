@@ -52,7 +52,8 @@ It loads the engine in a worker (`spike/web/engine-worker.js`), dumps
 content, 30 marked fields) and draws the DVI. Buttons: compile five times and print the
 median, compile from the stock format, check that every glyph resolves to its own character,
 hit-test every field from a click at a glyph centre, and open the overlay on the three-line
-bullet and measure its drift. Clicking any glyph opens the overlay on that field; Escape
+bullet and measure its drift, with TeX's line breaker (`src/tex/linebreak.ts`) or with the
+browser's own breaks for comparison. Clicking any glyph opens the overlay on that field; Escape
 closes it.
 
 ## The scripts
