@@ -11,7 +11,8 @@ the engine.
 ## Assets
 
 Everything large lives outside git, in `spike/assets/` for the scripts and in
-`public/spike-assets/` for the page. Both are ignored.
+`spike/web/assets/` for the page. Both are ignored. The dev server serves `spike/web/` at
+`/spike/` through a small plugin in `vite.config.ts`, so nothing under it can reach `dist/`.
 
 1. Engine and TeX Live bundles from the BusyTeX WebAssembly release
    `build_wasm_4499aa69fd3cf77ad86a47287d9a5193cf5ad993_7936974349_1` (TeX Live 2023,
@@ -34,12 +35,10 @@ Everything large lives outside git, in `spike/assets/` for the scripts and in
 4. Computer Modern Type 1 fonts and metrics: `node spike/extract-fonts.cjs` pulls them out
    of the bundle into `spike/assets/texfonts/`. Glyph outlines and web fonts are then built
    with the two Python scripts in the appendix, run with `uv run --with fonttools`, and the
-   results copied to `public/spike-assets/fonts/*.json`, `public/spike-assets/tfm/*.tfm` and
-   `public/spike-assets/webfonts/*.otf`. Python stays out of this app on purpose; the
+   results copied to `spike/web/assets/fonts/*.json`, `spike/web/assets/tfm/*.tfm` and
+   `spike/web/assets/webfonts/*.otf`. Python stays out of this app on purpose; the
    production path will read Type 1 fonts in TypeScript.
-5. `public/spike-assets/` also needs the engine files from step 1 copied in. Vite copies all of
-   `public/` into `dist/` on `pnpm build`, so remove `public/spike-assets/` before building the
-   editor for real. Nothing deploys the build today.
+5. `spike/web/assets/` also needs the engine files from step 1 copied in.
 
 ## The page
 
@@ -47,8 +46,8 @@ Everything large lives outside git, in `spike/assets/` for the scripts and in
 pnpm dev            # then open http://localhost:5173/spike.html
 ```
 
-It loads the engine in a worker (`public/spike/engine-worker.js`), dumps
-`public/spike/jake-preamble.tex` into a format, compiles `public/spike/body.tex` (invented
+It loads the engine in a worker (`spike/web/engine-worker.js`), dumps
+`spike/web/jake-preamble.tex` into a format, compiles `spike/web/body.tex` (invented
 content, 30 marked fields) and draws the DVI. Buttons: compile five times and print the
 median, compile from the stock format, check that every glyph resolves to its own character,
 hit-test every field from a click at a glyph centre, and open the overlay on the three-line

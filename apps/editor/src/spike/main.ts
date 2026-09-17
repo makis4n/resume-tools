@@ -50,8 +50,8 @@ async function loadFonts(doc: DviDocument) {
     [...names].map(async (n) => {
       if (!outlines.has(n)) {
         const [o, t] = await Promise.all([
-          fetch(`/spike-assets/fonts/${n}.json`).then((r) => r.json() as Promise<FontOutlines>),
-          fetch(`/spike-assets/tfm/${n}.tfm`).then((r) => r.arrayBuffer()),
+          fetch(`/spike/assets/fonts/${n}.json`).then((r) => r.json() as Promise<FontOutlines>),
+          fetch(`/spike/assets/tfm/${n}.tfm`).then((r) => r.arrayBuffer()),
         ]);
         outlines.set(n, o);
         tfms.set(n, new Uint8Array(t));
