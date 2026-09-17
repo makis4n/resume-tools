@@ -17,6 +17,17 @@ export interface CharInfo {
   remainder: number;
 }
 
+/** One instruction of a font's ligature/kern program (TFtoPL's LIG and KRN). */
+export interface LigKern {
+  /** 0..127: the instruction applies; >128: skip; 255 in the first or last slot marks a boundary char. */
+  skip: number;
+  /** The character that must follow for this instruction to apply. */
+  next: number;
+  /** Below 128 a ligature op (4a+2b+c, see `applyLigKern`); 128 or more a kern. */
+  op: number;
+  remainder: number;
+}
+
 export interface Tfm {
   checksum: number;
   /** Design size in points. */
@@ -31,6 +42,13 @@ export interface Tfm {
   italics: Int32Array;
   /** Indexed by `code - bc`; `undefined` where the font has no such character. */
   chars: (CharInfo | undefined)[];
+  ligKern: LigKern[];
+  /** Kern amounts as fix_words. */
+  kerns: Int32Array;
+  /** Font parameters as fix_words, 1-based like fontdimen: slant, space, stretch, shrink, xHeight, quad, extraSpace, ... */
+  params: Int32Array;
+  /** The right boundary character, if the font has one. */
+  boundaryChar?: number;
 }
 
 export interface ScaledMetrics {
@@ -38,6 +56,14 @@ export interface ScaledMetrics {
   widths: Int32Array;
   heights: Int32Array;
   depths: Int32Array;
+  /** Kern amounts in scaled points, indexed like `Tfm.kerns`. */
+  kerns: Int32Array;
+  /** Interword glue and the em, in scaled points. */
+  space: number;
+  stretch: number;
+  shrink: number;
+  extraSpace: number;
+  quad: number;
 }
 
 export function parseTfm(bytes: Uint8Array): Tfm {
@@ -51,12 +77,19 @@ export function parseTfm(bytes: Uint8Array): Tfm {
   const nh = half(5);
   const nd = half(6);
   const ni = half(7);
+  const nl = half(8);
+  const nk = half(9);
+  const ne = half(10);
+  const np = half(11);
   if (lf * 4 !== bytes.byteLength) {
     throw new Error(
       `TFM length mismatch: header says ${lf * 4} bytes, file has ${bytes.byteLength}`,
     );
   }
   if (ec < bc - 1 || ec > 255) throw new Error(`TFM has an invalid character range ${bc}..${ec}`);
+  // tftopl's check: the tables must account for the whole file.
+  if (6 + lh + (ec - bc + 1) + nw + nh + nd + ni + nl + nk + ne + np !== lf)
+    throw new Error("TFM table lengths do not add up to the file length");
   const word = (i: number) => view.getInt32(i * 4);
   const checksum = view.getUint32(6 * 4);
   const designSize = word(7) / 2 ** 20;
@@ -90,7 +123,38 @@ export function parseTfm(bytes: Uint8Array): Tfm {
   const heights = table(nh);
   const depths = table(nd);
   const italics = table(ni);
-  return { checksum, designSize, bc, ec, widths, heights, depths, italics, chars };
+  const ligKern: LigKern[] = [];
+  for (let i = 0; i < nl; i++) {
+    const w = view.getUint32((at + i) * 4);
+    ligKern.push({
+      skip: (w >>> 24) & 0xff,
+      next: (w >>> 16) & 0xff,
+      op: (w >>> 8) & 0xff,
+      remainder: w & 0xff,
+    });
+  }
+  at += nl;
+  const kerns = table(nk);
+  at += ne;
+  const params = new Int32Array(np + 1);
+  for (let i = 1; i <= np; i++) params[i] = word(at + i - 1);
+  const first = ligKern[0];
+  const boundaryChar = first && first.skip === 255 ? first.next : undefined;
+  return {
+    checksum,
+    designSize,
+    bc,
+    ec,
+    widths,
+    heights,
+    depths,
+    italics,
+    chars,
+    ligKern,
+    kerns,
+    params,
+    boundaryChar,
+  };
 }
 
 /**
@@ -131,5 +195,123 @@ export function scaleTfm(tfm: Tfm, sizeSp: number): ScaledMetrics {
     heights[code] = h[info.height] ?? 0;
     depths[code] = d[info.depth] ?? 0;
   }
-  return { widths, heights, depths };
+  const kerns = Int32Array.from(tfm.kerns, (f) => scaleFixWord(f, sizeSp));
+  const param = (i: number) => scaleFixWord(tfm.params[i] ?? 0, sizeSp);
+  return {
+    widths,
+    heights,
+    depths,
+    kerns,
+    space: param(2),
+    stretch: param(3),
+    shrink: param(4),
+    extraSpace: param(7),
+    quad: param(6),
+  };
+}
+
+/** Where a font's ligature/kern program for a character starts, or -1 if it has none. */
+function ligKernStart(tfm: Tfm, code: number): number {
+  const info = tfm.chars[code - tfm.bc];
+  if (!info || info.tag !== 1) return -1;
+  let start = info.remainder;
+  const first = tfm.ligKern[start];
+  // A first instruction with skip > 128 is a pointer to the real start.
+  if (first && first.skip > 128) start = 256 * first.op + first.remainder;
+  return start;
+}
+
+/** The instruction that applies between two characters, if any. */
+function ligKernFor(tfm: Tfm, left: number, right: number): LigKern | undefined {
+  let i = ligKernStart(tfm, left);
+  if (i < 0) return undefined;
+  for (;;) {
+    const ins = tfm.ligKern[i];
+    if (!ins) return undefined;
+    if (ins.skip <= 128 && ins.next === right) return ins;
+    if (ins.skip >= 128) return undefined;
+    i += ins.skip + 1;
+  }
+}
+
+export interface LigKernResult {
+  /** Character codes after ligature substitution. */
+  codes: number[];
+  /** Kern (as a fix_word index into `kerns`, or -1) inserted after each code. */
+  kernAfter: number[];
+  /** For each output code, the index of the first input code it came from. */
+  source: number[];
+}
+
+/**
+ * Run a font's ligature/kern program over a run of characters the way TeX's main
+ * loop does (tex.web §1039-1040): ligature ops replace, insert or keep characters and
+ * may re-examine the result; kern ops record a kern between the pair.
+ * Boundary characters are not applied.
+ */
+export function applyLigKern(tfm: Tfm, input: number[]): LigKernResult {
+  const codes = [...input];
+  const source = input.map((_, i) => i);
+  const kernAfter: number[] = input.map(() => -1);
+  let i = 0;
+  // A real program settles in a few steps per pair; a crafted one could re-examine the
+  // same pair forever or insert without end, so both are bounded.
+  let steps = 0;
+  const limit = 8 * input.length + 64;
+  while (i < codes.length - 1) {
+    if (++steps > limit || codes.length > 2 * input.length + 64)
+      throw new Error("TFM ligature program does not terminate");
+    const ins = ligKernFor(tfm, codes[i] as number, codes[i + 1] as number);
+    if (!ins) {
+      i++;
+      continue;
+    }
+    if (ins.op >= 128) {
+      kernAfter[i] = 256 * (ins.op - 128) + ins.remainder;
+      i++;
+      continue;
+    }
+    const lig = ins.remainder;
+    switch (ins.op) {
+      case 0: // =:  replace both, re-examine
+        codes.splice(i, 2, lig);
+        source.splice(i, 2, source[i] as number);
+        kernAfter.splice(i, 2, -1);
+        break;
+      case 1: // =:|  replace the left, keep the right, re-examine
+        codes[i] = lig;
+        break;
+      case 2: // |=:  keep the left, replace the right, re-examine
+        codes[i + 1] = lig;
+        break;
+      case 3: // |=:|  insert between, re-examine with the inserted character
+        codes.splice(i + 1, 0, lig);
+        source.splice(i + 1, 0, source[i + 1] as number);
+        kernAfter.splice(i + 1, 0, -1);
+        break;
+      case 5: // =:|>
+        codes[i] = lig;
+        i++;
+        break;
+      case 6: // |=:>
+        codes[i + 1] = lig;
+        i++;
+        break;
+      case 7: // |=:|>
+        codes.splice(i + 1, 0, lig);
+        source.splice(i + 1, 0, source[i + 1] as number);
+        kernAfter.splice(i + 1, 0, -1);
+        i++;
+        break;
+      case 11: // |=:|>>
+        codes.splice(i + 1, 0, lig);
+        source.splice(i + 1, 0, source[i + 1] as number);
+        kernAfter.splice(i + 1, 0, -1);
+        i += 2;
+        break;
+      default:
+        i++;
+    }
+  }
+  return { codes, kernAfter, source };
 }

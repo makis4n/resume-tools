@@ -91,3 +91,35 @@ export function glyphText(name: string): string | undefined {
   if (name.length === 1 && /[A-Za-z]/.test(name)) return name;
   return GLYPH_TEXT[name];
 }
+
+/**
+ * The font code for each character of the source text, from a font's built-in encoding.
+ * Where several glyphs stand for one character (an `i` and a dotless i both read as "i"),
+ * the glyph at the character's own code wins, then the first in encoding order.
+ */
+export function textToCode(encoding: string[]): Map<string, number> {
+  const codes = new Map<string, number>();
+  encoding.forEach((name, code) => {
+    const text = glyphText(name);
+    if (
+      text !== undefined &&
+      text.length === 1 &&
+      (!codes.has(text) || text.charCodeAt(0) === code)
+    )
+      codes.set(text, code);
+    // The characters inputenc maps onto the ligature glyphs, so "–" costs what "--" costs.
+    const spelled = UNICODE_SPELLING[name];
+    if (spelled !== undefined && !codes.has(spelled)) codes.set(spelled, code);
+  });
+  return codes;
+}
+
+/** Glyphs TeX reaches through a ligature that a source text may spell with one character. */
+const UNICODE_SPELLING: Record<string, string> = {
+  endash: "\u2013",
+  emdash: "\u2014",
+  quotedblleft: "\u201c",
+  quotedblright: "\u201d",
+  quoteleft: "\u2018",
+  quoteright: "\u2019",
+};

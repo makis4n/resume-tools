@@ -61,7 +61,8 @@ build from TeX Live sources is still to do; nothing below depends on it except s
   areas are the glyphs' bounding boxes, not their painted shapes.
 - Multi-line fields need the plan's fallback: the overlay must break lines where TeX did,
   since a differently broken line moves whole words. Within a line the drift is a few
-  points, and single-line fields are within a point, so they need nothing.
+  points, and single-line fields are within a point, so they need nothing. Decision 0004
+  gives the overlay TeX's own line breaker and measures the drift at a pixel.
 - XDV rendering of native-font runs is parsed but not yet drawn; it needs the font files'
   outlines in the browser and comes with the XeTeX work above.
 
@@ -70,7 +71,8 @@ build from TeX Live sources is still to do; nothing below depends on it except s
 - Two compile loops to maintain, and XeTeX templates will feel slower than pdfTeX ones on
   every machine. The debounce for XeTeX templates should be longer, as the plan foresaw.
 - The template package grows a "resolved fonts" section for XeTeX templates.
-- The overlay needs its own line breaker using the TFM widths for any field that wraps.
+- The overlay needs its own line breaker using the TFM widths for any field that wraps;
+  decision 0004 has it.
 - First load is under 30 MB only as a projection, only compressed, and only once TeX Live
   files are fetched on demand, which is not built. A per-engine build is still wanted to cut
   the 30 MB binary, and the format is the next largest item.
