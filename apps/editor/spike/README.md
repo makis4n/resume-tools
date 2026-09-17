@@ -33,11 +33,12 @@ Everything large lives outside git, in `spike/assets/` for the scripts and in
    Brands-Regular-400}.otf` (FortAwesome/Font-Awesome 5.15.4, renamed), and
    `sourcesans/OTF/SourceSans3-*.otf` (adobe-fonts/source-sans 3.052R).
 4. Computer Modern Type 1 fonts and metrics: `node spike/extract-fonts.cjs` pulls them out
-   of the bundle into `spike/assets/texfonts/`. Glyph outlines and web fonts are then built
-   with the two Python scripts in the appendix, run with `uv run --with fonttools`, and the
-   results copied to `spike/web/assets/fonts/*.json`, `spike/web/assets/tfm/*.tfm` and
-   `spike/web/assets/webfonts/*.otf`. Python stays out of this app on purpose; the
-   production path will read Type 1 fonts in TypeScript.
+   of the bundle into `spike/assets/texfonts/`. Copy the `.pfb` files to
+   `spike/web/assets/type1/` and the `.tfm` files to `spike/web/assets/tfm/`; the page reads
+   both directly (`src/tex/type1.ts` interprets the Type 1 charstrings in the browser). The
+   web fonts the overlay is set in are still built with the Python script in the appendix, run
+   with `uv run --with fonttools`, into `spike/web/assets/webfonts/*.otf`. Python stays out of
+   this app on purpose; that script goes when the OpenType writer exists.
 5. `spike/web/assets/` also needs the engine files from step 1 copied in.
 
 ## The page
@@ -76,38 +77,7 @@ whose `open` fails, so the bundle loaders fall back to reading their `.data` fil
 64 MB of the heap are restored from a snapshot taken after initialisation, which is how
 BusyTeX itself makes `main()` callable repeatedly.
 
-## Appendix: font scripts
-
-`glyphs.py`, run as `uv run --with fonttools python glyphs.py cmr10 cmbx10 ...` from a
-directory holding `texfonts/`:
-
-```python
-"""Dump Type 1 glyph outlines (SVG path data, 1000 units per em, y up) and the built-in encoding to JSON."""
-import json
-import sys
-from fontTools.t1Lib import T1Font
-from fontTools.pens.boundsPen import BoundsPen
-from fontTools.pens.svgPathPen import SVGPathPen
-from fontTools.encodings.StandardEncoding import StandardEncoding
-
-for name in sys.argv[1:]:
-    f = T1Font(f"texfonts/{name}.pfb")
-    gs = f.getGlyphSet()
-    enc = f.font.get("Encoding")
-    if not isinstance(enc, list):
-        enc = list(StandardEncoding)
-    glyphs = {}
-    for gname in gs.keys():
-        g = gs[gname]
-        pen = SVGPathPen(gs)
-        g.draw(pen)
-        bp = BoundsPen(gs)
-        g.draw(bp)
-        glyphs[gname] = {"w": g.width, "d": pen.getCommands(), "b": bp.bounds}
-    out = {"name": name, "fontMatrix": f.font["FontMatrix"], "encoding": enc, "glyphs": glyphs}
-    with open(f"texfonts/{name}.json", "w") as fh:
-        json.dump(out, fh)
-```
+## Appendix: web font script
 
 `t1tootf.py`, run as `uv run --with fonttools python t1tootf.py <outdir> cmr10 cmbx10 ...`:
 

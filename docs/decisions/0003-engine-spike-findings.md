@@ -28,7 +28,7 @@ build from TeX Live sources is still to do; nothing below depends on it except s
 | XeTeX from a format that holds no native font | 210 ms for a body on metric fonts; fontspec itself adds 475 ms; one family loaded through fontspec brings a body to about 1 s |
 | SVG with markers | Every marker survives as a `\special`. On a 30-field page, 852 of 852 glyphs resolve to their own character and 30 of 30 fields resolve from a click at a glyph's centre |
 | Overlay drift, three-line bullet, same font | Baseline within 0.5 pt, and 3 pt mean horizontal shift on the same line with the overlay set ragged-right like the page. The browser and TeX break one line differently, which moves 7 of 204 glyphs to another line and shifts glyphs around that break by up to 36 pt. An earlier reading of 12 pt mean came from the overlay justifying a paragraph TeX had set ragged, and is withdrawn |
-| First load, pdfTeX path | Not measured as a transfer: nothing in the spike fetches TeX Live files on demand yet, and the page loads three whole bundles, 199 MB. Projected from file sizes: engine 30.4 MB raw, 12.1 MB gzip, 9.5 MB Brotli, for all engines in one binary; format 6.7 MB, 6.3 MB gzip; the 0.1 MB of TeX Live files a body compile reads, found with the engine's recorder; glyph outlines about 50 KB per font. About 16 MB compressed once files are fetched on demand |
+| First load, pdfTeX path | Not measured as a transfer: nothing in the spike fetches TeX Live files on demand yet, and the page loads three whole bundles, 199 MB. Projected from file sizes: engine 30.4 MB raw, 12.1 MB gzip, 9.5 MB Brotli, for all engines in one binary; format 6.7 MB, 6.3 MB gzip; the 0.1 MB of TeX Live files a body compile reads, found with the engine's recorder; the Type 1 fonts themselves at about 35 KB each (cmr10; the extracted outlines were 52 KB). About 16 MB compressed once files are fetched on demand |
 | Rendering cost | Parsing the DVI, aligning fields and building the SVG takes 2 ms; putting 876 glyph elements in the DOM takes 2 ms |
 
 ## Decision
@@ -53,10 +53,12 @@ build from TeX Live sources is still to do; nothing below depends on it except s
   reader shows it, which the product rules forbid; with it, bookmarks hold only the text and
   the markers still reach the DVI. Other moving contexts, running headers among them, are
   for the probe step to detect.
-- The page is drawn from glyph outlines extracted from the Type 1 fonts ahead of time, one
-  path per glyph and one `<use>` per typeset glyph, with the glyph's field and character
-  offset as data attributes. The same outlines become the OpenType web font the overlay is
-  set in. Hit areas are the glyphs' bounding boxes, not their painted shapes.
+- The page is drawn from glyph outlines read out of the Type 1 fonts in the browser
+  (`src/tex/type1.ts` interprets the charstrings; the spike first extracted them ahead of
+  time with fontTools, which is now only the test oracle), one path per glyph and one
+  `<use>` per typeset glyph, with the glyph's field and character offset as data
+  attributes. The same outlines become the OpenType web font the overlay is set in. Hit
+  areas are the glyphs' bounding boxes, not their painted shapes.
 - Multi-line fields need the plan's fallback: the overlay must break lines where TeX did,
   since a differently broken line moves whole words. Within a line the drift is a few
   points, and single-line fields are within a point, so they need nothing.
