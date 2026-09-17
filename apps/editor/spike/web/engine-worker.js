@@ -3,7 +3,7 @@
 // that need importScripts, which module workers do not have.
 /* global importScripts, busytex */
 
-const ASSETS = "/spike-assets/";
+const ASSETS = "/spike/assets/";
 const PROJECT = "/home/web_user/project_dir";
 const STOCK_FORMAT = "/texlive/texmf-dist/texmf-var/web2c/pdftex/pdflatex.fmt";
 const HEADER_BYTES = 2 ** 26;

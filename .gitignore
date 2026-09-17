@@ -25,8 +25,11 @@ __pycache__/
 # Logs
 *.log
 
-# Engine and TeX Live bundles staged for the spike; hundreds of MB, fetched by scripts
-apps/editor/public/spike-assets/
+# Engine, TeX Live bundles and fonts the spike page serves in dev; hundreds of MB, fetched by scripts
+apps/editor/spike/web/assets/
 
 # Spike harness inputs and outputs: engine, bundles, fonts, templates (hundreds of MB)
 apps/editor/spike/assets/
+
+# Worktrees the desktop app creates for background agents
+.claude/worktrees/
