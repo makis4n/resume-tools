@@ -68,6 +68,7 @@ All take `SPIKE_ASSETS` to point elsewhere and write outputs to `assets/out/`.
 | `xetex-bisect.cjs` | Where XeTeX's time goes: fontspec, faces by file, faces by name, packages |
 | `xetex-bisect2.cjs` | A format dumped before any native font, and bodies compiled from it |
 | `xetex-rawfont.cjs` | Raw `\font` loads against fontspec, to separate engine cost from package cost |
+| `xetex-loop.cjs` | The XeTeX loop of decision 0003 on Awesome-CV: a format with no native font, the body from it with file-named NFSS declarations instead of fontspec; findings in `xetex-loop-report.md`. Needs `acv.cjs`'s output first |
 | `extract-fonts.cjs` | Copy CM Type 1 fonts, TFMs and the pdftex map out of the bundle |
 | `dvi-inspect.cjs <file>` | List a DVI or XDV file's fonts, specials and page structure |
 
