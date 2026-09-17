@@ -31,7 +31,10 @@ Everything large lives outside git, in `spike/assets/` for the scripts and in
 3. Fonts for Awesome-CV into `spike/assets/fonts/`: `roboto/Roboto-*.ttf` (from the
    Awesome-CV history, commit af40bb01), `fa5/FontAwesome5{Free-Solid-900,Free-Regular-400,
    Brands-Regular-400}.otf` (FortAwesome/Font-Awesome 5.15.4, renamed), and
-   `sourcesans/OTF/SourceSans3-*.otf` (adobe-fonts/source-sans 3.052R).
+   `sourcesans/OTF/SourceSans3-*.otf` (adobe-fonts/source-sans 3.052R), and an OpenType
+   math font for `unicode-math.cjs`: `NewCMMath-Regular.otf` (typst/typst-assets,
+   GUST font licence; Latin Modern Math would do as well but its GitHub copies are LFS
+   pointers).
 4. Computer Modern Type 1 fonts and metrics: `node spike/extract-fonts.cjs` pulls them out
    of the bundle into `spike/assets/texfonts/`. Copy the `.pfb` files to
    `spike/web/assets/type1/` and the `.tfm` files to `spike/web/assets/tfm/`; the page reads
@@ -69,6 +72,8 @@ All take `SPIKE_ASSETS` to point elsewhere and write outputs to `assets/out/`.
 | `xetex-bisect.cjs` | Where XeTeX's time goes: fontspec, faces by file, faces by name, packages |
 | `xetex-bisect2.cjs` | A format dumped before any native font, and bodies compiled from it |
 | `xetex-rawfont.cjs` | Raw `\font` loads against fontspec, to separate engine cost from package cost |
+| `unicode-math.cjs [font]` | What unicode-math costs per compile on the loop, against text symbols and against the math font declared as a plain family |
+| `xetex-loop.cjs` | The XeTeX loop of decision 0003 on Awesome-CV: a format with no native font, the body from it with file-named NFSS declarations instead of fontspec; findings in `xetex-loop-report.md`. Needs `acv.cjs`'s output first |
 | `extract-fonts.cjs` | Copy CM Type 1 fonts, TFMs and the pdftex map out of the bundle |
 | `dvi-inspect.cjs <file>` | List a DVI or XDV file's fonts, specials and page structure |
 

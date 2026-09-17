@@ -25,7 +25,9 @@ build from TeX Live sources is still to do; nothing below depends on it except s
 | Dumping the preamble into a format | 1.4 to 1.7 s, 6.7 MB, and the body compiled from it is byte-identical to a compile from the stock format |
 | XeTeX system fonts in a format | **No.** `\dump` fails with "Can't \dump a format with native fonts or font-mappings" as soon as any OpenType font or a TeX text mapping has been loaded, which `\documentclass` alone does on XeLaTeX |
 | XeTeX, Awesome-CV, plain compile | 10.2 s per compile. Fontspec loads about fifteen faces and its probing costs 200 to 350 ms per face; XeTeX's own font loading is a one-off 160 ms for the first face and near zero after |
-| XeTeX from a format that holds no native font | 210 ms for a body on metric fonts; fontspec itself adds 475 ms; one family loaded through fontspec brings a body to about 1 s |
+| XeTeX from a format that holds no native font | 235 ms for a body on metric fonts; fontspec itself adds 475 ms; one family loaded through fontspec brings a body to about 1 s |
+| XeTeX, Awesome-CV, the loop decided below | 459 ms warm median in Node (847 ms with the machine under load), against 10.2 s with fontspec. The format dumps in 2.8 s to 9.0 MB. The first native face costs about 180 ms, the other eleven 5 ms together, the `tex-text` mapping nothing. Same pages, glyph runs and native fonts as the fontspec compile; xdvipdfmx makes the PDF in 210 ms. `apps/editor/spike/xetex-loop-report.md` has the breakdown |
+| unicode-math on that loop | 3.6 s per compile (3,587 ms warm median) with `\setmathfont` naming the file, 3.8 s with a display formula on the page, against 395 ms for the same page with text symbols; it cannot be dumped, since it loads fontspec and a native font. Awesome-CV uses it only for a bullet and a centred dot: taking those two glyphs from the math font as an ordinary NFSS family costs 2 ms. Measured with New Computer Modern Math, an OpenType math font like Latin Modern Math; `spike/unicode-math.cjs` |
 | SVG with markers | Every marker survives as a `\special`. On a 30-field page, 852 of 852 glyphs resolve to their own character and 30 of 30 fields resolve from a click at a glyph's centre |
 | Overlay drift, three-line bullet, same font | Baseline within 0.5 pt, and 3 pt mean horizontal shift on the same line with the overlay set ragged-right like the page. The browser and TeX break one line differently, which moves 7 of 204 glyphs to another line and shifts glyphs around that break by up to 36 pt. An earlier reading of 12 pt mean came from the overlay justifying a paragraph TeX had set ragged, and is withdrawn |
 | First load, pdfTeX path | Not measured as a transfer: nothing in the spike fetches TeX Live files on demand yet, and the page loads three whole bundles, 199 MB. Projected from file sizes: engine 30.4 MB raw, 12.1 MB gzip, 9.5 MB Brotli, for all engines in one binary; format 6.7 MB, 6.3 MB gzip; the 0.1 MB of TeX Live files a body compile reads, found with the engine's recorder; the Type 1 fonts themselves at about 35 KB each (cmr10; the extracted outlines were 52 KB). About 16 MB compressed once files are fetched on demand |
@@ -40,12 +42,14 @@ build from TeX Live sources is still to do; nothing below depends on it except s
   converged unless the log asks for a rerun, in which case the worker runs once more.
 - XeTeX templates get a different loop. The format is dumped from a preamble that never
   loads a native font, by forcing a metric font encoding before the document class
-  (`\RequirePackage[OT1]{fontenc}` ahead of `\documentclass`). Fonts are then declared per
-  compile with plain XeTeX `\font` and NFSS declarations that the template package resolves
-  at build time, not through fontspec at compile time. Fontspec, where a template needs it,
-  runs at import time to discover the font files and features, and its result is baked into
-  the package. Expected cost on this machine: roughly half a second per compile instead of
-  ten.
+  (`\RequirePackage[OT1]{fontenc}` ahead of `\documentclass`) and by removing fontspec
+  itself, not only the font packages: loading fontspec selects Latin Modern through the TU
+  encoding and the dump fails. Fonts are declared with NFSS declarations that name the font
+  files (`\DeclareFontShape{TU}{Roboto}{m}{n}{<->"[Roboto-Regular.ttf]:mapping=tex-text"}{}`),
+  which the template package resolves at import time; fontspec runs there to discover files
+  and features, and its `Ligatures=TeX` becomes the `tex-text` mapping. The declarations
+  live in the format, since nothing loads until `\selectfont`, and the body carries content
+  only. Measured on this machine: 459 ms per compile instead of ten seconds.
 - The generated LaTeX wraps every editable field as
   `\texorpdfstring{\leavevmode\special{rt:b:<id>}<text>\special{rt:e:<id>}}{<text>}`.
   Without `\leavevmode` a field that starts a list item swallows the item's bullet. Without
@@ -69,14 +73,21 @@ build from TeX Live sources is still to do; nothing below depends on it except s
 ## Consequences
 
 - Two compile loops to maintain, and XeTeX templates will feel slower than pdfTeX ones on
-  every machine. The debounce for XeTeX templates should be longer, as the plan foresaw.
+  every machine. The debounce for XeTeX templates should be longer, as the plan foresaw, and
+  should assume the loaded-machine figure rather than the best case.
+- `\dump` on XeTeX drops hyperref's first-shipout specials (PDF version, the dvipdfmx
+  configuration, a colour push). Drawing is unaffected; the body must re-emit them if the
+  downloaded PDF has to match a plain compile.
 - The template package grows a "resolved fonts" section for XeTeX templates.
 - The overlay needs its own line breaker using the TFM widths for any field that wraps;
   decision 0004 has it.
 - First load is under 30 MB only as a projection, only compressed, and only once TeX Live
   files are fetched on demand, which is not built. A per-engine build is still wanted to cut
   the 30 MB binary, and the format is the next largest item.
-- unicode-math was dropped from the Awesome-CV test because its math font was not in the
-  bundles at hand; it will add to the per-compile cost of that template and should be
-  measured when the TeX Live file server exists.
+- unicode-math costs about 3.2 s per compile and cannot live in a format. A template that
+  loads it only for symbols in text, as Awesome-CV does, gets the symbols from the math
+  font as a plain family at import time, for 2 ms. A template that typesets mathematics
+  keeps the package in the body, is marked slow, and gets the longer debounce; that case is
+  rare in a resume. The math font itself was missing only because the spike's bundles are
+  a subset of TeX Live; the on-demand file server holds all of it.
 - The slow-laptop measurements the plan calls for remain open.
