@@ -8,6 +8,7 @@ import { alignGlyphs, collectFields, type Field } from "../tex/fields";
 import { type FontOutlines, glyphText } from "../tex/glyphs";
 import { renderPage } from "../tex/svg";
 import { parseTfm, scaleTfm } from "../tex/tfm";
+import { parseType1 } from "../tex/type1";
 import { type OverlayHandle, openOverlay } from "./overlay";
 
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
@@ -49,9 +50,14 @@ async function loadFonts(doc: DviDocument) {
   await Promise.all(
     [...names].map(async (n) => {
       if (!outlines.has(n)) {
+        const bytes = async (url: string) => {
+          const r = await fetch(url);
+          if (!r.ok) throw new Error(`${url}: ${r.status}`);
+          return r.arrayBuffer();
+        };
         const [o, t] = await Promise.all([
-          fetch(`/spike/assets/fonts/${n}.json`).then((r) => r.json() as Promise<FontOutlines>),
-          fetch(`/spike/assets/tfm/${n}.tfm`).then((r) => r.arrayBuffer()),
+          bytes(`/spike/assets/type1/${n}.pfb`).then((b) => parseType1(new Uint8Array(b))),
+          bytes(`/spike/assets/tfm/${n}.tfm`),
         ]);
         outlines.set(n, o);
         tfms.set(n, new Uint8Array(t));

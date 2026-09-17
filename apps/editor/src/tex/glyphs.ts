@@ -1,9 +1,9 @@
 /**
  * Glyph outlines for the Type 1 fonts a DVI refers to, and the text each glyph stands for.
  *
- * The outlines are extracted ahead of time into JSON (SVG path data in a 1000-unit em,
- * y pointing up) together with the font's built-in encoding, so the page can be drawn
- * as one path per glyph with no font loading in the browser.
+ * The outlines (SVG path data in a 1000-unit em, y pointing up) and the font's built-in
+ * encoding come from reading the Type 1 font itself in the browser (`type1.ts`), so the
+ * page can be drawn as one path per glyph from the same files the PDF driver embeds.
  */
 
 export interface GlyphOutline {
