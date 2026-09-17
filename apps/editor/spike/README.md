@@ -43,16 +43,23 @@ Everything large lives outside git, in `spike/assets/` for the scripts and in
    with `uv run --with fonttools`, into `spike/web/assets/webfonts/*.otf`. Python stays out of
    this app on purpose; that script goes when the OpenType writer exists.
 5. `spike/web/assets/` also needs the engine files from step 1 copied in.
+6. For the on-demand mode (`spike.html?ondemand=1`), `node spike/extract-texlive.cjs` unpacks
+   the bundles into `spike/web/assets/texlive/` as individual files (13,840 files, 257 MB)
+   and writes `spike/web/assets/texlive-manifest.json`, the path and size of every file.
 
 ## The page
 
 ```sh
-pnpm dev            # then open http://localhost:5173/spike.html
+pnpm dev            # then open http://localhost:5173/spike.html, or spike.html?ondemand=1
 ```
 
 It loads the engine in a worker (`spike/web/engine-worker.js`), dumps
 `spike/web/jake-preamble.tex` into a format, compiles `spike/web/body.tex` (invented
-content, 30 marked fields) and draws the DVI. Buttons: compile five times and print the
+content, 30 marked fields) and draws the DVI. With `?ondemand=1` the worker
+loads no bundle: every file in the manifest becomes an empty file that knows its size, and
+its contents are fetched with one synchronous request the first time TeX reads it; the log
+then says what each step fetched, and `window.fetchedFiles` lists the paths for
+`spike/fetched-size.cjs`. Buttons: compile five times and print the
 median, compile from the stock format, check that every glyph resolves to its own character,
 hit-test every field from a click at a glyph centre, and open the overlay on the three-line
 bullet and measure its drift, with TeX's line breaker (`src/tex/linebreak.ts`) or with the
@@ -75,6 +82,8 @@ All take `SPIKE_ASSETS` to point elsewhere and write outputs to `assets/out/`.
 | `unicode-math.cjs [font]` | What unicode-math costs per compile on the loop, against text symbols and against the math font declared as a plain family |
 | `xetex-loop.cjs` | The XeTeX loop of decision 0003 on Awesome-CV: a format with no native font, the body from it with file-named NFSS declarations instead of fontspec; findings in `xetex-loop-report.md`. Needs `acv.cjs`'s output first |
 | `extract-fonts.cjs` | Copy CM Type 1 fonts, TFMs and the pdftex map out of the bundle |
+| `extract-texlive.cjs` | Unpack the bundles into individual files plus a manifest, for the page's on-demand mode |
+| `fetched-size.cjs <list.json>` | Raw, gzip and Brotli sizes of the files the on-demand page fetched, by kind |
 | `dvi-inspect.cjs <file>` | List a DVI or XDV file's fonts, specials and page structure |
 
 The harness runs the Emscripten module in Node. Two hacks make that work: a fake IndexedDB

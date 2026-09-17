@@ -30,7 +30,7 @@ build from TeX Live sources is still to do; nothing below depends on it except s
 | unicode-math on that loop | 3.6 s per compile (3,587 ms warm median) with `\setmathfont` naming the file, 3.8 s with a display formula on the page, against 395 ms for the same page with text symbols; it cannot be dumped, since it loads fontspec and a native font. Awesome-CV uses it only for a bullet and a centred dot: taking those two glyphs from the math font as an ordinary NFSS family costs 2 ms. Measured with New Computer Modern Math, an OpenType math font like Latin Modern Math; `spike/unicode-math.cjs` |
 | SVG with markers | Every marker survives as a `\special`. On a 30-field page, 852 of 852 glyphs resolve to their own character and 30 of 30 fields resolve from a click at a glyph's centre |
 | Overlay drift, three-line bullet, same font | Baseline within 0.5 pt, and 3 pt mean horizontal shift on the same line with the overlay set ragged-right like the page. The browser and TeX break one line differently, which moves 7 of 204 glyphs to another line and shifts glyphs around that break by up to 36 pt. An earlier reading of 12 pt mean came from the overlay justifying a paragraph TeX had set ragged, and is withdrawn |
-| First load, pdfTeX path | Not measured as a transfer: nothing in the spike fetches TeX Live files on demand yet, and the page loads three whole bundles, 199 MB. Projected from file sizes: engine 30.4 MB raw, 12.1 MB gzip, 9.5 MB Brotli, for all engines in one binary; format 6.7 MB, 6.3 MB gzip; the 0.1 MB of TeX Live files a body compile reads, found with the engine's recorder; the Type 1 fonts themselves at about 35 KB each (cmr10; the extracted outlines were 52 KB). About 16 MB compressed once files are fetched on demand |
+| First load, pdfTeX path | Measured with TeX Live fetched on demand (`spike.html?ondemand=1`: the bundles unpacked into 13,840 individual files, each fetched the first time TeX opens it): building Jake's format fetches 74 files, 8.07 MB raw and 3.97 MB Brotli, of which the stock `pdflatex.fmt` is 6.48 MB raw and 3.66 MB Brotli, 53 package files 1.37 MB raw and 0.25 MB Brotli, and `ls-R` 0.17 MB raw; the first body compile then fetches 19 more files, 0.06 MB, and later compiles nothing. Mounting the file list (0.87 MB raw, 0.08 MB Brotli) takes 155 ms and the engine is ready in 237 ms instead of 565 ms. With the engine (30.4 MB raw, 9.5 MB Brotli, all engines in one binary) and the page's fonts (about 0.8 MB raw) the first load is about 14 MB compressed, against the 30 MB target |
 | Rendering cost | Parsing the DVI, aligning fields and building the SVG takes 2 ms; putting 876 glyph elements in the DOM takes 2 ms |
 
 ## Decision
@@ -81,9 +81,14 @@ build from TeX Live sources is still to do; nothing below depends on it except s
 - The template package grows a "resolved fonts" section for XeTeX templates.
 - The overlay needs its own line breaker using the TFM widths for any field that wraps;
   decision 0004 has it.
-- First load is under 30 MB only as a projection, only compressed, and only once TeX Live
-  files are fetched on demand, which is not built. A per-engine build is still wanted to cut
-  the 30 MB binary, and the format is the next largest item.
+- First load is about 14 MB compressed with TeX Live files fetched on demand, which the
+  spike worker now does; the engine binary is two thirds of it, so a per-engine build is
+  still wanted, and the stock format is the next largest item. That format is fetched only
+  to build the template's own format; a template format built once and served from the
+  cache would replace both it and the package files, leaving a body compile at 0.06 MB of
+  TeX Live files. Each on-demand file costs one synchronous request from the worker, so
+  latency, not size, will decide how a cold start feels; the file list must be served with
+  the engine and refreshed with TeX Live.
 - unicode-math costs about 3.2 s per compile and cannot live in a format. A template that
   loads it only for symbols in text, as Awesome-CV does, gets the symbols from the math
   font as a plain family at import time, for 2 ms. A template that typesets mathematics

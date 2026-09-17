@@ -84,6 +84,18 @@ let fields: Map<string, Field> | undefined;
 let texts: Map<string, string> | undefined;
 let overlay: OverlayHandle | undefined;
 let preamble = "";
+// ?ondemand=1: fetch TeX Live files one by one as TeX opens them instead of loading bundles.
+const onDemand = new URLSearchParams(location.search).get("ondemand") === "1";
+type Fetched = { requests: number; bytes: number; files: string[] };
+const fetchedSoFar: string[] = [];
+const logFetched = (what: string, f: Fetched | undefined) => {
+  if (!f) return;
+  fetchedSoFar.push(...f.files);
+  log(
+    `${what}: fetched ${f.requests} files, ${(f.bytes / 1e6).toFixed(2)} MB (${fetchedSoFar.length} so far)`,
+  );
+  (window as unknown as { fetchedFiles: string[] }).fetchedFiles = fetchedSoFar;
+};
 
 const svgEl = () => $("page").querySelector("svg") as SVGSVGElement | null;
 
@@ -177,6 +189,7 @@ async function compile(body: string, times: number, stock = false) {
     // The stock format knows nothing of the template, so it gets the whole document.
     last = await call({ type: "compile", body: stock ? `${preamble}\n${body}` : body, stock });
     ms.push(Number(last.ms));
+    logFetched(`compile ${i + 1}`, last.fetched as Fetched | undefined);
     if (last.code !== 0 || !last.dvi) {
       log(`compile failed (exit ${String(last.code)}):\n${String(last.log).slice(-1500)}`);
       return;
@@ -270,17 +283,23 @@ $("check").addEventListener("click", () => {
     fetch("/spike/body.tex").then((r) => r.text()),
   ]);
   preamble = pre;
-  status("loading engine and TeX Live bundles…");
+  status(onDemand ? "loading engine, TeX Live on demand…" : "loading engine and TeX Live bundles…");
   const ready = await call({
     type: "init",
     packages: ["texlive-basic", "ubuntu-texlive-latex-extra", "ubuntu-texlive-fonts-recommended"],
+    onDemand,
   });
-  log(`engine ready in ${Number(ready.ms).toFixed(0)} ms, heap ${String(ready.heapMb)} MB`);
+  const mounted = ready.mounted as { count: number; ms: number } | null;
+  log(
+    `engine ready in ${Number(ready.ms).toFixed(0)} ms, heap ${String(ready.heapMb)} MB${mounted ? `; ${mounted.count} on-demand files mounted in ${mounted.ms.toFixed(0)} ms` : ""}`,
+  );
+  logFetched("init", ready.fetched as Fetched | undefined);
   status("dumping the preamble into a format…");
   const dumped = await call({ type: "dump", preamble });
   log(
     `format: exit ${String(dumped.code)}, ${Number(dumped.ms).toFixed(0)} ms, ${(Number(dumped.size) / 1e6).toFixed(1)} MB`,
   );
+  logFetched("format", dumped.fetched as Fetched | undefined);
   if (dumped.code !== 0) {
     status("format dump failed");
     log(String(dumped.log).slice(-2000));
