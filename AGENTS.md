@@ -59,6 +59,7 @@ TypeScript, from the repository root:
 
 ```sh
 pnpm install
+pnpm --filter @resume-tools/editor fetch-engine   # once; tests that run TeX skip without it
 pnpm format       # Biome, fixes formatting and safe lint issues
 pnpm check        # Biome, must be clean
 pnpm typecheck

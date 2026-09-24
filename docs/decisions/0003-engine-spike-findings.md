@@ -102,3 +102,27 @@ build from TeX Live sources is still to do; nothing below depends on it except s
   rare in a resume. The math font itself was missing only because the spike's bundles are
   a subset of TeX Live; the on-demand file server holds all of it.
 - The slow-laptop measurements the plan calls for remain open.
+
+## Update, 24 September 2026
+
+Most of the pdfTeX compile time measured above was kpathsea, TeX Live's file finder, and not
+TeX. The trees the engine searched had no filename database, or one that covered only part of
+them, so kpathsea listed folders to find each file, and in the engine every run starts from a
+fresh heap, so it listed them again on every compile. The editor's engine session
+(`apps/editor/src/engine/`, milestone 2 item 2) builds a database for every tree from the
+manifest at start-up and tells kpathsea to use nothing else. The same Jake's Resume format and
+body, measured in Node on the same laptop:
+
+| | Spike | With the databases |
+|---|---|---|
+| Dump the preamble into a format | 1.4 to 1.7 s (3.4 s on this tree, which has more files) | 0.28 s |
+| Compile the body from the format, warm median | 135 ms (280 ms on this tree) | 68 ms |
+
+In Chrome on the same laptop, the engine starts in about 0.3 s, the format dumps in 0.37 s, a
+new document's two passes take 0.15 s together, and an edit recompiles in 65 ms, against 100
+to 110 ms in the spike. These were measured with the desktop app's browser pane in the
+background, where a run under load came out four to five times slower, so the best of three is
+reported.
+
+The first load also no longer fetches TeX Live's `ls-R`, 0.17 MB. The XeTeX numbers were not
+measured again; the session gives XeTeX the same databases.
