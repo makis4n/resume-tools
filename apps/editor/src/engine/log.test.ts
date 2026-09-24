@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { summariseLog } from "./log";
+import { failedInAux, summariseLog } from "./log";
 
 describe("summariseLog", () => {
   it("reads the page count from a clean run", () => {
@@ -58,5 +58,35 @@ describe("summariseLog", () => {
         "Package rerunfilecheck Info: File `doc.out' has not changed.\n(rerunfilecheck)                Checksum: 1234;390.",
       ).rerun,
     ).toBe(false);
+  });
+
+  it("takes the word only from warnings", () => {
+    // rerunfilecheck's banner, which every document with hyperref prints.
+    const banner = "Package: rerunfilecheck 2022-07-10 v1.10 Rerun checks for auxiliary files (HO)";
+    expect(summariseLog(banner).rerun).toBe(false);
+    // A line of the document, echoed after an overfull box.
+    const echoed =
+      "Overfull \\hbox (3.0pt too wide) in paragraph at lines 3--4\n[]\\OT1/cmr/m/n/10 Rerun the nightly jobs";
+    expect(summariseLog(echoed).rerun).toBe(false);
+    // A warning that asks on its second line, after \MessageBreak.
+    const broken = "LaTeX Warning: Something changed.\n               Please rerun LaTeX.";
+    expect(summariseLog(broken).rerun).toBe(true);
+    // A warning ends where a line stops carrying it on.
+    const after = "LaTeX Warning: Something changed.\nRerun the nightly jobs";
+    expect(summariseLog(after).rerun).toBe(false);
+  });
+});
+
+describe("failedInAux", () => {
+  it("is true only for an error while the job's .aux was open", () => {
+    const inAux = "(./doc.tex\n(./doc.aux\n! Undefined control sequence.\nl.3 \\nosuchmacro";
+    expect(failedInAux(inAux, "doc")).toBe(true);
+    const inBody =
+      "(./doc.tex\n(./doc.aux) (./doc.out)\n! Undefined control sequence.\nl.9 \\nosuchmacro";
+    expect(failedInAux(inBody, "doc")).toBe(false);
+    expect(failedInAux(inAux, "other")).toBe(false);
+    expect(failedInAux("(./doc.aux)\nOutput written on doc.dvi (1 page, 812 bytes).", "doc")).toBe(
+      false,
+    );
   });
 });

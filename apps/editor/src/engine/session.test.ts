@@ -273,4 +273,36 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     // One pass stopped by the old .aux, then two as a new document.
     expect(clean.passes.length).toBe(3);
   }, 60_000);
+
+  it("runs a failed edit once, and retries only within the passes allowed", () => {
+    session.dump("pdftex", "budget", PREAMBLE);
+    const ok = "\\begin{document}x\\end{document}";
+    expect(session.compile("pdftex", "budget", ok, { job: "budget" }).ok).toBe(true);
+    // An error in the body is not the old .aux's fault: no retry.
+    const broken = session.compile(
+      "pdftex",
+      "budget",
+      "\\begin{document}\\nosuchmacro\\end{document}",
+      {
+        job: "budget",
+      },
+    );
+    expect(broken.passes.length).toBe(1);
+    // A poisoned .aux with one pass allowed: the failed pass is all there is.
+    const poison = String.raw`\begin{document}\makeatletter\immediate\write\@auxout{\string\nosuchmacro}\makeatother x\end{document}`;
+    session.compile("pdftex", "budget", poison, { job: "budget" });
+    const one = session.compile("pdftex", "budget", ok, { job: "budget", maxPasses: 1 });
+    expect(one.ok).toBe(false);
+    expect(one.passes.length).toBe(1);
+  }, 60_000);
+
+  it("settles a document with hyperref in one pass after the first compile", () => {
+    // hyperref loads rerunfilecheck, whose banner has the word Rerun in it.
+    const body =
+      "\\documentclass{article}\\usepackage{hyperref}\\begin{document}Hello\\end{document}";
+    const passes = [0, 1, 2].map(
+      () => session.compile("pdftex", "stock", body, { job: "settles" }).passes.length,
+    );
+    expect(passes).toEqual([2, 1, 1]);
+  }, 60_000);
 });

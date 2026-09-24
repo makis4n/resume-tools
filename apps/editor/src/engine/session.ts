@@ -17,7 +17,7 @@
  * another, read another's text, or overwrite a format.
  */
 
-import { summariseLog } from "./log";
+import { failedInAux, summariseLog } from "./log";
 import { filenameDatabase } from "./lsr";
 import type { EngineManifest } from "./manifest";
 
@@ -214,7 +214,10 @@ export interface CompileResult {
 export interface CompileOptions {
   /** The document's name, and the name of its folder; one per open document. Defaults to "doc". */
   job?: string;
-  /** Passes at most; a pass is repeated when the document is new or the log asks for one. */
+  /**
+   * Passes at most, 3 by default. A pass is repeated when the document is new or the log asks for
+   * one, and the retry as a new document takes its passes from the same budget.
+   */
   maxPasses?: number;
   /** Files to put in the job's folder before compiling. */
   files?: JobFiles;
@@ -418,8 +421,8 @@ export class EngineSession {
    * auxiliary files the second reads, and any pass is repeated when the log asks for it.
    *
    * TeX reads a document's old auxiliary files before it writes new ones, so a bad line in them
-   * stops every later compile. A document that fails after compiling before is therefore tried
-   * once more as a new document.
+   * stops every later compile. A compile that stops while reading them is therefore tried once
+   * more as a new document.
    */
   compile(
     engine: Engine,
@@ -443,11 +446,13 @@ export class EngineSession {
     this.formatOf.set(job, formatKey);
 
     this.tally.take();
-    let attempt = this.passes(spec, formatPath, job, body, options);
-    if (!attempt.ok && !attempt.fresh) {
+    const maxPasses = options.maxPasses ?? 3;
+    let attempt = this.passes(spec, formatPath, job, body, options.files, maxPasses);
+    const left = maxPasses - attempt.passes.length;
+    if (!attempt.ok && !attempt.fresh && left > 0 && failedInAux(attempt.log, job)) {
       this.forget(job);
       this.formatOf.set(job, formatKey);
-      const again = this.passes(spec, formatPath, job, body, options);
+      const again = this.passes(spec, formatPath, job, body, options.files, left);
       attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
     }
     const { fresh: _, ...result } = attempt;
@@ -467,16 +472,16 @@ export class EngineSession {
     formatPath: string,
     job: string,
     body: string,
-    options: CompileOptions,
+    files: JobFiles | undefined,
+    maxPasses: number,
   ): Omit<CompileResult, "fetched"> & { fresh: boolean } {
     const folder = `${JOBS}/${job}`;
     const at = (extension: string) => `${folder}/${job}.${extension}`;
     this.engine.FS.mkdirTree(folder);
-    this.writeFiles(folder, options.files ?? {});
+    this.writeFiles(folder, files ?? {});
     this.engine.FS.writeFile(at("tex"), body);
     const fresh = !this.engine.FS.analyzePath(at("aux")).exists;
     const passes: number[] = [];
-    const maxPasses = options.maxPasses ?? 3;
     let run: RunResult;
     let log: string;
     for (;;) {

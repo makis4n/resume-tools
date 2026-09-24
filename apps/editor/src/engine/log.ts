@@ -18,12 +18,27 @@ export interface LogSummary {
 }
 
 const OUTPUT_WRITTEN = /^Output written on .* \((\d+) pages?, \d+ bytes\)\.$/m;
+
+/** The first line of a warning from LaTeX, a package or a class. */
+const WARNING = /^(?:LaTeX|Package \S+|Class \S+) Warning: /;
+/** A line that carries a warning on: "(package)" or spaces, as `\MessageBreak` writes them. */
+const WARNING_GOES_ON = /^(?:\(\S+\)|\s)/;
+
 /**
- * Packages ask for another run in their own words: "Rerun to get cross-references right",
- * "Rerun to correct eqparbox widths", longtable's "Table widths have changed. Rerun LaTeX.".
- * They share the capitalised word, which "rerunfilecheck" and its info lines do not.
+ * Whether a warning asks for another run. Packages ask in their own words: "Rerun to get
+ * cross-references right", eqparbox's "Rerun to correct eqparbox widths", longtable's "Table
+ * widths have changed. Rerun LaTeX.", "Please rerun LaTeX.". Only warnings count, since the word
+ * also turns up in rerunfilecheck's banner and in lines of the document that TeX echoes.
  */
-const RERUN = /\bRerun\b|\bPlease rerun\b/;
+function asksForRerun(lines: string[]): boolean {
+  let inWarning = false;
+  for (const line of lines) {
+    if (WARNING.test(line)) inWarning = true;
+    else if (!WARNING_GOES_ON.test(line)) inWarning = false;
+    if (inWarning && /\b[Rr]erun\b/.test(line)) return true;
+  }
+  return false;
+}
 
 export function summariseLog(log: string): LogSummary {
   const lines = log.split(/\r?\n/);
@@ -44,6 +59,19 @@ export function summariseLog(log: string): LogSummary {
     error: first >= 0 ? lines[first]?.slice(2) : undefined,
     errorLine,
     pages: written ? Number(written[1]) : 0,
-    rerun: RERUN.test(log),
+    rerun: asksForRerun(lines),
   };
+}
+
+/**
+ * True when TeX stopped on an error while reading the job's `.aux` file, which LaTeX reads at
+ * `\begin{document}` before writing a new one: the log opened `(./<job>.aux` and closed no file
+ * between that and the error.
+ */
+export function failedInAux(log: string, job: string): boolean {
+  const error = log.search(/^! /m);
+  if (error < 0) return false;
+  const before = log.slice(0, error);
+  const opened = before.lastIndexOf(`(./${job}.aux`);
+  return opened >= 0 && !before.slice(opened).includes(")");
 }
