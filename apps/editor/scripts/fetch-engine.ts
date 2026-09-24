@@ -20,7 +20,9 @@
  *   .engine/busytex.mjs      the same loader as an ES module, for the worker
  *   .engine/busytex.wasm     the engine: pdfTeX, XeTeX, LuaHBTeX and xdvipdfmx in one binary
  *   .engine/files/<path>     every TeX Live file, at the path the engine sees it under
- *   .engine/manifest.json    { release, bundles, files: { <path>: <size> } }, written last
+ *   .engine/manifest.json    { release, layout, bundles, files: { <path>: <size> } }, written last
+ *
+ * One run at a time: a run holds `.engine/.lock` while it builds, and a second run stops.
  */
 
 import { createHash } from "node:crypto";
@@ -34,6 +36,12 @@ import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { fileURLToPath } from "node:url";
 
 const RELEASE = "build_wasm_4499aa69fd3cf77ad86a47287d9a5193cf5ad993_7936974349_1";
+
+/**
+ * The version of what this script writes. Bump it whenever the output changes (the files, the
+ * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt.
+ */
+const LAYOUT = 1;
 const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELEASE}/`;
 
 /** Release files with their SHA-256 and size, recorded from the copies the spike measured. */
@@ -121,9 +129,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".engine");
 const DOWNLOADS = join(ROOT, "downloads");
 const FILES = join(ROOT, "files");
 const MANIFEST = join(ROOT, "manifest.json");
+const LOCK = join(ROOT, ".lock");
 
 export interface EngineManifest {
   release: string;
+  layout: number;
   bundles: string[];
   /** Every file TeX may read, by its path in the engine's file system, with its size in bytes. */
   files: Record<string, number>;
@@ -258,9 +268,39 @@ async function upToDate(): Promise<boolean> {
   const manifest = JSON.parse(await readFile(MANIFEST, "utf8")) as EngineManifest;
   return (
     manifest.release === RELEASE &&
+    manifest.layout === LAYOUT &&
     manifest.bundles.join() === BUNDLES.join() &&
-    ["busytex.js", "busytex.mjs", "busytex.wasm"].every((f) => existsSync(join(ROOT, f)))
+    ["busytex.js", "busytex.mjs", "busytex.wasm"].every((f) => existsSync(join(ROOT, f))) &&
+    REQUIRED.every((path) => existsSync(join(FILES, path)))
   );
+}
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
+/**
+ * Take `.engine/.lock`, which names the process holding it, and return what releases it. A lock
+ * left by a run that is no longer alive is taken over; a live one stops this run.
+ */
+async function lock(): Promise<() => Promise<void>> {
+  for (;;) {
+    try {
+      await writeFile(LOCK, String(process.pid), { flag: "wx" });
+      return () => rm(LOCK, { force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const holder = Number(await readFile(LOCK, "utf8").catch(() => ""));
+      if (holder && holder !== process.pid && alive(holder))
+        throw new Error(`fetch-engine is already running (process ${holder}); let it finish`);
+      await rm(LOCK, { force: true });
+    }
+  }
 }
 
 async function main() {
@@ -271,7 +311,16 @@ async function main() {
     console.log(`.engine/ is up to date (${RELEASE}); --force rebuilds it`);
     return;
   }
+  mkdirSync(ROOT, { recursive: true });
+  const unlock = await lock();
+  try {
+    await build(from);
+  } finally {
+    await unlock();
+  }
+}
 
+async function build(from: string | undefined) {
   console.log(from ? `Copying the release from ${from}` : `Downloading ${RELEASE_URL}`);
   mkdirSync(DOWNLOADS, { recursive: true });
   // The editor's package is an ES module package, which would make Node load the release's
@@ -283,6 +332,7 @@ async function main() {
   const started = performance.now();
   // A new manifest is written last, so a build that stops half way is never taken as done.
   await rm(MANIFEST, { force: true });
+  // Holding the lock, anything staged earlier belongs to a run that stopped.
   const staging = `${FILES}.partial`;
   await rm(staging, { recursive: true, force: true });
   const files = copyOut(await mount(), staging);
@@ -296,7 +346,7 @@ async function main() {
   // The worker is an ES module and cannot use importScripts, so it imports this copy.
   await writeFile(join(ROOT, "busytex.mjs"), `${loader}\nexport default busytex;\n`);
   await copyFile(join(DOWNLOADS, "busytex.wasm"), join(ROOT, "busytex.wasm"));
-  const manifest: EngineManifest = { release: RELEASE, bundles: BUNDLES, files };
+  const manifest: EngineManifest = { release: RELEASE, layout: LAYOUT, bundles: BUNDLES, files };
   await writeFile(MANIFEST, JSON.stringify(manifest));
 
   const bytes = Object.values(files).reduce((a, b) => a + b, 0);
