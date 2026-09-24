@@ -1,6 +1,7 @@
 /**
  * The fonts a page needs, from the TeX Live tree: each TeX font's metrics from its TFM, and its
- * outlines from the Type 1 file the font map names. Loads are shared and kept for the session.
+ * outlines from the Type 1 file the font map names. Loads are shared and kept for the session;
+ * one that fails is dropped, so the next draw reads the files again.
  *
  * Only fonts drawn as the map says are given outlines. A font the map re-encodes, slants or
  * stretches is reported without them until the renderer applies those (milestone 2, item 16),
@@ -38,18 +39,28 @@ export class FontLibrary {
   load(name: string): Promise<PageFont | undefined> {
     let loading = this.fonts.get(name);
     if (!loading) {
-      loading = this.loadNow(name);
-      this.fonts.set(name, loading);
+      const started = this.loadNow(name);
+      started.catch(() => {
+        if (this.fonts.get(name) === started) this.fonts.delete(name);
+      });
+      this.fonts.set(name, started);
+      loading = started;
     }
     return loading;
   }
 
   private fontMap(): Promise<Map<string, FontMapEntry>> {
-    this.map ??= (async () => {
-      const path = this.index.find("map", "pdftex.map");
-      if (!path) throw new Error("the TeX Live tree has no pdftex.map");
-      return parseFontMaps(new TextDecoder().decode(await this.read(path)));
-    })();
+    if (!this.map) {
+      const started = (async () => {
+        const path = this.index.find("map", "pdftex.map");
+        if (!path) throw new Error("the TeX Live tree has no pdftex.map");
+        return parseFontMaps(new TextDecoder().decode(await this.read(path)));
+      })();
+      started.catch(() => {
+        if (this.map === started) this.map = undefined;
+      });
+      this.map = started;
+    }
     return this.map;
   }
 

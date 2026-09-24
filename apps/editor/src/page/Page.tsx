@@ -10,11 +10,18 @@ export interface PageProps {
   onField?: (field: string, offset: number) => void;
 }
 
+/** The field and character offset of the glyph a click landed on, from its data attributes. */
+export function fieldAt(target: Element | null): { field: string; offset: number } | undefined {
+  const glyph = target?.closest("[data-field]");
+  const field = glyph?.getAttribute("data-field");
+  const offset = glyph?.getAttribute("data-offset");
+  return field && offset && /^\d+$/.test(offset) ? { field, offset: Number(offset) } : undefined;
+}
+
 export function Page({ svg, onField }: PageProps) {
   const click = (event: MouseEvent<HTMLDivElement>) => {
-    const glyph = (event.target as Element).closest("[data-field]");
-    if (!glyph || !onField) return;
-    onField(glyph.getAttribute("data-field") ?? "", Number(glyph.getAttribute("data-offset")));
+    const hit = fieldAt(event.target as Element);
+    if (hit) onField?.(hit.field, hit.offset);
   };
   return (
     // The SVG is built by src/tex/svg.ts from the engine's output, with every string escaped.

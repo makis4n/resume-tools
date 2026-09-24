@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
-import { type DrawnPage, drawPage, paperSize } from "./draw";
+import type { EngineSession } from "../engine/session";
+import { type DrawnPage, drawPage, type GlyphBox, glyphAt, paperSize } from "./draw";
 import { FontLibrary } from "./fonts";
 import { TexLiveIndex } from "./texlive";
 
@@ -37,8 +38,10 @@ describe("paperSize", () => {
 describe.skipIf(!engineAvailable())("drawPage", () => {
   let drawn: DrawnPage;
   let texts: Map<string, string>;
+  let session: EngineSession;
+  let fonts: FontLibrary;
   beforeAll(async () => {
-    const session = await startNodeSession();
+    session = await startNodeSession();
     const dumped = session.dump("pdftex", "jake", spike("jake-preamble.tex"));
     if (!dumped.ok) throw new Error(dumped.error);
     const body = spike("body.tex");
@@ -47,7 +50,7 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     const manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
-    const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+    fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );
     texts = fieldTexts(body);
@@ -89,4 +92,32 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     const glyphs = [...drawn.fields.values()].reduce((n, f) => n + f.glyphs.length, 0);
     expect(marked.length).toBe(glyphs);
   });
+  it("resolves every field from a click at the centre of its middle glyph", () => {
+    for (const field of drawn.fields.values()) {
+      const boxes = drawn.glyphs.filter((g) => g.field === field.id);
+      const middle = boxes[Math.floor(boxes.length / 2)] as GlyphBox;
+      expect(middle, field.id).toBeDefined();
+      const hit = glyphAt(
+        drawn.glyphs,
+        (middle.left + middle.right) / 2,
+        (middle.top + middle.bottom) / 2,
+      );
+      expect(hit, field.id).toBe(middle);
+    }
+  });
+
+  it("gives a later page the size the first page set", async () => {
+    const compiled = session.compile(
+      "pdftex",
+      "stock",
+      "\\documentclass{article}\\usepackage[a4paper]{geometry}\\begin{document}One\\newpage Two\\end{document}",
+      { job: "a4" },
+    );
+    const output = compiled.output as Uint8Array;
+    const first = await drawPage(output, fonts, new Map(), 0);
+    const second = await drawPage(output, fonts, new Map(), 1);
+    expect(first.pageCount).toBe(2);
+    expect(first.size.width).toBeCloseTo(597.51, 2);
+    expect(second.size).toEqual(first.size);
+  }, 30_000);
 });

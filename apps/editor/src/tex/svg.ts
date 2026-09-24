@@ -19,7 +19,8 @@ export interface PageSize {
 }
 
 export const US_LETTER: PageSize = { width: 614.295, height: 794.97 };
-const INCH = 72.27;
+/** One inch in TeX points: the DVI origin sits this far in from the page's top-left corner. */
+export const INCH = 72.27;
 
 /** Outlines of an OpenType or TrueType font XeTeX used directly, by glyph index. */
 export interface NativeOutlines {

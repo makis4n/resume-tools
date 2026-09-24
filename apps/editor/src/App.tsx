@@ -14,21 +14,24 @@ async function load(
   engine: EngineClient,
 ): Promise<{ page: DrawnPage; texts: Map<string, string>; ms: number }> {
   const started = performance.now();
-  const text = (url: string) => fetch(url).then((r) => r.text());
+  const get = async (url: string) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+    return response;
+  };
   const [manifest, preamble, body] = await Promise.all([
-    fetch("/engine/manifest.json").then((r) => r.json() as Promise<EngineManifest>),
-    text("/spike/jake-preamble.tex"),
-    text("/spike/body.tex"),
+    get("/engine/manifest.json").then((r) => r.json() as Promise<EngineManifest>),
+    get("/spike/jake-preamble.tex").then((r) => r.text()),
+    get("/spike/body.tex").then((r) => r.text()),
   ]);
   const dumped = await engine.dump("pdftex", "jake", preamble);
   if (!dumped.ok) throw new Error(dumped.error);
   const compiled = await engine.compile("pdftex", "jake", body);
   if (!compiled.output) throw new Error(compiled.error);
-  const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) => {
-    const response = await fetch(`/engine/files${path}`);
-    if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
-    return new Uint8Array(await response.arrayBuffer());
-  });
+  const fonts = new FontLibrary(
+    new TexLiveIndex(manifest),
+    async (path) => new Uint8Array(await (await get(`/engine/files${path}`)).arrayBuffer()),
+  );
   const texts = new Map<string, string>();
   for (const m of body.matchAll(/\\rtfield\{([^}]*)\}\{([^{}]*)\}/g))
     texts.set(m[1] ?? "", m[2] ?? "");
@@ -38,7 +41,7 @@ async function load(
 
 export function App() {
   const [state, setState] = useState<Awaited<ReturnType<typeof load>>>();
-  const [error, setError] = useState<string>();
+  const [failed, setFailed] = useState(false);
   const [clicked, setClicked] = useState<string>();
   useEffect(() => {
     // The effect owns its worker, so React's second run in development stops the first one.
@@ -46,14 +49,19 @@ export function App() {
     let live = true;
     load(engine).then(
       (loaded) => live && setState(loaded),
-      (e: unknown) => live && setError(String(e)),
+      (error: unknown) => {
+        if (!live) return;
+        // The details are the engine's and TeX's, for developers; a user never sees LaTeX.
+        console.error("The page could not be shown:", error);
+        setFailed(true);
+      },
     );
     return () => {
       live = false;
       engine.terminate();
     };
   }, []);
-  if (error) return <p>Could not show the page: {error}</p>;
+  if (failed) return <p>The page could not be shown.</p>;
   if (!state) return <p>Loading the engine…</p>;
   return (
     <main>
