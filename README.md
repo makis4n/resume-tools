@@ -22,7 +22,7 @@ packages/
 docs/
   plan.md               the editor plan, converted from the shared page
   decisions/            short records of decisions, one file each
-.github/                CODEOWNERS, CI, pull request and issue templates
+.github/                CI, pull request and issue templates
 ```
 
 ## Getting started
@@ -53,13 +53,13 @@ CI runs exactly these commands. If they pass on your machine they pass there.
 
 ## Ownership
 
-`.github/CODEOWNERS` maps every path to an owner, and GitHub asks the owner of whatever a pull request touches for a review. In short: you own your app, we both own the contract, the docs and the root configuration. Working in the other person's area is fine; it just means they review it.
+The tree above names the owner of each path. In short: you own your app, we both own the contract, the docs and the root configuration. Working in the other person's area is fine.
 
 ## How we work
 
 **Branches.** `main` is always releasable and is protected on GitHub: changes reach it through pull requests only. The repository owner can bypass that, and that is reserved for emergencies. Work happens on short-lived branches named `<you>/<topic>`, for example `waikin/overlay-editor` or `keaen/pdf-text-layer`.
 
-**Pull requests.** Every change to `main` goes through a pull request, squash-merged, with CI green. A review is required when a change touches the other person's area, `packages/`, `docs/decisions/` or `.github/`. Changes inside your own app can be self-merged once CI passes. Keep a pull request small enough to read in ten minutes, and split it otherwise.
+**Pull requests.** Every change to `main` goes through a pull request, squash-merged, with CI green. No review is required, wherever the change lands: you merge your own pull request once CI passes (decision 0005). Keep a pull request small enough to read in ten minutes, and split it otherwise.
 
 **Commits.** [Conventional Commits](https://www.conventionalcommits.org/), with the area as scope: `feat(editor): open a field by clicking its glyph`, `fix(ats): handle PDFs with no text layer`, `chore(repo): bump biome`. Scopes are `editor`, `ats`, `contracts`, `model`, `docs` and `repo`. The squash-merge title follows the same rule, because that is what ends up in history.
 
@@ -77,7 +77,7 @@ CI runs exactly these commands. If they pass on your machine they pass there.
 
 - The ATS service exposes `POST /v1/analyze`, takes a PDF as multipart form data, and returns JSON that validates against `packages/contracts/ats/v1/analysis.schema.json`.
 - The panel in `apps/editor/src/features/ats` depends on that schema and on nothing else inside the ATS. The ATS never imports from the editor.
-- Changing the contract is a pull request that both of us review. Additive changes are fine within `v1`. Anything that would break the panel becomes `v2` next to it, and `v1` stays until the panel has moved.
+- Changing the contract is a pull request like any other. Additive changes are fine within `v1`. Anything that would break the panel becomes `v2` next to it, and `v1` stays until the panel has moved.
 - Locally the ATS runs at `http://localhost:8000` and the editor reads its address from `VITE_ATS_SERVICE_URL`.
 
 ## Hosting

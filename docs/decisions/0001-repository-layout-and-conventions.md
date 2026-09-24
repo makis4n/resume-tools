@@ -1,6 +1,6 @@
 # 0001. Repository layout and working conventions
 
-Date: 2026-09-13 · Status: accepted
+Date: 2026-09-13 · Status: accepted; the review rule is superseded by 0005
 
 ## Context
 
@@ -18,6 +18,6 @@ Two people are building two products that share one moment of contact: the edito
 
 ## Consequences
 
-- `main` is protected on GitHub: pull requests only, with no required approvals and no required status checks. Reviews are requested through CODEOWNERS and required by convention, and a required check would block merges on pull requests whose paths never trigger that workflow.
+- `main` is protected on GitHub: pull requests only, with no required approvals and no required status checks. Reviews are not required (decision 0005), and a required check would block merges on pull requests whose paths never trigger that workflow.
 - Two toolchains in one repository. Each CI workflow runs only for its own paths, so neither slows the other down.
 - Contract changes cost two reviews by design.
