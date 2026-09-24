@@ -53,15 +53,15 @@ end to end before the other two templates, so that the editing loop is proven on
 
 ### Stage 1. The engine as product code
 
-1. [ ] **Fetch the engine and TeX Live for development.** `pnpm --filter @resume-tools/editor
+1. [x] **Fetch the engine and TeX Live for development.** `pnpm --filter @resume-tools/editor
    fetch-engine` downloads the pinned BusyTeX release (engine, `texlive-basic` and the four Ubuntu
    bundles), checks every file against a recorded hash, unpacks the bundles into one file per
    path, and writes the manifest. It replaces the spike README's manual steps for the engine.
-2. [ ] **Compile in a worker.** `src/engine/`: the session, a module worker and a client whose
+2. [x] **Compile in a worker.** `src/engine/`: the session, a module worker and a client whose
    replies carry request ids. A format dump, a body compile, two passes when a document opens,
    and a rerun when the log asks for one. Done when Jake's spike preamble and body compile from
    product code in the browser and in Node, as fast as the spike did.
-3. [ ] **Draw the page.** `src/page/`: TFMs and Type 1 fonts looked up through the manifest and
+3. [x] **Draw the page.** `src/page/`: TFMs and Type 1 fonts looked up through the manifest and
    `pdftex.map`, outlines cached, the SVG drawn by `src/tex/svg.ts` in a React component, and a
    click resolved to a field and a character offset. Done when the spike's checks pass as tests:
    every glyph resolves to its own character, and every field resolves from a click.
