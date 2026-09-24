@@ -20,9 +20,13 @@ import type { FontLibrary, PageFont } from "./fonts";
 
 /**
  * Where a drawn glyph sits, in TeX points from the page's top-left corner. The box is the glyph's
- * outline box, which is also what a click lands on in the SVG.
+ * outline box, which is also what a click lands on in the SVG; a glyph with no outline has an
+ * empty box at its origin.
  */
 export interface GlyphBox {
+  /** The glyph's origin on its baseline, where the SVG places it. */
+  x: number;
+  y: number;
   left: number;
   top: number;
   right: number;
@@ -37,7 +41,7 @@ export interface DrawnPage {
   size: PageSize;
   /** The page's fields, each glyph given its offset in the field's text. */
   fields: Map<string, Field>;
-  /** Every glyph drawn, in the order the SVG paints them. */
+  /** Every Type 1 glyph drawn, in the order the SVG paints them, one for each of its glyphs. */
   glyphs: GlyphBox[];
   /** Pages in the whole document, for the warning when a resume spills onto a second one. */
   pageCount: number;
@@ -93,7 +97,7 @@ export function glyphAt(glyphs: GlyphBox[], x: number, y: number): GlyphBox | un
   return undefined;
 }
 
-/** The outline box of every Type 1 glyph on a page, with its field, as the SVG draws them. */
+/** The box of every Type 1 glyph on a page, with its field, for each glyph the SVG draws. */
 function glyphBoxes(
   doc: DviDocument,
   page: DviPage,
@@ -110,16 +114,20 @@ function glyphBoxes(
     const font = doc.fonts.get(item.font);
     const outlines = font && fonts.get(font.name)?.outlines;
     const name = outlines?.encoding[item.code];
-    const b = name ? outlines?.glyphs[name]?.b : undefined;
-    if (!font || !b) return;
+    const glyph = name ? outlines?.glyphs[name] : undefined;
+    // The same test the SVG makes before it draws a glyph.
+    if (!font || !glyph) return;
     const s = (font.scale * pt) / 1000;
     const x = INCH + item.h * pt;
     const y = INCH + item.v * pt;
+    const [xMin, yMin, xMax, yMax] = glyph.b ?? [0, 0, 0, 0];
     boxes.push({
-      left: x + b[0] * s,
-      top: y - b[3] * s,
-      right: x + b[2] * s,
-      bottom: y - b[1] * s,
+      x,
+      y,
+      left: x + xMin * s,
+      top: y - yMax * s,
+      right: x + xMax * s,
+      bottom: y - yMin * s,
       ...fieldOf.get(index),
     });
   });

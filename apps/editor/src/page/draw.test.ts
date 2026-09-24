@@ -92,6 +92,21 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     const glyphs = [...drawn.fields.values()].reduce((n, f) => n + f.glyphs.length, 0);
     expect(marked.length).toBe(glyphs);
   });
+  it("draws each glyph where its hit box says, with the same field and offset", () => {
+    const uses = [
+      ...drawn.svg.matchAll(/<use href="#g[^"]*" x="([\d.-]+)" y="([\d.-]+)"([^>]*)\/>/g),
+    ];
+    expect(uses.length).toBe(drawn.glyphs.length);
+    uses.forEach((use, i) => {
+      const box = drawn.glyphs[i] as GlyphBox;
+      expect(use[1]).toBe(box.x.toFixed(3));
+      expect(use[2]).toBe(box.y.toFixed(3));
+      const field = /data-field="([^"]*)" data-offset="(\d+)"/.exec(use[3] ?? "");
+      expect(field?.[1]).toBe(box.field);
+      expect(field ? Number(field[2]) : undefined).toBe(box.offset);
+    });
+  });
+
   it("resolves every field from a click at the centre of its middle glyph", () => {
     for (const field of drawn.fields.values()) {
       const boxes = drawn.glyphs.filter((g) => g.field === field.id);
