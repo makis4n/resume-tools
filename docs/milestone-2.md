@@ -68,7 +68,7 @@ end to end before the other two templates, so that the editing loop is proven on
 
 ### Stage 2. Templates as data
 
-4. [ ] **Decide the package format and model version 1.** Decision record 0006. A package is
+4. [x] **Decide the package format and model version 1.** Decision record 0006. A package is
    data rather than code, because the import pipeline will produce packages and the cache will
    store them. It holds the preamble, any class files, the style parameters, and snippets that
    map the model onto the template's macros, written in a small template language with slots.
