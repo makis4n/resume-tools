@@ -221,9 +221,10 @@ export interface CompileOptions {
   maxPasses?: number;
   /**
    * Files to put in the job's folder, such as a template's own files. They stay with the job, so
-   * they need passing only once, until it is forgotten or compiled with another format. A format
-   * name stands for one template: dumping or putting it again keeps a job's files, so give
-   * another template another name, or forget the job before moving it over.
+   * they need passing only once, until it is forgotten or compiled with another format (another
+   * engine or another name). A format name stands for one template: dumping or putting it again
+   * keeps a job's files, so give another template another name, or forget the job before moving
+   * it over.
    */
   files?: JobFiles;
 }
@@ -235,6 +236,11 @@ const checkName = (kind: string, name: string) => {
 const checkFileName = (name: string) => {
   if (!name || name.includes("/") || name.startsWith("."))
     throw new Error(`not a plain file name: ${name}`);
+};
+/** A name for a format `dump` or `putFormat` makes; `stock` means the engine's own format. */
+const checkFormatName = (name: string) => {
+  checkName("format", name);
+  if (name === "stock") throw new Error("stock is the engine's own format and cannot be replaced");
 };
 
 class Tally {
@@ -384,7 +390,7 @@ export class EngineSession {
    * stands for one template, so another template needs another name.
    */
   dump(engine: Engine, name: string, preamble: string, files: JobFiles = {}): DumpResult {
-    checkName("format", name);
+    checkFormatName(name);
     const spec = ENGINES[engine];
     const folder = `${BUILDS}/${name}`;
     this.tally.take();
@@ -423,7 +429,7 @@ export class EngineSession {
    * `dump`, a name stands for one template, and putting it again keeps its jobs' files.
    */
   putFormat(engine: Engine, name: string, format: Uint8Array) {
-    checkName("format", name);
+    checkFormatName(name);
     this.install(engine, name, format);
   }
 

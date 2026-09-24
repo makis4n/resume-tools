@@ -122,6 +122,9 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
 
   it("refuses names that are not plain", () => {
     expect(() => session.dump("pdftex", "../x", PREAMBLE)).toThrow();
+    // "stock" means the engine's own format, which a dump must not seem to replace.
+    expect(() => session.dump("pdftex", "stock", PREAMBLE)).toThrow();
+    expect(() => session.putFormat("pdftex", "stock", new Uint8Array())).toThrow();
     expect(() => session.dump("pdftex", "x", PREAMBLE, { ".hidden": "" })).toThrow();
     expect(() => session.compile("pdftex", "stock", "", { job: "a b" })).toThrow();
     expect(() =>
