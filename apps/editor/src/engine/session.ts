@@ -221,7 +221,9 @@ export interface CompileOptions {
   maxPasses?: number;
   /**
    * Files to put in the job's folder, such as a template's own files. They stay with the job, so
-   * they need passing only once, until it is forgotten or compiled with another format.
+   * they need passing only once, until it is forgotten or compiled with another format. A format
+   * name stands for one template: dumping or putting it again keeps a job's files, so give
+   * another template another name, or forget the job before moving it over.
    */
   files?: JobFiles;
 }
@@ -377,7 +379,9 @@ export class EngineSession {
   /**
    * Dump a preamble into a format named `name`, which later compiles with the same engine can
    * load. It runs in a folder of its own, with `files` beside it, and leaves only the format. A
-   * dump that fails leaves any earlier format of that name in place.
+   * dump that fails leaves any earlier format of that name in place. One that succeeds replaces
+   * it, and the jobs compiled with it start again as new documents, keeping their files; a name
+   * stands for one template, so another template needs another name.
    */
   dump(engine: Engine, name: string, preamble: string, files: JobFiles = {}): DumpResult {
     checkName("format", name);
@@ -414,7 +418,10 @@ export class EngineSession {
     };
   }
 
-  /** Put a format made earlier, by this session or another, where compiles can load it. */
+  /**
+   * Put a format made earlier, by this session or another, where compiles can load it. As with
+   * `dump`, a name stands for one template, and putting it again keeps its jobs' files.
+   */
   putFormat(engine: Engine, name: string, format: Uint8Array) {
     checkName("format", name);
     this.install(engine, name, format);
