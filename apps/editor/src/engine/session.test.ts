@@ -303,6 +303,25 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     expect(empty.passes.length).toBe(2);
   }, 60_000);
 
+  it("keeps a job's files through a failed edit, until its format changes", () => {
+    session.dump("pdftex", "keepfiles", "\\documentclass{article}");
+    const files = { "extra.tex": "Extra text." };
+    const body = (text: string) => `\\begin{document}\\input{extra} ${text}\\end{document}`;
+    const compile = (format: string, text: string, withFiles = false) =>
+      session.compile("pdftex", format, body(text), {
+        job: "keepfiles",
+        files: withFiles ? files : undefined,
+      });
+    expect(compile("keepfiles", "x", true).ok).toBe(true);
+    expect(compile("keepfiles", "y").ok).toBe(true);
+    // The retry as a new document clears the folder and writes the files back.
+    expect(compile("keepfiles", "\\nosuchmacro").error).toBe("Undefined control sequence.");
+    expect(compile("keepfiles", "z").ok).toBe(true);
+    // Another format is another template, whose files come with it.
+    session.dump("pdftex", "otherfiles", "\\documentclass{article}");
+    expect(compile("otherfiles", "z").error).toBe("LaTeX Error: File `extra.tex' not found.");
+  }, 60_000);
+
   it("recovers from a bad line in any auxiliary file", () => {
     session.dump("pdftex", "aux", "\\documentclass{article}");
     const poison = String.raw`\makeatletter\immediate\write\@auxout{\string\nosuchmacro}\makeatother`;

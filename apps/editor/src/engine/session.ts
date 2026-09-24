@@ -219,7 +219,10 @@ export interface CompileOptions {
    * one, and the retry as a new document takes its passes from the same budget.
    */
   maxPasses?: number;
-  /** Files to put in the job's folder before compiling. */
+  /**
+   * Files to put in the job's folder, such as a template's own files. They stay with the job, so
+   * they need passing only once, until it is forgotten or compiled with another format.
+   */
   files?: JobFiles;
 }
 
@@ -288,6 +291,8 @@ export class EngineSession {
   private readonly formatOf = new Map<string, string>();
   /** How many times each format has been put in place, by engine and name. */
   private readonly generations = new Map<string, number>();
+  /** The files each job was given, written back whenever the session clears its folder. */
+  private readonly filesOf = new Map<string, JobFiles>();
 
   private constructor(
     private readonly engine: EngineModule,
@@ -421,11 +426,13 @@ export class EngineSession {
    * auxiliary files the second reads, and any pass is repeated when the log asks for it.
    *
    * TeX reads a document's old auxiliary files before it writes new ones, so a bad line in any of
-   * them (the .aux, an included part's .aux, the .toc) stops every later compile. A document that
-   * fails after compiling before is therefore tried once more as a new document, within its
-   * budget of passes. A log cannot say reliably which file an error came from, so a failed edit
-   * is retried too: it usually costs one extra pass and never more than `maxPasses` in all.
-   * Pass `maxPasses: 1` to do without the retry.
+   * them (the .aux, an included part's .aux, the .toc) stops every later compile. A log cannot
+   * say reliably which file an error came from, so any failure of a document that compiled
+   * before is retried as a new document, within its budget of passes. A failed edit therefore
+   * costs one extra pass, or two when the document compiles as new but fails on its second
+   * pass, and never more than `maxPasses` in all. After a failure before `\begin{document}`,
+   * which leaves the old auxiliary files as they were, the next good compile runs as a new
+   * document too, in two passes. Pass `maxPasses: 1` to do without the retry.
    */
   compile(
     engine: Engine,
@@ -435,6 +442,7 @@ export class EngineSession {
   ): CompileResult {
     const job = options.job ?? "doc";
     checkName("job", job);
+    for (const name of Object.keys(options.files ?? {})) checkFileName(name);
     const spec = ENGINES[engine];
     let formatPath = spec.stockFormat;
     let formatKey = `${engine}:stock`;
@@ -447,26 +455,32 @@ export class EngineSession {
     }
     if (this.formatOf.get(job) !== formatKey) this.forget(job);
     this.formatOf.set(job, formatKey);
+    if (options.files) this.filesOf.set(job, { ...this.filesOf.get(job), ...options.files });
 
     this.tally.take();
     const maxPasses = options.maxPasses ?? 3;
-    let attempt = this.passes(spec, formatPath, job, body, options.files, maxPasses);
+    let attempt = this.passes(spec, formatPath, job, body, maxPasses);
     const left = maxPasses - attempt.passes.length;
     if (!attempt.ok && !attempt.fresh && left > 0) {
-      this.forget(job);
-      this.formatOf.set(job, formatKey);
-      const again = this.passes(spec, formatPath, job, body, options.files, left);
+      this.clearFolder(job);
+      const again = this.passes(spec, formatPath, job, body, left);
       attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
     }
     const { fresh: _, ...result } = attempt;
     return { ...result, fetched: this.tally.take() };
   }
 
-  /** Remove a job's folder, so its next compile starts as a new document. */
+  /** Forget a job: its folder, its files and its format, so its next compile starts afresh. */
   forget(job: string) {
     checkName("job", job);
-    this.removeTree(`${JOBS}/${job}`);
+    this.clearFolder(job);
     this.formatOf.delete(job);
+    this.filesOf.delete(job);
+  }
+
+  /** Remove a job's folder, so it compiles as a new document; its files are written back. */
+  private clearFolder(job: string) {
+    this.removeTree(`${JOBS}/${job}`);
   }
 
   /** Compile a job's body once, and again while it is new or its log asks. */
@@ -475,13 +489,12 @@ export class EngineSession {
     formatPath: string,
     job: string,
     body: string,
-    files: JobFiles | undefined,
     maxPasses: number,
   ): Omit<CompileResult, "fetched"> & { fresh: boolean } {
     const folder = `${JOBS}/${job}`;
     const at = (extension: string) => `${folder}/${job}.${extension}`;
     this.engine.FS.mkdirTree(folder);
-    this.writeFiles(folder, files ?? {});
+    this.writeFiles(folder, this.filesOf.get(job) ?? {});
     this.engine.FS.writeFile(at("tex"), body);
     const fresh = !this.engine.FS.analyzePath(at("aux")).exists;
     const passes: number[] = [];
