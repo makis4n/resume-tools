@@ -3,8 +3,9 @@
  *
  * Every glyph becomes a `<use>` of a shared outline in `<defs>`, carrying the field id
  * and character offset it resolves to as data attributes, so a click on the page is a
- * DOM lookup. Coordinates are in TeX points with the origin at the page's top-left
- * corner; the DVI origin sits one inch in from that.
+ * DOM lookup. A glyph's hit area is its bounding box rather than its ink, so a click in
+ * the hole of an "o" still lands on it. Coordinates are in TeX points with the origin at
+ * the page's top-left corner; the DVI origin sits one inch in from that.
  */
 
 import type { DviDocument, DviPage, NativeFont } from "./dvi";
@@ -18,7 +19,8 @@ export interface PageSize {
 }
 
 export const US_LETTER: PageSize = { width: 614.295, height: 794.97 };
-const INCH = 72.27;
+/** One inch in TeX points: the DVI origin sits this far in from the page's top-left corner. */
+export const INCH = 72.27;
 
 /** Outlines of an OpenType or TrueType font XeTeX used directly, by glyph index. */
 export interface NativeOutlines {
@@ -186,7 +188,7 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
   });
 
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size.width} ${size.height}" width="${size.width}pt" height="${size.height}pt">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size.width} ${size.height}" width="${size.width}pt" height="${size.height}pt" pointer-events="bounding-box">`,
     `<defs>${[...defs.values()].join("")}</defs>`,
     `<rect width="${size.width}" height="${size.height}" fill="white"/>`,
     ...body,

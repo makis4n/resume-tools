@@ -43,6 +43,8 @@ describe("renderPage with XeTeX native fonts", () => {
     const s = (font.size * pt) / 1000;
     expect(svg).toContain(`transform="matrix(${s} 0 0 ${-s} 0 0)"`);
     expect(svg).toContain(`viewBox="0 0 ${US_LETTER.width} ${US_LETTER.height}"`);
+    // Glyphs are hit by their bounding boxes, not their ink.
+    expect(svg).toContain('pointer-events="bounding-box"');
   });
 });
 
