@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { engineAvailable, startNodeSession } from "./node";
-import type { EngineSession } from "./session";
+import type { Engine, EngineSession } from "./session";
 
 const PREAMBLE = String.raw`\documentclass{article}
 \usepackage[hidelinks]{hyperref}`;
@@ -131,6 +131,29 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       session.compile("pdftex", "stock", "", { job: "x", files: { "../x.tex": "" } }),
     ).toThrow();
   });
+
+  it("refuses an engine it does not have before it writes anything", () => {
+    // The engine is part of a format's path, so an unchecked one could put a file anywhere.
+    for (const engine of ["../jobs/doc", "toString", ""] as unknown as Engine[]) {
+      expect(() => session.putFormat(engine, "x", new Uint8Array(1))).toThrow("no engine named");
+      expect(() => session.dump(engine, "x", PREAMBLE)).toThrow("no engine named");
+      expect(() => session.compile(engine, "stock", "")).toThrow("no engine named");
+    }
+    const fs = (session as unknown as { engine: { FS: { readdir(path: string): string[] } } })
+      .engine.FS;
+    expect(fs.readdir("/home/web_user/jobs")).not.toContain("doc-x.fmt");
+  });
+
+  it("refuses a budget of passes that is not a whole number from 1", () => {
+    // Without a finite budget, a document whose log always asks for a rerun would never stop.
+    const body = "\\documentclass{article}\\begin{document}x\\end{document}";
+    for (const maxPasses of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])
+      expect(
+        () => session.compile("pdftex", "stock", body, { job: "budget", maxPasses }),
+        String(maxPasses),
+      ).toThrow("maxPasses");
+    expect(session.compile("pdftex", "stock", body, { job: "budget", maxPasses: 1 }).ok).toBe(true);
+  }, 30_000);
 
   it("puts a template's files beside the preamble and the document", () => {
     const files = { "greeting.sty": "\\ProvidesPackage{greeting}\\newcommand\\greet{Hello}" };

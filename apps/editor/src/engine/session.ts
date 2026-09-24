@@ -215,8 +215,9 @@ export interface CompileOptions {
   /** The document's name, and the name of its folder; one per open document. Defaults to "doc". */
   job?: string;
   /**
-   * Passes at most, 3 by default. A pass is repeated when the document is new or the log asks for
-   * one, and the retry as a new document takes its passes from the same budget.
+   * Passes at most, a whole number from 1, and 3 by default. A pass is repeated when the document
+   * is new or the log asks for one, and the retry as a new document takes its passes from the same
+   * budget.
    */
   maxPasses?: number;
   /**
@@ -241,6 +242,14 @@ const checkFileName = (name: string) => {
 const checkFormatName = (name: string) => {
   checkName("format", name);
   if (name === "stock") throw new Error("stock is the engine's own format and cannot be replaced");
+};
+/** The engine is part of a format's path, so it must be one of ours, whatever the caller sent. */
+const checkEngine = (engine: Engine) => {
+  if (!Object.hasOwn(ENGINES, engine)) throw new Error(`no engine named ${engine}`);
+};
+const checkPasses = (maxPasses: number) => {
+  if (!Number.isInteger(maxPasses) || maxPasses < 1)
+    throw new Error(`maxPasses must be a whole number from 1: ${maxPasses}`);
 };
 
 class Tally {
@@ -390,6 +399,7 @@ export class EngineSession {
    * stands for one template, so another template needs another name.
    */
   dump(engine: Engine, name: string, preamble: string, files: JobFiles = {}): DumpResult {
+    checkEngine(engine);
     checkFormatName(name);
     const spec = ENGINES[engine];
     const folder = `${BUILDS}/${name}`;
@@ -429,6 +439,7 @@ export class EngineSession {
    * `dump`, a name stands for one template, and putting it again keeps its jobs' files.
    */
   putFormat(engine: Engine, name: string, format: Uint8Array) {
+    checkEngine(engine);
     checkFormatName(name);
     this.install(engine, name, format);
   }
@@ -455,7 +466,10 @@ export class EngineSession {
     options: CompileOptions = {},
   ): CompileResult {
     const job = options.job ?? "doc";
+    const maxPasses = options.maxPasses ?? 3;
+    checkEngine(engine);
     checkName("job", job);
+    checkPasses(maxPasses);
     for (const name of Object.keys(options.files ?? {})) checkFileName(name);
     const spec = ENGINES[engine];
     const key = `${engine}:${format}`;
@@ -475,7 +489,6 @@ export class EngineSession {
     if (options.files) this.filesOf.set(job, { ...this.filesOf.get(job), ...options.files });
 
     this.tally.take();
-    const maxPasses = options.maxPasses ?? 3;
     let attempt = this.passes(spec, formatPath, job, body, maxPasses);
     const left = maxPasses - attempt.passes.length;
     if (!attempt.ok && !attempt.fresh && left > 0) {
