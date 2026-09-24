@@ -62,16 +62,3 @@ export function summariseLog(log: string): LogSummary {
     rerun: asksForRerun(lines),
   };
 }
-
-/**
- * True when TeX stopped on an error while reading the job's `.aux` file, which LaTeX reads at
- * `\begin{document}` before writing a new one: the log opened `(./<job>.aux` and closed no file
- * between that and the error.
- */
-export function failedInAux(log: string, job: string): boolean {
-  const error = log.search(/^! /m);
-  if (error < 0) return false;
-  const before = log.slice(0, error);
-  const opened = before.lastIndexOf(`(./${job}.aux`);
-  return opened >= 0 && !before.slice(opened).includes(")");
-}

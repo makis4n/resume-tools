@@ -17,7 +17,7 @@
  * another, read another's text, or overwrite a format.
  */
 
-import { failedInAux, summariseLog } from "./log";
+import { summariseLog } from "./log";
 import { filenameDatabase } from "./lsr";
 import type { EngineManifest } from "./manifest";
 
@@ -420,9 +420,11 @@ export class EngineSession {
    * `\begin{document}` on. A new document gets a second pass, since the first writes the
    * auxiliary files the second reads, and any pass is repeated when the log asks for it.
    *
-   * TeX reads a document's old auxiliary files before it writes new ones, so a bad line in them
-   * stops every later compile. A compile that stops while reading them is therefore tried once
-   * more as a new document.
+   * TeX reads a document's old auxiliary files before it writes new ones, so a bad line in any of
+   * them (the .aux, an included part's .aux, the .toc) stops every later compile. A document that
+   * fails after compiling before is therefore tried once more as a new document, within its
+   * budget of passes. A log cannot say reliably which file an error came from, so an error in
+   * the body costs one extra pass too; pass `maxPasses: 1` to do without the retry.
    */
   compile(
     engine: Engine,
@@ -449,7 +451,7 @@ export class EngineSession {
     const maxPasses = options.maxPasses ?? 3;
     let attempt = this.passes(spec, formatPath, job, body, options.files, maxPasses);
     const left = maxPasses - attempt.passes.length;
-    if (!attempt.ok && !attempt.fresh && left > 0 && failedInAux(attempt.log, job)) {
+    if (!attempt.ok && !attempt.fresh && left > 0) {
       this.forget(job);
       this.formatOf.set(job, formatKey);
       const again = this.passes(spec, formatPath, job, body, options.files, left);

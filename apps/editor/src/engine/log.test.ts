@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { failedInAux, summariseLog } from "./log";
+import { summariseLog } from "./log";
 
 describe("summariseLog", () => {
   it("reads the page count from a clean run", () => {
@@ -74,19 +74,5 @@ describe("summariseLog", () => {
     // A warning ends where a line stops carrying it on.
     const after = "LaTeX Warning: Something changed.\nRerun the nightly jobs";
     expect(summariseLog(after).rerun).toBe(false);
-  });
-});
-
-describe("failedInAux", () => {
-  it("is true only for an error while the job's .aux was open", () => {
-    const inAux = "(./doc.tex\n(./doc.aux\n! Undefined control sequence.\nl.3 \\nosuchmacro";
-    expect(failedInAux(inAux, "doc")).toBe(true);
-    const inBody =
-      "(./doc.tex\n(./doc.aux) (./doc.out)\n! Undefined control sequence.\nl.9 \\nosuchmacro";
-    expect(failedInAux(inBody, "doc")).toBe(false);
-    expect(failedInAux(inAux, "other")).toBe(false);
-    expect(failedInAux("(./doc.aux)\nOutput written on doc.dvi (1 page, 812 bytes).", "doc")).toBe(
-      false,
-    );
   });
 });

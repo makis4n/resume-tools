@@ -274,26 +274,44 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     expect(clean.passes.length).toBe(3);
   }, 60_000);
 
-  it("runs a failed edit once, and retries only within the passes allowed", () => {
+  it("retries a failed edit once, within the passes allowed", () => {
     session.dump("pdftex", "budget", PREAMBLE);
     const ok = "\\begin{document}x\\end{document}";
+    const broken = "\\begin{document}\\nosuchmacro\\end{document}";
     expect(session.compile("pdftex", "budget", ok, { job: "budget" }).ok).toBe(true);
-    // An error in the body is not the old .aux's fault: no retry.
-    const broken = session.compile(
-      "pdftex",
-      "budget",
-      "\\begin{document}\\nosuchmacro\\end{document}",
+    // The failed pass, then one as a new document, which stops on the same error.
+    const retried = session.compile("pdftex", "budget", broken, { job: "budget" });
+    expect(retried.error).toBe("Undefined control sequence.");
+    expect(retried.passes.length).toBe(2);
+    // With one pass allowed there is no retry.
+    expect(session.compile("pdftex", "budget", ok, { job: "budget" }).ok).toBe(true);
+    const once = session.compile("pdftex", "budget", broken, { job: "budget", maxPasses: 1 });
+    expect(once.passes.length).toBe(1);
+  }, 60_000);
+
+  it("recovers from a bad line in any auxiliary file", () => {
+    session.dump("pdftex", "aux", "\\documentclass{article}");
+    const poison = String.raw`\makeatletter\immediate\write\@auxout{\string\nosuchmacro}\makeatother`;
+    const cases: { files: Record<string, string>; bad: string; good: string }[] = [
       {
-        job: "budget",
+        // The main .aux, read after an included part's own .aux.
+        files: { "part.tex": "\\section{Part}Included." },
+        bad: `\\begin{document}\\include{part}${poison} x\\end{document}`,
+        good: "\\begin{document}\\include{part}x\\end{document}",
       },
-    );
-    expect(broken.passes.length).toBe(1);
-    // A poisoned .aux with one pass allowed: the failed pass is all there is.
-    const poison = String.raw`\begin{document}\makeatletter\immediate\write\@auxout{\string\nosuchmacro}\makeatother x\end{document}`;
-    session.compile("pdftex", "budget", poison, { job: "budget" });
-    const one = session.compile("pdftex", "budget", ok, { job: "budget", maxPasses: 1 });
-    expect(one.ok).toBe(false);
-    expect(one.passes.length).toBe(1);
+      {
+        // The .toc, which \tableofcontents reads before it writes a new one.
+        files: {},
+        bad: "\\begin{document}\\DeclareRobustCommand\\foo{X}\\tableofcontents\\section{A \\foo}\\end{document}",
+        good: "\\begin{document}\\tableofcontents\\section{A}\\end{document}",
+      },
+    ];
+    cases.forEach(({ files, bad, good }, i) => {
+      const job = `aux${i}`;
+      session.compile("pdftex", "aux", bad, { job, files });
+      const result = session.compile("pdftex", "aux", good, { job, files });
+      expect(result.error, job).toBeUndefined();
+    });
   }, 60_000);
 
   it("settles a document with hyperref in one pass after the first compile", () => {
