@@ -20,6 +20,7 @@
 import { summariseLog } from "./log";
 import { filenameDatabase } from "./lsr";
 import type { EngineManifest } from "./manifest";
+import { isFileName, NAME } from "./names";
 
 export type Engine = "pdftex" | "xetex";
 
@@ -230,13 +231,11 @@ export interface CompileOptions {
   files?: JobFiles;
 }
 
-const NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const checkName = (kind: string, name: string) => {
   if (!NAME.test(name)) throw new Error(`${kind} name must be letters, digits, - and _: ${name}`);
 };
 const checkFileName = (name: string) => {
-  if (!name || name.includes("/") || name.startsWith("."))
-    throw new Error(`not a plain file name: ${name}`);
+  if (!isFileName(name)) throw new Error(`not a plain file name: ${name}`);
 };
 /** A name for a format `dump` or `putFormat` makes; `stock` means the engine's own format. */
 const checkFormatName = (name: string) => {

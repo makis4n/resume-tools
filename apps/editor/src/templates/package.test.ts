@@ -19,6 +19,7 @@ import {
   ITEM_SLOTS,
   LABELLED_ITEM_SLOTS,
   LINK_SLOTS,
+  pageSizeFor,
   parsePackage,
   SECTION_SLOTS,
   TemplatePackage,
@@ -243,5 +244,52 @@ describe("slot vocabularies", () => {
       expect(slots(SECTION_SLOTS[option.shape.kind.value])).toEqual(
         fields(option, "id", "kind", "role", "extras"),
       );
+  });
+});
+
+describe("names the engine accepts", () => {
+  it("needs an id the session takes as a format name", () => {
+    const withId = (id: string) =>
+      plainWith((pkg) => {
+        pkg.id = id;
+      });
+    expect(issues(withId("plain"))).toEqual([]);
+    for (const id of ["stock", "_plain", "-plain"])
+      expect(issues(withId(id)).map((issue) => issue.path)).toEqual(["id"]);
+  });
+
+  it("needs plain file names", () => {
+    const withFile = (name: string) =>
+      plainWith((pkg) => {
+        pkg.files = { [name]: "" };
+      });
+    expect(issues(withFile("plain.sty"))).toEqual([]);
+    for (const name of ["fonts/x.sty", ".hidden", ""])
+      expect(issues(withFile(name)).map((issue) => issue.path)).toEqual([`files.${name}`]);
+  });
+});
+
+describe("pageSizeFor", () => {
+  it("follows CLDR's paper sizes, with A4 for a locale it cannot read", () => {
+    for (const locale of ["en-US", "es-MX", "tl-PH", "en"]) {
+      expect(pageSizeFor(locale)).toBe("letter");
+    }
+    for (const locale of ["en-GB", "de-CH", "pt-BR", "x", ""]) {
+      expect(pageSizeFor(locale)).toBe("a4");
+    }
+  });
+});
+
+describe("defaultControls with a locale", () => {
+  it("takes the page size from the locale when the package offers the control", () => {
+    const a4 = parsePackage(
+      plainWith((pkg) => {
+        pkg.controls = { pageSize: { default: "a4", apply: { letter: "", a4: "" } } };
+      }),
+    );
+    expect(defaultControls(a4, "en-US").pageSize).toBe("letter");
+    expect(defaultControls(a4, "en-GB").pageSize).toBe("a4");
+    expect(defaultControls(a4).pageSize).toBe("a4");
+    expect(defaultControls(parsePackage(plain), "en-US")).toEqual({ dateFormat: "MMM yyyy" });
   });
 });

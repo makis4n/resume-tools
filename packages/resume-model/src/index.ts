@@ -5,7 +5,9 @@ import { z } from "zod";
  * template it uses. Decision 0006 settles it, and docs/plan.md section 5.2 says why there is one.
  *
  * It checks structure, not content. Any text may be empty, because an edit passes through the
- * empty string on its way to anything else, so only ids, dates and kinds are constrained.
+ * empty string on its way to anything else, so only ids, dates and kinds are constrained. Its
+ * objects are strict: a document with a field this version does not know is refused rather than
+ * read with the field dropped, so an older editor never saves a newer document without part of it.
  *
  * Every node a field lives on has an id, unique across the document, and a field is named by its
  * node's id and its own name: `<entry id>.title`, `<bullet id>.text`, and `header.first` and so on
@@ -34,14 +36,14 @@ export const YearMonth = z
 export type YearMonth = z.infer<typeof YearMonth>;
 
 /** `end: "present"` means ongoing, and `start` alone is a single date, such as an award's. */
-export const Dates = z.object({
+export const Dates = z.strictObject({
   start: YearMonth,
   end: z.union([YearMonth, z.literal("present")]).optional(),
 });
 export type Dates = z.infer<typeof Dates>;
 
 /** A run of text with one set of marks. An `href` makes it a link, and the generator escapes it. */
-export const Run = z.object({
+export const Run = z.strictObject({
   text: z.string(),
   bold: z.boolean().optional(),
   italic: z.boolean().optional(),
@@ -52,20 +54,20 @@ export type Run = z.infer<typeof Run>;
 export const RichText = z.array(Run);
 export type RichText = z.infer<typeof RichText>;
 
-export const Bullet = z.object({ id: Id, text: RichText });
+export const Bullet = z.strictObject({ id: Id, text: RichText });
 export type Bullet = z.infer<typeof Bullet>;
 
-export const Item = z.object({ id: Id, text: RichText });
+export const Item = z.strictObject({ id: Id, text: RichText });
 export type Item = z.infer<typeof Item>;
 
 /** An item with a label before it, such as a kind of skill and the skills. */
-export const LabelledItem = z.object({ id: Id, label: z.string(), text: RichText });
+export const LabelledItem = z.strictObject({ id: Id, label: z.string(), text: RichText });
 export type LabelledItem = z.infer<typeof LabelledItem>;
 
 export const Extras = z.record(z.string(), z.unknown());
 export type Extras = z.infer<typeof Extras>;
 
-export const Entry = z.object({
+export const Entry = z.strictObject({
   id: Id,
   title: z.string(),
   subtitle: z.string().optional(),
@@ -103,10 +105,10 @@ export type SectionRole = z.infer<typeof SectionRole>;
 const sectionBase = { id: Id, title: z.string(), role: SectionRole, extras: Extras.optional() };
 
 export const Section = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("entries"), ...sectionBase, entries: z.array(Entry) }),
-  z.object({ kind: z.literal("list"), ...sectionBase, items: z.array(Item) }),
-  z.object({ kind: z.literal("labelled"), ...sectionBase, items: z.array(LabelledItem) }),
-  z.object({ kind: z.literal("paragraph"), ...sectionBase, text: RichText }),
+  z.strictObject({ kind: z.literal("entries"), ...sectionBase, entries: z.array(Entry) }),
+  z.strictObject({ kind: z.literal("list"), ...sectionBase, items: z.array(Item) }),
+  z.strictObject({ kind: z.literal("labelled"), ...sectionBase, items: z.array(LabelledItem) }),
+  z.strictObject({ kind: z.literal("paragraph"), ...sectionBase, text: RichText }),
 ]);
 export type Section = z.infer<typeof Section>;
 
@@ -115,17 +117,17 @@ export const LINK_KINDS = ["website", "linkedin", "github", "twitter", "orcid", 
 export const LinkKind = z.enum(LINK_KINDS);
 export type LinkKind = z.infer<typeof LinkKind>;
 
-export const Link = z.object({ id: Id, kind: LinkKind, label: z.string(), href: z.string() });
+export const Link = z.strictObject({ id: Id, kind: LinkKind, label: z.string(), href: z.string() });
 export type Link = z.infer<typeof Link>;
 
 /**
  * The name is stored split, because Awesome-CV takes it as two arguments, and joining two parts
  * is trivial where splitting one is not. `last` may be empty.
  */
-export const Name = z.object({ first: z.string(), last: z.string() });
+export const Name = z.strictObject({ first: z.string(), last: z.string() });
 export type Name = z.infer<typeof Name>;
 
-export const Header = z.object({
+export const Header = z.strictObject({
   name: Name,
   headline: z.string().optional(),
   email: z.string().optional(),

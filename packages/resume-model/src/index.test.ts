@@ -176,3 +176,15 @@ describe("Resume", () => {
     expect(accepts(named({ first: "Rowan", last: "" }))).toBe(true);
   });
 });
+
+describe("Resume, being strict", () => {
+  it("refuses a field it does not know rather than dropping it", () => {
+    const result = Resume.safeParse({
+      ...minimal,
+      sections: [{ kind: "list", id: "s", title: "", role: "other", items: [], column: "right" }],
+    });
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual([
+      'Unrecognized key: "column"',
+    ]);
+  });
+});

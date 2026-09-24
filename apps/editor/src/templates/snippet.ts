@@ -37,8 +37,13 @@ export class SnippetError extends Error {
 /** What a slot holds, which decides how a snippet may use it. */
 export type SlotType = "text" | "rich" | "date" | "url" | "list";
 
-/** Two braces, an optional sigil, a name and two braces, with whitespace allowed in between. */
-const TAG = /\{\{\s*([&#^/]?)\s*([A-Za-z][A-Za-z0-9]*)\s*\}\}/y;
+/**
+ * Two braces, an optional sigil, a name and two braces, with whitespace allowed in between. The
+ * whitespace after the sigil sits inside the sigil's optional group. With a `\s*` on each side of
+ * an optional sigil, a `{{` followed by a long run of whitespace that begins no tag is tried once
+ * for every way of splitting the run between the two, and packages will come from other users.
+ */
+const TAG = /\{\{\s*(?:([&#^/])\s*)?([A-Za-z][A-Za-z0-9]*)\s*\}\}/y;
 
 interface Tag {
   sigil: string;
@@ -101,8 +106,18 @@ export function checkSnippet(
 ): string[] {
   const problems = new Set<string>();
   const names = Object.keys(slots);
-  const visit = (node: SnippetNode) => {
-    if (node.kind === "text") return;
+  // An explicit stack rather than recursion: the parser nests blocks to any depth, and a snippet
+  // deep enough to overflow the call stack would throw out of Zod's safeParse instead of failing.
+  const stack: SnippetNode[] = [];
+  const push = (list: SnippetNode[]) => {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const node = list[i];
+      if (node) stack.push(node);
+    }
+  };
+  push(nodes);
+  for (let node = stack.pop(); node; node = stack.pop()) {
+    if (node.kind === "text") continue;
     // Own names only, since every object inherits a `constructor`.
     const type = Object.hasOwn(slots, node.name) ? slots[node.name] : undefined;
     if (type === undefined) {
@@ -113,9 +128,8 @@ export function checkSnippet(
     } else if (node.kind === "slot" && type === "list" && node.raw) {
       problems.add(`${node.name} is a list, so it goes in as {{${node.name}}} or names a block`);
     }
-    if (node.kind === "block") node.children.forEach(visit);
-  };
-  nodes.forEach(visit);
+    if (node.kind === "block") push(node.children);
+  }
   return [...problems];
 }
 
@@ -143,17 +157,23 @@ function scan(source: string): Tag[] {
 /**
  * What a tag takes out of the text. A block tag with nothing but spaces and tabs around it on its
  * line takes the line and its line break; a slot, or a tag sharing its line, takes only itself.
+ * Only the blanks next to the tag are read, never the rest of its line, so a line of many tags
+ * costs its length once rather than once per tag.
  */
 function span(source: string, start: number, end: number, sigil: string) {
-  if (sigil === "" || sigil === "&") return { from: start, to: end };
-  const lineStart = source.lastIndexOf("\n", start - 1) + 1;
-  const newline = source.indexOf("\n", end);
-  const lineEnd = newline < 0 ? source.length : newline + 1;
-  const alone =
-    /^[ \t]*$/.test(source.slice(lineStart, start)) &&
-    /^[ \t]*\r?\n?$/.test(source.slice(end, lineEnd));
-  return alone ? { from: lineStart, to: lineEnd } : { from: start, to: end };
+  const own = { from: start, to: end };
+  if (sigil === "" || sigil === "&") return own;
+  let from = start;
+  while (from > 0 && isBlank(source[from - 1])) from--;
+  if (from > 0 && source[from - 1] !== "\n") return own;
+  let to = end;
+  while (to < source.length && isBlank(source[to])) to++;
+  if (source[to] === "\r") to++;
+  if (to < source.length && source[to] !== "\n") return own;
+  return { from, to: Math.min(to + 1, source.length) };
 }
+
+const isBlank = (char: string | undefined) => char === " " || char === "\t";
 
 /** A tag as an error names it, with its offset. */
 function show(tag: Tag) {

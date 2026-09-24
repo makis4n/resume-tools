@@ -22,6 +22,7 @@ import {
   type SectionRole,
 } from "@resume-tools/resume-model";
 import { z } from "zod";
+import { isFileName, isFormatName } from "../engine/names";
 import type { Engine as SessionEngine } from "../engine/session";
 import {
   checkSnippet,
@@ -99,6 +100,7 @@ function byRole<T extends z.ZodType>(schema: T) {
 const Engine = z.enum({ pdftex: "pdftex", xetex: "xetex" } satisfies { [E in SessionEngine]: E });
 
 const PageSize = z.enum(["letter", "a4"]);
+type PageSize = z.infer<typeof PageSize>;
 /**
  * Inches, the same on every side. `multipleOf` allows for floating point, in which 0.7 / 0.1 is
  * 6.999999999999999.
@@ -197,14 +199,22 @@ const Snippets = z.strictObject({
 export const TemplatePackage = z
   .strictObject({
     version: z.literal(1),
-    /** Names the template's formats, and the folder a curated package is written in. */
-    id: Id,
+    /**
+     * Names the template's formats, and the folder a curated package is written in, so the engine
+     * must take it as a format name: it starts with a letter or digit, and it is not `stock`.
+     */
+    id: Id.refine(isFormatName, "a package id starts with a letter or digit and is not stock"),
     name: z.string(),
     engine: Engine,
     /** Where the template came from, and the licence and attribution a port keeps. */
     source: z.strictObject({ url: z.string(), license: z.string(), attribution: z.string() }),
-    /** Class and style files the preamble loads, by file name, as text. */
-    files: z.record(z.string(), z.string()).default({}),
+    /** Class and style files the preamble loads, by plain file name, as text. */
+    files: z
+      .record(
+        z.string().refine(isFileName, "a file name is one segment and not hidden"),
+        z.string(),
+      )
+      .default({}),
     /** Everything before `\begin{document}`, dumped as the format. */
     preamble: Snippet,
     controls: Controls,
@@ -294,15 +304,51 @@ export const ControlValues = z.strictObject({
 } satisfies Record<keyof Controls, z.ZodType>);
 export type ControlValues = z.infer<typeof ControlValues>;
 
+/** The regions that print on US Letter, from CLDR's paper-size data; the rest use A4. */
+const LETTER_REGIONS = new Set([
+  "BZ",
+  "CA",
+  "CL",
+  "CO",
+  "CR",
+  "GT",
+  "MX",
+  "NI",
+  "PA",
+  "PH",
+  "PR",
+  "SV",
+  "US",
+  "VE",
+]);
+
+/**
+ * The page size a locale implies, which plan section 5.4 makes a new document's default: the
+ * browser's `navigator.language`, filled out to a region and looked up in CLDR's paper sizes. A
+ * locale that cannot be read gets A4, as most of the world does.
+ */
+export function pageSizeFor(locale: string): PageSize {
+  try {
+    const region = new Intl.Locale(locale).maximize().region;
+    return region !== undefined && LETTER_REGIONS.has(region) ? "letter" : "a4";
+  } catch {
+    return "a4";
+  }
+}
+
 /**
  * The choices a new document starts with: the default of each control the package offers, and of
- * the date format, which is "MMM yyyy" when the package sets none. Controls the package does not
- * offer stay absent.
+ * the date format, which is "MMM yyyy" when the package sets none. The page size follows the
+ * locale instead when one is given, as plan section 5.4 rules. Controls the package does not offer
+ * stay absent.
  */
-export function defaultControls(pkg: TemplatePackage): ControlValues & { dateFormat: DateFormat } {
+export function defaultControls(
+  pkg: TemplatePackage,
+  locale?: string,
+): ControlValues & { dateFormat: DateFormat } {
   const { pageSize, margins, fontSize, font, accent, density, dateFormat } = pkg.controls;
   return {
-    ...(pageSize && { pageSize: pageSize.default }),
+    ...(pageSize && { pageSize: locale === undefined ? pageSize.default : pageSizeFor(locale) }),
     ...(margins && { margins: margins.default }),
     ...(fontSize && { fontSize: fontSize.default }),
     ...(font && { font: font.default }),

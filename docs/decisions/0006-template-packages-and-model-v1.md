@@ -22,11 +22,11 @@ A package is one JSON value, which `apps/editor/src/templates/package.ts` valida
 | Field | What it holds |
 |---|---|
 | `version` | `1` |
-| `id` | a model id; it names the template's formats and the folder a curated package lives in |
+| `id` | a model id the engine also takes as a format name, since it names the template's formats and the folder a curated package lives in: it starts with a letter or digit and is not `stock` |
 | `name` | the name the user sees |
 | `engine` | `pdftex` or `xetex` |
 | `source` | the template's `url`, `license` and `attribution`, kept as its licence asks |
-| `files` | class and style files by file name, as text |
+| `files` | class and style files by plain file name, one segment that does not start with a dot, as text |
 | `preamble` | everything before `\begin{document}`, dumped as the format |
 | `controls` | the style controls the template offers, and how each is applied |
 | `snippets` | how each part of the model is set with the template's macros |
@@ -37,7 +37,10 @@ assembled value. A package holds no marker macros: `\rtfield` and the paragraph 
 decision 0004 are the editor's, and the generator appends them to the preamble when it dumps the
 format, after the template's own preamble so that they see hyperref when it loads. The schema is
 strict: every snippet must parse and use only its place's slots, as their types allow, and an
-unknown key, such as a misspelt role, is an error rather than ignored.
+unknown key, such as a misspelt role, is an error rather than ignored. An id is unique across
+every package the editor holds: curated ids are words, and milestone 3 mints imported ids from
+the package's content under a prefix no curated package uses, so an import cannot take over a
+curated template's format.
 
 ### The snippet language
 
@@ -65,7 +68,9 @@ and joined by a separator. A URL is only raw, as in `\href{{{&href}}}{{{label}}}
 would end up in the address, and raw text serves wherever else a marker would break, as in
 `\href{mailto:{{&email}}}`. A list goes in typeset or names a block, never raw. User text enters
 LaTeX only through slots, which the generator escapes, so keeping it from acting as LaTeX is the
-generator's job and never a template's.
+generator's job and never a template's. Packages will come from other users, so the parser's cost
+grows only with a snippet's length, whatever the snippet holds, and the checker does not recurse:
+a crafted package can neither stall validation nor crash it.
 
 | Snippet | Slots |
 |---|---|
@@ -128,13 +133,17 @@ is marked `format`: its value is also a slot of the preamble, named after the co
 format is dumped for each combination of the format-bound values. The preamble has no other
 slots, and a control's value is not a field, so it is never marked. The generator formats every
 date, so every package has the date format control and may only choose its default, `MMM yyyy`
-when the package says nothing. A choice a document leaves out is the package's default.
+when the package says nothing. A new document starts on the package's defaults, except the page
+size, which plan section 5.4 takes from the browser's locale: US Letter in the regions CLDR lists
+for it, A4 everywhere else. A choice a document leaves out is the package's default.
 
 ### Model version 1
 
 `packages/resume-model` holds the model as Zod schemas, which check structure, not content: any
 text may be empty, because an edit passes through the empty string, and only ids, dates and
-kinds are constrained.
+kinds are constrained. The objects are strict, as a package's are: a document with a field this
+version does not know is refused, never read with the field dropped, so an older editor cannot
+save a newer document without part of it.
 
 ```
 Resume     { version: 1, header, sections: Section[] }
@@ -190,6 +199,7 @@ has and the model lacks, never typeset until the pipeline needs them; the draft'
   decision record, never code in a package.
 - The marker strategy that plan section 5.1 gives each package becomes one rule, that every
   typeset slot is marked, and the pipeline's probe step checks that the markers survive.
-- Adding a role, a link kind or a control is additive; removing or renaming one needs a new
-  version of the model or the package format. A strict schema refuses a package written for a
-  newer editor rather than rendering it wrongly.
+- Adding a role, a link kind, a control or a field is additive for every reader that knows it,
+  and a loud refusal from one that does not; removing or renaming one needs a new version of the
+  model or the package format. Strict schemas refuse a document or a package written for a newer
+  editor rather than reading it wrongly.

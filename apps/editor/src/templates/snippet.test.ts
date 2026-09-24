@@ -146,3 +146,23 @@ describe("checkSnippet", () => {
     ]);
   });
 });
+
+describe("crafted snippets", () => {
+  it("checks deep nesting without recursing", () => {
+    const depth = 100_000;
+    const nodes = parseSnippet("{{#x}}".repeat(depth) + "{{/x}}".repeat(depth));
+    expect(checkSnippet(nodes, { title: "text" })).toEqual([
+      "there is no slot x here; the slots are title",
+    ]);
+  });
+
+  it("costs time in proportion to the snippet's length, whatever it holds", () => {
+    // Both took seconds while the tag regex and the standalone-line test scanned quadratically.
+    const blanks = `{{${"\n".repeat(200_000)}\\relax}}`;
+    const tags = "{{#a}}{{/a}}".repeat(50_000);
+    const started = performance.now();
+    expect(parseSnippet(blanks)).toEqual([text(blanks)]);
+    expect(parseSnippet(tags)).toHaveLength(50_000);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+});
