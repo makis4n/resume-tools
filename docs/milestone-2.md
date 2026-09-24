@@ -86,8 +86,9 @@ end to end before the other two templates, so that the editing loop is proven on
 7. [ ] **Run the validation harness in CI.** For each curated package, compile the sample in Node
    and check that two passes converge, that every field keeps its markers and its glyphs align
    with its text, and that it fits the page count the package declares. The PDF and the controls
-   join the harness when they land. A CI job restores `.engine/` from a cache keyed on the
-   fetch script's pinned hashes. Done when a package that loses a marker fails CI.
+   join the harness when they land. CI already builds `.engine/` from a cache keyed on the fetch
+   script (item 2), so the harness runs in the existing job. Done when a package that loses a
+   marker fails CI.
 
 ### Stage 3. Editing on the page
 
@@ -117,7 +118,9 @@ end to end before the other two templates, so that the editing loop is proven on
     creates and deletes documents.
 14. [ ] **Download a PDF, and warn about a second page.** xdvipdfmx in the worker turns the same
     DVI into the PDF. The PDF's text must be extractable, because the ATS reads it. A warning
-    shows when the DVI has more than one page.
+    shows when the DVI has more than one page. The Ubuntu bundles' font maps are not in
+    `pdftex.map`, which lists only TeX Live's basic fonts, so the fetch script has to merge them
+    first, as `updmap` would; item 16 needs the same.
 
 ### Stage 5. Style controls
 
