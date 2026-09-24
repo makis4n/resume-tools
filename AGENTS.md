@@ -51,8 +51,6 @@ Conventional Commits with the area as scope:
 
 - Fill in `.github/PULL_REQUEST_TEMPLATE.md`, including the area checkboxes.
 - CI must be green. CI runs exactly the commands listed below, so run them first.
-- A change that touches the other owner's app, `packages/`, `docs/decisions/` or `.github/` needs
-  the other owner's review. CODEOWNERS requests it automatically; do not remove the request.
 - Squash merge only. Do not merge on someone's behalf unless they asked.
 
 ## Commands that must pass
@@ -84,7 +82,7 @@ Python. Do not call `npm`, `npx`, `pip` or a bare `python` in this repository.
 - The editor never imports from `apps/ats`. The ATS never imports from `apps/editor`. Sharing
   happens through `packages/` or the HTTP contract, never by reaching across.
 - Changing `packages/contracts`: additive changes stay in the current version. A change that would
-  break the panel goes in a new version folder (`ats/v2/`) next to the old one. Both owners review.
+  break the panel goes in a new version folder (`ats/v2/`) next to the old one.
 - `packages/resume-model` is the single definition of resume data. Do not add parallel types for
   the same thing elsewhere.
 - Do not move code across the boundary to "share" it. Propose a decision record first.

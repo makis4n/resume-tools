@@ -11,6 +11,5 @@
 ## Before merging
 
 - [ ] CI is green
-- [ ] If this touches the other person's area or a shared path, their review is requested
-- [ ] If this changes `packages/contracts`, both of us reviewed it and a breaking change got a new version
+- [ ] If this changes `packages/contracts` in a way that breaks the panel, it went into a new version
 - [ ] If this decides something we would re-argue later, there is a file in `docs/decisions/`

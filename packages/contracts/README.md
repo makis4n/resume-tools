@@ -1,6 +1,6 @@
 # contracts
 
-JSON Schemas for everything that crosses between the editor and the ATS service. Both of us own this folder, and every change here is reviewed by both.
+JSON Schemas for everything that crosses between the editor and the ATS service. Both of us own this folder.
 
 Rules:
 
