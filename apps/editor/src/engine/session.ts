@@ -423,8 +423,9 @@ export class EngineSession {
    * TeX reads a document's old auxiliary files before it writes new ones, so a bad line in any of
    * them (the .aux, an included part's .aux, the .toc) stops every later compile. A document that
    * fails after compiling before is therefore tried once more as a new document, within its
-   * budget of passes. A log cannot say reliably which file an error came from, so an error in
-   * the body costs one extra pass too; pass `maxPasses: 1` to do without the retry.
+   * budget of passes. A log cannot say reliably which file an error came from, so a failed edit
+   * is retried too: it usually costs one extra pass and never more than `maxPasses` in all.
+   * Pass `maxPasses: 1` to do without the retry.
    */
   compile(
     engine: Engine,
@@ -493,19 +494,26 @@ export class EngineSession {
       run = this.run([spec.program, ...spec.args, "--fmt", formatPath, `${job}.tex`], folder);
       passes.push(run.ms);
       log = this.read(at("log"), "utf8") ?? "";
-      const again = run.code === 0 && ((fresh && passes.length === 1) || summariseLog(log).rerun);
+      // Only a pass that shipped pages is worth another: one that failed, or that TeX finished
+      // with nothing to ship, would do the same again.
+      const shipped = run.code === 0 && this.engine.FS.analyzePath(at(spec.output)).exists;
+      const again = shipped && ((fresh && passes.length === 1) || summariseLog(log).rerun);
       if (!again || passes.length >= maxPasses) break;
     }
     const summary = summariseLog(log);
     const output = run.code === 0 ? this.read(at(spec.output)) : undefined;
     const ok = output !== undefined;
+    const failure =
+      run.code === 0
+        ? "No pages of output."
+        : (summary.error ?? `${spec.program} exited with ${run.code}`);
     return {
       ok,
       output,
       pages: summary.pages,
       passes,
       log,
-      error: ok ? undefined : (summary.error ?? `${spec.program} exited with ${run.code}`),
+      error: ok ? undefined : failure,
       errorLine: ok ? undefined : summary.errorLine,
       fresh,
     };

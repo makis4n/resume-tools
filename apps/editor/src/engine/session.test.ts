@@ -289,6 +289,20 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     expect(once.passes.length).toBe(1);
   }, 60_000);
 
+  it("stops at one extra pass for an edit that ships no pages", () => {
+    session.dump("pdftex", "empty", PREAMBLE);
+    const ok = session.compile("pdftex", "empty", "\\begin{document}x\\end{document}", {
+      job: "empty",
+    });
+    expect(ok.ok).toBe(true);
+    const empty = session.compile("pdftex", "empty", "\\begin{document}\\end{document}", {
+      job: "empty",
+    });
+    expect(empty.error).toBe("No pages of output.");
+    // The failed pass and the retry as a new document, which ships nothing either.
+    expect(empty.passes.length).toBe(2);
+  }, 60_000);
+
   it("recovers from a bad line in any auxiliary file", () => {
     session.dump("pdftex", "aux", "\\documentclass{article}");
     const poison = String.raw`\makeatletter\immediate\write\@auxout{\string\nosuchmacro}\makeatother`;
