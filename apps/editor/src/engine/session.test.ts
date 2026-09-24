@@ -304,7 +304,7 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
   }, 60_000);
 
   it("keeps a job's files through a failed edit, until its format changes", () => {
-    session.dump("pdftex", "keepfiles", "\\documentclass{article}");
+    const made = session.dump("pdftex", "keepfiles", "\\documentclass{article}");
     const files = { "extra.tex": "Extra text." };
     const body = (text: string) => `\\begin{document}\\input{extra} ${text}\\end{document}`;
     const compile = (format: string, text: string, withFiles = false) =>
@@ -317,6 +317,14 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     // The retry as a new document clears the folder and writes the files back.
     expect(compile("keepfiles", "\\nosuchmacro").error).toBe("Undefined control sequence.");
     expect(compile("keepfiles", "z").ok).toBe(true);
+    // The same format made again, by a dump or put back, starts the job as a new document with
+    // its files.
+    session.dump("pdftex", "keepfiles", "\\documentclass{article}");
+    expect(compile("keepfiles", "z").passes).toHaveLength(2);
+    session.putFormat("pdftex", "keepfiles", made.format as Uint8Array);
+    const put = compile("keepfiles", "z");
+    expect(put.error).toBeUndefined();
+    expect(put.passes).toHaveLength(2);
     // Another format is another template, whose files come with it.
     session.dump("pdftex", "otherfiles", "\\documentclass{article}");
     expect(compile("otherfiles", "z").error).toBe("LaTeX Error: File `extra.tex' not found.");

@@ -285,10 +285,11 @@ function mountOnDemand(fs: EmscriptenFs, options: SessionOptions, tally: Tally) 
 
 export class EngineSession {
   /**
-   * The format each job was last compiled with, down to the dump that made it, so a job whose
-   * format changes, or is dumped again, starts again as a new document.
+   * The format each job was last compiled with, by engine and name, and the dump that made it.
+   * A job whose format changes starts again as a new document with nothing it was given before;
+   * one whose format is made again starts again as a new document and keeps its files.
    */
-  private readonly formatOf = new Map<string, string>();
+  private readonly formatOf = new Map<string, { format: string; generation: number }>();
   /** How many times each format has been put in place, by engine and name. */
   private readonly generations = new Map<string, number>();
   /** The files each job was given, written back whenever the session clears its folder. */
@@ -444,17 +445,20 @@ export class EngineSession {
     checkName("job", job);
     for (const name of Object.keys(options.files ?? {})) checkFileName(name);
     const spec = ENGINES[engine];
+    const key = `${engine}:${format}`;
     let formatPath = spec.stockFormat;
-    let formatKey = `${engine}:stock`;
+    let generation = 0;
     if (format !== "stock") {
       checkName("format", format);
-      const generation = this.generations.get(`${engine}:${format}`);
-      if (generation === undefined) throw new Error(`no ${engine} format named ${format}`);
+      const made = this.generations.get(key);
+      if (made === undefined) throw new Error(`no ${engine} format named ${format}`);
       formatPath = this.formatPath(engine, format);
-      formatKey = `${engine}:${format}:${generation}`;
+      generation = made;
     }
-    if (this.formatOf.get(job) !== formatKey) this.forget(job);
-    this.formatOf.set(job, formatKey);
+    const last = this.formatOf.get(job);
+    if (last?.format !== key) this.forget(job);
+    else if (last.generation !== generation) this.clearFolder(job);
+    this.formatOf.set(job, { format: key, generation });
     if (options.files) this.filesOf.set(job, { ...this.filesOf.get(job), ...options.files });
 
     this.tally.take();
