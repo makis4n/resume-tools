@@ -272,16 +272,21 @@ function copyOut(fs: EmscriptenFs, dir: string): Record<string, number> {
   return Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1)));
 }
 
+/** True when `.engine/` holds a finished build of this release, layout and set of bundles. */
 async function upToDate(): Promise<boolean> {
-  if (!existsSync(MANIFEST)) return false;
-  const manifest = JSON.parse(await readFile(MANIFEST, "utf8")) as EngineManifest;
-  return (
-    manifest.release === RELEASE &&
-    manifest.layout === LAYOUT &&
-    manifest.bundles.join() === BUNDLES.join() &&
-    ["busytex.js", "busytex.mjs", "busytex.wasm"].every((f) => existsSync(join(ROOT, f))) &&
-    REQUIRED.every((path) => existsSync(join(FILES, path)))
-  );
+  try {
+    const manifest = JSON.parse(await readFile(MANIFEST, "utf8")) as EngineManifest;
+    return (
+      manifest.release === RELEASE &&
+      manifest.layout === LAYOUT &&
+      manifest.bundles.join() === BUNDLES.join() &&
+      ["busytex.js", "busytex.mjs", "busytex.wasm"].every((f) => existsSync(join(ROOT, f))) &&
+      REQUIRED.every((path) => existsSync(join(FILES, path)))
+    );
+  } catch {
+    // No manifest, or one that is cut short or not of this shape: build again.
+    return false;
+  }
 }
 
 const alive = (pid: number) => {
@@ -394,7 +399,11 @@ async function build(from: string | undefined) {
   await writeFile(join(ROOT, "busytex.mjs"), `${loader}\nexport default busytex;\n`);
   await copyFile(join(DOWNLOADS, "busytex.wasm"), join(ROOT, "busytex.wasm"));
   const manifest: EngineManifest = { release: RELEASE, layout: LAYOUT, bundles: BUNDLES, files };
-  await writeFile(MANIFEST, JSON.stringify(manifest));
+  // Written under another name and renamed, so a run stopped while writing it leaves no
+  // manifest rather than part of one.
+  const partial = `${MANIFEST}.partial-${process.pid}`;
+  await writeFile(partial, JSON.stringify(manifest));
+  await rename(partial, MANIFEST);
 
   const bytes = Object.values(files).reduce((a, b) => a + b, 0);
   console.log(
