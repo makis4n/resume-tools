@@ -85,10 +85,10 @@ end to end before the other two templates, so that the editing loop is proven on
    resume is invented.
 7. [ ] **Run the validation harness in CI.** For each curated package, compile the sample in Node
    and check that two passes converge, that every field keeps its markers and its glyphs align
-   with its text, and that it fits the page count the package declares. The PDF and the controls
-   join the harness when they land. CI already builds `.engine/` from a cache keyed on the fetch
-   script (item 2), so the harness runs in the existing job. Done when a package that loses a
-   marker fails CI.
+   with its text, and that it fits on one page, since decision 0006 declares no page count. The
+   PDF and the controls join the harness when they land. CI already builds `.engine/` from a
+   cache keyed on the fetch script (item 2), so the harness runs in the existing job. Done when a
+   package that loses a marker fails CI.
 
 ### Stage 3. Editing on the page
 
@@ -210,3 +210,15 @@ pull request that acts on it.
 | An OpenType writer so the Python web font script can go | Item 9, using opentype.js |
 | Hyphenation in the line breaker | Only when a port needs it; none is known to |
 | Our own per-engine build in Docker | Milestone 5; it changes size and licensing, not behaviour |
+
+## Owed from item 4's review, and where each lands
+
+The adversarial review of decision 0006 (pull request #16) confirmed six findings, all fixed in
+that pull request. Four questions it settled by assigning them to a later item rather than by code:
+
+| Item | Where |
+|---|---|
+| Format names, one per combination of format-bound values, that fit the session's 64-character rule whatever the length of the package id | Item 5 |
+| A bound on the generated body, since a package may expand a list slot any number of times | Item 5 |
+| A stored choice a revised package no longer offers: store only the choices the user made, and decide whether such a document opens on the default or refuses | Item 13 |
+| Ids unique across packages: the loader refuses or re-mints an imported id not minted under the prefix decision 0006 sets | Milestone 3 |
