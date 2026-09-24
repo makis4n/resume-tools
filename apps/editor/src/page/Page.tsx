@@ -3,8 +3,6 @@
  * field reports the field and the character the click landed on.
  */
 
-import type { MouseEvent } from "react";
-
 export interface PageProps {
   svg: string;
   onField?: (field: string, offset: number) => void;
@@ -18,13 +16,21 @@ export function fieldAt(target: Element | null): { field: string; offset: number
   return field && offset && /^\d+$/.test(offset) ? { field, offset: Number(offset) } : undefined;
 }
 
-export function Page({ svg, onField }: PageProps) {
-  const click = (event: MouseEvent<HTMLDivElement>) => {
-    const hit = fieldAt(event.target as Element);
+/** What a click on the page does: report the field and character under it, if there is one. */
+export function onPageClick(onField?: PageProps["onField"]) {
+  return (event: { target: EventTarget | null }) => {
+    const hit = fieldAt(event.target as Element | null);
     if (hit) onField?.(hit.field, hit.offset);
   };
+}
+
+export function Page({ svg, onField }: PageProps) {
   return (
     // The SVG is built by src/tex/svg.ts from the engine's output, with every string escaped.
-    <div className="page" onClick={click} dangerouslySetInnerHTML={{ __html: svg }} />
+    <div
+      className="page"
+      onClick={onPageClick(onField)}
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
   );
 }

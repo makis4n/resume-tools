@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fieldAt } from "./Page";
+import { fieldAt, onPageClick } from "./Page";
 
 /** Just enough of an element for fieldAt: `closest` finds `found` for the field selector. */
 const target = (found: Record<string, string> | null) =>
@@ -22,5 +22,15 @@ describe("fieldAt", () => {
     expect(fieldAt(target(null))).toBeUndefined();
     expect(fieldAt(null)).toBeUndefined();
     expect(fieldAt(target({ "data-field": "name" }))).toBeUndefined();
+  });
+});
+
+describe("onPageClick", () => {
+  it("reports the field and the character the click landed on, as they are", () => {
+    const clicks: [string, number][] = [];
+    const click = onPageClick((field, offset) => clicks.push([field, offset]));
+    click({ target: target({ "data-field": "name", "data-offset": "7" }) });
+    click({ target: target(null) });
+    expect(clicks).toEqual([["name", 7]]);
   });
 });
