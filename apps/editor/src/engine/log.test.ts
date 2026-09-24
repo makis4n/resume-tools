@@ -48,6 +48,15 @@ describe("summariseLog", () => {
         "Package rerunfilecheck Warning: File `doc.out' has changed.\n(rerunfilecheck)                Rerun to get outlines right",
       ).rerun,
     ).toBe(true);
+    expect(summariseLog("LaTeX Warning: Rerun to correct eqparbox widths.").rerun).toBe(true);
+    expect(
+      summariseLog("Package longtable Warning: Table widths have changed. Rerun LaTeX.").rerun,
+    ).toBe(true);
     expect(summariseLog("LaTeX Warning: There were undefined references.").rerun).toBe(false);
+    expect(
+      summariseLog(
+        "Package rerunfilecheck Info: File `doc.out' has not changed.\n(rerunfilecheck)                Checksum: 1234;390.",
+      ).rerun,
+    ).toBe(false);
   });
 });

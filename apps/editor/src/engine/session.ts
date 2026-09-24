@@ -7,9 +7,14 @@
  * becomes an empty file that knows its size, and its contents are read the first time TeX opens
  * it, because kpathsea stats many candidates for each file it looks up and opens only one.
  *
- * The engine's `main` can run only once per heap, so the session keeps a copy of the start of the
- * heap from just after start-up and puts it back after every run, as BusyTeX itself does. The
- * project's files live in the engine's file system, outside the heap, and survive.
+ * The engine's `main` can run only once per engine state, so after every run the session puts
+ * back what start-up left: the start of the heap, as BusyTeX itself does, and the stack pointer,
+ * which lives outside the heap. It also closes the files TeX left open, which the restored heap
+ * no longer knows about. Files live in the engine's file system, outside the heap, and survive.
+ *
+ * Every job runs in a folder of its own and every format is built in one, and TeX may read and
+ * write only inside the folder it runs in, so one document or template cannot plant files for
+ * another, read another's text, or overwrite a format.
  */
 
 import { summariseLog } from "./log";
@@ -44,14 +49,13 @@ const ENGINES: Record<Engine, EngineSpec> = {
   },
 };
 
-/** The folder TeX runs in: documents, their auxiliary files, and files such as class files. */
-export const PROJECT = "/home/web_user/project_dir";
-
-/** Formats live apart from the project, so no job's files can collide with them. */
-export const FORMATS = "/home/web_user/formats";
-
-/** What TeX and LaTeX write next to a job, which `forget` removes; nothing a template supplies. */
-const GENERATED = ["aux", "out", "toc", "lof", "lot", "log", "dvi", "xdv", "pdf", "fls", "tex"];
+const HOME = "/home/web_user";
+/** Each job's folder holds its body, the files the caller supplies, and what TeX writes. */
+const JOBS = `${HOME}/jobs`;
+/** Each dump runs in a folder of its own, removed once the format is out of it. */
+const BUILDS = `${HOME}/builds`;
+/** Finished formats, which only the session writes; TeX never runs in this folder. */
+const FORMATS = `${HOME}/formats`;
 
 /**
  * The TeX Live trees kpathsea searches, in order: TeX Live's own configuration, generated files
@@ -75,6 +79,10 @@ const ENV: Record<string, string> = {
   TEXMFVAR: "/texlive/texmf-dist/texmf-var",
   TEXMFCNF: "/texlive/texmf-dist/web2c",
   FONTCONFIG_PATH: "/texlive",
+  // TeX may open only files below the folder it runs in: no absolute paths, no "..", no dot
+  // files. Files kpathsea finds in the trees are not affected.
+  openin_any: "p",
+  openout_any: "p",
   // Wide enough that TeX never wraps a line of its log, so the log can be read line by line.
   max_print_line: "10000",
   error_line: "254",
@@ -90,6 +98,11 @@ interface MemfsNode {
   contents: Uint8Array | null;
 }
 
+/** An open file in Emscripten's file system. */
+interface EmscriptenStream {
+  fd: number;
+}
+
 /** The part of Emscripten's file system API the session uses. */
 export interface EmscriptenFs {
   mkdirTree(path: string): void;
@@ -98,15 +111,23 @@ export interface EmscriptenFs {
   readFile(path: string): Uint8Array;
   readFile(path: string, options: { encoding: "utf8" }): string;
   unlink(path: string): void;
+  rmdir(path: string): void;
   readdir(path: string): string[];
+  stat(path: string): { mode: number };
+  isDir(mode: number): boolean;
   analyzePath(path: string): { exists: boolean };
   chdir(path: string): void;
+  /** Open files by descriptor; a closed descriptor's slot is empty. */
+  streams: (EmscriptenStream | null | undefined)[];
+  close(stream: EmscriptenStream): void;
 }
 
 /** The engine module Emscripten's factory resolves to. */
 export interface EngineModule {
   FS: EmscriptenFs;
   HEAPU8: Uint8Array;
+  /** The WebAssembly exports, among them the stack pointer's getter and setter. */
+  asm: { stackSave(): number; stackRestore(pointer: number): void };
   callMain(args: string[]): number;
   _flush_streams(): void;
 }
@@ -141,6 +162,9 @@ export interface SessionOptions {
    */
   verifyHeap?: boolean;
 }
+
+/** Files a template supplies, such as a class file, by plain file name. */
+export type JobFiles = Record<string, string | Uint8Array>;
 
 /** TeX Live files read since the last result: how many, how many bytes, and which. */
 export interface Fetched {
@@ -179,7 +203,7 @@ export interface CompileResult {
   /** The DVI, or XDV from XeTeX, when TeX shipped out at least one page. */
   output?: Uint8Array;
   pages: number;
-  /** How long each pass took, in milliseconds. */
+  /** How long each pass took, in milliseconds, including a retry as a new document. */
   passes: number[];
   log: string;
   error?: string;
@@ -188,15 +212,21 @@ export interface CompileResult {
 }
 
 export interface CompileOptions {
-  /** The document's name in the project folder; one per open document. Defaults to "doc". */
+  /** The document's name, and the name of its folder; one per open document. Defaults to "doc". */
   job?: string;
   /** Passes at most; a pass is repeated when the document is new or the log asks for one. */
   maxPasses?: number;
+  /** Files to put in the job's folder before compiling. */
+  files?: JobFiles;
 }
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const checkName = (kind: string, name: string) => {
   if (!NAME.test(name)) throw new Error(`${kind} name must be letters, digits, - and _: ${name}`);
+};
+const checkFileName = (name: string) => {
+  if (!name || name.includes("/") || name.startsWith("."))
+    throw new Error(`not a plain file name: ${name}`);
 };
 
 class Tally {
@@ -248,12 +278,18 @@ function mountOnDemand(fs: EmscriptenFs, options: SessionOptions, tally: Tally) 
 }
 
 export class EngineSession {
-  /** The format each job was last compiled with, so a change of format drops stale aux files. */
+  /**
+   * The format each job was last compiled with, down to the dump that made it, so a job whose
+   * format changes, or is dumped again, starts again as a new document.
+   */
   private readonly formatOf = new Map<string, string>();
+  /** How many times each format has been put in place, by engine and name. */
+  private readonly generations = new Map<string, number>();
 
   private constructor(
     private readonly engine: EngineModule,
     private readonly header: Uint8Array,
+    private readonly stackTop: number,
     private readonly printed: string[],
     private readonly tally: Tally,
     private readonly afterRun: (() => void) | undefined,
@@ -274,8 +310,7 @@ export class EngineSession {
           const { FS, ENV: env } = moduleOptions;
           if (!FS || !env) throw new Error("the engine did not provide FS and ENV before preRun");
           Object.assign(env, ENV);
-          FS.mkdirTree(PROJECT);
-          FS.mkdirTree(FORMATS);
+          for (const folder of [JOBS, BUILDS, FORMATS]) FS.mkdirTree(folder);
           mountOnDemand(FS, options, tally);
         },
       ],
@@ -283,7 +318,7 @@ export class EngineSession {
       printErr: (text) => printed.push(text),
     };
     const engine = await options.load(moduleOptions);
-    engine.FS.chdir(PROJECT);
+    engine.FS.chdir(HOME);
     if (options.verifyHeap) {
       const past = new Int32Array(engine.HEAPU8.buffer, HEADER_BYTES);
       for (let i = 0; i < past.length; i++)
@@ -292,6 +327,7 @@ export class EngineSession {
     const session = new EngineSession(
       engine,
       engine.HEAPU8.slice(0, HEADER_BYTES),
+      engine.asm.stackSave(),
       printed,
       tally,
       options.afterRun,
@@ -305,54 +341,64 @@ export class EngineSession {
     return { session, result };
   }
 
-  /** Run one program of the binary, such as `pdflatex` or `xdvipdfmx`, in the project folder. */
-  run(args: string[]): RunResult {
+  /** Run one program of the binary, such as `pdflatex` or `xdvipdfmx`, in the folder `cwd`. */
+  run(args: string[], cwd = HOME): RunResult {
+    const fs = this.engine.FS;
+    const open = new Set(fs.streams.flatMap((stream) => (stream ? [stream.fd] : [])));
     this.printed.length = 0;
+    fs.chdir(cwd);
     const started = performance.now();
     let code: number;
     try {
       code = this.engine.callMain([...args]); // callMain changes the array it is given
       this.engine._flush_streams();
     } finally {
-      // Put the heap back even when the run threw, so the next run starts clean.
+      // Put the engine back as start-up left it, even when the run threw.
       const heap = this.engine.HEAPU8;
       heap.fill(0);
       heap.set(this.header);
+      this.engine.asm.stackRestore(this.stackTop);
+      for (const stream of fs.streams) if (stream && !open.has(stream.fd)) fs.close(stream);
+      fs.chdir(HOME);
       this.afterRun?.();
     }
     return { code, ms: performance.now() - started, output: this.printed.join("\n") };
   }
 
   /**
-   * Dump a preamble into a format named `name`, which later compiles can load. It runs in the
-   * project folder, so it finds files written there, and leaves only the format behind.
+   * Dump a preamble into a format named `name`, which later compiles with the same engine can
+   * load. It runs in a folder of its own, with `files` beside it, and leaves only the format. A
+   * dump that fails leaves any earlier format of that name in place.
    */
-  dump(engine: Engine, name: string, preamble: string): DumpResult {
+  dump(engine: Engine, name: string, preamble: string, files: JobFiles = {}): DumpResult {
     checkName("format", name);
     const spec = ENGINES[engine];
-    const at = (extension: string) => `${FORMATS}/${name}.${extension}`;
+    const folder = `${BUILDS}/${name}`;
     this.tally.take();
-    for (const extension of ["fmt", "tex", "log"]) this.removePath(at(extension));
-    this.engine.FS.writeFile(at("tex"), `${preamble}\n\\dump\n`);
-    const run = this.run([
-      spec.program,
-      "-ini",
-      `-jobname=${name}`,
-      `-output-directory=${FORMATS}`,
-      ...spec.args,
-      `&${spec.program}`,
-      at("tex"),
-    ]);
-    const log = this.readPath(at("log"), "utf8") ?? "";
-    const format = this.readPath(at("fmt"));
-    for (const extension of ["tex", "log"]) this.removePath(at(extension));
-    const ok = run.code === 0 && format !== undefined;
+    this.removeTree(folder);
+    this.engine.FS.mkdirTree(folder);
+    let run: RunResult;
+    let log: string;
+    let format: Uint8Array | undefined;
+    try {
+      this.writeFiles(folder, files);
+      this.engine.FS.writeFile(`${folder}/${name}.tex`, `${preamble}\n\\dump\n`);
+      run = this.run(
+        [spec.program, "-ini", `-jobname=${name}`, ...spec.args, `&${spec.program}`, `${name}.tex`],
+        folder,
+      );
+      log = this.read(`${folder}/${name}.log`, "utf8") ?? "";
+      format = run.code === 0 ? this.read(`${folder}/${name}.fmt`) : undefined;
+    } finally {
+      this.removeTree(folder);
+    }
+    if (format) this.install(engine, name, format);
     return {
-      ok,
-      format: ok ? format : undefined,
+      ok: format !== undefined,
+      format,
       ms: run.ms,
       log,
-      error: ok
+      error: format
         ? undefined
         : (summariseLog(log).error ?? `${spec.program} exited with ${run.code}`),
       fetched: this.tally.take(),
@@ -360,9 +406,9 @@ export class EngineSession {
   }
 
   /** Put a format made earlier, by this session or another, where compiles can load it. */
-  putFormat(name: string, format: Uint8Array) {
+  putFormat(engine: Engine, name: string, format: Uint8Array) {
     checkName("format", name);
-    this.engine.FS.writeFile(`${FORMATS}/${name}.fmt`, format);
+    this.install(engine, name, format);
   }
 
   /**
@@ -370,6 +416,10 @@ export class EngineSession {
    * `putFormat`. The body is everything the format does not hold, usually from
    * `\begin{document}` on. A new document gets a second pass, since the first writes the
    * auxiliary files the second reads, and any pass is repeated when the log asks for it.
+   *
+   * TeX reads a document's old auxiliary files before it writes new ones, so a bad line in them
+   * stops every later compile. A document that fails after compiling before is therefore tried
+   * once more as a new document.
    */
   compile(
     engine: Engine,
@@ -379,82 +429,114 @@ export class EngineSession {
   ): CompileResult {
     const job = options.job ?? "doc";
     checkName("job", job);
-    if (format !== "stock") checkName("format", format);
     const spec = ENGINES[engine];
-    const formatPath = format === "stock" ? spec.stockFormat : `${FORMATS}/${format}.fmt`;
-    if (!this.engine.FS.analyzePath(formatPath).exists)
-      throw new Error(`no format named ${format}`);
-    const formatKey = `${engine}:${format}`;
+    let formatPath = spec.stockFormat;
+    let formatKey = `${engine}:stock`;
+    if (format !== "stock") {
+      checkName("format", format);
+      const generation = this.generations.get(`${engine}:${format}`);
+      if (generation === undefined) throw new Error(`no ${engine} format named ${format}`);
+      formatPath = this.formatPath(engine, format);
+      formatKey = `${engine}:${format}:${generation}`;
+    }
     if (this.formatOf.get(job) !== formatKey) this.forget(job);
     this.formatOf.set(job, formatKey);
 
     this.tally.take();
-    this.write(`${job}.tex`, body);
-    const fresh = !this.exists(`${job}.aux`);
+    let attempt = this.passes(spec, formatPath, job, body, options);
+    if (!attempt.ok && !attempt.fresh) {
+      this.forget(job);
+      this.formatOf.set(job, formatKey);
+      const again = this.passes(spec, formatPath, job, body, options);
+      attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
+    }
+    const { fresh: _, ...result } = attempt;
+    return { ...result, fetched: this.tally.take() };
+  }
+
+  /** Remove a job's folder, so its next compile starts as a new document. */
+  forget(job: string) {
+    checkName("job", job);
+    this.removeTree(`${JOBS}/${job}`);
+    this.formatOf.delete(job);
+  }
+
+  /** Compile a job's body once, and again while it is new or its log asks. */
+  private passes(
+    spec: EngineSpec,
+    formatPath: string,
+    job: string,
+    body: string,
+    options: CompileOptions,
+  ): Omit<CompileResult, "fetched"> & { fresh: boolean } {
+    const folder = `${JOBS}/${job}`;
+    const at = (extension: string) => `${folder}/${job}.${extension}`;
+    this.engine.FS.mkdirTree(folder);
+    this.writeFiles(folder, options.files ?? {});
+    this.engine.FS.writeFile(at("tex"), body);
+    const fresh = !this.engine.FS.analyzePath(at("aux")).exists;
     const passes: number[] = [];
     const maxPasses = options.maxPasses ?? 3;
     let run: RunResult;
     let log: string;
     for (;;) {
-      this.remove(`${job}.${spec.output}`);
-      run = this.run([spec.program, ...spec.args, "--fmt", formatPath, `${job}.tex`]);
+      // What an earlier pass wrote must not pass for what this one did.
+      this.removeTree(at(spec.output));
+      this.removeTree(at("log"));
+      run = this.run([spec.program, ...spec.args, "--fmt", formatPath, `${job}.tex`], folder);
       passes.push(run.ms);
-      log = this.readText(`${job}.log`);
+      log = this.read(at("log"), "utf8") ?? "";
       const again = run.code === 0 && ((fresh && passes.length === 1) || summariseLog(log).rerun);
       if (!again || passes.length >= maxPasses) break;
     }
     const summary = summariseLog(log);
-    const output = this.readBytes(`${job}.${spec.output}`);
-    const ok = run.code === 0 && output !== undefined;
+    const output = run.code === 0 ? this.read(at(spec.output)) : undefined;
+    const ok = output !== undefined;
     return {
       ok,
-      output: ok ? output : undefined,
+      output,
       pages: summary.pages,
       passes,
       log,
       error: ok ? undefined : (summary.error ?? `${spec.program} exited with ${run.code}`),
       errorLine: ok ? undefined : summary.errorLine,
-      fetched: this.tally.take(),
+      fresh,
     };
   }
 
-  /** Remove the files TeX wrote for a job, so its next compile starts as a new document. */
-  forget(job: string) {
-    checkName("job", job);
-    for (const extension of GENERATED) this.remove(`${job}.${extension}`);
-    this.formatOf.delete(job);
+  /** Put a format in place and note that every job compiled with an earlier one is stale. */
+  private install(engine: Engine, name: string, format: Uint8Array) {
+    this.engine.FS.writeFile(this.formatPath(engine, name), format);
+    const key = `${engine}:${name}`;
+    this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
   }
 
-  /** Write a file into the project folder, such as a template's class file. */
-  write(name: string, data: string | Uint8Array) {
-    if (name.includes("/") || name.startsWith("."))
-      throw new Error(`not a plain file name: ${name}`);
-    this.engine.FS.writeFile(`${PROJECT}/${name}`, data);
+  private formatPath(engine: Engine, name: string): string {
+    return `${FORMATS}/${engine}-${name}.fmt`;
   }
 
-  private exists(name: string): boolean {
-    return this.engine.FS.analyzePath(`${PROJECT}/${name}`).exists;
+  private writeFiles(folder: string, files: JobFiles) {
+    for (const [name, data] of Object.entries(files)) {
+      checkFileName(name);
+      this.engine.FS.writeFile(`${folder}/${name}`, data);
+    }
   }
 
-  private remove(name: string) {
-    this.removePath(`${PROJECT}/${name}`);
+  private removeTree(path: string) {
+    const fs = this.engine.FS;
+    if (!fs.analyzePath(path).exists) return;
+    if (!fs.isDir(fs.stat(path).mode)) {
+      fs.unlink(path);
+      return;
+    }
+    for (const name of fs.readdir(path))
+      if (name !== "." && name !== "..") this.removeTree(`${path}/${name}`);
+    fs.rmdir(path);
   }
 
-  private readText(name: string): string {
-    return this.readPath(`${PROJECT}/${name}`, "utf8") ?? "";
-  }
-
-  private readBytes(name: string): Uint8Array | undefined {
-    return this.readPath(`${PROJECT}/${name}`);
-  }
-
-  private removePath(path: string) {
-    if (this.engine.FS.analyzePath(path).exists) this.engine.FS.unlink(path);
-  }
-
-  private readPath(path: string): Uint8Array | undefined;
-  private readPath(path: string, encoding: "utf8"): string | undefined;
-  private readPath(path: string, encoding?: "utf8"): Uint8Array | string | undefined {
+  private read(path: string): Uint8Array | undefined;
+  private read(path: string, encoding: "utf8"): string | undefined;
+  private read(path: string, encoding?: "utf8"): Uint8Array | string | undefined {
     if (!this.engine.FS.analyzePath(path).exists) return undefined;
     return encoding ? this.engine.FS.readFile(path, { encoding }) : this.engine.FS.readFile(path);
   }

@@ -122,7 +122,155 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
 
   it("refuses names that are not plain", () => {
     expect(() => session.dump("pdftex", "../x", PREAMBLE)).toThrow();
-    expect(() => session.write("../x.tex", "")).toThrow();
+    expect(() => session.dump("pdftex", "x", PREAMBLE, { ".hidden": "" })).toThrow();
     expect(() => session.compile("pdftex", "stock", "", { job: "a b" })).toThrow();
+    expect(() =>
+      session.compile("pdftex", "stock", "", { job: "x", files: { "../x.tex": "" } }),
+    ).toThrow();
   });
+
+  it("puts a template's files beside the preamble and the document", () => {
+    const files = { "greeting.sty": "\\ProvidesPackage{greeting}\\newcommand\\greet{Hello}" };
+    expect(
+      session.dump("pdftex", "withfiles", `${PREAMBLE}\n\\usepackage{greeting}`, files).ok,
+    ).toBe(true);
+    const result = session.compile(
+      "pdftex",
+      "withfiles",
+      "\\begin{document}\\greet\\end{document}",
+      {
+        job: "withfiles",
+        files,
+      },
+    );
+    expect(result.error).toBeUndefined();
+  }, 30_000);
+
+  it("keeps working after hundreds of runs", () => {
+    // A run moves the engine's stack pointer, which lives outside the heap. Unless the session
+    // puts it back, the 64 KB stack runs out after a few hundred runs.
+    for (let i = 0; i < 400; i++) expect(session.run(["pdflatex", "--version"]).code).toBe(0);
+    expect(session.dump("pdftex", "after", PREAMBLE).ok).toBe(true);
+    const body = "\\begin{document}x\\end{document}";
+    expect(session.compile("pdftex", "after", body, { job: "after" }).ok).toBe(true);
+  }, 60_000);
+
+  it("closes the files a failed run leaves open", () => {
+    const open = () =>
+      (session as unknown as { engine: { FS: { streams: unknown[] } } }).engine.FS.streams.filter(
+        Boolean,
+      ).length;
+    session.dump("pdftex", "leaks", PREAMBLE);
+    const before = open();
+    for (let i = 0; i < 5; i++)
+      session.compile("pdftex", "leaks", "\\begin{document}\\nosuchmacro\\end{document}", {
+        job: `leak${i}`,
+      });
+    expect(open()).toBe(before);
+  }, 30_000);
+
+  describe("keeps each job to its own folder", () => {
+    const doc = (body: string) => `\\documentclass{article}\\begin{document}${body}\\end{document}`;
+    const read = (path: string) =>
+      String.raw`\newread\r\openin\r=${path} \ifeof\r\typeout{RESULT=unread}\else\typeout{RESULT=read}\fi x`;
+    const plant = String.raw`\newwrite\w\immediate\openout\w=planted.tex\immediate\write\w{planted}\immediate\closeout\w x`;
+    const result = (log: string) => /RESULT=(\w+)/.exec(log)?.[1];
+
+    it("lets a job read what it wrote, and no other job", () => {
+      expect(session.compile("pdftex", "stock", doc(plant), { job: "planter" }).ok).toBe(true);
+      const own = session.compile("pdftex", "stock", doc(read("planted.tex")), { job: "planter" });
+      expect(result(own.log)).toBe("read");
+      const other = session.compile("pdftex", "stock", doc(read("../planter/planted.tex")), {
+        job: "reader",
+      });
+      expect(result(other.log)).toBe("unread");
+      const absolute = session.compile(
+        "pdftex",
+        "stock",
+        doc(read("/home/web_user/jobs/planter/planted.tex")),
+        { job: "reader" },
+      );
+      expect(result(absolute.log)).toBe("unread");
+      const input = session.compile("pdftex", "stock", doc("\\input{planted}"), { job: "reader" });
+      expect(input.error).toBe("LaTeX Error: File `planted.tex' not found.");
+    }, 60_000);
+
+    it("stops a job writing outside its folder", () => {
+      const escape = (path: string) =>
+        String.raw`\newwrite\w\immediate\openout\w=${path}\immediate\write\w{x}\immediate\closeout\w x`;
+      const up = session.compile("pdftex", "stock", doc(escape("../reader/evil.tex")), {
+        job: "escaper",
+      });
+      expect(up.error).toBe("I can't write on file `../reader/evil.tex'.");
+      expect(session.dump("pdftex", "target", PREAMBLE).ok).toBe(true);
+      // A dump cannot reach the formats either, so a template cannot replace another's.
+      const dump = session.dump(
+        "pdftex",
+        "escaper",
+        `${PREAMBLE}\n${escape("/home/web_user/formats/pdftex-target.fmt")}`,
+      );
+      expect(dump.error).toBe("I can't write on file `/home/web_user/formats/pdftex-target.fmt'.");
+      const target = session.compile("pdftex", "target", "\\begin{document}x\\end{document}", {
+        job: "target",
+      });
+      expect(target.ok).toBe(true);
+    }, 60_000);
+  });
+
+  it("starts a job again when its format is dumped again", () => {
+    // titletoc writes commands into the .aux that a format without it cannot read.
+    session.dump("pdftex", "redump", "\\documentclass{article}\\usepackage{titletoc}");
+    const body = "\\begin{document}\\tableofcontents\\section{A}\\end{document}";
+    expect(session.compile("pdftex", "redump", body, { job: "redump" }).ok).toBe(true);
+    session.dump("pdftex", "redump", "\\documentclass{article}");
+    const after = session.compile("pdftex", "redump", body, { job: "redump" });
+    expect(after.error).toBeUndefined();
+    expect(after.passes.length).toBe(2);
+  }, 60_000);
+
+  it("keeps a format when dumping it again fails", () => {
+    expect(session.dump("pdftex", "keep", PREAMBLE).ok).toBe(true);
+    expect(session.dump("pdftex", "keep", `${PREAMBLE}\n\\usepackage{nosuchpackage}`).ok).toBe(
+      false,
+    );
+    const body = "\\begin{document}x\\end{document}";
+    expect(session.compile("pdftex", "keep", body, { job: "keep" }).ok).toBe(true);
+  }, 60_000);
+
+  it("leaves no format behind when a dump fails", () => {
+    // XeTeX writes a partial format before it refuses to dump a native font.
+    expect(session.dump("xetex", "partial", "\\documentclass{article}").ok).toBe(false);
+    expect(() => session.compile("xetex", "partial", "", { job: "partial" })).toThrow(
+      "no xetex format named partial",
+    );
+    // Formats are kept by engine, so a pdfTeX one is not mistaken for a XeTeX one.
+    expect(session.dump("pdftex", "partial", PREAMBLE).ok).toBe(true);
+    expect(() => session.compile("xetex", "partial", "", { job: "partial" })).toThrow();
+  }, 60_000);
+
+  it("reports a failure from this compile's log, never an earlier one", () => {
+    session.dump("pdftex", "stale", PREAMBLE);
+    const broken = "\\begin{document}\n\n\\nosuchmacro\n\\end{document}";
+    expect(session.compile("pdftex", "stale", broken, { job: "stale" }).errorLine).toBe(3);
+    session.putFormat("pdftex", "stale", new TextEncoder().encode("not a format"));
+    const result = session.compile("pdftex", "stale", "\\begin{document}x\\end{document}", {
+      job: "stale",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.log).not.toContain("nosuchmacro");
+    expect(result.errorLine).toBeUndefined();
+  }, 60_000);
+
+  it("tries once more as a new document when old auxiliary files break a compile", () => {
+    session.dump("pdftex", "retry", PREAMBLE);
+    // The first pass leaves a line in the .aux that the second pass cannot read.
+    const poison = String.raw`\begin{document}\makeatletter\immediate\write\@auxout{\string\nosuchmacro}\makeatother x\end{document}`;
+    expect(session.compile("pdftex", "retry", poison, { job: "retry" }).ok).toBe(false);
+    const clean = session.compile("pdftex", "retry", "\\begin{document}x\\end{document}", {
+      job: "retry",
+    });
+    expect(clean.error).toBeUndefined();
+    // One pass stopped by the old .aux, then two as a new document.
+    expect(clean.passes.length).toBe(3);
+  }, 60_000);
 });

@@ -18,7 +18,12 @@ export interface LogSummary {
 }
 
 const OUTPUT_WRITTEN = /^Output written on .* \((\d+) pages?, \d+ bytes\)\.$/m;
-const RERUN = /Rerun to get|Please rerun|may have changed\. Rerun|\(rerunfilecheck\)\s+Rerun/;
+/**
+ * Packages ask for another run in their own words: "Rerun to get cross-references right",
+ * "Rerun to correct eqparbox widths", longtable's "Table widths have changed. Rerun LaTeX.".
+ * They share the capitalised word, which "rerunfilecheck" and its info lines do not.
+ */
+const RERUN = /\bRerun\b|\bPlease rerun\b/;
 
 export function summariseLog(log: string): LogSummary {
   const lines = log.split(/\r?\n/);

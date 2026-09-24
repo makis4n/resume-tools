@@ -47,16 +47,13 @@ async function handle(request: EngineRequest & { id: number }): Promise<EngineRe
   switch (request.type) {
     case "start":
       return { id: request.id, result: started };
-    case "write":
-      for (const [name, data] of Object.entries(request.files)) session.write(name, data);
-      return { id: request.id, result: null };
     case "dump":
       return {
         id: request.id,
-        result: session.dump(request.engine, request.name, request.preamble),
+        result: session.dump(request.engine, request.name, request.preamble, request.files),
       };
     case "putFormat":
-      session.putFormat(request.name, request.format);
+      session.putFormat(request.engine, request.name, request.format);
       return { id: request.id, result: null };
     case "compile":
       return {

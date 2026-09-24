@@ -3,20 +3,25 @@
  * reply to it carries the same id, so replies to overlapping requests cannot be confused.
  */
 
-import type { CompileOptions, CompileResult, DumpResult, Engine, StartResult } from "./session";
+import type {
+  CompileOptions,
+  CompileResult,
+  DumpResult,
+  Engine,
+  JobFiles,
+  StartResult,
+} from "./session";
 
 export type EngineRequest =
   | { type: "start" }
-  | { type: "write"; files: Record<string, string | Uint8Array> }
-  | { type: "dump"; engine: Engine; name: string; preamble: string }
-  | { type: "putFormat"; name: string; format: Uint8Array }
+  | { type: "dump"; engine: Engine; name: string; preamble: string; files?: JobFiles }
+  | { type: "putFormat"; engine: Engine; name: string; format: Uint8Array }
   | { type: "compile"; engine: Engine; format: string; body: string; options?: CompileOptions }
   | { type: "forget"; job: string };
 
 /** What each request resolves to. */
 export interface EngineResults {
   start: StartResult;
-  write: null;
   dump: DumpResult;
   putFormat: null;
   compile: CompileResult;

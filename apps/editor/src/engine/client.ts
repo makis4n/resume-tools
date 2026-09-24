@@ -4,7 +4,14 @@
  */
 
 import type { EngineReply, EngineRequest, EngineResults } from "./protocol";
-import type { CompileOptions, CompileResult, DumpResult, Engine, StartResult } from "./session";
+import type {
+  CompileOptions,
+  CompileResult,
+  DumpResult,
+  Engine,
+  JobFiles,
+  StartResult,
+} from "./session";
 
 interface Pending {
   resolve: (result: unknown) => void;
@@ -50,18 +57,14 @@ export class EngineClient {
     return this.call({ type: "start" });
   }
 
-  /** Write files into the project folder, such as a template's class files. */
-  async write(files: Record<string, string | Uint8Array>): Promise<void> {
-    await this.call({ type: "write", files });
-  }
-
-  dump(engine: Engine, name: string, preamble: string): Promise<DumpResult> {
-    return this.call({ type: "dump", engine, name, preamble });
+  /** Dump a preamble into a format, with `files` such as a class file beside it. */
+  dump(engine: Engine, name: string, preamble: string, files?: JobFiles): Promise<DumpResult> {
+    return this.call({ type: "dump", engine, name, preamble, files });
   }
 
   /** Hand the worker a format made earlier. The bytes move to the worker. */
-  async putFormat(name: string, format: Uint8Array): Promise<void> {
-    await this.call({ type: "putFormat", name, format }, [format.buffer as ArrayBuffer]);
+  async putFormat(engine: Engine, name: string, format: Uint8Array): Promise<void> {
+    await this.call({ type: "putFormat", engine, name, format }, [format.buffer as ArrayBuffer]);
   }
 
   compile(
