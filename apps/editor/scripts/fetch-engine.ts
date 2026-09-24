@@ -22,11 +22,20 @@
  *   .engine/files/<path>     every TeX Live file, at the path the engine sees it under
  *   .engine/manifest.json    { release, layout, bundles, files: { <path>: <size> } }, written last
  *
- * One run at a time: a run holds `.engine/.lock` while it builds, and a second run stops.
+ * One run at a time: a run holds `.engine/.lock` while it builds, and a second run stops. Each run
+ * writes its downloads and its staging folder under names that carry its process id, so even
+ * runs that both got past the lock cannot overwrite each other's half-written files.
  */
 
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { copyFile, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
@@ -36,13 +45,13 @@ import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { fileURLToPath } from "node:url";
 
 const RELEASE = "build_wasm_4499aa69fd3cf77ad86a47287d9a5193cf5ad993_7936974349_1";
+const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELEASE}/`;
 
 /**
  * The version of what this script writes. Bump it whenever the output changes (the files, the
  * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt.
  */
 const LAYOUT = 1;
-const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELEASE}/`;
 
 /** Release files with their SHA-256 and size, recorded from the copies the spike measured. */
 const ASSETS: Record<string, { sha256: string; size: number }> = {
@@ -157,7 +166,7 @@ async function verified(file: string, name: string): Promise<boolean> {
 async function obtain(name: string, from: string | undefined): Promise<void> {
   const target = join(DOWNLOADS, name);
   if (await verified(target, name)) return;
-  const partial = `${target}.partial`;
+  const partial = `${target}.partial-${process.pid}`;
   if (from) {
     await copyFile(join(from, name), partial);
   } else {
@@ -284,21 +293,50 @@ const alive = (pid: number) => {
   }
 };
 
+/** A lock this old is stale even if its process id now belongs to a live process. */
+const STALE_AFTER_MS = 60 * 60 * 1000;
+
 /**
  * Take `.engine/.lock`, which names the process holding it, and return what releases it. A lock
- * left by a run that is no longer alive is taken over; a live one stops this run.
+ * whose process is gone, or that is over an hour old, was left by a run that stopped and is taken
+ * over; a live one stops this run.
  */
 async function lock(): Promise<() => Promise<void>> {
+  const mine = String(process.pid);
   for (;;) {
     try {
-      await writeFile(LOCK, String(process.pid), { flag: "wx" });
-      return () => rm(LOCK, { force: true });
+      await writeFile(LOCK, mine, { flag: "wx" });
+      // Release the lock only while it is still this run's.
+      return async () => {
+        if ((await readFile(LOCK, "utf8").catch(() => "")) === mine)
+          await rm(LOCK, { force: true });
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const holder = Number(await readFile(LOCK, "utf8").catch(() => ""));
-      if (holder && holder !== process.pid && alive(holder))
-        throw new Error(`fetch-engine is already running (process ${holder}); let it finish`);
+      const age =
+        Date.now() -
+        (await stat(LOCK).then(
+          (s) => s.mtimeMs,
+          () => 0,
+        ));
+      if (holder && holder !== process.pid && alive(holder) && age < STALE_AFTER_MS)
+        throw new Error(
+          `fetch-engine is already running (process ${holder}). If it is not, delete ${LOCK} and run it again.`,
+        );
       await rm(LOCK, { force: true });
+    }
+  }
+}
+
+/** Remove what runs that are no longer alive left behind: part-written files and old trees. */
+async function sweep() {
+  const folders = [ROOT, DOWNLOADS].filter((folder) => existsSync(folder));
+  for (const folder of folders) {
+    for (const name of readdirSync(folder)) {
+      const leftover = /\.(?:partial|old)(?:-(\d+))?$/.exec(name);
+      if (leftover && !(leftover[1] && alive(Number(leftover[1]))))
+        await rm(join(folder, name), { recursive: true, force: true });
     }
   }
 }
@@ -314,6 +352,7 @@ async function main() {
   mkdirSync(ROOT, { recursive: true });
   const unlock = await lock();
   try {
+    await sweep();
     await build(from);
   } finally {
     await unlock();
@@ -332,14 +371,22 @@ async function build(from: string | undefined) {
   const started = performance.now();
   // A new manifest is written last, so a build that stops half way is never taken as done.
   await rm(MANIFEST, { force: true });
-  // Holding the lock, anything staged earlier belongs to a run that stopped.
-  const staging = `${FILES}.partial`;
-  await rm(staging, { recursive: true, force: true });
-  const files = copyOut(await mount(), staging);
-  const missing = REQUIRED.filter((path) => files[path] === undefined);
-  if (missing.length) throw new Error(`the TeX Live tree lacks ${missing.join(", ")}`);
-  await rm(FILES, { recursive: true, force: true });
-  await rename(staging, FILES);
+  const staging = `${FILES}.partial-${process.pid}`;
+  const old = `${FILES}.old-${process.pid}`;
+  let files: Record<string, number>;
+  try {
+    files = copyOut(await mount(), staging);
+    const missing = REQUIRED.filter((path) => files[path] === undefined);
+    if (missing.length) throw new Error(`the TeX Live tree lacks ${missing.join(", ")}`);
+    // Swap the trees by renaming, so no run deletes files another run has put in place.
+    await rename(FILES, old).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+    await rename(staging, FILES);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+    await rm(old, { recursive: true, force: true });
+  }
 
   const loader = await readFile(join(DOWNLOADS, "busytex.js"), "utf8");
   await writeFile(join(ROOT, "busytex.js"), loader);
