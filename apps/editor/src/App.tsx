@@ -9,6 +9,8 @@ import { TexLiveIndex } from "./page/texlive";
 /**
  * Until the editor has documents (milestone 2, item 8), the app compiles the spike's marked-up
  * Jake's Resume and shows its page, so the engine, the fonts and field clicks can be seen working.
+ * Only the dev server serves `/engine/` and `/spike/`; hosting the engine is milestone 5, so a
+ * production build shows the failure message until then.
  */
 async function load(
   engine: EngineClient,
