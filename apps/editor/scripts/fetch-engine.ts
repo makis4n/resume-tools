@@ -43,6 +43,8 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { fileURLToPath } from "node:url";
+// Node runs this file by stripping its types, so the type import needs its real extension.
+import type { EngineManifest } from "../src/engine/manifest.ts";
 
 const RELEASE = "build_wasm_4499aa69fd3cf77ad86a47287d9a5193cf5ad993_7936974349_1";
 const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELEASE}/`;
@@ -139,14 +141,6 @@ const DOWNLOADS = join(ROOT, "downloads");
 const FILES = join(ROOT, "files");
 const MANIFEST = join(ROOT, "manifest.json");
 const LOCK = join(ROOT, ".lock");
-
-export interface EngineManifest {
-  release: string;
-  layout: number;
-  bundles: string[];
-  /** Every file TeX may read, by its path in the engine's file system, with its size in bytes. */
-  files: Record<string, number>;
-}
 
 async function sha256(file: string): Promise<string> {
   const hash = createHash("sha256");

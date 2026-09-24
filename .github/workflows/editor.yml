@@ -34,6 +34,14 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The engine and TeX Live tree, rebuilt only when the script that pins them changes.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            apps/editor/.engine
+            !apps/editor/.engine/downloads
+          key: engine-${{ hashFiles('apps/editor/scripts/fetch-engine.ts') }}
+      - run: pnpm --filter @resume-tools/editor fetch-engine
       - run: pnpm check
       - run: pnpm typecheck
       - run: pnpm test
