@@ -1,0 +1,339 @@
+/**
+ * The template package: everything the editor knows about one template, as one JSON value.
+ *
+ * The import pipeline will produce packages and the shared cache will store them, so a package is
+ * data, never code: the preamble its format is dumped from, any class and style files, the style
+ * controls the template offers and how each is applied, and snippets that map the resume model
+ * onto its macros. One generator renders the model with any package. A template the generator
+ * cannot render needs a generator feature or a new decision record, never code in a package
+ * (decision 0006).
+ *
+ * Every snippet is checked here against the slots its place offers, so a package that parses is
+ * one the generator can render. The marker macros are not a package's: they are the editor's, and
+ * the generator appends them to the preamble when it dumps the format.
+ */
+
+import {
+  Id,
+  type LinkKind,
+  SECTION_KINDS,
+  SECTION_ROLES,
+  type SectionKind,
+  type SectionRole,
+} from "@resume-tools/resume-model";
+import { z } from "zod";
+import type { Engine as SessionEngine } from "../engine/session";
+import {
+  checkSnippet,
+  parseSnippet,
+  type SlotType,
+  SnippetError,
+  type SnippetNode,
+} from "./snippet";
+
+type Slots = Readonly<Record<string, SlotType>>;
+
+// The slots each snippet offers, by its place in the package. The generator renders from these.
+
+/** The body, from `\begin{document}` to `\end{document}`. The header is a list of one. */
+export const DOCUMENT_SLOTS = { header: "list", sections: "list" } satisfies Slots;
+/** `contacts` is the phone, email, location and links that are present, joined by a separator. */
+export const HEADER_SLOTS = {
+  first: "text",
+  last: "text",
+  headline: "text",
+  email: "text",
+  phone: "text",
+  location: "text",
+  links: "list",
+  contacts: "list",
+} satisfies Slots;
+/** One contact field, as `{{contacts}}` shows it. */
+export const CONTACT_SLOTS = { text: "text" } satisfies Slots;
+export const LINK_SLOTS = { label: "text", href: "url" } satisfies Slots;
+export const SECTION_SLOTS = {
+  entries: { title: "text", entries: "list" },
+  list: { title: "text", items: "list" },
+  labelled: { title: "text", items: "list" },
+  paragraph: { title: "text", text: "rich" },
+} satisfies Record<SectionKind, Slots>;
+export const ENTRY_SLOTS = {
+  title: "text",
+  subtitle: "text",
+  place: "text",
+  dates: "date",
+  bullets: "list",
+} satisfies Slots;
+export const BULLET_SLOTS = { text: "rich" } satisfies Slots;
+export const ITEM_SLOTS = { text: "rich" } satisfies Slots;
+export const LABELLED_ITEM_SLOTS = { label: "text", text: "rich" } satisfies Slots;
+
+/** A control's value in the snippet that applies it. It is not a field, so it is never marked. */
+const VALUE_SLOTS = { value: "text" } satisfies Slots;
+
+/** Template text in the snippet language. The slots it may use depend on where it sits. */
+const Snippet = z.string().superRefine((source, ctx) => {
+  try {
+    parseSnippet(source);
+  } catch (error) {
+    if (!(error instanceof SnippetError)) throw error;
+    ctx.addIssue({ code: "custom", message: error.message });
+  }
+});
+
+/**
+ * A snippet or separator that may depend on the role of the section it sits in: the same one for
+ * every role, or a `default` and a variant for each role that needs one.
+ */
+export type ByRole<T> = T | ({ default: T } & Partial<Record<SectionRole, T>>);
+
+function byRole<T extends z.ZodType>(schema: T) {
+  const variants = Object.fromEntries(SECTION_ROLES.map((role) => [role, schema.optional()]));
+  return z.union([
+    schema,
+    z.strictObject({ default: schema, ...(variants as Record<SectionRole, z.ZodOptional<T>>) }),
+  ]);
+}
+
+/** The engines a package can name, which `satisfies` holds to the session's, both ways. */
+const Engine = z.enum({ pdftex: "pdftex", xetex: "xetex" } satisfies { [E in SessionEngine]: E });
+
+const PageSize = z.enum(["letter", "a4"]);
+/**
+ * Inches, the same on every side. `multipleOf` allows for floating point, in which 0.7 / 0.1 is
+ * 6.999999999999999.
+ */
+const Margin = z.number().min(0.4).max(1).multipleOf(0.1);
+/** Points. */
+const FontSize = z.number().min(9).max(12).multipleOf(0.5);
+const HexColour = z.string().regex(/^#[0-9A-Fa-f]{6}$/, "a colour is #RRGGBB");
+const Density = z.enum(["compact", "normal", "relaxed"]);
+export const DateFormat = z.enum(["MMM yyyy", "MMMM yyyy", "MM/yyyy", "yyyy"]);
+export type DateFormat = z.infer<typeof DateFormat>;
+
+const format = z.boolean().optional();
+
+/**
+ * The style controls a package offers, from the closed set in docs/plan.md section 5.4, and how
+ * each is applied. An `apply` snippet goes in the body before `\begin{document}`, so changing the
+ * control costs one ordinary compile. A control marked `format` is one the class fixes when it
+ * loads, such as the font size in `article`: its value is also a slot of the preamble, named after
+ * the control, and one format is dumped for each combination of the format-bound values. The date
+ * format has no snippet, because the generator formats every date. Every package offers it and
+ * may only choose its default.
+ */
+const Controls = z.strictObject({
+  pageSize: z
+    .strictObject({ default: PageSize, apply: z.record(PageSize, Snippet), format })
+    .optional(),
+  margins: z.strictObject({ default: Margin, apply: Snippet, format }).optional(),
+  fontSize: z.strictObject({ default: FontSize, apply: Snippet, format }).optional(),
+  font: z
+    .strictObject({
+      default: Id,
+      choices: z
+        .array(z.strictObject({ id: Id, name: z.string(), apply: Snippet }))
+        .min(1)
+        .max(4),
+      format,
+    })
+    .optional(),
+  accent: z.strictObject({ default: HexColour, apply: Snippet, format }).optional(),
+  density: z
+    .strictObject({ default: Density, apply: z.record(Density, Snippet), format })
+    .optional(),
+  dateFormat: z.strictObject({ default: DateFormat }).optional(),
+});
+type Controls = z.infer<typeof Controls>;
+
+/**
+ * The snippets that map the model onto the template's macros, one for each kind of node. Those
+ * that sit inside a section may depend on its role. The generator joins the items of a list slot
+ * with the matching separator, which is plain template text and a newline unless the package says
+ * otherwise.
+ */
+const Snippets = z.strictObject({
+  document: Snippet,
+  header: Snippet,
+  /** A contact field without a snippet is left out of `{{contacts}}`. */
+  contact: z
+    .strictObject({
+      phone: Snippet.optional(),
+      email: Snippet.optional(),
+      location: Snippet.optional(),
+    })
+    .optional(),
+  /** A link kind without a snippet of its own uses `other`'s. */
+  link: z.strictObject({
+    website: Snippet.optional(),
+    linkedin: Snippet.optional(),
+    github: Snippet.optional(),
+    twitter: Snippet.optional(),
+    orcid: Snippet.optional(),
+    other: Snippet,
+  } satisfies Record<LinkKind, z.ZodType>),
+  section: z.strictObject({
+    entries: byRole(Snippet),
+    list: byRole(Snippet),
+    labelled: byRole(Snippet),
+    paragraph: byRole(Snippet),
+  } satisfies Record<SectionKind, z.ZodType>),
+  entry: byRole(Snippet),
+  bullet: byRole(Snippet),
+  item: byRole(Snippet),
+  labelledItem: byRole(Snippet),
+  separators: z
+    .strictObject({
+      sections: z.string().default("\n"),
+      links: z.string().default("\n"),
+      contacts: z.string().default("\n"),
+      entries: byRole(z.string()).default("\n"),
+      bullets: byRole(z.string()).default("\n"),
+      items: byRole(z.string()).default("\n"),
+    })
+    .prefault({}),
+});
+
+export const TemplatePackage = z
+  .strictObject({
+    version: z.literal(1),
+    /** Names the template's formats, and the folder a curated package is written in. */
+    id: Id,
+    name: z.string(),
+    engine: Engine,
+    /** Where the template came from, and the licence and attribution a port keeps. */
+    source: z.strictObject({ url: z.string(), license: z.string(), attribution: z.string() }),
+    /** Class and style files the preamble loads, by file name, as text. */
+    files: z.record(z.string(), z.string()).default({}),
+    /** Everything before `\begin{document}`, dumped as the format. */
+    preamble: Snippet,
+    controls: Controls,
+    snippets: Snippets,
+  })
+  .superRefine((pkg, ctx) => {
+    const check = (source: string | undefined, slots: Slots, path: PropertyKey[]) => {
+      if (source === undefined) return;
+      let nodes: SnippetNode[];
+      try {
+        nodes = parseSnippet(source);
+      } catch (error) {
+        if (error instanceof SnippetError) return; // Snippet has reported it.
+        throw error;
+      }
+      for (const message of checkSnippet(nodes, slots))
+        ctx.addIssue({ code: "custom", message, path });
+    };
+    const checkEach = (
+      sources: Readonly<Record<string, string | undefined>>,
+      slots: Slots,
+      path: PropertyKey[],
+    ) => {
+      for (const [key, source] of Object.entries(sources)) check(source, slots, [...path, key]);
+    };
+    const checkByRole = (value: ByRole<string>, slots: Slots, path: PropertyKey[]) => {
+      if (typeof value === "string") check(value, slots, path);
+      else checkEach(value, slots, path);
+    };
+
+    const { controls, snippets } = pkg;
+    const formatBound: Record<string, SlotType> = {};
+    for (const [id, control] of Object.entries(controls))
+      if (control && "format" in control && control.format) formatBound[id] = "text";
+    check(pkg.preamble, formatBound, ["preamble"]);
+
+    checkEach(controls.pageSize?.apply ?? {}, {}, ["controls", "pageSize", "apply"]);
+    check(controls.margins?.apply, VALUE_SLOTS, ["controls", "margins", "apply"]);
+    check(controls.fontSize?.apply, VALUE_SLOTS, ["controls", "fontSize", "apply"]);
+    check(controls.accent?.apply, VALUE_SLOTS, ["controls", "accent", "apply"]);
+    checkEach(controls.density?.apply ?? {}, {}, ["controls", "density", "apply"]);
+    if (controls.font) {
+      const ids = new Set<string>();
+      controls.font.choices.forEach((choice, i) => {
+        check(choice.apply, {}, ["controls", "font", "choices", i, "apply"]);
+        if (ids.has(choice.id))
+          ctx.addIssue({
+            code: "custom",
+            message: `the font id ${choice.id} is already used by another choice`,
+            path: ["controls", "font", "choices", i, "id"],
+          });
+        ids.add(choice.id);
+      });
+      if (!ids.has(controls.font.default))
+        ctx.addIssue({
+          code: "custom",
+          message: `the default font ${controls.font.default} is not one of the choices`,
+          path: ["controls", "font", "default"],
+        });
+    }
+
+    check(snippets.document, DOCUMENT_SLOTS, ["snippets", "document"]);
+    check(snippets.header, HEADER_SLOTS, ["snippets", "header"]);
+    checkEach(snippets.contact ?? {}, CONTACT_SLOTS, ["snippets", "contact"]);
+    checkEach(snippets.link, LINK_SLOTS, ["snippets", "link"]);
+    for (const kind of SECTION_KINDS)
+      checkByRole(snippets.section[kind], SECTION_SLOTS[kind], ["snippets", "section", kind]);
+    checkByRole(snippets.entry, ENTRY_SLOTS, ["snippets", "entry"]);
+    checkByRole(snippets.bullet, BULLET_SLOTS, ["snippets", "bullet"]);
+    checkByRole(snippets.item, ITEM_SLOTS, ["snippets", "item"]);
+    checkByRole(snippets.labelledItem, LABELLED_ITEM_SLOTS, ["snippets", "labelledItem"]);
+  });
+export type TemplatePackage = z.infer<typeof TemplatePackage>;
+
+/** Read a package, or throw Zod's error, which lists every problem with its path. */
+export const parsePackage = (value: unknown): TemplatePackage => TemplatePackage.parse(value);
+
+/** A document's choices for its package's controls. A choice left out is the package default. */
+export const ControlValues = z.strictObject({
+  pageSize: PageSize.optional(),
+  margins: Margin.optional(),
+  fontSize: FontSize.optional(),
+  font: Id.optional(),
+  accent: HexColour.optional(),
+  density: Density.optional(),
+  dateFormat: DateFormat.optional(),
+} satisfies Record<keyof Controls, z.ZodType>);
+export type ControlValues = z.infer<typeof ControlValues>;
+
+/**
+ * The choices a new document starts with: the default of each control the package offers, and of
+ * the date format, which is "MMM yyyy" when the package sets none. Controls the package does not
+ * offer stay absent.
+ */
+export function defaultControls(pkg: TemplatePackage): ControlValues & { dateFormat: DateFormat } {
+  const { pageSize, margins, fontSize, font, accent, density, dateFormat } = pkg.controls;
+  return {
+    ...(pageSize && { pageSize: pageSize.default }),
+    ...(margins && { margins: margins.default }),
+    ...(fontSize && { fontSize: fontSize.default }),
+    ...(font && { font: font.default }),
+    ...(accent && { accent: accent.default }),
+    ...(density && { density: density.default }),
+    dateFormat: dateFormat?.default ?? "MMM yyyy",
+  };
+}
+
+/**
+ * The schema for a document's choices under one package, which refuses a choice for a control
+ * the package does not offer and a font it does not list. The date format is always allowed.
+ */
+export function controlValuesFor(pkg: TemplatePackage) {
+  const offered = new Set(
+    Object.entries(pkg.controls).flatMap(([name, control]) => (control ? [name] : [])),
+  );
+  const fonts = pkg.controls.font?.choices.map((choice) => choice.id) ?? [];
+  return ControlValues.superRefine((values, ctx) => {
+    for (const [name, value] of Object.entries(values))
+      if (value !== undefined && name !== "dateFormat" && !offered.has(name))
+        ctx.addIssue({
+          code: "custom",
+          message: `the template has no ${name} control`,
+          path: [name],
+        });
+    if (values.font !== undefined && offered.has("font") && !fonts.includes(values.font))
+      ctx.addIssue({
+        code: "custom",
+        message: `${values.font} is not one of the template's fonts`,
+        path: ["font"],
+      });
+  });
+}
