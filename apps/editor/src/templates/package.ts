@@ -196,6 +196,14 @@ const Snippets = z.strictObject({
     .prefault({}),
 });
 
+/** A package id is a model id that the engine also takes as a format name. */
+const PackageId = z
+  .string()
+  .refine(
+    (id) => Id.safeParse(id).success && isFormatName(id),
+    "a package id is 1 to 64 letters, digits, - or _, starting with a letter or digit, not stock",
+  );
+
 export const TemplatePackage = z
   .strictObject({
     version: z.literal(1),
@@ -203,17 +211,23 @@ export const TemplatePackage = z
      * Names the template's formats, and the folder a curated package is written in, so the engine
      * must take it as a format name: it starts with a letter or digit, and it is not `stock`.
      */
-    id: Id.refine(isFormatName, "a package id starts with a letter or digit and is not stock"),
+    id: PackageId,
     name: z.string(),
     engine: Engine,
     /** Where the template came from, and the licence and attribution a port keeps. */
     source: z.strictObject({ url: z.string(), license: z.string(), attribution: z.string() }),
     /** Class and style files the preamble loads, by plain file name, as text. */
     files: z
-      .record(
-        z.string().refine(isFileName, "a file name is one segment and not hidden"),
-        z.string(),
-      )
+      .record(z.string(), z.string())
+      .superRefine((files, ctx) => {
+        for (const name of Object.keys(files))
+          if (!isFileName(name))
+            ctx.addIssue({
+              code: "custom",
+              message: `not a plain file name: ${name}`,
+              path: [name],
+            });
+      })
       .default({}),
     /** Everything before `\begin{document}`, dumped as the format. */
     preamble: Snippet,

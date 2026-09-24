@@ -139,7 +139,7 @@ export const Header = z.strictObject({
 export type Header = z.infer<typeof Header>;
 
 export const Resume = z
-  .object({
+  .strictObject({
     version: z.literal(1),
     header: Header,
     sections: z.array(Section),

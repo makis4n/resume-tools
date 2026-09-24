@@ -186,5 +186,9 @@ describe("Resume, being strict", () => {
     expect(result.error?.issues.map((issue) => issue.message)).toEqual([
       'Unrecognized key: "column"',
     ]);
+    const root = Resume.safeParse({ ...minimal, sections: [], language: "de" });
+    expect(root.error?.issues.map((issue) => issue.message)).toEqual([
+      'Unrecognized key: "language"',
+    ]);
   });
 });
