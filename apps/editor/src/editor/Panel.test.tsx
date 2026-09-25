@@ -2,6 +2,7 @@ import { type Section, YearMonth } from "@resume-tools/resume-model";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { curated } from "../templates/curated";
+import type { Field } from "../tex/fields";
 import { apply, type Command, fieldsOf, newDocument } from "./document";
 import {
   fieldStatus,
@@ -10,6 +11,7 @@ import {
   needsInput,
   Panel,
   plainText,
+  shownFieldsOf,
   thisMonth,
 } from "./Panel";
 
@@ -78,6 +80,44 @@ describe("needsInput", () => {
     expect(needsInput("marginalia.place", "Portland, OR", "Place", undefined)).toBe(false);
     expect(needsInput("marginalia.place", "Place", "Place", undefined)).toBe(true);
     expect(needsInput("marginalia.place", "", "Place", undefined)).toBe(true);
+  });
+});
+
+describe("shownFieldsOf", () => {
+  const drawnFrom = newDocument("jake", sample, "en-US");
+  /** A field of a page, with as many glyphs as `glyphs`. */
+  const field = (id: string, glyphs: number): [string, Field] => {
+    const each = Array.from({ length: glyphs }, (_, item) => ({ item, text: "x", offset: item }));
+    return [id, { id, glyphs: each }];
+  };
+  // The page drawn from the sample, in part: the last name and a section's title with glyphs, and
+  // the first name with none, as if its letters set none.
+  const page = {
+    fields: new Map([field("header.first", 0), field("header.last", 5), field("exp.title", 10)]),
+  };
+  const latest = { page, document: drawnFrom };
+
+  it("counts a field new since the page's document as shown, while its page is to come", () => {
+    const present = apply(drawnFrom, {
+      type: "structure",
+      op: { op: "addSection", kind: "list", role: "skills" },
+    });
+    const title = `${present.resume.sections.at(-1)?.id}.title`;
+    const shown = shownFieldsOf(latest, present);
+    expect(shown?.has(title)).toBe(true);
+    // So the new section's title, which is filled, gets no input for as long as the compile takes.
+    expect(needsInput(title, "Skills", undefined, shown)).toBe(false);
+  });
+
+  it("goes by the page for a field its document had too", () => {
+    const present = apply(drawnFrom, { type: "text", field: "header.first", text: "Maren" });
+    const shown = shownFieldsOf(latest, present);
+    expect(shown).toEqual(new Set(["header.last", "exp.title"]));
+    expect(needsInput("header.first", "Maren", undefined, shown)).toBe(true);
+  });
+
+  it("is undefined before the first page, when every field counts as shown", () => {
+    expect(shownFieldsOf(undefined, drawnFrom)).toBeUndefined();
   });
 });
 

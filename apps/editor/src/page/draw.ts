@@ -102,7 +102,7 @@ export function glyphAt(glyphs: GlyphBox[], x: number, y: number): GlyphBox | un
  * whose text sets no glyph, such as a name in a script the fonts lack, still has its markers on
  * the page with nothing between them, so it is in `fields` but not here; a field on a later page,
  * which the editor does not draw, is in neither. The side panel gives an input to a filled field
- * that is not here, since the page offers no way to edit it.
+ * the page leaves out, since the page offers no way to edit it.
  */
 export function fieldsShown(page: Pick<DrawnPage, "fields">): Set<string> {
   const shown = new Set<string>();

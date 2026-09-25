@@ -2,10 +2,9 @@ import type { Resume, RichText } from "@resume-tools/resume-model";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Compiler, type Shown } from "./editor/compiler";
 import { type Command, type FieldRef, fieldsOf, History, newDocument } from "./editor/document";
-import { Panel } from "./editor/Panel";
+import { Panel, shownFieldsOf } from "./editor/Panel";
 import { EngineClient } from "./engine/client";
 import type { EngineManifest } from "./engine/manifest";
-import { fieldsShown } from "./page/draw";
 import { FontLibrary } from "./page/fonts";
 import { Page } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
@@ -151,7 +150,11 @@ export function App() {
       </div>
       {/* The side panel's column: the structure, with the style controls under it (item 15). */}
       <aside style={{ flex: "none", width: "24rem" }}>
-        <Panel document={present} shownFields={fieldsShown(shown.latest.page)} onCommand={edit} />
+        <Panel
+          document={present}
+          shownFields={shownFieldsOf(shown.latest, present)}
+          onCommand={edit}
+        />
       </aside>
     </main>
   );

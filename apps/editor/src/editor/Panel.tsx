@@ -36,6 +36,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { type DrawnPage, fieldsShown } from "../page/draw";
 import { curated } from "../templates/curated";
 import { formatDates } from "../templates/dates";
 import { isBlank } from "../templates/escape";
@@ -43,6 +44,7 @@ import { type DateFormat, defaultControls } from "../templates/package";
 import {
   type Command,
   type Document,
+  fieldsOf,
   PLACEHOLDERS,
   SECTION_TITLES,
   type StructureOp,
@@ -97,11 +99,11 @@ export function fieldStatus(
  * Whether the panel gives a field an input: when the page does not show it, so that it can still
  * be filled in or cleared, and while it holds its placeholder, shown or not, so that the input can
  * mark it. An empty field is never on the page (decision 0007). A filled one is off it when it is
- * not in `shownFields`, the fields with a glyph on the latest page: its template's variant may
- * have no slot for it, as Jake's projects entry has no place, no character of its text may set a
- * glyph, or it may be on a page after the first, which the editor does not draw. Before the first
- * page `shownFields` is undefined, and every field counts as shown, so that the panel does not
- * fill with inputs while the document opens.
+ * not in `shownFields` (`shownFieldsOf`): its template's variant may have no slot for it, as
+ * Jake's projects entry has no place, no character of its text may set a glyph, or it may be on a
+ * page after the first, which the editor does not draw. Before the first page `shownFields` is
+ * undefined, and every field counts as shown, so that the panel does not fill with inputs while
+ * the document opens.
  */
 export function needsInput(
   field: string,
@@ -111,6 +113,26 @@ export function needsInput(
 ): boolean {
   if (fieldStatus(text, placeholder) !== "filled") return true;
   return shownFields !== undefined && !shownFields.has(field);
+}
+
+/**
+ * The fields `needsInput` counts as shown, from `latest`, the latest page with the document it was
+ * drawn from (the compiler's `Shown`), and `present`, the document the panel shows: those with a
+ * glyph on the page (`fieldsShown`), and those the page's document did not have. The page can be
+ * a compile behind, and a field added since has had no page to be on yet, so it counts as shown
+ * until one comes, as every field does before the first page. Otherwise a new section's title,
+ * which is not a placeholder, would get an input for as long as the compile takes and lose it when
+ * the page arrives. Undefined while there is no page.
+ */
+export function shownFieldsOf(
+  latest: { page: Pick<DrawnPage, "fields">; document: Document } | undefined,
+  present: Document,
+): Set<string> | undefined {
+  if (latest === undefined) return undefined;
+  const shown = fieldsShown(latest.page);
+  const drawn = fieldsOf(latest.document.resume);
+  for (const id of fieldsOf(present.resume).keys()) if (!drawn.has(id)) shown.add(id);
+  return shown;
 }
 
 /** The month "Add dates" starts an entry's dates at: this one, as the model writes a month. */
@@ -171,7 +193,7 @@ const STYLE = {
 export interface PanelProps {
   document: Document;
   /**
-   * The fields with a glyph on the latest page (`fieldsShown`), so that a filled field the page
+   * The fields that count as shown on the page (`shownFieldsOf`), so that a filled field the page
    * does not show gets an input here; undefined before the first page.
    */
   shownFields?: ReadonlySet<string>;
