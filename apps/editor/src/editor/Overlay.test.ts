@@ -827,11 +827,14 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
     const values = defaultControls(pkg);
     const format = generateFormat(pkg, values);
 
-    /** The page of a resume set with Jake's Resume, and its fields' texts. */
-    async function jake(resume: Resume, job: string) {
+    /**
+     * The page of a resume set with Jake's Resume, and its fields' texts, with the controls'
+     * `controls`, which must share the defaults' format, as the font size does.
+     */
+    async function jake(resume: Resume, job: string, controls = values) {
       const dumped = session.dump(pkg.engine, format.name, format.preamble, format.files);
       if (!dumped.ok) throw new Error(dumped.error);
-      const body = generateBody(pkg, resume, values);
+      const body = generateBody(pkg, resume, controls);
       const result = session.compile(pkg.engine, format.name, body.latex, { job, maxPasses: 3 });
       if (!result.output) throw new Error(result.error);
       return { page: await drawPage(result.output, fonts, body.texts), texts: body.texts };
@@ -982,13 +985,13 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
     }, 60_000);
 
     /** The sample with its first entry's bullets replaced by rich `bullets`, and its page. */
-    async function richPage(prefix: string, bullets: RichText[]) {
+    async function richPage(prefix: string, bullets: RichText[], controls = values) {
       const resume = structuredClone(sample);
       const section = resume.sections.find((each) => each.kind === "entries");
       const entry = section?.kind === "entries" ? section.entries[0] : undefined;
       if (!entry) throw new Error("the sample has no entry");
       entry.bullets = bullets.map((text, i) => ({ id: `${prefix}-${i}`, text }));
-      const { page } = await jake(resume, `overlay-${prefix}`);
+      const { page } = await jake(resume, `overlay-${prefix}`, controls);
       return { page, resume };
     }
 
@@ -1049,6 +1052,40 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
         (node) => node.kind === "glue" && node.offset === 9,
       );
       expect(space?.kind === "glue" && space.width / PT).toBeCloseTo(3.833, 3);
+    }, 60_000);
+
+    it("names each variant at the cut LaTeX picks for the size the page sets it at", async () => {
+      // The verifier's bullets: every word bold italic, which Latin Modern cuts only at 10 and is
+      // all the page sets, and the spaces plain, bold or italic, which set no glyph. At the font
+      // sizes 9, 9.5 and 10 the bullets are 8.18, 8.64 and 9.09 pt, where t1lmr.fd sets the
+      // regular, bold and italic fonts in their 8, 9 and 9 cuts; named at the bold italic's 10,
+      // one broke at 112 where TeX broke at 106, and lines ended 1.36 to 3.07 pt off.
+      const spaced = (space: Run): RichText =>
+        WORDS.flatMap((word, i) => [
+          ...(i > 0 ? [space] : []),
+          { text: word, bold: true, italic: true },
+        ]);
+      const bullets = [
+        spaced({ text: " " }),
+        spaced({ text: " ", bold: true }),
+        spaced({ text: " ", italic: true }),
+      ];
+      for (const [fontSize, cut] of [
+        [9, 8],
+        [9.5, 9],
+        [10, 9],
+      ] as const) {
+        const prefix = `cut${fontSize * 10}`;
+        const { page, resume } = await richPage(prefix, bullets, { ...values, fontSize });
+        for (const i of bullets.keys()) {
+          const { named } = await sameAsTex(page, resume, `${prefix}-${i}.text`);
+          expect([...named].map(([variant, font]) => [variant, font.font.name])).toEqual([
+            ["regular", `ec-lmr${cut}`],
+            ["bold", `ec-lmbx${cut}`],
+            ["italic", `ec-lmri${cut}`],
+          ]);
+        }
+      }
     }, 60_000);
 
     it("measures each variant's symbols in its own companion, and corrects after them", async () => {

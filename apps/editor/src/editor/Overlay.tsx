@@ -247,7 +247,10 @@ export async function namedVariants(
   for (const variant of VARIANTS) {
     if (known.has(variant)) continue;
     const candidates = sources.flatMap((source) =>
-      variantFontNames(source.font.name, variant).map((name) => ({ name, size: source.size })),
+      variantFontNames(source.font.name, variant, source.size).map((name) => ({
+        name,
+        size: source.size,
+      })),
     );
     for (const { name, size } of candidates) {
       const font = await load(name).catch(() => undefined);
