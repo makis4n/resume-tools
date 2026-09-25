@@ -33,10 +33,13 @@ const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
 /**
  * How long ago `then` was, as of `now`, in the largest whole unit: "5 minutes ago", "yesterday".
  * In English, as the rest of the editor is for now; under a minute, or in the future, as a clock
- * that has moved back would put it, it is "just now".
+ * that has moved back would put it, it is "just now". A time that is not a number, which the store
+ * leaves out of the list, is said to be unknown rather than let the formatter throw, which would
+ * take the whole list down.
  */
 export function editedAgo(then: number, now: number): string {
   const elapsed = now - then;
+  if (!Number.isFinite(elapsed)) return "at an unknown time";
   const format = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
   for (const [unit, length] of UNITS)
     if (elapsed >= length) return format.format(-Math.floor(elapsed / length), unit);

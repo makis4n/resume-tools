@@ -145,6 +145,13 @@ export interface CompilerOptions {
    * drop it; without it, nothing is fetched ahead.
    */
   fetchFile?: (path: string) => Promise<unknown>;
+  /**
+   * Whether the engine's tree has a file at this path, as its manifest says. The prefetch fetches
+   * only such files: its paths come from the browser's storage, which anything on the origin can
+   * write, and a path the tree does not have is not one TeX read. Without it, nothing is fetched
+   * ahead.
+   */
+  knownPath?: (path: string) => boolean;
 }
 
 /** What the user reads when a page cannot be made, whatever the reason; never TeX's words. */
@@ -237,6 +244,7 @@ export class Compiler {
   private readonly formatStore: FormatStore | undefined;
   private readonly prefetchStore: PrefetchStore | undefined;
   private readonly fetchFile: ((path: string) => Promise<unknown>) | undefined;
+  private readonly knownPath: ((path: string) => boolean) | undefined;
   /** The fetches ahead asked for each template, by id, once per session. */
   private readonly prefetched = new Map<string, Promise<void>>();
   /** Whether a document has opened since one last reached the job, which it then starts afresh. */
@@ -274,6 +282,7 @@ export class Compiler {
     this.formatStore = options.formats;
     this.prefetchStore = options.prefetch;
     this.fetchFile = options.fetchFile;
+    this.knownPath = options.knownPath;
   }
 
   /**
@@ -547,18 +556,20 @@ export class Compiler {
 
   /**
    * Fetch the files a template is known to read into the HTTP cache, once per session, so that
-   * the worker's synchronous reads, one round trip each, find them there. It settles once every
-   * fetch has been asked for, and never with an error; it waits on none of them, since a file not
-   * yet fetched is read when TeX asks for it, as it would have been anyway.
+   * the worker's synchronous reads, one round trip each, find them there. Only files the tree has
+   * are fetched, whatever the store holds (`knownPath`). It settles once every fetch has been
+   * asked for, and never with an error; it waits on none of them, since a file not yet fetched is
+   * read when TeX asks for it, as it would have been anyway.
    */
   private prefetchFor(pkg: TemplatePackage): Promise<void> {
-    const { prefetchStore: store, fetchFile } = this;
-    if (store === undefined || fetchFile === undefined) return Promise.resolve();
+    const { prefetchStore: store, fetchFile, knownPath: known } = this;
+    if (store === undefined || fetchFile === undefined || known === undefined)
+      return Promise.resolve();
     let asked = this.prefetched.get(pkg.id);
     if (asked === undefined) {
       asked = this.ask("read the files to fetch ahead", () => store.get(pkg.id), [] as string[])
         .then((paths) => {
-          for (const path of paths) fetchFile(path).catch(() => {});
+          for (const path of paths) if (known(path)) fetchFile(path).catch(() => {});
         })
         .catch((error: unknown) => console.warn("The files could not be fetched ahead", error));
       this.prefetched.set(pkg.id, asked);

@@ -28,4 +28,22 @@ describe("the engine's URLs", () => {
   it("encodes a tag that would read as a path", () => {
     expect(engineUrl("a/b", "busytex.mjs")).toBe("/engine/a%2Fb/busytex.mjs");
   });
+
+  // The prefetch reads its paths from the browser's storage, which anything on the origin can
+  // write: `/../../../api/x` would otherwise be a request for /api/x, with the user's cookies.
+  it("refuses a path that would step out of the tree, or names no file", () => {
+    for (const path of [
+      "/../x",
+      "/texmf/../../../api/account",
+      "/./x",
+      "//evil.example/x",
+      "/texmf//x",
+      "/texmf/x/",
+      "https://evil.example/x",
+      "texmf/x",
+      "/",
+      "",
+    ])
+      expect(() => fileUrl(TAG, path), path).toThrow("not a path in the engine's file system");
+  });
 });

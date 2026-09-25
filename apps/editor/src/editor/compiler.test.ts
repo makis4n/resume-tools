@@ -825,6 +825,7 @@ describe("Compiler", () => {
     stores.paths.set("jake", [ARTICLE, CMR10]);
     const s = scheduler({
       prefetch: stores.prefetchStore,
+      knownPath: () => true,
       fetchFile: async (path) => {
         s.engine().calls.push(`fetch ${path}`);
         if (path === CMR10) throw new Error("offline");
@@ -852,12 +853,36 @@ describe("Compiler", () => {
     expect(s.engine().calls.filter((call) => call.startsWith("fetch"))).toHaveLength(2);
   });
 
+  it("fetches ahead only what the tree has, whatever the store holds", async () => {
+    const stores = new MemoryStores();
+    // Anything on the origin can write the store: a path out of the tree, and one it lacks.
+    stores.paths.set("jake", ["/../../../api/account/delete", ARTICLE, "/texmf/nowhere.sty"]);
+    const fetched: string[] = [];
+    const fetchFile = async (path: string) => {
+      fetched.push(path);
+    };
+    const s = scheduler({
+      prefetch: stores.prefetchStore,
+      knownPath: (p) => p === ARTICLE,
+      fetchFile,
+    });
+    s.compiler.open(jake, opening);
+    await settle();
+    expect(fetched).toEqual([ARTICLE]);
+    // With no way to tell what the tree has, nothing is fetched ahead.
+    const t = scheduler({ prefetch: stores.prefetchStore, fetchFile });
+    t.compiler.open(jake, opening);
+    await settle();
+    expect(fetched).toEqual([ARTICLE]);
+  });
+
   it("goes around a store that fails or does not answer, and never loses the page", async () => {
     const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
     const never = () => new Promise<never>(() => {});
     const s = scheduler({
       formats: { get: never, put: () => Promise.reject(new Error("quota")) },
       prefetch: { get: () => Promise.reject(new Error("closed")), add: never },
+      knownPath: () => true,
       fetchFile: async () => {},
     });
     s.compiler.open(jake, opening);

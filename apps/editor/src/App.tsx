@@ -18,7 +18,15 @@ import { engineTag, fileUrl, manifestUrl } from "./engine/urls";
 import { FontLibrary } from "./page/fonts";
 import { Page } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
-import { CANNOT_OPEN, DocumentRefused, DocumentStore, type Summary } from "./storage/store";
+import {
+  CANNOT_OPEN,
+  canLeave,
+  DocumentRefused,
+  DocumentStore,
+  type Flushed,
+  type Stored,
+  type Summary,
+} from "./storage/store";
 import { CURATED, curated } from "./templates/curated";
 
 /**
@@ -37,21 +45,34 @@ const NEW_TEMPLATE = "jake";
 /** What the user reads when the browser's storage fails; the details go to the console. */
 const NO_STORAGE = "Documents cannot be read or kept in this browser.";
 
+/** What the user reads while the open document's edits cannot be written; it stays open. */
+const NOT_SAVED = "This document could not be saved in this browser.";
+
+/** What the user reads once another tab has changed the open document. */
+const CHANGED_ELSEWHERE = "This document was changed in another tab.";
+
 async function get(url: string): Promise<Response> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
   return response;
 }
 
-/** The engine's tree as the main thread needs it: its tag, and the fonts the page is drawn with. */
-async function loadTree(): Promise<{ tag: string; fonts: FontLibrary }> {
+/**
+ * The engine's tree as the main thread needs it: its tag, the fonts the page is drawn with, and
+ * whether the tree has a file at a path, which is all the prefetch may fetch.
+ */
+async function loadTree(): Promise<{
+  tag: string;
+  fonts: FontLibrary;
+  known: (path: string) => boolean;
+}> {
   const manifest = (await (await get(manifestUrl())).json()) as EngineManifest;
   const tag = engineTag(manifest);
   const fonts = new FontLibrary(
     new TexLiveIndex(manifest),
     async (path) => new Uint8Array(await (await get(fileUrl(tag, path))).arrayBuffer()),
   );
-  return { tag, fonts };
+  return { tag, fonts, known: (path) => Object.hasOwn(manifest.files, path) };
 }
 
 /**
@@ -76,9 +97,25 @@ interface Click {
 interface Open {
   /** Its id in the store. */
   id: string;
+  /** The revision it was read at, which its saves name, so none is written over another tab's. */
+  revision: number;
   history: History;
   /** The history's present, as state, so that an edit renders. */
   present: EditorDocument;
+  /** Whether another tab has changed it since it was read: it takes no edits until read again. */
+  stale: boolean;
+  /** Whether its newest save could not be written; it stays open until one is. */
+  unsaved: boolean;
+}
+
+/**
+ * The open document after a flush: unsaved while its newest save is not written, and changed
+ * elsewhere once one of its saves has met another tab's change.
+ */
+function afterFlush(open: Open, { failed, conflicts }: Flushed): Open {
+  const unsaved = failed.includes(open.id);
+  const stale = open.stale || conflicts.includes(open.id);
+  return unsaved === open.unsaved && stale === open.stale ? open : { ...open, unsaved, stale };
 }
 
 export function App() {
@@ -119,7 +156,7 @@ export function App() {
    */
   const openDocument = async (id: string) => {
     const request = ++opening.current;
-    let found: EditorDocument | undefined;
+    let found: Stored | undefined;
     try {
       found = await store.current?.get(id);
     } catch (error) {
@@ -130,20 +167,28 @@ export function App() {
     }
     if (request !== opening.current) return;
     if (found === undefined) return showList("That document is no longer in this browser.");
-    const pkg = CURATED.get(found.template)?.package;
+    const { revision } = found;
+    const pkg = CURATED.get(found.document.template)?.package;
     // A template this editor does not have: a newer one wrote the document.
     if (pkg === undefined) {
-      console.error(`No curated template has the id ${found.template}`);
+      console.error(`No curated template has the id ${found.document.template}`);
       return showList(CANNOT_OPEN);
     }
-    const { document, dropped } = dropRefusedChoices(pkg, found);
+    const { document, dropped } = dropRefusedChoices(pkg, found.document);
     if (dropped.length > 0) {
       const choices = dropped.join(" and ");
       console.warn(
         `${pkg.name} no longer offers the document's ${choices}, so it opens on the template's default`,
       );
     }
-    setOpen({ id, history: new History(document), present: document });
+    setOpen({
+      id,
+      revision,
+      history: new History(document),
+      present: document,
+      stale: false,
+      unsaved: false,
+    });
     setNotice(undefined);
     setShown(undefined);
     setError(undefined);
@@ -158,6 +203,14 @@ export function App() {
     let live = true;
     const kept = new DocumentStore();
     store.current = kept;
+    // What the store learns in the background reaches the open document: a flush the timer or the
+    // page going away asked for, and another tab's change. Closing the store stops both.
+    kept.onFlushed((result) => setOpen((current) => current && afterFlush(current, result)));
+    kept.onChanged((id) =>
+      setOpen((current) =>
+        current?.id === id && !current.stale ? { ...current, stale: true } : current,
+      ),
+    );
     let owned: Compiler | undefined;
     const events: CompilerEvents = {
       page: (latest) => {
@@ -168,12 +221,15 @@ export function App() {
       busy: setBusy,
     };
     const loaded = loadTree().then(
-      ({ tag, fonts }) => {
+      ({ tag, fonts, known }) => {
         if (!live) return;
         owned = new Compiler(() => new EngineClient(), fonts, events, {
           formats: kept.formatsFor(tag),
           prefetch: kept.prefetch,
-          fetchFile: (path) => fetchAhead(fileUrl(tag, path)),
+          knownPath: known,
+          // The compiler asks only for paths the tree has; this checks again, so that no path the
+          // storage holds becomes a request of its own.
+          fetchFile: (path) => (known(path) ? fetchAhead(fileUrl(tag, path)) : Promise.resolve()),
         });
         compiler.current = owned;
       },
@@ -255,13 +311,16 @@ export function App() {
     );
   }
 
-  const { id, history, present } = open;
+  const { id, revision, history, present, stale, unsaved } = open;
 
   const edit = (command: Command) => {
+    // A document another tab has changed takes no edit until it is read again: one made here
+    // could not be saved over the other tab's, and would be lost on the reload.
+    if (stale) return;
     const next = history.dispatch(command);
     setOpen((current) => current && { ...current, present: next });
     compiler.current?.update(next);
-    store.current?.save(id, next);
+    store.current?.save(id, next, revision);
   };
 
   /**
@@ -275,13 +334,43 @@ export function App() {
     compiler.current?.open(curated(doc.template).package, doc);
   };
 
-  // Back to the list, which writes the document's last saves first. The compiler keeps the engine
-  // and its formats for the next document, and nothing it does for this one is shown again.
+  /**
+   * Back to the list, once the document's saves are written. Until they are, its history holds
+   * the only copy of the edits, so the editor stays, and the message line says why (the store's
+   * listeners set it from the same flush). The compiler keeps the engine and its formats for the
+   * next document, and nothing it does for this one is shown again.
+   */
+  const leave = async () => {
+    const request = opening.current;
+    const flushed = await store.current?.flush();
+    if (request !== opening.current || (flushed !== undefined && !canLeave(flushed))) return;
+    await showList();
+  };
+
   const back = (
-    <button type="button" onClick={() => void showList()}>
+    <button type="button" onClick={() => void leave()}>
       Documents
     </button>
   );
+
+  // Why the edits here are not being kept, when they are not: another tab's change, which a
+  // reload takes in, and which leaves nothing here worth trying again; or a save that failed,
+  // which a flush tries again, as the store also does by itself.
+  const saving = stale ? (
+    <p role="alert">
+      {CHANGED_ELSEWHERE}{" "}
+      <button type="button" onClick={() => void openDocument(id)}>
+        Reload
+      </button>
+    </p>
+  ) : unsaved ? (
+    <p role="alert">
+      {NOT_SAVED}{" "}
+      <button type="button" onClick={() => void store.current?.flush()}>
+        Retry
+      </button>
+    </p>
+  ) : null;
 
   // With no page yet there is nothing to keep showing, so a failure to make the first one is a
   // failure to show any. Fonts that did not load leave no compiler to ask again.
@@ -289,6 +378,7 @@ export function App() {
     return (
       <main>
         {back}
+        {saving}
         <p>The page could not be shown.</p>
       </main>
     );
@@ -296,6 +386,7 @@ export function App() {
     return (
       <main>
         {back}
+        {saving}
         <p>
           The page could not be shown.{" "}
           <button type="button" onClick={tryAgain}>
@@ -308,6 +399,7 @@ export function App() {
     return (
       <main>
         {back}
+        {saving}
         <p>Opening…</p>
       </main>
     );
@@ -320,8 +412,9 @@ export function App() {
     <main style={{ display: "flex", alignItems: "flex-start", gap: "1.5rem" }}>
       <div style={{ flex: "none" }}>
         {back}
+        {saving}
         <p>{error ?? (slow ? "Compiling…" : took)}</p>
-        {clicked && field && (
+        {clicked && field && !stale && (
           <FieldBox click={clicked} field={field} resume={present.resume} onEdit={edit} />
         )}
         <Page
@@ -329,8 +422,10 @@ export function App() {
           onField={(field, offset) => setClicked({ field, offset })}
         />
       </div>
-      {/* The side panel's column: the structure, with the style controls under it (item 15). */}
-      <aside style={{ flex: "none", width: "24rem" }}>
+      {/* The side panel's column: the structure, with the style controls under it (item 15). Its
+          commands are edits as the page's are, so a document another tab has changed takes none
+          of them either, and the column is inert until the document is read again. */}
+      <aside inert={stale} style={{ flex: "none", width: "24rem" }}>
         <Panel
           document={present}
           shownFields={shownFieldsOf(shown.latest, present)}

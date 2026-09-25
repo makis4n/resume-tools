@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,18 @@ import { IMMUTABLE, serveEngine, serveFolder } from "./serve-folder";
 
 let folder: string;
 const servers: ViteDevServer[] = [];
+
+const RELEASE = "build_wasm_0123abcd_1";
+
+/** Write the manifest as fetch-engine does, whole: written beside it, then renamed over it. */
+function writeManifest(text: string) {
+  const partial = join(folder, "manifest.json.partial");
+  writeFileSync(partial, text);
+  renameSync(partial, join(folder, "manifest.json"));
+}
+
+const manifest = (layout: number) =>
+  JSON.stringify({ release: RELEASE, layout, bundles: [], files: { "/texmf/a b.sty": 6 } });
 
 /** A dev server with only `plugin`, and the origin it listens at. */
 async function serve(plugin: Plugin): Promise<string> {
@@ -31,7 +43,7 @@ beforeAll(() => {
   writeFileSync(join(folder, "files", "article.cls"), "\\ProvidesClass{article}");
   writeFileSync(join(folder, "files", "texmf", "a b.sty"), "\\relax");
   writeFileSync(join(folder, "notes.txt"), "not served");
-  writeFileSync(join(folder, "manifest.json"), "{}");
+  writeManifest(manifest(1));
   writeFileSync(join(folder, "busytex.wasm"), "\0asm");
 });
 
@@ -90,7 +102,7 @@ describe("serveFolder", () => {
 
 describe("serveEngine", () => {
   let origin: string;
-  const tag = engineTag({ release: "build_wasm_0123abcd_1", layout: 1 });
+  const tag = engineTag({ release: RELEASE, layout: 1 });
 
   beforeAll(async () => {
     origin = await serve(serveEngine(folder));
@@ -103,17 +115,47 @@ describe("serveEngine", () => {
     expect(response.headers.get("cache-control")).toBe("no-cache");
   });
 
-  test("serves the engine and the tree under any tag, for good", async () => {
-    for (const url of [engineUrl(tag, "busytex.wasm"), engineUrl("another-2", "busytex.wasm")]) {
-      const response = await fetch(`${origin}${url}`);
-      expect(response.status, url).toBe(200);
-      expect(response.headers.get("content-type")).toBe("application/wasm");
-      expect(response.headers.get("cache-control")).toBe(IMMUTABLE);
-    }
+  test("serves the engine and the tree under the tag its manifest names, for good", async () => {
+    const engine = await fetch(`${origin}${engineUrl(tag, "busytex.wasm")}`);
+    expect(engine.status).toBe(200);
+    expect(engine.headers.get("content-type")).toBe("application/wasm");
+    expect(engine.headers.get("cache-control")).toBe(IMMUTABLE);
     const response = await fetch(`${origin}${fileUrl(tag, "/texmf/a b.sty")}`);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe(IMMUTABLE);
     expect(await response.text()).toBe("\\relax");
+  });
+
+  // A browser would keep this tree's bytes under another tree's URLs for a year.
+  test("answers 404, with nothing to keep, under any other tag", async () => {
+    for (const url of [
+      engineUrl("another-2", "busytex.wasm"),
+      fileUrl("another-2", "/texmf/a b.sty"),
+      fileUrl(engineTag({ release: RELEASE, layout: 2 }), "/texmf/a b.sty"),
+    ]) {
+      const response = await fetch(`${origin}${url}`);
+      expect(response.status, url).toBe(404);
+      expect(response.headers.get("cache-control"), url).toBeNull();
+    }
+  });
+
+  test("serves a tree swapped in under its new tag only, and none it cannot read", async () => {
+    const next = engineTag({ release: RELEASE, layout: 2 });
+    const status = async (url: string) => (await fetch(`${origin}${url}`)).status;
+    try {
+      writeManifest(manifest(2));
+      expect(await status(fileUrl(next, "/texmf/a b.sty"))).toBe(200);
+      expect(await status(fileUrl(tag, "/texmf/a b.sty"))).toBe(404);
+      // A manifest cut short, or not a manifest, names no tag.
+      for (const text of ["{", JSON.stringify({ release: RELEASE })]) {
+        writeManifest(text);
+        expect(await status(fileUrl(next, "/texmf/a b.sty")), text).toBe(404);
+        expect(await status(engineUrl("undefined-undefined", "busytex.wasm")), text).toBe(404);
+      }
+    } finally {
+      writeManifest(manifest(1));
+    }
+    expect(await status(fileUrl(tag, "/texmf/a b.sty"))).toBe(200);
   });
 
   test("answers 404, with nothing to keep, for a file outside its place", async () => {
