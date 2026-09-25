@@ -15,7 +15,7 @@ import { type DrawnPage, drawPage, type GlyphBox, ruleCrossings } from "../page/
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
-import { checkSpecial } from "../validate/harness";
+import { checkSpecial, validatePackage } from "../validate/harness";
 import { mediaBoxes, shownTexts, strokedPaths } from "../validate/pdf";
 import { CURATED, curated } from "./curated";
 import { generateBody, generateFormat } from "./generate";
@@ -2329,7 +2329,17 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     });
     if (!result.output) throw new Error(result.error);
     expect((await drawPage(result.output, fonts, body.texts)).glyphs).toEqual(drawn.glyphs);
-  }, 60_000);
+    // And the harness reports upstream's column under the long label, which set the text past the
+    // page's edge, where neither the page nor the PDF shows it.
+    const report = await validatePackage(session, fonts, upstream, labelled, values, "skills-edge");
+    expect(report.findings.filter((finding) => finding.check === "pages")).toEqual([
+      {
+        check: "pages",
+        field: "languages.text",
+        message: "languages.text runs past the page's edge",
+      },
+    ]);
+  }, 120_000);
 
   it("sets an award's dates on one line in every date format, a range included, and the sample's as upstream", async () => {
     // Upstream's column for an award's date is 1.5 cm, for a year; the model's dates are ranges
