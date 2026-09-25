@@ -183,30 +183,31 @@ describe("layoutRows", () => {
     expect(took).toBeLessThan(50);
   });
 
-  it("breaks 5 KB within a small multiple of a plain paragraph's time, whatever the shape", () => {
+  it("breaks 5 KB under any shape in linear time, against the same shape at a fifth of it", () => {
     // The reviewers' specials: a \parshape of 2,000 lines, and a \hangafter of 2^31 - 1 around a
     // ragged paragraph, which looks no different; each cost hundreds of milliseconds a keystroke.
-    // The breaker tells a shape's lines apart, so the 64 lines of one it is given cost 8 to 11
-    // times what the same text costs without a shape, where 256 lines cost 35 to 51 times and
-    // 2,000 lines 68 to 100. So a shape's cost is bound by the plain paragraph's, measured on the
-    // same machine in the same way (`fastest`), rather than in milliseconds, which a slow shared
-    // machine may not meet; 100 ms stays as a ceiling, should the plain paragraph go slow too.
+    // The breaker tells a shape's lines apart, so its work grows with the shape's length as well
+    // as the text's. With the 64 lines of a shape it is given, 5 KB costs 4.5 to 4.7 times what
+    // the same shape costs at 1 KB, as five times the text should; with 256 lines it costs 13.3
+    // to 13.7 times, and with 2,000 lines 26 to 29. So each shape at 5 KB is bound by nine times
+    // itself at a fifth of the text, like against like on whatever machine runs the test, which
+    // a plain paragraph's time was not: a shared runner took twice this machine's ratio of a
+    // shape to a plain paragraph. 100 ms stays as a ceiling, should the fifth go slow too.
     const shape = Array.from({ length: 2000 }, () => "0.0pt,542.0pt").join("|");
-    const [plain, ...crafted] = [
-      special({ parshape: "0", shape: "" }),
+    const crafted = [
       special({ parshape: "2000", shape }),
       special({ hangindent: "10.0pt", hangafter: "2147483647", parshape: "0", shape: "" }),
     ].map((each) => breakParams(parseParagraph(each) as Paragraph));
-    for (const params of crafted) expect(params.lines.length).toBeLessThanOrEqual(65);
-    const text = `${BULLET} `.repeat(25).slice(0, 5 * 1024);
-    const [alone = 0, ...shaped] = fastest(
-      [plain, ...crafted].map((params) => () => layoutRows(text, face, params)),
-      9,
-    );
-    expect(shaped).toHaveLength(2);
-    for (const ms of shaped) {
-      expect(ms).toBeLessThan(20 * alone);
-      expect(ms).toBeLessThan(100);
+    const whole = `${BULLET} `.repeat(25).slice(0, 5 * 1024);
+    const fifth = whole.slice(0, 1024);
+    for (const params of crafted) {
+      expect(params.lines.length).toBeLessThanOrEqual(65);
+      const [short = 0, long = 0] = fastest(
+        [fifth, whole].map((text) => () => layoutRows(text, face, params)),
+        9,
+      );
+      expect(long).toBeLessThan(9 * short);
+      expect(long).toBeLessThan(100);
     }
   });
 });
