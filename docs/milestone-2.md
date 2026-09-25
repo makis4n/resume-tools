@@ -92,7 +92,7 @@ end to end before the other two templates, so that the editing loop is proven on
 
 ### Stage 3. Editing on the page
 
-8. [ ] **Open a document and recompile as it changes.** Document state is the model plus the
+8. [x] **Open a document and recompile as it changes.** Document state is the model plus the
    style values as one JSON blob, changed only through commands, which gives undo for free. The
    scheduler debounces per engine, keeps one compile in flight and drops stale ones, and swaps
    the page without a flash. A compile error becomes a plain message, never a log.
