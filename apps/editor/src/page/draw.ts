@@ -97,6 +97,57 @@ export function glyphAt(glyphs: GlyphBox[], x: number, y: number): GlyphBox | un
   return undefined;
 }
 
+/** A rule a page draws, in TeX points from the page's top-left corner, as a glyph's box is. */
+export interface RuleBox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** A glyph a rule is drawn across, and the rule. */
+export interface RuleCrossing {
+  rule: RuleBox;
+  glyph: GlyphBox;
+}
+
+/**
+ * Every glyph a rule is drawn across on a page. A rule is one the SVG draws, with a width and a
+ * height, and it crosses a glyph where it overlaps the glyph's box by more than an edge, so that
+ * none crosses a glyph with no outline, whose box is empty. `glyphs` are the boxes `drawPage`
+ * gives the page at `pageIndex`. A rule across a glyph strikes through text the user reads and
+ * clicks, as a section title's rule does when the space after the title is less than the
+ * template's macros take back and the line under the title is set over the rule; so Jake's round
+ * trip checks each density with this, and the validation harness can check any package's page
+ * with it.
+ */
+export function ruleCrossings(
+  doc: DviDocument,
+  glyphs: readonly GlyphBox[],
+  pageIndex = 0,
+): RuleCrossing[] {
+  const page = doc.pages[pageIndex];
+  if (!page) throw new Error(`the document has ${doc.pages.length} pages, not ${pageIndex + 1}`);
+  const pt = pointsPerUnit(doc);
+  const crossings: RuleCrossing[] = [];
+  for (const item of page.items) {
+    // The same test the SVG makes before it draws a rule.
+    if (item.kind !== "rule" || item.width <= 0 || item.height <= 0) continue;
+    const rule: RuleBox = {
+      left: INCH + item.h * pt,
+      top: INCH + (item.v - item.height) * pt,
+      right: INCH + (item.h + item.width) * pt,
+      bottom: INCH + item.v * pt,
+    };
+    for (const glyph of glyphs) {
+      const across = Math.min(rule.right, glyph.right) > Math.max(rule.left, glyph.left);
+      const through = Math.min(rule.bottom, glyph.bottom) > Math.max(rule.top, glyph.top);
+      if (across && through) crossings.push({ rule, glyph });
+    }
+  }
+  return crossings;
+}
+
 /**
  * The ids of the fields a page shows: those with a glyph on it, which a click can land on. A field
  * whose text sets no glyph, such as a name in a script the fonts lack, still has its markers on

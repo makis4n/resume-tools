@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
-import { type DrawnPage, drawPage } from "../page/draw";
+import { type DrawnPage, drawPage, type GlyphBox, ruleCrossings } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
@@ -147,6 +147,39 @@ function lineOf(page: DrawnPage, id: string) {
 function baselinesOf(page: DrawnPage, id: string): number[] {
   const ys = new Set(page.glyphs.filter((glyph) => glyph.field === id).map((glyph) => glyph.y));
   return [...ys].sort((a, b) => a - b);
+}
+
+/**
+ * Where a line of a page is set over the line above it, and by how much, down the page. A line
+ * is every glyph on a baseline some field is set on, and it is set over the line above where a
+ * glyph of one overlaps a glyph of the other by more than an edge. Baselines that only glyphs
+ * outside the fields sit on are not lines: Jake centres each bullet on its line's axis, above the
+ * baseline, and a bullet taken for a line would stand between its own line and the one above,
+ * which would then never be compared.
+ */
+function linesSetOver(page: DrawnPage): string[] {
+  const baselines = page.glyphs.flatMap((glyph) => (glyph.field === undefined ? [] : [glyph.y]));
+  const lines = [...new Set(baselines)]
+    .sort((a, b) => a - b)
+    .map((y) => page.glyphs.filter((glyph) => glyph.y === y));
+  const fieldsOf = (line: GlyphBox[]) =>
+    [...new Set(line.flatMap((glyph) => glyph.field ?? []))].join(", ");
+  const found: string[] = [];
+  lines.forEach((line, i) => {
+    const above = lines[i - 1] ?? [];
+    // How far the line reaches into the one above, where any of its glyphs stands under one there.
+    let depth = 0;
+    for (const lower of line)
+      for (const upper of above)
+        if (Math.min(upper.right, lower.right) > Math.max(upper.left, lower.left))
+          depth = Math.max(
+            depth,
+            Math.min(upper.bottom, lower.bottom) - Math.max(upper.top, lower.top),
+          );
+    if (depth > 0)
+      found.push(`${fieldsOf(line)} over ${fieldsOf(above)} by ${depth.toFixed(2)} pt`);
+  });
+  return found;
 }
 
 /** Each link on a page, in order: the address its URI action opens, and the glyphs it spans. */
@@ -327,6 +360,13 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
       const { result, page } = await compileAndDraw(body.latex, body.texts, `density-${density}`);
       expect(result.pages, density).toBe(1);
       expect(page.unmatched, density).toBe(0);
+      // Nothing is set over anything else, however tight the density. Jake's macros take space
+      // back after a title and around an entry, so a density that leaves less than they take
+      // draws a title's rule through the line under it, and sets a line over the one above it.
+      const doc = parseDvi(result.output as Uint8Array, () => undefined);
+      const struck = ruleCrossings(doc, page.glyphs).map(({ glyph }) => glyph.field ?? "no field");
+      expect([...new Set(struck)], `${density}: fields a rule is drawn through`).toEqual([]);
+      expect(linesSetOver(page), `${density}: lines set over the line above`).toEqual([]);
       pages.push(page);
     }
     // The text block ends at the lowest glyph's bottom.

@@ -28,7 +28,7 @@
     "density": {
       "default": "normal",
       "apply": {
-        "compact": "\\titlespacing*{\\section}{0pt}{4pt}{0pt}\\setlist[itemize]{topsep=0pt,itemsep=-2pt}",
+        "compact": "\\titlespacing*{\\section}{0pt}{10pt}{9pt}\\setlist[itemize,1]{topsep=2pt,itemsep=2pt}\\setlist[itemize,2]{topsep=2pt,itemsep=0pt}",
         "normal": "",
         "relaxed": "\\titlespacing*{\\section}{0pt}{22pt}{14pt}\\setlist[itemize,1]{topsep=12pt,itemsep=6pt}\\setlist[itemize,2]{topsep=6pt,itemsep=3pt}"
       }

@@ -102,8 +102,16 @@
 % titlesec's 3.5ex before a section title and 2.3ex after it, 16.5pt and 10.8pt here, and the
 % lists' topsep and itemsep, 9pt and 4.5pt for the entries and 4.5pt and 2pt for their bullets.
 % Compact sets each of them lower and relaxed each higher, so that the space between sections,
-% entries and bullets moves together; relaxed sets the two levels apart, since a value above the
-% entries' would more than double the bullets'.
+% entries and bullets moves together, and both set the two levels apart: relaxed since a value
+% above the entries' would more than double the bullets', and compact so that an entry stays
+% further from the bullets above it than they are from each other. Compact has to leave room for
+% the space the macros below take back with a negative \vspace, or it sets a line over the one
+% above it, or a title's rule through the line under it. So it keeps 9pt after a title, where
+% the rule's -5pt and \resumeSubheading's -2pt take back 7pt, and where a section is empty the
+% rule's -5pt and the next title's -4pt take back 9pt, since titlesec drops the space before a
+% title that follows another; 10pt before a title, which keeps the title a font size below an
+% entry with no bullets, though the entry's heading takes back 7pt after it and the title 4pt
+% before itself; and no itemsep below 0pt.
 \titleformat{\section}{
   \vspace{-4pt}\scshape\raggedright\large\color{rtaccent}
 }{}{0em}{}[\color{rtaccent}\titlerule \vspace{-5pt}]
