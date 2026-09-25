@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
-
+import { fastestAsync } from "../test/timing";
 import type { DviDocument, PageItem } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { INCH } from "../tex/svg";
@@ -552,21 +552,9 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
   }
 
   /**
-   * A page drawn, and the CPU time this thread spent drawing it, in milliseconds: the time it
-   * waits while the other test files run does not count, so a bound in CPU time holds on a slow
-   * shared machine where one in elapsed time may not.
-   */
-  async function timedDraw(output: Uint8Array): Promise<{ page: DrawnPage; ms: number }> {
-    const started = process.threadCpuUsage();
-    const page = await drawPage(output, fonts, new Map());
-    const { user, system } = process.threadCpuUsage(started);
-    return { page, ms: (user + system) / 1000 };
-  }
-
-  /**
    * A page of 8,000 fields of one glyph each (`crowded`), and the same page with a tenth of them:
    * each drawn once to load its fonts, then five times, in turn, and the fastest draw of each in
-   * CPU time (`timedDraw`), with the larger page as drawn.
+   * CPU time (`fastestAsync`), with the larger page as first drawn.
    */
   async function tenfold(job: string, cell: (i: number) => string, line: string) {
     const [small, large] = [800, 8000].map((count) =>
@@ -574,15 +562,11 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     );
     if (!small || !large) throw new Error("no pages");
     await drawPage(small, fonts, new Map());
-    let page = await drawPage(large, fonts, new Map());
-    let smallMs = Number.POSITIVE_INFINITY;
-    let largeMs = Number.POSITIVE_INFINITY;
-    for (let run = 0; run < 5; run++) {
-      smallMs = Math.min(smallMs, (await timedDraw(small)).ms);
-      const drawn = await timedDraw(large);
-      largeMs = Math.min(largeMs, drawn.ms);
-      page = drawn.page;
-    }
+    const page = await drawPage(large, fonts, new Map());
+    const [smallMs = 0, largeMs = 0] = await fastestAsync(
+      [small, large].map((output) => () => drawPage(output, fonts, new Map())),
+      5,
+    );
     expect(page.fields.size, job).toBe(8000);
     expect(page.pageCount, job).toBe(1);
     expect(

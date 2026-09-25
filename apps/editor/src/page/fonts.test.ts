@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
+import { cpuMsAsync } from "../test/timing";
 import { parseDvi } from "../tex/dvi";
 import { drawPage } from "./draw";
 import { FontLibrary } from "./fonts";
@@ -218,13 +219,17 @@ describe("FontLibrary over an invented tree", () => {
       "/fonts/tfm/v/fan2.tfm": fixture("cmr10.tfm"),
       "/fonts/vf/v/fan2.vf": virtualFont("fan1", top),
     });
-    const started = performance.now();
-    const [fan1, fan2] = await Promise.all([fonts.load("fan1"), fonts.load("fan2")]);
-    expect(performance.now() - started).toBeLessThan(500);
-    expect(fan1?.outlines).toBeUndefined();
-    expect(fan1?.missing).toBe("the packet of 65 sets more than 64 characters and rules");
-    expect(fan2?.outlines).toBeUndefined();
-    expect(fan2?.missing).toBe("the packet of 0 sets more than 64 characters and rules");
+    // Refused at the first packet past the limit, however far the packets fan out, they now cost
+    // 0.2 to 1.4 ms of CPU time (`cpuMsAsync`): a budget with no smaller case to compare them
+    // with, so 500 ms of CPU time is their bound alone.
+    const took = await cpuMsAsync(async () => {
+      const [fan1, fan2] = await Promise.all([fonts.load("fan1"), fonts.load("fan2")]);
+      expect(fan1?.outlines).toBeUndefined();
+      expect(fan1?.missing).toBe("the packet of 65 sets more than 64 characters and rules");
+      expect(fan2?.outlines).toBeUndefined();
+      expect(fan2?.missing).toBe("the packet of 0 sets more than 64 characters and rules");
+    });
+    expect(took).toBeLessThan(500);
   });
 
   it("refuses a chain of virtual fonts more than four deep", async () => {
@@ -270,18 +275,22 @@ describe("FontLibrary over an invented tree", () => {
     // Two fit in a glyph, three do not.
     expect(size).toBeGreaterThan((64 * 1024) / 3);
     expect(size).toBeLessThan((64 * 1024) / 2);
-    const started = performance.now();
-    expect((await fonts.load("huge"))?.missing).toBe(
-      "its character 65 holds more than 65536 characters of path data and name",
-    );
-    expect((await fonts.load("many"))?.missing).toBe(
-      "its glyphs hold more than 4194304 characters of path data and names",
-    );
-    expect((await fonts.load("names2"))?.missing).toBeUndefined();
-    expect((await fonts.load("names3"))?.missing).toBe(
-      "its character 65 holds more than 65536 characters of path data and name",
-    );
-    expect(performance.now() - started).toBeLessThan(2_000);
+    // The limits bound the work: composed up to them, the four cost 70 to 95 ms of CPU time, and
+    // 153 to 156 ms with no limits at all, which the refusals catch rather than the time. So 2,000
+    // ms of CPU time is a budget alone, with no smaller case to compare them with.
+    const took = await cpuMsAsync(async () => {
+      expect((await fonts.load("huge"))?.missing).toBe(
+        "its character 65 holds more than 65536 characters of path data and name",
+      );
+      expect((await fonts.load("many"))?.missing).toBe(
+        "its glyphs hold more than 4194304 characters of path data and names",
+      );
+      expect((await fonts.load("names2"))?.missing).toBeUndefined();
+      expect((await fonts.load("names3"))?.missing).toBe(
+        "its character 65 holds more than 65536 characters of path data and name",
+      );
+    });
+    expect(took).toBeLessThan(2_000);
   });
 });
 

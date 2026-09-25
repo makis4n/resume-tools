@@ -15,6 +15,7 @@ import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
 import { defaultControls } from "../templates/package";
 import { PRELUDE } from "../templates/prelude";
+import { fastest, median } from "../test/timing";
 import { glyphOf, glyphText, textToCode } from "../tex/glyphs";
 import {
   type Node as BreakNode,
@@ -101,37 +102,6 @@ function special(values: Record<string, string>): string {
 
 /** The text each row holds. */
 const texts = (text: string, rows: Row[]) => rows.map((row) => text.slice(row.from, row.to));
-
-/**
- * The CPU time this thread spends on `work`, in milliseconds. The time it waits while the other
- * test files run does not count, and a longer run meets more of that wait, so a bound in CPU time
- * holds on a slow shared machine where one in elapsed time may not.
- */
-function cpuMs(work: () => void): number {
-  const started = process.threadCpuUsage();
-  work();
-  const { user, system } = process.threadCpuUsage(started);
-  return (user + system) / 1000;
-}
-
-/** The median of `runs` timings of `work`, in milliseconds of CPU time (`cpuMs`). */
-function median(work: () => void, runs: number): number {
-  const times = Array.from({ length: runs }, () => cpuMs(work)).sort((a, b) => a - b);
-  return times[Math.floor(runs / 2)] ?? Number.POSITIVE_INFINITY;
-}
-
-/**
- * The fastest of `runs` timings of each of `works`, in milliseconds of CPU time (`cpuMs`), the
- * works taken in turn, so that what load is left meets them alike.
- */
-function fastest(works: (() => void)[], runs: number): number[] {
-  const best = works.map(() => Number.POSITIVE_INFINITY);
-  for (let run = 0; run < runs; run++)
-    works.forEach((work, i) => {
-      best[i] = Math.min(best[i] ?? Number.POSITIVE_INFINITY, cpuMs(work));
-    });
-  return best;
-}
 
 describe("layoutRows", () => {
   const face = cmr10();
@@ -335,18 +305,13 @@ describe("richRows", () => {
       Array.from({ length: count }, (_, i) =>
         i % 2 === 0 ? { text: "word", bold: true } : { text: " word " },
       );
-    const cpu = (runs: RichText) => {
-      let fastest = Number.POSITIVE_INFINITY;
-      for (let run = 0; run < 3; run++) {
-        const started = process.threadCpuUsage();
-        richRows(runs, faces, params);
-        const { user, system } = process.threadCpuUsage(started);
-        fastest = Math.min(fastest, (user + system) / 1000);
-      }
-      return fastest;
-    };
-    const small = cpu(runsOf(4000));
-    const large = cpu(runsOf(40_000));
+    const [small = 0, large = 0] = fastest(
+      [4000, 40_000].map((count) => {
+        const runs = runsOf(count);
+        return () => richRows(runs, faces, params);
+      }),
+      3,
+    );
     expect(large).toBeLessThan(3 * 10 * small);
   });
 

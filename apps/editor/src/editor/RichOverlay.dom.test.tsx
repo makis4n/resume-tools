@@ -4,6 +4,7 @@ import type { Editor } from "@tiptap/core";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { fastest } from "../test/timing";
 import type { Command } from "./document";
 import { RichOverlay } from "./RichOverlay";
 import { docToRuns } from "./rich";
@@ -34,11 +35,14 @@ function transfer(plain: string, html: string) {
 }
 
 /**
- * A hostile page's copy: a rule the browser matches against every pasted element, and 20,000 of
- * them, 500 KB in all, which ProseMirror would parse and style before any handler of the editor's.
+ * A hostile page's copy: a rule the browser matches against every pasted element, and `count` of
+ * them, which ProseMirror would parse and style before any handler of the editor's.
  */
-const HOSTILE =
-  "<style>div:has(~ div ~ div ~ p){color:red}</style>" + "<div><span>x</span></div>".repeat(20_000);
+const hostile = (count: number) =>
+  "<style>div:has(~ div ~ div ~ p){color:red}</style>" + "<div><span>x</span></div>".repeat(count);
+
+/** The hostile copy the tests paste and drop: 20,000 elements, 500 KB in all. */
+const HOSTILE = hostile(20_000);
 
 describe("the rich editor's paste and drop", () => {
   let host: HTMLElement;
@@ -82,41 +86,61 @@ describe("the rich editor's paste and drop", () => {
 
   it("pastes the text alone, never reading the HTML, however much of it there is", () => {
     const view = editor().view;
-    const clipboard = transfer("the whole", HOSTILE);
-    const event = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "clipboardData", { value: clipboard });
-    const started = performance.now();
-    act(() => {
-      view.dom.dispatchEvent(event);
-    });
-    const took = performance.now() - started;
+    /** A paste of "the whole" with `html` beside it, dispatched and taken. */
+    const paste = (html: string) => {
+      const clipboard = transfer("the whole", html);
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", { value: clipboard });
+      act(() => {
+        view.dom.dispatchEvent(event);
+      });
+      return { clipboard, event };
+    };
+    const { clipboard, event } = paste(HOSTILE);
     expect(clipboard.htmlRead).toBe(false);
     expect(event.defaultPrevented).toBe(true);
     expect(docToRuns(view.state.doc)).toEqual([{ text: "Ledthe whole the team" }]);
-    expect(took).toBeLessThan(100);
+    // The HTML is never read, so the paste costs 0.6 to 0.8 times what it costs beside a tenth
+    // of it, in CPU time (`fastest`); parsed, as ProseMirror parses a paste the editor leaves
+    // to it, 20 times. So the paste is bound by three times the tenth's, and by 100 ms.
+    const [short = 0, long = 0] = fastest(
+      [hostile(2_000), HOSTILE].map((html) => () => paste(html)),
+      5,
+    );
+    expect(long).toBeLessThan(3 * short);
+    expect(long).toBeLessThan(100);
   });
 
   it("drops text from elsewhere as text alone, never reading its HTML", () => {
     const view = editor().view;
     // jsdom lays nothing out, so the place a drop lands is given.
     view.posAtCoords = () => ({ pos: 4, inside: -1 });
-    const dragged = transfer("the whole", HOSTILE);
-    const event = new MouseEvent("drop", {
-      bubbles: true,
-      cancelable: true,
-      clientX: 1,
-      clientY: 1,
-    });
-    Object.defineProperty(event, "dataTransfer", { value: dragged });
-    const started = performance.now();
-    act(() => {
-      view.dom.dispatchEvent(event);
-    });
-    const took = performance.now() - started;
+    /** A drop of "the whole" from elsewhere with `html` beside it, dispatched and taken. */
+    const drop = (html: string) => {
+      const dragged = transfer("the whole", html);
+      const event = new MouseEvent("drop", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 1,
+        clientY: 1,
+      });
+      Object.defineProperty(event, "dataTransfer", { value: dragged });
+      act(() => {
+        view.dom.dispatchEvent(event);
+      });
+      return { dragged, event };
+    };
+    const { dragged, event } = drop(HOSTILE);
     expect(dragged.htmlRead).toBe(false);
     expect(event.defaultPrevented).toBe(true);
     expect(docToRuns(view.state.doc)).toEqual([{ text: "Ledthe whole the team" }]);
-    expect(took).toBeLessThan(100);
+    // As for a paste: 0.7 to 0.8 times the tenth's, and 20 times with the HTML parsed.
+    const [short = 0, long = 0] = fastest(
+      [hostile(2_000), HOSTILE].map((html) => () => drop(html)),
+      5,
+    );
+    expect(long).toBeLessThan(3 * short);
+    expect(long).toBeLessThan(100);
   });
 
   it("pastes the text during a composition too, rather than leaving it to the browser", () => {
