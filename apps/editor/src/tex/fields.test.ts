@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { bound, fastest } from "../test/timing";
 import { type DviPage, type PageItem, parseDvi } from "./dvi";
 import { alignField, alignGlyphs, collectFields, type GlyphTextOf } from "./fields";
 import { accentMark, glyphText } from "./glyphs";
@@ -428,11 +429,31 @@ describe("alignGlyphs", () => {
   it("reads a run of characters that set no glyph once, however many glyphs miss in it", () => {
     // OT1 sets é as an accent, which has no text, and an e, which no é matches; and … as three
     // periods, which no … matches either. Each glyph used to walk the rest of the run.
-    const accented = fieldOf(Array.from({ length: 16_000 }, (_, i) => (i % 2 ? "e" : undefined)));
-    const dotted = fieldOf(Array.from({ length: 18_000 }, () => "."));
-    const started = performance.now();
-    expect(alignGlyphs(accented, "\u{e9}".repeat(8_000))).toBe(16_000);
-    expect(alignGlyphs(dotted, "\u{2026}".repeat(6_000))).toBe(18_000);
-    expect(performance.now() - started).toBeLessThan(100);
-  });
+    // Read once, each field costs 9.4 to 10.6 times what it costs at a tenth of its length, in CPU
+    // time (`fastest`); walked again for each glyph, 97 to 116 times. So each is bound by three
+    // times ten times its tenth, and by 100 ms.
+    const accented = (count: number) =>
+      [
+        fieldOf(Array.from({ length: 2 * count }, (_, i) => (i % 2 ? "e" : undefined))),
+        "\u{e9}".repeat(count),
+      ] as const;
+    const dotted = (count: number) =>
+      [fieldOf(Array.from({ length: 3 * count }, () => ".")), "\u{2026}".repeat(count)] as const;
+    expect(alignGlyphs(...accented(8_000))).toBe(16_000);
+    expect(alignGlyphs(...dotted(6_000))).toBe(18_000);
+    for (const [shape, count] of [
+      [accented, 8_000],
+      [dotted, 6_000],
+    ] as const) {
+      const [short = 0, long = 0] = fastest(
+        [count / 10, count].map((each) => {
+          const [field, text] = shape(each);
+          return () => alignGlyphs(field, text);
+        }),
+        5,
+      );
+      expect(long).toBeLessThan(bound(3 * 10, short));
+      expect(long).toBeLessThan(100);
+    }
+  }, 60_000);
 });

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ENGINE_DIR, engineAvailable } from "../engine/node";
+import { cpuMs } from "../test/timing";
 import type { FontOutlines, GlyphOutline } from "./glyphs";
 import { parseType1, readType1, type Type1Font, type1Outlines } from "./type1";
 
@@ -544,10 +545,14 @@ describe("readType1 on damaged fonts", () => {
   });
 
   it("rejects an absurd subr count at once", () => {
-    const t0 = performance.now();
+    // Refused in 0.07 to 0.4 ms of CPU time, whatever the count. With no check the reader fails
+    // as fast, on the first entry it cannot read, so there is no slower version to compare with,
+    // and 200 ms of CPU time is a budget alone.
     const font = craft("/Subrs 4294967295 array\n/CharStrings 0 dict dup begin\nend\n");
-    expect(() => readType1(font)).toThrow(/subrs/);
-    expect(performance.now() - t0).toBeLessThan(200);
+    const took = cpuMs(() => {
+      expect(() => readType1(font)).toThrow(/subrs/);
+    });
+    expect(took).toBeLessThan(200);
   });
 });
 

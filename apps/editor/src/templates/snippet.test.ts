@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { bound, fastest } from "../test/timing";
 import {
   checkAddresses,
   checkSnippet,
@@ -249,31 +250,67 @@ describe("crafted snippets", () => {
 
   it("costs time in proportion to the snippet's length, whatever it holds", () => {
     // Both took seconds while the tag regex and the standalone-line test scanned quadratically.
-    const blanks = `{{${"\n".repeat(200_000)}\\relax}}`;
-    const tags = "{{#a}}{{/a}}".repeat(50_000);
-    const started = performance.now();
-    expect(parseSnippet(blanks)).toEqual([text(blanks)]);
-    expect(parseSnippet(tags)).toHaveLength(50_000);
-    expect(performance.now() - started).toBeLessThan(1000);
-  });
+    // Each now costs 8.9 to 11.9 times what it costs at a tenth of its length, in CPU time
+    // (`fastest`); with the regex and the line test they first had, 95 and 99 times. So each is
+    // bound by five times ten times its tenth, as draw.test.ts bounds a page, and by 1,000 ms.
+    const blanks = (count: number) => `{{${"\n".repeat(count)}\\relax}}`;
+    const tags = (count: number) => "{{#a}}{{/a}}".repeat(count);
+    expect(parseSnippet(blanks(200_000))).toEqual([text(blanks(200_000))]);
+    expect(parseSnippet(tags(50_000))).toHaveLength(50_000);
+    for (const [snippet, count] of [
+      [blanks, 200_000],
+      [tags, 50_000],
+    ] as const) {
+      const [short = 0, long = 0] = fastest(
+        [count / 10, count].map((each) => {
+          const source = snippet(each);
+          return () => parseSnippet(source);
+        }),
+        5,
+      );
+      expect(long).toBeLessThan(bound(5 * 10, short));
+      expect(long).toBeLessThan(1000);
+    }
+  }, 60_000);
 
   it("checks addresses in one pass, however deep they nest or often they open", () => {
-    const deep = `${"\\href{".repeat(100_000)}{{&text}}${"}".repeat(100_000)}`;
-    const unclosed = "\\href{\\url{ {{#text}}".repeat(50_000);
+    // Each costs 9.7 to 14.2 times what it costs at a tenth of its length, in CPU time, and is
+    // bound by five times ten times its tenth, as a parse is above, and by 1,000 ms. The check
+    // was one pass from its first version, so there is no quadratic one to measure.
+    const deep = (count: number) => `${"\\href{".repeat(count)}{{&text}}${"}".repeat(count)}`;
+    const unclosed = (count: number) => "\\href{\\url{ {{#text}}".repeat(count);
     // Comments, optional arguments and runs of backslashes, each read once.
-    const commented = "%\\href{{{&text}}\n".repeat(50_000);
-    const optional = "\\href[{[".repeat(100_000);
-    const backslashes = `${"\\".repeat(500_001)}{{&text}}${"\\{{&text}}".repeat(50_000)}`;
-    const started = performance.now();
-    expect(checkAddresses(deep, { text: "text" })).toEqual([
+    const commented = (count: number) => "%\\href{{{&text}}\n".repeat(count);
+    const optional = (count: number) => "\\href[{[".repeat(count);
+    // An odd run of backslashes, so that the last of them reaches the slot.
+    const backslashes = (count: number) =>
+      `${"\\".repeat(10 * count + 1)}{{&text}}${"\\{{&text}}".repeat(count)}`;
+    const check = (source: string) => checkAddresses(source, { text: "text" });
+    expect(check(deep(100_000))).toEqual([
       "text is a text slot; inside \\href use a url slot, such as href",
     ]);
-    expect(checkAddresses(unclosed, { text: "text" })).toEqual([]);
-    expect(checkAddresses(commented, { text: "text" })).toEqual([]);
-    expect(checkAddresses(optional, { text: "text" })).toEqual([]);
-    expect(checkAddresses(backslashes, { text: "text" })).toEqual([
+    expect(check(unclosed(50_000))).toEqual([]);
+    expect(check(commented(50_000))).toEqual([]);
+    expect(check(optional(100_000))).toEqual([]);
+    expect(check(backslashes(50_000))).toEqual([
       "a slot cannot follow a backslash; the text would become a command",
     ]);
-    expect(performance.now() - started).toBeLessThan(1000);
-  });
+    for (const [snippet, count] of [
+      [deep, 100_000],
+      [unclosed, 50_000],
+      [commented, 50_000],
+      [optional, 100_000],
+      [backslashes, 50_000],
+    ] as const) {
+      const [short = 0, long = 0] = fastest(
+        [count / 10, count].map((each) => {
+          const source = snippet(each);
+          return () => check(source);
+        }),
+        5,
+      );
+      expect(long).toBeLessThan(bound(5 * 10, short));
+      expect(long).toBeLessThan(1000);
+    }
+  }, 60_000);
 });

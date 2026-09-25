@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { bound, cpuMs, fastest } from "../test/timing";
 import { parseTfm } from "./tfm";
 import {
   expand,
@@ -226,28 +227,44 @@ describe("expand", () => {
       `the packet of 1 holds ${MAX_PACKET_BYTES + 1} bytes, more than ${MAX_PACKET_BYTES}`,
     );
     // A packet of four million pushes, which grew the stack by one for each, is refused before
-    // it is walked.
+    // it is walked, in 0.05 to 0.11 ms of CPU time at any length, where the walk with no budgets
+    // took 38 to 102 ms and let the packet through; so 100 ms of CPU time is a budget alone.
     const hostile = parseVf(longPacket(141, 4_000_000));
-    const started = performance.now();
-    expect(() => expand(hostile, 1, quarter)).toThrow("more than");
-    expect(performance.now() - started).toBeLessThan(100);
+    const took = cpuMs(() => {
+      expect(() => expand(hostile, 1, quarter)).toThrow("more than");
+    });
+    expect(took).toBeLessThan(100);
   });
 
   it("finds a font by its number without going through every font a file defines", () => {
     // A file of 100,000 font definitions, 2 MB, used to cost that many again for each packet run.
-    const out = [247, 202, 0, ...bytes(4, 0), ...bytes(4, 10 * ONE)];
-    for (let k = 0; k < 100_000; k++) {
-      out.push(245, ...bytes(3, k), ...bytes(4, 0), ...bytes(4, ONE), ...bytes(4, 10 * ONE));
-      out.push(0, 4, 98, 97, 115, 101);
-    }
-    // Each packet selects the last font, by fnt3, and sets its A.
-    for (let code = 0; code < 128; code++)
-      out.push(5, code, ...bytes(3, ONE), 237, ...bytes(3, 99_999), 65);
-    out.push(248, 248, 248);
-    const many = parseVf(new Uint8Array(out));
-    const started = performance.now();
-    for (let code = 0; code < 128; code++)
-      expect(expand(many, code, quarter)?.[0]).toMatchObject({ code: 65 });
-    expect(performance.now() - started).toBeLessThan(250);
-  });
+    // Its 128 packets now cost 0.9 to 1.1 times what they cost over a file of a tenth as many
+    // fonts, in CPU time (`fastest`), the table of fonts made once for each file; made again for
+    // each packet, they cost 11.6 to 11.9 times. So they are bound by three times the tenth, and
+    // by 250 ms.
+    const defining = (count: number) => {
+      const out = [247, 202, 0, ...bytes(4, 0), ...bytes(4, 10 * ONE)];
+      for (let k = 0; k < count; k++) {
+        out.push(245, ...bytes(3, k), ...bytes(4, 0), ...bytes(4, ONE), ...bytes(4, 10 * ONE));
+        out.push(0, 4, 98, 97, 115, 101);
+      }
+      // Each packet selects the last font, by fnt3, and sets its A.
+      for (let code = 0; code < 128; code++)
+        out.push(5, code, ...bytes(3, ONE), 237, ...bytes(3, count - 1), 65);
+      out.push(248, 248, 248);
+      return parseVf(new Uint8Array(out));
+    };
+    const files = [defining(10_000), defining(100_000)];
+    for (const vf of files)
+      for (let code = 0; code < 128; code++)
+        expect(expand(vf, code, quarter)?.[0]).toMatchObject({ code: 65 });
+    const [short = 0, long = 0] = fastest(
+      files.map((vf) => () => {
+        for (let code = 0; code < 128; code++) expand(vf, code, quarter);
+      }),
+      5,
+    );
+    expect(long).toBeLessThan(bound(3, short));
+    expect(long).toBeLessThan(250);
+  }, 60_000);
 });
