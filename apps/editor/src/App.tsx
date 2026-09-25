@@ -2,6 +2,7 @@ import type { Resume, RichText } from "@resume-tools/resume-model";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Compiler, type Shown } from "./editor/compiler";
 import { type Command, type FieldRef, fieldsOf, History, newDocument } from "./editor/document";
+import { Panel } from "./editor/Panel";
 import { EngineClient } from "./engine/client";
 import type { EngineManifest } from "./engine/manifest";
 import { FontLibrary } from "./page/fonts";
@@ -136,15 +137,21 @@ export function App() {
   const took = `${shown.opening ? "Opened" : "Updated"} in ${ms.toFixed(0)} ms${started}.`;
   const field = clicked && fieldsOf(present.resume).get(clicked.field);
   return (
-    <main>
-      <p>{error ?? (slow ? "Compiling…" : took)}</p>
-      {clicked && field && (
-        <FieldBox click={clicked} field={field} resume={present.resume} onEdit={edit} />
-      )}
-      <Page
-        svg={shown.latest.page.svg}
-        onField={(field, offset) => setClicked({ field, offset })}
-      />
+    <main style={{ display: "flex", alignItems: "flex-start", gap: "1.5rem" }}>
+      <div style={{ flex: "none" }}>
+        <p>{error ?? (slow ? "Compiling…" : took)}</p>
+        {clicked && field && (
+          <FieldBox click={clicked} field={field} resume={present.resume} onEdit={edit} />
+        )}
+        <Page
+          svg={shown.latest.page.svg}
+          onField={(field, offset) => setClicked({ field, offset })}
+        />
+      </div>
+      {/* The side panel's column: the structure, with the style controls under it (item 15). */}
+      <aside style={{ flex: "none", width: "24rem" }}>
+        <Panel document={present} onCommand={edit} />
+      </aside>
     </main>
   );
 }

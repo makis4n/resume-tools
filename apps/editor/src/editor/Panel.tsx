@@ -1,0 +1,737 @@
+/**
+ * The side panel, which holds the resume's structure (plan section 5.3, item 11): the header's
+ * contact fields and links, and the sections and what each holds, to add, remove and reorder, with
+ * each section's role. Text is edited on the page, where it is read, so the panel names a node by
+ * its title or first words rather than repeat it in inputs. Its inputs are for what the page may
+ * not show: the header's contact fields, each link's kind and address with its label, and a field
+ * that is empty, since an empty field is not on the page (decision 0007) and so cannot be clicked
+ * there, or that still holds its placeholder, which a template may not set at all. Everything the
+ * panel does is a command, as an edit on the page is, so the page recompiles after it.
+ *
+ * Plain HTML in plain English, with nothing in it that is LaTeX.
+ */
+
+import {
+  type Entry,
+  type Header,
+  type Item,
+  type LabelledItem,
+  LINK_KINDS,
+  type Link,
+  LinkKind,
+  type RichText,
+  SECTION_KINDS,
+  SECTION_ROLES,
+  type Section,
+  SectionKind,
+  SectionRole,
+} from "@resume-tools/resume-model";
+import {
+  type CSSProperties,
+  type InputHTMLAttributes,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { curated } from "../templates/curated";
+import { formatDates } from "../templates/dates";
+import { isBlank } from "../templates/escape";
+import { type DateFormat, defaultControls } from "../templates/package";
+import {
+  type Command,
+  type Document,
+  PLACEHOLDERS,
+  SECTION_TITLES,
+  type StructureOp,
+} from "./document";
+
+/** How long typing in the panel waits for a pause before it becomes a command, in milliseconds. */
+export const PAUSE = 300;
+
+/** Where the panel's commands go. */
+type Send = (command: Command) => void;
+
+/** A structure op as the command that carries it. */
+const structural = (op: StructureOp): Command => ({ type: "structure", op });
+
+/** A rich field's text as the page shows it: its runs joined. */
+export const plainText = (runs: RichText) => runs.map((run) => run.text).join("");
+
+/**
+ * The first words of a text, which name a bullet or an item in the panel without repeating it
+ * whole; cut at a number of characters too, since an address is one long word.
+ */
+export function firstWords(text: string, words = 6, characters = 48): string {
+  const all = text.trim().split(/\s+/);
+  const start = all.slice(0, words).join(" ");
+  if (start.length > characters) return `${start.slice(0, characters).trimEnd()}…`;
+  return all.length > words ? `${start}…` : start;
+}
+
+/**
+ * Where a field stands: `empty` when the page would show nothing for it, by the generator's own
+ * test, so that it is not on the page (decision 0007); `placeholder` while it holds the text it
+ * started with; and `filled` otherwise.
+ */
+export function fieldStatus(
+  text: string | undefined,
+  placeholder?: string,
+): "empty" | "placeholder" | "filled" {
+  if (text === undefined || isBlank(text)) return "empty";
+  return text === placeholder ? "placeholder" : "filled";
+}
+
+/** The month "Add dates" starts an entry's dates at: this one, as the model writes a month. */
+export function thisMonth(now = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Whether removing a section would lose more than its title, which is when the panel asks. */
+export function holdsContent(section: Section): boolean {
+  switch (section.kind) {
+    case "entries":
+      return section.entries.length > 0;
+    case "list":
+    case "labelled":
+      return section.items.length > 0;
+    case "paragraph":
+      return !isBlank(plainText(section.text));
+  }
+}
+
+/** Each kind of section in plain English. */
+const KIND_NAMES: Readonly<Record<SectionKind, string>> = {
+  entries: "Entries",
+  list: "List",
+  labelled: "Labelled list",
+  paragraph: "Paragraph",
+};
+
+/** Each kind of link as the site it points to names itself. */
+const LINK_NAMES: Readonly<Record<LinkKind, string>> = {
+  website: "Website",
+  linkedin: "LinkedIn",
+  github: "GitHub",
+  twitter: "Twitter",
+  orcid: "ORCID",
+  other: "Other",
+};
+
+/**
+ * The header's fields besides the name, with an input whatever they hold, since the page does not
+ * show one while it is empty and a template may not show it at all, as Jake's does not a headline.
+ */
+const HEADER_FIELDS = [
+  { key: "headline", label: "Headline", mode: "text" },
+  { key: "email", label: "Email", mode: "email" },
+  { key: "phone", label: "Phone", mode: "tel" },
+  { key: "location", label: "Location", mode: "text" },
+] as const;
+
+/** Just enough layout for a narrow column; the rest is the browser's own. */
+const STYLE = {
+  panel: { display: "grid", gap: "0.75rem", fontSize: "0.875rem" },
+  list: { display: "grid", gap: "0.5rem", margin: "0.5rem 0", paddingLeft: "1.25rem" },
+  row: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.375rem" },
+  mark: { color: "#9a5b00", fontStyle: "italic" },
+} satisfies Record<string, CSSProperties>;
+
+export interface PanelProps {
+  document: Document;
+  /** Where the panel's commands go: the way an edit on the page goes, so the page follows. */
+  onCommand: Send;
+}
+
+export function Panel({ document, onCommand }: PanelProps) {
+  const { header, sections } = document.resume;
+  return (
+    <div style={STYLE.panel}>
+      <HeaderFields header={header} send={onCommand} />
+      <Links links={header.links} send={onCommand} />
+      <Sections sections={sections} format={dateFormatOf(document)} send={onCommand} />
+    </div>
+  );
+}
+
+/** The date format the page sets dates in: the document's choice, or its template's default. */
+function dateFormatOf(document: Document): DateFormat {
+  const { dateFormat } = document.controls;
+  return dateFormat ?? defaultControls(curated(document.template).package).dateFormat;
+}
+
+/** The `setHeader` op for one of the header's fields. */
+function setHeader(key: (typeof HEADER_FIELDS)[number]["key"], text: string): StructureOp {
+  const op: Extract<StructureOp, { op: "setHeader" }> = { op: "setHeader" };
+  op[key] = text;
+  return op;
+}
+
+function HeaderFields({ header, send }: { header: Header; send: Send }) {
+  const text = (field: string) => (value: string) => send({ type: "text", field, text: value });
+  return (
+    <fieldset>
+      <legend>Header</legend>
+      <FieldInput label="First name" text={header.name.first} onChange={text("header.first")} />
+      <FieldInput label="Last name" text={header.name.last} onChange={text("header.last")} />
+      {HEADER_FIELDS.map(({ key, label, mode }) => (
+        <label key={key} style={STYLE.row}>
+          {label}
+          <TypedInput
+            value={header[key] ?? ""}
+            inputMode={mode}
+            onChange={(value) => send(structural(setHeader(key, value)))}
+          />
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+function Links({ links, send }: { links: readonly Link[]; send: Send }) {
+  const set = (id: string, change: { kind?: LinkKind; label?: string; href?: string }) =>
+    send(structural({ op: "setLink", id, ...change }));
+  return (
+    <fieldset>
+      <legend>Links</legend>
+      {links.length > 0 && (
+        <ol style={STYLE.list}>
+          {links.map((link, index) => (
+            <li key={link.id} style={STYLE.row}>
+              <select
+                aria-label="Kind of link"
+                value={link.kind}
+                onChange={(event) => set(link.id, { kind: LinkKind.parse(event.target.value) })}
+              >
+                {LINK_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {LINK_NAMES[kind]}
+                  </option>
+                ))}
+              </select>
+              <label style={STYLE.row}>
+                Label
+                <TypedInput value={link.label} onChange={(label) => set(link.id, { label })} />
+                {fieldStatus(link.label, PLACEHOLDERS.link.label) === "placeholder" && <Mark />}
+              </label>
+              <label style={STYLE.row}>
+                Address
+                <TypedInput
+                  value={link.href}
+                  inputMode="url"
+                  spellCheck={false}
+                  onChange={(href) => set(link.id, { href })}
+                />
+              </label>
+              <Reorder
+                index={index}
+                count={links.length}
+                onMove={(to) => send(structural({ op: "moveLink", id: link.id, to }))}
+                onRemove={() => send(structural({ op: "removeLink", id: link.id }))}
+              />
+            </li>
+          ))}
+        </ol>
+      )}
+      <button type="button" onClick={() => send(structural({ op: "addLink" }))}>
+        Add link
+      </button>
+    </fieldset>
+  );
+}
+
+function Sections({
+  sections,
+  format,
+  send,
+}: {
+  sections: readonly Section[];
+  format: DateFormat;
+  send: Send;
+}) {
+  return (
+    <fieldset>
+      <legend>Sections</legend>
+      {sections.length > 0 && (
+        <ol style={STYLE.list}>
+          {sections.map((section, index) => (
+            <SectionRow
+              key={section.id}
+              section={section}
+              index={index}
+              count={sections.length}
+              format={format}
+              send={send}
+            />
+          ))}
+        </ol>
+      )}
+      <AddSection send={send} />
+    </fieldset>
+  );
+}
+
+/**
+ * A section: its title, which the page edits, its kind, which never changes, and its role, with
+ * the buttons that reorder and remove it; and, once opened, what it holds.
+ */
+function SectionRow({
+  section,
+  index,
+  count,
+  format,
+  send,
+}: {
+  section: Section;
+  index: number;
+  count: number;
+  format: DateFormat;
+  send: Send;
+}) {
+  const [open, setOpen] = useState(false);
+  const { id, title } = section;
+  const remove = () => {
+    const named = isBlank(title) ? "this section" : `the section “${title}”`;
+    if (holdsContent(section) && !confirm(`Remove ${named} and everything in it?`)) return;
+    send(structural({ op: "removeSection", id }));
+  };
+  return (
+    <li>
+      <div style={STYLE.row}>
+        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {isBlank(title) ? "Untitled section" : title}
+        </button>
+        <span>{KIND_NAMES[section.kind]}</span>
+        <RoleSelect
+          role={section.role}
+          onChange={(role) => send(structural({ op: "setSection", id, role }))}
+        />
+        <Reorder
+          index={index}
+          count={count}
+          onMove={(to) => send(structural({ op: "moveSection", id, to }))}
+          onRemove={remove}
+        />
+      </div>
+      <FieldInput
+        label="Title"
+        text={title}
+        onChange={(text) => send({ type: "text", field: `${id}.title`, text })}
+      />
+      {open && <SectionContents section={section} format={format} send={send} />}
+    </li>
+  );
+}
+
+/** What a section holds, each with the buttons that reorder and remove it, and one to add more. */
+function SectionContents({
+  section,
+  format,
+  send,
+}: {
+  section: Section;
+  format: DateFormat;
+  send: Send;
+}) {
+  switch (section.kind) {
+    case "entries": {
+      const { entries } = section;
+      return (
+        <>
+          {entries.length > 0 && (
+            <ol style={STYLE.list}>
+              {entries.map((entry, index) => (
+                <EntryRow
+                  key={entry.id}
+                  entry={entry}
+                  index={index}
+                  count={entries.length}
+                  format={format}
+                  send={send}
+                />
+              ))}
+            </ol>
+          )}
+          <button
+            type="button"
+            onClick={() => send(structural({ op: "addEntry", section: section.id }))}
+          >
+            Add entry
+          </button>
+        </>
+      );
+    }
+    case "list":
+    case "labelled": {
+      const items: readonly (Item | LabelledItem)[] = section.items;
+      return (
+        <>
+          {items.length > 0 && (
+            <ol style={STYLE.list}>
+              {items.map((item, index) => (
+                <ItemRow key={item.id} item={item} index={index} count={items.length} send={send} />
+              ))}
+            </ol>
+          )}
+          <button
+            type="button"
+            onClick={() => send(structural({ op: "addItem", section: section.id }))}
+          >
+            Add item
+          </button>
+        </>
+      );
+    }
+    case "paragraph":
+      return (
+        <RichField label="Text" field={`${section.id}.text`} runs={section.text} send={send} />
+      );
+  }
+}
+
+/**
+ * An entry: its title and dates as the page sets them, the fields the page does not show, and its
+ * bullets. Dates are edited on the page (item 9), so an entry without them gets a button here, as
+ * it has none on the page to click.
+ */
+function EntryRow({
+  entry,
+  index,
+  count,
+  format,
+  send,
+}: {
+  entry: Entry;
+  index: number;
+  count: number;
+  format: DateFormat;
+  send: Send;
+}) {
+  const { id, bullets } = entry;
+  const text = (name: "title" | "subtitle" | "place") => (value: string) =>
+    send({ type: "text", field: `${id}.${name}`, text: value });
+  const placeholder = PLACEHOLDERS.entry;
+  return (
+    <li>
+      <div style={STYLE.row}>
+        <span>{isBlank(entry.title) ? "Untitled entry" : entry.title}</span>
+        {entry.dates ? (
+          <span>{formatDates(entry.dates, format)}</span>
+        ) : (
+          <button
+            type="button"
+            onClick={() =>
+              send({ type: "dates", field: `${id}.dates`, dates: { start: thisMonth() } })
+            }
+          >
+            Add dates
+          </button>
+        )}
+        <Reorder
+          index={index}
+          count={count}
+          onMove={(to) => send(structural({ op: "moveEntry", id, to }))}
+          onRemove={() => send(structural({ op: "removeEntry", id }))}
+        />
+      </div>
+      <FieldInput
+        label="Title"
+        text={entry.title}
+        placeholder={placeholder.title}
+        onChange={text("title")}
+      />
+      <FieldInput
+        label="Subtitle"
+        text={entry.subtitle}
+        placeholder={placeholder.subtitle}
+        onChange={text("subtitle")}
+      />
+      <FieldInput
+        label="Place"
+        text={entry.place}
+        placeholder={placeholder.place}
+        onChange={text("place")}
+      />
+      <div style={STYLE.row}>
+        {bullets.length === 1 ? "1 bullet" : `${bullets.length} bullets`}
+        <button type="button" onClick={() => send(structural({ op: "addBullet", entry: id }))}>
+          Add bullet
+        </button>
+      </div>
+      {bullets.length > 0 && (
+        <ol style={STYLE.list}>
+          {bullets.map((bullet, b) => (
+            <li key={bullet.id} style={STYLE.row}>
+              <RichField
+                label="Bullet"
+                field={`${bullet.id}.text`}
+                runs={bullet.text}
+                placeholder={PLACEHOLDERS.bullet}
+                send={send}
+              />
+              <Reorder
+                index={b}
+                count={bullets.length}
+                onMove={(to) => send(structural({ op: "moveBullet", id: bullet.id, to }))}
+                onRemove={() => send(structural({ op: "removeBullet", id: bullet.id }))}
+              />
+            </li>
+          ))}
+        </ol>
+      )}
+    </li>
+  );
+}
+
+/** An item of a list or labelled section: its label, if it has one, and its first words. */
+function ItemRow({
+  item,
+  index,
+  count,
+  send,
+}: {
+  item: Item | LabelledItem;
+  index: number;
+  count: number;
+  send: Send;
+}) {
+  const labelled = "label" in item;
+  return (
+    <li style={STYLE.row}>
+      {labelled && (
+        <FieldInput
+          label="Label"
+          text={item.label}
+          placeholder={PLACEHOLDERS.labelledItem.label}
+          onChange={(text) => send({ type: "text", field: `${item.id}.label`, text })}
+        >
+          <b>{item.label}</b>
+        </FieldInput>
+      )}
+      <RichField
+        label={labelled ? "Text" : "Item"}
+        field={`${item.id}.text`}
+        runs={item.text}
+        placeholder={labelled ? PLACEHOLDERS.labelledItem.text : PLACEHOLDERS.item}
+        send={send}
+      />
+      <Reorder
+        index={index}
+        count={count}
+        onMove={(to) => send(structural({ op: "moveItem", id: item.id, to }))}
+        onRemove={() => send(structural({ op: "removeItem", id: item.id }))}
+      />
+    </li>
+  );
+}
+
+/** The kind and role of a new section, and the button that adds it at the end. */
+function AddSection({ send }: { send: Send }) {
+  const [kind, setKind] = useState<SectionKind>("entries");
+  const [role, setRole] = useState<SectionRole>("experience");
+  return (
+    <div style={STYLE.row}>
+      <label style={STYLE.row}>
+        Kind
+        <select value={kind} onChange={(event) => setKind(SectionKind.parse(event.target.value))}>
+          {SECTION_KINDS.map((each) => (
+            <option key={each} value={each}>
+              {KIND_NAMES[each]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <RoleSelect role={role} onChange={setRole} />
+      <button type="button" onClick={() => send(structural({ op: "addSection", kind, role }))}>
+        Add section
+      </button>
+    </div>
+  );
+}
+
+function RoleSelect({
+  role,
+  onChange,
+}: {
+  role: SectionRole;
+  onChange: (role: SectionRole) => void;
+}) {
+  return (
+    <label style={STYLE.row}>
+      Role
+      <select value={role} onChange={(event) => onChange(SectionRole.parse(event.target.value))}>
+        {SECTION_ROLES.map((each) => (
+          <option key={each} value={each}>
+            {SECTION_TITLES[each]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** Move up, move down and remove, for the node at `index` of the `count` in its list. */
+function Reorder({
+  index,
+  count,
+  onMove,
+  onRemove,
+}: {
+  index: number;
+  count: number;
+  onMove: (to: number) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <span style={STYLE.row}>
+      <button
+        type="button"
+        title="Move up"
+        aria-label="Move up"
+        disabled={index === 0}
+        onClick={() => onMove(index - 1)}
+      >
+        ↑
+      </button>
+      <button
+        type="button"
+        title="Move down"
+        aria-label="Move down"
+        disabled={index === count - 1}
+        onClick={() => onMove(index + 1)}
+      >
+        ↓
+      </button>
+      <button type="button" onClick={onRemove}>
+        Remove
+      </button>
+    </span>
+  );
+}
+
+/**
+ * A rich field: its first words, or an input while the page does not show it. The input sets the
+ * field as one plain run, so a field with bold, italic or a link is left to the page, where those
+ * are edited, rather than lose them here.
+ */
+function RichField({
+  label,
+  field,
+  runs,
+  placeholder,
+  send,
+}: {
+  label: string;
+  field: string;
+  runs: RichText;
+  placeholder?: string;
+  send: Send;
+}) {
+  const text = plainText(runs);
+  const marked = runs.some((run) => run.bold || run.italic || run.href !== undefined);
+  return (
+    <FieldInput
+      label={label}
+      text={text}
+      placeholder={placeholder}
+      locked={marked && !isBlank(text)}
+      onChange={(typed) => send({ type: "rich", field, runs: [{ text: typed }] })}
+    >
+      <span>{firstWords(text)}</span>
+    </FieldInput>
+  );
+}
+
+/**
+ * An input for a field the page cannot show, so that it can still be filled in: an empty field,
+ * which is not on the page (decision 0007), or one still holding its placeholder, which a template
+ * may leave off the page, as Jake's does a project's place. Any other field is edited on the page,
+ * and the panel shows `children` for it instead. Once the input has had the focus it stays, so
+ * that filling the field in does not pull the input, and the panel below it, from under the
+ * pointer.
+ */
+function FieldInput({
+  label,
+  text,
+  placeholder,
+  locked = false,
+  onChange,
+  children,
+}: {
+  label: string;
+  text: string | undefined;
+  placeholder?: string;
+  /** Whether the input would lose some of what the field holds, which leaves it to the page. */
+  locked?: boolean;
+  onChange: (text: string) => void;
+  children?: ReactNode;
+}) {
+  const [used, setUsed] = useState(false);
+  const status = fieldStatus(text, placeholder);
+  if (locked || (status === "filled" && !used)) return <>{children}</>;
+  return (
+    <label style={STYLE.row} onFocus={() => setUsed(true)}>
+      {label}
+      <TypedInput value={text ?? ""} onChange={onChange} />
+      {status === "placeholder" && <Mark />}
+    </label>
+  );
+}
+
+/** The mark on a field that still holds the text it started with. */
+function Mark() {
+  return <small style={STYLE.mark}>placeholder</small>;
+}
+
+/**
+ * A text input whose typing becomes a command at each pause rather than at each keystroke, the
+ * command carrying the whole value. Every command asks for a compile, and the compiler's own wait
+ * is shorter than the gap between two keystrokes, so without this pause the page would compile for
+ * most characters typed. The input shows what was typed until the command goes, and the document's
+ * value after. Leaving the input sends what is pending at once; the input going away drops it,
+ * since its field may have gone with it.
+ */
+function TypedInput({
+  value,
+  onChange,
+  ...rest
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "onBlur"> & {
+  value: string;
+  onChange: (text: string) => void;
+}) {
+  const [draft, setDraft] = useState<string>();
+  const pending = useRef<{ text: string; timer: ReturnType<typeof setTimeout> }>(undefined);
+  // The timer calls the latest callback, not the one from the render in which the typing began.
+  const latest = useRef(onChange);
+  useEffect(() => {
+    latest.current = onChange;
+  });
+  useEffect(
+    () => () => {
+      clearTimeout(pending.current?.timer);
+      pending.current = undefined;
+    },
+    [],
+  );
+  const send = () => {
+    const typed = pending.current;
+    if (typed === undefined) return;
+    clearTimeout(typed.timer);
+    pending.current = undefined;
+    setDraft(undefined);
+    latest.current(typed.text);
+  };
+  return (
+    <input
+      {...rest}
+      value={draft ?? value}
+      onChange={(event) => {
+        const text = event.target.value;
+        setDraft(text);
+        clearTimeout(pending.current?.timer);
+        pending.current = { text, timer: setTimeout(send, PAUSE) };
+      }}
+      onBlur={send}
+    />
+  );
+}
