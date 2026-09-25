@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/makis4n/resume-tools/packages/contracts/ats/v1/error.schema.json",
+  "title": "ATS error, v1 (draft)",
+  "description": "Body of every non-2xx response from the ATS service. Clients branch on `code` and may show `message` to the user; neither contains internal details. Clients ignore properties they do not know. Draft: expect changes until both owners mark it stable.",
+  "type": "object",
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Stable machine-readable code. Current codes: not-a-pdf (415), file-too-large (413), invalid-request (422), internal-error (500). New codes may be added within v1."
+        },
+        "message": {
+          "type": "string",
+          "description": "Plain-English explanation that can be shown to the user."
+        }
+      }
+    }
+  }
+}
