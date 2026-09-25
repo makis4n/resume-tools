@@ -593,16 +593,18 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
   it("lays out thousands of fields in time proportional to the page", async () => {
     // The reviewers' page: 8,000 fields of one glyph each, which a template could mark. Laid out
     // field by field over the whole page, it drew in 636 to 726 ms, after every edit's compile.
-    // Ten times the fields cost 12 times the CPU time of the page's tenth now, and cost 73 times
-    // then; so the page is bound by three times ten times its tenth, drawn on the same machine
-    // in the same way, rather than in milliseconds, which a slow shared machine may not meet.
-    // 500 ms stays as a ceiling, should the tenth go slow too.
+    // Ten times the fields cost 11.5 to 12.6 times the CPU time of the page's tenth now, and cost
+    // 74 to 95 times in the two ways this was quadratic. So the page is bound by its tenth, drawn
+    // on the same machine in the same way, rather than in milliseconds, which a slow shared
+    // machine may not meet; and by five times ten times it, since a shared runner's ratios run as
+    // much as twice this machine's, which still fails either quadratic way. 500 ms stays as a
+    // ceiling, should the tenth go slow too.
     const { small, large } = await tenfold(
       "many",
       (i) => `\\special{rt:b:f${i}}x\\special{rt:e:f${i}}`,
       " ",
     );
-    expect(large).toBeLessThan(3 * 10 * small);
+    expect(large).toBeLessThan(5 * 10 * small);
     expect(large).toBeLessThan(500);
   }, 60_000);
 
@@ -610,7 +612,7 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     // The verifier's page: the 8,000 fields on one line, each raised a scaled point more than the
     // one before, so that each glyph has a baseline of its own within half a point of every other.
     // Gathered and sorted anew for each baseline, what shares a field's baseline took 2.2 s, and
-    // 88 times the CPU time of the page's tenth where it now takes 12 times; bound as above.
+    // 95 times the CPU time of the page's tenth where it now takes 11.5 times; bound as above.
     const { page, small, large } = await tenfold(
       "close",
       (i) => `\\special{rt:b:f${i}}\\rlap{\\raisebox{${i}sp}{x}}\\special{rt:e:f${i}}`,
@@ -619,7 +621,7 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     const baselines = new Set([...page.fields.values()].map((field) => field.layout?.baseline));
     expect(baselines.size).toBe(1);
     expect([...baselines][0]).toHaveLength(8000);
-    expect(large).toBeLessThan(3 * 10 * small);
+    expect(large).toBeLessThan(5 * 10 * small);
     expect(large).toBeLessThan(500);
   }, 60_000);
 
