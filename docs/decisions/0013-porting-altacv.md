@@ -205,8 +205,8 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   the letters it joins (decision 0009), Lato's and Roboto's `uniFB00` to `uniFB04` among them:
   ff, fi, fl, ffi and ffl in Lato and Latin Modern, ff, fi, fl and ft in Source Sans, and fi and fl
   alone in Roboto and Roboto Slab. T1's `,,` is a ligature too, set as `quotedblbase` in every
-  font, as in Jake's, which the page reads as „ and the aligner does not match to the two commas
-  the resume holds, so a field with two commas in a row fails alignment at that glyph.
+  font, as in Jake's, which the page reads as „ and the aligner matches to the two commas the
+  resume holds, as it matches the en dash to `--`.
 - 17 of TS1's symbols draw and reach the PDF but match no character of their field in a title:
   `glyphText` has no reading for eleven of their glyphs' names, such as Latin Modern's `baht` and
   `naira`, and reads six as other text, such as Roboto Slab's `‖` as two bars and `‽` as `!?`. A

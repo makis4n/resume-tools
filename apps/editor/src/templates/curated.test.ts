@@ -1415,7 +1415,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     // Each font sets the ligatures its T1 metrics form, as the sample does, and the page reads
     // each as the letters it joins, Lato's and Roboto's uniFB00 to uniFB04 among them (decision
     // 0013). Roboto and Roboto Slab form fi and fl alone, and Source Sans ft, and ff but not ffi or
-    // ffl.
+    // ffl. Every one sets two commas as T1's low double quote, which aligns with the two.
     const LIGATURES: Record<string, string[]> = {
       lato: ["ff", "ffi", "ffl", "fi", "fl"],
       roboto: ["fi", "fl"],
@@ -1438,12 +1438,12 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     const bullet = entry?.bullets[0];
     if (!experience || !entry || !bullet) throw new Error("the sample moved");
     // The name and a section's title, which are Roboto Slab under every choice; an entry's title,
-    // its subtitle in the family's bold, and a bullet, upright and italic.
+    // its subtitle in the family's bold, and a bullet, upright and italic, with two commas.
     joined.header.name.last = "Duffield";
     experience.title = "Offline fieldwork";
     entry.title = words;
     entry.subtitle = words;
-    bullet.text = [{ text: `${words}, ` }, { text: words, italic: true }];
+    bullet.text = [{ text: `${words}, ` }, { text: words, italic: true }, { text: ",, twice" }];
     for (const { id } of pkg.controls.font?.choices ?? []) {
       const body = generateBody(pkg, joined, { ...values, font: id });
       const job = `ligatures-${id}`;
@@ -1454,6 +1454,8 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
       const text = ["tidewater.title", "tidewater.subtitle", "tidewater-1.text"];
       expect(ligaturesIn(page, text), id).toEqual(LIGATURES[id]);
       expect(ligaturesIn(page, ["header.last", "experience.title"]), id).toEqual(["fi", "fl"]);
+      const low = page.fields.get("tidewater-1.text")?.glyphs.filter((g) => g.text === "\u{201e}");
+      expect(low?.length, id).toBe(1);
       expect(session.pdf(job).error, id).toBeUndefined();
     }
   }, 60_000);
