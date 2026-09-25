@@ -36,17 +36,31 @@ const TIGHTER: Readonly<Record<Density, Density | undefined>> = {
 };
 
 /**
- * The narrowest margins and a margin's step, in inches, and the smallest font size and a size's
- * step, in points: the ranges of plan section 5.4, which the package schema holds values to.
+ * A control's range: its least and most values, and how many steps it takes to the unit, which
+ * makes its grid.
  */
-const MARGINS = { least: 0.4, step: 0.1 } as const;
-const FONT_SIZES = { least: 9, step: 0.5 } as const;
+interface Range {
+  least: number;
+  most: number;
+  perUnit: number;
+}
 
 /**
- * Margins go in tenths of an inch, so that 0.8 less 0.1 is 0.7 and not 0.7000000000000001, and
- * steps from 1 inch end at 0.4 rather than at 0.40000000000000013, a step short of the least.
+ * The margins, from 0.4 to 1 inch in tenths, and the font size, from 9 to 12 points in halves: the
+ * ranges of plan section 5.4, which the package schema holds values to.
  */
-const tenths = (inches: number) => Math.round(inches * 10) / 10;
+const MARGINS: Range = { least: 0.4, most: 1, perUnit: 10 };
+const FONT_SIZES: Range = { least: 9, most: 12, perUnit: 2 };
+
+/**
+ * One step below `value` in `range`, counted in steps rather than in units, so that 0.8 inch less a
+ * tenth is 0.7 and not 0.7000000000000001, and steps from 1 inch end at 0.4 rather than at
+ * 0.40000000000000013, a step short of the least. A value off the grid, which no document holds
+ * since the schema refuses it, steps onto the grid, and no step leaves the range.
+ */
+function stepBelow({ least, most, perUnit }: Range, value: number): number {
+  return Math.min(most, Math.max(least, Math.round(value * perUnit - 1) / perUnit));
+}
 
 /**
  * The settings the search tries, in order, each a step further than the one before, starting from
@@ -55,6 +69,8 @@ const tenths = (inches: number) => Math.round(inches * 10) / 10;
  * 0.5 point smaller; then each of the three again that has a step left, until every one of them
  * the package offers is at its least. A control the package does not offer is skipped, and every
  * other control stays as it is. Each setting holds a value for every control the package offers.
+ * Every value a step makes is one the package takes (`stepBelow`); a value a setting keeps from
+ * the document is as the document has it.
  */
 export function fitSteps(pkg: TemplatePackage, values: ControlValues): ControlValues[] {
   const { density, margins, fontSize } = pkg.controls;
@@ -69,9 +85,9 @@ export function fitSteps(pkg: TemplatePackage, values: ControlValues): ControlVa
     const tighter = at.density && TIGHTER[at.density];
     if (density && tighter) take({ ...at, density: tighter });
     if (margins && at.margins !== undefined && at.margins > MARGINS.least)
-      take({ ...at, margins: tenths(at.margins - MARGINS.step) });
+      take({ ...at, margins: stepBelow(MARGINS, at.margins) });
     if (fontSize && at.fontSize !== undefined && at.fontSize > FONT_SIZES.least)
-      take({ ...at, fontSize: at.fontSize - FONT_SIZES.step });
+      take({ ...at, fontSize: stepBelow(FONT_SIZES, at.fontSize) });
     stepped = steps.length > before;
   }
   return steps;

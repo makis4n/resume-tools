@@ -34,6 +34,7 @@ import {
   type Shown,
 } from "./compiler";
 import { apply, type Document, History, newDocument } from "./document";
+import { fit } from "./fit";
 
 const { package: jake, sample } = curated("jake");
 
@@ -1121,9 +1122,11 @@ describe("Compiler", () => {
     const tried = s.engine().compiles[2];
     expect(tried?.body).toBe(bodyOf({ ...a, controls: COMPACT }));
     expect(tried?.options).toEqual({ job: "fit", maxPasses: 3 });
+    // The engine stays busy from the edit's compile to the trial's.
+    expect(s.busy).toEqual([true, false, true]);
     tried?.resolve({ ...compiled(3), pages: 2 });
     await expect(trial).resolves.toBe(2);
-    // It counts pages and shows nothing: no page, no message, and no document busy.
+    // It counts pages and shows nothing: no page and no message.
     expect(s.shown).toHaveLength(2);
     expect(s.errors).toEqual([]);
     expect(s.busy).toEqual([true, false, true, false]);
@@ -1292,6 +1295,93 @@ describe("Compiler", () => {
     await settle();
     expect(s.engine().calls).toHaveLength(4);
     await expect(s.compiler.tryControls(COMPACT)).rejects.toThrow("has to be open");
+  });
+
+  it("refuses to try values the template does not take, and compiles nothing", async () => {
+    const s = scheduler();
+    await opened(s);
+    // Expected as they are asked for, since they fail before the test would otherwise look.
+    const offGrid = expect(s.compiler.tryControls({ ...COMPACT, fontSize: 10.25 })).rejects.toThrow(
+      /refuses[\s\S]*multiple of 0.5[\s\S]*fontSize/,
+    );
+    const narrow = expect(s.compiler.tryControls({ ...COMPACT, margins: 0.3 })).rejects.toThrow(
+      /refuses[\s\S]*margins/,
+    );
+    await settle();
+    expect(s.engine().compiles).toHaveLength(1);
+    await offGrid;
+    await narrow;
+    // The engine is free for a trial of values the template takes.
+    const taken = s.compiler.tryControls(COMPACT);
+    await settle();
+    s.engine().compiles[1]?.resolve(compiled(2));
+    await expect(taken).resolves.toBe(1);
+  });
+
+  it("makes a PDF asked for during a trial once the trial lands, and is busy meanwhile", async () => {
+    const s = scheduler();
+    await opened(s);
+    const name = formatOf(opening);
+    const trial = s.compiler.tryControls(COMPACT);
+    await settle();
+    expect(s.engine().calls.slice(3)).toEqual([`compile ${name}`]);
+    // The engine is busy with the trial, though no document is compiling or waiting to.
+    expect(s.busy).toEqual([true, false, true]);
+    // A PDF asked for now waits for the trial, rather than go to the engine behind it.
+    const made = s.compiler.pdf();
+    await wait(5_000);
+    expect(s.engine().calls.slice(3)).toEqual([`compile ${name}`]);
+    s.engine().compiles[1]?.resolve({ ...compiled(2), pages: 2 });
+    await expect(trial).resolves.toBe(2);
+    await settle();
+    expect(s.busy).toEqual([true, false, true, false]);
+    expect(s.engine().calls.slice(3)).toEqual([`compile ${name}`, "pdf doc"]);
+    s.engine().pdfs[0]?.resolve(madePdf);
+    await expect(made).resolves.toBe(PDF);
+    expect(s.engine().terminated).toBe(false);
+    expect(s.errors).toEqual([]);
+  });
+
+  it("fails the trial on an engine a PDF request loses, which stops the fit, and compiles the page once", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = scheduler();
+    await opened(s);
+    const name = formatOf(opening);
+    const made = expect(s.compiler.pdf()).rejects.toThrow(
+      expect.objectContaining({ cause: new Error("took over 10000 ms") }),
+    );
+    await settle();
+    // A fit asked for while the PDF is on its way, whose first trial goes to the engine behind it.
+    await wait(5_000);
+    let fitted: unknown = "pending";
+    void fit(s.compiler, jake, opening).then(
+      (found) => {
+        fitted = found;
+      },
+      (error: unknown) => {
+        fitted = error;
+      },
+    );
+    await settle();
+    expect(s.engine().calls.slice(3)).toEqual(["pdf doc", `compile ${name}`]);
+    // The PDF runs past its limit and loses the engine, and the trial fails with it at once,
+    // rather than wait out its own limit on an engine that is gone, so the fit stops.
+    await wait(5_000);
+    await made;
+    expect(s.engines[0]?.terminated).toBe(true);
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("PDF"), expect.any(Error));
+    expect(fitted).toEqual(expect.objectContaining({ message: expect.stringContaining("PDF") }));
+    // The page compiles again, once, on the new engine, whose job the next PDF is made from.
+    expect(s.engines).toHaveLength(2);
+    expect(s.engine().calls).toEqual(["start", `put ${name}`, `compile ${name}`]);
+    expect(s.engine().compiles[0]?.options).toEqual({ job: "doc", maxPasses: 3 });
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([opening, opening]);
+    expect(s.busy.at(-1)).toBe(false);
+    // No time limit is left running, and the user heard of no page that failed, since none did.
+    expect(vi.getTimerCount()).toBe(0);
+    expect(s.errors).toEqual([]);
   });
 });
 

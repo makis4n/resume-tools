@@ -630,6 +630,8 @@ export function App() {
   const took = `${shown.opening ? "Opened" : "Updated"} in ${ms.toFixed(0)} ms${started}.`;
   // A fit speaks only of the document it began on, as it stood.
   const fitShown = fitting?.document === present ? fitting : undefined;
+  // A fit runs, and has the engine, until it says what it came to, whatever document it began on.
+  const fitRuns = fitting !== undefined && fitting.note === undefined;
   return (
     <main style={{ display: "flex", alignItems: "flex-start", gap: "1.5rem" }}>
       <div style={{ flex: "none" }}>
@@ -654,26 +656,34 @@ export function App() {
           >
             Redo
           </button>{" "}
-          {/* A document another tab has changed is not the one stored, so it gives no PDF. */}
+          {/* A document another tab has changed is not the one stored, so it gives no PDF. A fit
+              to one page has the engine while it runs, so the PDF waits until it is done, as the
+              fit waits for the PDF (item 18). */}
           <button
             type="button"
             onClick={() => void download()}
-            disabled={busy || downloading || stale}
+            disabled={busy || downloading || stale || fitRuns}
           >
             Download PDF
           </button>
         </p>
         {pdfError && <p>{pdfError}</p>}
         {/* The fit takes the page on screen to be the present document's, so it waits while a
-            page is on its way, and a document another tab has changed takes no fit, as it takes
-            no edit (item 18). */}
+            page is on its way; it waits while a PDF is being made, whose request would otherwise
+            share the engine with its trials; and a document another tab has changed takes no fit,
+            as it takes no edit (item 18). */}
         {shown.latest.page.pageCount > 1 && (
           <p>
             This resume runs onto a second page.{" "}
             <button
               type="button"
               onClick={() => void fitToPage()}
-              disabled={busy || stale || (fitShown !== undefined && fitShown.note === undefined)}
+              disabled={
+                busy ||
+                downloading ||
+                stale ||
+                (fitShown !== undefined && fitShown.note === undefined)
+              }
             >
               Fit to one page
             </button>

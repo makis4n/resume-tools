@@ -97,6 +97,19 @@ describe("fitSteps", () => {
           });
         }
   });
+
+  it("steps a value off the grid onto it, and never out of the control's range", () => {
+    // No document holds such a value, since the package's schema refuses it, and the compiler
+    // refuses to try one; a step from one lands on the grid and within the range all the same.
+    const sizes = fitSteps(jake, { fontSize: 10.25 }).map((step) => step.fontSize);
+    // The size's first step, after the density's and the margins', is 10, and the last is 9.
+    expect(sizes).toEqual([10.25, 10.25, 10, 9.5, 9]);
+    const margins = fitSteps(jake, { margins: 0.44 }).map((step) => step.margins);
+    expect(margins).toEqual([0.44, 0.4, 0.4, 0.4, 0.4, 0.4]);
+    const tightest = { density: "compact", margins: 0.4 } as const;
+    const large = fitSteps(jake, { ...tightest, fontSize: 13 }).map((step) => step.fontSize);
+    expect(large).toEqual([12, 11.5, 11, 10.5, 10, 9.5, 9]);
+  });
 });
 
 /**

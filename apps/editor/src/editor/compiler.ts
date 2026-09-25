@@ -40,9 +40,12 @@
  * time limit, but in a job of its own, so that the document's auxiliary files and the output its
  * PDF is made from stay as they are, and it shows nothing: it only counts pages. The document comes
  * first, since its page is what the user sees, so a trial waits for the document compiling or
- * waiting to, and a document that changes during a trial compiles as soon as the trial lands.
+ * waiting to, and a document that changes during a trial compiles as soon as the trial lands. The
+ * engine is busy while a trial is in flight, as while a document compiles, so a PDF asked for
+ * meanwhile waits for it; a PDF request that loses the engine fails the trial it was ahead of.
  */
 
+import { z } from "zod";
 import type {
   CompileOptions,
   CompileResult,
@@ -61,7 +64,7 @@ import {
   generateBody,
   generateFormat,
 } from "../templates/generate";
-import type { ControlValues, TemplatePackage } from "../templates/package";
+import { type ControlValues, controlValuesFor, type TemplatePackage } from "../templates/package";
 import type { Document } from "./document";
 
 /**
@@ -134,7 +137,10 @@ export interface CompilerEvents {
   page(shown: Shown): void;
   /** Why no new page came, in words for the user; the details go to the console. */
   error(message: string): void;
-  /** Whether a document is compiling or waiting to, for a quiet indicator. */
+  /**
+   * Whether the engine is busy, with a document compiling or waiting to or a trial of other
+   * control values in flight (`Compiler.tryControls`), for a quiet indicator.
+   */
   busy(pending: boolean): void;
 }
 
@@ -335,7 +341,10 @@ export class Compiler {
   private pending: Document | undefined;
   /** The trials asked for that wait for the engine, in the order they were asked for. */
   private readonly trials: Trial[] = [];
-  /** The trial in flight, which a document's compile waits for as for another document's. */
+  /**
+   * The trial in flight, which a document's compile waits for as for another document's, and a
+   * PDF as for a document's compile.
+   */
   private trying: Trial | undefined;
   private debounce: ReturnType<typeof setTimeout> | undefined;
   private running: Run | undefined;
@@ -458,17 +467,24 @@ export class Compiler {
    * in the fit job, so that the document's auxiliary files and the output its PDF is made from are
    * untouched. The trial waits for what is in flight and for a document waiting to compile, which
    * comes first; it has a compile's time limit; and a format-bound value whose format is new dumps
-   * it first, kept like any other. It shows nothing: no page, no message, and it is not the
-   * document compiling that `busy` speaks of. It fails when its compile does, when the engine is
-   * lost to it (`loseToTrial`), when no document is open, and when the compiler closes first.
+   * it first, kept like any other. It shows nothing, no page and no message, but while it is in
+   * flight the engine is `busy` with it, so a PDF asked for meanwhile waits for it. It fails at
+   * once for values the package does not take, as a document's control command does, and it fails
+   * when its compile does, when the engine is lost to it (`loseToTrial`) or to a PDF request
+   * (`losePdf`), when no document is open, and when the compiler closes first.
    */
   tryControls(values: ControlValues): Promise<number> {
     const pkg = this.pkg;
     const doc = this.latest;
     if (this.closed || pkg === undefined || doc === undefined)
       return Promise.reject(new Error("a document has to be open to try other control values"));
+    const taken = controlValuesFor(pkg).safeParse(values);
+    if (!taken.success)
+      return Promise.reject(
+        new Error(`${pkg.name} refuses the values to try: ${z.prettifyError(taken.error)}`),
+      );
     return new Promise((resolve, reject) => {
-      const document = { ...doc, controls: values };
+      const document = { ...doc, controls: taken.data };
       this.trials.push({ pkg, document, opened: this.openings, resolve, reject });
       // A document waiting for a pause in the edits compiles first, once the pause has passed.
       if (this.debounce === undefined) this.next();
@@ -479,10 +495,12 @@ export class Compiler {
    * The PDF of the page on screen, which xdvipdfmx makes from the page's own output (plan section
    * 5.5). A document compiling or waiting to is the one the user sees next, so the PDF waits for
    * its page, and fails if that document's compile does: a PDF of the page before would not be
-   * what the user asked for. Calls made while one is on its way share it. The request has a
-   * compile's time limit, and one that runs past it, or that the engine fails rather than
-   * answers, loses the engine as a compile's would (`losePdf`). The promise fails with
-   * `COULD_NOT_MAKE_PDF`, and the reason as its cause.
+   * what the user asked for. It waits for a trial in flight too (`tryControls`), since the engine
+   * takes one request at a time, and a request behind a trial's would spend its time limit on the
+   * trial. Calls made while one is on its way share it. The request has a compile's time limit,
+   * and one that runs past it, or that the engine fails rather than answers, loses the engine as a
+   * compile's would (`losePdf`). The promise fails with `COULD_NOT_MAKE_PDF`, and the reason as
+   * its cause.
    */
   pdf(): Promise<Uint8Array> {
     this.making ??= this.makePdf().finally(() => {
@@ -492,7 +510,8 @@ export class Compiler {
   }
 
   private async makePdf(): Promise<Uint8Array> {
-    // Until nothing is compiling or waiting to, when the page on screen is the newest document's.
+    // Until nothing is compiling or waiting to, a trial included (`setBusy`), when the page on
+    // screen is the newest document's and the engine has nothing else to do.
     while (this.busy && !this.closed) await new Promise<void>((wake) => this.settled.push(wake));
     const made = this.made;
     if (this.closed || made === undefined || made.instance !== this.instance)
@@ -530,18 +549,29 @@ export class Compiler {
 
   /**
    * The engine is lost to a PDF request, which ran past its limit or which it failed rather than
-   * answered: it is terminated and replaced, as `lose` does for a compile. The page on screen then
-   * compiles again on the new engine, unless a newer document is on its way and compiles instead,
-   * so that the new engine's job holds the output the next PDF is made from.
+   * answered: it is terminated and replaced, as `lose` does for a compile. A trial asked for while
+   * the request was on its way went to the engine behind it, and it fails now, rather than wait out
+   * its own time limit on an engine that is gone, so the fit that asked for it stops; nothing it
+   * brings back later is heard. The page on screen then compiles again on the new engine, unless a
+   * newer document is on its way and compiles instead, so that the new engine's job holds the
+   * output the next PDF is made from.
    */
   private losePdf(made: Made, error: unknown) {
     if (this.closed || this.instance !== made.instance) return;
     console.warn("A PDF request lost the engine, so a new one takes its place", error);
     made.instance.engine.terminate();
     this.instance = undefined;
-    if (this.running !== undefined || this.pending !== undefined) return;
-    this.pending = made.document;
-    this.next();
+    const trial = this.trying;
+    if (trial !== undefined) {
+      this.trying = undefined;
+      clearTimeout(trial.timer);
+      trial.reject(new Error("a PDF request lost the engine the trial was on", { cause: error }));
+    }
+    if (this.running !== undefined) return;
+    // The page on screen, or a newer document in its place, which compiles once its pause has
+    // passed, or at once if it was waiting for the trial, whose landing would have started it.
+    this.pending ??= made.document;
+    if (this.debounce === undefined) this.next();
   }
 
   /**
@@ -558,11 +588,12 @@ export class Compiler {
       this.begin(pkg, doc, false);
       return;
     }
-    this.setBusy();
     const trial = inFlight || doc !== undefined ? undefined : this.trials.shift();
-    if (trial === undefined) return;
-    this.trying = trial;
-    void this.runTrial(trial);
+    if (trial !== undefined) this.trying = trial;
+    // Once the trial is in flight, so that the engine stays busy from the landing of what was in
+    // flight to the trial's, and a PDF waiting for the one waits for the other.
+    this.setBusy();
+    if (trial !== undefined) void this.runTrial(trial);
   }
 
   /** Start a document compiling; `retry` when it is its second try, after it lost the engine. */
@@ -689,9 +720,10 @@ export class Compiler {
 
   /**
    * Compile a trial's document in the fit job and settle the trial with its page count. It is
-   * current while it is the trial in flight, which closing ends. A compile that fails fails the
-   * trial, and so does the engine lost to one of its requests; it is not tried again, since the
-   * fit that asked for it can be, and the page on screen was never at stake.
+   * current while it is the trial in flight, which closing ends, and so does a PDF request that
+   * loses the engine (`losePdf`). A compile that fails fails the trial, and so does the engine lost
+   * to one of its requests; it is not tried again, since the fit that asked for it can be, and the
+   * page on screen was never at stake.
    */
   private async runTrial(trial: Trial): Promise<void> {
     const { pkg, document: doc } = trial;
@@ -966,9 +998,13 @@ export class Compiler {
     this.events.error(COULD_NOT_UPDATE);
   }
 
-  /** Tell the app whether a document is compiling or waiting to, when that changes. */
+  /**
+   * Tell the app whether the engine is busy, with a document compiling or waiting to or a trial in
+   * flight, when that changes; a PDF waits until it is not.
+   */
   private setBusy() {
-    const busy = this.running !== undefined || this.pending !== undefined;
+    const busy =
+      this.running !== undefined || this.pending !== undefined || this.trying !== undefined;
     if (busy === this.busy || this.closed) return;
     this.busy = busy;
     this.events.busy(busy);
