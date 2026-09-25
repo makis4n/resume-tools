@@ -908,6 +908,38 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       expect(report.findings).toEqual([]);
     }, 120_000);
 
+    it("finds a hyphenated first word in the PDF of a font whose hyphen is U+2011 as well", async () => {
+      // Source Sans Pro's map gives its hyphen U+002D, U+00AD, U+2010 and U+2011, and xdvipdfmx's
+      // ToUnicode map gives a glyph the highest of its characters, so the PDF shows a typed hyphen
+      // as U+2011: in the phone, 555-0142, and in a bullet's first word.
+      const sans = parsePackage({
+        ...xetex,
+        id: "invented-xetex-sans",
+        fonts: xetex.fonts?.map((font) =>
+          font.family === "Roboto"
+            ? {
+                ...font,
+                shapes: {
+                  "m/n": "SourceSansPro-Regular.otf",
+                  "m/it": "SourceSansPro-RegularIt.otf",
+                  "b/n": "SourceSansPro-Bold.otf",
+                  "bx/n": "SourceSansPro-Bold.otf",
+                  "b/it": "SourceSansPro-BoldIt.otf",
+                  "bx/it": "SourceSansPro-BoldIt.otf",
+                },
+              }
+            : font,
+        ),
+      });
+      const hyphenated = structuredClone(sample);
+      const work = hyphenated.sections.find((section) => section.id === "work");
+      const bullet = work?.kind === "entries" ? work.entries[0]?.bullets[1] : undefined;
+      if (bullet === undefined) throw new Error("the sample has harbor-2");
+      bullet.text = [{ text: "Full-text search across the backlist, rebuilt in a month." }];
+      const report = await validatePackage(session, fonts, sans, hyphenated);
+      expect(report.findings).toEqual([]);
+    }, 120_000);
+
     it("reports a native font XeTeX emboldens, which the page draws as boxes, and nothing else", async () => {
       const bolded = parsePackage({
         ...xetex,

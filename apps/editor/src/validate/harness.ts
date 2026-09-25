@@ -26,7 +26,7 @@ import { summariseLog } from "../engine/log";
 import type { CompileResult, DumpResult, EngineSession, PdfResult } from "../engine/session";
 import { glyphTextOf, nativeProblem, paperSize, widthsOf } from "../page/draw";
 import type { FontLibrary, NativePageFont, PageFont } from "../page/fonts";
-import { nativeFileName } from "../page/native";
+import { type NativeFontFile, nativeFileName } from "../page/native";
 import { CURATED } from "../templates/curated";
 import { isBlank } from "../templates/escape";
 import { generateBody, generateFormat } from "../templates/generate";
@@ -235,7 +235,7 @@ export async function validatePackage(
   report.passes.push(...controls.passes);
   findings.push(...controls.findings);
 
-  const { fields, undrawable } = await readFields(fonts, output, doc);
+  const { fields, undrawable, natives } = await readFields(fonts, output, doc);
   report.pages = doc.pages.length;
   report.fields = fields.size;
   const fieldFindings = checkFields(doc, fields, body.texts);
@@ -254,7 +254,7 @@ export async function validatePackage(
     ...checkFonts(undrawable),
     ...checkSpecial(doc),
     ...pdfFindings,
-    ...(pdf === undefined ? [] : checkPdf(pdf, doc, fields, body.texts, reported)),
+    ...(pdf === undefined ? [] : checkPdf(pdf, doc, fields, body.texts, reported, natives)),
   );
   return report;
 }
@@ -861,6 +861,30 @@ const SHOWN_AS_ITSELF = /^[A-Za-z0-9.,:;!?'()[\]@#%&*+=/-]+$/;
 const CURLED = /[\u2018\u2019]/g;
 
 /**
+ * A text with each character a native font's map gives one glyph with others read as the one the
+ * glyph reads as first (`NativeFontFile.textsOf`), in any of `natives`. xdvipdfmx's ToUnicode map
+ * gives such a glyph the highest of its characters, so a hyphen typed in Source Sans Pro, whose
+ * map gives its hyphen U+002D, U+00AD, U+2010 and U+2011, shows in the PDF's text as U+2011, and
+ * reads here as the hyphen again (decision 0014).
+ */
+function unaliased(text: string, natives: readonly NativeFontFile[]): string {
+  let out = "";
+  for (const char of text) {
+    let first = char;
+    for (const file of natives) {
+      const glyph = file.glyphFor(char);
+      const [read] = glyph === undefined ? [] : file.textsOf(glyph);
+      if (read !== undefined && read !== char && [...read].length === 1) {
+        first = read;
+        break;
+      }
+    }
+    out += first;
+  }
+  return out;
+}
+
+/**
  * Characters TeX's text fonts may set as one glyph, a ligature, under a code of its own, which
  * differs from OT1 to T1: ff, fi and fl, the dashes, the closing double quote, and in T1 the low
  * double quote that two commas make.
@@ -877,7 +901,10 @@ const LIGATURE = /ff|fi|fl|--|''|,,/;
  * for what `SHOWN_AS_ITSELF` allows, and not for a ligature; a field whose first word has a
  * character outside ASCII, or anything else those rule out, is skipped. A native font's text,
  * XeTeX's, is read through its ToUnicode map (`shownStrings`), where the quotes XeTeX's
- * `tex-text` mapping curls read as the straight ones the text holds. A first word TeX broke at
+ * `tex-text` mapping curls read as the straight ones the text holds, and a character its font's
+ * map gives one glyph with others as the one the glyph reads as first (`unaliased`), since
+ * xdvipdfmx shows such a glyph as the highest, as it shows Source Sans Pro's hyphen as U+2011. A
+ * first word TeX broke at
  * a line end lands in two text operators, its halves split by a hyphen TeX inserted, so a word not
  * in any one string is looked for in the strings joined, with that hyphen anywhere inside it. A
  * field the fields or alignment checks report (`reported`) is left to them. A PDF xdvipdfmx cannot
@@ -890,6 +917,7 @@ function checkPdf(
   found: ReadonlyMap<string, Field>,
   texts: ReadonlyMap<string, string>,
   reported: ReadonlySet<string>,
+  natives: ReadonlyMap<string, NativePageFont>,
 ): Finding[] {
   const pdf = made.pdf;
   if (!made.ok || pdf === undefined)
@@ -916,7 +944,8 @@ function checkPdf(
       check: "pdf",
       message: "no font of the PDF has a ToUnicode map, so its text cannot be read",
     });
-  const shown = shownStrings(pdf).map((text) => text.replace(CURLED, "'"));
+  const files = [...natives.values()].flatMap((font) => font.file ?? []);
+  const shown = shownStrings(pdf).map((text) => unaliased(text, files).replace(CURLED, "'"));
   // The operators joined in order, nothing between them, so a first word broken across two of them
   // reads as one, its halves split by the hyphen TeX inserted at the break.
   const joined = shown.join("");
@@ -959,8 +988,9 @@ function readDvi(output: Uint8Array): DviDocument {
 }
 
 /**
- * The fields an output's pages show, and the fonts the page cannot draw them with, with the
- * reason. Each font `doc`, the output as `readDvi` parsed it, uses is loaded once, as the page
+ * The fields an output's pages show, the fonts the page cannot draw them with, with the reason,
+ * and the native fonts it loaded, by file name, which the PDF check reads the PDF's text with
+ * (`unaliased`). Each font `doc`, the output as `readDvi` parsed it, uses is loaded once, as the page
  * loads it, TeX fonts and XeTeX's native ones alike; the output is parsed again with the TeX
  * fonts' widths, as the page parses it, since whether an accent stands over the letter after it
  * depends on where each starts (`collectFields`); and each glyph is named as the page names it
@@ -971,7 +1001,11 @@ async function readFields(
   fonts: FontLibrary,
   output: Uint8Array,
   doc: DviDocument,
-): Promise<{ fields: Map<string, Field>; undrawable: Map<string, string> }> {
+): Promise<{
+  fields: Map<string, Field>;
+  undrawable: Map<string, string>;
+  natives: Map<string, NativePageFont>;
+}> {
   const loaded = new Map<string, PageFont>();
   const undrawable = new Map<string, string>();
   for (const name of new Set([...doc.fonts.values()].map((font) => font.name))) {
@@ -1004,7 +1038,7 @@ async function readFields(
     if (problem !== undefined) undrawable.set(name, problem);
   }
   const placed = parseDvi(output, widthsOf(loaded));
-  return { fields: fieldsOf(placed, glyphTextOf(placed, loaded, natives)), undrawable };
+  return { fields: fieldsOf(placed, glyphTextOf(placed, loaded, natives)), undrawable, natives };
 }
 
 /** The first copy of each field the pages show, page by page, as `collectFields` finds them. */

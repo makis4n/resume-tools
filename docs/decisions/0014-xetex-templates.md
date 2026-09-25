@@ -128,6 +128,19 @@ one Font Awesome icon in the header) stands in for it in the tests.
   reads such a font's strings through the map (`shownStrings`), with the curled single quotes the
   mapping sets read as the straight ones the text holds. The invented template passes the harness
   with no findings.
+- **A glyph of several characters in the PDF.** The ToUnicode map gives a glyph the character map
+  gives several characters the highest of them, so a typed hyphen shows in the PDF's text as
+  U+2011 in Source Sans Pro, whose hyphen is U+002D, U+00AD, U+2010 and U+2011, and as U+2010 in
+  Lato: `555-0142` reads as `555‑0142`. So does Source Sans's micro sign as Greek mu, and its
+  apostrophe as U+2019, which is what `tex-text` sets anyway. That is what the ATS will read.
+  xdvipdfmx makes the map from the font's own character map, in code point order, for a font
+  XeTeX sets by file, and has no option that gives such a font another map; an `Add` CMap of
+  xdvipdfmx's naming beside the font file changed nothing. Short of rewriting the PDF, the layer
+  stays as it is, and the harness's PDF check reads each such character in the PDF's text as the
+  one its glyph reads as first on the page (`unaliased`). XeTeX can also write each word's text
+  beside its glyphs (`\XeTeXgenerateactualtext=1`), which xdvipdfmx puts in the PDF as an
+  `ActualText` span, `555-0142` as typed, for a reader that takes it, at a cost of 8% on a
+  one-line page; whether the loop writes it waits for the ATS's choice of a PDF reader.
 
 ## Numbers
 
