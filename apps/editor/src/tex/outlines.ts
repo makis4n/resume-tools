@@ -5,7 +5,7 @@
  * the hit boxes, the field aligner and item 9's web fonts draw it as they draw any other font.
  */
 
-import type { FontOutlines, GlyphOutline } from "./glyphs";
+import { type FontOutlines, type GlyphOutline, glyphTable } from "./glyphs";
 
 /**
  * An affine map of the plane, as SVG's `matrix(a b c d e f)` gives it: a point (x, y) goes to
@@ -103,7 +103,7 @@ export function transform(
 ): FontOutlines {
   if (slant === 0 && extend === 1) return outlines;
   const m: Matrix = [extend, 0, slant, 1, 0, 0];
-  const glyphs: Record<string, GlyphOutline> = {};
+  const glyphs = glyphTable();
   for (const [name, glyph] of Object.entries(outlines.glyphs))
     glyphs[name] = transformGlyph(glyph, m);
   return { name: outlines.name, encoding: outlines.encoding, glyphs };

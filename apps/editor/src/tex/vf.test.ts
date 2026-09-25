@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseTfm } from "./tfm";
-import { expand, parseVf, type VirtualFont } from "./vf";
+import {
+  expand,
+  MAX_PACKET_BYTES,
+  MAX_PLACEMENTS,
+  MAX_PUSHES,
+  parseVf,
+  type VirtualFont,
+} from "./vf";
 
 const fixture = (name: string) =>
   new Uint8Array(readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
@@ -36,6 +43,33 @@ function virtualFont(packets: Record<number, number[]>): Uint8Array {
   }
   out.push(248, 248, 248);
   return new Uint8Array(out);
+}
+
+/**
+ * A virtual font over `base` whose one packet, for code 1, is `n` bytes of the opcode `op`,
+ * written straight into the file, as a packet of millions of bytes cannot be spread into an array.
+ */
+function longPacket(op: number, n: number): Uint8Array {
+  const head = [247, 202, 0, ...bytes(4, 0), ...bytes(4, 10 * ONE)];
+  head.push(
+    243,
+    0,
+    ...bytes(4, 0),
+    ...bytes(4, ONE),
+    ...bytes(4, 10 * ONE),
+    0,
+    4,
+    98,
+    97,
+    115,
+    101,
+  );
+  head.push(242, ...bytes(4, n), ...bytes(4, 1), ...bytes(4, ONE));
+  const out = new Uint8Array(head.length + n + 3);
+  out.set(head);
+  out.fill(op, head.length, head.length + n);
+  out.fill(248, head.length + n);
+  return out;
 }
 
 /** Every character of both local fonts is a quarter of the design size wide. */
@@ -170,5 +204,50 @@ describe("expand", () => {
     const empty: VirtualFont = { comment: "", checksum: 0, design: 0, fonts: [], chars: new Map() };
     empty.chars.set(1, { width: 0, dvi: new Uint8Array([65]) });
     expect(() => expand(empty, 1, quarter)).toThrow("before any font is defined");
+  });
+
+  it("runs a packet up to its budgets, and refuses one past any of them at once", () => {
+    const run = (dvi: number[]) => () => expand(parseVf(virtualFont({ 1: dvi })), 1, quarter);
+    const sets = (n: number) => Array.from({ length: n }, () => 65);
+    const pushes = (n: number) => [...Array.from({ length: n }, () => 141), 65];
+    // Every real font is far inside each: the most a packet in TeX Live holds is 111 bytes,
+    // 11 characters and rules, and pushes nested 2 deep.
+    expect(run(sets(MAX_PLACEMENTS))()).toHaveLength(MAX_PLACEMENTS);
+    expect(run(pushes(MAX_PUSHES))()).toHaveLength(1);
+    expect(run(Array.from({ length: MAX_PACKET_BYTES }, () => 138))()).toEqual([]);
+    expect(run(sets(MAX_PLACEMENTS + 1))).toThrow(
+      `the packet of 1 sets more than ${MAX_PLACEMENTS} characters and rules`,
+    );
+    // A rule counts as a character does.
+    const rules = Array.from({ length: MAX_PLACEMENTS + 1 }, () => [137, ...bytes(8, 0)]).flat();
+    expect(run(rules)).toThrow("characters and rules");
+    expect(run(pushes(MAX_PUSHES + 1))).toThrow(`nests more than ${MAX_PUSHES} pushes`);
+    expect(run(Array.from({ length: MAX_PACKET_BYTES + 1 }, () => 138))).toThrow(
+      `the packet of 1 holds ${MAX_PACKET_BYTES + 1} bytes, more than ${MAX_PACKET_BYTES}`,
+    );
+    // A packet of four million pushes, which grew the stack by one for each, is refused before
+    // it is walked.
+    const hostile = parseVf(longPacket(141, 4_000_000));
+    const started = performance.now();
+    expect(() => expand(hostile, 1, quarter)).toThrow("more than");
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+
+  it("finds a font by its number without going through every font a file defines", () => {
+    // A file of 100,000 font definitions, 2 MB, used to cost that many again for each packet run.
+    const out = [247, 202, 0, ...bytes(4, 0), ...bytes(4, 10 * ONE)];
+    for (let k = 0; k < 100_000; k++) {
+      out.push(245, ...bytes(3, k), ...bytes(4, 0), ...bytes(4, ONE), ...bytes(4, 10 * ONE));
+      out.push(0, 4, 98, 97, 115, 101);
+    }
+    // Each packet selects the last font, by fnt3, and sets its A.
+    for (let code = 0; code < 128; code++)
+      out.push(5, code, ...bytes(3, ONE), 237, ...bytes(3, 99_999), 65);
+    out.push(248, 248, 248);
+    const many = parseVf(new Uint8Array(out));
+    const started = performance.now();
+    for (let code = 0; code < 128; code++)
+      expect(expand(many, code, quarter)?.[0]).toMatchObject({ code: 65 });
+    expect(performance.now() - started).toBeLessThan(250);
   });
 });

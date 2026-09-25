@@ -54,7 +54,10 @@ const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELE
 
 /**
  * The version of what this script writes. Bump it whenever the output changes (the files, the
- * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt.
+ * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt. CI keys its
+ * cached `.engine/` on the three files the output depends on, this script, `fontmaps.ts` and
+ * `src/page/fontmap.ts`, which merge the Ubuntu tree's font maps into `pdftex.map`, so a change to
+ * any of them rebuilds it there; a `.engine/` built on a machine is rebuilt only by the bump.
  */
 const LAYOUT = 2;
 

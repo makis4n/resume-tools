@@ -11,7 +11,7 @@
 import type { DviDocument, DviPage, NativeFont } from "./dvi";
 import { pointsPerUnit } from "./dvi";
 import type { Field } from "./fields";
-import type { FontOutlines } from "./glyphs";
+import { type FontOutlines, glyphOf } from "./glyphs";
 
 export interface PageSize {
   width: number;
@@ -95,8 +95,7 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
         const font = doc.fonts.get(item.font);
         const outlines = font && options.outlines(font.name);
         if (!font || !outlines) return;
-        const name = outlines.encoding[item.code];
-        const glyph = name && outlines.glyphs[name];
+        const glyph = glyphOf(outlines, item.code);
         if (!glyph) return;
         const id = `g${item.font}-${item.code}`;
         if (!defs.has(id)) {

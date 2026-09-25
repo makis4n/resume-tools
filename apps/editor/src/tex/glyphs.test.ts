@@ -2,7 +2,15 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ENGINE_DIR, engineAvailable } from "../engine/node";
-import { ACCENTS, accentMark, glyphText, parseAgl } from "./glyphs";
+import {
+  ACCENTS,
+  accentMark,
+  glyphOf,
+  glyphTable,
+  glyphText,
+  parseAgl,
+  textToCode,
+} from "./glyphs";
 
 /** A few lines of the Adobe Glyph List, as TeX Live's `glyphlist.txt` has them. */
 const AGL = parseAgl(
@@ -85,6 +93,27 @@ describe("glyphText", () => {
   it("does not read a name from the prototype of an object", () => {
     expect(glyphText("constructor", AGL)).toBeUndefined();
     expect(glyphText("toString")).toBeUndefined();
+  });
+});
+
+describe("glyph tables", () => {
+  it("hold any name as a glyph's, and give nothing for a name the font lacks", () => {
+    const glyphs = glyphTable();
+    glyphs["__proto__"] = { w: 1, d: "", b: null };
+    const outlines = { name: "Test", encoding: ["__proto__", "constructor", "valueOf"], glyphs };
+    expect(Object.getPrototypeOf(glyphs)).toBeNull();
+    expect(glyphOf(outlines, 0)?.w).toBe(1);
+    expect(glyphOf(outlines, 1)).toBeUndefined();
+    expect(glyphOf(outlines, 2)).toBeUndefined();
+    expect(glyphOf(outlines, 3)).toBeUndefined();
+  });
+
+  it("give no character to a glyph named after an object's member", () => {
+    const codes = textToCode(["constructor", "toString", "__proto__", "valueOf", "endash", "a"]);
+    expect([...codes]).toEqual([
+      ["\u2013", 4],
+      ["a", 5],
+    ]);
   });
 });
 

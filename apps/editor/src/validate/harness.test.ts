@@ -473,6 +473,21 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
     }, 60_000);
   });
 
+  describe("over Jake's Resume with a letter narrower than its accent", () => {
+    it("reports no alignment finding, as the page aligns the letter", async () => {
+      // T1 has no Ī, so LaTeX sets it with \accent: the macron, and the I after it, which is
+      // narrower and so starts after it. The harness parsed the output without the fonts' widths,
+      // where the macron advances by nothing, took the two for two glyphs, and failed a sample
+      // the page draws and aligns whole.
+      const { package: jake, sample } = curated("jake");
+      const bullet = JSON.stringify(sample).replace("Đurva", "Īvars Đurva");
+      expect(bullet).toContain("Īvars");
+      const report = await validatePackage(session, fonts, jake, Resume.parse(JSON.parse(bullet)));
+      expect(report.findings.filter((finding) => finding.check === "alignment")).toEqual([]);
+      expect(report.findings).toEqual([]);
+    }, 60_000);
+  });
+
   describe("over Jake's Resume with the name in a running head as well", () => {
     it("reports each field the page marks twice, whose first copy is the head's", async () => {
       // fancyhdr's head is set before the body on the page, so its small copy of the name is

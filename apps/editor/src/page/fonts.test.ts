@@ -13,8 +13,11 @@ const ONE = 2 ** 20;
 const bytes = (n: number, value: number) =>
   Array.from({ length: n }, (_, i) => (value >>> (8 * (n - 1 - i))) & 0xff);
 
-/** A virtual font at 10 pt over one local font at its size, each code set as that code. */
-function virtualFont(local: string, codes: number[]): Uint8Array {
+/**
+ * A virtual font at 10 pt over one local font at its size: each code of a list set as that code,
+ * or each code of a record set as its packet says, in a short or a long packet by its length.
+ */
+function virtualFont(local: string, packets: number[] | Record<number, number[]>): Uint8Array {
   const name = [...local].map((c) => c.charCodeAt(0));
   const out = [247, 202, 0, ...bytes(4, 0), ...bytes(4, 10 * ONE)];
   out.push(
@@ -27,10 +30,22 @@ function virtualFont(local: string, codes: number[]): Uint8Array {
     name.length,
     ...name,
   );
-  for (const code of codes) out.push(1, code, ...bytes(3, ONE / 2), code);
+  const byCode = Array.isArray(packets)
+    ? Object.fromEntries(packets.map((code) => [code, [code]]))
+    : packets;
+  for (const [code, dvi] of Object.entries(byCode)) {
+    const head =
+      dvi.length < 242
+        ? [dvi.length, Number(code), ...bytes(3, ONE / 2)]
+        : [242, ...bytes(4, dvi.length), ...bytes(4, Number(code)), ...bytes(4, ONE / 2)];
+    out.push(...head, ...dvi);
+  }
   out.push(248, 248, 248, 248);
   return new Uint8Array(out);
 }
+
+/** `n` copies of a packet's commands. */
+const times = (n: number, commands: number[]) => Array.from({ length: n }, () => commands).flat();
 
 /**
  * A library over a tree of the given files, by path under the first TeX Live tree, which reads
@@ -140,11 +155,131 @@ describe("FontLibrary over an invented tree", () => {
     expect(await fonts.load("nosuch")).toBeUndefined();
   });
 
-  it("passes on a read that fails, and reads again next time", async () => {
-    const { fonts, reads } = libraryOver(cmr10, ".pfb");
-    await expect(fonts.load("cmr10")).rejects.toThrow("the network dropped it");
-    expect((await fonts.load("cmr10"))?.outlines?.glyphs.A).toBeDefined();
-    expect(reads.get("/fonts/type1/cm/cmr10.pfb")).toBe(2);
+  it("keeps a font's metrics when its outlines cannot be read, and reads them next time", async () => {
+    for (const [font, failing] of [
+      ["cmr10", "cmr10.pfb"],
+      ["cmr10x", "8r.enc"],
+    ] as const) {
+      const { fonts, reads } = libraryOver(cmr10, failing);
+      const first = await fonts.load(font);
+      expect(first?.tfm.designSize, failing).toBe(10);
+      expect(first?.outlines, failing).toBeUndefined();
+      expect(first?.missing, failing).toBe("the network dropped it");
+      expect(first?.text(65), failing).toBeUndefined();
+      // Forgotten once it settled: the next load reads the file again, and draws the font.
+      const second = await fonts.load(font);
+      expect(second?.outlines?.glyphs.A, failing).toBeDefined();
+      expect([...reads].find(([path]) => path.endsWith(failing))?.[1], failing).toBe(2);
+      // Kept from then on.
+      expect(await fonts.load(font), failing).toBe(second);
+    }
+  });
+
+  it("leaves a virtual font undrawn this time only, when a read under it failed", async () => {
+    const over = {
+      ...cmr10,
+      "/fonts/tfm/v/over.tfm": fixture("cmr10.tfm"),
+      "/fonts/vf/v/over.vf": virtualFont("cmr10", [65]),
+    };
+    for (const [failing, why] of [
+      ["over.vf", "the network dropped it"],
+      ["cmr10.pfb", "its virtual font sets cmr10, which cannot be drawn: the network dropped it"],
+      ["cmr10.tfm", "the network dropped it"],
+    ]) {
+      const { fonts } = libraryOver(over, failing);
+      const first = await fonts.load("over");
+      expect(first?.missing, failing).toBe(why);
+      expect(first?.tfm.designSize, failing).toBe(10);
+      expect((await fonts.load("over"))?.outlines?.encoding[65], failing).toBe("A");
+    }
+  });
+
+  it("rejects when what every page needs cannot be read, and reads it again next time", async () => {
+    const withList = { ...cmr10, "/fonts/map/glyphlist/glyphlist.txt": "A;0041\n" };
+    for (const failing of ["cmr10.tfm", "pdftex.map", "glyphlist.txt"]) {
+      const { fonts } = libraryOver(withList, failing);
+      await expect(fonts.load("cmr10"), failing).rejects.toThrow("the network dropped it");
+      expect((await fonts.load("cmr10"))?.outlines?.glyphs.A, failing).toBeDefined();
+    }
+  });
+
+  it("refuses at once the reviewers' virtual fonts, which fan out past any real one", async () => {
+    // fan1 sets cmr10's A 241 times for its code 65, and fan2 sets fan1's code 65 241 times for
+    // each of 128 codes: 31 KB of files that used to compose 39 MB of path data for each code,
+    // hold the thread for most of a minute and then run out of memory.
+    const fan = times(241, [65]);
+    const top = Object.fromEntries(Array.from({ length: 128 }, (_, code) => [code, fan]));
+    const { fonts } = libraryOver({
+      ...cmr10,
+      "/fonts/tfm/v/fan1.tfm": fixture("cmr10.tfm"),
+      "/fonts/vf/v/fan1.vf": virtualFont("cmr10", { 65: fan }),
+      "/fonts/tfm/v/fan2.tfm": fixture("cmr10.tfm"),
+      "/fonts/vf/v/fan2.vf": virtualFont("fan1", top),
+    });
+    const started = performance.now();
+    const [fan1, fan2] = await Promise.all([fonts.load("fan1"), fonts.load("fan2")]);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(fan1?.outlines).toBeUndefined();
+    expect(fan1?.missing).toBe("the packet of 65 sets more than 64 characters and rules");
+    expect(fan2?.outlines).toBeUndefined();
+    expect(fan2?.missing).toBe("the packet of 0 sets more than 64 characters and rules");
+  });
+
+  it("refuses a chain of virtual fonts more than four deep", async () => {
+    const files: Record<string, Uint8Array | string> = { ...cmr10 };
+    let below = "cmr10";
+    for (let level = 1; level <= 5; level++) {
+      files[`/fonts/tfm/v/deep${level}.tfm`] = fixture("cmr10.tfm");
+      files[`/fonts/vf/v/deep${level}.vf`] = virtualFont(below, [65]);
+      below = `deep${level}`;
+    }
+    const { fonts } = libraryOver(files);
+    expect((await fonts.load("deep4"))?.outlines?.encoding[65]).toBe("A");
+    expect((await fonts.load("deep5"))?.missing).toBe("its virtual fonts nest 5 deep, more than 4");
+  });
+
+  it("refuses a virtual font whose glyphs hold more than any real one's", async () => {
+    // wide composes 40 of cmr10's As into one glyph, some 24 KB of path data. huge sets 64 of
+    // those, past what one glyph may hold; many sets 2 for each of 128 codes, each glyph within
+    // it and all of them past what a font may. names1 sets 64 empty rules, whose glyph has no
+    // path, only a name, names2 64 of those, and names3 64 of names2's, whose names alone would
+    // have grown by 64 times a level.
+    const empty = [137, ...bytes(8, 0)];
+    const { fonts } = libraryOver({
+      ...cmr10,
+      "/fonts/tfm/v/wide.tfm": fixture("cmr10.tfm"),
+      "/fonts/vf/v/wide.vf": virtualFont("cmr10", { 65: times(40, [65]) }),
+      "/fonts/tfm/v/huge.tfm": fixture("cmr10.tfm"),
+      "/fonts/vf/v/huge.vf": virtualFont("wide", { 65: times(64, [65]) }),
+      "/fonts/tfm/v/many.tfm": fixture("cmr10.tfm"),
+      "/fonts/vf/v/many.vf": virtualFont(
+        "wide",
+        Object.fromEntries(Array.from({ length: 128 }, (_, code) => [code, times(2, [65])])),
+      ),
+      "/fonts/tfm/v/names1.tfm": fixture("cmr10.tfm"),
+      "/fonts/vf/v/names1.vf": virtualFont("cmr10", { 65: times(64, empty) }),
+      "/fonts/tfm/v/names2.tfm": fixture("cmr10.tfm"),
+      "/fonts/vf/v/names2.vf": virtualFont("names1", { 65: times(64, [65]) }),
+      "/fonts/tfm/v/names3.tfm": fixture("cmr10.tfm"),
+      "/fonts/vf/v/names3.vf": virtualFont("names2", { 65: times(64, [65]) }),
+    });
+    const wide = await fonts.load("wide");
+    const size = wide?.outlines?.glyphs[wide.outlines.encoding[65] ?? ""]?.d.length ?? 0;
+    // Two fit in a glyph, three do not.
+    expect(size).toBeGreaterThan((64 * 1024) / 3);
+    expect(size).toBeLessThan((64 * 1024) / 2);
+    const started = performance.now();
+    expect((await fonts.load("huge"))?.missing).toBe(
+      "its character 65 holds more than 65536 characters of path data and name",
+    );
+    expect((await fonts.load("many"))?.missing).toBe(
+      "its glyphs hold more than 4194304 characters of path data and names",
+    );
+    expect((await fonts.load("names2"))?.missing).toBeUndefined();
+    expect((await fonts.load("names3"))?.missing).toBe(
+      "its character 65 holds more than 65536 characters of path data and name",
+    );
+    expect(performance.now() - started).toBeLessThan(2_000);
   });
 });
 
@@ -239,10 +374,39 @@ describe.skipIf(!engineAvailable())("FontLibrary", () => {
     expect(abreve?.b?.[3]).toBeGreaterThan(raw?.outlines?.glyphs.A?.b?.[3] ?? Infinity);
     expect(abreve?.b?.[3]).toBeGreaterThan(breve?.b?.[3] ?? Infinity);
     expect(abreve?.w).toBeCloseTo(raw?.outlines?.glyphs.A?.w ?? 0, 0);
-    // The visible space is three rules, which have no text.
+    // The visible space is three rules, which read as the character T1 has at 32.
     expect(outlines?.encoding[32]).toBe("rule+rule+rule");
-    expect(times?.text(32)).toBeUndefined();
+    expect(times?.text(32)).toBe("\u{2423}");
     expect(times?.text(233)).toBe("é");
+  });
+
+  it("reads a virtual font's codes in T1 and TS1 by their encoding, and in OT1 by the glyphs", async () => {
+    const fonts = new FontLibrary(index(), flaky("never"));
+    const loaded = await Promise.all(
+      ["ptmr8t", "pcrr8t", "ptmrc8t", "ptmr8c", "pcrr7t", "ptmri7t"].map((name) =>
+        fonts.load(name),
+      ),
+    );
+    for (const font of loaded) expect(font?.missing, font?.name).toBeUndefined();
+    const [times, courier, caps, symbols, courierOt1, italicOt1] = loaded;
+    // fontinst builds these from two glyphs, which read as d', d̄, l', t', L' and ij; the codes
+    // stand for ď, đ, ľ, ť, Ľ and ĳ.
+    const composites = [164, 158, 169, 180, 137, 188];
+    expect(composites.map((code) => times?.text(code))).toEqual(["ď", "đ", "ľ", "ť", "Ľ", "ĳ"]);
+    // The glyphs keep their parts' names, which item 9's web fonts need apart.
+    expect(times?.outlines?.encoding[164]).toBe("d+quoteright");
+    // A name the glyph list does not know, T1's Germandbls, reads by the glyphs: \SS is S and S.
+    expect(times?.text(223)).toBe("SS");
+    // Courier's en and em dashes are one and two hyphens.
+    expect([21, 22].map((code) => courier?.text(code))).toEqual(["--", "---"]);
+    // A small-caps font's lowercase letters are smaller capitals.
+    expect([65, 97, 233, 255].map((code) => caps?.text(code))).toEqual(["A", "a", "é", "ß"]);
+    // TS1: the Euro, which Times lacks and fontinst draws as a rule, and the centred asterisk.
+    expect([191, 42].map((code) => symbols?.text(code))).toEqual(["€", "\u{2217}"]);
+    // OT1's layout depends on the shape, so it reads by the glyphs: Courier has < where a roman
+    // font has ¡, and an italic font £ where an upright one has $.
+    expect([60, 62, 123].map((code) => courierOt1?.text(code))).toEqual(["<", ">", "{"]);
+    expect(italicOt1?.text(36)).toBe("£");
   });
 
   it("draws the Ubuntu tree's fonts through the merged map", async () => {

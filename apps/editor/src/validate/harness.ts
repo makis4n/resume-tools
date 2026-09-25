@@ -24,7 +24,7 @@
 import type { Resume, RichText } from "@resume-tools/resume-model";
 import { summariseLog } from "../engine/log";
 import type { CompileResult, DumpResult, EngineSession } from "../engine/session";
-import { glyphTextOf } from "../page/draw";
+import { glyphTextOf, widthsOf } from "../page/draw";
 import type { FontLibrary, PageFont } from "../page/fonts";
 import { CURATED } from "../templates/curated";
 import { isBlank } from "../templates/escape";
@@ -203,7 +203,7 @@ export async function validatePackage(
       : attempt(findings, "edits", () => compile(editedBody.latex));
   report.passes.push(...(edited?.passes ?? []));
 
-  const { fields, undrawable } = await readFields(fonts, doc);
+  const { fields, undrawable } = await readFields(fonts, output, doc);
   report.pages = doc.pages.length;
   report.fields = fields.size;
   const fieldFindings = checkFields(doc, fields, body.texts);
@@ -401,7 +401,7 @@ async function checkEdits(
   } catch (error) {
     return [{ check: "edits", message: `after an edit, ${messageOf(error)}` }];
   }
-  const { fields } = await readFields(fonts, doc);
+  const { fields } = await readFields(fonts, output, doc);
   const onePage = doc.pages.length === 1;
   // A field's markers first, so that a field the edit cut short is not taken for one behind.
   const problems = [...checkFields(doc, fields, texts), ...checkAlignment(fields, texts, onePage)];
@@ -596,9 +596,9 @@ function compileError(result: CompileResult): string | undefined {
 }
 
 /**
- * An output as the page parses it, without the fonts' widths, which only positions need: pages,
- * markers, specials and each glyph's font and code are there whatever the fonts. Output the DVI
- * reader cannot parse is an error that says so.
+ * An output parsed without the fonts' widths, which only positions need: pages, markers, specials
+ * and each glyph's font and code are there whatever the fonts, and `readFields` parses it again
+ * with them for the fields. Output the DVI reader cannot parse is an error that says so.
  */
 function readDvi(output: Uint8Array): DviDocument {
   try {
@@ -609,13 +609,17 @@ function readDvi(output: Uint8Array): DviDocument {
 }
 
 /**
- * The fields a document's pages show, and the fonts the page cannot draw them with, with the
- * reason. Each font the document uses is loaded once, as the page loads it, and each glyph named
- * as the page names it (`glyphTextOf`), so a glyph from a font that cannot be drawn has no text.
- * A field is the first copy the pages show, page by page, as `collectFields` keeps it on each.
+ * The fields an output's pages show, and the fonts the page cannot draw them with, with the
+ * reason. Each font `doc`, the output as `readDvi` parsed it, uses is loaded once, as the page
+ * loads it; the output is parsed again with their widths, as the page parses it, since whether an
+ * accent stands over the letter after it depends on where each starts (`collectFields`); and each
+ * glyph is named as the page names it (`glyphTextOf`), so a glyph from a font that cannot be
+ * drawn has no text. A field is the first copy the pages show, page by page, as `collectFields`
+ * keeps it on each.
  */
 async function readFields(
   fonts: FontLibrary,
+  output: Uint8Array,
   doc: DviDocument,
 ): Promise<{ fields: Map<string, Field>; undrawable: Map<string, string> }> {
   const loaded = new Map<string, PageFont>();
@@ -635,7 +639,8 @@ async function readFields(
     loaded.set(name, font);
     if (font.missing !== undefined) undrawable.set(name, font.missing);
   }
-  return { fields: fieldsOf(doc, glyphTextOf(doc, loaded)), undrawable };
+  const placed = parseDvi(output, widthsOf(loaded));
+  return { fields: fieldsOf(placed, glyphTextOf(placed, loaded)), undrawable };
 }
 
 /** The first copy of each field the pages show, page by page, as `collectFields` finds them. */

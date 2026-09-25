@@ -21,7 +21,30 @@ export interface FontOutlines {
   name: string;
   /** Glyph name for each of the 256 codes of the font's built-in encoding. */
   encoding: string[];
+  /**
+   * One outline per glyph name, in a table made by `glyphTable`, which has no prototype: a name
+   * comes from a font file or an encoding vector and may be any word, `constructor` or `__proto__`
+   * among them, which on an ordinary object would read an inherited member or set the prototype.
+   * Read it with `Object.hasOwn`, or through `glyphOf`.
+   */
   glyphs: Record<string, GlyphOutline>;
+}
+
+/** An empty table of glyphs by name, as `FontOutlines.glyphs` must be: one with no prototype. */
+export function glyphTable(): Record<string, GlyphOutline> {
+  return Object.create(null) as Record<string, GlyphOutline>;
+}
+
+/**
+ * The outline a code of a font draws: the glyph its encoding names there, when the font has one
+ * by that name. The renderer, the hit boxes and a virtual font's composition all ask this, so a
+ * code one of them leaves out, the others leave out too.
+ */
+export function glyphOf(outlines: FontOutlines, code: number): GlyphOutline | undefined {
+  const name = outlines.encoding[code];
+  return name !== undefined && Object.hasOwn(outlines.glyphs, name)
+    ? outlines.glyphs[name]
+    : undefined;
 }
 
 /** The characters a Computer Modern glyph represents in the source text. */
@@ -203,18 +226,21 @@ export function textToCode(encoding: string[]): Map<string, number> {
     )
       codes.set(text, code);
     // The characters inputenc maps onto the ligature glyphs, so "–" costs what "--" costs.
-    const spelled = UNICODE_SPELLING[name];
+    const spelled = UNICODE_SPELLING.get(name);
     if (spelled !== undefined && !codes.has(spelled)) codes.set(spelled, code);
   });
   return codes;
 }
 
-/** Glyphs TeX reaches through a ligature that a source text may spell with one character. */
-const UNICODE_SPELLING: Record<string, string> = {
-  endash: "\u2013",
-  emdash: "\u2014",
-  quotedblleft: "\u201c",
-  quotedblright: "\u201d",
-  quoteleft: "\u2018",
-  quoteright: "\u2019",
-};
+/**
+ * Glyphs TeX reaches through a ligature that a source text may spell with one character. A map,
+ * since it is looked up by glyph name, which may be any word.
+ */
+const UNICODE_SPELLING: ReadonlyMap<string, string> = new Map([
+  ["endash", "\u2013"],
+  ["emdash", "\u2014"],
+  ["quotedblleft", "\u201c"],
+  ["quotedblright", "\u201d"],
+  ["quoteleft", "\u2018"],
+  ["quoteright", "\u2019"],
+]);

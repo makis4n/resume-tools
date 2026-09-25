@@ -8,7 +8,7 @@
  * the renderer already consumes: a 1000-unit em, y pointing up, one path per glyph.
  */
 
-import type { FontOutlines, GlyphOutline } from "./glyphs";
+import { type FontOutlines, glyphTable } from "./glyphs";
 
 /** A Type 1 font's programs, decrypted but not yet interpreted. */
 export interface Type1Font {
@@ -551,7 +551,7 @@ function interpret(
 
 /** Interpret every glyph of a decrypted font into outlines the renderer can draw. */
 export function type1Outlines(font: Type1Font): FontOutlines {
-  const glyphs: Record<string, GlyphOutline> = {};
+  const glyphs = glyphTable();
   const draw = (name: string, path: PathBuilder, offset: [number, number]) => {
     const program = font.charstrings.get(name);
     if (program) interpret(program, font, path, offset, draw, true);

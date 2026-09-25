@@ -73,16 +73,25 @@ const LETTER = /^\p{L}$/u;
  * same way; its values are never uppercased, because `\rt@par` is protected and writes them when
  * it runs, after the case change.
  *
- * TeX's `\accent`, which OT1 sets every accented letter with, puts the accent in the DVI first
- * and the letter after it, as two glyphs, and moves back so that the letter starts before the
- * accent's advance ends. A spacing accent (`textOf.accent`) directly followed in the same field by
- * a glyph whose text is a letter and that starts there becomes one glyph whose text is the two
- * composed (NFC), `é` for `\'e`: the letter's item, with the accent's in `items`, so that a click
- * on either lands on the character. The position matters: OT1 sets `\textasciitilde` and
- * `\textasciicircum` as the same accent glyphs standing alone, and a letter after one of them
- * starts where it ends, so `~mara` still reads as typed. An accent with no letter over which it
- * stands stays a glyph of its own. The test holds without widths too, as the harness parses the
- * DVI: the accent then advances by nothing, and the move back still puts the letter before it.
+ * TeX's `\accent`, which OT1 sets every accented letter with and T1 the letters it has no glyph
+ * for, puts the accent in the DVI first and the letter after it, as two glyphs. It centres the
+ * accent over the letter (tex.web's `make_accent`): the accent moves right by half the letter's
+ * width less its own, plus a little in a slanted font, and the letter goes back to where the
+ * accent began. So a letter narrower than the accent starts after it, and a wider one before it,
+ * by less than twice the accent's width for every accent and letter of every T1 and OT1 font the
+ * page can draw (a dot over a W is the most, 1.83 widths in Avant Garde's oblique). A spacing
+ * accent (`textOf.accent`) directly followed in the same field by a glyph whose text is a letter
+ * and that starts within that span, from twice the accent's width before it to the end of its
+ * advance, becomes one glyph whose text is the two composed (NFC), `é` for `\'e`: the letter's
+ * item, with the accent's in `items`, so that a click on either lands on the character. The
+ * position matters: OT1 sets `\textasciitilde` and `\textasciicircum` as the same accent glyphs
+ * standing alone, and a letter after one of them starts where it ends, so `~mara` still reads as
+ * typed; and the first letter of the next line, back at the left margin, starts far before an
+ * accent that ended a line, unless the line held almost nothing else. An accent with no letter
+ * over which it stands stays a glyph of its own. The accent may sit higher or lower than the
+ * letter, in the box TeX shifts for a letter taller or shorter than the x-height, so the test does
+ * not look at v. It needs the fonts' widths, so the page and the validation harness both parse
+ * the DVI with them.
  */
 export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, Field> {
   const fields = new Map<string, Field>();
@@ -117,7 +126,11 @@ export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, F
     accents.delete(field);
     const accent = field.glyphs.at(-1);
     const over = accent && page.items[accent.item];
-    const under = over?.kind === "glyph" && item.kind === "glyph" && item.h < over.h + over.width;
+    const under =
+      over?.kind === "glyph" &&
+      item.kind === "glyph" &&
+      item.h >= over.h - 2 * over.width &&
+      item.h < over.h + over.width;
     if (mark !== undefined && accent && under && text !== undefined && LETTER.test(text)) {
       const letter = { item: index, text: `${text}${mark}`.normalize("NFC"), offset: -1 };
       field.glyphs[field.glyphs.length - 1] = { ...letter, items: [accent.item] };
@@ -260,21 +273,24 @@ function endOfRun(text: string, from: number): number {
  * itself and, for a composed letter such as the `é` an accent and its letter make, the letter
  * decomposed, as a model holds a letter typed with a combining mark.
  */
-function spellingsOf(text: string): string[] {
-  const alternatives = LIGATURE_ALTERNATIVES[text];
+function spellingsOf(text: string): readonly string[] {
+  const alternatives = LIGATURE_ALTERNATIVES.get(text);
   if (alternatives) return alternatives;
   const decomposed = text.normalize("NFD");
   return decomposed === text ? [text] : [text, decomposed];
 }
 
-/** Source spellings that produce a given glyph; the plain form first. */
-const LIGATURE_ALTERNATIVES: Record<string, string[]> = {
-  "--": ["--", "–"],
-  "---": ["---", "—"],
-  "``": ["``", "“", '"'],
-  "''": ["''", "”", '"'],
-  "'": ["'", "’"],
-  "`": ["`", "‘"],
+/**
+ * Source spellings that produce a given glyph, the plain form first. A map, since it is looked up
+ * by a glyph's text, which may be any word a glyph name spells, `constructor` among them.
+ */
+const LIGATURE_ALTERNATIVES: ReadonlyMap<string, readonly string[]> = new Map([
+  ["--", ["--", "–"]],
+  ["---", ["---", "—"]],
+  ["``", ["``", "“", '"']],
+  ["''", ["''", "”", '"']],
+  ["'", ["'", "’"]],
+  ["`", ["`", "‘"]],
   // T1 sets Đ (`\DJ`) with the glyph it sets Ð (`\DH`) with, at 208, which its fonts name Eth.
-  "\u{d0}": ["\u{d0}", "\u{110}"],
-};
+  ["\u{d0}", ["\u{d0}", "\u{110}"]],
+]);

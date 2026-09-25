@@ -169,6 +169,37 @@ const FNT_NUM_0 = 171;
 const FNT1 = 235;
 const XXX1 = 239;
 
+/**
+ * The most bytes a packet may hold, every one of which `expand` walks. This and the two budgets
+ * after it bound what running one packet may cost: a packet is a program the font file brings, so
+ * a hostile file could ask for any amount of work or memory, as a packet of pushes alone grows the
+ * stack by one for each of its bytes. They let every real font through and stop such a file at
+ * once, leaving the font undrawn with the reason. Across TeX Live's 664 virtual fonts the largest
+ * packet is 111 bytes, the most a packet sets is 11 characters and rules, and the deepest it nests
+ * pushes is 2; Times in T1, `ptmr8t`, needs 52 bytes, 3 and 1.
+ */
+export const MAX_PACKET_BYTES = 8 * 1024;
+/** The most characters and rules a packet may set, where real fonts set at most 11. */
+export const MAX_PLACEMENTS = 64;
+/** The most pushes a packet may nest, where real fonts nest at most 2. */
+export const MAX_PUSHES = 32;
+
+/**
+ * Each virtual font's local fonts by the number packets select them by, made once for all its
+ * packets: a file may define any number of fonts, and a table made for each packet would cost that
+ * number again for every character.
+ */
+const numbered = new WeakMap<VirtualFont, ReadonlyMap<number, VfFont>>();
+
+function fontsByNumber(vf: VirtualFont): ReadonlyMap<number, VfFont> {
+  let fonts = numbered.get(vf);
+  if (!fonts) {
+    fonts = new Map(vf.fonts.map((font) => [font.number, font]));
+    numbered.set(vf, fonts);
+  }
+  return fonts;
+}
+
 /** Names for the opcodes a packet may not hold, for the error that refuses one. */
 function opcodeName(op: number): string {
   if (op === 139) return "bop";
@@ -185,7 +216,8 @@ function opcodeName(op: number): string {
  * the font has no such character. Packets hold `set_char`, `set`, `put`, rules, moves, `push` and
  * `pop`, font changes, specials, which are skipped, and `nop`; anything else throws, naming it.
  * The current font starts as the first the file defines. `widthOf` gives each local font's TFM
- * widths, which a `set` moves right by, scaled by the font's scale.
+ * widths, which a `set` moves right by, scaled by the font's scale. A packet past one of the
+ * budgets above throws, naming it.
  */
 export function expand(
   vf: VirtualFont,
@@ -194,7 +226,11 @@ export function expand(
 ): Placement[] | undefined {
   const char = vf.chars.get(code);
   if (!char) return undefined;
-  const byNumber = new Map(vf.fonts.map((font) => [font.number, font]));
+  if (char.dvi.length > MAX_PACKET_BYTES)
+    throw new Error(
+      `the packet of ${code} holds ${char.dvi.length} bytes, more than ${MAX_PACKET_BYTES}`,
+    );
+  const byNumber = fontsByNumber(vf);
   let font = vf.fonts[0];
   const r = new Bytes(char.dvi);
   const out: Placement[] = [];
@@ -206,15 +242,22 @@ export function expand(
   let z = 0;
   const stack: [number, number, number, number, number, number][] = [];
 
+  const place = (placement: Placement) => {
+    if (out.length === MAX_PLACEMENTS)
+      throw new Error(
+        `the packet of ${code} sets more than ${MAX_PLACEMENTS} characters and rules`,
+      );
+    out.push(placement);
+  };
   const set = (c: number, advance: boolean) => {
     if (!font) throw new Error(`the packet of ${code} sets a character before any font is defined`);
-    out.push({ font: font.name, scale: font.scale, code: c, h, v });
+    place({ font: font.name, scale: font.scale, code: c, h, v });
     if (advance) h += ((widthOf(font.name, c) ?? 0) * font.scale) / 2 ** 20;
   };
   const rule = (advance: boolean) => {
     const height = r.signed(4);
     const width = r.signed(4);
-    out.push({ rule: true, h, v, width, height });
+    place({ rule: true, h, v, width, height });
     if (advance) h += width;
   };
   const select = (number: number) => {
@@ -233,8 +276,11 @@ export function expand(
     else if (among(op, PUT1, 4)) set(r.unsigned(op - PUT1 + 1), false);
     else if (op === PUT_RULE) rule(false);
     else if (op === NOP) continue;
-    else if (op === PUSH) stack.push([h, v, w, x, y, z]);
-    else if (op === POP) {
+    else if (op === PUSH) {
+      if (stack.length === MAX_PUSHES)
+        throw new Error(`the packet of ${code} nests more than ${MAX_PUSHES} pushes`);
+      stack.push([h, v, w, x, y, z]);
+    } else if (op === POP) {
       const top = stack.pop();
       if (!top) throw new Error(`the packet of ${code} pops more than it pushes`);
       [h, v, w, x, y, z] = top;

@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
-import type { FontOutlines } from "./glyphs";
+import { type FontOutlines, type GlyphOutline, glyphOf, glyphTable } from "./glyphs";
 import { reencode, transform, transformBox, transformPath } from "./outlines";
+
+/** A glyph table as a font's must be, with no prototype, holding the glyphs given. */
+function tableOf(glyphs: Record<string, GlyphOutline>): Record<string, GlyphOutline> {
+  return Object.assign(glyphTable(), glyphs);
+}
 
 const FONT: FontOutlines = {
   name: "Test",
   encoding: ["A", "B", ...Array.from({ length: 254 }, () => ".notdef")],
-  glyphs: {
+  glyphs: tableOf({
     A: { w: 600, d: "M0 0L500 0L250 700Z", b: [0, 0, 500, 700] },
     B: { w: 500, d: "", b: null },
-  },
+  }),
 };
 
 describe("transformPath", () => {
@@ -64,6 +69,17 @@ describe("transform", () => {
     expect(oblique.glyphs.A).toEqual({ w: 300, d: "M0 0L250 0L265 700Z", b: [0, 0, 390, 700] });
     expect(oblique.glyphs.B).toEqual({ w: 250, d: "", b: null });
     expect(oblique.encoding).toBe(FONT.encoding);
+  });
+
+  it("keeps glyphs named after an object's members, and only the font's", () => {
+    const glyphs = glyphTable();
+    glyphs["__proto__"] = { w: 400, d: "M0 0L100 0Z", b: [0, 0, 100, 0] };
+    const vector = ["__proto__", "constructor", "toString", ...FONT.encoding.slice(3)];
+    const oblique = transform(reencode({ ...FONT, glyphs }, vector), { slant: 0.2 });
+    expect(Object.getPrototypeOf(oblique.glyphs)).toBeNull();
+    expect(glyphOf(oblique, 0)?.w).toBe(400);
+    expect(glyphOf(oblique, 1)).toBeUndefined();
+    expect(glyphOf(oblique, 2)).toBeUndefined();
   });
 
   it("leaves a font with neither as it is", () => {

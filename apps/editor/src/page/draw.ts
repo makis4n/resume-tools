@@ -6,14 +6,14 @@
 
 import {
   type DviDocument,
-  type DviFont,
   type DviPage,
   type PageItem,
   parseDvi,
   pointsPerUnit,
+  type WidthProvider,
 } from "../tex/dvi";
 import { alignGlyphs, collectFields, type Field, type GlyphTextOf } from "../tex/fields";
-import { accentMark } from "../tex/glyphs";
+import { accentMark, glyphOf } from "../tex/glyphs";
 import { INCH, type PageSize, renderPage, US_LETTER } from "../tex/svg";
 import { scaleTfm } from "../tex/tfm";
 import type { FontLibrary, PageFont } from "./fonts";
@@ -136,8 +136,7 @@ function glyphBoxes(
     if (item.kind !== "glyph") return;
     const font = doc.fonts.get(item.font);
     const outlines = font && fonts.get(font.name)?.outlines;
-    const name = outlines?.encoding[item.code];
-    const glyph = name ? outlines?.glyphs[name] : undefined;
+    const glyph = outlines && glyphOf(outlines, item.code);
     // The same test the SVG makes before it draws a glyph.
     if (!font || !glyph) return;
     const s = (font.scale * pt) / 1000;
@@ -158,10 +157,26 @@ function glyphBoxes(
 }
 
 /**
+ * Each font's widths at the size a DVI uses it, from the fonts that loaded, which `parseDvi` moves
+ * right by after each glyph. Where a glyph starts decides where it is drawn and whether an accent
+ * before it stands over it (`collectFields`), so the page and the validation harness both parse
+ * a DVI with these. A font that did not load moves by nothing.
+ */
+export function widthsOf(loaded: ReadonlyMap<string, PageFont>): WidthProvider {
+  return (font) => {
+    const tfm = loaded.get(font.name)?.tfm;
+    return tfm ? scaleTfm(tfm, font.scale).widths : undefined;
+  };
+}
+
+/**
  * Draw one page of a DVI. `texts` holds each field's text as the model has it; glyphs are
  * matched against it so a click can say which character it landed on. A font the page cannot
- * draw, or whose files cannot be read this time, is left out and named in `missingFonts`, so that
- * no font costs the page.
+ * draw, or whose outlines cannot be read this time, is left out and named in `missingFonts`,
+ * while its metrics still place every glyph after its own; the next draw reads it again. It
+ * rejects when a font's metrics, the font map or the glyph list cannot be read, since a page
+ * drawn without them would put glyphs in the wrong places or name them wrongly with no error, and
+ * the caller keeps the page it had.
  */
 export async function drawPage(
   dvi: Uint8Array,
@@ -175,13 +190,7 @@ export async function drawPage(
   const missingFonts = new Map<string, string>();
   await Promise.all(
     names.map(async (name) => {
-      let font: PageFont | undefined;
-      try {
-        font = await fonts.load(name);
-      } catch (error) {
-        missingFonts.set(name, error instanceof Error ? error.message : String(error));
-        return;
-      }
+      const font = await fonts.load(name);
       if (!font) missingFonts.set(name, "TeX Live has no TFM for it");
       else {
         loaded.set(name, font);
@@ -189,11 +198,7 @@ export async function drawPage(
       }
     }),
   );
-  const widthsFor = (font: DviFont) => {
-    const tfm = loaded.get(font.name)?.tfm;
-    return tfm ? scaleTfm(tfm, font.scale).widths : undefined;
-  };
-  const doc: DviDocument = parseDvi(dvi, widthsFor);
+  const doc: DviDocument = parseDvi(dvi, widthsOf(loaded));
   const page = doc.pages[pageIndex];
   if (!page) throw new Error(`the document has ${doc.pages.length} pages, not ${pageIndex + 1}`);
 
