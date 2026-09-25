@@ -86,17 +86,18 @@ bullet, `$`, `€` and `°` from TS1 even in OT1, and in OT1 cannot set `ą`, `�
   letter is the narrower, before it when the letter is the wider, by less than twice the accent's
   width in every T1 and OT1 font the page can draw (a dot over a W is the most, 1.83 widths in
   Avant Garde's oblique). A spacing accent (`ACCENTS` in `glyphs.ts`: the thirteen of TeX's text
-  encodings) directly followed in the same field by a letter that starts within that span, from
-  twice the accent's width before it to the end of its advance, is one character, composed (NFC):
-  the letter's item, listing the accent's, so that a click on either lands on it and both carry its
+  encodings, and the ASCII `^` and `~`, which OT1's typewriter fonts set `\^` and `\~` with)
+  directly followed in the same field by a letter that starts within that span, from twice the
+  accent's width before it to the end of its advance, is one character, composed (NFC): the
+  letter's item, listing the accent's, so that a click on either lands on it and both carry its
   field and offset in the SVG. The test does not look at the height, since TeX raises the accent
-  over a tall letter. It keeps OT1's `\textasciitilde` and `\textasciicircum`, the same accent
-  glyphs standing alone, reading as `~` and `^`, since a letter after one starts where it ends,
-  and an accent that ends a line apart from the first letter of the next, back at the left
-  margin. It needs the fonts' widths, so the harness parses the output with them, as the page
-  does. The aligner takes a composed letter for its decomposed spelling too, as a model holds a
-  letter typed with a combining mark, and T1's one glyph for `Ð` and `Đ`, which its fonts name
-  `Eth`, for either.
+  over a tall letter. It keeps a `~` or `^` standing alone, OT1's `\textasciitilde` and
+  `\textasciicircum` or T1's, reading as itself, since a letter after one starts where it ends (no
+  text font in the tree kerns a letter after either), and an accent that ends a line apart from
+  the first letter of the next, back at the left margin. It needs the fonts' widths, so the
+  harness parses the output with them, as the page does. The aligner takes a composed letter for
+  its decomposed spelling too, as a model holds a letter typed with a combining mark, and T1's one
+  glyph for `Ð` and `Đ`, which its fonts name `Eth`, for either.
 - **One font map.** The Ubuntu bundles' font maps are not in `pdftex.map`, which updmap wrote for
   TeX Live's basic tree only. The fetch script merges them as updmap would (`scripts/fontmaps.ts`):
   each entry of `/texmf/texmf-dist/fonts/map/dvips/*/*.map`, in path order, for a TeX font the map

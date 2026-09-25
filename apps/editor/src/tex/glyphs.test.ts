@@ -180,8 +180,11 @@ describe("glyph tables", () => {
 
 describe("accentMark", () => {
   it("gives the combining mark of each spacing accent, and of nothing else", () => {
-    expect(ACCENTS.size).toBe(13);
+    expect(ACCENTS.size).toBe(15);
     expect(accentMark("acute")).toBe("\u{301}");
+    // OT1 typewriter's \^ and \~, which set the ASCII ^ and ~.
+    expect(accentMark("asciicircum")).toBe("\u{302}");
+    expect(accentMark("asciitilde")).toBe("\u{303}");
     expect(accentMark("caron")).toBe("\u{30c}");
     expect(accentMark("ogonek.ts1")).toBe("\u{328}");
     expect(accentMark("quoteleft")).toBeUndefined();

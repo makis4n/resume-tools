@@ -121,7 +121,9 @@ const GLYPH_TEXT: Record<string, string> = {
  * The spacing accents TeX's `\accent` sets over a letter, by glyph name, and the combining mark
  * each stands for there. OT1 sets every accented letter as an accent and the letter, and T1 the
  * letters it has no glyph for, such as `ǎ`; a virtual font composes its accented letters from the
- * same two glyphs. Either way the pair reads as the one letter the text holds.
+ * same two glyphs. Either way the pair reads as the one letter the text holds. OT1's typewriter
+ * fonts have the ASCII `^` and `~` at 94 and 126, where its roman fonts have the circumflex and
+ * the tilde, and set `\^` and `\~` with them, so they are accents too: `\^\i` is `î` in `cmtt10`.
  */
 export const ACCENTS: ReadonlyMap<string, string> = new Map([
   ["grave", "\u{300}"],
@@ -137,6 +139,8 @@ export const ACCENTS: ReadonlyMap<string, string> = new Map([
   ["caron", "\u{30c}"],
   ["cedilla", "\u{327}"],
   ["ogonek", "\u{328}"],
+  ["asciicircum", "\u{302}"],
+  ["asciitilde", "\u{303}"],
 ]);
 
 /** A glyph name without the suffix from its first period on: `a.sc` is a form of `a`. */

@@ -623,6 +623,43 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     expect(large).toBeLessThan(500);
   }, 60_000);
 
+  it("pairs OT1 typewriter's circumflex and tilde with the letter under them", async () => {
+    // cmtt has the ASCII ^ and ~ at 94 and 126, where cmr has the accents, and OT1's \^ and \~
+    // set them: î is \^\i, the ^ over a dotless i, and ñ is \~n. A dotless i alone is ı, and the
+    // same ^ and ~ standing alone stay themselves, the letter after each starting where it ends.
+    const latex = new Map([
+      ["a", "Resmî ılık"],
+      ["b", "Millî ırmak"],
+      ["c", "Año niño"],
+      ["d", "x\\textasciicircum{}y \\textasciitilde{}z"],
+    ]);
+    const texts = new Map([...latex, ["d", "x^y ~z"]]);
+    const fields = [...latex]
+      .map(([id, source]) => `\\special{rt:b:${id}}${source}\\special{rt:e:${id}} `)
+      .join("");
+    const body = `\\documentclass{article}\\begin{document}\\texttt{${fields}}\\end{document}`;
+    const compiled = session.compile("pdftex", "stock", body, { job: "typewriter", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const page = await drawPage(compiled.output, fonts, texts);
+    expect(page.missingFonts).toEqual(new Map());
+    expect(page.unmatched).toBe(0);
+    for (const [id, text] of texts) {
+      const glyphs = page.fields.get(id)?.glyphs ?? [];
+      // Each character but the space is one glyph, at its own offset.
+      const characters = [...text].flatMap((char, offset) =>
+        char === " " ? [] : [{ char, offset }],
+      );
+      expect(
+        glyphs.map((glyph) => glyph.text),
+        text,
+      ).toEqual(characters.map((c) => c.char));
+      expect(
+        glyphs.map((glyph) => glyph.offset),
+        text,
+      ).toEqual(characters.map((c) => c.offset));
+    }
+  }, 30_000);
+
   it("gives a later page the size the first page set", async () => {
     const compiled = session.compile(
       "pdftex",
