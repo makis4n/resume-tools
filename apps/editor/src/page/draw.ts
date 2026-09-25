@@ -98,6 +98,19 @@ export function glyphAt(glyphs: GlyphBox[], x: number, y: number): GlyphBox | un
 }
 
 /**
+ * The ids of the fields a page shows: those with a glyph on it, which a click can land on. A field
+ * whose text sets no glyph, such as a name in a script the fonts lack, still has its markers on
+ * the page with nothing between them, so it is in `fields` but not here; a field on a later page,
+ * which the editor does not draw, is in neither. The side panel gives an input to a filled field
+ * that is not here, since the page offers no way to edit it.
+ */
+export function fieldsShown(page: Pick<DrawnPage, "fields">): Set<string> {
+  const shown = new Set<string>();
+  for (const field of page.fields.values()) if (field.glyphs.length > 0) shown.add(field.id);
+  return shown;
+}
+
+/**
  * The text each glyph of a document stands for, which `collectFields` gives a field's glyphs:
  * what its font says the code's glyph stands for (`PageFont.text`), and, for a spacing accent,
  * the combining mark `collectFields` composes with the letter under it. `loaded` holds the fonts

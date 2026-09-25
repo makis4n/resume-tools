@@ -4,9 +4,9 @@
  * each section's role. Text is edited on the page, where it is read, so the panel names a node by
  * its title or first words rather than repeat it in inputs. Its inputs are for what the page may
  * not show: the header's contact fields, each link's kind and address with its label, and a field
- * that is empty, since an empty field is not on the page (decision 0007) and so cannot be clicked
- * there, or that still holds its placeholder, which a template may not set at all. Everything the
- * panel does is a command, as an edit on the page is, so the page recompiles after it.
+ * the page does not show, which cannot be clicked there, or that still holds its placeholder, so
+ * that the input can mark it (`needsInput`). Everything the panel does is a command, as an edit on
+ * the page is, so the page recompiles after it.
  *
  * Plain HTML in plain English, with nothing in it that is LaTeX.
  */
@@ -28,8 +28,10 @@ import {
 } from "@resume-tools/resume-model";
 import {
   type CSSProperties,
+  createContext,
   type InputHTMLAttributes,
   type ReactNode,
+  useContext,
   useEffect,
   useRef,
   useState,
@@ -54,6 +56,15 @@ type Send = (command: Command) => void;
 
 /** A structure op as the command that carries it. */
 const structural = (op: StructureOp): Command => ({ type: "structure", op });
+
+/**
+ * What a `FieldInput` for a text field is given besides its text: the field's id, and what the
+ * input does with what is typed, both from the one id, so that they name the same field.
+ */
+const textField = (field: string, send: Send) => ({
+  field,
+  onChange: (text: string) => send({ type: "text", field, text }),
+});
 
 /** A rich field's text as the page shows it: its runs joined. */
 export const plainText = (runs: RichText) => runs.map((run) => run.text).join("");
@@ -80,6 +91,26 @@ export function fieldStatus(
 ): "empty" | "placeholder" | "filled" {
   if (text === undefined || isBlank(text)) return "empty";
   return text === placeholder ? "placeholder" : "filled";
+}
+
+/**
+ * Whether the panel gives a field an input: when the page does not show it, so that it can still
+ * be filled in or cleared, and while it holds its placeholder, shown or not, so that the input can
+ * mark it. An empty field is never on the page (decision 0007). A filled one is off it when it is
+ * not in `shownFields`, the fields with a glyph on the latest page: its template's variant may
+ * have no slot for it, as Jake's projects entry has no place, no character of its text may set a
+ * glyph, or it may be on a page after the first, which the editor does not draw. Before the first
+ * page `shownFields` is undefined, and every field counts as shown, so that the panel does not
+ * fill with inputs while the document opens.
+ */
+export function needsInput(
+  field: string,
+  text: string | undefined,
+  placeholder: string | undefined,
+  shownFields: ReadonlySet<string> | undefined,
+): boolean {
+  if (fieldStatus(text, placeholder) !== "filled") return true;
+  return shownFields !== undefined && !shownFields.has(field);
 }
 
 /** The month "Add dates" starts an entry's dates at: this one, as the model writes a month. */
@@ -139,18 +170,31 @@ const STYLE = {
 
 export interface PanelProps {
   document: Document;
+  /**
+   * The fields with a glyph on the latest page (`fieldsShown`), so that a filled field the page
+   * does not show gets an input here; undefined before the first page.
+   */
+  shownFields?: ReadonlySet<string>;
   /** Where the panel's commands go: the way an edit on the page goes, so the page follows. */
   onCommand: Send;
 }
 
-export function Panel({ document, onCommand }: PanelProps) {
+/**
+ * `PanelProps.shownFields`, carried to each `FieldInput` however deep in the panel it sits rather
+ * than passed down through the rows between, which have no use for it.
+ */
+const ShownFields = createContext<ReadonlySet<string> | undefined>(undefined);
+
+export function Panel({ document, shownFields, onCommand }: PanelProps) {
   const { header, sections } = document.resume;
   return (
-    <div style={STYLE.panel}>
-      <HeaderFields header={header} send={onCommand} />
-      <Links links={header.links} send={onCommand} />
-      <Sections sections={sections} format={dateFormatOf(document)} send={onCommand} />
-    </div>
+    <ShownFields value={shownFields}>
+      <div style={STYLE.panel}>
+        <HeaderFields header={header} send={onCommand} />
+        <Links links={header.links} send={onCommand} />
+        <Sections sections={sections} format={dateFormatOf(document)} send={onCommand} />
+      </div>
+    </ShownFields>
   );
 }
 
@@ -168,12 +212,15 @@ function setHeader(key: (typeof HEADER_FIELDS)[number]["key"], text: string): St
 }
 
 function HeaderFields({ header, send }: { header: Header; send: Send }) {
-  const text = (field: string) => (value: string) => send({ type: "text", field, text: value });
   return (
     <fieldset>
       <legend>Header</legend>
-      <FieldInput label="First name" text={header.name.first} onChange={text("header.first")} />
-      <FieldInput label="Last name" text={header.name.last} onChange={text("header.last")} />
+      <FieldInput
+        label="First name"
+        text={header.name.first}
+        {...textField("header.first", send)}
+      />
+      <FieldInput label="Last name" text={header.name.last} {...textField("header.last", send)} />
       {HEADER_FIELDS.map(({ key, label, mode }) => (
         <label key={key} style={STYLE.row}>
           {label}
@@ -313,11 +360,7 @@ function SectionRow({
           onRemove={remove}
         />
       </div>
-      <FieldInput
-        label="Title"
-        text={title}
-        onChange={(text) => send({ type: "text", field: `${id}.title`, text })}
-      />
+      <FieldInput label="Title" text={title} {...textField(`${id}.title`, send)} />
       {open && <SectionContents section={section} format={format} send={send} />}
     </li>
   );
@@ -408,8 +451,6 @@ function EntryRow({
   send: Send;
 }) {
   const { id, bullets } = entry;
-  const text = (name: "title" | "subtitle" | "place") => (value: string) =>
-    send({ type: "text", field: `${id}.${name}`, text: value });
   const placeholder = PLACEHOLDERS.entry;
   return (
     <li>
@@ -438,19 +479,19 @@ function EntryRow({
         label="Title"
         text={entry.title}
         placeholder={placeholder.title}
-        onChange={text("title")}
+        {...textField(`${id}.title`, send)}
       />
       <FieldInput
         label="Subtitle"
         text={entry.subtitle}
         placeholder={placeholder.subtitle}
-        onChange={text("subtitle")}
+        {...textField(`${id}.subtitle`, send)}
       />
       <FieldInput
         label="Place"
         text={entry.place}
         placeholder={placeholder.place}
-        onChange={text("place")}
+        {...textField(`${id}.place`, send)}
       />
       <div style={STYLE.row}>
         {bullets.length === 1 ? "1 bullet" : `${bullets.length} bullets`}
@@ -503,7 +544,7 @@ function ItemRow({
           label="Label"
           text={item.label}
           placeholder={PLACEHOLDERS.labelledItem.label}
-          onChange={(text) => send({ type: "text", field: `${item.id}.label`, text })}
+          {...textField(`${item.id}.label`, send)}
         >
           <b>{item.label}</b>
         </FieldInput>
@@ -631,6 +672,7 @@ function RichField({
   const marked = runs.some((run) => run.bold || run.italic || run.href !== undefined);
   return (
     <FieldInput
+      field={field}
       label={label}
       text={text}
       placeholder={placeholder}
@@ -643,14 +685,14 @@ function RichField({
 }
 
 /**
- * An input for a field the page cannot show, so that it can still be filled in: an empty field,
- * which is not on the page (decision 0007), or one still holding its placeholder, which a template
- * may leave off the page, as Jake's does a project's place. Any other field is edited on the page,
- * and the panel shows `children` for it instead. Once the input has had the focus it stays, so
- * that filling the field in does not pull the input, and the panel below it, from under the
- * pointer.
+ * An input for a field that `needsInput` gives one: a field the page does not show, so that it can
+ * still be filled in or cleared, or one that holds its placeholder, which the input marks. Any
+ * other field is edited on the page, and the panel shows `children` for it instead. Once the input
+ * has had the focus it stays, so that filling the field in does not pull the input, and the panel
+ * below it, from under the pointer.
  */
 function FieldInput({
+  field,
   label,
   text,
   placeholder,
@@ -658,6 +700,8 @@ function FieldInput({
   onChange,
   children,
 }: {
+  /** The field's id, by which the page's markers name it. */
+  field: string;
   label: string;
   text: string | undefined;
   placeholder?: string;
@@ -666,14 +710,15 @@ function FieldInput({
   onChange: (text: string) => void;
   children?: ReactNode;
 }) {
+  const shownFields = useContext(ShownFields);
   const [used, setUsed] = useState(false);
-  const status = fieldStatus(text, placeholder);
-  if (locked || (status === "filled" && !used)) return <>{children}</>;
+  if (locked || (!used && !needsInput(field, text, placeholder, shownFields)))
+    return <>{children}</>;
   return (
     <label style={STYLE.row} onFocus={() => setUsed(true)}>
       {label}
       <TypedInput value={text ?? ""} onChange={onChange} />
-      {status === "placeholder" && <Mark />}
+      {fieldStatus(text, placeholder) === "placeholder" && <Mark />}
     </label>
   );
 }

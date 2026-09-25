@@ -5,6 +5,7 @@ import { type Command, type FieldRef, fieldsOf, History, newDocument } from "./e
 import { Panel } from "./editor/Panel";
 import { EngineClient } from "./engine/client";
 import type { EngineManifest } from "./engine/manifest";
+import { fieldsShown } from "./page/draw";
 import { FontLibrary } from "./page/fonts";
 import { Page } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
@@ -150,7 +151,7 @@ export function App() {
       </div>
       {/* The side panel's column: the structure, with the style controls under it (item 15). */}
       <aside style={{ flex: "none", width: "24rem" }}>
-        <Panel document={present} onCommand={edit} />
+        <Panel document={present} shownFields={fieldsShown(shown.latest.page)} onCommand={edit} />
       </aside>
     </main>
   );

@@ -2,8 +2,16 @@ import { type Section, YearMonth } from "@resume-tools/resume-model";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { curated } from "../templates/curated";
-import { apply, type Command, newDocument } from "./document";
-import { fieldStatus, firstWords, holdsContent, Panel, plainText, thisMonth } from "./Panel";
+import { apply, type Command, fieldsOf, newDocument } from "./document";
+import {
+  fieldStatus,
+  firstWords,
+  holdsContent,
+  needsInput,
+  Panel,
+  plainText,
+  thisMonth,
+} from "./Panel";
 
 const { sample } = curated("jake");
 
@@ -41,6 +49,38 @@ describe("fieldStatus", () => {
   });
 });
 
+describe("needsInput", () => {
+  // Some of what a page of Jake's sample shows. Left off it are a projects entry's place, which
+  // the projects variant has no slot for; a last name in a script the fonts lack, which sets no
+  // glyph; and a bullet on the second page, which the editor does not draw.
+  const shown = new Set(["header.first", "fennel.title", "fennel.place", "marginalia.title"]);
+
+  it("leaves a filled field the page shows to the page, where it is edited", () => {
+    expect(needsInput("fennel.title", "Software Engineer", "Title", shown)).toBe(false);
+    expect(needsInput("header.first", "Mara", undefined, shown)).toBe(false);
+  });
+
+  it("gives a filled field the page does not show an input, whatever keeps it off", () => {
+    const bullet = "Describe what you did";
+    expect(needsInput("marginalia.place", "Portland, OR", "Place", shown)).toBe(true);
+    expect(needsInput("header.last", "漢字", undefined, shown)).toBe(true);
+    expect(needsInput("research-2.text", "Ran a pilot.", bullet, shown)).toBe(true);
+  });
+
+  it("gives an empty field an input, and one holding its placeholder, on the page or not", () => {
+    expect(needsInput("fennel.place", "Place", "Place", shown)).toBe(true);
+    expect(needsInput("marginalia.place", "Place", "Place", shown)).toBe(true);
+    for (const text of [undefined, "", " "])
+      expect(needsInput("fennel.place", text, "Place", shown), JSON.stringify(text)).toBe(true);
+  });
+
+  it("gives only an empty field or a placeholder an input before the first page", () => {
+    expect(needsInput("marginalia.place", "Portland, OR", "Place", undefined)).toBe(false);
+    expect(needsInput("marginalia.place", "Place", "Place", undefined)).toBe(true);
+    expect(needsInput("marginalia.place", "", "Place", undefined)).toBe(true);
+  });
+});
+
 describe("thisMonth", () => {
   it("is the year and the month, as the model writes a month", () => {
     expect(thisMonth(new Date(2026, 8, 25))).toBe("2026-09");
@@ -68,9 +108,11 @@ describe("holdsContent", () => {
 });
 
 describe("Panel", () => {
-  const render = (commands: Command[] = []) => {
+  const render = (commands: Command[] = [], shownFields?: ReadonlySet<string>) => {
     const doc = commands.reduce(apply, newDocument("jake", sample, "en-US"));
-    return renderToStaticMarkup(<Panel document={doc} onCommand={() => {}} />);
+    return renderToStaticMarkup(
+      <Panel document={doc} shownFields={shownFields} onCommand={() => {}} />,
+    );
   };
 
   it("shows the header's fields, the links and the sections, in plain English", () => {
@@ -105,5 +147,19 @@ describe("Panel", () => {
     expect(html).not.toContain("Last name");
     expect(html).toContain('value="example.com"');
     expect(html).toContain(">placeholder</small>");
+  });
+
+  it("gives a filled field the page does not show an input, and leaves the rest to it", () => {
+    const every = new Set(fieldsOf(sample).keys());
+    // A page that shows every field is as good as no page yet.
+    expect(render([], every)).toBe(render());
+    // A first name whose letters set no glyph, and a section's title on the second page.
+    const shown = new Set([...every].filter((id) => id !== "header.first" && id !== "proj.title"));
+    const html = render([], shown);
+    expect(html).toContain("First name");
+    expect(html).toContain('value="Mara"');
+    expect(html).toContain('value="Projects"');
+    expect(html).not.toContain("Last name");
+    expect(html).not.toContain('value="Experience"');
   });
 });
