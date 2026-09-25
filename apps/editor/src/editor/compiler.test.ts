@@ -36,15 +36,25 @@ interface Waiting<T> {
 
 /**
  * A stand-in for the engine that notes every request in order, keeps each dump and compile
- * waiting until the test settles it, and takes a format at once. Terminating it only notes that
- * it was, so a test can settle a request after it, as a worker's reply could cross the call.
+ * waiting until the test settles it, and takes a format at once. It starts at once too, unless it
+ * is made to start slowly, when its start waits like a dump. Terminating it only notes that it
+ * was, so a test can settle a request after it, as a worker's reply could cross the call.
  */
 class FakeEngine implements Engine {
   calls: string[] = [];
+  starts: Waiting<void>[] = [];
   dumps: (Waiting<DumpResult> & { name: string })[] = [];
   puts: { name: string; format: Uint8Array }[] = [];
   compiles: (Waiting<CompileResult> & { body: string; options?: CompileOptions })[] = [];
   terminated = false;
+
+  constructor(private readonly slowStart: boolean) {}
+
+  start(): Promise<void> {
+    this.calls.push("start");
+    if (!this.slowStart) return Promise.resolve();
+    return new Promise((resolve, reject) => this.starts.push({ resolve, reject }));
+  }
 
   dump(_engine: SessionEngine, name: string): Promise<DumpResult> {
     this.calls.push(`dump ${name}`);
@@ -103,6 +113,8 @@ const FAILED: CompileResult = {
   errorLine: 12,
   fetched: FETCHED,
 };
+/** What the client fails a request with when its worker has crashed. */
+const CRASHED = new Error("compile worker: out of memory");
 
 /** A fake page that shows which compile it came from, and fails as a draw can for output 0. */
 async function draw(output: Uint8Array): Promise<DrawnPage> {
@@ -126,15 +138,18 @@ const NO_FONTS = new FontLibrary(
   async () => new Uint8Array(),
 );
 
-/** A compiler over fake engines, with what it made and emitted. */
-function scheduler(options: CompilerOptions = {}) {
+/**
+ * A compiler over fake engines, with what it made and emitted. With `slowStart`, every engine
+ * starts only when the test settles its start.
+ */
+function scheduler(options: CompilerOptions = {}, { slowStart = false } = {}) {
   const engines: FakeEngine[] = [];
   const shown: Shown[] = [];
   const errors: string[] = [];
   const busy: boolean[] = [];
   const compiler = new Compiler(
     () => {
-      const engine = new FakeEngine();
+      const engine = new FakeEngine(slowStart);
       engines.push(engine);
       return engine;
     },
@@ -169,6 +184,7 @@ const formatOf = (doc: Document, pkg = jake) => generateFormat(pkg, doc.controls
 /** Open the sample and show its first page, from the output 1. */
 async function opened(s: ReturnType<typeof scheduler>, pkg = jake) {
   s.compiler.open(pkg, opening);
+  await settle();
   s.engine().dumps[0]?.resolve(dumped());
   await settle();
   s.engine().compiles[0]?.resolve(compiled(1));
@@ -185,16 +201,18 @@ describe("Compiler", () => {
     vi.restoreAllMocks();
   });
 
-  it("opens a document at once: dumps its format, compiles, and shows the page", async () => {
+  it("opens a document at once: starts the engine, dumps, compiles, and shows the page", async () => {
     const s = scheduler();
     s.compiler.open(jake, opening);
     // At once, with no wait for a pause.
-    const name = formatOf(opening);
-    expect(s.engine().calls).toEqual([`dump ${name}`]);
+    expect(s.engine().calls).toEqual(["start"]);
     expect(s.busy).toEqual([true]);
+    await settle();
+    const name = formatOf(opening);
+    expect(s.engine().calls).toEqual(["start", `dump ${name}`]);
     s.engine().dumps[0]?.resolve(dumped());
     await settle();
-    expect(s.engine().calls).toEqual([`dump ${name}`, `compile ${name}`]);
+    expect(s.engine().calls).toEqual(["start", `dump ${name}`, `compile ${name}`]);
     const [compile] = s.engine().compiles;
     expect(compile?.body).toBe(bodyOf(opening));
     // The harness's job, and the session's passes: two for a new document, a third if asked.
@@ -207,6 +225,8 @@ describe("Compiler", () => {
     expect(page?.document).toBe(opening);
     expect(page?.body).toEqual(generateBody(jake, opening.resume, opening.controls));
     expect(page?.ms).toBeGreaterThanOrEqual(0);
+    // This run started the engine, so the page says how long that took.
+    expect(page?.startMs).toBeGreaterThanOrEqual(0);
     expect(s.busy).toEqual([true, false]);
     expect(s.errors).toEqual([]);
   });
@@ -228,8 +248,9 @@ describe("Compiler", () => {
     s.engine().compiles[1]?.resolve(compiled(2));
     await settle();
     expect(s.shown.map((page) => page.document)).toEqual([opening, c]);
-    // No second dump: the format is the same.
+    // No second dump: the format is the same. No second start: the engine is the same.
     expect(s.engine().dumps).toHaveLength(1);
+    expect(s.shown[1]?.startMs).toBeUndefined();
   });
 
   it("waits longer for XeTeX, and as long as it is told", async () => {
@@ -278,7 +299,7 @@ describe("Compiler", () => {
   });
 
   it("drops a result that lands after a newer compile started", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const s = scheduler();
     await opened(s);
     const [a, b] = [titled("Analyst"), titled("Builder")];
@@ -334,7 +355,7 @@ describe("Compiler", () => {
     await opened(s, bound);
     s.compiler.update(wide);
     await wait(100);
-    expect(s.engine().calls.slice(2)).toEqual([`dump ${wideName}`]);
+    expect(s.engine().calls.slice(3)).toEqual([`dump ${wideName}`]);
     s.engine().dumps[1]?.resolve(dumped(new Uint8Array([9])));
     await settle();
     expect(s.engine().compiles[1]?.body).toBe(bodyOf(wide, bound));
@@ -344,6 +365,7 @@ describe("Compiler", () => {
     s.compiler.update(opening);
     await wait(100);
     expect(s.engine().calls).toEqual([
+      "start",
       `dump ${narrowName}`,
       `compile ${narrowName}`,
       `dump ${wideName}`,
@@ -367,19 +389,15 @@ describe("Compiler", () => {
       FAILED.log,
     );
 
-    s.compiler.update(titled("Builder"));
-    await wait(100);
-    const lost = new Error("compile worker: failed to load");
-    s.engine().compiles[2]?.reject(lost);
-    await settle();
-    expect(logged).toHaveBeenLastCalledWith(expect.any(String), lost);
-
     s.compiler.update(titled("Curator"));
     await wait(100);
-    s.engine().compiles[3]?.resolve(compiled(0));
+    s.engine().compiles[2]?.resolve(compiled(0));
     await settle();
-    expect(s.errors).toEqual([COULD_NOT_UPDATE, COULD_NOT_UPDATE, COULD_NOT_UPDATE]);
+    expect(logged).toHaveBeenLastCalledWith(expect.any(String), expect.any(Error));
+    expect(s.errors).toEqual([COULD_NOT_UPDATE, COULD_NOT_UPDATE]);
     expect(s.shown).toHaveLength(1);
+    // The engine answered both times, so it stays.
+    expect(s.engines).toHaveLength(1);
     expect(s.busy.at(-1)).toBe(false);
   });
 
@@ -387,6 +405,7 @@ describe("Compiler", () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const s = scheduler();
     s.compiler.open(jake, opening);
+    await settle();
     const log = "! LaTeX Error: File `nosuchpackage.sty' not found.";
     s.engine().dumps[0]?.resolve({ ok: false, ms: 1, log, error: "not found", fetched: FETCHED });
     await settle();
@@ -397,7 +416,7 @@ describe("Compiler", () => {
   });
 
   it("cuts off a compile past its limit, and compiles what waits on a new engine", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
     const s = scheduler();
     await opened(s);
     const [first] = s.engines;
@@ -407,43 +426,222 @@ describe("Compiler", () => {
     s.compiler.update(b);
     await wait(9_999);
     expect(first?.terminated).toBe(false);
-    expect(s.errors).toEqual([]);
     await wait(1);
     await settle();
     expect(first?.terminated).toBe(true);
     expect(s.engines).toHaveLength(2);
-    expect(s.errors).toEqual([COULD_NOT_UPDATE]);
-    // The new engine is handed the kept format, as a copy, before its first compile.
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("took over 10000 ms"));
+    // The new engine starts, and is handed the kept format, as a copy, before its first compile.
     const second = s.engine();
     const name = formatOf(opening);
-    expect(second.calls).toEqual([`put ${name}`, `compile ${name}`]);
+    expect(second.calls).toEqual(["start", `put ${name}`, `compile ${name}`]);
     expect(second.puts[0]?.format).toEqual(FORMAT);
     expect(second.puts[0]?.format).not.toBe(FORMAT);
+    // b is newer than a, so b compiles and a is not tried again.
+    expect(second.compiles).toHaveLength(1);
     expect(second.compiles[0]?.body).toBe(bodyOf(b));
-    // The terminated worker's failure was reported when it was cut off.
+    // The terminated worker's failure is not the new one's.
     first?.compiles[1]?.reject(new Error("compile worker terminated"));
     await settle();
-    expect(s.errors).toEqual([COULD_NOT_UPDATE]);
+    expect(s.engines).toHaveLength(2);
     second.compiles[0]?.resolve(compiled(2));
     await settle();
     expect(s.shown.map((page) => page.document)).toEqual([opening, b]);
+    // A new page came, so the user never heard of a.
+    expect(s.errors).toEqual([]);
     expect(s.busy.at(-1)).toBe(false);
   });
 
-  it("cuts off a dump too, and dumps on the new engine when nothing was kept", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+  it("tries a document cut off once more on a new engine, and shows its page", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = scheduler();
+    await opened(s);
+    const a = titled("Analyst");
+    s.compiler.update(a);
+    await wait(100);
+    // Nothing newer waits when a is cut off, so a compiles again, on the new engine.
+    await wait(10_000);
+    await settle();
+    expect(s.engines[0]?.terminated).toBe(true);
+    const name = formatOf(opening);
+    expect(s.engine().calls).toEqual(["start", `put ${name}`, `compile ${name}`]);
+    expect(s.engine().compiles[0]?.body).toBe(bodyOf(a));
+    expect(s.errors).toEqual([]);
+    expect(s.busy.at(-1)).toBe(true);
+    s.engine().compiles[0]?.resolve(compiled(2));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([opening, a]);
+    // The new engine started for this page.
+    expect(s.shown[1]?.startMs).toBeGreaterThanOrEqual(0);
+    expect(s.errors).toEqual([]);
+    expect(s.busy.at(-1)).toBe(false);
+  });
+
+  it("gives a document up when it is cut off on its second try too", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const s = scheduler({ limits: { pdftex: 1_000, xetex: 2_000 } });
     s.compiler.open(jake, opening);
     await wait(1_000);
     await settle();
+    // The dump ran past its limit: the document opens again on a new engine, which dumps, since
+    // nothing was kept, and the user hears nothing yet.
     expect(s.engines[0]?.terminated).toBe(true);
+    const name = formatOf(opening);
+    expect(s.engine().calls).toEqual(["start", `dump ${name}`]);
+    expect(s.errors).toEqual([]);
+    await wait(999);
+    expect(s.engines[1]?.terminated).toBe(false);
+    await wait(1);
+    await settle();
+    expect(s.engines[1]?.terminated).toBe(true);
     expect(s.errors).toEqual([COULD_NOT_UPDATE]);
-    // Nothing waited, so the new engine has nothing to do until the document changes.
-    expect(s.engine().calls).toEqual([]);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("lost twice"));
     expect(s.busy).toEqual([true, false]);
+    // Nothing is tried a third time, and no engine is made, until the document changes.
+    await wait(10_000);
+    expect(s.engines).toHaveLength(2);
     s.compiler.update(titled("Analyst"));
     await wait(100);
-    expect(s.engine().calls).toEqual([`dump ${formatOf(opening)}`]);
+    expect(s.engines).toHaveLength(3);
+    expect(s.engine().calls).toEqual(["start", `dump ${name}`]);
+  });
+
+  it("replaces an engine that fails a request, as one that crashed, and tries once more", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const s = scheduler();
+    await opened(s);
+    const [first] = s.engines;
+    const a = titled("Analyst");
+    s.compiler.update(a);
+    await wait(100);
+    first?.compiles[1]?.reject(CRASHED);
+    await settle();
+    expect(first?.terminated).toBe(true);
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("failed"), CRASHED);
+    // a again, on a new engine that starts and is handed the kept format.
+    const name = formatOf(opening);
+    expect(s.engine().calls).toEqual(["start", `put ${name}`, `compile ${name}`]);
+    expect(s.engine().compiles[0]?.body).toBe(bodyOf(a));
+    s.engine().compiles[0]?.resolve(compiled(2));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([opening, a]);
+    expect(s.errors).toEqual([]);
+    expect(logged).not.toHaveBeenCalled();
+
+    // Failed on its second try too, a document is given up, with the plain message.
+    const b = titled("Builder");
+    s.compiler.update(b);
+    await wait(100);
+    s.engine().compiles[1]?.reject(CRASHED);
+    await settle();
+    expect(s.engines).toHaveLength(3);
+    expect(s.engine().compiles[0]?.body).toBe(bodyOf(b));
+    s.engine().compiles[0]?.reject(CRASHED);
+    await settle();
+    expect(s.errors).toEqual([COULD_NOT_UPDATE]);
+    expect(s.engines.map((engine) => engine.terminated)).toEqual([true, true, true]);
+    expect(s.shown).toHaveLength(2);
+    expect(s.busy.at(-1)).toBe(false);
+    // The next edit gets an engine of its own.
+    s.compiler.update(titled("Curator"));
+    await wait(100);
+    expect(s.engines).toHaveLength(4);
+    expect(s.engine().calls).toEqual(["start", `put ${name}`, `compile ${name}`]);
+  });
+
+  it("gives the engine's start-up a limit of its own, apart from the compile's", async () => {
+    const s = scheduler({}, { slowStart: true });
+    s.compiler.open(jake, opening);
+    expect(s.engine().calls).toEqual(["start"]);
+    // Past the compile's limit, but within the start's.
+    await wait(30_000);
+    expect(s.engine().terminated).toBe(false);
+    s.engine().starts[0]?.resolve();
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.errors).toEqual([]);
+    expect(s.engines).toHaveLength(1);
+    const [page] = s.shown;
+    expect(page?.startMs).toBe(30_000);
+    // The page's own time starts with its first request, after the start-up.
+    expect(page?.ms).toBe(0);
+  });
+
+  it("tries a document again on a new engine when one does not start in time, or fails to", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const s = scheduler({ startLimit: 5_000 }, { slowStart: true });
+    s.compiler.open(jake, opening);
+    await wait(4_999);
+    expect(s.engines).toHaveLength(1);
+    await wait(1);
+    expect(s.engines[0]?.terminated).toBe(true);
+    expect(s.engine().calls).toEqual(["start"]);
+    await wait(2_000);
+    s.engine().starts[0]?.resolve();
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([opening]);
+    expect(s.shown[0]?.startMs).toBe(2_000);
+    expect(s.errors).toEqual([]);
+
+    // A worker that fails to start, twice, as one with no engine to load does: no page comes.
+    const t = scheduler({}, { slowStart: true });
+    t.compiler.open(jake, opening);
+    const missing = new Error("/engine/manifest.json: HTTP 404; run fetch-engine");
+    t.engine().starts[0]?.reject(missing);
+    await settle();
+    expect(t.engines).toHaveLength(2);
+    t.engine().starts[0]?.reject(missing);
+    await settle();
+    expect(t.errors).toEqual([COULD_NOT_UPDATE]);
+    expect(t.shown).toEqual([]);
+    expect(t.busy).toEqual([true, false]);
+  });
+
+  it("drops a page that does not draw within the limit, and keeps the engine", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    /** Draws of the output 8, which wait for the test, as one waiting on a font's request does. */
+    const drawing: Waiting<DrawnPage>[] = [];
+    const s = scheduler({
+      draw: (output) =>
+        output[0] === 8
+          ? new Promise((resolve, reject) => drawing.push({ resolve, reject }))
+          : draw(output),
+    });
+    await opened(s);
+    s.compiler.update(titled("Analyst"));
+    await wait(100);
+    s.engine().compiles[1]?.resolve(compiled(8));
+    await wait(9_999);
+    expect(drawing).toHaveLength(1);
+    expect(s.errors).toEqual([]);
+    await wait(1);
+    expect(s.errors).toEqual([COULD_NOT_UPDATE]);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("to draw"));
+    expect(s.busy.at(-1)).toBe(false);
+    // The engine did its part, so it stays.
+    expect(s.engines).toHaveLength(1);
+    expect(s.engine().terminated).toBe(false);
+    // A page that draws after all is not shown, since its run was dropped.
+    drawing[0]?.resolve(await draw(new Uint8Array([2])));
+    await settle();
+    expect(s.shown).toHaveLength(1);
+    // The next edit compiles on the same engine, and its page shows.
+    s.compiler.update(titled("Builder"));
+    await wait(100);
+    s.engine().compiles[2]?.resolve(compiled(3));
+    await settle();
+    expect(s.shown.map((page) => page.page.svg)).toEqual(["<svg>1</svg>", "<svg>3</svg>"]);
+    expect(s.engines).toHaveLength(1);
   });
 
   it("stops every timer and the engine when closed, and says nothing after", async () => {
@@ -510,7 +708,9 @@ describe.skipIf(!engineAvailable())("Compiler through the engine", () => {
   }, 60_000);
 
   it("opens Jake's sample, then recompiles after an edit and after a control", async () => {
+    // The session started before the test, so there is nothing left to start.
     const engine: Engine = {
+      start: async () => {},
       dump: async (kind, name, preamble, files) => session.dump(kind, name, preamble, files),
       putFormat: async (kind, name, format) => session.putFormat(kind, name, format),
       compile: async (kind, format, body, options) => session.compile(kind, format, body, options),

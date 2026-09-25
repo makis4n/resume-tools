@@ -111,7 +111,10 @@ export function App() {
   if (failed || (error !== undefined && shown === undefined))
     return <p>The page could not be shown.</p>;
   if (!shown) return <p>Loading the engine…</p>;
-  const took = `${shown.opening ? "Opened" : "Updated"} in ${shown.latest.ms.toFixed(0)} ms.`;
+  const { ms, startMs } = shown.latest;
+  // Start-up is apart from the page's own time: it is paid once per worker, not per edit.
+  const started = startMs === undefined ? "" : ` (engine started in ${startMs.toFixed(0)} ms)`;
+  const took = `${shown.opening ? "Opened" : "Updated"} in ${ms.toFixed(0)} ms${started}.`;
   const field = clicked && fieldsOf(present.resume).get(clicked.field);
   return (
     <main>

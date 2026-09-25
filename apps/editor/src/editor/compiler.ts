@@ -15,8 +15,18 @@
  * TeX runs in the worker in one synchronous call that nothing can interrupt (decision 0008), so a
  * compile that ran long, for any reason, would hold up every edit after it. Every request to the
  * engine therefore has a time limit, past which the scheduler terminates the worker and starts
- * another. The formats are kept as bytes on the main thread, so the new worker is handed them
- * rather than dumping them again.
+ * another. A worker that fails a request rather than answering it is replaced the same way, since
+ * one that has crashed fails every request after. Either way the document is tried once more on
+ * the new worker, because a machine that stalled for a moment should cost a wait and not the page,
+ * and it is given up, with the plain message, only when that worker is lost too. The formats are
+ * kept as bytes on the main thread, so the new worker is handed them rather than dumping them
+ * again.
+ *
+ * A worker's start-up loads the engine and TeX Live's file list, which can take many seconds on a
+ * slow machine or network and is paid again by every new worker, so it has a limit of its own and
+ * the other limits time only what the engine does with a document. Drawing the page waits on fonts
+ * from the network, so it has the compile's limit too; past it the page is dropped, but the
+ * worker, which did its part, stays.
  */
 
 import type {
@@ -37,6 +47,11 @@ import type { Document } from "./document";
  * tests.
  */
 export interface Engine {
+  /**
+   * Load the engine and mount TeX Live. The first request would wait for it anyway; asking first
+   * lets the scheduler time start-up apart from the requests that follow it.
+   */
+  start(): Promise<unknown>;
   dump(
     engine: SessionEngine,
     name: string,
@@ -61,11 +76,16 @@ export type Shown = {
   body: GeneratedBody;
   document: Document;
   /**
-   * How long the page took, in milliseconds: from the start of the compile, and of the dump when
-   * the format was new, to the drawn page, for the numbers item 23 records. The wait for a pause
-   * in the edits is not in it.
+   * How long the page took, in milliseconds: from the run's first request to the engine, the dump
+   * included when the format was new, to the drawn page, for the numbers item 23 records. The
+   * wait for a pause in the edits is not in it, and neither is the engine's start-up.
    */
   ms: number;
+  /**
+   * How long the engine took to start, in milliseconds, when this page's run started it: the
+   * first page's, and the first after a worker was replaced.
+   */
+  startMs?: number;
 };
 
 export interface CompilerEvents {
@@ -80,8 +100,13 @@ export interface CompilerEvents {
 export interface CompilerOptions {
   /** How long to wait after the last edit before compiling, in ms, by engine. */
   delays?: Record<SessionEngine, number>;
-  /** How long one request to the engine may take before the worker is stopped, in ms, by engine. */
+  /**
+   * How long one request to the engine may take before the worker is stopped, in ms, by engine,
+   * and how long drawing the page may take before the page is dropped.
+   */
   limits?: Record<SessionEngine, number>;
+  /** How long a worker may take to start before it is stopped, in ms. */
+  startLimit?: number;
   /** How a page is drawn from the output; tests draw without fonts. */
   draw?: typeof drawPage;
 }
@@ -103,6 +128,13 @@ const DELAYS: Record<SessionEngine, number> = { pdftex: 100, xetex: 400 };
 const LIMITS: Record<SessionEngine, number> = { pdftex: 10_000, xetex: 20_000 };
 
 /**
+ * Start-up takes about 0.3 s once the engine's files are cached (decision 0003), but a first load
+ * fetches the engine itself, 9.5 MB compressed, so a minute leaves room for a slow connection and
+ * still gives up on a worker that will never start.
+ */
+const START_LIMIT = 60_000;
+
+/**
  * The job every document compiles in. It is the validation harness's `EDITOR_JOB`, since TeX tells
  * a document its job's name and the harness checks a package as the editor compiles it; item 13
  * may name jobs after documents, and must change the harness with it.
@@ -121,25 +153,44 @@ const MAX_PASSES = 3;
 interface Run {
   /** Which run this is; one whose generation is no longer the latest is dropped when it lands. */
   generation: number;
-  /** Its time limit for each request, from its package's engine. */
+  pkg: TemplatePackage;
+  document: Document;
+  /**
+   * Whether this is the document's second try, after its first lost the engine. It gets no third,
+   * so a document that stops every worker it runs on costs two of them, not one after another.
+   */
+  retry: boolean;
+  /** Its time limit for each request and for the draw, from its package's engine. */
   limit: number;
-  /** The time limit of the request in flight. */
+  /** The time limit running now, of a request or of the draw. */
   timer?: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * An engine the scheduler has made, and what it knows of it. A new engine gets a new one of
+ * these, so a request to an engine that has been replaced cannot mark the new one started, or
+ * holding a format.
+ */
+interface Instance {
+  engine: Engine;
+  /** Whether it has started, which its first request waits for. */
+  started: boolean;
+  /** The formats it holds, by engine and name. */
+  installed: Set<string>;
 }
 
 export class Compiler {
   private readonly delays: Record<SessionEngine, number>;
   private readonly limits: Record<SessionEngine, number>;
+  private readonly startLimit: number;
   private readonly draw: typeof drawPage;
-  /** The engine every request goes to, made when the first document compiles. */
-  private engine: Engine | undefined;
+  /** The engine every request goes to, made when a document first needs one. */
+  private instance: Instance | undefined;
   /**
    * Every format dumped, as bytes, by engine and name. The session keeps its own copy, but a new
    * worker starts with none, and handing it these costs far less than dumping again.
    */
   private readonly formats = new Map<string, Uint8Array>();
-  /** The formats the current engine holds, by engine and name. */
-  private installed = new Set<string>();
   private pkg: TemplatePackage | undefined;
   /** The newest document that has not started compiling. */
   private pending: Document | undefined;
@@ -159,6 +210,7 @@ export class Compiler {
   ) {
     this.delays = { ...DELAYS, ...options.delays };
     this.limits = { ...LIMITS, ...options.limits };
+    this.startLimit = options.startLimit ?? START_LIMIT;
     this.draw = options.draw ?? drawPage;
   }
 
@@ -215,8 +267,8 @@ export class Compiler {
     this.debounce = undefined;
     this.running = undefined;
     this.pending = undefined;
-    this.engine?.terminate();
-    this.engine = undefined;
+    this.instance?.engine.terminate();
+    this.instance = undefined;
   }
 
   /** Start compiling the pending document, unless one is in flight. */
@@ -229,27 +281,45 @@ export class Compiler {
       return;
     }
     this.pending = undefined;
-    const run: Run = { generation: ++this.generation, limit: this.limits[pkg.engine] };
+    this.begin(pkg, doc, false);
+  }
+
+  /** Start a document compiling; `retry` when it is its second try, after it lost the engine. */
+  private begin(pkg: TemplatePackage, document: Document, retry: boolean) {
+    const generation = ++this.generation;
+    const run: Run = { generation, pkg, document, retry, limit: this.limits[pkg.engine] };
     this.running = run;
     this.setBusy();
-    void this.run(run, pkg, doc);
+    void this.run(run);
   }
 
   /** Take a document all the way to a page, or to the plain message. */
-  private async run(run: Run, pkg: TemplatePackage, doc: Document): Promise<void> {
-    const started = performance.now();
+  private async run(run: Run): Promise<void> {
+    const { pkg, document: doc } = run;
     try {
       const format = generateFormat(pkg, doc.controls);
       const body = generateBody(pkg, doc.resume, doc.controls);
-      const engine = this.currentEngine();
+      const instance = this.currentInstance();
+      const { engine } = instance;
+      let startMs: number | undefined;
+      if (!instance.started) {
+        const starting = performance.now();
+        await this.request(run, this.startLimit, () => engine.start());
+        instance.started = true;
+        startMs = performance.now() - starting;
+        if (!this.current(run)) return;
+      }
+      const started = performance.now();
       const key = `${pkg.engine}:${format.name}`;
-      if (!this.installed.has(key)) {
+      if (!instance.installed.has(key)) {
         const kept = this.formats.get(key);
         if (kept !== undefined) {
           // putFormat may move the buffer it is given to the worker, so it gets a copy.
-          await this.request(run, () => engine.putFormat(pkg.engine, format.name, kept.slice()));
+          await this.request(run, run.limit, () =>
+            engine.putFormat(pkg.engine, format.name, kept.slice()),
+          );
         } else {
-          const dumped = await this.request(run, () =>
+          const dumped = await this.request(run, run.limit, () =>
             engine.dump(pkg.engine, format.name, format.preamble, format.files),
           );
           if (!dumped.ok || dumped.format === undefined) {
@@ -259,11 +329,10 @@ export class Compiler {
           }
           this.formats.set(key, dumped.format);
         }
-        // The engine holds the format now, unless a new engine has taken its place meanwhile.
-        if (engine === this.engine) this.installed.add(key);
+        instance.installed.add(key);
         if (!this.current(run)) return;
       }
-      const result = await this.request(run, () =>
+      const result = await this.request(run, run.limit, () =>
         engine.compile(pkg.engine, format.name, body.latex, { job: JOB, maxPasses: MAX_PASSES }),
       );
       if (!this.current(run)) return;
@@ -271,47 +340,92 @@ export class Compiler {
         this.fail(`the body did not compile: ${result.error}`, result.log);
         return;
       }
-      const page = await this.draw(result.output, this.fonts, body.texts);
+      const output = result.output;
+      const page = await this.within(
+        run,
+        run.limit,
+        () => this.draw(output, this.fonts, body.texts),
+        () => this.drop(run),
+      );
       if (!this.current(run)) return;
       this.warnAboutFonts(page);
-      this.events.page({ page, body, document: doc, ms: performance.now() - started });
+      this.events.page({ page, body, document: doc, ms: performance.now() - started, startMs });
     } catch (error) {
-      // A request that was cut off fails with the terminated worker's error, which was reported
-      // when it was cut off.
+      // A request that lost the engine was dealt with there, and this run is no longer current:
+      // what it throws is the terminated or failed worker's error, and the console has heard why.
       if (this.current(run)) this.fail("the page could not be made", error);
     } finally {
       this.landed(run);
     }
   }
 
-  /** One request to the engine, cut off if it has not settled within the run's time limit. */
-  private async request<T>(run: Run, call: () => Promise<T>): Promise<T> {
-    const timer = setTimeout(() => this.cutOff(run), run.limit);
+  /**
+   * One request to the engine, within a time limit. A request that runs past it, or that the
+   * engine fails rather than answers, loses the engine (`lose`).
+   */
+  private async request<T>(run: Run, limit: number, call: () => Promise<T>): Promise<T> {
+    try {
+      return await this.within(run, limit, call, () => this.lose(run, `took over ${limit} ms`));
+    } catch (error) {
+      this.lose(run, "failed", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Wait for `work`, but call `expire` once `limit` ms have passed, which moves the scheduler on
+   * without it; whatever `work` settles with after that finds its run no longer current.
+   */
+  private async within<T>(
+    run: Run,
+    limit: number,
+    work: () => Promise<T>,
+    expire: () => void,
+  ): Promise<T> {
+    const timer = setTimeout(expire, limit);
     run.timer = timer;
     try {
-      return await call();
+      return await work();
     } finally {
       clearTimeout(timer);
     }
   }
 
   /**
-   * A request has run past its time limit. Nothing reaches TeX inside its synchronous run, so the
-   * worker goes and a new one takes its place, and gets the kept formats as its compiles need
-   * them. Whatever the old worker's requests settle with is dropped, and the pending document, if
-   * there is one, compiles on the new worker, as a new document, since it has no job folder yet.
+   * The engine is lost: a request ran past its time limit, and nothing reaches TeX inside its
+   * synchronous run, or the engine failed a request rather than answering it, as a worker that
+   * has crashed fails every request after. It is terminated, and the next request goes to a new
+   * one, which gets the kept formats as its compiles need them; whatever the old one's requests
+   * settle with is dropped. The run's document compiles again on the new engine, as a new
+   * document, since that one has no job folder yet, unless a newer document waits and compiles
+   * instead. A document that loses the engine on its second try is given up, and only then does
+   * the user hear of it.
    */
-  private cutOff(run: Run) {
+  private lose(run: Run, why: string, ...detail: unknown[]) {
     if (this.running !== run) return;
-    console.error(
-      `The page could not be updated: the engine took over ${run.limit} ms, restarting`,
-    );
+    console.warn(`The engine ${why}, so a new one takes its place`, ...detail);
     this.running = undefined;
     this.generation++;
-    this.engine?.terminate();
-    this.engine = this.newEngine();
-    this.installed = new Set();
-    this.events.error(COULD_NOT_UPDATE);
+    this.instance?.engine.terminate();
+    this.instance = undefined;
+    if (this.pending === undefined && !run.retry) {
+      this.begin(run.pkg, run.document, true);
+      return;
+    }
+    if (this.pending === undefined) this.fail("the engine was lost twice");
+    this.next();
+  }
+
+  /**
+   * A page has not drawn within its run's time limit, waiting on fonts from the network. The
+   * engine did its part and stays. The run is dropped, and with it whatever the draw brings back
+   * later; the user gets the plain message, and the pending document, if one waits, compiles.
+   */
+  private drop(run: Run) {
+    if (this.running !== run) return;
+    this.running = undefined;
+    if (this.current(run)) this.fail(`the page took over ${run.limit} ms to draw`);
+    this.generation++;
     this.next();
   }
 
@@ -327,14 +441,14 @@ export class Compiler {
     return !this.closed && run.generation === this.generation;
   }
 
-  private currentEngine(): Engine {
-    this.engine ??= this.newEngine();
-    return this.engine;
+  private currentInstance(): Instance {
+    this.instance ??= { engine: this.newEngine(), started: false, installed: new Set() };
+    return this.instance;
   }
 
   /** The plain message for the user, and what went wrong for developers. */
-  private fail(what: string, detail: unknown) {
-    console.error(`The page could not be updated: ${what}`, detail);
+  private fail(what: string, ...detail: unknown[]) {
+    console.error(`The page could not be updated: ${what}`, ...detail);
     this.events.error(COULD_NOT_UPDATE);
   }
 
