@@ -26,9 +26,12 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
   (decision 0007); and the file ends where the body would begin, since the generator writes the
   body.
 - A port sets no field's text inside a transformed group, a TikZ node or anything else between a
-  `pdf:btrans` and its `pdf:etrans`, since xdvipdfmx applies the transform and the page, drawn
-  from the DVI, applies none, so it would draw the field where the PDF does not put it (decision
-  0013, added after AltaCV's tags did). The harness's special check reports such a field.
+  `pdf:btrans` and its `pdf:etrans`, or after an `x:scale`, `x:rotate` or `x:bscale` in its level
+  of the graphics state, since xdvipdfmx applies the transform and the page, drawn from the DVI,
+  applies none, so it would draw the field where the PDF does not put it; nor closes a transform it
+  never opened, which moves everything after it on the PDF's page (decision 0013, added after
+  AltaCV's tags did). The harness's special check reports both, for the specials decision 0013
+  lists.
 - The licence notices of the template and of what it derives from stay in the preamble,
   verbatim, with the attribution in the package. Jake's Resume is based on sb2nov/resume, and
   about half of its preamble's code is sb2nov's, so the port carries Sourabh Bajaj's copyright
@@ -80,8 +83,10 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
 - xdvipdfmx does not honour `openin_any`, so a template's `\special` could read any file of the
   engine and embed it in the PDF. Before it runs, `session.pdf` scans every special and refuses one
   that reads a file or reconfigures the run: `pdf:image`, `pdf:img`, `pdf:epdf`, `pdf:fstream`,
-  `pdf:mapfile`, `pdf:mapline`, dvips's `psfile=`, and a `dvipdfmx:config` whose option is anything
-  but `C` (compatibility flags), `V` (PDF version) or `P` (permissions) — `f` loads a font map, `D`
-  runs a command, and the rest change the output. Version one's PDFs therefore carry no images at
-  all: a template's photo is an `extras` field (decision 0006), and a later item that wants images
-  in the PDF must give xdvipdfmx a folder of its own to read from, not the shared tree.
+  `pdf:mapfile`, `pdf:mapline`, their XeTeX forms `x:fontmapfile` and `x:fontmapline`, which
+  xdvipdfmx runs for pdfTeX's output too (added after item 20's review), dvips's `psfile=`, and a
+  `dvipdfmx:config` whose option is anything but `C` (compatibility flags), `V` (PDF version) or `P`
+  (permissions) — `f` loads a font map, `D` runs a command, and the rest change the output. Version
+  one's PDFs therefore carry no images at all: a template's photo is an `extras` field (decision
+  0006), and a later item that wants images in the PDF must give xdvipdfmx a folder of its own to
+  read from, not the shared tree.

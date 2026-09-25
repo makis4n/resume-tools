@@ -33,6 +33,16 @@ describe("refusedSpecial", () => {
     expect(refusedSpecial("dvipdfmx:config p a4")).toBe("dvipdfmx:config p");
   });
 
+  it("names an x:fontmapfile special, which loads a font map from a file", () => {
+    expect(refusedSpecial("x:fontmapfile pdftex.map")).toBe("x:fontmapfile");
+    expect(refusedSpecial(" x: FontMapFile +../victim/fonts.map")).toBe("x:fontmapfile");
+  });
+
+  it("names an x:fontmapline special, which can point a font at any file", () => {
+    expect(refusedSpecial("x:fontmapline cmr10 cmr10 <../victim/victim.dvi")).toBe("x:fontmapline");
+    expect(refusedSpecial("\tx:  FONTMAPLINE cmr10 cmr10 <x.pfb")).toBe("x:fontmapline");
+  });
+
   it("passes a special that reads no file", () => {
     for (const text of [
       "pdf:pagesize width 210mm height 297mm",
@@ -48,6 +58,10 @@ describe("refusedSpecial", () => {
       "dvipdfmx:config P -44",
       "rt:b:header.first",
       "header=l3backend-dvips.pro",
+      // x: specials that load nothing.
+      "x:gsave",
+      "x:scale 2 2",
+      "x:textcolor rgb 1 0 0",
     ])
       expect(refusedSpecial(text), text).toBeUndefined();
   });
@@ -608,6 +622,20 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(made.error).toContain("dvipdfmx:config f");
       expect(made.output).toBe("");
     }, 60_000);
+
+    for (const special of ["x:fontmapfile pdftex.map", "x:fontmapline cmr10 cmr10 <cmr10.pfb"])
+      it(`refuses an output with ${special.split(" ")[0]}, which loads a font map`, () => {
+        // The same class as pdf:mapfile and pdf:mapline, which xdvipdfmx runs for pdfTeX's output
+        // too; the map is never read, since the special is caught in the output first.
+        const job = special.startsWith("x:fontmapfile") ? "mapfile" : "mapline";
+        const attack = doc(`hi\\special{${special}}`);
+        expect(session.compile("pdftex", "stock", attack, { job }).ok).toBe(true);
+        const made = session.pdf(job, { compress: 0 });
+        expect(made.ok).toBe(false);
+        expect(made.pdf).toBeUndefined();
+        expect(made.error).toContain(special.split(" ")[0]);
+        expect(made.output).toBe("");
+      }, 60_000);
 
     it("refuses a compression level that is not a whole number from 0 to 9", () => {
       for (const compress of [-1, 10, 1.5, Number.NaN])

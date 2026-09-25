@@ -214,13 +214,24 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
 - A tag's frame, which TikZ draws with `pdf:` specials, is in the PDF but not on the page, which
   draws glyphs, rules and colours only; a tag's text is on both, in the same place.
 - The rule the tags broke holds for every port, and decision 0008's port rules now say it: no
-  field's text is set inside a transformed group, a TikZ node or anything else between a
-  `pdf:btrans` and its `pdf:etrans`, since xdvipdfmx applies the transform and the page applies
-  none. The harness's special check reports a field whose begin marker or glyphs lie inside one,
-  under any of the names xdvipdfmx takes for the two specials, so that it holds for milestone 3's
-  imports too. A transform written as a literal `cm` in `pdf:code` or `pdf:literal` goes unseen:
-  pgf writes such pairs, which undo each other, around a node's text, and telling those from one
-  that moves the text would take the matrices multiplied out.
+  field's text is set where xdvipdfmx transforms what the page does not, and no template closes a
+  transform it never opened. The harness's special check reports a field whose begin marker or a
+  glyph lies between a `pdf:btrans` and its `pdf:etrans`, which xdvipdfmx also takes as
+  `begintransform`, `begintrans` and `bt`, and `endtransform`, `endtrans` and `et`, however they
+  nest; or after an `x:scale`, `x:rotate` or `x:bscale` in its level of the graphics state, which
+  `x:gsave` and `x:grestore`, or `pdf:bcontent` and `pdf:econtent`, open and close, or the page's
+  own, to the end of the page; whatever whitespace comes before the prefix or after it, which
+  xdvipdfmx skips. An `x:bscale` reaches past its `x:escale` because the tree's xdvipdfmx saves no
+  state for the two: it scales about the point `x:bscale` is at and undoes the scale about the point
+  `x:escale` is at, which is another once anything is set between them, so the rest of the level
+  stays moved. The check reports once that a level was closed that was never opened: that pops the
+  state xdvipdfmx opens each page with, the move an inch in from the corner, so everything after it
+  on the page lands an inch left and off the PDF's page; and an `x:escale` with no `x:bscale` open
+  stops the tree's xdvipdfmx with a memory fault, which `session.pdf` throws and the harness reports
+  as a `pdf` finding too. It does not see a `cm`, `q` or `Q` a template writes itself in `pdf:code`,
+  `pdf:literal` or `pdf:content`, since pgf writes such pairs, which undo each other, around its
+  boxes, and telling those from one that moves the text would take the matrices multiplied out; nor
+  a form, `pdf:bxobj` to `pdf:exobj`, whose content the PDF draws wherever `pdf:uxobj` puts it.
 - A tag is one box, so one of more than about 2,500 characters, taller than a page, is set on a
   page of its own and runs past its foot.
 - Known limits, each far past a page and far under the generator's 1 MB bound on the body. About

@@ -676,24 +676,61 @@ function checkFonts(undrawable: ReadonlyMap<string, string>): Finding[] {
 }
 
 /**
- * The specials that begin and end a transform of what is set between them, under each name
- * xdvipdfmx takes for them: `pdf:btrans matrix 1 0 0 1 -23.6 0`, say, and `pdf:etrans`.
+ * What a special does to xdvipdfmx's graphics state, which the page has no part of: open a level
+ * that transforms what is set in it, open one that moves nothing, transform the level it is in
+ * from there to the level's end, or close the level it is in. Each is matched by every name
+ * xdvipdfmx takes for it, after any whitespace, which xdvipdfmx skips before a special's prefix
+ * and after it: `pdf:btrans` is also `begintransform`, `begintrans` and `bt`, and `pdf:etrans`
+ * `endtransform`, `endtrans` and `et`. The tree's xdvipdfmx does `x:bscale` and `x:escale` without
+ * saving the state: `x:bscale` scales about the point it is at, and `x:escale` undoes a scale about
+ * the point it is at, which is another once anything is set between them, so the rest of the level
+ * stays moved; an `x:escale` with no `x:bscale` open stops xdvipdfmx. And it knows no `x:brotate`
+ * or `x:erotate`, which it passes over with a warning.
  */
-const TRANSFORM_BEGIN = /^pdf:\s*(?:btrans|begintransform|bt)(?!\w)/;
-const TRANSFORM_END = /^pdf:\s*(?:etrans|endtransform|et)(?!\w)/;
+const GRAPHICS_STATE: readonly [RegExp, GraphicsStateChange][] = [
+  [/^\s*pdf:\s*(?:btrans|begintransform|begintrans|bt)(?!\w)/, "transforming"],
+  [/^\s*pdf:\s*(?:etrans|endtransform|endtrans|et)(?!\w)/, "close"],
+  [/^\s*pdf:\s*bcontent(?!\w)/, "open"],
+  [/^\s*pdf:\s*econtent(?!\w)/, "close"],
+  [/^\s*x:\s*gsave(?!\w)/, "open"],
+  [/^\s*x:\s*grestore(?!\w)/, "close"],
+  [/^\s*x:\s*bscale(?!\w)/, "scale"],
+  [/^\s*x:\s*escale(?!\w)/, "unscale"],
+  [/^\s*x:\s*(?:scale|rotate)(?!\w)/, "transform"],
+];
+
+type GraphicsStateChange = "transforming" | "open" | "transform" | "close" | "scale" | "unscale";
+
+/** What a special does to xdvipdfmx's graphics state, if anything. */
+function graphicsStateChange(text: string): GraphicsStateChange | undefined {
+  return GRAPHICS_STATE.find(([pattern]) => pattern.test(text))?.[1];
+}
 
 /**
  * `special`: each field's begin marker is followed directly by its paragraph special, with the
  * keys decision 0007 lists, in its order; the values are TeX's to measure. Item 9's overlay reads
  * the special to break a field's lines where TeX will, so a template that sets anything between
  * the two, or redefines what the prelude writes them with, leaves a field the overlay cannot set
- * as the page does. And no field is set inside a PDF-only transform: xdvipdfmx moves, scales or
- * turns what lies between a `pdf:btrans` and its `pdf:etrans`, however they nest, and the page,
- * drawn from the DVI, does not, so it would draw the field where the PDF does not put it, as it
- * drew the text of AltaCV's tags, TikZ nodes, before its port stopped setting it in one (decision
- * 0013). A field is reported when its begin marker or a glyph of it is inside one; a transform
- * left open at the end of a page ends with it, as it does in the PDF. Every copy of a field is
- * checked, and a field is reported once for each problem.
+ * as the page does.
+ *
+ * And no field is set where xdvipdfmx transforms what the page, drawn from the DVI, does not, so
+ * that the page would draw the field where the PDF does not put it, as it drew the text of
+ * AltaCV's tags, TikZ nodes, before its port stopped setting it in one (decision 0013). That is
+ * between a `pdf:btrans` and its `pdf:etrans`, however they nest, and from an `x:scale`,
+ * `x:rotate` or `x:bscale` to the end of the level of the graphics state it is in, which an
+ * `x:gsave` opens and its `x:grestore` closes, a `pdf:bcontent` and its `pdf:econtent` likewise,
+ * or the page's own, which ends with the page (`GRAPHICS_STATE` has every name, and why an
+ * `x:bscale` reaches past its `x:escale`). A field is reported when its begin marker or a glyph of
+ * it is in one. A level closed that was never opened closes the page's own, which xdvipdfmx opens
+ * with the move of an inch in from the corner, so that everything after it on the page lands an
+ * inch left and off the page; and an `x:escale` with no `x:bscale` open stops xdvipdfmx. Either is
+ * one finding of its own, however often it happens.
+ *
+ * What the check does not see: a `cm`, `q` or `Q` a template writes itself, in a `pdf:code`,
+ * `pdf:literal` or `pdf:content`, since pgf writes such pairs that undo each other around its own
+ * boxes, and telling those from a pair that moves the text would take the matrices multiplied
+ * out; and a form, `pdf:bxobj` to `pdf:exobj`, whose content the PDF draws wherever `pdf:uxobj`
+ * puts it. Every copy of a field is checked, and a field is reported once for each problem.
  */
 export function checkSpecial(doc: DviDocument): Finding[] {
   const findings: Finding[] = [];
@@ -708,25 +745,57 @@ export function checkSpecial(doc: DviDocument): Finding[] {
       message: `field ${id} is set inside a PDF-only transform, so the page cannot place it where the PDF does`,
     });
   };
+  let closedUnopened = false;
   // The fields begun and not yet ended where each item is set, read as one stream, since a field
-  // can run onto the next page; and the transforms open there, which end with their page.
+  // can run onto the next page; and the levels of the graphics state open there, the page's own
+  // first, each with whether it transforms what is set in it, which end with their page.
   const open = new Set<string>();
+  const closeUnopened = () => {
+    if (closedUnopened) return;
+    closedUnopened = true;
+    findings.push({
+      check: "special",
+      message: "a transform closed that was never opened, which moves every field after it",
+    });
+  };
   for (const { items } of doc.pages) {
-    let depth = 0;
+    const levels = [false];
+    let scales = 0;
     items.forEach((item, index) => {
       if (item.kind === "glyph" || item.kind === "native") {
-        if (depth > 0) for (const id of open) inTransform(id);
+        if (levels.at(-1)) for (const id of open) inTransform(id);
         return;
       }
       if (item.kind !== "special") return;
-      if (TRANSFORM_BEGIN.test(item.text)) depth++;
-      else if (TRANSFORM_END.test(item.text)) depth = Math.max(0, depth - 1);
+      switch (graphicsStateChange(item.text)) {
+        case "transforming":
+          levels.push(true);
+          break;
+        case "open":
+          levels.push(levels.at(-1) ?? false);
+          break;
+        case "transform":
+          levels[levels.length - 1] = true;
+          break;
+        case "close":
+          if (levels.length > 1) levels.pop();
+          else closeUnopened();
+          break;
+        case "scale":
+          levels[levels.length - 1] = true;
+          scales++;
+          break;
+        case "unscale":
+          if (scales > 0) scales--;
+          else closeUnopened();
+          break;
+      }
       const ended = markerId(item.text, MARKER_END);
       if (ended !== undefined) open.delete(ended);
       const id = markerId(item.text, MARKER_BEGIN);
       if (id === undefined) return;
       open.add(id);
-      if (depth > 0) inTransform(id);
+      if (levels.at(-1)) inTransform(id);
       if (reported.has(id)) return;
       const problem = paragraphProblem(id, items[index + 1]);
       if (problem === undefined) return;

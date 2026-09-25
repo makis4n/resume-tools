@@ -343,6 +343,13 @@ function namesPaperSize(parsed: DviDocument): boolean {
 const READS_A_FILE = new Set(["image", "img", "epdf", "fstream", "mapfile", "mapline"]);
 
 /**
+ * The `x:` specials, XeTeX's, which xdvipdfmx runs for pdfTeX's output too, that load a font map
+ * from a file or a line as `pdf:mapfile` and `pdf:mapline` do: a map line can point a font at any
+ * file of the engine's, which xdvipdfmx then embeds.
+ */
+const X_READS_A_FILE = new Set(["fontmapfile", "fontmapline"]);
+
+/**
  * The `dvipdfmx:config` options that only tune the PDF and reach nothing outside it: `C`
  * compatibility flags, `V` the PDF version, `P` the permission flags. Every other option is a
  * command-line flag that reads a file or reconfigures the run: `f` loads a font map (the same class
@@ -360,17 +367,19 @@ const SAFE_CONFIG = new Set(["C", "V", "P"]);
  * embed, say, another job's file or a TeX Live file (version one's PDFs carry no images at all;
  * decision 0008).
  *
- * dvipdfmx parses a `pdf:` special as `pdf:` then optional spaces then the command keyword, and a
- * `dvipdfmx:config` special as the prefix then optional spaces then `config` then the option, all
- * matched without regard to case except the option letter; a dvips special is the raw
- * `psfile=`/`PSfile=`. Harmless specials (`pdf:pagesize`, `pdf:literal`, `pdf:link`, `papersize=`,
- * `color push`, the field markers, `dvipdfmx:config C`) name no such command and pass.
+ * dvipdfmx parses a `pdf:` or `x:` special as the prefix then optional spaces then the command
+ * keyword, and a `dvipdfmx:config` special as the prefix then optional spaces then `config` then
+ * the option, all matched without regard to case except the option letter; a dvips special is the
+ * raw `psfile=`/`PSfile=`. Harmless specials (`pdf:pagesize`, `pdf:literal`, `pdf:link`, `x:gsave`,
+ * `papersize=`, `color push`, the field markers, `dvipdfmx:config C`) name no such command and pass.
  */
 export function refusedSpecial(text: string): string | undefined {
   const special = text.trimStart();
   if (/^psfile=/i.test(special)) return "psfile=";
   const command = /^pdf:\s*([a-z]+)/i.exec(special)?.[1]?.toLowerCase();
   if (command !== undefined) return READS_A_FILE.has(command) ? `pdf:${command}` : undefined;
+  const xCommand = /^x:\s*([a-z]+)/i.exec(special)?.[1]?.toLowerCase();
+  if (xCommand !== undefined) return X_READS_A_FILE.has(xCommand) ? `x:${xCommand}` : undefined;
   const option = /^dvipdfmx:\s*config\b\s*([a-z]+)?/i.exec(special)?.[1];
   if (option !== undefined && !SAFE_CONFIG.has(option)) return `dvipdfmx:config ${option}`;
   return undefined;
