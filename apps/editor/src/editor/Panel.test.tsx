@@ -1,4 +1,5 @@
 import { type Section, YearMonth } from "@resume-tools/resume-model";
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { curated } from "../templates/curated";
@@ -151,7 +152,7 @@ describe("Panel", () => {
   const render = (commands: Command[] = [], shownFields?: ReadonlySet<string>) => {
     const doc = commands.reduce(apply, newDocument("jake", sample, "en-US"));
     return renderToStaticMarkup(
-      <Panel document={doc} shownFields={shownFields} onCommand={() => {}} />,
+      <Panel document={doc} shownFields={shownFields} onCommand={() => {}} onSeal={() => {}} />,
     );
   };
 
@@ -201,5 +202,64 @@ describe("Panel", () => {
     expect(html).toContain('value="Projects"');
     expect(html).not.toContain("Last name");
     expect(html).not.toContain('value="Experience"');
+  });
+
+  type Props = Record<string, unknown>;
+
+  /**
+   * Every element a tree holds, depth first, with the components named in `expand` rendered in
+   * place, as a shallow renderer would; they use no hooks, so each can be called as a function. Any
+   * other component stays an element, whose handlers are the ones the browser would call.
+   */
+  function elementsOf(node: ReactNode, expand: ReadonlySet<string>): ReactElement<Props>[] {
+    if (Array.isArray(node)) return node.flatMap((each) => elementsOf(each, expand));
+    if (!isValidElement<Props>(node)) return [];
+    const { type } = node;
+    if (typeof type === "function" && expand.has(type.name))
+      return elementsOf((type as (props: Props) => ReactNode)(node.props), expand);
+    return [node, ...elementsOf(node.props.children as ReactNode, expand)];
+  }
+
+  it("sends what is typed into an input in the group of a visit to it, and nothing else in one", () => {
+    const sent: [Command, string | undefined][] = [];
+    const tree = Panel({
+      document: newDocument("jake", sample, "en-US"),
+      onCommand: (command, group) => sent.push([command, group]),
+      onSeal: () => {},
+    });
+    // The header's fields and the links, each input typed into, each menu changed and each button
+    // that is not disabled pressed, as the browser would.
+    for (const { type, props } of elementsOf(tree, new Set(["HeaderFields", "Links", "Reorder"]))) {
+      const name = typeof type === "function" ? type.name : type;
+      if (name === "TypedInput" || name === "FieldInput")
+        (props.onChange as (text: string) => void)("Typed");
+      if (name === "select")
+        (props.onChange as (event: { target: { value: string } }) => void)({
+          target: { value: "github" },
+        });
+      if (name === "button" && props.disabled !== true) (props.onClick as () => void)();
+    }
+    const setLink = (change: object) => ({
+      type: "structure",
+      op: { op: "setLink", id: "site", ...change },
+    });
+    const setHeader = (name: string) => ({
+      type: "structure",
+      op: { op: "setHeader", [name]: "Typed" },
+    });
+    expect(sent).toEqual([
+      [{ type: "text", field: "header.first", text: "Typed" }, "field:header.first"],
+      [{ type: "text", field: "header.last", text: "Typed" }, "field:header.last"],
+      [setHeader("headline"), "header:headline"],
+      [setHeader("email"), "header:email"],
+      [setHeader("phone"), "header:phone"],
+      [setHeader("location"), "header:location"],
+      [setLink({ kind: "github" }), undefined],
+      // The label is a field the page shows, and a visit to it in the panel is one to the field.
+      [setLink({ label: "Typed" }), "field:site.label"],
+      [setLink({ href: "Typed" }), "link:site"],
+      [{ type: "structure", op: { op: "removeLink", id: "site" } }, undefined],
+      [{ type: "structure", op: { op: "addLink" } }, undefined],
+    ]);
   });
 });

@@ -231,7 +231,8 @@ const LINE_BREAKS = /\r\n|[\t\n\r\u2028\u2029]/g;
 /**
  * Inputs the editor does not take: a new paragraph or line, which a field cannot hold; the
  * browser's own formatting, which would bring marks a field does not have; and the browser's undo
- * and redo, until item 12.
+ * and redo, which its menu still gives, since the app's history is the one undo: its own take the
+ * keys, and take back the visit to the field (item 12).
  */
 const REFUSED = /^(insertParagraph|insertLineBreak|format|history)/;
 
@@ -577,7 +578,11 @@ export function RichOverlay({
  * A link's address, edited in an input: Apply sets it as typed, Enter too, and Remove unlinks the
  * text; Escape goes back to the text. The generator decides what an address links to
  * (`linkAddress`, decision 0007), and the popover says what that is, as the user types, or that
- * the text will not be linked, so that no address is a surprise on the page.
+ * the text will not be linked, so that no address is a surprise on the page. The undo and redo
+ * keys in it are the browser's (`NATIVE_UNDO`), which undoes the typing in the input and nothing
+ * else (`refuseNativeUndo`): an address reaches the document only when it is applied, so the
+ * app's history holds none of it, and the app's undo would take the focus out of the popover,
+ * which closes the editor and loses it.
  */
 function LinkPopover({
   href,
@@ -604,7 +609,13 @@ function LinkPopover({
   }, [focus]);
   const address = linkAddress(draft);
   return (
-    <div role="group" aria-label="Link" style={CONTROLS_STYLE} onMouseDown={keepFocus}>
+    <div
+      role="group"
+      aria-label="Link"
+      data-native-undo
+      style={CONTROLS_STYLE}
+      onMouseDown={keepFocus}
+    >
       <label>
         Address{" "}
         <input

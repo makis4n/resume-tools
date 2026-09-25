@@ -107,7 +107,7 @@ end to end before the other two templates, so that the editing loop is proven on
     breaker. A link's address is edited in a popover.
 11. [x] **Structure from the side panel.** Add, remove and reorder sections, entries, bullets and
     header links, and edit what the page does not show, such as link addresses.
-12. [ ] **Undo and redo** across page and panel, with one step per field visit rather than per
+12. [x] **Undo and redo** across page and panel, with one step per field visit rather than per
     keystroke.
 
 ### Stage 4. Keeping and exporting

@@ -6,6 +6,16 @@
  * that the page recompiles and undo takes it back as it takes back an edit. Every value the panel
  * can give is one the package's schema accepts, and every label is plain English: a user never
  * sees LaTeX, and the snippets that apply a value never leave the package.
+ *
+ * A click on a button or a choice from a menu is one step for undo. A slider or the colour picker
+ * changes with every movement of the pointer, a change each time, so its changes go in the group
+ * of a drag (`dragOf`) until it loses the focus, which ends the step (`onSeal`): one drag is one
+ * undo, rather than hundreds that would push every earlier step out of the history (item 12). A
+ * control never sends the value it already shows, which the browser sees to for the radios, the
+ * menus, the sliders and the picker, and the swatches and the density buttons see to themselves:
+ * where the value shown is the template's default, the document holds no choice for it, and the
+ * click would store one (decision 0010), a step that changes nothing on the page and takes away
+ * what could have been redone.
  */
 
 import { type CSSProperties, useId } from "react";
@@ -22,13 +32,25 @@ export type ControlChange = {
   [K in keyof ControlValues]-?: { name: K; value: NonNullable<ControlValues[K]> };
 }[keyof ControlValues];
 
-type OnChange = (change: ControlChange) => void;
+/** A change, and the group of the drag it is part of (`dragOf`), if it is part of one. */
+type OnChange = (change: ControlChange, group?: string) => void;
+
+/**
+ * The group of a drag of the control `name`, whose changes are one step for undo until the control
+ * loses the focus (`History.dispatch`).
+ */
+const dragOf = (name: keyof ControlValues) => `control:${name}`;
 
 export interface ControlsProps {
   pkg: TemplatePackage;
   /** The document's own choices; a control it has none for shows the package's default. */
   values: ControlValues;
   onChange: OnChange;
+  /**
+   * The end of a drag, as a slider or the colour picker loses the focus, which ends the step of
+   * its changes (`History.seal`), so that the next drag is a step of its own.
+   */
+  onSeal: () => void;
 }
 
 const PAGE_SIZES = [
@@ -71,7 +93,7 @@ const EXAMPLE_DATE = "2024-01";
  * The panel for one document. The package's defaults fill in what the document leaves out, so
  * each `??` below is only for the types, which cannot say which controls a package offers.
  */
-export function Controls({ pkg, values, onChange }: ControlsProps) {
+export function Controls({ pkg, values, onChange, onSeal }: ControlsProps) {
   const id = useId();
   const shown = { ...defaultControls(pkg), ...values };
   const { pageSize, margins, fontSize, font, accent, density, dateFormat } = pkg.controls;
@@ -89,6 +111,7 @@ export function Controls({ pkg, values, onChange }: ControlsProps) {
           id={`${id}-margins`}
           value={shown.margins ?? margins.default}
           onChange={onChange}
+          onSeal={onSeal}
         />
       )}
       {fontSize && (
@@ -96,6 +119,7 @@ export function Controls({ pkg, values, onChange }: ControlsProps) {
           id={`${id}-font-size`}
           value={shown.fontSize ?? fontSize.default}
           onChange={onChange}
+          onSeal={onSeal}
         />
       )}
       {font && (
@@ -105,7 +129,9 @@ export function Controls({ pkg, values, onChange }: ControlsProps) {
           onChange={onChange}
         />
       )}
-      {accent && <AccentControl value={shown.accent ?? accent.default} onChange={onChange} />}
+      {accent && (
+        <AccentControl value={shown.accent ?? accent.default} onChange={onChange} onSeal={onSeal} />
+      )}
       {density && <DensityControl value={shown.density ?? density.default} onChange={onChange} />}
       {dateFormat && <DateFormatControl value={shown.dateFormat} onChange={onChange} />}
     </aside>
@@ -144,16 +170,19 @@ export function PageSizeControl({
 /**
  * A slider over the margins' range in its steps, with Tight, Normal and Roomy marked on it and
  * the value in inches beside it; `id` names the slider and its marks. The slider's value is text,
- * which the change reads to the tenth, so that 0.7 is 0.7 and not 0.7000000000000001.
+ * which the change reads to the tenth, so that 0.7 is 0.7 and not 0.7000000000000001. A drag is
+ * one step, which ends as the slider loses the focus.
  */
 export function MarginsControl({
   id,
   value,
   onChange,
+  onSeal,
 }: {
   id: string;
   value: number;
   onChange: OnChange;
+  onSeal: () => void;
 }) {
   const slider = `${id}-slider`;
   const shown = value.toFixed(1);
@@ -177,8 +206,12 @@ export function MarginsControl({
         value={value}
         aria-valuetext={`${shown} inches`}
         onChange={(event) =>
-          onChange({ name: "margins", value: Math.round(Number(event.target.value) * 10) / 10 })
+          onChange(
+            { name: "margins", value: Math.round(Number(event.target.value) * 10) / 10 },
+            dragOf("margins"),
+          )
         }
+        onBlur={onSeal}
       />
       <datalist id={`${id}-marks`}>
         {MARGIN_MARKS.map(({ inches, name }) => (
@@ -202,16 +235,18 @@ const halfPoints = (size: number) => Math.round(size * 2) / 2;
  * A slider over the font sizes, 9 to 12 points in half points, with the size in points beside it;
  * `id` names the slider. The slider's value is text, which the change reads to the half point, so
  * that no size the browser gives can be one the package refuses. A whole size shows as `11 pt`
- * and a half as `10.5 pt`.
+ * and a half as `10.5 pt`. A drag is one step, which ends as the slider loses the focus.
  */
 export function FontSizeControl({
   id,
   value,
   onChange,
+  onSeal,
 }: {
   id: string;
   value: number;
   onChange: OnChange;
+  onSeal: () => void;
 }) {
   const slider = `${id}-slider`;
   const shown = String(halfPoints(value));
@@ -234,8 +269,12 @@ export function FontSizeControl({
         value={value}
         aria-valuetext={`${shown} points`}
         onChange={(event) =>
-          onChange({ name: "fontSize", value: halfPoints(Number(event.target.value)) })
+          onChange(
+            { name: "fontSize", value: halfPoints(Number(event.target.value)) },
+            dragOf("fontSize"),
+          )
         }
+        onBlur={onSeal}
       />
     </div>
   );
@@ -274,9 +313,19 @@ export function FontControl({
 
 /**
  * The palette's swatches, the current one marked, and a picker for any other colour. A colour is
- * kept as `#RRGGBB` in capitals, while the picker reads and writes lower case.
+ * kept as `#RRGGBB` in capitals, while the picker reads and writes lower case. A swatch is one
+ * step, and the one already chosen sends nothing; the picker gives a colour for every movement in
+ * it, and a drag in it is one step, which ends as the picker loses the focus.
  */
-export function AccentControl({ value, onChange }: { value: string; onChange: OnChange }) {
+export function AccentControl({
+  value,
+  onChange,
+  onSeal,
+}: {
+  value: string;
+  onChange: OnChange;
+  onSeal: () => void;
+}) {
   const current = value.toUpperCase();
   return (
     <fieldset style={GROUP}>
@@ -289,7 +338,9 @@ export function AccentControl({ value, onChange }: { value: string; onChange: On
             title={name}
             aria-label={name}
             aria-pressed={current === colour}
-            onClick={() => onChange({ name: "accent", value: colour })}
+            onClick={() => {
+              if (current !== colour) onChange({ name: "accent", value: colour });
+            }}
             style={{ ...SWATCH, background: colour, ...(current === colour ? CHOSEN : {}) }}
           />
         ))}
@@ -300,15 +351,19 @@ export function AccentControl({ value, onChange }: { value: string; onChange: On
           type="color"
           value={current.toLowerCase()}
           onChange={(event) =>
-            onChange({ name: "accent", value: event.target.value.toUpperCase() })
+            onChange({ name: "accent", value: event.target.value.toUpperCase() }, dragOf("accent"))
           }
+          onBlur={onSeal}
         />
       </label>
     </fieldset>
   );
 }
 
-/** Compact, Normal and Relaxed, as three buttons, the current one pressed. */
+/**
+ * Compact, Normal and Relaxed, as three buttons, the current one pressed, which sends nothing when
+ * pressed again.
+ */
 export function DensityControl({
   value,
   onChange,
@@ -325,7 +380,9 @@ export function DensityControl({
             key={density}
             type="button"
             aria-pressed={value === density}
-            onClick={() => onChange({ name: "density", value: density })}
+            onClick={() => {
+              if (value !== density) onChange({ name: "density", value: density });
+            }}
             style={value === density ? { ...SEGMENT, ...PRESSED } : SEGMENT}
           >
             {name}
