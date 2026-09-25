@@ -115,6 +115,34 @@ describe("serveEngine", () => {
     expect(response.headers.get("cache-control")).toBe("no-cache");
   });
 
+  // The browser keeps the manifest and asks each load whether it has changed, which costs a few
+  // hundred bytes rather than its 1.8 MB, so that it is cached afterwards as a first load assumes.
+  test("answers a revalidation of the manifest it holds with 304, and a changed one anew", async () => {
+    const url = `${origin}${manifestUrl()}`;
+    const first = await fetch(url);
+    const etag = first.headers.get("etag");
+    expect(etag).toMatch(/^"[^"]+"$/);
+    expect(Number.isNaN(Date.parse(first.headers.get("last-modified") ?? ""))).toBe(false);
+    const again = await fetch(url, { headers: { "If-None-Match": etag ?? "" } });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe("");
+    expect(again.headers.get("etag")).toBe(etag);
+    expect(again.headers.get("cache-control")).toBe("no-cache");
+    // A list of tags matches if one does, and a weak one as a strong one.
+    const listed = await fetch(url, { headers: { "If-None-Match": `"other", W/${etag}` } });
+    expect(listed.status).toBe(304);
+    try {
+      // A tree swapped in writes a new manifest, which the same request is sent whole.
+      writeManifest(manifest(2));
+      const changed = await fetch(url, { headers: { "If-None-Match": etag ?? "" } });
+      expect(changed.status).toBe(200);
+      expect(JSON.parse(await changed.text()).layout).toBe(2);
+      expect(changed.headers.get("etag")).not.toBe(etag);
+    } finally {
+      writeManifest(manifest(1));
+    }
+  });
+
   test("serves the engine and the tree under the tag its manifest names, for good", async () => {
     const engine = await fetch(`${origin}${engineUrl(tag, "busytex.wasm")}`);
     expect(engine.status).toBe(200);
@@ -136,6 +164,7 @@ describe("serveEngine", () => {
       const response = await fetch(`${origin}${url}`);
       expect(response.status, url).toBe(404);
       expect(response.headers.get("cache-control"), url).toBeNull();
+      expect(response.headers.get("etag"), url).toBeNull();
     }
   });
 

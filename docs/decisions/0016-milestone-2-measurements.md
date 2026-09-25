@@ -115,6 +115,11 @@ To fill the slow laptop's column: set the repository up on it as its README says
   Brotli; the per-engine build shrinks the engine, nearly three quarters of the bytes; and a
   template's format served from the cache removes the stock format, 6.48 MB of the 8.14 MB of
   TeX Live.
+- A first load counts the manifest once, and it is cached afterwards: the dev server sends it
+  `no-cache` with an `ETag`, so a later fetch, the worker's as well as the next load's, is a
+  revalidation answered 304, about 300 bytes, until a rebuilt tree changes it. Before this item
+  it had no validator, and every load downloaded it whole, once for the page and once for the
+  worker. The CDN has to keep it so (milestone 5).
 - The keystroke's number is the row layout alone. The DOM work after it, redrawing the rows or
   ProseMirror's decorations, is not measured, so the target stays open to a browser trace on
   the slow laptop if the overlay ever feels slow there.
