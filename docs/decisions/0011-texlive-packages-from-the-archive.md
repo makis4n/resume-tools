@@ -9,7 +9,8 @@ LaTeX and XeTeX collections, and four Ubuntu bundles of LaTeX packages and fonts
 milestone 2 item 1). It lacks what AltaCV and Awesome-CV need: pgf and TikZ, Font Awesome 5, Lato,
 Roboto and Source Sans Pro. The milestone settles that the tree is BusyTeX's TeX Live 2023,
 extended from TeX Live 2023's final package archive; item 19 does it, in
-`apps/editor/scripts/fetch-engine.ts`, `scripts/containers.ts` and `scripts/tlpdb.ts`.
+`apps/editor/scripts/fetch-engine.ts`, `scripts/containers.ts`, `scripts/fontconfig.ts` and
+`scripts/tlpdb.ts`.
 
 ## Decision
 
@@ -68,6 +69,22 @@ extended from TeX Live 2023's final package archive; item 19 does it, in
   merge, as marvosym's would if it were taken, since the Ubuntu tree holds every file of it but
   its TrueType one. The four maps add 2,752 entries, all naming Type 1 files; the Ubuntu tree's 150
   are unchanged.
+- **Hidden from fontconfig.** XeTeX looks fonts up by name through fontconfig, and the release's
+  `/etc/fonts/fonts.conf` has fontconfig scan `/texlive/texmf-dist/fonts/opentype` and `/type1`,
+  where the packages' OpenType and Type 1 files land. The session restores the engine's heap after
+  every run, so fontconfig scans again on every XeTeX run, and the packages' 184 font files, 54 MB,
+  added about 250 ms to each XeTeX compile and 54 MB to the browser's first. Nothing needs
+  fontconfig to find them: the plan loads them by file, through kpathsea (item 21's loop, fontspec's
+  file syntax), and pdfTeX and xdvipdfmx read them through `pdftex.map`. So the script adds to
+  `fonts.conf` a `<selectfont><rejectfont>` block with one `<glob>` for each folder the packages
+  put outline files in, naming the folder itself, such as
+  `/texlive/texmf-dist/fonts/type1/google/roboto` (`scripts/fontconfig.ts`). fontconfig refuses a
+  folder that matches before it scans it, but checks a file against a glob only after it has opened
+  the file, which is why the globs name folders: globs of `<folder>/*` hid the fonts and still read
+  all 184 of them. The packages' fonts are therefore not found by name, only by file, which is how
+  the plan loads them. A package that would put outline files in a folder the bundles hold files in,
+  or under, is refused, naming the package and the folder, since the folder's glob would hide the
+  bundles' fonts too.
 - **What stays out.** Documentation and source containers, binaries, since the engine is one
   binary of its own, and a newer TeX Live, which waits for milestone 5 and the engine build it
   needs.
@@ -81,13 +98,17 @@ extended from TeX Live 2023's final package archive; item 19 does it, in
   and 44 MB, Source Sans Pro 1,504 and 16 MB, most of them metrics and virtual fonts for each
   encoding, weight and figure style, and their OpenType files, which the XeTeX templates read.
 - The session mounts every file of the manifest when it starts, so the engine starts later: in
-  Node on an M4 Pro, 4.1 to 4.5 s against 2.7 to 2.9 s for the tree before; a compile costs the
-  same. The manifest grows from 1.08 MB to 1.83 MB (94 KB to 129 KB with Brotli), and
-  `pdftex.map`, which the page reads before it draws, from 83 KB to 489 KB (25 KB with Brotli).
-  Item 23 measures the browser on the slow laptop; if the start costs too much there, the tree can
-  keep only what the templates read, or the session can mount lazily.
+  Node on an M4 Pro, 4.1 to 4.5 s against 2.7 to 2.9 s for the tree before. A compile costs the
+  same, because the packages' fonts are hidden from fontconfig and XeTeX takes them by file: the
+  first XeTeX compile of a one-line article reads the same 564 files, 30.0 MB, as on the tree
+  before, so the browser's first XeTeX compile fetches what it did before, and a warm one takes
+  283 ms against 288 ms, where it took 525 ms while fontconfig scanned them. pdfTeX, which does not
+  use fontconfig, was never slowed. The manifest grows from 1.08 MB to 1.83 MB (94 KB to 129 KB
+  with Brotli), and `pdftex.map`, which the page reads before it draws, from 83 KB to 489 KB
+  (25 KB with Brotli). Item 23 measures the browser on the slow laptop; if the start costs too
+  much there, the tree can keep only what the templates read, or the session can mount lazily.
 - A first build, and CI on a cache miss, need the archive's host. CI keys its cached tree on
-  `scripts/containers.ts` and `scripts/tlpdb.ts` as well.
+  `scripts/containers.ts`, `scripts/fontconfig.ts` and `scripts/tlpdb.ts` as well.
 - A package a style file loads, or an encoding it asks fontenc for, is found by reading the style
   files; `--resolve` does not read them. greek-fontenc is left out: only
   `sourcesanspro-type1-autoinst.sty` and Roboto's `\robotolgr` ask for its LGR encoding, and the

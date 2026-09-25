@@ -14,6 +14,7 @@ const [, RELEASE, LAYOUT] =
 const SOURCES = [
   "scripts/fetch-engine.ts",
   "scripts/containers.ts",
+  "scripts/fontconfig.ts",
   "scripts/fontmaps.ts",
   "scripts/tlpdb.ts",
   "src/page/fontmap.ts",
