@@ -7,10 +7,40 @@ import { parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { hasToUnicode, mediaBoxes, shownStrings } from "../validate/pdf";
 import { engineAvailable, startNodeSession } from "./node";
-import type { Engine, EngineSession } from "./session";
+import { type Engine, type EngineSession, refusedSpecial } from "./session";
 
 const PREAMBLE = String.raw`\documentclass{article}
 \usepackage[hidelinks]{hyperref}`;
+
+describe("refusedSpecial", () => {
+  it("names a special that makes xdvipdfmx read a file, in every form", () => {
+    // The commands that read a file, and their aliases, whatever the case and spacing.
+    for (const command of ["image", "img", "epdf", "fstream", "mapfile", "mapline"])
+      expect(refusedSpecial(`pdf:${command} @x (secret.bin)`), command).toBe(`pdf:${command}`);
+    expect(refusedSpecial("PDF:FSTREAM @x (x)")).toBe("pdf:fstream");
+    expect(refusedSpecial("pdf:  image (x)")).toBe("pdf:image");
+    expect(refusedSpecial("  pdf:mapfile pdftex.map")).toBe("pdf:mapfile");
+    // dvips's file-inclusion special, in both spellings.
+    expect(refusedSpecial("psfile=drawing.eps llx=0")).toBe("psfile=");
+    expect(refusedSpecial("PSfile=drawing.eps")).toBe("psfile=");
+  });
+
+  it("passes a special that reads no file", () => {
+    for (const text of [
+      "pdf:pagesize width 210mm height 297mm",
+      "pdf:literal q 1 0 0 1 0 0 cm Q",
+      "pdf:link",
+      "pdf:bann",
+      "pdf:dest (page.1) [@thispage /XYZ @xpos @ypos null]",
+      "papersize=614.295pt,794.96999pt",
+      "color push rgb 1 0 0",
+      "dvipdfmx:config C 0x0010",
+      "rt:b:header.first",
+      "header=l3backend-dvips.pro",
+    ])
+      expect(refusedSpecial(text), text).toBeUndefined();
+  });
+});
 
 const spike = (name: string) =>
   readFileSync(new URL(`../../spike/web/${name}`, import.meta.url), "utf8");
@@ -512,6 +542,48 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(made.error).toMatch(/^xdvipdfmx exited with 1\n/);
       expect(made.error).toContain('"tcrm1000"');
       expect(made.output).toContain("xdvipdfmx:fatal:");
+    }, 60_000);
+
+    it("keeps a XeTeX document's set size, which it writes as pdf:pagesize, not papersize=", () => {
+      // Dumped as decision 0003's loop does: fontenc before the class, geometry on A4, hyperref.
+      // XeTeX writes the size in a pdf:pagesize special, and -p would override it to Letter.
+      const preamble = String.raw`\RequirePackage[OT1]{fontenc}\documentclass{article}
+\usepackage[a4paper,margin=1cm]{geometry}
+\usepackage[hidelinks]{hyperref}
+\pagestyle{empty}`;
+      expect(session.dump("xetex", "xa4", preamble).error).toBeUndefined();
+      const body = String.raw`\begin{document}Top line\vfill Bottom line\end{document}`;
+      expect(session.compile("xetex", "xa4", body, { job: "xa4" }).error).toBeUndefined();
+      const [box, ...more] = mediaBoxes(session.pdf("xa4", { compress: 0 }).pdf as Uint8Array);
+      expect(more).toEqual([]);
+      expect(box?.width).toBeCloseTo(595.28, 1);
+      expect(box?.height).toBeCloseTo(841.89, 1);
+    }, 60_000);
+
+    it("honours a pdf:pagesize special in a pdfTeX DVI too", () => {
+      const a4 = doc("\\special{pdf:pagesize width 210mm height 297mm}Hello");
+      expect(session.compile("pdftex", "stock", a4, { job: "psize" }).ok).toBe(true);
+      const [box, ...more] = mediaBoxes(session.pdf("psize", { compress: 0 }).pdf as Uint8Array);
+      expect(more).toEqual([]);
+      expect(box?.width).toBeCloseTo(595.28, 1);
+      expect(box?.height).toBeCloseTo(841.89, 1);
+    }, 60_000);
+
+    it("refuses, before running xdvipdfmx, an output whose special would read a file", () => {
+      // xdvipdfmx ignores openin_any, so a pdf:fstream special would embed the named file. The
+      // path is never read: the special is caught in the output and the PDF refused (decision
+      // 0008). Resume text cannot emit a special (decision 0007); only a template can.
+      const attack = doc(
+        "hi\\special{pdf:fstream @x (../victim/victim.dvi)}\\special{pdf:close @x}",
+      );
+      expect(session.compile("pdftex", "stock", attack, { job: "reader" }).ok).toBe(true);
+      const made = session.pdf("reader", { compress: 0 });
+      expect(made.ok).toBe(false);
+      expect(made.pdf).toBeUndefined();
+      expect(made.error).toContain("pdf:fstream");
+      // Nothing ran, so nothing was fetched or written under the PDF's name.
+      expect(made.output).toBe("");
+      expect(jobFiles("reader")).not.toContain("reader.pdf");
     }, 60_000);
 
     it("refuses a compression level that is not a whole number from 0 to 9", () => {

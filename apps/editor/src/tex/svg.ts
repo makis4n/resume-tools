@@ -8,7 +8,7 @@
  * the page's top-left corner; the DVI origin sits one inch in from that.
  */
 
-import type { DviDocument, DviPage, NativeFont } from "./dvi";
+import type { DviDocument, DviPage, NativeFont, PageItem } from "./dvi";
 import { pointsPerUnit } from "./dvi";
 import type { Field } from "./fields";
 import { type FontOutlines, glyphOf } from "./glyphs";
@@ -21,6 +21,53 @@ export interface PageSize {
 export const US_LETTER: PageSize = { width: 614.295, height: 794.97 };
 /** One inch in TeX points: the DVI origin sits this far in from the page's top-left corner. */
 export const INCH = 72.27;
+
+/** A length unit, in TeX points, as the page-size specials spell it. */
+const UNITS: Record<string, number> = {
+  pt: 1,
+  bp: 72.27 / 72,
+  in: 72.27,
+  mm: 72.27 / 25.4,
+  cm: 72.27 / 2.54,
+};
+
+/** A length as a page-size special writes it, `<number><unit>`, in TeX points, or NaN. */
+function length(value: string, unit: string): number {
+  return Number(value) * (UNITS[unit] ?? Number.NaN);
+}
+
+/**
+ * The page size a page's specials give, in TeX points, or undefined when none does. Two specials
+ * set it, and the page, the harness's PDF check and the session's choice of whether to tell
+ * xdvipdfmx a size (`namesPaperSize` in `engine/session.ts`) all read it here, so they agree:
+ *
+ * - `papersize=<w>,<h>`, which geometry, hyperref and the `geometry` driver write for pdfTeX;
+ * - `pdf:pagesize width <w> height <h>`, which XeTeX and geometry's xetex/dvipdfmx driver write
+ *   instead, its `width` and `height` keys in either order. `pdf:pagesize default` gives no size.
+ *
+ * xdvipdfmx reads both, so a PDF made without `-p` comes out this size (decision 0008).
+ */
+export function paperSizeOf(items: PageItem[]): PageSize | undefined {
+  for (const item of items) {
+    if (item.kind !== "special") continue;
+    if (item.text.startsWith("papersize=")) {
+      const dims = item.text
+        .slice("papersize=".length)
+        .split(",")
+        .map((dim) => /^\s*([\d.]+)\s*([a-z]{2})\s*$/.exec(dim));
+      const [w, h] = dims.map((m) => (m ? length(m[1] as string, m[2] as string) : Number.NaN));
+      if (w && h && Number.isFinite(w) && Number.isFinite(h)) return { width: w, height: h };
+    } else if (/^pdf:pagesize\b/.test(item.text)) {
+      const w = /\bwidth\s+([\d.]+)\s*([a-z]{2})\b/.exec(item.text);
+      const h = /\bheight\s+([\d.]+)\s*([a-z]{2})\b/.exec(item.text);
+      const width = w ? length(w[1] as string, w[2] as string) : Number.NaN;
+      const height = h ? length(h[1] as string, h[2] as string) : Number.NaN;
+      if (width && height && Number.isFinite(width) && Number.isFinite(height))
+        return { width, height };
+    }
+  }
+  return undefined;
+}
 
 /** Outlines of an OpenType or TrueType font XeTeX used directly, by glyph index. */
 export interface NativeOutlines {

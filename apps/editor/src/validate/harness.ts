@@ -745,9 +745,12 @@ const LIGATURE = /ff|fi|fl|--|''|,,/;
  * A field is looked for by its first word, its text up to the first space, among the strings the
  * PDF's text operators show, where the glyphs' codes stand for the characters, which holds only
  * for what `SHOWN_AS_ITSELF` allows, and not for a ligature; a field whose first word has a
- * character outside ASCII, or anything else those rule out, is skipped. A field the fields or
- * alignment checks report (`reported`) is left to them. A PDF xdvipdfmx cannot make, as when the
- * output uses a font it has no Type 1 file of to embed, is one finding, with its words.
+ * character outside ASCII, or anything else those rule out, is skipped. A first word TeX broke at
+ * a line end lands in two text operators, its halves split by a hyphen TeX inserted, so a word not
+ * in any one string is looked for in the strings joined, with that hyphen anywhere inside it. A
+ * field the fields or alignment checks report (`reported`) is left to them. A PDF xdvipdfmx cannot
+ * make, as when the output uses a font it has no Type 1 file of to embed, is one finding, with its
+ * words.
  */
 function checkPdf(
   made: PdfResult,
@@ -782,17 +785,27 @@ function checkPdf(
       message: "no font of the PDF has a ToUnicode map, so its text cannot be read",
     });
   const shown = shownStrings(pdf);
+  // The operators joined in order, nothing between them, so a first word broken across two of them
+  // reads as one, its halves split by the hyphen TeX inserted at the break.
+  const joined = shown.join("");
   for (const field of found.values()) {
     const word = texts.get(field.id)?.trim().split(/\s/, 1)[0] ?? "";
     if (reported.has(field.id) || !SHOWN_AS_ITSELF.test(word) || LIGATURE.test(word)) continue;
-    if (!shown.some((text) => text.includes(word)))
-      findings.push({
-        check: "pdf",
-        field: field.id,
-        message: `the PDF's text does not show ${field.id}: no text operator shows its first word, ${word}`,
-      });
+    if (shown.some((text) => text.includes(word)) || brokenAcross(joined, word)) continue;
+    findings.push({
+      check: "pdf",
+      field: field.id,
+      message: `the PDF's text does not show ${field.id}: no text operator shows its first word, ${word}`,
+    });
   }
   return findings;
+}
+
+/** Whether `word` appears in `joined` with a single line-break hyphen inserted somewhere inside. */
+function brokenAcross(joined: string, word: string): boolean {
+  for (let at = 1; at < word.length; at++)
+    if (joined.includes(`${word.slice(0, at)}-${word.slice(at)}`)) return true;
+  return false;
 }
 
 /** TeX's first error in a compile, or undefined when it compiled with none in the log. */

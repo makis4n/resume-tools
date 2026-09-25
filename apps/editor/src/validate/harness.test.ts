@@ -580,6 +580,58 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
         unshown("tern-1.text", "Set"),
       ]);
     }, 60_000);
+
+    it("reports a PDF the session refuses because a template special would read a file", async () => {
+      // A template can emit a \special; resume text cannot (decision 0007). xdvipdfmx would embed
+      // the file it names, so the session refuses the PDF (decision 0008) and the harness reports
+      // it. The path is never read: the special is caught in the output.
+      const reading = plainWith("file-reading", {
+        document: [
+          "\\begin{document}",
+          "\\special{pdf:fstream @x (../victim/victim.dvi)}",
+          "{{header}}",
+          "{{sections}}",
+          "\\end{document}",
+        ].join("\n"),
+      });
+      const report = await validatePackage(session, fonts, reading, RESUME);
+      expect(report.findings).toEqual([
+        { check: "pdf", message: expect.stringContaining("pdf:fstream") },
+      ]);
+    }, 60_000);
+
+    it("does not report a first word TeX broke at a line end across two text operators", async () => {
+      // A long label pushes the item's text onto the next line, so TeX breaks its first word with
+      // an inserted hyphen (Typeset-/ting,) and its halves land in separate operators. The check
+      // joins the operators and finds the word with the hyphen inside it, so it reports nothing.
+      const label = "Languages and tools used every day at the press for many years now";
+      const hyphenating = Resume.parse({
+        version: 1,
+        header: { name: { first: "Ines", last: "Calloway" }, links: [] },
+        sections: [
+          {
+            id: "skills",
+            kind: "labelled",
+            role: "skills",
+            title: "Skills",
+            items: [
+              {
+                id: "langs",
+                label,
+                text: [{ text: "Typesetting, bookbinding and letterpress printing" }],
+              },
+            ],
+          },
+        ],
+      });
+      const report = await validatePackage(
+        session,
+        fonts,
+        plainWith("hyphenated", {}),
+        hyphenating,
+      );
+      expect(report.findings).toEqual([]);
+    }, 60_000);
   });
 
   describe("over an invented package in T1 and Latin Modern, as Jake's is", () => {

@@ -132,6 +132,11 @@ export function App() {
   /** The latest page, and whether it is the one the document opened with. */
   const [shown, setShown] = useState<{ latest: Shown; opening: boolean }>();
   const [error, setError] = useState<string>();
+  // The PDF's own message, apart from the compile error the page event clears: a failed PDF can
+  // start a recompile (the compiler's losePdf), whose page would otherwise wipe the message before
+  // it is read. It is cleared only when the next download starts or succeeds, or another document
+  // opens, whose PDF it does not speak of; never by a page.
+  const [pdfError, setPdfError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [slow, setSlow] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -194,6 +199,7 @@ export function App() {
     setNotice(undefined);
     setShown(undefined);
     setError(undefined);
+    setPdfError(undefined);
     setClicked(undefined);
     compiler.current?.open(pkg, document);
   };
@@ -382,11 +388,12 @@ export function App() {
     const owned = compiler.current;
     if (owned === undefined) return;
     setDownloading(true);
+    setPdfError(undefined);
     try {
       savePdf(await owned.pdf(), pdfFileName(history.present.resume.header.name));
     } catch (error) {
       console.error(error);
-      setError(COULD_NOT_MAKE_PDF);
+      setPdfError(COULD_NOT_MAKE_PDF);
     } finally {
       setDownloading(false);
     }
@@ -444,6 +451,7 @@ export function App() {
             Download PDF
           </button>
         </p>
+        {pdfError && <p>{pdfError}</p>}
         {shown.latest.page.pageCount > 1 && <p>This resume runs onto a second page.</p>}
         {clicked && field && !stale && (
           <FieldBox click={clicked} field={field} resume={present.resume} onEdit={edit} />

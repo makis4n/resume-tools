@@ -17,7 +17,8 @@
  * another, read another's text, or overwrite a format.
  */
 
-import { type PageItem, parseDvi } from "../tex/dvi";
+import { type DviDocument, parseDvi } from "../tex/dvi";
+import { paperSizeOf } from "../tex/svg";
 import { summariseLog } from "./log";
 import { filenameDatabase } from "./lsr";
 import type { EngineManifest } from "./manifest";
@@ -323,13 +324,51 @@ function mountOnDemand(fs: EmscriptenFs, options: SessionOptions, tally: Tally) 
 }
 
 /**
- * Whether an output's first page carries a `papersize=` special, as geometry and hyperref write
- * it, which the page is drawn to and xdvipdfmx reads.
+ * Whether an output's first page names its own size, so xdvipdfmx need not be told one. geometry
+ * and hyperref write it in a `papersize=` special for pdfTeX, and XeTeX and the xetex/dvipdfmx
+ * driver in a `pdf:pagesize` one instead; `paperSizeOf` reads both, the same as the page and the
+ * harness, so all three agree and a set A4 size is not forced to Letter (`-p letter`).
  */
-function namesPaperSize(output: Uint8Array): boolean {
-  const first = parseDvi(output, () => undefined).pages[0];
-  const special = (item: PageItem) => item.kind === "special" && item.text.startsWith("papersize=");
-  return first?.items.some(special) ?? false;
+function namesPaperSize(parsed: DviDocument): boolean {
+  return paperSizeOf(parsed.pages[0]?.items ?? []) !== undefined;
+}
+
+/**
+ * The dvipdfmx `\special` commands that read a file from the engine's file system and embed it in
+ * the PDF, which xdvipdfmx runs whatever `openin_any` says (unlike TeX), by the keyword it
+ * dispatches on: `pdf:image`/`pdf:img`/`pdf:epdf` include a graphic, `pdf:fstream` a file as a
+ * stream, `pdf:mapfile`/`pdf:mapline` a font through a map. dvips's `\special{psfile=...}` names a
+ * PostScript file the same way.
+ */
+const READS_A_FILE = new Set(["image", "img", "epdf", "fstream", "mapfile", "mapline"]);
+
+/**
+ * The command of a `\special` that would make xdvipdfmx read a file, or undefined for one that
+ * would not. It is the one thing between an output and a PDF that can reach outside the job's
+ * folder: resume text cannot emit a special (decision 0007 escapes every backslash), but a
+ * template can, so `pdf` scans every special and refuses the PDF rather than embed, say, another
+ * job's file or a TeX Live file (version one's PDFs carry no images at all; decision 0008).
+ *
+ * dvipdfmx parses a `pdf:` special as `pdf:` then optional spaces then the command keyword, both
+ * matched without regard to case; a dvips special is the raw `psfile=`/`PSfile=`. Harmless
+ * specials (`pdf:pagesize`, `pdf:literal`, `pdf:link`, `papersize=`, `color push`, the field
+ * markers, `dvipdfmx:config`) name no such command and pass.
+ */
+export function refusedSpecial(text: string): string | undefined {
+  const special = text.trimStart();
+  if (/^psfile=/i.test(special)) return "psfile=";
+  const command = /^pdf:\s*([a-z]+)/i.exec(special)?.[1]?.toLowerCase();
+  return command !== undefined && READS_A_FILE.has(command) ? `pdf:${command}` : undefined;
+}
+
+/** The first `\special` of any page that would make xdvipdfmx read a file, or undefined. */
+function fileReadingSpecial(parsed: DviDocument): string | undefined {
+  for (const page of parsed.pages)
+    for (const item of page.items) {
+      const refused = item.kind === "special" ? refusedSpecial(item.text) : undefined;
+      if (refused !== undefined) return refused;
+    }
+  return undefined;
 }
 
 export class EngineSession {
@@ -546,11 +585,15 @@ export class EngineSession {
    * once, and comes back with what xdvipdfmx printed, where its warnings go. Why a PDF could not
    * be made is for the console, never for a user: xdvipdfmx speaks of fonts and specials.
    *
-   * The page size is the output's own: geometry and hyperref write it in a `papersize=` special,
-   * which the page is drawn to (`paperSize` in `src/page/draw.ts`) and which xdvipdfmx honours.
-   * An output without one is drawn on US Letter, so xdvipdfmx is told Letter for it, since its own
-   * default, from `dvipdfmx.cfg`, is A4. It is told only then, because a size given to it
-   * overrides the special.
+   * The page size is the output's own: geometry, hyperref and XeTeX write it in a `papersize=` or
+   * `pdf:pagesize` special, which the page is drawn to (`paperSize` in `src/page/draw.ts`) and
+   * which xdvipdfmx honours. An output without one is drawn on US Letter, so xdvipdfmx is told
+   * Letter for it, since its own default, from `dvipdfmx.cfg`, is A4. It is told only then, because
+   * a size given to it (`-p`) overrides the special, and XeTeX only ever writes the special.
+   *
+   * xdvipdfmx does not honour `openin_any`, so before it runs, every special of the output is
+   * scanned and the PDF refused when one would read a file (`refusedSpecial`): a template's
+   * special could otherwise embed another job's or a TeX Live file (decision 0008).
    */
   pdf(job: string, options: PdfOptions = {}): PdfResult {
     checkName("job", job);
@@ -562,9 +605,18 @@ export class EngineSession {
     const output = file === undefined ? undefined : this.read(`${JOBS}/${job}/${file}`);
     if (file === undefined || output === undefined)
       return { ok: false, ms: 0, output: "", error: `${job} has no output to make a PDF of` };
+    const parsed = parseDvi(output, () => undefined);
+    const reads = fileReadingSpecial(parsed);
+    if (reads !== undefined)
+      return {
+        ok: false,
+        ms: 0,
+        output: "",
+        error: `the output has a \\special that reads a file, which the PDF must not embed: ${reads}`,
+      };
     const args = [
       "xdvipdfmx",
-      ...(namesPaperSize(output) ? [] : ["-p", "letter"]),
+      ...(namesPaperSize(parsed) ? [] : ["-p", "letter"]),
       ...(compress === undefined ? [] : ["-z", String(compress)]),
       "-o",
       `${job}.pdf`,
