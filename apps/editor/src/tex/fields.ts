@@ -88,10 +88,26 @@ export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, F
   return fields;
 }
 
-/** The id a begin or end marker names, lowercased; undefined for any other special. */
-function markerId(text: string, marker: string): string | undefined {
+/**
+ * The id a begin or end marker names, lowercased; undefined for any other special. `marker` is
+ * `MARKER_BEGIN` or `MARKER_END`, and the marker is read whatever its case.
+ */
+export function markerId(text: string, marker: string): string | undefined {
   if (text.slice(0, marker.length).toLowerCase() !== marker) return undefined;
   return text.slice(marker.length).toLowerCase();
+}
+
+/** What aligning a field's glyphs with its text found. */
+export interface Alignment {
+  /** Glyphs that could not be matched to a character of the text. */
+  unmatched: number;
+  /**
+   * Where the walk stands when the glyphs run out: the index in the text just past the last
+   * glyph it matched. What the text holds from here on is what the page does not show, so the
+   * validation harness checks that none of it would set a glyph, which finds a field a template
+   * cuts short, as truncate.sty does, where every glyph the page shows still matches.
+   */
+  covered: number;
 }
 
 /**
@@ -105,14 +121,14 @@ function markerId(text: string, marker: string): string | undefined {
  * past each character that may set no glyph where it stands, such as an emoji or a
  * letter of a script the fonts lack; an unmatched hyphen is a break TeX inserted; and
  * a glyph a few code units on resynchronises the walk. Returns the number of glyphs
- * that could not be matched.
+ * that could not be matched, and how much of the text the glyphs account for.
  *
  * A run of such characters is read once, however many glyphs fail to match in it: a
  * glyph whose spellings all begin with printable ASCII, which no character of the run
  * is, can match only at the run's end, so only a glyph with a spelling outside ASCII,
  * such as an en dash, walks the run a character at a time.
  */
-export function alignGlyphs(field: Field, text: string): number {
+export function alignField(field: Field, text: string): Alignment {
   let pos = 0;
   let unmatched = 0;
   // The end of the run of characters that may set no glyph from `pos` on: the first index at or
@@ -167,7 +183,12 @@ export function alignGlyphs(field: Field, text: string): number {
       }
     }
   }
-  return unmatched;
+  return { unmatched, covered: pos };
+}
+
+/** Give each glyph its character offset, as `alignField` does, and count those it cannot place. */
+export function alignGlyphs(field: Field, text: string): number {
+  return alignField(field, text).unmatched;
 }
 
 /** What the walk skips before every glyph: whitespace, which TeX sets as glue, and INVISIBLE. */

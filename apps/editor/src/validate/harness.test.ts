@@ -5,12 +5,20 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { z } from "zod";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
-import type { EngineSession } from "../engine/session";
+import type { CompileResult, DumpResult, EngineSession } from "../engine/session";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
-import { CURATED } from "../templates/curated";
-import { parsePackage, type TemplatePackage } from "../templates/package";
-import { CHECKS, type Check, type Report, validateCurated, validatePackage } from "./harness";
+import { CURATED, curated } from "../templates/curated";
+import { generateBody } from "../templates/generate";
+import { defaultControls, parsePackage, type TemplatePackage } from "../templates/package";
+import {
+  CHECKS,
+  type Check,
+  editEverything,
+  type Report,
+  validateCurated,
+  validatePackage,
+} from "./harness";
 
 type PackageInput = z.input<typeof TemplatePackage>;
 
@@ -18,10 +26,11 @@ type PackageInput = z.input<typeof TemplatePackage>;
 const ENSURES: Record<Check, string> = {
   dump: "dumps its preamble as a format",
   compile: "compiles its sample with no error in the log",
-  converges: "converges: the same body compiles again in one pass, to the same output",
+  converges: "converges: two passes as a new document, then one again, to the same output",
+  edits: "shows every field's new text after an edit, compiled once as the editor does",
   pages: "sets its sample on one page",
-  fields: "keeps every field's markers, and the page finds each field with glyphs",
-  alignment: "matches every glyph of every field to a character of its text",
+  fields: "keeps every field's markers, once each, and the page finds each field with glyphs",
+  alignment: "matches every glyph of every field to a character of its text, and shows it whole",
   fonts: "uses only fonts the page can draw",
   special: "writes each field's paragraph special right after its begin marker",
 };
@@ -55,30 +64,211 @@ const PLAIN: PackageInput = {
   },
 };
 
-/** The plain package under an id of its own, with some of its snippets replaced. */
-function plainWith(id: string, snippets: Partial<PackageInput["snippets"]>): TemplatePackage {
-  return parsePackage({ ...PLAIN, id, snippets: { ...PLAIN.snippets, ...snippets } });
+/**
+ * The plain package under an id of its own, with some of its snippets replaced, and a line
+ * added to its preamble when one is given.
+ */
+function plainWith(
+  id: string,
+  snippets: Partial<PackageInput["snippets"]>,
+  preamble?: string,
+): TemplatePackage {
+  return parsePackage({
+    ...PLAIN,
+    id,
+    preamble: preamble === undefined ? PLAIN.preamble : `${PLAIN.preamble}\n${preamble}`,
+    snippets: { ...PLAIN.snippets, ...snippets },
+  });
 }
 
-/** An invented resume with one entry and one bullet, which the plain package sets on one page. */
-const RESUME = Resume.parse({
-  version: 1,
-  header: { name: { first: "Ines", last: "Calloway" }, links: [] },
-  sections: [
-    {
-      id: "work",
-      kind: "entries",
-      role: "experience",
-      title: "Experience",
-      entries: [
+/**
+ * An invented resume with one entry and one bullet, which the plain package sets on one page,
+ * with the bullet's text and the entry's title given.
+ */
+function resumeWith(bullet: string, title = "Typesetter"): Resume {
+  return Resume.parse({
+    version: 1,
+    header: { name: { first: "Ines", last: "Calloway" }, links: [] },
+    sections: [
+      {
+        id: "work",
+        kind: "entries",
+        role: "experience",
+        title: "Experience",
+        entries: [{ id: "tern", title, bullets: [{ id: "tern-1", text: [{ text: bullet }] }] }],
+      },
+    ],
+  });
+}
+
+const RESUME = resumeWith("Set the quarterly report");
+
+describe("editEverything", () => {
+  /** A resume with every text field the model has, and a location that is blank. */
+  const resume = Resume.parse({
+    version: 1,
+    header: {
+      name: { first: "Ines", last: "Calloway" },
+      headline: "Typesetter",
+      email: "ines@example.com",
+      phone: "555-0100",
+      location: " ",
+      links: [{ id: "site", kind: "website", label: "tern.example.com", href: "tern.example.com" }],
+    },
+    sections: [
+      {
+        id: "work",
+        kind: "entries",
+        role: "experience",
+        title: "Experience",
+        entries: [
+          {
+            id: "tern",
+            title: "Typesetter",
+            subtitle: "Tern Press",
+            place: "Leeds",
+            dates: { start: "2020-01", end: "present" },
+            bullets: [
+              {
+                id: "tern-1",
+                text: [{ text: "Set the " }, { text: "report", bold: true, href: "example.com" }],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "tools",
+        kind: "list",
+        role: "skills",
+        title: "Tools",
+        items: [{ id: "tools-1", text: [{ text: "Linotype" }] }],
+      },
+      {
+        id: "skills",
+        kind: "labelled",
+        role: "skills",
+        title: "Skills",
+        items: [{ id: "langs", label: "Languages", text: [{ text: "Welsh" }] }],
+      },
+      {
+        id: "about",
+        kind: "paragraph",
+        role: "summary",
+        title: "About",
+        text: [{ text: "Sets." }],
+      },
+    ],
+  });
+
+  it("adds a word to every text field, and leaves dates, addresses, ids and blanks alone", () => {
+    const before = structuredClone(resume);
+    expect(editEverything(resume)).toEqual({
+      version: 1,
+      header: {
+        name: { first: "Ines edited", last: "Calloway edited" },
+        headline: "Typesetter edited",
+        email: "ines@example.com edited",
+        phone: "555-0100 edited",
+        location: " ",
+        links: [
+          {
+            id: "site",
+            kind: "website",
+            label: "tern.example.com edited",
+            href: "tern.example.com",
+          },
+        ],
+      },
+      sections: [
         {
-          id: "tern",
-          title: "Typesetter",
-          bullets: [{ id: "tern-1", text: [{ text: "Set the quarterly report" }] }],
+          id: "work",
+          kind: "entries",
+          role: "experience",
+          title: "Experience edited",
+          entries: [
+            {
+              id: "tern",
+              title: "Typesetter edited",
+              subtitle: "Tern Press edited",
+              place: "Leeds edited",
+              dates: { start: "2020-01", end: "present" },
+              bullets: [
+                {
+                  id: "tern-1",
+                  text: [
+                    { text: "Set the " },
+                    { text: "report edited", bold: true, href: "example.com" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          id: "tools",
+          kind: "list",
+          role: "skills",
+          title: "Tools edited",
+          items: [{ id: "tools-1", text: [{ text: "Linotype edited" }] }],
+        },
+        {
+          id: "skills",
+          kind: "labelled",
+          role: "skills",
+          title: "Skills edited",
+          items: [{ id: "langs", label: "Languages edited", text: [{ text: "Welsh edited" }] }],
+        },
+        {
+          id: "about",
+          kind: "paragraph",
+          role: "summary",
+          title: "About edited",
+          text: [{ text: "Sets. edited" }],
         },
       ],
-    },
-  ],
+    });
+    expect(resume).toEqual(before);
+  });
+
+  it("gives every field of each curated sample but its dates another text, under the same ids", () => {
+    for (const [id, { package: pkg, sample }] of CURATED) {
+      const values = defaultControls(pkg);
+      const before = generateBody(pkg, sample, values).texts;
+      const after = generateBody(pkg, editEverything(sample), values).texts;
+      expect([...after.keys()], id).toEqual([...before.keys()]);
+      for (const [field, text] of before)
+        if (field.endsWith(".dates")) expect(after.get(field), field).toBe(text);
+        else expect(after.get(field), field).not.toBe(text);
+    }
+  });
+});
+
+describe("validatePackage, with a session that ships output the page cannot read", () => {
+  it("reports it as a compile finding, rather than throw", async () => {
+    const fetched = { files: 0, bytes: 0, paths: [] };
+    const session = {
+      dump: (): DumpResult => ({ ok: true, ms: 1, log: "", fetched }),
+      compile: (): CompileResult => ({
+        ok: true,
+        output: new Uint8Array([1, 2, 3]),
+        pages: 1,
+        passes: [1, 1],
+        log: "",
+        fetched,
+      }),
+    } as unknown as EngineSession;
+    // The fonts are never reached: nothing after an unreadable output has anything to read.
+    const report = await validatePackage(
+      session,
+      {} as FontLibrary,
+      plainWith("unread", {}),
+      RESUME,
+    );
+    expect(report.findings).toEqual([
+      { check: "compile", message: "the output cannot be read: not a DVI file: missing preamble" },
+    ]);
+  });
 });
 
 // Needs `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
@@ -111,12 +301,14 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
           expect(report().findings.filter((finding) => finding.check === check)).toEqual([]);
         });
 
-      it("compiles in good time, and says how long it took", () => {
+      it("compiles in good time, a new document and an edit alike, and says how long", () => {
         const { format, passes, pages, fields } = report();
         const timings = passes.map((ms) => `${Math.round(ms)} ms`).join(", ");
         console.log(`${id}: format ${format}; passes ${timings}; pages ${pages}; fields ${fields}`);
         // Generous, so that a pathological slowdown fails CI and an ordinary slow runner does not.
+        // The first pass is a new document's, and the last the edit's, which every edit costs.
         expect(passes[0]).toBeLessThan(2_000);
+        expect(passes.at(-1)).toBeLessThan(2_000);
       });
     });
   }
@@ -137,7 +329,8 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
 
     it("reports a font the page cannot draw, and nothing else, rather than throw", async () => {
       // LaTeX 2023 sets itemize's own bullet from TS1, whose metrics tfm.ts refuses (decision
-      // 0007), so drawPage throws; the harness reports the font instead.
+      // 0007), so the font does not load; the harness names it. The bullet is \item's label,
+      // which LaTeX sets before the field's begin marker, so no field holds its glyph.
       const bulleted = plainWith("ts1-bullet", {
         entry: [
           "{{title}}\\par",
@@ -155,6 +348,154 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       ]);
       // The markers are read from the output, so every field is still found.
       expect(report.fields).toBe(5);
+    }, 60_000);
+
+    it("reports a field that does not align, where a font cannot be drawn as well", async () => {
+      // The title in capitals matches none of its text but its first letter; the TS1 bullet
+      // stops the page drawing, which used to hide the misaligned field.
+      const both = plainWith("capitals-bulleted", {
+        entry: [
+          "\\MakeUppercase{{{title}}}\\par",
+          "{{#bullets}}",
+          "\\begin{itemize}",
+          "{{bullets}}",
+          "\\end{itemize}",
+          "{{/bullets}}",
+        ].join("\n"),
+        bullet: "\\item {{text}}",
+      });
+      const report = await validatePackage(session, fonts, both, RESUME);
+      expect(report.findings).toEqual([
+        {
+          check: "alignment",
+          field: "tern.title",
+          message: "9 of the 10 glyphs of tern.title match no character of its text",
+        },
+        { check: "fonts", message: expect.stringMatching(/^the page cannot draw tcrm1000: /) },
+      ]);
+    }, 60_000);
+
+    it("reports a field cut short, which loses its end marker and the rest of its text", async () => {
+      // truncate.sty keeps what fits in two inches, and drops the rest with the end marker in
+      // it, while every glyph the page shows still matches.
+      const cut = plainWith(
+        "truncated",
+        { bullet: "\\truncate[]{2in}{{{text}}}\\par" },
+        "\\usepackage{truncate}",
+      );
+      const long = "Set the quarterly report for every office in the region, with its tables";
+      const bullet = `${long} and its figures`;
+      const report = await validatePackage(session, fonts, cut, resumeWith(bullet));
+      expect(report.findings).toEqual([
+        {
+          check: "fields",
+          field: "tern-1.text",
+          message: "the end marker of tern-1.text never reaches the page",
+        },
+        {
+          check: "alignment",
+          field: "tern-1.text",
+          message: "the page shows only 34 of the 88 characters of tern-1.text",
+        },
+      ]);
+    }, 60_000);
+
+    it("does not report a field whose text ends in characters that set no glyph", async () => {
+      // The prelude drops the emoji and TeX the spaces, so the glyphs end before the texts do.
+      const trailing = plainWith("trailing", {});
+      const resume = resumeWith("Set the quarterly report \u{1f4c8}  ", "Typesetter   ");
+      const report = await validatePackage(session, fonts, trailing, resume);
+      expect(report.findings).toEqual([]);
+    }, 60_000);
+
+    it("reports a template that needs a third pass as a new document, and nothing else", async () => {
+      // The label's value changes between the first pass and the second, so LaTeX asks for a
+      // rerun after the second; from then on it holds, and one pass does.
+      const relabelled = plainWith("relabelled", {
+        document: [
+          "\\begin{document}",
+          "\\newcounter{probe}\\ifcsname r@probe\\endcsname\\stepcounter{probe}\\fi",
+          "\\refstepcounter{probe}\\label{probe}",
+          "{{header}}",
+          "{{sections}}",
+          "\\end{document}",
+        ].join("\n"),
+      });
+      const report = await validatePackage(session, fonts, relabelled, RESUME);
+      expect(report.findings).toEqual([
+        { check: "converges", message: "a new document takes 3 passes to compile, not two" },
+      ]);
+      // Three as a new document, one for the same body again, and one for the edit.
+      expect(report.passes).toHaveLength(5);
+    }, 60_000);
+
+    it("reports a field that shows the text of the compile before after an edit", async () => {
+      // The section's title reaches the page only through the table of contents, which TeX
+      // reads from what the compile before wrote. Two compiles of the same body agree, and
+      // the title is right on both; after an edit, it is one edit behind.
+      const toc = "\\addcontentsline{toc}{section}{{{title}}}";
+      const contents = plainWith("contents", {
+        document: "\\begin{document}\n\\tableofcontents\n{{header}}\n{{sections}}\n\\end{document}",
+        section: {
+          entries: `${toc}\n{{entries}}`,
+          list: `${toc}\n{{items}}`,
+          labelled: `${toc}\n{{items}}`,
+          paragraph: `${toc}\n{{text}}\\par`,
+        },
+      });
+      const report = await validatePackage(session, fonts, contents, RESUME);
+      expect(report.findings).toEqual([
+        {
+          check: "edits",
+          field: "work.title",
+          message: "after an edit, work.title shows the text of the compile before",
+        },
+      ]);
+    }, 60_000);
+
+    it("compiles in the editor's job, which TeX gives a package as \\jobname", async () => {
+      // The bullet loses its markers under the editor's job, "doc", and keeps them under any
+      // other, such as the package's id, which the harness used to compile in.
+      const telling = plainWith("job-telling", {
+        bullet: [
+          "\\ifnum\\pdfstrcmp{\\jobname}{doc}=0 \\settowidth{\\dimen0}{{{text}}}",
+          "\\else{{text}}\\par\\fi",
+        ].join(""),
+      });
+      const report = await validatePackage(session, fonts, telling, RESUME);
+      expect(report.findings).toEqual([
+        {
+          check: "fields",
+          field: "tern-1.text",
+          message: "the body marks tern-1.text, but its markers never reach the page",
+        },
+      ]);
+      const elsewhere = await validatePackage(session, fonts, telling, RESUME, {}, "elsewhere");
+      expect(elsewhere.findings).toEqual([]);
+    }, 60_000);
+  });
+
+  describe("over Jake's Resume with the name in a running head as well", () => {
+    it("reports each field the page marks twice, whose first copy is the head's", async () => {
+      // fancyhdr's head is set before the body on the page, so its small copy of the name is
+      // the one the page keeps, and the name the user sees at the top belongs to no field.
+      const { package: jake, sample } = curated("jake");
+      const headed = parsePackage({
+        ...jake,
+        id: "jake-headed",
+        snippets: {
+          ...jake.snippets,
+          header: `\\fancyhead[L]{\\tiny {{first}} {{last}}}\n${jake.snippets.header}`,
+        },
+      });
+      const report = await validatePackage(session, fonts, headed, sample);
+      expect(report.findings).toEqual(
+        ["header.first", "header.last"].map((field) => ({
+          check: "fields",
+          field,
+          message: `${field} is marked 2 times on the page; the editor edits the first`,
+        })),
+      );
     }, 60_000);
   });
 });

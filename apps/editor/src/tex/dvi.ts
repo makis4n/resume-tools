@@ -68,6 +68,9 @@ export interface DviDocument {
 /** Supplies character widths, in scaled points, for a font at its used size. */
 export type WidthProvider = (font: DviFont) => Int32Array | undefined;
 
+/** Bytes decoded per call of `String.fromCharCode`, well within what a call may be passed. */
+const LATIN1_CHUNK = 8192;
+
 class Reader {
   pos = 0;
   private readonly view: DataView;
@@ -104,8 +107,18 @@ class Reader {
     this.pos += n;
     return out;
   }
+  /**
+   * `n` bytes as ISO-8859-1, one character per byte. A special may be as long as pdfTeX's string
+   * pool, megabytes, and spreading a byte per argument overflows the call stack at about 125,000,
+   * so the string is built a chunk at a time. TextDecoder would not do: its `latin1` is
+   * windows-1252, which reads bytes 0x80 to 0x9F as other characters.
+   */
   latin1(n: number): string {
-    return String.fromCharCode(...this.bytes_(n));
+    const bytes = this.bytes_(n);
+    let text = "";
+    for (let at = 0; at < bytes.length; at += LATIN1_CHUNK)
+      text += String.fromCharCode(...bytes.subarray(at, at + LATIN1_CHUNK));
+    return text;
   }
   utf16(units: number): string {
     let s = "";
