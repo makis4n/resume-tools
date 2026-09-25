@@ -33,9 +33,10 @@
 %   changes within a word parts the word between two of the PDF's text operators, where the
 %   editor's check of the PDF looks for a field's first word in one. Upstream's also dropped a
 %   space among the first three characters, and stopped the compile on a title shorter than three.
-% - \makecvheader starts the name's line and the contacts' line whatever they hold, so that a
-%   blank name, or a header with no contacts, sets: each line ends with \\, which stopped
-%   upstream's compile when there was no line to end.
+% - \makecvheader starts the name's line and the contacts' line when nothing on them has, so
+%   that a name of two blank halves, or a header with no contacts, sets: each line ends with \\,
+%   which stopped upstream's compile when there was no line to end. A line with anything on it
+%   is upstream's, a blank first half and all.
 % Everything else is upstream's.
 %%%%%%%%%%%%%%%%
 
@@ -558,14 +559,14 @@
   \end{minipage}
   \begin{minipage}[c]{\headertextwidth}
     \ifthenelse{\equal{#1}{L}}{\raggedright}{\ifthenelse{\equal{#1}{R}}{\raggedleft}{\centering}}
-    % rt: \leavevmode, so that a blank name still starts the line that \\ ends, as below a
-    % social line with nothing in it: \\ stops the compile where there is no line to end.
-    \leavevmode\headerfirstnamestyle{\@firstname}\headerlastnamestyle{{}\acvHeaderNameDelim\@lastname}%
+    \headerfirstnamestyle{\@firstname}\headerlastnamestyle{{}\acvHeaderNameDelim\@lastname}%
+    % rt: a line to end, when the name has set nothing, as below when the contacts have not: \\
+    % stops the compile where there is no line to end.
+    \ifvmode\leavevmode\fi
     \\[\acvHeaderAfterNameSkip]%
     \ifthenelse{\isundefined{\@position}}{}{\headerpositionstyle{\@position\\[\acvHeaderAfterPositionSkip]}}%
     \ifthenelse{\isundefined{\@address}}{}{\headeraddressstyle{\@address\\[\acvHeaderAfterAddressSkip]}}%
-    % rt: \leavevmode, as above.
-    \leavevmode\headersocialstyle{%
+    \headersocialstyle{%
       \newbool{isstart}%
       \setbool{isstart}{true}%
       \ifthenelse{\isundefined{\@mobile}}%
@@ -701,7 +702,10 @@
           \ifbool{isstart}{\setbool{isstart}{false}}{\acvHeaderSocialSep}%
           \@extrainfo%
         }%
-    } \\[\acvHeaderAfterSocialSkip]%
+    }%
+    % rt: a line to end, as above.
+    \ifvmode\leavevmode\fi
+    \\[\acvHeaderAfterSocialSkip]%
     \ifthenelse{\isundefined{\@quote}}%
       {}%
       {\headerquotestyle{\@quote\\}\vspace{\acvHeaderAfterQuoteSkip}}%

@@ -2217,6 +2217,21 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(page.unmatched).toBe(0);
   });
 
+  it("sets a name with a blank first half as upstream does, the rest centred on the page", async () => {
+    // Upstream's class drops the space between the two halves at the start of the name's line when
+    // the first is blank, so the last is centred on its own; a blank name of both halves stops its
+    // compile, which the port's does not (the next test).
+    const lastOnly = Resume.parse(structuredClone(sample));
+    lastOnly.header.name.first = "";
+    const body = generateBody(pkg, lastOnly, values);
+    const { result, page } = await compileAndDraw(body.latex, body.texts, "last-only");
+    expect(result.log).not.toMatch(/^! /m);
+    const last = page.glyphs.filter((glyph) => glyph.field === "header.last");
+    // Where upstream's own class, through fontspec, sets the O of the sample's last name, with the
+    // port's half-inch margins: the port kept the space between the halves, and set it 4 pt right.
+    expect(last[0]?.x).toBeCloseTo(251.46, 1);
+  });
+
   it("compiles blank fields, empty sections, a bare header and bullets under an award, as edits pass through", async () => {
     // Every argument a macro of the class takes may come empty, as a user's edits leave it.
     const edges = Resume.parse({

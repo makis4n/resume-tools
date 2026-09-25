@@ -65,9 +65,11 @@ Only what the loop needs, and what the editor's page, text and PDF need of the c
   within a word parts the word between two of the PDF's text operators, and the harness's PDF
   check looks for a field's first word in one; so the whole title takes the accent when
   `acvSectionColorHighlight` is true, as the preamble keeps it.
-- **`\makecvheader` starts the name's line and the contacts' line whatever they hold**, with
-  `\leavevmode`: each line ends with `\\`, which stopped the compile where a blank name, or a
-  header with no contacts, left no line to end.
+- **`\makecvheader` starts the name's line and the contacts' line when nothing on them has**,
+  with `\leavevmode`: each line ends with `\\`, which stopped the compile where a name of two
+  blank halves, or a header with no contacts, left no line to end. A line with anything on it is
+  upstream's: a blank first half drops the space before the second at the start of the line, and
+  the last name is centred on its own, as upstream sets it.
 
 tcolorbox stays, loaded with its `skins` library for the photo, which the editor never sets; the
 tree has tikzfill now (decision 0011). It costs about 125 ms of the dump and 0.37 MB of the format,
