@@ -16,9 +16,12 @@
 % that grows with the square of a section title's length. The fonts are Latin Modern in T1, where
 % upstream has Computer Modern in OT1: the editor draws the page from Type 1 outlines, and TeX
 % Live has none for Computer Modern in T1, while Latin Modern is the same design and has them;
-% and in OT1 LaTeX cannot set letters such as ą or Đ, or guillemets, at all. And the file ends
-% where the body would begin, because the editor generates the body from the resume. Everything
-% else is upstream's.
+% and in OT1 LaTeX cannot set letters such as ą or Đ, or guillemets, at all. The port names the
+% accent colour, rtaccent, and sets the section titles and the rules under them in it, where
+% upstream set the rules in black, so that the accent colour control can set it; its default is
+% black, which keeps upstream's look. xcolor takes the place of color, because the control gives
+% the colour as six hex digits, which only xcolor reads. And the file ends where the body would
+% begin, because the editor generates the body from the resume. Everything else is upstream's.
 %
 % Copyright (c) 2026 Sourabh Bajaj
 % Copyright (c) 2020 Jake Gutierrez
@@ -53,7 +56,10 @@
 \usepackage[letterpaper,margin=0.5in]{geometry}
 \usepackage{titlesec}
 \usepackage{marvosym}
-\usepackage[usenames,dvipsnames]{color}
+% xcolor in place of color, and the accent colour named, as the note at the top says. The accent
+% colour control defines rtaccent again after the format.
+\usepackage[usenames,dvipsnames]{xcolor}
+\definecolor{rtaccent}{HTML}{000000}
 \usepackage{verbatim}
 \usepackage{enumitem}
 % dvipdfmx, because the editor makes the PDF from the DVI with xdvipdfmx: in DVI mode hyperref's
@@ -92,9 +98,15 @@
 \setlength{\tabcolsep}{0in}
 
 % Sections formatting
+% The density control respaces what follows, after the format. Normal leaves it as it is:
+% titlesec's 3.5ex before a section title and 2.3ex after it, 16.5pt and 10.8pt here, and the
+% lists' topsep and itemsep, 9pt and 4.5pt for the entries and 4.5pt and 2pt for their bullets.
+% Compact sets each of them lower and relaxed each higher, so that the space between sections,
+% entries and bullets moves together; relaxed sets the two levels apart, since a value above the
+% entries' would more than double the bullets'.
 \titleformat{\section}{
-  \vspace{-4pt}\scshape\raggedright\large
-}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+  \vspace{-4pt}\scshape\raggedright\large\color{rtaccent}
+}{}{0em}{}[\color{rtaccent}\titlerule \vspace{-5pt}]
 
 % Ensure that generate pdf is machine readable/ATS parsable
 \pdfgentounicode=1

@@ -118,7 +118,13 @@ describe("newDocument", () => {
       version: 1,
       template: "jake",
       resume: sample,
-      controls: { pageSize: "letter", margins: 0.5, dateFormat: "MMM yyyy" },
+      controls: {
+        pageSize: "letter",
+        margins: 0.5,
+        accent: "#000000",
+        density: "normal",
+        dateFormat: "MMM yyyy",
+      },
     });
     expect(newDocument("jake", sample, "de-DE").controls.pageSize).toBe("a4");
     expect(newDocument("jake", sample).controls).toEqual(defaultControls(jake));
@@ -254,7 +260,12 @@ describe("apply", () => {
     expect(a4.controls.pageSize).toBe("a4");
     readsBack(a4);
     const reset = apply(a4, { type: "control", name: "margins", value: undefined });
-    expect(reset.controls).toEqual({ pageSize: "a4", dateFormat: "MMM yyyy" });
+    expect(reset.controls).toEqual({
+      pageSize: "a4",
+      accent: "#000000",
+      density: "normal",
+      dateFormat: "MMM yyyy",
+    });
     expect("margins" in reset.controls).toBe(false);
     readsBack(reset);
   });

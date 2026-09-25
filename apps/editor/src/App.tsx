@@ -1,5 +1,6 @@
 import type { Resume, RichText } from "@resume-tools/resume-model";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Controls } from "./editor/Controls";
 import { Compiler, type Shown } from "./editor/compiler";
 import { type Command, type FieldRef, fieldsOf, History, newDocument } from "./editor/document";
 import { Panel, shownFieldsOf } from "./editor/Panel";
@@ -154,6 +155,11 @@ export function App() {
           document={present}
           shownFields={shownFieldsOf(shown.latest, present)}
           onCommand={edit}
+        />
+        <Controls
+          pkg={curated(present.template).package}
+          values={present.controls}
+          onChange={(change) => edit({ type: "control", ...change })}
         />
       </aside>
     </main>

@@ -124,7 +124,7 @@ end to end before the other two templates, so that the editing loop is proven on
 
 ### Stage 5. Style controls
 
-15. [ ] **The controls that need no new fonts.** Each parameter is declared in the package and
+15. [x] **The controls that need no new fonts.** Each parameter is declared in the package and
     applied after the format and before `\begin{document}`, so a change costs one ordinary
     compile. This item covers page size, margins, accent colour, density and date format on
     Jake's Resume.
