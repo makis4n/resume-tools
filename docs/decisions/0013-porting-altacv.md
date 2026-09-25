@@ -116,11 +116,6 @@ text's. Past that:
   characters, 2.2 s for 8,000, where the port takes 77 ms. In `\cvsection`, `\leavevmode` takes
   its place, so that a blank title still starts the line the class ends with `\\`, which would
   otherwise stop the compile. A class without them stops the dump.
-- **No ligatures.** Lato names its ff, fi, fl, ffi and ffl glyphs `uniFB00` to `uniFB04`,
-  Roboto the last four `uniFB01` to `uniFB04`, and Roboto Slab its fl, ffi and ffl, which
-  `glyphText` reads as Unicode's presentation forms, where it reads Latin Modern's `fi` as the
-  two letters, so every field with fi in it failed alignment. The kernel's `selectfont` hook
-  runs `\pdfnoligatures` on each font as it is selected, and a user's `--` stays two hyphens.
 - **TS1's symbols from Latin Modern where a family lacks them.** The kernel declares Roboto Slab and
   Roboto to have TS1's subset 4 and Source Sans its subset 3, each short of many symbols, so LaTeX
   sets a symbol outside a family's subset, such as an arrow, a lone acute accent or a musical note,
@@ -204,9 +199,14 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   harness does not see it, since it checks glyphs by their text, and the round trip checks that
   no density sets a line over another in Roboto for that reason. Clicks on Lato's text resolve
   against boxes twice their size until the reader scales outlines by the matrix.
-- The ligatures and the capitals can come back when `glyphText` reads `uniFB00` to `uniFB04` as
-  the letters they join and the aligner folds case; the capitals then need a way around
+- The capitals can come back when the aligner folds case, and then need a way around
   `\MakeUppercase`'s cost, as the bookmarks did in decision 0008.
+- Each font sets the ligatures its T1 metrics form, as the sample does, and the page reads each as
+  the letters it joins (decision 0009), Lato's and Roboto's `uniFB00` to `uniFB04` among them:
+  ff, fi, fl, ffi and ffl in Lato and Latin Modern, ff, fi, fl and ft in Source Sans, and fi and fl
+  alone in Roboto and Roboto Slab. T1's `,,` is a ligature too, set as `quotedblbase` in every
+  font, as in Jake's, which the page reads as „ and the aligner does not match to the two commas
+  the resume holds, so a field with two commas in a row fails alignment at that glyph.
 - 17 of TS1's symbols draw and reach the PDF but match no character of their field in a title:
   `glyphText` has no reading for eleven of their glyphs' names, such as Latin Modern's `baht` and
   `naira`, and reads six as other text, such as Roboto Slab's `‖` as two bars and `‽` as `!?`. A
@@ -254,8 +254,8 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   class, gives the way back: the side panel stays when the page cannot be shown, so the edit can be
   undone or the item removed, which comes with the review's change to the app once item 9's rewrite
   of the page column has landed.
-- The port's default page is the sample's but for the capitals, the ligatures, the margins, a pale
-  rule in place of the gold, and what has no place in the model.
+- The port's default page is the sample's but for the capitals, the margins, a pale rule in place
+  of the gold, and what has no place in the model.
 - xdvipdfmx warns once for each of the editor's marker specials, which it does not know, as it
   does for Jake's.
 - Plan section 7 lists AltaCV's licence as MIT; the class says LPPL 1.3c.

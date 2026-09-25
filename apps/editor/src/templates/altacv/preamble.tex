@@ -17,9 +17,9 @@
 % fonts of the name and the section titles are the sample's, and the class is AltaCV's with only
 % what the editor's compile loop needs changed, as rt-altacv.cls says at its top. The port changes
 % the sample only as follows, each where it is made. The class is the renamed one, and takes no
-% withhyper option, since it always loads hyperref. No font sets ligatures, and the name and the
-% section titles are not set in capitals, because the editor's page cannot yet match either to the
-% letters the resume holds. A symbol of LaTeX's TS1 encoding that a family lacks, such as an arrow
+% withhyper option, since it always loads hyperref. The name and the section titles are not set in
+% capitals, because the editor's page cannot yet match a capital to the lower-case letter the
+% resume holds. A symbol of LaTeX's TS1 encoding that a family lacks, such as an arrow
 % in Roboto Slab, is set in Latin Modern, where LaTeX would take Computer Modern, whose TS1 fonts
 % the editor's TeX Live has no outlines for, so that neither the page nor the PDF could show it. The
 % margins control sets the margins after the format, the same on every side, and its default is half
@@ -55,14 +55,6 @@
 \def\rmsubstdefault{lmr}
 \def\sfsubstdefault{lmss}
 \def\ttsubstdefault{lmtt}
-% No ligatures, in any font. Lato names its ff, fi, fl, ffi and ffl glyphs uniFB00 to uniFB04,
-% Roboto the last four uniFB01 to uniFB04, and Roboto Slab its fl, ffi and ffl, which the editor's
-% page reads as the single characters of Unicode's presentation forms, so that a field with fi in
-% it would not align with the letters the resume holds, and a click in it would land on the wrong
-% one. So each font is set without its ligatures as it is selected, and a user's -- stays two
-% hyphens. This can go once the page reads those names as the letters they join, as it reads the
-% ones Latin Modern names fi.
-\AddToHook{selectfont}{\pdfnoligatures\font}
 
 % The font size control's sizes, and the density control's spacing, as the note at the top says.
 % \rt@size is the size in scaled points, 10 points until \rtfontsize sets another, and

@@ -1411,6 +1411,53 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     }
   }, 60_000);
 
+  it("sets each font's ligatures as one glyph, which aligns with the letters it joins", async () => {
+    // Each font sets the ligatures its T1 metrics form, as the sample does, and the page reads
+    // each as the letters it joins, Lato's and Roboto's uniFB00 to uniFB04 among them (decision
+    // 0013). Roboto and Roboto Slab form fi and fl alone, and Source Sans ft, and ff but not ffi or
+    // ffl.
+    const LIGATURES: Record<string, string[]> = {
+      lato: ["ff", "ffi", "ffl", "fi", "fl"],
+      roboto: ["fi", "fl"],
+      sourcesans: ["ff", "fi", "fl", "ft"],
+      lm: ["ff", "ffi", "ffl", "fi", "fl"],
+    };
+    /** The ligatures some fields are set with: each glyph that stands for more than a letter. */
+    const ligaturesIn = (page: DrawnPage, ids: string[]) => {
+      const glyphs = ids.flatMap((id) => page.fields.get(id)?.glyphs ?? []);
+      return [
+        ...new Set(glyphs.flatMap(({ text }) => (text && text.length > 1 ? [text] : []))),
+      ].sort();
+    };
+    // The sample's own, in Lato: "offline-first map editor that field teams use".
+    expect(ligaturesIn(drawn, ["larkspur-1.text"])).toEqual(["ffl", "fi"]);
+    const words = "Office staff baffled by fifty fluffy waffles in shifts";
+    const joined = Resume.parse(structuredClone(sample));
+    const [experience] = joined.sections;
+    const entry = experience?.kind === "entries" ? experience.entries[0] : undefined;
+    const bullet = entry?.bullets[0];
+    if (!experience || !entry || !bullet) throw new Error("the sample moved");
+    // The name and a section's title, which are Roboto Slab under every choice; an entry's title,
+    // its subtitle in the family's bold, and a bullet, upright and italic.
+    joined.header.name.last = "Duffield";
+    experience.title = "Offline fieldwork";
+    entry.title = words;
+    entry.subtitle = words;
+    bullet.text = [{ text: `${words}, ` }, { text: words, italic: true }];
+    for (const { id } of pkg.controls.font?.choices ?? []) {
+      const body = generateBody(pkg, joined, { ...values, font: id });
+      const job = `ligatures-${id}`;
+      const { result, page } = await compileAndDraw(body.latex, body.texts, job);
+      expect(result.log, id).not.toMatch(/^! /m);
+      expect(page.missingFonts, id).toEqual(new Map());
+      expect(page.unmatched, id).toBe(0);
+      const text = ["tidewater.title", "tidewater.subtitle", "tidewater-1.text"];
+      expect(ligaturesIn(page, text), id).toEqual(LIGATURES[id]);
+      expect(ligaturesIn(page, ["header.last", "experience.title"]), id).toEqual(["fi", "fl"]);
+      expect(session.pdf(job).error, id).toBeUndefined();
+    }
+  }, 60_000);
+
   it("sets a TS1 symbol a family lacks in Latin Modern, in each font it offers, and makes the PDF", async () => {
     // Roboto Slab, which sets the section titles, and Roboto and Source Sans cover only part of
     // TS1, and LaTeX sets a symbol a family lacks from its substitution family, Computer Modern by
