@@ -530,14 +530,13 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
   }, 30_000);
 
   /**
-   * A page of 8,000 fields of one glyph each, `cell` the LaTeX of the i-th, 40 to a line of the
-   * source, compiled and drawn five times after one draw that loads its fonts: the page, and the
-   * median of the five draws' times in milliseconds.
+   * The page of `count` fields of one glyph each, `cell` the LaTeX of the i-th, 40 to a line of
+   * the source, each line ending in `line`, as the engine compiles it.
    */
-  async function manyFields(job: string, cell: (i: number) => string, line: string) {
-    const cells = Array.from({ length: 8000 }, (_, i) => cell(i));
+  function crowded(job: string, count: number, cell: (i: number) => string, line: string) {
+    const cells = Array.from({ length: count }, (_, i) => cell(i));
     const lines = Array.from(
-      { length: 200 },
+      { length: Math.ceil(count / 40) },
       (_, i) => `${cells.slice(i * 40, i * 40 + 40).join("")}${line}`,
     );
     const body = [
@@ -547,47 +546,81 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     ].join("\n");
     const compiled = session.compile("pdftex", "stock", body, { job, maxPasses: 1 });
     if (!compiled.output) throw new Error(compiled.error);
-    const output = compiled.output;
-    let drawn = await drawPage(output, fonts, new Map());
-    const times: number[] = [];
-    for (let i = 0; i < 5; i++) {
-      const started = performance.now();
-      drawn = await drawPage(output, fonts, new Map());
-      times.push(performance.now() - started);
+    return compiled.output;
+  }
+
+  /**
+   * A page drawn, and the CPU time this thread spent drawing it, in milliseconds: the time it
+   * waits while the other test files run does not count, so a bound in CPU time holds on a slow
+   * shared machine where one in elapsed time may not.
+   */
+  async function timedDraw(output: Uint8Array): Promise<{ page: DrawnPage; ms: number }> {
+    const started = process.threadCpuUsage();
+    const page = await drawPage(output, fonts, new Map());
+    const { user, system } = process.threadCpuUsage(started);
+    return { page, ms: (user + system) / 1000 };
+  }
+
+  /**
+   * A page of 8,000 fields of one glyph each (`crowded`), and the same page with a tenth of them:
+   * each drawn once to load its fonts, then five times, in turn, and the fastest draw of each in
+   * CPU time (`timedDraw`), with the larger page as drawn.
+   */
+  async function tenfold(job: string, cell: (i: number) => string, line: string) {
+    const [small, large] = [800, 8000].map((count) =>
+      crowded(`${job}-${count}`, count, cell, line),
+    );
+    if (!small || !large) throw new Error("no pages");
+    await drawPage(small, fonts, new Map());
+    let page = await drawPage(large, fonts, new Map());
+    let smallMs = Number.POSITIVE_INFINITY;
+    let largeMs = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 5; run++) {
+      smallMs = Math.min(smallMs, (await timedDraw(small)).ms);
+      const drawn = await timedDraw(large);
+      largeMs = Math.min(largeMs, drawn.ms);
+      page = drawn.page;
     }
-    expect(drawn.fields.size, job).toBe(8000);
-    expect(drawn.pageCount, job).toBe(1);
+    expect(page.fields.size, job).toBe(8000);
+    expect(page.pageCount, job).toBe(1);
     expect(
-      [...drawn.fields.values()].every((field) => field.layout),
+      [...page.fields.values()].every((field) => field.layout),
       job,
     ).toBe(true);
-    return { drawn, ms: times.sort((a, b) => a - b)[2] ?? Number.POSITIVE_INFINITY };
+    return { page, small: smallMs, large: largeMs };
   }
 
   it("lays out thousands of fields in time proportional to the page", async () => {
     // The reviewers' page: 8,000 fields of one glyph each, which a template could mark. Laid out
     // field by field over the whole page, it drew in 636 to 726 ms, after every edit's compile.
-    const { ms } = await manyFields(
+    // Ten times the fields cost 12 times the CPU time of the page's tenth now, and cost 73 times
+    // then; so the page is bound by three times ten times its tenth, drawn on the same machine
+    // in the same way, rather than in milliseconds, which a slow shared machine may not meet.
+    // 500 ms stays as a ceiling, should the tenth go slow too.
+    const { small, large } = await tenfold(
       "many",
       (i) => `\\special{rt:b:f${i}}x\\special{rt:e:f${i}}`,
       " ",
     );
-    expect(ms).toBeLessThan(100);
+    expect(large).toBeLessThan(3 * 10 * small);
+    expect(large).toBeLessThan(500);
   }, 60_000);
 
   it("gathers each baseline once, however close a page's baselines lie", async () => {
     // The verifier's page: the 8,000 fields on one line, each raised a scaled point more than the
     // one before, so that each glyph has a baseline of its own within half a point of every other.
-    // Gathered and sorted anew for each baseline, what shares a field's baseline took 2.2 s.
-    const { drawn, ms } = await manyFields(
+    // Gathered and sorted anew for each baseline, what shares a field's baseline took 2.2 s, and
+    // 88 times the CPU time of the page's tenth where it now takes 12 times; bound as above.
+    const { page, small, large } = await tenfold(
       "close",
       (i) => `\\special{rt:b:f${i}}\\rlap{\\raisebox{${i}sp}{x}}\\special{rt:e:f${i}}`,
       "%",
     );
-    const baselines = new Set([...drawn.fields.values()].map((field) => field.layout?.baseline));
+    const baselines = new Set([...page.fields.values()].map((field) => field.layout?.baseline));
     expect(baselines.size).toBe(1);
     expect([...baselines][0]).toHaveLength(8000);
-    expect(ms).toBeLessThan(300);
+    expect(large).toBeLessThan(3 * 10 * small);
+    expect(large).toBeLessThan(500);
   }, 60_000);
 
   it("gives a later page the size the first page set", async () => {

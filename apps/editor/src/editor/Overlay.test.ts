@@ -90,37 +90,36 @@ function special(values: Record<string, string>): string {
 /** The text each row holds. */
 const texts = (text: string, rows: Row[]) => rows.map((row) => text.slice(row.from, row.to));
 
-/** `runs` timings of `work`, in milliseconds, fastest first. */
-function timings(work: () => void, runs: number): number[] {
-  const times: number[] = [];
-  for (let i = 0; i < runs; i++) {
-    const started = performance.now();
-    work();
-    times.push(performance.now() - started);
-  }
-  return times.sort((a, b) => a - b);
+/**
+ * The CPU time this thread spends on `work`, in milliseconds. The time it waits while the other
+ * test files run does not count, and a longer run meets more of that wait, so a bound in CPU time
+ * holds on a slow shared machine where one in elapsed time may not.
+ */
+function cpuMs(work: () => void): number {
+  const started = process.threadCpuUsage();
+  work();
+  const { user, system } = process.threadCpuUsage(started);
+  return (user + system) / 1000;
+}
+
+/** The median of `runs` timings of `work`, in milliseconds of CPU time (`cpuMs`). */
+function median(work: () => void, runs: number): number {
+  const times = Array.from({ length: runs }, () => cpuMs(work)).sort((a, b) => a - b);
+  return times[Math.floor(runs / 2)] ?? Number.POSITIVE_INFINITY;
 }
 
 /**
- * The fastest of `runs` timings of each of `works`, in milliseconds of this thread's CPU time, so
- * that the time the thread waits while the other test files run, which a longer run meets more
- * of, does not count; and the works taken in turn, so that what load is left meets them alike.
+ * The fastest of `runs` timings of each of `works`, in milliseconds of CPU time (`cpuMs`), the
+ * works taken in turn, so that what load is left meets them alike.
  */
 function fastest(works: (() => void)[], runs: number): number[] {
   const best = works.map(() => Number.POSITIVE_INFINITY);
   for (let run = 0; run < runs; run++)
     works.forEach((work, i) => {
-      const started = process.threadCpuUsage();
-      work();
-      const { user, system } = process.threadCpuUsage(started);
-      best[i] = Math.min(best[i] ?? Number.POSITIVE_INFINITY, (user + system) / 1000);
+      best[i] = Math.min(best[i] ?? Number.POSITIVE_INFINITY, cpuMs(work));
     });
   return best;
 }
-
-/** The median of `runs` timings of `work`, in milliseconds. */
-const median = (work: () => void, runs: number) =>
-  timings(work, runs)[Math.floor(runs / 2)] ?? Number.POSITIVE_INFINITY;
 
 describe("layoutRows", () => {
   const face = cmr10();
@@ -174,7 +173,8 @@ describe("layoutRows", () => {
   });
 
   it("breaks a keystroke's text again well within a frame", () => {
-    // What a keystroke costs besides the DOM: the bullet's nodes, breaks and rows, each time.
+    // What a keystroke costs besides the DOM: the bullet's nodes, breaks and rows, each time, in
+    // CPU time, against the 50 ms the plan asks of Node, a bound a real keystroke is far below.
     let i = 0;
     const took = median(() => {
       const at = 100 + (i++ % 25);
