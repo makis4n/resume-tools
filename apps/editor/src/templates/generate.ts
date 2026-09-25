@@ -53,8 +53,8 @@ export class GenerateError extends Error {
  * The longest body the generator builds, in characters. A resume's body is tens of kilobytes, but
  * a package may repeat a list slot any number of times, and packages will come from other users,
  * so the generator stops past this rather than hand TeX a gigabyte. Each tag and list item it
- * renders costs a character as well, so a package that repeats slots which render nothing stops
- * as soon.
+ * renders costs a character as well, and each slot the length of its source, so a package that
+ * repeats slots which render nothing, or a long field, stops as soon.
  */
 export const MAX_BODY = 1_048_576;
 
@@ -71,15 +71,20 @@ export interface GeneratedBody {
   texts: Map<string, string>;
 }
 
-/** What a slot holds while a snippet renders. User text carries the id of its field. */
+/**
+ * What a slot holds while a snippet renders. User text carries the id of its field. Whether a
+ * slot is present is decided once, when its value is built, so a block that tests it costs a
+ * step however long the text is.
+ */
 type Value =
-  | { type: "text"; text: string; field: string }
-  | { type: "rich"; runs: RichText; field: string }
-  | { type: "date"; text: string | undefined; field: string }
-  | { type: "url"; url: string }
-  | { type: "list"; parts: readonly Part[]; separator: string }
+  | { type: "text"; text: string; field: string; present: boolean }
+  /** `text` is the runs joined, which the page shows; `size` their length, addresses included. */
+  | { type: "rich"; runs: RichText; text: string; size: number; field: string; present: boolean }
+  | { type: "date"; text: string | undefined; field: string; present: boolean }
+  | { type: "url"; url: string; present: boolean }
+  | { type: "list"; parts: readonly Part[]; separator: string; present: boolean }
   /** A control's value, which is not a field: it goes in as it is, typeset or raw. */
-  | { type: "value"; text: string };
+  | { type: "value"; text: string; present: boolean };
 
 type ValueOf<T extends SlotType> = Extract<Value, { type: T }>;
 type Scope = Readonly<Record<string, Value>>;
@@ -94,43 +99,45 @@ interface Part {
   scope: Scope;
 }
 
-/**
- * The format for a package and a document's control values. Its name is the package's id when no
- * control is format-bound; otherwise one format stands for each combination of format-bound
- * values, as `<id>-<8 hex digits>`, with the id cut to 55 characters so that the name fits the
- * session's 64 however long the id is. The digits are an FNV-1a hash of the package id and the
- * values as the preamble has them, so values that give the same preamble share a format, and two
- * long ids that begin alike do not.
- */
+/** The name of the format for a package and a document's values, which `generateFormat` gives. */
 export function formatName(pkg: TemplatePackage, values: ControlValues): string {
-  const bound = controlsOf(pkg, values)
-    .filter((control) => control.format)
-    .map((control) => [control.id, control.text]);
-  if (bound.length === 0) return pkg.id;
-  const hash = fnv1a(JSON.stringify([pkg.id, ...bound]));
-  return `${pkg.id.slice(0, 55)}-${hash.toString(16).padStart(8, "0")}`;
+  return generateFormat(pkg, values).name;
 }
 
 /**
  * What the session dumps: the package's preamble with each format-bound control's slot set to its
  * value, followed by the prelude, which comes after the template's own preamble so that it sees
  * hyperref; and the package's files, which the session writes beside it.
+ *
+ * The format is named `<id>-<8 hex digits>`, with the id cut to 55 characters so that the name
+ * fits the session's 64 however long the id is, and the digits an FNV-1a hash of exactly what is
+ * dumped: the preamble and the files. The same dump has the same name, and anything that changes
+ * it has another, be it the template's preamble, a format-bound value it uses, the prelude or a
+ * file, while a format-bound value the preamble does not use keeps the name. Every name ends in
+ * the suffix, so no package's id, however it is spelt, can be another package's format name.
  */
 export function generateFormat(pkg: TemplatePackage, values: ControlValues): GeneratedFormat {
   const scope: Record<string, Value> = {};
   for (const control of controlsOf(pkg, values))
-    if (control.format) scope[control.id] = { type: "value", text: control.text };
+    if (control.format) scope[control.id] = valueSlot(control.text);
   const out = new Output(Number.POSITIVE_INFINITY);
   render({ nodes: parseSnippet(pkg.preamble), scope }, out, new Map());
-  return { name: formatName(pkg, values), preamble: `${out.join()}\n${PRELUDE}`, files: pkg.files };
+  const preamble = `${out.join()}\n${PRELUDE}`;
+  // By name, so that the same files listed in another order are the same dump. Names are keys,
+  // so no two are equal.
+  const files = Object.entries(pkg.files).sort(([a], [b]) => (a < b ? -1 : 1));
+  const hash = fnv1a(JSON.stringify([preamble, files]));
+  const name = `${pkg.id.slice(0, 55)}-${hash.toString(16).padStart(8, "0")}`;
+  return { name, preamble, files: pkg.files };
 }
 
 /**
  * What the session compiles from the format: each control's snippet for its value, a line each,
  * in the schema's order and whether or not the control is format-bound, since a format-bound
  * value is applied as well as dumped (decision 0006); then the `document` snippet, which runs from
- * `\begin{document}` to `\end{document}`. `texts` holds every field the body marks, with the text
- * the page shows for it: the text, a rich field's runs joined, or the formatted dates.
+ * `\begin{document}` to `\end{document}`. `texts` holds every field the body marks, once each,
+ * with the text the page shows for it: the text, a rich field's runs joined, or the formatted
+ * dates. A field's first appearance is the one marked, so the one the user edits.
  */
 export function generateBody(
   pkg: TemplatePackage,
@@ -150,7 +157,7 @@ export function generateBody(
   const out = new Output(MAX_BODY);
   const texts = new Map<string, string>();
   for (const control of controlsOf(pkg, values)) {
-    const scope = { value: { type: "value", text: control.text } } satisfies Scope;
+    const scope = { value: valueSlot(control.text) } satisfies Scope;
     render({ nodes: tree(control.apply), scope }, out, texts);
     out.add("\n");
   }
@@ -247,6 +254,21 @@ interface Build {
 /** The header's contact fields in the order `{{contacts}}` sets them, before the links. */
 const CONTACTS = ["phone", "email", "location"] as const;
 
+/**
+ * The address a contact links to, its snippet's `href`: `mailto:` and the address, trimmed;
+ * `tel:` and the number with every space taken out; and none for the location.
+ */
+function contactAddress(kind: (typeof CONTACTS)[number], text: string): string {
+  switch (kind) {
+    case "email":
+      return `mailto:${text.trim()}`;
+    case "phone":
+      return `tel:${text.replace(/\s/g, "")}`;
+    case "location":
+      return "";
+  }
+}
+
 function documentPart(build: Build, resume: Resume): Part {
   const { snippets } = build.pkg;
   const sections = resume.sections.map((section) => sectionPart(build, section));
@@ -259,37 +281,49 @@ function documentPart(build: Build, resume: Resume): Part {
 
 function headerPart(build: Build, header: Header): Part {
   const { snippets } = build.pkg;
-  const links = header.links.map((link) => linkPart(build, link));
+  const fields = {
+    phone: textSlot("header.phone", header.phone),
+    email: textSlot("header.email", header.email),
+    location: textSlot("header.location", header.location),
+  };
+  const links = header.links.flatMap((link) => linkPart(build, link) ?? []);
   // A contact field is left out when the package has no snippet for it, and when it is empty,
   // so that the separator falls only between the contacts that are there.
   const contacts: Part[] = [];
   for (const kind of CONTACTS) {
     const source = snippets.contact?.[kind];
-    const text = header[kind] ?? "";
-    if (source === undefined || isBlank(text)) continue;
-    const scope: ScopeOf<typeof CONTACT_SLOTS> = { text: textSlot(`header.${kind}`, text) };
+    const text = fields[kind];
+    if (source === undefined || !text.present) continue;
+    const scope: ScopeOf<typeof CONTACT_SLOTS> = {
+      text,
+      href: urlSlot(contactAddress(kind, text.text)),
+    };
     contacts.push({ nodes: build.tree(source), scope });
   }
   const scope: ScopeOf<typeof HEADER_SLOTS> = {
     first: textSlot("header.first", header.name.first),
     last: textSlot("header.last", header.name.last),
     headline: textSlot("header.headline", header.headline),
-    email: textSlot("header.email", header.email),
-    phone: textSlot("header.phone", header.phone),
-    location: textSlot("header.location", header.location),
+    email: fields.email,
+    phone: fields.phone,
+    location: fields.location,
     links: listSlot(links, snippets.separators.links),
     contacts: listSlot([...contacts, ...links], snippets.separators.contacts),
   };
   return { nodes: build.tree(snippets.header), scope };
 }
 
-/** A link through its kind's snippet, or through `other`'s when its kind has none. */
-function linkPart(build: Build, link: Link): Part {
+/**
+ * A link through its kind's snippet, or through `other`'s when its kind has none. A link with
+ * neither a label nor an address, as a new one starts, shows nothing, so it is left out of both
+ * `{{links}}` and `{{contacts}}`, where it would leave a separator with nothing after it.
+ */
+function linkPart(build: Build, link: Link): Part | undefined {
+  const label = textSlot(`${link.id}.label`, link.label);
+  const href = urlSlot(link.href);
+  if (!label.present && !href.present) return undefined;
   const snippets = build.pkg.snippets.link;
-  const scope: ScopeOf<typeof LINK_SLOTS> = {
-    label: textSlot(`${link.id}.label`, link.label),
-    href: { type: "url", url: link.href },
-  };
+  const scope: ScopeOf<typeof LINK_SLOTS> = { label, href };
   return { nodes: build.tree(snippets[link.kind] ?? snippets.other), scope };
 }
 
@@ -356,11 +390,7 @@ function entryPart(build: Build, entry: Entry, role: SectionRole): Part {
     title: textSlot(`${entry.id}.title`, entry.title),
     subtitle: textSlot(`${entry.id}.subtitle`, entry.subtitle),
     place: textSlot(`${entry.id}.place`, entry.place),
-    dates: {
-      type: "date",
-      text: entry.dates && formatDates(entry.dates, build.dateFormat),
-      field: `${entry.id}.dates`,
-    },
+    dates: dateSlot(`${entry.id}.dates`, entry.dates && formatDates(entry.dates, build.dateFormat)),
     bullets: listSlot(bullets, byRole(snippets.separators.bullets, role)),
   };
   return { nodes: build.tree(byRole(snippets.entry, role)), scope };
@@ -371,21 +401,34 @@ function byRole(value: ByRole<string>, role: SectionRole): string {
   return typeof value === "string" ? value : (value[role] ?? value.default);
 }
 
-const textSlot = (field: string, text: string | undefined): ValueOf<"text"> => ({
-  type: "text",
-  text: text ?? "",
-  field,
-});
-const richSlot = (field: string, runs: RichText): ValueOf<"rich"> => ({
-  type: "rich",
-  runs,
-  field,
-});
-const listSlot = (parts: readonly Part[], separator: string): ValueOf<"list"> => ({
-  type: "list",
-  parts,
-  separator,
-});
+// Each slot's presence is decided here, once, by the rule decision 0007 gives: text that shows
+// something, a date that exists, a list with items.
+
+function textSlot(field: string, text = ""): ValueOf<"text"> {
+  return { type: "text", text, field, present: !isBlank(text) };
+}
+
+function richSlot(field: string, runs: RichText): ValueOf<"rich"> {
+  const text = runs.map((run) => run.text).join("");
+  const size = runs.reduce((size, run) => size + run.text.length + (run.href?.length ?? 0), 0);
+  return { type: "rich", runs, text, size, field, present: !isBlank(text) };
+}
+
+function dateSlot(field: string, text: string | undefined): ValueOf<"date"> {
+  return { type: "date", text, field, present: text !== undefined };
+}
+
+function urlSlot(url: string): ValueOf<"url"> {
+  return { type: "url", url, present: !isBlank(url) };
+}
+
+function listSlot(parts: readonly Part[], separator: string): ValueOf<"list"> {
+  return { type: "list", parts, separator, present: parts.length > 0 };
+}
+
+function valueSlot(text: string): Extract<Value, { type: "value" }> {
+  return { type: "value", text, present: !isBlank(text) };
+}
 
 /** A walk's place in a snippet, or in a list whose items it is rendering one by one. */
 type Frame =
@@ -396,8 +439,8 @@ type Frame =
  * Render a part into the output. The walk keeps a stack of its own rather than recursing, as
  * `checkSnippet` does, since blocks nest to any depth in a snippet that parses; and a list's items
  * join the stack one at a time, so every step is small and each is counted against MAX_BODY. A
- * block over a list tests whether it has items, and never iterates: a list renders only through
- * its slot.
+ * block reads the presence its slot's value was built with, and a block over a list never
+ * iterates: a list renders only through its slot.
  */
 function render(part: Part, out: Output, texts: Map<string, string>) {
   const stack: Frame[] = [{ kind: "nodes", nodes: part.nodes, next: 0, scope: part.scope }];
@@ -420,11 +463,11 @@ function render(part: Part, out: Output, texts: Map<string, string>) {
     } else if (node.kind === "text") {
       out.add(node.text);
     } else if (node.kind === "block") {
-      if (isPresent(slot(frame.scope, node.name)) === node.present)
+      if (slot(frame.scope, node.name).present === node.present)
         stack.push({ kind: "nodes", nodes: node.children, next: 0, scope: frame.scope });
     } else {
       const value = slot(frame.scope, node.name);
-      if (value.type !== "list") out.add(renderValue(value, node.raw, texts));
+      if (value.type !== "list") out.add(renderValue(value, node.raw, out, texts));
       else if (node.raw) throw new Error(`${node.name} is a list, which never goes in raw`);
       else stack.push({ kind: "list", list: value, next: 0 });
     }
@@ -438,52 +481,50 @@ function slot(scope: Scope, name: string): Value {
   return value;
 }
 
-/** Whether a block over a slot is kept: text that shows, a date that exists, a list with items. */
-function isPresent(value: Value): boolean {
-  switch (value.type) {
-    case "text":
-    case "value":
-      return !isBlank(value.text);
-    case "rich":
-      return !isBlank(joined(value.runs));
-    case "date":
-      return value.text !== undefined;
-    case "url":
-      return !isBlank(value.url);
-    case "list":
-      return value.parts.length > 0;
-  }
-}
-
-/** A slot other than a list: typeset in its field's markers, or raw, escaped for where it goes. */
+/**
+ * A slot other than a list: typeset in its field's markers, or raw, escaped for where it goes. A
+ * field that is absent sets nothing, markers included. Every render is charged its source's
+ * length before anything is escaped, so a package that repeats a long field reaches MAX_BODY in
+ * proportion, even where the field sets little or nothing.
+ */
 function renderValue(
   value: Exclude<Value, { type: "list" }>,
   raw: boolean,
+  out: Output,
   texts: Map<string, string>,
 ): string {
   switch (value.type) {
     case "value":
+      out.charge(value.text.length);
       return value.text;
     case "url":
       // The schema refuses a typeset URL, since its markers would end up in the address.
       if (!raw) throw new Error("a URL goes in raw");
+      out.charge(value.url.length);
       return escapeUrl(value.url);
     case "text":
+      out.charge(value.text.length);
       if (raw) return escapeText(value.text);
-      return field(value.field, value.text, escapeText(value.text), texts);
+      return value.present ? field(value.field, value.text, escapeText(value.text), texts) : "";
     case "rich":
+      out.charge(value.size);
       if (raw) return richLatex(value.runs);
-      return field(value.field, joined(value.runs), richLatex(value.runs), texts);
+      return value.present ? field(value.field, value.text, richLatex(value.runs), texts) : "";
     case "date":
       if (value.text === undefined) return "";
+      out.charge(value.text.length);
       if (raw) return escapeText(value.text);
       return field(value.field, value.text, escapeText(value.text), texts);
   }
 }
 
-/** A typeset field in its markers, or nothing when it would show nothing. */
+/**
+ * A field in its markers, the first time it renders. A later render of the same field, such as a
+ * link a header sets through both `{{links}}` and `{{contacts}}`, goes in without them, so the
+ * page finds one copy of each field: the first, which is the one the user edits.
+ */
 function field(id: string, text: string, latex: string, texts: Map<string, string>): string {
-  if (isBlank(text)) return "";
+  if (texts.has(id)) return latex;
   texts.set(id, text);
   return `\\rtfield{${id}}{${latex}}`;
 }
@@ -503,9 +544,6 @@ function richLatex(runs: RichText): string {
   return latex;
 }
 
-/** The text a rich field shows: its runs, one after another. */
-const joined = (runs: RichText) => runs.map((run) => run.text).join("");
-
 /** Output as it grows, which stops the moment it passes its limit. */
 class Output {
   private readonly parts: string[] = [];
@@ -521,6 +559,11 @@ class Output {
   /** A step of the walk, which costs a character, so repeating slots that add nothing stops too. */
   step() {
     this.spend(1);
+  }
+
+  /** Work in proportion to a slot's source, such as escaping it, which may add less than it cost. */
+  charge(size: number) {
+    this.spend(size);
   }
 
   join(): string {

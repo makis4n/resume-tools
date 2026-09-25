@@ -75,6 +75,27 @@ describe("collectFields", () => {
     expect(fields.size).toBe(1);
     expect(fields.get("f")?.glyphs).toHaveLength(1);
   });
+
+  it("reads markers whatever their case, as \\MakeUppercase leaves them, and lowercases the id", () => {
+    const p = page([
+      special("RT:B:WORK.TITLE"),
+      ...word("EXP"),
+      special("RT:E:WORK.TITLE"),
+      special("rt:b:B_0.TEXT"),
+      ...word("x"),
+      special("rt:e:b_0.text"),
+      special("RTX:b:not.a.field"),
+    ]);
+    const fields = collectFields(p, textOf);
+    expect([...fields.keys()]).toEqual(["work.title", "b_0.text"]);
+    expect(
+      fields
+        .get("work.title")
+        ?.glyphs.map((g) => g.text)
+        .join(""),
+    ).toBe("EXP");
+    expect(fields.get("b_0.text")?.glyphs).toHaveLength(1);
+  });
 });
 
 describe("alignGlyphs", () => {
@@ -114,5 +135,44 @@ describe("alignGlyphs", () => {
     const f = fieldOf(["a", undefined, "b"]);
     expect(alignGlyphs(f, "ab")).toBe(1);
     expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 1]);
+  });
+
+  it("finds a glyph past characters that set no glyph, taking a surrogate pair as one", () => {
+    // pdfTeX drops an emoji, which is two code units, so "launch" starts at 9.
+    const text = "Led \u{1f680}\u{1f680} launch";
+    const f = fieldOf([..."Ledlaunch"]);
+    expect(alignGlyphs(f, text)).toBe(0);
+    expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 9, 10, 11, 12, 13, 14]);
+  });
+
+  it("skips the invisible characters the generator drops, however many", () => {
+    const f = fieldOf([..."zerowidth"]);
+    expect(alignGlyphs(f, "zero\u{200b}\u{200b}\u{200b}\u{200b}width")).toBe(0);
+    expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 8, 9, 10, 11, 12]);
+  });
+
+  it("finds a word after one in a script the fonts lack", () => {
+    const f = fieldOf([..."Petrov"]);
+    expect(alignGlyphs(f, "\u{418}\u{432}\u{430}\u{43d} Petrov")).toBe(0);
+    expect(f.glyphs.map((g) => g.offset)).toEqual([5, 6, 7, 8, 9, 10]);
+  });
+
+  it("matches a dash or a curly quote where it stands, and within a run it would skip", () => {
+    const quoted = fieldOf(["x", "'", "s"]);
+    expect(alignGlyphs(quoted, "x\u{2019}s")).toBe(0);
+    expect(quoted.glyphs.map((g) => g.offset)).toEqual([0, 1, 2]);
+    // The en dash sits among Cyrillic letters and spaces, which set no glyph.
+    const dashed = fieldOf(["--", ..."English"]);
+    expect(alignGlyphs(dashed, "\u{420}\u{443}\u{441} \u{2013} English")).toBe(0);
+    expect(dashed.glyphs.map((g) => g.offset)).toEqual([4, 6, 7, 8, 9, 10, 11, 12]);
+  });
+
+  it("resynchronises over three code units of ASCII at most", () => {
+    const near = fieldOf(["a", "e"]);
+    expect(alignGlyphs(near, "abcde")).toBe(0);
+    expect(near.glyphs.map((g) => g.offset)).toEqual([0, 4]);
+    const far = fieldOf(["a", "f"]);
+    expect(alignGlyphs(far, "abcdef")).toBe(1);
+    expect(far.glyphs.map((g) => g.offset)).toEqual([0, 1]);
   });
 });

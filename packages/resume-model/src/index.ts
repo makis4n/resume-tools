@@ -19,10 +19,14 @@ import { z } from "zod";
  * and never typeset, until the import pipeline needs them.
  */
 
-/** A node's id. It travels inside a `\special`, so it keeps to characters that need no escaping. */
+/**
+ * A node's id. It travels inside a `\special`, so it keeps to characters that need no escaping,
+ * and it is lowercase: a template may set a field in `\MakeUppercase`, which uppercases the
+ * marker's text too, and lowercase ids let the page read markers case-insensitively.
+ */
 export const Id = z
   .string()
-  .regex(/^[A-Za-z0-9_-]{1,64}$/, "an id is 1 to 64 letters, digits, - or _");
+  .regex(/^[a-z0-9_-]{1,64}$/, "an id is 1 to 64 lowercase letters, digits, - or _");
 export type Id = z.infer<typeof Id>;
 
 /**

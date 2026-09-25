@@ -44,9 +44,33 @@ describe("escapeText", () => {
     expect(escapeText("ok \u{1f642} done")).toBe("ok \u{1f642} done");
   });
 
-  it("passes letters, dashes and curly quotes through", () => {
-    const text = "A naïve façade – “quoted” and ‘single’ — ok -- 3, 50/50 @ [1] + (2) = *";
+  it("passes letters, dashes and curly quotes through, and a straight double quote", () => {
+    const text = 'A naïve façade – “quoted” and ‘single’ — ok -- 3, 50/50 @ (1) + 2 = "3"';
     expect(escapeText(text)).toBe(text);
+  });
+
+  it("turns every space separator into a space, and a no-break one into a tie", () => {
+    for (const space of ["\u{2009}", "\u{3000}", "\u{1680}", "\u{2003}", "\u{205f}"])
+      expect(escapeText(`a${space}b`), JSON.stringify(space)).toBe("a b");
+    for (const space of ["\u{a0}", "\u{202f}", "\u{2007}"])
+      expect(escapeText(`a${space}b`), JSON.stringify(space)).toBe("a~b");
+  });
+
+  it("braces brackets and the asterisk, which raw text after \\\\ or \\item gives up", () => {
+    expect(escapeText("[")).toBe("{[}");
+    expect(escapeText("]")).toBe("{]}");
+    expect(escapeText("*")).toBe("{*}");
+    expect(escapeText("[3 people] led a team*")).toBe("{[}3 people{]} led a team{*}");
+  });
+
+  it("puts an empty group before a backtick, so that ? or ! before it makes no ligature", () => {
+    expect(escapeText("`?`")).toBe("{}`?{}`");
+    expect(escapeText("Rust's `!` too")).toBe("Rust's {}`!{}` too");
+  });
+
+  it("composes an accent typed as a combining mark with its letter", () => {
+    expect(escapeText("e\u{301}")).toBe("\u{e9}");
+    expect(escapeText("Nguye\u{302}\u{303}n")).toBe("Nguy\u{1ec5}n");
   });
 });
 
@@ -75,7 +99,7 @@ describe("isBlank", () => {
   it("is true for text that would show nothing", () => {
     for (const text of ["", "  ", "\t\n", " ", "​", " ‍﻿ "])
       expect(isBlank(text), JSON.stringify(text)).toBe(true);
-    for (const text of ["a", " . ", "​x", "\u{1f642}"])
+    for (const text of ["a", " . ", "​x", "\u{1f642}", "e\u{301}"])
       expect(isBlank(text), JSON.stringify(text)).toBe(false);
   });
 });

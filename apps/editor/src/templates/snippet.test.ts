@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { checkSnippet, parseSnippet, SnippetError, type SnippetNode } from "./snippet";
+import {
+  checkAddresses,
+  checkSnippet,
+  parseSnippet,
+  SnippetError,
+  type SnippetNode,
+} from "./snippet";
 
 const text = (text: string): SnippetNode => ({ kind: "text", text });
 const slot = (name: string, raw = false): SnippetNode => ({ kind: "slot", name, raw });
@@ -43,11 +49,11 @@ describe("parseSnippet", () => {
   });
 
   it("reads a raw slot", () => {
-    expect(parseSnippet("\\href{mailto:{{&email}}}{{{email}}}")).toEqual([
-      text("\\href{mailto:"),
-      slot("email", true),
-      text("}{"),
-      slot("email"),
+    expect(parseSnippet("\\hypersetup{pdfauthor={{{&last}}}}{{{last}}}")).toEqual([
+      text("\\hypersetup{pdfauthor={"),
+      slot("last", true),
+      text("}}{"),
+      slot("last"),
       text("}"),
     ]);
   });
@@ -147,6 +153,37 @@ describe("checkSnippet", () => {
   });
 });
 
+describe("checkAddresses", () => {
+  const slots = { text: "text", href: "url", summary: "rich" } as const;
+  const check = (source: string) => checkAddresses(source, slots);
+  const refused = (name: string) =>
+    `${name} is text; inside \\href or \\url use a url slot, such as href`;
+
+  it("passes a URL slot in an address, and any slot outside one", () => {
+    expect(check("\\href{{{&href}}}{\\underline{{{text}}}}")).toEqual([]);
+    expect(check("\\url {{{&href}}} \\hypersetup{pdftitle={{{&text}}}} {{&summary}}")).toEqual([]);
+    // A name the place does not offer is checkSnippet's to report.
+    expect(check("\\href{{{&nothing}}}{x}")).toEqual([]);
+  });
+
+  it("refuses any other slot in an address, raw or typeset, however deep", () => {
+    expect(check("\\href{mailto:{{&text}}}{{{text}}}")).toEqual([refused("text")]);
+    expect(check("\\mbox{\\url{x{y{{{summary}}}}}}")).toEqual([refused("summary")]);
+    expect(check("\\href{{{#text}}{{&text}}{{/text}}}{x}")).toEqual([refused("text")]);
+    expect(check("\\href\n  {tel:{{&text}}}{x} \\url{{{&summary}}}")).toEqual([
+      refused("text"),
+      refused("summary"),
+    ]);
+  });
+
+  it("reads a backslash before a brace or a backslash as a control symbol", () => {
+    // \\ is a line break, so the "href" after it is text, and \} closes no argument.
+    expect(check("\\\\href{{{&text}}}")).toEqual([]);
+    expect(check("\\href{a\\}{{&text}}}")).toEqual([refused("text")]);
+    expect(check("\\href{a}{{&text}}")).toEqual([]);
+  });
+});
+
 describe("crafted snippets", () => {
   it("checks deep nesting without recursing", () => {
     const depth = 100_000;
@@ -163,6 +200,17 @@ describe("crafted snippets", () => {
     const started = performance.now();
     expect(parseSnippet(blanks)).toEqual([text(blanks)]);
     expect(parseSnippet(tags)).toHaveLength(50_000);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  it("checks addresses in one pass, however deep they nest or often they open", () => {
+    const deep = `${"\\href{".repeat(100_000)}{{&text}}${"}".repeat(100_000)}`;
+    const unclosed = "\\href{\\url{ {{#text}}".repeat(50_000);
+    const started = performance.now();
+    expect(checkAddresses(deep, { text: "text" })).toEqual([
+      "text is text; inside \\href or \\url use a url slot, such as href",
+    ]);
+    expect(checkAddresses(unclosed, { text: "text" })).toEqual([]);
     expect(performance.now() - started).toBeLessThan(1000);
   });
 });

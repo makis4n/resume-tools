@@ -13,35 +13,52 @@ begin marker carrying the paragraph TeX sets the field in.
 ## Decision
 
 - **Text.** User text enters LaTeX only through slots, and every character of it typesets or is
-  dropped. Dropped: Unicode's controls, format characters such as zero-width joiners and U+FEFF,
-  lone surrogates, which UTF-8 cannot encode, and the line and paragraph separators, except that
-  tab, newline, carriage return, U+2028 and U+2029 become a space, since a field is one
-  paragraph. A non-breaking space becomes `~`. Of the ten characters TeX gives a meaning, `\` is
+  dropped. It is composed first (NFC), so an accent typed as a combining mark reaches LaTeX as the
+  letter it has a definition for. Dropped: Unicode's controls, format characters such as
+  zero-width joiners and U+FEFF, lone surrogates, which UTF-8 cannot encode, and the line and
+  paragraph separators, except that tab, newline, carriage return, U+2028 and U+2029 become a
+  space, since a field is one paragraph. Every space separator becomes a space, since LaTeX
+  defines none of them and would join the words on either side, except the no-break ones, U+00A0,
+  U+202F and U+2007, which become `~`. Of the ten characters TeX gives a meaning, `\` is
   `\textbackslash{}`, `^` and `~` are `\textasciicircum{}` and `\textasciitilde{}`, which are the
   ASCII characters in T1 and XeTeX's TU and accents in OT1, and the rest take a backslash. `<`,
   `>` and `|` are `\textless{}`, `\textgreater{}` and `\textbar{}`, because OT1, the encoding of
-  LaTeX's default fonts, holds ¡, ¿ and an em dash at their codes. Everything else passes
+  LaTeX's default fonts, holds ¡, ¿ and an em dash at their codes. `[`, `]` and `*` are braced,
+  as `{[}`, `{]}` and `{*}`, so that raw text right after `\\` or `\item` is never read as an
+  optional argument or a star; and a backtick follows an empty group, so that a `?` or `!` before
+  it cannot make OT1's ¿ or ¡, and still sets as OT1's opening quote. Everything else passes
   through: letters outside ASCII, dashes and curly quotes, which LaTeX's UTF-8 input and XeTeX
-  set, and `--` and the like, which become ligatures. A character LaTeX has no definition for,
-  such as an emoji, the prelude drops with a warning in the log where LaTeX would stop with an
-  error; XeTeX drops a character its font lacks by itself.
+  set; `--` and the like, which become ligatures; and a straight double quote, which OT1 sets as
+  a closing quote, as LaTeX does, and T1 (item 16) as itself. A character LaTeX has no definition
+  for, such as an emoji, the prelude drops with a warning in the log where LaTeX would stop with
+  an error, and so it does with a command the UTF-8 input maps a character onto that the font
+  encoding has no glyph for, such as `\k` for `ą` or `\guillemetleft` for `«` in OT1: a symbol
+  sets nothing, and an accented letter its base letter. XeTeX drops a character its font lacks by
+  itself.
 - **Presence.** A text is present when more than whitespace is left after the drops. A typeset
   slot that is absent renders nothing, markers included, and `{{#name}}` keeps its block only when
-  the slot is present: text by that rule, a date that exists, a list with items.
+  the slot is present: text by that rule, a date that exists, a list with items. Presence is
+  decided once, when a slot's value is built. A link with neither a label nor an address, as a
+  new one starts, is left out of `{{links}}` and `{{contacts}}`, so that no separator is left
+  with nothing after it.
 - **Addresses.** A URL slot drops the same characters and the whitespace around the address, and
   percent-encodes as UTF-8 anything outside RFC 3986's unreserved and reserved characters and
   `%`, and `$` and `~`, which hyperref does not turn back. It then writes `%`, `#`, `&` and `_` as
   `\%`, `\#`, `\&` and `\_`, which hyperref turns back inside `\href` and `\url` whether or not
   they sit in another macro's argument, as a link in rich text always does. A `%` already there is
   kept, since an address may be encoded already. Rich runs are bold outside italic and a link
-  outside both: `\href{...}{\textbf{\textit{...}}}`.
+  outside both: `\href{...}{\textbf{\textit{...}}}`. A contact snippet's `href` is the address the
+  generator builds: `mailto:` and the email, trimmed; `tel:` and the phone with its whitespace
+  taken out; and none for the location.
 - **Dates** are the generator's, never TeX's, with English month names: `Jun 2020`, `June 2020`,
   `06/2020` or `2020`, and a date stored as a year is the year in every format. A range is joined
   by an en dash between spaces, an ongoing one ends in `Present`, and a single date stands alone.
 - **The prelude** follows the template's preamble, so `\texorpdfstring` is hyperref's when the
   template loads hyperref. `\rtfield{<id>}{<content>}` is
-  `\texorpdfstring{\leavevmode\special{rt:b:<id>}\rt@par{<id>}<content>\special{rt:e:<id>}}{<content>}`.
-  `\rt@par` is protected, so a moving argument writes it rather than running it.
+  `\texorpdfstring{\leavevmode\special{rt:b:<id>}\rt@par{<id>}<content>\special{rt:e:<id>}}{<content>}`,
+  where each special writes the id through `\detokenize`, so that a character a template makes
+  active, as underscore.sty does `_`, cannot expand inside a marker. `\rt@par` is protected, so a
+  moving argument writes it rather than running it.
 - **The paragraph special**, the contract item 9's overlay reads, follows the begin marker
   directly and is measured by TeX at the field's start. It is `rt:p:<id>:` and then `key=value`
   pairs joined by `;`, always these and in this order:
@@ -52,19 +69,28 @@ begin marker carrying the paragraph TeX sets the field in.
   | `pretolerance`, `tolerance` | integers |
   | `emergencystretch`, `hangindent` | dimensions |
   | `hangafter`, `parshape` | integers |
+  | `inner` | `1` in restricted horizontal mode, such as a tabular cell or an `\mbox`, where TeX never breaks a line (`\ifinner`), and `0` elsewhere |
   | `shape` | each line of `\parshape` as `<indent>,<length>`, joined by `\|`, and empty when `parshape` is 0 |
 
-  A bullet in `article`'s itemize at 11 pt ends `parshape=1;shape=27.37506pt,471.28752pt`.
+  A bullet in `article`'s itemize at 11 pt ends `parshape=1;inner=0;shape=27.37506pt,471.28752pt`.
+  Item 9 breaks a field's lines where TeX would when `inner` is 0 and keeps them whole when it is
+  1, and reads the id case-insensitively, as the page reads the markers.
 - **Fields** are named `<node id>.<slot>`, and the header's `header.<slot>`; a contact snippet's
   `text` is the header field. The body comes with `texts`, the page's source for each field's
   text: the model's text, so offsets are the model's, a rich field's runs joined, or the dates as
-  formatted.
-- **Formats** are named by the package id when no control is format-bound, and otherwise
-  `<id cut to 55 characters>-<8 hex digits>`, the digits the FNV-1a 32-bit hash of the JSON of the
-  package id and the format-bound `[control, value]` pairs in the schema's order, each value as
-  the preamble has it: one format for each combination, a name the session takes however long the
-  id, and no name shared by two long ids that begin alike. The dumped preamble is the package's
-  with its slots filled, then the prelude.
+  formatted. A field is marked the first time it renders, and a later render of it, such as a
+  link a header sets through both `{{contacts}}` and `{{links}}`, goes in without markers: the
+  first appearance of a field is the editable one. The page reads the markers case-insensitively,
+  since a template may set a field in `\MakeUppercase`, which uppercases its markers too, and ids
+  are lowercase (decision 0006).
+- **Formats** are named `<id cut to 55 characters>-<8 hex digits>`, the digits the FNV-1a 32-bit
+  hash of the JSON of exactly what is dumped: the preamble as the session gets it, and the
+  package's files by name. The same dump has the same name; anything that changes what is dumped
+  changes it, be it the template's preamble, a format-bound value the preamble uses, the prelude
+  or a file; and a format-bound value the preamble does not use keeps it. A name fits the
+  session's 64 characters however long the id, and every name ends in the suffix, so no package's
+  id can be another package's format name. The dumped preamble is the package's with its slots
+  filled, then the prelude.
 - **The body** is each offered control's snippet for its value, a line each, in the schema's
   order (`pageSize`, `margins`, `fontSize`, `font`, `accent`, `density`), format-bound or not;
   then the `document` snippet, which runs from `\begin{document}` to `\end{document}` as decision
@@ -73,23 +99,36 @@ begin marker carrying the paragraph TeX sets the field in.
   with no snippet, such as a font the package no longer lists, is a `GenerateError`.
 - **The cap.** A body stops at `MAX_BODY`, 1,048,576 characters, with a `GenerateError`: a package
   may repeat a list slot any number of times, and packages will come from other users. Each tag
-  and list item rendered costs a character too, so slots repeated around nothing stop as soon, and
-  the walk keeps its own stack, so blocks nested past a call stack's depth still render.
+  and list item rendered costs a character too, so slots repeated around nothing stop as soon;
+  each slot rendered also costs its source's length, charged before it is escaped, so a package
+  that repeats a long field stops in proportion however little the field sets; and a block reads
+  a presence decided once, so testing a long field costs a step. The walk keeps its own stack, so
+  blocks nested past a call stack's depth still render.
 
 ## Consequences
 
 - The aligner does not yet pair an accented letter with its two OT1 glyphs (item 16). A typed
   `^` or `~` sets OT1's circumflex and tilde accent glyphs, which `glyphs.ts` reads as the
   characters.
+- In OT1 the characters LaTeX's UTF-8 input defines only for T1, such as `ą`, `Đ`, `Þ`, `ŋ`,
+  guillemets and low quotes, set nothing or their base letter, with a warning in the log, and a
+  field that holds one does not align with the model's text. T1 fonts (item 16) fix both.
+- A field set in `\MakeUppercase` is found, but its glyphs do not align with the model's text
+  until the aligner learns case folding (item 9).
+- Two texts can share a body, since a soft hyphen or a zero-width space changes only `texts`:
+  item 8 must treat a body and its `texts` as one unit when it drops a stale compile.
 - LaTeX 2023 sets `\$`, its itemize bullet and characters such as `•`, `°` and `€` from TS1, even
   in an OT1 document. The engine tree has no Type 1 fonts for TS1, and `tfm.ts` refuses its TFMs,
   which are padded past the length their header gives, so the page cannot draw them yet.
-- Raw text in an address, as in `\href{mailto:{{&email}}}`, is escaped as text. hyperref turns
-  back `\%`, `\#`, `\&` and `\_`, which covers what an email address usually holds; any other
-  escape, a tilde's among them, reaches the address as written.
+- An address is only ever a URL slot: the schema refuses a text slot, raw or typeset, inside
+  `\href` or `\url`, where the escapes for typesetting break, and contact snippets get `href`
+  from the generator. The check reads a snippet's own text, so a class whose own macro builds an
+  address from a slot's text, as a template's email macro may, is outside it: a port has to link
+  the contact through `href` instead.
 - A template that needs a separator only between the contacts present uses `{{contacts}}`.
 - Anything a package cannot express is still a generator feature or a new record, never package
   code.
 - The prelude replaces LaTeX's error for an undefined character, and the copy the kernel restores
-  at the start of every job. A newer LaTeX may rename them; the round trip in `generate.test.ts`
+  at the start of every job, and its error for a text command the font encoding lacks,
+  `\TextSymbolUnavailable`. A newer LaTeX may rename them; the round trip in `generate.test.ts`
   fails if such a character stops the compile again.

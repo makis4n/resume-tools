@@ -7,24 +7,29 @@
  * start a comment, enter math or call a macro, whatever the template does with the result.
  */
 
-/**
- * What means nothing on a page, or what TeX would refuse: controls, format characters such as
- * zero-width joiners and U+FEFF, lone surrogates, which UTF-8 cannot encode, and the line and
- * paragraph separators.
- */
-const INVISIBLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu;
+import { INVISIBLE } from "../tex/fields";
 
-/** Every character `escapeText` changes: the invisible ones, and those TeX gives a meaning. */
-const TEXT_CHANGES = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp} \\{}$&#^_%~<>|]/gu;
+/**
+ * Every character `escapeText` changes: the invisible ones, which the page's aligner skips too;
+ * every space separator; and those TeX or OT1 read as something else.
+ */
+const TEXT_CHANGES = new RegExp(`${INVISIBLE.source}|[\\p{Zs}\\\\{}$&#^_%~<>|[\\]*\`]`, "gu");
+
+/** A space separator, such as a thin or an ideographic space, which LaTeX has no definition for. */
+const SPACE_SEPARATOR = /\p{Zs}/u;
 
 const TEXT_ESCAPES: Readonly<Record<string, string>> = {
   // A field is one paragraph, since Enter inserts nothing (decision 0004), so a break is a space.
   "\t": " ",
   "\n": " ",
   "\r": " ",
-  " ": " ",
-  " ": " ",
-  " ": "~",
+  "\u2028": " ",
+  "\u2029": " ",
+  // The space separators that do not break; any other becomes a space. LaTeX defines none of
+  // them, so each would be left out, joining the words on either side.
+  "\u00a0": "~",
+  "\u202f": "~",
+  "\u2007": "~",
   // The ten characters TeX gives a meaning to. The caret and the tilde are the ASCII characters
   // where the font encoding has them, T1 and XeTeX's TU; in OT1 LaTeX sets them as accents.
   "\\": "\\textbackslash{}",
@@ -41,15 +46,28 @@ const TEXT_ESCAPES: Readonly<Record<string, string>> = {
   "<": "\\textless{}",
   ">": "\\textgreater{}",
   "|": "\\textbar{}",
+  // Braced, so that raw text right after \\ or \item is never read as an optional argument or
+  // a star.
+  "[": "{[}",
+  "]": "{]}",
+  "*": "{*}",
+  // After an empty group, so that a ? or ! before it cannot make OT1's ¿ or ¡ ligature. It still
+  // sets as OT1's opening quote, which the page reads as a backtick.
+  "`": "{}`",
 };
 
 /**
- * Escape text for a text, rich or date slot, typeset or raw. What is not escaped passes through:
- * letters outside ASCII, dashes and curly quotes, which LaTeX's UTF-8 input and XeTeX typeset,
- * and anything else, which the prelude has LaTeX drop when it has no definition for it.
+ * Escape text for a text, rich or date slot, typeset or raw. The text is composed first (NFC), so
+ * an accent typed as a combining mark reaches LaTeX as the letter it has a definition for. What
+ * is not escaped passes through: letters outside ASCII, dashes and curly quotes, which LaTeX's
+ * UTF-8 input and XeTeX typeset; a straight double quote, which OT1 sets as a closing quote, as
+ * LaTeX does; and anything else, which the prelude has LaTeX drop when it has no definition for
+ * it or the font encoding no glyph.
  */
 export function escapeText(text: string): string {
-  return text.replace(TEXT_CHANGES, (char) => TEXT_ESCAPES[char] ?? "");
+  return text
+    .normalize("NFC")
+    .replace(TEXT_CHANGES, (char) => TEXT_ESCAPES[char] ?? (SPACE_SEPARATOR.test(char) ? " " : ""));
 }
 
 /**
@@ -89,8 +107,9 @@ const hex = (byte: number) => byte.toString(16).toUpperCase().padStart(2, "0");
 
 /**
  * True when a text would show nothing: only whitespace is left once the characters `escapeText`
- * drops are gone. The generator leaves such a field out, as it leaves out an empty one.
+ * drops are gone. The generator leaves such a field out, as it leaves out an empty one. It reads
+ * the text composed, as `escapeText` does.
  */
 export function isBlank(text: string): boolean {
-  return text.replace(INVISIBLE, "").trim() === "";
+  return text.normalize("NFC").replace(INVISIBLE, "").trim() === "";
 }

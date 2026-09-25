@@ -65,18 +65,21 @@ behind, which TeX would read as the end of a paragraph. A slot is never removed 
 A slot is `text`, a plain string; `rich`, runs that may be bold, italic or links; `date`,
 formatted by the generator; `url`; or `list`, the node's children, each set by its own snippet
 and joined by a separator. A URL is only raw, as in `\href{{{&href}}}{{{label}}}`, since markers
-would end up in the address, and raw text serves wherever else a marker would break, as in
-`\href{mailto:{{&email}}}`. A list goes in typeset or names a block, never raw. User text enters
-LaTeX only through slots, which the generator escapes, so keeping it from acting as LaTeX is the
-generator's job and never a template's. Packages will come from other users, so the parser's cost
-grows only with a snippet's length, whatever the snippet holds, and the checker does not recurse:
-a crafted package can neither stall validation nor crash it.
+would end up in the address, and an address is only ever a URL slot: text escaped for typesetting
+breaks inside `\href` and `\url`, so the schema refuses any other slot in their first argument,
+and `contact.email` and `contact.phone` carry an `href` the generator builds. Raw text serves
+where a marker would break outside an address, as in a PDF string such as `pdftitle`. A list goes
+in typeset or names a block, never raw. User text enters LaTeX only through slots, which the
+generator escapes, so keeping it from acting as LaTeX is the generator's job and never a
+template's. Packages will come from other users, so the parser's cost grows only with a snippet's
+length, whatever the snippet holds, and the checker does not recurse: a crafted package can
+neither stall validation nor crash it.
 
 | Snippet | Slots |
 |---|---|
 | `document` | `header`, `sections` (lists; the header is a list of one) |
 | `header` | `first`, `last`, `headline`, `email`, `phone`, `location` (text); `links`, `contacts` (lists) |
-| `contact.phone`, `.email`, `.location` | `text` (text) |
+| `contact.phone`, `.email`, `.location` | `text` (text), `href` (url: `mailto:` or `tel:` and the field, which the generator builds; none for the location) |
 | `link.other`, and one for any other link kind | `label` (text), `href` (url) |
 | `section.entries`, `.list`, `.labelled` | `title` (text); `entries` or `items` (list) |
 | `section.paragraph` | `title` (text), `text` (rich) |
@@ -159,13 +162,14 @@ Dates      { start, end? }: YYYY or YYYY-MM, and end may be "present"
 RichText   { text, bold?, italic?, href? }[]
 ```
 
-Every node a field lives on has an id of 1 to 64 letters, digits, `-` and `_`, unique across the
-document, which the markers carry without escaping and which moves with its node in a reorder. A
-field is named by its node's id and its own name: `header.first`, `.last`, `.headline`, `.email`,
-`.phone` and `.location`; `<link>.label`; `<section>.title`, and `.text` for a paragraph;
-`<entry>.title`, `.subtitle`, `.place` and `.dates`; `<bullet>.text`; `<item>.text` and
-`.label`. The names are unique because node ids are, and no node has a field named like one of
-the header's.
+Every node a field lives on has an id of 1 to 64 lowercase letters, digits, `-` and `_`, lowercase
+because a template may set a field in `\MakeUppercase`, which uppercases its markers too, unique
+across the document, which the markers carry without escaping and which moves with its node in a
+reorder. A field is named by its node's id and its own name: `header.first`, `.last`,
+`.headline`, `.email`, `.phone` and `.location`; `<link>.label`; `<section>.title`, and `.text`
+for a paragraph; `<entry>.title`, `.subtitle`, `.place` and `.dates`; `<bullet>.text`;
+`<item>.text` and `.label`. The names are unique because node ids are, and no node has a field
+named like one of the header's.
 
 Dates are ISO 8601 at reduced precision: `YYYY-MM`, which `<input type="month">` reads and
 writes, or `YYYY`. `end: "present"` means ongoing, and `start` alone is a single date, such as an

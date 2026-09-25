@@ -3,9 +3,11 @@
  *
  * A snippet is template text with slots, in a small language shaped like Mustache. `{{title}}` is
  * a typeset slot: the field, escaped for LaTeX and wrapped in its markers. `{{&href}}` is a raw
- * slot: the value escaped for where it goes, with no markers, which is the only way to use a URL
- * and the way to put text where a marker would break, as in `\href{mailto:{{&email}}}`. A
- * block, `{{#bullets}}...{{/bullets}}`, is kept when its slot is present, and
+ * slot: the value escaped for where it goes, with no markers. It is the only way to use a URL,
+ * and an address is only ever a URL slot, as in `\href{{{&href}}}{{{text}}}`, since text escaped
+ * for typesetting breaks inside `\href` and `\url`; raw text serves where a marker would break
+ * outside an address, as in a PDF string such as `pdftitle`. A block,
+ * `{{#bullets}}...{{/bullets}}`, is kept when its slot is present, and
  * `{{^bullets}}...{{/bullets}}` when it is absent. User text reaches LaTeX only through slots, so
  * whether it can act as LaTeX is up to the generator, never to a template (decision 0006).
  *
@@ -132,6 +134,66 @@ export function checkSnippet(
   }
   return [...problems];
 }
+
+/**
+ * Check what a snippet puts in an address, the first argument of `\href` or `\url`, where
+ * hyperref reads a URL: only a URL slot may go there, and the message says so for any other.
+ * Text escaped for typesetting breaks in an address, since hyperref turns back only some of the
+ * escapes (decision 0007), and a typeset slot would put its markers there; the generator builds a
+ * URL slot for what needs a link, such as a contact's `href`. One pass over the source counts
+ * braces, however the arguments nest, so the check costs time in proportion to its length.
+ */
+export function checkAddresses(
+  source: string,
+  slots: Readonly<Record<string, SlotType>>,
+): string[] {
+  const problems = new Set<string>();
+  const tags = scan(source);
+  // The brace depth inside each address that is open, the innermost last.
+  const addresses: number[] = [];
+  let depth = 0;
+  let next = 0;
+  let at = 0;
+  while (at < source.length) {
+    const tag = tags[next];
+    if (tag !== undefined && tag.at <= at) {
+      next++;
+      at = Math.max(at, tag.to);
+      if (addresses.length === 0 || (tag.sigil !== "" && tag.sigil !== "&")) continue;
+      // A name the place does not offer is checkSnippet's to report.
+      const type = Object.hasOwn(slots, tag.name) ? slots[tag.name] : undefined;
+      if (type !== undefined && type !== "url")
+        problems.add(`${tag.name} is text; inside \\href or \\url use a url slot, such as href`);
+      continue;
+    }
+    if (source[at] === "\\") {
+      COMMAND.lastIndex = at;
+      const command = COMMAND.exec(source);
+      if (command === null) {
+        // A control symbol, such as \{ or \\, unless a tag begins right after the backslash.
+        at += tag?.at === at + 1 ? 1 : 2;
+        continue;
+      }
+      at = COMMAND.lastIndex;
+      const name = command[1];
+      if ((name === "href" || name === "url") && source[at] === "{" && tag?.at !== at) {
+        addresses.push(++depth);
+        at++;
+      }
+      continue;
+    }
+    if (source[at] === "{") depth++;
+    else if (source[at] === "}") {
+      if (addresses.at(-1) === depth) addresses.pop();
+      depth--;
+    }
+    at++;
+  }
+  return [...problems];
+}
+
+/** A control word, and the spaces TeX skips after it. */
+const COMMAND = /\\([A-Za-z]+)\s*/y;
 
 /** Every well-formed tag in a snippet, in order. */
 function scan(source: string): Tag[] {
