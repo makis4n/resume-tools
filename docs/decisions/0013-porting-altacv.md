@@ -49,7 +49,8 @@ notice. The package's `source` names the licence, `LPPL-1.3c`, and the author.
 
 ### What the class changes, and why
 
-Only what the loop needs, as decision 0008 has a port change, and what the tree forced:
+Only what the loop needs, as decision 0008 has a port change, what the tree forced, and what the
+review of the port found the editor's page and text need of the class's macros:
 
 - **pdfx is not loaded.** It makes PDF/A for pdfTeX's PDF mode. hyperref, which pdfx loaded, is
   loaded in its place on the dvipdfmx driver, with `bookmarks=false` and `hidelinks`, as decision
@@ -65,6 +66,12 @@ Only what the loop needs, as decision 0008 has a port change, and what the tree 
 - **pgf takes the dvipdfmx driver**, for hyperref's reason: in DVI mode pgf takes dvips's, whose
   PostScript xdvipdfmx cannot run, and the PDF would lose a tag's frame. Every later pdfTeX port
   that loads pgf does the same.
+- **`\printinfo` sets a contact's text as it comes.** Upstream re-reads it through
+  `\utffriendlydetokenize`, a `\scantokens` with `~`, `_`, `&`, `$` and `#` made ordinary, so that
+  one typed raw prints. The generator escapes all five already, and writes `~` for a no-break space
+  (U+00A0, U+202F, U+2007), which the re-read printed as a tilde on the page and in the PDF, so that
+  a pasted phone number failed alignment. The space the re-read left after the text stays, so the
+  contacts are as far apart as upstream's.
 
 The class's other `\RequirePackage`s are all in the tree but simpleicons, which it loads only if
 present, falling back from `\xtwitter` to `\twitter`, and academicons, which it loads only when

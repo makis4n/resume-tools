@@ -1,7 +1,8 @@
 /**
  * What a PDF from xdvipdfmx holds, read back for the validation harness and the engine's tests:
- * its page size, whether its fonts carry ToUnicode maps, and the strings its text operators show.
- * The ATS reads the PDF's text, so these are what say the PDF is one it can read.
+ * its page size, whether its fonts carry ToUnicode maps, and the strings its text operators show,
+ * and where. The ATS reads the PDF's text, so these are what say the PDF is one it can read; and
+ * the page is drawn from the same output, so where the PDF shows a text is where the page must.
  *
  * It reads only what a PDF made at compression level 0 (`PdfOptions.compress`) keeps as plain
  * text: xdvipdfmx then writes every stream, object streams among them, unfiltered, so the page
@@ -66,11 +67,40 @@ export function hasToUnicode(pdf: Uint8Array): boolean {
  * such as fonts and ToUnicode maps, hold no text operators.
  */
 export function shownStrings(pdf: Uint8Array): string[] {
+  return shownTexts(pdf).map((shown) => shown.text);
+}
+
+/** What one text-showing operator shows, and where. */
+export interface ShownText {
+  /** Its strings joined, as `shownStrings` gives them. */
+  text: string;
+  /**
+   * Its strings and the kerns between them as a TJ gives them, in thousandths of the font's size,
+   * a negative kern moving the next glyph right; a Tj, ' or " shows one string.
+   */
+  parts: (string | number)[];
+  /**
+   * Where its first glyph's origin is, in big points, in the space of the content stream that
+   * shows it: for a page's content, the page's own, from the lower left corner. That is the text
+   * matrix's origin through the transformation matrix, `cm` by `cm` and `q` and `Q` as the stream
+   * has them, which is where xdvipdfmx places a line of text; and a TJ's kerns before its first
+   * string move it. NaN where the operator follows another show with no move of the text between
+   * them, since the first moved the text by its glyphs' widths, which this does not read.
+   */
+  x: number;
+  y: number;
+}
+
+/**
+ * What each of the PDF's text-showing operators shows, and where, in the order `shownStrings`
+ * reads them. The graphics state starts afresh in each content stream.
+ */
+export function shownTexts(pdf: Uint8Array): ShownText[] {
   const text = asText(pdf);
   const contents = new Set<number>();
   for (const match of text.matchAll(/\/Contents\s*(\[[^\]]*\]|\d+\s+\d+\s+R)/g))
     for (const ref of (match[1] ?? "").matchAll(/(\d+)\s+\d+\s+R/g)) contents.add(Number(ref[1]));
-  const shown: string[] = [];
+  const shown: ShownText[] = [];
   for (const stream of streamsOf(text)) {
     const content = contents.has(stream.object) || /\/Subtype\s*\/Form\b/.test(stream.dict);
     if (content && !/\/Filter\b/.test(stream.dict)) readContent(stream.data, shown);
@@ -164,11 +194,73 @@ function hexString(content: string, from: number): [string, number] {
 /** A run of regular characters: a number, a name's body or an operator. */
 const REGULAR = /[^\s()<>[\]{}/%]+/y;
 
-/** Add what each text-showing operator of a content stream shows to `shown`. */
-function readContent(content: string, shown: string[]) {
-  /** The operands since the last operator: strings, and arrays of the strings they hold. */
-  let operands: (string | string[])[] = [];
-  let array: string[] | undefined;
+/** An affine transformation as PDF writes one, `[a b c d e f]`. */
+type Matrix = readonly [number, number, number, number, number, number];
+
+const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
+
+/** `m`, then `n`: PDF's `m × n`, which maps a point through `m` and the result through `n`. */
+function times(m: Matrix, n: Matrix): Matrix {
+  const [a, b, c, d, e, f] = m;
+  const [p, q, r, s, t, u] = n;
+  return [
+    a * p + b * r,
+    a * q + b * s,
+    c * p + d * r,
+    c * q + d * s,
+    e * p + f * r + t,
+    e * q + f * s + u,
+  ];
+}
+
+/** A move by `x` and `y`. */
+const translation = (x: number, y: number): Matrix => [1, 0, 0, 1, x, y];
+
+/** Add what each text-showing operator of a content stream shows, and where, to `shown`. */
+function readContent(content: string, shown: ShownText[]) {
+  /** The operands since the last operator: strings, numbers, and arrays of the two. */
+  let operands: (string | number | (string | number)[])[] = [];
+  let array: (string | number)[] | undefined;
+  /** The last `count` operands, when they are all numbers. */
+  const numbers = (count: number) => {
+    const last = operands.slice(-count);
+    return last.length === count && last.every((operand) => typeof operand === "number")
+      ? (last as number[])
+      : undefined;
+  };
+  // The transformation matrix and the copies `q` saves; the text line matrix and the text matrix;
+  // and whether the text matrix is where the next glyph starts, which a show leaves it not.
+  let ctm = IDENTITY;
+  const saved: Matrix[] = [];
+  let line = IDENTITY;
+  let matrix = IDENTITY;
+  let placed = true;
+  let size = 0;
+  let scaling = 1;
+  let leading = 0;
+  const moveTo = (next: Matrix) => {
+    line = next;
+    matrix = next;
+    placed = true;
+  };
+  const show = (parts: (string | number)[]) => {
+    let x = Number.NaN;
+    let y = Number.NaN;
+    if (placed) {
+      // A TJ's kerns before its first string move its first glyph.
+      let kern = 0;
+      for (const part of parts) {
+        if (typeof part === "string") break;
+        kern -= (part / 1000) * size * scaling;
+      }
+      const origin = times(times(translation(kern, 0), matrix), ctm);
+      x = origin[4];
+      y = origin[5];
+    }
+    const text = parts.filter((part) => typeof part === "string").join("");
+    shown.push({ text, parts, x, y });
+    placed = false;
+  };
   let at = 0;
   while (at < content.length) {
     const char = content[at] as string;
@@ -190,17 +282,38 @@ function readContent(content: string, shown: string[]) {
       at++;
     } else if (char === ">" || char === "{" || char === "}") at++;
     else {
-      // A name (after its slash) or a number is an operand this does not need; anything else
-      // is an operator, which ends its operands.
+      // A name (after its slash) is an operand this does not need, and a number one it may;
+      // anything else is an operator, which ends its operands.
       const name = char === "/";
       REGULAR.lastIndex = name ? at + 1 : at;
       const word = REGULAR.exec(content)?.[0] ?? "";
       at = REGULAR.lastIndex > at ? REGULAR.lastIndex : at + 1;
-      if (name || /^[-+.\d]/.test(word)) continue;
+      if (name) continue;
+      if (/^[-+.\d]/.test(word)) {
+        const number = Number(word);
+        if (Number.isFinite(number)) (array ?? operands).push(number);
+        continue;
+      }
       const last = operands.at(-1);
-      if (word === "TJ" && Array.isArray(last)) shown.push(last.join(""));
-      else if ((word === "Tj" || word === "'" || word === '"') && typeof last === "string")
-        shown.push(last);
+      const [first, second] = numbers(2) ?? [];
+      const six = numbers(6) as Matrix | undefined;
+      if (word === "TJ" && Array.isArray(last)) show(last);
+      else if (word === "Tj" && typeof last === "string") show([last]);
+      else if ((word === "'" || word === '"') && typeof last === "string") {
+        moveTo(times(translation(0, -leading), line));
+        show([last]);
+      } else if (word === "q") saved.push(ctm);
+      else if (word === "Q") ctm = saved.pop() ?? ctm;
+      else if (word === "cm" && six) ctm = times(six, ctm);
+      else if (word === "BT") moveTo(IDENTITY);
+      else if ((word === "Td" || word === "TD") && first !== undefined && second !== undefined) {
+        if (word === "TD") leading = -second;
+        moveTo(times(translation(first, second), line));
+      } else if (word === "Tm" && six) moveTo(six);
+      else if (word === "T*") moveTo(times(translation(0, -leading), line));
+      else if (word === "TL") leading = numbers(1)?.[0] ?? leading;
+      else if (word === "Tf") size = numbers(1)?.[0] ?? size;
+      else if (word === "Tz") scaling = (numbers(1)?.[0] ?? 100) / 100;
       else if (word === "ID") {
         // An inline image's data runs to its EI, and may hold any byte.
         const end = content.slice(at).search(/\sEI(?=\s|$)/);

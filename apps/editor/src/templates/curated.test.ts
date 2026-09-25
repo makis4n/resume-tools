@@ -15,6 +15,7 @@ import { type DrawnPage, drawPage, type GlyphBox, ruleCrossings } from "../page/
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
+import { shownTexts } from "../validate/pdf";
 import { CURATED, curated } from "./curated";
 import { generateBody, generateFormat } from "./generate";
 import { type ByRole, defaultControls, parsePackage, type TemplatePackage } from "./package";
@@ -1078,6 +1079,48 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
       { uri: "https://code.example.com/ncastellan", glyphs: "ncastellan".length },
       { uri: "https://people.example.com/noor-castellan", glyphs: "noor-castellan".length },
     ]);
+  });
+
+  it("sets a no-break space in a contact or a link's label as a space, on the page and in the PDF", async () => {
+    // The generator writes ~ for U+00A0, U+202F and U+2007, which pasted phone numbers carry,
+    // and upstream's \printinfo re-read a contact's text with ~ made ordinary, so each of them
+    // printed as a tilde (decision 0013).
+    const spaced = Resume.parse(structuredClone(sample));
+    const [site] = spaced.header.links;
+    if (!site) throw new Error("the sample moved");
+    spaced.header.phone = "+44 20 7946 0958";
+    spaced.header.location = "Leeds, UK";
+    site.label = "castellan site";
+    const body = generateBody(pkg, spaced, values);
+    const { result, page } = await compileAndDraw(body.latex, body.texts, "no-break");
+    expect(result.log).not.toMatch(/^! /m);
+    expect(page.missingFonts).toEqual(new Map());
+    expect(page.unmatched).toBe(0);
+    // A space sets no glyph, so each field's glyphs are its letters and digits alone.
+    const glyphsOf = (id: string) =>
+      page.fields
+        .get(id)
+        ?.glyphs.map((glyph) => glyph.text)
+        .join("");
+    expect(glyphsOf("header.phone")).toBe("+442079460958");
+    expect(glyphsOf("header.location")).toBe("Leeds,UK");
+    expect(glyphsOf("site.label")).toBe("castellansite");
+    // In the PDF, no tilde, and the phone's groups a space apart: a kern of a fifth of the size
+    // or more, where a reader of the PDF's text puts a space.
+    const made = session.pdf("no-break", { compress: 0 });
+    if (!made.pdf) throw new Error(made.error);
+    const shown = shownTexts(made.pdf);
+    expect(shown.filter(({ text }) => text.includes("~"))).toEqual([]);
+    const phone = shown.find(({ text }) => text === "+442079460958");
+    expect(phone?.parts.filter((part) => typeof part === "string")).toEqual([
+      "+44",
+      "20",
+      "7946",
+      "0958",
+    ]);
+    const kerns = phone?.parts.filter((part) => typeof part === "number") ?? [];
+    expect(kerns).toHaveLength(3);
+    for (const kern of kerns) expect(kern).toBeLessThanOrEqual(-200);
   });
 
   it("sets A4 with half-inch margins, and follows the page size and margins controls", async () => {

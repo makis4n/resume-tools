@@ -40,6 +40,11 @@
 % - pgf takes the dvipdfmx driver, for hyperref's reason: in DVI mode it would take
 %   dvips's, whose PostScript xdvipdfmx cannot run, and the PDF would lose what TikZ
 %   draws, such as a tag's frame.
+% - \printinfo sets a contact's text as it comes, where upstream re-reads it through
+%   \utffriendlydetokenize, a \scantokens with ~, _, &, $ and # made ordinary so that a
+%   raw one prints. The editor has escaped every such character already, and writes ~
+%   for a no-break space, which the re-read would print as a tilde. The space the re-read
+%   left after the text stays, so the contacts are as far apart as upstream's.
 % Everything else is upstream's.
 
 %%%%%%%%%%%%%%%%
@@ -200,14 +205,17 @@
   \IfNoValueTF{#4}{%
     \mbox{\textcolor{accent}%
     {\BeginAccSupp{method=escape,ActualText={\IfNoValueTF{#1}{\detokenize{#2}}{#1}:\space}}\normalfont #2\EndAccSupp{}}%
-    ~\utffriendlydetokenize{#3}\hspace{2em}}%
+    % rt: the text as the editor writes it, not re-read, and after it the space the re-read
+    % left, as the note at the top says; under \ExplSyntaxOn, ~ is a space.
+    ~{#3}~\hspace{2em}}%
   }{% v1.7.4: fix accsupp ActualText bugs when withhyper enabled
     \iftoggle{withhyper}{%
       \mbox{\textcolor{accent}%
       {\BeginAccSupp{method=escape,ActualText={\IfNoValueTF{#1}{\detokenize{#2}}{#1}:\space}}\normalfont #2\EndAccSupp{}}%
       ~%
       \BeginAccSupp{method=escape,ActualText={#4}}%
-      \href{#4}{\utffriendlydetokenize{#3}}%
+      % rt: as above.
+      \href{#4}{#3}~%
       \EndAccSupp{}%
       \hspace{2em}}%
      }{%

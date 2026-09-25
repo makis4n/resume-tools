@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasToUnicode, mediaBoxes, shownStrings } from "./pdf";
+import { hasToUnicode, mediaBoxes, shownStrings, shownTexts } from "./pdf";
 
 /** A PDF's text as its bytes, one byte per character, as xdvipdfmx writes a PDF at level 0. */
 const bytes = (text: string) => Uint8Array.from(text, (char) => char.charCodeAt(0));
@@ -78,6 +78,32 @@ line)Tj ET`,
       `${stream(4, content).replace("\nendstream", " (Past the end)Tj\nendstream")}\n3 0 obj\n<</Type/Page/Contents 4 0 R>>\nendobj`,
     );
     expect(shownStrings(pdf)).toEqual(["Before", "After"]);
+  });
+});
+
+describe("shownTexts", () => {
+  it("places each operator's first glyph by the text matrix, the kerns before it and each cm", () => {
+    const pdf = pdfWith(
+      [
+        // One inch in from the lower left corner, as xdvipdfmx starts a page.
+        "q 1 0 0 1 72 720 cm",
+        "BT /F1 10 Tf 10 20 Td[(Hel)-27(lo)]TJ 0 -12 Td[-500(Two)]TJ ET",
+        // A move in a saved state, as a transform special makes one: a show after a show is not
+        // placed, since it follows the first's glyphs.
+        "q 1 0 0 1 -23.5 0 cm BT /F1 10 Tf 5 -40 Td(Moved)Tj (After)Tj ET Q",
+        "q 2 0 0 2 0 0 cm BT 1 0 0 1 3 4 Tm (Scaled)Tj 14 TL (Next)' ET Q",
+        "BT /F1 10 Tf 0 0 Td (Back)Tj ET Q",
+      ].join(" "),
+    );
+    expect(shownTexts(pdf)).toEqual([
+      { text: "Hello", parts: ["Hel", -27, "lo"], x: 82, y: 740 },
+      { text: "Two", parts: [-500, "Two"], x: 87, y: 728 },
+      { text: "Moved", parts: ["Moved"], x: 53.5, y: 680 },
+      { text: "After", parts: ["After"], x: Number.NaN, y: Number.NaN },
+      { text: "Scaled", parts: ["Scaled"], x: 78, y: 728 },
+      { text: "Next", parts: ["Next"], x: 78, y: 700 },
+      { text: "Back", parts: ["Back"], x: 72, y: 720 },
+    ]);
   });
 });
 
