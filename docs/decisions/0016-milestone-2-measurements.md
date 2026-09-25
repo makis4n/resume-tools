@@ -19,16 +19,19 @@ rows below are left empty, to be filled by running the same command again once t
 
 - One command measures every curated package in Node, whatever `src/templates/curated.ts` holds,
   on either engine: `pnpm --filter @resume-tools/editor measure` (`scripts/measure.ts`). Each
-  package gets an engine session and fonts of its own, as a first load has them, a new document
-  of its sample on the package's defaults, and these measurements, from the code paths the
-  editor runs (`src/measure/measure.ts`): the format's dump (`generateFormat` and the session);
-  the new document's compile, two passes; its first draw (`drawPage`), which loads the page's
-  fonts; the overlay's row layout of the sample's longest field, median of 100, which is what a
-  keystroke there costs before the DOM (`richRows` for a rich field, `layoutRows` for a text
-  one); and ten edits of that field, each its last character retyped as a command, applied to
-  the document, generated, compiled once and drawn, median. It prints a table per package and a
-  summary against section 4.3, `--json <file>` writes the numbers, and `--runs <n>` sets the
-  edits, with ten times as many layouts.
+  package gets an engine session and fonts of its own, as a first load has them, and the editor's
+  compile scheduler (`Compiler`) drives them, as the app drives its worker, so that every step
+  the editor takes to make a page is a step measured, including those it gains later
+  (`src/measure/measure.ts`). It opens a new document of the sample on the package's defaults
+  and reads, from the scheduler's requests to the engine, its draws and its events: the format's
+  dump; the new document's compile, two passes; its first draw, which loads the page's fonts; and
+  the first page as the scheduler times it (`Shown.ms`). Then the overlay's row layout of the
+  sample's longest field, median of 100, which is what a keystroke there costs before the DOM
+  (`richRows` for a rich field, `layoutRows` for a text one); and ten edits of that field, each
+  its last character retyped as a command through the document's history and an `update`,
+  compiled once and drawn, median, from the command to the page. It prints a table per package
+  and a summary against section 4.3, `--json <file>` writes the numbers, and `--runs <n>` sets
+  the edits, with ten times as many layouts.
 - The app measures itself in the browser at `?measure=1` (`src/measure/MeasurePage.tsx`): it
   opens Jake's Resume's sample, or another package's with `?measure=<id>`, through the worker as
   the app does, and times the engine's start and the first page (`Shown.startMs`, `Shown.ms`),
@@ -38,11 +41,11 @@ rows below are left empty, to be filled by running the same command again once t
   console.
 - An edit is judged by its own time, from the command to the drawn page. The scheduler's pause
   before the compile, 100 ms for pdfTeX and 400 ms for XeTeX, waits for the typing to stop and is
-  not in it, as it was not in decision 0003's numbers; the browser page gives the edit with it
-  too.
+  not in it, as it was not in decision 0003's numbers: the command sets it to nothing, and the
+  browser page gives the edit with it too.
 - Sizes are bytes on disk. A first load is the engine's `.wasm` and its loader's `.mjs`, the
-  manifest, the TeX Live files the dump and the new document's compile read, and the files the
-  page's fonts read that TeX had not. What they compress to on the way is the CDN's to say
+  manifest, every TeX Live file the engine read while the scheduler made the first page, and the
+  files the fonts read that TeX had not. What they compress to on the way is the CDN's to say
   (milestone 5), and the app's own JavaScript is not in it.
 
 ## Findings

@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Resume } from "@resume-tools/resume-model";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { Compiler } from "../editor/compiler";
 import { apply, Document, fieldsOf } from "../editor/document";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
-import type { Fetched } from "../engine/session";
+import type { CompileResult, DumpResult, EngineSession, Fetched } from "../engine/session";
 import type { DrawnPage, FieldLayout, PageField } from "../page/draw";
-import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { curated } from "../templates/curated";
 import { measuredTemplate } from "./MeasurePage";
@@ -167,23 +167,38 @@ const read = (paths: [string, number][]): Fetched => ({
   paths: paths.map(([path]) => path),
 });
 
+/** What a step read of nothing. */
+const NOTHING = { tex: read([]), fonts: new Map<string, number>() };
+
 describe("firstLoad", () => {
-  it("counts each file once, the fonts' only where TeX did not read them", () => {
-    const numbers = {
-      dump: { ms: 1, bytes: 1, read: read([["/a.fmt", 600]]) },
-      open: { ms: 1, passes: [1, 1], read: read([["/b.tfm", 20]]) },
+  it("counts every file the first page read, the engine's and the fonts', once each", () => {
+    const reads = {
+      // The dump's and two compiles' reads, as the scheduler made them, and the fonts': the page's
+      // outlines, a metric TeX read too, and a font file read before the compile, as a scheduler
+      // that loads a package's declared fonts first reads one.
+      open: {
+        tex: read([
+          ["/a.fmt", 600],
+          ["/b.tfm", 20],
+          ["/c.sty", 30],
+        ]),
+        fonts: new Map([
+          ["/b.tfm", 20],
+          ["/d.pfb", 100],
+          ["/e.otf", 900],
+        ]),
+      },
+      overlay: NOTHING,
+      // An edit that reads a file the first page did not is no first load's.
+      edits: { tex: read([["/f.tfm", 5]]), fonts: new Map() },
     };
-    const fonts = new Map([
-      ["/b.tfm", 20],
-      ["/c.pfb", 100],
-    ]);
-    expect(firstLoad(numbers, { engine: 3000, loader: 30, manifest: 200 }, fonts)).toEqual({
+    expect(firstLoad({ reads }, { engine: 3000, loader: 30, manifest: 200 })).toEqual({
       engine: 3000,
       loader: 30,
       manifest: 200,
-      texLive: 620,
-      fonts: 100,
-      total: 3950,
+      texLive: 650,
+      fonts: 1000,
+      total: 4880,
     });
   });
 });
@@ -196,6 +211,7 @@ describe("the tables", () => {
     dump: { ms: 300, bytes: 6.7e6, read: read([["/a.fmt", 7.9e6]]) },
     open: { ms: 150, passes: [80, 70], read: read([["/b.tfm", 0.2e6]]) },
     draw: { ms: 80, missingFonts: [] },
+    page: { ms: 240 },
     edits: [edit, edit + 10, edit - 10].map((ms) => ({
       ms,
       compileMs: ms - 5,
@@ -203,6 +219,7 @@ describe("the tables", () => {
       passes: 1,
     })),
     keystroke: { field: "x.text", characters: 245, rows: 3, runs: 30, ms: keystroke },
+    reads: { open: NOTHING, overlay: NOTHING, edits: NOTHING },
   });
   const load = (total: number): FirstLoad => ({
     engine: 1,
@@ -240,7 +257,8 @@ describe("the tables", () => {
 
   it("lays a package's numbers out a row each", () => {
     const text = packageTable(numbers("fast", 80, 0.1), load(42e6));
-    expect(text.split("\n")).toHaveLength(6);
+    expect(text.split("\n")).toHaveLength(7);
+    expect(text).toMatch(/\nFirst page +240 ms +the dump, the compile and the draw/);
     expect(text).toContain("Edit to page, median of 3");
     expect(text).toContain("0.10 ms");
     expect(text).toContain("x.text, 245 characters on 3 lines");
@@ -268,22 +286,64 @@ describe("measuredTemplate", () => {
 
 // Needs `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
 describe.skipIf(!engineAvailable())("measurePackage", () => {
+  const { package: jake, sample } = curated("jake");
   let numbers: PackageNumbers;
+  /** What the session's dumps and compiles brought back, all of them. */
+  let results: (DumpResult | CompileResult)[];
+  /** Every file the fonts read, by path. */
   let fontFiles: Map<string, number>;
+  /** What the measurement asked of the editor's compile scheduler. */
+  let opens: Parameters<Compiler["open"]>[];
+  let updates: Parameters<Compiler["update"]>[];
   beforeAll(async () => {
-    const session = await startNodeSession();
+    const session: EngineSession = await startNodeSession();
     const manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
     fontFiles = new Map();
-    const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) => {
-      const data = readFileSync(join(ENGINE_DIR, "files", path));
-      fontFiles.set(path, data.length);
-      return data;
-    });
-    const { package: pkg, sample } = curated("jake");
-    numbers = await measurePackage(session, fonts, pkg, sample, 2);
+    const tree = {
+      index: new TexLiveIndex(manifest),
+      read: async (path: string) => {
+        const data = readFileSync(join(ENGINE_DIR, "files", path));
+        fontFiles.set(path, data.length);
+        return data;
+      },
+    };
+    const dumps = vi.spyOn(session, "dump");
+    const compiles = vi.spyOn(session, "compile");
+    const opened = vi.spyOn(Compiler.prototype, "open");
+    const updated = vi.spyOn(Compiler.prototype, "update");
+    try {
+      numbers = await measurePackage(session, tree, jake, sample, 2);
+      // Kept here, since each test starts with the spies' calls cleared.
+      opens = [...opened.mock.calls];
+      updates = [...updated.mock.calls];
+      results = [...dumps.mock.results, ...compiles.mock.results].flatMap((result) =>
+        result.type === "return" ? [result.value] : [],
+      );
+    } finally {
+      vi.restoreAllMocks();
+    }
   }, 60_000);
+
+  it("opens the sample and edits it through the editor's compile scheduler", () => {
+    expect(opens).toHaveLength(1);
+    const [pkg, opened] = opens[0] ?? [];
+    expect(pkg).toBe(jake);
+    expect(opened?.resume).toEqual(sample);
+    // Each edit is the document before it with the bullet retyped, which the scheduler compiles.
+    const bullet = (doc: Document) => {
+      const field = fieldsOf(doc.resume).get("fennel-1.text");
+      return field?.kind === "rich"
+        ? field
+            .get(doc.resume)
+            .map((run) => run.text)
+            .join("")
+        : "";
+    };
+    // The sample's bullet ends "without help.", and each edit retypes its last character.
+    expect(updates.map(([doc]) => bullet(doc).slice(-5))).toEqual(["helpx", "helpy"]);
+  });
 
   it("dumps the format from the stock one, and compiles the sample as a new document", () => {
     expect(numbers).toMatchObject({ id: "jake", name: "Jake's Resume", engine: "pdftex" });
@@ -314,13 +374,17 @@ describe.skipIf(!engineAvailable())("measurePackage", () => {
     expect(numbers.keystroke.ms).toBeGreaterThan(0);
   });
 
-  it("counts the fonts' files a first load fetches besides TeX's", () => {
+  it("counts under first load every file the engine read, and the fonts' files besides", () => {
     const sizes = { engine: 10, loader: 1, manifest: 2 };
-    const load = firstLoad(numbers, sizes, fontFiles);
+    const load = firstLoad(numbers, sizes);
+    // Everything the session read, which for this sample is all read for the first page.
+    const tex = results.reduce((sum, result) => sum + result.fetched.bytes, 0);
+    expect(load.texLive).toBe(tex);
+    expect(numbers.reads.open.tex.bytes).toBe(tex);
     // The page reads Type 1 outlines, which TeX never opens, and TFMs, which it has.
-    expect([...fontFiles.keys()].some((path) => path.endsWith(".pfb"))).toBe(true);
+    expect([...numbers.reads.open.fonts.keys()].some((path) => path.endsWith(".pfb"))).toBe(true);
     expect(load.fonts).toBeGreaterThan(0);
     expect(load.fonts).toBeLessThan([...fontFiles.values()].reduce((a, b) => a + b, 0));
-    expect(load.total).toBe(13 + numbers.dump.read.bytes + numbers.open.read.bytes + load.fonts);
+    expect(load.total).toBe(13 + tex + load.fonts);
   });
 });

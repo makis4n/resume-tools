@@ -8,13 +8,14 @@
  *                  ten times as often
  *   --json <file>  write the numbers as JSON too, for the decision record
  *
- * Each package gets an engine session and a font library of its own, as a first load does. The
- * format is dumped, the sample compiled as a new document and its page drawn, the longest field's
- * rows laid out as the overlay does on a keystroke, and that field edited, each edit compiled and
- * drawn (`src/measure/measure.ts`). It prints a table per package and a summary against the
- * targets. Sizes are bytes on disk: the engine's `.wasm` and `.mjs`, the manifest, and the TeX Live
- * files the dump, the compile and the page's fonts read; what they compress to on the way is the
- * CDN's to say (milestone 5). It needs `.engine/`, which `fetch-engine` builds.
+ * Each package gets an engine session and fonts of its own, as a first load does, and the editor's
+ * compile scheduler drives them, as the app drives its worker: it opens the sample as a new
+ * document, the overlay lays out the longest field's rows as on a keystroke, and that field is
+ * edited through the document's history, each edit compiled and drawn (`src/measure/measure.ts`).
+ * It prints a table per package and a summary against the targets. Sizes are bytes on disk: the
+ * engine's `.wasm` and `.mjs`, the manifest, and the TeX Live files the engine and the fonts read;
+ * what they compress to on the way is the CDN's to say (milestone 5). It needs `.engine/`, which
+ * `fetch-engine` builds.
  *
  * The editor's modules are written for Vite, with extensionless imports, JSX, and JSON and `?raw`
  * imports, which Node cannot load. So this file, which Node runs as it is, loads them through
@@ -31,12 +32,11 @@ import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
 import type { Fetched } from "../src/engine/session.ts";
-import type { FirstLoad, PackageNumbers } from "../src/measure/measure.ts";
+import type { FirstLoad, PackageNumbers, StepReads } from "../src/measure/measure.ts";
 
 type Measure = typeof import("../src/measure/measure.ts");
 type NodeEngine = typeof import("../src/engine/node.ts");
 type Curated = typeof import("../src/templates/curated.ts");
-type Fonts = typeof import("../src/page/fonts.ts");
 type TexLive = typeof import("../src/page/texlive.ts");
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
@@ -82,6 +82,12 @@ function machine() {
 /** A read as the JSON keeps it: how many files and bytes, without the paths. */
 const count = ({ files, bytes }: Fetched) => ({ files, bytes });
 
+/** What a step read, as the JSON keeps it. */
+const countStep = ({ tex, fonts }: StepReads) => ({
+  tex: count(tex),
+  fonts: { files: fonts.size, bytes: [...fonts.values()].reduce((sum, bytes) => sum + bytes, 0) },
+});
+
 /** The numbers as the JSON keeps them, milliseconds to a microsecond. */
 function json(
   about: ReturnType<typeof machine>,
@@ -97,6 +103,11 @@ function json(
       ...numbers,
       dump: { ...numbers.dump, read: count(numbers.dump.read) },
       open: { ...numbers.open, read: count(numbers.open.read) },
+      reads: {
+        open: countStep(numbers.reads.open),
+        overlay: countStep(numbers.reads.overlay),
+        edits: countStep(numbers.reads.edits),
+      },
       firstLoad: load,
     })),
     summary: verdicts.map(({ target, values }) => ({ ...target, values })),
@@ -135,7 +146,6 @@ async function main() {
     if (!engineAvailable())
       throw new Error("There is no .engine/ to measure with: run fetch-engine first.");
     const { CURATED } = await runner.import<Curated>("/src/templates/curated.ts");
-    const { FontLibrary } = await runner.import<Fonts>("/src/page/fonts.ts");
     const { TexLiveIndex } = await runner.import<TexLive>("/src/page/texlive.ts");
 
     const manifestPath = join(ENGINE_DIR, "manifest.json");
@@ -155,14 +165,12 @@ async function main() {
     for (const { package: pkg, sample } of CURATED.values()) {
       // A session and fonts of the package's own, so that what they read is a first load's.
       const session = await startNodeSession();
-      const fontFiles = new Map<string, number>();
-      const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) => {
-        const data = readFileSync(join(ENGINE_DIR, "files", path));
-        fontFiles.set(path, data.length);
-        return data;
-      });
-      const numbers = await measure.measurePackage(session, fonts, pkg, sample, options.runs);
-      const load = measure.firstLoad(numbers, sizes, fontFiles);
+      const tree = {
+        index: new TexLiveIndex(manifest),
+        read: async (path: string) => readFileSync(join(ENGINE_DIR, "files", path)),
+      };
+      const numbers = await measure.measurePackage(session, tree, pkg, sample, options.runs);
+      const load = measure.firstLoad(numbers, sizes);
       measured.push({ numbers, load });
       console.log(`${pkg.name} (${pkg.id}, ${pkg.engine})`);
       console.log(`${measure.packageTable(numbers, load)}\n`);
