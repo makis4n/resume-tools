@@ -44,6 +44,7 @@ All of it is in `apps/editor`, except the resume model.
 | `src/editor/` | Document state and commands, the compile scheduler, the overlay, the side panel, the controls |
 | `src/storage/` | Documents and formats in IndexedDB |
 | `src/validate/` | The validation harness, run in CI |
+| `scripts/measure.ts`, `src/measure/` | The editor measured against plan section 4.3: a command over every curated package in Node, and the app's `?measure=1` page (decision 0016) |
 | `packages/resume-model` | The canonical model, version 1 of which this milestone settles |
 
 ## The work, in order
@@ -158,7 +159,7 @@ end to end before the other two templates, so that the editing loop is proven on
 
 ### Stage 7. Closing the milestone
 
-23. [ ] **Measure on the slow laptop and retire the spike page.** All three templates, every
+23. [x] **Measure on the slow laptop and retire the spike page.** All three templates, every
     target in section 4.3, with the numbers recorded next to decision 0003's. A first pass on
     Jake's Resume should happen as soon as item 9 lands, so a miss shows up early. The spike's
     Node scripts stay, since the decision records cite them.
@@ -184,6 +185,12 @@ pull request that acts on it.
 
 ## Risks
 
+- **Measured on a fast machine only, so far** (item 23, decision 0016). On an M4 Pro, Jake's
+  Resume and AltaCV meet the keystroke target (0.07 and 0.11 ms against 16) and the typical edit
+  (84 and 115 ms against 300), and fit a sample that just runs past a page in one compile; both
+  miss the first load as the dev server serves it, 42 and 44 MB uncompressed against 30, which
+  milestone 5's CDN and engine build have to bring under. The slow laptop and Awesome-CV are
+  still to measure, with the same command and page.
 - **Awesome-CV may not meet the slow-laptop target.** The loop measured 459 ms at best and
   847 ms under load on an M4 Pro, against 500 ms on a 2019 laptop. The plan already accepts
   that XeTeX templates feel slower. The milestone bar should say so explicitly for XeTeX, or

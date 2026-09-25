@@ -1,7 +1,7 @@
 /**
  * The editing overlay: a field opened in place on the page, set in the page's own glyphs and
  * broken into lines where TeX will break them, so that what the user types sits where the next
- * compile puts it (decision 0004). It is the spike's overlay (`spike/overlay.ts`) as product code.
+ * compile puts it (decision 0004). It is the spike's overlay as product code.
  *
  * A keystroke never waits for TeX. Every input rebuilds the field's text from the rows the
  * browser edited, breaks it again with TeX's breaker, the field's font metrics and the parameters

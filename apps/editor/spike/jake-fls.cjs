@@ -8,11 +8,10 @@ const { makeModule, writeProject, readText, readBytes, PROJECT } = require("./ha
     "ubuntu-texlive-latex-extra",
     "ubuntu-texlive-fonts-recommended",
   ]);
-  const preamble = fs.readFileSync(
-    path.join(__dirname, "..", "public", "spike", "jake-preamble.tex"),
-    "utf8",
-  );
-  const body = fs.readFileSync(path.join(__dirname, "..", "public", "spike", "body.tex"), "utf8");
+  // The spike page's preamble and body, which the tests keep as fixtures.
+  const fixtures = path.join(__dirname, "..", "src", "tex", "fixtures");
+  const preamble = fs.readFileSync(path.join(fixtures, "jake-preamble.tex"), "utf8");
+  const body = fs.readFileSync(path.join(fixtures, "body.tex"), "utf8");
   writeProject(M, { "pre.tex": `${preamble}\n\\dump\n`, "body.tex": body });
   const common = [
     "--no-shell-escape",

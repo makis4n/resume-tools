@@ -12,6 +12,7 @@ record holds the measurements and the changes they force. The numbers come from 
 laptop, in Chrome inside the desktop app and in Node; the slow-laptop numbers the plan asks
 for are still to be taken. The harness and page that produced them are in
 `apps/editor/spike/` and `apps/editor/spike.html`.
+The page was retired in milestone 2 item 23 (decision 0016); the Node scripts remain.
 
 The engines are the prebuilt BusyTeX WebAssembly build of TeX Live 2023 (Emscripten
 3.1.43), one 30 MB binary holding pdfTeX, XeTeX, LuaHBTeX and xdvipdfmx. Our own per-engine

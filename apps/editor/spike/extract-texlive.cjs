@@ -1,11 +1,12 @@
 // Unpack the TeX Live bundles into individual files, the way a CDN would hold them, plus a
 // manifest of every path and size for the worker's on-demand file system.
-// Usage: node spike/extract-texlive.cjs   -> spike/web/assets/texlive/** and texlive-manifest.json
+// Usage: node spike/extract-texlive.cjs   -> spike/assets/texlive/** and texlive-manifest.json
 const fs = require("fs");
 const path = require("path");
 const { makeModule } = require("./harness.cjs");
-const OUT = path.join(__dirname, "web", "assets", "texlive");
-const MANIFEST = path.join(__dirname, "web", "assets", "texlive-manifest.json");
+const R = process.env.SPIKE_ASSETS ?? path.join(__dirname, "assets");
+const OUT = path.join(R, "texlive");
+const MANIFEST = path.join(R, "texlive-manifest.json");
 (async () => {
   const M = await makeModule([
     "texlive-basic",

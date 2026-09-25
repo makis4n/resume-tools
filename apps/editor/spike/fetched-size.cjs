@@ -1,9 +1,11 @@
-// Sum the raw, gzip and brotli sizes of files the on-demand page reported fetching.
+// Sum the raw, gzip and brotli sizes of files the on-demand page reported fetching, from the tree
+// extract-texlive.cjs unpacked.
 // Usage: node spike/fetched-size.cjs <json list of paths>   (paths as in the manifest)
 const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
-const ROOT = path.join(__dirname, "web", "assets", "texlive");
+const R = process.env.SPIKE_ASSETS ?? path.join(__dirname, "assets");
+const ROOT = path.join(R, "texlive");
 const list = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const groups = {};
 const add = (group, raw, gz, br) => {
@@ -37,4 +39,4 @@ const extra = (p) => {
   const d = fs.readFileSync(p);
   return `${path.basename(p)}: raw ${(d.length / 1e6).toFixed(2)} MB gzip ${(zlib.gzipSync(d, { level: 9 }).length / 1e6).toFixed(2)} MB brotli ${(zlib.brotliCompressSync(d).length / 1e6).toFixed(2)} MB`;
 };
-console.log(extra(path.join(__dirname, "web", "assets", "texlive-manifest.json")));
+console.log(extra(path.join(R, "texlive-manifest.json")));

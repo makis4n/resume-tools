@@ -1,10 +1,10 @@
 /**
- * Serve a folder at a route in the dev server only. The engine and TeX Live tree
- * (`.engine/`, built by `scripts/fetch-engine.ts`) and the spike's page assets (`spike/web/`)
- * are hundreds of MB each; keeping them out of `public/` keeps them out of `dist/`.
+ * Serve a folder at a route in the dev server only. The engine and TeX Live tree (`.engine/`,
+ * built by `scripts/fetch-engine.ts`) is hundreds of MB; keeping it out of `public/` keeps it out
+ * of `dist/`.
  */
 
-import { createReadStream, readFileSync, statSync } from "node:fs";
+import { createReadStream, readFileSync, type Stats, statSync } from "node:fs";
 import { extname, join, relative, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 import type { EngineManifest } from "../src/engine/manifest.ts";
@@ -37,10 +37,37 @@ export interface ServeOptions {
 }
 
 /**
+ * A file's entity tag, from what changes when the file does: its inode, which fetch-engine's
+ * renaming changes, its size and its modification time.
+ */
+const etagOf = (stat: Stats) =>
+  `"${stat.ino.toString(36)}-${stat.size.toString(36)}-${stat.mtimeMs}"`;
+
+/** The headers a file goes out with, which a 404 in its place must not keep. */
+const FILE_HEADERS = ["Content-Type", "Content-Length", "Cache-Control", "ETag", "Last-Modified"];
+
+/**
+ * Whether an `If-None-Match` header names the tag, as a list of tags or `*`, compared weakly: a
+ * `W/` in front of one is not part of it.
+ */
+function matches(header: string | undefined, etag: string): boolean {
+  if (header === undefined) return false;
+  return header.split(",").some((each) => {
+    const tag = each.trim().replace(/^W\//, "");
+    return tag === "*" || tag === etag;
+  });
+}
+
+/**
  * `folder` is an absolute path. `serves` says which paths, relative to the folder, the route
  * answers for, and may answer differently under a tag. Anything else under the route is a 404,
  * never the app's index page, so the worker cannot take HTML for a TeX file. It keeps the route
  * tidy and is not access control: Vite serves every file under the app's folder in dev anyway.
+ *
+ * Every file goes out with validators, an `ETag` and a `Last-Modified`, and a request whose
+ * `If-None-Match` names the file's tag is answered 304 Not Modified, with no body: so a file sent
+ * `no-cache`, as the engine's manifest is, is kept by the browser and only revalidated, and a
+ * rebuilt one, which has another tag, is sent anew.
  */
 export function serveFolder(
   name: string,
@@ -55,7 +82,8 @@ export function serveFolder(
     apply: "serve",
     configureServer(server) {
       server.middlewares.use(route, (req, res, next) => {
-        // Connect also hands this route "/spike.html" and "/spike", which are not in the folder.
+        // Connect also hands a route such as "/engine/" the paths "/engine" and "/engine.json",
+        // which are not in the folder.
         if (!req.originalUrl?.startsWith(route)) return next();
         const notFound = () => {
           res.statusCode = 404;
@@ -79,26 +107,32 @@ export function serveFolder(
         if (!file.startsWith(root + sep)) return notFound();
         const served = relative(root, file).split(sep).join("/");
         if (!serves(served, tagged)) return notFound();
-        let size: number;
+        let stat: Stats;
         try {
-          const stat = statSync(file);
+          stat = statSync(file);
           if (!stat.isFile()) return notFound();
-          size = stat.size;
         } catch {
           return notFound();
         }
-        res.setHeader("Content-Type", TYPES[extname(file)] ?? "application/octet-stream");
-        res.setHeader("Content-Length", size);
+        const etag = etagOf(stat);
+        res.setHeader("ETag", etag);
+        res.setHeader("Last-Modified", stat.mtime.toUTCString());
         const cacheControl = options.cacheControl?.(served, tagged);
         if (cacheControl !== undefined) res.setHeader("Cache-Control", cacheControl);
+        const held = req.headers["if-none-match"];
+        if (matches(Array.isArray(held) ? held.join(",") : held, etag)) {
+          res.statusCode = 304;
+          res.end();
+          return;
+        }
+        res.setHeader("Content-Type", TYPES[extname(file)] ?? "application/octet-stream");
+        res.setHeader("Content-Length", stat.size);
         const stream = createReadStream(file);
         // The file can go between the stat and the read, as when fetch-engine swaps a new tree
         // in. Without a listener the error would be thrown, and stop the dev server.
         stream.on("error", () => {
           if (res.headersSent) return res.destroy();
-          res.removeHeader("Content-Type");
-          res.removeHeader("Content-Length");
-          res.removeHeader("Cache-Control");
+          for (const header of FILE_HEADERS) res.removeHeader(header);
           notFound();
         });
         // A request the browser abandons, as on a reload, closes the file too.
@@ -117,10 +151,11 @@ const ENGINE_FILES = new Set(["busytex.mjs", "busytex.wasm"]);
 
 /**
  * The engine and its TeX Live tree at `/engine/`: the manifest untagged and revalidated on every
- * load, since it names the tag, and everything else only under the tag the manifest names, and
- * immutable, since a new tree comes with a new tag (decision 0010). A tab still holding the tag of
- * a tree fetch-engine has since replaced is answered 404 rather than with the new tree's files,
- * which it would keep under the old tree's URLs; a reload gives it the new tag.
+ * load, since it names the tag, which costs a 304 while it is unchanged (`serveFolder`), and
+ * everything else only under the tag the manifest names, and immutable, since a new tree comes
+ * with a new tag (decision 0010). A tab still holding the tag of a tree fetch-engine has since
+ * replaced is answered 404 rather than with the new tree's files, which it would keep under the
+ * old tree's URLs; a reload gives it the new tag.
  */
 export function serveEngine(folder: string): Plugin {
   const manifest = join(folder, "manifest.json");
