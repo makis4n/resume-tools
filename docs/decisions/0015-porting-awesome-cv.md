@@ -70,6 +70,13 @@ Only what the loop needs, and what the editor's page, text and PDF need of the c
   blank halves, or a header with no contacts, left no line to end. A line with anything on it is
   upstream's: a blank first half drops the space before the second at the start of the line, and
   the last name is centred on its own, as upstream sets it.
+- **cvhonors sets an award's date in a column as wide as the widest date it holds**, with an em of
+  the date's size on either side, and never narrower than upstream's 1.5 cm, which holds a year;
+  the award's title gives up what it takes. The editor's dates are ranges too, such as May 2022 –
+  Present, which wrapped in upstream's column at every date format, their first line up against
+  the title, and a single month at the long month format wrapped too. The environment reads its
+  body first and measures each date in a box it throws away, so the column fits the date format
+  the document has; the sample's years keep upstream's column, and its page is upstream's.
 
 tcolorbox stays, loaded with its `skins` library for the photo, which the editor never sets; the
 tree has tikzfill now (decision 0011). It costs about 125 ms of the dump and 0.37 MB of the format,

@@ -37,6 +37,9 @@
 %   that a name of two blank halves, or a header with no contacts, sets: each line ends with \\,
 %   which stopped upstream's compile when there was no line to end. A line with anything on it
 %   is upstream's, a blank first half and all.
+% - cvhonors sets an award's date in a column as wide as the widest date it holds, with an em on
+%   either side, and never narrower than upstream's 1.5 cm, which holds a year: the editor's
+%   dates are ranges too, which wrapped there, up against the award's title.
 % Everything else is upstream's.
 %%%%%%%%%%%%%%%%
 
@@ -801,17 +804,34 @@
 }
 
 % Define an environment for cvhonor
-\newenvironment{cvhonors}{%
+% rt: the column of an award's date as wide as the widest date the environment holds, with an em
+% of the date's size on either side, where upstream's is 1.5 cm, which holds a year: the editor's
+% dates are ranges too, such as May 2022 -- Present, which wrapped there, up against the title.
+% The column is never narrower than upstream's, and the title's gives up what it takes. So the
+% environment reads its body first, and \rt@honordates measures each date in a box it throws
+% away, which is never shipped, so no field is found there.
+\newlength\rt@datewidth
+\newcommand\rt@honordates[1]{%
+  \global\rt@datewidth 1.5cm\relax
+  \setbox\z@\hbox{%
+    \def\cvhonor##1##2##3##4{%
+      \settowidth\dimen@{\honordatestyle{##4\hskip2em}}%
+      \ifdim\dimen@>\rt@datewidth \global\rt@datewidth\dimen@ \fi}%
+    \def\multicolumn##1##2##3{}%
+    \let\\\relax
+    #1}}
+\NewDocumentEnvironment{cvhonors}{+b}{%
   \vspace{\acvSectionContentTopSkip}
   \vspace{-2mm}
   \begin{center}
     \setlength\tabcolsep{0pt}
     \setlength{\extrarowheight}{0pt}
-    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} C{1.5cm} L{\textwidth - 4.0cm} R{2.5cm}}
-}{%
+    \rt@honordates{#1}%
+    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} C{\rt@datewidth} L{\textwidth - 4.0cm + 1.5cm - \rt@datewidth} R{2.5cm}}
+      #1
     \end{tabular*}
   \end{center}
-}
+}{}
 % Define a line of cv information(honor, award or something else)
 % Usage: \cvhonor{<position>}{<title>}{<location>}{<date>}
 \newcommand*{\cvhonor}[4]{%

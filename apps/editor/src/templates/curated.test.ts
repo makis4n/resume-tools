@@ -2217,6 +2217,92 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(page.unmatched).toBe(0);
   });
 
+  it("sets an award's dates on one line in every date format, a range included, and the sample's as upstream", async () => {
+    // Upstream's column for an award's date is 1.5 cm, for a year; the model's dates are ranges
+    // too, which wrapped there, their first line up against the title.
+    const ranged = Resume.parse(structuredClone(sample));
+    const awards = ranged.sections.find((section) => section.role === "awards");
+    if (awards?.kind !== "entries") throw new Error("the sample moved");
+    awards.entries = [
+      {
+        id: "years",
+        title: "Mentor",
+        subtitle: "Coding club",
+        dates: { start: "2019", end: "2021" },
+      },
+      {
+        id: "ongoing",
+        title: "Reviewer",
+        subtitle: "Build Systems Journal",
+        place: "Online",
+        dates: { start: "2022-05", end: "present" },
+      },
+      {
+        id: "months",
+        title: "Chair",
+        subtitle: "Platform Days",
+        dates: { start: "2023-09", end: "2023-11" },
+      },
+      { id: "single", title: "Speaker", subtitle: "Lowlands Meetup", dates: { start: "2022-09" } },
+    ].map((entry) => ({ ...entry, bullets: [] }));
+    for (const dateFormat of ["MMM yyyy", "MMMM yyyy", "MM/yyyy", "yyyy"] as const) {
+      const body = generateBody(pkg, ranged, { ...values, dateFormat });
+      const job = `award-dates-${dateFormat.replace(/\W/g, "")}`;
+      const { result, page } = await compileAndDraw(body.latex, body.texts, job);
+      expect(result.log, dateFormat).not.toMatch(/^! /m);
+      expect(page.unmatched, dateFormat).toBe(0);
+      for (const { id } of awards.entries) {
+        const at = `${id} in ${dateFormat}`;
+        expect(baselinesOf(page, `${id}.dates`), at).toHaveLength(1);
+        // And a gap of at least a point before the award's title.
+        const dates = page.glyphs.filter((glyph) => glyph.field === `${id}.dates`);
+        const title = page.glyphs.find((glyph) => glyph.field === `${id}.title`);
+        expect(
+          (title?.left ?? 0) - Math.max(...dates.map((glyph) => glyph.right)),
+          at,
+        ).toBeGreaterThan(1);
+      }
+    }
+    // The sample's awards are years, which upstream's column holds, and are set as there.
+    const cls = pkg.files["rt-awesome-cv.cls"] ?? "";
+    const honors =
+      /^% rt: the column of an award's date[\s\S]*?^% Define a line of cv information\(honor/m;
+    expect(cls.match(new RegExp(honors.source, "gm"))).toHaveLength(1);
+    const upstream = parsePackage({
+      ...pkg,
+      id: "awesome-cv-honors",
+      files: {
+        "rt-awesome-cv.cls": cls.replace(
+          honors,
+          [
+            "\\newenvironment{cvhonors}{%",
+            "  \\vspace{\\acvSectionContentTopSkip}",
+            "  \\vspace{-2mm}",
+            "  \\begin{center}",
+            "    \\setlength\\tabcolsep{0pt}",
+            "    \\setlength{\\extrarowheight}{0pt}",
+            "    \\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}} C{1.5cm} L{\\textwidth - 4.0cm} R{2.5cm}}",
+            "}{%",
+            "    \\end{tabular*}",
+            "  \\end{center}",
+            "}",
+            "% Define a line of cv information(honor",
+          ].join("\n"),
+        ),
+      },
+    });
+    const plain = generateFormat(upstream, values);
+    const dumped = session.dump(upstream.engine, plain.name, plain.preamble, plain.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    const body = generateBody(upstream, sample, values);
+    const result = session.compile(upstream.engine, plain.name, body.latex, {
+      job: "honors-upstream",
+      maxPasses: 3,
+    });
+    if (!result.output) throw new Error(result.error);
+    expect((await drawPage(result.output, fonts, body.texts)).glyphs).toEqual(drawn.glyphs);
+  }, 60_000);
+
   it("sets a name with a blank first half as upstream does, the rest centred on the page", async () => {
     // Upstream's class drops the space between the two halves at the start of the name's line when
     // the first is blank, so the last is centred on its own; a blank name of both halves stops its
