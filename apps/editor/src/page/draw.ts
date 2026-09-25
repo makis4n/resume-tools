@@ -90,9 +90,10 @@ export interface FieldLayout {
    */
   secondLine: number | undefined;
   /**
-   * The x of each glyph and drawn rule on the first glyph's baseline, within half a point, in TeX
-   * points, ascending, whichever field or column it belongs to: what a field shown on one line
-   * guesses its line's start from. The fields on one baseline share it.
+   * The x of each glyph and drawn rule on the first glyph's baseline, in TeX points, ascending,
+   * whichever field or column it belongs to: what a field shown on one line guesses its line's
+   * start from. A glyph or rule is on the baseline of the first the page sets within half a point
+   * of it, the nearest when there are two, and the fields on one baseline share it.
    */
   baseline: readonly number[];
 }
@@ -329,13 +330,17 @@ function layoutsOf(
     if (first) append(firsts, first.item, field.id);
   }
   // A field's paragraph special is the first after its first begin marker and before its first
-  // glyph. The x of everything drawn is kept by baseline, in DVI units.
+  // glyph. Everything drawn goes to its baseline as the walk meets it, and each field's first
+  // glyph says which baseline is the field's.
   const paragraphs = new Map<string, string>();
   const begun = new Set<string>();
   const waiting = new Set<string>();
-  const drawn = new Map<number, number[]>();
+  const baselines = new Baselines(ON_BASELINE / pt);
+  const baselineOf = new Map<string, Baseline>();
   page.items.forEach((item, index) => {
-    for (const id of firsts.get(index) ?? []) waiting.delete(id);
+    // The fields whose first glyph this is.
+    const startsHere = firsts.get(index) ?? [];
+    for (const id of startsHere) waiting.delete(id);
     if (item.kind === "special") {
       const begin = markerId(item.text, MARKER_BEGIN);
       if (begin !== undefined && !begun.has(begin)) {
@@ -344,23 +349,20 @@ function layoutsOf(
       }
       const id = begin === undefined ? paragraphId(item.text) : undefined;
       if (id !== undefined && waiting.delete(id)) paragraphs.set(id, item.text);
-    } else if (item.kind === "glyph" || (item.kind === "rule" && item.width > 0 && item.height > 0))
-      append(drawn, item.v, item.h);
+    } else if (
+      item.kind === "glyph" ||
+      (item.kind === "rule" && item.width > 0 && item.height > 0)
+    ) {
+      const baseline = baselines.at(item.v);
+      baseline.h.push(item.h);
+      for (const id of startsHere) baselineOf.set(id, baseline);
+    }
   });
-  const levels = [...drawn.keys()].sort((a, b) => a - b);
-  const baselines = new Map<number, readonly number[]>();
-  /** What is drawn within half a point of the baseline at `v`, in DVI units, as x in points. */
-  const baselineAt = (v: number): readonly number[] => {
-    const kept = baselines.get(v);
-    if (kept) return kept;
-    const within = ON_BASELINE / pt;
-    let at = lowerBound(levels, v - within);
-    const baseline: number[] = [];
-    for (; at < levels.length && (levels[at] as number) <= v + within; at++)
-      for (const h of drawn.get(levels[at] as number) ?? []) baseline.push(INCH + h * pt);
-    baseline.sort((a, b) => a - b);
-    baselines.set(v, baseline);
-    return baseline;
+  /** A baseline's x, in points and in order, sorted the first time a field asks for them. */
+  const sorted = (baseline: Baseline | undefined): readonly number[] => {
+    if (baseline === undefined) return [];
+    baseline.x ??= baseline.h.map((h) => INCH + h * pt).sort((a, b) => a - b);
+    return baseline.x;
   };
   const layouts = new Map<string, FieldLayout | undefined>();
   for (const [id, field] of fields) {
@@ -380,7 +382,7 @@ function layoutsOf(
       x: INCH + item.h * pt,
       y: INCH + item.v * pt,
       secondLine: secondLineOf(page, field, item.v, primary.size / 2 / pt, pt),
-      baseline: baselineAt(item.v),
+      baseline: sorted(baselineOf.get(id)),
     });
   }
   return layouts;
@@ -393,16 +395,46 @@ function append<K, V>(lists: Map<K, V[]>, key: K, value: V) {
   else lists.set(key, [value]);
 }
 
-/** The first index of a sorted array whose value is at least `value`. */
-function lowerBound(sorted: readonly number[], value: number): number {
-  let low = 0;
-  let high = sorted.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if ((sorted[middle] as number) < value) low = middle + 1;
-    else high = middle;
+/** The glyphs and rules a page draws on one baseline. */
+interface Baseline {
+  /** The baseline, the v of the first glyph or rule on it, in DVI units. */
+  v: number;
+  /** The h of each glyph and rule on it, in DVI units, in the order the page sets them. */
+  h: number[];
+  /** Their x in TeX points, ascending, once a field has asked. */
+  x?: number[];
+}
+
+/**
+ * A page's baselines, gathered in one walk over its items, so that finding what shares a field's
+ * baseline costs the same however close together a page sets its baselines: a template may
+ * raise each of thousands of glyphs by a scaled point more than the last, and a window of half a
+ * point gathered and sorted anew for each baseline cost 2.2 s to draw such a page. A glyph or
+ * rule goes to the nearest baseline already met within `within` of it, or starts one of its own.
+ * Each baseline is kept under its v quantised to steps of `within`: two v in one step lie within
+ * `within` of each other, so a step holds at most one baseline, and the only baselines that can
+ * be near enough to a v are those of its own step and the two beside it.
+ */
+class Baselines {
+  private readonly steps = new Map<number, Baseline>();
+
+  constructor(private readonly within: number) {}
+
+  /** The baseline a glyph or rule at `v` is on, in DVI units. */
+  at(v: number): Baseline {
+    const step = Math.floor(v / this.within);
+    let nearest: Baseline | undefined;
+    for (let near = step - 1; near <= step + 1; near++) {
+      const baseline = this.steps.get(near);
+      const distance = baseline === undefined ? Number.POSITIVE_INFINITY : Math.abs(baseline.v - v);
+      if (distance <= this.within && (!nearest || distance < Math.abs(nearest.v - v)))
+        nearest = baseline;
+    }
+    if (nearest) return nearest;
+    const baseline: Baseline = { v, h: [] };
+    this.steps.set(step, baseline);
+    return baseline;
   }
-  return low;
 }
 
 /**

@@ -529,37 +529,65 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     expect(f?.secondLine).toBe(f?.x);
   }, 30_000);
 
-  it("lays out thousands of fields in time proportional to the page", async () => {
-    // The reviewers' page: 8,000 fields of one glyph each, which a template could mark. Laid out
-    // field by field over the whole page, it drew in 636 to 726 ms, after every edit's compile.
-    const cells = Array.from(
-      { length: 8000 },
-      (_, i) => `\\special{rt:b:f${i}}x\\special{rt:e:f${i}}`,
-    );
+  /**
+   * A page of 8,000 fields of one glyph each, `cell` the LaTeX of the i-th, 40 to a line of the
+   * source, compiled and drawn five times after one draw that loads its fonts: the page, and the
+   * median of the five draws' times in milliseconds.
+   */
+  async function manyFields(job: string, cell: (i: number) => string, line: string) {
+    const cells = Array.from({ length: 8000 }, (_, i) => cell(i));
     const lines = Array.from(
       { length: 200 },
-      (_, i) => `${cells.slice(i * 40, i * 40 + 40).join("")} `,
+      (_, i) => `${cells.slice(i * 40, i * 40 + 40).join("")}${line}`,
     );
     const body = [
       "\\documentclass{article}\\usepackage[margin=0.2in]{geometry}\\begin{document}\\tiny\\noindent",
       ...lines,
       "\\end{document}",
     ].join("\n");
-    const compiled = session.compile("pdftex", "stock", body, { job: "many", maxPasses: 1 });
+    const compiled = session.compile("pdftex", "stock", body, { job, maxPasses: 1 });
     if (!compiled.output) throw new Error(compiled.error);
     const output = compiled.output;
-    await drawPage(output, fonts, new Map());
+    let drawn = await drawPage(output, fonts, new Map());
     const times: number[] = [];
-    let drawn: DrawnPage | undefined;
     for (let i = 0; i < 5; i++) {
       const started = performance.now();
       drawn = await drawPage(output, fonts, new Map());
       times.push(performance.now() - started);
     }
-    expect(drawn?.fields.size).toBe(8000);
-    expect(drawn?.pageCount).toBe(1);
-    expect([...(drawn?.fields.values() ?? [])].every((field) => field.layout)).toBe(true);
-    expect(times.sort((a, b) => a - b)[2]).toBeLessThan(100);
+    expect(drawn.fields.size, job).toBe(8000);
+    expect(drawn.pageCount, job).toBe(1);
+    expect(
+      [...drawn.fields.values()].every((field) => field.layout),
+      job,
+    ).toBe(true);
+    return { drawn, ms: times.sort((a, b) => a - b)[2] ?? Number.POSITIVE_INFINITY };
+  }
+
+  it("lays out thousands of fields in time proportional to the page", async () => {
+    // The reviewers' page: 8,000 fields of one glyph each, which a template could mark. Laid out
+    // field by field over the whole page, it drew in 636 to 726 ms, after every edit's compile.
+    const { ms } = await manyFields(
+      "many",
+      (i) => `\\special{rt:b:f${i}}x\\special{rt:e:f${i}}`,
+      " ",
+    );
+    expect(ms).toBeLessThan(100);
+  }, 60_000);
+
+  it("gathers each baseline once, however close a page's baselines lie", async () => {
+    // The verifier's page: the 8,000 fields on one line, each raised a scaled point more than the
+    // one before, so that each glyph has a baseline of its own within half a point of every other.
+    // Gathered and sorted anew for each baseline, what shares a field's baseline took 2.2 s.
+    const { drawn, ms } = await manyFields(
+      "close",
+      (i) => `\\special{rt:b:f${i}}\\rlap{\\raisebox{${i}sp}{x}}\\special{rt:e:f${i}}`,
+      "%",
+    );
+    const baselines = new Set([...drawn.fields.values()].map((field) => field.layout?.baseline));
+    expect(baselines.size).toBe(1);
+    expect([...baselines][0]).toHaveLength(8000);
+    expect(ms).toBeLessThan(300);
   }, 60_000);
 
   it("gives a later page the size the first page set", async () => {
