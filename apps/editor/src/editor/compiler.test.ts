@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Font, Glyph, Path } from "opentype.js";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
@@ -20,6 +21,7 @@ import { INVENTED_XETEX } from "../templates/invented";
 import {
   type ControlValues,
   defaultControls,
+  fontFiles,
   parsePackage,
   type TemplatePackage,
 } from "../templates/package";
@@ -165,10 +167,57 @@ const NO_FONTS = new FontLibrary(
 );
 
 /**
- * A compiler over fake engines, with what it made and emitted. With `slowStart`, every engine
- * starts only when the test settles its start.
+ * An invented OpenType font, written by opentype.js, with a glyph for each character of printable
+ * ASCII and the en dash, and none for anything else: as a declared file of the invented XeTeX
+ * package reads, it sets no arrow.
  */
-function scheduler(options: CompilerOptions = {}, { slowStart = false } = {}) {
+function textFont(): Uint8Array {
+  const points = [...Array.from({ length: 95 }, (_, i) => 0x20 + i), 0x2013];
+  const font = new Font({
+    familyName: "Invented",
+    styleName: "Regular",
+    unitsPerEm: 1000,
+    ascender: 800,
+    descender: -200,
+    glyphs: [
+      new Glyph({ name: ".notdef", advanceWidth: 500, path: new Path() }),
+      ...points.map(
+        (point) =>
+          new Glyph({
+            name: `u${point.toString(16)}`,
+            unicodes: [point],
+            advanceWidth: 500,
+            path: new Path(),
+          }),
+      ),
+    ],
+  });
+  return new Uint8Array(font.toArrayBuffer());
+}
+
+/**
+ * A font library whose tree has every font file the invented XeTeX package declares, each read
+ * by `read`, by default as `textFont`.
+ */
+function inventedFonts(read: (path: string) => Promise<Uint8Array> = async () => textFont()) {
+  const files = Object.fromEntries(
+    fontFiles(INVENTED_XETEX.package).map((file) => [
+      `/texlive/texmf-dist/fonts/opentype/x/${file}`,
+      1,
+    ]),
+  );
+  return new FontLibrary(new TexLiveIndex({ release: "", layout: 0, bundles: [], files }), read);
+}
+
+/**
+ * A compiler over fake engines, with what it made and emitted. With `slowStart`, every engine
+ * starts only when the test settles its start. `fonts` is the library the page's fonts come from,
+ * which the fake draw never reads, and which gives a XeTeX package's body what its fonts set.
+ */
+function scheduler(
+  options: CompilerOptions = {},
+  { slowStart = false, fonts = NO_FONTS }: { slowStart?: boolean; fonts?: FontLibrary } = {},
+) {
   const engines: FakeEngine[] = [];
   const shown: Shown[] = [];
   const errors: string[] = [];
@@ -179,7 +228,7 @@ function scheduler(options: CompilerOptions = {}, { slowStart = false } = {}) {
       engines.push(engine);
       return engine;
     },
-    NO_FONTS,
+    fonts,
     {
       page: (page) => shown.push(page),
       error: (message) => errors.push(message),
@@ -1255,8 +1304,8 @@ describe("Compiler", () => {
     if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
     summary.text = [{ text: "From 40 \u{2192} 12 minutes." }];
     const doc = Document.parse({ version: 1, template: xetex.id, resume, controls: {} });
-    // The fake library has no font file, so the fonts set nothing past ASCII.
-    const s = scheduler();
+    // The fonts set no arrow.
+    const s = scheduler({}, { fonts: inventedFonts() });
     s.compiler.open(xetex, doc);
     await settle();
     s.engine().dumps[0]?.resolve(dumped());
@@ -1624,5 +1673,67 @@ describe.skipIf(!engineAvailable())("Compiler through the engine", () => {
     expect(shownText).not.toContain("\u{ffff}");
     // The console hears which characters were left out, once.
     expect(warned).toHaveBeenCalledWith(expect.stringContaining("\u{2192}"));
+  }, 60_000);
+
+  it("leaves nothing more out when a font it does not use fails to read, and reads it again", async () => {
+    // The verifier's case: one failed fetch of Roboto Bold Italic, which no text of the sample is
+    // set in, left every character past ASCII out of the whole page, the dates' dash among them.
+    const engine: Engine = {
+      start: async () => {},
+      dump: async (kind, name, preamble, files) => session.dump(kind, name, preamble, files),
+      putFormat: async (kind, name, format) => session.putFormat(kind, name, format),
+      forget: async (job) => session.forget(job),
+      compile: async (kind, format, body, options) => session.compile(kind, format, body, options),
+      pdf: async (job, options) => session.pdf(job, options),
+      terminate: () => {},
+    };
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    const reads = new Map<string, number>();
+    const flaky = new FontLibrary(new TexLiveIndex(manifest), async (path) => {
+      const count = (reads.get(path) ?? 0) + 1;
+      reads.set(path, count);
+      if (path.endsWith("/Roboto-BoldItalic.otf") && count === 1) throw new Error("dropped");
+      return readFileSync(join(ENGINE_DIR, "files", path));
+    });
+    const { package: xetex, sample: invented } = INVENTED_XETEX;
+    const doc = Document.parse({ version: 1, template: xetex.id, resume: invented, controls: {} });
+    const pages: Shown[] = [];
+    let onPage: () => void = () => {};
+    const compiler = new Compiler(() => engine, flaky, {
+      page: (page) => {
+        pages.push(page);
+        onPage();
+      },
+      error: (message) => {
+        throw new Error(message);
+      },
+      busy: () => {},
+    });
+    const next = () =>
+      new Promise<Shown>((resolve) => {
+        onPage = () => resolve(pages.at(-1) as Shown);
+      });
+    let shown = next();
+    compiler.open(xetex, doc);
+    const { page, body } = await shown;
+    // The dates keep their en dash, which every font that loaded has.
+    const dates = body.texts.get("harbor.dates") ?? "";
+    expect(dates).toContain("\u{2013}");
+    const dash = page.fields.get("harbor.dates")?.glyphs.find((g) => g.text === "\u{2013}");
+    expect(dash?.offset).toBe(dates.indexOf("\u{2013}"));
+    expect(body.dropped).toEqual([]);
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("Roboto-BoldItalic.otf"));
+    // The next compile reads it again.
+    shown = next();
+    compiler.update(
+      apply(doc, { type: "text", field: "harbor.title", text: "Harbour Lane Press" }),
+    );
+    await shown;
+    compiler.close();
+    const boldItalic = [...reads].find(([path]) => path.endsWith("/Roboto-BoldItalic.otf"));
+    expect(boldItalic?.[1]).toBe(2);
   }, 60_000);
 });

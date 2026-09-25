@@ -59,7 +59,7 @@ import type {
   Engine as SessionEngine,
 } from "../engine/session";
 import { type DrawnPage, drawPage } from "../page/draw";
-import type { FontLibrary } from "../page/fonts";
+import type { FontLibrary, NativeCoverage } from "../page/fonts";
 import {
   type GeneratedBody,
   type GeneratedFormat,
@@ -370,6 +370,8 @@ export class Compiler {
   private readonly warned = new Set<string>();
   /** The characters the console has been told the body leaves out, which its fonts cannot set. */
   private readonly leftOut = new Set<string>();
+  /** The declared font files the console has been told could not be read, until one is. */
+  private readonly unreadFonts = new Set<string>();
   /**
    * The page on screen while it is the newest document's. A compile that fails, or a page that is
    * dropped, clears it, since a PDF of an older page is not what the user asked for.
@@ -662,14 +664,15 @@ export class Compiler {
         await this.request(run, run.limit, () => engine.forget(JOB));
         if (!this.current(run)) return;
       }
-      const covers = await this.within(
+      const coverage = await this.within(
         run,
         run.limit,
         () => covering,
         () => this.drop(run, "to read its fonts"),
       );
       if (!this.current(run)) return;
-      const body = generateBody(pkg, doc.resume, doc.controls, { covers });
+      this.warnAboutUnread(coverage);
+      const body = generateBody(pkg, doc.resume, doc.controls, { covers: coverage?.covers });
       this.warnAboutLeftOut(body.dropped);
       this.opened = false;
       instance.compiled = true;
@@ -769,17 +772,15 @@ export class Compiler {
       // `run`), so that the trial sets the pages the document would. The document's compile has
       // read the fonts by now, so this waits on nothing, and never past a compile's limit.
       const reading = this.limits[pkg.engine];
-      const covers = await new Promise<((char: string) => boolean) | undefined>(
-        (resolve, reject) => {
-          trial.timer = setTimeout(
-            () => reject(new Error(`the fonts took over ${reading} ms to read`)),
-            reading,
-          );
-          this.coverage(pkg).then(resolve, reject);
-        },
-      ).finally(() => clearTimeout(trial.timer));
+      const coverage = await new Promise<NativeCoverage | undefined>((resolve, reject) => {
+        trial.timer = setTimeout(
+          () => reject(new Error(`the fonts took over ${reading} ms to read`)),
+          reading,
+        );
+        this.coverage(pkg).then(resolve, reject);
+      }).finally(() => clearTimeout(trial.timer));
       if (this.trying !== trial) return;
-      const body = generateBody(pkg, doc.resume, doc.controls, { covers });
+      const body = generateBody(pkg, doc.resume, doc.controls, { covers: coverage?.covers });
       const instance = this.currentInstance();
       const { engine } = instance;
       const work: Work = {
@@ -999,11 +1000,12 @@ export class Compiler {
 
   /**
    * What a XeTeX package's declared fonts can set, read from their files, which the page draws
-   * with anyway (`FontLibrary.coverage`), so that the body leaves out a character none of them has
-   * rather than have XeTeX set a font's box for it (decision 0014); undefined for a package that
-   * declares no fonts, whose body leaves nothing out.
+   * with anyway (`FontLibrary.coverage`), so that the body leaves out a character they cannot all
+   * set rather than have XeTeX set a font's box for it (decision 0014); undefined for a package
+   * that declares no fonts, whose body leaves nothing out. A file that could not be read takes no
+   * part, and is read again for the next compile.
    */
-  private coverage(pkg: TemplatePackage): Promise<((char: string) => boolean) | undefined> {
+  private coverage(pkg: TemplatePackage): Promise<NativeCoverage | undefined> {
     const files = fontFiles(pkg);
     return files.length === 0 ? Promise.resolve(undefined) : this.fonts.coverage(files);
   }
@@ -1077,6 +1079,22 @@ export class Compiler {
     this.busy = busy;
     this.events.busy(busy);
     if (!busy) for (const wake of this.settled.splice(0)) wake();
+  }
+
+  /**
+   * A font file a XeTeX package declares that could not be read takes no part in what the body
+   * leaves out, and the console hears of it, once until it is read; the next compile reads it again.
+   */
+  private warnAboutUnread(coverage: NativeCoverage | undefined) {
+    const unread = coverage?.unread ?? [];
+    for (const name of [...this.unreadFonts])
+      if (!unread.includes(name)) this.unreadFonts.delete(name);
+    const fresh = unread.filter((name) => !this.unreadFonts.has(name));
+    if (fresh.length === 0) return;
+    for (const name of fresh) this.unreadFonts.add(name);
+    console.warn(
+      `The page's fonts could not all be read, so the body leaves out only what the others cannot set: ${fresh.join(", ")}`,
+    );
   }
 
   /**

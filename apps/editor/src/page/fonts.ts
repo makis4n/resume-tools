@@ -77,6 +77,14 @@ export interface NativePageFont {
   missing?: string;
 }
 
+/** What a XeTeX package's native fonts can set among them (`FontLibrary.coverage`). */
+export interface NativeCoverage {
+  /** Whether every text font that loaded covers a character. */
+  covers: (char: string) => boolean;
+  /** The files the tree has that could not be read or parsed, by name, which take no part. */
+  unread: string[];
+}
+
 /** A fix_word's 1.0. */
 const FIX = 2 ** 20;
 
@@ -221,13 +229,21 @@ export class FontLibrary {
 
   /**
    * What a XeTeX package's native font files `names` can set wherever its template sets a text
-   * (`nativeCoverage`), each loaded as `loadNative` loads it. A file the tree lacks sets no text,
-   * since XeTeX cannot load it either, and is left out; one that cannot be read or parsed covers
-   * nothing. The generator leaves out of the package's texts what they cannot set (decision 0014).
+   * (`nativeCoverage`), from those that load as `loadNative` loads them, and the files the tree
+   * has that could not be read or parsed, by name, which take no part. A file the tree lacks sets
+   * no text, since XeTeX cannot load it either, and takes no part either. A read that failed is not
+   * kept, as `loadNative` keeps none, so the next call reads the file again. The generator leaves
+   * out of the package's texts what they cannot set (decision 0014).
    */
-  async coverage(names: readonly string[]): Promise<(char: string) => boolean> {
+  async coverage(names: readonly string[]): Promise<NativeCoverage> {
     const fonts = await Promise.all(names.map((name) => this.loadNative(name)));
-    return nativeCoverage(fonts.flatMap((font) => (font === undefined ? [] : [font.file])));
+    const files: NativeFontFile[] = [];
+    const unread: string[] = [];
+    fonts.forEach((font, i) => {
+      if (font?.file !== undefined) files.push(font.file);
+      else if (font !== undefined) unread.push(names[i] as string);
+    });
+    return { covers: nativeCoverage(files), unread };
   }
 
   /**

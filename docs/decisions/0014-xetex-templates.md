@@ -91,7 +91,10 @@ Sans Pro for the headings, one Font Awesome icon in the header) stands in for it
   not, so an arrow is left out of a heading in Source Sans too. An icon font, whose map gives only
   ASCII and the Private Use Area, as Font Awesome's does, is no text font. The compiler reads the
   files while the engine starts, as the page reads them anyway, and the harness before its first
-  compile; a file that cannot be read covers nothing. A text for XeTeX's fonts stays composed,
+  compile. A file that could not be read or parsed takes no part, so that one failed fetch of a
+  shape no text uses leaves nothing out, and neither does a file the tree lacks, which XeTeX cannot
+  load either; the console names a file that could not be read, and the next compile reads it
+  again. With no text font read, nothing is left out. A text for XeTeX's fonts stays composed,
   since they set letters whole, where pdfTeX's is decomposed past Latin Extended-A (`escape.ts`).
   A glyph 0 the page still meets, which only a template's own text can set, reads as a character
   left out: it draws nothing, has no box, and the aligner puts it where the walk is and does not

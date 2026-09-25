@@ -177,7 +177,7 @@ export async function validatePackage(
   // What a XeTeX package's fonts can set, as the editor reads it, so that every body leaves out
   // what they cannot, as the editor's does (decision 0014).
   const files = fontFiles(pkg);
-  const covers = files.length === 0 ? undefined : await fonts.coverage(files);
+  const covers = files.length === 0 ? undefined : (await fonts.coverage(files)).covers;
 
   // The generator throws for what it cannot render, such as a body past MAX_BODY or a font the
   // package no longer lists, and the session for a run the engine cannot finish; either is a

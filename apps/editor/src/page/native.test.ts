@@ -198,14 +198,10 @@ describe("nativeCoverage", () => {
     expect(nativeCoverage([serif])("\u{2192}")).toBe(true);
   });
 
-  it("takes a file that did not load for a text font that covers nothing", () => {
-    expect(nativeCoverage([serif, undefined])("a")).toBe(false);
-    expect(nativeCoverage([undefined])("a")).toBe(false);
-    expect(nativeCoverage([])("a")).toBe(false);
-  });
-
   it("leaves everything to XeTeX when no file is a text font, having nothing to judge by", () => {
     expect(nativeCoverage([icons])("\u{e9}")).toBe(true);
+    // As when none of the files loaded, which the caller leaves out.
+    expect(nativeCoverage([])("\u{2192}")).toBe(true);
   });
 });
 

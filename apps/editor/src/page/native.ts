@@ -337,20 +337,18 @@ export function parseNativeFont(bytes: Uint8Array): NativeFontFile {
 
 /**
  * What a XeTeX package's fonts can set wherever its template sets a text (decision 0014): a
- * character every text font of the files its `fonts` section names covers
- * (`NativeFontFile.covers`), since the generator cannot tell which family a template sets a text
- * in, and XeTeX sets a font's `.notdef` box for a character that font lacks, though another has
- * it: Source Sans Pro has an arrow, and Roboto does not. An icon font such as Font Awesome is no
- * text font (`NativeFontFile.setsText`), and a file that did not load is one that covers
- * nothing, so that the generator leaves its characters out rather than have XeTeX set boxes for
- * them. Files none of which is a text font leave everything to XeTeX.
+ * character every text font among `files` covers (`NativeFontFile.covers`), since the generator
+ * cannot tell which family a template sets a text in, and XeTeX sets a font's `.notdef` box for a
+ * character that font lacks, though another has it: Source Sans Pro has an arrow, and Roboto does
+ * not. `files` are those of its `fonts` section that loaded: one that did not takes no part, so
+ * that a failed fetch of a shape no text uses leaves nothing out (`FontLibrary.coverage`). An
+ * icon font such as Font Awesome is no text font (`NativeFontFile.setsText`), and with no text
+ * font among them, nothing is left out and everything is XeTeX's to set.
  */
-export function nativeCoverage(
-  files: readonly (NativeFontFile | undefined)[],
-): (char: string) => boolean {
-  const texts = files.filter((file) => file === undefined || file.setsText);
-  if (files.length > 0 && texts.length === 0) return () => true;
-  return (char) => texts.length > 0 && texts.every((file) => file?.covers(char) === true);
+export function nativeCoverage(files: readonly NativeFontFile[]): (char: string) => boolean {
+  const texts = files.filter((file) => file.setsText);
+  if (texts.length === 0) return () => true;
+  return (char) => texts.every((file) => file.covers(char));
 }
 
 /**

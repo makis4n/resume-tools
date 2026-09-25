@@ -312,19 +312,44 @@ describe("FontLibrary over an invented tree", () => {
   it("reads what a package's native fonts can set, leaving out a file the tree lacks", async () => {
     const { fonts } = libraryOver({
       "/fonts/opentype/invented/Invented-Regular.otf": nativeFont([0xe9]),
-      "/fonts/opentype/invented/Broken.otf": new Uint8Array([0, 1, 0, 0, 0, 0]),
     });
     // XeTeX cannot load a file the tree lacks either, so it sets no text to judge by.
-    const covers = await fonts.coverage(["Invented-Regular.otf", "Nosuch.otf"]);
+    const { covers, unread } = await fonts.coverage(["Invented-Regular.otf", "Nosuch.otf"]);
     expect(covers("\u{e9}")).toBe(true);
     expect(covers("\u{2192}")).toBe(false);
-    // One the tree has that cannot be read might set anything, so it covers nothing.
-    const unread = await fonts.coverage(["Invented-Regular.otf", "Broken.otf"]);
-    expect(unread("\u{e9}")).toBe(false);
+    expect(unread).toEqual([]);
     expect(fonts.nativePath("Invented-Regular.otf")).toBe(
       "/texlive/texmf-dist/fonts/opentype/invented/Invented-Regular.otf",
     );
     expect(fonts.nativePath("Nosuch.otf")).toBeUndefined();
+  });
+
+  it("leaves a file it cannot read out of what the fonts set, names it, and reads it again next time", async () => {
+    // One failed fetch of a shape no text uses must not leave every accent out of the document.
+    const { fonts, reads } = libraryOver(
+      {
+        "/fonts/opentype/invented/Invented-Regular.otf": nativeFont([0xe9, 0x2013]),
+        "/fonts/opentype/invented/Invented-Bold.otf": nativeFont([0xe9]),
+        "/fonts/opentype/invented/Broken.otf": new Uint8Array([0, 1, 0, 0, 0, 0]),
+      },
+      "Invented-Bold.otf",
+    );
+    const names = ["Invented-Regular.otf", "Invented-Bold.otf"];
+    const first = await fonts.coverage(names);
+    expect(first.unread).toEqual(["Invented-Bold.otf"]);
+    expect(first.covers("\u{e9}")).toBe(true);
+    expect(first.covers("\u{2013}")).toBe(true);
+    // The next compile reads it again, and it takes its part: it has no en dash.
+    const second = await fonts.coverage(names);
+    expect(reads.get("/fonts/opentype/invented/Invented-Bold.otf")).toBe(2);
+    expect(second.unread).toEqual([]);
+    expect(second.covers("\u{2013}")).toBe(false);
+    // A file that does not parse takes no part either.
+    const broken = await fonts.coverage(["Invented-Regular.otf", "Broken.otf"]);
+    expect(broken.unread).toEqual(["Broken.otf"]);
+    expect(broken.covers("\u{e9}")).toBe(true);
+    // And with none read, nothing is left out.
+    expect((await fonts.coverage(["Broken.otf"])).covers("\u{2192}")).toBe(true);
   });
 
   it("refuses a chain of virtual fonts more than four deep", async () => {
