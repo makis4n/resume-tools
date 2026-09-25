@@ -147,6 +147,8 @@ export function App() {
   const [downloading, setDownloading] = useState(false);
   const clicks = useRef(0);
   const [sheet, setSheet] = useState<HTMLDivElement | null>(null);
+  /** The TeX Live fonts the pages are drawn from, which a rich field's editor loads fonts from. */
+  const [library, setLibrary] = useState<FontLibrary>();
 
   /** The list, fresh from the store, which writes what waits to be saved before it lists. */
   const showList = async (reason?: string) => {
@@ -237,6 +239,7 @@ export function App() {
     const loaded = loadTree().then(
       ({ tag, fonts, known }) => {
         if (!live) return;
+        setLibrary(fonts);
         owned = new Compiler(() => new EngineClient(), fonts, events, {
           formats: kept.formatsFor(tag),
           prefetch: kept.prefetch,
@@ -474,6 +477,7 @@ export function App() {
               document={present}
               shown={shown.latest}
               page={sheet}
+              fonts={library}
               onCommand={edit}
               onClose={() => setClicked(undefined)}
             />

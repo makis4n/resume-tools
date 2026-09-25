@@ -56,6 +56,11 @@ export interface ScaledMetrics {
   widths: Int32Array;
   heights: Int32Array;
   depths: Int32Array;
+  /**
+   * Per character code, the italic correction TeX's `\/` appends after the character, which
+   * LaTeX's `\textit` and `\textbf` set at their ends (`linebreak.ts`, `FaceRun`).
+   */
+  italics: Int32Array;
   /** Kern amounts in scaled points, indexed like `Tfm.kerns`. */
   kerns: Int32Array;
   /** Interword glue and the em, in scaled points. */
@@ -188,15 +193,18 @@ export function scaleTfm(tfm: Tfm, sizeSp: number): ScaledMetrics {
   const widths = new Int32Array(256);
   const heights = new Int32Array(256);
   const depths = new Int32Array(256);
+  const italics = new Int32Array(256);
   const w = Array.from(tfm.widths, (f) => scaleFixWord(f, sizeSp));
   const h = Array.from(tfm.heights, (f) => scaleFixWord(f, sizeSp));
   const d = Array.from(tfm.depths, (f) => scaleFixWord(f, sizeSp));
+  const it = Array.from(tfm.italics, (f) => scaleFixWord(f, sizeSp));
   for (let code = tfm.bc; code <= tfm.ec; code++) {
     const info = tfm.chars[code - tfm.bc];
     if (!info) continue;
     widths[code] = w[info.width] ?? 0;
     heights[code] = h[info.height] ?? 0;
     depths[code] = d[info.depth] ?? 0;
+    italics[code] = it[info.italic] ?? 0;
   }
   const kerns = Int32Array.from(tfm.kerns, (f) => scaleFixWord(f, sizeSp));
   const param = (i: number) => scaleFixWord(tfm.params[i] ?? 0, sizeSp);
@@ -204,6 +212,7 @@ export function scaleTfm(tfm: Tfm, sizeSp: number): ScaledMetrics {
     widths,
     heights,
     depths,
+    italics,
     kerns,
     space: param(2),
     stretch: param(3),

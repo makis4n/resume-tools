@@ -8,7 +8,8 @@
  * list of boxes, glue, kerns, penalties and discretionaries, so the overlay can break
  * exactly where TeX will. `paragraphNodes` builds that list from a field's text with
  * the font's TFM metrics, ligatures, kerns and space factors, the way TeX's main loop
- * does. Hyphenation is a hook, not built in.
+ * does, and `richParagraphNodes` from rich text's runs, each in its own font.
+ * Hyphenation is a hook, not built in.
  *
  * All dimensions are in scaled points, integers, as in TeX.
  */
@@ -48,7 +49,12 @@ export type Node =
       /** True when inserted by hyphenation: only the second pass may break here. */
       hyphenation: boolean;
       offset: number;
-    };
+    }
+  /**
+   * A `\special`, which sets nothing, as hyperref's at each end of a link: TeX may break at glue
+   * after it, as after a letter, and never at a kern right before it, which stays on its line.
+   */
+  | { kind: "whatsit" };
 
 export interface LineSpec {
   indent: number;
@@ -156,7 +162,8 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
   const sumShOrder = new Uint8Array(n + 1);
   for (let i = 0; i < n; i++) {
     const node = nodes[i] as Node;
-    const w = node.kind === "disc" || node.kind === "penalty" ? 0 : node.width;
+    const w =
+      node.kind === "disc" || node.kind === "penalty" || node.kind === "whatsit" ? 0 : node.width;
     sumW[i + 1] = (sumW[i] as number) + w;
     for (let o = 0; o < 4; o++) {
       const s = sumS[o] as Float64Array;
@@ -372,11 +379,19 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
       switch (node.kind) {
         case "glue": {
           const before = nodes[cur - 1];
-          if (before && (before.kind === "box" || before.kind === "disc")) tryBreak(cur, 0, false);
+          // tex.web §866: glue is a place to break after a letter, a discretionary or a special.
+          if (before?.kind === "box" || before?.kind === "disc" || before?.kind === "whatsit")
+            tryBreak(cur, 0, false);
           break;
         }
         case "penalty":
           tryBreak(cur, node.penalty, false);
+          break;
+        case "kern":
+          // tex.web §866's kern_break: a kern followed by glue is a place to break, as after an
+          // ellipsis or an italic correction, and the glue after it is not, since a kern comes
+          // before it. Font kerns stand between two letters, so every kern here is explicit.
+          if (nodes[cur + 1]?.kind === "glue") tryBreak(cur, 0, false);
           break;
         case "disc":
           if (!node.hyphenation || pass.second)
@@ -446,6 +461,12 @@ export interface Face {
    * TeX's ligature and kern program runs within one font.
    */
   widthOf?: (ch: string) => number | undefined;
+  /**
+   * The italic correction of such a character, from the font `widthOf` measures it in, which
+   * TeX's `\/` sets after it, as it takes a correction from the font of the character before it
+   * whatever font that is (tex.web §1113); undefined, or 0, when that font gives it none.
+   */
+  italicOf?: (ch: string) => number | undefined;
 }
 
 export interface TextOptions {
@@ -570,134 +591,232 @@ function kindOf(ch: string): "space" | "tie" | "none" | "char" {
 const ELLIPSIS = "\u2026";
 
 /**
- * Build the node list for a paragraph of text as the generator writes it and TeX sets it:
- * characters become boxes after the font's ligature and kern program, a run of spaces becomes
- * one glue sized by the space factor (or `\spaceskip` and `\xspaceskip`), a no-break space a
- * penalty of 10000 and a normal space, and an explicit hyphen gets a discretionary after it. A
- * character the font lacks is a box of another of the field's fonts when one has it
- * (`Face.widthOf`), and is dropped otherwise, as TeX drops a missing character. Leading spaces
- * are dropped, and so is a trailing one, as TeX drops it at `\par`.
+ * A run of a paragraph's text in one font, as the generator writes rich text (decision 0007): each
+ * run in its own `\textbf`, `\textit` or `\href`, so that a font change or a special stands
+ * between two runs, and TeX's ligature and kern program never runs across them.
+ */
+export interface FaceRun {
+  /** The run's text. The runs' texts joined are the paragraph's, which offsets count through. */
+  text: string;
+  /** The font TeX sets the run in. */
+  face: Face;
+  /**
+   * Whether TeX appends an italic correction where the run ends, as LaTeX's `\textit` and
+   * `\textbf` do with `\/` at their ends and `\textbf` at its start; `rich.ts` decides it from the
+   * runs' marks (`breakRuns`). It is a kern of the italic correction of the last character set,
+   * after that character and before a space or no-break space after it, which LaTeX takes off and
+   * puts back around the kern (`\sw@slant`). It is the correction of that character's own font,
+   * a companion's such as TS1's for a `°` (`Face.italicOf`); and like `\/`, it sets nothing after
+   * anything but a character, such as the kern that ends an ellipsis or a hyphen's discretionary.
+   */
+  italicCorrection?: boolean;
+  /**
+   * Whether the run is a link, set inside `\href`, whose specials hyperref sets at its start and
+   * end (`whatsit`). The run's closing italic correction comes before its closing special, so that
+   * a break at the space after the link keeps the correction on its line, where a break at the
+   * kern would drop it (the reviewers' italic links, a line 0.69 pt short).
+   */
+  link?: boolean;
+}
+
+/**
+ * Build the node list for a paragraph of text as the generator writes it and TeX sets it: the
+ * one-run case of `richParagraphNodes`.
  */
 export function paragraphNodes(text: string, face: Face, options: TextOptions = {}): Node[] {
+  return richParagraphNodes([{ text, face }], options);
+}
+
+/**
+ * Build the node list for a paragraph of runs as the generator writes them and TeX sets them:
+ * characters become boxes after their run's font's ligature and kern program, a run of spaces
+ * becomes one glue sized by the space factor (or `\spaceskip` and `\xspaceskip`), a no-break space
+ * a penalty of 10000 and a normal space, and an explicit hyphen gets a discretionary after it. A
+ * character the run's font lacks is a box of another of the field's fonts when one has it
+ * (`Face.widthOf`), and is dropped otherwise, as TeX drops a missing character. Leading spaces
+ * are dropped, and so is a trailing one, as TeX drops it at `\par`.
+ *
+ * Each run is set in its own face, and ligatures and kerns never cross from one run into the
+ * next, as they never cross a font change in TeX. A space's glue is its run's font's, since TeX
+ * takes the interword glue from the font current where it reads the space; spaces on both sides of
+ * a boundary are two glues, as TeX reads a space token on each side of the commands between; and
+ * the space factor carries across runs, as TeX keeps it across a font change. Offsets are over the
+ * runs' texts joined.
+ */
+export function richParagraphNodes(runs: readonly FaceRun[], options: TextOptions = {}): Node[] {
   const sfCode = options.sfCode ?? latexSfCode;
-  const base = options.offset ?? 0;
   const nodes: Node[] = [];
   let spaceFactor = 1000;
-  // Characters are code points; offsets are UTF-16 indices, which is what callers slice by.
-  const chars: { ch: string; at: number; kind: ReturnType<typeof kindOf> }[] = [];
-  let pos = 0;
-  for (const ch of text) {
-    chars.push({ ch, at: pos, kind: kindOf(ch) });
-    pos += ch.length;
-  }
-  const at = (k: number) => base + (chars[k]?.at ?? text.length);
-  const kind = (k: number) => chars[k]?.kind;
-  const glue = (factor: number) => spaceGlue(face.metrics, factor, options);
-  const period = face.codeFor(".");
-
-  /**
-   * Set the word from character `from` to `to`. It is cut into runs of the face's own
-   * characters, each put through the font's ligature and kern program; a character another font
-   * sets, and each period of an ellipsis, ends a run, as a font change or a kern ends one in TeX.
-   */
-  const setWord = (from: number, to: number) => {
-    // Where each character stands in the word as `hyphenate` sees it, without the left-out ones.
-    const place: number[] = [];
-    let letters = "";
-    for (let k = from; k <= to; k++) {
-      place.push(letters.length);
-      const c = chars[k];
-      if (k < to && c?.kind === "char") letters += c.ch;
-    }
-    const hyphens = new Set(options.hyphenate ? options.hyphenate(letters) : []);
-    // The run being gathered: the face's codes, and the character each came from.
-    let codes: number[] = [];
-    let sources: number[] = [];
-    const setRun = (end: number) => {
-      const lig = applyLigKern(face.tfm, codes);
-      lig.codes.forEach((code, k) => {
-        const first = sources[lig.source[k] as number] as number;
-        const next = lig.source[k + 1];
-        const last = next === undefined ? end : (sources[next] as number);
-        nodes.push({
-          kind: "box",
-          width: face.metrics.widths[code] ?? 0,
-          offset: at(first),
-          end: at(last),
-          code,
-        });
-        for (let s = first; s < last; s++) {
-          const c = chars[s];
-          if (c?.kind === "char") spaceFactor = nextSpaceFactor(spaceFactor, sfCode(c.ch));
-        }
-        if (code === face.hyphenChar)
-          nodes.push({ kind: "disc", preWidth: 0, hyphenation: false, offset: at(last) });
-        if (hyphens.has(place[last - from] ?? -1) && k < lig.codes.length - 1)
-          nodes.push({
-            kind: "disc",
-            preWidth: face.metrics.widths[face.hyphenChar] ?? 0,
-            hyphenation: true,
-            offset: at(last),
-          });
-        const kern = lig.kernAfter[k] as number;
-        if (kern >= 0 && k < lig.codes.length - 1)
-          nodes.push({ kind: "kern", width: face.metrics.kerns[kern] ?? 0 });
-      });
-      codes = [];
-      sources = [];
-    };
-    for (let k = from; k < to; k++) {
-      const c = chars[k];
-      if (c?.kind !== "char") continue;
-      const code = face.codeFor(c.ch);
-      if (code !== undefined) {
-        codes.push(code);
-        sources.push(k);
-      } else if (c.ch === ELLIPSIS && period !== undefined) {
-        // The first period joins the run before it, as TeX sets it right after the letter
-        // before; the kern after each period ends a run.
-        for (let dot = 0; dot < 3; dot++) {
-          codes.push(period);
-          sources.push(k);
-          setRun(k + 1);
-          nodes.push({ kind: "kern", width: face.metrics.stretch });
-        }
-        spaceFactor = nextSpaceFactor(spaceFactor, sfCode("."));
-      } else {
-        // TeX drops a character no font of the field has, and the run goes on past it.
-        const width = face.widthOf?.(c.ch);
-        if (width === undefined) continue;
-        setRun(k);
-        nodes.push({ kind: "box", width, offset: at(k), end: at(k + 1) });
-        spaceFactor = nextSpaceFactor(spaceFactor, sfCode(c.ch));
-      }
-    }
-    setRun(to);
-  };
-
-  let i = 0;
-  let pendingSpace: { offset: number; end: number } | undefined;
+  // A space waits for what comes after it, since TeX drops the paragraph's last, and is set in its
+  // own run's font whatever follows it.
+  let pendingSpace: { offset: number; end: number; face: Face } | undefined;
   const flushSpace = () => {
-    if (pendingSpace) nodes.push({ kind: "glue", ...glue(spaceFactor), ...pendingSpace });
+    if (pendingSpace) {
+      const { face, ...at } = pendingSpace;
+      nodes.push({ kind: "glue", ...spaceGlue(face.metrics, spaceFactor, options), ...at });
+    }
     pendingSpace = undefined;
   };
-  while (i < chars.length) {
-    const here = kind(i);
-    const from = i;
-    if (here === "none") i++;
-    else if (here === "space") {
-      while (i < chars.length && (kind(i) === "space" || kind(i) === "none")) i++;
-      if (nodes.length) pendingSpace = { offset: at(from), end: at(i) };
-    } else if (here === "tie") {
-      flushSpace();
-      nodes.push({ kind: "penalty", penalty: INF_PENALTY });
-      nodes.push({ kind: "glue", ...glue(1000), offset: at(i), end: at(i + 1) });
-      i++;
-    } else {
-      flushSpace();
-      while (i < chars.length && (kind(i) === "char" || kind(i) === "none")) i++;
-      setWord(from, i);
+  // The last character's box set, and its italic correction, for a `\/` after it.
+  let lastChar: { node: Node; italic: number } | undefined;
+
+  /** Set one run's text, whose first character is at offset `base` in the paragraph. */
+  const setText = (text: string, face: Face, base: number) => {
+    // Characters are code points; offsets are UTF-16 indices, which is what callers slice by.
+    const chars: { ch: string; at: number; kind: ReturnType<typeof kindOf> }[] = [];
+    let pos = 0;
+    for (const ch of text) {
+      chars.push({ ch, at: pos, kind: kindOf(ch) });
+      pos += ch.length;
     }
+    const at = (k: number) => base + (chars[k]?.at ?? text.length);
+    const kind = (k: number) => chars[k]?.kind;
+    const period = face.codeFor(".");
+
+    /**
+     * Set the word from character `from` to `to`. It is cut into runs of the face's own
+     * characters, each put through the font's ligature and kern program; a character another font
+     * sets, and each period of an ellipsis, ends a run, as a font change or a kern ends one in TeX.
+     */
+    const setWord = (from: number, to: number) => {
+      // Where each character stands in the word as `hyphenate` sees it, without the left-out ones.
+      const place: number[] = [];
+      let letters = "";
+      for (let k = from; k <= to; k++) {
+        place.push(letters.length);
+        const c = chars[k];
+        if (k < to && c?.kind === "char") letters += c.ch;
+      }
+      const hyphens = new Set(options.hyphenate ? options.hyphenate(letters) : []);
+      // The run being gathered: the face's codes, and the character each came from.
+      let codes: number[] = [];
+      let sources: number[] = [];
+      const setRun = (end: number) => {
+        const lig = applyLigKern(face.tfm, codes);
+        lig.codes.forEach((code, k) => {
+          const first = sources[lig.source[k] as number] as number;
+          const next = lig.source[k + 1];
+          const last = next === undefined ? end : (sources[next] as number);
+          const box: Node = {
+            kind: "box",
+            width: face.metrics.widths[code] ?? 0,
+            offset: at(first),
+            end: at(last),
+            code,
+          };
+          nodes.push(box);
+          lastChar = { node: box, italic: face.metrics.italics[code] ?? 0 };
+          for (let s = first; s < last; s++) {
+            const c = chars[s];
+            if (c?.kind === "char") spaceFactor = nextSpaceFactor(spaceFactor, sfCode(c.ch));
+          }
+          if (code === face.hyphenChar)
+            nodes.push({ kind: "disc", preWidth: 0, hyphenation: false, offset: at(last) });
+          if (hyphens.has(place[last - from] ?? -1) && k < lig.codes.length - 1)
+            nodes.push({
+              kind: "disc",
+              preWidth: face.metrics.widths[face.hyphenChar] ?? 0,
+              hyphenation: true,
+              offset: at(last),
+            });
+          const kern = lig.kernAfter[k] as number;
+          if (kern >= 0 && k < lig.codes.length - 1)
+            nodes.push({ kind: "kern", width: face.metrics.kerns[kern] ?? 0 });
+        });
+        codes = [];
+        sources = [];
+      };
+      for (let k = from; k < to; k++) {
+        const c = chars[k];
+        if (c?.kind !== "char") continue;
+        const code = face.codeFor(c.ch);
+        if (code !== undefined) {
+          codes.push(code);
+          sources.push(k);
+        } else if (c.ch === ELLIPSIS && period !== undefined) {
+          // The first period joins the run before it, as TeX sets it right after the letter
+          // before; the kern after each period ends a run.
+          for (let dot = 0; dot < 3; dot++) {
+            codes.push(period);
+            sources.push(k);
+            setRun(k + 1);
+            nodes.push({ kind: "kern", width: face.metrics.stretch });
+          }
+          spaceFactor = nextSpaceFactor(spaceFactor, sfCode("."));
+        } else {
+          // TeX drops a character no font of the field has, and the run goes on past it.
+          const width = face.widthOf?.(c.ch);
+          if (width === undefined) continue;
+          setRun(k);
+          const box: Node = { kind: "box", width, offset: at(k), end: at(k + 1) };
+          nodes.push(box);
+          lastChar = { node: box, italic: face.italicOf?.(c.ch) ?? 0 };
+          spaceFactor = nextSpaceFactor(spaceFactor, sfCode(c.ch));
+        }
+      }
+      setRun(to);
+    };
+
+    let i = 0;
+    while (i < chars.length) {
+      const here = kind(i);
+      const from = i;
+      if (here === "none") i++;
+      else if (here === "space") {
+        while (i < chars.length && (kind(i) === "space" || kind(i) === "none")) i++;
+        // A space an earlier run ended in is a glue of its own, since TeX reads two spaces there.
+        flushSpace();
+        if (nodes.length) pendingSpace = { offset: at(from), end: at(i), face };
+      } else if (here === "tie") {
+        flushSpace();
+        nodes.push({ kind: "penalty", penalty: INF_PENALTY });
+        nodes.push({
+          kind: "glue",
+          ...spaceGlue(face.metrics, 1000, options),
+          offset: at(i),
+          end: at(i + 1),
+        });
+        i++;
+      } else {
+        flushSpace();
+        while (i < chars.length && (kind(i) === "char" || kind(i) === "none")) i++;
+        setWord(from, i);
+      }
+    }
+  };
+
+  /**
+   * LaTeX's `\/` where a run ends: the italic correction of the last character set, as a kern
+   * right after it. LaTeX's `\sw@slant` takes off one glue, the space waiting to be set or a
+   * no-break space's, and then one penalty, the no-break space's, sets the correction and puts
+   * them back; and `\/` sets nothing after anything else, such as a kern or a discretionary.
+   */
+  const correctItalic = () => {
+    let last = nodes.length - 1;
+    if (pendingSpace === undefined && nodes[last]?.kind === "glue") last--;
+    if (nodes[last]?.kind === "penalty") last--;
+    const tail = nodes[last];
+    if (tail !== undefined && tail === lastChar?.node && lastChar.italic !== 0)
+      nodes.splice(last + 1, 0, { kind: "kern", width: lastChar.italic });
+  };
+
+  let base = options.offset ?? 0;
+  for (const run of runs) {
+    // A link opens with a special, after a space before it and before any inside it. One that
+    // starts the paragraph has nothing before it to break after, and its leading spaces are
+    // dropped as any others are.
+    if (run.link && nodes.length > 0) {
+      flushSpace();
+      nodes.push({ kind: "whatsit" });
+    }
+    setText(run.text, run.face, base);
+    if (run.italicCorrection) correctItalic();
+    // A link closes with a special, after its correction and any space inside it.
+    if (run.link) {
+      flushSpace();
+      nodes.push({ kind: "whatsit" });
+    }
+    base += run.text.length;
   }
   return nodes;
 }

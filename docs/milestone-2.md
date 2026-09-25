@@ -102,7 +102,7 @@ end to end before the other two templates, so that the editing loop is proven on
    Lines break with TeX's breaker, using the parameters the paragraph special carries. Dates
    open a picker, because the date format control needs them stored as dates. A keystroke in the
    overlay stays under 16 ms.
-10. [ ] **Bold, italic and links.** Rich fields in Tiptap with the three marks and nothing else,
+10. [x] **Bold, italic and links.** Rich fields in Tiptap with the three marks and nothing else,
     TeX's line breaks shown through ProseMirror decorations, and one font face per run for the
     breaker. A link's address is edited in a popover.
 11. [x] **Structure from the side panel.** Add, remove and reorder sections, entries, bullets and
