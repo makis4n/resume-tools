@@ -9,11 +9,11 @@
  */
 
 export interface GlyphOutline {
-  /** Advance width in font units. */
+  /** Advance width, in a 1000-unit em whatever the font's own units. */
   w: number;
-  /** SVG path data in font units, y up. */
+  /** SVG path data in a 1000-unit em, y up. */
   d: string;
-  /** Bounding box [xMin, yMin, xMax, yMax] in font units, or null for an empty glyph. */
+  /** Bounding box [xMin, yMin, xMax, yMax] in a 1000-unit em, or null for an empty glyph. */
   b: [number, number, number, number] | null;
 }
 

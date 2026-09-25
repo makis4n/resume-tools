@@ -6,14 +6,24 @@
  * here means the page can be drawn from the same files the engine's PDF driver embeds,
  * with no conversion step outside the browser. The output is the `FontOutlines` shape
  * the renderer already consumes: a 1000-unit em, y pointing up, one path per glyph.
+ *
+ * A charstring's numbers are in the font's own units, which its `/FontMatrix` maps to the
+ * em, so every point, advance and `seac` placement is mapped through 1000 times that
+ * matrix, skew and translation included: Computer Modern's `[0.001 0 0 0.001 0 0]` leaves
+ * them as they are, while Lato's `[0.0005 0 0 0.0005 0 0]`, a 2000-unit em, halves them.
  */
 
 import { type FontOutlines, glyphTable } from "./glyphs";
+import type { Matrix } from "./outlines";
 
 /** A Type 1 font's programs, decrypted but not yet interpreted. */
 export interface Type1Font {
   name: string;
-  fontMatrix: number[];
+  /**
+   * The `/FontMatrix`, from the charstrings' units to the em, where 1 is the size the font is
+   * set at: [a b c d e f] takes (x, y) to (a·x + c·y + e, b·x + d·y + f).
+   */
+  fontMatrix: Matrix;
   /** Glyph name for each of the 256 codes of the built-in encoding; ".notdef" where empty. */
   encoding: string[];
   /** Decrypted charstrings by glyph name, with the lenIV prefix removed. */
@@ -116,6 +126,23 @@ function parseEncoding(clear: string): string[] {
   return encoding;
 }
 
+/** The matrix of a font that gives none, and of most that do: a 1000-unit em. */
+const DEFAULT_MATRIX: Matrix = [0.001, 0, 0, 0.001, 0, 0];
+
+/**
+ * Read the clear-text `/FontMatrix`: six numbers, or the default when the font gives none. A
+ * matrix that is not six numbers throws, since every glyph would be drawn wrong through it.
+ */
+function parseFontMatrix(clear: string): Matrix {
+  const text = /\/FontMatrix\s*\[([^\]]*)\]/.exec(clear)?.[1];
+  if (text === undefined) return DEFAULT_MATRIX;
+  const values = text.trim().split(/\s+/).map(Number);
+  if (values.length !== 6 || !values.every(Number.isFinite))
+    throw new Error("Type 1 font is malformed: its FontMatrix is not six numbers");
+  const [a = 0, b = 0, c = 0, d = 0, e = 0, f = 0] = values;
+  return [a, b, c, d, e, f];
+}
+
 /** A cursor over the decrypted private portion, which mixes PostScript tokens and binary. */
 class Cursor {
   pos = 0;
@@ -172,8 +199,7 @@ class Cursor {
 export function readType1(bytes: Uint8Array): Type1Font {
   const { clear, priv } = splitFont(bytes);
   const name = /\/FontName\s*\/(\S+)/.exec(clear)?.[1] ?? "";
-  const matrix = /\/FontMatrix\s*\[([^\]]*)\]/.exec(clear)?.[1];
-  const fontMatrix = matrix ? matrix.trim().split(/\s+/).map(Number) : [0.001, 0, 0, 0.001, 0, 0];
+  const fontMatrix = parseFontMatrix(clear);
   const encoding = parseEncoding(clear);
 
   const cursor = new Cursor(priv);
@@ -268,13 +294,29 @@ function cubicBounds(
   }
 }
 
-/** Collects a glyph's outline as SVG path data and its bounding box. */
+/**
+ * Collects a glyph's outline as SVG path data and its bounding box in the em, each point mapped
+ * through `matrix` as it is added. The current point, which the interpreter moves, stays in the
+ * charstring's units. A Bézier curve's image under an affine map is the curve through its mapped
+ * control points, so the bounds taken from those are the mapped curve's own.
+ */
 class PathBuilder {
   private parts: string[] = [];
   private open = false;
   private bounds: [number, number, number, number] | null = null;
+  private readonly matrix: Matrix;
   x = 0;
   y = 0;
+
+  constructor(matrix: Matrix) {
+    this.matrix = matrix;
+  }
+
+  /** A point in the charstring's units, in the em. */
+  private map(x: number, y: number): [number, number] {
+    const [a, b, c, d, e, f] = this.matrix;
+    return [a * x + c * y + e, b * x + d * y + f];
+  }
 
   private extend = (x: number, y: number) => {
     if (!this.bounds) this.bounds = [x, y, x, y];
@@ -289,23 +331,29 @@ class PathBuilder {
 
   moveTo(x: number, y: number) {
     this.open = true;
-    this.parts.push(`M${num(x)} ${num(y)}`);
+    const [mx, my] = this.map(x, y);
+    this.parts.push(`M${num(mx)} ${num(my)}`);
     this.x = x;
     this.y = y;
   }
   lineTo(x: number, y: number) {
     if (!this.open) this.moveTo(this.x, this.y);
     if (x === this.x && y === this.y) return;
-    this.extend(this.x, this.y);
-    this.extend(x, y);
-    this.parts.push(`L${num(x)} ${num(y)}`);
+    const [x0, y0] = this.map(this.x, this.y);
+    const [mx, my] = this.map(x, y);
+    this.extend(x0, y0);
+    this.extend(mx, my);
+    this.parts.push(`L${num(mx)} ${num(my)}`);
     this.x = x;
     this.y = y;
   }
   curveTo(x1: number, y1: number, x2: number, y2: number, x: number, y: number) {
     if (!this.open) this.moveTo(this.x, this.y);
-    cubicBounds([this.x, this.y], [x1, y1], [x2, y2], [x, y], this.extend);
-    this.parts.push(`C${num(x1)} ${num(y1)} ${num(x2)} ${num(y2)} ${num(x)} ${num(y)}`);
+    const p1 = this.map(x1, y1);
+    const p2 = this.map(x2, y2);
+    const p3 = this.map(x, y);
+    cubicBounds(this.map(this.x, this.y), p1, p2, p3, this.extend);
+    this.parts.push(`C${[...p1, ...p2, ...p3].map(num).join(" ")}`);
     this.x = x;
     this.y = y;
   }
@@ -325,7 +373,9 @@ class PathBuilder {
 /**
  * Run a Type 1 charstring. Hints are skipped, flex is turned into its two curves, and
  * `seac` draws the base and accent glyphs by name through `draw`. A component drawn
- * for `seac` may not itself be a composite, as the specification requires.
+ * for `seac` may not itself be a composite, as the specification requires. It works in
+ * the charstring's units, `offset` and the advance it returns included; `path` maps what
+ * it draws into the em.
  */
 function interpret(
   program: Uint8Array,
@@ -334,10 +384,11 @@ function interpret(
   offset: [number, number],
   draw: (name: string, path: PathBuilder, offset: [number, number]) => void,
   component = false,
-): { width: number } {
+): { wx: number; wy: number } {
   const stack: number[] = [];
   const psStack: number[] = [];
-  let width = 0;
+  let wx = 0;
+  let wy = 0;
   let sbx = 0;
   let flexPoints: number[] | null = null;
   let flexStart: [number, number] = [0, 0];
@@ -389,7 +440,8 @@ function interpret(
         case 13: {
           // hsbw: sidebearing x, width
           sbx = (stack[0] ?? 0) + offset[0];
-          width = stack[1] ?? 0;
+          wx = stack[1] ?? 0;
+          wy = 0;
           path.x = sbx;
           path.y = offset[1];
           stack.length = 0;
@@ -484,7 +536,8 @@ function interpret(
             case 7: {
               // sbw: sbx sby wx wy
               sbx = (stack[0] ?? 0) + offset[0];
-              width = stack[2] ?? 0;
+              wx = stack[2] ?? 0;
+              wy = stack[3] ?? 0;
               path.x = sbx;
               path.y = (stack[1] ?? 0) + offset[1];
               stack.length = 0;
@@ -546,21 +599,28 @@ function interpret(
     }
   };
   run(program, 0);
-  return { width };
+  return { wx, wy };
 }
 
-/** Interpret every glyph of a decrypted font into outlines the renderer can draw. */
+/**
+ * Interpret every glyph of a decrypted font into outlines the renderer can draw, in a 1000-unit
+ * em: through 1000 times the font's matrix, whatever size of em the font's own units make.
+ */
 export function type1Outlines(font: Type1Font): FontOutlines {
+  const [a, b, c, d, e, f] = font.fontMatrix;
+  const em: Matrix = [a * 1000, b * 1000, c * 1000, d * 1000, e * 1000, f * 1000];
   const glyphs = glyphTable();
   const draw = (name: string, path: PathBuilder, offset: [number, number]) => {
     const program = font.charstrings.get(name);
     if (program) interpret(program, font, path, offset, draw, true);
   };
   for (const [name, program] of font.charstrings) {
-    const path = new PathBuilder();
-    const { width } = interpret(program, font, path, [0, 0], draw);
-    const { d, b } = path.result();
-    glyphs[name] = { w: width, d, b };
+    const path = new PathBuilder(em);
+    const { wx, wy } = interpret(program, font, path, [0, 0], draw);
+    const outline = path.result();
+    // An advance is a distance, which the matrix's translation does not move; the page advances
+    // along x, so the advance is the x part of its image.
+    glyphs[name] = { w: em[0] * wx + em[2] * wy, d: outline.d, b: outline.b };
   }
   return { name: font.name, encoding: font.encoding, glyphs };
 }
