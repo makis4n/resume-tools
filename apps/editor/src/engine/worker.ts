@@ -60,14 +60,16 @@ async function handle(request: EngineRequest & { id: number }): Promise<EngineRe
     case "forget":
       session.forget(request.job);
       return { id: request.id, result: null };
+    case "pdf":
+      return { id: request.id, result: session.pdf(request.job, request.options) };
   }
 }
 
 /** Bytes a reply can hand over rather than copy. */
 function transferables(reply: EngineReply): Transferable[] {
   if (!("result" in reply) || !reply.result) return [];
-  const result = reply.result as { output?: Uint8Array; format?: Uint8Array };
-  return [result.output?.buffer, result.format?.buffer].filter(
+  const result = reply.result as { output?: Uint8Array; format?: Uint8Array; pdf?: Uint8Array };
+  return [result.output?.buffer, result.format?.buffer, result.pdf?.buffer].filter(
     (b): b is ArrayBuffer => b instanceof ArrayBuffer,
   );
 }

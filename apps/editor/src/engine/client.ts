@@ -11,6 +11,8 @@ import type {
   DumpResult,
   Engine,
   JobFiles,
+  PdfOptions,
+  PdfResult,
   StartResult,
 } from "./session";
 
@@ -81,6 +83,11 @@ export class EngineClient {
 
   async forget(job: string): Promise<void> {
     await this.call({ type: "forget", job });
+  }
+
+  /** The PDF of a job's last compile. The worker hands the bytes over rather than copy them. */
+  pdf(job: string, options?: PdfOptions): Promise<PdfResult> {
+    return this.call({ type: "pdf", job, options });
   }
 
   /** Stop the worker; anything still waiting fails, and so does anything asked later. */

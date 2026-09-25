@@ -42,6 +42,8 @@ import type {
   DumpResult,
   Fetched,
   JobFiles,
+  PdfOptions,
+  PdfResult,
   Engine as SessionEngine,
 } from "../engine/session";
 import { type DrawnPage, drawPage } from "../page/draw";
@@ -76,6 +78,8 @@ export interface Engine {
     body: string,
     options?: CompileOptions,
   ): Promise<CompileResult>;
+  /** The PDF of a job's last compile, made from its output. */
+  pdf(job: string, options?: PdfOptions): Promise<PdfResult>;
   /** Stop the engine at once, whatever it is doing; what waits on it fails. */
   terminate(): void;
 }
@@ -158,6 +162,12 @@ export interface CompilerOptions {
 export const COULD_NOT_UPDATE = "The page could not be updated.";
 
 /**
+ * What the user reads when the PDF cannot be made, whatever the reason; never xdvipdfmx's words.
+ * `pdf()` fails with it, and with the reason as the error's cause, for the console.
+ */
+export const COULD_NOT_MAKE_PDF = "The PDF could not be made.";
+
+/**
  * The wait after an edit. XeTeX's is longer and assumes a loaded machine, as decision 0003 asks:
  * a compile there took about 460 ms at best and 850 ms under load, against pdfTeX's 65.
  */
@@ -221,6 +231,14 @@ interface Run {
   timer?: ReturnType<typeof setTimeout>;
 }
 
+/** Where the page on screen came from, which its PDF is made from. */
+interface Made {
+  /** The engine whose job holds the page's output. */
+  instance: Instance;
+  pkg: TemplatePackage;
+  document: Document;
+}
+
 /**
  * An engine the scheduler has made, and what it knows of it. A new engine gets a new one of
  * these, so a request to an engine that has been replaced cannot mark the new one started, or
@@ -268,6 +286,17 @@ export class Compiler {
   private closed = false;
   /** The fonts the console has been told the page cannot draw. */
   private readonly warned = new Set<string>();
+  /**
+   * The page on screen while it is the newest document's. A compile that fails, or a page that is
+   * dropped, clears it, since a PDF of an older page is not what the user asked for.
+   */
+  private made: Made | undefined;
+  /** The PDF on its way, which every `pdf()` call shares until it comes. */
+  private making: Promise<Uint8Array> | undefined;
+  /** The time limit of the PDF request in flight, which closing stops with the other timers. */
+  private pdfTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Wakes each `pdf()` call waiting for the newest document, once nothing is compiling. */
+  private readonly settled: (() => void)[] = [];
 
   constructor(
     private readonly newEngine: () => Engine,
@@ -345,6 +374,77 @@ export class Compiler {
     this.waits.clear();
     this.instance?.engine.terminate();
     this.instance = undefined;
+    clearTimeout(this.pdfTimer);
+    for (const wake of this.settled.splice(0)) wake();
+  }
+
+  /**
+   * The PDF of the page on screen, which xdvipdfmx makes from the page's own output (plan section
+   * 5.5). A document compiling or waiting to is the one the user sees next, so the PDF waits for
+   * its page, and fails if that document's compile does: a PDF of the page before would not be
+   * what the user asked for. Calls made while one is on its way share it. The request has a
+   * compile's time limit, and one that runs past it, or that the engine fails rather than
+   * answers, loses the engine as a compile's would (`losePdf`). The promise fails with
+   * `COULD_NOT_MAKE_PDF`, and the reason as its cause.
+   */
+  pdf(): Promise<Uint8Array> {
+    this.making ??= this.makePdf().finally(() => {
+      this.making = undefined;
+    });
+    return this.making;
+  }
+
+  private async makePdf(): Promise<Uint8Array> {
+    // Until nothing is compiling or waiting to, when the page on screen is the newest document's.
+    while (this.busy && !this.closed) await new Promise<void>((wake) => this.settled.push(wake));
+    const made = this.made;
+    if (this.closed || made === undefined || made.instance !== this.instance)
+      throw new Error(COULD_NOT_MAKE_PDF, {
+        cause: "no page of the newest document to make it of",
+      });
+    let result: PdfResult;
+    try {
+      result = await this.requestPdf(made);
+    } catch (error) {
+      this.losePdf(made, error);
+      throw new Error(COULD_NOT_MAKE_PDF, { cause: error });
+    }
+    if (!result.ok || result.pdf === undefined)
+      throw new Error(COULD_NOT_MAKE_PDF, { cause: result.error ?? "xdvipdfmx made none" });
+    return result.pdf;
+  }
+
+  /** Ask the engine that made the page for its PDF, failing past a compile's time limit. */
+  private async requestPdf({ instance, pkg }: Made): Promise<PdfResult> {
+    const limit = this.limits[pkg.engine];
+    let expire: (error: Error) => void = () => {};
+    const expired = new Promise<never>((_, reject) => {
+      expire = reject;
+    });
+    const timer = setTimeout(() => expire(new Error(`took over ${limit} ms`)), limit);
+    this.pdfTimer = timer;
+    try {
+      return await Promise.race([instance.engine.pdf(JOB), expired]);
+    } finally {
+      clearTimeout(timer);
+      if (this.pdfTimer === timer) this.pdfTimer = undefined;
+    }
+  }
+
+  /**
+   * The engine is lost to a PDF request, which ran past its limit or which it failed rather than
+   * answered: it is terminated and replaced, as `lose` does for a compile. The page on screen then
+   * compiles again on the new engine, unless a newer document is on its way and compiles instead,
+   * so that the new engine's job holds the output the next PDF is made from.
+   */
+  private losePdf(made: Made, error: unknown) {
+    if (this.closed || this.instance !== made.instance) return;
+    console.warn("A PDF request lost the engine, so a new one takes its place", error);
+    made.instance.engine.terminate();
+    this.instance = undefined;
+    if (this.running !== undefined || this.pending !== undefined) return;
+    this.pending = made.document;
+    this.next();
   }
 
   /** Start compiling the pending document, unless one is in flight. */
@@ -452,6 +552,7 @@ export class Compiler {
       );
       if (!this.current(run)) return;
       this.warnAboutFonts(page);
+      this.made = { instance, pkg, document: doc };
       this.events.page({ page, body, document: doc, ms: performance.now() - started, startMs });
     } catch (error) {
       // A request that lost the engine was dealt with there, and this run is no longer current:
@@ -630,6 +731,7 @@ export class Compiler {
 
   /** The plain message for the user, and what went wrong for developers. */
   private fail(what: string, ...detail: unknown[]) {
+    this.made = undefined;
     console.error(`The page could not be updated: ${what}`, ...detail);
     this.events.error(COULD_NOT_UPDATE);
   }
@@ -640,6 +742,7 @@ export class Compiler {
     if (busy === this.busy || this.closed) return;
     this.busy = busy;
     this.events.busy(busy);
+    if (!busy) for (const wake of this.settled.splice(0)) wake();
   }
 
   /**

@@ -17,6 +17,7 @@
  * another, read another's text, or overwrite a format.
  */
 
+import { type PageItem, parseDvi } from "../tex/dvi";
 import { summariseLog } from "./log";
 import { filenameDatabase } from "./lsr";
 import type { EngineManifest } from "./manifest";
@@ -49,6 +50,12 @@ const ENGINES: Record<Engine, EngineSpec> = {
     args: [...COMMON, "--no-pdf"],
   },
 };
+
+/**
+ * How many of xdvipdfmx's own messages, the last it printed, say why it made no PDF: its fatal
+ * error, and the warnings before it that name the font or the special it stopped on.
+ */
+const LAST_MESSAGES = 4;
 
 const HOME = "/home/web_user";
 /** Each job's folder holds its body, the files the caller supplies, and what TeX writes. */
@@ -212,6 +219,22 @@ export interface CompileResult {
   fetched: Fetched;
 }
 
+export interface PdfOptions {
+  /** Deflate level 0 to 9; xdvipdfmx's default when left out. Tests read a level 0 PDF. */
+  compress?: number;
+}
+
+export interface PdfResult {
+  ok: boolean;
+  /** The PDF, when xdvipdfmx made one. */
+  pdf?: Uint8Array;
+  ms: number;
+  /** What xdvipdfmx printed to the terminal, where its warnings go. */
+  output: string;
+  /** Why there is no PDF: for the console, never for a user. */
+  error?: string;
+}
+
 export interface CompileOptions {
   /** The document's name, and the name of its folder; one per open document. Defaults to "doc". */
   job?: string;
@@ -299,6 +322,16 @@ function mountOnDemand(fs: EmscriptenFs, options: SessionOptions, tally: Tally) 
   }
 }
 
+/**
+ * Whether an output's first page carries a `papersize=` special, as geometry and hyperref write
+ * it, which the page is drawn to and xdvipdfmx reads.
+ */
+function namesPaperSize(output: Uint8Array): boolean {
+  const first = parseDvi(output, () => undefined).pages[0];
+  const special = (item: PageItem) => item.kind === "special" && item.text.startsWith("papersize=");
+  return first?.items.some(special) ?? false;
+}
+
 export class EngineSession {
   /**
    * The format each job was last compiled with, by engine and name, and the dump that made it.
@@ -310,6 +343,11 @@ export class EngineSession {
   private readonly generations = new Map<string, number>();
   /** The files each job was given, written back whenever the session clears its folder. */
   private readonly filesOf = new Map<string, JobFiles>();
+  /**
+   * The engine of each job whose last compile succeeded, which `pdf` needs. A failed compile can
+   * leave in the folder the pages TeX shipped before its error, which are not the document.
+   */
+  private readonly outputOf = new Map<string, Engine>();
 
   private constructor(
     private readonly engine: EngineModule,
@@ -486,6 +524,7 @@ export class EngineSession {
     else if (last.generation !== generation) this.clearFolder(job);
     this.formatOf.set(job, { format: key, generation });
     if (options.files) this.filesOf.set(job, { ...this.filesOf.get(job), ...options.files });
+    this.outputOf.delete(job);
 
     this.tally.take();
     let attempt = this.passes(spec, formatPath, job, body, maxPasses);
@@ -496,7 +535,61 @@ export class EngineSession {
       attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
     }
     const { fresh: _, ...result } = attempt;
+    if (result.ok) this.outputOf.set(job, engine);
     return { ...result, fetched: this.tally.take() };
+  }
+
+  /**
+   * The PDF of a job's last compile, which xdvipdfmx makes from the DVI or XDV that compile left
+   * in the job's folder, so that the PDF and the page come from one output (plan section 5.5). A
+   * job with no compile, or whose last compile failed, has none. The PDF is read and removed at
+   * once, and comes back with what xdvipdfmx printed, where its warnings go. Why a PDF could not
+   * be made is for the console, never for a user: xdvipdfmx speaks of fonts and specials.
+   *
+   * The page size is the output's own: geometry and hyperref write it in a `papersize=` special,
+   * which the page is drawn to (`paperSize` in `src/page/draw.ts`) and which xdvipdfmx honours.
+   * An output without one is drawn on US Letter, so xdvipdfmx is told Letter for it, since its own
+   * default, from `dvipdfmx.cfg`, is A4. It is told only then, because a size given to it
+   * overrides the special.
+   */
+  pdf(job: string, options: PdfOptions = {}): PdfResult {
+    checkName("job", job);
+    const { compress } = options;
+    if (compress !== undefined && !(Number.isInteger(compress) && compress >= 0 && compress <= 9))
+      throw new Error(`compress must be a whole number from 0 to 9: ${compress}`);
+    const engine = this.outputOf.get(job);
+    const file = engine === undefined ? undefined : `${job}.${ENGINES[engine].output}`;
+    const output = file === undefined ? undefined : this.read(`${JOBS}/${job}/${file}`);
+    if (file === undefined || output === undefined)
+      return { ok: false, ms: 0, output: "", error: `${job} has no output to make a PDF of` };
+    const args = [
+      "xdvipdfmx",
+      ...(namesPaperSize(output) ? [] : ["-p", "letter"]),
+      ...(compress === undefined ? [] : ["-z", String(compress)]),
+      "-o",
+      `${job}.pdf`,
+      file,
+    ];
+    const at = `${JOBS}/${job}/${job}.pdf`;
+    let run: RunResult;
+    let pdf: Uint8Array | undefined;
+    // A file TeX wrote under that name must not pass for the PDF.
+    this.removeTree(at);
+    try {
+      run = this.run(args, `${JOBS}/${job}`);
+      pdf = run.code === 0 ? this.read(at) : undefined;
+    } finally {
+      this.removeTree(at);
+    }
+    if (pdf !== undefined) return { ok: true, pdf, ms: run.ms, output: run.output };
+    const said = run.output.split("\n").filter((line) => line.startsWith("xdvipdfmx:"));
+    const why = run.code === 0 ? "xdvipdfmx wrote no PDF" : `xdvipdfmx exited with ${run.code}`;
+    return {
+      ok: false,
+      ms: run.ms,
+      output: run.output,
+      error: [why, ...said.slice(-LAST_MESSAGES)].join("\n"),
+    };
   }
 
   /** Forget a job: its folder, its files and its format, so its next compile starts afresh. */
@@ -505,6 +598,7 @@ export class EngineSession {
     this.clearFolder(job);
     this.formatOf.delete(job);
     this.filesOf.delete(job);
+    this.outputOf.delete(job);
   }
 
   /** Remove a job's folder, so it compiles as a new document; its files are written back. */

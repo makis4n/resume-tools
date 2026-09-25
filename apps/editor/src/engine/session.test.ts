@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
+import { curated } from "../templates/curated";
+import { generateBody, generateFormat } from "../templates/generate";
+import { defaultControls } from "../templates/package";
 import { parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
+import { hasToUnicode, mediaBoxes, shownStrings } from "../validate/pdf";
 import { engineAvailable, startNodeSession } from "./node";
 import type { Engine, EngineSession } from "./session";
 
@@ -390,4 +394,129 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     );
     expect(passes).toEqual([2, 1, 1]);
   }, 60_000);
+
+  describe("makes the PDF of a job's last compile", () => {
+    const { package: jake, sample } = curated("jake");
+    const text = (pdf: Uint8Array) => new TextDecoder("latin1").decode(pdf);
+    const jobFiles = (job: string) =>
+      (
+        session as unknown as { engine: { FS: { readdir(path: string): string[] } } }
+      ).engine.FS.readdir(`/home/web_user/jobs/${job}`);
+    const doc = (body: string) => `\\documentclass{article}\\begin{document}${body}\\end{document}`;
+
+    /** Jake's sample, compiled as the editor compiles it, on the page size given. */
+    function compileJake(job: string, pageSize: "letter" | "a4") {
+      const values = { ...defaultControls(jake), pageSize };
+      const format = generateFormat(jake, values);
+      expect(session.dump("pdftex", format.name, format.preamble, format.files).ok).toBe(true);
+      const body = generateBody(jake, sample, values);
+      expect(session.compile("pdftex", format.name, body.latex, { job }).error).toBeUndefined();
+    }
+
+    it("from Jake's sample: whole, the page's size, its text readable, its links kept", () => {
+      compileJake("jakepdf", "letter");
+      const made = session.pdf("jakepdf", { compress: 0 });
+      expect(made.error).toBeUndefined();
+      const pdf = made.pdf as Uint8Array;
+      expect(text(pdf.subarray(0, 5))).toBe("%PDF-");
+      expect(text(pdf).trimEnd().endsWith("%%EOF")).toBe(true);
+      // geometry's papersize= special, which the page is drawn to as well: US Letter.
+      expect(mediaBoxes(pdf)).toEqual([{ width: 612, height: 792 }]);
+      // xdvipdfmx maps each font's glyph names to Unicode, which lets the ATS take the text out.
+      expect(hasToUnicode(pdf)).toBe(true);
+      // The first name is one string of the page's content, [(Mara)]TJ, in the glyphs' codes.
+      expect(shownStrings(pdf).some((shown) => shown.includes(sample.header.name.first))).toBe(
+        true,
+      );
+      // hyperref's dvipdfmx driver writes links xdvipdfmx keeps (decision 0008).
+      expect(text(pdf)).toContain(`/URI(${sample.header.links[0]?.href})`);
+      // The PDF is read and removed; the folder holds what the compile left, and no more.
+      expect(jobFiles("jakepdf")).not.toContain("jakepdf.pdf");
+
+      const times: number[] = [];
+      let size = 0;
+      for (let i = 0; i < 5; i++) {
+        const again = session.pdf("jakepdf");
+        expect(again.ok).toBe(true);
+        times.push(again.ms);
+        size = again.pdf?.length ?? 0;
+      }
+      times.sort((a, b) => a - b);
+      console.log(
+        `jake pdf: first ${made.ms.toFixed(0)} ms at level 0, median ${times[2]?.toFixed(0)} ms, ${size} bytes`,
+      );
+    }, 60_000);
+
+    it("on A4 when the document is set on A4, from the same special", () => {
+      compileJake("jakea4", "a4");
+      const [box, ...more] = mediaBoxes(session.pdf("jakea4", { compress: 0 }).pdf as Uint8Array);
+      expect(more).toEqual([]);
+      expect(box?.width).toBeCloseTo(595.276, 1);
+      expect(box?.height).toBeCloseTo(841.89, 1);
+    }, 60_000);
+
+    it("on US Letter, as the page is drawn, from an output that does not name its size", () => {
+      // Nothing here writes a papersize= special, and xdvipdfmx's own default is A4.
+      expect(session.compile("pdftex", "stock", doc("x"), { job: "unsized" }).ok).toBe(true);
+      const pdf = session.pdf("unsized", { compress: 0 }).pdf as Uint8Array;
+      expect(mediaBoxes(pdf)).toEqual([{ width: 612, height: 792 }]);
+    }, 60_000);
+
+    it("in colour, from the dvips colour specials LaTeX writes", () => {
+      // The color package takes the dvips driver in DVI mode, as Jake's does (decision 0008).
+      const coloured = `\\documentclass{article}\\usepackage{color}\\begin{document}\\color{red}\\rule{1cm}{1cm}\\end{document}`;
+      expect(session.compile("pdftex", "stock", coloured, { job: "coloured" }).ok).toBe(true);
+      const content = text(session.pdf("coloured", { compress: 0 }).pdf as Uint8Array);
+      expect(content).toContain("1 0 0 rg");
+      expect(content).toContain("1 0 0 RG");
+    }, 60_000);
+
+    it("from XeTeX's XDV as well", () => {
+      const xe = session.compile("xetex", "stock", doc("Hello from XeTeX."), { job: "xepdf" });
+      expect(xe.ok).toBe(true);
+      const made = session.pdf("xepdf");
+      expect(made.error).toBeUndefined();
+      expect(text((made.pdf as Uint8Array).subarray(0, 5))).toBe("%PDF-");
+    }, 60_000);
+
+    it("of no job that has not compiled, or whose last compile failed", () => {
+      expect(session.pdf("never")).toEqual({
+        ok: false,
+        ms: 0,
+        output: "",
+        error: "never has no output to make a PDF of",
+      });
+      expect(session.compile("pdftex", "stock", doc("x"), { job: "broken" }).ok).toBe(true);
+      expect(session.pdf("broken").ok).toBe(true);
+      const failed = session.compile("pdftex", "stock", doc("x\\newpage\\nosuchmacro"), {
+        job: "broken",
+      });
+      expect(failed.ok).toBe(false);
+      // TeX shipped the first page before the error, so a DVI is there, but it is not the document.
+      expect(jobFiles("broken")).toContain("broken.dvi");
+      expect(session.pdf("broken").error).toBe("broken has no output to make a PDF of");
+      expect(session.compile("pdftex", "stock", doc("y"), { job: "broken" }).ok).toBe(true);
+      expect(session.pdf("broken").ok).toBe(true);
+      session.forget("broken");
+      expect(session.pdf("broken").ok).toBe(false);
+    }, 60_000);
+
+    it("fails, naming the font, when xdvipdfmx cannot embed one", () => {
+      // LaTeX 2023 takes itemize's bullet from TS1, whose Computer Modern font, tcrm1000, the
+      // tree has metrics for, but no Type 1 file, and no font map of it names one.
+      const bulleted = doc("\\begin{itemize}\\item x\\end{itemize}");
+      expect(session.compile("pdftex", "stock", bulleted, { job: "bulleted" }).ok).toBe(true);
+      const made = session.pdf("bulleted");
+      expect(made.ok).toBe(false);
+      expect(made.pdf).toBeUndefined();
+      expect(made.error).toMatch(/^xdvipdfmx exited with 1\n/);
+      expect(made.error).toContain('"tcrm1000"');
+      expect(made.output).toContain("xdvipdfmx:fatal:");
+    }, 60_000);
+
+    it("refuses a compression level that is not a whole number from 0 to 9", () => {
+      for (const compress of [-1, 10, 1.5, Number.NaN])
+        expect(() => session.pdf("unsized", { compress }), String(compress)).toThrow("compress");
+    });
+  });
 });

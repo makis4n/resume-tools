@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { z } from "zod";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
-import type { CompileResult, DumpResult, EngineSession } from "../engine/session";
+import type { CompileResult, DumpResult, EngineSession, PdfResult } from "../engine/session";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { CURATED, curated } from "../templates/curated";
@@ -34,6 +34,7 @@ const ENSURES: Record<Check, string> = {
   alignment: "matches every glyph of every field to a character of its text, and shows it whole",
   fonts: "uses only fonts the page can draw",
   special: "writes each field's paragraph special right after its begin marker",
+  pdf: "makes its PDF from the same output: the page's size, readable, every field in its text",
 };
 
 /**
@@ -338,7 +339,7 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       expect(report.fields).toBe(4);
     }, 60_000);
 
-    it("reports a font the page cannot draw, and nothing else, rather than throw", async () => {
+    it("reports a font neither the page can draw nor xdvipdfmx embed, and nothing else", async () => {
       // LaTeX 2023 sets itemize's own bullet from TS1, whose Computer Modern font, tcrm1000, the
       // tree has metrics for but no outlines, so the page cannot draw it; the harness names it.
       // The bullet is \item's label, which LaTeX sets before the field's begin marker, so no
@@ -357,6 +358,8 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       const report = await validatePackage(session, fonts, bulleted, RESUME);
       expect(report.findings).toEqual([
         { check: "fonts", message: expect.stringMatching(/^the page cannot draw tcrm1000: /) },
+        // No font map names a Type 1 file for it either, so xdvipdfmx makes no PDF.
+        { check: "pdf", message: expect.stringContaining('"tcrm1000"') },
       ]);
       // The markers are read from the output, so every field is still found.
       expect(report.fields).toBe(5);
@@ -384,6 +387,7 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
           message: "9 of the 10 glyphs of tern.title match no character of its text",
         },
         { check: "fonts", message: expect.stringMatching(/^the page cannot draw tcrm1000: /) },
+        { check: "pdf", message: expect.stringContaining('"tcrm1000"') },
       ]);
     }, 60_000);
 
@@ -537,6 +541,56 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       expect(report.findings).toEqual([]);
       // Two passes as a new document, one again, one for the edit and two for the new format.
       expect(report.passes).toHaveLength(6);
+    }, 60_000);
+
+    it("reports a PDF of another size, with no ToUnicode map, or without a field's text", async () => {
+      // The resume compiles for real, on US Letter, but the session hands back a PDF made by hand
+      // to fail every part of the check: A4, no ToUnicode map, and only the first name shown.
+      const content = "BT /F1 10 Tf [(In)-20(es)]TJ (Elsewhere)Tj ET";
+      const handMade = [
+        "%PDF-1.5",
+        `4 0 obj\n<</Length ${content.length}>>\nstream\n${content}\nendstream\nendobj`,
+        "3 0 obj\n<</Type/Page/Contents 4 0 R/MediaBox[0 0 595.28 841.89]>>\nendobj",
+        "%%EOF",
+      ].join("\n");
+      const pdf = Uint8Array.from(handMade, (char) => char.charCodeAt(0));
+      const handing = {
+        dump: session.dump.bind(session),
+        compile: session.compile.bind(session),
+        pdf: (): PdfResult => ({ ok: true, pdf, ms: 1, output: "" }),
+      } as unknown as EngineSession;
+      const report = await validatePackage(handing, fonts, plainWith("hand-made", {}), RESUME);
+      const unshown = (field: string, word: string) => ({
+        check: "pdf",
+        field,
+        message: `the PDF's text does not show ${field}: no text operator shows its first word, ${word}`,
+      });
+      expect(report.findings).toEqual([
+        {
+          check: "pdf",
+          message: "the PDF's page is 595.28 by 841.89 bp, not the page's 612 by 792 bp",
+        },
+        {
+          check: "pdf",
+          message: "no font of the PDF has a ToUnicode map, so its text cannot be read",
+        },
+        unshown("header.last", "Calloway"),
+        unshown("work.title", "Experience"),
+        unshown("tern.title", "Typesetter"),
+        unshown("tern-1.text", "Set"),
+      ]);
+    }, 60_000);
+  });
+
+  describe("over an invented package in T1 and Latin Modern, as Jake's is", () => {
+    it("does not look in the PDF for a first word TeX sets with a ligature", async () => {
+      // The page aligns the ligatures with their letters, but the PDF shows their codes, T1's
+      // \036 for ffi, \034 for fi and \025 for the en dash, and not the letters' bytes.
+      const t1 = plainWith("t1-ligatures", {}, "\\usepackage[T1]{fontenc}\n\\usepackage{lmodern}");
+      const resume = resumeWith("first--rate reports, every quarter", "Office manager");
+      const report = await validatePackage(session, fonts, t1, resume);
+      expect(report.findings).toEqual([]);
+      expect(report.fields).toBe(5);
     }, 60_000);
   });
 

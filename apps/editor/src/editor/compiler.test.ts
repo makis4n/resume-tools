@@ -8,6 +8,7 @@ import type {
   CompileResult,
   DumpResult,
   EngineSession,
+  PdfResult,
   Engine as SessionEngine,
 } from "../engine/session";
 import type { DrawnPage } from "../page/draw";
@@ -18,6 +19,7 @@ import { generateBody, generateFormat } from "../templates/generate";
 import { parsePackage, type TemplatePackage } from "../templates/package";
 import { INCH, US_LETTER } from "../tex/svg";
 import {
+  COULD_NOT_MAKE_PDF,
   COULD_NOT_UPDATE,
   Compiler,
   type CompilerOptions,
@@ -37,7 +39,7 @@ interface Waiting<T> {
 }
 
 /**
- * A stand-in for the engine that notes every request in order, keeps each dump and compile
+ * A stand-in for the engine that notes every request in order, keeps each dump, compile and PDF
  * waiting until the test settles it, and takes a format at once. It starts at once too, unless it
  * is made to start slowly, when its start waits like a dump. Terminating it only notes that it
  * was, so a test can settle a request after it, as a worker's reply could cross the call.
@@ -48,6 +50,7 @@ class FakeEngine implements Engine {
   dumps: (Waiting<DumpResult> & { name: string })[] = [];
   puts: { name: string; format: Uint8Array }[] = [];
   compiles: (Waiting<CompileResult> & { body: string; options?: CompileOptions })[] = [];
+  pdfs: Waiting<PdfResult>[] = [];
   terminated = false;
 
   constructor(private readonly slowStart: boolean) {}
@@ -82,6 +85,11 @@ class FakeEngine implements Engine {
   ): Promise<CompileResult> {
     this.calls.push(`compile ${format}`);
     return new Promise((resolve, reject) => this.compiles.push({ body, options, resolve, reject }));
+  }
+
+  pdf(job: string): Promise<PdfResult> {
+    this.calls.push(`pdf ${job}`);
+    return new Promise((resolve, reject) => this.pdfs.push({ resolve, reject }));
   }
 
   terminate() {
@@ -122,6 +130,9 @@ const FAILED: CompileResult = {
 };
 /** What the client fails a request with when its worker has crashed. */
 const CRASHED = new Error("compile worker: out of memory");
+/** A PDF's bytes, as the engine hands them back. */
+const PDF = new TextEncoder().encode("%PDF-1.5");
+const madePdf: PdfResult = { ok: true, pdf: PDF, ms: 1, output: "" };
 
 /** A fake page that shows which compile it came from, and fails as a draw can for output 0. */
 async function draw(output: Uint8Array): Promise<DrawnPage> {
@@ -774,6 +785,131 @@ describe("Compiler", () => {
     expect(t.busy).toEqual([true, false, true]);
   });
 
+  it("makes the PDF once the page a debounce waits for is shown, one request for calls at once", async () => {
+    const s = scheduler();
+    await opened(s);
+    const name = formatOf(opening);
+    const a = titled("Analyst");
+    s.compiler.update(a);
+    const [first, second] = [s.compiler.pdf(), s.compiler.pdf()];
+    await wait(99);
+    expect(s.engine().calls.slice(3)).toEqual([]);
+    await wait(1);
+    // The edit compiles first, and the PDF waits for its page.
+    expect(s.engine().calls.slice(3)).toEqual([`compile ${name}`]);
+    s.engine().compiles[1]?.resolve(compiled(2));
+    await settle();
+    expect(s.shown.at(-1)?.document).toBe(a);
+    expect(s.engine().calls.slice(3)).toEqual([`compile ${name}`, "pdf doc"]);
+    s.engine().pdfs[0]?.resolve(madePdf);
+    await expect(first).resolves.toBe(PDF);
+    await expect(second).resolves.toBe(PDF);
+    // Once it has come, the next call asks again, at once, since nothing is compiling.
+    const third = s.compiler.pdf();
+    await settle();
+    expect(s.engine().pdfs).toHaveLength(2);
+    s.engine().pdfs[1]?.resolve(madePdf);
+    await expect(third).resolves.toBe(PDF);
+    expect(s.errors).toEqual([]);
+  });
+
+  it("fails a PDF when the newest document's compile fails, or there is no page", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const none = scheduler();
+    await expect(none.compiler.pdf()).rejects.toThrow(COULD_NOT_MAKE_PDF);
+    expect(none.engines).toEqual([]);
+
+    const s = scheduler();
+    await opened(s);
+    s.compiler.update(titled("Analyst"));
+    // Expected as it is asked for, since it fails before the test would otherwise look.
+    const failed = expect(s.compiler.pdf()).rejects.toThrow(COULD_NOT_MAKE_PDF);
+    await wait(100);
+    s.engine().compiles[1]?.resolve(FAILED);
+    await settle();
+    // The page on screen is the one before the edit, which is not what was asked for.
+    await failed;
+    await expect(s.compiler.pdf()).rejects.toThrow(COULD_NOT_MAKE_PDF);
+    expect(s.engine().pdfs).toEqual([]);
+
+    // The next page has its PDF; one xdvipdfmx cannot make fails with its reason as the cause.
+    s.compiler.update(titled("Builder"));
+    await wait(100);
+    s.engine().compiles[2]?.resolve(compiled(3));
+    await settle();
+    const refused = s.compiler.pdf();
+    await settle();
+    const error =
+      'xdvipdfmx exited with 1\nxdvipdfmx:fatal: Cannot proceed without .vf or "physical" font';
+    s.engine().pdfs[0]?.resolve({ ok: false, ms: 1, output: "", error });
+    await expect(refused).rejects.toThrow(expect.objectContaining({ cause: error }));
+    // xdvipdfmx answered, so the engine stays.
+    expect(s.engines).toHaveLength(1);
+    expect(s.engine().terminated).toBe(false);
+  });
+
+  it("loses the engine to a PDF past its limit, or failed, and compiles the page again", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const s = scheduler();
+    await opened(s);
+    const name = formatOf(opening);
+    const cutOff = expect(s.compiler.pdf()).rejects.toThrow(
+      expect.objectContaining({ cause: new Error("took over 10000 ms") }),
+    );
+    await settle();
+    expect(s.engine().calls.at(-1)).toBe("pdf doc");
+    await wait(9_999);
+    expect(s.engines[0]?.terminated).toBe(false);
+    await wait(1);
+    await cutOff;
+    expect(s.engines[0]?.terminated).toBe(true);
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("PDF"), expect.any(Error));
+    // The page compiles again on a new engine, whose job the next PDF is made from.
+    expect(s.engine().calls).toEqual(["start", `put ${name}`, `compile ${name}`]);
+    expect(s.busy.at(-1)).toBe(true);
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([opening, opening]);
+    const again = s.compiler.pdf();
+    await settle();
+    // A worker that fails the request, as a crashed one does, is lost the same way.
+    s.engine().pdfs[0]?.reject(CRASHED);
+    await expect(again).rejects.toThrow(expect.objectContaining({ cause: CRASHED }));
+    expect(s.engines).toHaveLength(3);
+    expect(s.engines[1]?.terminated).toBe(true);
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    const last = s.compiler.pdf();
+    await settle();
+    s.engine().pdfs[0]?.resolve(madePdf);
+    await expect(last).resolves.toBe(PDF);
+    // The user heard of no page that failed, since none did.
+    expect(s.errors).toEqual([]);
+  });
+
+  it("fails a PDF waiting or asked for when closed, and leaves no timer", async () => {
+    const s = scheduler();
+    await opened(s);
+    const asked = s.compiler.pdf();
+    await settle();
+    expect(vi.getTimerCount()).toBe(1);
+    s.compiler.close();
+    expect(vi.getTimerCount()).toBe(0);
+    // The client fails what waits on a worker it terminates.
+    s.engine().pdfs[0]?.reject(new Error("compile worker terminated"));
+    await expect(asked).rejects.toThrow(COULD_NOT_MAKE_PDF);
+    // Closing does not replace the engine, and nothing asks it again.
+    expect(s.engines).toHaveLength(1);
+
+    const t = scheduler();
+    await opened(t);
+    t.compiler.update(titled("Analyst"));
+    const waiting = t.compiler.pdf();
+    t.compiler.close();
+    await expect(waiting).rejects.toThrow(COULD_NOT_MAKE_PDF);
+    expect(t.engine().pdfs).toEqual([]);
+  });
+
   it("shows a page whose fonts it cannot draw, and warns about each font once", async () => {
     const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
     const s = scheduler();
@@ -986,6 +1122,7 @@ describe.skipIf(!engineAvailable())("Compiler through the engine", () => {
       putFormat: async (kind, name, format) => session.putFormat(kind, name, format),
       forget: async (job) => session.forget(job),
       compile: async (kind, format, body, options) => session.compile(kind, format, body, options),
+      pdf: async (job, options) => session.pdf(job, options),
       terminate: () => {},
     };
     let onPage: ((shown: Shown) => void) | undefined;
@@ -1017,6 +1154,9 @@ describe.skipIf(!engineAvailable())("Compiler through the engine", () => {
     for (const id of texts.keys())
       expect(first.page.fields.get(id)?.glyphs.length, id).toBeGreaterThan(0);
     expect(first.page.unmatched).toBe(0);
+    // The PDF comes from the same output.
+    const pdf = await compiler.pdf();
+    expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe("%PDF-");
 
     next = nextPage();
     const title = "Staff Software Engineer";

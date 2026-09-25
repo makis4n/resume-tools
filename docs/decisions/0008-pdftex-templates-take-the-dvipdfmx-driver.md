@@ -63,3 +63,9 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
   harness cannot bound a compile either, since the engine's call is synchronous: CI bounds it
   with the check job's time limit, and milestone 3's probe step, which runs the harness in the
   browser, has to run it in a worker it can terminate.
+- Item 14 settled the two questions left to it above. Nothing is re-emitted: the PDF is PDF 1.5
+  with xdvipdfmx's own compression either way, and lacks only named destinations nothing links
+  to. The driver stays hyperref's alone: xdvipdfmx reads the dvips `color` and `papersize=`
+  specials that `color` and geometry write, so a coloured rule reaches the PDF as `rg` and `RG`
+  and the PDF is the page's size, and it passes over `l3backend`'s PostScript header. The
+  validation harness checks the PDF's size and text layer.

@@ -8,11 +8,11 @@
  *
  * It compiles the resume through the package as the editor does, twice, then once more after an
  * edit to every field, then once for each style control set another way, and reads the output
- * back as the page does. It reports rather than throws: each check that fails adds a finding, so
- * that CI names every check a package fails and the import step can say what is locked. Only a
- * failed dump or compile stops it, since nothing after either has anything to read. Findings are
- * for developers and CI, and may quote TeX's log, so the product never shows one to a user as it
- * is. The PDF (item 14) joins the checks when it lands.
+ * back as the page does; and it checks the PDF xdvipdfmx makes from the resume's first output.
+ * It reports rather than throws: each check that fails adds a finding, so that CI names every
+ * check a package fails and the import step can say what is locked. Only a failed dump or compile
+ * stops it, since nothing after either has anything to read. Findings are for developers and CI,
+ * and may quote TeX's log, so the product never shows one to a user as it is.
  *
  * The harness cannot bound a compile itself. The engine runs TeX in one synchronous call, and
  * nothing else in its thread runs until the call returns, timers included, so a package whose TeX
@@ -23,8 +23,8 @@
 
 import type { Resume, RichText } from "@resume-tools/resume-model";
 import { summariseLog } from "../engine/log";
-import type { CompileResult, DumpResult, EngineSession } from "../engine/session";
-import { glyphTextOf, widthsOf } from "../page/draw";
+import type { CompileResult, DumpResult, EngineSession, PdfResult } from "../engine/session";
+import { glyphTextOf, paperSize, widthsOf } from "../page/draw";
 import type { FontLibrary, PageFont } from "../page/fonts";
 import { CURATED } from "../templates/curated";
 import { isBlank } from "../templates/escape";
@@ -42,6 +42,8 @@ import {
   MARKER_END,
   markerId,
 } from "../tex/fields";
+import { INCH, US_LETTER } from "../tex/svg";
+import { hasToUnicode, mediaBoxes, shownStrings } from "./pdf";
 
 /** The checks, in the order the harness makes them. */
 export const CHECKS = [
@@ -55,6 +57,7 @@ export const CHECKS = [
   "alignment",
   "fonts",
   "special",
+  "pdf",
 ] as const;
 
 export type Check = (typeof CHECKS)[number];
@@ -192,6 +195,10 @@ export async function validatePackage(
   if (output === undefined) return report;
   const doc = attempt(findings, "compile", () => readDvi(output));
   if (doc === undefined) return report;
+  // The PDF of this output, while the job holds it: the compiles after this one replace it, and
+  // the edit's is of other texts. What it finds is reported in its turn, last.
+  const pdfFindings: Finding[] = [];
+  const pdf = attempt(pdfFindings, "pdf", () => session.pdf(job, { compress: 0 }));
 
   const second = attempt(findings, "converges", () => compile(body.latex));
   report.passes.push(...(second?.passes ?? []));
@@ -221,19 +228,21 @@ export async function validatePackage(
   report.fields = fields.size;
   const fieldFindings = checkFields(doc, fields, body.texts);
   const alignmentFindings = checkAlignment(fields, body.texts, doc.pages.length === 1);
-  // The edit is judged only on the fields these two checks pass as the resume has them.
-  if (editedBody !== undefined && edited !== undefined) {
-    const reported = new Set(
-      [...fieldFindings, ...alignmentFindings].flatMap((finding) => finding.field ?? []),
-    );
+  // The edit and the PDF are judged only on the fields these two checks pass as the resume has
+  // them.
+  const reported = new Set(
+    [...fieldFindings, ...alignmentFindings].flatMap((finding) => finding.field ?? []),
+  );
+  if (editedBody !== undefined && edited !== undefined)
     findings.push(...(await checkEdits(fonts, edited, editedBody.texts, body.texts, reported)));
-  }
   findings.push(
     ...checkPages(doc),
     ...fieldFindings,
     ...alignmentFindings,
     ...checkFonts(undrawable),
     ...checkSpecial(doc),
+    ...pdfFindings,
+    ...(pdf === undefined ? [] : checkPdf(pdf, doc, fields, body.texts, reported)),
   );
   return report;
 }
@@ -708,6 +717,82 @@ function paragraphProblem(id: string, next: PageItem | undefined): string | unde
   if (!decided)
     return `the paragraph special of ${id} has the keys ${keys.join(", ")}, not decision 0007's`;
   return undefined;
+}
+
+/** How far a PDF's page size may be from the page's, in big points: xdvipdfmx rounds to 0.01. */
+const PDF_SIZE_TOLERANCE = 0.01;
+
+/**
+ * The characters a field's first word may hold to be looked for in a PDF's strings as itself:
+ * ASCII letters, digits, and the punctuation every text font the page draws sets under its own
+ * code. OT1 sets others from other fonts, as it does `<` and `|`, or as a rule, as it does `_`,
+ * and its italic sets a pound sign under the dollar's code.
+ */
+const SHOWN_AS_ITSELF = /^[A-Za-z0-9.,:;!?'()[\]@#%&*+=/-]+$/;
+
+/**
+ * Characters TeX's text fonts may set as one glyph, a ligature, under a code of its own, which
+ * differs from OT1 to T1: ff, fi and fl, the dashes, the closing double quote, and in T1 the low
+ * double quote that two commas make.
+ */
+const LIGATURE = /ff|fi|fl|--|''|,,/;
+
+/**
+ * `pdf`: xdvipdfmx makes the PDF from the output the page is drawn from (plan section 5.5), and
+ * the ATS can read it: its page is the page's size, as `paperSize` reads it; a font of it carries
+ * a ToUnicode map, which is what lets a reader take the text out; and every field the page shows
+ * is in its text. It is made at compression level 0, whose streams `pdf.ts` reads as they stand.
+ * A field is looked for by its first word, its text up to the first space, among the strings the
+ * PDF's text operators show, where the glyphs' codes stand for the characters, which holds only
+ * for what `SHOWN_AS_ITSELF` allows, and not for a ligature; a field whose first word has a
+ * character outside ASCII, or anything else those rule out, is skipped. A field the fields or
+ * alignment checks report (`reported`) is left to them. A PDF xdvipdfmx cannot make, as when the
+ * output uses a font it has no Type 1 file of to embed, is one finding, with its words.
+ */
+function checkPdf(
+  made: PdfResult,
+  doc: DviDocument,
+  found: ReadonlyMap<string, Field>,
+  texts: ReadonlyMap<string, string>,
+  reported: ReadonlySet<string>,
+): Finding[] {
+  const pdf = made.pdf;
+  if (!made.ok || pdf === undefined)
+    return [
+      { check: "pdf", message: `xdvipdfmx makes no PDF: ${made.error ?? "no reason given"}` },
+    ];
+  const findings: Finding[] = [];
+  const bp = 72 / INCH;
+  const size = paperSize(doc.pages[0] ?? { items: [] }) ?? US_LETTER;
+  const page = { width: size.width * bp, height: size.height * bp };
+  const boxes = mediaBoxes(pdf);
+  const near = (a: number, b: number) => Math.abs(a - b) <= PDF_SIZE_TOLERANCE;
+  const other = boxes.find((box) => !near(box.width, page.width) || !near(box.height, page.height));
+  const sizeOf = ({ width, height }: { width: number; height: number }) =>
+    `${Number(width.toFixed(2))} by ${Number(height.toFixed(2))} bp`;
+  if (boxes.length === 0) findings.push({ check: "pdf", message: "the PDF gives no page size" });
+  else if (other !== undefined)
+    findings.push({
+      check: "pdf",
+      message: `the PDF's page is ${sizeOf(other)}, not the page's ${sizeOf(page)}`,
+    });
+  if (!hasToUnicode(pdf))
+    findings.push({
+      check: "pdf",
+      message: "no font of the PDF has a ToUnicode map, so its text cannot be read",
+    });
+  const shown = shownStrings(pdf);
+  for (const field of found.values()) {
+    const word = texts.get(field.id)?.trim().split(/\s/, 1)[0] ?? "";
+    if (reported.has(field.id) || !SHOWN_AS_ITSELF.test(word) || LIGATURE.test(word)) continue;
+    if (!shown.some((text) => text.includes(word)))
+      findings.push({
+        check: "pdf",
+        field: field.id,
+        message: `the PDF's text does not show ${field.id}: no text operator shows its first word, ${word}`,
+      });
+  }
+  return findings;
 }
 
 /** TeX's first error in a compile, or undefined when it compiled with none in the log. */
