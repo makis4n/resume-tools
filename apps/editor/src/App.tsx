@@ -106,10 +106,29 @@ export function App() {
     compiler.current?.update(next);
   };
 
+  /**
+   * Open the document again after its first page could not be made. The compiler outlives a
+   * document it gave up and a page it dropped, and opening compiles at once, on a new worker if
+   * the last was lost; with no page there is no field to edit, so nothing else would try again.
+   */
+  const tryAgain = () => {
+    setError(undefined);
+    const doc = history.present;
+    compiler.current?.open(curated(doc.template).package, doc);
+  };
+
   // With no page yet there is nothing to keep showing, so a failure to make the first one is a
-  // failure to show any.
-  if (failed || (error !== undefined && shown === undefined))
-    return <p>The page could not be shown.</p>;
+  // failure to show any. Fonts that did not load leave no compiler to ask again.
+  if (failed) return <p>The page could not be shown.</p>;
+  if (error !== undefined && shown === undefined)
+    return (
+      <p>
+        The page could not be shown.{" "}
+        <button type="button" onClick={tryAgain}>
+          Try again
+        </button>
+      </p>
+    );
   if (!shown) return <p>Loading the engine…</p>;
   const { ms, startMs } = shown.latest;
   // Start-up is apart from the page's own time: it is paid once per worker, not per edit.

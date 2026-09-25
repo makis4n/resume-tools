@@ -22,11 +22,12 @@
  * kept as bytes on the main thread, so the new worker is handed them rather than dumping them
  * again.
  *
- * A worker's start-up loads the engine and TeX Live's file list, which can take many seconds on a
- * slow machine or network and is paid again by every new worker, so it has a limit of its own and
- * the other limits time only what the engine does with a document. Drawing the page waits on fonts
- * from the network, so it has the compile's limit too; past it the page is dropped, but the
- * worker, which did its part, stays.
+ * A worker's start-up loads the engine and TeX Live's file list, and a dump reads TeX Live's files
+ * as TeX asks for them. On a slow machine or network either can take many seconds, and a worker
+ * that replaces a lost one pays for both again, so they have a longer limit of their own and the
+ * compile limit times only what TeX does with an edit. Drawing the page waits on fonts from the
+ * network, so it has the compile's limit too; past it the page is dropped, but the worker, which
+ * did its part, stays.
  */
 
 import type {
@@ -101,11 +102,13 @@ export interface CompilerOptions {
   /** How long to wait after the last edit before compiling, in ms, by engine. */
   delays?: Record<SessionEngine, number>;
   /**
-   * How long one request to the engine may take before the worker is stopped, in ms, by engine,
-   * and how long drawing the page may take before the page is dropped.
+   * How long a compile, or handing the engine a kept format, may take before the worker is
+   * stopped, in ms, by engine, and how long drawing the page may take before the page is dropped.
    */
   limits?: Record<SessionEngine, number>;
-  /** How long a worker may take to start before it is stopped, in ms. */
+  /**
+   * How long a worker may take to start, or a format to dump, before the worker is stopped, in ms.
+   */
   startLimit?: number;
   /** How a page is drawn from the output; tests draw without fonts. */
   draw?: typeof drawPage;
@@ -128,9 +131,10 @@ const DELAYS: Record<SessionEngine, number> = { pdftex: 100, xetex: 400 };
 const LIMITS: Record<SessionEngine, number> = { pdftex: 10_000, xetex: 20_000 };
 
 /**
- * Start-up takes about 0.3 s once the engine's files are cached (decision 0003), but a first load
- * fetches the engine itself, 9.5 MB compressed, so a minute leaves room for a slow connection and
- * still gives up on a worker that will never start.
+ * The limit for a worker's start-up and for a dump. Start-up takes about 0.3 s once the engine's
+ * files are cached (decision 0003), but a first load fetches the engine itself, 9.5 MB compressed,
+ * so a minute leaves room for a slow connection and still gives up on a worker that will never
+ * start. Why a dump shares it is said where the dump is asked for.
  */
 const START_LIMIT = 60_000;
 
@@ -160,7 +164,10 @@ interface Run {
    * so a document that stops every worker it runs on costs two of them, not one after another.
    */
   retry: boolean;
-  /** Its time limit for each request and for the draw, from its package's engine. */
+  /**
+   * Its time limit for a compile, for handing the engine a kept format and for the draw, from its
+   * package's engine. Start-up and dumps have the longer `startLimit`.
+   */
   limit: number;
   /** The time limit running now, of a request or of the draw. */
   timer?: ReturnType<typeof setTimeout>;
@@ -319,7 +326,12 @@ export class Compiler {
             engine.putFormat(pkg.engine, format.name, kept.slice()),
           );
         } else {
-          const dumped = await this.request(run, run.limit, () =>
+          // A dump reads TeX Live's files as TeX asks for them, 54 files and 7.5 MiB for Jake's
+          // format on a cold cache, and one that is cut off leaves no format behind, so the worker
+          // that retries it reads them all over again. It gets the start-up's limit rather than
+          // the compile's: a format is dumped when a document opens or a control bound to the
+          // format changes, never per keystroke, so a long dump costs a wait, not an edit.
+          const dumped = await this.request(run, this.startLimit, () =>
             engine.dump(pkg.engine, format.name, format.preamble, format.files),
           );
           if (!dumped.ok || dumped.format === undefined) {

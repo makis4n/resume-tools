@@ -480,7 +480,8 @@ describe("Compiler", () => {
   it("gives a document up when it is cut off on its second try too", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    const s = scheduler({ limits: { pdftex: 1_000, xetex: 2_000 } });
+    // A dump has the start-up's limit.
+    const s = scheduler({ startLimit: 1_000 });
     s.compiler.open(jake, opening);
     await wait(1_000);
     await settle();
@@ -505,6 +506,56 @@ describe("Compiler", () => {
     await wait(100);
     expect(s.engines).toHaveLength(3);
     expect(s.engine().calls).toEqual(["start", `dump ${name}`]);
+  });
+
+  it("opens a document again after giving it up or dropping its page, and shows it", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const name = formatOf(opening);
+    const s = scheduler();
+    s.compiler.open(jake, opening);
+    await settle();
+    s.engine().dumps[0]?.reject(CRASHED);
+    await settle();
+    s.engine().dumps[0]?.reject(CRASHED);
+    await settle();
+    expect(s.errors).toEqual([COULD_NOT_UPDATE]);
+    expect(s.shown).toEqual([]);
+    // The app's Try again: the same document, opened once more, compiles at once on a new engine.
+    s.compiler.open(jake, opening);
+    await settle();
+    expect(s.engines).toHaveLength(3);
+    expect(s.engine().calls).toEqual(["start", `dump ${name}`]);
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([opening]);
+    expect(s.errors).toEqual([COULD_NOT_UPDATE]);
+    expect(s.busy.at(-1)).toBe(false);
+
+    // After a first page whose draw was dropped: on the same engine, which holds the format.
+    const drawing: Waiting<DrawnPage>[] = [];
+    const t = scheduler({
+      draw: (output) =>
+        output[0] === 8
+          ? new Promise((resolve, reject) => drawing.push({ resolve, reject }))
+          : draw(output),
+    });
+    t.compiler.open(jake, opening);
+    await settle();
+    t.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    t.engine().compiles[0]?.resolve(compiled(8));
+    await wait(10_000);
+    expect(t.errors).toEqual([COULD_NOT_UPDATE]);
+    t.compiler.open(jake, opening);
+    await settle();
+    expect(t.engines).toHaveLength(1);
+    expect(t.engine().calls.slice(3)).toEqual([`compile ${name}`]);
+    t.engine().compiles[1]?.resolve(compiled(1));
+    await settle();
+    expect(t.shown.map((page) => page.page.svg)).toEqual(["<svg>1</svg>"]);
   });
 
   it("replaces an engine that fails a request, as one that crashed, and tries once more", async () => {
@@ -570,6 +621,24 @@ describe("Compiler", () => {
     expect(page?.startMs).toBe(30_000);
     // The page's own time starts with its first request, after the start-up.
     expect(page?.ms).toBe(0);
+  });
+
+  it("gives a dump the start-up's limit, since a format is dumped at open, not per edit", async () => {
+    const s = scheduler();
+    s.compiler.open(jake, opening);
+    await settle();
+    // TeX Live's files for the format come slowly: past the compile's limit, within the start's.
+    await wait(59_999);
+    expect(s.engines).toHaveLength(1);
+    expect(s.engines[0]?.terminated).toBe(false);
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown).toHaveLength(1);
+    expect(s.errors).toEqual([]);
+    // The dump is part of the page's own time.
+    expect(s.shown[0]?.ms).toBe(59_999);
   });
 
   it("tries a document again on a new engine when one does not start in time, or fails to", async () => {
