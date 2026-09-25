@@ -71,6 +71,23 @@ export interface FieldFont {
   font: LayoutFont;
   /** The size the page uses it at, in TeX points. */
   size: number;
+  /**
+   * How much XeTeX stretches a native font's glyphs across, which scales their advances and the
+   * space's, from the XDV's font (`extend=`); left out when it does not.
+   */
+  extend?: number;
+  /**
+   * How much XeTeX slants a native font's glyphs, from the XDV's font (`slant=`), which moves no
+   * glyph and adds to `\fontdimen1`, which LaTeX reads to set italic corrections; left out when it
+   * does not.
+   */
+  slant?: number;
+  /**
+   * What XeTeX adds after each glyph of a word but its last, and to the space, in TeX points, from
+   * the features its family loads the file with (`letterspace=`, a hundredth of the size for 1),
+   * which the XDV does not record (`DrawOptions.features`); left out when it adds nothing.
+   */
+  letterSpace?: number;
   /** How many of the field's glyphs it sets. */
   glyphs: number;
   /** How many of those stand for letters or digits. */
@@ -98,10 +115,14 @@ export interface FieldLayout {
   /**
    * The first of `fonts`, the field's letter font, and its size in TeX points: the overlay
    * measures the field in it and sets its rows in its web font. For a native font, the file and
-   * the size XeTeX set the field's first glyphs in.
+   * the size XeTeX set the field's first glyphs in, and how it stretched and letterspaced them
+   * (`FieldFont`).
    */
   font: LayoutFont;
   size: number;
+  extend?: number;
+  slant?: number;
+  letterSpace?: number;
   /** The first glyph's origin on its baseline, in TeX points from the page's top-left corner. */
   x: number;
   y: number;
@@ -419,6 +440,7 @@ function fontsOf(
   loaded: ReadonlyMap<string, PageFont>,
   natives: ReadonlyMap<string, NativePageFont>,
   field: Field,
+  features: ReadonlyMap<string, string>,
 ): FieldFont[] {
   const pt = pointsPerUnit(doc);
   // By the DVI's font number, which a TeX font and a native one share, and kind apart all the same.
@@ -428,6 +450,7 @@ function fontsOf(
     let key: string;
     let font: LayoutFont | undefined;
     let size: number;
+    const spacing: Pick<FieldFont, "extend" | "slant" | "letterSpace"> = {};
     if (item?.kind === "glyph") {
       const def = doc.fonts.get(item.font);
       key = `tex:${item.font}`;
@@ -435,12 +458,26 @@ function fontsOf(
       size = (def?.scale ?? 0) * pt;
     } else if (item?.kind === "native") {
       const def = doc.nativeFonts.get(item.font);
+      const file = nativeFileName(def?.name ?? "");
       key = `native:${item.font}`;
-      font = fileOf(def, natives) ? natives.get(nativeFileName(def?.name ?? "")) : undefined;
+      font = fileOf(def, natives) ? natives.get(file) : undefined;
       size = (def?.size ?? 0) * pt;
+      const extend = (def?.extend ?? 65536) / 65536;
+      const slant = (def?.slant ?? 0) / 65536;
+      const letterSpace = letterSpaceOf(features.get(file), size);
+      if (extend !== 1) spacing.extend = extend;
+      if (slant !== 0) spacing.slant = slant;
+      if (letterSpace !== 0) spacing.letterSpace = letterSpace;
     } else continue;
     if (font === undefined) continue;
-    const count = counts.get(key) ?? { font, size, glyphs: 0, letters: 0, order: counts.size };
+    const count = counts.get(key) ?? {
+      font,
+      size,
+      ...spacing,
+      glyphs: 0,
+      letters: 0,
+      order: counts.size,
+    };
     count.glyphs++;
     if (glyph.text !== undefined && LETTERS.test(glyph.text)) count.letters++;
     counts.set(key, count);
@@ -461,6 +498,7 @@ function layoutsOf(
   loaded: ReadonlyMap<string, PageFont>,
   natives: ReadonlyMap<string, NativePageFont>,
   fields: ReadonlyMap<string, Field>,
+  features: ReadonlyMap<string, string>,
 ): Map<string, FieldLayout | undefined> {
   const pt = pointsPerUnit(doc);
   // The fields each item is the first glyph of, or holds the first glyph of, in a native run.
@@ -515,7 +553,7 @@ function layoutsOf(
   for (const [id, field] of fields) {
     const first = field.glyphs[0];
     const at = first && originOf(page.items[first.item], first.glyph);
-    const fonts = fontsOf(doc, page, loaded, natives, field);
+    const fonts = fontsOf(doc, page, loaded, natives, field, features);
     const [primary] = fonts;
     if (at === undefined || !primary) {
       layouts.set(id, undefined);
@@ -526,6 +564,9 @@ function layoutsOf(
       fonts,
       font: primary.font,
       size: primary.size,
+      ...(primary.extend === undefined ? {} : { extend: primary.extend }),
+      ...(primary.slant === undefined ? {} : { slant: primary.slant }),
+      ...(primary.letterSpace === undefined ? {} : { letterSpace: primary.letterSpace }),
       x: INCH + at.h * pt,
       y: INCH + at.v * pt,
       secondLine: secondLineOf(page, field, at.v, primary.size / 2 / pt, pt),
@@ -619,6 +660,26 @@ export function widthsOf(loaded: ReadonlyMap<string, PageFont>): WidthProvider {
   };
 }
 
+/** What a page is drawn with besides its output, its fonts and its fields' texts. */
+export interface DrawOptions {
+  /**
+   * The XeTeX features each native font file is loaded with, by the file's name, from the
+   * package's `fonts` section (`fontFeatures`): what XeTeX letterspaces a font by, which the XDV
+   * does not record, is read from them for the overlay (`FieldFont.letterSpace`, decision 0014).
+   */
+  features?: ReadonlyMap<string, string>;
+}
+
+/**
+ * What XeTeX's `letterspace=` among a font's features adds after a glyph, in points at `size`:
+ * the value is in hundredths of the size, as XeTeX reads it; 0 without one.
+ */
+export function letterSpaceOf(features: string | undefined, size: number): number {
+  const value = /(?:^|;)letterspace=(-?[\d.]+)/.exec(features ?? "")?.[1];
+  const hundredths = value === undefined ? 0 : Number.parseFloat(value);
+  return Number.isFinite(hundredths) ? (hundredths / 100) * size : 0;
+}
+
 /**
  * Draw one page of a DVI, or of XeTeX's XDV. `texts` holds each field's text as the model has
  * it; glyphs are matched against it so a click can say which character it landed on. A font the
@@ -634,6 +695,7 @@ export async function drawPage(
   fonts: FontLibrary,
   texts: ReadonlyMap<string, string>,
   pageIndex = 0,
+  options: DrawOptions = {},
 ): Promise<DrawnPage> {
   // Fonts are defined at the end of a DVI too; a first pass without widths finds their names.
   const defined = parseDvi(dvi, () => undefined);
@@ -667,7 +729,7 @@ export async function drawPage(
   const found = collectFields(page, glyphTextOf(doc, loaded, natives));
   let unmatched = 0;
   for (const field of found.values()) unmatched += alignGlyphs(field, texts.get(field.id) ?? "");
-  const layouts = layoutsOf(doc, page, loaded, natives, found);
+  const layouts = layoutsOf(doc, page, loaded, natives, found, options.features ?? new Map());
   const fields = new Map<string, PageField>();
   for (const [id, field] of found) fields.set(id, { ...field, layout: layouts.get(id) });
 

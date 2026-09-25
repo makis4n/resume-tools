@@ -312,10 +312,16 @@ export function rowOf(rows: readonly Row[], offset: number): { row: number; colu
   return { row, column: Math.min(Math.max(0, offset - from), to - from) };
 }
 
-/** A font at the size a page uses it, in TeX points. */
+/**
+ * A font at the size a page uses it, in TeX points, and for a native font how XeTeX stretched,
+ * slanted and letterspaced it (`FieldFont`).
+ */
 export interface SizedFont {
   font: LayoutFont;
   size: number;
+  extend?: number;
+  slant?: number;
+  letterSpace?: number;
 }
 
 /** The characters a page font's web font maps, with their codes; none when it has no outlines. */
@@ -342,34 +348,49 @@ function texFace(font: PageFont, size: number): Face {
  * page. Its slant is its file's (`NativeFontFile.slant`), and a glyph's italic correction what
  * its outline reaches past its advance, as XeTeX measures both. A font whose file could not be
  * read measures every character as nothing.
+ *
+ * XeTeX's `extend` scales every advance, the space's among them, the italic corrections and the
+ * slant, and its letterspacing, in scaled points, goes after each glyph of a word but its last and
+ * into `\fontdimen2`, whose stretch and shrink are of both. The breaker sets a box for each
+ * character, so the letterspacing goes after every glyph and is taken out of the space's width,
+ * which sets a word and the space after it as wide as XeTeX does, the last word of a line a
+ * letterspace wider. XeTeX's `slant` moves no glyph and adds to `\fontdimen1`.
  */
-function nativeFace(font: NativePageFont, size: number): Face {
+function nativeFace(
+  font: NativePageFont,
+  size: number,
+  extend = 1,
+  letterSpace = 0,
+  slanted = 0,
+): Face {
   const { file } = font;
-  const scale = file === undefined ? 0 : size / file.unitsPerEm;
-  const space = Math.round((file?.spaceAdvance ?? 0) * scale);
+  const scale = file === undefined ? 0 : (size * extend) / file.unitsPerEm;
+  const space = Math.round((file?.spaceAdvance ?? 0) * scale) + letterSpace;
   const glue = {
-    space,
+    space: space - letterSpace,
     stretch: Math.trunc(space / 2),
     shrink: Math.trunc(space / 3),
     extraSpace: Math.trunc(space / 3),
   };
   return {
     codeFor: (char) => file?.glyphFor(char),
-    widthOf: (glyph) => Math.round((file?.advanceOf(glyph) ?? 0) * scale),
+    widthOf: (glyph) => Math.round((file?.advanceOf(glyph) ?? 0) * scale) + letterSpace,
     italicOf: (glyph) => {
       const past = (file?.boxOf(glyph)?.[2] ?? 0) - (file?.advanceOf(glyph) ?? 0);
       return past > 0 ? Math.round(past * scale) : 0;
     },
-    slant: file?.slant ?? 0,
+    slant: (file?.slant ?? 0) * extend + slanted,
     spaceGlue: () => glue,
     hyphenChar: file?.glyphFor("-") ?? -1,
   };
 }
 
 /** A font's face at the size the page uses it, by its kind. */
-function faceOf({ font, size }: SizedFont): Face {
+function faceOf({ font, size, extend, slant, letterSpace }: SizedFont): Face {
   const scaled = Math.round(size * PT);
-  return font.kind === "native" ? nativeFace(font, scaled) : texFace(font, scaled);
+  return font.kind === "native"
+    ? nativeFace(font, scaled, extend, Math.round((letterSpace ?? 0) * PT), slant)
+    : texFace(font, scaled);
 }
 
 /**

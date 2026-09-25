@@ -15,6 +15,8 @@ import {
   controlValuesFor,
   defaultControls,
   ENTRY_SLOTS,
+  fontFeatures,
+  fontFiles,
   HEADER_SLOTS,
   ITEM_SLOTS,
   LABELLED_ITEM_SLOTS,
@@ -352,6 +354,28 @@ describe("a XeTeX package's fonts", () => {
   it("takes features of XeTeX's syntax that go inside the declaration's quotes", () => {
     for (const features of ["mapping=tex-text]", 'a"b', "script:latn", "x}{\\input{y}", "a b", ""])
       expect(paths(xetexWith([{ ...roboto, features }])), features).toEqual(["fonts.0.features"]);
+  });
+
+  it("lists each file once, with the features its first family loads it with", () => {
+    const pkg = parsePackage(
+      xetexWith([
+        roboto,
+        { family: "Headings", shapes: { "b/n": "Roboto-Regular.otf", "m/n": "Lato-Black.ttf" } },
+      ]),
+    );
+    expect(fontFiles(pkg)).toEqual([
+      "Roboto-Regular.otf",
+      "Roboto-BoldItalic.otf",
+      "Lato-Black.ttf",
+    ]);
+    expect(fontFeatures(pkg)).toEqual(
+      new Map([
+        ["Roboto-Regular.otf", "mapping=tex-text;+onum"],
+        ["Roboto-BoldItalic.otf", "mapping=tex-text;+onum"],
+        ["Lato-Black.ttf", ""],
+      ]),
+    );
+    expect(fontFiles(parsePackage(plain))).toEqual([]);
   });
 });
 

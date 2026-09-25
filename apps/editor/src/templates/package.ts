@@ -406,6 +406,18 @@ export function fontFiles(pkg: TemplatePackage): string[] {
   return [...new Set((pkg.fonts ?? []).flatMap(({ shapes }) => Object.values(shapes)))];
 }
 
+/**
+ * The XeTeX features each font file of a package's `fonts` section is loaded with, by the file's
+ * name: its family's, or none, the first family's where two name one file.
+ */
+export function fontFeatures(pkg: TemplatePackage): Map<string, string> {
+  const features = new Map<string, string>();
+  for (const { shapes, features: loaded } of pkg.fonts ?? [])
+    for (const file of Object.values(shapes))
+      if (!features.has(file)) features.set(file, loaded ?? "");
+  return features;
+}
+
 /** A document's choices for its package's controls. A choice left out is the package default. */
 export const ControlValues = z.strictObject({
   pageSize: PageSize.optional(),

@@ -19,6 +19,7 @@ import {
   fieldsShown,
   type GlyphBox,
   glyphAt,
+  letterSpaceOf,
   paperSize,
   ruleCrossings,
 } from "./draw";
@@ -226,6 +227,21 @@ function fieldTexts(body: string): Map<string, string> {
     texts.set(m[1] ?? "", m[2] ?? "");
   return texts;
 }
+
+describe("letterSpaceOf", () => {
+  it("reads XeTeX's letterspace from a font's features, in hundredths of the size", () => {
+    expect(letterSpaceOf("mapping=tex-text;letterspace=6.0", 10.95)).toBeCloseTo(0.657, 6);
+    expect(letterSpaceOf("letterspace=-2;mapping=tex-text", 10)).toBeCloseTo(-0.2, 6);
+    for (const features of [
+      undefined,
+      "",
+      "mapping=tex-text",
+      "letterspace=x",
+      "wordletterspace=5",
+    ])
+      expect(letterSpaceOf(features, 10), String(features)).toBe(0);
+  });
+});
 
 describe("paperSize", () => {
   const special = (text: string) => ({ items: [{ kind: "special" as const, h: 0, v: 0, text }] });

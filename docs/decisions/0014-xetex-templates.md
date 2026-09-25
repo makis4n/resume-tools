@@ -9,9 +9,9 @@ preamble that loads no native font, and fonts declared by file, which load when 
 them. The page could draw only Type 1 glyphs, the overlay only measure TFM fonts, and a package
 had nowhere to name its fonts, which decision 0006 left to this item as a "resolved fonts"
 section. Decision 0011 gives fontconfig no font folder to scan, so XeTeX finds Roboto, Lato,
-Source Sans Pro, Font Awesome and every other font of the tree only by file. Awesome-CV's port is item 22; an invented XeTeX
-template (`src/templates/invented.ts`: Roboto for the text, Source Sans Pro for the headings,
-one Font Awesome icon in the header) stands in for it in the tests.
+Source Sans Pro, Font Awesome and every other font of the tree only by file. Awesome-CV's port is
+item 22; an invented XeTeX template (`src/templates/invented.ts`: Roboto for the text, Source
+Sans Pro for the headings, one Font Awesome icon in the header) stands in for it in the tests.
 
 ## Decision
 
@@ -71,9 +71,9 @@ one Font Awesome icon in the header) stands in for it in the tests.
   and a combining mark where the map has no composed letter, as of d and U+0323 for ḍ, which reads
   composed, as the generator keeps the text. A glyph neither reaches, such as a small capital that
   `+smcp` substitutes, has no text. Native fonts set accented letters whole, so none is paired
-  with an accent. XeTeX's `tex-text` mapping sets `’`
-  for `'`, `–` for `--`, `”` for `"` and the rest of `tex-text.map`, so the aligner reads each of
-  those characters as the text's spelling too.
+  with an accent. XeTeX's `tex-text` mapping sets `’` for `'`, `–` for `--`, `”` for `"` and the
+  rest of `tex-text.map`, so the aligner reads each of those characters as the text's spelling
+  too.
 - **What the page cannot draw.** A native font is drawn as boxes, one for each run, and named in
   `missingFonts` and the harness's fonts check, by its file's name, when the tree lacks the file,
   the file cannot be read or parsed, XeTeX set a face of a collection other than the first, or
@@ -97,23 +97,33 @@ one Font Awesome icon in the header) stands in for it in the tests.
   left out: it draws nothing, has no box, and the aligner puts it where the walk is and does not
   count it as unmatched; the PDF shows it as the box.
 - **The overlay's native face.** `Face` is an interface either kind of font fills: `codeFor`,
-  `widthOf`, `spaceGlue` and `hyphenChar`, and a TeX font's ligature and kern program, which
-  `paragraphNodes` runs when the face has one. A native face's codes are glyphs from the
-  character map; a glyph is its advance at the size, rounded to a scaled point; the space is the
-  space glyph's advance, which XeTeX makes `\fontdimen2`, with half of it to stretch and a third
-  to shrink, and a third more after a sentence, which is XeTeX's `\fontdimen3`, `4` and `7` of
-  every native font, as an engine test prints them; and there are no ligatures or kerns. Its
+  `widthOf`, `italicOf`, `slant`, `spaceGlue` and `hyphenChar`, and a TeX font's ligature and
+  kern program, which `paragraphNodes` runs when the face has one. A native face's codes are
+  glyphs from the character map; a glyph is its advance at the size, rounded to a scaled point;
+  the space is the space glyph's advance, which XeTeX makes `\fontdimen2`, with half of it to
+  stretch and a third to shrink, and a third more after a sentence, which is XeTeX's
+  `\fontdimen3`, `4` and `7` of every native font, as an engine test prints them; and there are
+  no ligatures or kerns. Its
   slant, which LaTeX's `\textit` and `\textbf` read to set an italic correction at a rich run's
   end (item 10), is XeTeX's `\fontdimen1`, the tangent of the file's italic angle, and a glyph's
   italic correction what its outline reaches past its advance, as XeTeX measures it; an engine
   test prints both. A rich field in a native font measures each variant the page sets in that
   variant's file; one the page does not set, in the letter font, since the TeX font names
-  `namedVariants` reads give nothing for a file. The
-  overlay's web font for a native font is the file itself, registered as it is under
-  `rt-<file name>`, and its rows are placed with the file's own ascent and descent, its `hhea`
-  table's, which macOS's and Linux's browsers read, where a TeX font's web font has 0.8 and 0.2;
-  Windows reads the `OS/2` table's, which for the tree's fonts put a row's baseline within a
-  hundredth of an em of the same place.
+  `namedVariants` reads give nothing for a file. A font XeTeX stretches with `extend=`, which the
+  XDV records, has every advance, the space, the italic corrections and the slant scaled by it;
+  one it slants with `slant=`, which the XDV records too, has it added to its slant and moves no
+  glyph; one it letterspaces with `letterspace=`, which the XDV does not record, so the page reads
+  it from the features the package's family loads the file with (`DrawOptions`), has it, a
+  hundredth of the size for 1, after each glyph: XeTeX puts it after each glyph of a word but its
+  last and into `\fontdimen2`, whose stretch and shrink are of both, so the face takes it out of
+  the space's width, which sets a word and its space as wide as XeTeX does, and the last word of a
+  line a letterspace wider. With `extend` or `letterspace`, a paragraph Roboto neither kerns nor
+  joins breaks where XeTeX's does, and `Moved ` measures within Roboto's kerning of the page's
+  30.28 pt at `extend=0.85` and 38.91 pt at `letterspace=6.0`. The overlay's web font for a
+  native font is the file itself, registered as it is under `rt-<file name>`, and its rows are
+  placed with the file's own ascent and descent, its `hhea` table's, which macOS's and Linux's
+  browsers read, where a TeX font's web font has 0.8 and 0.2; Windows reads the `OS/2` table's,
+  which for the tree's fonts put a row's baseline within a hundredth of an em of the same place.
 - **Nothing is re-emitted.** The invented template's sample, compiled from the dumped format and
   as a whole document from the stock `xelatex.fmt`, sets the same glyphs, runs and rules. The
   whole compile has four specials more, all written at the first shipout: hyperref's
@@ -185,6 +195,10 @@ within their rows, which is Roboto's kerning and ligatures, left to the page.
   which is the drift above; decision 0004 accepts drift within a line, and a break it moves waits
   for the compile. Giving the breaker the font's shaping is a later step, as giving the TeX fonts'
   web fonts their kerns is.
+- The overlay measures a stretched or letterspaced font as XeTeX sets it, but the browser draws
+  the rows in the file's own glyphs, neither stretched nor letterspaced, so within a row they drift
+  from the page by the difference: CSS's `letter-spacing` and a horizontal scale of the rows, with
+  the word spacing made up to match, are the step that closes it.
 - A glyph that `+smcp` or another single substitution makes has no text, so a field set in small
   capitals does not align. Awesome-CV sets its position line in Source Sans Pro's small capitals,
   so item 22 needs a family whose `sc` shape loads with `+smcp` while its other shapes do not, which

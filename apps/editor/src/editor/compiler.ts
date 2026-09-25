@@ -69,6 +69,7 @@ import {
 import {
   type ControlValues,
   controlValuesFor,
+  fontFeatures,
   fontFiles,
   type TemplatePackage,
 } from "../templates/package";
@@ -693,7 +694,7 @@ export class Compiler {
       const page = await this.within(
         run,
         run.limit,
-        () => this.draw(output, this.fonts, body.texts),
+        () => this.draw(output, this.fonts, body.texts, 0, { features: fontFeatures(pkg) }),
         () => this.drop(run),
       );
       if (!this.current(run)) return;

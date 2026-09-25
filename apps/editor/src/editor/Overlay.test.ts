@@ -16,7 +16,7 @@ import { TexLiveIndex } from "../page/texlive";
 import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
-import { defaultControls } from "../templates/package";
+import { defaultControls, parsePackage } from "../templates/package";
 import { PRELUDE } from "../templates/prelude";
 import { bound, fastest, median } from "../test/timing";
 import { glyphOf, glyphText, textToCode } from "../tex/glyphs";
@@ -431,6 +431,34 @@ describe("faceFor", () => {
       stretch: Math.trunc(space / 2),
       shrink: Math.trunc(space / 3),
       extraSpace: Math.trunc(space / 3),
+    });
+  });
+
+  it("measures a native font XeTeX stretches or letterspaces as XeTeX sets it", () => {
+    // extend scales every advance and the space; letterspace, in points at the size, goes after
+    // each glyph of a word but its last and into the space, and the overlay puts it after each
+    // glyph and leaves it out of the space, which sets a word and its space as wide.
+    const font = nativeFont("Invented-Regular.otf");
+    const f = Math.round((600 * 10 * PT * 0.85) / 2000);
+    const space = Math.round((500 * 10 * PT * 0.85) / 2000);
+    const stretched = faceFor({ font, size: 10, extend: 0.85 });
+    expect(stretched.widthOf(2)).toBe(f);
+    expect(stretched.spaceGlue()).toEqual({
+      space,
+      stretch: Math.trunc(space / 2),
+      shrink: Math.trunc(space / 3),
+      extraSpace: Math.trunc(space / 3),
+    });
+    const letters = Math.round(0.6 * PT);
+    const spaced = faceFor({ font, size: 10, letterSpace: 0.6 });
+    expect(spaced.widthOf(2)).toBe(Math.round((600 * 10 * PT) / 2000) + letters);
+    // XeTeX's \fontdimen2 is the space and the letterspace, and its stretch and shrink are of both.
+    const glue = Math.round((500 * 10 * PT) / 2000) + letters;
+    expect(spaced.spaceGlue()).toEqual({
+      space: glue - letters,
+      stretch: Math.trunc(glue / 2),
+      shrink: Math.trunc(glue / 3),
+      extraSpace: Math.trunc(glue / 3),
     });
   });
 
@@ -1248,6 +1276,70 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
       entry.bullets = bullets.map((text, i) => ({ id: `${prefix}-${i}`, text: [{ text }] }));
       return resume;
     }
+
+    it("measures a field XeTeX stretches or letterspaces as the page sets it, and breaks there", async () => {
+      // The page places each glyph where XeTeX did, extended and letterspaced; the overlay measures
+      // the field's characters so, from the XDV's extend and the family's features, and so its
+      // rows break where XeTeX's lines do. A paragraph Roboto neither kerns nor joins, as above.
+      const text =
+        "Built and shipped a new build system that cut the nightly build down in minutes while also making the tests run in all machines in the lab and it now helps the whole company plan its launches with much less guesswork than it used.";
+      const cases = [
+        ["extend=0.85", 30.28],
+        ["letterspace=6.0", 38.91],
+      ] as const;
+      for (const [more, moved] of cases) {
+        const variant = parsePackage({
+          ...pkg,
+          id: `invented-xetex-${more.split("=")[0]}`,
+          fonts: pkg.fonts?.map((font) =>
+            font.family === "Roboto" ? { ...font, features: `${font.features};${more}` } : font,
+          ),
+        });
+        const chosen = defaultControls(variant);
+        const made = generateFormat(variant, chosen);
+        const dumped = session.dump(variant.engine, made.name, made.preamble, made.files);
+        if (!dumped.ok) throw new Error(dumped.error);
+        const body = generateBody(variant, withBullets("spaced", [text]), chosen);
+        const job = `overlay-${more.split("=")[0]}`;
+        const result = session.compile(variant.engine, made.name, body.latex, {
+          job,
+          maxPasses: 3,
+        });
+        if (!result.output) throw new Error(result.error);
+        // Each file with the features its family loads it with, which the XDV does not record.
+        const features = new Map(
+          (variant.fonts ?? []).flatMap(({ shapes, features: loaded }) =>
+            Object.values(shapes).map((file): [string, string] => [file, loaded ?? ""]),
+          ),
+        );
+        const page = await drawPage(result.output, fonts, body.texts, 0, { features });
+        expect(page.missingFonts, more).toEqual(new Map());
+        // "Moved " on the page, from the M to the t after the space.
+        const gull = body.texts.get("gull-1.text") ?? "";
+        const glyphs = page.glyphs.filter((glyph) => glyph.field === "gull-1.text");
+        const x = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+        const onPage = x(gull.indexOf("the")) - x(0);
+        expect(onPage, more).toBeCloseTo(moved, 2);
+        // The overlay's, within Roboto's kerning of o and v, and v and e, which it leaves to the page.
+        const layout = page.fields.get("gull-1.text")?.layout;
+        if (!layout) throw new Error("gull-1.text has no layout");
+        const { face } = settingFor("gull-1.text", layout, page.size.width);
+        const nodes = paragraphNodes("Moved the", face);
+        let measured = 0;
+        for (const node of nodes) {
+          if (node.kind === "box" && node.offset < 6) measured += node.width;
+          else if (node.kind === "kern") measured += node.width;
+          else if (node.kind === "glue") {
+            measured += node.width;
+            break;
+          }
+        }
+        // Roboto kerns them by 0.14 pt at this size, and extend by 85% of it.
+        expect(Math.abs(measured / PT - onPage), more).toBeLessThan(0.2);
+        const { rows, page: lines } = compare(page, "spaced-0.text", text);
+        expect(rows, more).toEqual(lines);
+      }
+    }, 60_000);
 
     it("gives a native font the interword glue XeTeX gives it", async () => {
       // XeTeX's \fontdimen2, 3, 4 and 7 of Roboto at the invented template's 10.95 pt, printed in
