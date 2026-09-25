@@ -37,13 +37,17 @@ import {
   faceFor,
   layoutRows,
   lineStartOf,
+  namedVariants,
   placementFor,
+  type RichFaces,
   type Row,
+  richFaces,
   richRows,
   rowOf,
   type Setting,
   settingFor,
   shouldClose,
+  slantOf,
   spaceWidths,
   variantFontsOf,
 } from "./Overlay";
@@ -226,22 +230,27 @@ describe("richRows", () => {
     const tfm = parseTfm(fixture(`${name}.tfm`));
     return { tfm, metrics: scaleTfm(tfm, 10 * PT), codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
   };
-  const faces = new Map<Variant, Face>([
-    ["regular", cmr10()],
-    ["bold", faceOf("cmbx10")],
-    ["italic", faceOf("cmti10")],
-  ]);
-  const variantFace = (variant: Variant) => faces.get(variant) ?? cmr10();
+  const roman = cmr10();
+  const bold = faceOf("cmbx10");
+  const italic = faceOf("cmti10");
+  const faces: RichFaces = {
+    variants: new Map([
+      ["regular", roman],
+      ["bold", bold],
+      ["italic", italic],
+    ]),
+    letter: roman,
+  };
 
   it("sets a field of one run as the plain overlay sets its text", () => {
-    expect(richRows([{ text: BULLET }], variantFace, params)).toEqual(
+    expect(richRows([{ text: BULLET }], faces, params)).toEqual(
       layoutRows(BULLET, cmr10(), params),
     );
     // A bold run's italic correction at its end is nothing after a period.
-    expect(richRows([{ text: BULLET, bold: true }], variantFace, params)).toEqual(
-      layoutRows(BULLET, variantFace("bold"), params),
+    expect(richRows([{ text: BULLET, bold: true }], faces, params)).toEqual(
+      layoutRows(BULLET, bold, params),
     );
-    expect(richRows([{ text: BULLET }], variantFace, undefined)).toEqual([
+    expect(richRows([{ text: BULLET }], faces, undefined)).toEqual([
       { from: 0, to: BULLET.length, wordSpacingSp: 0 },
     ]);
   });
@@ -250,15 +259,94 @@ describe("richRows", () => {
     // A justified line, whose spaces TeX sets wider than any font's: the browser draws the bold
     // space wider than the roman, so the word spacing that makes up the line is less.
     const justified = { ...params, rightSkip: LATEX_PARAMS.rightSkip };
-    const [roman] = richRows([{ text: BULLET }], variantFace, justified);
+    const [alone] = richRows([{ text: BULLET }], faces, justified);
     const words = BULLET.split(" ");
     const runs = [
       { text: `${words.slice(0, 3).join(" ")} ` },
       { text: `${words.slice(3, 6).join(" ")} `, bold: true },
       { text: words.slice(6).join(" ") },
     ];
-    const [mixed] = richRows(runs, variantFace, justified);
-    expect(roman && mixed && mixed.wordSpacingSp).toBeLessThan(roman?.wordSpacingSp ?? 0);
+    const [mixed] = richRows(runs, faces, justified);
+    expect(alone && mixed && mixed.wordSpacingSp).toBeLessThan(alone?.wordSpacingSp ?? 0);
+  });
+
+  it("takes a variant the page sets no glyph of as its family has it, not as the letter font", () => {
+    // A field set wholly in italic: the page sets only its italic and bold italic, and its letter
+    // font is italic, but the regular and bold fonts outside its groups are the paragraph's.
+    const wholly: RichFaces = { variants: new Map([["italic", italic]]), letter: italic };
+    const slant = slantOf(wholly);
+    expect(
+      ["regular", "bold", "italic", "boldItalic"].map((each) => slant(each as Variant)),
+    ).toEqual([false, false, true, true]);
+    const runs = [
+      { text: "Led the ", italic: true },
+      { text: "team", italic: true, bold: true },
+      { text: " well", italic: true },
+    ];
+    expect(breakRuns(runs, slant).map((run) => run.italicCorrection)).toEqual([true, true, true]);
+    // A slanted regular or bold font the page does set says the paragraph is slanted.
+    const slantedParagraph: RichFaces = { variants: new Map([["bold", italic]]), letter: italic };
+    expect(slantOf(slantedParagraph)("regular")).toBe(true);
+    expect(slantOf(faces)("bold")).toBe(false);
+  });
+
+  it("measures a variant's symbols in its own companion first", () => {
+    // Two companions for one field, the bold one listed first, as the page sorts them by glyphs:
+    // the regular variant takes the regular one, whose name it gives.
+    const font = (name: string, tfm: string): PageFont => ({
+      ...cmr10Font(),
+      name,
+      tfm: parseTfm(fixture(`${tfm}.tfm`)),
+    });
+    const euro = (code: number) => (code === 36 ? "\u20ac" : undefined);
+    const regular = font("ec-lmr10", "cmr10");
+    const boldFont = font("ec-lmbx10", "cmbx10");
+    const boldTs1 = { ...font("ts1-lmbx10", "cmbx10"), text: euro };
+    const regularTs1 = { ...font("ts1-lmr10", "cmr10"), text: euro };
+    const layout = layoutAt(72, {
+      font: regular,
+      fonts: [regular, boldFont, boldTs1, regularTs1].map((each) => ({
+        font: each,
+        size: 10,
+        glyphs: 1,
+        letters: 0,
+      })),
+    });
+    const both = richFaces(
+      new Map([
+        ["regular", { font: regular, size: 10 }],
+        ["bold", { font: boldFont, size: 10 }],
+      ]),
+      layout,
+    );
+    const width = (tfm: string) => scaleTfm(parseTfm(fixture(`${tfm}.tfm`)), 10 * PT).widths[36];
+    expect(both.variants.get("regular")?.widthOf?.("\u20ac")).toBe(width("cmr10"));
+    expect(both.variants.get("bold")?.widthOf?.("\u20ac")).toBe(width("cmbx10"));
+    expect(both.letter.widthOf?.("\u20ac")).toBe(width("cmr10"));
+  });
+
+  it("breaks tens of thousands of runs in time proportional to their number", () => {
+    // The reviewers' field, bold and plain word by word: breakRuns copied the runs after each on
+    // every call, and each space looked for its run from the first, so 40,000 runs took 700 ms,
+    // 55 times 4,000's. Bound by three times ten times the tenth, in CPU time, as draw.test.ts
+    // bounds a page, rather than in milliseconds a slow shared machine may not meet.
+    const runsOf = (count: number) =>
+      Array.from({ length: count }, (_, i) =>
+        i % 2 === 0 ? { text: "word", bold: true } : { text: " word " },
+      );
+    const cpu = (runs: RichText) => {
+      let fastest = Number.POSITIVE_INFINITY;
+      for (let run = 0; run < 3; run++) {
+        const started = process.threadCpuUsage();
+        richRows(runs, faces, params);
+        const { user, system } = process.threadCpuUsage(started);
+        fastest = Math.min(fastest, (user + system) / 1000);
+      }
+      return fastest;
+    };
+    const small = cpu(runsOf(4000));
+    const large = cpu(runsOf(40_000));
+    expect(large).toBeLessThan(3 * 10 * small);
   });
 
   it("breaks a keystroke's runs again well within a frame", () => {
@@ -275,7 +363,7 @@ describe("richRows", () => {
       const typed = runs.map((run, k) =>
         k === 2 ? { ...run, text: `${run.text}x`.slice(at) } : run,
       );
-      richRows(typed, variantFace, params);
+      richRows(typed, faces, params);
     }, 25);
     expect(took).toBeLessThan(50);
   });
@@ -593,9 +681,9 @@ function rowEnds(
  * `overlayEnds` for a rich field's runs as the rich editor sets them: each run in its variant's
  * face, with LaTeX's italic corrections, and each space in its own run's font.
  */
-function richEnds(runs: RichText, faceOf: (variant: Variant) => Face, params: BreakParams) {
-  const slanted = (variant: Variant) => (faceOf(variant).tfm.params[1] ?? 0) > 0;
-  const set = breakRuns(runs, slanted).map((run) => ({ ...run, face: faceOf(run.variant) }));
+function richEnds(runs: RichText, faces: RichFaces, params: BreakParams) {
+  const faceOf = (variant: Variant) => faces.variants.get(variant) ?? faces.letter;
+  const set = breakRuns(runs, slantOf(faces)).map((run) => ({ ...run, face: faceOf(run.variant) }));
   const nodes = richParagraphNodes(set, params);
   const faceAt = (offset: number) => {
     let at = 0;
@@ -603,32 +691,63 @@ function richEnds(runs: RichText, faceOf: (variant: Variant) => Face, params: Br
       at += run.text.length;
       if (offset < at) return run.face;
     }
-    return faceOf("regular");
+    return faces.letter;
   };
-  const rows = richRows(runs, faceOf, params);
+  const rows = richRows(runs, faces, params);
   return rowEnds(nodes, rows, (offset) => faceAt(offset).metrics.space);
 }
 
-/** The rows the rich editor sets a field of a page in, and the lines the page set it in. */
-function compareRich(page: DrawnPage, resume: Resume, id: string) {
+/**
+ * The rows the rich editor sets a field of a page in, and the lines the page set it in: the faces
+ * of the variants the page sets, and of the others as the tree names them (`namedVariants`), as
+ * the editor finds them with `load`.
+ */
+async function compareRich(
+  page: DrawnPage,
+  resume: Resume,
+  id: string,
+  load: (name: string) => Promise<PageFont | undefined>,
+) {
   const layout = page.fields.get(id)?.layout;
   const field = fieldsOf(resume).get(id);
   const variants = variantFontsOf(page, resume, id);
   if (!layout || field?.kind !== "rich" || !variants) throw new Error(`${id} is not on the page`);
   const setting = settingFor(id, layout, page.size.width);
-  const faces = new Map(
-    [...variants].map(([variant, font]) => [variant, faceFor(font, layout.fonts)]),
-  );
-  const faceOf = (variant: Variant) => faces.get(variant) ?? setting.face;
+  const named = await namedVariants(variants, layout, load);
+  const faces = richFaces(new Map([...named, ...variants]), layout);
   const runs = field.get(resume);
   const text = runs.map((run) => run.text).join("");
-  const rows = richRows(runs, faceOf, setting.params);
-  return { rows: rowStarts(text, rows), page: pageLines(page, id), runs, faceOf, setting };
+  const rows = richRows(runs, faces, setting.params);
+  return { rows: rowStarts(text, rows), page: pageLines(page, id), runs, faces, setting, named };
 }
 
 /** Runs joined where their marks are the same, as the rich editor sends them. */
 const RICH = getSchema(RICH_SCHEMA);
 const normalised = (runs: RichText) => docToRuns(ProseMirrorNode.fromJSON(RICH, runsToDoc(runs)));
+
+/** The invented words of the rich bullets. */
+const WORDS =
+  "Designed and shipped a streaming ingestion service that cut reporting latency from hours to minutes, kept costs flat across three regions and two providers, wrote the failover runbook the operations team still uses every quarter, and trained four new engineers to run it.".split(
+    " ",
+  );
+
+/**
+ * The reviewers' wholly italic bullets: every word italic, and a bold italic word every sixth, or
+ * an italic link every fifth, from the word `shift`; the spaces between words are only italic.
+ */
+function whollyItalic(kind: "bold" | "link", shift: number): RichText {
+  return normalised(
+    WORDS.flatMap((word, i): Run[] => [
+      ...(i > 0 ? [{ text: " ", italic: true }] : []),
+      {
+        text: word,
+        italic: true,
+        ...(kind === "bold" && i % 6 === shift && { bold: true }),
+        ...(kind === "link" && i % 5 === shift && { href: "example.org/runbook" }),
+      },
+    ]),
+  );
+}
 
 /**
  * An invented bullet with italic, bold, bold italic and a link on words that move along it with
@@ -637,10 +756,7 @@ const normalised = (runs: RichText) => docToRuns(ProseMirrorNode.fromJSON(RICH, 
  * with the word before it when odd.
  */
 function richBullet(k: number): RichText {
-  const words =
-    "Designed and shipped a streaming ingestion service that cut reporting latency from hours to minutes, kept costs flat across three regions and two providers, wrote the failover runbook the operations team still uses every quarter, and trained four new engineers to run it.".split(
-      " ",
-    );
+  const words = WORDS;
   const n = words.length;
   const runs: Run[] = [];
   words.forEach((word, i) => {
@@ -832,9 +948,16 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
       if (!entry) throw new Error("the sample has no entry");
       entry.bullets = bullets.map((text, i) => ({ id: `rb-${i}`, text }));
       const { page } = await jake(resume, "overlay-rich");
-      bullets.forEach((_, i) => {
+      for (const i of bullets.keys()) {
         const id = `rb-${i}.text`;
-        const { rows, page: lines, runs, faceOf, setting } = compareRich(page, resume, id);
+        const load = (name: string) => fonts.load(name);
+        const {
+          rows,
+          page: lines,
+          runs,
+          faces,
+          setting,
+        } = await compareRich(page, resume, id, load);
         const text = runs.map((run) => run.text).join("");
         expect(lines.length, text).toBeGreaterThan(1);
         expect(rows, `${id}: ${text}`).toEqual(lines);
@@ -842,20 +965,129 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
         const glyphs = page.glyphs.filter((glyph) => glyph.field === id);
         const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
         if (!setting.params) throw new Error(`${id} is not broken`);
-        for (const row of richEnds(runs, faceOf, setting.params)) {
+        for (const row of richEnds(runs, faces, setting.params)) {
           const tex = at(row.last) - at(row.first);
           expect(Math.abs(row.x - tex), `${id} at ${row.last}: ${text}`).toBeLessThan(0.01);
         }
-      });
-      const fonts = variantFontsOf(page, resume, "rb-0.text") ?? new Map();
+      }
+      const table = variantFontsOf(page, resume, "rb-0.text") ?? new Map();
       expect(
-        Object.fromEntries([...fonts].map(([variant, font]) => [variant, font.font.name])),
+        Object.fromEntries([...table].map(([variant, font]) => [variant, font.font.name])),
       ).toEqual({
         regular: "ec-lmr10",
         bold: "ec-lmbx10",
         italic: "ec-lmri10",
         boldItalic: "ec-lmbxi10",
       });
+    }, 60_000);
+
+    /** The sample with its first entry's bullets replaced by rich `bullets`, and its page. */
+    async function richPage(prefix: string, bullets: RichText[]) {
+      const resume = structuredClone(sample);
+      const section = resume.sections.find((each) => each.kind === "entries");
+      const entry = section?.kind === "entries" ? section.entries[0] : undefined;
+      if (!entry) throw new Error("the sample has no entry");
+      entry.bullets = bullets.map((text, i) => ({ id: `${prefix}-${i}`, text }));
+      const { page } = await jake(resume, `overlay-${prefix}`);
+      return { page, resume };
+    }
+
+    /**
+     * A rich bullet as the editor sets it against the page: the same breaks, and each line ending
+     * within a hundredth of a point of where TeX ends it.
+     */
+    async function sameAsTex(page: DrawnPage, resume: Resume, id: string) {
+      const compared = await compareRich(page, resume, id, (name) => fonts.load(name));
+      const { rows, page: lines, runs, faces, setting } = compared;
+      const text = runs.map((run) => run.text).join("");
+      expect(lines.length, text).toBeGreaterThan(1);
+      expect(rows, `${id}: ${text}`).toEqual(lines);
+      const glyphs = page.glyphs.filter((glyph) => glyph.field === id);
+      const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+      if (!setting.params) throw new Error(`${id} is not broken`);
+      for (const row of richEnds(runs, faces, setting.params)) {
+        const tex = at(row.last) - at(row.first);
+        expect(Math.abs(row.x - tex), `${id} at ${row.last}: ${text}`).toBeLessThan(0.01);
+      }
+      return compared;
+    }
+
+    it("sets the corrections of a field wholly in italic, whose upright font the page lacks", async () => {
+      // The reviewers' eight bullets: the page sets no regular glyph of them, and their letter
+      // font is italic, whose slant dropped every correction TeX sets outside their groups; two
+      // broke where TeX did not, and every line ended 1.5 to 4.9 pt short.
+      const bullets = [0, 1, 2, 3].flatMap((shift) => [
+        whollyItalic("bold", shift),
+        whollyItalic("link", shift),
+      ]);
+      const { page, resume } = await richPage("wi", bullets);
+      for (const i of bullets.keys()) {
+        const { named } = await sameAsTex(page, resume, `wi-${i}.text`);
+        expect(named.get("regular")?.font.name).toBe("ec-lmr10");
+      }
+    }, 60_000);
+
+    it("measures a run that is only a space in its own variant's font, which the page never sets", async () => {
+      // The reviewers' \textbf{ } and \textit{  }: TeX sets the bold space at 3.833 pt and the
+      // italic one in the italic font, where the letter font's space is 3.333 pt. The first line
+      // is ragged, so that it ends where the spaces' natural widths put it.
+      const tail =
+        "office dashboards, then wrote the runbook the operations team reads every quarter before it plans its work for the year.";
+      const bullets: RichText[] = [
+        [{ text: "Built the" }, { text: " ", bold: true }, { text: tail }],
+        [{ text: "Built the" }, { text: "  ", italic: true }, { text: tail }],
+      ];
+      const { page, resume } = await richPage("sp", bullets);
+      const { faces, setting, named } = await sameAsTex(page, resume, "sp-0.text");
+      await sameAsTex(page, resume, "sp-1.text");
+      expect(named.get("bold")?.font.name).toBe("ec-lmbx10");
+      const set = breakRuns(bullets[0] ?? [], slantOf(faces)).map((run) => ({
+        ...run,
+        face: faces.variants.get(run.variant) ?? faces.letter,
+      }));
+      const space = richParagraphNodes(set, setting.params).find(
+        (node) => node.kind === "glue" && node.offset === 9,
+      );
+      expect(space?.kind === "glue" && space.width / PT).toBeCloseTo(3.833, 3);
+    }, 60_000);
+
+    it("measures each variant's symbols in its own companion, and corrects after them", async () => {
+      // The reviewers' bullets. Euros regular and bold: each regular one was measured in bold
+      // TS1, which set more of the field's glyphs. Degrees in italic runs: TeX's \/ after each
+      // takes ts1-lmri10's correction, 1.0655 pt, which a character another font sets never got.
+      const bullets: RichText[] = [
+        [
+          {
+            text: "Raised \u20ac2.4M and \u20ac1.1M and \u20ac0.9M and \u20ac0.4M in a rounds x, then grew revenue to ",
+          },
+          { text: "\u20ac".repeat(10) + " twelve", bold: true },
+          {
+            text: " while keeping churn under two percent and the team small across three offices and two continents.",
+          },
+        ],
+        [
+          { text: "Ran the cold chain at the xxx " },
+          { text: "minus 20\u00b0", italic: true },
+          { text: " for three hundred sites and at " },
+          { text: "plus 4\u00b0", italic: true },
+          { text: " for the rest, cutting spoilage by " },
+          { text: "half\u00b0", italic: true },
+          {
+            text: " while keeping churn under two percent and the team small across three offices and continents.",
+          },
+        ],
+      ];
+      const { page, resume } = await richPage("cm", bullets);
+      await sameAsTex(page, resume, "cm-0.text");
+      const { faces, setting } = await sameAsTex(page, resume, "cm-1.text");
+      const set = breakRuns(bullets[1] ?? [], slantOf(faces)).map((run) => ({
+        ...run,
+        face: faces.variants.get(run.variant) ?? faces.letter,
+      }));
+      const nodes = richParagraphNodes(set, setting.params);
+      const degree = nodes.findIndex((node) => node.kind === "box" && node.offset === 38);
+      const after = nodes[degree + 1];
+      expect(after?.kind === "kern" && after.width / PT).toBeCloseTo(1.0655, 4);
     }, 60_000);
 
     it("keeps an emptied field's place while the page lacks it", async () => {

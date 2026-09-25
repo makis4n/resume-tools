@@ -49,7 +49,12 @@ export type Node =
       /** True when inserted by hyphenation: only the second pass may break here. */
       hyphenation: boolean;
       offset: number;
-    };
+    }
+  /**
+   * A `\special`, which sets nothing, as hyperref's at each end of a link: TeX may break at glue
+   * after it, as after a letter, and never at a kern right before it, which stays on its line.
+   */
+  | { kind: "whatsit" };
 
 export interface LineSpec {
   indent: number;
@@ -157,7 +162,8 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
   const sumShOrder = new Uint8Array(n + 1);
   for (let i = 0; i < n; i++) {
     const node = nodes[i] as Node;
-    const w = node.kind === "disc" || node.kind === "penalty" ? 0 : node.width;
+    const w =
+      node.kind === "disc" || node.kind === "penalty" || node.kind === "whatsit" ? 0 : node.width;
     sumW[i + 1] = (sumW[i] as number) + w;
     for (let o = 0; o < 4; o++) {
       const s = sumS[o] as Float64Array;
@@ -373,7 +379,9 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
       switch (node.kind) {
         case "glue": {
           const before = nodes[cur - 1];
-          if (before && (before.kind === "box" || before.kind === "disc")) tryBreak(cur, 0, false);
+          // tex.web §866: glue is a place to break after a letter, a discretionary or a special.
+          if (before?.kind === "box" || before?.kind === "disc" || before?.kind === "whatsit")
+            tryBreak(cur, 0, false);
           break;
         }
         case "penalty":
@@ -453,6 +461,12 @@ export interface Face {
    * TeX's ligature and kern program runs within one font.
    */
   widthOf?: (ch: string) => number | undefined;
+  /**
+   * The italic correction of such a character, from the font `widthOf` measures it in, which
+   * TeX's `\/` sets after it, as it takes a correction from the font of the character before it
+   * whatever font that is (tex.web §1113); undefined, or 0, when that font gives it none.
+   */
+  italicOf?: (ch: string) => number | undefined;
 }
 
 export interface TextOptions {
@@ -591,11 +605,18 @@ export interface FaceRun {
    * `\textbf` do with `\/` at their ends and `\textbf` at its start; `rich.ts` decides it from the
    * runs' marks (`breakRuns`). It is a kern of the italic correction of the last character set,
    * after that character and before a space or no-break space after it, which LaTeX takes off and
-   * puts back around the kern (`\sw@slant`). Like `\/`, it sets nothing after anything but a
-   * character of the run's fonts, such as the kern that ends an ellipsis or a hyphen's
-   * discretionary.
+   * puts back around the kern (`\sw@slant`). It is the correction of that character's own font,
+   * a companion's such as TS1's for a `°` (`Face.italicOf`); and like `\/`, it sets nothing after
+   * anything but a character, such as the kern that ends an ellipsis or a hyphen's discretionary.
    */
   italicCorrection?: boolean;
+  /**
+   * Whether the run is a link, set inside `\href`, whose specials hyperref sets at its start and
+   * end (`whatsit`). The run's closing italic correction comes before its closing special, so that
+   * a break at the space after the link keeps the correction on its line, where a break at the
+   * kern would drop it (the reviewers' italic links, a line 0.69 pt short).
+   */
+  link?: boolean;
 }
 
 /**
@@ -727,7 +748,9 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
           const width = face.widthOf?.(c.ch);
           if (width === undefined) continue;
           setRun(k);
-          nodes.push({ kind: "box", width, offset: at(k), end: at(k + 1) });
+          const box: Node = { kind: "box", width, offset: at(k), end: at(k + 1) };
+          nodes.push(box);
+          lastChar = { node: box, italic: face.italicOf?.(c.ch) ?? 0 };
           spaceFactor = nextSpaceFactor(spaceFactor, sfCode(c.ch));
         }
       }
@@ -779,8 +802,20 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
 
   let base = options.offset ?? 0;
   for (const run of runs) {
+    // A link opens with a special, after a space before it and before any inside it. One that
+    // starts the paragraph has nothing before it to break after, and its leading spaces are
+    // dropped as any others are.
+    if (run.link && nodes.length > 0) {
+      flushSpace();
+      nodes.push({ kind: "whatsit" });
+    }
     setText(run.text, run.face, base);
     if (run.italicCorrection) correctItalic();
+    // A link closes with a special, after its correction and any space inside it.
+    if (run.link) {
+      flushSpace();
+      nodes.push({ kind: "whatsit" });
+    }
     base += run.text.length;
   }
   return nodes;

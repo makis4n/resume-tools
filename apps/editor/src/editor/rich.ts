@@ -19,6 +19,7 @@ import Link from "@tiptap/extension-link";
 import Paragraph from "@tiptap/extension-paragraph";
 import Text from "@tiptap/extension-text";
 import type { Mark, Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { FontVariant } from "../page/fontnames";
 import { escapeText } from "../templates/escape";
 import { linkAddress } from "../templates/generate";
 
@@ -112,7 +113,7 @@ export function runsToDoc(runs: RichText): JSONContent {
  * Which of a field's fonts a run is set in: what bold and italic choose. A link chooses none, as
  * `\href` changes no font, so a link's text is set in the variant of its bold and italic.
  */
-export type Variant = "regular" | "bold" | "italic" | "boldItalic";
+export type Variant = FontVariant;
 
 export const VARIANTS: readonly Variant[] = ["regular", "bold", "italic", "boldItalic"];
 
@@ -191,6 +192,8 @@ export interface BreakRun {
   variant: Variant;
   /** Whether TeX sets an italic correction where the run ends. */
   italicCorrection: boolean;
+  /** Whether the run is a link the generator writes in `\href`, with its specials. */
+  link: boolean;
 }
 
 /** A run as the generator writes it (`richLatex`): its LaTeX and what wraps it. */
@@ -246,16 +249,24 @@ export function breakRuns(runs: RichText, slanted: (variant: Variant) => boolean
     } else written.push(next);
   }
   const blank = (run: Written) => run.latex.trim() === "";
-  // The first thing TeX reads after run k: the next run's command, or its first character, or
-  // the field's end marker, a `\special`.
-  const after = (k: number): string => {
-    for (const run of written.slice(k + 1)) {
-      if (wrapped(run)) return COMMAND;
-      const first = run.latex[0];
-      if (first !== undefined) return first;
-    }
-    return COMMAND;
-  };
+  // What TeX reads first after each run: the next run's command, or its first character, or the
+  // field's end marker, a `\special`, past runs the generator writes as nothing. Found in one walk
+  // from the end, as the last run that sets anything before each is in one walk from the start,
+  // so that a field of many runs costs time in proportion to them.
+  const after: string[] = [];
+  let next = COMMAND;
+  for (let k = written.length - 1; k >= 0; k--) {
+    after[k] = next;
+    const run = written[k] as Written;
+    if (wrapped(run)) next = COMMAND;
+    else if (run.latex !== "") next = run.latex[0] as string;
+  }
+  const before: (Written | undefined)[] = [];
+  let setting: Written | undefined;
+  for (const [k, run] of written.entries()) {
+    before[k] = setting;
+    if (!blank(run)) setting = run;
+  }
   const corrects = (font: Variant, next: string) => !slanted(font) && !NO_CORRECTION.has(next);
   // The correction a run's own commands set at its end.
   const closing = (k: number): boolean => {
@@ -264,17 +275,15 @@ export function breakRuns(runs: RichText, slanted: (variant: Variant) => boolean
     // In `\textbf{\textit{...}}`, `\textit` ends in the bold font, before `\textbf`'s own end.
     if (run.bold && run.italic && corrects("bold", COMMAND)) return true;
     // Inside `\href`, hyperref's own command follows.
-    return corrects("regular", run.linked ? COMMAND : after(k));
+    return corrects("regular", run.linked ? COMMAND : (after[k] as string));
   };
   // The correction a run's first command sets after the text before it, where that text is not
   // a link, whose closing special would stand between.
   const opening = (k: number): boolean => {
     const run = written[k] as Written;
     if (blank(run) || run.linked || !(run.bold || run.italic)) return false;
-    let before: Written | undefined;
-    for (let j = k - 1; j >= 0 && before === undefined; j--)
-      if (!blank(written[j] as Written)) before = written[j];
-    if (before === undefined || before.linked) return false;
+    const previous = before[k];
+    if (previous === undefined || previous.linked) return false;
     // `\textbf` sets the upright bold font first, and then reads its text, or `\textit`.
     const first = run.bold && run.italic ? COMMAND : (run.latex[0] ?? COMMAND);
     return corrects(run.bold ? "bold" : "italic", first);
@@ -283,6 +292,7 @@ export function breakRuns(runs: RichText, slanted: (variant: Variant) => boolean
     text: run.text,
     variant: variantOf(run),
     italicCorrection: closing(k) || (k + 1 < written.length && opening(k + 1)),
+    link: run.linked,
   }));
 }
 

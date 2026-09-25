@@ -36,7 +36,7 @@ import {
   useEditor,
   useEditorState,
 } from "@tiptap/react";
-import { type MouseEvent, useLayoutEffect, useRef, useState } from "react";
+import { type MouseEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { linkAddress } from "../templates/generate";
 import type { Command } from "./document";
 import { docToRuns, linePositions, RICH_SCHEMA, runsToDoc, TEXT_START, type Variant } from "./rich";
@@ -79,7 +79,11 @@ export interface RichOverlayProps {
   field: string;
   /** Where in the field's text the click landed, which the caret opens at. */
   offset: number;
-  /** The field's runs when it opens; after that the editor's document is the field's. */
+  /**
+   * The field's runs as the document holds them now. The editor opens on them, and after that its
+   * own document is the field's, each edit sent as a command; runs the editor did not send, when
+   * the field changed under it, close it at its next edit rather than be written over.
+   */
   runs: RichText;
   /** The CSS font family of the field's letter font, which a variant without a look is drawn in. */
   family: string;
@@ -339,7 +343,11 @@ export function RichOverlay({
   const [scope] = useState(() => `rt-rich-${++scopes}`);
   const wrapper = useRef<HTMLDivElement>(null);
   const layout = useRef<Layout>({ rowsFor, frame: undefined });
-  const latest = useRef({ field, onCommand, onClose, link: () => {} });
+  // What the document holds for the field as far as the editor knows, as JSON: the runs it opened
+  // on and each edit it has sent since, which the document may not show yet; and whether the
+  // document has shown anything else, which only a change the editor did not make gives.
+  const [known] = useState(() => ({ sent: [JSON.stringify(runs)], changed: false }));
+  const latest = useRef({ field, onCommand, onClose, link: () => {}, known });
 
   const [options] = useState((): UseEditorOptions => {
     const hooks: Hooks = {
@@ -361,42 +369,56 @@ export function RichOverlay({
           autocorrect: "off",
           style: TEXT_STYLE,
         },
-        // Pasted text comes in plain, its line breaks as spaces, with the marks at the caret.
-        handlePaste: (view, event) => {
-          const text = event.clipboardData?.getData("text/plain") ?? "";
-          if (text !== "")
-            view.dispatch(
-              view.state.tr.insertText(text.replace(LINE_BREAKS, " ")).scrollIntoView(),
-            );
-          return true;
-        },
-        // A drag within the field moves its text, marks and all; one from elsewhere comes in
-        // plain, as a paste does, with the marks where it lands.
-        handleDrop: (view, event, _slice, moved) => {
-          if (moved) return false;
-          event.preventDefault();
-          const text = (event.dataTransfer?.getData("text/plain") ?? "").replace(LINE_BREAKS, " ");
-          const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
-          if (text === "" || !at) return true;
-          const tr = view.state.tr.insertText(text, at.pos);
-          view.dispatch(tr.setSelection(TextSelection.create(tr.doc, at.pos + text.length)));
-          view.focus();
-          return true;
-        },
+        // Paste and drop are taken as DOM events, which ProseMirror hands the editor before its
+        // own handling: that parses the clipboard's HTML, and applies every rule of a style sheet
+        // it holds to what it parsed, before `handlePaste` runs, so that a page the user copies
+        // from could hold the tab for seconds; and during a composition it leaves a paste to the
+        // browser, which would bring the HTML's marks and links in.
         handleDOMEvents: {
           beforeinput: (_view, event) => {
             if (!REFUSED.test(event.inputType)) return false;
             event.preventDefault();
             return true;
           },
+          // Pasted text comes in plain, its line breaks as spaces, with the marks at the caret.
+          paste: (view, event) => {
+            event.preventDefault();
+            const text = (event.clipboardData?.getData("text/plain") ?? "").replace(
+              LINE_BREAKS,
+              " ",
+            );
+            if (text !== "") view.dispatch(view.state.tr.insertText(text).scrollIntoView());
+            return true;
+          },
+          // A drag within the field is ProseMirror's own, which moves its text, marks and all;
+          // one from elsewhere comes in plain, as a paste does, with the marks where it lands.
+          drop: (view, event) => {
+            if (view.dragging) return false;
+            event.preventDefault();
+            const text = (event.dataTransfer?.getData("text/plain") ?? "").replace(
+              LINE_BREAKS,
+              " ",
+            );
+            const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+            if (text === "" || !at) return true;
+            const tr = view.state.tr.insertText(text, at.pos);
+            view.dispatch(tr.setSelection(TextSelection.create(tr.doc, at.pos + text.length)));
+            view.focus();
+            return true;
+          },
         },
       },
-      onUpdate: ({ editor }) =>
-        latest.current.onCommand({
-          type: "rich",
-          field: latest.current.field,
-          runs: docToRuns(editor.state.doc),
-        }),
+      onUpdate: ({ editor }) => {
+        const { known } = latest.current;
+        // The field changed under the editor, as its document says: the edit would write over it.
+        if (known.changed) {
+          latest.current.onClose();
+          return;
+        }
+        const runs = docToRuns(editor.state.doc);
+        known.sent.push(JSON.stringify(runs));
+        latest.current.onCommand({ type: "rich", field: latest.current.field, runs });
+      },
       // A popover asked for is for the text selected when it was asked for.
       onSelectionUpdate: () => setLinking(false),
     };
@@ -410,8 +432,16 @@ export function RichOverlay({
     setLinking(true);
   };
   useLayoutEffect(() => {
-    latest.current = { field, onCommand, onClose, link: openLink };
+    latest.current = { field, onCommand, onClose, link: openLink, known };
   });
+  // Each time the document's runs for the field change: the editor's own edit coming back, which
+  // settles every edit sent before it, or another change.
+  const now = useMemo(() => JSON.stringify(runs), [runs]);
+  useLayoutEffect(() => {
+    const at = known.sent.lastIndexOf(now);
+    if (at >= 0) known.sent.splice(0, at);
+    else known.changed = true;
+  }, [known, now]);
 
   // Placed on the page as it is shown now, and again with each new page.
   useLayoutEffect(() => {

@@ -447,6 +447,50 @@ describe("richParagraphNodes over runs in several fonts", () => {
     expect(kernAfter(none, 4)?.kind).toBe("glue");
   });
 
+  it("sets the italic correction after a character another font sets, from that font", () => {
+    // ts1-lmri10 sets an italic run's °, and TeX's \/ after it takes ts1-lmri10's correction.
+    const correction = Math.round(1.0655 * PT);
+    const withDegree: Face = {
+      ...italic,
+      widthOf: (ch) => (ch === "\u00b0" ? 4 * PT : undefined),
+      italicOf: (ch) => (ch === "\u00b0" ? correction : undefined),
+    };
+    const nodes = richParagraphNodes([
+      { text: "minus 20\u00b0", face: withDegree, italicCorrection: true },
+      { text: " for three", face: roman },
+    ]);
+    const degree = nodes.findIndex((n) => n.kind === "box" && n.offset === 8);
+    expect(nodes[degree]).toMatchObject({ kind: "box", width: 4 * PT, end: 9 });
+    expect(nodes[degree + 1]).toEqual({ kind: "kern", width: correction });
+    expect(nodes[degree + 2]?.kind).toBe("glue");
+  });
+
+  it("keeps a link's closing correction on its line, breaking after the link's special", () => {
+    // \href{...}{\textit{fast}}: the correction after the t, then hyperref's closing special;
+    // TeX breaks at the space after the special, and never at the kern, which is not before glue.
+    // "Ran fast" fits in 45 pt, and "Ran fast and" does not.
+    const narrow = { ...LATEX_PARAMS, lines: [{ indent: 0, width: 45 * PT }], rightSkip: FIL_GLUE };
+    const runs = [
+      { text: "Ran ", face: roman },
+      { text: "fast", face: italic, italicCorrection: true, link: true },
+      { text: " and far away", face: roman },
+    ];
+    const nodes = richParagraphNodes(runs);
+    const t = nodes.findIndex((n) => n.kind === "box" && n.offset === 7);
+    expect(nodes.slice(t + 1, t + 4).map((n) => n.kind)).toEqual(["kern", "whatsit", "glue"]);
+    expect(nodes[nodes.findIndex((n) => n.kind === "box" && n.offset === 4) - 1]?.kind).toBe(
+      "whatsit",
+    );
+    const [first] = breakLines(nodes, narrow);
+    expect(first?.breakAt).toBe(t + 3);
+    const kern = nodes[t + 1];
+    const upToT = nodes.slice(0, t + 1).reduce((w, n) => w + ("width" in n ? n.width : 0), 0);
+    expect(first?.natural).toBe(upToT + (kern?.kind === "kern" ? kern.width : 0));
+    // A link that starts the paragraph has no special before it, and its leading space goes.
+    const leading = richParagraphNodes([{ text: " fast", face: italic, link: true }]);
+    expect(leading[0]?.kind).toBe("box");
+  });
+
   it("breaks at a kern that comes before a space, as TeX breaks after an ellipsis", () => {
     const narrow = { ...LATEX_PARAMS, lines: [{ indent: 0, width: 40 * PT }], rightSkip: FIL_GLUE };
     for (const runs of [

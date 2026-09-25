@@ -29,7 +29,8 @@
 import { type Dates, type Resume, type RichText, YearMonth } from "@resume-tools/resume-model";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DrawnPage, FieldFont, FieldLayout } from "../page/draw";
-import type { PageFont } from "../page/fonts";
+import { companionName, variantFontNames } from "../page/fontnames";
+import type { FontLibrary, PageFont } from "../page/fonts";
 import { breakParams, parseParagraph, startingAt } from "../page/paragraph";
 import { ASCENT, registerWebFont, typedCodes, webFontFamily, webFontOf } from "../page/webfont";
 import {
@@ -49,7 +50,7 @@ import { scaleTfm } from "../tex/tfm";
 import type { Shown } from "./compiler";
 import { type Command, type Document, fieldsOf } from "./document";
 import { type Look, RichOverlay } from "./RichOverlay";
-import { breakRuns, type Variant, variantFonts } from "./rich";
+import { breakRuns, VARIANTS, type Variant, variantFonts, variantOf } from "./rich";
 
 /** Scaled points in a point. */
 const PT = 65536;
@@ -143,23 +144,53 @@ export function layoutRows(text: string, face: Face, params: BreakParams | undef
 }
 
 /**
- * The rows a rich field's runs are set in, as `layoutRows` sets a field's text: each run in the
- * face of its variant, `faceOf`, with the italic corrections LaTeX sets around `\textit` and
- * `\textbf` (`breakRuns`), and each space measured in its own run's font, which the browser draws
- * it in too. A variant is slanted when its font's `\fontdimen1` is above zero.
+ * The faces a rich field's runs are measured in (`richFaces`): each variant's that the page or the
+ * tree gives, and the field's letter face, which measures a variant that has none until a page
+ * sets it.
  */
-export function richRows(
-  runs: RichText,
-  faceOf: (variant: Variant) => Face,
-  params: BreakParams | undefined,
-): Row[] {
+export interface RichFaces {
+  variants: ReadonlyMap<Variant, Face>;
+  letter: Face;
+}
+
+/** Whether a face's font is slanted: its `\fontdimen1`, as LaTeX's `\maybe@ic` reads it. */
+const slanted = (face: Face) => (face.tfm.params[1] ?? 0) > 0;
+
+/**
+ * Whether each variant's font is slanted, which decides LaTeX's italic corrections (`breakRuns`).
+ * A variant without a face is taken as its family has it, never as the field's letter font is:
+ * the regular and bold fonts outside a run's groups are the paragraph's, upright unless the page
+ * sets one of them slanted, since `\bfseries` keeps the paragraph's shape; and the italic ones are
+ * slanted. A field set wholly in italic has an italic letter font, whose slant would drop every
+ * correction TeX sets there (the reviewers' wholly italic bullets, 1.5 to 4.9 pt short a line).
+ */
+export function slantOf(faces: RichFaces): (variant: Variant) => boolean {
+  const known = (variant: Variant) => {
+    const face = faces.variants.get(variant);
+    return face && slanted(face);
+  };
+  return (variant) => {
+    if (variant === "regular") return known("regular") ?? known("bold") ?? false;
+    if (variant === "bold") return known("bold") ?? known("regular") ?? false;
+    return known(variant) ?? true;
+  };
+}
+
+/**
+ * The rows a rich field's runs are set in, as `layoutRows` sets a field's text: each run in the
+ * face of its variant, or the letter face when it has none (`RichFaces`), with the italic
+ * corrections LaTeX sets around `\textit` and `\textbf` (`breakRuns`, `slantOf`), and each space
+ * measured in its own run's font, which the browser draws it in too.
+ */
+export function richRows(runs: RichText, faces: RichFaces, params: BreakParams | undefined): Row[] {
   const length = runs.reduce((sum, run) => sum + run.text.length, 0);
   if (params === undefined) return [{ from: 0, to: length, wordSpacingSp: 0 }];
-  const slanted = (variant: Variant) => (faceOf(variant).tfm.params[1] ?? 0) > 0;
-  const set = breakRuns(runs, slanted).map((run) => ({ ...run, face: faceOf(run.variant) }));
+  const faceOf = (variant: Variant) => faces.variants.get(variant) ?? faces.letter;
+  const set = breakRuns(runs, slantOf(faces)).map((run) => ({ ...run, face: faceOf(run.variant) }));
   const { spaceSkip, xspaceSkip } = params;
   const nodes = richParagraphNodes(set, { spaceSkip, xspaceSkip });
-  // Where each run starts, for the face a space is set in.
+  // Where each run starts, for the face a space is set in, found by halves, since a field may
+  // hold thousands of runs and a line many spaces.
   const starts: number[] = [];
   let at = 0;
   for (const run of set) {
@@ -167,11 +198,65 @@ export function richRows(
     at += run.text.length;
   }
   const faceAt = (offset: number): Face => {
-    let run = 0;
-    while (run + 1 < starts.length && (starts[run + 1] as number) <= offset) run++;
-    return set[run]?.face ?? faceOf("regular");
+    let low = 0;
+    let high = starts.length - 1;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if ((starts[middle] as number) <= offset) low = middle;
+      else high = middle - 1;
+    }
+    return set[low]?.face ?? faces.letter;
   };
   return rowsOf(nodes, length, params, (space) => faceAt(space.offset).metrics.space);
+}
+
+/**
+ * The faces of a rich field's variants, from the fonts they are set in (`variantFontsOf`,
+ * `namedVariants`), and its letter face. A character a variant's font lacks is measured in the
+ * variant's own companion first, the TS1 font of its weight and shape (`companionName`), and only
+ * then in the field's other fonts, whose order puts the companion that sets the most glyphs first:
+ * LaTeX takes a regular `€` from regular TS1 however many bold ones the field has (the reviewers'
+ * bullet, 1.9 pt long a line with each regular euro measured in bold TS1).
+ */
+export function richFaces(fonts: ReadonlyMap<Variant, SizedFont>, layout: FieldLayout): RichFaces {
+  const faceOf = (font: SizedFont) => {
+    const companion = companionName(font.font.name);
+    const own = (other: SizedFont) => other.font.name === companion;
+    return faceFor(font, [...layout.fonts.filter(own), ...layout.fonts.filter((o) => !own(o))]);
+  };
+  const variants = new Map([...fonts].map(([variant, font]) => [variant, faceOf(font)]));
+  return { variants, letter: faceOf(layout) };
+}
+
+/**
+ * The fonts of a rich field's variants the page sets no glyph of, by name (`variantFontNames`)
+ * from the fonts of those it does, and then from the field's letter font, each loaded by `load`,
+ * which gives nothing for a name the tree has no TFM for. They are the upright font outside a
+ * field set wholly in italic, and the bold font of a run that is only a space, which no page will
+ * ever show: TeX sets the reviewers' `\textbf{ }` at 3.833 pt, and the letter font's space is
+ * 3.333 pt. A font found is used at the size of the one its name came from. A variant no name
+ * gives, or whose font cannot be read, is left out, and measured in the letter font.
+ */
+export async function namedVariants(
+  known: ReadonlyMap<Variant, SizedFont>,
+  layout: FieldLayout,
+  load: (name: string) => Promise<PageFont | undefined>,
+): Promise<Map<Variant, SizedFont>> {
+  const sources = [...known.values(), layout];
+  const named = new Map<Variant, SizedFont>();
+  for (const variant of VARIANTS) {
+    if (known.has(variant)) continue;
+    const candidates = sources.flatMap((source) =>
+      variantFontNames(source.font.name, variant).map((name) => ({ name, size: source.size })),
+    );
+    for (const { name, size } of candidates) {
+      const font = await load(name).catch(() => undefined);
+      if (font === undefined) continue;
+      named.set(variant, { font, size });
+      break;
+    }
+  }
+  return named;
 }
 
 /**
@@ -215,7 +300,7 @@ export function rowOf(rows: readonly Row[], offset: number): { row: number; colu
 }
 
 /** A font at the size a page uses it, in TeX points. */
-interface SizedFont {
+export interface SizedFont {
   font: PageFont;
   size: number;
 }
@@ -229,9 +314,10 @@ const codesOf = (font: PageFont) =>
  * each character by the rule its web font's character map follows (`typedCodes`), so that a
  * character the breaker measures is the glyph the browser draws. A character the letter font has
  * no code for is measured in the first of `others`, the field's other fonts, that has one, at the
- * size the page uses it, as LaTeX takes `€`, `×` or `•` from a companion font such as TS1; the
- * browser draws such a character in its serif, a little off within the row but on the row TeX
- * puts it on. A font with no outlines has no codes, and what only it sets measures as nothing.
+ * size the page uses it, as LaTeX takes `€`, `×` or `•` from a companion font such as TS1, with
+ * that font's italic correction for a `\/` after it; the browser draws such a character in its
+ * serif, a little off within the row but on the row TeX puts it on. A font with no outlines has no
+ * codes, and what only it sets measures as nothing.
  */
 export function faceFor(primary: SizedFont, others: readonly SizedFont[] = []): Face {
   const codes = codesOf(primary.font);
@@ -239,19 +325,28 @@ export function faceFor(primary: SizedFont, others: readonly SizedFont[] = []): 
     .filter((other) => other.font !== primary.font || other.size !== primary.size)
     .map((other) => ({
       codes: codesOf(other.font),
-      widths: scaleTfm(other.font.tfm, Math.round(other.size * PT)).widths,
+      metrics: scaleTfm(other.font.tfm, Math.round(other.size * PT)),
     }));
+  // The first of the other fonts that sets a character, and its code there.
+  const fallbackFor = (char: string) => {
+    for (const fallback of fallbacks) {
+      const code = fallback.codes.get(char);
+      if (code !== undefined) return { metrics: fallback.metrics, code };
+    }
+    return undefined;
+  };
   return {
     tfm: primary.font.tfm,
     metrics: scaleTfm(primary.font.tfm, Math.round(primary.size * PT)),
     codeFor: (char) => codes.get(char),
     hyphenChar: 45,
     widthOf: (char) => {
-      for (const fallback of fallbacks) {
-        const code = fallback.codes.get(char);
-        if (code !== undefined) return fallback.widths[code];
-      }
-      return undefined;
+      const found = fallbackFor(char);
+      return found && found.metrics.widths[found.code];
+    },
+    italicOf: (char) => {
+      const found = fallbackFor(char);
+      return found && found.metrics.italics[found.code];
     },
   };
 }
@@ -453,6 +548,12 @@ export interface OverlayProps {
   shown: Shown;
   /** The element the page's SVG is drawn in, positioned, which the overlay is placed in. */
   page: HTMLElement;
+  /**
+   * The TeX Live fonts the page is drawn from, from which a rich field's editor loads the font of
+   * a variant its page sets no glyph of (`namedVariants`); without them, such a variant is
+   * measured in the field's letter font.
+   */
+  fonts?: FontLibrary;
   /** Each edit, as a command for the document. */
   onCommand: (command: Command) => void;
   onClose: () => void;
@@ -471,7 +572,8 @@ export function Overlay(props: OverlayProps) {
       case "text":
         return { kind: field.kind, text: field.get(props.document.resume) ?? "" };
       case "rich":
-        return { kind: field.kind, runs: field.get(props.document.resume) };
+        // The rich editor opens on the field's runs as the document holds them when it mounts.
+        return { kind: field.kind };
       case "dates":
         return { kind: field.kind, dates: field.get(props.document.resume) };
       default:
@@ -494,8 +596,7 @@ export function Overlay(props: OverlayProps) {
   if (opened === undefined || closing || placement === undefined) return null;
   if (opened.kind === "dates")
     return <DatePicker {...props} placement={placement} dates={opened.dates} />;
-  if (opened.kind === "rich")
-    return <RichField {...props} placement={placement} runs={opened.runs} />;
+  if (opened.kind === "rich") return <RichField {...props} placement={placement} />;
   return <TextOverlay {...props} placement={placement} text={opened.text} />;
 }
 
@@ -945,13 +1046,20 @@ function Rows({
  * A rich field opened in the rich editor (`RichOverlay`), placed on the page as a plain field is
  * (`frameOf`). Each variant of the field, bold and italic among them, is measured and drawn in the
  * font the page sets it in (`variantFontsOf`), read again from each page that shows the field; a
- * variant the page does not set yet, as when the user has just made a word bold, takes the field's
- * letter font until a page sets it. The editor shows once the letter font's web font is ready, and
- * each variant's joins it as it is.
+ * variant the page sets no glyph of in the font its family's names give (`namedVariants`), once
+ * the tree has it; and else in the field's letter font, until a page sets it.
+ *
+ * The editor mounts once the letter font's web font is ready and stays mounted: when a page brings
+ * a letter font the field has not had, as when the user makes most of it bold or picks another
+ * font or size, the editor keeps the family it has until the new one is ready, since an editor
+ * taken down would open again on what it was given and lose the edits since. For the same reason
+ * it is given the field's runs as the document holds them, never as they were when clicked. Web
+ * fonts are built for the page's variants, and for a named variant once a run is set in it.
  */
-function RichField(props: OpenProps & { runs: RichText }) {
-  const { field: id, shown, page, placement } = props;
+function RichField(props: OpenProps) {
+  const { field: id, shown, page, placement, document, fonts: tree } = props;
   const { layout, pageWidth } = placement;
+  const runs = useMemo(() => richRunsOf(document, id), [document, id]);
   const [variants, setVariants] = useState(
     () => variantFontsOf(shown.page, shown.document.resume, id) ?? new Map<Variant, FieldFont>(),
   );
@@ -961,31 +1069,48 @@ function RichField(props: OpenProps & { runs: RichText }) {
     const next = variantFontsOf(shown.page, shown.document.resume, id);
     if (next !== undefined) setVariants(next);
   }
-  const fonts = useMemo(
-    () => [...new Set([layout.font, ...[...variants.values()].map((each) => each.font)])],
-    [layout, variants],
+  const [named, setNamed] = useState<ReadonlyMap<Variant, SizedFont>>(() => new Map());
+  useEffect(() => {
+    if (tree === undefined) return;
+    let live = true;
+    namedVariants(variants, layout, (name) => tree.load(name)).then((found) => {
+      if (live) setNamed(found);
+    });
+    return () => {
+      live = false;
+    };
+  }, [variants, layout, tree]);
+  // The page's variants win over the names', which a later page may have outdated.
+  const all = useMemo(
+    () => new Map<Variant, SizedFont>([...named, ...variants]),
+    [named, variants],
   );
+  const used = useMemo(() => new Set(runs.map(variantOf)), [runs]);
+  const fonts = useMemo(() => {
+    const drawn = [...all].filter(([variant]) => variants.has(variant) || used.has(variant));
+    return [...new Set([layout.font, ...drawn.map(([, each]) => each.font)])];
+  }, [all, variants, used, layout]);
   const families = useWebFonts(fonts);
-  const family = families.get(layout.font.name);
+  // The letter font's family, or, while a new letter font's registers, the one the editor has.
+  const [kept, setKept] = useState<string>();
+  const ready = families.get(layout.font.name);
+  if (ready !== undefined && ready !== kept) setKept(ready);
+  const family = ready ?? kept;
   const setting = useMemo(() => settingFor(id, layout, pageWidth), [id, layout, pageWidth]);
-  const faces = useMemo(
-    () => new Map([...variants].map(([variant, font]) => [variant, faceFor(font, layout.fonts)])),
-    [variants, layout],
-  );
+  const faces = useMemo(() => richFaces(all, layout), [all, layout]);
   const rowsFor = useCallback(
-    (runs: RichText) =>
-      richRows(runs, (variant) => faces.get(variant) ?? setting.face, setting.params),
+    (runs: RichText) => richRows(runs, faces, setting.params),
     [faces, setting],
   );
   const looks = useMemo(() => {
     const looks = new Map<Variant, Look>();
-    for (const [variant, font] of variants)
-      looks.set(variant, {
-        family: families.get(font.font.name) ?? family ?? "serif",
-        scale: font.size / layout.size,
-      });
+    for (const [variant, font] of all) {
+      const own = families.get(font.font.name);
+      if (own !== undefined || variants.has(variant))
+        looks.set(variant, { family: own ?? family ?? "serif", scale: font.size / layout.size });
+    }
     return looks;
-  }, [variants, families, family, layout]);
+  }, [all, variants, families, family, layout]);
   // A new function with each page, which draws its SVG anew, so that the editor measures again,
   // as the plain rows do.
   const measure = useCallback(
@@ -998,9 +1123,10 @@ function RichField(props: OpenProps & { runs: RichText }) {
   if (family === undefined) return null;
   return (
     <RichOverlay
+      key={id}
       field={id}
       offset={props.offset}
-      runs={props.runs}
+      runs={runs}
       family={family}
       looks={looks}
       measure={measure}
@@ -1009,6 +1135,12 @@ function RichField(props: OpenProps & { runs: RichText }) {
       onClose={props.onClose}
     />
   );
+}
+
+/** A rich field's runs as a document holds them; none when it has no such field. */
+function richRunsOf(document: Document, id: string): RichText {
+  const field = fieldsOf(document.resume).get(id);
+  return field?.kind === "rich" ? field.get(document.resume) : [];
 }
 
 /**
