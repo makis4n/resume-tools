@@ -5,8 +5,9 @@
  * class, so that the format holds no native font; no fontspec; the text in Roboto, the headings in
  * Source Sans and one icon in the header from Font Awesome, each declared by file; and hyperref,
  * which takes its own XeTeX driver, since it refuses dvipdfmx under XeTeX, with no bookmarks, as
- * decision 0008 has every port. It is not curated: `curated.ts` ships no XeTeX template until
- * item 22 ports Awesome-CV. Every name and word in it is invented.
+ * decision 0008 has every port. It is not curated: the curated XeTeX template is Awesome-CV's
+ * port (item 22, decision 0015), and this one stays the tests' own, small and free to change.
+ * Every name and word in it is invented.
  */
 
 import { Resume } from "@resume-tools/resume-model";
