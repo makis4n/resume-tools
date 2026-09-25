@@ -1429,6 +1429,56 @@ x\end{document}`;
     }, 60_000);
   });
 
+  describe("on Awesome-CV with its text in Roboto", () => {
+    const { package: pkg, sample } = curated("awesome-cv");
+    const values = { ...defaultControls(pkg), font: "roboto" };
+    const format = generateFormat(pkg, values);
+
+    it("breaks a bullet Roboto Light neither kerns nor joins where XeTeX did, row for row", async () => {
+      // The class sets an entry's bullets justified, in its light weight, which the font control
+      // makes Roboto Light. No two letters of a word here are a pair Roboto Light kerns, and no
+      // f is joined to what follows it, so XeTeX's words are as wide as their glyphs' advances,
+      // which the overlay measures; the rows must end where XeTeX's lines do.
+      const text =
+        "Built and shipped a new build system that cut the nightly build down in minutes while also making the tests run in all machines in the lab and it now helps the whole company plan its launches with much less guesswork than it used, and then built the guide that the team still checks when it adds a machine or changes how the builds run in the lab each month.";
+      const light = await fonts.loadNative("Roboto-Light.otf");
+      const file = light?.file;
+      if (!file) throw new Error("the tree has no Roboto Light");
+      const opened = parse(file.bytes.slice().buffer);
+      for (const word of text.split(" ")) {
+        expect(word, word).not.toMatch(/f[il]/);
+        for (let i = 0; i + 1 < word.length; i++) {
+          const pair = [word[i], word[i + 1]].map((char) => file.glyphFor(char ?? "") ?? 0);
+          expect(opened.getKerningValue(pair[0] ?? 0, pair[1] ?? 0), word).toBe(0);
+        }
+      }
+      const resume = structuredClone(sample);
+      const section = resume.sections.find((each) => each.kind === "entries");
+      const entry = section?.kind === "entries" ? section.entries[0] : undefined;
+      if (!entry) throw new Error("the sample has no entry");
+      entry.bullets = [{ id: "plain-0", text: [{ text }] }];
+      const dumped = session.dump(pkg.engine, format.name, format.preamble, format.files);
+      if (!dumped.ok) throw new Error(dumped.error);
+      const body = generateBody(pkg, resume, values);
+      const job = "overlay-awesome";
+      const result = session.compile(pkg.engine, format.name, body.latex, { job, maxPasses: 3 });
+      if (!result.output) throw new Error(result.error);
+      const page = await drawPage(result.output, fonts, body.texts);
+      expect(page.missingFonts).toEqual(new Map());
+      const { rows, page: lines, setting, layout } = compare(page, "plain-0.text", text);
+      expect(layout.font.kind).toBe("native");
+      expect(layout.font.name).toBe("Roboto-Light.otf");
+      expect(lines).toHaveLength(3);
+      expect(rows).toEqual(lines);
+      const glyphs = page.glyphs.filter((glyph) => glyph.field === "plain-0.text");
+      const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+      for (const row of overlayEnds(text, setting)) {
+        const tex = at(row.last) - at(row.first);
+        expect(Math.abs(row.x - tex), `at ${row.last}`).toBeLessThan(0.01);
+      }
+    }, 60_000);
+  });
+
   it("breaks hanging, shaped, justified and ragged paragraphs where TeX did", async () => {
     const texts = new Map([
       [

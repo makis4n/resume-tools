@@ -18,6 +18,10 @@ import altacvPreamble from "./altacv/preamble.tex?raw";
 import altacvClass from "./altacv/rt-altacv.cls?raw";
 import altacvSample from "./altacv/sample.json";
 import altacvTemplate from "./altacv/template.json";
+import awesomePreamble from "./awesome-cv/preamble.tex?raw";
+import awesomeClass from "./awesome-cv/rt-awesome-cv.cls?raw";
+import awesomeSample from "./awesome-cv/sample.json";
+import awesomeTemplate from "./awesome-cv/template.json";
 import jakePreamble from "./jake/preamble.tex?raw";
 import jakeSample from "./jake/sample.json";
 import jakeTemplate from "./jake/template.json";
@@ -49,6 +53,13 @@ const FOLDERS: Folder[] = [
     preamble: altacvPreamble,
     files: { "rt-altacv.cls": altacvClass },
     sample: altacvSample,
+  },
+  {
+    folder: "awesome-cv",
+    template: awesomeTemplate,
+    preamble: awesomePreamble,
+    files: { "rt-awesome-cv.cls": awesomeClass },
+    sample: awesomeSample,
   },
 ];
 

@@ -155,7 +155,7 @@ end to end before the other two templates, so that the editing loop is proven on
     runtime dependency, and the overlay's web fonts are the OpenType files themselves. The
     specials that `\dump` drops change nothing a reader sees, so the body re-emits none and the
     PDF matches a plain compile's but for named destinations nothing links to (decision 0014).
-22. [ ] **Port Awesome-CV.** A renamed class, its fonts from TeX Live, the name split into first
+22. [x] **Port Awesome-CV.** A renamed class, its fonts from TeX Live, the name split into first
     and last, its controls, and XeTeX's longer debounce.
 
 ### Stage 7. Closing the milestone

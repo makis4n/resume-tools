@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "id": "awesome-cv",
+  "name": "Awesome-CV",
+  "engine": "xetex",
+  "source": {
+    "url": "https://github.com/posquit0/Awesome-CV",
+    "license": "LPPL-1.3c",
+    "attribution": "Claud D. Park (posquit0/Awesome-CV, awesome-cv.cls at its last revision for Font Awesome 5)"
+  },
+  "fonts": [
+    {
+      "family": "Roboto",
+      "shapes": {
+        "m/n": "Roboto-Regular.otf",
+        "m/it": "Roboto-Italic.otf",
+        "m/sl": "Roboto-Italic.otf",
+        "m/sc": "Roboto-Regular.otf",
+        "b/n": "Roboto-Bold.otf",
+        "b/it": "Roboto-BoldItalic.otf",
+        "b/sl": "Roboto-BoldItalic.otf",
+        "bx/n": "Roboto-Bold.otf",
+        "bx/it": "Roboto-BoldItalic.otf",
+        "bx/sl": "Roboto-BoldItalic.otf"
+      },
+      "features": "mapping=tex-text"
+    },
+    {
+      "family": "RobotoLight",
+      "shapes": {
+        "m/n": "Roboto-Light.otf",
+        "m/it": "Roboto-LightItalic.otf",
+        "m/sl": "Roboto-LightItalic.otf",
+        "m/sc": "Roboto-Light.otf",
+        "b/n": "Roboto-Medium.otf",
+        "b/it": "Roboto-MediumItalic.otf",
+        "b/sl": "Roboto-MediumItalic.otf",
+        "bx/n": "Roboto-Medium.otf",
+        "bx/it": "Roboto-MediumItalic.otf",
+        "bx/sl": "Roboto-MediumItalic.otf"
+      },
+      "features": "mapping=tex-text"
+    },
+    {
+      "family": "SourceSans",
+      "shapes": {
+        "m/n": "SourceSansPro-Regular.otf",
+        "m/it": "SourceSansPro-RegularIt.otf",
+        "m/sl": "SourceSansPro-RegularIt.otf",
+        "m/sc": "SourceSansPro-Regular.otf",
+        "b/n": "SourceSansPro-Bold.otf",
+        "b/it": "SourceSansPro-BoldIt.otf",
+        "b/sl": "SourceSansPro-BoldIt.otf",
+        "bx/n": "SourceSansPro-Bold.otf",
+        "bx/it": "SourceSansPro-BoldIt.otf",
+        "bx/sl": "SourceSansPro-BoldIt.otf"
+      },
+      "features": "mapping=tex-text"
+    },
+    {
+      "family": "SourceSansLight",
+      "shapes": {
+        "m/n": "SourceSansPro-Light.otf",
+        "m/it": "SourceSansPro-LightIt.otf",
+        "m/sl": "SourceSansPro-LightIt.otf",
+        "m/sc": "SourceSansPro-Light.otf",
+        "b/n": "SourceSansPro-Semibold.otf",
+        "b/it": "SourceSansPro-SemiboldIt.otf",
+        "b/sl": "SourceSansPro-SemiboldIt.otf",
+        "bx/n": "SourceSansPro-Semibold.otf",
+        "bx/it": "SourceSansPro-SemiboldIt.otf",
+        "bx/sl": "SourceSansPro-SemiboldIt.otf"
+      },
+      "features": "mapping=tex-text"
+    },
+    {
+      "family": "Lato",
+      "shapes": {
+        "m/n": "Lato-Regular.ttf",
+        "m/it": "Lato-Italic.ttf",
+        "m/sl": "Lato-Italic.ttf",
+        "m/sc": "Lato-Regular.ttf",
+        "b/n": "Lato-Bold.ttf",
+        "b/it": "Lato-BoldItalic.ttf",
+        "b/sl": "Lato-BoldItalic.ttf",
+        "bx/n": "Lato-Bold.ttf",
+        "bx/it": "Lato-BoldItalic.ttf",
+        "bx/sl": "Lato-BoldItalic.ttf"
+      },
+      "features": "mapping=tex-text"
+    },
+    {
+      "family": "LatoLight",
+      "shapes": {
+        "m/n": "Lato-Light.ttf",
+        "m/it": "Lato-LightItalic.ttf",
+        "m/sl": "Lato-LightItalic.ttf",
+        "m/sc": "Lato-Light.ttf",
+        "b/n": "Lato-Semibold.ttf",
+        "b/it": "Lato-SemiboldItalic.ttf",
+        "b/sl": "Lato-SemiboldItalic.ttf",
+        "bx/n": "Lato-Semibold.ttf",
+        "bx/it": "Lato-SemiboldItalic.ttf",
+        "bx/sl": "Lato-SemiboldItalic.ttf"
+      },
+      "features": "mapping=tex-text"
+    },
+    {
+      "family": "FontAwesome",
+      "shapes": {
+        "m/n": "FontAwesome5Free-Solid-900.otf"
+      }
+    },
+    {
+      "family": "FontAwesomeBrands",
+      "shapes": {
+        "m/n": "FontAwesome5Brands-Regular-400.otf"
+      }
+    }
+  ],
+  "controls": {
+    "pageSize": {
+      "default": "a4",
+      "apply": {
+        "letter": "\\geometry{letterpaper}",
+        "a4": "\\geometry{a4paper}"
+      }
+    },
+    "margins": {
+      "default": 0.5,
+      "apply": "\\geometry{margin={{value}}in}"
+    },
+    "fontSize": {
+      "default": 11,
+      "apply": "\\rtfontsize{{{value}}}"
+    },
+    "font": {
+      "default": "sourcesans",
+      "choices": [
+        {
+          "id": "sourcesans",
+          "name": "Source Sans",
+          "apply": ""
+        },
+        {
+          "id": "roboto",
+          "name": "Roboto",
+          "apply": "\\rtbodyfonts{Roboto}{RobotoLight}"
+        },
+        {
+          "id": "lato",
+          "name": "Lato",
+          "apply": "\\rtbodyfonts{Lato}{LatoLight}"
+        }
+      ]
+    },
+    "accent": {
+      "default": "#DC3522",
+      "apply": "\\definecolor{rtaccent}{HTML}{{{value}}}\\colorlet{awesome}{rtaccent}"
+    },
+    "density": {
+      "default": "normal",
+      "apply": {
+        "compact": "\\rtdensity{50}",
+        "normal": "",
+        "relaxed": "\\rtdensity{150}"
+      }
+    },
+    "dateFormat": {
+      "default": "MMM yyyy"
+    }
+  },
+  "snippets": {
+    "document": "\\begin{document}\n{{header}}\n\n{{sections}}\n\\end{document}",
+    "header": "\\name{{{first}}}{{{last}}}\n{{#headline}}\n\\position{{{headline}}}\n{{/headline}}\n{{#location}}\n\\address{{{location}}}\n{{/location}}\n{{#contacts}}\n\\extrainfo{{{contacts}}}\n{{/contacts}}\n\\makecvheader[C]",
+    "contact": {
+      "phone": "\\href{{{&href}}}{\\faMobile\\acvHeaderIconSep{}{{text}}}",
+      "email": "\\href{{{&href}}}{\\faEnvelope\\acvHeaderIconSep{}{{text}}}"
+    },
+    "link": {
+      "website": "{{#href}}\\href{{{&href}}}{\\faHome\\acvHeaderIconSep{}{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}{{/href}}{{^href}}\\faHome\\acvHeaderIconSep{}{{label}}{{/href}}",
+      "linkedin": "{{#href}}\\href{{{&href}}}{\\faLinkedin\\acvHeaderIconSep{}{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}{{/href}}{{^href}}\\faLinkedin\\acvHeaderIconSep{}{{label}}{{/href}}",
+      "github": "{{#href}}\\href{{{&href}}}{\\faGithubSquare\\acvHeaderIconSep{}{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}{{/href}}{{^href}}\\faGithubSquare\\acvHeaderIconSep{}{{label}}{{/href}}",
+      "twitter": "{{#href}}\\href{{{&href}}}{\\faTwitter\\acvHeaderIconSep{}{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}{{/href}}{{^href}}\\faTwitter\\acvHeaderIconSep{}{{label}}{{/href}}",
+      "orcid": "{{#href}}\\href{{{&href}}}{\\faOrcid\\acvHeaderIconSep{}{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}{{/href}}{{^href}}\\faOrcid\\acvHeaderIconSep{}{{label}}{{/href}}",
+      "other": "{{#href}}\\href{{{&href}}}{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}{{/href}}{{^href}}{{label}}{{/href}}"
+    },
+    "section": {
+      "entries": {
+        "default": "\\cvsection{{{title}}}\n\n{{#entries}}\n\\begin{cventries}\n{{entries}}\n\\end{cventries}\n{{/entries}}",
+        "awards": "\\cvsection{{{title}}}\n\n{{#entries}}\n\\begin{cvhonors}\n{{entries}}\n\\end{cvhonors}\n{{/entries}}"
+      },
+      "list": "\\cvsection{{{title}}}\n\n{{#items}}\n\\begin{rtlist}\n{{items}}\n\\end{rtlist}\n{{/items}}",
+      "labelled": "\\cvsection{{{title}}}\n\n{{#items}}\n\\begin{cvskills}\n{{items}}\n\\end{cvskills}\n{{/items}}",
+      "paragraph": "\\cvsection{{{title}}}\n\n{{#text}}\n\\begin{cvparagraph}\n{{text}}\n\\end{cvparagraph}\n{{/text}}"
+    },
+    "entry": {
+      "default": "\\cventry{{{title}}}{{{subtitle}}}{{{place}}}{{{dates}}}{{{#bullets}}\\begin{cvitems}\n{{bullets}}\n\\end{cvitems}{{/bullets}}}",
+      "awards": "\\cvhonor{{{title}}}{{{subtitle}}}{{{place}}}{{{dates}}}\n{{#bullets}}\n\\multicolumn{3}{L{\\textwidth}}{\\descriptionstyle{\\begin{cvitems}\n{{bullets}}\n\\end{cvitems}}} \\\\\n{{/bullets}}"
+    },
+    "bullet": "\\item {{text}}",
+    "item": "\\item {{text}}",
+    "labelledItem": "\\cvskill{{{label}}}{{{text}}}",
+    "separators": {
+      "sections": "\n\n",
+      "entries": {
+        "default": "\n\n",
+        "awards": "\n"
+      },
+      "contacts": "\\acvHeaderSocialSep\n"
+    }
+  }
+}
