@@ -50,12 +50,16 @@ which opens TeX Live's PostScript families to pdfTeX templates.
   the body. They are T1, as decision 0009 has every pdfTeX port: the PostScript families' T1
   fonts are virtual fonts over their `8r` fonts, which decision 0009 draws, and psnfss's `.fd`
   files, which the tree has, give each family upright, italic or oblique, bold and small caps in
-  T1, and TS1's symbols, so that a user's accented letters and symbols set in the family. They
-  change the text's font only: the math, which Jake's sets only for its separators and bullets,
-  stays Latin Modern's. Helvetica is scaled to 0.92, so that its large x-height sets nearer the
-  serif families' size. Times (`ptm`) is in the tree too, and stays out, since four is the
-  plan's most. XeTeX families wait for item 21, and families outside the tree, such as Roboto,
-  Lato and Source Sans, for item 19.
+  T1, and its symbols in TS1, so that a user's accented letters are the family's own. A symbol
+  the family's TS1 subset lacks, such as → or №, is set in Latin Modern's TS1 font (Latin Modern
+  Sans's in Helvetica, and Latin Modern's caps in small caps), because the tree's Computer Modern
+  TS1 fonts, which LaTeX would otherwise take, have no outlines: Jake's preamble names Latin Modern as the substitution family,
+  in `\rmsubstdefault`, `\sfsubstdefault` and `\ttsubstdefault`, and the round trip sets both
+  symbols in each family, on the page and in the PDF. They change the text's font only: the math,
+  which Jake's sets only for its separators and bullets, stays Latin Modern's. Helvetica is scaled
+  to 0.92, so that its large x-height sets nearer the serif families' size. Times (`ptm`) is in
+  the tree too, and stays out, since four is the plan's most. XeTeX families wait for item 21, and
+  families outside the tree, such as Roboto, Lato and Source Sans, for item 19.
 - **A family a template lists must draw as well as compile.** Every glyph of the sample in it is
   drawn and matched to its text. The harness's `controls` check compiles each listed family and
   fails one that does not compile or changes nothing; the round trip in `curated.test.ts` draws
@@ -95,6 +99,11 @@ which opens TeX Live's PostScript families to pdfTeX templates.
   small caps from a virtual font in OT1, which decision 0009 left to this item. Latin Modern has
   no bold small caps, so the name is set in bold in it, as upstream's is in Computer Modern, and
   in bold small caps in the other three families.
+- A known limit: the psnfss T1 virtual fonts of Charter, Palatino and Helvetica have no Ŋ, ŋ or
+  ȷ, and their TS1 fonts no ␢ (Palatino's and Helvetica's no ‽ either), and draw fontinst's black
+  box in their place, on the page and in the PDF, as any LaTeX document set in these families
+  does; LaTeX counts the two symbols as present, so the substitution above never reaches them.
+  Latin Modern draws them all.
 - The harness's `controls` check compiles a family but does not draw it. A curated package's
   round trip does; an imported package has none, so milestone 3's probe step has to draw each
   font it probes, or the harness has to learn to.

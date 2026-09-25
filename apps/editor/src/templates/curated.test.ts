@@ -578,6 +578,49 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     console.log(`Jake's sample compiles again in one pass in ${costs.join(", ")}`);
   }, 60_000);
 
+  it("sets the symbols a family lacks in Latin Modern, on the page and in the PDF", async () => {
+    // LaTeX sets a symbol a family's TS1 font lacks in the substitution family, as it does → (a
+    // level 4 symbol) and № (level 5) in the three PostScript families, whose TS1 subset is 5.
+    // Unless the preamble names another, that family is Computer Modern, whose TS1 fonts, such as
+    // tcrm1000 and tcss1000, the tree has TFMs for and no outlines: the page drew nothing there,
+    // and xdvipdfmx made no PDF. Jake's preamble names Latin Modern, and Latin Modern Sans for
+    // Helvetica, the sans family; Latin Modern itself has both symbols.
+    const id = "research-2.text";
+    const symbols = Resume.parse(structuredClone(sample));
+    const bullet = symbols.sections
+      .flatMap((section) => (section.kind === "entries" ? section.entries : []))
+      .flatMap((entry) => entry.bullets)
+      .find((each) => `${each.id}.text` === id);
+    if (!bullet) throw new Error("the sample moved");
+    bullet.text = [{ text: "Cut the nightly build from 40 → 12 minutes, the team's № 1 request." }];
+    for (const { id: font } of pkg.controls.font?.choices ?? []) {
+      const body = generateBody(pkg, symbols, { ...values, font });
+      const job = `symbols-${font}`;
+      const { result, page } = await compileAndDraw(body.latex, body.texts, job);
+      expect(result.log, font).not.toMatch(/^! /m);
+      expect(page.missingFonts, font).toEqual(new Map());
+      expect(page.unmatched, font).toBe(0);
+      // Each symbol drawn where a click finds it, in Latin Modern's TS1 font at the bullets' size.
+      const ts1 = font === "helvetica" ? "ts1-lmss10" : "ts1-lmr10";
+      const text = body.texts.get(id) ?? "";
+      for (const char of ["→", "№"]) {
+        const offset = text.indexOf(char);
+        expect(offset, char).toBeGreaterThanOrEqual(0);
+        const boxes = page.glyphs.filter((box) => box.field === id && box.offset === offset);
+        expect(boxes, `${font} ${char}`).toHaveLength(1);
+        const use = new RegExp(`data-font="${ts1}"[^>]*data-field="${id}" data-offset="${offset}"`);
+        expect(page.svg, `${font} ${char}`).toMatch(use);
+      }
+      // Computer Modern's TS1 fonts are named tc, as tcrm1000 is, and none is used.
+      const computerModern = fontsOf(result.output as Uint8Array).filter((name) =>
+        name.startsWith("tc"),
+      );
+      expect(computerModern, font).toEqual([]);
+      const pdf = session.pdf(job);
+      expect(pdf.ok, `${font}: ${pdf.error}`).toBe(true);
+    }
+  }, 60_000);
+
   it("compiles in every font at every size, and says which set more than one page", () => {
     // Fitting on one page is item 18's to do, so a spill is reported here rather than failed.
     const spills: string[] = [];

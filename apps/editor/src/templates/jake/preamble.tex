@@ -56,6 +56,11 @@
 % Latin Modern in T1, in place of Computer Modern in OT1, as the note at the top says.
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
+% A symbol a family's TS1 font lacks, such as an arrow in Charter, is set in Latin Modern, where
+% LaTeX would take Computer Modern, whose TS1 fonts the tree has TFMs for and no outlines.
+\def\rmsubstdefault{lmr}
+\def\sfsubstdefault{lmss}
+\def\ttsubstdefault{lmtt}
 % The font size control's sizes, as the note at the top says. \rt@size is the size in scaled points,
 % 11 points until \rtfontsize sets another, and \rt@pt{<points>} is a length of size11.clo's scaled
 % by it over 11 points and rounded to a hundredth of a point, TeX arithmetic throughout. A length
