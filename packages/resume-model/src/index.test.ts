@@ -149,6 +149,17 @@ describe("Resume", () => {
     expect(accepts(withEntry({ id: "lark#spur" }))).toBe(false);
   });
 
+  it("rejects an id with a capital, since a template may uppercase a field's markers", () => {
+    const result = Resume.safeParse(withEntry({ id: "Work" }));
+    expect(result.error?.issues).toMatchObject([
+      {
+        message: "an id is 1 to 64 lowercase letters, digits, - or _",
+        path: ["sections", 0, "entries", 0, "id"],
+      },
+    ]);
+    expect(accepts(withEntry({ id: "work-2_b" }))).toBe(true);
+  });
+
   it("rejects a date that is not YYYY or YYYY-MM, and a null end", () => {
     expect(accepts(withEntry({ dates: { start: "March 2020" } }))).toBe(false);
     expect(accepts(withEntry({ dates: { start: "2020-13" } }))).toBe(false);

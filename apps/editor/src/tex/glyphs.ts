@@ -69,6 +69,10 @@ const GLYPH_TEXT: Record<string, string> = {
   bar: "|",
   braceright: "}",
   asciitilde: "~",
+  // OT1 has no ASCII caret or tilde: LaTeX sets \textasciicircum and \textasciitilde as the
+  // circumflex and tilde accent glyphs at codes 94 and 126, which read as the characters.
+  circumflex: "^",
+  tilde: "~",
   endash: "--",
   emdash: "---",
   quotedblleft: "``",

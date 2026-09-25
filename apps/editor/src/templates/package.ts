@@ -8,9 +8,10 @@
  * cannot render needs a generator feature or a new decision record, never code in a package
  * (decision 0006).
  *
- * Every snippet is checked here against the slots its place offers, so a package that parses is
- * one the generator can render. The marker macros are not a package's: they are the editor's, and
- * the generator appends them to the preamble when it dumps the format.
+ * Every snippet is checked here against the slots its place offers, and for what it puts in an
+ * address, so a package that parses is one the generator can render. The marker macros are not a
+ * package's: they are the editor's, and the generator appends them to the preamble when it dumps
+ * the format.
  */
 
 import {
@@ -25,6 +26,7 @@ import { z } from "zod";
 import { isFileName, isFormatName } from "../engine/names";
 import type { Engine as SessionEngine } from "../engine/session";
 import {
+  checkAddresses,
   checkSnippet,
   parseSnippet,
   type SlotType,
@@ -49,8 +51,14 @@ export const HEADER_SLOTS = {
   links: "list",
   contacts: "list",
 } satisfies Slots;
-/** One contact field, as `{{contacts}}` shows it. */
-export const CONTACT_SLOTS = { text: "text" } satisfies Slots;
+/**
+ * One contact field, as `{{contacts}}` shows it: its `text`, and an `href` the generator builds,
+ * since an address is only ever a URL slot. For the email it is `mailto:` and the address,
+ * trimmed; for the phone `tel:` and the number with all whitespace taken out, each with the
+ * `#`, `?`, `&`, `%` and `/` an address would read as its syntax percent-encoded; and the location
+ * has none, so that `{{#href}}` is false and `{{&href}}` sets nothing.
+ */
+export const CONTACT_SLOTS = { text: "text", href: "url" } satisfies Slots;
 export const LINK_SLOTS = { label: "text", href: "url" } satisfies Slots;
 export const SECTION_SLOTS = {
   entries: { title: "text", entries: "list" },
@@ -201,7 +209,7 @@ const PackageId = z
   .string()
   .refine(
     (id) => Id.safeParse(id).success && isFormatName(id),
-    "a package id is 1 to 64 letters, digits, - or _, starting with a letter or digit, not stock",
+    "a package id is 1 to 64 lowercase letters, digits, - or _, starting with a letter or digit, not stock",
   );
 
 export const TemplatePackage = z
@@ -244,7 +252,7 @@ export const TemplatePackage = z
         if (error instanceof SnippetError) return; // Snippet has reported it.
         throw error;
       }
-      for (const message of checkSnippet(nodes, slots))
+      for (const message of [...checkSnippet(nodes, slots), ...checkAddresses(source, slots)])
         ctx.addIssue({ code: "custom", message, path });
     };
     const checkEach = (

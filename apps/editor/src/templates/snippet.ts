@@ -3,9 +3,11 @@
  *
  * A snippet is template text with slots, in a small language shaped like Mustache. `{{title}}` is
  * a typeset slot: the field, escaped for LaTeX and wrapped in its markers. `{{&href}}` is a raw
- * slot: the value escaped for where it goes, with no markers, which is the only way to use a URL
- * and the way to put text where a marker would break, as in `\href{mailto:{{&email}}}`. A
- * block, `{{#bullets}}...{{/bullets}}`, is kept when its slot is present, and
+ * slot: the value escaped for where it goes, with no markers. It is the only way to use a URL,
+ * and an address is only ever a URL slot, as in `\href{{{&href}}}{{{text}}}`, since text escaped
+ * for typesetting breaks inside `\href` and `\url`; raw text serves where a marker would break
+ * outside an address, as in a PDF string such as `pdftitle`. A block,
+ * `{{#bullets}}...{{/bullets}}`, is kept when its slot is present, and
  * `{{^bullets}}...{{/bullets}}` when it is absent. User text reaches LaTeX only through slots, so
  * whether it can act as LaTeX is up to the generator, never to a template (decision 0006).
  *
@@ -131,6 +133,164 @@ export function checkSnippet(
     if (node.kind === "block") push(node.children);
   }
   return [...problems];
+}
+
+/**
+ * The commands whose first argument hyperref reads as an address: `\href`'s and `\url`'s, which
+ * link to it, `\nolinkurl`'s, which it sets as `\url` does, and `\hyperlink`'s, a target's name.
+ */
+const LINK_COMMANDS = new Set(["href", "url", "nolinkurl", "hyperlink"]);
+
+/**
+ * Check where a snippet puts its slots in TeX, and return what is wrong: a slot other than a URL
+ * in an address, the first argument of `\href`, `\url`, `\nolinkurl` or `\hyperlink`, named with
+ * its type; and a slot right after a backslash. Text escaped for typesetting breaks in an
+ * address, since hyperref turns back only some of the escapes (decision 0007), and a typeset slot
+ * would put its markers there; the generator builds a URL slot for what needs a link, such as a
+ * contact's `href`. A slot right after a backslash would make its text a command's name, so that
+ * `\{{&text}}` with `LaTeX rocks` sets the logo.
+ *
+ * The check reads as much of TeX as that takes: a comment, from a `%` to the end of its line, is
+ * not read, tags and all; a control symbol, such as `\{`, `\%` or `\\`, is one token; an
+ * optional argument may come between a command and its address, its braces counted as any
+ * others; `\url` and `\nolinkurl` may take their address between a pair of any other character,
+ * as `\url|...|`; and a block tag between a backslash and a slot sets nothing, so the backslash
+ * still reaches the slot. One pass over the source counts braces, however the arguments nest, so
+ * the check costs time in proportion to its length.
+ */
+export function checkAddresses(
+  source: string,
+  slots: Readonly<Record<string, SlotType>>,
+): string[] {
+  const problems = new Set<string>();
+  const tags = scan(source);
+  // Each address that is open, the innermost last: with the brace depth inside it, or with the
+  // character that closes it, for `\url|...|` and the like, which take any delimiter.
+  const addresses: { command: string; depth: number; delimiter?: string }[] = [];
+  // A link command whose address has not opened yet: right after its name, inside its optional
+  // argument, which ends at a `]` at the brace depth it began at, or after that argument.
+  let link: { command: string; stage: "name" | "options" | "argument"; depth: number } | undefined;
+  let depth = 0;
+  let next = 0;
+  let at = 0;
+  // Where the text TeX reads has got to: the index after the last character outside a tag. A
+  // block tag sets nothing, so the character before a slot, once the tags are gone, is the one
+  // before the block tags in between, and a backslash there still makes the slot's text a command.
+  let rendered = 0;
+  while (at < source.length) {
+    const tag = tags[next];
+    if (tag !== undefined && tag.at <= at) {
+      next++;
+      at = Math.max(at, tag.to);
+      // A block tag sets nothing itself, so an address may still follow it.
+      if (tag.sigil !== "" && tag.sigil !== "&") continue;
+      // A slot where a link's argument would begin is that argument, and no address opens.
+      if (link?.stage !== "options") link = undefined;
+      if (followsBackslash(source, rendered))
+        problems.add("a slot cannot follow a backslash; the text would become a command");
+      rendered = at;
+      const address = addresses.at(-1);
+      // A name the place does not offer is checkSnippet's to report.
+      const type = Object.hasOwn(slots, tag.name) ? slots[tag.name] : undefined;
+      if (address !== undefined && type !== undefined && type !== "url")
+        problems.add(
+          `${tag.name} is a ${type} slot; inside \\${address.command} use a url slot, such as href`,
+        );
+      continue;
+    }
+    const char = source.charAt(at);
+    if (char === "%") {
+      // TeX reads none of a comment, nor what a tag in it renders. A tag that runs on past the
+      // line's end takes the comment on to the end of the line it ends on.
+      let end = lineEnd(source, at);
+      for (let inside = tags[next]; inside !== undefined && inside.at < end; inside = tags[++next])
+        if (inside.to > end) end = lineEnd(source, inside.to);
+      at = end;
+      rendered = at;
+      continue;
+    }
+    if (char === "\\") {
+      COMMAND.lastIndex = at;
+      const command = COMMAND.exec(source);
+      // A control symbol, such as \{, \% or \\, is two characters, unless a tag begins right
+      // after the backslash, which the tag's own check reports.
+      at = command === null ? at + (tag?.at === at + 1 ? 1 : 2) : COMMAND.lastIndex;
+      rendered = at;
+      // Inside an optional argument a command is part of it. Elsewhere it may begin a link, and
+      // where a link's argument would begin it is that argument.
+      if (link?.stage !== "options") {
+        const name = command?.[1];
+        link =
+          name !== undefined && LINK_COMMANDS.has(name)
+            ? { command: name, stage: "name", depth }
+            : undefined;
+      }
+      continue;
+    }
+    const delimited = addresses.at(-1);
+    if (delimited?.delimiter === char) {
+      // The address `\url|...|` opened closes at its own delimiter, whatever the braces inside.
+      addresses.pop();
+      at++;
+      rendered = at;
+      continue;
+    }
+    if (link?.stage === "options") {
+      if (char === "]" && depth === link.depth) link.stage = "argument";
+    } else if (link !== undefined) {
+      if (char === "{") {
+        // The address opens, and the walk goes on inside it.
+        addresses.push({ command: link.command, depth: depth + 1 });
+        link = undefined;
+      } else if (char === "[" && link.stage === "name") {
+        link.stage = "options";
+        link.depth = depth;
+      } else if (/\s/.test(char)) {
+        // The spaces after a command are TeX's to skip; the address may still follow.
+      } else if (DELIMITED_COMMANDS.has(link.command) && link.stage === "name") {
+        // `\url` and `\nolinkurl` take their address between any character but a brace, as
+        // `\url|...|` does, and it runs to that character's next appearance.
+        addresses.push({ command: link.command, depth: -1, delimiter: char });
+        link = undefined;
+        at++;
+        rendered = at;
+        continue;
+      } else {
+        link = undefined;
+      }
+    }
+    if (char === "{") depth++;
+    else if (char === "}") {
+      if (addresses.at(-1)?.depth === depth) addresses.pop();
+      depth--;
+    }
+    at++;
+    rendered = at;
+  }
+  return [...problems];
+}
+
+/** The link commands that also take their address between a pair of any other character. */
+const DELIMITED_COMMANDS = new Set(["url", "nolinkurl"]);
+
+/** A control word, and the spaces TeX skips after it. */
+const COMMAND = /\\([A-Za-z]+)\s*/y;
+
+/** Where the line `from` is on ends: at its line feed, or at the source's end. */
+function lineEnd(source: string, from: number): number {
+  const end = source.indexOf("\n", from);
+  return end < 0 ? source.length : end;
+}
+
+/**
+ * Whether an odd run of backslashes ends right before `at`, so that the last of them makes what
+ * follows part of a command. Each run is read for the one tag after it, so reading them all costs
+ * the source's length at most.
+ */
+function followsBackslash(source: string, at: number): boolean {
+  let run = 0;
+  while (source[at - 1 - run] === "\\") run++;
+  return run % 2 === 1;
 }
 
 /** Every well-formed tag in a snippet, in order. */

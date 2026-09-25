@@ -151,6 +151,32 @@ describe("TemplatePackage", () => {
     expect(issues(linked("\\href{{{&href}}}{{{label}}}"))).toEqual([]);
   });
 
+  it("puts only a URL slot in an address, since escaped text breaks inside \\href", () => {
+    const emailed = (email: string) =>
+      plainWith((pkg) => {
+        pkg.snippets.contact = { email };
+      });
+    const path = "snippets.contact.email";
+    expect(issues(emailed("\\href{mailto:{{&text}}}{{{text}}}"))).toEqual([
+      { path, message: "text is a text slot; inside \\href use a url slot, such as href" },
+    ]);
+    expect(issues(emailed("\\href{{{&href}}}{{{text}}}"))).toEqual([]);
+    // A typeset URL is refused by the rule for URLs, as before, and by nothing else.
+    expect(issues(emailed("\\href{{{href}}}{{{text}}}"))).toEqual([
+      { path, message: "href is a URL, so it goes in raw, as {{&href}}" },
+    ]);
+    // The check runs wherever snippets are checked, a control's among them.
+    const accented = plainWith((pkg) => {
+      pkg.controls.accent = { default: "#1F4E79", apply: "\\url{{{&value}}}" };
+    });
+    expect(issues(accented)).toEqual([
+      {
+        path: "controls.accent.apply",
+        message: "value is a text slot; inside \\url use a url slot, such as href",
+      },
+    ]);
+  });
+
   it("holds margins to tenths of an inch and font sizes to half points", () => {
     const stepped = (margins: number, fontSize: number) =>
       plainWith((pkg) => {
@@ -254,7 +280,7 @@ describe("names the engine accepts", () => {
         pkg.id = id;
       });
     expect(issues(withId("plain"))).toEqual([]);
-    for (const id of ["stock", "_plain", "-plain"])
+    for (const id of ["stock", "_plain", "-plain", "Plain"])
       expect(issues(withId(id)).map((issue) => issue.path)).toEqual(["id"]);
   });
 

@@ -1,0 +1,1251 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { Resume } from "@resume-tools/resume-model";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { z } from "zod";
+import type { EngineManifest } from "../engine/manifest";
+import { isFormatName } from "../engine/names";
+import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
+import type { CompileResult, EngineSession } from "../engine/session";
+import { type DrawnPage, drawPage } from "../page/draw";
+import { FontLibrary } from "../page/fonts";
+import { TexLiveIndex } from "../page/texlive";
+import { type PageItem, parseDvi } from "../tex/dvi";
+import { alignGlyphs, collectFields, MARKER_BEGIN, MARKER_END } from "../tex/fields";
+import {
+  formatName,
+  type GeneratedBody,
+  GenerateError,
+  generateBody,
+  generateFormat,
+  MAX_BODY,
+} from "./generate";
+import { parsePackage, type TemplatePackage } from "./package";
+import { PARAGRAPH_MARKER, PRELUDE } from "./prelude";
+
+type PackageInput = z.input<typeof TemplatePackage>;
+
+/**
+ * A package on `article`, invented for these tests, that uses every construct the generator
+ * renders: typeset, raw and URL slots, blocks of both kinds, a variant and a separator by role,
+ * contact and link snippets, a file of its own, and every control, written out of the schema's
+ * order.
+ */
+const input: PackageInput = {
+  version: 1,
+  id: "plain",
+  name: "Plain",
+  engine: "pdftex",
+  source: { url: "https://example.com/plain", license: "MIT", attribution: "Invented for tests" },
+  files: { "rtplain.sty": "\\ProvidesPackage{rtplain}\n\\newcommand{\\plainmark}{\\relax}\n" },
+  preamble: [
+    "\\documentclass[{{fontSize}}pt,dvipdfmx]{article}",
+    "\\usepackage{geometry}",
+    "\\usepackage{xcolor}",
+    "\\usepackage[hidelinks]{hyperref}",
+    "\\usepackage{rtplain}",
+    "\\pagestyle{empty}",
+    "\\setlength{\\parindent}{0pt}",
+    // LaTeX sets its own bullet, \textbullet, from TS1, which the page cannot draw yet.
+    "\\renewcommand{\\labelitemi}{$\\bullet$}",
+  ].join("\n"),
+  controls: {
+    density: {
+      default: "normal",
+      apply: {
+        compact: "\\linespread{0.9}",
+        normal: "\\linespread{1}",
+        relaxed: "\\linespread{1.1}",
+      },
+    },
+    accent: { default: "#1f4e79", apply: "\\definecolor{accent}{HTML}{{{value}}}" },
+    fontSize: { default: 11, apply: "\\newcommand{\\bodysize}{{{value}}pt}", format: true },
+    font: {
+      default: "serif",
+      choices: [
+        { id: "serif", name: "Serif", apply: "\\renewcommand{\\familydefault}{\\rmdefault}" },
+        { id: "sans", name: "Sans", apply: "\\renewcommand{\\familydefault}{\\sfdefault}" },
+      ],
+    },
+    margins: { default: 0.8, apply: "\\geometry{margin={{value}}in}" },
+    pageSize: {
+      default: "letter",
+      apply: { letter: "\\geometry{letterpaper}", a4: "\\geometry{a4paper}" },
+    },
+    dateFormat: { default: "MMM yyyy" },
+  },
+  snippets: {
+    document: "\\begin{document}\n{{header}}\n{{sections}}\n\\end{document}",
+    header: [
+      "\\plainmark",
+      "\\begin{center}",
+      "{\\Large\\textbf{{{first}} {{last}}}}\\\\",
+      "{{#headline}}",
+      "\\textit{{{headline}}}\\\\",
+      "{{/headline}}",
+      "{{contacts}}",
+      "\\end{center}",
+    ].join("\n"),
+    contact: {
+      phone: "\\href{{{&href}}}{{{text}}}",
+      email: "\\href{{{&href}}}{\\underline{{{text}}}}",
+      location: "{{text}}",
+    },
+    link: {
+      github: "Code: \\href{{{&href}}}{{{label}}}",
+      other: "\\href{{{&href}}}{{{label}}}",
+    },
+    section: {
+      entries: "\\section*{\\color{accent}{{title}}}\n{{entries}}",
+      list: [
+        "\\section*{{{title}}}",
+        "{{#items}}",
+        "\\begin{itemize}",
+        "{{items}}",
+        "\\end{itemize}",
+        "{{/items}}",
+      ].join("\n"),
+      labelled: "\\section*{{{title}}}\n{{items}}",
+      // Numbered, so the title also goes to the table of contents and to a bookmark.
+      paragraph: "\\section{{{title}}}\n{{text}}",
+    },
+    entry: {
+      default: [
+        "\\textbf{{{title}}}{{#place}}, {{place}}{{/place}} \\hfill {{dates}}\\par",
+        "{{#subtitle}}",
+        "\\textit{{{subtitle}}}\\par",
+        "{{/subtitle}}",
+        "{{#bullets}}",
+        "\\begin{itemize}",
+        "{{bullets}}",
+        "\\end{itemize}",
+        "{{/bullets}}",
+      ].join("\n"),
+      projects: [
+        "\\textbf{{{title}}}{{#subtitle}} $|$ \\emph{{{subtitle}}}{{/subtitle}}{{^dates}} (undated){{/dates}} \\hfill {{dates}}\\par",
+        "{{#bullets}}",
+        "\\begin{itemize}",
+        "{{bullets}}",
+        "\\end{itemize}",
+        "{{/bullets}}",
+      ].join("\n"),
+    },
+    bullet: "\\item {{text}}",
+    item: "\\item {{text}}",
+    labelledItem: "\\textbf{{{label}}}: {{text}}\\par",
+    separators: {
+      contacts: " $|$ ",
+      links: ", ",
+      sections: "\n\n",
+      entries: { default: "\n\\medskip\n", projects: "\n\\smallskip\n" },
+    },
+  },
+};
+
+const pkg = parsePackage(input);
+
+/** The package with a change. */
+function packageWith(change: (pkg: PackageInput) => void): TemplatePackage {
+  const copy = structuredClone(input);
+  change(copy);
+  return parsePackage(copy);
+}
+
+/** An invented resume that reaches every snippet, with empty and absent optional fields. */
+const resume = Resume.parse({
+  version: 1,
+  header: {
+    name: { first: "Ilse", last: "Marrow" },
+    headline: "Typesetting engineer",
+    email: "ilse_m@example.com",
+    phone: "+1 555 0100",
+    links: [
+      { id: "code", kind: "github", label: "code.example/ilse", href: "https://code.example/ilse" },
+      { id: "site", kind: "website", label: "marrow.example", href: "https://marrow.example/" },
+    ],
+  },
+  sections: [
+    {
+      id: "summary",
+      kind: "paragraph",
+      role: "summary",
+      title: "Summary & aims",
+      text: [
+        { text: "Builds " },
+        { text: "fast", bold: true },
+        { text: ", " },
+        { text: "careful", italic: true },
+        { text: " tools", bold: true, italic: true },
+        { text: "; see " },
+        { text: "notes", href: "https://notes.example/a b?x=1&y=2#top_1" },
+        { text: " and " },
+        { text: "the log", bold: true, href: "https://log.example/" },
+        { text: "." },
+      ],
+    },
+    {
+      id: "work",
+      kind: "entries",
+      role: "experience",
+      title: "Experience",
+      entries: [
+        {
+          id: "fennel",
+          title: "Engineer",
+          subtitle: "Fennel Systems",
+          place: "Remote",
+          dates: { start: "2021-03", end: "present" },
+          bullets: [
+            { id: "fennel-1", text: [{ text: "Cut build times by 40% & more" }] },
+            {
+              id: "fennel-2",
+              text: [{ text: "Ran the " }, { text: "release", italic: true }, { text: " train" }],
+            },
+          ],
+        },
+        {
+          id: "larch",
+          title: "Intern",
+          subtitle: "",
+          dates: { start: "2019-06", end: "2019-09" },
+          bullets: [],
+        },
+      ],
+    },
+    {
+      id: "projects",
+      kind: "entries",
+      role: "projects",
+      title: "Projects",
+      entries: [
+        {
+          id: "galley",
+          title: "Galley",
+          subtitle: "TypeScript",
+          bullets: [{ id: "galley_1", text: [{ text: "A page editor" }] }],
+        },
+        { id: "quire", title: "Quire", dates: { start: "2020" }, bullets: [] },
+      ],
+    },
+    {
+      id: "skills",
+      kind: "labelled",
+      role: "skills",
+      title: "Skills",
+      items: [{ id: "langs", label: "Languages", text: [{ text: "TypeScript, Rust" }] }],
+    },
+    {
+      id: "awards",
+      kind: "list",
+      role: "awards",
+      title: "Awards",
+      items: [{ id: "prize", text: [{ text: "Best paper, 2020" }] }],
+    },
+  ],
+});
+
+/** Each field the resume shows through the package, with its text as the page shows it. */
+const TEXTS = {
+  "header.first": "Ilse",
+  "header.last": "Marrow",
+  "header.headline": "Typesetting engineer",
+  "header.phone": "+1 555 0100",
+  "header.email": "ilse_m@example.com",
+  "code.label": "code.example/ilse",
+  "site.label": "marrow.example",
+  "summary.title": "Summary & aims",
+  "summary.text": "Builds fast, careful tools; see notes and the log.",
+  "work.title": "Experience",
+  "fennel.title": "Engineer",
+  "fennel.subtitle": "Fennel Systems",
+  "fennel.place": "Remote",
+  "fennel.dates": "Mar 2021 \u2013 Present",
+  "fennel-1.text": "Cut build times by 40% & more",
+  "fennel-2.text": "Ran the release train",
+  "larch.title": "Intern",
+  "larch.dates": "Jun 2019 \u2013 Sep 2019",
+  "projects.title": "Projects",
+  "galley.title": "Galley",
+  "galley.subtitle": "TypeScript",
+  "galley_1.text": "A page editor",
+  "quire.title": "Quire",
+  "quire.dates": "2020",
+  "skills.title": "Skills",
+  "langs.label": "Languages",
+  "langs.text": "TypeScript, Rust",
+  "awards.title": "Awards",
+  "prize.text": "Best paper, 2020",
+};
+
+/** The ids of the fields a body marks, in order, once for each time it marks one. */
+const marked = (latex: string) => [...latex.matchAll(/\\rtfield\{([^}]*)\}/g)].map((m) => m[1]);
+
+/**
+ * The package with a header that sets fields twice: the name in the PDF's author before it shows
+ * it, and the links in the contacts and again on their own. Its preamble is the package's, so it
+ * compiles from the same format.
+ */
+const twice = packageWith((pkg) => {
+  pkg.snippets.header = [
+    "\\hypersetup{pdfauthor={{{first}} {{last}}}}",
+    "{\\Large {{first}} {{last}}}\\\\",
+    "{{contacts}}\\\\",
+    "{{links}}",
+  ].join("\n");
+});
+
+/** What a call throws. */
+function thrown(run: () => unknown): Error {
+  try {
+    run();
+  } catch (error) {
+    if (error instanceof Error) return error;
+  }
+  throw new Error("nothing was thrown");
+}
+
+describe("generateBody", () => {
+  it("applies each control's snippet in the schema's order, then sets the document", () => {
+    const lines = (values: Parameters<typeof generateBody>[2]) =>
+      generateBody(pkg, resume, values).latex.split("\n").slice(0, 7);
+    expect(lines({})).toEqual([
+      "\\geometry{letterpaper}",
+      "\\geometry{margin=0.8in}",
+      "\\newcommand{\\bodysize}{11pt}",
+      "\\renewcommand{\\familydefault}{\\rmdefault}",
+      "\\definecolor{accent}{HTML}{1F4E79}",
+      "\\linespread{1}",
+      "\\begin{document}",
+    ]);
+    const values = {
+      pageSize: "a4",
+      margins: 0.1 + 0.2 + 0.4,
+      fontSize: 10.5,
+      font: "sans",
+      accent: "#aa0033",
+      density: "compact",
+    } as const;
+    expect(lines(values)).toEqual([
+      "\\geometry{a4paper}",
+      "\\geometry{margin=0.7in}",
+      "\\newcommand{\\bodysize}{10.5pt}",
+      "\\renewcommand{\\familydefault}{\\sfdefault}",
+      "\\definecolor{accent}{HTML}{AA0033}",
+      "\\linespread{0.9}",
+      "\\begin{document}",
+    ]);
+    expect(generateBody(pkg, resume, {}).latex.endsWith("\n\\end{document}\n")).toBe(true);
+  });
+
+  it("ignores a value for a control the package does not offer", () => {
+    const bare = packageWith((pkg) => {
+      pkg.preamble = "\\documentclass{article}";
+      pkg.controls = {};
+    });
+    const { latex } = generateBody(bare, resume, { margins: 0.5, pageSize: "a4" });
+    expect(latex.startsWith("\\begin{document}\n")).toBe(true);
+  });
+
+  it("refuses a font the package does not offer", () => {
+    const error = thrown(() => generateBody(pkg, resume, { font: "mono" }));
+    expect(error).toBeInstanceOf(GenerateError);
+    expect(error.message).toBe("the template has no font mono");
+  });
+
+  it("marks every field by its node's id, and holds each field's text as the page shows it", () => {
+    const { latex, texts } = generateBody(pkg, resume, {});
+    expect(Object.fromEntries(texts)).toEqual(TEXTS);
+    expect(marked(latex).sort()).toEqual(Object.keys(TEXTS).sort());
+    expect(latex).toContain(String.raw`\rtfield{fennel.dates}{Mar 2021 – Present}`);
+    expect(latex).toContain(String.raw`\section{\rtfield{summary.title}{Summary \& aims}}`);
+  });
+
+  it("formats dates in the document's format, or the package's", () => {
+    const monthly = generateBody(pkg, resume, { dateFormat: "MM/yyyy" }).texts;
+    expect(monthly.get("fennel.dates")).toBe("03/2021 \u2013 Present");
+    const spelled = packageWith((pkg) => {
+      pkg.controls.dateFormat = { default: "MMMM yyyy" };
+    });
+    const texts = generateBody(spelled, resume, {}).texts;
+    expect(texts.get("larch.dates")).toBe("June 2019 \u2013 September 2019");
+    expect(texts.get("quire.dates")).toBe("2020");
+  });
+
+  it("leaves an empty optional field out, skipping a block over it and keeping an inverted one", () => {
+    const { latex, texts } = generateBody(pkg, resume, {});
+    for (const id of ["larch.subtitle", "larch.place", "galley.dates", "header.location"])
+      expect(texts.has(id), id).toBe(false);
+    // The whole work section, every line of it: the standalone block tags of the intern's
+    // subtitle and bullets take their lines with them, so no blank line is left behind.
+    const work = [
+      String.raw`\section*{\color{accent}\rtfield{work.title}{Experience}}`,
+      String.raw`\textbf{\rtfield{fennel.title}{Engineer}}, \rtfield{fennel.place}{Remote} \hfill \rtfield{fennel.dates}{Mar 2021 – Present}\par`,
+      String.raw`\textit{\rtfield{fennel.subtitle}{Fennel Systems}}\par`,
+      String.raw`\begin{itemize}`,
+      String.raw`\item \rtfield{fennel-1.text}{Cut build times by 40\% \& more}`,
+      String.raw`\item \rtfield{fennel-2.text}{Ran the \textit{release} train}`,
+      String.raw`\end{itemize}`,
+      "",
+      String.raw`\medskip`,
+      String.raw`\textbf{\rtfield{larch.title}{Intern}} \hfill \rtfield{larch.dates}{Jun 2019 – Sep 2019}\par`,
+      "",
+      "",
+      String.raw`\section*{\color{accent}\rtfield{projects.title}{Projects}}`,
+    ].join("\n");
+    expect(latex).toContain(work);
+    expect(latex).toContain(
+      String.raw`\textbf{\rtfield{galley.title}{Galley}} $|$ \emph{\rtfield{galley.subtitle}{TypeScript}} (undated) \hfill \par`,
+    );
+  });
+
+  it("sets rich runs in bold, italic, both, and links with escaped addresses", () => {
+    const { latex } = generateBody(pkg, resume, {});
+    expect(latex).toContain(
+      String.raw`\rtfield{summary.text}{Builds \textbf{fast}, \textit{careful}\textbf{\textit{ tools}}; see \href{https://notes.example/a\%20b?x=1\&y=2\#top\_1}{notes} and \href{https://log.example/}{\textbf{the log}}.}`,
+    );
+  });
+
+  it("keeps a ? or ! that ends a run from a backtick that begins the next", () => {
+    const quoted = Resume.parse({
+      ...resume,
+      sections: [
+        {
+          id: "summary",
+          kind: "paragraph",
+          role: "summary",
+          title: "Summary",
+          text: [
+            { text: "Really?" },
+            { text: "` and `" },
+            { text: "!", bold: true },
+            { text: "`x" },
+          ],
+        },
+      ],
+    });
+    const { latex } = generateBody(pkg, quoted, {});
+    // A bold run is set in a font of its own, so the backtick after it needs no group.
+    expect(latex).toContain("\\rtfield{summary.text}{Really?{}` and `\\textbf{!}`x}");
+  });
+
+  it("joins the contacts that are there with their separator, then the links", () => {
+    const { latex } = generateBody(pkg, resume, {});
+    const contacts = [
+      String.raw`\href{tel:+15550100}{\rtfield{header.phone}{+1 555 0100}}`,
+      String.raw`\href{mailto:ilse\_m@example.com}{\underline{\rtfield{header.email}{ilse\_m@example.com}}}`,
+      // A link kind with a snippet of its own, then one that falls back to other's.
+      String.raw`Code: \href{https://code.example/ilse}{\rtfield{code.label}{code.example/ilse}}`,
+      String.raw`\href{https://marrow.example/}{\rtfield{site.label}{marrow.example}}`,
+    ];
+    expect(latex).toContain(`${contacts.join(" $|$ ")}\n\\end{center}`);
+    // A field without a snippet is left out even when it is there.
+    const noEmail = packageWith((pkg) => {
+      pkg.snippets.contact = { phone: "{{text}}", location: "{{text}}" };
+    });
+    const located = { ...resume, header: { ...resume.header, location: "Quillford" } };
+    const body = generateBody(noEmail, located, {});
+    expect(body.latex).toContain(
+      String.raw`\rtfield{header.phone}{+1 555 0100} $|$ \rtfield{header.location}{Quillford} $|$ Code:`,
+    );
+    expect(body.texts.has("header.email")).toBe(false);
+  });
+
+  it("gives each contact the address it links to, escaped as a URL, and the location none", () => {
+    const addressed = packageWith((pkg) => {
+      pkg.snippets.contact = {
+        phone: "\\href{{{&href}}}{{{text}}}",
+        email: "\\href{{{&href}}}{{{text}}}",
+        location: "{{#href}}\\href{{{&href}}}{x}{{/href}}{{^href}}no address: {{/href}}{{text}}",
+      };
+    });
+    const header = {
+      ...resume.header,
+      email: " Ilse <ilse@example.com> ",
+      phone: "+1 555 0100 | +44 20 7946 0000",
+      location: "Quillford",
+    };
+    const { latex } = generateBody(addressed, { ...resume, header }, {});
+    expect(latex).toContain(
+      String.raw`\href{tel:+15550100\%7C+442079460000}{\rtfield{header.phone}`,
+    );
+    expect(latex).toContain(
+      String.raw`\href{mailto:Ilse\%20\%3Cilse@example.com\%3E}{\rtfield{header.email}`,
+    );
+    expect(latex).toContain(String.raw`no address: \rtfield{header.location}{Quillford}`);
+  });
+
+  it("percent-encodes what an address would read as its own syntax in a contact field", () => {
+    // A # would begin a fragment, so that the address would be a's; a / would begin a path.
+    const header = { ...resume.header, email: "a#b@example.com", phone: "+1 555/0100" };
+    const { latex } = generateBody(pkg, { ...resume, header }, {});
+    expect(latex).toContain(String.raw`\href{mailto:a\%23b@example.com}`);
+    expect(latex).toContain(String.raw`\href{tel:+1555\%2F0100}`);
+    // And ?, & and %, a % once, since escapeUrl keeps one it finds.
+    const other = { ...resume.header, email: "q?x&y%z@example.com" };
+    expect(generateBody(pkg, { ...resume, header: other }, {}).latex).toContain(
+      String.raw`\href{mailto:q\%3Fx\%26y\%25z@example.com}`,
+    );
+  });
+
+  it("marks every render of a field, and holds each field's text once", () => {
+    const { latex, texts } = generateBody(twice, resume, {});
+    const ids = marked(latex);
+    for (const id of ["header.first", "header.last", "code.label", "site.label"])
+      expect(
+        ids.filter((each) => each === id),
+        id,
+      ).toHaveLength(2);
+    expect(new Set(ids)).toEqual(new Set(texts.keys()));
+    expect(texts.get("code.label")).toBe("code.example/ilse");
+    // The name in the PDF's author as well as on the page, and the links in both lists: here
+    // through {{links}}, whose separator is a comma.
+    expect(latex).toContain(
+      String.raw`\hypersetup{pdfauthor={\rtfield{header.first}{Ilse} \rtfield{header.last}{Marrow}}}`,
+    );
+    expect(latex).toContain(
+      String.raw`Code: \href{https://code.example/ilse}{\rtfield{code.label}{code.example/ilse}}, \href{https://marrow.example/}{\rtfield{site.label}{marrow.example}}`,
+    );
+  });
+
+  it("leaves a link with neither a label nor an address out of both lists", () => {
+    const withLink = (link: { label: string; href: string }) => ({
+      ...resume,
+      header: {
+        ...resume.header,
+        links: [...resume.header.links, { id: "new", kind: "other" as const, ...link }],
+      },
+    });
+    for (const each of [pkg, twice]) {
+      const without = generateBody(each, resume, {});
+      const fresh = generateBody(each, withLink({ label: "", href: " " }), {});
+      expect(fresh.latex).toBe(without.latex);
+      expect(fresh.texts).toEqual(without.texts);
+    }
+    // A link with an address stays while its label is empty, as it does the other way round.
+    const addressOnly = generateBody(
+      pkg,
+      withLink({ label: "", href: "https://new.example/" }),
+      {},
+    );
+    expect(addressOnly.latex).toContain(String.raw` $|$ \href{https://new.example/}{}`);
+    const labelOnly = generateBody(pkg, withLink({ label: "New", href: "" }), {});
+    expect(labelOnly.latex).toContain(String.raw` $|$ \href{}{\rtfield{new.label}{New}}`);
+  });
+
+  it("chooses variants and separators by role, and the default for a role without its own", () => {
+    const { latex } = generateBody(pkg, resume, {});
+    expect(latex).toContain("\\end{itemize}\n\n\\medskip\n\\textbf{\\rtfield{larch.title}");
+    expect(latex).toContain("\\end{itemize}\n\n\\smallskip\n\\textbf{\\rtfield{quire.title}");
+    expect(latex).toContain(String.raw`\textbf{\rtfield{quire.title}{Quire}} \hfill \rtfield`);
+  });
+
+  it("sets raw slots escaped and without markers, adding no field", () => {
+    const raw = packageWith((pkg) => {
+      pkg.snippets.labelledItem = "\\textbf{{{&label}}}: {{&text}}\\par";
+      pkg.snippets.entry = "{{&title}} ({{&dates}})";
+    });
+    const tricky = Resume.parse({
+      ...resume,
+      sections: [
+        {
+          id: "skills",
+          kind: "labelled",
+          role: "skills",
+          title: "Skills",
+          items: [{ id: "langs", label: "C & C#", text: [{ text: "50%", bold: true }] }],
+        },
+        {
+          id: "work",
+          kind: "entries",
+          role: "experience",
+          title: "Work",
+          entries: [{ id: "x", title: "R&D [lab]*", dates: { start: "2020" }, bullets: [] }],
+        },
+      ],
+    });
+    const { latex, texts } = generateBody(raw, tricky, {});
+    expect(latex).toContain(String.raw`\textbf{C \& C\#}: \textbf{50\%}\par`);
+    expect(latex).toContain(String.raw`R\&D {[}lab{]}{*} (2020)`);
+    expect([...texts.keys()].filter((id) => /^(langs|x)\./.test(id))).toEqual([]);
+  });
+
+  it("refuses a body past MAX_BODY, quickly", () => {
+    const repeated = packageWith((pkg) => {
+      pkg.snippets.document = `\\begin{document}\n${"{{sections}}\n".repeat(100_000)}\\end{document}`;
+    });
+    const started = performance.now();
+    const error = thrown(() => generateBody(repeated, resume, {}));
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(error).toBeInstanceOf(GenerateError);
+    expect(error.message).toContain("MAX_BODY");
+    expect(error.message).toContain(String(MAX_BODY));
+  });
+
+  it("stops a package that repeats lists which render nothing, quickly", () => {
+    // No snippet or separator here writes a character, and the controls write a line each, so
+    // only the steps of the walk can reach the limit: billions of them, without it.
+    const hollow = packageWith((pkg) => {
+      pkg.snippets.document = "{{sections}}".repeat(1000);
+      pkg.snippets.section = {
+        entries: "{{entries}}".repeat(1000),
+        list: "",
+        labelled: "",
+        paragraph: "",
+      };
+      pkg.snippets.entry = "{{bullets}}".repeat(1000);
+      pkg.snippets.bullet = "";
+      pkg.snippets.separators = { sections: "", entries: "", bullets: "" };
+    });
+    const started = performance.now();
+    const error = thrown(() => generateBody(hollow, resume, {}));
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(error).toBeInstanceOf(GenerateError);
+    expect(error.message).toContain("MAX_BODY");
+  });
+
+  it("renders blocks nested deeper than a call stack goes", () => {
+    const depth = 50_000;
+    const deep = packageWith((pkg) => {
+      pkg.snippets.bullet = `\\item ${"{{#text}}".repeat(depth)}{{text}}${"{{/text}}".repeat(depth)}`;
+    });
+    const { latex, texts } = generateBody(deep, resume, {});
+    expect(latex).toContain(String.raw`\item \rtfield{galley_1.text}{A page editor}`);
+    expect(texts.get("fennel-2.text")).toBe("Ran the release train");
+  });
+
+  it("decides a field's presence once, so each block that tests a long field costs a step", () => {
+    const tested = packageWith((pkg) => {
+      pkg.snippets.section.paragraph = "{{#text}}{{/text}}".repeat(200_000);
+    });
+    const long = withSummary(20_000);
+    const started = performance.now();
+    try {
+      generateBody(tested, long, {});
+    } catch (error) {
+      if (!(error instanceof GenerateError)) throw error;
+    }
+    expect(performance.now() - started).toBeLessThan(300);
+  });
+
+  it("charges each render of a field its length, so repeating a long field stops", () => {
+    const repeated = packageWith((pkg) => {
+      pkg.snippets.section.paragraph = "{{text}}".repeat(1000);
+    });
+    const error = thrown(() => generateBody(repeated, withSummary(2_000), {}));
+    expect(error).toBeInstanceOf(GenerateError);
+    expect(error.message).toContain("MAX_BODY");
+  });
+});
+
+/** The resume with only a summary, `length` characters of words, a run for each word. */
+function withSummary(length: number): Resume {
+  const words = "Builds careful tools for typesetting. ".repeat(Math.ceil(length / 38));
+  const text = words.slice(0, length).split(/(?<= )/);
+  return Resume.parse({
+    ...resume,
+    sections: [
+      {
+        id: "summary",
+        kind: "paragraph",
+        role: "summary",
+        title: "Summary",
+        text: text.map((word) => ({ text: word })),
+      },
+    ],
+  });
+}
+
+describe("formatName", () => {
+  /** The package with no format-bound control, and a preamble of its own. */
+  const unbound = (preamble: string) =>
+    packageWith((pkg) => {
+      pkg.preamble = preamble;
+      pkg.controls.fontSize = { default: 11, apply: "" };
+    });
+
+  it("is the id and a hash of what is dumped, with a control format-bound or not", () => {
+    const name = formatName(unbound("\\documentclass[11pt]{article}"), {});
+    expect(name).toMatch(/^plain-[0-9a-f]{8}$/);
+    expect(formatName(unbound("\\documentclass[11pt]{article}"), { fontSize: 12 })).toBe(name);
+    expect(formatName(pkg, {})).toMatch(/^plain-[0-9a-f]{8}$/);
+    expect(generateFormat(pkg, {}).name).toBe(formatName(pkg, {}));
+  });
+
+  it("changes with a format-bound value the preamble uses, and not with anything else", () => {
+    const name = formatName(pkg, {});
+    expect(formatName(pkg, { fontSize: 11 })).toBe(name);
+    expect(formatName(pkg, { margins: 0.5, accent: "#000000", dateFormat: "yyyy" })).toBe(name);
+    const larger = formatName(pkg, { fontSize: 12 });
+    expect(larger).not.toBe(name);
+    expect(formatName(pkg, { fontSize: 10.5 })).not.toBe(larger);
+    // A format-bound control whose slot the preamble does not use changes nothing dumped.
+    const unused = packageWith((pkg) => {
+      pkg.controls.margins = {
+        default: 0.8,
+        apply: "\\geometry{margin={{value}}in}",
+        format: true,
+      };
+    });
+    expect(formatName(unused, { margins: 0.5 })).toBe(formatName(unused, { margins: 0.6 }));
+  });
+
+  it("differs between packages of one id that dump different preambles or files", () => {
+    const name = formatName(unbound("\\documentclass[11pt]{article}"), {});
+    expect(formatName(unbound("\\documentclass[12pt]{article}"), {})).not.toBe(name);
+    const appended = packageWith((pkg) => {
+      pkg.preamble += "\n\\setlength{\\parskip}{6pt}";
+    });
+    expect(formatName(appended, {})).not.toBe(formatName(pkg, {}));
+    const refiled = packageWith((pkg) => {
+      pkg.files = { "rtplain.sty": "\\ProvidesPackage{rtplain}\n\\newcommand{\\plainmark}{x}\n" };
+    });
+    expect(formatName(refiled, {})).not.toBe(formatName(pkg, {}));
+    // The same files, listed in another order, are the same dump.
+    const listed = (files: Record<string, string>) =>
+      packageWith((pkg) => {
+        pkg.files = files;
+      });
+    expect(formatName(listed({ "a.sty": "a", "b.sty": "b" }), {})).toBe(
+      formatName(listed({ "b.sty": "b", "a.sty": "a" }), {}),
+    );
+  });
+
+  it("gives an id shaped like another package's format name a suffix of its own", () => {
+    const taken = formatName(pkg, {});
+    const lookalike = packageWith((pkg) => {
+      pkg.id = taken;
+    });
+    expect(formatName(lookalike, {})).toMatch(new RegExp(`^${taken}-[0-9a-f]{8}$`));
+  });
+
+  it("fits the session's rule for a 64-character id", () => {
+    const long = packageWith((pkg) => {
+      pkg.id = "a".repeat(64);
+    });
+    const name = formatName(long, {});
+    expect(name).toHaveLength(64);
+    expect(name.startsWith(`${"a".repeat(55)}-`)).toBe(true);
+    expect(isFormatName(name)).toBe(true);
+  });
+});
+
+describe("generateFormat", () => {
+  it("fills the preamble's slots, appends the prelude and keeps the package's files", () => {
+    const format = generateFormat(pkg, { fontSize: 10.5 });
+    expect(format.name).toBe(formatName(pkg, { fontSize: 10.5 }));
+    expect(format.preamble.startsWith("\\documentclass[10.5pt,dvipdfmx]{article}\n")).toBe(true);
+    const last = "\\renewcommand{\\labelitemi}{$\\bullet$}";
+    expect(format.preamble.endsWith(`\n${last}\n${PRELUDE}`)).toBe(true);
+    expect(format.files).toEqual(input.files);
+  });
+});
+
+/** The glyph texts the aligner accepts for each spelling of a ligature in a field's text. */
+const SPELLINGS: Record<string, string[]> = {
+  "--": ["--", "\u2013"],
+  "---": ["---", "\u2014"],
+  "``": ["``", "\u201c"],
+  "''": ["''", "\u201d"],
+  "`": ["`", "\u2018"],
+  "'": ["'", "\u2019"],
+};
+
+/** The specials and the three OT1 characters, as a user might type them into a bullet. */
+const SPECIALS = "Specials \\ { } $ & # _ % < > | in a row";
+
+/**
+ * Bullets, by the last part of their ids, of what pdfTeX sets no glyph for, sets otherwise than
+ * the model's text has it, or would read as something else.
+ */
+const TRICKY = {
+  // Characters LaTeX has no definition for, or the generator drops, before words the page aligns.
+  emoji: "Led \u{1f680}\u{1f680} launch of the tool",
+  cyrillic: "Speaks \u{420}\u{443}\u{441}\u{441}\u{43a}\u{438}\u{439} and English well",
+  hidden: "zero\u{200b}\u{200b}\u{200b}\u{200b}width",
+  // Characters LaTeX's UTF-8 input defines only for T1, which OT1 has no glyph for.
+  t1: "\u{ab} Zarz\u{105}dzanie \u{110} \u{201e}x\u{201c} \u{bb}",
+  // A ? before a backtick, which OT1 would set as its inverted question mark; and two backticks
+  // and two quotes, which OT1 sets as its double quotes.
+  quotes: "Rust's `?` operator",
+  doubled: "``x''",
+  // An accent typed as a combining mark, which LaTeX has no definition for on its own.
+  nfd: "Jose\u{301}",
+  // A letter LaTeX has no definition for, as a keyboard composes it and decomposed, which sets
+  // its base letter.
+  vietnamese: "Nguy\u{1ec5}n",
+  decomposed: "Nguye\u{302}\u{303}n",
+  // Brackets and a star, which raw text right after \\ or \item would give to the command.
+  brackets: "[3 people] led a team*",
+};
+
+/**
+ * The fields whose glyphs cannot all align with the model's text yet, which the round trip does
+ * not count: OT1 sets `ą` as its base letter, which the aligner finds a few letters on; `é` as an
+ * accent and a letter, which it does not pair; and `ễ` as its base letter alone, which it does not
+ * pair with the composed letter either (item 16).
+ */
+const MISALIGNED = new Set(["tricky-t1.text", "tricky-nfd.text", "tricky-vietnamese.text"]);
+
+/**
+ * The resume with every character the generator escapes or drops, in several contexts, and with
+ * contacts whose addresses need encoding. `dollar` says whether the specials keep their dollar
+ * sign, which LaTeX sets from TS1 (see its test), so the page that is drawn is compiled without
+ * it.
+ */
+function specialResume(dollar: boolean): Resume {
+  const special = Resume.parse(structuredClone(resume));
+  const [summary, work, , , awards] = special.sections;
+  if (summary?.kind !== "paragraph" || work?.kind !== "entries" || awards?.kind !== "list")
+    throw new Error("the resume's sections moved");
+  summary.text = [
+    // A tab, a non-breaking space, a zero-width space, and an emoji LaTeX has no definition for.
+    { text: "Tab\there, non\u00a0breaking, zero\u200bwidth and ok \u{1f642} done; " },
+    { text: "50% & more", bold: true },
+    { text: " and " },
+    { text: "a_b {c}", italic: true },
+    { text: "; see " },
+    { text: "notes", href: "https://notes.example/a b?x=1&y=2#top_1" },
+    { text: "." },
+  ];
+  const [first, second] = work.entries[0]?.bullets ?? [];
+  const [prize] = awards.items;
+  if (!first || !second || !prize) throw new Error("the resume's bullets and items moved");
+  first.text = [{ text: dollar ? SPECIALS : SPECIALS.replace("$ ", "") }];
+  second.text = [
+    { text: "\u201cCurly\u201d and \u2018single\u2019, an en dash \u2013 and -- two" },
+  ];
+  prize.text = [{ text: "x^y~z" }];
+  for (const [key, text] of Object.entries(TRICKY))
+    work.entries[0]?.bullets.push({ id: `tricky-${key}`, text: [{ text }] });
+  // A display name and a second number, which the addresses built from them percent-encode, and
+  // a thin space, which LaTeX has no definition for.
+  special.header.email = "Ilse <ilse@example.com>";
+  special.header.phone = "+1 555 0100 | +44 20 7946 0000";
+  special.header.location = "Paris\u{2009}France";
+  return special;
+}
+
+/**
+ * The package with what the round trip's page cannot also hold: underscore.sty, which makes `_`
+ * active; the name and the section titles in \MakeUppercase; a projects bullet in a tabular cell,
+ * where TeX cannot break a line; and an education bullet raw, right after \\.
+ */
+const quirks = packageWith((pkg) => {
+  pkg.id = "quirks";
+  pkg.preamble += "\n\\usepackage{underscore}";
+  pkg.snippets.header =
+    "\\begin{center}\n{\\Large\\MakeUppercase{{{first}} {{last}}}}\n\\end{center}";
+  pkg.snippets.section.entries = "\\section*{\\MakeUppercase{{{title}}}}\n{{entries}}";
+  pkg.snippets.bullet = {
+    default: "\\item {{text}}",
+    projects: "\\item \\begin{tabular}{l}{{text}}\\end{tabular}",
+    education: "\\item x\\\\{{&text}}",
+  };
+});
+
+/** An invented resume with a bullet for each of the quirks package's bullet snippets. */
+const quirksResume = Resume.parse({
+  version: 1,
+  header: { name: { first: "Ilse", last: "Marrow" }, links: [] },
+  sections: [
+    {
+      id: "work",
+      kind: "entries",
+      role: "experience",
+      title: "Experience",
+      entries: [
+        {
+          id: "fennel",
+          title: "Engineer",
+          bullets: [{ id: "b_0", text: [{ text: "Cut build times" }] }],
+        },
+      ],
+    },
+    {
+      id: "projects",
+      kind: "entries",
+      role: "projects",
+      title: "Projects",
+      entries: [
+        {
+          id: "galley",
+          title: "Galley",
+          bullets: [{ id: "cell", text: [{ text: "Set in a cell" }] }],
+        },
+      ],
+    },
+    {
+      id: "study",
+      kind: "entries",
+      role: "education",
+      title: "Education",
+      entries: [
+        {
+          id: "quill",
+          title: "Quill College",
+          bullets: [{ id: "raw", text: [{ text: TRICKY.brackets }] }],
+        },
+      ],
+    },
+  ],
+});
+
+/** The keys of the paragraph special, in the order the prelude writes them. */
+const PARAGRAPH_KEYS = [
+  "hsize",
+  "leftskip",
+  "rightskip",
+  "parfillskip",
+  "pretolerance",
+  "tolerance",
+  "emergencystretch",
+  "hangindent",
+  "hangafter",
+  "parshape",
+  "inner",
+  "shape",
+];
+
+/** A paragraph special's field id and its parameters, in order. */
+function paragraphOf(text: string) {
+  const rest = text.slice(PARAGRAPH_MARKER.length);
+  const colon = rest.indexOf(":");
+  const pairs = rest
+    .slice(colon + 1)
+    .split(";")
+    .map((pair) => pair.split("=") as [string, string]);
+  return { id: rest.slice(0, colon), keys: pairs.map(([key]) => key), params: new Map(pairs) };
+}
+
+// Needs `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
+describe.skipIf(!engineAvailable())("the generated LaTeX through the engine", () => {
+  let session: EngineSession;
+  let fonts: FontLibrary;
+  let body: GeneratedBody;
+  let compiled: CompileResult;
+  let dollar: CompileResult;
+  let drawn: DrawnPage;
+  let items: PageItem[];
+  beforeAll(async () => {
+    session = await startNodeSession();
+    const format = generateFormat(pkg, {});
+    const dumped = session.dump("pdftex", format.name, format.preamble, format.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    body = generateBody(pkg, specialResume(false), {});
+    compiled = session.compile("pdftex", format.name, body.latex, { job: "generated" });
+    if (!compiled.output) throw new Error(compiled.error);
+    const withDollar = generateBody(pkg, specialResume(true), {}).latex;
+    dollar = session.compile("pdftex", format.name, withDollar, { job: "dollar" });
+    if (!dollar.output) throw new Error(dollar.error);
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+      readFileSync(join(ENGINE_DIR, "files", path)),
+    );
+    drawn = await drawPage(compiled.output, fonts, body.texts);
+    items = parseDvi(compiled.output, () => undefined).pages[0]?.items ?? [];
+  }, 60_000);
+
+  it("compiles to one page, with every font drawn and no error in the log", () => {
+    expect(compiled.ok).toBe(true);
+    expect(compiled.pages).toBe(1);
+    expect(drawn.pageCount).toBe(1);
+    expect(drawn.missingFonts).toEqual(new Map());
+    expect(compiled.log).not.toMatch(/^! /m);
+    expect(compiled.log).not.toContain("Undefined control sequence");
+    expect(compiled.log).not.toContain("not set up for use with LaTeX");
+    // The emoji was left out by the prelude, with a warning, rather than failing the compile.
+    expect(compiled.log).toContain("(U+1F642)");
+  });
+
+  it("finds every field on the page, each with glyphs", () => {
+    const begun = items.flatMap((item) =>
+      item.kind === "special" && item.text.startsWith(MARKER_BEGIN)
+        ? [item.text.slice(MARKER_BEGIN.length)]
+        : [],
+    );
+    expect([...begun].sort()).toEqual([...body.texts.keys()].sort());
+    for (const id of body.texts.keys())
+      expect(drawn.fields.get(id)?.glyphs.length, id).toBeGreaterThan(0);
+  });
+
+  it("typesets or drops every character, each glyph matching its own character", () => {
+    let misaligned = 0;
+    for (const field of drawn.fields.values()) {
+      const text = body.texts.get(field.id) ?? "";
+      if (MISALIGNED.has(field.id)) {
+        misaligned += alignGlyphs(field, text);
+        continue;
+      }
+      expect(alignGlyphs(field, text), field.id).toBe(0);
+      for (const glyph of field.glyphs) {
+        if (glyph.inserted) {
+          expect(glyph.text).toBe("-");
+          continue;
+        }
+        if (glyph.text === undefined) continue;
+        const spellings = SPELLINGS[glyph.text] ?? [glyph.text];
+        expect(
+          spellings.some((spelling) => text.startsWith(spelling, glyph.offset)),
+          `${field.id} at ${glyph.offset}: glyph "${glyph.text}"`,
+        ).toBe(true);
+      }
+    }
+    expect(drawn.unmatched).toBe(misaligned);
+  });
+
+  it("leaves out, with a warning, a character the UTF-8 input defines only for T1", () => {
+    // In OT1, which has no glyph for them, LaTeX would stop with an error instead.
+    for (const command of ["\\guillemetleft", "\\k", "\\DJ", "\\quotedblbase", "\\guillemetright"])
+      expect(compiled.log).toContain(`Command ${command} unavailable in encoding OT1;`);
+    // The symbols set nothing, and the letter with the ogonek its base letter.
+    const glyphs = drawn.fields.get("tricky-t1.text")?.glyphs ?? [];
+    expect(glyphs.map((glyph) => glyph.text).join("")).toBe("Zarzadzaniex``");
+  });
+
+  it("aligns the words after a run of characters pdfTeX drops, however long", () => {
+    for (const key of ["emoji", "cyrillic", "hidden"] as const) {
+      const field = drawn.fields.get(`tricky-${key}.text`);
+      expect(field && alignGlyphs(field, TRICKY[key]), key).toBe(0);
+    }
+    const emoji = drawn.fields.get("tricky-emoji.text")?.glyphs ?? [];
+    expect(emoji[3]?.offset).toBe(TRICKY.emoji.indexOf("launch"));
+  });
+
+  it("sets a thin space as a space between the words", () => {
+    const boxes = drawn.glyphs.filter((box) => box.field === "header.location");
+    const s = boxes.find((box) => box.offset === "Paris".length - 1);
+    const f = boxes.find((box) => box.offset === "Paris ".length);
+    if (!s || !f) throw new Error("the location's glyphs moved");
+    expect(f.left - s.right).toBeGreaterThan(1);
+  });
+
+  it("keeps a ? before a backtick from OT1's ligature, and composes a decomposed accent", () => {
+    // Quote left, question mark, quote left: no inverted question mark, which reads as "?`".
+    const quotes = drawn.fields.get("tricky-quotes.text")?.glyphs ?? [];
+    expect(quotes.map((glyph) => glyph.text)).toEqual([..."Rust's`?`operator"]);
+    // The combining acute reaches LaTeX composed with its e, so nothing is left out: OT1 sets it
+    // as the accent, which has no text for the aligner yet, over the e.
+    expect(compiled.log).not.toContain("U+0301");
+    const nfd = drawn.fields.get("tricky-nfd.text")?.glyphs ?? [];
+    expect(nfd.map((glyph) => glyph.text)).toEqual(["J", "o", "s", undefined, "e"]);
+  });
+
+  it("sets two backticks and two quotes as OT1's double quotes", () => {
+    const glyphs = drawn.fields.get("tricky-doubled.text")?.glyphs ?? [];
+    expect(glyphs.map((glyph) => glyph.text)).toEqual(["``", "x", "''"]);
+    const codes = glyphs.map((glyph) => {
+      const item = items[glyph.item];
+      return item?.kind === "glyph" ? item.code : undefined;
+    });
+    // OT1's quotedblleft and quotedblright, where ASCII has \ and ".
+    expect(codes).toEqual([92, 120, 34]);
+  });
+
+  it("sets the base letter of a letter LaTeX has no definition for, typed either way", () => {
+    // ễ reaches LaTeX as an e and two combining marks, which the prelude leaves out.
+    for (const key of ["vietnamese", "decomposed"]) {
+      const glyphs = drawn.fields.get(`tricky-${key}.text`)?.glyphs ?? [];
+      expect(glyphs.map((glyph) => glyph.text).join(""), key).toBe("Nguyen");
+    }
+    expect(compiled.log).toMatch(/\(U\+0302\)\s+is left out/);
+    expect(compiled.log).toMatch(/\(U\+0303\)\s+is left out/);
+    expect(compiled.log).not.toContain("U+1EC5");
+  });
+
+  it("sets a caret and a tilde as OT1's accent glyphs, which read as the characters", () => {
+    // OT1 has no ASCII caret or tilde, so LaTeX sets \textasciicircum and \textasciitilde as the
+    // circumflex and tilde accents, codes 94 and 126, which `glyphs.ts` reads as the characters.
+    const glyphs = drawn.fields.get("prize.text")?.glyphs ?? [];
+    expect(glyphs.map((glyph) => glyph.text)).toEqual(["x", "^", "y", "~", "z"]);
+    const codes = glyphs
+      .filter((glyph) => glyph.text === "^" || glyph.text === "~")
+      .map((glyph) => {
+        const item = items[glyph.item];
+        return item?.kind === "glyph" ? item.code : undefined;
+      });
+    expect(codes).toEqual([94, 126]);
+  });
+
+  it("sets an underscore as the rule OT1 draws for it", () => {
+    const at = (text: string) =>
+      items.findIndex((item) => item.kind === "special" && item.text === text);
+    const begin = at(`${MARKER_BEGIN}fennel-1.text`);
+    const end = at(`${MARKER_END}fennel-1.text`);
+    expect(begin).toBeGreaterThanOrEqual(0);
+    expect(items.slice(begin, end).some((item) => item.kind === "rule")).toBe(true);
+  });
+
+  it("sets a dollar sign from TS1, which the page cannot draw yet", () => {
+    // LaTeX 2023 sets \textdollar, like its itemize bullet, from the TS1 encoding even in an OT1
+    // document, since OT1 italic has a pound sign where the dollar goes. The engine tree has no
+    // Type 1 font for TS1, and `tfm.ts` refuses its TFMs, which are padded past the length their
+    // header gives, so the page that is drawn goes without it; here it is found in the DVI.
+    expect(dollar.log).not.toMatch(/^! /m);
+    const doc = parseDvi(dollar.output as Uint8Array, () => undefined);
+    const page = doc.pages[0];
+    if (!page) throw new Error("no page");
+    const glyphs = collectFields(page, () => undefined).get("fennel-1.text")?.glyphs ?? [];
+    const ts1 = glyphs.flatMap((glyph) => {
+      const item = page.items[glyph.item];
+      const font = item?.kind === "glyph" ? doc.fonts.get(item.font)?.name : undefined;
+      return item?.kind === "glyph" && font?.startsWith("tc") ? [`${font} ${item.code}`] : [];
+    });
+    expect(ts1).toEqual(["tcrm1095 36"]);
+  });
+
+  it("writes each field's paragraph right after its begin marker", () => {
+    let fields = 0;
+    items.forEach((item, index) => {
+      if (item.kind !== "special" || !item.text.startsWith(MARKER_BEGIN)) return;
+      fields++;
+      const id = item.text.slice(MARKER_BEGIN.length);
+      const next = items[index + 1];
+      expect(next?.kind === "special" && next.text.startsWith(PARAGRAPH_MARKER), id).toBe(true);
+      if (next?.kind !== "special") return;
+      const paragraph = paragraphOf(next.text);
+      expect(paragraph.id).toBe(id);
+      expect(paragraph.keys, id).toEqual(PARAGRAPH_KEYS);
+      expect(paragraph.params.get("hsize"), id).toMatch(/^\d+(\.\d+)?pt$/);
+      expect(paragraph.params.get("parfillskip"), id).toMatch(/^[\d.]+pt( plus [\d.]+fil+)?/);
+      expect(paragraph.params.get("tolerance"), id).toMatch(/^-?\d+$/);
+      expect(paragraph.params.get("inner"), id).toMatch(/^[01]$/);
+    });
+    expect(fields).toBe(body.texts.size);
+
+    const paragraph = (id: string) => {
+      const item = items.find(
+        (item) => item.kind === "special" && item.text.startsWith(`${PARAGRAPH_MARKER}${id}:`),
+      );
+      return item?.kind === "special" ? paragraphOf(item.text).params : new Map<string, string>();
+    };
+    // A bullet sits in the itemize's one-line shape, indented by the list's margin.
+    const bullet = paragraph("fennel-1.text");
+    expect(bullet.get("parshape")).toBe("1");
+    expect(bullet.get("inner")).toBe("0");
+    const [indent, length, ...more] = (bullet.get("shape") ?? "").split(/[,|]/);
+    expect(more).toEqual([]);
+    expect(Number.parseFloat(indent ?? "")).toBeGreaterThan(0);
+    expect(Number.parseFloat(length ?? "")).toBeGreaterThan(0);
+    // A paragraph outside any list has no shape.
+    expect(paragraph("summary.text").get("parshape")).toBe("0");
+    expect(paragraph("summary.text").get("shape")).toBe("");
+    // The email is set in \underline's box, restricted horizontal mode, where TeX cannot break.
+    expect(paragraph("header.email").get("inner")).toBe("1");
+  });
+
+  it("links through hyperref with the addresses as they were typed, encoded", () => {
+    const addresses = items.flatMap((item) => {
+      if (item.kind !== "special" || !item.text.startsWith("pdf:bann")) return [];
+      const uri = /\/URI\(((?:\\.|[^\\)])*)\)/.exec(item.text);
+      return uri ? [uri[1]] : [];
+    });
+    expect(addresses).toContain("https://notes.example/a%20b?x=1&y=2#top_1");
+    // A contact links through the address the generator builds from it, percent-encoded.
+    expect(addresses).toContain("mailto:Ilse%20%3Cilse@example.com%3E");
+    expect(addresses).toContain("tel:+15550100%7C+442079460000");
+    expect(addresses).toContain("https://code.example/ilse");
+  });
+
+  describe("with a package that sets the name in the PDF's author, and the links twice", () => {
+    let result: CompileResult;
+    let page: DrawnPage;
+    let pageItems: PageItem[];
+    beforeAll(async () => {
+      // The header is all that differs, so the format is the one the page above compiled from.
+      const twiceBody = generateBody(twice, resume, {});
+      result = session.compile("pdftex", generateFormat(twice, {}).name, twiceBody.latex, {
+        job: "twice",
+      });
+      if (!result.output) throw new Error(result.error);
+      page = await drawPage(result.output, fonts, twiceBody.texts);
+      pageItems = parseDvi(result.output, () => undefined).pages[0]?.items ?? [];
+    }, 60_000);
+
+    /** Where the page begins a copy of a field. */
+    const begins = (id: string) =>
+      pageItems.flatMap((item, index) =>
+        item.kind === "special" && item.text === `${MARKER_BEGIN}${id}` ? [index] : [],
+      );
+
+    it("finds the name at the copy the page shows, after one in the author with no markers", () => {
+      expect(result.log).not.toMatch(/^! /m);
+      expect(begins("header.first")).toHaveLength(1);
+      const field = page.fields.get("header.first");
+      expect(field?.glyphs.map((glyph) => glyph.text).join("")).toBe("Ilse");
+      expect(field && alignGlyphs(field, "Ilse")).toBe(0);
+      expect(page.unmatched).toBe(0);
+    });
+
+    it("finds a link set twice once, with its first copy's glyphs", () => {
+      const [first = -1, second = -1, ...more] = begins("code.label");
+      expect(more).toEqual([]);
+      expect(second).toBeGreaterThan(first);
+      const glyphs = page.fields.get("code.label")?.glyphs ?? [];
+      expect(glyphs).toHaveLength("code.example/ilse".length);
+      expect(glyphs.every((glyph) => glyph.item > first && glyph.item < second)).toBe(true);
+    });
+  });
+
+  describe("with a package that uppercases, makes _ active and sets a field in a cell", () => {
+    let quirked: GeneratedBody;
+    let result: CompileResult;
+    let page: DrawnPage;
+    let specials: string[];
+    let glyphCodes: number[];
+    beforeAll(async () => {
+      const format = generateFormat(quirks, {});
+      const dumped = session.dump("pdftex", format.name, format.preamble, format.files);
+      if (!dumped.ok) throw new Error(dumped.error);
+      quirked = generateBody(quirks, quirksResume, {});
+      result = session.compile("pdftex", format.name, quirked.latex, { job: "quirks" });
+      if (!result.output) throw new Error(result.error);
+      page = await drawPage(result.output, fonts, quirked.texts);
+      const pageItems = parseDvi(result.output, () => undefined).pages[0]?.items ?? [];
+      specials = pageItems.flatMap((item) => (item.kind === "special" ? [item.text] : []));
+      glyphCodes = pageItems.flatMap((item) => (item.kind === "glyph" ? [item.code] : []));
+    }, 60_000);
+
+    it("compiles, and finds a field whose id holds a character underscore.sty makes active", () => {
+      expect(result.ok).toBe(true);
+      expect(result.log).not.toMatch(/^! /m);
+      // The id reaches the marker as its characters, not as what the active _ expands to.
+      expect(specials).toContain(`${MARKER_BEGIN}b_0.text`);
+      const field = page.fields.get("b_0.text");
+      expect(field && alignGlyphs(field, quirked.texts.get("b_0.text") ?? "")).toBe(0);
+    });
+
+    it("finds a field set in \\MakeUppercase, whose glyphs are the uppercased letters", () => {
+      // The case change reaches the markers, which the page reads whatever their case.
+      expect(specials).toContain("RT:B:WORK.TITLE");
+      for (const id of [
+        "header.first",
+        "header.last",
+        "work.title",
+        "projects.title",
+        "study.title",
+      ]) {
+        const glyphs = page.fields.get(id)?.glyphs ?? [];
+        const text = quirked.texts.get(id) ?? "";
+        expect(glyphs.map((glyph) => glyph.text).join(""), id).toBe(text.toUpperCase());
+      }
+    });
+
+    it("says whether TeX can break a field's lines", () => {
+      const inner = (id: string) => {
+        const special = specials.find((text) => text.startsWith(`${PARAGRAPH_MARKER}${id}:`));
+        return special && paragraphOf(special).params.get("inner");
+      };
+      // A tabular cell is restricted horizontal mode, where TeX never breaks a line.
+      expect(inner("cell.text")).toBe("1");
+      expect(inner("b_0.text")).toBe("0");
+    });
+
+    it("sets brackets and a star right after \\\\ as text, never as the command's argument", () => {
+      // The raw bullet has no field, so its glyphs are read off the page, where OT1 codes these
+      // characters as ASCII does.
+      expect(String.fromCharCode(...glyphCodes)).toContain("x[3people]ledateam*");
+    });
+  });
+});
