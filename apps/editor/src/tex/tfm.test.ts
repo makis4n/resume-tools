@@ -72,4 +72,12 @@ describe("scaleTfm", () => {
     const m = scaleTfm(parseTfm(fixture("cmr10.tfm")), 655360);
     expect(m.widths[200]).toBe(0);
   });
+
+  it("scales each character's italic correction, which an upright font mostly leaves at zero", () => {
+    // cmr10.pl gives f (CHARIC R 0.077779) and o none; cmti10 gives its o one.
+    const upright = scaleTfm(parseTfm(fixture("cmr10.tfm")), 655360);
+    expect((upright.italics[102] ?? 0) / 65536).toBeCloseTo(0.77779, 4);
+    expect(upright.italics[111]).toBe(0);
+    expect(scaleTfm(parseTfm(fixture("cmti10.tfm")), 655360).italics[111]).toBeGreaterThan(0);
+  });
 });

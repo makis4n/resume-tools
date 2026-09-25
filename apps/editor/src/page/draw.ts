@@ -39,6 +39,13 @@ export interface GlyphBox {
   top: number;
   right: number;
   bottom: number;
+  /**
+   * The TeX font the glyph is drawn from and its size in TeX points, as the SVG's `data-font` and
+   * `data-size` give them: a rich field's runs are set in several fonts, which the overlay reads
+   * from the glyphs of each (item 10).
+   */
+  font: string;
+  size: number;
   /** The field the glyph belongs to and its character offset there, if it is in one. */
   field?: string;
   offset?: number;
@@ -270,6 +277,8 @@ function glyphBoxes(
       top: y - yMax * s,
       right: x + xMax * s,
       bottom: y - yMin * s,
+      font: font.name,
+      size: font.scale * pt,
       ...fieldOf.get(index),
     });
   });

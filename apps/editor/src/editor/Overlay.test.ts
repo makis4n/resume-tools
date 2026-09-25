@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Resume } from "@resume-tools/resume-model";
+import type { Resume, RichText, Run } from "@resume-tools/resume-model";
+import { getSchema } from "@tiptap/core";
+import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
@@ -15,11 +17,14 @@ import { defaultControls } from "../templates/package";
 import { PRELUDE } from "../templates/prelude";
 import { glyphOf, glyphText, textToCode } from "../tex/glyphs";
 import {
+  type Node as BreakNode,
+  type BreakParams,
   type Face,
   FIL_GLUE,
   type Glue,
   LATEX_PARAMS,
   paragraphNodes,
+  richParagraphNodes,
   ZERO_GLUE,
 } from "../tex/linebreak";
 import { parseTfm, scaleTfm } from "../tex/tfm";
@@ -34,12 +39,15 @@ import {
   lineStartOf,
   placementFor,
   type Row,
+  richRows,
   rowOf,
   type Setting,
   settingFor,
   shouldClose,
   spaceWidths,
+  variantFontsOf,
 } from "./Overlay";
+import { breakRuns, docToRuns, RICH_SCHEMA, runsToDoc, type Variant } from "./rich";
 
 const fixture = (name: string) =>
   new Uint8Array(readFileSync(new URL(`../tex/fixtures/${name}`, import.meta.url)));
@@ -208,6 +216,68 @@ describe("layoutRows", () => {
       expect(ms).toBeLessThan(20 * alone);
       expect(ms).toBeLessThan(100);
     }
+  });
+});
+
+describe("richRows", () => {
+  const params = breakParams(BULLET_PARAGRAPH);
+  const codes = textToCode(parseType1(fixture("cmr10.pfb")).encoding);
+  const faceOf = (name: string): Face => {
+    const tfm = parseTfm(fixture(`${name}.tfm`));
+    return { tfm, metrics: scaleTfm(tfm, 10 * PT), codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+  };
+  const faces = new Map<Variant, Face>([
+    ["regular", cmr10()],
+    ["bold", faceOf("cmbx10")],
+    ["italic", faceOf("cmti10")],
+  ]);
+  const variantFace = (variant: Variant) => faces.get(variant) ?? cmr10();
+
+  it("sets a field of one run as the plain overlay sets its text", () => {
+    expect(richRows([{ text: BULLET }], variantFace, params)).toEqual(
+      layoutRows(BULLET, cmr10(), params),
+    );
+    // A bold run's italic correction at its end is nothing after a period.
+    expect(richRows([{ text: BULLET, bold: true }], variantFace, params)).toEqual(
+      layoutRows(BULLET, variantFace("bold"), params),
+    );
+    expect(richRows([{ text: BULLET }], variantFace, undefined)).toEqual([
+      { from: 0, to: BULLET.length, wordSpacingSp: 0 },
+    ]);
+  });
+
+  it("measures each space in its own run's font, as the browser draws it", () => {
+    // A justified line, whose spaces TeX sets wider than any font's: the browser draws the bold
+    // space wider than the roman, so the word spacing that makes up the line is less.
+    const justified = { ...params, rightSkip: LATEX_PARAMS.rightSkip };
+    const [roman] = richRows([{ text: BULLET }], variantFace, justified);
+    const words = BULLET.split(" ");
+    const runs = [
+      { text: `${words.slice(0, 3).join(" ")} ` },
+      { text: `${words.slice(3, 6).join(" ")} `, bold: true },
+      { text: words.slice(6).join(" ") },
+    ];
+    const [mixed] = richRows(runs, variantFace, justified);
+    expect(roman && mixed && mixed.wordSpacingSp).toBeLessThan(roman?.wordSpacingSp ?? 0);
+  });
+
+  it("breaks a keystroke's runs again well within a frame", () => {
+    const runs = [
+      { text: BULLET.slice(0, 60) },
+      { text: BULLET.slice(60, 90), italic: true },
+      { text: BULLET.slice(90, 150) },
+      { text: BULLET.slice(150, 170), bold: true, href: "example.org" },
+      { text: BULLET.slice(170) },
+    ];
+    let i = 0;
+    const took = median(() => {
+      const at = i++ % 25;
+      const typed = runs.map((run, k) =>
+        k === 2 ? { ...run, text: `${run.text}x`.slice(at) } : run,
+      );
+      richRows(typed, variantFace, params);
+    }, 25);
+    expect(took).toBeLessThan(50);
   });
 });
 
@@ -424,6 +494,9 @@ describe("when an open field closes, and where it stays", () => {
     expect(shouldClose(false, false)).toBe(true);
   });
 
+  /** A glyph's box with nothing in it, in cmr10 at 10 pt. */
+  const box = { x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, font: "cmr10", size: 10 };
+
   /** A page of one field, or of none. */
   const pageOf = (layout: FieldLayout | undefined): DrawnPage => ({
     svg: "",
@@ -431,8 +504,8 @@ describe("when an open field closes, and where it stays", () => {
     fields: new Map(layout ? [["fennel-1.text", { id: "fennel-1.text", glyphs: [], layout }]] : []),
     glyphs: layout
       ? [
-          { x: 0, y: 200, left: 0, top: 0, right: 0, bottom: 0, field: "fennel-1.text", offset: 0 },
-          { x: 0, y: 212, left: 0, top: 0, right: 0, bottom: 0, field: "fennel-1.text", offset: 9 },
+          { ...box, y: 200, field: "fennel-1.text", offset: 0 },
+          { ...box, y: 212, field: "fennel-1.text", offset: 9 },
         ]
       : [],
     pageCount: 1,
@@ -488,7 +561,15 @@ function compare(page: DrawnPage, id: string, text: string) {
 function overlayEnds(text: string, setting: Setting): { first: number; last: number; x: number }[] {
   const { face, params } = setting;
   const nodes = paragraphNodes(text, face, params);
-  const rows = layoutRows(text, face, params);
+  return rowEnds(nodes, layoutRows(text, face, params), () => face.metrics.space);
+}
+
+/** `overlayEnds` for rows of `nodes` whose spaces the browser sets at `space` before spacing. */
+function rowEnds(
+  nodes: BreakNode[],
+  rows: Row[],
+  space: (offset: number) => number,
+): { first: number; last: number; x: number }[] {
   return rows.flatMap((row) => {
     let x = 0;
     let first: number | undefined;
@@ -502,10 +583,83 @@ function overlayEnds(text: string, setting: Setting): { first: number; last: num
         x += node.width;
       } else if (node.kind === "kern") x += first === undefined ? 0 : node.width;
       else if (node.kind === "glue" && first !== undefined)
-        x += face.metrics.space + row.wordSpacingSp;
+        x += space(node.offset) + row.wordSpacingSp;
     }
     return first === undefined ? [] : [{ first, last: last.offset, x: last.x / PT }];
   });
+}
+
+/**
+ * `overlayEnds` for a rich field's runs as the rich editor sets them: each run in its variant's
+ * face, with LaTeX's italic corrections, and each space in its own run's font.
+ */
+function richEnds(runs: RichText, faceOf: (variant: Variant) => Face, params: BreakParams) {
+  const slanted = (variant: Variant) => (faceOf(variant).tfm.params[1] ?? 0) > 0;
+  const set = breakRuns(runs, slanted).map((run) => ({ ...run, face: faceOf(run.variant) }));
+  const nodes = richParagraphNodes(set, params);
+  const faceAt = (offset: number) => {
+    let at = 0;
+    for (const run of set) {
+      at += run.text.length;
+      if (offset < at) return run.face;
+    }
+    return faceOf("regular");
+  };
+  const rows = richRows(runs, faceOf, params);
+  return rowEnds(nodes, rows, (offset) => faceAt(offset).metrics.space);
+}
+
+/** The rows the rich editor sets a field of a page in, and the lines the page set it in. */
+function compareRich(page: DrawnPage, resume: Resume, id: string) {
+  const layout = page.fields.get(id)?.layout;
+  const field = fieldsOf(resume).get(id);
+  const variants = variantFontsOf(page, resume, id);
+  if (!layout || field?.kind !== "rich" || !variants) throw new Error(`${id} is not on the page`);
+  const setting = settingFor(id, layout, page.size.width);
+  const faces = new Map(
+    [...variants].map(([variant, font]) => [variant, faceFor(font, layout.fonts)]),
+  );
+  const faceOf = (variant: Variant) => faces.get(variant) ?? setting.face;
+  const runs = field.get(resume);
+  const text = runs.map((run) => run.text).join("");
+  const rows = richRows(runs, faceOf, setting.params);
+  return { rows: rowStarts(text, rows), page: pageLines(page, id), runs, faceOf, setting };
+}
+
+/** Runs joined where their marks are the same, as the rich editor sends them. */
+const RICH = getSchema(RICH_SCHEMA);
+const normalised = (runs: RichText) => docToRuns(ProseMirrorNode.fromJSON(RICH, runsToDoc(runs)));
+
+/**
+ * An invented bullet with italic, bold, bold italic and a link on words that move along it with
+ * `k`, a mark never taking the comma or period after its word, so that some italic words are
+ * followed by one. The space between two words goes with the word after it when `k` is even, and
+ * with the word before it when odd.
+ */
+function richBullet(k: number): RichText {
+  const words =
+    "Designed and shipped a streaming ingestion service that cut reporting latency from hours to minutes, kept costs flat across three regions and two providers, wrote the failover runbook the operations team still uses every quarter, and trained four new engineers to run it.".split(
+      " ",
+    );
+  const n = words.length;
+  const runs: Run[] = [];
+  words.forEach((word, i) => {
+    const both = i === (k * 7 + 11) % n;
+    const italic = both || i === (k * 3) % n || i === (k * 3 + 1) % n;
+    const bold = both || i === (k * 5 + 7) % n;
+    const link = i === (k * 2 + 15) % n || i === (k * 2 + 16) % n;
+    const [, core = word, stop = ""] = /^(.*?)([,.]?)$/.exec(word) ?? [];
+    const before = k % 2 === 0 && i > 0 ? " " : "";
+    const after = k % 2 === 1 && i < n - 1 ? " " : "";
+    runs.push({
+      text: `${before}${core}`,
+      ...(bold && { bold }),
+      ...(italic && { italic }),
+      ...(link && { href: "example.org/runbook" }),
+    });
+    runs.push({ text: `${stop}${after}` });
+  });
+  return normalised(runs);
 }
 
 /** A sentence of `count` invented words, different for each `seed`. */
@@ -656,6 +810,52 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
         return lines[1] !== 115;
       });
       expect(moved).toEqual([bullets[7]]);
+    }, 60_000);
+
+    it("breaks rich bullets where TeX did, each run in its own font, corrections and all", async () => {
+      const bullets: RichText[] = [
+        ...Array.from({ length: 16 }, (_, k) => richBullet(k)),
+        // A bold label before the text, and a mark that starts inside a word, which splits the
+        // ligature and the kern the word would have had.
+        normalised([
+          { text: "Lead engineer:", bold: true },
+          { text: " took the reporting stack from nightly batches to a streaming pipeline and " },
+          { text: "of", italic: true },
+          { text: "fice dashboards that every team now reads before its Monday planning " },
+          { text: "WAV", bold: true },
+          { text: "E review." },
+        ]),
+      ];
+      const resume = structuredClone(sample);
+      const section = resume.sections.find((each) => each.kind === "entries");
+      const entry = section?.kind === "entries" ? section.entries[0] : undefined;
+      if (!entry) throw new Error("the sample has no entry");
+      entry.bullets = bullets.map((text, i) => ({ id: `rb-${i}`, text }));
+      const { page } = await jake(resume, "overlay-rich");
+      bullets.forEach((_, i) => {
+        const id = `rb-${i}.text`;
+        const { rows, page: lines, runs, faceOf, setting } = compareRich(page, resume, id);
+        const text = runs.map((run) => run.text).join("");
+        expect(lines.length, text).toBeGreaterThan(1);
+        expect(rows, `${id}: ${text}`).toEqual(lines);
+        // Each line ends where TeX ends it, which the italic corrections decide within a line.
+        const glyphs = page.glyphs.filter((glyph) => glyph.field === id);
+        const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+        if (!setting.params) throw new Error(`${id} is not broken`);
+        for (const row of richEnds(runs, faceOf, setting.params)) {
+          const tex = at(row.last) - at(row.first);
+          expect(Math.abs(row.x - tex), `${id} at ${row.last}: ${text}`).toBeLessThan(0.01);
+        }
+      });
+      const fonts = variantFontsOf(page, resume, "rb-0.text") ?? new Map();
+      expect(
+        Object.fromEntries([...fonts].map(([variant, font]) => [variant, font.font.name])),
+      ).toEqual({
+        regular: "ec-lmr10",
+        bold: "ec-lmbx10",
+        italic: "ec-lmri10",
+        boldItalic: "ec-lmbxi10",
+      });
     }, 60_000);
 
     it("keeps an emptied field's place while the page lacks it", async () => {

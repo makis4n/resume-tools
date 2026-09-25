@@ -101,3 +101,7 @@ nothing hyphenates yet.
   keeps its place from the last page that showed the field until a page shows it again.
 - The web fonts should be built with the TFM kerns and ligatures as GPOS and GSUB tables
   once the OpenType writer exists, so the within-line drift goes to zero too.
+- Rich fields (milestone 2, item 10) break the same way, shown through ProseMirror decorations: a
+  `<br>` widget where TeX ends each line and each line's `word-spacing`, with every run measured
+  in the font the page sets its variant in, and with the italic corrections LaTeX's `\textit` and
+  `\textbf` add at their edges.

@@ -282,6 +282,8 @@ describe("ruleCrossings", () => {
     top: INCH + top,
     right: INCH + right,
     bottom: INCH + bottom,
+    font: "cmr10",
+    size: 10,
   });
 
   it("finds each glyph a rule is drawn across, with the rule", () => {

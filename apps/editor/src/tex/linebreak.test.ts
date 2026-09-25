@@ -12,6 +12,7 @@ import {
   lineRanges,
   type Node,
   paragraphNodes,
+  richParagraphNodes,
   spaceGlue,
   ZERO_GLUE,
 } from "./linebreak";
@@ -272,6 +273,198 @@ describe("paragraphNodes over the text as the generator writes it", () => {
     expect(boxes(paragraphNodes("f\u20aci", face)).map(([from, to]) => [from, to])).toEqual([
       [0, 3],
     ]);
+  });
+});
+
+describe("richParagraphNodes over runs in several fonts", () => {
+  // Computer Modern's roman, bold and italic share OT1's layout for letters, so cmr10's glyph
+  // names give the codes of all three.
+  const codes = textToCode(parseType1(fixture("cmr10.pfb")).encoding);
+  const faceOf = (name: string): Face => {
+    const tfm = parseTfm(fixture(`${name}.tfm`));
+    return { tfm, metrics: scaleTfm(tfm, 10 * PT), codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+  };
+  const roman = faceOf("cmr10");
+  const bold = faceOf("cmbx10");
+  const italic = faceOf("cmti10");
+  const boxes = (nodes: Node[]) =>
+    nodes.flatMap((n) => (n.kind === "box" ? [[n.offset, n.end, n.width]] : []));
+  const glues = (nodes: Node[]) => nodes.filter((n) => n.kind === "glue");
+  const widthOf = (face: Face, ch: string) => face.metrics.widths[codes.get(ch) ?? -1];
+
+  it("sets a bold word in the middle of a line in the bold face's widths", () => {
+    const nodes = richParagraphNodes([
+      { text: "Led the ", face: roman },
+      { text: "migration", face: bold },
+      { text: " of it", face: roman },
+    ]);
+    const set = boxes(nodes);
+    const inBold = set.filter(([from]) => (from as number) >= 8 && (from as number) < 17);
+    expect(inBold.map(([from]) => from)).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    for (const [from, , width] of inBold) {
+      const ch = "Led the migration of it"[from as number] as string;
+      expect(width, ch).toBe(widthOf(bold, ch));
+      expect(width, ch).not.toBe(widthOf(roman, ch));
+    }
+    // The words on either side keep the roman widths.
+    expect(set[0]).toEqual([0, 1, widthOf(roman, "L")]);
+    expect(set.at(-1)).toEqual([22, 23, widthOf(roman, "t")]);
+  });
+
+  it("gives offsets over the joined text, which the lines tile", () => {
+    const runs = [
+      { text: "Rebuilt the ", face: roman },
+      { text: "pipe", face: bold },
+      { text: "line so", face: italic },
+      { text: "\u00a0releases ship", face: roman },
+      { text: " weekly without a manual step.", face: bold },
+    ];
+    const text = runs.map((run) => run.text).join("");
+    const nodes = richParagraphNodes(runs);
+    const offsets = nodes.flatMap((n) => (n.kind === "box" || n.kind === "glue" ? [n] : []));
+    for (const [i, node] of offsets.entries()) {
+      expect(node.offset).toBeLessThan(node.end);
+      expect(node.offset).toBeGreaterThanOrEqual(offsets[i - 1]?.end ?? 0);
+    }
+    expect([offsets[0]?.offset, offsets.at(-1)?.end]).toEqual([0, text.length]);
+    const narrow = { ...LATEX_PARAMS, lines: [{ indent: 0, width: 80 * PT }], rightSkip: FIL_GLUE };
+    const ranges = lineRanges(nodes, breakLines(nodes, narrow), text.length);
+    expect(ranges.length).toBeGreaterThan(2);
+    expect(ranges.map((r) => text.slice(r.from, r.to)).join("")).toBe(text);
+  });
+
+  it("makes no ligature or kern across a run boundary inside a word", () => {
+    const whole = boxes(richParagraphNodes([{ text: "office", face: roman }]));
+    expect(whole.map(([from, to]) => [from, to])).toEqual([
+      [0, 1],
+      [1, 4],
+      [4, 5],
+      [5, 6],
+    ]);
+    // Split between the two f's, the first stays a letter and the second makes fi with the i.
+    const split = boxes(
+      richParagraphNodes([
+        { text: "of", face: roman },
+        { text: "fice", face: roman },
+      ]),
+    );
+    expect(split.map(([from, to]) => [from, to])).toEqual([
+      [0, 1],
+      [1, 2],
+      [2, 4],
+      [4, 5],
+      [5, 6],
+    ]);
+    // A and V kern in one run, and not across two.
+    const kerns = (nodes: Node[]) => nodes.filter((n) => n.kind === "kern");
+    expect(kerns(richParagraphNodes([{ text: "AV", face: roman }]))).toHaveLength(1);
+    const apart = [
+      { text: "A", face: roman },
+      { text: "V", face: roman },
+    ];
+    expect(kerns(richParagraphNodes(apart))).toHaveLength(0);
+  });
+
+  it("takes a space's glue from its own run's font, and the space factor across runs", () => {
+    const boldSpace = spaceGlue(bold.metrics, 1000);
+    expect(boldSpace.width).not.toBe(spaceGlue(roman.metrics, 1000).width);
+    const before = richParagraphNodes([
+      { text: "Led ", face: bold },
+      { text: "teams", face: roman },
+    ]);
+    const after = richParagraphNodes([
+      { text: "Led", face: roman },
+      { text: " teams", face: bold },
+    ]);
+    for (const nodes of [before, after]) expect(glues(nodes)).toMatchObject([boldSpace]);
+    // The period ends a bold run, and the space after it, in the roman run, is a sentence's.
+    const sentence = richParagraphNodes([
+      { text: "Shipped.", face: bold },
+      { text: " Then", face: roman },
+    ]);
+    expect(glues(sentence)[0]?.width).toBe(roman.metrics.space + roman.metrics.extraSpace);
+  });
+
+  it("sets spaces on both sides of a boundary as two glues, only the first a place to break", () => {
+    const nodes = richParagraphNodes([
+      { text: "aaaa bbbb ", face: roman },
+      { text: " cccc dddd", face: bold },
+    ]);
+    expect(nodes.map((n) => n.kind)).toEqual([
+      "box",
+      "box",
+      "box",
+      "box",
+      "glue",
+      ...Array(4).fill("box"),
+      "glue",
+      "glue",
+      ...Array(4).fill("box"),
+      "glue",
+      ...Array(4).fill("box"),
+    ]);
+  });
+
+  it("sets an italic correction where LaTeX's \\/ puts it", () => {
+    const kernAfter = (nodes: Node[], offset: number) => {
+      const at = nodes.findIndex((n) => n.kind === "box" && n.end === offset);
+      return nodes[at + 1];
+    };
+    const ic = italic.metrics.italics[codes.get("t") ?? -1] as number;
+    expect(ic).toBeGreaterThan(0);
+    const correction = { kind: "kern", width: ic };
+    // After the last letter, before a space in either run, and before a no-break space's penalty.
+    const cases = [
+      [
+        { text: "fast", face: italic, italicCorrection: true },
+        { text: " car", face: roman },
+      ],
+      [
+        { text: "fast ", face: italic, italicCorrection: true },
+        { text: "car", face: roman },
+      ],
+      [
+        { text: "fast\u00a0", face: italic, italicCorrection: true },
+        { text: "car", face: roman },
+      ],
+    ];
+    for (const runs of cases) {
+      const nodes = richParagraphNodes(runs);
+      expect(kernAfter(nodes, 4), JSON.stringify(runs[0]?.text)).toEqual(correction);
+    }
+    // Nothing after a hyphen's discretionary or an ellipsis's kern, or when LaTeX sets none.
+    for (const text of ["well-", "so\u2026"]) {
+      const nodes = richParagraphNodes([{ text, face: italic, italicCorrection: true }]);
+      expect(
+        nodes.filter((n) => n.kind === "kern" && n.width === ic),
+        text,
+      ).toEqual([]);
+    }
+    const none = richParagraphNodes([
+      { text: "fast", face: italic },
+      { text: " car", face: roman },
+    ]);
+    expect(kernAfter(none, 4)?.kind).toBe("glue");
+  });
+
+  it("breaks at a kern that comes before a space, as TeX breaks after an ellipsis", () => {
+    const narrow = { ...LATEX_PARAMS, lines: [{ indent: 0, width: 40 * PT }], rightSkip: FIL_GLUE };
+    for (const runs of [
+      [{ text: "Wait\u2026 then go on", face: roman }],
+      [
+        { text: "Waited", face: italic, italicCorrection: true },
+        { text: " then go on", face: roman },
+      ],
+    ]) {
+      const text = runs.map((run) => run.text).join("");
+      const nodes = richParagraphNodes(runs);
+      const lines = breakLines(nodes, narrow);
+      expect(nodes[lines[0]?.breakAt ?? -1]?.kind, text).toBe("kern");
+      const ranges = lineRanges(nodes, lines, text.length);
+      expect(text.slice(ranges[0]?.from, ranges[0]?.to), text).toBe(
+        text.slice(0, text.indexOf(" ") + 1),
+      );
+    }
   });
 });
 
