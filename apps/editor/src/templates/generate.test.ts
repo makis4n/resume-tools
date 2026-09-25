@@ -1056,6 +1056,8 @@ const PARAGRAPH_KEYS = [
   "parshape",
   "inner",
   "shape",
+  "spaceskip",
+  "xspaceskip",
 ];
 
 /** A paragraph special's field id and its parameters, in order. */

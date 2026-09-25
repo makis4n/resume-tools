@@ -94,10 +94,13 @@ begin marker carrying the paragraph TeX sets the field in.
   | `hangafter`, `parshape` | integers |
   | `inner` | `1` in restricted horizontal mode, such as a tabular cell or an `\mbox`, where TeX never breaks a line (`\ifinner`), and `0` elsewhere |
   | `shape` | each line of `\parshape` as `<indent>,<length>`, joined by `\|`, and empty when `parshape` is 0 |
+  | `spaceskip`, `xspaceskip` | glue, which sets the space between words and after a sentence in place of the font's when not zero, as ragged2e's `\RaggedRight` makes its spaces rigid |
 
-  A bullet in `article`'s itemize at 11 pt ends `parshape=1;inner=0;shape=27.37506pt,471.28752pt`.
-  Item 9 breaks a field's lines where TeX would when `inner` is 0 and keeps them whole when it is
-  1, and reads the id case-insensitively, as the page reads the markers.
+  A bullet in `article`'s itemize at 11 pt ends
+  `parshape=1;inner=0;shape=27.37506pt,471.28752pt;spaceskip=0.0pt;xspaceskip=0.0pt`. Item 9
+  breaks a field's lines where TeX would when `inner` is 0 and keeps them whole when it is 1, and
+  reads the id case-insensitively, as the page reads the markers. Item 9's review added
+  `spaceskip` and `xspaceskip`, last, since the glue between words is built from them.
 - **Fields** are named `<node id>.<slot>`, and the header's `header.<slot>`; a contact snippet's
   `text` is the header field. The body comes with `texts`, the page's source for each field's
   text: the model's text, so offsets are the model's, a rich field's runs joined, or the dates as

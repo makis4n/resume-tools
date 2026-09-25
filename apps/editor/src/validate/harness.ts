@@ -126,6 +126,8 @@ const PARAGRAPH_KEYS = [
   "parshape",
   "inner",
   "shape",
+  "spaceskip",
+  "xspaceskip",
 ];
 
 /**

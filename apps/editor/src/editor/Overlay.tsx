@@ -8,11 +8,12 @@
  * TeX measured for its paragraph (the paragraph special, `page/paragraph.ts`), draws the rows and
  * puts the caret back; then the edit goes to the document as a command, and the compile follows it
  * after the scheduler's pause. The browser wraps nothing: each row is a `<div>` of its own with
- * `white-space: pre`, and its `word-spacing` is the glue TeX sets on the line, nothing on a ragged
- * line or the last line of a justified one, the shrink or stretch spread over the spaces otherwise.
- * The rows are set in a web font built from the page's own outlines (`page/webfont.ts`), and wait
- * for it. When the compile's page arrives the overlay reads its place from the new page and stays
- * open with its text and caret; a field the new page no longer has closes it.
+ * `white-space: pre`, and its `word-spacing` is the glue TeX sets on the line: the line's shortfall
+ * shared between its spaces and its skips as TeX shares it. The rows are set in a web font built
+ * from the page's own outlines (`page/webfont.ts`), and wait for it. When the compile's page
+ * arrives the overlay reads its place from the new page and stays open with its text and caret; a
+ * page without the field leaves it where it was (`placementFor`), and only a document without the
+ * field closes it (`shouldClose`).
  *
  * Offsets are UTF-16 indices throughout, as the DOM and the model slice by. A field is one
  * paragraph, so Enter inserts nothing, and pasted text comes in plain, its line breaks as spaces.
@@ -22,8 +23,8 @@
  */
 
 import { type Dates, YearMonth } from "@resume-tools/resume-model";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { FieldLayout } from "../page/draw";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { DrawnPage, FieldLayout } from "../page/draw";
 import type { PageFont } from "../page/fonts";
 import { breakParams, parseParagraph, startingAt } from "../page/paragraph";
 import { ASCENT, registerWebFont, typedCodes, webFontFamily, webFontOf } from "../page/webfont";
@@ -32,9 +33,12 @@ import {
   type BreakParams,
   breakLines,
   type Face,
+  type Glue,
   LATEX_PARAMS,
+  type LineSpec,
   lineRanges,
   paragraphNodes,
+  ZERO_GLUE,
 } from "../tex/linebreak";
 import { scaleTfm } from "../tex/tfm";
 import type { Shown } from "./compiler";
@@ -53,39 +57,68 @@ export interface Row {
 }
 
 /**
+ * The width TeX sets each of a line's spaces at, when the line's other glue is `skips` and its
+ * width falls short of the line's by `shortfall` scaled points, or exceeds it when that is below
+ * zero (tex.web §656–665). A shortfall is shared by the line's glue of the highest order of
+ * infinity that has any stretch, spaces and skips alike, each by its stretch; so fil glue in the
+ * margins, or `\parfillskip` on a paragraph's last line, takes all of it, and a `\rightskip` with
+ * finite stretch, as ragged2e's `\RaggedRight` has, shares it with the spaces, or takes all of it
+ * when `\spaceskip` has made them rigid. An excess is shared by shrink in the same way, and finite
+ * shrink never goes past what the glue has.
+ */
+export function spaceWidths(
+  spaces: readonly Glue[],
+  skips: readonly Glue[],
+  shortfall: number,
+): number[] {
+  const stretching = shortfall > 0;
+  const amount = (glue: Glue) => (stretching ? glue.stretch : glue.shrink);
+  const orderOf = (glue: Glue) => (stretching ? glue.stretchOrder : glue.shrinkOrder);
+  const totals = [0, 0, 0, 0];
+  for (const glue of [...spaces, ...skips])
+    totals[orderOf(glue)] = (totals[orderOf(glue)] ?? 0) + amount(glue);
+  const order = [3, 2, 1, 0].find((each) => totals[each] !== 0);
+  if (shortfall === 0 || order === undefined) return spaces.map((space) => space.width);
+  let ratio = Math.abs(shortfall) / (totals[order] as number);
+  if (!stretching && order === 0) ratio = Math.min(ratio, 1);
+  const sign = stretching ? 1 : -1;
+  return spaces.map(
+    (space) => space.width + (orderOf(space) === order ? sign * amount(space) * ratio : 0),
+  );
+}
+
+/**
  * The rows a field's text is set in: TeX's lines for `params`, and one row for a field TeX never
  * breaks, which has none. The rows tile the text (`lineRanges`), so joining them gives it back.
  *
- * Each row's word spacing makes its spaces as wide as TeX's glue on the line, spread evenly over
- * them. The browser sets every space at the font's interword space, where TeX sets a wider one
- * after a sentence; and TeX stretches or shrinks a line's glue only when it shrank the line or
- * stretched a line of a justified paragraph, since fil glue in the margins, or `\parfillskip` on
- * the last line, takes all the stretch otherwise.
+ * Each row's word spacing makes its spaces as wide as TeX sets them on the line, on average: the
+ * browser sets every space at the font's interword space, where TeX sets a wider one after a
+ * sentence, or `\spaceskip` when a template sets it, and shares the line's shortfall between its
+ * spaces and its skips (`spaceWidths`).
  */
 export function layoutRows(text: string, face: Face, params: BreakParams | undefined): Row[] {
   const whole = [{ from: 0, to: text.length, wordSpacingSp: 0 }];
   if (params === undefined) return whole;
-  const nodes = paragraphNodes(text, face);
+  const { leftSkip, rightSkip, parFillSkip, spaceSkip, xspaceSkip } = params;
+  const nodes = paragraphNodes(text, face, { spaceSkip, xspaceSkip });
   const lines = breakLines(nodes, params);
-  const { leftSkip, rightSkip, parFillSkip } = params;
   const rows = lineRanges(nodes, lines, text.length).map((range, i): Row => {
     const line = lines[i];
-    if (line === undefined) return { from: range.from, to: range.to, wordSpacingSp: 0 };
-    const glue = nodes
-      .slice(line.from, line.breakAt)
-      .filter((node): node is Extract<BreakNode, { kind: "glue" }> => node.kind === "glue");
-    const wider = glue.reduce((sum, space) => sum + space.width - face.metrics.space, 0);
-    const shortfall = line.width - line.natural - leftSkip.width - rightSkip.width;
-    const last = i === lines.length - 1;
-    const justified =
-      leftSkip.stretchOrder === 0 &&
-      rightSkip.stretchOrder === 0 &&
-      !(last && parFillSkip.stretchOrder > 0);
-    const set = shortfall < 0 || justified ? shortfall : 0;
+    const spaces = line
+      ? nodes
+          .slice(line.from, line.breakAt)
+          .filter((node): node is Extract<BreakNode, { kind: "glue" }> => node.kind === "glue")
+      : [];
+    if (line === undefined || spaces.length === 0)
+      return { from: range.from, to: range.to, wordSpacingSp: 0 };
+    const skips =
+      i === lines.length - 1 ? [leftSkip, rightSkip, parFillSkip] : [leftSkip, rightSkip];
+    const natural = skips.reduce((sum, skip) => sum + skip.width, line.natural);
+    const set = spaceWidths(spaces, skips, line.width - natural).reduce((sum, w) => sum + w, 0);
     return {
       from: range.from,
       to: range.to,
-      wordSpacingSp: glue.length > 0 ? (wider + set) / glue.length : 0,
+      wordSpacingSp: (set - spaces.length * face.metrics.space) / spaces.length,
     };
   });
   return rows.length > 0 ? rows : whole;
@@ -102,20 +135,80 @@ export function rowOf(rows: readonly Row[], offset: number): { row: number; colu
   return { row, column: Math.min(Math.max(0, offset - from), to - from) };
 }
 
+/** A font at the size a page uses it, in TeX points. */
+interface SizedFont {
+  font: PageFont;
+  size: number;
+}
+
+/** The characters a page font's web font maps, with their codes; none when it has no outlines. */
+const codesOf = (font: PageFont) =>
+  font.outlines ? typedCodes(font.outlines, font.text) : new Map<string, number>();
+
 /**
- * The breaker's face for a font at a size in points: its TFM scaled as TeX scales it, and the
- * code for each character by the rule its web font's character map follows (`typedCodes`), so
- * that a character the breaker measures is the glyph the browser draws. A font with no outlines
- * has no codes, and its text measures as nothing.
+ * The breaker's face for a field: its letter font's TFM scaled as TeX scales it, and the code for
+ * each character by the rule its web font's character map follows (`typedCodes`), so that a
+ * character the breaker measures is the glyph the browser draws. A character the letter font has
+ * no code for is measured in the first of `others`, the field's other fonts, that has one, at the
+ * size the page uses it, as LaTeX takes `€`, `×` or `•` from a companion font such as TS1; the
+ * browser draws such a character in its serif, a little off within the row but on the row TeX
+ * puts it on. A font with no outlines has no codes, and what only it sets measures as nothing.
  */
-export function faceFor(font: PageFont, size: number): Face {
-  const codes = font.outlines ? typedCodes(font.outlines, font.text) : new Map<string, number>();
+export function faceFor(primary: SizedFont, others: readonly SizedFont[] = []): Face {
+  const codes = codesOf(primary.font);
+  const fallbacks = others
+    .filter((other) => other.font !== primary.font || other.size !== primary.size)
+    .map((other) => ({
+      codes: codesOf(other.font),
+      widths: scaleTfm(other.font.tfm, Math.round(other.size * PT)).widths,
+    }));
   return {
-    tfm: font.tfm,
-    metrics: scaleTfm(font.tfm, Math.round(size * PT)),
+    tfm: primary.font.tfm,
+    metrics: scaleTfm(primary.font.tfm, Math.round(primary.size * PT)),
     codeFor: (char) => codes.get(char),
     hyphenChar: 45,
+    widthOf: (char) => {
+      for (const fallback of fallbacks) {
+        const code = fallback.codes.get(char);
+        if (code !== undefined) return fallback.widths[code];
+      }
+      return undefined;
+    },
   };
+}
+
+/**
+ * Where a field's first line starts on the page, in TeX points: its paragraph's left edge and the
+ * line's indent, so that anything set before the field on that line lies between it and the
+ * field's first glyph. `lines` are the paragraph's (`breakParams`), `hsize` its `\hsize`, in
+ * scaled points.
+ *
+ * When the page shows the field's second line, the edge comes from it: a line after a paragraph's
+ * first starts at the edge and its own indent, with nothing before the field's text, unless the
+ * left skip stretches or shrinks, as in a centred paragraph, where no line starts at a fixed place.
+ *
+ * Otherwise the start is guessed from the baseline: the leftmost glyph or rule on it within the
+ * first line's width before the field's first glyph, and never more than `\hsize` before it. That
+ * remains approximate for a field shown on one line: a list's label hung in the margin, as
+ * `itemize`'s bullet is on the baseline, is taken for the line's start, so the line is taken to be
+ * shorter by the label's distance; an indent box, which draws nothing, is missed, so the line is
+ * taken to be longer by `\parindent`; and a column to the left whose text shares the baseline
+ * within reach is taken for the line's. Each matters only once the field grows past its line, and
+ * the page that shows its second line then says where the edge is.
+ */
+export function lineStartOf(
+  layout: FieldLayout,
+  lines: readonly LineSpec[],
+  hsize: number,
+  leftSkip: Glue,
+): number {
+  const [first = { indent: 0, width: hsize }, second = first] = lines;
+  const fixed = leftSkip.stretch === 0 && leftSkip.shrink === 0;
+  if (layout.secondLine !== undefined && fixed)
+    return layout.secondLine + (first.indent - second.indent) / PT;
+  const reach = Math.min(first.width, hsize) / PT;
+  const leftmost = layout.baseline.find((x) => x >= layout.x - reach);
+  return Math.min(layout.x, leftmost ?? layout.x);
 }
 
 /** How the overlay breaks a field: the face, and the parameters, none for a field on one row. */
@@ -128,35 +221,46 @@ export interface Setting {
 const unread = new Set<string>();
 
 /**
- * How the overlay sets a field on a page: the face of its first glyph's font, and the breaker's
- * parameters from its paragraph special, the first line shortened by however far into it the
- * field starts. A field TeX never breaks (`inner`) has no parameters. Without a special it can
+ * How the overlay sets a field on a page: the face of its fonts, and the breaker's parameters
+ * from its paragraph special, the first line shortened by however far into it the field starts
+ * (`lineStartOf`). A field TeX never breaks (`inner`) has no parameters. Without a special it can
  * read, a field breaks by LaTeX's defaults over the width the page suggests, its line's start
  * taken as the margin on both sides, and the console hears of it once.
  */
 export function settingFor(id: string, layout: FieldLayout, pageWidth: number): Setting {
-  const face = faceFor(layout.font, layout.size);
+  const face = faceFor(layout, layout.fonts);
   const paragraph = layout.paragraph === undefined ? undefined : parseParagraph(layout.paragraph);
   if (paragraph?.inner) return { face, params: undefined };
-  const into = Math.round((layout.x - layout.lineStart) * PT);
-  if (paragraph !== undefined) return { face, params: startingAt(breakParams(paragraph), into) };
+  const into = (start: number) => Math.round((layout.x - start) * PT);
+  if (paragraph !== undefined) {
+    const params = breakParams(paragraph);
+    const start = lineStartOf(layout, params.lines, paragraph.hsize, paragraph.leftSkip);
+    return { face, params: startingAt(params, into(start)) };
+  }
   if (!unread.has(id)) {
     unread.add(id);
     console.warn(`The paragraph of ${id} could not be read, so it breaks by LaTeX's defaults`, {
       special: layout.paragraph,
     });
   }
-  const width = Math.max(0, Math.round((pageWidth - 2 * layout.lineStart) * PT));
-  return { face, params: startingAt({ ...LATEX_PARAMS, lines: [{ indent: 0, width }] }, into) };
+  const start = lineStartOf(layout, [], Math.round(pageWidth * PT), ZERO_GLUE);
+  const width = Math.max(0, Math.round((pageWidth - 2 * start) * PT));
+  return {
+    face,
+    params: startingAt({ ...LATEX_PARAMS, lines: [{ indent: 0, width }] }, into(start)),
+  };
 }
 
-/** A month as `<input type="month">` reads and writes it. */
+/** A month as `<input type="month">` reads and writes it, and a date stored as a year. */
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+const YEAR = /^\d{4}$/;
 
 /**
- * The command a date picker sends for what it shows: a start, and an end that is a month,
- * `"present"`, or none. A start the model refuses, as an emptied input gives, sends nothing, since
- * dates need one; an end that is not a month or the present is no end date.
+ * The command a date picker sends for what it shows: a start, and an end that is any date the
+ * model takes, a month or a year, or `"present"`, or none. An end stored as a year, as the sample's
+ * is, stays as it is when the start changes, though a month input cannot show it. A start the
+ * model refuses, as an emptied input gives, sends nothing, since dates need one; an end the model
+ * refuses is no end date.
  */
 export function datesCommand(
   field: string,
@@ -165,8 +269,98 @@ export function datesCommand(
 ): Command | undefined {
   if (!YearMonth.safeParse(start).success) return undefined;
   const dates: Dates =
-    end === "present" || (end !== undefined && MONTH.test(end)) ? { start, end } : { start };
+    end === "present" || (end !== undefined && YearMonth.safeParse(end).success)
+      ? { start, end }
+      : { start };
   return { type: "dates", field, dates };
+}
+
+/**
+ * Whether an open field closes because of what the document and the latest page hold: only when
+ * the document no longer has the field, as after the panel removes its node. A page without the
+ * field says nothing of the kind, since it may be the compile of older text than the overlay
+ * holds. The reviewers' case: the user selects a bullet's text, deletes it, and types its
+ * replacement while the empty text compiles; the page for the empty text lands, and Jake's
+ * template leaves an empty field out, as it does every one of the sample's 30 text and rich fields
+ * once emptied, so the page has no glyph of the bullet. Had the overlay closed then, what the user
+ * typed next would have gone nowhere, and after a longer pause the emptied field would have had
+ * no glyph left to click. Escape and a blur close it too, through its own handlers.
+ */
+export function shouldClose(documentHasField: boolean, _pageHasField: boolean): boolean {
+  return !documentHasField;
+}
+
+/**
+ * Where an open field is set: its layout and baselines on the last page that showed it, and that
+ * page's width, which a field whose paragraph cannot be read breaks within.
+ */
+export interface Placement {
+  layout: FieldLayout;
+  /** The baselines the field's lines sit on, down that page, in TeX points. */
+  baselines: number[];
+  pageWidth: number;
+}
+
+/**
+ * The baselines a field's lines sit on, down a page, in TeX points: for each character, the
+ * lowest glyph that draws it, so that an accent TeX raised over its letter is not taken for a line.
+ */
+function baselinesOf(page: DrawnPage, id: string): number[] {
+  const lowest = new Map<number, number>();
+  for (const glyph of page.glyphs)
+    if (glyph.field === id && glyph.offset !== undefined)
+      lowest.set(glyph.offset, Math.max(glyph.y, lowest.get(glyph.offset) ?? glyph.y));
+  return [...new Set(lowest.values())].sort((a, b) => a - b);
+}
+
+/**
+ * Where an open field is set once the page `latest` arrives: from `latest` when it shows the
+ * field, and otherwise where it was, `previous`, so that the overlay keeps its place and size and
+ * stays editable until a page shows the field again, and that page places it anew. The first
+ * placement is the page the overlay opened on, which the click landed on; it is undefined only
+ * while no page since the overlay opened has shown the field with a font that loaded.
+ */
+export function placementFor(
+  id: string,
+  latest: DrawnPage,
+  previous: Placement | undefined,
+): Placement | undefined {
+  const layout = latest.fields.get(id)?.layout;
+  if (layout === undefined) return previous;
+  return { layout, baselines: baselinesOf(latest, id), pageWidth: latest.size.width };
+}
+
+/** An edit of a field's text, and where the caret goes after it. */
+export interface Edit {
+  text: string;
+  offset: number;
+}
+
+/** The characters a user sees, which Backspace and Delete take one at a time. */
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** The text with the span from `from` to `to` deleted, and the caret where it was. */
+export function deleteRange(text: string, from: number, to: number): Edit {
+  const start = Math.max(0, Math.min(from, to, text.length));
+  const end = Math.max(start, Math.min(Math.max(from, to), text.length));
+  return { text: text.slice(0, start) + text.slice(end), offset: start };
+}
+
+/**
+ * The text with the character before `offset` deleted, as Backspace does, or the one after it, as
+ * Delete does: a whole grapheme cluster, such as an emoji with its modifiers or a letter with its
+ * combining marks. The caret goes where the character was; at either end of the text nothing is
+ * deleted.
+ */
+export function deleteAt(text: string, offset: number, direction: "backward" | "forward"): Edit {
+  const at = Math.max(0, Math.min(offset, text.length));
+  if (direction === "backward") {
+    if (at === 0) return { text, offset: 0 };
+    const before = GRAPHEMES.segment(text.slice(0, at)).containing(at - 1);
+    return deleteRange(text, before?.index ?? at - 1, at);
+  }
+  const after = GRAPHEMES.segment(text.slice(at)).containing(0);
+  return deleteRange(text, at, at + (after?.segment.length ?? 0));
 }
 
 export interface OverlayProps {
@@ -212,17 +406,29 @@ export function Overlay(props: OverlayProps) {
         return undefined;
     }
   });
-  const layout = shown.page.fields.get(id)?.layout;
-  // A page without the field, as a template that drops an emptied field gives, closes it.
-  const gone = opened === undefined || layout === undefined;
+  // Where the field is set: on the page it opened on, then on each later page that shows it.
+  const [placement, setPlacement] = useState(() => placementFor(id, shown.page, undefined));
+  const [placedOn, setPlacedOn] = useState(shown);
+  if (placedOn !== shown) {
+    setPlacedOn(shown);
+    setPlacement(placementFor(id, shown.page, placement));
+  }
+  const inDocument = useMemo(() => fieldsOf(props.document.resume).has(id), [props.document, id]);
+  const onPage = shown.page.fields.get(id)?.layout !== undefined;
+  const closing = opened === undefined || shouldClose(inDocument, onPage);
   useEffect(() => {
-    if (gone) onClose();
-  }, [gone, onClose]);
-  if (opened === undefined || layout === undefined) return null;
+    if (closing) onClose();
+  }, [closing, onClose]);
+  if (opened === undefined || closing || placement === undefined) return null;
   if (opened.kind === "dates")
-    return <DatePicker {...props} layout={layout} dates={opened.dates} />;
+    return <DatePicker {...props} placement={placement} dates={opened.dates} />;
   return (
-    <TextOverlay {...props} layout={layout} text={opened.text} rich={opened.kind === "rich"} />
+    <TextOverlay
+      {...props}
+      placement={placement}
+      text={opened.text}
+      rich={opened.kind === "rich"}
+    />
   );
 }
 
@@ -297,42 +503,30 @@ interface Frame {
 }
 
 /**
- * The baselines a field's lines sit on, down the page, in TeX points: for each character, the
- * lowest glyph that draws it, so that an accent TeX raised over its letter is not taken for a line.
- */
-function baselinesOf(shown: Shown, id: string): number[] {
-  const lowest = new Map<number, number>();
-  for (const glyph of shown.page.glyphs)
-    if (glyph.field === id && glyph.offset !== undefined)
-      lowest.set(glyph.offset, Math.max(glyph.y, lowest.get(glyph.offset) ?? glyph.y));
-  return [...new Set(lowest.values())].sort((a, b) => a - b);
-}
-
-/**
- * The frame for a field on the page in `container`: its first row's baseline and left edge on its
- * first glyph's, the font's size scaled as the page is, and the line height the page's baselines
- * give when the field has two lines or more, else 1.2 em. The first row is as wide as the field's
+ * The frame for a field placed in `container`: its first row's baseline and left edge on its first
+ * glyph's, the font's size scaled as the page is, and the line height the page's baselines give
+ * when the field has two lines or more, else 1.2 em. The first row is as wide as the field's
  * first line, the measure TeX breaks it at, so a line TeX would fill is not cut short.
  */
 function frameOf(
   container: HTMLElement,
-  shown: Shown,
   id: string,
-  layout: FieldLayout,
+  placement: Placement,
   ready: Ready,
 ): Frame | undefined {
   const ctm = container.querySelector("svg")?.getScreenCTM();
   if (!ctm) return undefined;
+  const { layout, baselines, pageWidth } = placement;
   const scale = ctm.a;
   const at = new DOMPoint(layout.x, layout.y).matrixTransform(ctm);
   const box = container.getBoundingClientRect();
   const fontPx = layout.size * scale;
-  const [first, second] = baselinesOf(shown, id);
+  const [first, second] = baselines;
   const lineHeightPx =
     first !== undefined && second !== undefined ? (second - first) * scale : 1.2 * fontPx;
   // With the web font's ascent at 0.8 em and descent 0.2 em, the baseline sits this far down a row.
   const baseline = (lineHeightPx - fontPx) / 2 + ASCENT * fontPx;
-  const setting = settingFor(id, { ...layout, font: ready.font }, shown.page.size.width);
+  const setting = settingFor(id, { ...layout, font: ready.font }, pageWidth);
   const lines = setting.params?.lines ?? [];
   const pxPerSp = scale / PT;
   const start = lines[0]?.indent ?? 0;
@@ -409,15 +603,43 @@ class FieldRows {
     return changed;
   }
 
+  /**
+   * Make a deletion the browser would get wrong, before it does, and say whether it did; the
+   * caller then prevents the browser's own. The rows are `<div>`s with nothing between them, so
+   * at a row's edge, Backspace at the start of a row after the first or Delete at the end of one
+   * before the last, the browser joins the two rows' elements and deletes no character, and the
+   * rows come back as they were; and a selection across rows it deletes by joining elements too.
+   * Here the character before or after the caret, or the selection, leaves the text instead, the
+   * rows are drawn anew and the caret put where the deletion was.
+   */
+  remove(inputType: string): boolean {
+    const selection = document.getSelection();
+    if (!selection?.anchorNode || !selection.focusNode) return false;
+    const anchor = this.offsetOf(selection.anchorNode, selection.anchorOffset);
+    const focus = this.offsetOf(selection.focusNode, selection.focusOffset);
+    if (anchor === undefined || focus === undefined) return false;
+    let edit: Edit | undefined;
+    if (!selection.isCollapsed) {
+      const across =
+        this.rowOfNode(selection.anchorNode, selection.anchorOffset) !==
+        this.rowOfNode(selection.focusNode, selection.focusOffset);
+      if (across) edit = deleteRange(this.text, anchor, focus);
+    } else if (this.rows.some((row, i) => i > 0 && row.from === focus)) {
+      if (inputType.endsWith("Backward")) edit = deleteAt(this.text, focus, "backward");
+      else if (inputType.endsWith("Forward")) edit = deleteAt(this.text, focus, "forward");
+    }
+    if (edit === undefined) return false;
+    this.text = edit.text;
+    this.draw(edit.offset);
+    return true;
+  }
+
   /** Where the caret is in the text, or undefined when the selection is not in the rows. */
   caret(): number | undefined {
     const selection = document.getSelection();
-    const node = selection?.focusNode;
-    if (!selection || !node || !this.element.contains(node)) return undefined;
-    const before = document.createRange();
-    before.setStart(this.element, 0);
-    before.setEnd(node, selection.focusOffset);
-    return before.toString().length;
+    return selection?.focusNode
+      ? this.offsetOf(selection.focusNode, selection.focusOffset)
+      : undefined;
   }
 
   /** Put the caret at an offset in the text. */
@@ -429,6 +651,24 @@ class FieldRows {
     if (node instanceof Text)
       document.getSelection()?.collapse(node, Math.min(column, node.length));
     else document.getSelection()?.collapse(line, 0);
+  }
+
+  /** The offset in the text of a point in the DOM, or undefined when it is not in the rows. */
+  private offsetOf(node: Node, offset: number): number | undefined {
+    if (!this.element.contains(node)) return undefined;
+    const before = document.createRange();
+    before.setStart(this.element, 0);
+    before.setEnd(node, offset);
+    return before.toString().length;
+  }
+
+  /** The row element a point in the DOM is in. */
+  private rowOfNode(node: Node, offset: number): Node | undefined {
+    if (node === this.element)
+      return this.element.childNodes[Math.min(offset, this.element.childNodes.length - 1)];
+    let at: Node | null = node;
+    while (at && at.parentNode !== this.element) at = at.parentNode;
+    return at ?? undefined;
   }
 
   private draw(caret: number | undefined) {
@@ -486,8 +726,10 @@ const OVERLAY_STYLE = {
   color: "#000",
 } as const;
 
-function TextOverlay(props: OverlayProps & { layout: FieldLayout; text: string; rich: boolean }) {
-  const ready = useWebFont(props.layout.font);
+type OpenProps = OverlayProps & { placement: Placement };
+
+function TextOverlay(props: OpenProps & { text: string; rich: boolean }) {
+  const ready = useWebFont(props.placement.layout.font);
   if (!ready) return null;
   return <Rows {...props} ready={ready} />;
 }
@@ -497,13 +739,13 @@ function Rows({
   offset,
   shown,
   page,
-  layout,
+  placement,
   text,
   rich,
   ready,
   onCommand,
   onClose,
-}: OverlayProps & { layout: FieldLayout; text: string; rich: boolean; ready: Ready }) {
+}: OpenProps & { text: string; rich: boolean; ready: Ready }) {
   const box = useRef<HTMLDivElement>(null);
   const rows = useRef<FieldRows | undefined>(undefined);
   const latest = useRef({ onCommand, onClose });
@@ -518,12 +760,14 @@ function Rows({
     Object.assign(element.style, OVERLAY_STYLE);
     const editing = new FieldRows(element, text);
     rows.current = editing;
-    const edited = () => {
-      if (!editing.update()) return;
+    const send = () => {
       const { text } = editing;
       latest.current.onCommand(
         rich ? { type: "rich", field: id, runs: [{ text }] } : { type: "text", field: id, text },
       );
+    };
+    const edited = () => {
+      if (editing.update()) send();
     };
     const listeners: [string, (event: Event) => void][] = [
       [
@@ -537,7 +781,12 @@ function Rows({
       [
         "beforeinput",
         (event) => {
-          if (REFUSED.test((event as InputEvent).inputType)) event.preventDefault();
+          const { inputType, isComposing } = event as InputEvent;
+          if (REFUSED.test(inputType)) event.preventDefault();
+          else if (inputType.startsWith("delete") && !isComposing && editing.remove(inputType)) {
+            event.preventDefault();
+            send();
+          }
         },
       ],
       [
@@ -568,14 +817,15 @@ function Rows({
     };
   }, [id, rich, text]);
 
-  // Placed on the page as it is shown now, and again with each new page or font. The first time,
-  // the caret goes where the click landed; after that it stays where the user left it.
+  // Placed on the page as it is shown now, and again with each new page, which draws its SVG anew,
+  // or font. The first time, the caret goes where the click landed; after that it stays where the
+  // user left it.
   const placed = useRef(false);
   useLayoutEffect(() => {
     const editing = rows.current;
     const element = box.current;
     if (!editing || !element) return;
-    const frame = frameOf(page, shown, id, layout, ready);
+    const frame = frameOf(page, id, placement, ready);
     if (!frame) return;
     if (placed.current) {
       editing.place(frame, document.activeElement === element ? editing.caret() : undefined);
@@ -585,7 +835,7 @@ function Rows({
     editing.place(frame, undefined);
     element.focus({ preventScroll: true });
     editing.put(offset);
-  }, [page, shown, id, layout, ready, offset]);
+  }, [page, shown, id, placement, ready, offset]);
 
   return (
     <div
@@ -603,18 +853,19 @@ function Rows({
 
 /**
  * The picker a field's dates open: a month for the start, and for the end a month, the present,
- * or none. Each change is a `dates` command. It sits under the field's first glyph, and closes on
- * Escape, when focus leaves it, or at a click outside it.
+ * or none. Each change is a `dates` command. A date stored as a year shows its year beside the
+ * empty month, and stays as it is until a month is picked. It sits under the field's first glyph,
+ * and closes on Escape, when focus leaves it, or at a click outside it.
  */
 function DatePicker({
   field: id,
   shown,
   page,
-  layout,
+  placement,
   dates,
   onCommand,
   onClose,
-}: OverlayProps & { layout: FieldLayout; dates: Dates | undefined }) {
+}: OpenProps & { dates: Dates | undefined }) {
   const [value, setValue] = useState(dates);
   const [place, setPlace] = useState<{ left: number; top: number }>();
   const root = useRef<HTMLDivElement>(null);
@@ -624,6 +875,8 @@ function DatePicker({
     latest.current = onClose;
   });
 
+  // Placed again with each new page, which draws its SVG anew.
+  const { layout } = placement;
   useLayoutEffect(() => {
     const ctm = page.querySelector("svg")?.getScreenCTM();
     if (!ctm) return;
@@ -654,6 +907,9 @@ function DatePicker({
   const start = value?.start ?? "";
   const end = value?.end;
   const month = (date: string | undefined) => (date !== undefined && MONTH.test(date) ? date : "");
+  // A year a month input cannot show, beside it, so that the user sees it is there.
+  const year = (date: string | undefined) =>
+    date !== undefined && YEAR.test(date) ? <small> ({date})</small> : null;
   return (
     <div
       ref={root}
@@ -692,6 +948,7 @@ function DatePicker({
           value={month(start)}
           onChange={(event) => send(event.target.value, end)}
         />
+        {year(start)}
       </label>
       <label>
         End{" "}
@@ -701,6 +958,7 @@ function DatePicker({
           disabled={end === "present"}
           onChange={(event) => send(start, event.target.value || undefined)}
         />
+        {year(end)}
       </label>
       <label>
         <input

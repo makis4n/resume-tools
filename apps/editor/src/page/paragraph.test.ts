@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { breakLines, FIL_GLUE, LATEX_PARAMS, type Node } from "../tex/linebreak";
-import { breakParams, type Paragraph, paragraphId, parseParagraph, startingAt } from "./paragraph";
+import { breakLines, FIL_GLUE, LATEX_PARAMS, type Node, ZERO_GLUE } from "../tex/linebreak";
+import {
+  breakParams,
+  MAX_SHAPE_LINES,
+  type Paragraph,
+  paragraphId,
+  parseParagraph,
+  startingAt,
+} from "./paragraph";
 
 const PT = 65536;
 
@@ -8,7 +15,8 @@ const PT = 65536;
 const BULLET =
   "rt:p:fennel-1.text:hsize=542.02501pt;leftskip=0.0pt;rightskip=0.0pt plus 1.0fil;" +
   "parfillskip=0.0pt plus 1.0fil;pretolerance=100;tolerance=200;emergencystretch=0.0pt;" +
-  "hangindent=0.0pt;hangafter=1;parshape=1;inner=0;shape=34.93008pt,507.09492pt";
+  "hangindent=0.0pt;hangafter=1;parshape=1;inner=0;shape=34.93008pt,507.09492pt;" +
+  "spaceskip=0.0pt;xspaceskip=0.0pt";
 
 /** The bullet's special with some values replaced, in decision 0007's order. */
 function special(values: Record<string, string>, id = "fennel-1.text"): string {
@@ -38,7 +46,21 @@ describe("parseParagraph", () => {
       hangAfter: 1,
       shape: [{ indent: Math.round(34.93008 * PT), width: Math.round(507.09492 * PT) }],
       inner: false,
+      spaceSkip: ZERO_GLUE,
+      xspaceSkip: ZERO_GLUE,
     });
+  });
+
+  it("reads the glue ragged2e sets between words, and after a sentence", () => {
+    // \RaggedRight sets \spaceskip to the font's interword space, with neither stretch nor shrink.
+    const ragged = parsed({ spaceskip: "3.33333pt", xspaceskip: "4.44444pt plus 1.0fil" });
+    expect(ragged.spaceSkip).toEqual({ ...ZERO_GLUE, width: Math.round(3.33333 * PT) });
+    expect(ragged.xspaceSkip).toEqual({
+      ...FIL_GLUE,
+      width: Math.round(4.44444 * PT),
+    });
+    const params = breakParams(ragged);
+    expect([params.spaceSkip, params.xspaceSkip]).toEqual([ragged.spaceSkip, ragged.xspaceSkip]);
   });
 
   it("reads glue and dimensions as \\the prints them", () => {
@@ -117,6 +139,15 @@ describe("parseParagraph", () => {
       special({ parshape: "0" }),
       special({ shape: "34.93008pt" }),
       special({ shape: "34.93008pt,507.09492pt,1.0pt" }),
+      special({ spaceskip: "3.0" }),
+      // The keys before item 9's review added \spaceskip and \xspaceskip.
+      BULLET.replace(";spaceskip=0.0pt;xspaceskip=0.0pt", ""),
+      // Past \maxdimen or TeX's largest integer, which \the never prints: a length the breaker
+      // would take for infinite.
+      special({ hsize: `${"9".repeat(400)}.0pt` }),
+      special({ hsize: "16384.0pt" }),
+      special({ rightskip: "0.0pt plus 20000.0fil" }),
+      special({ tolerance: "2147483648" }),
     ];
     for (const text of malformed) expect(parseParagraph(text), text).toBeUndefined();
   });
@@ -163,8 +194,26 @@ describe("breakParams", () => {
     ]);
   });
 
-  it("spells out no more hanging lines than a page could hold", () => {
-    expect(lines({ hangindent: "20.0pt", hangafter: "2147483647" })).toHaveLength(257);
+  it("reads the largest length and integer TeX has", () => {
+    expect(parsed({ hsize: "16383.99998pt", tolerance: "2147483647" })).toMatchObject({
+      hsize: 0x3fffffff,
+      tolerance: 0x7fffffff,
+    });
+  });
+
+  it("spells out at most 64 lines of a shape, however many a template asks for", () => {
+    // The breaker keeps a shape's lines apart, so its work grows with the shape's length: these
+    // made each keystroke cost hundreds of milliseconds before the cap.
+    const hung = lines({ hangindent: "20.0pt", hangafter: "2147483647" });
+    expect(hung).toHaveLength(MAX_SHAPE_LINES + 1);
+    expect(hung.at(-2)).toEqual({ indent: 0, width: hsize });
+    expect(hung.at(-1)).toEqual({ indent: 20 * PT, width: hsize - 20 * PT });
+    expect(lines({ hangindent: "20.0pt", hangafter: "-2147483647" })).toHaveLength(65);
+    const shape = Array.from({ length: 2000 }, (_, i) => `${i}.0pt,300.0pt`).join("|");
+    const shaped = lines({ parshape: "2000", shape });
+    expect(shaped.length).toBeLessThanOrEqual(65);
+    // The first 64 lines as the template gave them; the last of them repeats.
+    expect(shaped.at(-1)).toEqual({ indent: 63 * PT, width: 300 * PT });
   });
 });
 

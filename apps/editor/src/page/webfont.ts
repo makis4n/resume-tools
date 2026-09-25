@@ -174,19 +174,23 @@ const registered = new Map<string, Promise<FontFace>>();
  * The web font for the TeX font `name`, registered with the document: built by `build` the first
  * time any field in the font is opened and kept for the page's life, so that each font is built
  * once. It resolves once the browser has loaded the font, so that text set in it lays out in its
- * metrics from the first frame; it rejects, and keeps rejecting, when the browser refuses it.
- * Browser-only.
+ * metrics from the first frame. It rejects when the build throws or the browser refuses the font,
+ * and that is forgotten once it settles, so that the next field opened in the font tries again: a
+ * font whose outlines could not be read this time has them after a later page reads them again,
+ * as `FontLibrary` forgets a failed read. It needs the browser's `FontFace` and `document.fonts`.
  */
 export function registerWebFont(name: string, build: () => ArrayBuffer): Promise<FontFace> {
   const family = webFontFamily(name);
-  let face = registered.get(family);
-  if (face === undefined) {
-    face = (async () => {
-      const loaded = await new FontFace(family, build()).load();
-      document.fonts.add(loaded);
-      return loaded;
-    })();
-    registered.set(family, face);
-  }
+  const kept = registered.get(family);
+  if (kept !== undefined) return kept;
+  const face = (async () => {
+    const loaded = await new FontFace(family, build()).load();
+    document.fonts.add(loaded);
+    return loaded;
+  })();
+  registered.set(family, face);
+  face.catch(() => {
+    if (registered.get(family) === face) registered.delete(family);
+  });
   return face;
 }

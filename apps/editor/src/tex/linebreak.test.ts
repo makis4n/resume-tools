@@ -13,6 +13,7 @@ import {
   type Node,
   paragraphNodes,
   spaceGlue,
+  ZERO_GLUE,
 } from "./linebreak";
 import { applyLigKern, parseTfm, scaleTfm } from "./tfm";
 import { parseType1 } from "./type1";
@@ -165,6 +166,112 @@ describe("paragraphNodes with Computer Modern", () => {
   it("adds a discretionary after an explicit hyphen but not after an en dash", () => {
     expect(paragraphNodes("re-use", face).some((n) => n.kind === "disc")).toBe(true);
     expect(paragraphNodes("2016 -- 2020", face).some((n) => n.kind === "disc")).toBe(false);
+  });
+});
+
+describe("paragraphNodes over the text as the generator writes it", () => {
+  const tfm = parseTfm(fixture("cmr10.tfm"));
+  const metrics = scaleTfm(tfm, 10 * PT);
+  const codes = textToCode(parseType1(fixture("cmr10.pfb")).encoding);
+  const face: Face = { tfm, metrics, codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+  const glues = (nodes: Node[]) => nodes.filter((n) => n.kind === "glue");
+  const boxes = (nodes: Node[]) =>
+    nodes.flatMap((n) => (n.kind === "box" ? [[n.offset, n.end, n.width]] : []));
+
+  it("sets a no-break space as LaTeX's ~: a penalty of 10000 and a normal space", () => {
+    // The generator writes U+00A0, U+202F and U+2007 as ~, \nobreakspace, which is \nobreak and a
+    // control space: the interword glue at a space factor of 1000, even after a period.
+    for (const tie of ["\u00a0", "\u202f", "\u2007"]) {
+      const nodes = paragraphNodes(`Mr.${tie}Smith`, face);
+      const at = nodes.findIndex((n) => n.kind === "penalty");
+      expect(nodes[at], JSON.stringify(tie)).toEqual({ kind: "penalty", penalty: 10000 });
+      expect(nodes[at + 1]).toEqual({
+        kind: "glue",
+        ...spaceGlue(metrics, 1000),
+        offset: 3,
+        end: 4,
+      });
+      expect(glues(nodes)).toHaveLength(1);
+    }
+    // A space and a tie are two glues, of which only the first, after a box, is a place to break.
+    expect(paragraphNodes("a \u00a0b", face).map((n) => n.kind)).toEqual([
+      "box",
+      "glue",
+      "penalty",
+      "glue",
+      "box",
+    ]);
+  });
+
+  it("never breaks at a no-break space", () => {
+    const narrow = { ...LATEX_PARAMS, lines: [{ indent: 0, width: 50 * PT }], rightSkip: FIL_GLUE };
+    const rows = (text: string) => {
+      const nodes = paragraphNodes(text, face);
+      return lineRanges(nodes, breakLines(nodes, narrow), text.length).map((r) =>
+        text.slice(r.from, r.to),
+      );
+    };
+    expect(rows("aaaa bbbb cccc dddd")).toEqual(["aaaa bbbb ", "cccc dddd"]);
+    expect(rows("aaaa bbbb\u00a0cccc dddd")).toEqual(["aaaa ", "bbbb\u00a0cccc ", "dddd"]);
+  });
+
+  it("sets nothing for what the generator leaves out, inside a word or between words", () => {
+    // U+FEFF and the zero-width space never reach TeX, so "of\uFEFFfice" keeps its ffi ligature,
+    // and a word runs on through one.
+    expect(boxes(paragraphNodes("of\ufefffice", face)).map(([from, to]) => [from, to])).toEqual([
+      [0, 1],
+      [1, 5],
+      [5, 6],
+      [6, 7],
+    ]);
+    expect(glues(paragraphNodes("a\ufeffb", face))).toEqual([]);
+    expect(glues(paragraphNodes("a \u200b b", face))).toHaveLength(1);
+    // A vertical tab is a control the generator drops, where /\s/ would have made it a space.
+    expect(glues(paragraphNodes("a\vb", face))).toEqual([]);
+  });
+
+  it("builds the glue between words from \\spaceskip and \\xspaceskip when they are set", () => {
+    // ragged2e's \RaggedRight: the font's space with neither stretch nor shrink, widened after a
+    // sentence as TeX widens any space when \xspaceskip is zero.
+    const rigid = { ...ZERO_GLUE, width: metrics.space };
+    const [space, sentence] = glues(paragraphNodes("One two. Three", face, { spaceSkip: rigid }));
+    expect(space).toMatchObject({ width: metrics.space, stretch: 0, shrink: 0 });
+    expect(sentence).toMatchObject({ width: metrics.space + metrics.extraSpace, stretch: 0 });
+    const x = { ...FIL_GLUE, width: 5 * PT };
+    const both = glues(paragraphNodes("One two. Three", face, { spaceSkip: rigid, xspaceSkip: x }));
+    expect(both[1]).toMatchObject(x);
+    expect(spaceGlue(metrics, 1000, { spaceSkip: ZERO_GLUE })).toEqual(spaceGlue(metrics, 1000));
+  });
+
+  it("sets an ellipsis as LaTeX's three periods, each followed by a kern", () => {
+    // \textellipsis: .\kern\fontdimen3\font three times; a space after it follows a period.
+    const nodes = paragraphNodes("so\u2026 then", face);
+    const period = metrics.widths[codes.get(".") ?? -1] ?? 0;
+    expect(nodes.slice(2, 8)).toEqual([
+      { kind: "box", width: period, offset: 2, end: 3, code: codes.get(".") },
+      { kind: "kern", width: metrics.stretch },
+      { kind: "box", width: period, offset: 2, end: 3, code: codes.get(".") },
+      { kind: "kern", width: metrics.stretch },
+      { kind: "box", width: period, offset: 2, end: 3, code: codes.get(".") },
+      { kind: "kern", width: metrics.stretch },
+    ]);
+    expect(glues(nodes)[0]).toMatchObject({ width: metrics.space + metrics.extraSpace });
+  });
+
+  it("measures a character the font lacks in another font of the field, apart from its run", () => {
+    // LaTeX takes € from TS1 in a T1 paragraph: a box of that font, which ends the f's run, so the
+    // f and the i beside it make no ligature.
+    const euro = 7 * PT;
+    const withEuro: Face = { ...face, widthOf: (ch) => (ch === "\u20ac" ? euro : undefined) };
+    expect(boxes(paragraphNodes("f\u20aci", withEuro))).toEqual([
+      [0, 1, metrics.widths[102]],
+      [1, 2, euro],
+      [2, 3, metrics.widths[105]],
+    ]);
+    // A character no font of the field has is dropped, as TeX drops it.
+    expect(boxes(paragraphNodes("f\u20aci", face)).map(([from, to]) => [from, to])).toEqual([
+      [0, 3],
+    ]);
   });
 });
 

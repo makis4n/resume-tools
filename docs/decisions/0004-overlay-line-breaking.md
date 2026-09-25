@@ -29,29 +29,51 @@ nothing hyphenates yet.
 
 - The overlay does not let the browser wrap. It sets each field as explicit lines broken by
   the TeX breaker with the field's font metrics, with `white-space: pre`, and sets each
-  line's `word-spacing` to the glue TeX set: nothing on a ragged line or on the last line
-  of a justified one, where `\parfillskip` takes the stretch, the shrink or stretch divided
-  over the spaces otherwise. The lines tile the text: each runs from where the previous one
-  stopped to the first character of the next, so the space TeX broke at, leading and
-  trailing whitespace and characters the font has no glyph for all stay in the field. While
-  the user types, every input event rebuilds the text from the element, re-breaks it and
-  puts the caret back, so the overlay always shows the breaks the next compile will
-  produce. Offsets are UTF-16 indices throughout, since that is what the DOM and the model
-  slice by. Enter inserts nothing: a field is one paragraph.
+  line's `word-spacing` to the glue TeX set: the line's shortfall shared between its spaces
+  and its skips as TeX's `hpack` shares it, by the stretch of the highest order of infinity
+  there is, or an excess by shrink. So nothing goes to the spaces of a ragged line or of the
+  last line of a justified one, where fil glue takes it all; a justified line's spaces take
+  it all; and a finite `\rightskip`, as ragged2e's `\RaggedRight` has, shares it with the
+  spaces, or takes it all when `\spaceskip` has made them rigid. The lines tile the text:
+  each runs from where the previous one stopped to the first character of the next, so the
+  space TeX broke at, leading and trailing whitespace and characters the font has no glyph
+  for all stay in the field. While the user types, every input event rebuilds the text from
+  the element, re-breaks it and puts the caret back, so the overlay always shows the breaks
+  the next compile will produce. Offsets are UTF-16 indices throughout, since that is what
+  the DOM and the model slice by. Enter inserts nothing: a field is one paragraph.
 - The breaker needs the paragraph TeX set the field in: the `\parshape` (or `\hsize` with
-  hanging indentation), `\leftskip`, `\rightskip`, `\parfillskip`, the tolerances and
-  `\emergencystretch`. The spike hard-codes the values measured inside Jake's `\resumeItem`
-  (`\parshape 1`, `\@totalleftmargin` 34.93 pt, `\linewidth` 507.09 pt, `\raggedright`).
-  The template package will carry them per field: the generated LaTeX emits them next to
-  the field's begin marker, as a second `\special` written with `\the` of each parameter
-  (e-TeX's `\parshapeindent` and `\parshapelength` for the shape), so they are measured by
-  TeX rather than derived from the template by hand. Space-factor codes are LaTeX's
-  defaults unless the template changes them, which the probe step can detect.
+  hanging indentation), `\leftskip`, `\rightskip`, `\parfillskip`, the tolerances,
+  `\emergencystretch`, and `\spaceskip` and `\xspaceskip`, which replace the font's glue
+  between words when they are not zero. The spike hard-codes the values measured inside
+  Jake's `\resumeItem` (`\parshape 1`, `\@totalleftmargin` 34.93 pt, `\linewidth`
+  507.09 pt, `\raggedright`). The template package will carry them per field: the
+  generated LaTeX emits them next to the field's begin marker, as a second `\special`
+  written with `\the` of each parameter (e-TeX's `\parshapeindent` and `\parshapelength`
+  for the shape), so they are measured by TeX rather than derived from the template by
+  hand. Space-factor codes are LaTeX's defaults unless the template changes them, which
+  the probe step can detect.
 - A field that starts mid-paragraph, after other text on its first line, gets its first
-  line's available width from the position of its first glyph on the page.
-- Characters that reach a glyph through a ligature in TeX but sit in the text as one
-  character (`–`, `—`, curly quotes) are mapped to that glyph's code, so they cost what
-  the ligature costs. A character the font has no glyph for costs nothing, as in TeX.
+  line's available width from the position of its first glyph on the page, less where the
+  line starts. That is the paragraph's left edge and the line's indent, and the edge comes
+  from the field's second line when the page shows one, since every line after a
+  paragraph's first starts at the edge and its own indent. A field the page shows on one
+  line takes its line's start from the leftmost glyph or rule on its baseline within the
+  line's width, never more than `\hsize` back; a list's label hung in the margin, an indent
+  box, which draws nothing, and a column beside it that shares the baseline still mislead
+  that guess, until the field grows onto a second line and the next page says where the
+  edge is.
+- A field is measured in its letter font, the font that sets the most of its letters and
+  digits on the page, whatever font its first glyph is in. A character that font lacks costs
+  what the first of the field's other fonts that has it sets it at, as LaTeX sets `€`, `×`
+  or `•` from TS1 in a T1 paragraph, as a box of its own outside any ligature or kern; the
+  browser draws it in its serif. `…` costs LaTeX's `\textellipsis`, three periods each
+  followed by a kern of `\fontdimen3`, and a character none of the field's fonts has costs
+  nothing, as in TeX. Characters that reach a glyph through a ligature in TeX but sit in the
+  text as one character (`–`, `—`, curly quotes) are mapped to that glyph's code, so they
+  cost what the ligature costs.
+- A no-break space, which the generator writes as `~`, is `\nobreak` and a normal space, so
+  the overlay never breaks there, and the characters the generator leaves out, U+FEFF and the
+  zero-width space among them, cost nothing and never break.
 - Hyphenation stays a hook until a template needs it. TeX hyphenates only on its second
   pass, when the first pass finds no feasible break; a resume bullet on a ragged-right
   measure almost never reaches it. When one does, the overlay's break will differ from the
@@ -71,5 +93,11 @@ nothing hyphenates yet.
 - The overlay reads that special (milestone 2, item 9): a field breaks with the `\parshape` or
   hanging indentation, skips, tolerances and emergency stretch TeX measured where it begins, and
   one that starts after other text on its line loses the distance from the line's start to it.
+  The breaker's work grows with a shape's length, so it is given at most 64 lines of one,
+  which no resume paragraph reaches.
+- The overlay closes on Escape, when it loses the focus, and when the document no longer has
+  its field, never because a page lacks the field: that page may be the compile of older text,
+  such as an emptied field a template leaves out while the user types its replacement. It then
+  keeps its place from the last page that showed the field until a page shows it again.
 - The web fonts should be built with the TFM kerns and ligatures as GPOS and GSUB tables
   once the OpenType writer exists, so the within-line drift goes to zero too.

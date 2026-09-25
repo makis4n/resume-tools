@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Font, parse } from "opentype.js";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable } from "../engine/node";
 import { type FontOutlines, glyphOf, glyphTable, glyphText } from "../tex/glyphs";
@@ -9,7 +9,14 @@ import { parseTfm } from "../tex/tfm";
 import { parseType1 } from "../tex/type1";
 import { FontLibrary, type PageFont } from "./fonts";
 import { TexLiveIndex } from "./texlive";
-import { buildWebFont, pathOf, typedCodes, webFontFamily, webFontOf } from "./webfont";
+import {
+  buildWebFont,
+  pathOf,
+  registerWebFont,
+  typedCodes,
+  webFontFamily,
+  webFontOf,
+} from "./webfont";
 
 const fixture = (name: string) =>
   new Uint8Array(readFileSync(new URL(`../tex/fixtures/${name}`, import.meta.url)));
@@ -157,6 +164,49 @@ describe("buildWebFont", () => {
     const codes = typedCodes(outlines, (code) => (code === 66 ? "B" : code === 128 ? "Ă" : "ff"));
     expect(codes.has("B")).toBe(false);
     expect([...codes.keys()]).toEqual(["Ă"]);
+  });
+});
+
+describe("registerWebFont", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("builds a font again after a build that failed, and keeps the one that loaded", async () => {
+    // The browser's FontFace and document.fonts, as far as registerWebFont uses them.
+    const added: string[] = [];
+    class FakeFontFace {
+      constructor(
+        readonly family: string,
+        readonly data: ArrayBuffer,
+      ) {}
+      load() {
+        return Promise.resolve(this);
+      }
+    }
+    vi.stubGlobal("FontFace", FakeFontFace);
+    vi.stubGlobal("document", { fonts: { add: (face: FakeFontFace) => added.push(face.family) } });
+    const page = { ...cmr10(), name: "cmr10-again" };
+    // What FontLibrary gives while a font's outlines cannot be read, as when its .pfb's request
+    // fails once: its metrics, and why it has no outlines.
+    const spoiled: PageFont = {
+      name: page.name,
+      tfm: page.tfm,
+      missing: "HTTP 503",
+      text: () => undefined,
+    };
+    let builds = 0;
+    const build = (font: PageFont) => () => {
+      builds++;
+      return webFontOf(font);
+    };
+    await expect(registerWebFont(page.name, build(spoiled))).rejects.toThrow("has no outlines");
+    expect(added).toEqual([]);
+    // The next field opened in the font, once a page has read its outlines, gets its web font.
+    const face = await registerWebFont(page.name, build(page));
+    expect(added).toEqual(["rt-cmr10-again"]);
+    expect(await registerWebFont(page.name, build(page))).toBe(face);
+    expect(builds).toBe(2);
   });
 });
 

@@ -32,6 +32,12 @@ export interface Paragraph {
    * `\mbox`, where it never breaks a line (`\ifinner`).
    */
   inner: boolean;
+  /**
+   * `\spaceskip` and `\xspaceskip`, the glue between words and after a sentence in place of the
+   * font's when not zero, as ragged2e sets them to make the spaces of `\RaggedRight` rigid.
+   */
+  spaceSkip: Glue;
+  xspaceSkip: Glue;
 }
 
 /** The keys of the special, in the order decision 0007 gives them and `prelude.ts` writes them. */
@@ -48,16 +54,22 @@ const KEYS = [
   "parshape",
   "inner",
   "shape",
+  "spaceskip",
+  "xspaceskip",
 ] as const;
 
 /** Scaled points in a point. */
 const PT = 65536;
 
 /**
- * The most lines hanging indentation is spelled out for. `\hangafter` may be any integer, and a
- * field is never more lines than a page holds, so the entries past this would never be read.
+ * The most lines of a paragraph's shape the breaker is given. The breaker tells the lines of a
+ * shape apart, so its work grows with the shape's length as well as the text's: a template's
+ * `\parshape` of 2,000 lines, or a `\hangafter` of 2^31 - 1 spelled out, made each keystroke cost
+ * hundreds of milliseconds. No resume paragraph has 64 lines, so a longer `\parshape` keeps its
+ * first 64, the last of which repeats, as TeX repeats a shape's last line anyway, and hanging
+ * indentation spells out at most 64 lines before the ones that repeat.
  */
-const MAX_SPECIAL_LINES = 256;
+export const MAX_SHAPE_LINES = 64;
 
 /** A number as `\the` prints one: an optional minus sign, digits, and a fraction. */
 const NUMBER = String.raw`-?\d+(?:\.\d+)?`;
@@ -70,7 +82,20 @@ const GLUE = new RegExp(`^(${NUMBER})pt(?: plus ${COMPONENT})?(?: minus ${COMPON
 /** The infinity order a unit names: 0 for points, then 1 to 3 for `fil` to `filll`. */
 const ORDERS: Record<string, number> = { pt: 0, fil: 1, fill: 2, filll: 3 };
 
-const scaled = (points: string) => Math.round(Number(points) * PT);
+/**
+ * The largest length and integer TeX holds, `\maxdimen` in scaled points and 2^31 - 1: `\the`
+ * prints nothing larger, so a special that holds more, which only a template that writes its own
+ * could, is malformed. A length past them would be infinite to the breaker, which then keeps every
+ * break of a paragraph in play at once.
+ */
+const MAX_DIMEN = 0x3fffffff;
+const MAX_INTEGER = 0x7fffffff;
+
+/** Points as scaled points, or undefined past `\maxdimen`. */
+function scaled(points: string): number | undefined {
+  const sp = Math.round(Number(points) * PT);
+  return Math.abs(sp) <= MAX_DIMEN ? sp : undefined;
+}
 
 function dimension(text: string): number | undefined {
   const match = DIMENSION.exec(text);
@@ -78,18 +103,20 @@ function dimension(text: string): number | undefined {
 }
 
 function integer(text: string): number | undefined {
-  return INTEGER.test(text) ? Number(text) : undefined;
+  return INTEGER.test(text) && Math.abs(Number(text)) <= MAX_INTEGER ? Number(text) : undefined;
 }
 
 function glue(text: string): Glue | undefined {
   const match = GLUE.exec(text);
   if (!match) return undefined;
-  const [, width, stretch, stretchUnit, shrink, shrinkUnit] = match;
+  const [, width = "", stretch = "0", stretchUnit, shrink = "0", shrinkUnit] = match;
+  const [natural, plus, minus] = [width, stretch, shrink].map(scaled);
+  if (natural === undefined || plus === undefined || minus === undefined) return undefined;
   return {
-    width: scaled(width as string),
-    stretch: stretch === undefined ? 0 : scaled(stretch),
+    width: natural,
+    stretch: plus,
     stretchOrder: stretchUnit === undefined ? 0 : (ORDERS[stretchUnit] ?? 0),
-    shrink: shrink === undefined ? 0 : scaled(shrink),
+    shrink: minus,
     shrinkOrder: shrinkUnit === undefined ? 0 : (ORDERS[shrinkUnit] ?? 0),
   };
 }
@@ -159,6 +186,8 @@ export function parseParagraph(text: string): Paragraph | undefined {
     hangAfter: integer(value("hangafter")),
     shape: shape(value("shape")),
     inner: inner === "1" ? true : inner === "0" ? false : undefined,
+    spaceSkip: glue(value("spaceskip")),
+    xspaceSkip: glue(value("xspaceskip")),
   };
   const lines = integer(value("parshape"));
   // `\parshape` counts the lines `shape` spells out, so the two must agree.
@@ -175,15 +204,16 @@ const repeat = (line: LineSpec, count: number) => Array.from({ length: count }, 
  * `\parshape` when it has one, whose last line repeats; otherwise the hanging indentation, which
  * with `\hangafter` n ≥ 0 narrows the lines after the first n, and with n < 0 the first −n; and
  * otherwise every line `\hsize` wide. A positive `\hangindent` indents on the left, a negative one
- * on the right, so the line starts where it would have and is that much shorter.
+ * on the right, so the line starts where it would have and is that much shorter. At most
+ * `MAX_SHAPE_LINES` lines are spelled out, and one more that repeats.
  */
 function lineSpecs(paragraph: Paragraph): LineSpec[] {
   const { hsize, hangIndent, hangAfter } = paragraph;
-  if (paragraph.shape.length > 0) return paragraph.shape;
+  if (paragraph.shape.length > 0) return paragraph.shape.slice(0, MAX_SHAPE_LINES);
   const full = { indent: 0, width: hsize };
   if (hangIndent === 0) return [full];
   const hung = { indent: Math.max(0, hangIndent), width: hsize - Math.abs(hangIndent) };
-  const special = Math.min(Math.abs(hangAfter), MAX_SPECIAL_LINES);
+  const special = Math.min(Math.abs(hangAfter), MAX_SHAPE_LINES);
   return hangAfter < 0 ? [...repeat(hung, special), full] : [...repeat(full, special), hung];
 }
 
@@ -203,6 +233,8 @@ export function breakParams(paragraph: Paragraph): BreakParams {
     leftSkip: paragraph.leftSkip,
     rightSkip: paragraph.rightSkip,
     parFillSkip: paragraph.parFillSkip,
+    spaceSkip: paragraph.spaceSkip,
+    xspaceSkip: paragraph.xspaceSkip,
   };
 }
 

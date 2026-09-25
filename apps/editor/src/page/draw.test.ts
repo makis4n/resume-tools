@@ -86,17 +86,23 @@ describe("drawPage over an invented tree", () => {
     ]);
   });
 
-  it("gives each field its first glyph's font, size and place, and its line's start", async () => {
+  it("gives each field its fonts, its first glyph's place, and its baseline", async () => {
     const drawn = await drawPage(fixture("accents.dvi"), cmr10Library(), texts);
     for (const id of ["word", "lone"]) {
       const layout = drawn.fields.get(id)?.layout;
+      const glyphs = drawn.fields.get(id)?.glyphs ?? [];
       const first = drawn.glyphs.find((glyph) => glyph.field === id);
       expect(layout?.font.name, id).toBe("cmr10");
       expect(layout?.size, id).toBeCloseTo(10, 5);
+      expect(
+        layout?.fonts.map((each) => [each.font, each.glyphs]),
+        id,
+      ).toEqual([[layout?.font, glyphs.length]]);
       expect([layout?.x, layout?.y], id).toEqual([first?.x, first?.y]);
-      // Nothing is set before either field on its line.
-      const line = drawn.glyphs.filter((glyph) => glyph.y === first?.y);
-      expect(layout?.lineStart, id).toBe(Math.min(...line.map((glyph) => glyph.x)));
+      // Each field is one line, and the only one on its baseline.
+      expect(layout?.secondLine, id).toBeUndefined();
+      const line = drawn.glyphs.filter((glyph) => glyph.y === first?.y).map((glyph) => glyph.x);
+      expect(layout?.baseline, id).toEqual(line.sort((a, b) => a - b));
       // The fixture was compiled without the prelude, so it has no paragraph specials.
       expect(layout?.paragraph, id).toBeUndefined();
     }
@@ -488,14 +494,73 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     expect(f?.paragraph).toBe("RT:P:F:hsize=345.0pt");
     expect(f?.font.name).toBe("cmr10");
     expect(f?.size).toBeCloseTo(10, 5);
-    // The line starts at the rule, before the label's glyphs and the field's.
+    // The baseline starts at the rule, before the label's glyphs and the field's.
     const label = Math.min(...page.glyphs.filter((glyph) => glyph.y === f?.y).map((g) => g.x));
-    expect(f && label - f.lineStart).toBeGreaterThan(12);
+    expect(f && label - (f.baseline[0] ?? Number.NaN)).toBeGreaterThan(12);
     expect(f && f.x - label).toBeGreaterThan(20);
+    expect(f?.baseline).toContain(f?.x);
     const g = page.fields.get("g")?.layout;
     expect(g?.paragraph).toBeUndefined();
-    expect(g?.lineStart).toBe(g?.x);
+    expect(g?.baseline[0]).toBe(g?.x);
   }, 30_000);
+
+  it("gives a field its letter font first, and where its second line starts", async () => {
+    // LaTeX sets € from TS1 in a T1 paragraph: a field that starts with one is still measured and
+    // set in the font of its letters. The field's second line starts at the paragraph's edge.
+    const text =
+      "\u20ac2.4M raised after building the first prototype, then hired and led a team of six engineers through launch and growth.";
+    const body = [
+      "\\documentclass{article}\\usepackage[T1]{fontenc}\\usepackage{lmodern}\\begin{document}",
+      `\\noindent\\parbox{150pt}{\\special{rt:b:f}${text}\\special{rt:e:f}}`,
+      "\\end{document}",
+    ].join("\n");
+    const compiled = session.compile("pdftex", "stock", body, { job: "letters", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const page = await drawPage(compiled.output, fonts, new Map([["f", text]]));
+    const f = page.fields.get("f")?.layout;
+    expect(f?.fonts.map((each) => [each.font.name, each.glyphs, each.letters])).toEqual([
+      ["ec-lmr10", (page.fields.get("f")?.glyphs.length ?? 0) - 1, expect.any(Number)],
+      ["ts1-lmr10", 1, 0],
+    ]);
+    expect(f?.font.name).toBe("ec-lmr10");
+    const glyphs = page.glyphs.filter((glyph) => glyph.field === "f");
+    const second = glyphs.find((glyph) => glyph.y > (f?.y ?? 0) + 5);
+    expect(f?.secondLine).toBe(second?.x);
+    expect(f?.secondLine).toBe(f?.x);
+  }, 30_000);
+
+  it("lays out thousands of fields in time proportional to the page", async () => {
+    // The reviewers' page: 8,000 fields of one glyph each, which a template could mark. Laid out
+    // field by field over the whole page, it drew in 636 to 726 ms, after every edit's compile.
+    const cells = Array.from(
+      { length: 8000 },
+      (_, i) => `\\special{rt:b:f${i}}x\\special{rt:e:f${i}}`,
+    );
+    const lines = Array.from(
+      { length: 200 },
+      (_, i) => `${cells.slice(i * 40, i * 40 + 40).join("")} `,
+    );
+    const body = [
+      "\\documentclass{article}\\usepackage[margin=0.2in]{geometry}\\begin{document}\\tiny\\noindent",
+      ...lines,
+      "\\end{document}",
+    ].join("\n");
+    const compiled = session.compile("pdftex", "stock", body, { job: "many", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const output = compiled.output;
+    await drawPage(output, fonts, new Map());
+    const times: number[] = [];
+    let drawn: DrawnPage | undefined;
+    for (let i = 0; i < 5; i++) {
+      const started = performance.now();
+      drawn = await drawPage(output, fonts, new Map());
+      times.push(performance.now() - started);
+    }
+    expect(drawn?.fields.size).toBe(8000);
+    expect(drawn?.pageCount).toBe(1);
+    expect([...(drawn?.fields.values() ?? [])].every((field) => field.layout)).toBe(true);
+    expect(times.sort((a, b) => a - b)[2]).toBeLessThan(100);
+  }, 60_000);
 
   it("gives a later page the size the first page set", async () => {
     const compiled = session.compile(
