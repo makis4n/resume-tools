@@ -16,9 +16,15 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
 - A port changes only what the loop needs, and says so in a comment at the top of its preamble:
   the driver; `geometry` in place of whatever set the page size and margins, with defaults that
   reproduce the upstream layout, so that the page size and margins controls are ordinary compiles
-  (plan section 5.4); no marker macros, since the prelude defines them (decision 0007); and the
-  file ends where the body would begin, since the generator writes the body. The upstream
-  licence notice stays in the preamble, verbatim, with the attribution in the package.
+  (plan section 5.4); hyperref's bookmarks off, with `bookmarks=false`, since a one-page resume
+  has no use for them and hyperref converts each section title into its bookmark in time that
+  grows with the square of the title's length, about 4 s a pass for 8,000 characters against
+  under a tenth of a second without; no marker macros, since the prelude defines them (decision
+  0007); and the file ends where the body would begin, since the generator writes the body.
+- The licence notices of the template and of what it derives from stay in the preamble,
+  verbatim, with the attribution in the package. Jake's Resume is based on sb2nov/resume, and
+  about half of its preamble's code is sb2nov's, so the port carries Sourabh Bajaj's copyright
+  line above Jake Gutierrez's, over the MIT permission notice the two share.
 - A curated package lives in a folder named after its id, `apps/editor/src/templates/<id>/`,
   holding `template.json`, `preamble.tex`, any class or style files and `sample.json`, an
   invented resume that shows the template off; `curated.ts` assembles the folders at load and
@@ -42,3 +48,7 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
 - The loader imports each folder statically, as JSON and as text through Vite's `?raw`, since the
   app is a bundle with no file system; the same module serves the tests and item 7's harness, which
   therefore run under Vitest.
+- Bookmarks off removes the one cost the review of item 6 found growing faster than a field's
+  length, but nothing yet bounds a compile: the worker runs requests one at a time with no
+  timeout, so a compile that runs long, for any reason, holds up every edit after it. Item 8,
+  whose scheduler keeps one compile in flight, has to give it a time limit.

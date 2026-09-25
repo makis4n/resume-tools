@@ -58,7 +58,21 @@ begin marker carrying the paragraph TeX sets the field in.
   generator builds: `mailto:` and the email, trimmed; `tel:` and the phone with its whitespace
   taken out; and none for the location. The field is typed as text, so its `#`, `?`, `&`, `%` and
   `/` are percent-encoded before the URL slot's own encoding, since an address reads them as its
-  syntax: in `mailto:a#b@example.com` the address would be `a`, and the rest a fragment.
+  syntax: in `mailto:a#b@example.com` the address would be `a`, and the rest a fragment. An
+  address from the resume, a link's `href` or a rich run's, links only to the web, an email or a
+  phone, because hyperref reads its scheme to choose the link's PDF action: under the dvipdfmx
+  driver a `run:` address becomes a Launch action, which asks the reader to run a program; a
+  `file:` address, or one with no scheme, a GoToR link to a file, with `.pdf` added when it has no
+  extension, so that the everyday `github.com/mara` would open `github.com/mara.pdf`; `#name` a
+  GoTo within the document; and any other scheme, `javascript:` among them, a URI. So the
+  generator reads such an address as the URL slot writes it, without the dropped characters and
+  the whitespace around it (`linkAddress`): one with a scheme is kept when the scheme is `http`,
+  `https`, `mailto` or `tel`, in any case, and is not linked otherwise; one without gets `mailto:`
+  when it reads as an email, with one `@` and no whitespace, slash or colon, `https:` when it
+  begins with `//`, and `https://` otherwise; and one that is blank, or begins with `#`, is not
+  linked. A link's `href` that is not linked is absent, as a blank one is, so `{{#href}}` is false
+  and `{{&href}}` sets nothing; a rich run with such an address is set without `\href`. The
+  contacts' addresses, which the generator builds, are not read this way.
 - **Dates** are the generator's, never TeX's, with English month names: `Jun 2020`, `June 2020`,
   `06/2020` or `2020`, and a date stored as a year is the year in every format. A range is joined
   by an en dash between spaces, an ongoing one ends in `Present`, and a single date stands alone.

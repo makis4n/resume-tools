@@ -6,7 +6,7 @@
   "source": {
     "url": "https://github.com/jakegut/resume",
     "license": "MIT",
-    "attribution": "Jake Gutierrez, based on sb2nov/resume"
+    "attribution": "Jake Gutierrez and Sourabh Bajaj (jakegut/resume, based on sb2nov/resume)"
   },
   "files": {},
   "controls": {
@@ -31,22 +31,22 @@
       "location": "{{text}}"
     },
     "link": {
-      "other": "\\href{{{&href}}}{\\underline{{{label}}}}"
+      "other": "{{#href}}\\href{{{&href}}}{\\underline{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}}{{/href}}{{^href}}\\underline{{{label}}}{{/href}}"
     },
     "section": {
       "entries": "\\section{{{title}}}\n{{#entries}}\n\\resumeSubHeadingListStart\n{{entries}}\n\\resumeSubHeadingListEnd\n{{/entries}}",
-      "list": "\\section{{{title}}}\n{{#items}}\n\\begin{itemize}[leftmargin=0.15in, label={}]\n\\small{\\item{\\leavevmode\n{{items}}\n}}\n\\end{itemize}\n{{/items}}",
+      "list": "\\section{{{title}}}\n{{#items}}\n\\begin{itemize}[leftmargin=0.15in, label={}]\n\\small{\\item{\n{{items}}\n}}\n\\end{itemize}\n{{/items}}",
       "labelled": "\\section{{{title}}}\n{{#items}}\n\\begin{itemize}[leftmargin=0.15in, label={}]\n\\small{\\item{\n{{items}}\n}}\n\\end{itemize}\n{{/items}}",
       "paragraph": "\\section{{{title}}}\n{\\small {{text}}\\par}"
     },
     "entry": {
       "default": "\\resumeSubheading\n  {{{title}}}{{{dates}}}\n  {{{subtitle}}}{{{place}}}\n{{#bullets}}\n\\resumeItemListStart\n{{bullets}}\n\\resumeItemListEnd\n{{/bullets}}",
       "education": "\\resumeSubheading\n  {{{title}}}{{{place}}}\n  {{{subtitle}}}{{{dates}}}\n{{#bullets}}\n\\resumeItemListStart\n{{bullets}}\n\\resumeItemListEnd\n{{/bullets}}",
-      "projects": "\\resumeProjectHeading\n  {\\textbf{{{title}}}{{#subtitle}} $|$ \\emph{{{subtitle}}}{{/subtitle}}}{{{dates}}}\n{{#bullets}}\n\\resumeItemListStart\n{{bullets}}\n\\resumeItemListEnd\n{{/bullets}}"
+      "projects": "\\resumeProjectHeading\n  {\\textbf{{{title}}}{{#subtitle}}{{#title}} $|$ {{/title}}\\emph{{{subtitle}}}{{/subtitle}}}{{{dates}}}\n{{#bullets}}\n\\resumeItemListStart\n{{bullets}}\n\\resumeItemListEnd\n{{/bullets}}"
     },
     "bullet": "\\resumeItem{{{text}}}",
-    "item": "{{text}}",
-    "labelledItem": "\\textbf{{{label}}}{: {{text}}}",
+    "item": "\\leavevmode{{text}}",
+    "labelledItem": "\\leavevmode{{#label}}\\textbf{{{label}}}: {{/label}}{{text}}",
     "separators": {
       "contacts": " $|$ ",
       "links": " $|$ ",

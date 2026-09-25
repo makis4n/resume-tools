@@ -12,15 +12,17 @@ import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
 import { alignGlyphs, collectFields, MARKER_BEGIN, MARKER_END } from "../tex/fields";
+import { curated } from "./curated";
 import {
   formatName,
   type GeneratedBody,
   GenerateError,
   generateBody,
   generateFormat,
+  linkAddress,
   MAX_BODY,
 } from "./generate";
-import { parsePackage, type TemplatePackage } from "./package";
+import { type ControlValues, defaultControls, parsePackage, type TemplatePackage } from "./package";
 import { PARAGRAPH_MARKER, PRELUDE } from "./prelude";
 
 type PackageInput = z.input<typeof TemplatePackage>;
@@ -517,9 +519,12 @@ describe("generateBody", () => {
     });
     for (const each of [pkg, twice]) {
       const without = generateBody(each, resume, {});
-      const fresh = generateBody(each, withLink({ label: "", href: " " }), {});
-      expect(fresh.latex).toBe(without.latex);
-      expect(fresh.texts).toEqual(without.texts);
+      // An address the editor does not link is no address, as a blank one is.
+      for (const href of [" ", "run:calc.exe", "#top"]) {
+        const fresh = generateBody(each, withLink({ label: "", href }), {});
+        expect(fresh.latex, href).toBe(without.latex);
+        expect(fresh.texts, href).toEqual(without.texts);
+      }
     }
     // A link with an address stays while its label is empty, as it does the other way round.
     const addressOnly = generateBody(
@@ -530,6 +535,55 @@ describe("generateBody", () => {
     expect(addressOnly.latex).toContain(String.raw` $|$ \href{https://new.example/}{}`);
     const labelOnly = generateBody(pkg, withLink({ label: "New", href: "" }), {});
     expect(labelOnly.latex).toContain(String.raw` $|$ \href{}{\rtfield{new.label}{New}}`);
+  });
+
+  it("links a header link and a rich run to the address linkAddress gives, or not at all", () => {
+    // A link snippet that tests its address, as Jake's does, and sets the label alone without one.
+    const guarded = packageWith((pkg) => {
+      pkg.snippets.link = {
+        other: "{{#href}}\\href{{{&href}}}{{{label}}}{{/href}}{{^href}}{{label}}{{/href}}",
+      };
+    });
+    const typed = Resume.parse({
+      ...resume,
+      header: {
+        ...resume.header,
+        links: [
+          { id: "code", kind: "github", label: "Code", href: "code.example/ilse" },
+          { id: "tool", kind: "other", label: "Tool", href: "run:calc.exe" },
+        ],
+      },
+      sections: [
+        {
+          id: "summary",
+          kind: "paragraph",
+          role: "summary",
+          title: "Summary",
+          text: [
+            { text: "Mail", href: "ilse@example.com" },
+            { text: ", " },
+            { text: "launch", bold: true, href: "run:calc.exe" },
+            { text: " and " },
+            { text: "top", href: "#Doc-Start" },
+          ],
+        },
+      ],
+    });
+    const { latex, texts } = generateBody(guarded, typed, {});
+    // The contacts link to the addresses the generator builds for them, as before.
+    expect(latex).toContain(
+      [
+        String.raw`\href{tel:+15550100}{\rtfield{header.phone}{+1 555 0100}}`,
+        String.raw`\href{mailto:ilse\_m@example.com}{\underline{\rtfield{header.email}{ilse\_m@example.com}}}`,
+        String.raw`\href{https://code.example/ilse}{\rtfield{code.label}{Code}}`,
+        String.raw`\rtfield{tool.label}{Tool}`,
+      ].join(" $|$ "),
+    );
+    expect(latex).toContain(
+      String.raw`\rtfield{summary.text}{\href{mailto:ilse@example.com}{Mail}, \textbf{launch} and top}`,
+    );
+    // What the page shows is the text alone either way.
+    expect(texts.get("summary.text")).toBe("Mail, launch and top");
   });
 
   it("chooses variants and separators by role, and the default for a role without its own", () => {
@@ -740,6 +794,54 @@ describe("generateFormat", () => {
   });
 });
 
+describe("linkAddress", () => {
+  it("keeps an address whose scheme is the web's, email's or the phone's, in any case", () => {
+    for (const address of [
+      "https://quist.example.com",
+      "http://quist.example.com/cv",
+      "HTTPS://QUIST.EXAMPLE.COM",
+      "mailto:mara@example.com",
+      "Tel:+14155550132",
+    ])
+      expect(linkAddress(address), address).toBe(address);
+  });
+
+  it("links no other scheme, which hyperref would make a Launch, a GoToR or a script", () => {
+    for (const address of [
+      "run:calc.exe",
+      "RUN:calc.exe",
+      "file:///x",
+      "javascript:alert(1)",
+      "ftp://files.example.com/cv.pdf",
+      "data:text/html,x",
+    ])
+      expect(linkAddress(address), address).toBeUndefined();
+  });
+
+  it("gives an email typed without its scheme mailto:", () => {
+    expect(linkAddress("mara@example.com")).toBe("mailto:mara@example.com");
+    // With a slash it reads as a web address with a user in it.
+    expect(linkAddress("mara@example.com/cv")).toBe("https://mara@example.com/cv");
+  });
+
+  it("gives an address that begins with // https:, and any other without a scheme https://", () => {
+    expect(linkAddress("//host/share/cv.pdf")).toBe("https://host/share/cv.pdf");
+    expect(linkAddress("github.com/mara")).toBe("https://github.com/mara");
+    expect(linkAddress("quist.example.com")).toBe("https://quist.example.com");
+  });
+
+  it("reads the address as escapeUrl writes it, trimmed and without what escapeUrl drops", () => {
+    expect(linkAddress("  github.com/mara\n")).toBe("https://github.com/mara");
+    expect(linkAddress("\u200bmailto:mara@example.com")).toBe("mailto:mara@example.com");
+    expect(linkAddress(" \u200brun:calc.exe")).toBeUndefined();
+  });
+
+  it("links neither a blank address nor a name within the document", () => {
+    for (const address of ["", "   ", "\u200b", "#Doc-Start", "  #top"])
+      expect(linkAddress(address), JSON.stringify(address)).toBeUndefined();
+  });
+});
+
 /** The glyph texts the aligner accepts for each spelling of a ligature in a field's text. */
 const SPELLINGS: Record<string, string[]> = {
   "--": ["--", "\u2013"],
@@ -886,6 +988,57 @@ const quirksResume = Resume.parse({
           bullets: [{ id: "raw", text: [{ text: TRICKY.brackets }] }],
         },
       ],
+    },
+  ],
+});
+
+/**
+ * Addresses as a user might type them into a link: a program to run, a file, a script, a name
+ * within the document, a share, a web address and an email without their schemes, and a web
+ * address in full. Through hyperref as they are, the first four would be a Launch, a GoToR to a
+ * file, a URI that runs a script and a GoTo, and the share and the web address GoToR links too.
+ */
+const TYPED_ADDRESSES = [
+  "run:calc.exe",
+  "file:///x",
+  "javascript:alert(1)",
+  "#Doc-Start",
+  "//host/share/cv.pdf",
+  "github.com/mara",
+  "mara@example.com",
+  "https://quist.example.com",
+];
+
+/** Where the last four of them link once `linkAddress` has read them, in order. */
+const LINKED = [
+  "https://host/share/cv.pdf",
+  "https://github.com/mara",
+  "mailto:mara@example.com",
+  "https://quist.example.com",
+];
+
+/** An invented resume with each typed address as a header link and as a run of the summary. */
+const addressed = Resume.parse({
+  version: 1,
+  header: {
+    name: { first: "Mara", last: "Quist" },
+    links: TYPED_ADDRESSES.map((href, i) => ({
+      id: `link-${i}`,
+      kind: "website",
+      label: `Link ${i}`,
+      href,
+    })),
+  },
+  sections: [
+    {
+      id: "summary",
+      kind: "paragraph",
+      role: "summary",
+      title: "Summary",
+      text: TYPED_ADDRESSES.flatMap((href, i) => [
+        ...(i > 0 ? [{ text: ", " }] : []),
+        { text: `Address ${i}`, href },
+      ]),
     },
   ],
 });
@@ -1246,6 +1399,66 @@ describe.skipIf(!engineAvailable())("the generated LaTeX through the engine", ()
       // The raw bullet has no field, so its glyphs are read off the page, where OT1 codes these
       // characters as ASCII does.
       expect(String.fromCharCode(...glyphCodes)).toContain("x[3people]ledateam*");
+    });
+  });
+
+  describe("with addresses of every kind, through this package and Jake's", () => {
+    const jake = curated("jake");
+    const cases: [string, TemplatePackage, ControlValues][] = [
+      ["plain", pkg, {}],
+      ["jake", jake.package, defaultControls(jake.package)],
+    ];
+    const compiled = new Map<
+      string,
+      { body: GeneratedBody; result: CompileResult; page: DrawnPage; banns: string[] }
+    >();
+    beforeAll(async () => {
+      for (const [name, each, values] of cases) {
+        const format = generateFormat(each, values);
+        // This package's format was dumped above; Jake's is dumped here.
+        if (each !== pkg) {
+          const dumped = session.dump(each.engine, format.name, format.preamble, format.files);
+          if (!dumped.ok) throw new Error(dumped.error);
+        }
+        const body = generateBody(each, addressed, values);
+        const result = session.compile(each.engine, format.name, body.latex, {
+          job: `addresses-${name}`,
+        });
+        if (!result.output) throw new Error(result.error);
+        const page = await drawPage(result.output, fonts, body.texts);
+        const banns = parseDvi(result.output, () => undefined)
+          .pages.flatMap(({ items }) => items)
+          .flatMap((item) =>
+            item.kind === "special" && item.text.startsWith("pdf:bann") ? [item.text] : [],
+          );
+        compiled.set(name, { body, result, page, banns });
+      }
+    }, 60_000);
+
+    it("makes each link a URI to the web, an email or a phone, and the others no link", () => {
+      expect([...compiled.keys()]).toEqual(["plain", "jake"]);
+      for (const [name, { result, banns }] of compiled) {
+        expect(result.log, name).not.toMatch(/^! /m);
+        // No Launch, no GoToR to a file and no GoTo within the document.
+        for (const bann of banns) expect(bann, name).not.toMatch(/\/S\/(Launch|GoToR|GoTo)\b/);
+        const uris = banns.map((bann) => /\/S\/URI\/URI\(((?:\\.|[^\\)])*)\)/.exec(bann)?.[1]);
+        // The four that link, in the header and again in the summary, and nothing for the rest.
+        expect(uris, name).toEqual([...LINKED, ...LINKED]);
+      }
+    });
+
+    it("still sets the label or the text of an address it does not link", () => {
+      for (const [name, { body, page }] of compiled) {
+        for (const id of ["link-0.label", "link-1.label", "link-2.label", "link-3.label"])
+          expect(body.texts.get(id), `${name} ${id}`).toBe(`Link ${id.charAt(5)}`);
+        expect(body.texts.get("summary.text"), name).toContain("Address 0, Address 1");
+        for (const [id, text] of body.texts) {
+          const field = page.fields.get(id);
+          expect(field?.glyphs.length, `${name} ${id}`).toBeGreaterThan(0);
+          expect(field && alignGlyphs(field, text), `${name} ${id}`).toBe(0);
+        }
+        expect(page.unmatched, name).toBe(0);
+      }
     });
   });
 });

@@ -71,16 +71,28 @@ function filledFields(resume: Resume): string[] {
 }
 
 describe("CURATED", () => {
-  it("holds Jake's Resume, ported under the MIT licence with its notice", () => {
+  it("holds Jake's Resume, ported under the MIT licence with the notices of both its sources", () => {
     expect(CURATED.has("jake")).toBe(true);
     const jake = curated("jake");
     expect(jake).toBe(CURATED.get("jake"));
     expect(jake.package.id).toBe("jake");
     expect(jake.package.engine).toBe("pdftex");
     expect(jake.package.source.license).toBe("MIT");
-    // Upstream's header stays at the top, and the licence's notice goes with the copy.
+    expect(jake.package.source.attribution).toBe(
+      "Jake Gutierrez and Sourabh Bajaj (jakegut/resume, based on sb2nov/resume)",
+    );
+    // Upstream's header stays at the top, and the licence's notice goes with the copy: the
+    // copyright line of sb2nov/resume, which Jake's Resume is based on, and Jake's, over the
+    // permission notice the two share.
     expect(jake.package.preamble).toMatch(/^%-+\n% Resume in Latex\n% Author : Jake Gutierrez\n/);
-    expect(jake.package.preamble).toContain("% Copyright (c) 2020 Jake Gutierrez\n");
+    expect(jake.package.preamble).toContain(
+      [
+        "% Copyright (c) 2026 Sourabh Bajaj",
+        "% Copyright (c) 2020 Jake Gutierrez",
+        "%",
+        "% Permission is hereby granted, free of charge,",
+      ].join("\n"),
+    );
   });
 
   it("has a snippet for every section's role, and a sample that reaches each role's variant", () => {
@@ -114,6 +126,34 @@ function widthOf(page: DrawnPage, id: string): number {
   const last = glyphs.at(-1);
   if (!first || !last) throw new Error(`no glyphs for ${id}`);
   return last.right - first.left;
+}
+
+/** The glyphs on the baseline of a field's first glyph: the field's, and anything set beside it. */
+function lineOf(page: DrawnPage, id: string) {
+  const y = page.glyphs.find((glyph) => glyph.field === id)?.y;
+  if (y === undefined) throw new Error(`no glyphs for ${id}`);
+  return page.glyphs.filter((glyph) => glyph.y === y);
+}
+
+/** The baselines a field's glyphs sit on, down the page. */
+function baselinesOf(page: DrawnPage, id: string): number[] {
+  const ys = new Set(page.glyphs.filter((glyph) => glyph.field === id).map((glyph) => glyph.y));
+  return [...ys].sort((a, b) => a - b);
+}
+
+/** Each link on a page, in order: the address its URI action opens, and the glyphs it spans. */
+function linksOf(items: PageItem[]) {
+  const links: { uri: string | undefined; glyphs: number }[] = [];
+  let open: (typeof links)[number] | undefined;
+  for (const item of items) {
+    if (item.kind === "glyph" && open) open.glyphs++;
+    if (item.kind !== "special") continue;
+    if (item.text.startsWith("pdf:bann")) {
+      open = { uri: /\/S\/URI\/URI\(((?:\\.|[^\\)])*)\)/.exec(item.text)?.[1], glyphs: 0 };
+      links.push(open);
+    } else if (item.text.startsWith("pdf:eann")) open = undefined;
+  }
+  return links;
 }
 
 const INCH = 72.27;
@@ -307,5 +347,118 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     expect(page.unmatched).toBe(0);
     // The summary's smaller size ends with it, so the sections after it are set as before.
     expect(widthOf(page, "northgate.title")).toBeCloseTo(widthOf(drawn, "northgate.title"), 3);
+  });
+
+  it("sets a link, a project and a labelled item with a blank field, and no stray separator", async () => {
+    const blank = Resume.parse(structuredClone(sample));
+    const [site] = blank.header.links;
+    const [, , projects, skills] = blank.sections;
+    const project = projects?.kind === "entries" ? projects.entries[0] : undefined;
+    const languages = skills?.kind === "labelled" ? skills.items[0] : undefined;
+    if (!site || !project || !languages) throw new Error("the sample moved");
+    // A link with an address and no label, and one with an address the editor does not link.
+    site.label = "";
+    blank.header.links.push({ id: "tool", kind: "other", label: "Portfolio", href: "run:x" });
+    project.title = "";
+    languages.label = "";
+    const blankBody = generateBody(pkg, blank, values);
+    const { result, page } = await compileAndDraw(blankBody.latex, blankBody.texts, "blank");
+    expect(result.log).not.toMatch(/^! /m);
+    expect(page.unmatched).toBe(0);
+    // The link with no label shows its address, and links; the one to run:x shows its label,
+    // and links nowhere; and the email links as before.
+    expect(blankBody.latex).toContain(
+      String.raw`\href{https://quist.example.com}{\underline{https://quist.example.com}} $|$ \underline{\rtfield{tool.label}{Portfolio}}`,
+    );
+    const dvi = parseDvi(result.output as Uint8Array, () => undefined).pages[0]?.items ?? [];
+    expect(linksOf(dvi)).toEqual([
+      { uri: "mailto:mara@example.com", glyphs: "mara@example.com".length },
+      { uri: "https://quist.example.com", glyphs: "https://quist.example.com".length },
+    ]);
+    expect(page.fields.get("tool.label")?.glyphs).toHaveLength("Portfolio".length);
+    // No | before the project's subtitle, and no colon before the skills: every glyph on their
+    // lines is a field's.
+    expect(blankBody.latex).toContain(String.raw`{\textbf{}\emph{\rtfield{marginalia.subtitle}`);
+    expect(blankBody.latex).toContain(String.raw`\leavevmode\rtfield{languages.text}`);
+    for (const id of ["marginalia.subtitle", "languages.text"])
+      expect(
+        lineOf(page, id).filter((glyph) => glyph.field === undefined),
+        id,
+      ).toEqual([]);
+  });
+
+  it("compiles blank items anywhere in a list or labelled section, each other one a line", async () => {
+    // Where the blank items are: each x an item with text, each - an empty one, and each _ one
+    // of spaces, which is as blank. The \\ after a blank item would find no line to end, and
+    // stop the compile, if the item did not leave vertical mode itself.
+    const shapes = ["x-x", "x--", "--x", "x_x"];
+    const typed = (mark: string, words: string) => {
+      if (mark === "x") return words;
+      return mark === "_" ? "   " : "";
+    };
+    for (const [index, shape] of shapes.entries()) {
+      const marks = [...shape];
+      const blanks = Resume.parse({
+        ...structuredClone(sample),
+        sections: [
+          ...structuredClone(sample.sections),
+          {
+            id: "awards",
+            kind: "list",
+            role: "awards",
+            title: "Awards",
+            items: marks.map((mark, i) => ({
+              id: `award-${i}`,
+              text: [{ text: typed(mark, `Typesetting prize ${i + 1}`) }],
+            })),
+          },
+          {
+            id: "spoken",
+            kind: "labelled",
+            role: "languages",
+            title: "Languages",
+            items: marks.map((mark, i) => ({
+              id: `spoken-${i}`,
+              label: typed(mark, "Fluent"),
+              text: [{ text: typed(mark, `Language ${i + 1}`) }],
+            })),
+          },
+        ],
+      });
+      const blanksBody = generateBody(pkg, blanks, values);
+      const job = `blanks-${index}`;
+      const { result, page } = await compileAndDraw(blanksBody.latex, blanksBody.texts, job);
+      expect(result.log, shape).not.toMatch(/^! /m);
+      expect(page.unmatched, shape).toBe(0);
+      for (const prefix of ["award", "spoken"]) {
+        // Each item with text on a line of its own, below the one before it.
+        const lines = marks.flatMap((mark, i) =>
+          mark === "x" ? [baselinesOf(page, `${prefix}-${i}.text`)] : [],
+        );
+        const ys = lines.map((line) => {
+          expect(line, `${shape} ${prefix}`).toHaveLength(1);
+          return line[0] ?? Number.NaN;
+        });
+        for (const [k, y] of ys.entries())
+          if (k > 0) expect(y, `${shape} ${prefix}`).toBeGreaterThan(ys[k - 1] ?? Infinity);
+      }
+    }
+  });
+
+  it("compiles a section title of 8,000 characters in under a second, with no bookmarks", () => {
+    // hyperref's bookmark for a section converts its title in time that grows with the square
+    // of its length, about 4 s a pass at this length; Jake's port turns bookmarks off.
+    const long = Resume.parse(structuredClone(sample));
+    const [first] = long.sections;
+    if (!first) throw new Error("the sample moved");
+    first.title = "Research and teaching ".repeat(400).slice(0, 8_000);
+    const { latex } = generateBody(pkg, long, values);
+    const result = session.compile(pkg.engine, format.name, latex, {
+      job: "long-title",
+      maxPasses: 1,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.log).not.toMatch(/^! /m);
+    expect(result.passes[0]).toBeLessThan(1000);
   });
 });
