@@ -87,10 +87,11 @@ export interface Report {
 }
 
 /**
- * The job the editor compiles its document in: the session's default, since `App.tsx` names
- * none. TeX gives a document its job's name as `\jobname`, so the harness compiles in the same
- * job, or a package could set its fields one way for the harness and another for the editor.
- * Item 8, if it gives each open document a job of its own, has to keep the two names the same.
+ * The job the editor compiles its document in, which the compile scheduler names in
+ * `src/editor/compiler.ts`. TeX gives a document its job's name as `\jobname`, so the harness
+ * compiles in the same job, or a package could set its fields one way for the harness and another
+ * for the editor. Item 13, if it gives each open document a job of its own, has to keep the two
+ * names the same.
  */
 const EDITOR_JOB = "doc";
 
