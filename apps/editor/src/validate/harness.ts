@@ -7,12 +7,12 @@
  * browser: the caller brings the session and the fonts.
  *
  * It compiles the resume through the package as the editor does, twice, then once more after an
- * edit to every field, and reads the output back as the page does. It reports rather than throws:
- * each check that fails adds a finding, so that CI names every check a package fails and the
- * import step can say what is locked. Only a failed dump or compile stops it, since nothing after
- * either has anything to read. Findings are for developers and CI, and may quote TeX's log, so
- * the product never shows one to a user as it is. The PDF (item 14) and the style controls (item
- * 15) join the checks when they land.
+ * edit to every field, then once for each style control set another way, and reads the output
+ * back as the page does. It reports rather than throws: each check that fails adds a finding, so
+ * that CI names every check a package fails and the import step can say what is locked. Only a
+ * failed dump or compile stops it, since nothing after either has anything to read. Findings are
+ * for developers and CI, and may quote TeX's log, so the product never shows one to a user as it
+ * is. The PDF (item 14) joins the checks when it lands.
  *
  * The harness cannot bound a compile itself. The engine runs TeX in one synchronous call, and
  * nothing else in its thread runs until the call returns, timers included, so a package whose TeX
@@ -29,7 +29,7 @@ import type { FontLibrary, PageFont } from "../page/fonts";
 import { CURATED } from "../templates/curated";
 import { isBlank } from "../templates/escape";
 import { generateBody, generateFormat } from "../templates/generate";
-import { type ControlValues, defaultControls, type TemplatePackage } from "../templates/package";
+import { ControlValues, defaultControls, type TemplatePackage } from "../templates/package";
 import { PARAGRAPH_MARKER } from "../templates/prelude";
 import { type DviDocument, type PageItem, parseDvi } from "../tex/dvi";
 import {
@@ -48,6 +48,7 @@ export const CHECKS = [
   "dump",
   "compile",
   "converges",
+  "controls",
   "edits",
   "pages",
   "fields",
@@ -75,7 +76,9 @@ export interface Report {
    * How long each pass took, in milliseconds, as the session timed them: the resume's compile,
    * two passes as a new document, or three when the log asks for a rerun; the same body's second
    * compile, one pass when it converges; then the edited resume's compile, one pass, as an edit
-   * costs.
+   * costs; then the resume's compile with each control set another way, one pass, as a change of
+   * a control costs, or two where the job starts again as a new document, as it does when the
+   * value names another format.
    */
   passes: number[];
   /** The pages the resume sets. */
@@ -202,6 +205,16 @@ export async function validatePackage(
       ? undefined
       : attempt(findings, "edits", () => compile(editedBody.latex));
   report.passes.push(...(edited?.passes ?? []));
+
+  // The controls' compiles come last, after the edit's, though `CHECKS` lists their check before
+  // `edits`: each leaves the job as it compiled it, with another format where a value names one,
+  // and the edit has to compile in the job as the resume's second compile left it, as an edit does
+  // in the editor. So nothing is restored after them. The first reads the auxiliary files the
+  // edit's compile wrote, so only a template whose page shows what they hold, which the edits
+  // check reports, could pass a control that does nothing.
+  const controls = checkControls(session, pkg, sample, chosen, format.name, output, job);
+  report.passes.push(...controls.passes);
+  findings.push(...controls.findings);
 
   const { fields, undrawable } = await readFields(fonts, output, doc);
   report.pages = doc.pages.length;
@@ -365,6 +378,113 @@ function checkConverges(
   if (!sameOutput(output, second.output))
     findings.push({ check: "converges", message: "the same body compiles again to other output" });
   return findings;
+}
+
+/**
+ * `controls`: every style control the package offers takes effect, in an ordinary compile. The
+ * editor applies a control's value in the body, before `\begin{document}` (decision 0006), so a
+ * snippet that sets nothing TeX shows, such as one that leaves its value in a comment, gives the
+ * user a control that changes nothing, and one that stops the compile gives a page that no longer
+ * updates. So the resume compiles once more for each value `probesOf` gives, one control set
+ * another way in each, in the job, as a change of a control compiles in the editor: a value that
+ * names another format has it dumped first, as the editor dumps it, and the job then starts again
+ * as a new document. A finding says that the format did not dump, that the body did not compile
+ * or its log has an error, or that the output is the resume's own (`sameOutput`), so the control
+ * does nothing. Plan section 5.4 asks as much of an imported template's controls, which appear
+ * only where overriding one changes the output without breaking the compile.
+ */
+function checkControls(
+  session: EngineSession,
+  pkg: TemplatePackage,
+  sample: Resume,
+  chosen: ControlValues,
+  format: string,
+  output: Uint8Array,
+  job: string,
+): { findings: Finding[]; passes: number[] } {
+  const findings: Finding[] = [];
+  const passes: number[] = [];
+  const add = (message: string) => findings.push({ check: "controls", message });
+  for (const { values, set, was } of probesOf(pkg, chosen)) {
+    try {
+      const probe = generateFormat(pkg, values);
+      if (probe.name !== format) {
+        const dumped = session.dump(pkg.engine, probe.name, probe.preamble, probe.files);
+        if (!dumped.ok) {
+          add(`with ${set}, the format does not dump: ${dumped.error ?? "no format"}`);
+          continue;
+        }
+      }
+      const body = generateBody(pkg, sample, values);
+      const result = session.compile(pkg.engine, probe.name, body.latex, { job, maxPasses: 3 });
+      passes.push(...result.passes);
+      const error = compileError(result);
+      if (error !== undefined || result.output === undefined)
+        add(`with ${set}, the body does not compile: ${error ?? "no output"}`);
+      else if (sameOutput(output, result.output))
+        add(`${set} sets the same output as ${was}, so the control does nothing`);
+    } catch (error) {
+      // The generator throws for what it cannot render, and the session for a run the engine
+      // cannot finish.
+      add(`with ${set}, ${messageOf(error)}`);
+    }
+  }
+  return { findings, passes };
+}
+
+/** One value the controls check tries, and how a finding names it and the document's value. */
+interface Probe {
+  /** The document's values, with one control set another way. */
+  values: ControlValues;
+  /** The control and the value it is set to, as `margins 1`. */
+  set: string;
+  /** The control and the document's value for it, as `margins 0.5`. */
+  was: string;
+}
+
+/** The accent the controls check tries, a dark blue, unless the document's accent is that. */
+const PROBE_ACCENT = "#1F4E79";
+
+/**
+ * The values the controls check tries, one control set another way in each, for every control the
+ * package offers, in the schema's order: the other page size; margins of an inch, or of 0.4 where
+ * they are an inch already; the largest font size, or 11.5 where the size is 12; each font but
+ * the document's; a dark blue accent, or black where the accent is that blue; each density but
+ * the document's; and the date format that shows only years, or `MMM yyyy` where the document
+ * shows only years. `chosen` holds a value for every control the package offers, the package's
+ * defaults filled in. The date format is tried only where the package declares it, as Jake's
+ * does, since it is the generator's and changes the page only where the template sets a date.
+ */
+function probesOf(pkg: TemplatePackage, chosen: ControlValues): Probe[] {
+  const { pageSize, margins, fontSize, font, accent, density, dateFormat } = pkg.controls;
+  const probes: Probe[] = [];
+  const probe = (values: ControlValues, name: keyof ControlValues) =>
+    probes.push({
+      values,
+      set: `${name} ${String(values[name])}`,
+      was: `${name} ${String(chosen[name])}`,
+    });
+  if (pageSize)
+    probe({ ...chosen, pageSize: chosen.pageSize === "a4" ? "letter" : "a4" }, "pageSize");
+  if (margins) {
+    const wide = (chosen.margins ?? margins.default) < 1;
+    probe({ ...chosen, margins: wide ? 1 : 0.4 }, "margins");
+  }
+  if (fontSize) probe({ ...chosen, fontSize: chosen.fontSize === 12 ? 11.5 : 12 }, "fontSize");
+  for (const { id } of font?.choices ?? [])
+    if (id !== chosen.font) probe({ ...chosen, font: id }, "font");
+  if (accent) {
+    const blue = (chosen.accent ?? accent.default).toUpperCase() === PROBE_ACCENT;
+    probe({ ...chosen, accent: blue ? "#000000" : PROBE_ACCENT }, "accent");
+  }
+  if (density)
+    for (const value of ControlValues.shape.density.unwrap().options)
+      if (value !== chosen.density) probe({ ...chosen, density: value }, "density");
+  if (dateFormat) {
+    const years = chosen.dateFormat === "yyyy";
+    probe({ ...chosen, dateFormat: years ? "MMM yyyy" : "yyyy" }, "dateFormat");
+  }
+  return probes;
 }
 
 /**

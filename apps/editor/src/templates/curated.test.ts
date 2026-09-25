@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
-import { type DrawnPage, drawPage } from "../page/draw";
+import { type DrawnPage, drawPage, type GlyphBox, ruleCrossings } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
@@ -147,6 +147,39 @@ function lineOf(page: DrawnPage, id: string) {
 function baselinesOf(page: DrawnPage, id: string): number[] {
   const ys = new Set(page.glyphs.filter((glyph) => glyph.field === id).map((glyph) => glyph.y));
   return [...ys].sort((a, b) => a - b);
+}
+
+/**
+ * Where a line of a page is set over the line above it, and by how much, down the page. A line
+ * is every glyph on a baseline some field is set on, and it is set over the line above where a
+ * glyph of one overlaps a glyph of the other by more than an edge. Baselines that only glyphs
+ * outside the fields sit on are not lines: Jake centres each bullet on its line's axis, above the
+ * baseline, and a bullet taken for a line would stand between its own line and the one above,
+ * which would then never be compared.
+ */
+function linesSetOver(page: DrawnPage): string[] {
+  const baselines = page.glyphs.flatMap((glyph) => (glyph.field === undefined ? [] : [glyph.y]));
+  const lines = [...new Set(baselines)]
+    .sort((a, b) => a - b)
+    .map((y) => page.glyphs.filter((glyph) => glyph.y === y));
+  const fieldsOf = (line: GlyphBox[]) =>
+    [...new Set(line.flatMap((glyph) => glyph.field ?? []))].join(", ");
+  const found: string[] = [];
+  lines.forEach((line, i) => {
+    const above = lines[i - 1] ?? [];
+    // How far the line reaches into the one above, where any of its glyphs stands under one there.
+    let depth = 0;
+    for (const lower of line)
+      for (const upper of above)
+        if (Math.min(upper.right, lower.right) > Math.max(upper.left, lower.left))
+          depth = Math.max(
+            depth,
+            Math.min(upper.bottom, lower.bottom) - Math.max(upper.top, lower.top),
+          );
+    if (depth > 0)
+      found.push(`${fieldsOf(line)} over ${fieldsOf(above)} by ${depth.toFixed(2)} pt`);
+  });
+  return found;
 }
 
 /** Each link on a page, in order: the address its URI action opens, and the glyphs it spans. */
@@ -307,6 +340,69 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     expect(page.size.height).toBeCloseTo((297 / 25.4) * INCH, 2);
     expect(leftmost(page)).toBeCloseTo(0.8 * INCH, 2);
     expect(page.unmatched).toBe(0);
+  });
+
+  it("spaces sections, entries and bullets together by density, each on one page", async () => {
+    // Where each gap is measured: a section's title from the last line of the section before it,
+    // an entry's title from the last bullet of the entry before it, and one bullet from another.
+    const first = (page: DrawnPage, id: string) => baselinesOf(page, id)[0] ?? Number.NaN;
+    const gaps = (page: DrawnPage) => [
+      first(page, "exp.title") - first(page, "northgate.subtitle"),
+      first(page, "research.title") - first(page, "fennel-3.text"),
+      first(page, "fennel-3.text") - first(page, "fennel-2.text"),
+    ];
+    const pages: DrawnPage[] = [];
+    for (const density of ["compact", "normal", "relaxed"] as const) {
+      const spaced = { ...values, density };
+      // An ordinary compile: the same format, and the spacing set again in the body.
+      expect(generateFormat(pkg, spaced).name).toBe(format.name);
+      const body = generateBody(pkg, sample, spaced);
+      const { result, page } = await compileAndDraw(body.latex, body.texts, `density-${density}`);
+      expect(result.pages, density).toBe(1);
+      expect(page.unmatched, density).toBe(0);
+      // Nothing is set over anything else, however tight the density. Jake's macros take space
+      // back after a title and around an entry, so a density that leaves less than they take
+      // draws a title's rule through the line under it, and sets a line over the one above it.
+      const doc = parseDvi(result.output as Uint8Array, () => undefined);
+      const struck = ruleCrossings(doc, page.glyphs).map(({ glyph }) => glyph.field ?? "no field");
+      expect([...new Set(struck)], `${density}: fields a rule is drawn through`).toEqual([]);
+      expect(linesSetOver(page), `${density}: lines set over the line above`).toEqual([]);
+      pages.push(page);
+    }
+    // The text block ends at the lowest glyph's bottom.
+    const heights = pages.map((page) => Math.max(...page.glyphs.map((glyph) => glyph.bottom)));
+    const said = heights.map((height) => `${height.toFixed(1)} pt`).join(", ");
+    console.log(`Jake's sample ends, compact, normal and relaxed, at ${said}`);
+    const [compact, normal, relaxed] = pages;
+    if (!compact || !normal || !relaxed) throw new Error("a density drew no page");
+    expect(heights[0]).toBeLessThan(heights[1] ?? 0);
+    expect(heights[1]).toBeLessThan(heights[2] ?? 0);
+    // Normal is upstream's spacing, the page the sample opens with.
+    expect(normal.glyphs).toEqual(drawn.glyphs);
+    gaps(normal).forEach((gap, i) => {
+      expect(gaps(compact)[i]).toBeLessThan(gap);
+      expect(gaps(relaxed)[i]).toBeGreaterThan(gap);
+    });
+  });
+
+  it("sets the section titles and the rules under them in the accent, and black by default", async () => {
+    const blue = { ...values, accent: "#1F4E79" };
+    expect(generateFormat(pkg, blue).name).toBe(format.name);
+    const body = generateBody(pkg, sample, blue);
+    const { page } = await compileAndDraw(body.latex, body.texts, "accent");
+    const fill = 'fill="rgb(31,78,121)"';
+    // Every glyph of a section title takes the accent, and no other glyph does.
+    const titles = new Set(sample.sections.map((section) => `${section.id}.title`));
+    const uses = [...page.svg.matchAll(/<use [^>]*>/g)].map(([use]) => use);
+    const inTitle = (use: string) => titles.has(/data-field="([^"]*)"/.exec(use)?.[1] ?? "");
+    expect(uses.filter(inTitle).length).toBeGreaterThan(0);
+    for (const use of uses) expect(use.includes(fill), use).toBe(inTitle(use));
+    // The rule under each title, and not the links' underlines.
+    const rules = [...page.svg.matchAll(/<rect [^>]*>/g)].filter(([rect]) => rect.includes(fill));
+    expect(rules).toHaveLength(sample.sections.length);
+    expect(page.unmatched).toBe(0);
+    // Upstream's look by default: nothing on the page the sample opens with has a colour.
+    expect(drawn.svg).not.toMatch(/fill="rgb/);
   });
 
   it("compiles every section kind, empty sections and an empty item, as edits pass through", async () => {

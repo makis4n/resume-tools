@@ -4,10 +4,21 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
-import type { PageItem } from "../tex/dvi";
+
+import type { DviDocument, PageItem } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
+import { INCH } from "../tex/svg";
 import { parseType1 } from "../tex/type1";
-import { type DrawnPage, drawPage, fieldsShown, type GlyphBox, glyphAt, paperSize } from "./draw";
+import {
+  type DrawnPage,
+  drawPage,
+  fieldsShown,
+  type GlyphBox,
+  glyphAt,
+  paperSize,
+  ruleCrossings,
+} from "./draw";
+
 import { FontLibrary } from "./fonts";
 import { TexLiveIndex } from "./texlive";
 
@@ -202,6 +213,67 @@ describe("fieldsShown", () => {
     const fields = collectFields({ counters: [], items }, () => "Q");
     expect([...fields.keys()]).toEqual(["header.first", "header.last"]);
     expect(fieldsShown({ fields })).toEqual(new Set(["header.last"]));
+  });
+});
+
+describe("ruleCrossings", () => {
+  // A page in TeX's units, the scaled point, with two rules 100pt long from the origin, an inch
+  // in from the page's corner: one a point thick whose bottom edge is 20pt down, and one 40pt
+  // down with no height, which the SVG does not draw.
+  const SP = 2 ** 16;
+  const doc: DviDocument = {
+    id: 2,
+    numerator: 25_400_000,
+    denominator: 473_628_672,
+    magnification: 1000,
+    comment: "",
+    fonts: new Map(),
+    nativeFonts: new Map(),
+    pages: [
+      {
+        counters: [],
+        items: [
+          { kind: "rule", h: 0, v: 20 * SP, width: 100 * SP, height: SP },
+          { kind: "rule", h: 0, v: 40 * SP, width: 100 * SP, height: 0 },
+        ],
+      },
+    ],
+  };
+  /** A glyph's box from `top` to `bottom` points down from the origin, and 10 to 16 across. */
+  const glyph = (top: number, bottom: number, left = 10, right = 16): GlyphBox => ({
+    x: INCH + left,
+    y: INCH + bottom,
+    left: INCH + left,
+    top: INCH + top,
+    right: INCH + right,
+    bottom: INCH + bottom,
+  });
+
+  it("finds each glyph a rule is drawn across, with the rule", () => {
+    const struck = glyph(12, 21);
+    const crossings = ruleCrossings(doc, [glyph(10, 18), struck, glyph(21, 30)]);
+    expect(crossings.map((crossing) => crossing.glyph)).toEqual([struck]);
+    const rule = crossings[0]?.rule;
+    expect(rule?.left).toBeCloseTo(INCH, 6);
+    expect(rule?.top).toBeCloseTo(INCH + 19, 6);
+    expect(rule?.right).toBeCloseTo(INCH + 100, 6);
+    expect(rule?.bottom).toBeCloseTo(INCH + 20, 6);
+  });
+
+  it("passes a glyph that only touches a rule, one past its end, an empty box, an undrawn rule", () => {
+    const rule = ruleCrossings(doc, [glyph(12, 21)])[0]?.rule;
+    if (!rule) throw new Error("the rule crossed nothing");
+    const touching = { ...glyph(12, 21), bottom: rule.top };
+    const past = glyph(12, 21, 101, 107);
+    // A glyph with no outline has an empty box at its origin, here on the rule.
+    const empty = glyph(19.5, 19.5, 50, 50);
+    // And one across the rule with no height, which is not drawn.
+    const undrawn = glyph(35, 45);
+    expect(ruleCrossings(doc, [touching, past, empty, undrawn])).toEqual([]);
+  });
+
+  it("refuses a page the document does not have", () => {
+    expect(() => ruleCrossings(doc, [], 1)).toThrow("the document has 1 pages, not 2");
   });
 });
 

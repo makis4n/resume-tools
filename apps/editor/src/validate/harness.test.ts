@@ -27,6 +27,7 @@ const ENSURES: Record<Check, string> = {
   dump: "dumps its preamble as a format",
   compile: "compiles its sample with no error in the log",
   converges: "converges: two passes as a new document, then one again, to the same output",
+  controls: "compiles with each control it offers set another way, with no error, to other output",
   edits: "shows every field's new text after an edit, compiled once as the editor does",
   pages: "sets its sample on one page",
   fields: "keeps every field's markers, once each, and the page finds each field with glyphs",
@@ -79,6 +80,18 @@ function plainWith(
     preamble: preamble === undefined ? PLAIN.preamble : `${PLAIN.preamble}\n${preamble}`,
     snippets: { ...PLAIN.snippets, ...snippets },
   });
+}
+
+/**
+ * The plain package under an id of its own, offering the controls given, and with another
+ * preamble when one is given.
+ */
+function plainOffering(
+  id: string,
+  controls: PackageInput["controls"],
+  preamble = PLAIN.preamble,
+): TemplatePackage {
+  return parsePackage({ ...PLAIN, id, controls, preamble });
 }
 
 /**
@@ -298,14 +311,15 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
           expect(report().findings.filter((finding) => finding.check === check)).toEqual([]);
         });
 
-      it("compiles in good time, a new document and an edit alike, and says how long", () => {
+      it("compiles in good time, a new document, an edit and a control alike, and says how long", () => {
         const { format, passes, pages, fields } = report();
         const timings = passes.map((ms) => `${Math.round(ms)} ms`).join(", ");
         console.log(`${id}: format ${format}; passes ${timings}; pages ${pages}; fields ${fields}`);
         // Generous, so that a pathological slowdown fails CI and an ordinary slow runner does not.
-        // The first pass is a new document's, and the last the edit's, which every edit costs.
-        expect(passes[0]).toBeLessThan(2_000);
-        expect(passes.at(-1)).toBeLessThan(2_000);
+        // The first pass is a new document's, and each after the same body's second compile is
+        // the edit's or a control's, as every edit and every change of a control costs.
+        expect(passes.length).toBeGreaterThanOrEqual(4);
+        for (const ms of passes) expect(ms).toBeLessThan(2_000);
       });
     });
   }
@@ -470,6 +484,59 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       ]);
       const elsewhere = await validatePackage(session, fonts, telling, RESUME, {}, "elsewhere");
       expect(elsewhere.findings).toEqual([]);
+    }, 60_000);
+
+    it("reports a control whose value never reaches the page, and nothing else", async () => {
+      // The margins snippet leaves its value in a comment, so another margin changes the body and
+      // nothing TeX sets.
+      const inert = plainOffering("inert-margins", {
+        margins: { default: 0.5, apply: "% {{value}}" },
+      });
+      const report = await validatePackage(session, fonts, inert, RESUME);
+      expect(report.findings).toEqual([
+        {
+          check: "controls",
+          message: "margins 1 sets the same output as margins 0.5, so the control does nothing",
+        },
+      ]);
+      // Two passes as a new document, one again, one for the edit and one for the margins.
+      expect(report.passes).toHaveLength(5);
+    }, 60_000);
+
+    it("reports a control whose value stops the compile, and not the values that work", async () => {
+      // Compact calls a command nothing defines, while relaxed sets space between paragraphs,
+      // which the page shows.
+      const broken = plainOffering("broken-density", {
+        density: {
+          default: "normal",
+          apply: {
+            compact: "\\tightenEverything",
+            normal: "",
+            relaxed: "\\setlength{\\parskip}{6pt}",
+          },
+        },
+      });
+      const report = await validatePackage(session, fonts, broken, RESUME);
+      expect(report.findings).toEqual([
+        {
+          check: "controls",
+          message: "with density compact, the body does not compile: Undefined control sequence.",
+        },
+      ]);
+    }, 60_000);
+
+    it("dumps the format a format-bound value names, and compiles with it", async () => {
+      // article fixes its size as it loads, so the size is a slot of the preamble, and 12pt names
+      // a format of its own, which the job then compiles with as a new document.
+      const sized = plainOffering(
+        "sized",
+        { fontSize: { default: 10, apply: "", format: true } },
+        PLAIN.preamble.replace("{article}", "[{{fontSize}}pt]{article}"),
+      );
+      const report = await validatePackage(session, fonts, sized, RESUME);
+      expect(report.findings).toEqual([]);
+      // Two passes as a new document, one again, one for the edit and two for the new format.
+      expect(report.passes).toHaveLength(6);
     }, 60_000);
   });
 

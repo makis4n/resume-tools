@@ -20,6 +20,21 @@
     "margins": {
       "default": 0.5,
       "apply": "\\geometry{margin={{value}}in}"
+    },
+    "accent": {
+      "default": "#000000",
+      "apply": "\\definecolor{rtaccent}{HTML}{{{value}}}"
+    },
+    "density": {
+      "default": "normal",
+      "apply": {
+        "compact": "\\titlespacing*{\\section}{0pt}{10pt}{9pt}\\setlist[itemize,1]{topsep=2pt,itemsep=2pt}\\setlist[itemize,2]{topsep=2pt,itemsep=0pt}",
+        "normal": "",
+        "relaxed": "\\titlespacing*{\\section}{0pt}{22pt}{14pt}\\setlist[itemize,1]{topsep=12pt,itemsep=6pt}\\setlist[itemize,2]{topsep=6pt,itemsep=3pt}"
+      }
+    },
+    "dateFormat": {
+      "default": "MMM yyyy"
     }
   },
   "snippets": {

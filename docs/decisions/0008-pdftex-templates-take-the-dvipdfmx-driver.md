@@ -16,11 +16,15 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
 - A port changes only what the loop needs, and says so in a comment at the top of its preamble:
   the driver; `geometry` in place of whatever set the page size and margins, with defaults that
   reproduce the upstream layout, so that the page size and margins controls are ordinary compiles
-  (plan section 5.4); hyperref's bookmarks off, with `bookmarks=false`, since a one-page resume
-  has no use for them and hyperref converts each section title into its bookmark in time that
-  grows with the square of the title's length, about 4 s a pass for 8,000 characters against
-  under a tenth of a second without; no marker macros, since the prelude defines them (decision
-  0007); and the file ends where the body would begin, since the generator writes the body.
+  (plan section 5.4); the accent colour named, as `rtaccent` in Jake's port, defined as upstream's
+  colour and set wherever the template's accent goes, with xcolor in place of color, whose models
+  cannot read the six hex digits the accent colour control gives, so that the control is an
+  ordinary compile too (item 15); hyperref's bookmarks off, with `bookmarks=false`, since a
+  one-page resume has no use for them and hyperref converts each section title into its bookmark
+  in time that grows with the square of the title's length, about 4 s a pass for 8,000 characters
+  against under a tenth of a second without; no marker macros, since the prelude defines them
+  (decision 0007); and the file ends where the body would begin, since the generator writes the
+  body.
 - The licence notices of the template and of what it derives from stay in the preamble,
   verbatim, with the attribution in the package. Jake's Resume is based on sb2nov/resume, and
   about half of its preamble's code is sb2nov's, so the port carries Sourabh Bajaj's copyright
