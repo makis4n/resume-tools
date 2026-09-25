@@ -75,7 +75,7 @@ end to end before the other two templates, so that the editing loop is proven on
    One generic generator walks the model. The same record settles the model changes the three
    templates need, such as ids on bullets, a section kind, labelled list items and dates stored as
    dates.
-5. [ ] **Generate LaTeX from the model.** Every user character either typesets or is dropped, so
+5. [x] **Generate LaTeX from the model.** Every user character either typesets or is dropped, so
    no text a user types can act as LaTeX. Rich runs become bold, italic and links. Markers wrap
    every field, and the paragraph special from decision 0004 goes next to each begin marker.
    Empty optional fields are left out, and field ids come from model ids so they survive a
