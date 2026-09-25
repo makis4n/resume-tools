@@ -10,6 +10,7 @@
  */
 
 import type { DviPage, PageItem } from "./dvi";
+import { accented } from "./glyphs";
 
 export interface FieldGlyph {
   /** Index of the glyph in the page's item list. */
@@ -82,16 +83,16 @@ const LETTER = /^\p{L}$/u;
  * page can draw (a dot over a W is the most, 1.83 widths in Avant Garde's oblique). A spacing
  * accent (`textOf.accent`) directly followed in the same field by a glyph whose text is a letter
  * and that starts within that span, from twice the accent's width before it to the end of its
- * advance, becomes one glyph whose text is the two composed (NFC), `é` for `\'e`: the letter's
- * item, with the accent's in `items`, so that a click on either lands on the character. The
- * position matters: OT1 sets `\textasciitilde` and `\textasciicircum` as the same accent glyphs
- * standing alone, and a letter after one of them starts where it ends, so `~mara` still reads as
- * typed; and the first letter of the next line, back at the left margin, starts far before an
- * accent that ended a line, unless the line held almost nothing else. An accent with no letter
- * over which it stands stays a glyph of its own. The accent may sit higher or lower than the
- * letter, in the box TeX shifts for a letter taller or shorter than the x-height, so the test does
- * not look at v. It needs the fonts' widths, so the page and the validation harness both parse
- * the DVI with them.
+ * advance, becomes one glyph whose text is the two composed (NFC), `é` for `\'e` and `í` for
+ * `\'\i` (`accented`): the letter's item, with the accent's in `items`, so that a click on either
+ * lands on the character. The position matters: OT1 sets `\textasciitilde` and `\textasciicircum`
+ * as the same accent glyphs standing alone, and a letter after one of them starts where it ends,
+ * so `~mara` still reads as typed; and the first letter of the next line, back at the left margin,
+ * starts far before an accent that ended a line, unless the line held almost nothing else. An
+ * accent with no letter over which it stands stays a glyph of its own. The accent may sit higher
+ * or lower than the letter, in the box TeX shifts for a letter taller or shorter than the
+ * x-height, so the test does not look at v. It needs the fonts' widths, so the page and the
+ * validation harness both parse the DVI with them.
  */
 export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, Field> {
   const fields = new Map<string, Field>();
@@ -132,7 +133,7 @@ export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, F
       item.h >= over.h - 2 * over.width &&
       item.h < over.h + over.width;
     if (mark !== undefined && accent && under && text !== undefined && LETTER.test(text)) {
-      const letter = { item: index, text: `${text}${mark}`.normalize("NFC"), offset: -1 };
+      const letter = { item: index, text: accented(text, mark), offset: -1 };
       field.glyphs[field.glyphs.length - 1] = { ...letter, items: [accent.item] };
       return;
     }

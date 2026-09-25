@@ -109,8 +109,10 @@ const GLYPH_TEXT: Record<string, string> = {
   fl: "fl",
   ffi: "ffi",
   ffl: "ffl",
-  dotlessi: "i",
-  dotlessj: "j",
+  // A dotless i or j reads as itself, which a text may hold, and under an accent as the letter it
+  // accents (`accented`). The AGL gives `dotlessj` a private-use code point, U+F6BE, not ȷ.
+  dotlessi: "\u{131}",
+  dotlessj: "\u{237}",
   bullet: "•",
   periodcentered: "·",
 };
@@ -163,6 +165,25 @@ const PRIVATE_USE = /\p{Co}/u;
 /** The combining mark a glyph stands for when TeX's `\accent` sets it over a letter, if any. */
 export function accentMark(name: string): string | undefined {
   return ACCENTS.get(baseName(name));
+}
+
+/** The letter a dotless i or j is under an accent. */
+const DOTTED: ReadonlyMap<string, string> = new Map([
+  ["\u{131}", "i"],
+  ["\u{237}", "j"],
+]);
+
+/**
+ * Letters with combining marks after them, composed (NFC). TeX sets `í` as an acute over a dotless
+ * i, `\'\i`, the accent standing where the dot was, and a virtual font composes it from `dotlessi`
+ * and `acute`; so a dotless i or j that the marks go over takes its dot back, and the pair is the
+ * accented letter, where `ı` and a mark would stay two characters.
+ */
+export function accented(letters: string, marks: string): string {
+  const last = letters.at(-1);
+  const dotted = marks === "" || last === undefined ? undefined : DOTTED.get(last);
+  const base = dotted === undefined ? letters : `${letters.slice(0, -1)}${dotted}`;
+  return `${base}${marks}`.normalize("NFC");
 }
 
 /**
@@ -249,7 +270,8 @@ function lookUpName(
  * U+FB00 to U+FB06, is spelled as its letters, as the table spells Computer Modern's ligatures:
  * `uniFB01` is `fi`, as `fi` is, and `uniFB05` is `ſt`. A name that joins parts with `+`, as a
  * virtual font's composed character is named (`fonts.ts`), is its parts' texts composed: a spacing
- * accent becomes its combining mark after the rest, and the whole is NFC, so `A+breve` is `Ă`.
+ * accent becomes its combining mark after the rest, and the whole is NFC, so `A+breve` is `Ă`,
+ * with a dotless i or j under the accent taking its dot back (`accented`): `dotlessi+acute` is `í`.
  */
 export function glyphText(name: string, agl?: ReadonlyMap<string, string>): string | undefined {
   if (!name.includes("+")) return nameText(name, agl);
@@ -260,12 +282,12 @@ export function glyphText(name: string, agl?: ReadonlyMap<string, string>): stri
   const bases = texts.filter((_, i) => marks[i] === undefined);
   // Accents alone, with no letter to go over, read as themselves.
   if (bases.length === 0) return texts.join("");
-  return `${bases.join("")}${marks.filter((mark) => mark !== undefined).join("")}`.normalize("NFC");
+  return accented(bases.join(""), marks.filter((mark) => mark !== undefined).join(""));
 }
 
 /**
  * The font code for each character of the source text, from a font's built-in encoding.
- * Where several glyphs stand for one character (an `i` and a dotless i both read as "i"),
+ * Where several glyphs stand for one character (`quoteright` and `quotesingle` both read as "'"),
  * the glyph at the character's own code wins, then the first in encoding order.
  *
  * `textOf` gives each code's text, by default what its glyph's name reads as. The overlay passes

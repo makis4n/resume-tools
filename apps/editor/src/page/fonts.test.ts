@@ -336,6 +336,8 @@ describe.skipIf(!engineAvailable())("FontLibrary", () => {
       "``",
       "«",
     ]);
+    // T1's dotless i and j, which a text may hold, read as themselves.
+    expect([25, 26].map((code) => t1?.text(code))).toEqual(["\u{131}", "\u{237}"]);
     expect([136, 191, 176].map((code) => ts1?.text(code))).toEqual(["•", "€", "°"]);
     // lm-ts1.enc names the superior figures two.superior and the like, and the old-style ones
     // dollar.oldstyle and cent.oldstyle.

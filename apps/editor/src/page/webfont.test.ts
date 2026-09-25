@@ -90,9 +90,9 @@ describe("buildWebFont on cmr10", () => {
 
   it("maps each character to the glyph its code is typed as", () => {
     expect(glyphFor(font, "a").name).toBe(`code${codeOf("a")}`);
-    // The i at its own code wins over the dotless i, which reads as i too.
+    // The i is the one at its own code, and the dotless i, which reads as ı, is typed as ı.
     expect(glyphFor(font, "i").name).toBe("code105");
-    expect(codeOf("dotlessi")).toBeLessThan(105);
+    expect(glyphFor(font, "\u{131}").name).toBe(`code${codeOf("dotlessi")}`);
     // What TeX reaches through a ligature, a text may spell with one character.
     const spelled: [string, string][] = [
       ["–", "endash"],

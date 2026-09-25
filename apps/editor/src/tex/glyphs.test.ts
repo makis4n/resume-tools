@@ -134,6 +134,23 @@ describe("glyphText", () => {
     expect(glyphText("rule+rule", AGL)).toBeUndefined();
   });
 
+  it("reads a dotless i or j as itself, and under an accent as the letter it accents", () => {
+    // The glyph list gives dotlessj a private-use code point, as the tree's does; the table wins.
+    const agl = parseAgl(
+      ["caron;02C7", "dieresis;00A8", "dotlessi;0131", "dotlessj;F6BE"].join("\n"),
+    );
+    for (const list of [agl, undefined])
+      expect(["dotlessi", "dotlessj"].map((name) => glyphText(name, list))).toEqual([
+        "\u{131}",
+        "\u{237}",
+      ]);
+    expect(glyphText("dotlessi+dieresis", agl)).toBe("\u{ef}");
+    expect(glyphText("dotlessj+caron", agl)).toBe("\u{1f0}");
+    expect(glyphText("uni0237+caron", agl)).toBe("\u{1f0}");
+    // Only the letter the accent goes over, the last, takes its dot back.
+    expect(glyphText("dotlessi+dotlessj+caron", agl)).toBe("\u{131}\u{1f0}");
+  });
+
   it("does not read a name from the prototype of an object", () => {
     expect(glyphText("constructor", AGL)).toBeUndefined();
     expect(glyphText("toString")).toBeUndefined();
@@ -180,5 +197,11 @@ describe.skipIf(!engineAvailable())("the Adobe Glyph List in the tree", () => {
     expect(agl.size).toBe(4281);
     expect(glyphText("Dcroat", agl)).toBe("\u{110}");
     expect(glyphText("Eth", agl)).toBe("\u{d0}");
+    // The list gives dotlessj U+F6BE, in the Private Use Area, which the table overrides.
+    expect(agl.get("dotlessj")).toBe("\u{f6be}");
+    expect(["dotlessi", "dotlessj"].map((name) => glyphText(name, agl))).toEqual([
+      "\u{131}",
+      "\u{237}",
+    ]);
   });
 });

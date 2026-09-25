@@ -230,6 +230,25 @@ describe("collectFields with accents", () => {
     expect(read(tilde(120), n(0, 12))).toEqual(["~", "n"]);
   });
 
+  it("reads a dotless j under a caron as ǰ, and a dotless i or j alone as itself", () => {
+    // cmr10's caron over its dotless j, as OT1 sets \v\j, then \i and \j alone.
+    expect([20, 17, 16].map((code) => encoding[code])).toEqual(["caron", "dotlessj", "dotlessi"]);
+    const at = (code: number, h: number): PageItem => ({
+      kind: "glyph",
+      font: 0,
+      code,
+      h,
+      v: 0,
+      width: 50,
+    });
+    const items = [at(20, 100), at(17, 110), at(16, 200), at(17, 300)];
+    const field = collectFields(page([special("rt:b:f"), ...items, special("rt:e:f")]), textOf).get(
+      "f",
+    );
+    expect(field?.glyphs.map((g) => g.text)).toEqual(["\u{1f0}", "\u{131}", "\u{237}"]);
+    expect(alignGlyphs(field as NonNullable<typeof field>, "\u{1f0} \u{131}\u{237}")).toBe(0);
+  });
+
   it("pairs only an accent and a letter in the same field, and only a letter", () => {
     const at = (code: number, h: number): PageItem => ({
       kind: "glyph",
