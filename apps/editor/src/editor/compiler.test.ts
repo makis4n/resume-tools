@@ -22,6 +22,8 @@ import {
   Compiler,
   type CompilerOptions,
   type Engine,
+  type FormatStore,
+  type PrefetchStore,
   type Shown,
 } from "./compiler";
 import { apply, type Document, History, newDocument } from "./document";
@@ -64,6 +66,11 @@ class FakeEngine implements Engine {
   putFormat(_engine: SessionEngine, name: string, format: Uint8Array): Promise<void> {
     this.calls.push(`put ${name}`);
     this.puts.push({ name, format });
+    return Promise.resolve();
+  }
+
+  forget(job: string): Promise<void> {
+    this.calls.push(`forget ${job}`);
     return Promise.resolve();
   }
 
@@ -169,6 +176,32 @@ function scheduler(options: CompilerOptions = {}, { slowStart = false } = {}) {
   };
   return { compiler, engines, engine, shown, errors, busy };
 }
+
+/** A format store and a prefetch store in memory, holding what they would between sessions. */
+class MemoryStores {
+  /** Formats by engine and name. */
+  readonly formats = new Map<string, Uint8Array>();
+  /** Paths by template. */
+  readonly paths = new Map<string, string[]>();
+  readonly formatStore: FormatStore = {
+    get: async (engine, name) => this.formats.get(`${engine}:${name}`),
+    put: async (engine, name, format) => {
+      this.formats.set(`${engine}:${name}`, format);
+    },
+  };
+  readonly prefetchStore: PrefetchStore = {
+    get: async (template) => this.paths.get(template) ?? [],
+    add: async (template, paths) => {
+      this.paths.set(template, [...new Set([...(this.paths.get(template) ?? []), ...paths])]);
+    },
+  };
+}
+
+/** What a dump or compile read of TeX Live. */
+const read = (...paths: string[]) => ({ files: paths.length, bytes: 0, paths });
+const STOCK = "/texlive/texmf-dist/texmf-var/web2c/pdftex/pdflatex.fmt";
+const ARTICLE = "/texlive/texmf-dist/tex/latex/base/article.cls";
+const CMR10 = "/texlive/texmf-dist/fonts/tfm/public/cm/cmr10.tfm";
 
 /** Let every promise that can settle do so, without moving the fake clock. */
 const settle = () => vi.advanceTimersByTimeAsync(0);
@@ -552,7 +585,8 @@ describe("Compiler", () => {
     t.compiler.open(jake, opening);
     await settle();
     expect(t.engines).toHaveLength(1);
-    expect(t.engine().calls.slice(3)).toEqual([`compile ${name}`]);
+    // Opened again, it starts the job afresh.
+    expect(t.engine().calls.slice(3)).toEqual(["forget doc", `compile ${name}`]);
     t.engine().compiles[1]?.resolve(compiled(1));
     await settle();
     expect(t.shown.map((page) => page.page.svg)).toEqual(["<svg>1</svg>"]);
@@ -754,6 +788,174 @@ describe("Compiler", () => {
     expect(warned).toHaveBeenCalledTimes(1);
     expect(warned).toHaveBeenCalledWith(expect.stringContaining("cmex10 (no outlines)"));
   });
+
+  it("puts a format the store kept, rather than dumping it", async () => {
+    const stores = new MemoryStores();
+    const name = formatOf(opening);
+    stores.formats.set(`pdftex:${name}`, FORMAT);
+    const s = scheduler({ formats: stores.formatStore });
+    s.compiler.open(jake, opening);
+    await settle();
+    expect(s.engine().calls).toEqual(["start", `put ${name}`, `compile ${name}`]);
+    // A copy, since the engine may take the bytes it is handed.
+    expect(s.engine().puts[0]?.format).toEqual(FORMAT);
+    expect(s.engine().puts[0]?.format).not.toBe(FORMAT);
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([opening]);
+  });
+
+  it("keeps a format it dumps, and notes what the dump and the compiles read", async () => {
+    const stores = new MemoryStores();
+    const s = scheduler({ formats: stores.formatStore, prefetch: stores.prefetchStore });
+    s.compiler.open(jake, opening);
+    await settle();
+    s.engine().dumps[0]?.resolve({ ...dumped(), fetched: read(STOCK, ARTICLE) });
+    await settle();
+    s.engine().compiles[0]?.resolve({ ...compiled(1), fetched: read(CMR10) });
+    await settle();
+    expect(s.shown).toHaveLength(1);
+    expect(stores.formats.get(`pdftex:${formatOf(opening)}`)).toEqual(FORMAT);
+    // Not the stock format, which only a dump reads, and which the kept format saves.
+    expect(stores.paths.get("jake")).toEqual([ARTICLE, CMR10]);
+  });
+
+  it("fetches what the template read ahead of TeX, once a session, however that goes", async () => {
+    const stores = new MemoryStores();
+    stores.paths.set("jake", [ARTICLE, CMR10]);
+    const s = scheduler({
+      prefetch: stores.prefetchStore,
+      knownPath: () => true,
+      fetchFile: async (path) => {
+        s.engine().calls.push(`fetch ${path}`);
+        if (path === CMR10) throw new Error("offline");
+      },
+    });
+    s.compiler.open(jake, opening);
+    await settle();
+    const name = formatOf(opening);
+    // Asked for while the engine starts, and before TeX reads anything.
+    expect(s.engine().calls).toEqual([
+      "start",
+      `fetch ${ARTICLE}`,
+      `fetch ${CMR10}`,
+      `dump ${name}`,
+    ]);
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown).toHaveLength(1);
+    expect(s.errors).toEqual([]);
+    // Another document set with the template fetches nothing more.
+    s.compiler.open(jake, titled("Other"));
+    await settle();
+    expect(s.engine().calls.filter((call) => call.startsWith("fetch"))).toHaveLength(2);
+  });
+
+  it("fetches ahead only what the tree has, whatever the store holds", async () => {
+    const stores = new MemoryStores();
+    // Anything on the origin can write the store: a path out of the tree, and one it lacks.
+    stores.paths.set("jake", ["/../../../api/account/delete", ARTICLE, "/texmf/nowhere.sty"]);
+    const fetched: string[] = [];
+    const fetchFile = async (path: string) => {
+      fetched.push(path);
+    };
+    const s = scheduler({
+      prefetch: stores.prefetchStore,
+      knownPath: (p) => p === ARTICLE,
+      fetchFile,
+    });
+    s.compiler.open(jake, opening);
+    await settle();
+    expect(fetched).toEqual([ARTICLE]);
+    // With no way to tell what the tree has, nothing is fetched ahead.
+    const t = scheduler({ prefetch: stores.prefetchStore, fetchFile });
+    t.compiler.open(jake, opening);
+    await settle();
+    expect(fetched).toEqual([ARTICLE]);
+  });
+
+  it("goes around a store that fails or does not answer, and never loses the page", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const never = () => new Promise<never>(() => {});
+    const s = scheduler({
+      formats: { get: never, put: () => Promise.reject(new Error("quota")) },
+      prefetch: { get: () => Promise.reject(new Error("closed")), add: never },
+      knownPath: () => true,
+      fetchFile: async () => {},
+    });
+    s.compiler.open(jake, opening);
+    await wait(1_999);
+    expect(s.engine().calls).toEqual(["start"]);
+    await wait(1);
+    const name = formatOf(opening);
+    expect(s.engine().calls).toEqual(["start", `dump ${name}`]);
+    s.engine().dumps[0]?.resolve({ ...dumped(), fetched: read(ARTICLE) });
+    await settle();
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown).toHaveLength(1);
+    expect(s.errors).toEqual([]);
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("within 2000 ms"));
+    expect(warned).toHaveBeenCalledWith(
+      expect.stringContaining("keep a format"),
+      expect.any(Error),
+    );
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("fetch ahead"), expect.any(Error));
+
+    // Closing stops the wait for a store too.
+    const t = scheduler({ formats: { get: never, put: never } });
+    t.compiler.open(jake, opening);
+    await settle();
+    expect(vi.getTimerCount()).toBe(1);
+    t.compiler.close();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("starts the job afresh for a document opened on an engine that has compiled", async () => {
+    const s = scheduler();
+    await opened(s);
+    const other = titled("Other");
+    s.compiler.open(jake, other);
+    await settle();
+    const name = formatOf(opening);
+    expect(s.engine().calls.slice(3)).toEqual(["forget doc", `compile ${name}`]);
+    expect(s.engine().compiles[1]?.body).toBe(bodyOf(other));
+    s.engine().compiles[1]?.resolve(compiled(2));
+    await settle();
+    // Its edits compile in the job as it left it.
+    s.compiler.update(titled("Edited"));
+    await wait(100);
+    expect(s.engine().calls.slice(5)).toEqual([`compile ${name}`]);
+  });
+
+  it("starts the job afresh for a document opened whose format failed to dump", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const margins = jake.controls.margins;
+    if (margins === undefined) throw new Error("Jake's Resume has margins");
+    const bound = parsePackage({
+      ...jake,
+      preamble: `${jake.preamble}\n% margins {{margins}}`,
+      controls: { ...jake.controls, margins: { ...margins, format: true } },
+    });
+    const wide = apply(opening, { type: "control", name: "margins", value: 0.8 });
+    const s = scheduler();
+    await opened(s, bound);
+    // Another document, whose format fails; then, back on the first format, its next edit.
+    s.compiler.open(bound, wide);
+    await settle();
+    s.engine().dumps[1]?.resolve({ ok: false, ms: 1, log: "", error: "no", fetched: FETCHED });
+    await settle();
+    s.compiler.update(opening);
+    await wait(100);
+    const [narrowName, wideName] = [formatOf(opening, bound), formatOf(wide, bound)];
+    expect(s.engine().calls.slice(3)).toEqual([
+      `dump ${wideName}`,
+      "forget doc",
+      `compile ${narrowName}`,
+    ]);
+  });
 });
 
 /** Where the page's glyphs begin on the left, in TeX points: the left margin, for Jake's. */
@@ -782,6 +984,7 @@ describe.skipIf(!engineAvailable())("Compiler through the engine", () => {
       start: async () => {},
       dump: async (kind, name, preamble, files) => session.dump(kind, name, preamble, files),
       putFormat: async (kind, name, format) => session.putFormat(kind, name, format),
+      forget: async (job) => session.forget(job),
       compile: async (kind, format, body, options) => session.compile(kind, format, body, options),
       terminate: () => {},
     };
@@ -793,10 +996,15 @@ describe.skipIf(!engineAvailable())("Compiler through the engine", () => {
         onPage = resolve;
         onError = reject;
       });
-    const compiler = new Compiler(() => engine, fonts, {
-      page: (shown) => onPage?.(shown),
-      error: (message) => onError?.(new Error(message)),
+    const events = {
+      page: (shown: Shown) => onPage?.(shown),
+      error: (message: string) => onError?.(new Error(message)),
       busy: () => {},
+    };
+    const stores = new MemoryStores();
+    const compiler = new Compiler(() => engine, fonts, events, {
+      formats: stores.formatStore,
+      prefetch: stores.prefetchStore,
     });
     const history = new History(newDocument("jake", sample));
 
@@ -827,6 +1035,21 @@ describe.skipIf(!engineAvailable())("Compiler through the engine", () => {
     expect(leftmost(moved.page)).toBeCloseTo(0.8 * INCH, 2);
     expect(moved.page.unmatched).toBe(0);
     compiler.close();
+
+    // The session kept its format, and what TeX read of TeX Live, less the stock format.
+    expect([...stores.formats.keys()]).toEqual([`pdftex:${generateFormat(jake, {}).name}`]);
+    const paths = stores.paths.get("jake") ?? [];
+    expect(paths).toContain("/texlive/texmf-dist/tex/latex/base/article.cls");
+    expect(paths.filter((path) => path.endsWith(".fmt"))).toEqual([]);
+    // A later session puts the kept format rather than dumping it.
+    const dumps = vi.spyOn(engine, "dump");
+    const later = new Compiler(() => engine, fonts, events, { formats: stores.formatStore });
+    next = nextPage();
+    later.open(jake, history.present);
+    const reopened = await next;
+    expect(dumps).not.toHaveBeenCalled();
+    expect(reopened.page.unmatched).toBe(0);
+    later.close();
 
     const ms = (shown: Shown) => `${Math.round(shown.ms)} ms`;
     const timings = `first page ${ms(first)}, an edit ${ms(edited)}, a margin ${ms(moved)}`;

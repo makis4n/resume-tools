@@ -1,15 +1,15 @@
 /**
  * The compile worker: one engine session, driven by `EngineClient`. It is a module worker, so it
  * imports the ES module copy of the engine's loader, and it reads TeX Live files with synchronous
- * requests, which a worker may make, because TeX asks for a file in the middle of a run.
+ * requests, which a worker may make, because TeX asks for a file in the middle of a run. Only the
+ * HTTP cache can answer such a request, so every file comes from a URL under the tree's tag, which
+ * the dev server marks immutable (`src/engine/urls.ts`).
  */
 
 import type { EngineManifest } from "./manifest";
 import type { EngineReply, EngineRequest } from "./protocol";
 import { EngineSession, type LoadEngine } from "./session";
-
-/** Where the dev server serves `.engine/` (see `scripts/fetch-engine.ts`). */
-const BASE = "/engine/";
+import { engineTag, engineUrl, fileUrl, manifestUrl } from "./urls";
 
 function getSync(url: string): Uint8Array {
   const request = new XMLHttpRequest();
@@ -20,24 +20,21 @@ function getSync(url: string): Uint8Array {
   return new Uint8Array(request.response as ArrayBuffer);
 }
 
-const fileUrl = (path: string) =>
-  `${BASE}files${path.split("/").map(encodeURIComponent).join("/")}`;
-
 let starting: ReturnType<typeof EngineSession.start> | undefined;
 
 async function start() {
-  const response = await fetch(`${BASE}manifest.json`);
-  if (!response.ok)
-    throw new Error(`${BASE}manifest.json: HTTP ${response.status}; run fetch-engine`);
+  const response = await fetch(manifestUrl());
+  if (!response.ok) throw new Error(`${manifestUrl()}: HTTP ${response.status}; run fetch-engine`);
   const manifest = (await response.json()) as EngineManifest;
-  const { default: load } = (await import(/* @vite-ignore */ `${BASE}busytex.mjs`)) as {
+  const tag = engineTag(manifest);
+  const { default: load } = (await import(/* @vite-ignore */ engineUrl(tag, "busytex.mjs"))) as {
     default: LoadEngine;
   };
   return EngineSession.start({
     load,
     manifest,
-    read: (path) => getSync(fileUrl(path)),
-    locateFile: (name) => `${BASE}${name.split("/").pop()}`,
+    read: (path) => getSync(fileUrl(tag, path)),
+    locateFile: (name) => engineUrl(tag, name.split("/").pop() ?? name),
   });
 }
 
