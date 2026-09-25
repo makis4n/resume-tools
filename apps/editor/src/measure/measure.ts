@@ -20,6 +20,7 @@
 import type { Resume, RichText } from "@resume-tools/resume-model";
 import { Compiler, type Engine as CompilerEngine, type Shown } from "../editor/compiler";
 import { type Command, Document, fieldsOf, History } from "../editor/document";
+import { fit } from "../editor/fit";
 import {
   layoutRows,
   namedVariants,
@@ -34,7 +35,7 @@ import type { CompileResult, DumpResult, Engine, EngineSession, Fetched } from "
 import { type DrawnPage, drawPage, type FieldFont } from "../page/draw";
 import { FontLibrary, type ReadFile } from "../page/fonts";
 import type { TexLiveIndex } from "../page/texlive";
-import type { TemplatePackage } from "../templates/package";
+import type { ControlValues, TemplatePackage } from "../templates/package";
 
 /** One of the targets of plan section 4.3, as the plan states it. */
 export interface Target {
@@ -212,9 +213,68 @@ export interface EditTime {
 
 /**
  * Where a package's measurement is, for what it reads: the scheduler making the new document's
- * first page, the overlay laying out the field's rows, or the edits.
+ * first page, the overlay laying out the field's rows, the edits, or the fit to one page.
  */
-export type Step = "open" | "overlay" | "edits";
+export type Step = "open" | "overlay" | "edits" | "fit";
+
+/** Fit to one page (item 18), on the sample made too long for one. */
+export interface FitTime {
+  /** The bullets added to the sample, which ran it onto a second page (`grown`). */
+  bullets: number;
+  /** The pages the grown sample set. */
+  pages: number;
+  /** The whole search, from the first trial asked for to the last one's answer. */
+  ms: number;
+  /** The compiles the trials took, and the formats they dumped. */
+  compiles: number;
+  dumps: number;
+  /** The values the search found, or undefined when no setting fits. */
+  fitted: ControlValues | undefined;
+}
+
+/** Invented bullets, a line or two each, that `grown` adds to make a sample too long. */
+const MORE_BULLETS = [
+  "Rebuilt the invoicing export so that a month of records renders in seconds rather than an afternoon.",
+  "Wrote the style guide for release notes and edited every one of them for a year.",
+  "Cut the test suite's run from twenty minutes to six by splitting it across workers.",
+  "Ran the weekly review of support questions and turned the common ones into help pages.",
+];
+
+/**
+ * How many bullets `measurePackage` tries adding, in turn, to run the sample past a page, before
+ * it halves back to the fewest that do.
+ */
+const GROWTH = [4, 8, 16, 32, 64];
+
+/**
+ * The resume with `count` invented bullets more under the first entry of its experience, or of
+ * its first section of entries that has one when it has no experience; undefined when it has no
+ * entry at all.
+ */
+export function grown(resume: Resume, count: number): Resume | undefined {
+  const sections = resume.sections;
+  const withEntries = (role?: string) =>
+    sections.findIndex(
+      (section) =>
+        section.kind === "entries" &&
+        section.entries.length > 0 &&
+        (role === undefined || section.role === role),
+    );
+  const at = [withEntries("experience"), withEntries()].find((index) => index >= 0);
+  const section = at === undefined ? undefined : sections[at];
+  if (at === undefined || section?.kind !== "entries") return undefined;
+  const [first, ...rest] = section.entries;
+  if (first === undefined) return undefined;
+  const bullets = Array.from({ length: count }, (_, i) => ({
+    id: `measure-more-${i + 1}`,
+    text: [{ text: MORE_BULLETS[i % MORE_BULLETS.length] ?? "" }],
+  }));
+  const longer = {
+    ...section,
+    entries: [{ ...first, bullets: [...first.bullets, ...bullets] }, ...rest],
+  };
+  return { ...resume, sections: sections.map((each, i) => (i === at ? longer : each)) };
+}
 
 /** What a step read: the TeX Live files the engine read, and those the fonts read, by path. */
 export interface StepReads {
@@ -243,6 +303,8 @@ export interface PackageNumbers {
   page: { ms: number };
   edits: EditTime[];
   keystroke: Keystroke;
+  /** Fit to one page on the sample made too long; undefined when it could not be made so. */
+  fit: FitTime | undefined;
   /** What each step read, of TeX Live through the engine and through the fonts. */
   reads: Record<Step, StepReads>;
 }
@@ -320,9 +382,11 @@ const msOf = (requests: readonly Request[]) =>
  * Measure a package with its sample as the editor opens and edits a new document with the
  * package's defaults, by driving the editor's compile scheduler (`Compiler`) over the session,
  * with the fonts the page and the overlay read from `tree`: the first page, the overlay's layout
- * of the longest field (`keystrokeWork`) timed `runs` times `LAYOUTS_PER_EDIT`, and `runs`
- * edits of that field, each a command through the document's history and an `update`, timed from
- * the command to the page it brings. Every step the scheduler takes to make a page is the step
+ * of the longest field (`keystrokeWork`) timed `runs` times `LAYOUTS_PER_EDIT`, `runs` edits of
+ * that field, each a command through the document's history and an `update`, timed from the
+ * command to the page it brings, and fit to one page (`fit`, item 18) on the sample grown by the
+ * fewest bullets that run it onto a second page (`grown`). Every step the scheduler takes to
+ * make a page is the step
  * measured: the numbers are read from its requests to the engine, its draws and its events, and
  * what it read from what the engine and the fonts noted. It waits no pause before an edit's
  * compile, which a user's typing would, so that an edit is timed by its own work. The session
@@ -345,6 +409,7 @@ export async function measurePackage(
     open: new Map(),
     overlay: new Map(),
     edits: new Map(),
+    fit: new Map(),
   };
   const fonts = new FontLibrary(tree.index, async (path) => {
     const data = await tree.read(path);
@@ -432,6 +497,56 @@ export async function measurePackage(
       });
     }
 
+    // Fit to one page, as the app runs it, on the sample grown by the fewest bullets that run it
+    // onto a second page: doubled until they do, then halved back.
+    step = "fit";
+    const grownTo = async (bullets: number) => {
+      const resume = grown(doc.resume, bullets);
+      if (resume === undefined) return undefined;
+      const long: Document = { ...doc, resume };
+      const shown = pageOf(long);
+      compiler.update(long);
+      return { bullets, long, pages: (await shown).page.pageCount };
+    };
+    let fits = 0;
+    let over: Awaited<ReturnType<typeof grownTo>>;
+    for (const bullets of GROWTH) {
+      over = await grownTo(bullets);
+      if (over === undefined || over.pages > 1) break;
+      fits = bullets;
+      over = undefined;
+    }
+    while (over !== undefined && over.bullets - fits > 1) {
+      const middle = await grownTo(Math.floor((fits + over.bullets) / 2));
+      if (middle === undefined) break;
+      if (middle.pages > 1) over = middle;
+      else fits = middle.bullets;
+    }
+    let fitting: FitTime | undefined;
+    if (over !== undefined) {
+      const { bullets, long, pages } = over;
+      // The fit fits the document the scheduler has open, which the halving may have moved on.
+      if (compiler.document !== long) {
+        const shown = pageOf(long);
+        compiler.update(long);
+        await shown;
+      }
+      const before = requests.length;
+      const started = performance.now();
+      const found = await fit(compiler, pkg, long);
+      const ms = performance.now() - started;
+      const trials = requests.slice(before);
+      const count = (kind: Request["kind"]) => trials.filter((each) => each.kind === kind).length;
+      fitting = {
+        bullets,
+        pages,
+        ms,
+        compiles: count("compile"),
+        dumps: count("dump"),
+        fitted: found?.values,
+      };
+    }
+
     const readsOf = (at: Step): StepReads => ({
       tex: joined(
         requests.flatMap((request) => (request.step === at && request.read ? [request.read] : [])),
@@ -455,7 +570,13 @@ export async function measurePackage(
       page: { ms: first.ms },
       edits,
       keystroke,
-      reads: { open: readsOf("open"), overlay: readsOf("overlay"), edits: readsOf("edits") },
+      fit: fitting,
+      reads: {
+        open: readsOf("open"),
+        overlay: readsOf("overlay"),
+        edits: readsOf("edits"),
+        fit: readsOf("fit"),
+      },
     };
   } finally {
     compiler.close();
@@ -552,6 +673,22 @@ export function table(rows: readonly (readonly string[])[]): string {
 /** Some files as a table names them: how many, and their bytes. */
 const filesOf = (read: Fetched) => `${read.files} files, ${formatMb(read.bytes)}`;
 
+/** What a fit did, for its row of the table. */
+function fitted(done: FitTime | undefined): string {
+  if (done === undefined) return "the sample could not be made too long for one page";
+  const { bullets, pages, compiles, dumps, fitted: values } = done;
+  const many = (n: number, what: string) => `${n} ${what}${n === 1 ? "" : "s"}`;
+  const tried = [many(compiles, "compile"), ...(dumps > 0 ? [many(dumps, "dump")] : [])].join(", ");
+  const grew = `the sample grown by ${bullets} bullets onto ${pages} pages`;
+  if (values === undefined) return `${tried}, and no setting fits ${grew}`;
+  const found = [
+    values.density && `${values.density} density`,
+    values.margins !== undefined && `${values.margins} in margins`,
+    values.fontSize !== undefined && `${values.fontSize} pt`,
+  ].filter(Boolean);
+  return `${tried}, to ${found.join(", ")}, for ${grew}`;
+}
+
 /** The table `scripts/measure.ts` prints for a package. */
 export function packageTable(numbers: PackageNumbers, load: FirstLoad): string {
   const { dump, open, draw, edits, keystroke } = numbers;
@@ -597,6 +734,7 @@ export function packageTable(numbers: PackageNumbers, load: FirstLoad): string {
       formatMs(keystroke.ms),
       `${keystroke.field}, ${keystroke.characters} characters on ${keystroke.rows} lines`,
     ],
+    ["Fit to one page", numbers.fit ? formatMs(numbers.fit.ms) : "-", fitted(numbers.fit)],
     ["First load, uncompressed", formatMb(load.total), loaded.join(", ")],
     [
       "Opening the field, uncompressed",

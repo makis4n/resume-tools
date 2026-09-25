@@ -11,9 +11,9 @@ session, both on an M4 Pro; neither measured the editor as a whole, and nobody h
 slow laptop yet. The spike's page, which took 0003's browser numbers, is retired in the same
 item, so the editor has to measure itself.
 
-Main holds one curated package today, Jake's Resume. AltaCV (pdfTeX, item 20) and Awesome-CV
-(XeTeX, items 21 and 22) are on branches in review, and fit to one page (item 18) is too. Their
-rows below are left empty, to be filled by running the same command again once they merge.
+Main holds two curated packages today, Jake's Resume and AltaCV (item 20), both on pdfTeX, and
+fit to one page (item 18). Awesome-CV, on XeTeX (items 21 and 22), is on branches in review; its
+rows below are left empty, to be filled by running the same command again once it merges.
 
 ## Decision
 
@@ -29,9 +29,12 @@ rows below are left empty, to be filled by running the same command again once t
   sample's longest field, median of 100, which is what a keystroke there costs before the DOM
   (`richRows` for a rich field, `layoutRows` for a text one); and ten edits of that field, each
   its last character retyped as a command through the document's history and an `update`,
-  compiled once and drawn, median, from the command to the page. It prints a table per package
-  and a summary against section 4.3, `--json <file>` writes the numbers, and `--runs <n>` sets
-  the edits, with ten times as many layouts.
+  compiled once and drawn, median, from the command to the page. Last, fit to one page (`fit`,
+  item 18) as the app runs it, through the scheduler's trials, on the sample made too long: grown
+  by the fewest invented bullets under its first job that run it onto a second page, which is
+  when a user reaches for it; its compiles and its time. It prints a table per package and a
+  summary against section 4.3, `--json <file>` writes the numbers, and `--runs <n>` sets the
+  edits, with ten times as many layouts.
 - The app measures itself in the browser at `?measure=1` (`src/measure/MeasurePage.tsx`): it
   opens Jake's Resume's sample, or another package's with `?measure=<id>`, through the worker as
   the app does, and times the engine's start and the first page (`Shown.startMs`, `Shown.ms`),
@@ -125,8 +128,9 @@ To fill the slow laptop's column: set the repository up on it as its README says
   the slow laptop if the overlay ever feels slow there.
 - XeTeX's numbers come with Awesome-CV. Milestone 2's risk that it misses the slow-laptop target
   is decided on them, not on the spike's.
-- Fit to one page is not measured: item 18 is not on main. The plan's measure of it, the
-  search's compiles and total time on a sample made too long, joins the command once it merges.
+- Fit to one page is measured on a sample that just runs past a page, the case it is for. Its
+  longest search, one that tries every step, is six trials on Jake's Resume and four on AltaCV,
+  each a compile in the fit's own job; plan section 5.4 expects it to finish in a few seconds.
 - The spike's page is gone, with `src/spike/`, `spike/web/` and the dev server's `/spike/`
   route. Its Jake's Resume preamble and body are test fixtures now, and the spike's Node scripts
   remain in `apps/editor/spike/`, with a README for what they need.

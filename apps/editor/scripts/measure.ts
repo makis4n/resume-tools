@@ -108,6 +108,7 @@ function json(
         open: countStep(numbers.reads.open),
         overlay: countStep(numbers.reads.overlay),
         edits: countStep(numbers.reads.edits),
+        fit: countStep(numbers.reads.fit),
       },
       firstLoad: load,
       openingTheField: measure.overlayFonts(numbers),

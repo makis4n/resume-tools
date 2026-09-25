@@ -16,6 +16,7 @@ import {
   type FirstLoad,
   firstLoad,
   formatLimit,
+  grown,
   LAYOUTS_PER_EDIT,
   longestField,
   measurePackage,
@@ -139,6 +140,33 @@ describe("editCommand", () => {
   });
 });
 
+describe("grown", () => {
+  it("adds invented bullets under the first entry of the resume's experience", () => {
+    const longer = grown(RESUME, 5);
+    const entry =
+      longer?.sections[0]?.kind === "entries" ? longer.sections[0].entries[0] : undefined;
+    expect(entry?.bullets.map((bullet) => bullet.id)).toEqual([
+      "tern-1",
+      "tern-2",
+      "measure-more-1",
+      "measure-more-2",
+      "measure-more-3",
+      "measure-more-4",
+      "measure-more-5",
+    ]);
+    // Every bullet has text, and the resume given is left as it was.
+    expect(entry?.bullets.every((bullet) => bullet.text[0]?.text !== "")).toBe(true);
+    expect(Resume.parse(longer)).toEqual(longer);
+    expect(
+      RESUME.sections[0]?.kind === "entries" && RESUME.sections[0].entries[0]?.bullets,
+    ).toHaveLength(2);
+  });
+
+  it("gives nothing for a resume with no entry to add to", () => {
+    expect(grown({ ...RESUME, sections: [] }, 5)).toBeUndefined();
+  });
+});
+
 describe("longestField", () => {
   it("takes the longest rich field the page shows, whatever text fields are longer", () => {
     expect(longestField(RESUME, pageShowing("tern.title", "tern-1.text", "tern-2.text"))).toEqual({
@@ -192,6 +220,7 @@ describe("firstLoad", () => {
       overlay: NOTHING,
       // An edit that reads a file the first page did not is no first load's.
       edits: { tex: read([["/f.tfm", 5]]), fonts: new Map() },
+      fit: { tex: read([["/g.tfm", 5]]), fonts: new Map([["/g.pfb", 50]]) },
     };
     expect(firstLoad({ reads }, { engine: 3000, loader: 30, manifest: 200 })).toEqual({
       engine: 3000,
@@ -214,7 +243,7 @@ describe("firstLoad", () => {
         ["/c.pfb", 90],
       ]),
     };
-    const reads = { open, overlay, edits: NOTHING };
+    const reads = { open, overlay, edits: NOTHING, fit: NOTHING };
     expect(firstLoad({ reads }, { engine: 0, loader: 0, manifest: 0 })).toMatchObject({
       texLive: 20,
       fonts: 100,
@@ -240,7 +269,15 @@ describe("the tables", () => {
       passes: 1,
     })),
     keystroke: { field: "x.text", characters: 245, rows: 3, runs: 30, ms: keystroke },
-    reads: { open: NOTHING, overlay: NOTHING, edits: NOTHING },
+    fit: {
+      bullets: 8,
+      pages: 2,
+      ms: 420,
+      compiles: 3,
+      dumps: 0,
+      fitted: { density: "compact", margins: 0.4, fontSize: 10.5 },
+    },
+    reads: { open: NOTHING, overlay: NOTHING, edits: NOTHING, fit: NOTHING },
   });
   const load = (total: number): FirstLoad => ({
     engine: 1,
@@ -278,7 +315,10 @@ describe("the tables", () => {
 
   it("lays a package's numbers out a row each", () => {
     const text = packageTable(numbers("fast", 80, 0.1), load(42e6));
-    expect(text.split("\n")).toHaveLength(8);
+    expect(text.split("\n")).toHaveLength(9);
+    expect(text).toMatch(
+      /\nFit to one page +420 ms +3 compiles, to compact density, 0.4 in margins, 10.5 pt, for the sample grown by 8 bullets onto 2 pages\n/,
+    );
     expect(text).toMatch(/\nFirst page +240 ms +the dump, the compile and the draw/);
     expect(text).toContain("Edit to page, median of 3");
     expect(text).toContain("0.10 ms");
@@ -363,7 +403,14 @@ describe.skipIf(!engineAvailable())("measurePackage", () => {
         : "";
     };
     // The sample's bullet ends "without help.", and each edit retypes its last character.
-    expect(updates.map(([doc]) => bullet(doc).slice(-5))).toEqual(["helpx", "helpy"]);
+    expect(updates.slice(0, 2).map(([doc]) => bullet(doc).slice(-5))).toEqual(["helpx", "helpy"]);
+    // Then the sample, grown by more bullets each time, until it runs onto a second page for the
+    // fit, and back to the fewest that do.
+    const grownBy = updates
+      .slice(2)
+      .map(([doc]) => fieldsOf(doc.resume).size - fieldsOf(sample).size);
+    expect(grownBy.slice(0, 2)).toEqual([4, 8]);
+    expect(grownBy.every((count) => count > 0)).toBe(true);
   });
 
   it("dumps the format from the stock one, and compiles the sample as a new document", () => {
@@ -407,6 +454,17 @@ describe.skipIf(!engineAvailable())("measurePackage", () => {
     expect(load.fonts).toBeGreaterThan(0);
     expect(load.fonts).toBeLessThan([...fontFiles.values()].reduce((a, b) => a + b, 0));
     expect(load.total).toBe(13 + tex + load.fonts);
+  });
+
+  it("fits the sample made too long onto one page, through the scheduler's trials", () => {
+    expect(numbers.fit).toBeDefined();
+    const { bullets = 0, pages, compiles = 0, ms = 0, fitted: values } = numbers.fit ?? {};
+    expect(bullets).toBeGreaterThanOrEqual(1);
+    expect(pages).toBe(2);
+    // Each trial compiles once, and the first that fits is the last.
+    expect(compiles).toBeGreaterThanOrEqual(1);
+    expect(values).toBeDefined();
+    expect(ms).toBeGreaterThan(0);
   });
 
   it("counts under first load the fonts the first page read, and the overlay's apart", () => {
