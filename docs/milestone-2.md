@@ -80,7 +80,7 @@ end to end before the other two templates, so that the editing loop is proven on
    every field, and the paragraph special from decision 0004 goes next to each begin marker.
    Empty optional fields are left out, and field ids come from model ids so they survive a
    reorder. Pure functions with unit tests.
-6. [ ] **Port Jake's Resume.** Confirm the MIT licence, keep the attribution, and change only what
+6. [x] **Port Jake's Resume.** Confirm the MIT licence, keep the attribution, and change only what
    the loop needs: hyperref's dvipdfmx driver, and geometry for page size and margins. The sample
    resume is invented.
 7. [ ] **Run the validation harness in CI.** For each curated package, compile the sample in Node

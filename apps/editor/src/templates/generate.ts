@@ -5,10 +5,11 @@
  * pure functions of the package, the resume and the document's control values: the format each
  * template's documents compile from, and the body each compile sends. User text enters LaTeX only
  * through a snippet's slots, and each slot is escaped by its type (`escape.ts`), so no text a user
- * types can act as LaTeX, whatever the package holds. Every typeset slot is wrapped in the markers
- * `fields.ts` reads, named after its node's id so that a field keeps its name through a reorder,
- * and the body comes with each field's text, which the page aligns its glyphs to. Decision 0007
- * records the rules.
+ * types can act as LaTeX, whatever the package holds; and an address a user types links only to
+ * the web, an email or a phone (`linkAddress`), never to a program or a file. Every typeset slot
+ * is wrapped in the markers `fields.ts` reads, named after its node's id so that a field keeps
+ * its name through a reorder, and the body comes with each field's text, which the page aligns
+ * its glyphs to. Decision 0007 records the rules.
  */
 
 import type {
@@ -20,6 +21,7 @@ import type {
   Section,
   SectionRole,
 } from "@resume-tools/resume-model";
+import { INVISIBLE } from "../tex/fields";
 import { formatDates } from "./dates";
 import { escapeText, escapeUrl, isBlank } from "./escape";
 import {
@@ -283,6 +285,41 @@ const ADDRESS_SYNTAX = /[#?&%/]/g;
 const encoded = (text: string) =>
   text.replace(ADDRESS_SYNTAX, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 
+/**
+ * The schemes an address from the resume may link with: the web's, email's and the phone's.
+ * hyperref reads an address's scheme to choose the link's PDF action, and under the dvipdfmx
+ * driver it makes a `run:` address a Launch action, which asks the reader to run a program; a
+ * `file:` address, or one with no scheme, a GoToR link to a file, with `.pdf` added when it has no
+ * extension, so that `github.com/mara` would open `github.com/mara.pdf`; `#name` a GoTo within the
+ * document; and any other scheme, `javascript:` among them, a URI action a reader may follow.
+ */
+const LINK_SCHEMES = new Set(["http", "https", "mailto", "tel"]);
+
+/** A scheme as RFC 3986 spells one, and its colon. */
+const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
+
+/** An email address without its scheme: one `@`, and no whitespace, slash or colon. */
+const EMAIL = /^[^\s/:@]+@[^\s/:@]+$/;
+
+/**
+ * The address a link from the resume goes to, a header link's `href` or a rich run's, or
+ * undefined when the editor does not link it (decision 0007). The address is read as `escapeUrl`
+ * writes it, without the characters that drops and the whitespace around it. One with a scheme
+ * is kept when the scheme is `http`, `https`, `mailto` or `tel`, in any case, and is not linked
+ * otherwise. One without gets `mailto:` when it reads as an email, `https:` when it begins with
+ * `//`, and `https://` otherwise, so that `github.com/mara` links to `https://github.com/mara`.
+ * One that is blank, or begins with `#` as a name within the document does, is not linked. The
+ * addresses the generator builds for the contacts are its own, and do not come through here.
+ */
+export function linkAddress(href: string): string | undefined {
+  const address = href.replace(INVISIBLE, "").trim();
+  if (address === "" || address.startsWith("#")) return undefined;
+  const scheme = SCHEME.exec(address)?.[1];
+  if (scheme !== undefined) return LINK_SCHEMES.has(scheme.toLowerCase()) ? address : undefined;
+  if (EMAIL.test(address)) return `mailto:${address}`;
+  return address.startsWith("//") ? `https:${address}` : `https://${address}`;
+}
+
 function documentPart(build: Build, resume: Resume): Part {
   const { snippets } = build.pkg;
   const sections = resume.sections.map((section) => sectionPart(build, section));
@@ -328,13 +365,15 @@ function headerPart(build: Build, header: Header): Part {
 }
 
 /**
- * A link through its kind's snippet, or through `other`'s when its kind has none. A link with
- * neither a label nor an address, as a new one starts, shows nothing, so it is left out of both
- * `{{links}}` and `{{contacts}}`, where it would leave a separator with nothing after it.
+ * A link through its kind's snippet, or through `other`'s when its kind has none. Its `href` is
+ * the address `linkAddress` gives, and absent when the editor does not link it, as when it is
+ * blank. A link with neither a label nor an address, as a new one starts, shows nothing, so it is
+ * left out of both `{{links}}` and `{{contacts}}`, where it would leave a separator with nothing
+ * after it.
  */
 function linkPart(build: Build, link: Link): Part | undefined {
   const label = textSlot(`${link.id}.label`, link.label);
-  const href = urlSlot(link.href);
+  const href = urlSlot(linkAddress(link.href) ?? "");
   if (!label.present && !href.present) return undefined;
   const snippets = build.pkg.snippets.link;
   const scope: ScopeOf<typeof LINK_SLOTS> = { label, href };
@@ -543,7 +582,10 @@ function field(id: string, text: string, latex: string, texts: Map<string, strin
   return `\\rtfield{${id}}{${latex}}`;
 }
 
-/** Rich text as LaTeX, run by run: bold outside italic, and a link outside both. */
+/**
+ * Rich text as LaTeX, run by run: bold outside italic, and a link outside both, to the address
+ * `linkAddress` gives. A run whose address the editor does not link is set as its text alone.
+ */
 function richLatex(runs: RichText): string {
   let latex = "";
   for (const run of runs) {
@@ -551,8 +593,8 @@ function richLatex(runs: RichText): string {
     if (part === "") continue;
     if (run.italic) part = `\\textit{${part}}`;
     if (run.bold) part = `\\textbf{${part}}`;
-    if (run.href !== undefined && !isBlank(run.href))
-      part = `\\href{${escapeUrl(run.href)}}{${part}}`;
+    const address = run.href === undefined ? undefined : linkAddress(run.href);
+    if (address !== undefined) part = `\\href{${escapeUrl(address)}}{${part}}`;
     // Two runs that neither wrap meet in one font, so a ? or ! that ends one would make OT1's ¿
     // or ¡ with a backtick that begins the next: they are kept apart as `escapeText` keeps them.
     if (part.startsWith("`") && /[?!]$/.test(latex)) latex += "{}";

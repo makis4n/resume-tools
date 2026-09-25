@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Mara", "last": "Quist" },
+    "email": "mara@example.com",
+    "phone": "415-555-0132",
+    "links": [
+      {
+        "id": "site",
+        "kind": "website",
+        "label": "quist.example.com",
+        "href": "https://quist.example.com"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "edu",
+      "kind": "entries",
+      "role": "education",
+      "title": "Education",
+      "entries": [
+        {
+          "id": "northgate",
+          "title": "Northgate University",
+          "subtitle": "Bachelor of Science in Computer Science",
+          "place": "Portland, OR",
+          "dates": { "start": "2016-09", "end": "2020-06" },
+          "bullets": []
+        }
+      ]
+    },
+    {
+      "id": "exp",
+      "kind": "entries",
+      "role": "experience",
+      "title": "Experience",
+      "entries": [
+        {
+          "id": "fennel",
+          "title": "Software Engineer",
+          "subtitle": "Fennel Systems",
+          "place": "Remote",
+          "dates": { "start": "2020-07", "end": "present" },
+          "bullets": [
+            {
+              "id": "fennel-1",
+              "text": [
+                {
+                  "text": "Built a document pipeline that turns structured data into typeset pages, cutting the office's turnaround from days to minutes and removing a whole class of formatting errors, then wrote the runbook so the next team could operate it without help."
+                }
+              ]
+            },
+            {
+              "id": "fennel-2",
+              "text": [
+                {
+                  "text": "Led the migration of three services to a shared queue, which halved on-call pages."
+                }
+              ]
+            },
+            {
+              "id": "fennel-3",
+              "text": [{ "text": "Mentored two interns through their first production releases." }]
+            }
+          ]
+        },
+        {
+          "id": "research",
+          "title": "Research Assistant",
+          "subtitle": "Northgate University",
+          "place": "Portland, OR",
+          "dates": { "start": "2019-01", "end": "2020-06" },
+          "bullets": [
+            {
+              "id": "research-1",
+              "text": [
+                {
+                  "text": "Wrote the evaluation harness for a typesetting study and ran it across 400 documents."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "proj",
+      "kind": "entries",
+      "role": "projects",
+      "title": "Projects",
+      "entries": [
+        {
+          "id": "marginalia",
+          "title": "Marginalia",
+          "subtitle": "TypeScript, WebAssembly",
+          "dates": { "start": "2023", "end": "2024" },
+          "bullets": [
+            {
+              "id": "marginalia-1",
+              "text": [
+                {
+                  "text": "An in-browser editor for typeset pages where the page itself is the editing surface."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "kind": "labelled",
+      "role": "skills",
+      "title": "Technical Skills",
+      "items": [
+        {
+          "id": "languages",
+          "label": "Languages",
+          "text": [{ "text": "TypeScript, Python, Rust, SQL" }]
+        },
+        { "id": "tools", "label": "Tools", "text": [{ "text": "Git, Docker, Postgres, Vite" }] }
+      ]
+    }
+  ]
+}
