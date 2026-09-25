@@ -420,6 +420,108 @@ describe("History", () => {
     expect(steps).toBe(0);
     expect(titleOf(history.present)).toBe(`Title ${HISTORY_LIMIT + 50}`);
   });
+
+  describe("a step of several commands", () => {
+    // The group the editor gives a visit to the title (item 12).
+    const visit = "field:fennel.title";
+    const placed = (text: string): Command => ({ type: "text", field: "fennel.place", text });
+
+    it("takes back three commands in one group in one undo, and redo gives back its end", () => {
+      const history = new History(newDocument("jake", sample));
+      const start = history.present;
+      history.dispatch(titled("O"), visit);
+      history.dispatch(titled("On"), visit);
+      const end = history.dispatch(titled("One"), visit);
+      expect(history.canUndo).toBe(true);
+      expect(history.undo()).toBe(start);
+      expect(history.canUndo).toBe(false);
+      expect(history.redo()).toBe(end);
+      expect(titleOf(history.present)).toBe("One");
+      expect(history.canRedo).toBe(false);
+    });
+
+    it("begins a step for a command in another group, and in the same one after a seal", () => {
+      const history = new History(newDocument("jake", sample));
+      const start = history.present;
+      history.dispatch(titled("O"), visit);
+      const title = history.dispatch(titled("One"), visit);
+      history.dispatch(placed("R"), "field:fennel.place");
+      const place = history.dispatch(placed("Remote"), "field:fennel.place");
+      history.seal();
+      history.dispatch(placed("Remote, U"), "field:fennel.place");
+      history.dispatch(placed("Remote, US"), "field:fennel.place");
+      expect(history.undo()).toBe(place);
+      expect(history.undo()).toBe(title);
+      expect(history.undo()).toBe(start);
+      expect(history.canUndo).toBe(false);
+    });
+
+    it("gives a command without a group a step of its own, which ends the step before it", () => {
+      // A structure op and a control's change, which the editor dispatches with no group.
+      const history = new History(newDocument("jake", sample));
+      const start = history.present;
+      const one = history.dispatch(titled("One"), visit);
+      const added = history.dispatch({
+        type: "structure",
+        op: { op: "addBullet", entry: "fennel" },
+      });
+      const compact = history.dispatch({ type: "control", name: "density", value: "compact" });
+      history.dispatch(titled("One two"), visit);
+      const end = history.dispatch(titled("One two three"), visit);
+      expect(history.undo()).toBe(compact);
+      expect(history.undo()).toBe(added);
+      expect(history.undo()).toBe(one);
+      expect(history.undo()).toBe(start);
+      expect(history.redo()).toBe(one);
+      expect(history.redo()).toBe(added);
+      expect(history.redo()).toBe(compact);
+      expect(history.redo()).toBe(end);
+      expect(history.canRedo).toBe(false);
+    });
+
+    it("ends a step at an undo or a redo, so that its group's next command begins another", () => {
+      const history = new History(newDocument("jake", sample));
+      const start = history.present;
+      history.dispatch(titled("One"), visit);
+      expect(history.undo()).toBe(start);
+      const two = history.dispatch(titled("Two"), visit);
+      // A new command after an undo clears what was undone, in a group or not.
+      expect(history.canRedo).toBe(false);
+      expect(history.undo()).toBe(start);
+      expect(history.redo()).toBe(two);
+      history.dispatch(titled("Two three"), visit);
+      expect(history.undo()).toBe(two);
+      expect(history.undo()).toBe(start);
+    });
+
+    it("keeps a step open past a command that throws, which changes nothing", () => {
+      const history = new History(newDocument("jake", sample));
+      const start = history.present;
+      const one = history.dispatch(titled("One"), visit);
+      const nowhere: Command = { type: "text", field: "nowhere.title", text: "x" };
+      expect(() => history.dispatch(nowhere, visit)).toThrow(CommandError);
+      expect(history.present).toBe(one);
+      history.dispatch(titled("One two"), visit);
+      expect(history.undo()).toBe(start);
+      expect(history.canUndo).toBe(false);
+    });
+
+    it(`counts steps against the bound of ${HISTORY_LIMIT}, however many commands each took`, () => {
+      const history = new History(newDocument("jake", sample));
+      const start = history.present;
+      for (let i = 1; i <= 2 * HISTORY_LIMIT; i++) history.dispatch(titled(`Title ${i}`), visit);
+      expect(history.undo()).toBe(start);
+      for (let step = 1; step <= HISTORY_LIMIT + 10; step++) {
+        for (const text of [`${step}`, `Title ${step}`]) history.dispatch(titled(text), visit);
+        history.seal();
+      }
+      let steps = 0;
+      while (history.undo() !== undefined) steps++;
+      expect(steps).toBe(HISTORY_LIMIT);
+      // The ten oldest steps went, so the oldest kept begins where the tenth ended.
+      expect(titleOf(history.present)).toBe("Title 10");
+    });
+  });
 });
 
 describe("mintId", () => {

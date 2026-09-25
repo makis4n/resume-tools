@@ -231,7 +231,8 @@ const LINE_BREAKS = /\r\n|[\t\n\r\u2028\u2029]/g;
 /**
  * Inputs the editor does not take: a new paragraph or line, which a field cannot hold; the
  * browser's own formatting, which would bring marks a field does not have; and the browser's undo
- * and redo, until item 12.
+ * and redo, which its menu still gives, since the app's history is the one undo: its own take the
+ * keys, and take back the visit to the field (item 12).
  */
 const REFUSED = /^(insertParagraph|insertLineBreak|format|history)/;
 

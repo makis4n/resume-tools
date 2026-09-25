@@ -6,7 +6,9 @@
  * not show: the header's contact fields, each link's kind and address with its label, and a field
  * the page does not show, which cannot be clicked there, or that still holds its placeholder, so
  * that the input can mark it (`needsInput`). Everything the panel does is a command, as an edit on
- * the page is, so the page recompiles after it.
+ * the page is, so the page recompiles after it. What is typed into one of its inputs, from when
+ * the input takes the focus to when it loses it, is one step for undo, as a visit to a field on
+ * the page is (item 12); anything else the panel does is a step of its own.
  *
  * Plain HTML in plain English, with nothing in it that is LaTeX.
  */
@@ -53,8 +55,14 @@ import {
 /** How long typing in the panel waits for a pause before it becomes a command, in milliseconds. */
 export const PAUSE = 300;
 
-/** Where the panel's commands go. */
-type Send = (command: Command) => void;
+/**
+ * Where the panel's commands go. What is typed into an input goes with the group of a visit to
+ * what the input edits, so that the visit is one step (`History.dispatch`): `field:<id>` for a
+ * field, as on the page; `header:<name>` for one of the header's contact fields, which `setHeader`
+ * sets; and `link:<id>` for a link's address, which `setLink` sets. A button or a menu sends its
+ * command with no group, which makes the command a step of its own.
+ */
+type Send = (command: Command, group?: string) => void;
 
 /** A structure op as the command that carries it. */
 const structural = (op: StructureOp): Command => ({ type: "structure", op });
@@ -65,7 +73,7 @@ const structural = (op: StructureOp): Command => ({ type: "structure", op });
  */
 const textField = (field: string, send: Send) => ({
   field,
-  onChange: (text: string) => send({ type: "text", field, text }),
+  onChange: (text: string) => send({ type: "text", field, text }, `field:${field}`),
 });
 
 /** A rich field's text as the page shows it: its runs joined. */
@@ -199,6 +207,11 @@ export interface PanelProps {
   shownFields?: ReadonlySet<string>;
   /** Where the panel's commands go: the way an edit on the page goes, so the page follows. */
   onCommand: Send;
+  /**
+   * The end of a visit to one of the panel's inputs, as it loses the focus, which ends the step
+   * of what was typed there (`History.seal`), so that the next visit to it is a step of its own.
+   */
+  onSeal: () => void;
 }
 
 /**
@@ -207,15 +220,20 @@ export interface PanelProps {
  */
 const ShownFields = createContext<ReadonlySet<string> | undefined>(undefined);
 
-export function Panel({ document, shownFields, onCommand }: PanelProps) {
+/** `PanelProps.onSeal`, carried to each `TypedInput` in the same way. */
+const Seal = createContext<() => void>(() => {});
+
+export function Panel({ document, shownFields, onCommand, onSeal }: PanelProps) {
   const { header, sections } = document.resume;
   return (
     <ShownFields value={shownFields}>
-      <div style={STYLE.panel}>
-        <HeaderFields header={header} send={onCommand} />
-        <Links links={header.links} send={onCommand} />
-        <Sections sections={sections} format={dateFormatOf(document)} send={onCommand} />
-      </div>
+      <Seal value={onSeal}>
+        <div style={STYLE.panel}>
+          <HeaderFields header={header} send={onCommand} />
+          <Links links={header.links} send={onCommand} />
+          <Sections sections={sections} format={dateFormatOf(document)} send={onCommand} />
+        </div>
+      </Seal>
     </ShownFields>
   );
 }
@@ -249,7 +267,7 @@ function HeaderFields({ header, send }: { header: Header; send: Send }) {
           <TypedInput
             value={header[key] ?? ""}
             inputMode={mode}
-            onChange={(value) => send(structural(setHeader(key, value)))}
+            onChange={(value) => send(structural(setHeader(key, value)), `header:${key}`)}
           />
         </label>
       ))}
@@ -258,8 +276,11 @@ function HeaderFields({ header, send }: { header: Header; send: Send }) {
 }
 
 function Links({ links, send }: { links: readonly Link[]; send: Send }) {
-  const set = (id: string, change: { kind?: LinkKind; label?: string; href?: string }) =>
-    send(structural({ op: "setLink", id, ...change }));
+  const set = (
+    id: string,
+    change: { kind?: LinkKind; label?: string; href?: string },
+    group?: string,
+  ) => send(structural({ op: "setLink", id, ...change }), group);
   return (
     <fieldset>
       <legend>Links</legend>
@@ -280,7 +301,12 @@ function Links({ links, send }: { links: readonly Link[]; send: Send }) {
               </select>
               <label style={STYLE.row}>
                 Label
-                <TypedInput value={link.label} onChange={(label) => set(link.id, { label })} />
+                {/* The label is a field, which the page shows, so typing it here is a visit to
+                    that field, as a click on it there is. */}
+                <TypedInput
+                  value={link.label}
+                  onChange={(label) => set(link.id, { label }, `field:${link.id}.label`)}
+                />
                 {fieldStatus(link.label, PLACEHOLDERS.link.label) === "placeholder" && <Mark />}
               </label>
               <label style={STYLE.row}>
@@ -289,7 +315,7 @@ function Links({ links, send }: { links: readonly Link[]; send: Send }) {
                   value={link.href}
                   inputMode="url"
                   spellCheck={false}
-                  onChange={(href) => set(link.id, { href })}
+                  onChange={(href) => set(link.id, { href }, `link:${link.id}`)}
                 />
               </label>
               <Reorder
@@ -699,7 +725,7 @@ function RichField({
       text={text}
       placeholder={placeholder}
       locked={marked && !isBlank(text)}
-      onChange={(typed) => send({ type: "rich", field, runs: [{ text: typed }] })}
+      onChange={(typed) => send({ type: "rich", field, runs: [{ text: typed }] }, `field:${field}`)}
     >
       <span>{firstWords(text)}</span>
     </FieldInput>
@@ -755,8 +781,9 @@ function Mark() {
  * command carrying the whole value. Every command asks for a compile, and the compiler's own wait
  * is shorter than the gap between two keystrokes, so without this pause the page would compile for
  * most characters typed. The input shows what was typed until the command goes, and the document's
- * value after. Leaving the input sends what is pending at once; the input going away drops it,
- * since its field may have gone with it.
+ * value after. Leaving the input sends what is pending at once, and then ends the visit to it
+ * (`PanelProps.onSeal`), so that however many pauses the typing had, undo takes it back in one
+ * step; the input going away drops what is pending, since its field may have gone with it.
  */
 function TypedInput({
   value,
@@ -767,6 +794,7 @@ function TypedInput({
   onChange: (text: string) => void;
 }) {
   const [draft, setDraft] = useState<string>();
+  const seal = useContext(Seal);
   const pending = useRef<{ text: string; timer: ReturnType<typeof setTimeout> }>(undefined);
   // The timer calls the latest callback, not the one from the render in which the typing began.
   const latest = useRef(onChange);
@@ -798,7 +826,10 @@ function TypedInput({
         clearTimeout(pending.current?.timer);
         pending.current = { text, timer: setTimeout(send, PAUSE) };
       }}
-      onBlur={send}
+      onBlur={() => {
+        send();
+        seal();
+      }}
     />
   );
 }

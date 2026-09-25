@@ -18,8 +18,9 @@
  * Offsets are UTF-16 indices throughout, as the DOM and the model slice by. A field is one
  * paragraph, so Enter inserts nothing, and pasted text comes in plain, its line breaks as spaces.
  * Formatting keys insert nothing, and neither do the browser's own undo and redo, whose record of
- * the rows this overlay redraws on every input would be wrong; item 12 gives undo across page and
- * panel. Dates open a small picker instead, since the model stores them as dates.
+ * the rows this overlay redraws on every input would be wrong. The app takes the undo and redo keys
+ * (item 12), and closes the overlay first, so that an undo takes back the whole visit to the field.
+ * Dates open a small picker instead, since the model stores them as dates.
  *
  * A rich field opens in Tiptap instead (`RichOverlay.tsx`, item 10), placed and sized from here as
  * a plain field is, with a web font for each of its variants, bold and italic among them, and each
@@ -751,7 +752,8 @@ const LINE_BREAKS = /\r\n|[\t\n\r\u2028\u2029]/g;
 
 /**
  * Inputs the overlay does not take: a new paragraph or line, which a field cannot hold;
- * formatting, which a plain field has none of; and the browser's undo and redo, until item 12.
+ * formatting, which a plain field has none of; and the browser's undo and redo, which its menu
+ * still gives, since its record of the rows is wrong: the app's own take the keys (item 12).
  */
 const REFUSED = /^(insertParagraph|insertLineBreak|format|history)/;
 
