@@ -90,8 +90,10 @@ Sans Pro for the headings, one Font Awesome icon in the header) stands in for it
   so a character must be one every text font covers: Source Sans Pro has an arrow and Roboto does
   not, so an arrow is left out of a heading in Source Sans too. An icon font, whose map gives only
   ASCII and the Private Use Area, as Font Awesome's does, is no text font. The compiler reads the
-  files while the engine starts, as the page reads them anyway, and the harness before its first
-  compile. A file that could not be read or parsed takes no part, so that one failed fetch of a
+  files while the engine starts, as the page reads them anyway, and waits for them as long as the
+  compile after may take, the start-up's limit before a worker's first compile of a format; past
+  that, the body leaves nothing out, which may cost the PDF a box but never the page. The harness
+  reads them before its first compile. A file that could not be read or parsed takes no part, so that one failed fetch of a
   shape no text uses leaves nothing out, and neither does a file the tree lacks, which XeTeX cannot
   load either; the console names a file that could not be read, and the next compile reads it
   again. With no text font read, nothing is left out. A text for XeTeX's fonts stays composed,

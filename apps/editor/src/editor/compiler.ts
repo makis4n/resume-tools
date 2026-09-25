@@ -664,25 +664,21 @@ export class Compiler {
         await this.request(run, run.limit, () => engine.forget(JOB));
         if (!this.current(run)) return;
       }
-      const coverage = await this.within(
-        run,
-        run.limit,
-        () => covering,
-        () => this.drop(run, "to read its fonts"),
-      );
+      // A worker's first compile of a format reads, as TeX asks for them, the files the body needs
+      // that the preamble did not load: the fonts a XeTeX template declares by file, which load
+      // when the body selects them, 9 files and 1.2 MB for the invented template, and a pdfTeX
+      // body's font metrics. So it gets the start-up's limit, as the dump does, whether the format
+      // was dumped or handed over; it happens once a format and a worker, never per keystroke. The
+      // wait for the page's copies of the fonts, which say what the body leaves out, has the same.
+      const key = `${pkg.engine}:${format.name}`;
+      const limit = instance.compiledWith.has(key) ? run.limit : this.startLimit;
+      const coverage = covering && (await this.inTime(covering, limit, run));
       if (!this.current(run)) return;
       this.warnAboutUnread(coverage);
       const body = generateBody(pkg, doc.resume, doc.controls, { covers: coverage?.covers });
       this.warnAboutLeftOut(body.dropped);
       this.opened = false;
       instance.compiled = true;
-      // A worker's first compile of a format reads, as TeX asks for them, the files the body needs
-      // that the preamble did not load: the fonts a XeTeX template declares by file, which load
-      // when the body selects them, 9 files and 1.2 MB for the invented template, and a pdfTeX
-      // body's font metrics. So it gets the start-up's limit, as the dump does, whether the format
-      // was dumped or handed over; it happens once a format and a worker, never per keystroke.
-      const key = `${pkg.engine}:${format.name}`;
-      const limit = instance.compiledWith.has(key) ? run.limit : this.startLimit;
       const result = await this.request(run, limit, () =>
         engine.compile(pkg.engine, format.name, body.latex, { job: JOB, maxPasses: MAX_PASSES }),
       );
@@ -771,14 +767,8 @@ export class Compiler {
       // The body leaves out what a XeTeX package's fonts cannot set, as the document's does (see
       // `run`), so that the trial sets the pages the document would. The document's compile has
       // read the fonts by now, so this waits on nothing, and never past a compile's limit.
-      const reading = this.limits[pkg.engine];
-      const coverage = await new Promise<NativeCoverage | undefined>((resolve, reject) => {
-        trial.timer = setTimeout(
-          () => reject(new Error(`the fonts took over ${reading} ms to read`)),
-          reading,
-        );
-        this.coverage(pkg).then(resolve, reject);
-      }).finally(() => clearTimeout(trial.timer));
+      const covering = this.coverage(pkg);
+      const coverage = covering && (await this.inTime(covering, this.limits[pkg.engine], trial));
       if (this.trying !== trial) return;
       const body = generateBody(pkg, doc.resume, doc.controls, { covers: coverage?.covers });
       const instance = this.currentInstance();
@@ -938,15 +928,14 @@ export class Compiler {
   }
 
   /**
-   * A page has not drawn within its run's time limit, waiting on fonts from the network, or a
-   * XeTeX package's fonts have not loaded for its body (`coverage`). The engine did its part and
-   * stays. The run is dropped, and with it whatever the draw brings back later; the user gets the
-   * plain message, and the pending document, if one waits, compiles.
+   * A page has not drawn within its run's time limit, waiting on fonts from the network. The
+   * engine did its part and stays. The run is dropped, and with it whatever the draw brings back
+   * later; the user gets the plain message, and the pending document, if one waits, compiles.
    */
-  private drop(run: Run, what = "to draw") {
+  private drop(run: Run) {
     if (this.running !== run) return;
     this.running = undefined;
-    if (this.current(run)) this.fail(`the page took over ${run.limit} ms ${what}`);
+    if (this.current(run)) this.fail(`the page took over ${run.limit} ms to draw`);
     this.generation++;
     this.next();
   }
@@ -999,15 +988,44 @@ export class Compiler {
   }
 
   /**
+   * What a XeTeX package's fonts can set (`coverage`) once they are read, or nothing when they are
+   * not within `limit` ms, or fail: it only spares the PDF a box where a character is missing, so
+   * a body without it leaves nothing out rather than the page wait on it, and the console hears
+   * so. The timer is the work's, a run's or a trial's, which closing stops.
+   */
+  private async inTime(
+    waiting: Promise<NativeCoverage>,
+    limit: number,
+    work: { timer?: ReturnType<typeof setTimeout> },
+  ): Promise<NativeCoverage | undefined> {
+    try {
+      return await new Promise<NativeCoverage | undefined>((resolve) => {
+        work.timer = setTimeout(() => {
+          console.warn(
+            `The page's fonts were not read within ${limit} ms, so the body leaves nothing out`,
+          );
+          resolve(undefined);
+        }, limit);
+        waiting.then(resolve, (error: unknown) => {
+          console.warn("The page's fonts could not be read, so the body leaves nothing out", error);
+          resolve(undefined);
+        });
+      });
+    } finally {
+      clearTimeout(work.timer);
+    }
+  }
+
+  /**
    * What a XeTeX package's declared fonts can set, read from their files, which the page draws
    * with anyway (`FontLibrary.coverage`), so that the body leaves out a character they cannot all
    * set rather than have XeTeX set a font's box for it (decision 0014); undefined for a package
    * that declares no fonts, whose body leaves nothing out. A file that could not be read takes no
    * part, and is read again for the next compile.
    */
-  private coverage(pkg: TemplatePackage): Promise<NativeCoverage | undefined> {
+  private coverage(pkg: TemplatePackage): Promise<NativeCoverage> | undefined {
     const files = fontFiles(pkg);
-    return files.length === 0 ? Promise.resolve(undefined) : this.fonts.coverage(files);
+    return files.length === 0 ? undefined : this.fonts.coverage(files);
   }
 
   /** The format an earlier session kept under this name, when the store has one. */

@@ -1323,6 +1323,45 @@ describe("Compiler", () => {
     await expect(trial).resolves.toBe(1);
   });
 
+  it("waits for a XeTeX package's fonts as long as its compile may take, then leaves nothing out", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { package: xetex, sample: invented } = INVENTED_XETEX;
+    const resume = structuredClone(invented);
+    const [summary] = resume.sections;
+    if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+    summary.text = [{ text: "From 40 \u{2192} 12 minutes." }];
+    const doc = Document.parse({ version: 1, template: xetex.id, resume, controls: {} });
+    // Font files whose fetches never come back.
+    const s = scheduler({}, { fonts: inventedFonts(() => new Promise(() => {})) });
+    s.compiler.open(xetex, doc);
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    // A worker's first compile of a format has the start-up's limit, and so has the wait before it.
+    await wait(20_000);
+    expect(s.errors).toEqual([]);
+    expect(s.engine().compiles).toHaveLength(0);
+    await wait(40_000);
+    // Past it, the body leaves nothing out, which may cost the PDF a box, but never the page.
+    expect(s.engine().compiles).toHaveLength(1);
+    expect(s.engine().compiles[0]?.body).toContain("From 40 \u{2192} 12 minutes.");
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("fonts"));
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([doc]);
+    expect(s.errors).toEqual([]);
+    // A trial waits the compile's limit, and then compiles too, leaving nothing out.
+    const trial = s.compiler.tryControls({ ...defaultControls(xetex), margins: 1 });
+    await settle();
+    await wait(20_000);
+    const tried = s.engine().compiles[1];
+    expect(tried?.options?.job).toBe("fit");
+    expect(tried?.body).toContain("\u{2192}");
+    tried?.resolve(compiled(2));
+    await expect(trial).resolves.toBe(1);
+    expect(s.engines).toHaveLength(1);
+  });
+
   it("fails a trial whose compile fails, with TeX's words for the console, and keeps the engine", async () => {
     const s = scheduler();
     await opened(s);
