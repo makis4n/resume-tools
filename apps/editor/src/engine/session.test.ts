@@ -453,10 +453,18 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
   describe("makes the PDF of a job's last compile", () => {
     const { package: jake, sample } = curated("jake");
     const text = (pdf: Uint8Array) => new TextDecoder("latin1").decode(pdf);
-    const jobFiles = (job: string) =>
+    const fs = () =>
       (
-        session as unknown as { engine: { FS: { readdir(path: string): string[] } } }
-      ).engine.FS.readdir(`/home/web_user/jobs/${job}`);
+        session as unknown as {
+          engine: {
+            FS: {
+              readdir(path: string): string[];
+              writeFile(path: string, data: Uint8Array): void;
+            };
+          };
+        }
+      ).engine.FS;
+    const jobFiles = (job: string) => fs().readdir(`/home/web_user/jobs/${job}`);
     const doc = (body: string) => `\\documentclass{article}\\begin{document}${body}\\end{document}`;
 
     /** Jake's sample, compiled as the editor compiles it, on the page size given. */
@@ -567,6 +575,35 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(made.error).toMatch(/^xdvipdfmx exited with 1\n/);
       expect(made.error).toContain('"tcrm1000"');
       expect(made.output).toContain("xdvipdfmx:fatal:");
+    }, 60_000);
+
+    it("fails with the reason, rather than throw, when xdvipdfmx aborts, and makes the next", () => {
+      // The tree's xdvipdfmx stops with a memory fault on an x:escale with no x:bscale open
+      // (decision 0013), which the run throws. The PDF is refused, and the engine, put back as
+      // start-up left it, makes the next one.
+      const unscaled = doc("x\\special{x:escale}");
+      expect(session.compile("pdftex", "stock", unscaled, { job: "aborted" }).ok).toBe(true);
+      const made = session.pdf("aborted");
+      expect(made.ok).toBe(false);
+      expect(made.pdf).toBeUndefined();
+      expect(made.error).toMatch(/^xdvipdfmx aborted: memory access out of bounds/);
+      expect(made.output).toContain("aborted.dvi -> aborted.pdf");
+      expect(made.ms).toBeGreaterThan(0);
+      expect(jobFiles("aborted")).not.toContain("aborted.pdf");
+      // Again, the same, and then the same job with the special gone.
+      expect(session.pdf("aborted").error).toBe(made.error);
+      expect(session.compile("pdftex", "stock", doc("x"), { job: "aborted" }).ok).toBe(true);
+      expect(session.pdf("aborted").ok).toBe(true);
+    }, 60_000);
+
+    it("fails, rather than throw, for an output it cannot read, and runs nothing", () => {
+      // Its specials cannot be scanned for one that reads a file, so xdvipdfmx never sees it.
+      expect(session.compile("pdftex", "stock", doc("x"), { job: "garbled" }).ok).toBe(true);
+      fs().writeFile("/home/web_user/jobs/garbled/garbled.dvi", new Uint8Array([247, 2, 1]));
+      const made = session.pdf("garbled");
+      expect(made.ok).toBe(false);
+      expect(made.error).toMatch(/^the output cannot be read: /);
+      expect(made.output).toBe("");
     }, 60_000);
 
     it("keeps a XeTeX document's set size, which it writes as pdf:pagesize, not papersize=", () => {

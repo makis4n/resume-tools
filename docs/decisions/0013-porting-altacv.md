@@ -227,11 +227,12 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   stays moved. The check reports once that a level was closed that was never opened: that pops the
   state xdvipdfmx opens each page with, the move an inch in from the corner, so everything after it
   on the page lands an inch left and off the PDF's page; and an `x:escale` with no `x:bscale` open
-  stops the tree's xdvipdfmx with a memory fault, which `session.pdf` throws and the harness reports
-  as a `pdf` finding too. It does not see a `cm`, `q` or `Q` a template writes itself in `pdf:code`,
-  `pdf:literal` or `pdf:content`, since pgf writes such pairs, which undo each other, around its
-  boxes, and telling those from one that moves the text would take the matrices multiplied out; nor
-  a form, `pdf:bxobj` to `pdf:exobj`, whose content the PDF draws wherever `pdf:uxobj` puts it.
+  stops the tree's xdvipdfmx with a memory fault, which `session.pdf` returns as a PDF it could not
+  make, with the reason, rather than throw, and the harness reports as a `pdf` finding too. It does
+  not see a `cm`, `q` or `Q` a template writes itself in `pdf:code`, `pdf:literal` or `pdf:content`,
+  since pgf writes such pairs, which undo each other, around its boxes, and telling those from one
+  that moves the text would take the matrices multiplied out; nor a form, `pdf:bxobj` to
+  `pdf:exobj`, whose content the PDF draws wherever `pdf:uxobj` puts it.
 - A tag is one box, so one of more than about 2,500 characters, taller than a page, is set on a
   page of its own and runs past its foot.
 - Known limits, each far past a page and far under the generator's 1 MB bound on the body. About
