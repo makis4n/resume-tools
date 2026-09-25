@@ -23,11 +23,13 @@
  * again.
  *
  * A worker's start-up loads the engine and TeX Live's file list, and a dump reads TeX Live's files
- * as TeX asks for them. On a slow machine or network either can take many seconds, and a worker
- * that replaces a lost one pays for both again, so they have a longer limit of their own and the
- * compile limit times only what TeX does with an edit. Drawing the page waits on fonts from the
- * network, so it has the compile's limit too; past it the page is dropped, but the worker, which
- * did its part, stays.
+ * as TeX asks for them, and so does a worker's first compile of each format, for what the body
+ * needs that the preamble did not load, such as the fonts a XeTeX template declares by file, which
+ * load when the body selects them (decision 0014). On a slow machine or network any of these can
+ * take many seconds, and a worker that replaces a lost one pays for them again, so they have a
+ * longer limit of their own and the compile limit times only what TeX does with an edit. Drawing
+ * the page waits on fonts from the network, so it has the compile's limit too; past it the page is
+ * dropped, but the worker, which did its part, stays.
  *
  * Given the app's stores (`src/storage/store.ts`), formats and the TeX Live files each template
  * reads outlive the session: a format the store holds is handed to the engine rather than dumped,
@@ -57,14 +59,20 @@ import type {
   Engine as SessionEngine,
 } from "../engine/session";
 import { type DrawnPage, drawPage } from "../page/draw";
-import type { FontLibrary } from "../page/fonts";
+import type { FontLibrary, NativeCoverage } from "../page/fonts";
 import {
   type GeneratedBody,
   type GeneratedFormat,
   generateBody,
   generateFormat,
 } from "../templates/generate";
-import { type ControlValues, controlValuesFor, type TemplatePackage } from "../templates/package";
+import {
+  type ControlValues,
+  controlValuesFor,
+  fontFeatures,
+  fontFiles,
+  type TemplatePackage,
+} from "../templates/package";
 import type { Document } from "./document";
 
 /**
@@ -199,10 +207,11 @@ const DELAYS: Record<SessionEngine, number> = { pdftex: 100, xetex: 400 };
 const LIMITS: Record<SessionEngine, number> = { pdftex: 10_000, xetex: 20_000 };
 
 /**
- * The limit for a worker's start-up and for a dump. Start-up takes about 0.3 s once the engine's
- * files are cached (decision 0003), but a first load fetches the engine itself, 9.5 MB compressed,
- * so a minute leaves room for a slow connection and still gives up on a worker that will never
- * start. Why a dump shares it is said where the dump is asked for.
+ * The limit for a worker's start-up, for a dump, and for a worker's first compile of each format.
+ * Start-up takes about 0.3 s once the engine's files are cached (decision 0003), but a first load
+ * fetches the engine itself, 9.5 MB compressed, so a minute leaves room for a slow connection and
+ * still gives up on a worker that will never start. Why a dump and a first compile share it is said
+ * where each is asked for.
  */
 const START_LIMIT = 60_000;
 
@@ -249,7 +258,8 @@ interface Run {
   retry: boolean;
   /**
    * Its time limit for a compile, for handing the engine a kept format and for the draw, from its
-   * package's engine. Start-up and dumps have the longer `startLimit`.
+   * package's engine. Start-up, dumps and a worker's first compile of each format have the longer
+   * `startLimit`.
    */
   limit: number;
   /** The time limit running now, of a request or of the draw. */
@@ -308,6 +318,11 @@ interface Instance {
    * undefined until a trial has compiled there.
    */
   fitOpened: number | undefined;
+  /**
+   * The formats it has compiled a body with, in any job, by engine and name, which it has read
+   * the files of.
+   */
+  compiledWith: Set<string>;
 }
 
 export class Compiler {
@@ -353,6 +368,10 @@ export class Compiler {
   private closed = false;
   /** The fonts the console has been told the page cannot draw. */
   private readonly warned = new Set<string>();
+  /** The characters the console has been told the body leaves out, which its fonts cannot set. */
+  private readonly leftOut = new Set<string>();
+  /** The declared font files the console has been told could not be read, until one is. */
+  private readonly unreadFonts = new Set<string>();
   /**
    * The page on screen while it is the newest document's. A compile that fails, or a page that is
    * dropped, clears it, since a PDF of an older page is not what the user asked for.
@@ -610,7 +629,9 @@ export class Compiler {
     const { pkg, document: doc } = run;
     try {
       const format = generateFormat(pkg, doc.controls);
-      const body = generateBody(pkg, doc.resume, doc.controls);
+      // A XeTeX package's fonts load while the engine starts: the page needs them anyway, and the
+      // body leaves out what they cannot set.
+      const covering = this.coverage(pkg);
       const instance = this.currentInstance();
       const { engine } = instance;
       let startMs: number | undefined;
@@ -643,11 +664,25 @@ export class Compiler {
         await this.request(run, run.limit, () => engine.forget(JOB));
         if (!this.current(run)) return;
       }
+      // A worker's first compile of a format reads, as TeX asks for them, the files the body needs
+      // that the preamble did not load: the fonts a XeTeX template declares by file, which load
+      // when the body selects them, 9 files and 1.2 MB for the invented template, and a pdfTeX
+      // body's font metrics. So it gets the start-up's limit, as the dump does, whether the format
+      // was dumped or handed over; it happens once a format and a worker, never per keystroke. The
+      // wait for the page's copies of the fonts, which say what the body leaves out, has the same.
+      const key = `${pkg.engine}:${format.name}`;
+      const limit = instance.compiledWith.has(key) ? run.limit : this.startLimit;
+      const coverage = covering && (await this.inTime(covering, limit, run));
+      if (!this.current(run)) return;
+      this.warnAboutUnread(coverage);
+      const body = generateBody(pkg, doc.resume, doc.controls, { covers: coverage?.covers });
+      this.warnAboutLeftOut(body.dropped);
       this.opened = false;
       instance.compiled = true;
-      const result = await this.request(run, run.limit, () =>
+      const result = await this.request(run, limit, () =>
         engine.compile(pkg.engine, format.name, body.latex, { job: JOB, maxPasses: MAX_PASSES }),
       );
+      instance.compiledWith.add(key);
       this.record(pkg, result.fetched);
       if (!this.current(run)) return;
       if (!result.ok || result.output === undefined) {
@@ -658,7 +693,7 @@ export class Compiler {
       const page = await this.within(
         run,
         run.limit,
-        () => this.draw(output, this.fonts, body.texts),
+        () => this.draw(output, this.fonts, body.texts, 0, { features: fontFeatures(pkg) }),
         () => this.drop(run),
       );
       if (!this.current(run)) return;
@@ -729,7 +764,13 @@ export class Compiler {
     const { pkg, document: doc } = trial;
     try {
       const format = generateFormat(pkg, doc.controls);
-      const body = generateBody(pkg, doc.resume, doc.controls);
+      // The body leaves out what a XeTeX package's fonts cannot set, as the document's does (see
+      // `run`), so that the trial sets the pages the document would. The document's compile has
+      // read the fonts by now, so this waits on nothing, and never past a compile's limit.
+      const covering = this.coverage(pkg);
+      const coverage = covering && (await this.inTime(covering, this.limits[pkg.engine], trial));
+      if (this.trying !== trial) return;
+      const body = generateBody(pkg, doc.resume, doc.controls, { covers: coverage?.covers });
       const instance = this.currentInstance();
       const { engine } = instance;
       const work: Work = {
@@ -757,12 +798,17 @@ export class Compiler {
         if (!work.current()) return;
       }
       instance.fitOpened = trial.opened;
-      const result = await work.request(work.limit, () =>
+      // A worker's first compile of a format, in any job, reads the files the body needs, so it
+      // has the start-up's limit here too (see `run`).
+      const key = `${pkg.engine}:${format.name}`;
+      const limit = instance.compiledWith.has(key) ? work.limit : this.startLimit;
+      const result = await work.request(limit, () =>
         engine.compile(pkg.engine, format.name, body.latex, {
           job: FIT_JOB,
           maxPasses: MAX_PASSES,
         }),
       );
+      instance.compiledWith.add(key);
       this.record(pkg, result.fetched);
       if (!result.ok)
         throw new Error(`the trial did not compile: ${result.error}`, { cause: result.log });
@@ -913,6 +959,7 @@ export class Compiler {
       installed: new Set(),
       compiled: false,
       fitOpened: undefined,
+      compiledWith: new Set(),
     };
     return this.instance;
   }
@@ -938,6 +985,47 @@ export class Compiler {
       this.prefetched.set(pkg.id, asked);
     }
     return asked;
+  }
+
+  /**
+   * What a XeTeX package's fonts can set (`coverage`) once they are read, or nothing when they are
+   * not within `limit` ms, or fail: it only spares the PDF a box where a character is missing, so
+   * a body without it leaves nothing out rather than the page wait on it, and the console hears
+   * so. The timer is the work's, a run's or a trial's, which closing stops.
+   */
+  private async inTime(
+    waiting: Promise<NativeCoverage>,
+    limit: number,
+    work: { timer?: ReturnType<typeof setTimeout> },
+  ): Promise<NativeCoverage | undefined> {
+    try {
+      return await new Promise<NativeCoverage | undefined>((resolve) => {
+        work.timer = setTimeout(() => {
+          console.warn(
+            `The page's fonts were not read within ${limit} ms, so the body leaves nothing out`,
+          );
+          resolve(undefined);
+        }, limit);
+        waiting.then(resolve, (error: unknown) => {
+          console.warn("The page's fonts could not be read, so the body leaves nothing out", error);
+          resolve(undefined);
+        });
+      });
+    } finally {
+      clearTimeout(work.timer);
+    }
+  }
+
+  /**
+   * What a XeTeX package's declared fonts can set, read from their files, which the page draws
+   * with anyway (`FontLibrary.coverage`), so that the body leaves out a character they cannot all
+   * set rather than have XeTeX set a font's box for it (decision 0014); undefined for a package
+   * that declares no fonts, whose body leaves nothing out. A file that could not be read takes no
+   * part, and is read again for the next compile.
+   */
+  private coverage(pkg: TemplatePackage): Promise<NativeCoverage> | undefined {
+    const files = fontFiles(pkg);
+    return files.length === 0 ? undefined : this.fonts.coverage(files);
   }
 
   /** The format an earlier session kept under this name, when the store has one. */
@@ -1009,6 +1097,41 @@ export class Compiler {
     this.busy = busy;
     this.events.busy(busy);
     if (!busy) for (const wake of this.settled.splice(0)) wake();
+  }
+
+  /**
+   * A font file a XeTeX package declares that could not be read takes no part in what the body
+   * leaves out, and the console hears of it, once until it is read; the next compile reads it again.
+   */
+  private warnAboutUnread(coverage: NativeCoverage | undefined) {
+    const unread = coverage?.unread ?? [];
+    for (const name of [...this.unreadFonts])
+      if (!unread.includes(name)) this.unreadFonts.delete(name);
+    const fresh = unread.filter((name) => !this.unreadFonts.has(name));
+    if (fresh.length === 0) return;
+    for (const name of fresh) this.unreadFonts.add(name);
+    console.warn(
+      `The page's fonts could not all be read, so the body leaves out only what the others cannot set: ${fresh.join(", ")}`,
+    );
+  }
+
+  /**
+   * A character a XeTeX package's fonts cannot set is left out of the body, or set as the part of
+   * it they can, an accented letter's base, as pdfTeX's LaTeX leaves out one it has no definition
+   * for with a warning in its log; the console hears of each such character once, rather than on
+   * every compile.
+   */
+  private warnAboutLeftOut(dropped: readonly string[]) {
+    const fresh = dropped.filter((char) => !this.leftOut.has(char));
+    if (fresh.length === 0) return;
+    for (const char of fresh) this.leftOut.add(char);
+    const named = fresh.map((char) => {
+      const point = (char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
+      return `${char} (U+${point})`;
+    });
+    console.warn(
+      `The page's fonts cannot set these characters, so it leaves them out, or their accents: ${named.join(", ")}`,
+    );
   }
 
   /**

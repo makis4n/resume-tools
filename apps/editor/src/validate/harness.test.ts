@@ -10,6 +10,7 @@ import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { CURATED, curated } from "../templates/curated";
 import { generateBody } from "../templates/generate";
+import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls, parsePackage, type TemplatePackage } from "../templates/package";
 import type { DviDocument, PageItem } from "../tex/dvi";
 import {
@@ -879,6 +880,145 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       );
       expect(report.findings).toEqual([]);
     }, 60_000);
+  });
+
+  describe("over the invented XeTeX template", () => {
+    const { package: xetex, sample } = INVENTED_XETEX;
+
+    it("passes every check: fonts declared by file, drawn from their files, a readable PDF", async () => {
+      const report = await validatePackage(session, fonts, xetex, sample);
+      expect(report.findings).toEqual([]);
+      expect(report.pages).toBe(1);
+      expect(report.fields).toBe(generateBody(xetex, sample, defaultControls(xetex)).texts.size);
+      const timings = report.passes.map((ms) => `${Math.round(ms)} ms`).join(", ");
+      console.log(`invented XeTeX template: format ${report.format}; passes ${timings}`);
+      // A new document's two passes, the same body again, an edit, and the margins and accent.
+      expect(report.passes).toHaveLength(6);
+      for (const ms of report.passes) expect(ms).toBeLessThan(2_000);
+    }, 120_000);
+
+    it("leaves out a character no font of the package has, rather than set a box for it", async () => {
+      // Roboto has no arrow and no emoji: XeTeX would set its .notdef for each.
+      const lacking = structuredClone(sample);
+      const work = lacking.sections.find((section) => section.id === "work");
+      const bullet = work?.kind === "entries" ? work.entries[1]?.bullets[0] : undefined;
+      if (bullet === undefined) throw new Error("the sample has gull-1");
+      bullet.text = [{ text: "Cut the build from 40 \u{2192} 12 minutes \u{1f600}." }];
+      const report = await validatePackage(session, fonts, xetex, lacking);
+      expect(report.findings).toEqual([]);
+    }, 120_000);
+
+    it("finds a hyphenated first word in the PDF of a font whose hyphen is U+2011 as well", async () => {
+      // Source Sans Pro's map gives its hyphen U+002D, U+00AD, U+2010 and U+2011, and xdvipdfmx's
+      // ToUnicode map gives a glyph the highest of its characters, so the PDF shows a typed hyphen
+      // as U+2011: in the phone, 555-0142, and in a bullet's first word.
+      const sans = parsePackage({
+        ...xetex,
+        id: "invented-xetex-sans",
+        fonts: xetex.fonts?.map((font) =>
+          font.family === "Roboto"
+            ? {
+                ...font,
+                shapes: {
+                  "m/n": "SourceSansPro-Regular.otf",
+                  "m/it": "SourceSansPro-RegularIt.otf",
+                  "b/n": "SourceSansPro-Bold.otf",
+                  "bx/n": "SourceSansPro-Bold.otf",
+                  "b/it": "SourceSansPro-BoldIt.otf",
+                  "bx/it": "SourceSansPro-BoldIt.otf",
+                },
+              }
+            : font,
+        ),
+      });
+      const hyphenated = structuredClone(sample);
+      const work = hyphenated.sections.find((section) => section.id === "work");
+      const bullet = work?.kind === "entries" ? work.entries[0]?.bullets[1] : undefined;
+      if (bullet === undefined) throw new Error("the sample has harbor-2");
+      bullet.text = [{ text: "Full-text search across the backlist, rebuilt in a month." }];
+      const report = await validatePackage(session, fonts, sans, hyphenated);
+      expect(report.findings).toEqual([]);
+    }, 120_000);
+
+    it("reports a character the template sets that its font lacks, which the page hides", async () => {
+      // Roboto has no check mark: XeTeX sets its .notdef, a box the PDF shows and the page, which
+      // reads glyph 0 as a character left out, does not. The body leaves out what a user types
+      // that the fonts lack, but not what the template's own snippets set.
+      const checked = parsePackage({
+        ...xetex,
+        id: "invented-xetex-checked",
+        snippets: { ...xetex.snippets, header: `${xetex.snippets.header}\n\u{2713}\\par` },
+      });
+      const report = await validatePackage(session, fonts, checked, sample);
+      expect(report.findings).toEqual([
+        {
+          check: "fonts",
+          message:
+            "the template sets a character Roboto-Regular.otf lacks, \u{2713} (U+2713), which the PDF shows as a box and the page leaves out",
+        },
+      ]);
+    }, 120_000);
+
+    it("reports a native font XeTeX emboldens, which the page draws as boxes, and nothing else", async () => {
+      const bolded = parsePackage({
+        ...xetex,
+        id: "invented-xetex-bolded",
+        fonts: xetex.fonts?.map((font) =>
+          font.family === "SourceSans"
+            ? { ...font, features: `${font.features};embolden=1.5` }
+            : font,
+        ),
+      });
+      const report = await validatePackage(session, fonts, bolded, sample);
+      expect(report.findings).toEqual([
+        {
+          check: "fonts",
+          message:
+            "the page cannot draw SourceSansPro-Bold.otf: XeTeX emboldens it, which the page draws as boxes",
+        },
+      ]);
+    }, 120_000);
+
+    it("reports a font file TeX Live does not have for a shape the sample never selects", async () => {
+      // A resume that sets a run in bold italic would fail every compile, though the sample passes.
+      const misspelled = parsePackage({
+        ...xetex,
+        id: "invented-xetex-misspelled",
+        fonts: xetex.fonts?.map((font) =>
+          font.family === "Roboto"
+            ? { ...font, shapes: { ...font.shapes, "b/it": "Roboto-BoldItalc.otf" } }
+            : font,
+        ),
+      });
+      const report = await validatePackage(session, fonts, misspelled, sample);
+      expect(report.findings).toEqual([
+        {
+          check: "dump",
+          message:
+            "Roboto-BoldItalc.otf, the font file of Roboto b/it, is not one TeX Live has in fonts/opentype or fonts/truetype",
+        },
+      ]);
+    }, 120_000);
+
+    it("reports a font file TeX Live does not have, and as the compile's error where it is selected", async () => {
+      const missing = parsePackage({
+        ...xetex,
+        id: "invented-xetex-missing",
+        fonts: xetex.fonts?.map((font) =>
+          font.family === "SourceSans" ? { ...font, shapes: { "bx/n": "Nosuch-Bold.otf" } } : font,
+        ),
+      });
+      const report = await validatePackage(session, fonts, missing, sample);
+      // The declarations load nothing, so the format dumps; the first heading asks for the file.
+      expect(report.findings).toEqual([
+        {
+          check: "dump",
+          message:
+            "Nosuch-Bold.otf, the font file of SourceSans bx/n, is not one TeX Live has in fonts/opentype or fonts/truetype",
+        },
+        { check: "compile", message: expect.stringContaining("Nosuch-Bold.otf") },
+      ]);
+    }, 120_000);
   });
 
   describe("over an invented package in T1 and Latin Modern, as Jake's is", () => {

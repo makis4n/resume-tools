@@ -207,3 +207,6 @@ has and the model lacks, never typeset until the pipeline needs them; the draft'
   and a loud refusal from one that does not; removing or renaming one needs a new version of the
   model or the package format. Strict schemas refuse a document or a package written for a newer
   editor rather than reading it wrongly.
+- Decision 0014 adds `fonts` to the package, as its list of what is absent foresaw: a XeTeX
+  package's font families, each shape by its file in the TeX Live tree, which the generator
+  declares to NFSS in the format.

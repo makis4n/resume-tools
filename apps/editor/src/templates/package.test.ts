@@ -15,6 +15,8 @@ import {
   controlValuesFor,
   defaultControls,
   ENTRY_SLOTS,
+  fontFeatures,
+  fontFiles,
   HEADER_SLOTS,
   ITEM_SLOTS,
   LABELLED_ITEM_SLOTS,
@@ -292,6 +294,88 @@ describe("names the engine accepts", () => {
     expect(issues(withFile("plain.sty"))).toEqual([]);
     for (const name of ["fonts/x.sty", ".hidden", ""])
       expect(issues(withFile(name)).map((issue) => issue.path)).toEqual([`files.${name}`]);
+  });
+});
+
+describe("a XeTeX package's fonts", () => {
+  /** The plain package on XeTeX, with the fonts given. */
+  const xetexWith = (fonts: unknown, engine: "xetex" | "pdftex" = "xetex") =>
+    plainWith((pkg) => {
+      pkg.engine = engine;
+      (pkg as Record<string, unknown>).fonts = fonts;
+    });
+  const roboto = {
+    family: "Roboto",
+    shapes: { "m/n": "Roboto-Regular.otf", "bx/it": "Roboto-BoldItalic.otf" },
+    features: "mapping=tex-text;+onum",
+  };
+  const paths = (value: unknown) => issues(value).map((issue) => issue.path);
+
+  it("names each family's shapes by file, with the features they load with", () => {
+    const pkg = parsePackage(
+      xetexWith([roboto, { family: "Icons5", shapes: { "m/n": "Lato-Black.ttf" } }]),
+    );
+    expect(pkg.fonts).toEqual([roboto, { family: "Icons5", shapes: { "m/n": "Lato-Black.ttf" } }]);
+    // A package without fonts has none, and a pdfTeX package may have none.
+    expect(parsePackage(plain).fonts).toBeUndefined();
+    expect(paths(xetexWith([roboto], "pdftex"))).toEqual(["fonts"]);
+  });
+
+  it("holds a family to letters and digits, declared once, with a shape at least", () => {
+    for (const family of ["Roboto Mono", "2Roboto", "Rob}oto", ""])
+      expect(paths(xetexWith([{ ...roboto, family }])), family).toEqual(["fonts.0.family"]);
+    expect(paths(xetexWith([roboto, roboto]))).toEqual(["fonts.1.family"]);
+    expect(paths(xetexWith([{ ...roboto, shapes: {} }]))).toEqual(["fonts.0.shapes"]);
+  });
+
+  it("takes a resume's NFSS series and shapes, and nothing else", () => {
+    for (const key of ["l/n", "m/ui", "m", "sb/n", "b/n/x"]) {
+      const found = paths(xetexWith([{ ...roboto, shapes: { [key]: "Roboto-Regular.otf" } }]));
+      expect(found.length, key).toBeGreaterThan(0);
+      for (const path of found) expect(path, key).toMatch(/^fonts\.0\.shapes/);
+    }
+  });
+
+  it("takes a plain OpenType or TrueType file name, which cannot break the declaration", () => {
+    for (const file of [
+      "Roboto-Regular.pfb",
+      "fonts/Roboto-Regular.otf",
+      ".Roboto.otf",
+      "Roboto]:x.otf",
+      'Roboto".otf',
+      "Roboto Regular.otf",
+      "Roboto}{x.otf",
+    ])
+      expect(paths(xetexWith([{ ...roboto, shapes: { "m/n": file } }])), file).toEqual([
+        "fonts.0.shapes.m/n",
+      ]);
+  });
+
+  it("takes features of XeTeX's syntax that go inside the declaration's quotes", () => {
+    for (const features of ["mapping=tex-text]", 'a"b', "script:latn", "x}{\\input{y}", "a b", ""])
+      expect(paths(xetexWith([{ ...roboto, features }])), features).toEqual(["fonts.0.features"]);
+  });
+
+  it("lists each file once, with the features its first family loads it with", () => {
+    const pkg = parsePackage(
+      xetexWith([
+        roboto,
+        { family: "Headings", shapes: { "b/n": "Roboto-Regular.otf", "m/n": "Lato-Black.ttf" } },
+      ]),
+    );
+    expect(fontFiles(pkg)).toEqual([
+      "Roboto-Regular.otf",
+      "Roboto-BoldItalic.otf",
+      "Lato-Black.ttf",
+    ]);
+    expect(fontFeatures(pkg)).toEqual(
+      new Map([
+        ["Roboto-Regular.otf", "mapping=tex-text;+onum"],
+        ["Roboto-BoldItalic.otf", "mapping=tex-text;+onum"],
+        ["Lato-Black.ttf", ""],
+      ]),
+    );
+    expect(fontFiles(parsePackage(plain))).toEqual([]);
   });
 });
 

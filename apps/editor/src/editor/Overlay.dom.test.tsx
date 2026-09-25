@@ -26,6 +26,7 @@ const fixture = (name: string) =>
 function fontOf(name: string, tfm: string): PageFont {
   const outlines = parseType1(fixture("cmr10.pfb"));
   return {
+    kind: "tex",
     name,
     tfm: parseTfm(fixture(`${tfm}.tfm`)),
     outlines,
@@ -70,7 +71,7 @@ function shownIn(font: PageFont, document: Document): Shown {
     unmatched: 0,
     missingFonts: new Map(),
   };
-  return { page, body: { latex: "", texts: new Map() }, document, ms: 0 };
+  return { page, body: { latex: "", texts: new Map(), dropped: [] }, document, ms: 0 };
 }
 
 /** The runs a document holds for the field. */

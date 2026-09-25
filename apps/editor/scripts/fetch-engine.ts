@@ -12,8 +12,8 @@
  * against the SHA-512 the archive's database records for it and unpacked with the system `tar`
  * (`scripts/containers.ts`, decision 0011). On the way out, the added packages' and the Ubuntu
  * bundles' font maps are merged into `pdftex.map` (`mergeMaps`), as `updmap` would merge them,
- * and the folders the packages put fonts in are hidden from fontconfig (`hidePackageFonts`), so
- * that XeTeX does not scan them on every run.
+ * and fontconfig's configuration loses its font folders (`bareFontConf`), so that XeTeX scans no
+ * fonts on any run.
  *
  *   node scripts/fetch-engine.ts [--from <dir>] [--force] [--resolve]
  *
@@ -62,7 +62,7 @@ import { fileURLToPath } from "node:url";
 // Node runs this file by stripping its types, so the type import needs its real extension.
 import type { EngineManifest } from "../src/engine/manifest.ts";
 import { unpackPackages } from "./containers.ts";
-import { hideFontFolders, packageFontFolders } from "./fontconfig.ts";
+import { withoutFontFolders } from "./fontconfig.ts";
 import { mergeFontMaps } from "./fontmaps.ts";
 import { containerName, packagesToFetch, parseDatabase } from "./tlpdb.ts";
 
@@ -74,11 +74,11 @@ const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELE
  * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt. CI keys its
  * cached `.engine/` on the six files the output depends on, this script, `containers.ts` and
  * `tlpdb.ts`, which unpack the added packages and read their entries, `fontconfig.ts`, which
- * hides their fonts from fontconfig, and `fontmaps.ts` and `src/page/fontmap.ts`, which merge the
+ * writes fontconfig's configuration, and `fontmaps.ts` and `src/page/fontmap.ts`, which merge the
  * font maps into `pdftex.map`, so a change to any of them rebuilds it there; a `.engine/` built on
  * a machine is rebuilt only by the bump or by a change to `PACKAGES`.
  */
-const LAYOUT = 3;
+const LAYOUT = 4;
 
 /** Release files with their SHA-256 and size, recorded from the copies the spike measured. */
 const ASSETS: Record<string, { sha256: string; size: number }> = {
@@ -293,7 +293,7 @@ const REQUIRED = [
 /** The font map pdfTeX's tools read, as updmap wrote it for TeX Live's own tree. */
 const PDFTEX_MAP = "/texlive/texmf-dist/texmf-var/fonts/map/pdftex/updmap/pdftex.map";
 
-/** The fontconfig configuration XeTeX reads, which lists the folders fontconfig scans for fonts. */
+/** The fontconfig configuration XeTeX reads, whose folders fontconfig would scan for fonts. */
 const FONTS_CONF = "/etc/fonts/fonts.conf";
 
 /** Where the Ubuntu tree keeps its font maps, none of which updmap saw. */
@@ -524,15 +524,14 @@ function mergeMaps(dir: string, files: Record<string, number>, packageMaps: read
 }
 
 /**
- * Hide the folders the packages put outline files in from fontconfig, in the copied tree's
- * `fonts.conf`, and give the manifest its new size. XeTeX would otherwise scan the packages' fonts
- * on every run, though it takes them by file (`scripts/fontconfig.ts`).
+ * Take every font folder out of the copied tree's `fonts.conf`, and give the manifest its new size.
+ * XeTeX would otherwise have fontconfig scan the tree's fonts on every run, though it takes every
+ * font it sets by file (`scripts/fontconfig.ts`).
  */
-function hidePackageFonts(dir: string, files: Record<string, number>, folders: readonly string[]) {
-  if (folders.length === 0) return;
+function bareFontConf(dir: string, files: Record<string, number>) {
   if (files[FONTS_CONF] === undefined)
-    throw new Error(`the tree has no ${FONTS_CONF} to hide the packages' fonts from`);
-  const conf = hideFontFolders(readFileSync(join(dir, FONTS_CONF), "utf8"), folders);
+    throw new Error(`the tree has no ${FONTS_CONF} to take the font folders out of`);
+  const conf = withoutFontFolders(readFileSync(join(dir, FONTS_CONF), "utf8"));
   writeFileSync(join(dir, FONTS_CONF), conf);
   files[FONTS_CONF] = Buffer.byteLength(conf);
 }
@@ -699,8 +698,7 @@ async function build(from: string | undefined) {
   let files: Record<string, number>;
   try {
     files = copyOut(await mount(), staging);
-    const bundled = Object.keys(files);
-    const { maps, added } = unpackPackages(
+    const { maps } = unpackPackages(
       {
         packages: PACKAGES,
         containers: DOWNLOADS,
@@ -709,9 +707,8 @@ async function build(from: string | undefined) {
       },
       files,
     );
-    const folders = packageFontFolders(added, bundled);
     mergeMaps(staging, files, maps);
-    hidePackageFonts(staging, files, folders);
+    bareFontConf(staging, files);
     files = byPath(files);
     const missing = REQUIRED.filter((path) => files[path] === undefined);
     if (missing.length) throw new Error(`the TeX Live tree lacks ${missing.join(", ")}`);

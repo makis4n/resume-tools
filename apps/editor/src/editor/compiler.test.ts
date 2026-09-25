@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Font, Glyph, Path } from "opentype.js";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
@@ -16,13 +17,16 @@ import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
+import { INVENTED_XETEX } from "../templates/invented";
 import {
   type ControlValues,
   defaultControls,
+  fontFiles,
   parsePackage,
   type TemplatePackage,
 } from "../templates/package";
 import { INCH, US_LETTER } from "../tex/svg";
+import { shownStrings } from "../validate/pdf";
 import {
   COULD_NOT_MAKE_PDF,
   COULD_NOT_UPDATE,
@@ -33,7 +37,7 @@ import {
   type PrefetchStore,
   type Shown,
 } from "./compiler";
-import { apply, type Document, History, newDocument } from "./document";
+import { apply, Document, History, newDocument } from "./document";
 import { fit } from "./fit";
 
 const { package: jake, sample } = curated("jake");
@@ -163,10 +167,57 @@ const NO_FONTS = new FontLibrary(
 );
 
 /**
- * A compiler over fake engines, with what it made and emitted. With `slowStart`, every engine
- * starts only when the test settles its start.
+ * An invented OpenType font, written by opentype.js, with a glyph for each character of printable
+ * ASCII and the en dash, and none for anything else: as a declared file of the invented XeTeX
+ * package reads, it sets no arrow.
  */
-function scheduler(options: CompilerOptions = {}, { slowStart = false } = {}) {
+function textFont(): Uint8Array {
+  const points = [...Array.from({ length: 95 }, (_, i) => 0x20 + i), 0x2013];
+  const font = new Font({
+    familyName: "Invented",
+    styleName: "Regular",
+    unitsPerEm: 1000,
+    ascender: 800,
+    descender: -200,
+    glyphs: [
+      new Glyph({ name: ".notdef", advanceWidth: 500, path: new Path() }),
+      ...points.map(
+        (point) =>
+          new Glyph({
+            name: `u${point.toString(16)}`,
+            unicodes: [point],
+            advanceWidth: 500,
+            path: new Path(),
+          }),
+      ),
+    ],
+  });
+  return new Uint8Array(font.toArrayBuffer());
+}
+
+/**
+ * A font library whose tree has every font file the invented XeTeX package declares, each read
+ * by `read`, by default as `textFont`.
+ */
+function inventedFonts(read: (path: string) => Promise<Uint8Array> = async () => textFont()) {
+  const files = Object.fromEntries(
+    fontFiles(INVENTED_XETEX.package).map((file) => [
+      `/texlive/texmf-dist/fonts/opentype/x/${file}`,
+      1,
+    ]),
+  );
+  return new FontLibrary(new TexLiveIndex({ release: "", layout: 0, bundles: [], files }), read);
+}
+
+/**
+ * A compiler over fake engines, with what it made and emitted. With `slowStart`, every engine
+ * starts only when the test settles its start. `fonts` is the library the page's fonts come from,
+ * which the fake draw never reads, and which gives a XeTeX package's body what its fonts set.
+ */
+function scheduler(
+  options: CompilerOptions = {},
+  { slowStart = false, fonts = NO_FONTS }: { slowStart?: boolean; fonts?: FontLibrary } = {},
+) {
   const engines: FakeEngine[] = [];
   const shown: Shown[] = [];
   const errors: string[] = [];
@@ -177,7 +228,7 @@ function scheduler(options: CompilerOptions = {}, { slowStart = false } = {}) {
       engines.push(engine);
       return engine;
     },
-    NO_FONTS,
+    fonts,
     {
       page: (page) => shown.push(page),
       error: (message) => errors.push(message),
@@ -694,6 +745,47 @@ describe("Compiler", () => {
     expect(s.shown[0]?.ms).toBe(59_999);
   });
 
+  it("gives a worker's first compile of a format the start-up's limit, as it reads the template's files", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { package: xetex, sample: invented } = INVENTED_XETEX;
+    // Not curated, so the document is made by hand.
+    const doc = Document.parse({ version: 1, template: xetex.id, resume: invented, controls: {} });
+    const name = formatOf(doc, xetex);
+    const s = scheduler();
+    s.compiler.open(xetex, doc);
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    // The body's first compile reads the fonts it selects, which the dump never loaded: past the
+    // compile's limit, within the start's, the worker is kept and the page arrives.
+    await wait(30_000);
+    expect(s.engines).toHaveLength(1);
+    expect(s.engine().terminated).toBe(false);
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([doc]);
+    expect(s.shown[0]?.ms).toBe(30_000);
+    expect(s.errors).toEqual([]);
+    // Later compiles on that worker keep the compile's limit.
+    const edited = apply(doc, { type: "text", field: "harbor.title", text: "Harbour Lane Press" });
+    s.compiler.update(edited);
+    await wait(400);
+    await wait(19_999);
+    expect(s.engines[0]?.terminated).toBe(false);
+    await wait(1);
+    await settle();
+    expect(s.engines[0]?.terminated).toBe(true);
+    // The worker in its place is handed the format, and its first compile of it reads the files
+    // again, so it has the start's limit as well.
+    expect(s.engine().calls).toEqual(["start", `put ${name}`, `compile ${name}`]);
+    await wait(30_000);
+    expect(s.engines).toHaveLength(2);
+    s.engine().compiles[0]?.resolve(compiled(2));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([doc, edited]);
+    expect(s.errors).toEqual([]);
+  });
+
   it("tries a document again on a new engine when one does not start in time, or fails to", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1182,6 +1274,94 @@ describe("Compiler", () => {
     expect(s.engine().calls.slice(5)).toEqual([`compile ${wideName}`]);
   });
 
+  it("gives a trial's first compile of a format the start-up's limit, as the document's has", async () => {
+    // A worker's first compile of a format reads the files its body needs, in whichever job.
+    const margins = jake.controls.margins;
+    if (margins === undefined) throw new Error("Jake's Resume has margins");
+    const bound = parsePackage({
+      ...jake,
+      preamble: `${jake.preamble}\n% margins {{margins}}`,
+      controls: { ...jake.controls, margins: { ...margins, format: true } },
+    });
+    const s = scheduler();
+    await opened(s, bound);
+    const trial = s.compiler.tryControls({ ...defaultControls(bound), margins: 0.8 });
+    await settle();
+    s.engine().dumps[1]?.resolve(dumped(new Uint8Array([9])));
+    await settle();
+    await wait(30_000);
+    expect(s.engine().terminated).toBe(false);
+    s.engine().compiles[1]?.resolve(compiled(2));
+    await expect(trial).resolves.toBe(1);
+    expect(s.engines).toHaveLength(1);
+  });
+
+  it("leaves out of a trial's body what the XeTeX package's fonts cannot set, as the document's", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { package: xetex, sample: invented } = INVENTED_XETEX;
+    const resume = structuredClone(invented);
+    const [summary] = resume.sections;
+    if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+    summary.text = [{ text: "From 40 \u{2192} 12 minutes." }];
+    const doc = Document.parse({ version: 1, template: xetex.id, resume, controls: {} });
+    // The fonts set no arrow.
+    const s = scheduler({}, { fonts: inventedFonts() });
+    s.compiler.open(xetex, doc);
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    expect(s.engine().compiles[0]?.body).toContain("From 40  12 minutes.");
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    const trial = s.compiler.tryControls({ ...defaultControls(xetex), margins: 1 });
+    await settle();
+    const tried = s.engine().compiles[1];
+    expect(tried?.options?.job).toBe("fit");
+    expect(tried?.body).toContain("From 40  12 minutes.");
+    expect(tried?.body).not.toContain("\u{2192}");
+    tried?.resolve(compiled(2));
+    await expect(trial).resolves.toBe(1);
+  });
+
+  it("waits for a XeTeX package's fonts as long as its compile may take, then leaves nothing out", async () => {
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { package: xetex, sample: invented } = INVENTED_XETEX;
+    const resume = structuredClone(invented);
+    const [summary] = resume.sections;
+    if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+    summary.text = [{ text: "From 40 \u{2192} 12 minutes." }];
+    const doc = Document.parse({ version: 1, template: xetex.id, resume, controls: {} });
+    // Font files whose fetches never come back.
+    const s = scheduler({}, { fonts: inventedFonts(() => new Promise(() => {})) });
+    s.compiler.open(xetex, doc);
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    // A worker's first compile of a format has the start-up's limit, and so has the wait before it.
+    await wait(20_000);
+    expect(s.errors).toEqual([]);
+    expect(s.engine().compiles).toHaveLength(0);
+    await wait(40_000);
+    // Past it, the body leaves nothing out, which may cost the PDF a box, but never the page.
+    expect(s.engine().compiles).toHaveLength(1);
+    expect(s.engine().compiles[0]?.body).toContain("From 40 \u{2192} 12 minutes.");
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("fonts"));
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([doc]);
+    expect(s.errors).toEqual([]);
+    // A trial waits the compile's limit, and then compiles too, leaving nothing out.
+    const trial = s.compiler.tryControls({ ...defaultControls(xetex), margins: 1 });
+    await settle();
+    await wait(20_000);
+    const tried = s.engine().compiles[1];
+    expect(tried?.options?.job).toBe("fit");
+    expect(tried?.body).toContain("\u{2192}");
+    tried?.resolve(compiled(2));
+    await expect(trial).resolves.toBe(1);
+    expect(s.engines).toHaveLength(1);
+  });
+
   it("fails a trial whose compile fails, with TeX's words for the console, and keeps the engine", async () => {
     const s = scheduler();
     await opened(s);
@@ -1485,5 +1665,114 @@ describe.skipIf(!engineAvailable())("Compiler through the engine", () => {
     const ms = (shown: Shown) => `${Math.round(shown.ms)} ms`;
     const timings = `first page ${ms(first)}, an edit ${ms(edited)}, a margin ${ms(moved)}`;
     console.log(`jake through the compiler: ${timings}`);
+  }, 60_000);
+
+  it("sets no box for a character the invented XeTeX template's fonts lack, on the page or in the PDF", async () => {
+    const engine: Engine = {
+      start: async () => {},
+      dump: async (kind, name, preamble, files) => session.dump(kind, name, preamble, files),
+      putFormat: async (kind, name, format) => session.putFormat(kind, name, format),
+      forget: async (job) => session.forget(job),
+      compile: async (kind, format, body, options) => session.compile(kind, format, body, options),
+      // Uncompressed, so that the test can read the PDF's text.
+      pdf: async (job) => session.pdf(job, { compress: 0 }),
+      terminate: () => {},
+    };
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { package: xetex, sample: invented } = INVENTED_XETEX;
+    const resume = structuredClone(invented);
+    const work = resume.sections.find((section) => section.id === "work");
+    const bullet = work?.kind === "entries" ? work.entries[1]?.bullets[0] : undefined;
+    if (bullet === undefined) throw new Error("the sample has gull-1");
+    // Roboto has neither: XeTeX would set its .notdef, a crossed box, for each.
+    const text = "Cut the build from 40 \u{2192} 12 minutes \u{1f600}.";
+    bullet.text = [{ text }];
+    const doc = Document.parse({ version: 1, template: xetex.id, resume, controls: {} });
+    let onPage: (shown: Shown) => void = () => {};
+    let onError: (error: Error) => void = () => {};
+    const shown = new Promise<Shown>((resolve, reject) => {
+      onPage = resolve;
+      onError = reject;
+    });
+    const compiler = new Compiler(() => engine, fonts, {
+      page: (page) => onPage(page),
+      error: (message) => onError(new Error(message)),
+      busy: () => {},
+    });
+    compiler.open(xetex, doc);
+    const { page } = await shown;
+    expect(page.svg).not.toContain('data-glyph="0"');
+    expect(page.unmatched).toBe(0);
+    // Neither was set at all, as the font's .notdef or otherwise.
+    expect(page.fields.get("gull-1.text")?.glyphs.every((g) => g.text !== undefined)).toBe(true);
+    const pdf = await compiler.pdf();
+    compiler.close();
+    const shownText = shownStrings(pdf).join("");
+    expect(shownText).toContain("Cutthebuildfrom4012minutes.");
+    expect(shownText).not.toContain("\u{ffff}");
+    // The console hears which characters were left out, once.
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("\u{2192}"));
+  }, 60_000);
+
+  it("leaves nothing more out when a font it does not use fails to read, and reads it again", async () => {
+    // The verifier's case: one failed fetch of Roboto Bold Italic, which no text of the sample is
+    // set in, left every character past ASCII out of the whole page, the dates' dash among them.
+    const engine: Engine = {
+      start: async () => {},
+      dump: async (kind, name, preamble, files) => session.dump(kind, name, preamble, files),
+      putFormat: async (kind, name, format) => session.putFormat(kind, name, format),
+      forget: async (job) => session.forget(job),
+      compile: async (kind, format, body, options) => session.compile(kind, format, body, options),
+      pdf: async (job, options) => session.pdf(job, options),
+      terminate: () => {},
+    };
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    const reads = new Map<string, number>();
+    const flaky = new FontLibrary(new TexLiveIndex(manifest), async (path) => {
+      const count = (reads.get(path) ?? 0) + 1;
+      reads.set(path, count);
+      if (path.endsWith("/Roboto-BoldItalic.otf") && count === 1) throw new Error("dropped");
+      return readFileSync(join(ENGINE_DIR, "files", path));
+    });
+    const { package: xetex, sample: invented } = INVENTED_XETEX;
+    const doc = Document.parse({ version: 1, template: xetex.id, resume: invented, controls: {} });
+    const pages: Shown[] = [];
+    let onPage: () => void = () => {};
+    const compiler = new Compiler(() => engine, flaky, {
+      page: (page) => {
+        pages.push(page);
+        onPage();
+      },
+      error: (message) => {
+        throw new Error(message);
+      },
+      busy: () => {},
+    });
+    const next = () =>
+      new Promise<Shown>((resolve) => {
+        onPage = () => resolve(pages.at(-1) as Shown);
+      });
+    let shown = next();
+    compiler.open(xetex, doc);
+    const { page, body } = await shown;
+    // The dates keep their en dash, which every font that loaded has.
+    const dates = body.texts.get("harbor.dates") ?? "";
+    expect(dates).toContain("\u{2013}");
+    const dash = page.fields.get("harbor.dates")?.glyphs.find((g) => g.text === "\u{2013}");
+    expect(dash?.offset).toBe(dates.indexOf("\u{2013}"));
+    expect(body.dropped).toEqual([]);
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("Roboto-BoldItalic.otf"));
+    // The next compile reads it again.
+    shown = next();
+    compiler.update(
+      apply(doc, { type: "text", field: "harbor.title", text: "Harbour Lane Press" }),
+    );
+    await shown;
+    compiler.close();
+    const boldItalic = [...reads].find(([path]) => path.endsWith("/Roboto-BoldItalic.otf"));
+    expect(boldItalic?.[1]).toBe(2);
   }, 60_000);
 });

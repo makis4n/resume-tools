@@ -15,6 +15,7 @@ import { type PageItem, parseDvi } from "../tex/dvi";
 import { alignGlyphs, collectFields, MARKER_BEGIN, MARKER_END } from "../tex/fields";
 import { curated } from "./curated";
 import {
+  fontDeclarations,
   formatName,
   type GeneratedBody,
   GenerateError,
@@ -23,6 +24,7 @@ import {
   linkAddress,
   MAX_BODY,
 } from "./generate";
+import { INVENTED_XETEX } from "./invented";
 import { type ControlValues, defaultControls, parsePackage, type TemplatePackage } from "./package";
 import { PARAGRAPH_MARKER, PRELUDE } from "./prelude";
 
@@ -624,6 +626,57 @@ describe("generateBody", () => {
     expect([...texts.keys()].filter((id) => /^(langs|x)\./.test(id))).toEqual([]);
   });
 
+  it("leaves out what a XeTeX package's fonts cannot set, says which, and keeps the text", () => {
+    // XeTeX would set each font's .notdef box for them, where pdfTeX's LaTeX leaves them out.
+    const { package: xetex, sample } = INVENTED_XETEX;
+    const edited = structuredClone(sample);
+    const [summary] = edited.sections;
+    if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+    const typed = "Cut 40 \u{2192} 12 minutes \u{1f600} for the caf\u{e9}, and \u{2192} again";
+    summary.text = [{ text: typed }];
+    const covers = (char: string) => char !== "\u{2192}" && char !== "\u{1f600}";
+    const body = generateBody(xetex, edited, {}, { covers });
+    expect(body.latex).toContain(
+      "\\rtfield{summary.text}{Cut 40  12 minutes  for the caf\u{e9}, and  again}",
+    );
+    expect(body.dropped).toEqual(["\u{2192}", "\u{1f600}"]);
+    // The page aligns its glyphs with the text as the model holds it.
+    expect(body.texts.get("summary.text")).toBe(typed);
+    // Without a coverage, nothing is left out, as for a pdfTeX package, whose prelude does it.
+    const whole = generateBody(xetex, edited, {});
+    expect(whole.latex).toContain(typed);
+    expect(whole.dropped).toEqual([]);
+  });
+
+  it("keeps the part of an accented letter the fonts can set: its base, and an accent they have", () => {
+    // As pdfTeX's LaTeX sets the base of a letter it has no definition for (`escape.ts`): Roboto
+    // has neither ǎ nor the combining caron, and the letter was dropped whole, Xioming.
+    const { package: xetex, sample } = INVENTED_XETEX;
+    const edited = structuredClone(sample);
+    const [summary] = edited.sections;
+    if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+    const typed = "Xi\u{1ce}oming and Ka\u{1e69}i";
+    summary.text = [{ text: typed }];
+    // Neither ǎ nor ṩ, nor the caron or the dot above; the dot below.
+    const lacking = ["\u{1ce}", "\u{30c}", "\u{1e69}", "\u{307}"];
+    const body = generateBody(xetex, edited, {}, { covers: (char) => !lacking.includes(char) });
+    expect(body.latex).toContain("{Xiaoming and Kas\u{323}i}");
+    expect(body.dropped).toEqual(["\u{1ce}", "\u{1e69}"]);
+    expect(body.texts.get("summary.text")).toBe(typed);
+  });
+
+  it("keeps ASCII, spaces and what it escapes, whatever a coverage says", () => {
+    const { package: xetex, sample } = INVENTED_XETEX;
+    const edited = structuredClone(sample);
+    const [summary] = edited.sections;
+    if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+    summary.text = [{ text: "A & B\u{a0}{c}_d \u{2019}e" }];
+    const body = generateBody(xetex, edited, {}, { covers: () => false });
+    expect(body.latex).toContain(String.raw`\rtfield{summary.text}{A \& B~\{c\}\_d e}`);
+    // And the en dash the dates are formatted with, which is text the generator sets too.
+    expect(body.dropped).toEqual(["\u{2019}", "\u{2013}"]);
+  });
+
   it("refuses a body past MAX_BODY, quickly", () => {
     // The walk stops the moment the body passes MAX_BODY, so a document that sets the sections
     // 100,000 times costs 1.9 to 2.2 times what it costs 10,000 times, both refused at the same
@@ -833,6 +886,39 @@ describe("generateFormat", () => {
     const last = "\\renewcommand{\\labelitemi}{$\\bullet$}";
     expect(format.preamble.endsWith(`\n${last}\n${PRELUDE}`)).toBe(true);
     expect(format.files).toEqual(input.files);
+  });
+
+  it("declares a XeTeX package's fonts by file, after its preamble and before the prelude", () => {
+    const xetex = parsePackage({
+      ...input,
+      engine: "xetex",
+      preamble: "\\RequirePackage[OT1]{fontenc}\n\\documentclass{article}",
+      fonts: [
+        {
+          family: "Roboto",
+          shapes: { "m/n": "Roboto-Regular.otf", "bx/n": "Roboto-Bold.otf" },
+          features: "mapping=tex-text",
+        },
+        { family: "Icons", shapes: { "m/n": "FontAwesome5Free-Solid-900.otf" } },
+      ],
+    });
+    const declared = [
+      "\\DeclareFontFamily{TU}{Roboto}{}",
+      '\\DeclareFontShape{TU}{Roboto}{m}{n}{<->"[Roboto-Regular.otf]:mapping=tex-text"}{}',
+      '\\DeclareFontShape{TU}{Roboto}{bx}{n}{<->"[Roboto-Bold.otf]:mapping=tex-text"}{}',
+      "\\DeclareFontFamily{TU}{Icons}{}",
+      '\\DeclareFontShape{TU}{Icons}{m}{n}{<->"[FontAwesome5Free-Solid-900.otf]"}{}',
+    ].join("\n");
+    expect(fontDeclarations(xetex.fonts ?? [])).toBe(declared);
+    expect(generateFormat(xetex, {}).preamble).toBe(
+      `\\RequirePackage[OT1]{fontenc}\n\\documentclass{article}\n${declared}\n${PRELUDE}`,
+    );
+    // The fonts are part of what is dumped, so they name the format too.
+    const other = parsePackage({
+      ...xetex,
+      fonts: [{ family: "Roboto", shapes: { "m/n": "Roboto-Light.otf" } }],
+    });
+    expect(formatName(other, {})).not.toBe(formatName(xetex, {}));
   });
 });
 

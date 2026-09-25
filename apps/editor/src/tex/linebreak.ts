@@ -8,14 +8,15 @@
  * list of boxes, glue, kerns, penalties and discretionaries, so the overlay can break
  * exactly where TeX will. `paragraphNodes` builds that list from a field's text with
  * the font's TFM metrics, ligatures, kerns and space factors, the way TeX's main loop
- * does, and `richParagraphNodes` from rich text's runs, each in its own font.
- * Hyphenation is a hook, not built in.
+ * does, or with a native font's advances, as XeTeX sets one (`Face`), and
+ * `richParagraphNodes` from rich text's runs, each in its own font. Hyphenation is a
+ * hook, not built in.
  *
  * All dimensions are in scaled points, integers, as in TeX.
  */
 
 import { INVISIBLE } from "./fields";
-import type { ScaledMetrics, Tfm } from "./tfm";
+import type { LigKernResult, ScaledMetrics, Tfm } from "./tfm";
 import { applyLigKern } from "./tfm";
 
 export interface Glue {
@@ -446,27 +447,82 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
 const HYPHEN_PENALTY = 50;
 const EX_HYPHEN_PENALTY = 50;
 
-/** A font as the paragraph builder needs it. */
-export interface Face {
+/**
+ * A font's interword glue, in scaled points: the space, its stretch and shrink, and the extra
+ * space after a sentence, `\fontdimen2`, `3`, `4` and `7`.
+ */
+export type FontSpace = Pick<ScaledMetrics, "space" | "stretch" | "shrink" | "extraSpace">;
+
+/** A TeX font's ligature and kern program, and its kerns scaled to the size it is used at. */
+export interface LigKernProgram {
   tfm: Tfm;
-  metrics: ScaledMetrics;
+  kerns: Int32Array;
+}
+
+/**
+ * A font as the paragraph builder needs it, at the size a field is set in: a TeX font, whose
+ * codes are its characters and which has a ligature and kern program, or a native font, whose
+ * codes are its glyphs and which has neither (decision 0014).
+ */
+export interface Face {
   /** The font's code for a character of the text, or undefined if it has none. */
   codeFor: (ch: string) => number | undefined;
-  /** `\hyphenchar` of the font; 45 for text fonts. */
+  /** The width of a code's glyph, in scaled points. */
+  widthOf: (code: number) => number;
+  /**
+   * The italic correction TeX's `\/` appends after a code's glyph, in scaled points, which
+   * LaTeX's `\textit` and `\textbf` set at their ends (`FaceRun`); 0 for none.
+   */
+  italicOf: (code: number) => number;
+  /**
+   * The font's slant, its `\fontdimen1`, which LaTeX's `\maybe@ic` reads to decide whether a
+   * run ends in an italic correction: above 0 for a slanted font.
+   */
+  slant: number;
+  /** The font's interword glue, which a space is built from (`spaceGlue`). */
+  spaceGlue: () => FontSpace;
+  /** The code of the font's `\hyphenchar`, after which TeX may break a word; 45 in a text font. */
   hyphenChar: number;
+  /**
+   * A TeX font's ligature and kern program, which `paragraphNodes` runs over each run of the
+   * face's characters; a face without one sets each character as a box of its own, with no kern.
+   */
+  ligKern?: LigKernProgram;
   /**
    * The width, in scaled points, of a character this font has no code for but another font of
    * the field sets, as LaTeX sets `€`, `×` or `°` from TS1 in a T1 paragraph; undefined when none
    * does. Such a character is a box of its own, which takes part in no ligature or kern, since
    * TeX's ligature and kern program runs within one font.
    */
-  widthOf?: (ch: string) => number | undefined;
+  fallbackWidth?: (ch: string) => number | undefined;
   /**
-   * The italic correction of such a character, from the font `widthOf` measures it in, which
-   * TeX's `\/` sets after it, as it takes a correction from the font of the character before it
-   * whatever font that is (tex.web §1113); undefined, or 0, when that font gives it none.
+   * The italic correction of such a character, from the font `fallbackWidth` measures it in,
+   * which TeX's `\/` sets after it, as it takes a correction from the font of the character before
+   * it whatever font that is (tex.web §1113); undefined, or 0, when that font gives it none.
    */
-  italicOf?: (ch: string) => number | undefined;
+  fallbackItalic?: (ch: string) => number | undefined;
+}
+
+/**
+ * A TeX font's face from its TFM scaled to the size: its codes, its widths and italic
+ * corrections, its slant, its interword glue and its ligature and kern program. `codeFor` says
+ * which code a character is.
+ */
+export function tfmFace(
+  tfm: Tfm,
+  metrics: ScaledMetrics,
+  codeFor: (ch: string) => number | undefined,
+  hyphenChar = 45,
+): Face {
+  return {
+    codeFor,
+    widthOf: (code) => metrics.widths[code] ?? 0,
+    italicOf: (code) => metrics.italics[code] ?? 0,
+    slant: tfm.params[1] ?? 0,
+    spaceGlue: () => metrics,
+    hyphenChar,
+    ligKern: { tfm, kerns: metrics.kerns },
+  };
 }
 
 export interface TextOptions {
@@ -530,7 +586,7 @@ const isZero = (glue: Glue) => glue.width === 0 && glue.stretch === 0 && glue.sh
  * rigid and its `\rightskip` takes a line's whole shortfall.
  */
 export function spaceGlue(
-  metrics: ScaledMetrics,
+  metrics: FontSpace,
   spaceFactor: number,
   skips: Pick<TextOptions, "spaceSkip" | "xspaceSkip"> = {},
 ): Glue {
@@ -606,7 +662,7 @@ export interface FaceRun {
    * runs' marks (`breakRuns`). It is a kern of the italic correction of the last character set,
    * after that character and before a space or no-break space after it, which LaTeX takes off and
    * puts back around the kern (`\sw@slant`). It is the correction of that character's own font,
-   * a companion's such as TS1's for a `°` (`Face.italicOf`); and like `\/`, it sets nothing after
+   * a companion's such as TS1's for a `°` (`Face.fallbackItalic`); and like `\/`, it sets nothing after
    * anything but a character, such as the kern that ends an ellipsis or a hyphen's discretionary.
    */
   italicCorrection?: boolean;
@@ -633,8 +689,9 @@ export function paragraphNodes(text: string, face: Face, options: TextOptions = 
  * becomes one glue sized by the space factor (or `\spaceskip` and `\xspaceskip`), a no-break space
  * a penalty of 10000 and a normal space, and an explicit hyphen gets a discretionary after it. A
  * character the run's font lacks is a box of another of the field's fonts when one has it
- * (`Face.widthOf`), and is dropped otherwise, as TeX drops a missing character. Leading spaces
- * are dropped, and so is a trailing one, as TeX drops it at `\par`.
+ * (`Face.fallbackWidth`), and is dropped otherwise, as TeX drops a missing character. Leading
+ * spaces are dropped, and so is a trailing one, as TeX drops it at `\par`. A font without a
+ * ligature and kern program, a native font's, sets each character as a box of its own.
  *
  * Each run is set in its own face, and ligatures and kerns never cross from one run into the
  * next, as they never cross a font change in TeX. A space's glue is its run's font's, since TeX
@@ -653,7 +710,7 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
   const flushSpace = () => {
     if (pendingSpace) {
       const { face, ...at } = pendingSpace;
-      nodes.push({ kind: "glue", ...spaceGlue(face.metrics, spaceFactor, options), ...at });
+      nodes.push({ kind: "glue", ...spaceGlue(face.spaceGlue(), spaceFactor, options), ...at });
     }
     pendingSpace = undefined;
   };
@@ -692,20 +749,20 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
       let codes: number[] = [];
       let sources: number[] = [];
       const setRun = (end: number) => {
-        const lig = applyLigKern(face.tfm, codes);
+        const lig = face.ligKern ? applyLigKern(face.ligKern.tfm, codes) : unchanged(codes);
         lig.codes.forEach((code, k) => {
           const first = sources[lig.source[k] as number] as number;
           const next = lig.source[k + 1];
           const last = next === undefined ? end : (sources[next] as number);
           const box: Node = {
             kind: "box",
-            width: face.metrics.widths[code] ?? 0,
+            width: face.widthOf(code),
             offset: at(first),
             end: at(last),
             code,
           };
           nodes.push(box);
-          lastChar = { node: box, italic: face.metrics.italics[code] ?? 0 };
+          lastChar = { node: box, italic: face.italicOf(code) };
           for (let s = first; s < last; s++) {
             const c = chars[s];
             if (c?.kind === "char") spaceFactor = nextSpaceFactor(spaceFactor, sfCode(c.ch));
@@ -715,13 +772,13 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
           if (hyphens.has(place[last - from] ?? -1) && k < lig.codes.length - 1)
             nodes.push({
               kind: "disc",
-              preWidth: face.metrics.widths[face.hyphenChar] ?? 0,
+              preWidth: face.widthOf(face.hyphenChar),
               hyphenation: true,
               offset: at(last),
             });
           const kern = lig.kernAfter[k] as number;
           if (kern >= 0 && k < lig.codes.length - 1)
-            nodes.push({ kind: "kern", width: face.metrics.kerns[kern] ?? 0 });
+            nodes.push({ kind: "kern", width: face.ligKern?.kerns[kern] ?? 0 });
         });
         codes = [];
         sources = [];
@@ -740,17 +797,17 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
             codes.push(period);
             sources.push(k);
             setRun(k + 1);
-            nodes.push({ kind: "kern", width: face.metrics.stretch });
+            nodes.push({ kind: "kern", width: face.spaceGlue().stretch });
           }
           spaceFactor = nextSpaceFactor(spaceFactor, sfCode("."));
         } else {
           // TeX drops a character no font of the field has, and the run goes on past it.
-          const width = face.widthOf?.(c.ch);
+          const width = face.fallbackWidth?.(c.ch);
           if (width === undefined) continue;
           setRun(k);
           const box: Node = { kind: "box", width, offset: at(k), end: at(k + 1) };
           nodes.push(box);
-          lastChar = { node: box, italic: face.italicOf?.(c.ch) ?? 0 };
+          lastChar = { node: box, italic: face.fallbackItalic?.(c.ch) ?? 0 };
           spaceFactor = nextSpaceFactor(spaceFactor, sfCode(c.ch));
         }
       }
@@ -772,7 +829,7 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
         nodes.push({ kind: "penalty", penalty: INF_PENALTY });
         nodes.push({
           kind: "glue",
-          ...spaceGlue(face.metrics, 1000, options),
+          ...spaceGlue(face.spaceGlue(), 1000, options),
           offset: at(i),
           end: at(i + 1),
         });
@@ -819,6 +876,11 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
     base += run.text.length;
   }
   return nodes;
+}
+
+/** A run of codes as a font with no ligature and kern program sets it: each code as it is. */
+function unchanged(codes: number[]): LigKernResult {
+  return { codes, source: codes.map((_, k) => k), kernAfter: codes.map(() => -1) };
 }
 
 export interface LineRange {

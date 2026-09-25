@@ -1,11 +1,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Resume } from "@resume-tools/resume-model";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
+import { generateBody, generateFormat } from "../templates/generate";
+import { INVENTED_XETEX } from "../templates/invented";
+import { defaultControls, fontFiles } from "../templates/package";
 import { bound, fastestAsync } from "../test/timing";
-import type { DviDocument, PageItem } from "../tex/dvi";
+import { type DviDocument, type PageItem, parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { INCH } from "../tex/svg";
 import { parseType1 } from "../tex/type1";
@@ -15,6 +19,7 @@ import {
   fieldsShown,
   type GlyphBox,
   glyphAt,
+  letterSpaceOf,
   paperSize,
   ruleCrossings,
 } from "./draw";
@@ -198,6 +203,23 @@ describe("drawPage over an invented tree", () => {
   });
 });
 
+describe("drawPage on XeTeX's XDV over an invented tree", () => {
+  it("names a native font the tree lacks by its file, and draws its runs as boxes", async () => {
+    // hello.xdv sets a line in Source Sans 3, from a file of the spike's own the tree lacks.
+    const drawn = await drawPage(fixture("hello.xdv"), libraryOf({}), new Map());
+    expect(drawn.missingFonts).toEqual(
+      new Map([["SourceSans3-Regular.otf", "TeX Live has no SourceSans3-Regular.otf"]]),
+    );
+    const runs = parseDvi(fixture("hello.xdv"), () => undefined).pages[0]?.items.filter(
+      (item) => item.kind === "native",
+    );
+    expect(drawn.svg.match(/<rect [^>]*stroke="rgb\(200,60,60\)"/g)).toHaveLength(
+      runs?.length ?? -1,
+    );
+    expect(drawn.glyphs).toEqual([]);
+  });
+});
+
 /** Field texts straight from the spike's marked-up body, as the spike page read them. */
 function fieldTexts(body: string): Map<string, string> {
   const texts = new Map<string, string>();
@@ -205,6 +227,21 @@ function fieldTexts(body: string): Map<string, string> {
     texts.set(m[1] ?? "", m[2] ?? "");
   return texts;
 }
+
+describe("letterSpaceOf", () => {
+  it("reads XeTeX's letterspace from a font's features, in hundredths of the size", () => {
+    expect(letterSpaceOf("mapping=tex-text;letterspace=6.0", 10.95)).toBeCloseTo(0.657, 6);
+    expect(letterSpaceOf("letterspace=-2;mapping=tex-text", 10)).toBeCloseTo(-0.2, 6);
+    for (const features of [
+      undefined,
+      "",
+      "mapping=tex-text",
+      "letterspace=x",
+      "wordletterspace=5",
+    ])
+      expect(letterSpaceOf(features, 10), String(features)).toBe(0);
+  });
+});
 
 describe("paperSize", () => {
   const special = (text: string) => ({ items: [{ kind: "special" as const, h: 0, v: 0, text }] });
@@ -648,6 +685,205 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
         text,
       ).toEqual(characters.map((c) => c.offset));
     }
+  }, 30_000);
+
+  describe("on the invented XeTeX template's page", () => {
+    const { package: pkg, sample } = INVENTED_XETEX;
+    const values = defaultControls(pkg);
+    let xetex: DrawnPage;
+    let xetexTexts: Map<string, string>;
+    beforeAll(async () => {
+      const format = generateFormat(pkg, values);
+      const dumped = session.dump("xetex", format.name, format.preamble, format.files);
+      if (!dumped.ok) throw new Error(dumped.error);
+      const body = generateBody(pkg, sample, values);
+      const compiled = session.compile("xetex", format.name, body.latex, { job: "xetex" });
+      if (!compiled.output) throw new Error(compiled.error);
+      xetexTexts = body.texts;
+      // A library of its own, so that the draw reads and parses every font file as a first does.
+      const manifest = JSON.parse(
+        readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+      ) as EngineManifest;
+      const cold = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+        readFileSync(join(ENGINE_DIR, "files", path)),
+      );
+      const started = performance.now();
+      xetex = await drawPage(compiled.output, cold, xetexTexts);
+      const first = performance.now() - started;
+      const again = performance.now();
+      await drawPage(compiled.output, cold, xetexTexts);
+      console.log(
+        `invented XeTeX page: first draw ${first.toFixed(0)} ms, again ${(performance.now() - again).toFixed(0)} ms`,
+      );
+    }, 60_000);
+
+    it("draws every native font, and finds every field with its glyphs", () => {
+      expect(xetex.missingFonts).toEqual(new Map());
+      expect(xetex.pageCount).toBe(1);
+      expect(xetex.fields.size).toBe(xetexTexts.size);
+      for (const field of xetex.fields.values())
+        expect(field.glyphs.length, field.id).toBeGreaterThan(0);
+      expect(xetex.unmatched).toBe(0);
+    });
+
+    it("gives each glyph of a run its own character, ligatures and tex-text's quotes included", () => {
+      const text = xetexTexts.get("harbor-1.text") ?? "";
+      const glyphs = xetex.fields.get("harbor-1.text")?.glyphs ?? [];
+      // Roboto's fi, an apostrophe XeTeX curls, and a dash it makes of two hyphens.
+      const at = (spelling: string) => glyphs.find((g) => g.offset === text.indexOf(spelling));
+      expect(at("fice")?.text).toBe("fi");
+      expect(at("'s")?.text).toBe("\u{2019}");
+      expect(at("--")?.text).toBe("\u{2013}");
+      for (const glyph of glyphs) expect(glyph.glyph, String(glyph.offset)).toBeDefined();
+    });
+
+    it("draws each native glyph where its hit box says, with its field and offset", () => {
+      const uses = [
+        ...xetex.svg.matchAll(/<use href="#n[^"]*" x="([\d.-]+)" y="([\d.-]+)"([^>]*)\/>/g),
+      ];
+      expect(uses.length).toBe(xetex.glyphs.length);
+      uses.forEach((use, i) => {
+        const box = xetex.glyphs[i] as GlyphBox;
+        expect(use[1]).toBe(box.x.toFixed(3));
+        expect(use[2]).toBe(box.y.toFixed(3));
+        const field = /data-field="([^"]*)" data-offset="(\d+)"/.exec(use[3] ?? "");
+        expect(field?.[1]).toBe(box.field);
+        expect(field ? Number(field[2]) : undefined).toBe(box.offset);
+        // A letter's box has ink in it, around its origin on the baseline.
+        expect(box.right).toBeGreaterThan(box.left);
+        expect(box.bottom).toBeGreaterThan(box.top);
+      });
+      // The icon in the header is drawn, and belongs to no field.
+      const icon = uses.filter((use) => use[3]?.includes("FontAwesome5Free-Solid-900.otf"));
+      expect(icon).toHaveLength(1);
+      expect(icon[0]?.[3]).not.toContain("data-field");
+    });
+
+    it("resolves every field from a click at the centre of its middle glyph", () => {
+      for (const field of xetex.fields.values()) {
+        const boxes = xetex.glyphs.filter((g) => g.field === field.id);
+        const middle = boxes[Math.floor(boxes.length / 2)] as GlyphBox;
+        expect(middle, field.id).toBeDefined();
+        const hit = glyphAt(
+          xetex.glyphs,
+          (middle.left + middle.right) / 2,
+          (middle.top + middle.bottom) / 2,
+        );
+        expect(hit, field.id).toBe(middle);
+      }
+    });
+
+    /** The invented template's page for another resume, compiled in a job of its own. */
+    const drawnFor = async (resume: Resume, job: string) => {
+      const format = generateFormat(pkg, values);
+      const body = generateBody(pkg, resume, values);
+      const compiled = session.compile("xetex", format.name, body.latex, { job });
+      if (!compiled.output) throw new Error(compiled.error);
+      return { page: await drawPage(compiled.output, fonts, body.texts), texts: body.texts };
+    };
+
+    it("reads a Source Sans glyph its map gives several characters as the one the text holds", async () => {
+      // The headings are Source Sans Pro bold, whose map gives one glyph U+2019 and U+02BC, which
+      // tex-text makes of every ', one U+2018 and U+02BB, which it makes of `, one U+00B5 and
+      // U+03BC, and one U+002D, U+00AD, U+2010 and U+2011.
+      const resume = structuredClone(sample);
+      const titles = [
+        "Maker's Summary",
+        "`Chosen' Work in 5 \u{b5}m and 5 \u{3bc}m",
+        "Non\u{2011}stop Skills",
+      ];
+      resume.sections.forEach((section, i) => {
+        section.title = titles[i] ?? section.title;
+      });
+      const { page, texts } = await drawnFor(resume, "aliases");
+      expect(page.missingFonts).toEqual(new Map());
+      expect(page.unmatched).toBe(0);
+      const glyphAtOffset = (id: string, spelling: string) =>
+        page.fields.get(id)?.glyphs.find((g) => g.offset === texts.get(id)?.indexOf(spelling));
+      expect(glyphAtOffset("summary.title", "'s")?.text).toBe("\u{2019}");
+      expect(glyphAtOffset("work.title", "`")?.text).toBe("\u{2018}");
+      expect(glyphAtOffset("work.title", "\u{b5}")?.text).toBe("\u{b5}");
+      expect(glyphAtOffset("work.title", "\u{3bc}")?.text).toBe("\u{b5}");
+      // U+2011 is the character the text holds, not a hyphen TeX inserted before it.
+      const hyphen = glyphAtOffset("skills.title", "\u{2011}");
+      expect(hyphen?.text).toBe("-");
+      expect(hyphen?.inserted).toBeUndefined();
+    }, 30_000);
+
+    it("reads a ligature of the ccmp feature as its letters, composed where one is a mark", async () => {
+      // HarfBuzz applies ccmp unasked: Source Sans's makes one glyph of l·l, and Roboto, which has
+      // no ṛ, ṣ, ṇ or ḍ, sets each as its letter and U+0323, which its ccmp joins into one glyph.
+      const resume = structuredClone(sample);
+      const [summary] = resume.sections;
+      if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+      summary.title = "Col\u{b7}laboraci\u{f3} amb la Paral\u{b7}lel";
+      summary.text = [
+        { text: "Read the K\u{1e5b}\u{1e63}\u{1e47}a and \u{100}\u{1e0d}hya folios." },
+      ];
+      const { page, texts } = await drawnFor(resume, "ccmp");
+      expect(page.missingFonts).toEqual(new Map());
+      expect(page.unmatched).toBe(0);
+      const glyphAtOffset = (id: string, spelling: string) =>
+        page.fields.get(id)?.glyphs.find((g) => g.offset === texts.get(id)?.indexOf(spelling));
+      expect(glyphAtOffset("summary.title", "l\u{b7}l")?.text).toBe("l\u{b7}l");
+      expect(glyphAtOffset("summary.text", "\u{1e5b}")?.text).toBe("\u{1e5b}");
+      expect(glyphAtOffset("summary.text", "\u{1e0d}")?.text).toBe("\u{1e0d}");
+    }, 30_000);
+
+    it("sets the base of an accented letter its fonts lack, where the letter is", async () => {
+      // Roboto has neither ǎ nor the combining caron: the body sets the a, which the page reads
+      // at the ǎ, rather than leave the letter out.
+      const resume = structuredClone(sample);
+      const [summary] = resume.sections;
+      if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+      summary.text = [{ text: "Taught Xi\u{1ce}oming to set type." }];
+      const { covers } = await fonts.coverage(fontFiles(pkg));
+      const format = generateFormat(pkg, values);
+      const body = generateBody(pkg, resume, values, { covers });
+      expect(body.dropped).toEqual(["\u{1ce}"]);
+      const compiled = session.compile("xetex", format.name, body.latex, { job: "base" });
+      if (!compiled.output) throw new Error(compiled.error);
+      const page = await drawPage(compiled.output, fonts, body.texts);
+      expect(page.unmatched).toBe(0);
+      const text = body.texts.get("summary.text") ?? "";
+      const letter = page.fields
+        .get("summary.text")
+        ?.glyphs.find((g) => g.offset === text.indexOf("\u{1ce}"));
+      expect(letter?.text).toBe("a");
+    }, 30_000);
+
+    it("lays each field out in the native font and size of its first glyphs", () => {
+      const layout = (id: string) => xetex.fields.get(id)?.layout;
+      const name = layout("header.first");
+      expect(name?.font.kind).toBe("native");
+      expect(name?.font.name).toBe("Roboto-Bold.otf");
+      expect(name?.size).toBeCloseTo(17.28, 2);
+      expect(layout("work.title")?.font.name).toBe("SourceSansPro-Bold.otf");
+      expect(layout("work.title")?.size).toBeCloseTo(12, 2);
+      const bullet = layout("harbor-1.text");
+      expect(bullet?.font.name).toBe("Roboto-Regular.otf");
+      expect(bullet?.size).toBeCloseTo(10.95, 2);
+      expect(bullet?.paragraph).toMatch(/^rt:p:harbor-1\.text:hsize=/);
+      // The bullet takes two lines, whose second starts at the paragraph's edge.
+      const first = xetex.glyphs.find((g) => g.field === "harbor-1.text");
+      expect([bullet?.x, bullet?.y]).toEqual([first?.x, first?.y]);
+      expect(bullet?.secondLine).toBeDefined();
+      expect(bullet?.secondLine).toBeCloseTo(bullet?.x ?? 0, 3);
+    });
+  });
+
+  it("names a native font XeTeX emboldens, and draws its runs as boxes", async () => {
+    const body = String.raw`\documentclass{article}\pagestyle{empty}\begin{document}
+\font\bolded="[Roboto-Regular.otf]:embolden=2" {\bolded Boxed} \font\plain="[Roboto-Regular.otf]" {\plain Drawn}
+\end{document}`;
+    const compiled = session.compile("xetex", "stock", body, { job: "bolded", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const drawn = await drawPage(compiled.output, fonts, new Map());
+    expect(drawn.missingFonts.get("Roboto-Regular.otf")).toBe(
+      "XeTeX emboldens it, which the page draws as boxes",
+    );
+    expect(drawn.svg.match(/<rect [^>]*stroke="rgb\(200,60,60\)"/g)).toHaveLength(1);
+    expect(drawn.svg.match(/<use href="#n/g)).toHaveLength("Drawn".length);
   }, 30_000);
 
   it("gives a later page the size the first page set", async () => {

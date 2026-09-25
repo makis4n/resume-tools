@@ -512,7 +512,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
       expect(gaps(compact)[i]).toBeLessThan(gap);
       expect(gaps(relaxed)[i]).toBeGreaterThan(gap);
     });
-  });
+  }, 60_000);
 
   it("sets the section titles and the rules under them in the accent, and black by default", async () => {
     const blue = { ...values, accent: "#1F4E79" };

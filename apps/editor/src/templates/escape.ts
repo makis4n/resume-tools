@@ -77,11 +77,39 @@ const UNDEFINED_PAST_EXTENDED_A =
  * and Latin Extended-A has. Past those it is decomposed again (NFD), except for the few letters
  * LaTeX defines there, so that a letter it has no definition for, such as Vietnamese's `ễ`, sets
  * its base letter, and the prelude leaves out the combining marks, rather than dropping the
- * letter whole. That is pdfTeX's reach today; item 21 may keep text composed for XeTeX, whose
- * fonts set such letters as they are.
+ * letter whole. That is pdfTeX's reach; XeTeX's fonts set such letters as they are, so a text for
+ * XeTeX's declared fonts stays composed (`escapeText`'s `fonts`).
  */
 function normalized(text: string): string {
   return text.normalize("NFC").replace(UNDEFINED_PAST_EXTENDED_A, (run) => run.normalize("NFD"));
+}
+
+/**
+ * What escaping would pass through as itself and a font would have to set: anything past ASCII
+ * but spaces, which become spaces or ties, and the invisible characters, which escaping drops.
+ */
+const SET_AS_ITSELF = new RegExp(`(?!\\s|\\p{Zs}|${INVISIBLE.source})[^\\u{0}-\\u{7f}]`, "gu");
+
+/**
+ * What a XeTeX package's declared fonts can set among them (decision 0014), which `escapeText`
+ * takes a text's characters past ASCII to, and what hears of each character they cannot.
+ */
+export interface TextFonts {
+  covers: (char: string) => boolean;
+  /** Told of each character the fonts cannot set, which is left out, or set in part (`partOf`). */
+  lacks: (char: string) => void;
+}
+
+/**
+ * What the fonts can set of a character they cannot set whole: the parts of its canonical
+ * decomposition that are ASCII or that they cover, the base of an accented letter and each of its
+ * accents they have, as pdfTeX's LaTeX sets the base of a letter it has no definition for
+ * (`normalized`); nothing of a character that does not decompose.
+ */
+function partOf(char: string, covers: (char: string) => boolean): string {
+  const parts = [...char.normalize("NFD")];
+  if (parts.length < 2) return "";
+  return parts.filter((part) => part < "\u{80}" || covers(part)).join("");
 }
 
 /**
@@ -91,9 +119,24 @@ function normalized(text: string): string {
  * input and XeTeX typeset; a straight double quote, which OT1 sets as a closing quote, as LaTeX
  * does; and anything else, which the prelude has LaTeX drop when it has no definition for it or
  * the font encoding no glyph.
+ *
+ * XeTeX sets a font's `.notdef` box for a character the font lacks, so for a XeTeX package that
+ * declares its fonts the generator says which characters they can set (`fonts`, decision 0014):
+ * the text then stays composed, since XeTeX's fonts set letters whole and HarfBuzz decomposes one
+ * a font lacks, and every character that would pass through as itself and that they cannot set is
+ * set as the part of it they can, an accented letter as its base, or else left out, so that it too
+ * either typesets as itself, or as its letter, or is dropped.
  */
-export function escapeText(text: string): string {
-  return normalized(text)
+export function escapeText(text: string, fonts?: TextFonts): string {
+  const form =
+    fonts === undefined
+      ? normalized(text)
+      : text.normalize("NFC").replace(SET_AS_ITSELF, (char) => {
+          if (fonts.covers(char)) return char;
+          fonts.lacks(char);
+          return partOf(char, fonts.covers);
+        });
+  return form
     .replace(TEXT_CHANGES, (char) => TEXT_ESCAPES[char] ?? (SPACE_SEPARATOR.test(char) ? " " : ""))
     .replace(INVERTED_MARK, "$&{}");
 }

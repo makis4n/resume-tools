@@ -6,15 +6,18 @@
  * and come out in the DVI at the positions where the field starts and ends. The first
  * copy of a field on the page is the field: every glyph that sits between its markers in
  * stream order belongs to it, and aligning those glyphs with the field's source text
- * gives each glyph its character offset.
+ * gives each glyph its character offset. A glyph is a TeX font's character, one page item, or one
+ * glyph of a run XeTeX set in a native font, which is one item for the whole run (decision 0014).
  */
 
 import type { DviPage, PageItem } from "./dvi";
 import { accented } from "./glyphs";
 
 export interface FieldGlyph {
-  /** Index of the glyph in the page's item list. */
+  /** Index of the glyph in the page's item list, or of the native run it is a glyph of. */
   item: number;
+  /** The glyph's index in its native run's `glyphs`, when `item` is a native run. */
+  glyph?: number;
   /**
    * The other page items that draw this character: the accent TeX's `\accent` set over the
    * letter `item` draws, which reads with it as one accented letter (`collectFields`).
@@ -22,10 +25,22 @@ export interface FieldGlyph {
   items?: number[];
   /** The text this glyph stands for, e.g. "fi" for a ligature; undefined when unknown. */
   text: string | undefined;
+  /**
+   * What else the glyph stands for, when its font gives it several characters, as Source Sans
+   * sets U+2019 and U+02BC with one glyph (decision 0014): a native font's glyph only. The aligner
+   * takes any of them, and `text`, as the glyph's spelling.
+   */
+  alternatives?: readonly string[];
   /** Offset of the glyph's first character in the field's source text, once aligned. */
   offset: number;
   /** True for a hyphen TeX added at a line break, which has no source character. */
   inserted?: boolean;
+  /**
+   * True for glyph 0 of a native run, the font's `.notdef`, which XeTeX sets for a character its
+   * font lacks: the page reads it as that character left out, as the generator leaves out one the
+   * package's fonts lack (decision 0014), so it has no text, draws nothing, and is not unmatched.
+   */
+  dropped?: boolean;
 }
 
 export interface Field {
@@ -44,14 +59,22 @@ export const MARKER_END = "rt:e:";
  */
 export const INVISIBLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu;
 
-/** Text a page item stands for, or undefined for items that are not glyphs. */
+/**
+ * Text a page item stands for, or undefined for items that are not glyphs: for a native run, the
+ * text of its glyph at index `glyph`, since each glyph of a run is a glyph of its own.
+ */
 export interface GlyphTextOf {
-  (item: PageItem): string | undefined;
+  (item: PageItem, glyph?: number): string | undefined;
   /**
    * The combining mark a glyph stands for when it is a spacing accent (its glyph name is in
    * `ACCENTS`), and undefined for any other item. Without it, no accent is paired with its letter.
    */
   accent?: (item: PageItem) => string | undefined;
+  /**
+   * What else a native run's glyph at index `glyph` stands for, past the text the call gives,
+   * when its font gives it several characters; undefined or empty when it gives one.
+   */
+  alternatives?: (item: PageItem, glyph?: number) => readonly string[] | undefined;
 }
 
 /** A text of one letter, which an accent before it may go over. */
@@ -93,6 +116,12 @@ const LETTER = /^\p{L}$/u;
  * or lower than the letter, in the box TeX shifts for a letter taller or shorter than the
  * x-height, so the test does not look at v. It needs the fonts' widths, so the page and the
  * validation harness both parse the DVI with them.
+ *
+ * A native run's glyphs are collected one by one, each with its index in the run and the text
+ * `textOf` gives it, and what else it stands for (`textOf.alternatives`), so that each is aligned
+ * with the text as a TeX font's glyph is. Native fonts set accented letters whole, so none of their
+ * glyphs is paired with another. A run's glyph 0, the font's `.notdef`, is collected as a character
+ * left out (`FieldGlyph.dropped`).
  */
 export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, Field> {
   const fields = new Map<string, Field>();
@@ -122,6 +151,25 @@ export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, F
     if (item.kind !== "glyph" && item.kind !== "native") return;
     const field = open.at(-1)?.field;
     if (!field) return;
+    if (item.kind === "native") {
+      accents.delete(field);
+      item.glyphs.forEach(({ id }, glyph) => {
+        if (id === 0) {
+          field.glyphs.push({ item: index, glyph, text: undefined, offset: -1, dropped: true });
+          return;
+        }
+        const text = textOf(item, glyph);
+        const alternatives = textOf.alternatives?.(item, glyph);
+        field.glyphs.push({
+          item: index,
+          glyph,
+          text,
+          ...(alternatives?.length ? { alternatives } : {}),
+          offset: -1,
+        });
+      });
+      return;
+    }
     const text = textOf(item);
     const mark = accents.get(field);
     accents.delete(field);
@@ -173,11 +221,16 @@ export interface Alignment {
  * one ligature glyph, and may add a hyphen at a line break; and a field's text holds
  * characters that set no glyph at all, which the generator or TeX left out. The
  * alignment walks the text and the glyphs together. Before each glyph it skips
- * whitespace and the invisible characters. A glyph that does not match there is tried
- * past each character that may set no glyph where it stands, such as an emoji or a
- * letter of a script the fonts lack; an unmatched hyphen is a break TeX inserted; and
- * a glyph a few code units on resynchronises the walk. Returns the number of glyphs
- * that could not be matched, and how much of the text the glyphs account for.
+ * whitespace and the invisible characters. A glyph matches any spelling of its text or
+ * of what else it stands for (`FieldGlyph.alternatives`), or an accented letter whose base
+ * one is, set without its accents (`accentedAt`). A glyph that does not match
+ * there is tried past each character that may set no glyph where it stands, such as an
+ * emoji or a letter of a script the fonts lack; an unmatched hyphen is a break TeX
+ * inserted, which is U+002D's glyph, the font's `\hyphenchar`, so a glyph that stands
+ * for U+2010 or U+2011 and not for it is not one; and a glyph a few code units on
+ * resynchronises the walk. A native font's `.notdef` (`FieldGlyph.dropped`) stands where
+ * the walk is and matches nothing. Returns the number of glyphs that could not be
+ * matched, and how much of the text the glyphs account for.
  *
  * A run of such characters is read once, however many glyphs fail to match in it: a
  * glyph whose spellings all begin with printable ASCII, which no character of the run
@@ -193,14 +246,21 @@ export function alignField(field: Field, text: string): Alignment {
   let runEnd = -1;
   for (const glyph of field.glyphs) {
     while (pos < text.length && SKIPPED.test(charAt(text, pos))) pos += charAt(text, pos).length;
+    if (glyph.dropped) {
+      // A character the font lacks, which the next glyph skips as one that may set no glyph.
+      glyph.offset = pos;
+      continue;
+    }
     const g = glyph.text;
     if (g === undefined) {
       glyph.offset = pos;
       unmatched++;
       continue;
     }
-    const candidates = spellingsOf(g);
-    const matchAt = (at: number) => candidates.find((c) => text.startsWith(c, at));
+    const own = glyph.alternatives === undefined ? [g] : [g, ...glyph.alternatives];
+    const candidates = own.length === 1 ? spellingsOf(g) : [...new Set(own.flatMap(spellingsOf))];
+    const matchAt = (at: number) =>
+      candidates.find((c) => text.startsWith(c, at)) ?? accentedAt(text, at, candidates);
     // The spellings are tried where the walk stands first, so "–" still matches the "--"
     // glyph, and only then past the characters that may set no glyph.
     let at = pos;
@@ -224,15 +284,25 @@ export function alignField(field: Field, text: string): Alignment {
       glyph.offset = at;
       pos = at + match.length;
     } else if (g === "-") {
-      // A hyphen TeX inserted at a line break: it belongs to the character before it.
+      // A hyphen TeX inserted at a line break: it belongs to the character before it. A native
+      // glyph that stands for U+2010 or U+2011 as well reads as U+002D first; one that does not
+      // stand for U+002D is not the font's \hyphenchar, and reads as one of the others.
       glyph.offset = Math.max(0, pos - 1);
       glyph.inserted = true;
     } else {
       // Try to resynchronise a little further on; otherwise count it as unmatched.
-      const ahead = [1, 2, 3].find((k) => text.startsWith(g, pos + k));
+      let ahead: number | undefined;
+      let spelled = g;
+      for (const k of [1, 2, 3]) {
+        const found = own.find((each) => text.startsWith(each, pos + k));
+        if (found === undefined) continue;
+        ahead = k;
+        spelled = found;
+        break;
+      }
       if (ahead !== undefined) {
         glyph.offset = pos + ahead;
-        pos += ahead + g.length;
+        pos += ahead + spelled.length;
       } else {
         glyph.offset = pos;
         unmatched++;
@@ -241,6 +311,24 @@ export function alignField(field: Field, text: string): Alignment {
   }
   return { unmatched, covered: pos };
 }
+
+/**
+ * The accented letter at `at` whose canonical decomposition is one of `spellings` and accents
+ * after it, when there is one: a letter set without the accents its font lacks, as the generator
+ * sets ǎ as a where a XeTeX template's fonts have neither ǎ nor the caron, and pdfTeX's LaTeX the
+ * base of a letter it has no definition for (`escape.ts`).
+ */
+function accentedAt(text: string, at: number, spellings: readonly string[]): string | undefined {
+  const char = charAt(text, at);
+  if (char.length === 0 || char < "\u{80}") return undefined;
+  const decomposed = char.normalize("NFD");
+  const base = spellings.find((spelling) => spelling !== "" && decomposed.startsWith(spelling));
+  if (base === undefined || base.length === decomposed.length) return undefined;
+  return ACCENTS.test(decomposed.slice(base.length)) ? char : undefined;
+}
+
+/** Combining marks and nothing else, as an accented letter's decomposition holds after its base. */
+const ACCENTS = /^\p{M}+$/u;
 
 /** Give each glyph its character offset, as `alignField` does, and count those it cannot place. */
 export function alignGlyphs(field: Field, text: string): number {
@@ -284,6 +372,12 @@ function spellingsOf(text: string): readonly string[] {
 /**
  * Source spellings that produce a given glyph, the plain form first. A map, since it is looked up
  * by a glyph's text, which may be any word a glyph name spells, `constructor` among them.
+ *
+ * The first entries are a TeX font's ligatures and quotes, named as Computer Modern names them,
+ * and the characters T1 and TS1 set from more than one. The rest are the characters XeTeX's
+ * `tex-text` mapping (`tex-text.map`), which a XeTeX template's text fonts take (decision 0014),
+ * makes of what a text spells as TeX would, the low double quote among the first: a native font's
+ * glyph reads as the character its character map gives it, `–` for the `--` it was set from.
  */
 const LIGATURE_ALTERNATIVES: ReadonlyMap<string, readonly string[]> = new Map([
   ["--", ["--", "–"]],
@@ -300,4 +394,16 @@ const LIGATURE_ALTERNATIVES: ReadonlyMap<string, readonly string[]> = new Map([
   // mathematical ones, the CJK ones, and the deprecated ones, which NFC makes the CJK ones.
   ["\u{27e8}", ["\u{27e8}", "\u{3008}", "\u{2329}"]],
   ["\u{27e9}", ["\u{27e9}", "\u{3009}", "\u{232a}"]],
+  // What XeTeX's tex-text mapping sets for what a text spells as TeX would; its low double quote
+  // is T1's, above.
+  ["–", ["–", "--"]],
+  ["—", ["—", "---"]],
+  ["’", ["’", "'"]],
+  ["‘", ["‘", "`"]],
+  ["”", ["”", "''", '"']],
+  ["“", ["“", "``"]],
+  ["¡", ["¡", "!`"]],
+  ["¿", ["¿", "?`"]],
+  ["«", ["«", "<<"]],
+  ["»", ["»", ">>"]],
 ]);

@@ -63,8 +63,11 @@ export function hasToUnicode(pdf: Uint8Array): boolean {
  * of its content streams: a TJ's strings are joined without the kerns between them, which is also
  * where xdvipdfmx puts the space between two words. Each is its bytes as characters, the codes of
  * the glyphs in the font's encoding, which for ASCII letters, digits and most punctuation are
- * their own. The content streams are the pages' /Contents and any form XObject; the other streams,
- * such as fonts and ToUnicode maps, hold no text operators.
+ * their own; except in a composite font with a ToUnicode map, which is how xdvipdfmx embeds
+ * XeTeX's native fonts, whose two-byte codes are glyphs: its strings are read through the map, as
+ * a reader takes the text out, and a glyph the map does not name reads as nothing. The content
+ * streams are the pages' /Contents and any form XObject; the other streams, such as fonts and
+ * ToUnicode maps, hold no text operators.
  */
 export function shownStrings(pdf: Uint8Array): string[] {
   return shownTexts(pdf).map((shown) => shown.text);
@@ -136,10 +139,12 @@ function contentOf(pdf: Uint8Array): Content {
   const contents = new Set<number>();
   for (const match of text.matchAll(/\/Contents\s*(\[[^\]]*\]|\d+\s+\d+\s+R)/g))
     for (const ref of (match[1] ?? "").matchAll(/(\d+)\s+\d+\s+R/g)) contents.add(Number(ref[1]));
+  const { streams, dictionaries } = objectsOf(text);
+  const decoders = composites(streams, dictionaries);
   const read: Content = { shown: [], strokes: [] };
-  for (const stream of streamsOf(text)) {
+  for (const stream of streams) {
     const content = contents.has(stream.object) || /\/Subtype\s*\/Form\b/.test(stream.dict);
-    if (content && !/\/Filter\b/.test(stream.dict)) readContent(stream.data, read);
+    if (content && !/\/Filter\b/.test(stream.dict)) readContent(stream.data, read, decoders);
   }
   return read;
 }
@@ -155,23 +160,134 @@ const STREAM_START = /(\d+)\s+\d+\s+obj\s*(<<(?:(?!endobj)[\s\S])*?>>)\s*stream\
 
 /**
  * Every stream object in the file, its data cut to the dictionary's /Length, which xdvipdfmx
- * writes as a number. The search goes on after the data, since a font's bytes can hold anything.
+ * writes as a number, and every other object's text, by its number: a top-level object's, up to
+ * its `endobj`, and each of an unfiltered object stream's, where xdvipdfmx puts a PDF 1.5 file's
+ * dictionaries, fonts' and pages' among them. The search goes on after a stream's data, since a
+ * font's bytes can hold anything.
  */
-function streamsOf(text: string): Stream[] {
+function objectsOf(text: string): { streams: Stream[]; dictionaries: Map<number, string> } {
   const streams: Stream[] = [];
-  const objects = /\d+\s+\d+\s+obj\b/g;
+  const dictionaries = new Map<number, string>();
+  const objects = /(\d+)\s+\d+\s+obj\b/g;
   for (let found = objects.exec(text); found !== null; found = objects.exec(text)) {
     STREAM_START.lastIndex = found.index;
     const start = STREAM_START.exec(text);
     const dict = start?.[2];
     const length = dict === undefined ? undefined : /\/Length\s+(\d+)(?!\d|\s+\d+\s+R)/.exec(dict);
-    if (start === null || dict === undefined || length?.[1] === undefined) continue;
+    if (start === null || dict === undefined || length?.[1] === undefined) {
+      const body = found.index + found[0].length;
+      const end = text.indexOf("endobj", body);
+      if (end >= 0) dictionaries.set(Number(found[1]), text.slice(body, end));
+      continue;
+    }
     const from = start.index + start[0].length;
     const to = from + Number(length[1]);
-    streams.push({ object: Number(start[1]), dict, data: text.slice(from, to) });
+    const stream = { object: Number(start[1]), dict, data: text.slice(from, to) };
+    streams.push(stream);
+    if (/\/Type\s*\/ObjStm\b/.test(dict) && !/\/Filter\b/.test(dict))
+      for (const [object, body] of objectStream(stream)) dictionaries.set(object, body);
     objects.lastIndex = to;
   }
-  return streams;
+  return { streams, dictionaries };
+}
+
+/**
+ * The objects an object stream holds, by number: its data starts with pairs of an object's number
+ * and its offset past `/First`, and each object runs to the next one's offset.
+ */
+function objectStream(stream: Stream): Map<number, string> {
+  const held = new Map<number, string>();
+  const first = Number(/\/First\s+(\d+)/.exec(stream.dict)?.[1]);
+  const count = Number(/\/N\s+(\d+)/.exec(stream.dict)?.[1]);
+  if (!Number.isInteger(first) || !Number.isInteger(count)) return held;
+  const numbers = stream.data.slice(0, first).trim().split(/\s+/).map(Number);
+  for (let i = 0; i < count && 2 * i + 1 < numbers.length; i++) {
+    const object = numbers[2 * i] as number;
+    const from = first + (numbers[2 * i + 1] as number);
+    const next = numbers[2 * i + 3];
+    const to = next === undefined || 2 * i + 3 >= 2 * count ? stream.data.length : first + next;
+    if (Number.isInteger(object) && from <= to) held.set(object, stream.data.slice(from, to));
+  }
+  return held;
+}
+
+/**
+ * How each composite font's strings read, by the name the pages' resources give it: through its
+ * ToUnicode map, a CMap stream, two bytes to a code (`Identity-H`, as xdvipdfmx embeds every
+ * native font). xdvipdfmx names each font once for the whole document, so the names of every
+ * resource dictionary are read as one. A font without a map, or whose map is filtered, reads as
+ * its bytes.
+ */
+function composites(
+  streams: readonly Stream[],
+  dictionaries: ReadonlyMap<number, string>,
+): Map<string, (shown: string) => string> {
+  const byObject = new Map(streams.map((stream) => [stream.object, stream]));
+  const decoders = new Map<string, (shown: string) => string>();
+  const resources = [...dictionaries.values(), ...streams.map((stream) => stream.dict)];
+  for (const holder of resources)
+    for (const fonts of holder.matchAll(/\/Font\s*(<<[^<>]*>>|\d+\s+\d+\s+R)/g)) {
+      const ref = /^(\d+)\s+\d+\s+R$/.exec(fonts[1] ?? "");
+      const table = ref ? (dictionaries.get(Number(ref[1])) ?? "") : (fonts[1] ?? "");
+      for (const [, name, object] of table.matchAll(/\/([^\s/<>[\]()]+)\s+(\d+)\s+\d+\s+R/g)) {
+        const font = dictionaries.get(Number(object)) ?? "";
+        const map = /\/ToUnicode\s+(\d+)\s+\d+\s+R/.exec(font)?.[1];
+        const cmap = map === undefined ? undefined : byObject.get(Number(map));
+        if (!/\/Subtype\s*\/Type0\b/.test(font) || !cmap || /\/Filter\b/.test(cmap.dict)) continue;
+        const unicode = toUnicode(cmap.data);
+        decoders.set(name as string, (shown) => {
+          let out = "";
+          for (let at = 0; at + 1 < shown.length; at += 2)
+            out += unicode.get(shown.charCodeAt(at) * 256 + shown.charCodeAt(at + 1)) ?? "";
+          return out;
+        });
+      }
+    }
+  return decoders;
+}
+
+/** A hexadecimal string's bytes as UTF-16BE, the way a ToUnicode map writes a code's text. */
+function utf16(hex: string): string {
+  let out = "";
+  for (let at = 0; at + 4 <= hex.length; at += 4)
+    out += String.fromCharCode(Number.parseInt(hex.slice(at, at + 4), 16));
+  return out;
+}
+
+/** The most codes a two-byte ToUnicode map can name. */
+const CODES = 65_536;
+
+/**
+ * A ToUnicode CMap's codes and the text each stands for, from its `bfchar` and `bfrange` blocks:
+ * a range's codes read as its first text with the last code unit counted up, or as the texts of
+ * an array one by one.
+ */
+function toUnicode(cmap: string): Map<number, string> {
+  const map = new Map<number, string>();
+  for (const [, block = ""] of cmap.matchAll(/beginbfchar([\s\S]*?)endbfchar/g))
+    for (const [, code = "", text = ""] of block.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]*)>/g))
+      map.set(Number.parseInt(code, 16), utf16(text));
+  for (const [, block = ""] of cmap.matchAll(/beginbfrange([\s\S]*?)endbfrange/g))
+    for (const [, low = "", high = "", text, array] of block.matchAll(
+      /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]*)>|\[([^\]]*)\])/g,
+    )) {
+      const from = Number.parseInt(low, 16);
+      const to = Math.min(Number.parseInt(high, 16), from + CODES - 1);
+      const texts = array === undefined ? [] : [...array.matchAll(/<([0-9A-Fa-f]*)>/g)];
+      for (let code = from; code <= to; code++) {
+        const k = code - from;
+        if (array !== undefined) {
+          const each = texts[k]?.[1];
+          if (each !== undefined) map.set(code, utf16(each));
+          continue;
+        }
+        const first = utf16(text ?? "");
+        if (first === "") continue;
+        const last = first.charCodeAt(first.length - 1) + k;
+        map.set(code, first.slice(0, -1) + String.fromCharCode(last & 0xffff));
+      }
+    }
+  return map;
 }
 
 /** What a backslash and the character after it stand for in a literal string. */
@@ -254,10 +370,18 @@ const translation = (x: number, y: number): Matrix => [1, 0, 0, 1, x, y];
 
 /**
  * Add what each text-showing operator of a content stream shows, and where, and each path it
- * strokes, to `read`.
+ * strokes, to `read`: what it shows read through the decoder of the font the last `Tf` selected,
+ * when `decoders` has one for it.
  */
-function readContent(content: string, read: Content) {
+function readContent(
+  content: string,
+  read: Content,
+  decoders: ReadonlyMap<string, (shown: string) => string> = new Map(),
+) {
   const { shown, strokes } = read;
+  /** The last name among the operands, which `Tf` takes as the font's, and that font's decoder. */
+  let named: string | undefined;
+  let decode: ((shown: string) => string) | undefined;
   /** The operands since the last operator: strings, numbers, and arrays of the two. */
   let operands: (string | number | (string | number)[])[] = [];
   let array: (string | number)[] | undefined;
@@ -313,7 +437,11 @@ function readContent(content: string, read: Content) {
     matrix = next;
     placed = true;
   };
-  const show = (parts: (string | number)[]) => {
+  const show = (shownParts: (string | number)[]) => {
+    const parts =
+      decode === undefined
+        ? shownParts
+        : shownParts.map((part) => (typeof part === "string" ? (decode?.(part) ?? part) : part));
     let x = Number.NaN;
     let y = Number.NaN;
     if (placed) {
@@ -352,13 +480,16 @@ function readContent(content: string, read: Content) {
       at++;
     } else if (char === ">" || char === "{" || char === "}") at++;
     else {
-      // A name (after its slash) is an operand this does not need, and a number one it may;
-      // anything else is an operator, which ends its operands.
-      const name = char === "/";
-      REGULAR.lastIndex = name ? at + 1 : at;
+      // A name (after its slash) is an operand of which only a font's is needed, and a number one
+      // this may need; anything else is an operator, which ends its operands.
+      const slash = char === "/";
+      REGULAR.lastIndex = slash ? at + 1 : at;
       const word = REGULAR.exec(content)?.[0] ?? "";
       at = REGULAR.lastIndex > at ? REGULAR.lastIndex : at + 1;
-      if (name) continue;
+      if (slash) {
+        named = word;
+        continue;
+      }
       if (/^[-+.\d]/.test(word)) {
         const number = Number(word);
         if (Number.isFinite(number)) (array ?? operands).push(number);
@@ -391,8 +522,10 @@ function readContent(content: string, read: Content) {
       } else if (word === "Tm" && six) moveTo(six);
       else if (word === "T*") moveTo(times(translation(0, -leading), line));
       else if (word === "TL") leading = numbers(1)?.[0] ?? leading;
-      else if (word === "Tf") size = numbers(1)?.[0] ?? size;
-      else if (word === "Tz") scaling = (numbers(1)?.[0] ?? 100) / 100;
+      else if (word === "Tf") {
+        size = numbers(1)?.[0] ?? size;
+        decode = named === undefined ? undefined : decoders.get(named);
+      } else if (word === "Tz") scaling = (numbers(1)?.[0] ?? 100) / 100;
       else if (word === "ID") {
         // An inline image's data runs to its EI, and may hold any byte.
         const end = content.slice(at).search(/\sEI(?=\s|$)/);
@@ -400,6 +533,7 @@ function readContent(content: string, read: Content) {
       }
       operands = [];
       array = undefined;
+      named = undefined;
     }
   }
 }

@@ -33,7 +33,9 @@ export const PARAGRAPH_MARKER = "rt:p:";
  *   script the template's fonts do not cover, is left out with a warning in the log, rather than
  *   stopping the compile with an error, so every character a user types either typesets or is
  *   dropped. The kernel puts its own definition back at the start of every job from a saved copy,
- *   so the copy is replaced as well. XeTeX drops a character its font lacks on its own.
+ *   so the copy is replaced as well. XeTeX has a definition for every character but sets a font's
+ *   `.notdef` box for one the font lacks, so for a XeTeX package the generator leaves out what its
+ *   declared fonts lack (`BodyOptions.covers`, decision 0014).
  * - So is a character the UTF-8 input defines only for T1, such as `ą` (`\k a`), `Đ` (`\DJ`) or
  *   `«` (`\guillemetleft`): in OT1, the encoding of LaTeX's default fonts, which has no glyph for
  *   them, LaTeX would stop with `\TextSymbolUnavailable`'s error. A symbol sets nothing and an

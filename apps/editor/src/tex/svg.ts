@@ -87,6 +87,13 @@ export interface RenderOptions {
 const escape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 
+/**
+ * What names a glyph of a page: its item's index, and for a glyph of a native run, which is one
+ * item for the whole run, its index in the run as well.
+ */
+export const glyphKey = (item: number, glyph?: number) =>
+  glyph === undefined ? String(item) : `${item}:${glyph}`;
+
 /** Parse a dvips `color push ...` special into a CSS colour, or undefined if unknown. */
 export function dvipsColor(spec: string): string | undefined {
   const parts = spec.trim().split(/\s+/);
@@ -120,19 +127,23 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
   const defs = new Map<string, string>();
   const body: string[] = [];
   const colors: string[] = [];
-  const fieldOfItem = new Map<number, { id: string; offset: number }>();
+  // Each glyph's field and offset, by `glyphKey`: a native run's glyphs each have their own.
+  const fieldOfGlyph = new Map<string, { id: string; offset: number }>();
   // An accented letter TeX set as an accent and a letter is one character: both carry it.
   for (const field of options.fields?.values() ?? []) {
-    for (const g of field.glyphs)
-      for (const item of [g.item, ...(g.items ?? [])])
-        fieldOfItem.set(item, { id: field.id, offset: g.offset });
+    for (const g of field.glyphs) {
+      const own = { id: field.id, offset: g.offset };
+      fieldOfGlyph.set(glyphKey(g.item, g.glyph), own);
+      for (const item of g.items ?? []) fieldOfGlyph.set(glyphKey(item), own);
+    }
   }
   const fill = () => {
     const c = colors[colors.length - 1];
     return c && c !== "rgb(0,0,0)" ? ` fill="${c}"` : "";
   };
-  const fieldAttrs = (index: number) => {
-    const f = fieldOfItem.get(index);
+  /** The data attributes of the page item `index`, or of the glyph `glyph` of a native run. */
+  const fieldAttrs = (index: number, glyph?: number) => {
+    const f = fieldOfGlyph.get(glyphKey(index, glyph));
     return f ? ` data-field="${escape(f.id)}" data-offset="${f.offset}"` : "";
   };
 
@@ -171,11 +182,12 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
           outlines.unitsPerEm > 0 &&
           !font.embolden;
         if (!font || !outlines || !drawable) {
-          // Without the font file's outlines the run is drawn as a box.
+          // Without the font file's outlines the run is drawn as a box, which a click on lands on
+          // the run's first glyph.
           const x = INCH + item.h * pt;
           const y = INCH + item.v * pt;
           body.push(
-            `<rect x="${x.toFixed(3)}" y="${(y - 7).toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="9" fill="none" stroke="rgb(200,60,60)" stroke-width="0.3"${fieldAttrs(index)}/>`,
+            `<rect x="${x.toFixed(3)}" y="${(y - 7).toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="9" fill="none" stroke="rgb(200,60,60)" stroke-width="0.3"${fieldAttrs(index, 0)}/>`,
           );
           return;
         }
@@ -192,7 +204,10 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
         const extend = (font.extend ?? 65536) / 65536;
         const slant = (font.slant ?? 0) / 65536;
         const matrix = `matrix(${s * extend} 0 ${s * slant} ${-s} 0 0)`;
-        for (const g of item.glyphs) {
+        item.glyphs.forEach((g, glyph) => {
+          // Glyph 0 is the font's .notdef, which XeTeX sets for a character its font lacks: the
+          // page reads it as the character left out and draws nothing (decision 0014).
+          if (g.id === 0) return;
           const id = `n${item.font}-${g.id}`;
           if (!defs.has(id)) {
             let d: string | undefined;
@@ -201,15 +216,15 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
             } catch {
               d = undefined; // a glyph the font file cannot deliver is left out, not the page
             }
-            if (d === undefined) continue;
+            if (d === undefined) return;
             defs.set(id, `<path id="${id}" d="${escape(d)}" transform="${matrix}"/>`);
           }
           const x = INCH + (item.h + g.x) * pt;
           const y = INCH + (item.v + g.y) * pt;
           body.push(
-            `<use href="#${id}" x="${x.toFixed(3)}" y="${y.toFixed(3)}" data-glyph="${g.id}" data-font="${escape(font.name)}" data-size="${(font.size * pt).toFixed(3)}"${fieldAttrs(index)}${own}/>`,
+            `<use href="#${id}" x="${x.toFixed(3)}" y="${y.toFixed(3)}" data-glyph="${g.id}" data-font="${escape(font.name)}" data-size="${(font.size * pt).toFixed(3)}"${fieldAttrs(index, glyph)}${own}/>`,
           );
-        }
+        });
         return;
       }
       case "rule": {

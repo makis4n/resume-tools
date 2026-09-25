@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Font, Glyph, Path } from "opentype.js";
 import { describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
@@ -45,6 +46,39 @@ function virtualFont(local: string, packets: number[] | Record<number, number[]>
   }
   out.push(248, 248, 248, 248);
   return new Uint8Array(out);
+}
+
+/**
+ * An invented OpenType font of one glyph, an x, 500 units wide, which opentype.js writes, and a
+ * glyph of the same for each character `more` gives.
+ */
+function nativeFont(more: number[] = []): Uint8Array {
+  const x = new Path();
+  x.moveTo(0, 0);
+  x.lineTo(500, 700);
+  x.close();
+  const glyphs = [
+    new Glyph({ name: ".notdef", advanceWidth: 500, path: new Path() }),
+    new Glyph({ name: "x", unicodes: [0x78], advanceWidth: 500, path: x }),
+    ...more.map(
+      (point) =>
+        new Glyph({
+          name: `u${point.toString(16)}`,
+          unicodes: [point],
+          advanceWidth: 500,
+          path: x,
+        }),
+    ),
+  ];
+  const font = new Font({
+    familyName: "Invented",
+    styleName: "Regular",
+    unitsPerEm: 1000,
+    ascender: 800,
+    descender: -200,
+    glyphs,
+  });
+  return new Uint8Array(font.toArrayBuffer());
 }
 
 /** `n` copies of a packet's commands. */
@@ -230,6 +264,92 @@ describe("FontLibrary over an invented tree", () => {
       expect(fan2?.missing).toBe("the packet of 0 sets more than 64 characters and rules");
     });
     expect(took).toBeLessThan(500);
+  });
+
+  it("loads a native font by its file's name from the OpenType and TrueType folders", async () => {
+    const { fonts, reads } = libraryOver({
+      "/fonts/opentype/invented/Invented-Regular.otf": nativeFont(),
+      "/fonts/truetype/invented/Invented-Bold.ttf": nativeFont(),
+      "/fonts/type1/invented/Invented-Stray.otf": nativeFont(),
+    });
+    const [regular, bold] = await Promise.all([
+      fonts.loadNative("Invented-Regular.otf"),
+      fonts.loadNative("Invented-Bold.ttf"),
+    ]);
+    for (const font of [regular, bold]) {
+      expect(font?.kind).toBe("native");
+      expect(font?.missing).toBeUndefined();
+      expect(font?.file?.textOf(1)).toBe("x");
+    }
+    expect(regular?.name).toBe("Invented-Regular.otf");
+    // Read once, and kept; a file outside the fonts' folders is not XeTeX's to find.
+    expect(await fonts.loadNative("Invented-Regular.otf")).toBe(regular);
+    expect(reads.get("/fonts/opentype/invented/Invented-Regular.otf")).toBe(1);
+    expect(await fonts.loadNative("Invented-Stray.otf")).toBeUndefined();
+    expect(await fonts.loadNative("Nosuch.otf")).toBeUndefined();
+  });
+
+  it("leaves a native font it cannot read undrawn, for this time only when a read failed", async () => {
+    const files = {
+      "/fonts/opentype/invented/Invented-Regular.otf": nativeFont(),
+      "/fonts/opentype/invented/Broken.otf": new Uint8Array([0, 1, 0, 0, 0, 0]),
+    };
+    const { fonts, reads } = libraryOver(files, "Invented-Regular.otf");
+    const dropped = await fonts.loadNative("Invented-Regular.otf");
+    expect(dropped?.file).toBeUndefined();
+    expect(dropped?.missing).toBe("the network dropped it");
+    const again = await fonts.loadNative("Invented-Regular.otf");
+    expect(again?.file?.textOf(1)).toBe("x");
+    expect(reads.get("/fonts/opentype/invented/Invented-Regular.otf")).toBe(2);
+    // A file that does not parse is kept undrawn: reading it again would not help.
+    const broken = await fonts.loadNative("Broken.otf");
+    expect(broken?.file).toBeUndefined();
+    expect(broken?.missing).toBeDefined();
+    expect(await fonts.loadNative("Broken.otf")).toBe(broken);
+    expect(reads.get("/fonts/opentype/invented/Broken.otf")).toBe(1);
+  });
+
+  it("reads what a package's native fonts can set, leaving out a file the tree lacks", async () => {
+    const { fonts } = libraryOver({
+      "/fonts/opentype/invented/Invented-Regular.otf": nativeFont([0xe9]),
+    });
+    // XeTeX cannot load a file the tree lacks either, so it sets no text to judge by.
+    const { covers, unread } = await fonts.coverage(["Invented-Regular.otf", "Nosuch.otf"]);
+    expect(covers("\u{e9}")).toBe(true);
+    expect(covers("\u{2192}")).toBe(false);
+    expect(unread).toEqual([]);
+    expect(fonts.nativePath("Invented-Regular.otf")).toBe(
+      "/texlive/texmf-dist/fonts/opentype/invented/Invented-Regular.otf",
+    );
+    expect(fonts.nativePath("Nosuch.otf")).toBeUndefined();
+  });
+
+  it("leaves a file it cannot read out of what the fonts set, names it, and reads it again next time", async () => {
+    // One failed fetch of a shape no text uses must not leave every accent out of the document.
+    const { fonts, reads } = libraryOver(
+      {
+        "/fonts/opentype/invented/Invented-Regular.otf": nativeFont([0xe9, 0x2013]),
+        "/fonts/opentype/invented/Invented-Bold.otf": nativeFont([0xe9]),
+        "/fonts/opentype/invented/Broken.otf": new Uint8Array([0, 1, 0, 0, 0, 0]),
+      },
+      "Invented-Bold.otf",
+    );
+    const names = ["Invented-Regular.otf", "Invented-Bold.otf"];
+    const first = await fonts.coverage(names);
+    expect(first.unread).toEqual(["Invented-Bold.otf"]);
+    expect(first.covers("\u{e9}")).toBe(true);
+    expect(first.covers("\u{2013}")).toBe(true);
+    // The next compile reads it again, and it takes its part: it has no en dash.
+    const second = await fonts.coverage(names);
+    expect(reads.get("/fonts/opentype/invented/Invented-Bold.otf")).toBe(2);
+    expect(second.unread).toEqual([]);
+    expect(second.covers("\u{2013}")).toBe(false);
+    // A file that does not parse takes no part either.
+    const broken = await fonts.coverage(["Invented-Regular.otf", "Broken.otf"]);
+    expect(broken.unread).toEqual(["Broken.otf"]);
+    expect(broken.covers("\u{e9}")).toBe(true);
+    // And with none read, nothing is left out.
+    expect((await fonts.coverage(["Broken.otf"])).covers("\u{2192}")).toBe(true);
   });
 
   it("refuses a chain of virtual fonts more than four deep", async () => {

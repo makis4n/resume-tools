@@ -150,10 +150,11 @@ end to end before the other two templates, so that the editing loop is proven on
     dropped because the loop writes DVI, two columns through paracol, and icons from Font
     Awesome's Type 1 fonts. Measure what TikZ and tcolorbox in the format cost per compile before
     anything else.
-21. [ ] **XeTeX templates.** Decision 0003's loop in the worker: a format holding no native font,
+21. [x] **XeTeX templates.** Decision 0003's loop in the worker: a format holding no native font,
     and fonts declared by file. Native fonts are drawn through opentype.js, which becomes a
-    runtime dependency, and the overlay's web fonts are the OpenType files themselves. The body
-    re-emits the hyperref specials that `\dump` drops, so the PDF matches a plain compile.
+    runtime dependency, and the overlay's web fonts are the OpenType files themselves. The
+    specials that `\dump` drops change nothing a reader sees, so the body re-emits none and the
+    PDF matches a plain compile's but for named destinations nothing links to (decision 0014).
 22. [ ] **Port Awesome-CV.** A renamed class, its fonts from TeX Live, the name split into first
     and last, its controls, and XeTeX's longer debounce.
 

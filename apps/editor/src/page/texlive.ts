@@ -6,13 +6,18 @@
 import type { EngineManifest } from "../engine/manifest";
 import { TREES } from "../engine/session";
 
-/** Where each kind of file lives under a tree, as kpathsea's search paths say. */
+/**
+ * Where each kind of file lives under a tree, as kpathsea's search paths say. XeTeX reads the
+ * TrueType and OpenType files a template declares by name (decision 0014) from the last two.
+ */
 const KINDS = {
   tfm: "/fonts/tfm/",
   type1: "/fonts/type1/",
   enc: "/fonts/enc/",
   map: "/fonts/map/",
   vf: "/fonts/vf/",
+  truetype: "/fonts/truetype/",
+  opentype: "/fonts/opentype/",
 } as const;
 
 export type FileKind = keyof typeof KINDS;

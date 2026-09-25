@@ -2,7 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { bound, fastest } from "../test/timing";
 import { type DviPage, type PageItem, parseDvi } from "./dvi";
-import { alignField, alignGlyphs, collectFields, type GlyphTextOf } from "./fields";
+import {
+  alignField,
+  alignGlyphs,
+  collectFields,
+  type FieldGlyph,
+  type GlyphTextOf,
+} from "./fields";
 import { accentMark, glyphText } from "./glyphs";
 import { parseTfm, scaleTfm } from "./tfm";
 import { parseType1 } from "./type1";
@@ -149,6 +155,99 @@ describe("collectFields", () => {
   });
 });
 
+describe("collectFields with XeTeX's native runs", () => {
+  /** A native run of a glyph per character, glyph ids being the characters' codes. */
+  const run = (text: string, at = 0): PageItem => ({
+    kind: "native",
+    font: 1,
+    h: at,
+    v: 0,
+    width: text.length,
+    glyphs: [...text].map((char, i) => ({ id: char.charCodeAt(0), x: i, y: 0 })),
+  });
+  const nativeText: GlyphTextOf = (item, glyph) =>
+    item.kind === "native" && glyph !== undefined
+      ? String.fromCharCode(item.glyphs[glyph]?.id ?? 0)
+      : textOf(item);
+
+  it("collects each glyph of a run as a glyph of its own, with its index in the run", () => {
+    const p = page([special("rt:b:f"), run("Ada"), glyph(32), run("Lov", 4), special("rt:e:f")]);
+    const field = collectFields(p, nativeText).get("f");
+    expect(field?.glyphs.map((g) => [g.item, g.glyph, g.text])).toEqual([
+      [1, 0, "A"],
+      [1, 1, "d"],
+      [1, 2, "a"],
+      [2, undefined, " "],
+      [3, 0, "L"],
+      [3, 1, "o"],
+      [3, 2, "v"],
+    ]);
+    // A glyph the font has no text for is a glyph all the same.
+    const blind = collectFields(
+      page([special("rt:b:f"), run("xy"), special("rt:e:f")]),
+      () => undefined,
+    );
+    expect(blind.get("f")?.glyphs.map((g) => g.text)).toEqual([undefined, undefined]);
+  });
+
+  it("pairs no native glyph with an accent before it: native fonts set letters whole", () => {
+    const acute: PageItem = { kind: "glyph", font: 0, code: 19, h: 0, v: 0, width: 5 };
+    const named: GlyphTextOf = Object.assign(
+      (item: PageItem, glyph?: number) => (item.kind === "glyph" ? "´" : nativeText(item, glyph)),
+      { accent: (item: PageItem) => (item.kind === "glyph" ? "́" : undefined) },
+    );
+    const field = collectFields(page([special("rt:b:f"), acute, run("e")]), named).get("f");
+    expect(field?.glyphs.map((g) => g.text)).toEqual(["´", "e"]);
+  });
+
+  it("reads glyph 0, the font's .notdef, as a character left out, not as one unmatched", () => {
+    // XeTeX sets a font's .notdef for a character the font lacks, where pdfTeX's LaTeX leaves the
+    // character out; the generator leaves out what the package's fonts lack, so only a template's
+    // own text, or a character one family has and another lacks, can still set one.
+    const withNotdef: PageItem = {
+      kind: "native",
+      font: 1,
+      h: 0,
+      v: 0,
+      width: 5,
+      glyphs: [..."ab"].map((char, i) => ({ id: char.charCodeAt(0), x: i, y: 0 })),
+    };
+    const glyphs = withNotdef.kind === "native" ? withNotdef.glyphs : [];
+    glyphs.splice(1, 0, { id: 0, x: 1, y: 0 });
+    const field = collectFields(page([special("rt:b:f"), withNotdef]), (item, glyph) =>
+      item.kind === "native" && glyph !== undefined && item.glyphs[glyph]?.id !== 0
+        ? String.fromCharCode(item.glyphs[glyph]?.id ?? 0)
+        : undefined,
+    ).get("f");
+    expect(field?.glyphs.map((g) => [g.text, g.dropped])).toEqual([
+      ["a", undefined],
+      [undefined, true],
+      ["b", undefined],
+    ]);
+    if (!field) return;
+    // It stands where the walk is, and the character it stands for is skipped as one that sets
+    // no glyph.
+    expect(alignField(field, "a\u{2192}b")).toEqual({ unmatched: 0, covered: 3 });
+    expect(field.glyphs.map((g) => g.offset)).toEqual([0, 1, 2]);
+  });
+
+  it("keeps every character a glyph's font reaches it from, for the aligner", () => {
+    // As Source Sans's map gives its apostrophe U+2019 and U+02BC.
+    const aliased: GlyphTextOf = Object.assign(nativeText, {
+      alternatives: (item: PageItem, glyph?: number) =>
+        item.kind === "native" && glyph !== undefined && item.glyphs[glyph]?.id === 0x2019
+          ? ["\u{2bc}"]
+          : undefined,
+    });
+    const field = collectFields(page([special("rt:b:f"), run("a\u{2019}s")]), aliased).get("f");
+    expect(field?.glyphs.map((g) => [g.text, g.alternatives])).toEqual([
+      ["a", undefined],
+      ["\u{2019}", ["\u{2bc}"]],
+      ["s", undefined],
+    ]);
+  });
+});
+
 describe("collectFields with accents", () => {
   // accents.dvi sets, in cmr10, OT1's `caf\'e \'Etude na\"\i ve` in one field, and
   // `\textasciitilde mara\^{}x` in another: the same accent glyphs, standing alone.
@@ -292,7 +391,20 @@ describe("collectFields with accents", () => {
 
 const fieldOf = (glyphTexts: (string | undefined)[]) => ({
   id: "f",
-  glyphs: glyphTexts.map((text, i) => ({ item: i, text, offset: -1 })),
+  glyphs: glyphTexts.map((text, i) => ({ item: i, text, offset: -1 })) as FieldGlyph[],
+});
+
+/** A field of one glyph per text, each glyph standing for the characters its entry lists. */
+const aliasedFieldOf = (glyphTexts: string[][]) => ({
+  id: "f",
+  glyphs: glyphTexts.map(
+    ([text, ...alternatives], i): FieldGlyph => ({
+      item: i,
+      text,
+      ...(alternatives.length > 0 ? { alternatives } : {}),
+      offset: -1,
+    }),
+  ),
 });
 
 describe("alignField", () => {
@@ -398,6 +510,61 @@ describe("alignGlyphs", () => {
     expect(quote.glyphs.map((g) => g.offset)).toEqual([0, 1, 2]);
   });
 
+  it("matches what XeTeX's tex-text mapping sets to what the text spells", () => {
+    // A native font's glyph reads as the character its map gives it, which the mapping made of
+    // the text's --, ---, ', `, '', ``, " and ,, as TeX's ligatures do.
+    const glyphs = ["\u{2019}", "\u{2013}", "\u{2014}", "\u{201c}", "\u{201d}", "\u{2018}"];
+    const f = fieldOf([...glyphs, "\u{201d}", "\u{201e}"]);
+    expect(alignGlyphs(f, "'-- ---``''`\",,")).toBe(0);
+    expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 4, 7, 9, 11, 12, 13]);
+    // And each still matches itself, where a text holds it.
+    const typed = fieldOf(["\u{2019}", "\u{2013}"]);
+    expect(alignGlyphs(typed, "\u{2019}\u{2013}")).toBe(0);
+    expect(typed.glyphs.map((g) => g.offset)).toEqual([0, 1]);
+  });
+
+  it("matches a letter set without the accent its font lacks to the accented letter", () => {
+    // The generator sets ǎ as a where the fonts have neither it nor the caron, as pdfTeX's LaTeX
+    // sets the base of a letter it has no definition for.
+    const f = fieldOf([..."Xiaoming"]);
+    expect(alignField(f, "Xi\u{1ce}oming")).toEqual({ unmatched: 0, covered: 8 });
+    expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    // And one typed decomposed, whose accent sets nothing.
+    const decomposed = fieldOf([..."Xiaoming"]);
+    expect(alignGlyphs(decomposed, "Xia\u{30c}oming")).toBe(0);
+    // A letter is not a base of another letter, nor of a character with anything but accents.
+    expect(alignGlyphs(fieldOf(["a"]), "\u{e6}")).toBe(1);
+  });
+
+  it("matches a glyph to any character its font reaches it from", () => {
+    // Source Sans's apostrophe is U+2019 and U+02BC, and its micro sign U+00B5 and U+03BC.
+    const quote = ["\u{2019}", "\u{2bc}"];
+    const typed = aliasedFieldOf([["O"], quote, ["N"], quote, ["s"]]);
+    expect(alignGlyphs(typed, "O'N\u{2bc}s")).toBe(0);
+    expect(typed.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 4]);
+    const mu = ["\u{b5}", "\u{3bc}"];
+    const micro = aliasedFieldOf([["5"], mu, ["m"], ["5"], mu, ["m"]]);
+    expect(alignGlyphs(micro, "5 \u{b5}m 5 \u{3bc}m")).toBe(0);
+    expect(micro.glyphs.map((g) => g.offset)).toEqual([0, 2, 3, 5, 7, 8]);
+  });
+
+  it("takes a hyphen that is also U+2011 for the U+2011 a text holds, not for one TeX inserted", () => {
+    // Source Sans's hyphen is U+002D, U+2010, U+2011 and the soft hyphen.
+    const hyphen = ["-", "\u{2010}", "\u{2011}", "\u{ad}"];
+    const f = aliasedFieldOf([["N"], ["o"], ["n"], hyphen, ["s"], ["t"], ["o"], ["p"]]);
+    expect(alignGlyphs(f, "Non\u{2011}stop")).toBe(0);
+    expect(f.glyphs[3]?.offset).toBe(3);
+    expect(f.glyphs[3]?.inserted).toBeUndefined();
+    // Where the text holds nothing for it, it is the hyphen TeX inserted at a line break.
+    const broken = aliasedFieldOf([["t"], ["y"], ["p"], ["e"], hyphen, ["s"], ["e"], ["t"]]);
+    expect(alignGlyphs(broken, "typeset")).toBe(0);
+    expect(broken.glyphs[4]?.inserted).toBe(true);
+    // A glyph that is only U+2010 or U+2011 is not the hyphen TeX inserts, which is U+002D's.
+    const other = aliasedFieldOf([["t"], ["y"], ["p"], ["e"], ["\u{2010}", "\u{2011}"], ["s"]]);
+    expect(alignGlyphs(other, "types")).toBe(1);
+    expect(other.glyphs[4]?.inserted).toBeUndefined();
+  });
+
   it("matches T1's one glyph for Ð and Đ to either", () => {
     const f = fieldOf(["\u{d0}", "a", "\u{d0}"]);
     expect(alignGlyphs(f, "\u{110}a\u{d0}")).toBe(0);
@@ -427,8 +594,9 @@ describe("alignGlyphs", () => {
   });
 
   it("reads a run of characters that set no glyph once, however many glyphs miss in it", () => {
-    // OT1 sets é as an accent, which has no text, and an e, which no é matches; and … as three
-    // periods, which no … matches either. Each glyph used to walk the rest of the run.
+    // OT1 sets é as an accent, which has no text, and an e, which matches its é as the letter
+    // set without its accent; and … as three periods, which no … matches. Each glyph that missed
+    // used to walk the rest of the run.
     // Read once, each field costs 9.4 to 10.6 times what it costs at a tenth of its length, in CPU
     // time (`fastest`); walked again for each glyph, 97 to 116 times. So each is bound by three
     // times ten times its tenth, and by 100 ms.
@@ -439,7 +607,7 @@ describe("alignGlyphs", () => {
       ] as const;
     const dotted = (count: number) =>
       [fieldOf(Array.from({ length: 3 * count }, () => ".")), "\u{2026}".repeat(count)] as const;
-    expect(alignGlyphs(...accented(8_000))).toBe(16_000);
+    expect(alignGlyphs(...accented(8_000))).toBe(8_000);
     expect(alignGlyphs(...dotted(6_000))).toBe(18_000);
     for (const [shape, count] of [
       [accented, 8_000],

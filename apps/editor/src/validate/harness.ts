@@ -24,12 +24,18 @@
 import type { Resume, RichText } from "@resume-tools/resume-model";
 import { summariseLog } from "../engine/log";
 import type { CompileResult, DumpResult, EngineSession, PdfResult } from "../engine/session";
-import { glyphTextOf, paperSize, widthsOf } from "../page/draw";
-import type { FontLibrary, PageFont } from "../page/fonts";
+import { glyphTextOf, nativeProblem, paperSize, widthsOf } from "../page/draw";
+import type { FontLibrary, NativePageFont, PageFont } from "../page/fonts";
+import { type NativeFontFile, nativeFileName } from "../page/native";
 import { CURATED } from "../templates/curated";
 import { isBlank } from "../templates/escape";
 import { generateBody, generateFormat } from "../templates/generate";
-import { ControlValues, defaultControls, type TemplatePackage } from "../templates/package";
+import {
+  ControlValues,
+  defaultControls,
+  fontFiles,
+  type TemplatePackage,
+} from "../templates/package";
 import { PARAGRAPH_MARKER } from "../templates/prelude";
 import { type DviDocument, type PageItem, parseDvi } from "../tex/dvi";
 import {
@@ -167,6 +173,11 @@ export async function validatePackage(
     findings: [],
   };
   const { findings } = report;
+  findings.push(...checkFontFiles(pkg, fonts));
+  // What a XeTeX package's fonts can set, as the editor reads it, so that every body leaves out
+  // what they cannot, as the editor's does (decision 0014).
+  const files = fontFiles(pkg);
+  const covers = files.length === 0 ? undefined : (await fonts.coverage(files)).covers;
 
   // The generator throws for what it cannot render, such as a body past MAX_BODY or a font the
   // package no longer lists, and the session for a run the engine cannot finish; either is a
@@ -187,7 +198,7 @@ export async function validatePackage(
   // that a template that needs a third as a new document shows.
   const compile = (latex: string) =>
     session.compile(pkg.engine, format.name, latex, { job, maxPasses: 3 });
-  const body = attempt(findings, "compile", () => generateBody(pkg, sample, chosen));
+  const body = attempt(findings, "compile", () => generateBody(pkg, sample, chosen, { covers }));
   if (body === undefined) return report;
   const first = attempt(findings, "compile", () => compile(body.latex));
   if (first === undefined) return report;
@@ -207,7 +218,7 @@ export async function validatePackage(
   findings.push(...checkConverges(first, output, second));
 
   const editedBody = attempt(findings, "edits", () =>
-    generateBody(pkg, editEverything(sample), chosen),
+    generateBody(pkg, editEverything(sample), chosen, { covers }),
   );
   const edited =
     editedBody === undefined
@@ -221,11 +232,11 @@ export async function validatePackage(
   // in the editor. So nothing is restored after them. The first reads the auxiliary files the
   // edit's compile wrote, so only a template whose page shows what they hold, which the edits
   // check reports, could pass a control that does nothing.
-  const controls = checkControls(session, pkg, sample, chosen, format.name, output, job);
+  const controls = checkControls(session, pkg, sample, chosen, format.name, output, job, covers);
   report.passes.push(...controls.passes);
   findings.push(...controls.findings);
 
-  const { fields, undrawable } = await readFields(fonts, output, doc);
+  const { fields, undrawable, natives } = await readFields(fonts, output, doc);
   report.pages = doc.pages.length;
   report.fields = fields.size;
   const fieldFindings = checkFields(doc, fields, body.texts);
@@ -242,9 +253,10 @@ export async function validatePackage(
     ...fieldFindings,
     ...alignmentFindings,
     ...checkFonts(undrawable),
+    ...checkNotdefs(doc, first.log),
     ...checkSpecial(doc),
     ...pdfFindings,
-    ...(pdf === undefined ? [] : checkPdf(pdf, doc, fields, body.texts, reported)),
+    ...(pdf === undefined ? [] : checkPdf(pdf, doc, fields, body.texts, reported, natives)),
   );
   return report;
 }
@@ -339,6 +351,29 @@ function checkDump(dumped: DumpResult): Finding[] {
 }
 
 /**
+ * `dump`, before it: every font file a XeTeX package's `fonts` section names is one TeX Live has
+ * in `fonts/opentype` or `fonts/truetype`, where XeTeX and the page find it (decision 0014). The
+ * declarations load nothing, so the format dumps whatever they name, and a file the tree lacks
+ * fails every compile that selects its shape, which the sample may never do, as a bold italic run
+ * would. A finding names each such file and the shapes that name it, and the run goes on.
+ */
+function checkFontFiles(pkg: TemplatePackage, fonts: FontLibrary): Finding[] {
+  const shapesOf = new Map<string, string[]>();
+  for (const { family, shapes } of pkg.fonts ?? [])
+    for (const [shape, file] of Object.entries(shapes)) {
+      const named = shapesOf.get(file) ?? [];
+      named.push(`${family} ${shape}`);
+      shapesOf.set(file, named);
+    }
+  return [...shapesOf]
+    .filter(([file]) => fonts.nativePath(file) === undefined)
+    .map(([file, shapes]) => ({
+      check: "dump",
+      message: `${file}, the font file of ${shapes.join(" and ")}, is not one TeX Live has in fonts/opentype or fonts/truetype`,
+    }));
+}
+
+/**
  * `compile`: the body the generator makes from the resume compiles from the format with no error
  * in the log, to output the page can read. A failure means the template's snippets do not fit
  * its macros, or the resume reaches something the template cannot set, such as an empty argument
@@ -412,6 +447,7 @@ function checkControls(
   format: string,
   output: Uint8Array,
   job: string,
+  covers: ((char: string) => boolean) | undefined,
 ): { findings: Finding[]; passes: number[] } {
   const findings: Finding[] = [];
   const passes: number[] = [];
@@ -426,7 +462,7 @@ function checkControls(
           continue;
         }
       }
-      const body = generateBody(pkg, sample, values);
+      const body = generateBody(pkg, sample, values, { covers });
       const result = session.compile(pkg.engine, probe.name, body.latex, { job, maxPasses: 3 });
       passes.push(...result.passes);
       const error = compileError(result);
@@ -663,8 +699,10 @@ function alignmentProblem(field: Field, text: string, coverage: boolean): string
  * fonts LaTeX's T1 and TS1 take for Computer Modern, which the tree has only the metrics of. Each
  * font is loaded as the page loads it (`readFields`), and the loader says why one cannot be drawn,
  * or what went wrong reading its files. A glyph from a font that cannot be drawn has no text, so a
- * field that holds one fails the alignment check as well. XeTeX's native fonts are not among them
- * yet: the page draws them from item 21 on.
+ * field that holds one fails the alignment check as well. XeTeX's native fonts are among them, by
+ * their file's name (decision 0014): one the tree lacks, one that cannot be read, and one XeTeX
+ * set emboldened or from a later face of a collection, which the page draws as boxes
+ * (`nativeProblem`).
  */
 function checkFonts(undrawable: ReadonlyMap<string, string>): Finding[] {
   return [...undrawable].map(
@@ -704,6 +742,42 @@ type GraphicsStateChange = "transforming" | "open" | "transform" | "close" | "sc
 /** What a special does to xdvipdfmx's graphics state, if anything. */
 function graphicsStateChange(text: string): GraphicsStateChange | undefined {
   return GRAPHICS_STATE.find(([pattern]) => pattern.test(text))?.[1];
+}
+
+/**
+ * XeTeX's log line for a character a native font lacks, which it sets the font's `.notdef` for:
+ * the character, its code point, and the font's file, as `[<file>]` begins its name.
+ */
+const MISSING_CHARACTER =
+  /Missing character: There is no (.+?) \(U\+([0-9A-F]+)\) in font \[([^\]]+)\]/g;
+
+/**
+ * `fonts`, as well: the template sets no character its font lacks. XeTeX sets a native font's
+ * `.notdef`, glyph 0, for one, a box the PDF shows and the page, which reads glyph 0 as a
+ * character left out, does not (decision 0014). The generator leaves out what a user types that
+ * the package's fonts lack, so such a glyph comes from the template's own text, which its package
+ * has to set in a font that has it. A finding names each font a glyph 0 of the output is set in, or
+ * that XeTeX's log says lacks a character, with the characters the log names for it.
+ */
+function checkNotdefs(doc: DviDocument, log: string): Finding[] {
+  const lacking = new Map<string, Set<string>>();
+  const of = (file: string) => {
+    const characters = lacking.get(file) ?? new Set<string>();
+    lacking.set(file, characters);
+    return characters;
+  };
+  for (const { items } of doc.pages)
+    for (const item of items) {
+      const font = item.kind === "native" ? doc.nativeFonts.get(item.font) : undefined;
+      if (font !== undefined && item.kind === "native" && item.glyphs.some(({ id }) => id === 0))
+        of(nativeFileName(font.name));
+    }
+  for (const [, char = "", point = "", file = ""] of log.matchAll(MISSING_CHARACTER))
+    of(nativeFileName(file)).add(`${char} (U+${point})`);
+  return [...lacking].map(([file, characters]) => ({
+    check: "fonts",
+    message: `the template sets a character ${file} lacks, ${[...characters].join(", ")}${characters.size > 0 ? ", " : ""}which the PDF shows as a box and the page leaves out`,
+  }));
 }
 
 /**
@@ -842,6 +916,36 @@ const PDF_SIZE_TOLERANCE = 0.01;
 const SHOWN_AS_ITSELF = /^[A-Za-z0-9.,:;!?'()[\]@#%&*+=/-]+$/;
 
 /**
+ * The single quotes XeTeX's `tex-text` mapping sets for the straight apostrophe and backtick a
+ * text holds, which a native font's ToUnicode map reads as themselves (decision 0014).
+ */
+const CURLED = /[\u2018\u2019]/g;
+
+/**
+ * A text with each character a native font's map gives one glyph with others read as the one the
+ * glyph reads as first (`NativeFontFile.textsOf`), in any of `natives`. xdvipdfmx's ToUnicode map
+ * gives such a glyph the highest of its characters, so a hyphen typed in Source Sans Pro, whose
+ * map gives its hyphen U+002D, U+00AD, U+2010 and U+2011, shows in the PDF's text as U+2011, and
+ * reads here as the hyphen again (decision 0014).
+ */
+function unaliased(text: string, natives: readonly NativeFontFile[]): string {
+  let out = "";
+  for (const char of text) {
+    let first = char;
+    for (const file of natives) {
+      const glyph = file.glyphFor(char);
+      const [read] = glyph === undefined ? [] : file.textsOf(glyph);
+      if (read !== undefined && read !== char && [...read].length === 1) {
+        first = read;
+        break;
+      }
+    }
+    out += first;
+  }
+  return out;
+}
+
+/**
  * Characters TeX's text fonts may set as one glyph, a ligature, under a code of its own, which
  * differs from OT1 to T1: ff, fi and fl, the dashes, the closing double quote, and in T1 the low
  * double quote that two commas make.
@@ -856,7 +960,12 @@ const LIGATURE = /ff|fi|fl|--|''|,,/;
  * A field is looked for by its first word, its text up to the first space, among the strings the
  * PDF's text operators show, where the glyphs' codes stand for the characters, which holds only
  * for what `SHOWN_AS_ITSELF` allows, and not for a ligature; a field whose first word has a
- * character outside ASCII, or anything else those rule out, is skipped. A first word TeX broke at
+ * character outside ASCII, or anything else those rule out, is skipped. A native font's text,
+ * XeTeX's, is read through its ToUnicode map (`shownStrings`), where the quotes XeTeX's
+ * `tex-text` mapping curls read as the straight ones the text holds, and a character its font's
+ * map gives one glyph with others as the one the glyph reads as first (`unaliased`), since
+ * xdvipdfmx shows such a glyph as the highest, as it shows Source Sans Pro's hyphen as U+2011. A
+ * first word TeX broke at
  * a line end lands in two text operators, its halves split by a hyphen TeX inserted, so a word not
  * in any one string is looked for in the strings joined, with that hyphen anywhere inside it. A
  * field the fields or alignment checks report (`reported`) is left to them. A PDF xdvipdfmx cannot
@@ -869,6 +978,7 @@ function checkPdf(
   found: ReadonlyMap<string, Field>,
   texts: ReadonlyMap<string, string>,
   reported: ReadonlySet<string>,
+  natives: ReadonlyMap<string, NativePageFont>,
 ): Finding[] {
   const pdf = made.pdf;
   if (!made.ok || pdf === undefined)
@@ -895,7 +1005,8 @@ function checkPdf(
       check: "pdf",
       message: "no font of the PDF has a ToUnicode map, so its text cannot be read",
     });
-  const shown = shownStrings(pdf);
+  const files = [...natives.values()].flatMap((font) => font.file ?? []);
+  const shown = shownStrings(pdf).map((text) => unaliased(text, files).replace(CURLED, "'"));
   // The operators joined in order, nothing between them, so a first word broken across two of them
   // reads as one, its halves split by the hyphen TeX inserted at the break.
   const joined = shown.join("");
@@ -938,19 +1049,24 @@ function readDvi(output: Uint8Array): DviDocument {
 }
 
 /**
- * The fields an output's pages show, and the fonts the page cannot draw them with, with the
- * reason. Each font `doc`, the output as `readDvi` parsed it, uses is loaded once, as the page
- * loads it; the output is parsed again with their widths, as the page parses it, since whether an
- * accent stands over the letter after it depends on where each starts (`collectFields`); and each
- * glyph is named as the page names it (`glyphTextOf`), so a glyph from a font that cannot be
- * drawn has no text. A field is the first copy the pages show, page by page, as `collectFields`
- * keeps it on each.
+ * The fields an output's pages show, the fonts the page cannot draw them with, with the reason,
+ * and the native fonts it loaded, by file name, which the PDF check reads the PDF's text with
+ * (`unaliased`). Each font `doc`, the output as `readDvi` parsed it, uses is loaded once, as the page
+ * loads it, TeX fonts and XeTeX's native ones alike; the output is parsed again with the TeX
+ * fonts' widths, as the page parses it, since whether an accent stands over the letter after it
+ * depends on where each starts (`collectFields`); and each glyph is named as the page names it
+ * (`glyphTextOf`), so a glyph from a font that cannot be drawn has no text. A field is the first
+ * copy the pages show, page by page, as `collectFields` keeps it on each.
  */
 async function readFields(
   fonts: FontLibrary,
   output: Uint8Array,
   doc: DviDocument,
-): Promise<{ fields: Map<string, Field>; undrawable: Map<string, string> }> {
+): Promise<{
+  fields: Map<string, Field>;
+  undrawable: Map<string, string>;
+  natives: Map<string, NativePageFont>;
+}> {
   const loaded = new Map<string, PageFont>();
   const undrawable = new Map<string, string>();
   for (const name of new Set([...doc.fonts.values()].map((font) => font.name))) {
@@ -968,8 +1084,22 @@ async function readFields(
     loaded.set(name, font);
     if (font.missing !== undefined) undrawable.set(name, font.missing);
   }
+  const natives = new Map<string, NativePageFont>();
+  for (const name of new Set([...doc.nativeFonts.values()].map((f) => nativeFileName(f.name)))) {
+    try {
+      const font = await fonts.loadNative(name);
+      if (font !== undefined) natives.set(name, font);
+    } catch (error) {
+      undrawable.set(name, messageOf(error));
+    }
+  }
+  for (const def of doc.nativeFonts.values()) {
+    const name = nativeFileName(def.name);
+    const problem = undrawable.has(name) ? undefined : nativeProblem(def, natives.get(name));
+    if (problem !== undefined) undrawable.set(name, problem);
+  }
   const placed = parseDvi(output, widthsOf(loaded));
-  return { fields: fieldsOf(placed, glyphTextOf(placed, loaded)), undrawable };
+  return { fields: fieldsOf(placed, glyphTextOf(placed, loaded, natives)), undrawable, natives };
 }
 
 /** The first copy of each field the pages show, page by page, as `collectFields` finds them. */

@@ -20,6 +20,12 @@
  * glyph, while its metrics still place the glyphs after it. What every page needs is passed on
  * when it cannot be read: a font's metrics, the font map and the glyph list. Nothing is logged
  * here; the callers report.
+ *
+ * XeTeX's native fonts, the OpenType and TrueType files a XeTeX template declares by name
+ * (decision 0014), are loaded here too (`loadNative`), by the file's name, from the tree's
+ * `fonts/opentype` and `fonts/truetype` folders, and read through opentype.js (`native.ts`). They
+ * need no metrics, since the XDV places every glyph, and one that cannot be read is left undrawn
+ * with the reason, as a Type 1 font is.
  */
 
 import { parseEncoding } from "../tex/enc";
@@ -37,12 +43,16 @@ import { parseTfm, type Tfm } from "../tex/tfm";
 import { parseType1 } from "../tex/type1";
 import { expand, type Placement, parseVf } from "../tex/vf";
 import { type FontMapEntry, parseFontMaps } from "./fontmap";
+import { type NativeFontFile, nativeCoverage, parseNativeFont } from "./native";
 import type { TexLiveIndex } from "./texlive";
 
 /** Reads a TeX Live file by its path in the engine's file system. */
 export type ReadFile = (path: string) => Promise<Uint8Array>;
 
+/** A TeX font: metrics from a TFM, and outlines from a Type 1 file or a virtual font. */
 export interface PageFont {
+  /** Tells it from a native font (`NativePageFont`), which a field's layout may name instead. */
+  kind: "tex";
   name: string;
   tfm: Tfm;
   /** Outlines, or undefined when they cannot be drawn faithfully; see `missing`. */
@@ -51,6 +61,28 @@ export interface PageFont {
   missing?: string;
   /** The text the glyph a code draws stands for; undefined for a code the font does not draw. */
   text: (code: number) => string | undefined;
+}
+
+/**
+ * A font XeTeX set text in from its file (decision 0014), by the file's name: the last segment of
+ * the path the XDV gives (`nativeFileName`).
+ */
+export interface NativePageFont {
+  /** Tells it from a TeX font (`PageFont`). */
+  kind: "native";
+  name: string;
+  /** The file as the page reads it, or undefined when it cannot be; see `missing`. */
+  file?: NativeFontFile;
+  /** Why there is no file to draw from, for the harness and the console. */
+  missing?: string;
+}
+
+/** What a XeTeX package's native fonts can set among them (`FontLibrary.coverage`). */
+export interface NativeCoverage {
+  /** Whether every text font that loaded covers a character. */
+  covers: (char: string) => boolean;
+  /** The files the tree has that could not be read or parsed, by name, which take no part. */
+  unread: string[];
 }
 
 /** A fix_word's 1.0. */
@@ -139,6 +171,8 @@ export class FontLibrary {
   private map: Promise<Map<string, FontMapEntry>> | undefined;
   private agl: Promise<ReadonlyMap<string, string>> | undefined;
   private readonly fonts = new Map<string, Promise<PageFont | undefined>>();
+  /** XeTeX's native fonts, by file name. */
+  private readonly natives = new Map<string, Promise<NativePageFont | undefined>>();
   /**
    * Type 1 outlines by file, read and interpreted once for the fonts that share a file, as
    * `ec-lmr10` and `ts1-lmr10` share `lmr10.pfb`.
@@ -147,8 +181,11 @@ export class FontLibrary {
   private readonly encodings = new Map<string, Promise<string[]>>();
   /** What reads threw, which leave a font undrawn this time only. */
   private readonly failedReads = new WeakSet<object>();
-  /** Fonts a failed read left undrawn, which `load` forgets, so that the next draw reads again. */
-  private readonly unread = new WeakSet<PageFont>();
+  /**
+   * Fonts a failed read left undrawn, which `load` and `loadNative` forget, so that the next draw
+   * reads again.
+   */
+  private readonly unread = new WeakSet<PageFont | NativePageFont>();
   /** The fonts each virtual font waits for while it loads, so that a cycle is refused. */
   private readonly waiting = new Map<string, ReadonlySet<string>>();
   /** How many virtual fonts deep each virtual font's glyphs are composed, for `MAX_CHAIN`. */
@@ -173,6 +210,60 @@ export class FontLibrary {
       () => this.loadNow(name),
       (font) => !font || !this.unread.has(font),
     );
+  }
+
+  /**
+   * The native font XeTeX set text in from the file `name`, found by that name among the tree's
+   * OpenType and TrueType files, or undefined when the tree has no such file. A file that cannot be
+   * read or parsed leaves the font `missing`, with the reason: kept for the session when the fault
+   * is in the file, and forgotten once it settles when a read failed, as `load` does.
+   */
+  loadNative(name: string): Promise<NativePageFont | undefined> {
+    return shared(
+      this.natives,
+      name,
+      () => this.loadNativeNow(name),
+      (font) => !font || !this.unread.has(font),
+    );
+  }
+
+  /**
+   * What a XeTeX package's native font files `names` can set wherever its template sets a text
+   * (`nativeCoverage`), from those that load as `loadNative` loads them, and the files the tree
+   * has that could not be read or parsed, by name, which take no part. A file the tree lacks sets
+   * no text, since XeTeX cannot load it either, and takes no part either. A read that failed is not
+   * kept, as `loadNative` keeps none, so the next call reads the file again. The generator leaves
+   * out of the package's texts what they cannot set (decision 0014).
+   */
+  async coverage(names: readonly string[]): Promise<NativeCoverage> {
+    const fonts = await Promise.all(names.map((name) => this.loadNative(name)));
+    const files: NativeFontFile[] = [];
+    const unread: string[] = [];
+    fonts.forEach((font, i) => {
+      if (font?.file !== undefined) files.push(font.file);
+      else if (font !== undefined) unread.push(names[i] as string);
+    });
+    return { covers: nativeCoverage(files), unread };
+  }
+
+  /**
+   * Where the tree keeps the native font file `name`: among its OpenType files, or its TrueType
+   * ones; undefined when it has neither.
+   */
+  nativePath(name: string): string | undefined {
+    return this.index.find("opentype", name) ?? this.index.find("truetype", name);
+  }
+
+  private async loadNativeNow(name: string): Promise<NativePageFont | undefined> {
+    const path = this.nativePath(name);
+    if (!path) return undefined;
+    try {
+      return { kind: "native", name, file: parseNativeFont(await this.fetch(path)) };
+    } catch (error) {
+      const font: NativePageFont = { kind: "native", name, missing: messageOf(error) };
+      if (this.failedReads.has(error as object)) this.unread.add(font);
+      return font;
+    }
   }
 
   /** A file of the tree, marking a failure as a read's, which leaves a font undrawn this time. */
@@ -238,9 +329,9 @@ export class FontLibrary {
         const meant = vector?.[code];
         return (meant === undefined ? undefined : glyphText(meant, agl)) ?? glyphText(glyph, agl);
       });
-      return { name, tfm, outlines, text: (code) => texts[code] };
+      return { kind: "tex", name, tfm, outlines, text: (code) => texts[code] };
     } catch (error) {
-      const font: PageFont = { name, tfm, missing: messageOf(error), text: NO_TEXT };
+      const font: PageFont = { kind: "tex", name, tfm, missing: messageOf(error), text: NO_TEXT };
       if (this.failedReads.has(error as object)) this.unread.add(font);
       return font;
     }
