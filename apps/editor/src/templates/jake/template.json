@@ -21,6 +21,23 @@
       "default": 0.5,
       "apply": "\\geometry{margin={{value}}in}"
     },
+    "fontSize": {
+      "default": 11,
+      "apply": "\\changefontsize{{{value}}pt}"
+    },
+    "font": {
+      "default": "lm",
+      "choices": [
+        { "id": "lm", "name": "Latin Modern", "apply": "" },
+        { "id": "charter", "name": "Charter", "apply": "\\renewcommand{\\rmdefault}{bch}" },
+        { "id": "palatino", "name": "Palatino", "apply": "\\renewcommand{\\rmdefault}{ppl}" },
+        {
+          "id": "helvetica",
+          "name": "Helvetica",
+          "apply": "\\usepackage[scaled=.92]{helvet}\\renewcommand{\\familydefault}{\\sfdefault}"
+        }
+      ]
+    },
     "accent": {
       "default": "#000000",
       "apply": "\\definecolor{rtaccent}{HTML}{{{value}}}"

@@ -199,6 +199,40 @@ function linksOf(items: PageItem[]) {
 
 const INCH = 72.27;
 
+/** Every font size the control offers: 9 to 12 points in half points (plan section 5.4). */
+const SIZES = [9, 9.5, 10, 10.5, 11, 11.5, 12];
+
+/**
+ * What each of Jake's fonts sets the sample in, by TeX Live's names for the family's fonts: what
+ * the name of every font a field is set in begins with, T1's and TS1's alike, and the T1 fonts the
+ * page must use, for the upright, bold, italic and small-caps text the sample has. Helvetica's
+ * italic is its oblique, and each PostScript family's small caps are a virtual font.
+ */
+const FAMILIES: Record<string, { prefix: RegExp; t1: string[] }> = {
+  lm: { prefix: /^(ec|ts1)-lm/, t1: ["ec-lmr10", "ec-lmbx10", "ec-lmri10", "ec-lmcsc10"] },
+  charter: { prefix: /^bch/, t1: ["bchr8t", "bchb8t", "bchri8t", "bchrc8t"] },
+  palatino: { prefix: /^ppl/, t1: ["pplr8t", "pplb8t", "pplri8t", "pplrc8t"] },
+  helvetica: { prefix: /^phv/, t1: ["phvr8t", "phvb8t", "phvro8t", "phvrc8t"] },
+};
+
+/** How tall a page's text is set: from the highest glyph's top to the lowest glyph's bottom. */
+const blockHeight = (page: DrawnPage) =>
+  Math.max(...page.glyphs.map((glyph) => glyph.bottom)) -
+  Math.min(...page.glyphs.map((glyph) => glyph.top));
+
+/** The TeX fonts an output uses, by name. */
+const fontsOf = (output: Uint8Array) => [
+  ...new Set([...parseDvi(output, () => undefined).fonts.values()].map((font) => font.name)),
+];
+
+/** The fonts a page sets its fields' glyphs in, as the SVG names each glyph's font. */
+const fieldFontsOf = (page: DrawnPage) =>
+  new Set(
+    [...page.svg.matchAll(/<use [^>]*data-font="([^"]*)"[^>]*data-field="/g)].flatMap(
+      ([, font]) => font ?? [],
+    ),
+  );
+
 // What every package must do with its sample, the validation harness checks for each curated
 // package (src/validate/harness.test.ts): it compiles to one page and converges, every field it
 // marks is on the page with glyphs that align with its text and a paragraph special after its
@@ -377,7 +411,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     if (!compact || !normal || !relaxed) throw new Error("a density drew no page");
     expect(heights[0]).toBeLessThan(heights[1] ?? 0);
     expect(heights[1]).toBeLessThan(heights[2] ?? 0);
-    // Normal is upstream's spacing, the page the sample opens with.
+    // Normal is the template's own spacing, the page the sample opens with.
     expect(normal.glyphs).toEqual(drawn.glyphs);
     gaps(normal).forEach((gap, i) => {
       expect(gaps(compact)[i]).toBeLessThan(gap);
@@ -404,6 +438,93 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     // Upstream's look by default: nothing on the page the sample opens with has a colour.
     expect(drawn.svg).not.toMatch(/fill="rgb/);
   });
+
+  it("sets every font size from the one format, the whole page growing with it", async () => {
+    // The fontsize package sets every size again from the body's, after the format, so a size
+    // is an ordinary compile, and everything follows it: the name, the section titles titlesec
+    // sets, the entries and the bullets. Fitting on one page is item 18's to do, so a size that
+    // spills is not failed here; the sample fits at every size.
+    const heights: number[] = [];
+    const titles: number[] = [];
+    const names: number[] = [];
+    for (const fontSize of SIZES) {
+      const sized = { ...values, fontSize };
+      expect(generateFormat(pkg, sized).name).toBe(format.name);
+      const body = generateBody(pkg, sample, sized);
+      const { result, page } = await compileAndDraw(
+        body.latex,
+        body.texts,
+        `size-${fontSize * 10}`,
+      );
+      expect(result.log, `${fontSize}`).not.toMatch(/^! /m);
+      expect(page.missingFonts, `${fontSize}`).toEqual(new Map());
+      expect(page.unmatched, `${fontSize}`).toBe(0);
+      heights.push(blockHeight(page));
+      titles.push(widthOf(page, "edu.title"));
+      names.push(widthOf(page, "header.first"));
+    }
+    const said = heights.map((height) => `${height.toFixed(1)} pt`).join(", ");
+    console.log(`Jake's sample, from 9 to 12 points in half points, is ${said} tall`);
+    SIZES.forEach((size, i) => {
+      if (i === 0) return;
+      expect(heights[i], `${size}`).toBeGreaterThan(heights[i - 1] ?? Infinity);
+      expect(titles[i], `${size}`).toBeGreaterThan(titles[i - 1] ?? Infinity);
+      expect(names[i], `${size}`).toBeGreaterThan(names[i - 1] ?? Infinity);
+    });
+  }, 60_000);
+
+  it("draws the sample in each font it offers, every field in the family's own fonts", async () => {
+    const choices = pkg.controls.font?.choices ?? [];
+    expect(choices.map(({ id, name }) => [id, name])).toEqual([
+      ["lm", "Latin Modern"],
+      ["charter", "Charter"],
+      ["palatino", "Palatino"],
+      ["helvetica", "Helvetica"],
+    ]);
+    const costs: string[] = [];
+    for (const { id } of choices) {
+      const family = FAMILIES[id];
+      if (!family) throw new Error(`no family for ${id}`);
+      const chosen = { ...values, font: id };
+      // An ordinary compile: the same format, and the family chosen in the body.
+      expect(generateFormat(pkg, chosen).name).toBe(format.name);
+      const body = generateBody(pkg, sample, chosen);
+      const job = `font-${id}`;
+      const { result, page } = await compileAndDraw(body.latex, body.texts, job);
+      expect(result.log, id).not.toMatch(/^! /m);
+      // A family must draw as well as compile: every glyph drawn, and matched to its text.
+      expect(page.missingFonts, id).toEqual(new Map());
+      expect(page.unmatched, id).toBe(0);
+      expect(fontsOf(result.output as Uint8Array), id).toEqual(expect.arrayContaining(family.t1));
+      const others = [...fieldFontsOf(page)].filter((font) => !family.prefix.test(font));
+      expect(others, `${id}: fields set in another family`).toEqual([]);
+      // A change of font costs one ordinary pass, loading any package it needs in the body.
+      const again = session.compile(pkg.engine, format.name, body.latex, { job, maxPasses: 1 });
+      costs.push(`${id} ${Math.round(again.passes[0] ?? Number.NaN)} ms`);
+    }
+    console.log(`Jake's sample compiles again in one pass in ${costs.join(", ")}`);
+  }, 60_000);
+
+  it("compiles in every font at every size, and says which set more than one page", () => {
+    // Fitting on one page is item 18's to do, so a spill is reported here rather than failed.
+    const spills: string[] = [];
+    for (const { id } of pkg.controls.font?.choices ?? [])
+      for (const fontSize of SIZES) {
+        const body = generateBody(pkg, sample, { ...values, font: id, fontSize });
+        const result = session.compile(pkg.engine, format.name, body.latex, {
+          job: `every-${id}`,
+          maxPasses: 3,
+        });
+        expect(result.ok, `${id} ${fontSize}`).toBe(true);
+        expect(result.log, `${id} ${fontSize}`).not.toMatch(/^! /m);
+        if (result.pages !== 1) spills.push(`${id} at ${fontSize} pt, ${result.pages} pages`);
+      }
+    console.log(
+      spills.length === 0
+        ? "Jake's sample fits on one page in every font at every size"
+        : `Jake's sample spills: ${spills.join("; ")}`,
+    );
+  }, 120_000);
 
   it("compiles every section kind, empty sections and an empty item, as edits pass through", async () => {
     const edges = Resume.parse({

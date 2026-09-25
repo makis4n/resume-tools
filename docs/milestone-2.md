@@ -132,7 +132,7 @@ end to end before the other two templates, so that the editing loop is proven on
     and glyph names from the Adobe Glyph List, in the renderer and in the web fonts. Both the
     font control and AltaCV need them, since TeX Live's other pdfTeX families are re-encoded or
     virtual.
-17. [ ] **Font and font size.** Three or four families per template, from TeX Live. Sizes run
+17. [x] **Font and font size.** Three or four families per template, from TeX Live. Sizes run
     from 9 to 12 pt in half points, with one format per size where the class fixes the size when
     it loads, and scalable Computer Modern for the half sizes.
 18. [ ] **Fit to one page.** The search in the worker: density, then margins, then font size,

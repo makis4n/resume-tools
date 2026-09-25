@@ -9,6 +9,8 @@ import {
   Controls,
   DateFormatControl,
   DensityControl,
+  FontControl,
+  FontSizeControl,
   MarginsControl,
   PageSizeControl,
   SWATCHES,
@@ -28,6 +30,10 @@ function tagWith(html: string, name: string, attribute: string): string {
   if (tags.length !== 1) throw new Error(`${tags.length} ${name} tags have ${attribute}, not one`);
   return tags[0] as string;
 }
+
+/** The margins slider, which steps in tenths of an inch, and the font size slider, in half points. */
+const marginsSlider = (html: string) => tagWith(html, "input", 'step="0.1"');
+const sizeSlider = (html: string) => tagWith(html, "input", 'step="0.5"');
 
 /** Whether the button labelled `label`, by its text or its aria-label, is pressed. */
 function pressed(html: string, label: string): boolean {
@@ -67,8 +73,11 @@ describe("Controls", () => {
     const html = panel({});
     expect(tagWith(html, "input", 'value="letter"')).toContain('checked=""');
     expect(tagWith(html, "input", 'value="a4"')).not.toContain("checked");
-    expect(tagWith(html, "input", 'type="range"')).toContain('value="0.5"');
+    expect(marginsSlider(html)).toContain('value="0.5"');
     expect(html).toContain(">0.5 in</output>");
+    expect(sizeSlider(html)).toContain('value="11"');
+    expect(html).toContain(">11 pt</output>");
+    expect(tagWith(html, "option", 'value="lm"')).toContain('selected=""');
     expect(pressed(html, "Black")).toBe(true);
     expect(tagWith(html, "input", 'type="color"')).toContain('value="#000000"');
     expect(pressed(html, "Normal")).toBe(true);
@@ -80,14 +89,20 @@ describe("Controls", () => {
     const html = panel({
       pageSize: "a4",
       margins: 0.8,
+      fontSize: 10.5,
+      font: "palatino",
       accent: "#1f4e79",
       density: "compact",
       dateFormat: "yyyy",
     });
     expect(tagWith(html, "input", 'value="a4"')).toContain('checked=""');
     expect(tagWith(html, "input", 'value="letter"')).not.toContain("checked");
-    expect(tagWith(html, "input", 'type="range"')).toContain('value="0.8"');
+    expect(marginsSlider(html)).toContain('value="0.8"');
     expect(html).toContain(">0.8 in</output>");
+    expect(sizeSlider(html)).toContain('value="10.5"');
+    expect(html).toContain(">10.5 pt</output>");
+    expect(tagWith(html, "option", 'value="palatino"')).toContain('selected=""');
+    expect(tagWith(html, "option", 'value="lm"')).not.toContain("selected");
     expect(pressed(html, "Dark blue")).toBe(true);
     expect(pressed(html, "Black")).toBe(false);
     expect(tagWith(html, "input", 'type="color"')).toContain('value="#1f4e79"');
@@ -106,6 +121,12 @@ describe("Controls", () => {
       "Margins",
       "Tight",
       "Roomy",
+      "Font size",
+      "Font",
+      "Latin Modern",
+      "Charter",
+      "Palatino",
+      "Helvetica",
       "Accent colour",
       "Other colour",
       ...SWATCHES.map((swatch) => swatch.name),
@@ -119,7 +140,9 @@ describe("Controls", () => {
     ];
     for (const word of words) expect(html, word).toContain(word);
     expect(html).not.toContain("\\");
-    expect(html).not.toMatch(/geometry|definecolor|titlespacing|setlist|rtaccent/);
+    expect(html).not.toMatch(
+      /geometry|definecolor|titlespacing|setlist|rtaccent|changefontsize|rmdefault|familydefault|usepackage/,
+    );
   });
 
   it("shows only the controls a package offers", () => {
@@ -131,8 +154,51 @@ describe("Controls", () => {
     const html = renderToStaticMarkup(<Controls pkg={narrow} values={{}} onChange={() => {}} />);
     expect(html).toContain("Margins");
     expect(tagWith(html, "input", 'type="range"')).toContain('value="0.7"');
-    for (const other of ["Page size", "Accent colour", "Density", "Date format"])
+    for (const other of [
+      "Page size",
+      "Font size",
+      "Font",
+      "Accent colour",
+      "Density",
+      "Date format",
+    ])
       expect(html).not.toContain(other);
+  });
+
+  it("offers the size alone, or the package's own fonts by name in its order, as it offers them", () => {
+    const sized = parsePackage({
+      ...jake,
+      id: "sized",
+      controls: { fontSize: { default: 10, apply: "\\changefontsize{{{value}}pt}" } },
+    });
+    const size = renderToStaticMarkup(<Controls pkg={sized} values={{}} onChange={() => {}} />);
+    expect(sizeSlider(size)).toContain('value="10"');
+    expect(size).toContain(">10 pt</output>");
+    expect(size).not.toContain("<select");
+
+    const typefaces = parsePackage({
+      ...jake,
+      id: "typefaces",
+      controls: {
+        font: {
+          default: "sans",
+          choices: [
+            { id: "serif", name: "Invented Serif", apply: "" },
+            {
+              id: "sans",
+              name: "Invented Sans",
+              apply: "\\renewcommand{\\familydefault}{\\sfdefault}",
+            },
+          ],
+        },
+      },
+    });
+    const menu = renderToStaticMarkup(<Controls pkg={typefaces} values={{}} onChange={() => {}} />);
+    const options = [...menu.matchAll(/<option\b[^>]*>([^<]*)<\/option>/g)].map(([, name]) => name);
+    expect(options).toEqual(["Invented Serif", "Invented Sans"]);
+    expect(tagWith(menu, "option", 'value="sans"')).toContain('selected=""');
+    expect(menu).not.toContain("Font size");
+    expect(menu).not.toContain("\\");
   });
 
   it("offers a palette of distinct colours, black among them, each as #RRGGBB", () => {
@@ -154,6 +220,13 @@ describe("Controls", () => {
     const margins = <MarginsControl id="margins" value={0.5} onChange={onChange} />;
     // The slider's value is text, read to the tenth.
     fire(propsOf(margins, is("input", { type: "range" })).onChange, "0.7000000000000001");
+    const size = <FontSizeControl id="size" value={11} onChange={onChange} />;
+    // Read to the half point, whatever the browser gives.
+    fire(propsOf(size, is("input", { type: "range" })).onChange, "10.5");
+    fire(propsOf(size, is("input", { type: "range" })).onChange, "11.999999999999998");
+    const fonts = jake.controls.font?.choices ?? [];
+    const font = <FontControl choices={fonts} value="lm" onChange={onChange} />;
+    fire(propsOf(font, is("select", {})).onChange, "palatino");
     const accent = <AccentControl value="#000000" onChange={onChange} />;
     fire(propsOf(accent, is("button", { "aria-label": "Teal" })).onClick);
     // The picker writes lower case, and the document keeps capitals.
@@ -166,6 +239,9 @@ describe("Controls", () => {
     expect(changes).toEqual([
       { name: "pageSize", value: "a4" },
       { name: "margins", value: 0.7 },
+      { name: "fontSize", value: 10.5 },
+      { name: "fontSize", value: 12 },
+      { name: "font", value: "palatino" },
       { name: "accent", value: "#0F6B6B" },
       { name: "accent", value: "#AA0033" },
       { name: "density", value: "relaxed" },
