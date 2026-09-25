@@ -348,6 +348,33 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     expect(drawn.missingFonts).toEqual(new Map());
   });
 
+  it("draws and aligns TS1's symbols that the glyph list lacks or reads as other characters", async () => {
+    // LaTeX sets ‱ and ⟨ ⟩ from TS1, whose glyphs lm-ts1.enc names permyriad, angleleft and
+    // angleright: the glyph list has no permyriad, and reads the brackets as U+2329 and U+232A.
+    const text = "Error budget 5‱ of requests ⟨ok⟩";
+    const edited = Resume.parse(structuredClone(sample));
+    const bullet = edited.sections
+      .flatMap((section) => (section.kind === "entries" ? section.entries : []))
+      .flatMap((entry) => entry.bullets)
+      .find((each) => each.id === "research-1");
+    if (!bullet) throw new Error("the sample moved");
+    bullet.text = [{ text }];
+    const body = generateBody(pkg, edited, values);
+    const { page } = await compileAndDraw(body.latex, body.texts, "ts1-symbols");
+    expect(page.missingFonts).toEqual(new Map());
+    expect(page.unmatched).toBe(0);
+    const id = "research-1.text";
+    const glyphs = page.fields.get(id)?.glyphs ?? [];
+    for (const char of ["‱", "⟨", "⟩"]) {
+      const offset = text.indexOf(char);
+      expect(glyphs.find((glyph) => glyph.offset === offset)?.text, char).toBe(char);
+      const use = new RegExp(
+        `data-font="ts1-lmr10"[^>]*data-field="${id}" data-offset="${offset}"`,
+      );
+      expect(page.svg, char).toMatch(use);
+    }
+  });
+
   it("keeps the glyphs after a font in place when its outlines cannot be read this time", async () => {
     // A reader that fails once on Latin Modern Bold's outlines, as a dropped request would. A
     // project's name is bold, and what it is built with and its dates follow it on its line;

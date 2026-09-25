@@ -230,6 +230,25 @@ describe("collectFields with accents", () => {
     expect(read(tilde(120), n(0, 12))).toEqual(["~", "n"]);
   });
 
+  it("reads a dotless j under a caron as ǰ, and a dotless i or j alone as itself", () => {
+    // cmr10's caron over its dotless j, as OT1 sets \v\j, then \i and \j alone.
+    expect([20, 17, 16].map((code) => encoding[code])).toEqual(["caron", "dotlessj", "dotlessi"]);
+    const at = (code: number, h: number): PageItem => ({
+      kind: "glyph",
+      font: 0,
+      code,
+      h,
+      v: 0,
+      width: 50,
+    });
+    const items = [at(20, 100), at(17, 110), at(16, 200), at(17, 300)];
+    const field = collectFields(page([special("rt:b:f"), ...items, special("rt:e:f")]), textOf).get(
+      "f",
+    );
+    expect(field?.glyphs.map((g) => g.text)).toEqual(["\u{1f0}", "\u{131}", "\u{237}"]);
+    expect(alignGlyphs(field as NonNullable<typeof field>, "\u{1f0} \u{131}\u{237}")).toBe(0);
+  });
+
   it("pairs only an accent and a letter in the same field, and only a letter", () => {
     const at = (code: number, h: number): PageItem => ({
       kind: "glyph",
@@ -371,6 +390,14 @@ describe("alignGlyphs", () => {
     const f = fieldOf(["\u{d0}", "a", "\u{d0}"]);
     expect(alignGlyphs(f, "\u{110}a\u{d0}")).toBe(0);
     expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 2]);
+  });
+
+  it("matches TS1's angle brackets to each of the three code points LaTeX sets them from", () => {
+    for (const text of ["\u{27e8}ok\u{27e9}", "\u{3008}ok\u{3009}", "\u{2329}ok\u{232a}"]) {
+      const f = fieldOf(["\u{27e8}", "o", "k", "\u{27e9}"]);
+      expect(alignGlyphs(f, text), text).toBe(0);
+      expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3]);
+    }
   });
 
   it("matches a glyph whose text is a word an object has as a member", () => {

@@ -336,7 +336,17 @@ describe.skipIf(!engineAvailable())("FontLibrary", () => {
       "``",
       "«",
     ]);
+    // T1's dotless i and j, which a text may hold, read as themselves.
+    expect([25, 26].map((code) => t1?.text(code))).toEqual(["\u{131}", "\u{237}"]);
     expect([136, 191, 176].map((code) => ts1?.text(code))).toEqual(["•", "€", "°"]);
+    // TS1's symbols the glyph list lacks, or reads as other characters than LaTeX sets them for.
+    expect([152, 173, 42, 60, 62].map((code) => ts1?.text(code))).toEqual([
+      "\u{2031}",
+      "\u{2117}",
+      "\u{204e}",
+      "\u{27e8}",
+      "\u{27e9}",
+    ]);
     // lm-ts1.enc names the superior figures two.superior and the like, and the old-style ones
     // dollar.oldstyle and cent.oldstyle.
     const figures = [185, 178, 179, 138, 139];
@@ -405,9 +415,17 @@ describe.skipIf(!engineAvailable())("FontLibrary", () => {
     expect([21, 22].map((code) => courier?.text(code))).toEqual(["--", "---"]);
     // A small-caps font's lowercase letters are smaller capitals.
     expect([65, 97, 233, 255].map((code) => caps?.text(code))).toEqual(["A", "a", "é", "ß"]);
-    // TS1: the Euro, which Times lacks and fontinst draws as a rule, the centred asterisk, and
-    // the superior figures, which lm-ts1.enc names one.superior and the like.
-    expect([191, 42].map((code) => symbols?.text(code))).toEqual(["€", "\u{2217}"]);
+    // TS1: the Euro, which Times lacks and fontinst draws as a rule, the centred asterisk, which
+    // LaTeX sets for ⁎, the symbols the glyph list lacks, such as ‱ and ℗, and the angle brackets,
+    // and the superior figures, which lm-ts1.enc names one.superior and the like.
+    expect([191, 42, 152, 173, 60, 62].map((code) => symbols?.text(code))).toEqual([
+      "€",
+      "\u{204e}",
+      "\u{2031}",
+      "\u{2117}",
+      "\u{27e8}",
+      "\u{27e9}",
+    ]);
     expect([185, 178, 179].map((code) => symbols?.text(code))).toEqual(["¹", "²", "³"]);
     // OT1's layout depends on the shape, so it reads by the glyphs: Courier has < where a roman
     // font has ¡, and an italic font £ where an upright one has $.

@@ -62,9 +62,16 @@ bullet, `$`, `€` and `°` from TS1 even in OT1, and in OT1 cannot set `ą`, `�
   expert glyphs such as `dollaroldstyle` in the Private Use Area, so `dollar.oldstyle` stays `$`.
   Otherwise, after the suffix from the first period is dropped (`a.sc` is `a`), Computer Modern's
   own table first, which keeps winning so that `quoteright` stays `'` and `endash` stays `--`
-  for the aligner; then a single ASCII letter; then the AGL, which a name for several code points
-  reads as all of them; then the `uniXXXX` and `uXXXX[XX]` forms; then a ligature's parts joined
-  by `_`. A virtual font's composed character is named after its parts, joined by `+` with any
+  for the aligner, and which names TS1's symbols as LaTeX's UTF-8 input sets them (`ts1enc.dfu`)
+  where the AGL lacks them, as `permyriad` for `‱`, or reads them as other characters:
+  `asteriskmath` is `⁎`, not `∗`, and `angleleft` is `⟨`, not U+2329, the aligner taking each
+  angle bracket for any of the three code points LaTeX sets it from; then a single ASCII letter;
+  then the AGL, which a name for several code points reads as all of them; then the `uniXXXX` and
+  `uXXXX[XX]` forms; then a ligature's parts joined by `_`. Whichever of these reads a name, a
+  Latin ligature's code point, U+FB00 to U+FB06, is spelled as its letters (`uniFB01` is `fi`,
+  `uniFB05` is `ſt`), as the table spells Computer Modern's ligatures, since a model's text holds
+  the letters: Lato and Roboto name their ligatures by code point, and the AGL reads `fi` as
+  U+FB01. A virtual font's composed character is named after its parts, joined by `+` with any
   accent after the rest (`A+breve`), and a rule is `rule`; it reads as its parts' texts with each
   accent as its combining mark after the rest, composed (NFC), so `A+breve` is `Ă`. A part with
   no text leaves the whole without one.
@@ -83,17 +90,18 @@ bullet, `$`, `€` and `°` from TS1 even in OT1, and in OT1 cannot set `ą`, `�
   letter is the narrower, before it when the letter is the wider, by less than twice the accent's
   width in every T1 and OT1 font the page can draw (a dot over a W is the most, 1.83 widths in
   Avant Garde's oblique). A spacing accent (`ACCENTS` in `glyphs.ts`: the thirteen of TeX's text
-  encodings) directly followed in the same field by a letter that starts within that span, from
-  twice the accent's width before it to the end of its advance, is one character, composed (NFC):
-  the letter's item, listing the accent's, so that a click on either lands on it and both carry its
+  encodings, and the ASCII `^` and `~`, which OT1's typewriter fonts set `\^` and `\~` with)
+  directly followed in the same field by a letter that starts within that span, from twice the
+  accent's width before it to the end of its advance, is one character, composed (NFC): the
+  letter's item, listing the accent's, so that a click on either lands on it and both carry its
   field and offset in the SVG. The test does not look at the height, since TeX raises the accent
-  over a tall letter. It keeps OT1's `\textasciitilde` and `\textasciicircum`, the same accent
-  glyphs standing alone, reading as `~` and `^`, since a letter after one starts where it ends,
-  and an accent that ends a line apart from the first letter of the next, back at the left
-  margin. It needs the fonts' widths, so the harness parses the output with them, as the page
-  does. The aligner takes a composed letter for its decomposed spelling too, as a model holds a
-  letter typed with a combining mark, and T1's one glyph for `Ð` and `Đ`, which its fonts name
-  `Eth`, for either.
+  over a tall letter. It keeps a `~` or `^` standing alone, OT1's `\textasciitilde` and
+  `\textasciicircum` or T1's, reading as itself, since a letter after one starts where it ends (no
+  text font in the tree kerns a letter after either), and an accent that ends a line apart from
+  the first letter of the next, back at the left margin. It needs the fonts' widths, so the
+  harness parses the output with them, as the page does. The aligner takes a composed letter for
+  its decomposed spelling too, as a model holds a letter typed with a combining mark, and T1's one
+  glyph for `Ð` and `Đ`, which its fonts name `Eth`, for either.
 - **One font map.** The Ubuntu bundles' font maps are not in `pdftex.map`, which updmap wrote for
   TeX Live's basic tree only. The fetch script merges them as updmap would (`scripts/fontmaps.ts`):
   each entry of `/texmf/texmf-dist/fonts/map/dvips/*/*.map`, in path order, for a TeX font the map

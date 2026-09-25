@@ -37,10 +37,11 @@ export function webFontFamily(name: string): string {
 
 /**
  * The character each code a font draws is typed as. A code whose text is one character gets it,
- * the code at the character's own code first and then the lowest, so `i` is the i and not the
- * dotless i; and a ligature glyph TeX reaches from `--`, `---` or a pair of quotes also gets the
- * one character a text may spell it with, such as `–`. The web font's character map and the
- * overlay's breaker both take their characters from this, so they give each the same glyph.
+ * the code at the character's own code first and then the lowest, so `-` is T1's hyphen at 45 and
+ * not the one it keeps at 127; and a ligature glyph TeX reaches from `--`, `---` or a pair of
+ * quotes also gets the one character a text may spell it with, such as `–`. The web font's
+ * character map and the overlay's breaker both take their characters from this, so they give
+ * each the same glyph.
  */
 export function typedCodes(
   outlines: FontOutlines,

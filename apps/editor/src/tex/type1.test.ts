@@ -1,10 +1,13 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { FontOutlines } from "./glyphs";
+import { ENGINE_DIR, engineAvailable } from "../engine/node";
+import type { FontOutlines, GlyphOutline } from "./glyphs";
 import { parseType1, readType1, type Type1Font, type1Outlines } from "./type1";
 
 const fixture = (name: string) =>
   new Uint8Array(readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
+const tree = (path: string) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path)));
 
 /**
  * The reference outlines were produced by fontTools from the same font. Its path data uses
@@ -151,6 +154,7 @@ const OPS: Record<string, number[]> = {
   return: [11],
   endchar: [14],
   seac: [12, 6],
+  sbw: [12, 7],
   div: [12, 12],
   callothersubr: [12, 16],
   pop: [12, 17],
@@ -361,6 +365,137 @@ describe("type1Outlines on hand-built glyphs", () => {
   it("turns flex into two curves", () => {
     expect(outlines.glyphs.flexed?.d).toBe("M0 0C10 5 20 10 30 10C40 10 50 5 60 0L0 0Z");
     expect(outlines.glyphs.flexed?.b).toEqual([0, 0, 60, 10]);
+  });
+
+  it("maps points, advances and seac's placements through the whole font matrix", () => {
+    // A 500-unit em, skewed both ways and moved: in the 1000-unit em, a point (x, y) of the
+    // charstrings goes to (2x + 0.5y + 10, 0.25x + 2y - 20).
+    const skewed = type1Outlines({
+      ...font,
+      fontMatrix: [0.002, 0.00025, 0.0005, 0.002, 0.01, -0.02],
+      charstrings: new Map([
+        ...font.charstrings,
+        // sbw: a side bearing of (20, 30) and an advance of (400, 100), then a triangle.
+        [
+          "sbw",
+          charstring(
+            20,
+            30,
+            400,
+            100,
+            "sbw",
+            0,
+            0,
+            "rmoveto",
+            10,
+            "hlineto",
+            10,
+            "vlineto",
+            "closepath",
+            "endchar",
+          ),
+        ],
+      ]),
+    });
+    expect(skewed.glyphs.a).toEqual({
+      w: 1200,
+      d: "M110 -7.5L310 17.5L360 217.5L160 192.5Z",
+      b: [110, -7.5, 360, 217.5],
+    });
+    // seac places the accent at (240, 300) in the charstrings' units, then both are mapped.
+    expect(skewed.glyphs.aacute).toEqual({
+      w: 1200,
+      d: "M110 -7.5L310 17.5L360 217.5L160 192.5ZM660 642.5L700 647.5L710 687.5L670 682.5Z",
+      b: [110, -7.5, 710, 687.5],
+    });
+    // An advance is a distance, moved by no translation: 2·400 + 0.5·100.
+    expect(skewed.glyphs.sbw).toEqual({
+      w: 850,
+      d: "M65 45L85 47.5L90 67.5Z",
+      b: [65, 45, 90, 67.5],
+    });
+  });
+});
+
+/**
+ * A PFB whose clear text gives another `/FontMatrix`, its segment's length changed to match. The
+ * encrypted portion, and with it every charstring, stays as it is.
+ */
+function withFontMatrix(pfb: Uint8Array, matrix: string): Uint8Array {
+  // The first segment is the clear text: 0x80, 1, its length as a little-endian 32-bit number.
+  expect([pfb[0], pfb[1]]).toEqual([0x80, 1]);
+  const length = new DataView(pfb.buffer, pfb.byteOffset).getUint32(2, true);
+  const clear = String.fromCharCode(...pfb.subarray(6, 6 + length));
+  const rewritten = clear.replace(/\/FontMatrix\s*\[[^\]]*\]/, `/FontMatrix [${matrix}]`);
+  expect(rewritten).not.toBe(clear);
+  const out = new Uint8Array(pfb.length - length + rewritten.length);
+  out.set(pfb.subarray(0, 6));
+  new DataView(out.buffer).setUint32(2, rewritten.length, true);
+  out.set(
+    Uint8Array.from(rewritten, (ch) => ch.charCodeAt(0)),
+    6,
+  );
+  out.set(pfb.subarray(6 + length), 6 + rewritten.length);
+  return out;
+}
+
+/** The numbers of path data, and its commands alone. */
+const pathNumbers = (d: string) => (d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number);
+const pathCommands = (d: string) => d.replace(/[^A-Z]/g, "");
+
+// Needs `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
+describe.skipIf(!engineAvailable())("type1Outlines of a font of the tree, its em doubled", () => {
+  it("halves every coordinate, bound and advance of Latin Modern Roman", () => {
+    const lmr10 = tree("/texlive/texmf-dist/fonts/type1/public/lm/lmr10.pfb");
+    const plain = readType1(lmr10);
+    const doubled = readType1(withFontMatrix(lmr10, "0.0005 0 0 0.0005 0 0"));
+    expect(plain.fontMatrix).toEqual([0.001, 0, 0, 0.001, 0, 0]);
+    expect(doubled.fontMatrix).toEqual([0.0005, 0, 0, 0.0005, 0, 0]);
+    expect(doubled.charstrings).toEqual(plain.charstrings);
+    const want = type1Outlines(plain).glyphs;
+    const got = type1Outlines(doubled).glyphs;
+    expect(Object.keys(got)).toEqual(Object.keys(want));
+    expect(Object.keys(want).length).toBeGreaterThan(700);
+    expect(want.a?.w).toBe(500);
+    expect(got.a?.w).toBe(250);
+    // Path data is written to three decimals, so a halved coordinate may differ from half the
+    // one written for the plain font by up to 0.00075. Bounds and advances are not rounded.
+    const wrong: string[] = [];
+    for (const [name, glyph] of Object.entries(want)) {
+      const half = got[name] as GlyphOutline;
+      if (half.w !== glyph.w / 2) wrong.push(`${name}: advance ${half.w}, not ${glyph.w / 2}`);
+      const [full, halved] = [pathNumbers(glyph.d), pathNumbers(half.d)];
+      if (
+        pathCommands(half.d) !== pathCommands(glyph.d) ||
+        halved.length !== full.length ||
+        halved.some((v, i) => Math.abs(v - (full[i] as number) / 2) > 0.001)
+      )
+        wrong.push(`${name}: path ${half.d}, not half of ${glyph.d}`);
+      const box = glyph.b?.map((v) => v / 2);
+      if (
+        box === undefined
+          ? half.b !== null
+          : half.b === null || half.b.some((v, i) => Math.abs(v - (box[i] as number)) > 1e-9)
+      )
+        wrong.push(`${name}: bounds ${half.b}, not ${box ?? null}`);
+    }
+    expect(wrong).toEqual([]);
+  });
+});
+
+/** Lato, whose em is 2000 units, where the tree has it once a bundle brings it. */
+const LATO = join(
+  ENGINE_DIR,
+  "files",
+  "/texlive/texmf-dist/fonts/type1/typoland/lato/Lato-Regular.pfb",
+);
+
+describe("type1Outlines of Lato", () => {
+  it.skipIf(!existsSync(LATO))("draws an x as tall as other fonts', not twice as tall", () => {
+    const x = parseType1(new Uint8Array(readFileSync(LATO))).glyphs.x;
+    const [, bottom = 0, , top = 0] = x?.b ?? [];
+    expect(top - bottom).toBeGreaterThan(350);
+    expect(top - bottom).toBeLessThan(650);
   });
 });
 

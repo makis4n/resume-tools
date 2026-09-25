@@ -9,11 +9,11 @@
  */
 
 export interface GlyphOutline {
-  /** Advance width in font units. */
+  /** Advance width, in a 1000-unit em whatever the font's own units. */
   w: number;
-  /** SVG path data in font units, y up. */
+  /** SVG path data in a 1000-unit em, y up. */
   d: string;
-  /** Bounding box [xMin, yMin, xMax, yMax] in font units, or null for an empty glyph. */
+  /** Bounding box [xMin, yMin, xMax, yMax] in a 1000-unit em, or null for an empty glyph. */
   b: [number, number, number, number] | null;
 }
 
@@ -47,7 +47,10 @@ export function glyphOf(outlines: FontOutlines, code: number): GlyphOutline | un
     : undefined;
 }
 
-/** The characters a Computer Modern glyph represents in the source text. */
+/**
+ * The characters a glyph represents in the source text, where the AGL has no name for it or names
+ * another character: Computer Modern's glyphs, and TS1's symbols.
+ */
 const GLYPH_TEXT: Record<string, string> = {
   space: " ",
   exclam: "!",
@@ -109,17 +112,42 @@ const GLYPH_TEXT: Record<string, string> = {
   fl: "fl",
   ffi: "ffi",
   ffl: "ffl",
-  dotlessi: "i",
-  dotlessj: "j",
+  // A dotless i or j reads as itself, which a text may hold, and under an accent as the letter it
+  // accents (`accented`). The AGL gives `dotlessj` a private-use code point, U+F6BE, not ȷ.
+  dotlessi: "\u{131}",
+  dotlessj: "\u{237}",
   bullet: "•",
   periodcentered: "·",
+  // TS1's symbols, by the names lm-ts1.enc gives them, that the AGL lacks or reads as another
+  // character than the one LaTeX's UTF-8 input sets the symbol for (ts1enc.dfu). The centred
+  // asterisk is set for ⁎, U+204E, where the AGL has ∗, U+2217; and the angle brackets for ⟨ and
+  // ⟩, where it has U+2329 and U+232A, from which LaTeX sets them too, as from U+3008 and U+3009
+  // (the aligner's alternatives in `fields.ts`).
+  asteriskmath: "\u{204e}",
+  angleleft: "\u{27e8}",
+  angleright: "\u{27e9}",
+  blanksymbol: "␢",
+  mho: "℧",
+  bigcircle: "◯",
+  ohm: "\u{2126}",
+  naira: "₦",
+  peso: "₱",
+  recipe: "℞",
+  interrobang: "‽",
+  permyriad: "‱",
+  baht: "฿",
+  discount: "⁒",
+  servicemark: "℠",
+  published: "℗",
 };
 
 /**
  * The spacing accents TeX's `\accent` sets over a letter, by glyph name, and the combining mark
  * each stands for there. OT1 sets every accented letter as an accent and the letter, and T1 the
  * letters it has no glyph for, such as `ǎ`; a virtual font composes its accented letters from the
- * same two glyphs. Either way the pair reads as the one letter the text holds.
+ * same two glyphs. Either way the pair reads as the one letter the text holds. OT1's typewriter
+ * fonts have the ASCII `^` and `~` at 94 and 126, where its roman fonts have the circumflex and
+ * the tilde, and set `\^` and `\~` with them, so they are accents too: `\^\i` is `î` in `cmtt10`.
  */
 export const ACCENTS: ReadonlyMap<string, string> = new Map([
   ["grave", "\u{300}"],
@@ -135,6 +163,8 @@ export const ACCENTS: ReadonlyMap<string, string> = new Map([
   ["caron", "\u{30c}"],
   ["cedilla", "\u{327}"],
   ["ogonek", "\u{328}"],
+  ["asciicircum", "\u{302}"],
+  ["asciitilde", "\u{303}"],
 ]);
 
 /** A glyph name without the suffix from its first period on: `a.sc` is a form of `a`. */
@@ -165,6 +195,25 @@ export function accentMark(name: string): string | undefined {
   return ACCENTS.get(baseName(name));
 }
 
+/** The letter a dotless i or j is under an accent. */
+const DOTTED: ReadonlyMap<string, string> = new Map([
+  ["\u{131}", "i"],
+  ["\u{237}", "j"],
+]);
+
+/**
+ * Letters with combining marks after them, composed (NFC). TeX sets `í` as an acute over a dotless
+ * i, `\'\i`, the accent standing where the dot was, and a virtual font composes it from `dotlessi`
+ * and `acute`; so a dotless i or j that the marks go over takes its dot back, and the pair is the
+ * accented letter, where `ı` and a mark would stay two characters.
+ */
+export function accented(letters: string, marks: string): string {
+  const last = letters.at(-1);
+  const dotted = marks === "" || last === undefined ? undefined : DOTTED.get(last);
+  const base = dotted === undefined ? letters : `${letters.slice(0, -1)}${dotted}`;
+  return `${base}${marks}`.normalize("NFC");
+}
+
 /**
  * The Adobe Glyph List, TeX Live's `glyphlist.txt`: `name;XXXX` per line, several code points
  * separated by spaces for a name that stands for more than one, and `#` comments. Lines of any
@@ -191,8 +240,35 @@ function unicodeName(name: string): string | undefined {
   return codes.length > 0 && codes.every(valid) ? String.fromCodePoint(...codes) : undefined;
 }
 
-/** Text for one name with no `+` in it, by the lookups `glyphText` lists. */
+/**
+ * The letters of each Latin ligature Unicode encodes, U+FB00 to U+FB06. A model's text spells a
+ * ligature out and TeX sets the glyph for its letters, so the aligner needs the letters, which
+ * Computer Modern's `fi` reads as; but the AGL reads `fi` as U+FB01, and fonts beyond Computer
+ * Modern may name the glyph `uniFB01`, as Lato and Roboto do.
+ */
+const LIGATURE_LETTERS: ReadonlyMap<string, string> = new Map([
+  ["\u{fb00}", "ff"],
+  ["\u{fb01}", "fi"],
+  ["\u{fb02}", "fl"],
+  ["\u{fb03}", "ffi"],
+  ["\u{fb04}", "ffl"],
+  ["\u{fb05}", "\u{17f}t"],
+  ["\u{fb06}", "st"],
+]);
+
+/** Text for one name with no `+` in it, as `lookUpName` reads it, each ligature spelled out. */
 function nameText(name: string, agl: ReadonlyMap<string, string> | undefined): string | undefined {
+  return lookUpName(name, agl)?.replace(
+    /[\u{fb00}-\u{fb06}]/gu,
+    (ligature) => LIGATURE_LETTERS.get(ligature) ?? ligature,
+  );
+}
+
+/** Text for one name with no `+` in it, by the lookups `glyphText` lists. */
+function lookUpName(
+  name: string,
+  agl: ReadonlyMap<string, string> | undefined,
+): string | undefined {
   const joined = joinedName(name);
   const variant = joined === undefined ? undefined : agl?.get(joined);
   if (variant !== undefined && !PRIVATE_USE.test(variant)) return variant;
@@ -218,9 +294,12 @@ function nameText(name: string, agl: ReadonlyMap<string, string> | undefined): s
  * so wins (`quoteright` is `'`, `endash` is `--`); a single ASCII letter; the Adobe Glyph List,
  * which fonts beyond Computer Modern name their glyphs by (`Aacute` is `Á`, and a name for
  * several code points is their string); the `uniXXXX` and `uXXXX[XX]` forms; and a ligature's
- * parts joined by `_` (`f_f_i`). A name that joins parts with `+`, as a virtual font's composed
- * character is named (`fonts.ts`), is its parts' texts composed: a spacing accent becomes its
- * combining mark after the rest, and the whole is NFC, so `A+breve` is `Ă`.
+ * parts joined by `_` (`f_f_i`). Whichever of these reads a name, a Latin ligature's code point,
+ * U+FB00 to U+FB06, is spelled as its letters, as the table spells Computer Modern's ligatures:
+ * `uniFB01` is `fi`, as `fi` is, and `uniFB05` is `ſt`. A name that joins parts with `+`, as a
+ * virtual font's composed character is named (`fonts.ts`), is its parts' texts composed: a spacing
+ * accent becomes its combining mark after the rest, and the whole is NFC, so `A+breve` is `Ă`,
+ * with a dotless i or j under the accent taking its dot back (`accented`): `dotlessi+acute` is `í`.
  */
 export function glyphText(name: string, agl?: ReadonlyMap<string, string>): string | undefined {
   if (!name.includes("+")) return nameText(name, agl);
@@ -231,12 +310,12 @@ export function glyphText(name: string, agl?: ReadonlyMap<string, string>): stri
   const bases = texts.filter((_, i) => marks[i] === undefined);
   // Accents alone, with no letter to go over, read as themselves.
   if (bases.length === 0) return texts.join("");
-  return `${bases.join("")}${marks.filter((mark) => mark !== undefined).join("")}`.normalize("NFC");
+  return accented(bases.join(""), marks.filter((mark) => mark !== undefined).join(""));
 }
 
 /**
  * The font code for each character of the source text, from a font's built-in encoding.
- * Where several glyphs stand for one character (an `i` and a dotless i both read as "i"),
+ * Where several glyphs stand for one character (`quoteright` and `quotesingle` both read as "'"),
  * the glyph at the character's own code wins, then the first in encoding order.
  *
  * `textOf` gives each code's text, by default what its glyph's name reads as. The overlay passes
