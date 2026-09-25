@@ -62,15 +62,19 @@ bullet, `$`, `€` and `°` from TS1 even in OT1, and in OT1 cannot set `ą`, `�
   expert glyphs such as `dollaroldstyle` in the Private Use Area, so `dollar.oldstyle` stays `$`.
   Otherwise, after the suffix from the first period is dropped (`a.sc` is `a`), Computer Modern's
   own table first, which keeps winning so that `quoteright` stays `'` and `endash` stays `--`
-  for the aligner; then a single ASCII letter; then the AGL, which a name for several code points
-  reads as all of them; then the `uniXXXX` and `uXXXX[XX]` forms; then a ligature's parts joined
-  by `_`. Whichever of these reads a name, a Latin ligature's code point, U+FB00 to U+FB06, is
-  spelled as its letters (`uniFB01` is `fi`, `uniFB05` is `ſt`), as the table spells Computer
-  Modern's ligatures, since a model's text holds the letters: Lato and Roboto name their
-  ligatures by code point, and the AGL reads `fi` as U+FB01. A virtual font's composed character
-  is named after its parts, joined by `+` with any accent after the rest (`A+breve`), and a rule
-  is `rule`; it reads as its parts' texts with each accent as its combining mark after the rest,
-  composed (NFC), so `A+breve` is `Ă`. A part with no text leaves the whole without one.
+  for the aligner, and which names TS1's symbols as LaTeX's UTF-8 input sets them (`ts1enc.dfu`)
+  where the AGL lacks them, as `permyriad` for `‱`, or reads them as other characters:
+  `asteriskmath` is `⁎`, not `∗`, and `angleleft` is `⟨`, not U+2329, the aligner taking each
+  angle bracket for any of the three code points LaTeX sets it from; then a single ASCII letter;
+  then the AGL, which a name for several code points reads as all of them; then the `uniXXXX` and
+  `uXXXX[XX]` forms; then a ligature's parts joined by `_`. Whichever of these reads a name, a
+  Latin ligature's code point, U+FB00 to U+FB06, is spelled as its letters (`uniFB01` is `fi`,
+  `uniFB05` is `ſt`), as the table spells Computer Modern's ligatures, since a model's text holds
+  the letters: Lato and Roboto name their ligatures by code point, and the AGL reads `fi` as
+  U+FB01. A virtual font's composed character is named after its parts, joined by `+` with any
+  accent after the rest (`A+breve`), and a rule is `rule`; it reads as its parts' texts with each
+  accent as its combining mark after the rest, composed (NFC), so `A+breve` is `Ă`. A part with
+  no text leaves the whole without one.
 - **A virtual font's text from its encoding.** A code's glyph may say less than the code: fontinst
   builds `ď` from a `d` and a `quoteright`, `đ` from a `d` and a `macron`, a small-caps
   font's `a` from a smaller `A`, and Courier's en dash from a hyphen. So a virtual font whose name

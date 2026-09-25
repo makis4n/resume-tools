@@ -392,6 +392,14 @@ describe("alignGlyphs", () => {
     expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 2]);
   });
 
+  it("matches TS1's angle brackets to each of the three code points LaTeX sets them from", () => {
+    for (const text of ["\u{27e8}ok\u{27e9}", "\u{3008}ok\u{3009}", "\u{2329}ok\u{232a}"]) {
+      const f = fieldOf(["\u{27e8}", "o", "k", "\u{27e9}"]);
+      expect(alignGlyphs(f, text), text).toBe(0);
+      expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3]);
+    }
+  });
+
   it("matches a glyph whose text is a word an object has as a member", () => {
     // A virtual font's glyph composed of c, o, n and the rest reads as "constructor", whose
     // spellings the aligner looked up on a plain object, finding a function there.

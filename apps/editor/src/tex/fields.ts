@@ -294,4 +294,8 @@ const LIGATURE_ALTERNATIVES: ReadonlyMap<string, readonly string[]> = new Map([
   ["`", ["`", "‘"]],
   // T1 sets Đ (`\DJ`) with the glyph it sets Ð (`\DH`) with, at 208, which its fonts name Eth.
   ["\u{d0}", ["\u{d0}", "\u{110}"]],
+  // LaTeX's UTF-8 input sets TS1's angle brackets from three code points each (ts1enc.dfu): the
+  // mathematical ones, the CJK ones, and the deprecated ones, which NFC makes the CJK ones.
+  ["\u{27e8}", ["\u{27e8}", "\u{3008}", "\u{2329}"]],
+  ["\u{27e9}", ["\u{27e9}", "\u{3009}", "\u{232a}"]],
 ]);

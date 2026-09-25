@@ -47,7 +47,10 @@ export function glyphOf(outlines: FontOutlines, code: number): GlyphOutline | un
     : undefined;
 }
 
-/** The characters a Computer Modern glyph represents in the source text. */
+/**
+ * The characters a glyph represents in the source text, where the AGL has no name for it or names
+ * another character: Computer Modern's glyphs, and TS1's symbols.
+ */
 const GLYPH_TEXT: Record<string, string> = {
   space: " ",
   exclam: "!",
@@ -115,6 +118,27 @@ const GLYPH_TEXT: Record<string, string> = {
   dotlessj: "\u{237}",
   bullet: "•",
   periodcentered: "·",
+  // TS1's symbols, by the names lm-ts1.enc gives them, that the AGL lacks or reads as another
+  // character than the one LaTeX's UTF-8 input sets the symbol for (ts1enc.dfu). The centred
+  // asterisk is set for ⁎, U+204E, where the AGL has ∗, U+2217; and the angle brackets for ⟨ and
+  // ⟩, where it has U+2329 and U+232A, from which LaTeX sets them too, as from U+3008 and U+3009
+  // (the aligner's alternatives in `fields.ts`).
+  asteriskmath: "\u{204e}",
+  angleleft: "\u{27e8}",
+  angleright: "\u{27e9}",
+  blanksymbol: "␢",
+  mho: "℧",
+  bigcircle: "◯",
+  ohm: "\u{2126}",
+  naira: "₦",
+  peso: "₱",
+  recipe: "℞",
+  interrobang: "‽",
+  permyriad: "‱",
+  baht: "฿",
+  discount: "⁒",
+  servicemark: "℠",
+  published: "℗",
 };
 
 /**

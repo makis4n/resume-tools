@@ -151,6 +151,31 @@ describe("glyphText", () => {
     expect(glyphText("dotlessi+dotlessj+caron", agl)).toBe("\u{131}\u{1f0}");
   });
 
+  it("reads TS1's symbols as the characters LaTeX's UTF-8 input sets them for", () => {
+    // lm-ts1.enc's names. The glyph list lacks most of them, and reads three as other characters.
+    const agl = parseAgl(["angleleft;2329", "angleright;232A", "asteriskmath;2217"].join("\n"));
+    const symbols: [string, string][] = [
+      ["asteriskmath", "\u{204e}"],
+      ["angleleft", "\u{27e8}"],
+      ["angleright", "\u{27e9}"],
+      ["blanksymbol", "\u{2422}"],
+      ["mho", "\u{2127}"],
+      ["bigcircle", "\u{25ef}"],
+      ["ohm", "\u{2126}"],
+      ["naira", "\u{20a6}"],
+      ["peso", "\u{20b1}"],
+      ["recipe", "\u{211e}"],
+      ["interrobang", "\u{203d}"],
+      ["permyriad", "\u{2031}"],
+      ["baht", "\u{e3f}"],
+      ["discount", "\u{2052}"],
+      ["servicemark", "\u{2120}"],
+      ["published", "\u{2117}"],
+    ];
+    for (const list of [agl, undefined])
+      for (const [name, char] of symbols) expect(glyphText(name, list), name).toBe(char);
+  });
+
   it("does not read a name from the prototype of an object", () => {
     expect(glyphText("constructor", AGL)).toBeUndefined();
     expect(glyphText("toString")).toBeUndefined();
@@ -200,6 +225,17 @@ describe.skipIf(!engineAvailable())("the Adobe Glyph List in the tree", () => {
     expect(agl.size).toBe(4281);
     expect(glyphText("Dcroat", agl)).toBe("\u{110}");
     expect(glyphText("Eth", agl)).toBe("\u{d0}");
+    // The list reads TS1's centred asterisk and angle brackets as other characters than LaTeX sets
+    // them for, and has no permyriad; the table gives each its own.
+    expect(["asteriskmath", "angleleft"].map((name) => agl.get(name))).toEqual([
+      "\u{2217}",
+      "\u{2329}",
+    ]);
+    expect(["asteriskmath", "angleleft", "permyriad"].map((name) => glyphText(name, agl))).toEqual([
+      "\u{204e}",
+      "\u{27e8}",
+      "\u{2031}",
+    ]);
     // The list gives dotlessj U+F6BE, in the Private Use Area, which the table overrides.
     expect(agl.get("dotlessj")).toBe("\u{f6be}");
     expect(["dotlessi", "dotlessj"].map((name) => glyphText(name, agl))).toEqual([
