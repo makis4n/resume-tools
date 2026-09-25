@@ -3,7 +3,16 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { engineAvailable, startNodeSession } from "../src/engine/node";
+import type { EngineManifest } from "../src/engine/manifest";
+import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/node";
+import { drawPage } from "../src/page/draw";
+import { FontLibrary } from "../src/page/fonts";
+import { TexLiveIndex } from "../src/page/texlive";
+import { generateBody, generateFormat } from "../src/templates/generate";
+import { INVENTED_XETEX } from "../src/templates/invented";
+import { defaultControls } from "../src/templates/package";
+import { parseDvi } from "../src/tex/dvi";
+import { withoutFontFolders } from "./fontconfig";
 
 const SCRIPT = new URL("./fetch-engine.ts", import.meta.url);
 /** The pinned release and layout, so a manifest can match them and be read further. */
@@ -73,5 +82,67 @@ describe.skipIf(!engineAvailable())("the tree fetch-engine builds", () => {
     expect(result.error).toBeUndefined();
     expect(result.ok).toBe(true);
     expect(result.pages).toBe(1);
+  }, 60_000);
+
+  // fontconfig scans whatever folders its configuration lists, on every XeTeX run, and nothing
+  // needs it to: every font a XeTeX template sets is declared by file (decision 0014).
+  test("gives fontconfig no font folder to scan", () => {
+    const conf = readFileSync(join(ENGINE_DIR, "files/etc/fonts/fonts.conf"), "utf8");
+    expect(conf).toMatch(/<fontconfig>/);
+    expect(conf).not.toMatch(/<dir\b/);
+    expect(withoutFontFolders(conf)).toBe(conf);
+  });
+
+  test("finds every font file the templates declare, by file, with no folder to scan", async () => {
+    const session = await startNodeSession();
+    const files = [
+      "Roboto-Regular.otf",
+      "Lato-Regular.ttf",
+      "SourceSansPro-Regular.otf",
+      "FontAwesome5Free-Solid-900.otf",
+    ];
+    const body = [
+      String.raw`\documentclass{article}\pagestyle{empty}\begin{document}`,
+      ...files.map((file, i) => `\\font\\f${"abcd"[i]}="[${file}]" {\\f${"abcd"[i]} Quilt}\\par`),
+      String.raw`\end{document}`,
+    ].join("\n");
+    const result = session.compile("xetex", "stock", body, { job: "byfile", maxPasses: 1 });
+    expect(result.error).toBeUndefined();
+    const doc = parseDvi(result.output ?? new Uint8Array(), () => undefined);
+    const loaded = [...doc.nativeFonts.values()].map((font) => font.name.split("/").pop());
+    expect(new Set(loaded)).toEqual(new Set(files));
+  }, 60_000);
+
+  // The worker reads each file with a synchronous request of its own, within the compile's time
+  // limit, so a first compile that read the tree's 565 fonts could cost the page.
+  test("reads a handful of files on a XeTeX template's first compile, for the same page", async () => {
+    const session = await startNodeSession();
+    const { package: pkg, sample } = INVENTED_XETEX;
+    const values = defaultControls(pkg);
+    const format = generateFormat(pkg, values);
+    const dumped = session.dump("xetex", format.name, format.preamble, format.files);
+    expect(dumped.error).toBeUndefined();
+    const body = generateBody(pkg, sample, values);
+    const first = session.compile("xetex", format.name, body.latex, { job: "firstread" });
+    expect(first.error).toBeUndefined();
+    console.log(
+      `invented XeTeX template's first compile: ${first.fetched.files} files, ${(first.fetched.bytes / 1e6).toFixed(2)} MB, passes ${first.passes.map((ms) => ms.toFixed(0)).join(" + ")} ms`,
+    );
+    expect(first.fetched.files).toBeLessThan(20);
+    // The declared fonts are among them, read by file.
+    const read = first.fetched.paths.map((path) => path.split("/").pop());
+    for (const file of ["Roboto-Regular.otf", "SourceSansPro-Bold.otf"])
+      expect(read).toContain(file);
+    // And the page is the one the template sets: every field, every font drawn, every glyph read.
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+      readFileSync(join(ENGINE_DIR, "files", path)),
+    );
+    const page = await drawPage(first.output ?? new Uint8Array(), fonts, body.texts);
+    expect(page.missingFonts).toEqual(new Map());
+    expect(page.fields.size).toBe(body.texts.size);
+    expect(page.unmatched).toBe(0);
   }, 60_000);
 });

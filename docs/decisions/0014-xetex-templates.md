@@ -8,8 +8,8 @@ Milestone 2 item 21 makes decision 0003's XeTeX loop the editor's: a format dump
 preamble that loads no native font, and fonts declared by file, which load when the body selects
 them. The page could draw only Type 1 glyphs, the overlay only measure TFM fonts, and a package
 had nowhere to name its fonts, which decision 0006 left to this item as a "resolved fonts"
-section. Decision 0011 hid the packages' fonts from fontconfig, so XeTeX finds Roboto, Lato,
-Source Sans Pro and Font Awesome only by file. Awesome-CV's port is item 22; an invented XeTeX
+section. Decision 0011 gives fontconfig no font folder to scan, so XeTeX finds Roboto, Lato,
+Source Sans Pro, Font Awesome and every other font of the tree only by file. Awesome-CV's port is item 22; an invented XeTeX
 template (`src/templates/invented.ts`: Roboto for the text, Source Sans Pro for the headings,
 one Font Awesome icon in the header) stands in for it in the tests.
 
@@ -101,19 +101,29 @@ one Font Awesome icon in the header) stands in for it in the tests.
 
 ## Numbers
 
-Measured in Node on an M4 Pro with a load average of about 4, other sessions running:
+Measured in Node on an M4 Pro with a load average of about 4, other sessions running, on the tree
+whose fontconfig scans no folder (decision 0011, layout 4):
 
 | | |
 |---|---|
-| Dump the invented template's format | 420 to 450 ms, 8.5 MB |
-| A new document's two passes | 355 to 380 ms, then 290 to 310 ms |
-| The body, one pass, median of ten | 284 to 292 ms; 322 ms with a load average of 13 |
-| The same template's whole document from the stock format | 500 and 780 ms a pass with a load average of 13 |
-| xdvipdfmx on its XDV | 31 to 37 ms |
+| Dump the invented template's format | 420 to 450 ms, 8.5 MB, 43 files read |
+| A new document's two passes | 108 to 114 ms, then 88 to 93 ms, 9 files and 1.2 MB read |
+| The body, one pass, median of ten | 86 to 91 ms |
+| The same template's whole document from the stock format | 150 to 156 ms a pass |
+| xdvipdfmx on its XDV | 27 to 40 ms |
 | Drawing its page, 559 glyphs from five font files | 27 ms reading and parsing the files, 2 ms after |
 
-Decision 0003 measured 459 ms for Awesome-CV's body on the same loop. The invented template's
-body is lighter than Awesome-CV's (one page, no TikZ), so item 22 measures Awesome-CV again.
+The files a new document reads are the fonts its body selects, which load then and not in the
+format, and what LaTeX loads with them: `fonts.conf`, the `tex-text` mapping, a font definition
+file and a backend file. On the tree before, whose `fonts.conf` had fontconfig scan the release's
+own `fonts/opentype` and `fonts/type1` folders, the first compile read 565 files, 22 MB, which
+the browser's worker reads one synchronous request at a time, and fontconfig scanned them again,
+from memory, on every compile: the body took 284 to 312 ms, of which the scan was about 200, and
+the XDV was the same byte for byte.
+
+Decision 0003 measured 459 ms for Awesome-CV's body on the same loop, on a tree whose fontconfig
+scanned the release's folders on every compile. The invented template's body is lighter than
+Awesome-CV's (one page, no TikZ), so item 22 measures Awesome-CV again.
 
 The overlay against XeTeX's lines, on the invented template in Roboto at 10.95 pt: a three-line
 bullet none of whose words holds a pair Roboto kerns or joins breaks where XeTeX did, and each
