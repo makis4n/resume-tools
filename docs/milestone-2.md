@@ -135,7 +135,7 @@ end to end before the other two templates, so that the editing loop is proven on
 17. [x] **Font and font size.** Three or four families per template, from TeX Live. Sizes run
     from 9 to 12 pt in half points, with one format per size where the class fixes the size when
     it loads, and scalable Computer Modern for the half sizes.
-18. [ ] **Fit to one page.** The search in the worker: density, then margins, then font size,
+18. [x] **Fit to one page.** The search in the worker: density, then margins, then font size,
     stopping at the first setting that fits. It undoes in one click.
 
 ### Stage 6. The other two templates

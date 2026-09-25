@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Controls } from "./editor/Controls";
 import { COULD_NOT_MAKE_PDF, Compiler, type CompilerEvents, type Shown } from "./editor/compiler";
 import { DocumentList } from "./editor/DocumentList";
@@ -9,6 +9,7 @@ import {
   History,
 } from "./editor/document";
 import { pdfFileName, savePdf } from "./editor/download";
+import { applyFit, type Fitted, fit } from "./editor/fit";
 import { Overlay } from "./editor/Overlay";
 import { Panel, shownFieldsOf } from "./editor/Panel";
 import { holdsTyping, useHistoryKeys, type Way } from "./editor/undo";
@@ -52,6 +53,13 @@ const NOT_SAVED = "This document could not be saved in this browser.";
 
 /** What the user reads once another tab has changed the open document. */
 const CHANGED_ELSEWHERE = "This document was changed in another tab.";
+
+/** What the user reads while a fit to one page runs, and when no setting it tries fits. */
+const FITTING = "Fitting…";
+const DOES_NOT_FIT = "It does not fit on one page at these settings.";
+
+/** What the user reads when a fit to one page could not finish; the details go to the console. */
+const COULD_NOT_FIT = "Fit to one page could not finish.";
 
 async function get(url: string): Promise<Response> {
   const response = await fetch(url);
@@ -154,10 +162,21 @@ export function App() {
   const [failed, setFailed] = useState(false);
   const [clicked, setClicked] = useState<Click>();
   const [downloading, setDownloading] = useState(false);
+  /**
+   * The fit to one page asked for last (item 18): the document it began on, as it stood, and what
+   * it came to when it changed nothing; it runs while `note` is undefined. It is shown only while
+   * that document is the present one, since an edit makes what it says moot.
+   */
+  const [fitting, setFitting] = useState<{ document: EditorDocument; note?: string }>();
   const clicks = useRef(0);
   const [sheet, setSheet] = useState<HTMLDivElement | null>(null);
   /** The TeX Live fonts the pages are drawn from, which a rich field's editor loads fonts from. */
   const [library, setLibrary] = useState<FontLibrary>();
+  /** The open document as the latest render has it, for a fit that lands after later renders. */
+  const openNow = useRef<Open | undefined>(undefined);
+  useLayoutEffect(() => {
+    openNow.current = open;
+  });
 
   /** The list, fresh from the store, which writes what waits to be saved before it lists. */
   const showList = async (reason?: string) => {
@@ -526,6 +545,48 @@ export function App() {
     </aside>
   );
 
+  /**
+   * Fit the open document to one page (item 18): the compiler tries a tighter density, then
+   * narrower margins, then a smaller font size, in turn (`fit`), and the first setting that fits
+   * becomes one step of the history, which one undo takes back (`applyFit`), and compiles and is
+   * saved as any change is. What the fit finds is for the document as it stood when it began, so
+   * an edit, an undo or another document opened meanwhile leaves it unused and unsaid, and so does
+   * another tab's change, since such a document takes no edit. What went wrong is for developers.
+   */
+  const fitToPage = async () => {
+    const owned = compiler.current;
+    if (owned === undefined || stale) return;
+    const doc = history.present;
+    const pkg = curated(doc.template).package;
+    /** Say what the fit came to, or nothing, as long as it is still the fit of this document. */
+    const say = (note?: string) =>
+      setFitting((now) => {
+        if (now?.document !== doc) return now;
+        return note === undefined ? undefined : { document: doc, note };
+      });
+    setFitting({ document: doc });
+    let found: Fitted | undefined;
+    let finished = true;
+    try {
+      found = await fit(owned, pkg, doc);
+    } catch (error) {
+      console.error("The page could not be fitted:", error);
+      finished = false;
+    }
+    const now = openNow.current;
+    if (now?.history !== history || now.stale || history.present !== doc) {
+      say();
+    } else if (!finished) {
+      say(COULD_NOT_FIT);
+    } else if (found === undefined) {
+      say(DOES_NOT_FIT);
+    } else {
+      say();
+      applyFit(history, pkg, found.values);
+      followPresent(open);
+    }
+  };
+
   // With no page yet there is nothing to keep showing, so a failure to make the first one is a
   // failure to show any. Fonts that did not load leave no compiler to ask again.
   if (failed)
@@ -567,6 +628,8 @@ export function App() {
   // Start-up is apart from the page's own time: it is paid once per worker, not per edit.
   const started = startMs === undefined ? "" : ` (engine started in ${startMs.toFixed(0)} ms)`;
   const took = `${shown.opening ? "Opened" : "Updated"} in ${ms.toFixed(0)} ms${started}.`;
+  // A fit speaks only of the document it began on, as it stood.
+  const fitShown = fitting?.document === present ? fitting : undefined;
   return (
     <main style={{ display: "flex", alignItems: "flex-start", gap: "1.5rem" }}>
       <div style={{ flex: "none" }}>
@@ -601,7 +664,22 @@ export function App() {
           </button>
         </p>
         {pdfError && <p>{pdfError}</p>}
-        {shown.latest.page.pageCount > 1 && <p>This resume runs onto a second page.</p>}
+        {/* The fit takes the page on screen to be the present document's, so it waits while a
+            page is on its way, and a document another tab has changed takes no fit, as it takes
+            no edit (item 18). */}
+        {shown.latest.page.pageCount > 1 && (
+          <p>
+            This resume runs onto a second page.{" "}
+            <button
+              type="button"
+              onClick={() => void fitToPage()}
+              disabled={busy || stale || (fitShown !== undefined && fitShown.note === undefined)}
+            >
+              Fit to one page
+            </button>
+            {fitShown && ` ${fitShown.note ?? FITTING}`}
+          </p>
+        )}
         {/* The overlay, or the date picker, over the field clicked, which the latest page places
             and its commands edit. A document another tab has changed takes no edits, so it closes
             then, and showing the list or opening a document forgets the click. Its commands go in
