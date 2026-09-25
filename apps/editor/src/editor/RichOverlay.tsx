@@ -578,7 +578,10 @@ export function RichOverlay({
  * A link's address, edited in an input: Apply sets it as typed, Enter too, and Remove unlinks the
  * text; Escape goes back to the text. The generator decides what an address links to
  * (`linkAddress`, decision 0007), and the popover says what that is, as the user types, or that
- * the text will not be linked, so that no address is a surprise on the page.
+ * the text will not be linked, so that no address is a surprise on the page. The undo and redo
+ * keys in it are the browser's (`NATIVE_UNDO`), which undoes the typing in the input: an address
+ * reaches the document only when it is applied, so the app's history holds none of it, and the
+ * app's undo would take the focus out of the popover, which closes the editor and loses it.
  */
 function LinkPopover({
   href,
@@ -605,7 +608,13 @@ function LinkPopover({
   }, [focus]);
   const address = linkAddress(draft);
   return (
-    <div role="group" aria-label="Link" style={CONTROLS_STYLE} onMouseDown={keepFocus}>
+    <div
+      role="group"
+      aria-label="Link"
+      data-native-undo
+      style={CONTROLS_STYLE}
+      onMouseDown={keepFocus}
+    >
       <label>
         Address{" "}
         <input

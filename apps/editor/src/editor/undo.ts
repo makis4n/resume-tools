@@ -5,6 +5,9 @@
  * wrong, and in the panel's inputs, whose typing reaches the document only at a pause. What the
  * user is typing in loses the focus first, which ends the visit to it (`holdsTyping`), and then the
  * history takes back a step, a visit to a field rather than a keystroke (`History`, `document.ts`).
+ * Only inside an element marked `NATIVE_UNDO`, as the link popover is, do the keys stay the
+ * browser's: what is typed there reaches the document only when it is applied, so the history has
+ * none of it to take back, and taking the focus out of it would close the rich editor and lose it.
  *
  * The keys are taken before any element sees them, in the capture phase on the window, since the
  * rich editor would otherwise stop them: ProseMirror prevents the browser's action for Mod with Z
@@ -68,6 +71,23 @@ export function holdsTyping(
   return element.tagName === "INPUT" && TYPED.has(element.type ?? "text");
 }
 
+/**
+ * The attribute that marks an element whose typing keeps the browser's own undo and redo, as the
+ * link popover's does (`RichOverlay.tsx`): the keys pressed anywhere inside it are the browser's,
+ * which undoes and redoes the typing in the input that has the focus.
+ */
+export const NATIVE_UNDO = "data-native-undo";
+
+/**
+ * Whether a key was pressed at or inside an element marked `NATIVE_UNDO`. A key goes to the
+ * element with the focus, or else to the body; one sent to the document or the window, which
+ * have no `closest`, is in no element.
+ */
+function inNativeUndo(target: EventTarget | null): boolean {
+  const element = target as Partial<Pick<Element, "closest">> | null;
+  return typeof element?.closest === "function" && element.closest(`[${NATIVE_UNDO}]`) !== null;
+}
+
 /** Where the keys are listened for: the window, or a stand-in for it. */
 export type KeyTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
 
@@ -80,14 +100,16 @@ const CAPTURE = { capture: true } as const;
  * listener runs in the capture phase, after only the window's own capture listeners, so that no
  * element, the rich editor least of all, spends the key before it. A key taken is stopped there:
  * neither the browser's undo nor anything under the window acts on it. A key a capture listener
- * on the window has prevented already is left to that listener, and a key not taken, as while no
- * document is open, goes on as if the listener were not there.
+ * on the window has prevented already is left to that listener, a key pressed inside an element
+ * marked `NATIVE_UNDO` is left to the browser without asking `take`, and a key not taken, as while
+ * no document is open, goes on as if the listener were not there.
  */
 export function listenForHistoryKeys(target: KeyTarget, take: (way: Way) => boolean): () => void {
   const listener = (event: Event) => {
     const press = event as KeyboardEvent;
     const way = historyKey(press);
-    if (way === undefined || press.defaultPrevented || !take(way)) return;
+    if (way === undefined || press.defaultPrevented || inNativeUndo(press.target)) return;
+    if (!take(way)) return;
     press.preventDefault();
     press.stopPropagation();
   };
@@ -96,8 +118,9 @@ export function listenForHistoryKeys(target: KeyTarget, take: (way: Way) => bool
 }
 
 /**
- * Give the undo and redo keys, pressed anywhere in the page, to `take`, the one from the latest
- * render, which says whether it took the key (`listenForHistoryKeys`).
+ * Give the undo and redo keys, pressed anywhere in the page but inside an element that keeps the
+ * browser's own (`NATIVE_UNDO`), to `take`, the one from the latest render, which says whether it
+ * took the key (`listenForHistoryKeys`).
  */
 export function useHistoryKeys(take: (way: Way) => boolean): void {
   const latest = useRef(take);

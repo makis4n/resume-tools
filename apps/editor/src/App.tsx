@@ -329,7 +329,7 @@ export function App() {
 
   /**
    * Take back a step of the open document's history, or do again the one last taken back (item
-   * 12), from the message line's buttons or from the keys anywhere in the page. What is being typed
+   * 12), from the message line's buttons or from the keys (`useHistoryKeys`). What is being typed
    * in ends first, so that its edit is part of the step taken back rather than left to come after
    * it: an element that takes typing loses the focus, which makes a panel input send what it holds
    * back for a pause and seal its step, and an open field closes; undo and redo end the open step
