@@ -87,8 +87,8 @@ Only what the loop needs, and what the editor's page, text and PDF need of the c
   each label in a box it throws away; the sample's skills are where upstream's table sets them.
 
 tcolorbox stays, loaded with its `skins` library for the photo, which the editor never sets; the
-tree has tikzfill now (decision 0011). It costs about 125 ms of the dump and 0.37 MB of the format,
-and no measurable time a compile.
+tree has tikzfill now (decision 0011). It costs about 120 ms of the dump, 0.37 MB of the format,
+and 7 ms a compile, 108 ms against 101.
 
 ### The fonts
 
@@ -221,24 +221,31 @@ leaves them out.
 
 ## Numbers
 
-Measured in Node on an M4 Pro with a load average of about 4.5, as the median of ten compiles of
-one pass each after the document's first:
+Measured in Node on an M4 Pro with a load average of about 3.5, on the tree whose fontconfig scans
+no folder (decision 0011, layout 4), a compile's time as the median of ten of one pass each after
+the document's first:
 
 | | |
 |---|---|
-| Dump the format | 510 ms, 600 ms the first time; 9.37 MB |
-| A new document's two passes | 390 and 319 ms |
-| The body, one pass, median of ten | 317 ms (311 to 322) |
-| The invented XeTeX template's body, measured the same way | 300 ms |
-| The same class without tcolorbox | dump 390 ms, 9.00 MB; the body the same |
-| xdvipdfmx on its XDV | 51 to 66 ms |
-| Drawing its page, 17 native fonts from 11 files | 59 ms reading and parsing the files, 6 ms after |
+| Dump the format | 590 ms the first time, 492 to 496 ms after; 9.37 MB |
+| A new document's two passes | 129 and 109 ms |
+| The body, one pass, median of ten | 107 ms (106 to 110) |
+| The invented XeTeX template's body, measured the same way | 87 ms |
+| The same class without tcolorbox | dump 371 to 377 ms, 9.00 MB; the body 101 ms |
+| xdvipdfmx on its XDV | 48 to 63 ms |
+| Drawing its page, 17 native fonts from 11 files | 62 ms reading and parsing the files, 10 ms after |
 
-Decision 0003's mark was 459 ms, for the example's three pages on the spike's tree; the port's
-one-page sample compiles in 317 ms, and the scheduler already waits 400 ms after an edit before a
-XeTeX compile, against 100 ms for pdfTeX (item 8), which is the longer debounce the milestone
-asks for. The harness passes on the sample with no findings, 57 fields on one page, in 13 passes
-of 320 to 400 ms.
+Decision 0016's command, `pnpm --filter @resume-tools/editor measure`, at the same load: the first
+page, as the scheduler times it, in 842 ms; an edit's page, from the command, in 118 ms, compile
+109 and draw 6.7, the slowest of ten 121; a keystroke's rows in 0.11 ms; fit to one page in 215
+ms, one compile; and a first load of 53.44 MB uncompressed, of which TeX Live is 14.08 MB and the
+fonts 6.87.
+
+Decision 0003's mark was 459 ms, for the example's three pages, on a tree whose fontconfig scanned
+the release's folders on every compile; the port's one-page sample compiles in 107 ms, and the
+scheduler already waits 400 ms after an edit before a XeTeX compile, against 100 ms for pdfTeX
+(item 8), which is the longer debounce the milestone asks for. The harness passes on the sample
+with no findings, 57 fields on one page, in 13 passes of 107 to 132 ms.
 
 ## Consequences
 
