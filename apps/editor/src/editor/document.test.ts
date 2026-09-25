@@ -308,8 +308,18 @@ describe("dropRefusedChoices", () => {
     Document.parse({ version: 1, template, resume: sample, controls });
 
   it("drops a choice for a control the template no longer offers, and keeps the rest", () => {
-    // Jake's Resume offers no font or font size.
-    const doc = stored("jake", {
+    // A package that offers no font or font size, as Jake's Resume did before item 17.
+    const fewer = parsePackage({
+      ...EVERY,
+      id: "fewer",
+      controls: {
+        pageSize: { default: "letter", apply: { letter: "", a4: "" } },
+        margins: { default: 0.5, apply: "" },
+        density: { default: "normal", apply: { compact: "", normal: "", relaxed: "" } },
+        dateFormat: { default: "MMM yyyy" },
+      },
+    });
+    const doc = stored("fewer", {
       pageSize: "a4",
       margins: 0.7,
       fontSize: 11,
@@ -318,7 +328,7 @@ describe("dropRefusedChoices", () => {
       dateFormat: "yyyy",
     });
     const before = structuredClone(doc);
-    const { document, dropped } = dropRefusedChoices(jake, doc);
+    const { document, dropped } = dropRefusedChoices(fewer, doc);
     expect(dropped).toEqual(["fontSize", "font"]);
     expect(document.controls).toEqual({
       pageSize: "a4",
@@ -326,7 +336,7 @@ describe("dropRefusedChoices", () => {
       density: "compact",
       dateFormat: "yyyy",
     });
-    expect(controlValuesFor(jake).parse(document.controls)).toEqual(document.controls);
+    expect(controlValuesFor(fewer).parse(document.controls)).toEqual(document.controls);
     expect(document.resume).toBe(doc.resume);
     expect(doc).toStrictEqual(before);
   });

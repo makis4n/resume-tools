@@ -8,9 +8,7 @@
     "license": "MIT",
     "attribution": "Jake Gutierrez and Sourabh Bajaj (jakegut/resume, based on sb2nov/resume)"
   },
-  "files": {
-    "fontsize10.clo": "% The fontsize package reads this file as it loads, in place of setting every size from 10\n% points, its default, which it does even when it is given no size. So article's own sizes\n% stand, and the package adds only \\changefontsize, which the font size control calls.\n"
-  },
+  "files": {},
   "controls": {
     "pageSize": {
       "default": "letter",
@@ -25,7 +23,7 @@
     },
     "fontSize": {
       "default": 11,
-      "apply": "\\ifdim{{value}}pt=11pt\\else\\changefontsize{{{value}}pt}\\fi"
+      "apply": "\\rtfontsize{{{value}}}"
     },
     "font": {
       "default": "lm",
