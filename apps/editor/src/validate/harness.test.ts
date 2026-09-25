@@ -849,6 +849,62 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       ]);
     }, 60_000);
 
+    it("finds a first word a colour change parts between two abutting text operators, and no other", async () => {
+      // A template that colours part of a word, as Awesome-CV colours a title's first three
+      // letters, has xdvipdfmx show the word in two operators, the second starting where the first
+      // ends; a reader of the PDF's text reads them as one word. Two operators apart are two words.
+      // The PDFs are made by hand, on US Letter with a font of every glyph 500 units wide, so that
+      // 'Callo' at 10 bp ends 25 bp after it starts.
+      const handMade = (split: string) => {
+        const content = [
+          "BT /F1 10 Tf 72 720 Td (Ines)Tj ET",
+          `BT /F1 10 Tf 100 720 Td (Callo)Tj 0 0 1 rg ${split} (way)Tj ET`,
+          "BT /F1 10 Tf 72 700 Td (Experience)Tj ET",
+          "BT /F1 10 Tf 72 680 Td (Typesetter)Tj ET",
+          "BT /F1 10 Tf 72 660 Td [(Set)-250(the)]TJ ET",
+        ].join("\n");
+        const widths = Array.from({ length: 95 }, () => 500).join(" ");
+        const source = [
+          "%PDF-1.5",
+          `4 0 obj\n<</Length ${content.length}>>\nstream\n${content}\nendstream\nendobj`,
+          "3 0 obj\n<</Type/Page/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>/MediaBox[0 0 612 792]>>\nendobj",
+          `5 0 obj\n<</Type/Font/Subtype/Type1/FirstChar 32/LastChar 126/Widths[${widths}]/ToUnicode 6 0 R>>\nendobj`,
+          "%%EOF",
+        ].join("\n");
+        const pdf = Uint8Array.from(source, (char) => char.charCodeAt(0));
+        return {
+          dump: session.dump.bind(session),
+          compile: session.compile.bind(session),
+          pdf: (): PdfResult => ({ ok: true, pdf, ms: 1, output: "" }),
+        } as unknown as EngineSession;
+      };
+      // Shown on where the first left off, and moved to where it ends, as xdvipdfmx moves it.
+      for (const split of ["", "25 0 Td"]) {
+        const abutting = await validatePackage(
+          handMade(split),
+          fonts,
+          plainWith("abutting", {}),
+          RESUME,
+        );
+        expect(abutting.findings, split).toEqual([]);
+      }
+      // Moved to 5 bp past where the first ends, as a space would part them: two words.
+      const apart = await validatePackage(
+        handMade("30 0 Td"),
+        fonts,
+        plainWith("apart", {}),
+        RESUME,
+      );
+      expect(apart.findings).toEqual([
+        {
+          check: "pdf",
+          field: "header.last",
+          message:
+            "the PDF's text does not show header.last: no text operator shows its first word, Calloway",
+        },
+      ]);
+    }, 60_000);
+
     it("reports a PDF the session refuses because a template special would read a file", async () => {
       // A template can emit a \special; resume text cannot (decision 0007). xdvipdfmx would embed
       // the file it names, so the session refuses the PDF (decision 0008) and the harness reports

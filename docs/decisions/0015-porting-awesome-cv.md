@@ -57,14 +57,16 @@ Only what the loop needs, and what the editor's page, text and PDF need of the c
 - **hyperref makes no bookmarks**, as decision 0008 has every port, and bookmark, which only
   manages them, is not loaded. hyperref keeps its own XeTeX driver, which writes xdvipdfmx's
   specials; it refuses the `dvipdfmx` option under XeTeX (decision 0014).
-- **`\@sectioncolor` takes the title whole and sets all of it in the accent.** Upstream's takes a
-  title's first three tokens and colours them, which in the editor are the marker macro and its
-  two arguments, whose braces it drops, so that the field comes apart; it also dropped a space
-  among the first three characters, and stopped the compile on a title shorter than three.
-  Colouring the first three characters inside the field works on the page, but a colour change
-  within a word parts the word between two of the PDF's text operators, and the harness's PDF
-  check looks for a field's first word in one; so the whole title takes the accent when
-  `acvSectionColorHighlight` is true, as the preamble keeps it.
+- **`\@sectioncolor` takes the title whole and sets its first three characters in the accent
+  inside the title's field.** Upstream's takes a title's first three tokens and colours them,
+  which in the editor are the marker macro and its two arguments, whose braces it drops, so that
+  the field comes apart; it also dropped a space among the first three characters, and stopped
+  the compile on a title shorter than three. The port's scans the field's text: a letter, a
+  symbol such as `\&` or a braced bracket counts as a character, an empty group after
+  `\textbackslash` as none, and a space is kept and not counted, so a title of fewer than three
+  characters is all in the accent and a blank one sets nothing. A colour change within a word has
+  xdvipdfmx show the word in two text operators, the second from where the first ends, which a
+  reader of the PDF reads as one word; the harness's PDF check now reads them so too (below).
 - **`\makecvheader` starts the name's line and the contacts' line when nothing on them has**,
   with `\leavevmode`: each line ends with `\\`, which stopped the compile where a name of two
   blank halves, or a header with no contacts, left no line to end. A line with anything on it is
@@ -239,8 +241,7 @@ of 320 to 400 ms.
 
 ## Consequences
 
-- The port's default page is the example's but for the section titles, whole in the accent; the
-  headline and the positions, upright where upstream's were small capitals; Roboto's tabular
+- The port's default page is the example's but for the headline and the positions, upright where upstream's were small capitals; Roboto's tabular
   figures; the margins, half an inch on every side; the contacts, in the resume's order; and what
   has no place in the model. Small capitals and proportional figures can come back when the page
   reads the texts of glyphs a single substitution makes, and a family can load one shape with
@@ -252,6 +253,10 @@ of 320 to 400 ms.
   non-breaking hyphen, so the harness's PDF check misses a field whose first word holds a hyphen,
   whatever the page reads; the page aligns the hyphen. The sample holds no apostrophe, and no
   hyphen in a field's first word, until both are settled.
+- The harness's PDF check reads text operators that abut, each starting where the one before it
+  ends, as one text, so that a word a template colours in part is found whole: the PDF reader
+  (`src/validate/pdf.ts`) gives each operator its end, from its font's glyph widths and its
+  kerns. Operators a space apart stay apart.
 - The harness's `pages` check reports a field whose glyphs the page sets past one of its edges,
   as upstream's skills table set one, for every template: neither the page nor the PDF shows
   what is past the edge.

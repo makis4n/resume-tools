@@ -2190,7 +2190,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     });
   }, 120_000);
 
-  it("sets the headline, the section titles and the places in the accent, and follows the accent control", async () => {
+  it("sets the headline, the places and each title's first three letters in the accent, and follows the accent control", async () => {
     const titles = sample.sections.map((section) => `${section.id}.title`);
     const places = ["harbourline", "kestrel", "tulip", "noordveld", "hackathon", "talk"].map(
       (id) => `${id}.place`,
@@ -2201,9 +2201,25 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
       expect(fills.size, ids.join(", ")).toBe(1);
       return [...fills][0] ?? "";
     };
+    /**
+     * Each title's glyphs' colours by their offsets: upstream's highlight, the first three letters
+     * in the accent and the rest in the text's grey, which the sample's titles have no space in.
+     */
+    const highlighted = (page: DrawnPage, accent: string) => {
+      for (const id of titles) {
+        const uses = page.svg.matchAll(
+          new RegExp(`<use [^>]*data-field="${id}" data-offset="(\\d+)"[^>]*>`, "g"),
+        );
+        for (const [use, offset] of uses)
+          expect(/fill="([^"]*)"/.exec(use)?.[1], `${id} at ${offset}`).toBe(
+            Number(offset) < 3 ? accent : "rgb(51,51,51)",
+          );
+      }
+    };
     // The example's red, awesome-red, by default, where the name, the organisations and the text
     // keep the class's greys.
-    expect(fillOf(drawn, ["header.headline", ...titles, ...places])).toBe("rgb(220,53,34)");
+    expect(fillOf(drawn, ["header.headline", ...places])).toBe("rgb(220,53,34)");
+    highlighted(drawn, "rgb(220,53,34)");
     expect(fillOf(drawn, ["header.first"])).toBe("rgb(93,93,93)");
     expect(fillOf(drawn, ["header.last", "harbourline-1.text"])).toBe("rgb(51,51,51)");
     expect(fillOf(drawn, ["harbourline.subtitle"])).toBe("rgb(65,65,65)");
@@ -2212,7 +2228,8 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(generateFormat(pkg, blue).name).toBe(format.name);
     const body = generateBody(pkg, sample, blue);
     const { page } = await compileAndDraw(body.latex, body.texts, "accent");
-    expect(fillOf(page, ["header.headline", ...titles, ...places])).toBe("rgb(31,78,121)");
+    expect(fillOf(page, ["header.headline", ...places])).toBe("rgb(31,78,121)");
+    highlighted(page, "rgb(31,78,121)");
     expect(fillOf(page, ["header.last", "harbourline-1.text"])).toBe("rgb(51,51,51)");
     expect(page.unmatched).toBe(0);
   });
@@ -2408,6 +2425,8 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
       sections: [
         { id: "untitled", kind: "entries", role: "experience", title: "", entries: [] },
         { id: "short", kind: "paragraph", role: "summary", title: "AI", text: [] },
+        { id: "letter", kind: "paragraph", role: "other", title: "X", text: [] },
+        { id: "spaced", kind: "paragraph", role: "other", title: "My Skills", text: [] },
         {
           id: "blanks",
           kind: "list",
@@ -2509,6 +2528,24 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     const baseline = (id: string) => baselinesOf(page, id)[0] ?? Number.NaN;
     expect(baseline("prize-2-0.text")).toBeGreaterThan(baseline("prize-2.title"));
     expect(baseline("prize-2-1.text")).toBeGreaterThan(baseline("prize-2-0.text"));
+    // A title of one letter is all in the accent; a space among a title's first three letters
+    // is kept, and the highlight runs on to the third letter past it.
+    const accentAt = (id: string) =>
+      [
+        ...page.svg.matchAll(
+          new RegExp(`<use [^>]*data-field="${id}" data-offset="(\\d+)"[^>]*>`, "g"),
+        ),
+      ]
+        .filter(([use]) => use.includes('fill="rgb(220,53,34)"'))
+        .map(([, offset]) => Number(offset));
+    expect(accentAt("letter.title")).toEqual([0]);
+    expect(accentAt("short.title")).toEqual([0, 1]);
+    expect(accentAt("spaced.title")).toEqual([0, 1, 3]);
+    const spaced = page.fields
+      .get("spaced.title")
+      ?.glyphs.map((glyph) => glyph.text)
+      .join("");
+    expect(spaced).toBe("MySkills");
   }, 60_000);
 
   it("sets a link with no label as its address, and one it does not link as its label alone", async () => {

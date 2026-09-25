@@ -92,6 +92,13 @@ export interface ShownText {
    */
   x: number;
   y: number;
+  /**
+   * Where its last glyph's advance ends, which is where the next glyph starts, in the same space as
+   * `x` and `y`: its glyphs' widths as its font gives them in `/W` or `/Widths`, its kerns, and
+   * the spacing `Tc` and `Tw` add, at its size and scaling. Undefined when the font gives no
+   * width for a glyph it shows, or when the operator follows another whose end is not known.
+   */
+  end?: { x: number; y: number };
 }
 
 /**
@@ -141,10 +148,12 @@ function contentOf(pdf: Uint8Array): Content {
     for (const ref of (match[1] ?? "").matchAll(/(\d+)\s+\d+\s+R/g)) contents.add(Number(ref[1]));
   const { streams, dictionaries } = objectsOf(text);
   const decoders = composites(streams, dictionaries);
+  const widths = glyphWidths(dictionaries);
   const read: Content = { shown: [], strokes: [] };
   for (const stream of streams) {
     const content = contents.has(stream.object) || /\/Subtype\s*\/Form\b/.test(stream.dict);
-    if (content && !/\/Filter\b/.test(stream.dict)) readContent(stream.data, read, decoders);
+    if (content && !/\/Filter\b/.test(stream.dict))
+      readContent(stream.data, read, decoders, widths);
   }
   return read;
 }
@@ -244,6 +253,94 @@ function composites(
       }
     }
   return decoders;
+}
+
+/**
+ * A font's glyph widths, in thousandths of its size, by code: a composite font's two-byte codes,
+ * which with `Identity-H` are its CIDs, or a simple font's bytes.
+ */
+interface GlyphWidths {
+  bytes: 1 | 2;
+  width: (code: number) => number | undefined;
+}
+
+/**
+ * Each font's glyph widths, by the name the pages' resources give it: a composite font's from its
+ * descendant's `/W` array, and `/DW` for the CIDs it leaves out, 1000 when it gives none; a
+ * simple font's from its `/Widths` array, from `/FirstChar` on. An array may be given inline or
+ * by reference. A font with neither gives no widths, and the texts it shows no end.
+ */
+function glyphWidths(dictionaries: ReadonlyMap<number, string>): Map<string, GlyphWidths> {
+  const widths = new Map<string, GlyphWidths>();
+  const resolved = (dict: string, key: string) => {
+    const ref = new RegExp(`/${key}\\s*(\\d+)\\s+\\d+\\s+R`).exec(dict)?.[1];
+    return ref === undefined
+      ? arrayAfter(dict, `/${key}`)
+      : arrayAfter(dictionaries.get(Number(ref)) ?? "", "");
+  };
+  for (const holder of dictionaries.values())
+    for (const fonts of holder.matchAll(/\/Font\s*(<<[^<>]*>>|\d+\s+\d+\s+R)/g)) {
+      const ref = /^(\d+)\s+\d+\s+R$/.exec(fonts[1] ?? "");
+      const table = ref ? (dictionaries.get(Number(ref[1])) ?? "") : (fonts[1] ?? "");
+      for (const [, name, object] of table.matchAll(/\/([^\s/<>[\]()]+)\s+(\d+)\s+\d+\s+R/g)) {
+        const font = dictionaries.get(Number(object)) ?? "";
+        if (/\/Subtype\s*\/Type0\b/.test(font)) {
+          const descendant = /\/DescendantFonts\s*\[?\s*(\d+)\s+\d+\s+R/.exec(font)?.[1];
+          const cid = descendant === undefined ? "" : (dictionaries.get(Number(descendant)) ?? "");
+          const byCid = cidWidths(resolved(cid, "W"));
+          const standard = Number(/\/DW\s+(-?[\d.]+)/.exec(cid)?.[1] ?? 1000);
+          if (cid !== "")
+            widths.set(name as string, { bytes: 2, width: (code) => byCid.get(code) ?? standard });
+        } else {
+          const first = /\/FirstChar\s+(\d+)/.exec(font)?.[1];
+          const list = resolved(font, "Widths");
+          if (first === undefined || list === undefined) continue;
+          const numbers = list.match(/-?[\d.]+/g)?.map(Number) ?? [];
+          widths.set(name as string, { bytes: 1, width: (code) => numbers[code - Number(first)] });
+        }
+      }
+    }
+  return widths;
+}
+
+/**
+ * The array that begins after `key` in `text`, brackets and all, however its arrays nest, or
+ * undefined when none begins right after it.
+ */
+function arrayAfter(text: string, key: string): string | undefined {
+  const from = key === "" ? text.indexOf("[") : text.indexOf(key);
+  if (from < 0) return undefined;
+  const open = key === "" ? from : text.slice(from + key.length).search(/\S/) + from + key.length;
+  if (text[open] !== "[") return undefined;
+  let depth = 0;
+  for (let at = open; at < text.length; at++) {
+    if (text[at] === "[") depth++;
+    else if (text[at] === "]" && --depth === 0) return text.slice(open, at + 1);
+  }
+  return undefined;
+}
+
+/**
+ * A `/W` array's widths by CID: `c [w w ...]` gives CIDs from `c` on a width each, and
+ * `c_first c_last w` gives each CID of the range the one width.
+ */
+function cidWidths(array: string | undefined): Map<number, number> {
+  const byCid = new Map<number, number>();
+  const tokens = array?.slice(1, -1).match(/\[|\]|-?[\d.]+/g) ?? [];
+  for (let at = 0; at < tokens.length; ) {
+    const first = Number(tokens[at++]);
+    if (tokens[at] === "[") {
+      let cid = first;
+      for (at++; at < tokens.length && tokens[at] !== "]"; at++)
+        byCid.set(cid++, Number(tokens[at]));
+      at++;
+    } else {
+      const last = Number(tokens[at++]);
+      const width = Number(tokens[at++]);
+      for (let cid = first; cid <= last && cid - first < CODES; cid++) byCid.set(cid, width);
+    }
+  }
+  return byCid;
 }
 
 /** A hexadecimal string's bytes as UTF-16BE, the way a ToUnicode map writes a code's text. */
@@ -377,6 +474,7 @@ function readContent(
   content: string,
   read: Content,
   decoders: ReadonlyMap<string, (shown: string) => string> = new Map(),
+  widths: ReadonlyMap<string, GlyphWidths> = new Map(),
 ) {
   const { shown, strokes } = read;
   /** The last name among the operands, which `Tf` takes as the font's, and that font's decoder. */
@@ -431,11 +529,43 @@ function readContent(
   let placed = true;
   let size = 0;
   let scaling = 1;
+  // The font's widths, the spacing Tc and Tw add, and where the next glyph starts when a show's
+  // glyphs' widths are known, which a move sets again.
+  let widthsOf: GlyphWidths | undefined;
+  let charSpacing = 0;
+  let wordSpacing = 0;
+  let next: Matrix | undefined = IDENTITY;
   let leading = 0;
-  const moveTo = (next: Matrix) => {
-    line = next;
-    matrix = next;
+  const moveTo = (to: Matrix) => {
+    line = to;
+    matrix = to;
+    next = to;
     placed = true;
+  };
+  /**
+   * How far a show moves the text matrix, in text space: tx of the PDF reference's 9.4.4, each
+   * glyph's width at the size and a kern's thousandths of it, with Tc after every glyph and Tw
+   * after every single-byte space, all at the horizontal scaling; undefined when a glyph's width
+   * is not known. It reads the glyphs' codes, as the operator shows them.
+   */
+  const advance = (parts: (string | number)[]): number | undefined => {
+    let tx = 0;
+    for (const part of parts) {
+      if (typeof part === "number") {
+        tx -= (part / 1000) * size;
+        continue;
+      }
+      if (widthsOf === undefined) return undefined;
+      const { bytes, width } = widthsOf;
+      for (let at = 0; at + bytes <= part.length; at += bytes) {
+        const code =
+          bytes === 2 ? part.charCodeAt(at) * 256 + part.charCodeAt(at + 1) : part.charCodeAt(at);
+        const glyph = width(code);
+        if (glyph === undefined) return undefined;
+        tx += (glyph / 1000) * size + charSpacing + (bytes === 1 && code === 32 ? wordSpacing : 0);
+      }
+    }
+    return tx * scaling;
   };
   const show = (shownParts: (string | number)[]) => {
     const parts =
@@ -456,7 +586,10 @@ function readContent(
       y = origin[5];
     }
     const text = parts.filter((part) => typeof part === "string").join("");
-    shown.push({ text, parts, x, y });
+    const tx = next === undefined ? undefined : advance(shownParts);
+    next = tx === undefined || next === undefined ? undefined : times(translation(tx, 0), next);
+    const end = next === undefined ? undefined : times(next, ctm);
+    shown.push({ text, parts, x, y, ...(end && { end: { x: end[4], y: end[5] } }) });
     placed = false;
   };
   let at = 0;
@@ -501,6 +634,10 @@ function readContent(
       if (word === "TJ" && Array.isArray(last)) show(last);
       else if (word === "Tj" && typeof last === "string") show([last]);
       else if ((word === "'" || word === '"') && typeof last === "string") {
+        // " sets the word and character spacing first, from the two numbers before its string.
+        const spacing = word === '"' ? operands.slice(-3, -1) : [];
+        if (spacing.length === 2 && spacing.every((operand) => typeof operand === "number"))
+          [wordSpacing, charSpacing] = spacing as [number, number];
         moveTo(times(translation(0, -leading), line));
         show([last]);
       } else if (word === "q") saved.push({ ctm, lineWidth });
@@ -525,7 +662,10 @@ function readContent(
       else if (word === "Tf") {
         size = numbers(1)?.[0] ?? size;
         decode = named === undefined ? undefined : decoders.get(named);
+        widthsOf = named === undefined ? undefined : widths.get(named);
       } else if (word === "Tz") scaling = (numbers(1)?.[0] ?? 100) / 100;
+      else if (word === "Tc") charSpacing = numbers(1)?.[0] ?? charSpacing;
+      else if (word === "Tw") wordSpacing = numbers(1)?.[0] ?? wordSpacing;
       else if (word === "ID") {
         // An inline image's data runs to its EI, and may hold any byte.
         const end = content.slice(at).search(/\sEI(?=\s|$)/);

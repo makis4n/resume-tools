@@ -27,12 +27,11 @@
 % - hyperref makes no bookmarks, which a one-page resume has no use for and which cost time that
 %   grows with the square of a section title's length, and bookmark, which only manages them, is
 %   not loaded. hyperref takes its own XeTeX driver, which writes xdvipdfmx's specials.
-% - \@sectioncolor takes a section title whole, and sets all of it in the accent, where upstream's
-%   set the title's first three tokens in it. The editor gives the title as its field, whose
-%   first three tokens are its marker macro and the macro's two arguments; and a colour that
-%   changes within a word parts the word between two of the PDF's text operators, where the
-%   editor's check of the PDF looks for a field's first word in one. Upstream's also dropped a
-%   space among the first three characters, and stopped the compile on a title shorter than three.
+% - \@sectioncolor takes a section title whole, and sets its first three characters in the
+%   accent inside the title's field, where upstream's set the title's first three tokens in it:
+%   the editor gives the title as its field, whose first three tokens are its marker macro and the
+%   macro's two arguments. Upstream's also dropped a space among the first three characters, and
+%   stopped the compile on a title shorter than three, which the port sets.
 % - \makecvheader starts the name's line and the contacts' line when nothing on them has, so
 %   that a name of two blank halves, or a header with no contacts, sets: each line ends with \\,
 %   which stopped upstream's compile when there was no line to end. A line with anything on it
@@ -206,10 +205,37 @@
 \setbool{acvSectionColorHighlight}{true}
 
 % Awesome section color
-% rt: the title whole, and all of it in the accent, as the note at the top says.
+% rt: the title whole, and its first three characters in the accent, as the note at the top says.
+% The editor gives the title as its field, \rtfield{<id>}{<text>}, and the three are the text's,
+% inside the field, so that its markers stay round the whole title. A character is a token, such
+% as a letter or \&, or a group, as the editor escapes a bracket; an empty group, as after
+% \textbackslash, counts for nothing, and a space is kept and not counted. A title of fewer than
+% three characters is all in the accent, and a blank one sets nothing. The scan and its end are
+% protected, so that a PDF string would drop them rather than expand them.
 \def\@sectioncolor#1{%
-  \ifbool{acvSectionColorHighlight}{{\color{awesome}#1}}{#1}%
+  \ifbool{acvSectionColorHighlight}{\rt@sectioncolor{#1}}{#1}%
 }
+\def\rt@sectioncolor#1{\@ifnextchar\rtfield\rt@colorfield\rt@colorthree#1\rt@stop}
+\def\rt@colorfield\rtfield#1#2\rt@stop{\rtfield{#1}{\rt@colorthree#2\rt@stop}}
+\protected\def\rt@stop{}
+\newcount\rt@left
+\protected\def\rt@colorthree{\begingroup\color{awesome}\rt@left=3\relax\rt@scan}
+\def\rt@scan{\futurelet\rt@next\rt@look}
+\def\rt@look{%
+  \ifx\rt@next\rt@stop\let\rt@do\rt@end
+  \else\ifx\rt@next\@sptoken\let\rt@do\rt@space
+  \else\ifx\rt@next\bgroup\let\rt@do\rt@group
+  \else\let\rt@do\rt@token\fi\fi\fi
+  \rt@do}
+\def\rt@end\rt@stop{\endgroup}
+\@firstofone{\def\rt@space} { \rt@scan}
+\def\rt@group#1{{#1}\if\relax\detokenize{#1}\relax
+  \expandafter\rt@scan\else\expandafter\rt@counted\fi}
+\def\rt@token#1{#1\rt@counted}
+\def\rt@counted{%
+  \advance\rt@left\m@ne
+  \ifnum\rt@left>\z@\expandafter\rt@scan\else\expandafter\rt@rest\expandafter\@empty\fi}
+\def\rt@rest#1\rt@stop{\endgroup#1}
 
 
 %-------------------------------------------------------------------------------

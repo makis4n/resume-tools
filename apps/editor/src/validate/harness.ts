@@ -49,7 +49,7 @@ import {
   markerId,
 } from "../tex/fields";
 import { INCH, US_LETTER } from "../tex/svg";
-import { hasToUnicode, mediaBoxes, shownStrings } from "./pdf";
+import { hasToUnicode, mediaBoxes, type ShownText, shownTexts } from "./pdf";
 
 /** The checks, in the order the harness makes them. */
 export const CHECKS = [
@@ -967,16 +967,17 @@ const LIGATURE = /ff|fi|fl|--|''|,,/;
  * PDF's text operators show, where the glyphs' codes stand for the characters, which holds only
  * for what `SHOWN_AS_ITSELF` allows, and not for a ligature; a field whose first word has a
  * character outside ASCII, or anything else those rule out, is skipped. A native font's text,
- * XeTeX's, is read through its ToUnicode map (`shownStrings`), where the quotes XeTeX's
+ * XeTeX's, is read through its ToUnicode map (`shownTexts`), where the quotes XeTeX's
  * `tex-text` mapping curls read as the straight ones the text holds, and a character its font's
  * map gives one glyph with others as the one the glyph reads as first (`unaliased`), since
- * xdvipdfmx shows such a glyph as the highest, as it shows Source Sans Pro's hyphen as U+2011. A
- * first word TeX broke at
- * a line end lands in two text operators, its halves split by a hyphen TeX inserted, so a word not
- * in any one string is looked for in the strings joined, with that hyphen anywhere inside it. A
- * field the fields or alignment checks report (`reported`) is left to them. A PDF xdvipdfmx cannot
- * make, as when the output uses a font it has no Type 1 file of to embed, is one finding, with its
- * words.
+ * xdvipdfmx shows such a glyph as the highest, as it shows Source Sans Pro's hyphen as U+2011.
+ * Operators that abut, each starting where the one before it ends, are read as one text
+ * (`abuttingRuns`), as a reader of the PDF reads them, so that a word a template colours in part
+ * is found whole. A first word TeX broke at a line end lands in two text operators, its halves
+ * split by a hyphen TeX inserted, so a word not in any one string is looked for in the strings
+ * joined, with that hyphen anywhere inside it. A field the fields or alignment checks report
+ * (`reported`) is left to them. A PDF xdvipdfmx cannot make, as when the output uses a font it has
+ * no Type 1 file of to embed, is one finding, with its words.
  */
 function checkPdf(
   made: PdfResult,
@@ -1012,10 +1013,12 @@ function checkPdf(
       message: "no font of the PDF has a ToUnicode map, so its text cannot be read",
     });
   const files = [...natives.values()].flatMap((font) => font.file ?? []);
-  const shown = shownStrings(pdf).map((text) => unaliased(text, files).replace(CURLED, "'"));
+  const read = (text: string) => unaliased(text, files).replace(CURLED, "'");
+  const operators = shownTexts(pdf);
+  const shown = abuttingRuns(operators).map(read);
   // The operators joined in order, nothing between them, so a first word broken across two of them
   // reads as one, its halves split by the hyphen TeX inserted at the break.
-  const joined = shown.join("");
+  const joined = operators.map((each) => read(each.text)).join("");
   for (const field of found.values()) {
     const word = texts.get(field.id)?.trim().split(/\s/, 1)[0] ?? "";
     if (reported.has(field.id) || !SHOWN_AS_ITSELF.test(word) || LIGATURE.test(word)) continue;
@@ -1027,6 +1030,32 @@ function checkPdf(
     });
   }
   return findings;
+}
+
+/** How far apart, in big points, one text operator may end and the next start, and abut. */
+const ABUT = 0.5;
+
+/**
+ * The texts the PDF's text operators show, each joined to the one before it when it starts where
+ * that one ends (`ShownText.end`), within `ABUT`, or follows it with no move of the text: a word a
+ * template colours in part, as Awesome-CV colours the first three letters of a section's title,
+ * is shown in two operators, the second from where the first ends, and a reader of the PDF's text
+ * reads them as one word. Operators a space apart, or further, stay apart.
+ */
+function abuttingRuns(operators: readonly ShownText[]): string[] {
+  const runs: string[] = [];
+  operators.forEach((each, i) => {
+    const end = operators[i - 1]?.end;
+    const abuts =
+      i > 0 &&
+      (Number.isNaN(each.x) ||
+        (end !== undefined &&
+          Math.abs(each.x - end.x) <= ABUT &&
+          Math.abs(each.y - end.y) <= ABUT));
+    if (abuts) runs[runs.length - 1] += each.text;
+    else runs.push(each.text);
+  });
+  return runs;
 }
 
 /** Whether `word` appears in `joined` with a single line-break hyphen inserted somewhere inside. */
