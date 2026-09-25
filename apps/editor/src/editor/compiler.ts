@@ -34,8 +34,18 @@
  * and the files are fetched into the HTTP cache while the engine starts, since the worker reads
  * each with a synchronous request of its own (decision 0010). The stores only ever save time, so
  * one that fails or stalls is gone around rather than waited on.
+ *
+ * Fit to one page (item 18, `fit.ts`) asks how many pages the open document sets with other
+ * control values. Each such trial compiles on the same engine, in its turn and with a compile's
+ * time limit, but in a job of its own, so that the document's auxiliary files and the output its
+ * PDF is made from stay as they are, and it shows nothing: it only counts pages. The document comes
+ * first, since its page is what the user sees, so a trial waits for the document compiling or
+ * waiting to, and a document that changes during a trial compiles as soon as the trial lands. The
+ * engine is busy while a trial is in flight, as while a document compiles, so a PDF asked for
+ * meanwhile waits for it; a PDF request that loses the engine fails the trial it was ahead of.
  */
 
+import { z } from "zod";
 import type {
   CompileOptions,
   CompileResult,
@@ -48,8 +58,13 @@ import type {
 } from "../engine/session";
 import { type DrawnPage, drawPage } from "../page/draw";
 import type { FontLibrary } from "../page/fonts";
-import { type GeneratedBody, generateBody, generateFormat } from "../templates/generate";
-import type { TemplatePackage } from "../templates/package";
+import {
+  type GeneratedBody,
+  type GeneratedFormat,
+  generateBody,
+  generateFormat,
+} from "../templates/generate";
+import { type ControlValues, controlValuesFor, type TemplatePackage } from "../templates/package";
 import type { Document } from "./document";
 
 /**
@@ -122,7 +137,10 @@ export interface CompilerEvents {
   page(shown: Shown): void;
   /** Why no new page came, in words for the user; the details go to the console. */
   error(message: string): void;
-  /** Whether a document is compiling or waiting to, for a quiet indicator. */
+  /**
+   * Whether the engine is busy, with a document compiling or waiting to or a trial of other
+   * control values in flight (`Compiler.tryControls`), for a quiet indicator.
+   */
   busy(pending: boolean): void;
 }
 
@@ -204,6 +222,13 @@ const STORE_LIMIT = 2_000;
 const JOB = "doc";
 
 /**
+ * The job a trial compiles in (`tryControls`), apart from the document's, whose auxiliary files
+ * and output it leaves as they are. Like the document's, it may hold the files of the document
+ * open before, so a trial of a document opened since the job's last trial starts it afresh.
+ */
+const FIT_JOB = "fit";
+
+/**
  * Passes at most in one compile, the session's default, which leaves the session to run a new
  * document twice, a document whose log asks once more, and a failed compile again as a new
  * document, all within it. The first compile on a new worker is a new document's, since that
@@ -231,6 +256,32 @@ interface Run {
   timer?: ReturnType<typeof setTimeout>;
 }
 
+/** A compile of the open document with other control values, which counts its pages. */
+interface Trial {
+  pkg: TemplatePackage;
+  /** The open document as it was when the trial was asked for, with the values as its controls. */
+  document: Document;
+  /**
+   * Which opening of a document the trial was asked in, as `open` counts them, which tells the
+   * trials of one document from those of the next, however they queue.
+   */
+  opened: number;
+  resolve(pages: number): void;
+  reject(error: unknown): void;
+  /** The time limit of the request running now, which closing stops. */
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+/** What handing the engine a format needs of the work it is for: a document's run, or a trial. */
+interface Work {
+  /** The compile's time limit, which handing the engine a kept format has too. */
+  limit: number;
+  /** One request to the engine within a time limit, which loses the engine as the work's do. */
+  request<T>(limit: number, call: () => Promise<T>): Promise<T>;
+  /** Whether what the work brings back is still wanted. */
+  current(): boolean;
+}
+
 /** Where the page on screen came from, which its PDF is made from. */
 interface Made {
   /** The engine whose job holds the page's output. */
@@ -252,6 +303,11 @@ interface Instance {
   installed: Set<string>;
   /** Whether a document has compiled in its job, whose files the folder may still hold. */
   compiled: boolean;
+  /**
+   * The opening whose trial last compiled in the fit job, whose files that folder may still hold;
+   * undefined until a trial has compiled there.
+   */
+  fitOpened: number | undefined;
 }
 
 export class Compiler {
@@ -267,6 +323,8 @@ export class Compiler {
   private readonly prefetched = new Map<string, Promise<void>>();
   /** Whether a document has opened since one last reached the job, which it then starts afresh. */
   private opened = false;
+  /** How many times a document has opened, which each trial notes (`Trial.opened`). */
+  private openings = 0;
   /** The time limits running on requests to a store, which `close` stops. */
   private readonly waits = new Set<ReturnType<typeof setTimeout>>();
   /** The engine every request goes to, made when a document first needs one. */
@@ -277,8 +335,17 @@ export class Compiler {
    */
   private readonly formats = new Map<string, Uint8Array>();
   private pkg: TemplatePackage | undefined;
+  /** The newest document `open` or `update` gave, whatever has become of its compile. */
+  private latest: Document | undefined;
   /** The newest document that has not started compiling. */
   private pending: Document | undefined;
+  /** The trials asked for that wait for the engine, in the order they were asked for. */
+  private readonly trials: Trial[] = [];
+  /**
+   * The trial in flight, which a document's compile waits for as for another document's, and a
+   * PDF as for a document's compile.
+   */
+  private trying: Trial | undefined;
   private debounce: ReturnType<typeof setTimeout> | undefined;
   private running: Run | undefined;
   private generation = 0;
@@ -324,7 +391,9 @@ export class Compiler {
     if (this.closed) return;
     checkTemplate(pkg, doc);
     this.pkg = pkg;
+    this.latest = doc;
     this.opened = true;
+    this.openings++;
     void this.prefetchFor(pkg);
     clearTimeout(this.debounce);
     this.debounce = undefined;
@@ -339,15 +408,17 @@ export class Compiler {
 
   /**
    * The open document has changed. It compiles once the edits pause for the engine's delay, or,
-   * while a compile is in flight, as soon as that one lands; either way only the newest compiles.
+   * while a compile or a trial is in flight, as soon as that one lands; either way only the newest
+   * compiles.
    */
   update(doc: Document) {
     if (this.closed) return;
     const pkg = this.pkg;
     if (pkg === undefined) throw new Error("a document has to be open before it can change");
     checkTemplate(pkg, doc);
+    this.latest = doc;
     this.pending = doc;
-    if (this.running === undefined) {
+    if (this.running === undefined && this.trying === undefined) {
       clearTimeout(this.debounce);
       this.debounce = setTimeout(() => {
         this.debounce = undefined;
@@ -358,8 +429,8 @@ export class Compiler {
   }
 
   /**
-   * Stop for good: every timer stops, the engine is terminated, and a compile in flight is dropped
-   * when it lands, so nothing is emitted after this.
+   * Stop for good: every timer stops, the engine is terminated, a compile in flight is dropped
+   * when it lands, so nothing is emitted after this, and every trial fails.
    */
   close() {
     if (this.closed) return;
@@ -376,16 +447,60 @@ export class Compiler {
     this.instance = undefined;
     clearTimeout(this.pdfTimer);
     for (const wake of this.settled.splice(0)) wake();
+    clearTimeout(this.trying?.timer);
+    const closed = new Error("the compiler closed before the trial could compile");
+    for (const trial of [this.trying, ...this.trials.splice(0)]) trial?.reject(closed);
+    this.trying = undefined;
+  }
+
+  /**
+   * The open document as the compiler has it: the newest that `open` or `update` gave, which a
+   * trial compiles. The fit reads it to stop once the document has changed underneath it.
+   */
+  get document(): Document | undefined {
+    return this.latest;
+  }
+
+  /**
+   * How many pages the open document sets with `values` in place of its controls, for the fit's
+   * search (item 18): the newest document `open` or `update` gave, compiled on the same engine but
+   * in the fit job, so that the document's auxiliary files and the output its PDF is made from are
+   * untouched. The trial waits for what is in flight and for a document waiting to compile, which
+   * comes first; it has a compile's time limit; and a format-bound value whose format is new dumps
+   * it first, kept like any other. It shows nothing, no page and no message, but while it is in
+   * flight the engine is `busy` with it, so a PDF asked for meanwhile waits for it. It fails at
+   * once for values the package does not take, as a document's control command does, and it fails
+   * when its compile does, when the engine is lost to it (`loseToTrial`) or to a PDF request
+   * (`losePdf`), when no document is open, and when the compiler closes first.
+   */
+  tryControls(values: ControlValues): Promise<number> {
+    const pkg = this.pkg;
+    const doc = this.latest;
+    if (this.closed || pkg === undefined || doc === undefined)
+      return Promise.reject(new Error("a document has to be open to try other control values"));
+    const taken = controlValuesFor(pkg).safeParse(values);
+    if (!taken.success)
+      return Promise.reject(
+        new Error(`${pkg.name} refuses the values to try: ${z.prettifyError(taken.error)}`),
+      );
+    return new Promise((resolve, reject) => {
+      const document = { ...doc, controls: taken.data };
+      this.trials.push({ pkg, document, opened: this.openings, resolve, reject });
+      // A document waiting for a pause in the edits compiles first, once the pause has passed.
+      if (this.debounce === undefined) this.next();
+    });
   }
 
   /**
    * The PDF of the page on screen, which xdvipdfmx makes from the page's own output (plan section
    * 5.5). A document compiling or waiting to is the one the user sees next, so the PDF waits for
    * its page, and fails if that document's compile does: a PDF of the page before would not be
-   * what the user asked for. Calls made while one is on its way share it. The request has a
-   * compile's time limit, and one that runs past it, or that the engine fails rather than
-   * answers, loses the engine as a compile's would (`losePdf`). The promise fails with
-   * `COULD_NOT_MAKE_PDF`, and the reason as its cause.
+   * what the user asked for. It waits for a trial in flight too (`tryControls`), since the engine
+   * takes one request at a time, and a request behind a trial's would spend its time limit on the
+   * trial. Calls made while one is on its way share it. The request has a compile's time limit,
+   * and one that runs past it, or that the engine fails rather than answers, loses the engine as a
+   * compile's would (`losePdf`). The promise fails with `COULD_NOT_MAKE_PDF`, and the reason as
+   * its cause.
    */
   pdf(): Promise<Uint8Array> {
     this.making ??= this.makePdf().finally(() => {
@@ -395,7 +510,8 @@ export class Compiler {
   }
 
   private async makePdf(): Promise<Uint8Array> {
-    // Until nothing is compiling or waiting to, when the page on screen is the newest document's.
+    // Until nothing is compiling or waiting to, a trial included (`setBusy`), when the page on
+    // screen is the newest document's and the engine has nothing else to do.
     while (this.busy && !this.closed) await new Promise<void>((wake) => this.settled.push(wake));
     const made = this.made;
     if (this.closed || made === undefined || made.instance !== this.instance)
@@ -433,31 +549,51 @@ export class Compiler {
 
   /**
    * The engine is lost to a PDF request, which ran past its limit or which it failed rather than
-   * answered: it is terminated and replaced, as `lose` does for a compile. The page on screen then
-   * compiles again on the new engine, unless a newer document is on its way and compiles instead,
-   * so that the new engine's job holds the output the next PDF is made from.
+   * answered: it is terminated and replaced, as `lose` does for a compile. A trial asked for while
+   * the request was on its way went to the engine behind it, and it fails now, rather than wait out
+   * its own time limit on an engine that is gone, so the fit that asked for it stops; nothing it
+   * brings back later is heard. The page on screen then compiles again on the new engine, unless a
+   * newer document is on its way and compiles instead, so that the new engine's job holds the
+   * output the next PDF is made from.
    */
   private losePdf(made: Made, error: unknown) {
     if (this.closed || this.instance !== made.instance) return;
     console.warn("A PDF request lost the engine, so a new one takes its place", error);
     made.instance.engine.terminate();
     this.instance = undefined;
-    if (this.running !== undefined || this.pending !== undefined) return;
-    this.pending = made.document;
-    this.next();
+    const trial = this.trying;
+    if (trial !== undefined) {
+      this.trying = undefined;
+      clearTimeout(trial.timer);
+      trial.reject(new Error("a PDF request lost the engine the trial was on", { cause: error }));
+    }
+    if (this.running !== undefined) return;
+    // The page on screen, or a newer document in its place, which compiles once its pause has
+    // passed, or at once if it was waiting for the trial, whose landing would have started it.
+    this.pending ??= made.document;
+    if (this.debounce === undefined) this.next();
   }
 
-  /** Start compiling the pending document, unless one is in flight. */
+  /**
+   * Start what waits, unless a compile or a trial is in flight: the pending document, or else,
+   * once no document waits, the first trial.
+   */
   private next() {
-    if (this.closed || this.running !== undefined) return;
+    if (this.closed) return;
+    const inFlight = this.running !== undefined || this.trying !== undefined;
     const doc = this.pending;
     const pkg = this.pkg;
-    if (doc === undefined || pkg === undefined) {
-      this.setBusy();
+    if (!inFlight && doc !== undefined && pkg !== undefined) {
+      this.pending = undefined;
+      this.begin(pkg, doc, false);
       return;
     }
-    this.pending = undefined;
-    this.begin(pkg, doc, false);
+    const trial = inFlight || doc !== undefined ? undefined : this.trials.shift();
+    if (trial !== undefined) this.trying = trial;
+    // Once the trial is in flight, so that the engine stays busy from the landing of what was in
+    // flight to the trial's, and a PDF waiting for the one waits for the other.
+    this.setBusy();
+    if (trial !== undefined) void this.runTrial(trial);
   }
 
   /** Start a document compiling; `retry` when it is its second try, after it lost the engine. */
@@ -489,42 +625,17 @@ export class Compiler {
       // The files the template is known to read are on their way before TeX asks for any.
       await this.prefetchFor(pkg);
       if (!this.current(run)) return;
-      const key = `${pkg.engine}:${format.name}`;
-      if (!instance.installed.has(key)) {
-        // A format an earlier session kept saves the dump: 0.37 s in Chrome on a fast laptop, and
-        // on a cold cache the 7.5 MiB of TeX Live files a dump reads, most of it the stock format
-        // (decision 0003).
-        const kept = this.formats.get(key) ?? (await this.stored(pkg.engine, format.name));
-        if (!this.current(run)) return;
-        if (kept !== undefined) {
-          this.formats.set(key, kept);
-          // putFormat may move the buffer it is given to the worker, so it gets a copy.
-          await this.request(run, run.limit, () =>
-            engine.putFormat(pkg.engine, format.name, kept.slice()),
-          );
-        } else {
-          // A dump reads TeX Live's files as TeX asks for them, 54 files and 7.5 MiB for Jake's
-          // format on a cold cache, and one that is cut off leaves no format behind, so the worker
-          // that retries it reads them all over again. It gets the start-up's limit rather than
-          // the compile's: a format is dumped when a document opens or a control bound to the
-          // format changes, never per keystroke, so a long dump costs a wait, not an edit.
-          const dumped = await this.request(run, this.startLimit, () =>
-            engine.dump(pkg.engine, format.name, format.preamble, format.files),
-          );
-          this.record(pkg, dumped.fetched);
-          if (!dumped.ok || dumped.format === undefined) {
-            if (this.current(run))
-              this.fail(`the format did not dump: ${dumped.error}`, dumped.log);
-            return;
-          }
-          const bytes = dumped.format;
-          this.formats.set(key, bytes);
-          const store = this.formatStore;
-          if (store) this.keep("keep a format", () => store.put(pkg.engine, format.name, bytes));
-        }
-        instance.installed.add(key);
-        if (!this.current(run)) return;
+      const work: Work = {
+        limit: run.limit,
+        request: (limit, call) => this.request(run, limit, call),
+        current: () => this.current(run),
+      };
+      const failed = await this.installFormat(work, instance, pkg, format);
+      if (failed !== undefined) {
+        if (this.current(run)) this.fail(`the format did not dump: ${failed.error}`, failed.log);
+        return;
       }
+      if (!this.current(run)) return;
       // The job's folder may hold another document's auxiliary files, which this one must not
       // read. The scheduler knows no document ids, so a document opened on an engine that has
       // compiled starts afresh, which costs one pass when it is the same document again.
@@ -560,6 +671,156 @@ export class Compiler {
       if (this.current(run)) this.fail("the page could not be made", error);
     } finally {
       this.landed(run);
+    }
+  }
+
+  /**
+   * Hand the engine the work's format, unless it holds it already: the one this session or an
+   * earlier one kept, or else one dumped now, and kept for both. A dump that fails comes back, for
+   * the work to report as it reports failures; otherwise nothing does, and the work checks for
+   * itself whether it is still current, since the store and the engine were waited on.
+   */
+  private async installFormat(
+    work: Work,
+    instance: Instance,
+    pkg: TemplatePackage,
+    format: GeneratedFormat,
+  ): Promise<DumpResult | undefined> {
+    const key = `${pkg.engine}:${format.name}`;
+    if (instance.installed.has(key)) return undefined;
+    const { engine } = instance;
+    // A format an earlier session kept saves the dump: 0.37 s in Chrome on a fast laptop, and on a
+    // cold cache the 7.5 MiB of TeX Live files a dump reads, most of it the stock format (decision
+    // 0003).
+    const kept = this.formats.get(key) ?? (await this.stored(pkg.engine, format.name));
+    if (!work.current()) return undefined;
+    if (kept !== undefined) {
+      this.formats.set(key, kept);
+      // putFormat may move the buffer it is given to the worker, so it gets a copy.
+      await work.request(work.limit, () => engine.putFormat(pkg.engine, format.name, kept.slice()));
+    } else {
+      // A dump reads TeX Live's files as TeX asks for them, 54 files and 7.5 MiB for Jake's format
+      // on a cold cache, and one that is cut off leaves no format behind, so the worker that
+      // retries it reads them all over again. It gets the start-up's limit rather than the
+      // compile's: a format is dumped when a document opens or a control bound to the format
+      // changes, never per keystroke, so a long dump costs a wait, not an edit.
+      const dumped = await work.request(this.startLimit, () =>
+        engine.dump(pkg.engine, format.name, format.preamble, format.files),
+      );
+      this.record(pkg, dumped.fetched);
+      if (!dumped.ok || dumped.format === undefined) return dumped;
+      const bytes = dumped.format;
+      this.formats.set(key, bytes);
+      const store = this.formatStore;
+      if (store) this.keep("keep a format", () => store.put(pkg.engine, format.name, bytes));
+    }
+    instance.installed.add(key);
+    return undefined;
+  }
+
+  /**
+   * Compile a trial's document in the fit job and settle the trial with its page count. It is
+   * current while it is the trial in flight, which closing ends, and so does a PDF request that
+   * loses the engine (`losePdf`). A compile that fails fails the trial, and so does the engine lost
+   * to one of its requests; it is not tried again, since the fit that asked for it can be, and the
+   * page on screen was never at stake.
+   */
+  private async runTrial(trial: Trial): Promise<void> {
+    const { pkg, document: doc } = trial;
+    try {
+      const format = generateFormat(pkg, doc.controls);
+      const body = generateBody(pkg, doc.resume, doc.controls);
+      const instance = this.currentInstance();
+      const { engine } = instance;
+      const work: Work = {
+        limit: this.limits[pkg.engine],
+        request: (limit, call) => this.trialRequest(trial, instance, limit, call),
+        current: () => this.trying === trial,
+      };
+      if (!instance.started) {
+        await work.request(this.startLimit, () => engine.start());
+        instance.started = true;
+        if (!work.current()) return;
+      }
+      await this.prefetchFor(pkg);
+      if (!work.current()) return;
+      const failed = await this.installFormat(work, instance, pkg, format);
+      if (failed !== undefined)
+        throw new Error(`the format did not dump: ${failed.error}`, { cause: failed.log });
+      if (!work.current()) return;
+      // As the document's job does, for the same reason (see `run`). A trial is never dropped for
+      // a newer document, so one asked before another document opened can still compile after
+      // it, and it is the opening each trial notes, not the latest, that says whose files are in
+      // the job.
+      if (instance.fitOpened !== undefined && instance.fitOpened !== trial.opened) {
+        await work.request(work.limit, () => engine.forget(FIT_JOB));
+        if (!work.current()) return;
+      }
+      instance.fitOpened = trial.opened;
+      const result = await work.request(work.limit, () =>
+        engine.compile(pkg.engine, format.name, body.latex, {
+          job: FIT_JOB,
+          maxPasses: MAX_PASSES,
+        }),
+      );
+      this.record(pkg, result.fetched);
+      if (!result.ok)
+        throw new Error(`the trial did not compile: ${result.error}`, { cause: result.log });
+      trial.resolve(result.pages);
+    } catch (error) {
+      trial.reject(error);
+    } finally {
+      clearTimeout(trial.timer);
+      if (this.trying === trial) {
+        this.trying = undefined;
+        this.next();
+      }
+    }
+  }
+
+  /**
+   * One request of a trial to the engine, within a time limit. A request that runs past it, or that
+   * the engine fails rather than answers, loses the engine (`loseToTrial`) and fails the trial.
+   */
+  private async trialRequest<T>(
+    trial: Trial,
+    instance: Instance,
+    limit: number,
+    call: () => Promise<T>,
+  ): Promise<T> {
+    let expire: (error: Error) => void = () => {};
+    const expired = new Promise<never>((_, reject) => {
+      expire = reject;
+    });
+    trial.timer = setTimeout(() => expire(new Error(`took over ${limit} ms`)), limit);
+    try {
+      return await Promise.race([call(), expired]);
+    } catch (error) {
+      this.loseToTrial(instance, error);
+      throw error;
+    } finally {
+      clearTimeout(trial.timer);
+    }
+  }
+
+  /**
+   * The engine is lost to a trial's request, which ran past its limit or which the engine failed
+   * rather than answered: it is terminated and replaced, as `lose` does for a compile. The page on
+   * screen was made in that engine's job, which the next PDF is made from, so it compiles again on
+   * the new engine once the trial has landed, as after `losePdf`, unless a newer document is on its
+   * way and compiles instead.
+   */
+  private loseToTrial(instance: Instance, error: unknown) {
+    if (this.closed || this.instance !== instance) return;
+    console.warn(
+      "A trial of other control values lost the engine, so a new one takes its place",
+      error,
+    );
+    instance.engine.terminate();
+    this.instance = undefined;
+    if (this.pending === undefined && this.made?.instance === instance) {
+      this.pending = this.made.document;
+      this.setBusy();
     }
   }
 
@@ -651,6 +912,7 @@ export class Compiler {
       started: false,
       installed: new Set(),
       compiled: false,
+      fitOpened: undefined,
     };
     return this.instance;
   }
@@ -736,9 +998,13 @@ export class Compiler {
     this.events.error(COULD_NOT_UPDATE);
   }
 
-  /** Tell the app whether a document is compiling or waiting to, when that changes. */
+  /**
+   * Tell the app whether the engine is busy, with a document compiling or waiting to or a trial in
+   * flight, when that changes; a PDF waits until it is not.
+   */
   private setBusy() {
-    const busy = this.running !== undefined || this.pending !== undefined;
+    const busy =
+      this.running !== undefined || this.pending !== undefined || this.trying !== undefined;
     if (busy === this.busy || this.closed) return;
     this.busy = busy;
     this.events.busy(busy);
