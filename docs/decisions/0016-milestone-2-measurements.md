@@ -45,8 +45,10 @@ rows below are left empty, to be filled by running the same command again once t
   browser page gives the edit with it too.
 - Sizes are bytes on disk. A first load is the engine's `.wasm` and its loader's `.mjs`, the
   manifest, every TeX Live file the engine read while the scheduler made the first page, and the
-  files the fonts read that TeX had not. What they compress to on the way is the CDN's to say
-  (milestone 5), and the app's own JavaScript is not in it.
+  files the fonts read for it that TeX had not. The fonts the overlay reads when a field opens,
+  for variants the page sets no glyph of, are counted apart, since the app fetches them only
+  then. What they compress to on the way is the CDN's to say (milestone 5), and the app's own
+  JavaScript is not in it.
 
 ## Findings
 

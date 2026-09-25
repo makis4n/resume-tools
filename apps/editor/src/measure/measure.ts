@@ -471,32 +471,48 @@ export interface FirstLoad {
   manifest: number;
   /** The TeX Live files the engine read for the first page: the dump's and the compile's. */
   texLive: number;
-  /** The files the fonts read that TeX had not: Type 1 outlines, the font map and such. */
+  /**
+   * The files the fonts read for the first page that TeX had not: Type 1 outlines, the font map
+   * and such.
+   */
   fonts: number;
   total: number;
 }
 
 /**
  * What a first load of a package fetches: the engine and its loader, the manifest, every TeX Live
- * file the engine read while the scheduler made the first page, and the files the fonts read, by
- * path with their sizes, less those TeX read already, since the worker's reads and the page's go
- * through the same HTTP cache under the same URLs. Everything is counted once, as it is on disk;
- * what goes over the network compressed is the CDN's to say (milestone 5).
+ * file the engine read while the scheduler made the first page, and the files the fonts read for
+ * it, by path with their sizes, less those TeX read already, since the worker's reads and the
+ * page's go through the same HTTP cache under the same URLs. What the overlay reads when a field
+ * opens is not in it (`overlayFonts`), nor what the edits read. Everything is counted once, as it
+ * is on disk; what goes over the network compressed is the CDN's to say (milestone 5).
  */
 export function firstLoad(
   numbers: Pick<PackageNumbers, "reads">,
   sizes: { engine: number; loader: number; manifest: number },
 ): FirstLoad {
-  const { tex } = numbers.reads.open;
+  const { tex, fonts: files } = numbers.reads.open;
   const read = new Set(tex.paths);
   const texLive = tex.bytes;
-  const fontFiles = new Map<string, number>();
-  for (const { fonts: files } of Object.values(numbers.reads))
-    for (const [path, bytes] of files) fontFiles.set(path, bytes);
   let fonts = 0;
-  for (const [path, bytes] of fontFiles) if (!read.has(path)) fonts += bytes;
+  for (const [path, bytes] of files) if (!read.has(path)) fonts += bytes;
   const total = sizes.engine + sizes.loader + sizes.manifest + texLive + fonts;
   return { ...sizes, texLive, fonts, total };
+}
+
+/**
+ * The files the overlay's fonts read that the first page had not, which the app fetches when the
+ * field opens: the fonts of the variants the page sets no glyph of, which the rich overlay
+ * measures their runs in (`namedVariants`).
+ */
+export function overlayFonts(numbers: Pick<PackageNumbers, "reads">): {
+  files: number;
+  bytes: number;
+} {
+  const { open, overlay } = numbers.reads;
+  const read = new Set([...open.tex.paths, ...open.fonts.keys()]);
+  const files = [...overlay.fonts].filter(([path]) => !read.has(path));
+  return { files: files.length, bytes: files.reduce((sum, [, bytes]) => sum + bytes, 0) };
 }
 
 /** A duration for a table: two decimals under 10 ms, whole milliseconds above. */
@@ -539,6 +555,7 @@ const filesOf = (read: Fetched) => `${read.files} files, ${formatMb(read.bytes)}
 /** The table `scripts/measure.ts` prints for a package. */
 export function packageTable(numbers: PackageNumbers, load: FirstLoad): string {
   const { dump, open, draw, edits, keystroke } = numbers;
+  const opening = overlayFonts(numbers);
   const edit = median(edits.map((each) => each.ms));
   const compile = median(edits.map((each) => each.compileMs));
   const drawn = median(edits.map((each) => each.drawMs));
@@ -581,6 +598,11 @@ export function packageTable(numbers: PackageNumbers, load: FirstLoad): string {
       `${keystroke.field}, ${keystroke.characters} characters on ${keystroke.rows} lines`,
     ],
     ["First load, uncompressed", formatMb(load.total), loaded.join(", ")],
+    [
+      "Opening the field, uncompressed",
+      formatMb(opening.bytes),
+      `${opening.files} files of fonts for variants the page does not set`,
+    ],
   ]);
 }
 

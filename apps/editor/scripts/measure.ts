@@ -90,6 +90,7 @@ const countStep = ({ tex, fonts }: StepReads) => ({
 
 /** The numbers as the JSON keeps them, milliseconds to a microsecond. */
 function json(
+  measure: Measure,
   about: ReturnType<typeof machine>,
   runs: number,
   measured: { numbers: PackageNumbers; load: FirstLoad }[],
@@ -109,6 +110,7 @@ function json(
         edits: countStep(numbers.reads.edits),
       },
       firstLoad: load,
+      openingTheField: measure.overlayFonts(numbers),
     })),
     summary: verdicts.map(({ target, values }) => ({ ...target, values })),
   };
@@ -188,7 +190,7 @@ async function main() {
       ].join("\n"),
     );
     if (options.json !== undefined) {
-      writeFileSync(options.json, json(about, options.runs, measured, verdicts));
+      writeFileSync(options.json, json(measure, about, options.runs, measured, verdicts));
       console.log(`\nThe numbers are in ${options.json}`);
     }
   } finally {

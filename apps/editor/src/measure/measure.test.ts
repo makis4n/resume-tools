@@ -21,6 +21,7 @@ import {
   measurePackage,
   median,
   meets,
+  overlayFonts,
   type PackageNumbers,
   packageTable,
   summaryTable,
@@ -201,6 +202,26 @@ describe("firstLoad", () => {
       total: 4880,
     });
   });
+
+  it("leaves out the fonts the overlay reads when a field opens, and counts them apart", () => {
+    const open = { tex: read([["/a.tfm", 20]]), fonts: new Map([["/b.pfb", 100]]) };
+    // The overlay reads a variant's metrics and outlines, and one of the page's files again.
+    const overlay = {
+      tex: read([]),
+      fonts: new Map([
+        ["/b.pfb", 100],
+        ["/c.tfm", 10],
+        ["/c.pfb", 90],
+      ]),
+    };
+    const reads = { open, overlay, edits: NOTHING };
+    expect(firstLoad({ reads }, { engine: 0, loader: 0, manifest: 0 })).toMatchObject({
+      texLive: 20,
+      fonts: 100,
+      total: 120,
+    });
+    expect(overlayFonts({ reads })).toEqual({ files: 2, bytes: 100 });
+  });
 });
 
 describe("the tables", () => {
@@ -257,7 +278,7 @@ describe("the tables", () => {
 
   it("lays a package's numbers out a row each", () => {
     const text = packageTable(numbers("fast", 80, 0.1), load(42e6));
-    expect(text.split("\n")).toHaveLength(7);
+    expect(text.split("\n")).toHaveLength(8);
     expect(text).toMatch(/\nFirst page +240 ms +the dump, the compile and the draw/);
     expect(text).toContain("Edit to page, median of 3");
     expect(text).toContain("0.10 ms");
@@ -386,5 +407,20 @@ describe.skipIf(!engineAvailable())("measurePackage", () => {
     expect(load.fonts).toBeGreaterThan(0);
     expect(load.fonts).toBeLessThan([...fontFiles.values()].reduce((a, b) => a + b, 0));
     expect(load.total).toBe(13 + tex + load.fonts);
+  });
+
+  it("counts under first load the fonts the first page read, and the overlay's apart", () => {
+    const load = firstLoad(numbers, { engine: 0, loader: 0, manifest: 0 });
+    const names = (files: ReadonlyMap<string, number>) =>
+      [...files.keys()].map((path) => path.slice(path.lastIndexOf("/") + 1)).sort();
+    // The overlay measures the bullet's bold italic, which no page of the sample sets, in a font of
+    // its own, which the app fetches only when the field opens.
+    expect(names(numbers.reads.overlay.fonts)).toEqual(["ec-lmbxi10.tfm", "lmbxi10.pfb"]);
+    const tex = new Set(numbers.reads.open.tex.paths);
+    let page = 0;
+    for (const [path, bytes] of numbers.reads.open.fonts) if (!tex.has(path)) page += bytes;
+    expect(load.fonts).toBe(page);
+    const overlay = [...numbers.reads.overlay.fonts.values()].reduce((a, b) => a + b, 0);
+    expect(overlayFonts(numbers)).toEqual({ files: 2, bytes: overlay });
   });
 });
