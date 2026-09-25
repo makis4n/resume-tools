@@ -88,8 +88,14 @@ review of the port found the editor's page and text need of the class's macros:
   text wider than the column less its frame is set in lines of that width, ragged right, in one
   frame: upstream's one line ran off the page past about 45 characters, and past about 3,000 (1,357
   of `W` at 12 points in Latin Modern) stopped TeX with `Dimension too large`. It is set in those
-  lines first, which says whether it fits on one, and only then measured whole, since a long text's
-  width can pass TeX's largest dimension.
+  lines first, which says whether it fits on one, and only then measured whole, so that a text TeX
+  can break is never measured whole, however long; a run it cannot break is a limit, below. The tag
+  is one box, as the node is, so that a line breaks only at the space after it, where upstream's
+  does: with the frame, the text and the kerns around it loose, TeX could break at the last kern,
+  which has that space after it, and drop it, and the frame of a tag that ended a line hung past the
+  column by the kern, 6.25 bp for the sample's "Design systems" in Roboto at 11.5 points, and in 21
+  of the 84 settings of font, size and density. The frames and the text are then the node's in all
+  84, to 0.0015 bp.
 
 The class's other `\RequirePackage`s are all in the tree but simpleicons, which it loads only if
 present, falling back from `\xtwitter` to `\twitter`, and academicons, which it loads only when
@@ -217,14 +223,26 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   that moves the text would take the matrices multiplied out.
 - A tag is one box, so one of more than about 2,500 characters, taller than a page, is set on a
   page of its own and runs past its foot.
-- Known limits, each far past a page and far under the generator's 1 MB bound on the body: about
+- Known limits, each far past a page and far under the generator's 1 MB bound on the body. About
   3,250 one-word tags compile, to 24 pages, and 3,500 exhaust TeX's main memory; about 1,386 items
   in a list in the right column stop paracol with `Too many unprocessed columns/floats`, as the
   review of this item found; and 1,500 tags take about 5 s a pass, so that a new document of them,
-  two passes, reaches the scheduler's 10 s limit. Each edit is saved whatever the compile does, so
-  a document can be saved in a state whose first compile fails. The editor, not the class, has to
-  give the way back: the side panel stays when the page cannot be shown, so the edit can be
-  undone or the item removed, which comes once item 9's rewrite of the page column has landed.
+  two passes, reaches the scheduler's 10 s limit. And a tag whose text has a run TeX cannot break,
+  such as one long word, wraps TeX's 32-bit arithmetic when the run is wide enough, which the port
+  does not work around. Up to 32,768 points plus the width of the tag's lines (the column less the
+  frame, 185.90 points at the default controls) the run is set as one line, which runs off the page.
+  Past that, the excess TeX works out to fit the line passes 2³¹ scaled points and wraps, so the
+  line seems to fit and the run is measured whole, and its width wraps to 65,536 points less than it
+  is: up to 49,152 points that is below −16,384 points, and TikZ stops the compile with `Dimension
+  too large`; from 49,152 points to 65,536 it compiles, with the tag's width taken as that negative
+  amount, so the tags after it are set that far to the left, off the page for most of that range.
+  From 65,536 points on, the same repeats every 65,536. In `W`s of Lato at 10 points, 10.355 points
+  each, the compile stops from 3,183 to 4,746, and the other tags move from 4,747 to 6,328; a run of
+  ordinary letters, about half as wide, takes about twice as many. Each edit is saved whatever the
+  compile does, so a document can be saved in a state whose first compile fails. The editor, not the
+  class, gives the way back: the side panel stays when the page cannot be shown, so the edit can be
+  undone or the item removed, which comes with the review's change to the app once item 9's rewrite
+  of the page column has landed.
 - The port's default page is the sample's but for the capitals, the ligatures, the margins, a pale
   rule in place of the gold, and what has no place in the model.
 - xdvipdfmx warns once for each of the editor's marker specials, which it does not know, as it

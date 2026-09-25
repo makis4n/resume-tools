@@ -16,7 +16,7 @@ import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
 import { checkSpecial } from "../validate/harness";
-import { mediaBoxes, shownTexts } from "../validate/pdf";
+import { mediaBoxes, shownTexts, strokedPaths } from "../validate/pdf";
 import { CURATED, curated } from "./curated";
 import { generateBody, generateFormat } from "./generate";
 import { type ByRole, defaultControls, parsePackage, type TemplatePackage } from "./package";
@@ -1100,6 +1100,28 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     }
     // The harness's special check finds no field of the sample in a PDF-only transform.
     expect(checkSpecial(parseDvi(output, () => undefined))).toEqual([]);
+  });
+
+  it("keeps every tag's frame in the column, a tag being one box as upstream's node is", async () => {
+    // A tag set as its frame, a kern, its text and a kern, with the space after it, gave TeX a
+    // break at the last kern, which it took and dropped, so the frame of a tag that ended a line
+    // hung past the column by the kern: the sample's "Design systems" by 6.25 bp in Roboto at
+    // 11.5 points (decision 0013). The frames are read from the PDF, since the page draws none.
+    const body = generateBody(pkg, sample, { ...values, font: "roboto", fontSize: 11.5 });
+    const { result } = await compileAndDraw(body.latex, body.texts, "frames");
+    expect(result.log).not.toMatch(/^! /m);
+    const made = session.pdf("frames", { compress: 0 });
+    if (!made.pdf) throw new Error(made.error);
+    const skills = sample.sections.find((section) => section.role === "skills");
+    if (skills?.kind !== "list") throw new Error("the sample moved");
+    // Every tag's frame, and only they, are stroked with rounded corners.
+    const frames = strokedPaths(made.pdf).filter(({ curved }) => curved);
+    expect(frames).toHaveLength(skills.items.length);
+    const bp = 72 / INCH;
+    for (const { left, right, width } of frames) {
+      expect(left - width / 2).toBeGreaterThan(COLUMN.start * bp - 0.001);
+      expect(right + width / 2).toBeLessThan(COLUMN.end * bp + 0.001);
+    }
   });
 
   it("sets a tag wider than the column in lines of the column's width, even one of 3,500 characters", async () => {

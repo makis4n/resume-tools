@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasToUnicode, mediaBoxes, shownStrings, shownTexts } from "./pdf";
+import { hasToUnicode, mediaBoxes, shownStrings, shownTexts, strokedPaths } from "./pdf";
 
 /** A PDF's text as its bytes, one byte per character, as xdvipdfmx writes a PDF at level 0. */
 const bytes = (text: string) => Uint8Array.from(text, (char) => char.charCodeAt(0));
@@ -103,6 +103,31 @@ describe("shownTexts", () => {
       { text: "Scaled", parts: ["Scaled"], x: 78, y: 728 },
       { text: "Next", parts: ["Next"], x: 78, y: 700 },
       { text: "Back", parts: ["Back"], x: 72, y: 720 },
+    ]);
+  });
+});
+
+describe("strokedPaths", () => {
+  it("gives the box of each stroked path through the matrix, its line's width, and whether it curves", () => {
+    const pdf = pdfWith(
+      [
+        "q 1 0 0 1 72 720 cm",
+        // A rule, as xdvipdfmx draws one: a thick line.
+        "q 2 w 0 -10 m 100 -10 l S Q",
+        // A frame with rounded corners, as TikZ draws a tag's, moved and in a thinner line.
+        "q 1 0 0 1 20 -40 cm 0.4 w 4 0 m 36 0 l 38 0 40 2 40 4 c 40 12 l 40 14 38 16 36 16 c",
+        "4 16 l 2 16 0 14 0 12 c 0 4 l 0 2 2 0 4 0 c h S Q",
+        // Filled, and only clipped: neither is stroked.
+        "0 0 10 10 re f 0 0 5 5 re W n",
+        // A rectangle stroked at twice the size, whose line is twice as wide.
+        "q 2 0 0 2 0 0 cm 1 w 0 0 10 5 re S Q",
+        "Q",
+      ].join(" "),
+    );
+    expect(strokedPaths(pdf)).toEqual([
+      { left: 72, bottom: 710, right: 172, top: 710, width: 2, curved: false },
+      { left: 92, bottom: 680, right: 132, top: 696, width: 0.4, curved: true },
+      { left: 72, bottom: 720, right: 92, top: 730, width: 2, curved: false },
     ]);
   });
 });

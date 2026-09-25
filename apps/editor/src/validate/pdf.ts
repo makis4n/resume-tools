@@ -96,16 +96,52 @@ export interface ShownText {
  * reads them. The graphics state starts afresh in each content stream.
  */
 export function shownTexts(pdf: Uint8Array): ShownText[] {
+  return contentOf(pdf).shown;
+}
+
+/** A path the PDF strokes, as a rule or a frame is drawn. */
+export interface StrokedPath {
+  /**
+   * The box its points span, in big points, in the space of the content stream that strokes it,
+   * as `ShownText` places a text. A curve's control points count, which for a rounded corner lie
+   * within the box its ends span.
+   */
+  left: number;
+  bottom: number;
+  right: number;
+  top: number;
+  /** The line's width in that space: the stroke reaches half of it past the path. */
+  width: number;
+  /** Whether it has a curve, as a rounded frame does and a rule, drawn as a line, does not. */
+  curved: boolean;
+}
+
+/**
+ * Every path the PDF's content streams stroke, in the order `shownTexts` reads them, with an S, s,
+ * B, B*, b or b*; a path that is only filled or clipped is left out.
+ */
+export function strokedPaths(pdf: Uint8Array): StrokedPath[] {
+  return contentOf(pdf).strokes;
+}
+
+/** What the content streams show and stroke. */
+interface Content {
+  shown: ShownText[];
+  strokes: StrokedPath[];
+}
+
+/** What every content stream of the PDF shows and strokes, the pages' and the forms'. */
+function contentOf(pdf: Uint8Array): Content {
   const text = asText(pdf);
   const contents = new Set<number>();
   for (const match of text.matchAll(/\/Contents\s*(\[[^\]]*\]|\d+\s+\d+\s+R)/g))
     for (const ref of (match[1] ?? "").matchAll(/(\d+)\s+\d+\s+R/g)) contents.add(Number(ref[1]));
-  const shown: ShownText[] = [];
+  const read: Content = { shown: [], strokes: [] };
   for (const stream of streamsOf(text)) {
     const content = contents.has(stream.object) || /\/Subtype\s*\/Form\b/.test(stream.dict);
-    if (content && !/\/Filter\b/.test(stream.dict)) readContent(stream.data, shown);
+    if (content && !/\/Filter\b/.test(stream.dict)) readContent(stream.data, read);
   }
-  return shown;
+  return read;
 }
 
 interface Stream {
@@ -216,8 +252,12 @@ function times(m: Matrix, n: Matrix): Matrix {
 /** A move by `x` and `y`. */
 const translation = (x: number, y: number): Matrix => [1, 0, 0, 1, x, y];
 
-/** Add what each text-showing operator of a content stream shows, and where, to `shown`. */
-function readContent(content: string, shown: ShownText[]) {
+/**
+ * Add what each text-showing operator of a content stream shows, and where, and each path it
+ * strokes, to `read`.
+ */
+function readContent(content: string, read: Content) {
+  const { shown, strokes } = read;
   /** The operands since the last operator: strings, numbers, and arrays of the two. */
   let operands: (string | number | (string | number)[])[] = [];
   let array: (string | number)[] | undefined;
@@ -228,10 +268,40 @@ function readContent(content: string, shown: ShownText[]) {
       ? (last as number[])
       : undefined;
   };
-  // The transformation matrix and the copies `q` saves; the text line matrix and the text matrix;
-  // and whether the text matrix is where the next glyph starts, which a show leaves it not.
+  // The transformation matrix and the line width, and the copies `q` saves of the two; the path
+  // being built, its points through the matrix as each was added; the text line matrix and the
+  // text matrix; and whether the text matrix is where the next glyph starts, which a show leaves
+  // it not.
   let ctm = IDENTITY;
-  const saved: Matrix[] = [];
+  let lineWidth = 1;
+  const saved: { ctm: Matrix; lineWidth: number }[] = [];
+  let path: { points: [number, number][]; curved: boolean } = { points: [], curved: false };
+  const addPoints = (coordinates: number[] | undefined, curved = false) => {
+    if (coordinates === undefined) return;
+    for (let at = 0; at + 1 < coordinates.length; at += 2) {
+      const [x = 0, y = 0] = coordinates.slice(at, at + 2);
+      const [a, b, c, d, e, f] = ctm;
+      path.points.push([x * a + y * c + e, x * b + y * d + f]);
+    }
+    if (curved) path.curved = true;
+  };
+  const endPath = (stroked: boolean) => {
+    const { points, curved } = path;
+    if (stroked && points.length > 0) {
+      const xs = points.map(([x]) => x);
+      const ys = points.map(([, y]) => y);
+      const [a, b, c, d] = ctm;
+      strokes.push({
+        left: Math.min(...xs),
+        bottom: Math.min(...ys),
+        right: Math.max(...xs),
+        top: Math.max(...ys),
+        width: lineWidth * Math.sqrt(Math.abs(a * d - b * c)),
+        curved,
+      });
+    }
+    path = { points: [], curved: false };
+  };
   let line = IDENTITY;
   let matrix = IDENTITY;
   let placed = true;
@@ -302,9 +372,18 @@ function readContent(content: string, shown: ShownText[]) {
       else if ((word === "'" || word === '"') && typeof last === "string") {
         moveTo(times(translation(0, -leading), line));
         show([last]);
-      } else if (word === "q") saved.push(ctm);
-      else if (word === "Q") ctm = saved.pop() ?? ctm;
+      } else if (word === "q") saved.push({ ctm, lineWidth });
+      else if (word === "Q") ({ ctm, lineWidth } = saved.pop() ?? { ctm, lineWidth });
       else if (word === "cm" && six) ctm = times(six, ctm);
+      else if (word === "w") lineWidth = numbers(1)?.[0] ?? lineWidth;
+      else if (word === "m" || word === "l") addPoints(numbers(2));
+      else if (word === "c") addPoints(numbers(6), true);
+      else if (word === "v" || word === "y") addPoints(numbers(4), true);
+      else if (word === "re" && numbers(4)) {
+        const [x = 0, y = 0, width = 0, height = 0] = numbers(4) ?? [];
+        addPoints([x, y, x + width, y, x + width, y + height, x, y + height]);
+      } else if (["S", "s", "B", "B*", "b", "b*"].includes(word)) endPath(true);
+      else if (["f", "F", "f*", "n"].includes(word)) endPath(false);
       else if (word === "BT") moveTo(IDENTITY);
       else if ((word === "Td" || word === "TD") && first !== undefined && second !== undefined) {
         if (word === "TD") leading = -second;

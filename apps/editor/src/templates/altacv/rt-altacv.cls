@@ -55,7 +55,8 @@
 %   DVI, does not, so the page drew the text half its width right of where the PDF has it.
 %   The frame and the text are where the node puts them in the PDF. A text wider than the
 %   column less its frame is set in lines of that width, where the node's one line ran off
-%   the page, and past about 3,000 characters stopped TeX with Dimension too large.
+%   the page, and past about 3,000 characters stopped TeX with Dimension too large; a run
+%   TeX cannot break still can, past 2^31sp, as decision 0013 records.
 % Everything else is upstream's.
 
 %%%%%%%%%%%%%%%%
@@ -403,8 +404,12 @@
 % a text 1.5ex high and 0.25ex deep, in a 0.4pt line whose outer edge is the tag's. A text wider
 % than the column less its frame is set in lines of that width, ragged right, the frame around
 % them all. The text is set in those lines first, which says whether it fits on one: only then is
-% it measured whole, since a long text's width can pass TeX's largest dimension. The space after
-% the tag is the one upstream's node leaves.
+% it measured whole, so a text TeX can break is never measured whole, however long. A run it
+% cannot break, such as one long word, wraps TeX's arithmetic past 2^31sp and can stop the
+% compile or move the tags after it, a limit decision 0013 records. The tag is one box, as
+% upstream's node is, so that a line breaks only at the space after it, which is the one the node
+% leaves: a kern with that space after it would be a break, which TeX would take and drop, and the
+% frame would then hang past the column by the kern.
 \newsavebox\rt@tag
 \newsavebox\rt@tagline
 \newdimen\rt@tagwd
@@ -426,11 +431,12 @@
       \fi
     \fi\fi
     \ht\rt@tag\z@ \dp\rt@tag\z@
-    \rlap{\tikz[baseline=0pt]{%
-      \useasboundingbox (0pt,-\rt@tagdp-0.75ex-0.2pt) rectangle (\rt@tagwd+2ex+0.4pt,2.25ex+0.2pt);
-      \draw[draw=body!30,rounded corners]
-        (0.2pt,-\rt@tagdp-0.75ex) rectangle (\rt@tagwd+2ex+0.2pt,2.25ex);}}%
-    \kern\dimexpr1ex+0.2pt\relax\usebox\rt@tag\kern\dimexpr1ex+0.2pt\relax
+    \hbox{%
+      \rlap{\tikz[baseline=0pt]{%
+        \useasboundingbox (0pt,-\rt@tagdp-0.75ex-0.2pt) rectangle (\rt@tagwd+2ex+0.4pt,2.25ex+0.2pt);
+        \draw[draw=body!30,rounded corners]
+          (0.2pt,-\rt@tagdp-0.75ex) rectangle (\rt@tagwd+2ex+0.2pt,2.25ex);}}%
+      \kern\dimexpr1ex+0.2pt\relax\usebox\rt@tag\kern\dimexpr1ex+0.2pt\relax}%
   \endgroup\space
 }
 
