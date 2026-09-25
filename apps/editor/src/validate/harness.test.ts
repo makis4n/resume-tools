@@ -32,7 +32,7 @@ const ENSURES: Record<Check, string> = {
   converges: "converges: two passes as a new document, then one again, to the same output",
   controls: "compiles with each control it offers set another way, with no error, to other output",
   edits: "shows every field's new text after an edit, compiled once as the editor does",
-  pages: "sets its sample on one page",
+  pages: "sets its sample on one page, no field past the page's edges",
   fields: "keeps every field's markers, once each, and the page finds each field with glyphs",
   alignment: "matches every glyph of every field to a character of its text, and shows it whole",
   fonts: "uses only fonts the page can draw",
@@ -526,6 +526,26 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
   }
 
   describe("over an invented package", () => {
+    it("reports a field set past the page's edge, right or below, and nothing else", async () => {
+      // A table wider than the text, as a template's column of a fixed width after a column as wide
+      // as its longest label can make one, sets text off the page, where neither the page nor the
+      // PDF shows it: the harness reads each field's glyphs against the page's edges.
+      const right = plainWith("past-right", {
+        bullet: "\\noindent\\makebox[0pt][l]{\\hspace*{\\paperwidth}{{text}}}\\par",
+      });
+      const report = await validatePackage(session, fonts, right, RESUME);
+      expect(report.findings).toEqual([
+        { check: "pages", field: "tern-1.text", message: "tern-1.text runs past the page's edge" },
+      ]);
+      const below = plainWith("past-bottom", {
+        bullet: "\\noindent\\raisebox{-\\paperheight}[0pt][0pt]{{{text}}}\\par",
+      });
+      const under = await validatePackage(session, fonts, below, RESUME);
+      expect(under.findings).toEqual([
+        { check: "pages", field: "tern-1.text", message: "tern-1.text runs past the page's edge" },
+      ]);
+    }, 60_000);
+
     it("reports a field whose markers never reach the page, and nothing else", async () => {
       // A box \settowidth measures is never shipped out, so the specials in it never reach the
       // page (decision 0007), and the bullet cannot be found by a click.

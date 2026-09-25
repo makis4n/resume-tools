@@ -2217,6 +2217,80 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(page.unmatched).toBe(0);
   });
 
+  it("keeps a skill's text on the page whatever its label, and the sample's skills as upstream", async () => {
+    // Upstream's cvskills sets the skills' text in a column 0.9 of the text's width after a
+    // column as wide as the widest label, so a label of two or three words set the text past the
+    // page's edge, on the page and in the PDF.
+    const labelled = Resume.parse(structuredClone(sample));
+    const skills = labelled.sections.find((section) => section.kind === "labelled");
+    const [first] = skills?.kind === "labelled" ? skills.items : [];
+    if (!first) throw new Error("the sample moved");
+    first.label = "Programming Languages";
+    first.text = [
+      {
+        text: "Go, Python, TypeScript, Rust, SQL, Bash, Terraform, Kubernetes, Helm, Prometheus, Grafana, Bazel, Buildkite, Build Actions, Postgres, Redis, Kafka, Nomad and Vault",
+      },
+    ];
+    for (const pageSize of ["a4", "letter"] as const)
+      for (const fontSize of [11, 12]) {
+        const at = `${pageSize} at ${fontSize} pt`;
+        const body = generateBody(pkg, labelled, { ...values, pageSize, fontSize });
+        const { result, page } = await compileAndDraw(
+          body.latex,
+          body.texts,
+          `skills-${pageSize}-${fontSize}`,
+        );
+        expect(result.log, at).not.toMatch(/^! /m);
+        expect(page.unmatched, at).toBe(0);
+        // Every glyph of the skills inside the right margin, the ink of an italic overhang aside.
+        const edge = page.size.width - 0.5 * INCH + 1;
+        for (const id of [...body.texts.keys()].filter((id) =>
+          /^(languages|infrastructure|practices)\./.test(id),
+        ))
+          for (const glyph of page.glyphs.filter((each) => each.field === id))
+            expect(glyph.right, `${at}: ${id}`).toBeLessThan(edge);
+        expect(baselinesOf(page, "languages.text").length, at).toBeGreaterThan(1);
+      }
+    // The sample's labels leave its skills where upstream's column sets them.
+    const cls = pkg.files["rt-awesome-cv.cls"] ?? "";
+    const skillsTable =
+      /^% rt: the skills' text in the column[\s\S]*?^% Define a line of cv information\(skill\)/m;
+    expect(cls.match(new RegExp(skillsTable.source, "gm"))).toHaveLength(1);
+    const upstream = parsePackage({
+      ...pkg,
+      id: "awesome-cv-skills",
+      files: {
+        "rt-awesome-cv.cls": cls.replace(
+          skillsTable,
+          [
+            "\\newenvironment{cvskills}{%",
+            "  \\vspace{\\acvSectionContentTopSkip}",
+            "  \\vspace{-2.0mm}",
+            "  \\begin{center}",
+            "    \\setlength\\tabcolsep{1ex}",
+            "    \\setlength{\\extrarowheight}{0pt}",
+            "    \\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}} r L{\\textwidth * \\real{0.9}}}",
+            "}{%",
+            "    \\end{tabular*}",
+            "  \\end{center}",
+            "}",
+            "% Define a line of cv information(skill)",
+          ].join("\n"),
+        ),
+      },
+    });
+    const plain = generateFormat(upstream, values);
+    const dumped = session.dump(upstream.engine, plain.name, plain.preamble, plain.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    const body = generateBody(upstream, sample, values);
+    const result = session.compile(upstream.engine, plain.name, body.latex, {
+      job: "skills-upstream",
+      maxPasses: 3,
+    });
+    if (!result.output) throw new Error(result.error);
+    expect((await drawPage(result.output, fonts, body.texts)).glyphs).toEqual(drawn.glyphs);
+  }, 60_000);
+
   it("sets an award's dates on one line in every date format, a range included, and the sample's as upstream", async () => {
     // Upstream's column for an award's date is 1.5 cm, for a year; the model's dates are ranges
     // too, which wrapped there, their first line up against the title.

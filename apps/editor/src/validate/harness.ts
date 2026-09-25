@@ -37,7 +37,7 @@ import {
   type TemplatePackage,
 } from "../templates/package";
 import { PARAGRAPH_MARKER } from "../templates/prelude";
-import { type DviDocument, type PageItem, parseDvi } from "../tex/dvi";
+import { type DviDocument, type PageItem, parseDvi, pointsPerUnit } from "../tex/dvi";
 import {
   alignField,
   collectFields,
@@ -236,7 +236,7 @@ export async function validatePackage(
   report.passes.push(...controls.passes);
   findings.push(...controls.findings);
 
-  const { fields, undrawable, natives } = await readFields(fonts, output, doc);
+  const { fields, undrawable, natives, outside } = await readFields(fonts, output, doc);
   report.pages = doc.pages.length;
   report.fields = fields.size;
   const fieldFindings = checkFields(doc, fields, body.texts);
@@ -249,7 +249,7 @@ export async function validatePackage(
   if (editedBody !== undefined && edited !== undefined)
     findings.push(...(await checkEdits(fonts, edited, editedBody.texts, body.texts, reported)));
   findings.push(
-    ...checkPages(doc),
+    ...checkPages(doc, outside),
     ...fieldFindings,
     ...alignmentFindings,
     ...checkFonts(undrawable),
@@ -597,15 +597,21 @@ async function checkEdits(
 }
 
 /**
- * `pages`: the resume sets exactly one page. Decision 0006 declares no page count and the editor
- * warns about a second page (item 14), so a failure means the template spills its sample onto a
- * page the editor would warn about. The other checks read every page all the same, so that a
- * spill is reported here and nowhere else.
+ * `pages`: the resume sets exactly one page, and every field within the page's edges. Decision
+ * 0006 declares no page count and the editor warns about a second page (item 14), so a failure
+ * means the template spills its sample onto a page the editor would warn about. The other checks
+ * read every page all the same, so that a spill is reported here and nowhere else. A field that
+ * runs past an edge of the page (`outside`), as a table wider than the text sets one, is not
+ * shown there, nor in the PDF, where the page ends too, and the user cannot see what is lost.
  */
-function checkPages(doc: DviDocument): Finding[] {
+function checkPages(doc: DviDocument, outside: readonly string[]): Finding[] {
+  const findings: Finding[] = [];
   const count = doc.pages.length;
-  if (count === 1) return [];
-  return [{ check: "pages", message: `the resume sets ${count} pages, not one` }];
+  if (count !== 1)
+    findings.push({ check: "pages", message: `the resume sets ${count} pages, not one` });
+  for (const id of outside)
+    findings.push({ check: "pages", field: id, message: `${id} runs past the page's edge` });
+  return findings;
 }
 
 /**
@@ -1050,13 +1056,14 @@ function readDvi(output: Uint8Array): DviDocument {
 
 /**
  * The fields an output's pages show, the fonts the page cannot draw them with, with the reason,
- * and the native fonts it loaded, by file name, which the PDF check reads the PDF's text with
- * (`unaliased`). Each font `doc`, the output as `readDvi` parsed it, uses is loaded once, as the page
- * loads it, TeX fonts and XeTeX's native ones alike; the output is parsed again with the TeX
- * fonts' widths, as the page parses it, since whether an accent stands over the letter after it
- * depends on where each starts (`collectFields`); and each glyph is named as the page names it
- * (`glyphTextOf`), so a glyph from a font that cannot be drawn has no text. A field is the first
- * copy the pages show, page by page, as `collectFields` keeps it on each.
+ * the native fonts it loaded, by file name, which the PDF check reads the PDF's text with
+ * (`unaliased`), and the fields it sets past the page's edges (`outsideThePage`). Each font `doc`,
+ * the output as `readDvi` parsed it, uses is loaded once, as the page loads it, TeX fonts and
+ * XeTeX's native ones alike; the output is parsed again with the TeX fonts' widths, as the page
+ * parses it, since whether an accent stands over the letter after it depends on where each starts
+ * (`collectFields`); and each glyph is named as the page names it (`glyphTextOf`), so a glyph from
+ * a font that cannot be drawn has no text. A field is the first copy the pages show, page by
+ * page, as `collectFields` keeps it on each.
  */
 async function readFields(
   fonts: FontLibrary,
@@ -1066,6 +1073,7 @@ async function readFields(
   fields: Map<string, Field>;
   undrawable: Map<string, string>;
   natives: Map<string, NativePageFont>;
+  outside: string[];
 }> {
   const loaded = new Map<string, PageFont>();
   const undrawable = new Map<string, string>();
@@ -1099,7 +1107,57 @@ async function readFields(
     if (problem !== undefined) undrawable.set(name, problem);
   }
   const placed = parseDvi(output, widthsOf(loaded));
-  return { fields: fieldsOf(placed, glyphTextOf(placed, loaded, natives)), undrawable, natives };
+  const textOf = glyphTextOf(placed, loaded, natives);
+  return {
+    fields: fieldsOf(placed, textOf),
+    undrawable,
+    natives,
+    outside: outsideThePage(placed, textOf),
+  };
+}
+
+/** How far a glyph may stand past an edge of the page before it counts as past it, in points. */
+const EDGE_TOLERANCE = 0.01;
+
+/**
+ * The fields whose glyphs a page sets past one of its edges, in the order the pages set them: a
+ * glyph whose advance starts left of the page or ends right of it, or whose baseline is above the
+ * page's top or below its bottom. The page is the size the first page gives (`paperSize`), and a
+ * glyph is where the page draws it, an inch in and down from the DVI's origin (`renderPage`); a
+ * native glyph's advance runs to the next glyph of its run, or to the run's end.
+ */
+function outsideThePage(doc: DviDocument, textOf: GlyphTextOf): string[] {
+  const size = paperSize(doc.pages[0] ?? { items: [] }) ?? US_LETTER;
+  const pt = pointsPerUnit(doc);
+  const outside = new Set<string>();
+  for (const page of doc.pages)
+    for (const field of collectFields(page, textOf).values())
+      for (const glyph of field.glyphs) {
+        const item = page.items[glyph.item];
+        let left: number;
+        let right: number;
+        let baseline: number;
+        if (item?.kind === "glyph") {
+          left = item.h;
+          right = item.h + item.width;
+          baseline = item.v;
+        } else if (item?.kind === "native") {
+          const k = glyph.glyph ?? 0;
+          const at = item.glyphs[k];
+          if (at === undefined) continue;
+          left = item.h + at.x;
+          right = item.h + (item.glyphs[k + 1]?.x ?? item.width);
+          baseline = item.v + at.y;
+        } else continue;
+        const x = (units: number) => INCH + units * pt;
+        const past =
+          x(left) < -EDGE_TOLERANCE ||
+          x(right) > size.width + EDGE_TOLERANCE ||
+          x(baseline) < -EDGE_TOLERANCE ||
+          x(baseline) > size.height + EDGE_TOLERANCE;
+        if (past) outside.add(field.id);
+      }
+  return [...outside];
 }
 
 /** The first copy of each field the pages show, page by page, as `collectFields` finds them. */

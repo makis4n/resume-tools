@@ -40,6 +40,9 @@
 % - cvhonors sets an award's date in a column as wide as the widest date it holds, with an em on
 %   either side, and never narrower than upstream's 1.5 cm, which holds a year: the editor's
 %   dates are ranges too, which wrapped there, up against the award's title.
+% - cvskills sets the skills' text in what the labels' column leaves of the text's width when
+%   its widest label takes more than upstream's tenth of it: upstream's text column was 0.9 of the
+%   text's width whatever the labels, so a label of two or three words set it past the page.
 % Everything else is upstream's.
 %%%%%%%%%%%%%%%%
 
@@ -839,17 +842,35 @@
 }
 
 % Define an environment for cvskill
-\newenvironment{cvskills}{%
+% rt: the skills' text in the column upstream's has, 0.9 of the text's width, or in what the labels'
+% column leaves of the text's width when its widest label takes more than a tenth of it, where
+% upstream's set the text past the right margin, and a label of two or three words set it past the
+% page's edge. So the environment reads its body first, and \rt@skilllabels measures each label
+% in a box it throws away, which is never shipped, so no field is found there.
+\newlength\rt@labelwidth
+\newlength\rt@skillwidth
+\newcommand\rt@skilllabels[1]{%
+  \global\rt@labelwidth\z@
+  \setbox\z@\hbox{%
+    \def\cvskill##1##2{%
+      \settowidth\dimen@{\skilltypestyle{##1}}%
+      \ifdim\dimen@>\rt@labelwidth \global\rt@labelwidth\dimen@ \fi}%
+    #1}%
+  \setlength\rt@skillwidth{\textwidth * \real{0.9}}%
+  \setlength\dimen@{\textwidth - \rt@labelwidth - 3\tabcolsep}%
+  \ifdim\dimen@<\rt@skillwidth \setlength\rt@skillwidth{\dimen@}\fi}
+\NewDocumentEnvironment{cvskills}{+b}{%
   \vspace{\acvSectionContentTopSkip}
   \vspace{-2.0mm}
   \begin{center}
     \setlength\tabcolsep{1ex}
     \setlength{\extrarowheight}{0pt}
-    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} r L{\textwidth * \real{0.9}}}
-}{%
+    \rt@skilllabels{#1}%
+    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} r L{\rt@skillwidth}}
+      #1
     \end{tabular*}
   \end{center}
-}
+}{}
 % Define a line of cv information(skill)
 % Usage: \cvskill{<type>}{<skillset>}
 \newcommand*{\cvskill}[2]{%

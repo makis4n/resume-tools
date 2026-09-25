@@ -77,6 +77,12 @@ Only what the loop needs, and what the editor's page, text and PDF need of the c
   the title, and a single month at the long month format wrapped too. The environment reads its
   body first and measures each date in a box it throws away, so the column fits the date format
   the document has; the sample's years keep upstream's column, and its page is upstream's.
+- **cvskills sets the skills' text in what the labels' column leaves**, when the widest label
+  takes more than the tenth of the text's width upstream's table leaves it, and in upstream's 0.9
+  of the width otherwise. Upstream's text column was 0.9 of the text's width whatever the labels,
+  so a label of two or three words, such as Programming Languages, set a long skill's text past
+  the page's edge, on the page and in the PDF. The environment reads its body first and measures
+  each label in a box it throws away; the sample's skills are where upstream's table sets them.
 
 tcolorbox stays, loaded with its `skins` library for the photo, which the editor never sets; the
 tree has tikzfill now (decision 0011). It costs about 125 ms of the dump and 0.37 MB of the format,
@@ -246,10 +252,9 @@ of 320 to 400 ms.
   non-breaking hyphen, so the harness's PDF check misses a field whose first word holds a hyphen,
   whatever the page reads; the page aligns the hyphen. The sample holds no apostrophe, and no
   hyphen in a field's first word, until both are settled.
-- `cvskills` sets its labels' column as wide as the longest label, then the text's at 90 % of the
-  text's width, so a label wider than about a tenth of it sets the table past the right margin, as
-  upstream's does: the sample's longest label, Infrastructure, sets it 26 pt past, which a skill's
-  text reaches only when it fills its line.
+- The harness's `pages` check reports a field whose glyphs the page sets past one of its edges,
+  as upstream's skills table set one, for every template: neither the page nor the PDF shows
+  what is past the edge.
 - The class takes space back with fixed lengths, 3 mm after a title in a paragraph section, 2 mm
   before an entry and 4 mm around a list's items, which the font size does not scale; at 9 points
   they leave less room than at 11, and a density below the port's compact could set lines over
