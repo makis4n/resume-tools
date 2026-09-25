@@ -9,8 +9,10 @@
  * as Source Sans's gives its apostrophe U+2019 and U+02BC, and its hyphen U+002D, U+00AD, U+2010
  * and U+2011: the glyph then stands for each (`textsOf`), the one a field's text likelier holds
  * first (`likelihood`), and the aligner takes any of them. A ligature of the `liga` feature, such
- * as the `fi` XeTeX's shaping makes of an f and an i, reads as its components, and so does a
- * ligature the character map reaches only through a character that stands for those letters, as
+ * as the `fi` XeTeX's shaping makes of an f and an i, reads as its components, and so does one of
+ * the `ccmp` feature, which HarfBuzz applies unasked, as Source Sans's l·l for Catalan, or Roboto's
+ * d and U+0323, which it sets where it has no ḍ: composed, as the generator keeps a text. So does
+ * a ligature the character map reaches only through a character that stands for those letters, as
  * Roboto's `fi` is also U+FB01 ﬁ, which a resume's text never holds where the page shows the
  * ligature. A glyph reached neither way, such as a small capital, has no text.
  *
@@ -117,10 +119,16 @@ function coverageGlyphs(coverage: Coverage): number[] {
 }
 
 /**
- * The ligatures of a font's `liga` feature, in every script, each as its glyph and the glyphs it
- * is made of, in the order of the font's lookups. Extension lookups are read through. A table
- * opentype.js did not parse as expected gives no ligatures rather than an error, so that the
- * glyphs keep the text the character map gives them.
+ * The features whose ligatures read as their components: `liga`, which XeTeX's shaping applies,
+ * and `ccmp`, which HarfBuzz applies to every run, composing a letter and its marks.
+ */
+const LIGATURE_FEATURES = new Set(["ccmp", "liga"]);
+
+/**
+ * The ligatures of a font's `liga` and `ccmp` features, in every script, each as its glyph and
+ * the glyphs it is made of, in the order of the font's lookups. Extension lookups are read through.
+ * A table opentype.js did not parse as expected gives no ligatures rather than an error, so that
+ * the glyphs keep the text the character map gives them.
  */
 function ligaturesOf(font: Font): { glyph: number; components: number[] }[] {
   const ligatures: { glyph: number; components: number[] }[] = [];
@@ -129,7 +137,8 @@ function ligaturesOf(font: Font): { glyph: number; components: number[] }[] {
     if (!isObject(gsub) || !Array.isArray(gsub.features) || !Array.isArray(gsub.lookups)) return [];
     const indexes = new Set<number>();
     for (const { tag, feature } of gsub.features)
-      if (tag === "liga") for (const index of feature.lookupListIndexes) indexes.add(index);
+      if (LIGATURE_FEATURES.has(tag))
+        for (const index of feature.lookupListIndexes) indexes.add(index);
     for (const index of [...indexes].sort((a, b) => a - b)) {
       const lookup = gsub.lookups[index];
       for (const subtable of lookup?.subtables ?? []) {
@@ -173,10 +182,11 @@ function likelihood(point: number): number {
 
 /**
  * Each glyph's texts: every character the character map gives it, the likeliest first, then the
- * `liga` ligatures' components, a pass for each level a ligature may be made of others, up to
- * `LIGATURE_DEPTH`, each component read as its first text. A ligature takes its components' text
- * when it has none, or when the character map reaches it only through a character that decomposes
- * to that text, as U+FB01 ﬁ decomposes to fi.
+ * ligatures' components (`ligaturesOf`), a pass for each level a ligature may be made of others,
+ * up to `LIGATURE_DEPTH`, each component read as its first text and the whole composed (NFC), as
+ * d and U+0323 compose to ḍ. A ligature takes its components' text first when it has none, or when
+ * the character map reaches it only through a character that decomposes to that text, as U+FB01
+ * ﬁ decomposes to fi and Roboto's À, which its `ccmp` makes of A and U+0300, to them.
  */
 function glyphTexts(font: Font, cmap: Readonly<Record<number, number>>): Map<number, string[]> {
   const points = new Map<number, number[]>();
@@ -200,11 +210,13 @@ function glyphTexts(font: Font, cmap: Readonly<Record<number, number>>): Map<num
     for (const { glyph, components } of ligatures) {
       const parts = components.map((component) => texts.get(component)?.[0]);
       if (parts.some((part) => part === undefined)) continue;
-      const joined = parts.join("");
-      const had = texts.get(glyph)?.[0];
+      const joined = parts.join("").normalize("NFC");
+      const mapped = texts.get(glyph) ?? [];
+      const had = mapped[0];
       if (had === joined) continue;
-      if (had === undefined || had.normalize("NFKD") === joined) {
-        texts.set(glyph, [joined]);
+      if (had === undefined || had.normalize("NFKD") === joined.normalize("NFKD")) {
+        // What the map gives it stays, after the letters, for a text that holds U+FB01 itself.
+        texts.set(glyph, [joined, ...mapped.filter((text) => text !== joined)]);
         changed = true;
       }
     }

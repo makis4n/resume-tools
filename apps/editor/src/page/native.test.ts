@@ -22,8 +22,10 @@ function box(width: number): Path {
  * which its `liga` feature makes of them and its character map also gives U+FB01 ﬁ, as Roboto's
  * does; an a the map gives two characters; a small capital a nothing reaches; a hyphen the map
  * also gives the soft hyphen, U+2010 and U+2011, an apostrophe it also gives U+02BC ʼ, and a
- * micro sign it also gives Greek mu, as Source Sans's map does; and an Omega it gives the ohm sign
- * too, as Roboto's does.
+ * micro sign it also gives Greek mu, as Source Sans's map does; an Omega it gives the ohm sign
+ * too, as Roboto's does; and the ligatures its `ccmp` feature makes, which the map does not reach:
+ * of l, a middle dot and l, as Source Sans's makes for Catalan, and of d and a combining dot below,
+ * as Roboto's makes where it has no ḍ.
  */
 function inventedFont(): Uint8Array {
   const glyphs = [
@@ -44,6 +46,12 @@ function inventedFont(): Uint8Array {
     new Glyph({ name: "quoteright", unicodes: [0x2bc, 0x2019], advanceWidth: 200, path: box(200) }),
     new Glyph({ name: "mu", unicodes: [0x3bc, 0xb5], advanceWidth: 520, path: box(520) }),
     new Glyph({ name: "Omega", unicodes: [0x2126, 0x3a9], advanceWidth: 700, path: box(700) }),
+    new Glyph({ name: "l", unicodes: [0x6c], advanceWidth: 240, path: box(240) }),
+    new Glyph({ name: "periodcentered", unicodes: [0xb7], advanceWidth: 200, path: box(200) }),
+    new Glyph({ name: "l_periodcentered_l", advanceWidth: 600, path: box(600) }),
+    new Glyph({ name: "d", unicodes: [0x64], advanceWidth: 520, path: box(520) }),
+    new Glyph({ name: "dotbelowcomb", unicodes: [0x323], advanceWidth: 0, path: box(100) }),
+    new Glyph({ name: "d_dotbelowcomb.ccmp", advanceWidth: 520, path: box(520) }),
   ];
   const font = new Font({
     familyName: "Invented",
@@ -53,6 +61,9 @@ function inventedFont(): Uint8Array {
     descender: -300,
     glyphs,
   });
+  // Features go in in alphabetical order, as opentype.js writes them.
+  font.substitution.add("ccmp", { sub: [12, 13, 12], by: 14 });
+  font.substitution.add("ccmp", { sub: [15, 16], by: 17 });
   font.substitution.add("liga", { sub: [2, 3], by: 4 });
   return new Uint8Array(font.toArrayBuffer());
 }
@@ -95,14 +106,22 @@ describe("parseNativeFont on an invented font", () => {
   });
 
   it("reads a ligature as its components, though the character map gives it U+FB01", () => {
-    // XeTeX's shaping makes the ligature of an f and an i, which the text holds as fi.
+    // XeTeX's shaping makes the ligature of an f and an i, which the text holds as fi, and sets
+    // the same glyph for the U+FB01 a text may hold.
     expect(file.textOf(4)).toBe("fi");
+    expect(file.textsOf(4)).toEqual(["fi", "\u{fb01}"]);
+  });
+
+  it("reads a ligature of the ccmp feature, which HarfBuzz applies unasked, as its components", () => {
+    expect(file.textOf(14)).toBe("l\u{b7}l");
+    // A combining mark composes with the letter before it, as the generator keeps the text.
+    expect(file.textOf(17)).toBe("\u{1e0d}");
   });
 
   it("gives a glyph nothing reaches no text, and one past the font's glyphs nothing at all", () => {
     expect(file.textOf(6)).toBeUndefined();
     expect(file.textsOf(6)).toEqual([]);
-    for (const glyph of [12, 1000, -1, 1.5]) {
+    for (const glyph of [18, 1000, -1, 1.5]) {
       expect(file.textOf(glyph), String(glyph)).toBeUndefined();
       expect(file.textsOf(glyph), String(glyph)).toEqual([]);
       expect(file.advanceOf(glyph), String(glyph)).toBeUndefined();

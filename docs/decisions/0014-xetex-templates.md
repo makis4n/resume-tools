@@ -65,9 +65,13 @@ one Font Awesome icon in the header) stands in for it in the tests.
   aligner cannot match is the one TeX inserted at a line break only if it stands for U+002D, the
   font's `\hyphenchar`. A ligature of the `liga` feature reads as its components, which is what
   a resume's text holds: Roboto's `fi` is also U+FB01 in its map, and a ligature the map reaches
-  only through a character that decomposes to its components reads as them. A glyph neither
-  reaches, such as a small capital that `+smcp` substitutes, has no text. Native fonts set
-  accented letters whole, so none is paired with an accent. XeTeX's `tex-text` mapping sets `’`
+  only through a character that decomposes to its components reads as them, and as that character
+  too. So does a ligature of the `ccmp` feature, which HarfBuzz applies to every run: Source Sans
+  Pro's l·l, which it sets for Catalan's `l·l`, and the glyph Roboto's `ccmp` makes of a letter
+  and a combining mark where the map has no composed letter, as of d and U+0323 for ḍ, which reads
+  composed, as the generator keeps the text. A glyph neither reaches, such as a small capital that
+  `+smcp` substitutes, has no text. Native fonts set accented letters whole, so none is paired
+  with an accent. XeTeX's `tex-text` mapping sets `’`
   for `'`, `–` for `--`, `”` for `"` and the rest of `tex-text.map`, so the aligner reads each of
   those characters as the text's spelling too.
 - **What the page cannot draw.** A native font is drawn as boxes, one for each run, and named in

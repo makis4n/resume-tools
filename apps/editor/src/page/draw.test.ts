@@ -794,6 +794,26 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
       expect(hyphen?.inserted).toBeUndefined();
     }, 30_000);
 
+    it("reads a ligature of the ccmp feature as its letters, composed where one is a mark", async () => {
+      // HarfBuzz applies ccmp unasked: Source Sans's makes one glyph of l·l, and Roboto, which has
+      // no ṛ, ṣ, ṇ or ḍ, sets each as its letter and U+0323, which its ccmp joins into one glyph.
+      const resume = structuredClone(sample);
+      const [summary] = resume.sections;
+      if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+      summary.title = "Col\u{b7}laboraci\u{f3} amb la Paral\u{b7}lel";
+      summary.text = [
+        { text: "Read the K\u{1e5b}\u{1e63}\u{1e47}a and \u{100}\u{1e0d}hya folios." },
+      ];
+      const { page, texts } = await drawnFor(resume, "ccmp");
+      expect(page.missingFonts).toEqual(new Map());
+      expect(page.unmatched).toBe(0);
+      const glyphAtOffset = (id: string, spelling: string) =>
+        page.fields.get(id)?.glyphs.find((g) => g.offset === texts.get(id)?.indexOf(spelling));
+      expect(glyphAtOffset("summary.title", "l\u{b7}l")?.text).toBe("l\u{b7}l");
+      expect(glyphAtOffset("summary.text", "\u{1e5b}")?.text).toBe("\u{1e5b}");
+      expect(glyphAtOffset("summary.text", "\u{1e0d}")?.text).toBe("\u{1e0d}");
+    }, 30_000);
+
     it("lays each field out in the native font and size of its first glyphs", () => {
       const layout = (id: string) => xetex.fields.get(id)?.layout;
       const name = layout("header.first");
