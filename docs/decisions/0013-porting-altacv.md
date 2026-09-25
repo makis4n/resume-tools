@@ -72,6 +72,12 @@ review of the port found the editor's page and text need of the class's macros:
   (U+00A0, U+202F, U+2007), which the re-read printed as a tilde on the page and in the PDF, so that
   a pasted phone number failed alignment. The space the re-read left after the text stays, so the
   contacts are as far apart as upstream's.
+- **`\cvevent` lets the dates and the place wrap.** Upstream sets each in a box half the column
+  wide, which cannot break, so in the right column, where awards and other entries go, a range at
+  the `MMMM yyyy` format, or at 12 points at the default one, ran into the place, and in either
+  column a long place ran past the column, over the next or off the page. Each is a ragged-right
+  paragraph of that width, `\parbox[t]`, whose first line is where the box's was, so a range or a
+  place that fits is set as upstream sets it, to the sample's every glyph.
 - **`\cvtag` sets a tag's text as an ordinary box, and TikZ draws only its frame.** Upstream sets a
   tag as a TikZ node, whose text pgf's dvipdfmx driver places through a `pdf:btrans` transform,
   which xdvipdfmx applies and the page, drawn from the DVI, does not: the page drew every tag half
@@ -109,15 +115,15 @@ text's. Past that:
   `glyphText` reads as Unicode's presentation forms, where it reads Latin Modern's `fi` as the
   two letters, so every field with fi in it failed alignment. The kernel's `selectfont` hook
   runs `\pdfnoligatures` on each font as it is selected, and a user's `--` stays two hyphens.
-- **TS1's symbols from Latin Modern where a family lacks them.** Roboto Slab and Roboto cover the
-  fourth of the kernel's TS1 subsets and Source Sans the third, so LaTeX sets a symbol outside
-  a family's subset, such as an arrow, a lone acute accent or a musical note, from the substitution
-  family, `cmr` by default, whose TS1 fonts the tree has metrics for and no outlines: the page left
-  the glyph out, and xdvipdfmx made no PDF, which the download and the ATS need. Roboto Slab sets
-  the name and the section titles under every font choice, so 33 of the 73 characters LaTeX's
-  UTF-8 input sets from TS1 did this in a title at the default controls. The preamble sets
-  `\rmsubstdefault`, `\sfsubstdefault` and `\ttsubstdefault` to Latin Modern's families, whose TS1
-  fonts both can draw, and none of the 73 does it now.
+- **TS1's symbols from Latin Modern where a family lacks them.** The kernel declares Roboto Slab and
+  Roboto to have TS1's subset 4 and Source Sans its subset 3, each short of many symbols, so LaTeX
+  sets a symbol outside a family's subset, such as an arrow, a lone acute accent or a musical note,
+  from the substitution family, `cmr` by default, whose TS1 fonts the tree has metrics for and no
+  outlines: the page left the glyph out, and xdvipdfmx made no PDF, which the download and the ATS
+  need. Roboto Slab sets the name and the section titles under every font choice, so 33 of the 73
+  characters LaTeX's UTF-8 input sets from TS1 did this in a title at the default controls. The
+  preamble sets `\rmsubstdefault`, `\sfsubstdefault` and `\ttsubstdefault` to Latin Modern's
+  families, whose TS1 fonts both can draw, and none of the 73 does it now.
 - **The sizes and the space**, below.
 - **The accent**, below.
 - **The margins** are the control's, the same on every side, half an inch by default, the

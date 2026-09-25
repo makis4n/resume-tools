@@ -949,13 +949,13 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     return [...uses].map(([, x, w]) => ({ left: Number(x), right: Number(x) + Number(w) }));
   }
 
-  /** Where the right column starts and ends on A4 at the default margins, in TeX points. */
+  /** Where the right column starts and ends on A4 at the default margins, and half its width. */
   const COLUMN = (() => {
     const margin = 0.5 * INCH;
     const gap = (1.2 / 2.54) * INCH;
     const width = (210 / 25.4) * INCH;
     const start = margin + 0.6 * (width - 2 * margin - gap) + gap;
-    return { start, end: width - margin };
+    return { start, end: width - margin, half: (width - margin - start) / 2 };
   })();
 
   /** The size a field's glyphs are set at, in points, as the SVG gives each glyph's. */
@@ -1141,6 +1141,50 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
       expect(Math.max(...extents.map(({ right }) => right)), length).toBeLessThan(COLUMN.end);
     }
   }, 60_000);
+
+  it("wraps an entry's dates and place in their halves of the right column", async () => {
+    // \cvevent sets the dates and the place side by side, each in half the column, and upstream's
+    // halves are one line each, so in the narrow right column a long range ran into the place,
+    // and a long place past the column (decision 0013).
+    const events = Resume.parse({
+      ...structuredClone(sample),
+      sections: [
+        ...structuredClone(sample.sections),
+        {
+          id: "volunteering",
+          kind: "entries",
+          role: "other",
+          title: "Volunteering",
+          entries: [
+            {
+              id: "mentoring",
+              title: "Mentor",
+              subtitle: "Weekend coding club",
+              place: "Harrowgate Library and Community Learning Centres",
+              dates: { start: "2019-09", end: "2021-06" },
+              bullets: [],
+            },
+          ],
+        },
+      ],
+    });
+    const body = generateBody(pkg, events, { ...values, dateFormat: "MMMM yyyy" });
+    const { result, page } = await compileAndDraw(body.latex, body.texts, "narrow-event");
+    expect(result.log).not.toMatch(/^! /m);
+    expect(result.pages).toBe(1);
+    expect(page.unmatched).toBe(0);
+    // Each on lines of its own half: the dates end before the middle of the column, and the place
+    // starts after it and ends before the column does.
+    const middle = COLUMN.start + COLUMN.half;
+    const dates = extentsOf(page, "mentoring.dates");
+    const place = extentsOf(page, "mentoring.place");
+    expect(Math.min(...dates.map(({ left }) => left))).toBeGreaterThan(COLUMN.start);
+    expect(Math.max(...dates.map(({ right }) => right))).toBeLessThan(middle);
+    expect(Math.min(...place.map(({ left }) => left))).toBeGreaterThan(middle);
+    expect(Math.max(...place.map(({ right }) => right))).toBeLessThan(COLUMN.end);
+    expect(baselinesOf(page, "mentoring.dates").length).toBeGreaterThan(1);
+    expect(baselinesOf(page, "mentoring.place").length).toBeGreaterThan(1);
+  });
 
   it("draws the contacts' icons in the accent and the entries' markers, from Font Awesome's Type 1 fonts", () => {
     expect(drawn.missingFonts).toEqual(new Map());

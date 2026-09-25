@@ -21,8 +21,9 @@
 % - https://github.com/logological Remove redundant hyperref and typos (Apr 2021)
 %
 % What this version changes, and why. The editor compiles to DVI, draws the page it
-% shows from the DVI, and makes the PDF from the same DVI with xdvipdfmx, so the class
-% changes only what that needs, each change marked "rt:" where it is made:
+% shows from the DVI, makes the PDF from the same DVI with xdvipdfmx, and sets whatever
+% text a user types, escaped, so the class changes only what those need, each change
+% marked "rt:" where it is made:
 % - pdfx is not loaded, since it makes PDF/A for pdfTeX's PDF mode, which the editor
 %   does not use. hyperref, which pdfx loaded, is loaded in its place on the dvipdfmx
 %   driver, whose links xdvipdfmx keeps, where DVI mode's default, dvips, writes links
@@ -45,6 +46,9 @@
 %   raw one prints. The editor has escaped every such character already, and writes ~
 %   for a no-break space, which the re-read would print as a tilde. The space the re-read
 %   left after the text stays, so the contacts are as far apart as upstream's.
+% - \cvevent sets the dates and the place each in a ragged-right paragraph half the column
+%   wide, where upstream sets each in a box of that width, which cannot break: a long
+%   range or place ran into the other half, or past the column into the next.
 % - \cvtag sets a tag's text as an ordinary box, and TikZ draws only its frame. Upstream
 %   sets the tag as a TikZ node, whose text pgf's dvipdfmx driver places through a
 %   pdf:btrans transform, which xdvipdfmx applies and the editor's page, drawn from the
@@ -371,14 +375,15 @@
   \ifstrequal{#2}{}{}{
   \textbf{\color{accent}#2}\par
   \smallskip}
+  % rt: each half a paragraph of its width, ragged right, as the note at the top says.
   \ifstrequal{#3}{}{}{%
-    {\small\makebox[0.5\linewidth][l]%
-      {\BeginAccSupp{method=pdfstringdef,ActualText={\datename:}}\cvDateMarker\EndAccSupp{}%
+    {\small\parbox[t]{0.5\linewidth}%
+      {\raggedright\BeginAccSupp{method=pdfstringdef,ActualText={\datename:}}\cvDateMarker\EndAccSupp{}%
       ~#3}%
     }}%
   \ifstrequal{#4}{}{}{%
-    {\small\makebox[0.5\linewidth][l]%
-      {\BeginAccSupp{method=pdfstringdef,ActualText={\locationname:}}\cvLocationMarker\EndAccSupp{}%
+    {\small\parbox[t]{0.5\linewidth}%
+      {\raggedright\BeginAccSupp{method=pdfstringdef,ActualText={\locationname:}}\cvLocationMarker\EndAccSupp{}%
         ~#4}%
     }}\par
   \medskip\normalsize
