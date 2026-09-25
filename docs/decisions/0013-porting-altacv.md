@@ -97,6 +97,15 @@ text's. Past that:
   `glyphText` reads as Unicode's presentation forms, where it reads Latin Modern's `fi` as the
   two letters, so every field with fi in it failed alignment. The kernel's `selectfont` hook
   runs `\pdfnoligatures` on each font as it is selected, and a user's `--` stays two hyphens.
+- **TS1's symbols from Latin Modern where a family lacks them.** Roboto Slab and Roboto cover the
+  fourth of the kernel's TS1 subsets and Source Sans the third, so LaTeX sets a symbol outside
+  a family's subset, such as an arrow, a lone acute accent or a musical note, from the substitution
+  family, `cmr` by default, whose TS1 fonts the tree has metrics for and no outlines: the page left
+  the glyph out, and xdvipdfmx made no PDF, which the download and the ATS need. Roboto Slab sets
+  the name and the section titles under every font choice, so 33 of the 73 characters LaTeX's
+  UTF-8 input sets from TS1 did this in a title at the default controls. The preamble sets
+  `\rmsubstdefault`, `\sfsubstdefault` and `\ttsubstdefault` to Latin Modern's families, whose TS1
+  fonts both can draw, and none of the 73 does it now.
 - **The sizes and the space**, below.
 - **The accent**, below.
 - **The margins** are the control's, the same on every side, half an inch by default, the
@@ -174,6 +183,10 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
 - The ligatures and the capitals can come back when `glyphText` reads `uniFB00` to `uniFB04` as
   the letters they join and the aligner folds case; the capitals then need a way around
   `\MakeUppercase`'s cost, as the bookmarks did in decision 0008.
+- 17 of TS1's symbols draw and reach the PDF but match no character of their field in a title:
+  `glyphText` has no reading for the names Latin Modern's TS1 encoding gives twelve of them, such
+  as `baht` and `naira`, and reads five of Roboto Slab's as other text, `‖` as two bars and `‽` as
+  `!?`. A field holding one fails alignment at that glyph until the reader knows those names.
 - A tag's frame, which TikZ draws with `pdf:` specials, is in the PDF but not on the page, which
   draws glyphs, rules and colours only; a tag's text is on both.
 - A single tag of more than about 3,300 characters is wider than TeX's largest dimension, and TikZ

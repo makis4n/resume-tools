@@ -1256,6 +1256,40 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     }
   }, 60_000);
 
+  it("sets a TS1 symbol a family lacks in Latin Modern, in each font it offers, and makes the PDF", async () => {
+    // Roboto Slab, which sets the section titles, and Roboto and Source Sans cover only part of
+    // TS1, and LaTeX sets a symbol a family lacks from its substitution family, Computer Modern by
+    // default, whose TS1 fonts the tree has no outlines for: the page left the glyph out, and
+    // xdvipdfmx made no PDF (decision 0013). An arrow is one such symbol, for Roboto Slab and
+    // Roboto; the numero sign every family has.
+    const symbols = Resume.parse(structuredClone(sample));
+    const [experience] = symbols.sections;
+    const bullet = experience?.kind === "entries" ? experience.entries[0]?.bullets[0] : undefined;
+    if (!experience || !bullet) throw new Error("the sample moved");
+    experience.title = "Experience → now";
+    bullet.text = [{ text: "Cut release № 4's build from 12 min → 3 min." }];
+    for (const { id } of pkg.controls.font?.choices ?? []) {
+      const chosen = { ...values, font: id };
+      const body = generateBody(pkg, symbols, chosen);
+      const job = `ts1-${id}`;
+      const { result, page } = await compileAndDraw(body.latex, body.texts, job);
+      expect(result.log, id).not.toMatch(/^! /m);
+      expect(page.missingFonts, id).toEqual(new Map());
+      expect(page.unmatched, id).toBe(0);
+      // The title's arrow is drawn, from Latin Modern's TS1 font, where a click finds it.
+      const offset = "Experience ".length;
+      const arrow = page.fields.get("experience.title")?.glyphs.find((g) => g.offset === offset);
+      expect(arrow?.text, id).toBe("→");
+      const use = new RegExp(
+        `data-font="ts1-lm[^"]*"[^>]*data-field="experience.title" data-offset="${offset}"`,
+      );
+      expect(page.svg, id).toMatch(use);
+      const made = session.pdf(job);
+      expect(made.error, id).toBeUndefined();
+      expect(made.ok, id).toBe(true);
+    }
+  }, 60_000);
+
   it("spaces sections, entries and bullets together by density, each on one page", async () => {
     // Each gap from the last line before it: a section's title in the left column, an entry's
     // title, and a bullet.
