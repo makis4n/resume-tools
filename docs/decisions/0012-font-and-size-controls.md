@@ -14,16 +14,23 @@ which opens TeX Live's PostScript families to pdfTeX templates.
 
 ## Decision
 
-- **The font size through the fontsize package, after the format.** A pdfTeX template whose
-  fonts scale loads the `fontsize` package in its preamble at its class's size, and its font
-  size control applies `\changefontsize{<size>pt}` in the body. That sets `\normalsize` and every
-  other size, the leading and the lists' spacing again from the size given, so the control is
-  not format-bound: one format serves every size, and a change of size is an ordinary compile.
-  Jake's loads `\usepackage[fontsize=11pt,parindent=0pt]{fontsize}` after Latin Modern, keeps
-  `11pt` on `\documentclass`, and declares 11 as the control's default. `parindent=0pt` keeps
-  the zero paragraph indent Jake's `\raggedright` sets, which `\changefontsize` would otherwise
-  set to one and a half times the size. Latin Modern is scalable, with a design size for each
-  range of sizes, so the half sizes need no other font.
+- **The font size through the fontsize package, after the format, and the class's own sizes at
+  the default.** A pdfTeX template whose fonts scale loads the `fontsize` package in its preamble
+  with no size, and its font size control applies `\changefontsize{<size>pt}` in the body at
+  every size but its class's. That sets `\normalsize` and every other size, the leading and the
+  lists' spacing again from the size given, so the control is not format-bound: one format
+  serves every size, and a change of size is an ordinary compile. At the class's size, the
+  control's default, the sizes the class sets as it loads stand, so that the default page keeps
+  upstream's look (decision 0008). Jake's loads `\usepackage[parindent=0pt]{fontsize}` after
+  Latin Modern, keeps `11pt` on `\documentclass`, and applies
+  `\ifdim{{value}}pt=11pt\else\changefontsize{{{value}}pt}\fi`: TeX compares the size as a
+  dimension, so `11` and `11.0` alike leave article's sizes. The package sets every size from
+  its default of 10 points as it loads, even when it is given no size, unless it finds
+  `fontsize10.clo`, which it reads in its place; Jake's package carries that file, empty but for
+  a comment, so the package adds `\changefontsize` and sets nothing. `parindent=0pt` keeps the
+  zero paragraph indent Jake's `\raggedright` sets, which `\changefontsize` would otherwise set
+  to one and a half times the size. Latin Modern is scalable, with a design size for each range
+  of sizes, so the half sizes need no other font.
 - **One format per size is for a class whose sizes do not scale.** A `format` control, with the
   size in the class's options, stays for a class that the fontsize package cannot resize after
   the format, such as one whose fonts come in fixed sizes or that sets what it derives from the
@@ -50,17 +57,25 @@ which opens TeX Live's PostScript families to pdfTeX templates.
 
 ## Consequences
 
-- Jake's page at the default is not upstream's to the point. The fontsize package keeps the
-  proportions `article`'s sizes have at 10 points, so at 11 the name is 27.4pt where upstream's
-  is 24.9pt, the section titles 13.2pt where upstream's are 12pt, the lines 13.2pt apart where
-  upstream's are 13.6pt, and the entries' lists spaced 8.8pt and 4.4pt where upstream's are 9pt
-  and 4.5pt. The sample's text is 388.5pt tall, 7.7pt more than before.
-- The sample sets one page in every family at every size; in Latin Modern its text is 311.5pt
-  tall at 9 points and 422.1pt at 12, growing at every half point. Every family compiles in the
-  time Latin Modern does, about 75 ms a pass on an M4 Pro, Helvetica's `\usepackage` adding
-  about 1.5 ms, and every size too. The fontsize package adds 8 files, 113 KB, and about 14 ms
-  to the dump; the first compile in a family fetches its `.fd` files and TFMs, 25 to 57 KB,
-  before the page fetches its outlines.
+- Jake's page at the default is upstream's to the glyph, which the round trip checks against
+  the page its preamble sets without the package: the name at 24.88pt, the section titles at
+  12pt, the lines 13.6pt apart and the entries' lists spaced 9pt and 4.5pt, as `article`'s
+  `size11.clo` sets them. The sample's text is 380.8pt tall, and the density round trip ends it
+  at 361.7pt, 416.6pt and 464.7pt, as before this item. The package sets `\@ptsize`, the class's
+  size less 10, to 0 as it loads, where `article` leaves 1; nothing Jake's loads reads it.
+- The sizes the package sets keep the proportions `article`'s have at 10 points, not those of
+  its own at 11, so the name and the section titles do not grow at every step: 10.5 points sets
+  the name at 26.1pt and the titles at 12.6pt, larger than 11 does, and 11.5 points at 28.6pt
+  and 13.8pt. The text grows at every step: in Latin Modern the sample's is 311.5pt tall at 9
+  points, then 327.8pt, 354.9pt, 371.7pt, 380.8pt at 11, 405.3pt, and 422.1pt at 12, and it sets
+  one page in every family at every size.
+- Every family and every size compiles in the time the default does, about 72 ms a pass on an
+  M4 Pro, Helvetica's `\usepackage` adding about a millisecond. The package adds 7 files,
+  110 KB, and about 6 ms to the dump; the first compile in a family fetches its `.fd` files and
+  TFMs, 25 to 57 KB, before the page fetches its outlines.
+- A later fontsize with another default size or file name would set every size again as it
+  loads, and the round trip's comparison with the page set without the package fails if it
+  does.
 - The PostScript families' small caps, `bchrc8t`, `pplrc8t` and `phvrc8t`, and bold small caps,
   `bchbc8t`, `pplbc8t` and `phvbc8t`, are virtual fonts in T1, which read their lowercase codes
   as lowercase from T1's vector (decision 0009), so the section titles align. No family needs

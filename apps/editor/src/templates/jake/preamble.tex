@@ -16,19 +16,21 @@
 % that grows with the square of a section title's length. The fonts are Latin Modern in T1, where
 % upstream has Computer Modern in OT1: the editor draws the page from Type 1 outlines, and TeX
 % Live has none for Computer Modern in T1, while Latin Modern is the same design and has them;
-% and in OT1 LaTeX cannot set letters such as ą or Đ, or guillemets, at all. The fontsize package
-% sets the sizes, which article sets once, as it loads, and only at 10, 11 or 12 points: it sets
-% every size again from the normal one whenever it is asked, so that the font size control takes
-% half points from 9 to 12 as an ordinary compile, and one format serves every size, while the
-% class stays at upstream's 11 points. Its sizes keep the proportions of article's at 10 points,
-% so at 11 the name and the section titles are a tenth larger than upstream's, and the lines are
-% 13.2pt apart rather than 13.6pt; and it is told to set no paragraph indent, as \raggedright
-% below leaves none, where it would set one and a half times the size. The port names the
-% accent colour, rtaccent, and sets the section titles and the rules under them in it, where
-% upstream set the rules in black, so that the accent colour control can set it; its default is
-% black, which keeps upstream's look. xcolor takes the place of color, because the control gives
-% the colour as six hex digits, which only xcolor reads. And the file ends where the body would
-% begin, because the editor generates the body from the resume. Everything else is upstream's.
+% and in OT1 LaTeX cannot set letters such as ą or Đ, or guillemets, at all. article sets its
+% sizes once, as it loads, and only at 10, 11 or 12 points, while the font size control takes
+% half points from 9 to 12 as an ordinary compile, so that one format serves every size. At 11
+% points, the class's size and the control's default, the control leaves article's own sizes,
+% upstream's; at any other it calls the fontsize package's \changefontsize, which sets every size
+% again from the normal one, in the proportions article's have at 10 points, so that the name and
+% the section titles are larger at 10.5 points than at 11. The package is loaded with no size, and
+% told to set no paragraph indent, as \raggedright below leaves none, where it would set one and
+% a half times the size; and as it loads it reads fontsize10.clo, which the port provides empty,
+% in place of setting every size from 10 points, its default. The port names the accent colour,
+% rtaccent, and sets the section titles and the rules under them in it, where upstream set the
+% rules in black, so that the accent colour control can set it; its default is black, which keeps
+% upstream's look. xcolor takes the place of color, because the control gives the colour as six
+% hex digits, which only xcolor reads. And the file ends where the body would begin, because the
+% editor generates the body from the resume. Everything else is upstream's.
 %
 % Copyright (c) 2026 Sourabh Bajaj
 % Copyright (c) 2020 Jake Gutierrez
@@ -56,9 +58,9 @@
 % Latin Modern in T1, in place of Computer Modern in OT1, as the note at the top says.
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
-% Every size from 11 points, and no paragraph indent, as the note at the top says. The font size
-% control sets the sizes again from its own after the format.
-\usepackage[fontsize=11pt,parindent=0pt]{fontsize}
+% \changefontsize for the font size control, and no paragraph indent, as the note at the top says.
+% The port's empty fontsize10.clo keeps the package from setting any size as it loads.
+\usepackage[parindent=0pt]{fontsize}
 \usepackage{latexsym}
 % Upstream loaded fullpage[empty] here and adjusted its margins below, which comes to half an inch
 % on every side of US Letter. The page size and margins controls call \geometry again after the
@@ -108,10 +110,10 @@
 \setlength{\tabcolsep}{0in}
 
 % Sections formatting
-% The density control respaces what follows, after the format. Normal leaves it as it is, in
-% proportion to the font size: titlesec's 3.5ex before a section title and 2.3ex after it, and
-% the lists' topsep and itemsep, which the fontsize package sets, at 11 points 16.6pt and 10.9pt
-% around a title, 8.8pt and 4.4pt for the entries and 4.4pt and 2.2pt for their bullets.
+% The density control respaces what follows, after the format. Normal leaves it as it is:
+% titlesec's 3.5ex before a section title and 2.3ex after it, 16.5pt and 10.8pt at 11 points, and
+% the lists' topsep and itemsep, 9pt and 4.5pt for the entries and 4.5pt and 2pt for their
+% bullets, which the fontsize package sets in proportion to the font size at the other sizes.
 % Compact sets each of them lower and relaxed each higher, so that the space between sections,
 % entries and bullets moves together, and both set the two levels apart: relaxed since a value
 % above the entries' would more than double the bullets', and compact so that an entry stays

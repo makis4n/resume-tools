@@ -11,7 +11,7 @@ import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
 import { CURATED, curated } from "./curated";
 import { generateBody, generateFormat } from "./generate";
-import { type ByRole, defaultControls, type TemplatePackage } from "./package";
+import { type ByRole, defaultControls, parsePackage, type TemplatePackage } from "./package";
 
 /** A snippet for a section's role: the role's own variant, or the default. */
 const forRole = (value: ByRole<string>, role: SectionRole) =>
@@ -411,7 +411,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     if (!compact || !normal || !relaxed) throw new Error("a density drew no page");
     expect(heights[0]).toBeLessThan(heights[1] ?? 0);
     expect(heights[1]).toBeLessThan(heights[2] ?? 0);
-    // Normal is the template's own spacing, the page the sample opens with.
+    // Normal is upstream's spacing, the page the sample opens with.
     expect(normal.glyphs).toEqual(drawn.glyphs);
     gaps(normal).forEach((gap, i) => {
       expect(gaps(compact)[i]).toBeLessThan(gap);
@@ -439,11 +439,57 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     expect(drawn.svg).not.toMatch(/fill="rgb/);
   });
 
-  it("sets every font size from the one format, the whole page growing with it", async () => {
-    // The fontsize package sets every size again from the body's, after the format, so a size
-    // is an ordinary compile, and everything follows it: the name, the section titles titlesec
-    // sets, the entries and the bullets. Fitting on one page is item 18's to do, so a size that
-    // spills is not failed here; the sample fits at every size.
+  it("keeps article's own sizes at the default size, as if the fontsize package were not loaded", async () => {
+    // Upstream's look by default (decision 0008): at 11 points the control leaves the sizes
+    // article sets as it loads, and the package, loaded with no size, sets none of its own, so
+    // the page is the one the preamble sets without it, to the glyph.
+    const loaded = /^\\usepackage\[[^\]]*\]\{fontsize\}\n/m;
+    expect(pkg.preamble).toMatch(loaded);
+    const without = parsePackage({
+      ...pkg,
+      id: "jake-without-fontsize",
+      preamble: pkg.preamble.replace(loaded, ""),
+      files: {},
+    });
+    const plain = generateFormat(without, values);
+    const dumped = session.dump(without.engine, plain.name, plain.preamble, plain.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    const body = generateBody(without, sample, values);
+    const result = session.compile(without.engine, plain.name, body.latex, {
+      job: "without-fontsize",
+      maxPasses: 3,
+    });
+    if (!result.output) throw new Error(result.error);
+    const page = await drawPage(result.output, fonts, body.texts);
+    expect(drawn.svg).toBe(page.svg);
+    expect(drawn.glyphs).toEqual(page.glyphs);
+    // article's size11.clo: the name in \Huge at 24.88pt, and the section titles in \large at 12pt.
+    const sizesOf = (id: string) => [
+      ...new Set(
+        [...drawn.svg.matchAll(new RegExp(`data-size="([^"]*)"[^>]*data-field="${id}"`, "g"))].map(
+          ([, size]) => size,
+        ),
+      ),
+    ];
+    expect(sizesOf("header.first")).toEqual(["24.880"]);
+    expect(sizesOf("edu.title")).toEqual(["12.000"]);
+    // TeX compares the size as a dimension, so 11 written to the tenth leaves the sizes too.
+    const eleven = String.raw`\ifdim11pt=11pt\else\changefontsize{11pt}\fi`;
+    const opening = generateBody(pkg, sample, values);
+    expect(opening.latex).toContain(eleven);
+    const tenth = opening.latex.replace(
+      eleven,
+      String.raw`\ifdim11.0pt=11pt\else\changefontsize{11.0pt}\fi`,
+    );
+    const { page: tenthPage } = await compileAndDraw(tenth, opening.texts, "eleven-point-oh");
+    expect(tenthPage.svg).toBe(drawn.svg);
+  }, 60_000);
+
+  it("sets every font size from the one format, the page growing with it", async () => {
+    // The fontsize package sets every size but the default again from the body's, after the
+    // format, so a size is an ordinary compile, and everything follows it: the name, the section
+    // titles titlesec sets, the entries and the bullets. Fitting on one page is item 18's to do,
+    // so a size that spills is not failed here; the sample fits at every size.
     const heights: number[] = [];
     const titles: number[] = [];
     const names: number[] = [];
@@ -466,10 +512,16 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     const said = heights.map((height) => `${height.toFixed(1)} pt`).join(", ");
     console.log(`Jake's sample, from 9 to 12 points in half points, is ${said} tall`);
     SIZES.forEach((size, i) => {
-      if (i === 0) return;
-      expect(heights[i], `${size}`).toBeGreaterThan(heights[i - 1] ?? Infinity);
-      expect(titles[i], `${size}`).toBeGreaterThan(titles[i - 1] ?? Infinity);
-      expect(names[i], `${size}`).toBeGreaterThan(names[i - 1] ?? Infinity);
+      if (i > 0) expect(heights[i], `${size}`).toBeGreaterThan(heights[i - 1] ?? Infinity);
+    });
+    // The name and the section titles grow with every size the package sets. At the default they
+    // are article's, whose proportions differ, so 10.5 points sets them larger than 11 does.
+    const scaled = SIZES.flatMap((size, i) => (size === values.fontSize ? [] : [i]));
+    scaled.forEach((i, k) => {
+      const before = scaled[k - 1];
+      if (before === undefined) return;
+      expect(titles[i], `${SIZES[i]}`).toBeGreaterThan(titles[before] ?? Infinity);
+      expect(names[i], `${SIZES[i]}`).toBeGreaterThan(names[before] ?? Infinity);
     });
   }, 60_000);
 

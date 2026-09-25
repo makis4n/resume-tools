@@ -31,8 +31,9 @@ function tagWith(html: string, name: string, attribute: string): string {
   return tags[0] as string;
 }
 
-/** The margins slider, which steps in tenths of an inch, and the font size slider, in half points. */
+/** The margins slider, which steps in tenths of an inch. */
 const marginsSlider = (html: string) => tagWith(html, "input", 'step="0.1"');
+/** The font size slider, which steps in half points. */
 const sizeSlider = (html: string) => tagWith(html, "input", 'step="0.5"');
 
 /** Whether the button labelled `label`, by its text or its aria-label, is pressed. */
@@ -140,9 +141,8 @@ describe("Controls", () => {
     ];
     for (const word of words) expect(html, word).toContain(word);
     expect(html).not.toContain("\\");
-    expect(html).not.toMatch(
-      /geometry|definecolor|titlespacing|setlist|rtaccent|changefontsize|rmdefault|familydefault|usepackage/,
-    );
+    expect(html).not.toMatch(/geometry|definecolor|titlespacing|setlist|rtaccent/);
+    expect(html).not.toMatch(/changefontsize|rmdefault|familydefault|usepackage/);
   });
 
   it("shows only the controls a package offers", () => {
@@ -165,7 +165,7 @@ describe("Controls", () => {
       expect(html).not.toContain(other);
   });
 
-  it("offers the size alone, or the package's own fonts by name in its order, as it offers them", () => {
+  it("offers the size alone, or the package's own fonts by name, as it offers them", () => {
     const sized = parsePackage({
       ...jake,
       id: "sized",
