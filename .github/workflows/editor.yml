@@ -38,13 +38,14 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # The engine and TeX Live tree, rebuilt only when what builds them changes: the script that
-      # pins them, and the modules it merges the font maps with, which write the tree's pdftex.map.
+      # pins them, the module that reads the archive packages' entries, and the modules it merges
+      # the font maps with, which write the tree's pdftex.map.
       - uses: actions/cache@v4
         with:
           path: |
             apps/editor/.engine
             !apps/editor/.engine/downloads
-          key: engine-${{ hashFiles('apps/editor/scripts/fetch-engine.ts', 'apps/editor/scripts/fontmaps.ts', 'apps/editor/src/page/fontmap.ts') }}
+          key: engine-${{ hashFiles('apps/editor/scripts/fetch-engine.ts', 'apps/editor/scripts/tlpdb.ts', 'apps/editor/scripts/fontmaps.ts', 'apps/editor/src/page/fontmap.ts') }}
       - run: pnpm --filter @resume-tools/editor fetch-engine
       - run: pnpm check
       - run: pnpm typecheck

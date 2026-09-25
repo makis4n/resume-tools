@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
-import { ENGINE_DIR, engineAvailable } from "../engine/node";
+import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
+import { parseDvi } from "../tex/dvi";
+import { drawPage } from "./draw";
 import { FontLibrary } from "./fonts";
 import { TexLiveIndex } from "./texlive";
 
@@ -441,6 +443,50 @@ describe.skipIf(!engineAvailable())("FontLibrary", () => {
       expect(Object.keys(font?.outlines?.glyphs ?? {}).length, name).toBeGreaterThan(0);
     }
   });
+
+  it("draws the archive packages' fonts, set as a pdfTeX port sets them", async () => {
+    // Written as a pdfTeX port is (decisions 0008 and 0009): the dvipdfmx driver, T1 and Latin
+    // Modern. A TikZ line, a word in each family's pdfTeX face, and an icon.
+    const body = [
+      "\\documentclass[dvipdfmx]{article}",
+      "\\usepackage[T1]{fontenc}",
+      "\\usepackage{lmodern}",
+      "\\usepackage{tikz}",
+      "\\usepackage{fontawesome5}",
+      "\\usepackage{lato}",
+      "\\usepackage{roboto}",
+      "\\usepackage{sourcesanspro}",
+      "\\begin{document}",
+      "\\tikz\\draw (0,0) -- (2,0);",
+      "{\\lato Lato} {\\roboto Roboto} {\\sffamily Source} \\faGithub",
+      "\\end{document}",
+    ].join("\n");
+    const session = await startNodeSession();
+    const compiled = session.compile("pdftex", "stock", body, { job: "archive", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const doc = parseDvi(compiled.output, () => undefined);
+    // Each family's own Type 1 face, and Font Awesome's brands, which the merged map draws.
+    expect([...doc.fonts.values()].map((font) => font.name)).toEqual(
+      expect.arrayContaining([
+        "Lato-Regular-T1-TLF",
+        "Roboto-Regular-lf-t1",
+        "SourceSansPro-Regular-tlf-t1",
+        "fa5brands0",
+      ]),
+    );
+    // TikZ draws its line with dvipdfmx's specials, which the page leaves to the PDF.
+    const specials = doc.pages[0]?.items.flatMap((item) =>
+      item.kind === "special" ? [item.text] : [],
+    );
+    expect(specials?.some((text) => text.startsWith("pdf:code"))).toBe(true);
+    const drawn = await drawPage(
+      compiled.output,
+      new FontLibrary(index(), flaky("never")),
+      new Map(),
+    );
+    expect(drawn.missingFonts).toEqual(new Map());
+    expect(drawn.glyphs.length).toBeGreaterThan("LatoRobotoSource".length);
+  }, 60_000);
 
   it("reads the EC fonts' padded TS1 metrics, and reports that they have no outlines", async () => {
     const font = await new FontLibrary(index(), flaky("never")).load("tcrm1000");

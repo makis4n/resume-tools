@@ -10,7 +10,12 @@ const [, RELEASE, LAYOUT] =
   /const RELEASE = "([^"]+)";[\s\S]*const LAYOUT = (\d+);/.exec(readFileSync(SCRIPT, "utf8")) ?? [];
 
 /** The script and the modules it imports, by their paths from the editor's folder. */
-const SOURCES = ["scripts/fetch-engine.ts", "scripts/fontmaps.ts", "src/page/fontmap.ts"];
+const SOURCES = [
+  "scripts/fetch-engine.ts",
+  "scripts/fontmaps.ts",
+  "scripts/tlpdb.ts",
+  "src/page/fontmap.ts",
+];
 
 /**
  * Run a copy of the script from a folder of its own, where `.engine/` holds only `manifest`, and

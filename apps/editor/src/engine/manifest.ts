@@ -6,6 +6,11 @@ export interface EngineManifest {
   layout: number;
   /** The TeX Live bundles unpacked into the tree, in mounting order. */
   bundles: string[];
+  /**
+   * The packages added to the tree from TeX Live 2023's final archive, by name, with each one's
+   * revision. Manifests written before layout 3 have none.
+   */
+  packages?: Record<string, number>;
   /** Every file TeX may read, by its path in the engine's file system, with its size in bytes. */
   files: Record<string, number>;
 }

@@ -5,29 +5,42 @@
  * and checks every file against the hash recorded below. The release packs TeX Live into bundles
  * that only the engine can unpack, so the script mounts them in the engine under Node and copies
  * every file out, one file per path, with a manifest of paths and sizes. The worker fetches files
- * from that tree one at a time, the first time TeX opens each. On the way out, the Ubuntu
- * bundles' font maps are merged into `pdftex.map` (`mergeMaps`), as `updmap` would merge them.
+ * from that tree one at a time, the first time TeX opens each.
  *
- *   node scripts/fetch-engine.ts [--from <dir>] [--force]
+ * The bundles lack packages the templates need, pgf and Font Awesome 5 among them, so the script
+ * then adds those from TeX Live 2023's final package archive (`PACKAGES`), each container checked
+ * against the SHA-512 the archive's database records for it and unpacked with the system `tar`
+ * (decision 0011). On the way out, the added packages' and the Ubuntu bundles' font maps are
+ * merged into `pdftex.map` (`mergeMaps`), as `updmap` would merge them.
+ *
+ *   node scripts/fetch-engine.ts [--from <dir>] [--force] [--resolve]
  *
  *   --from <dir>  take the release files from a folder instead of downloading them
  *   --force       rebuild even when `.engine/` is already up to date
+ *   --resolve     work `PACKAGES` out again from the archive's database and print it, building
+ *                 nothing
+ *
+ * To change the packages, change `WANTED`, run with `--resolve`, paste what it prints over
+ * `PACKAGES`, and bump `LAYOUT`; nothing else reads the database.
  *
  * Output, all ignored by git:
  *
  *   .engine/package.json     marks the folder CommonJS, which the release's loaders are written as
- *   .engine/downloads/       the release files as downloaded
+ *   .engine/downloads/       the release files and the archive's containers as downloaded, and the
+ *                            archive's database once `--resolve` has read it
  *   .engine/busytex.js       the engine's loader, for Node
  *   .engine/busytex.mjs      the same loader as an ES module, for the worker
  *   .engine/busytex.wasm     the engine: pdfTeX, XeTeX, LuaHBTeX and xdvipdfmx in one binary
  *   .engine/files/<path>     every TeX Live file, at the path the engine sees it under
- *   .engine/manifest.json    { release, layout, bundles, files: { <path>: <size> } }, written last
+ *   .engine/manifest.json    { release, layout, bundles, packages, files: { <path>: <size> } },
+ *                            written last
  *
  * One run at a time: a run holds `.engine/.lock` while it builds, and a second run stops. Each run
  * writes its downloads and its staging folder under names that carry its process id, so even
  * runs that both got past the lock cannot overwrite each other's half-written files.
  */
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   createReadStream,
@@ -36,11 +49,14 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { copyFile, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
@@ -48,6 +64,7 @@ import { fileURLToPath } from "node:url";
 // Node runs this file by stripping its types, so the type import needs its real extension.
 import type { EngineManifest } from "../src/engine/manifest.ts";
 import { mergeFontMaps } from "./fontmaps.ts";
+import { containerName, packagesToFetch, parseDatabase } from "./tlpdb.ts";
 
 const RELEASE = "build_wasm_4499aa69fd3cf77ad86a47287d9a5193cf5ad993_7936974349_1";
 const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELEASE}/`;
@@ -55,11 +72,12 @@ const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELE
 /**
  * The version of what this script writes. Bump it whenever the output changes (the files, the
  * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt. CI keys its
- * cached `.engine/` on the three files the output depends on, this script, `fontmaps.ts` and
- * `src/page/fontmap.ts`, which merge the Ubuntu tree's font maps into `pdftex.map`, so a change to
- * any of them rebuilds it there; a `.engine/` built on a machine is rebuilt only by the bump.
+ * cached `.engine/` on the four files the output depends on, this script, `tlpdb.ts`, which reads
+ * the added packages' entries, and `fontmaps.ts` and `src/page/fontmap.ts`, which merge the font
+ * maps into `pdftex.map`, so a change to any of them rebuilds it there; a `.engine/` built on a
+ * machine is rebuilt only by the bump or by a change to `PACKAGES`.
  */
-const LAYOUT = 2;
+const LAYOUT = 3;
 
 /** Release files with their SHA-256 and size, recorded from the copies the spike measured. */
 const ASSETS: Record<string, { sha256: string; size: number }> = {
@@ -126,6 +144,118 @@ const BUNDLES = [
   "ubuntu-texlive-fonts-recommended",
 ];
 
+/**
+ * TeX Live 2023's package archive as it was when TeX Live 2024 replaced it, which no longer
+ * changes. It has to be 2023's, the year of the engine and of the bundles, since a format or a
+ * package of another year disagrees with them (decision 0011).
+ */
+const ARCHIVE_URL = "https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2023/tlnet-final/";
+
+/**
+ * The archive's package database, with its SHA-256 and size, so that a database that differs is
+ * refused rather than read; the refusal prints what it found, for when the archive is meant to
+ * change. Only `--resolve` reads it. It is the uncompressed copy: the archive also serves it
+ * compressed with xz, but neither Node nor macOS's base system can decompress a bare xz file, and
+ * the system tar reads xz only inside a tar archive.
+ */
+const DATABASE = {
+  path: "tlpkg/texlive.tlpdb",
+  sha256: "529eda93e5f3cbf89cb4064d835ebde1a0dd83dca4019d217548f83b5ca14b27",
+  size: 19353989,
+};
+
+/**
+ * The TeX Live packages the templates need that the bundles lack: pgf for TikZ, Font Awesome 5
+ * for icons, and Lato, Roboto and Source Sans Pro. `--resolve` adds what their `depend` lines
+ * name, but TeX Live records few dependencies between ordinary packages, so what their style
+ * files load that the bundles lack is named here too: mweights, which `roboto.sty` and
+ * `sourcesanspro.sty` load, and ly1, whose LY1 encoding `sourcesanspro.sty` asks fontenc for.
+ * And pgfopts, pgf's option parser, which none of them loads but bundled packages such as
+ * beamertheme-metropolis and handin do, and could not while the tree lacked it.
+ */
+const WANTED = [
+  "pgf",
+  "fontawesome5",
+  "lato",
+  "roboto",
+  "sourcesanspro",
+  "mweights",
+  "ly1",
+  "pgfopts",
+];
+
+/** A package's container of run files in the archive: its revision, size and SHA-512. */
+interface Container {
+  revision: number;
+  size: number;
+  sha512: string;
+}
+
+/**
+ * The packages the archive adds to the tree: `WANTED` and what they depend on, less those whose
+ * every run file the bundles hold already, each with its revision and its container's size and
+ * SHA-512 as the database records them, so that the tree is the same on every machine without
+ * reading the database. To change it, change `WANTED`, run `--resolve`, which reads the database,
+ * checks that the archive serves each container it lists and prints the list, paste the list
+ * here, and bump `LAYOUT`.
+ */
+const PACKAGES: Record<string, Container> = {
+  fontawesome5: {
+    revision: 63207,
+    size: 866312,
+    sha512:
+      "d7f6a40797b2968c31b28f1bf273af9d27b7a87e7c2953748f354db2e760b027feb5a8fd52c8f367649fba24cd629d71c1b1368b8864d42eb84269e0b22b59d4",
+  },
+  lato: {
+    revision: 54512,
+    size: 12721308,
+    sha512:
+      "2f8454888913ec6a024c53cf157509b8b769f948ac2c92d0683e80ff8e22865545a6a65864876be35569bf4a5d56ed871c8112b216561e3ce585136bd062c9ce",
+  },
+  ly1: {
+    revision: 63565,
+    size: 54900,
+    sha512:
+      "79ec3f1971587a3266d3351cf4d97e44d7871ace695c7f229b92c819f1334c2032a3c906a2e7e74e98fea5f01ef4dabac9c2dbdbecf68f0d5512c637288e8297",
+  },
+  mweights: {
+    revision: 53520,
+    size: 1236,
+    sha512:
+      "50d675bdee00625b5fbdcc1ef923a48abc19af890faab90ddde4893081dd2a5de6b5ce9165a4bece512c885ba3f3990d8dc300a873177c725a5aa16b434d4e77",
+  },
+  pgf: {
+    revision: 65553,
+    size: 717460,
+    sha512:
+      "d7fbf0dc83f88a2f6d2de3117365d3f4ac2379ecbc530e343bc3e02ac8083e9a9843d479d375d086e39b6377b21d2fcba22883485e040fab1601642ba80128b9",
+  },
+  pgfopts: {
+    revision: 56615,
+    size: 1928,
+    sha512:
+      "7d672d626428c37fa749a810c57be43c6102e1325a6d3e16c57bc560b6d65a57bae94e619a73f3e0efb46ce7b4783d05a6e98c64b1e90c6e0f94f1dd9acd676f",
+  },
+  roboto: {
+    revision: 64350,
+    size: 25354284,
+    sha512:
+      "d82d9ce9480bf0c9d7f6559e7bcbb5fe8f22179adc44113121f67fc0daadd66c938b9fcf9a41073843e1cc981162972a79f15fe6162f68ba7a01b74732b0f01a",
+  },
+  sourcesanspro: {
+    revision: 54892,
+    size: 5153396,
+    sha512:
+      "0511dcf736273d80f7143c9dad96dd9f631b016183b4078243ed061d35889fea62e50c5f48e9842ffae7b654fd2e08a21d1c46403e56349c0b515ff2eb62e164",
+  },
+  xcolor: {
+    revision: 68864,
+    size: 18236,
+    sha512:
+      "6b7d38d631f89f4c4ffa9f447a16cef6169c3e4798c5c65339fe48f9318291373a49ef9da8143c453fc5fd9ee853bad53b5477b248ad5f99763df9ea28638c78",
+  },
+};
+
 /** Top-level folders of the engine's file system that hold files TeX may read. */
 const ROOTS = ["/texlive", "/texmf", "/etc", "/bin"];
 
@@ -142,6 +272,11 @@ const REQUIRED = [
   "/texmf/texmf-dist/tex/latex/xcolor/xcolor.sty",
   "/texmf/texmf-dist/tex/latex/enumitem/enumitem.sty",
   "/texmf/texmf-dist/fonts/map/dvips/marvosym/marvosym.map",
+  "/texlive/texmf-dist/tex/latex/pgf/frontendlayer/tikz.sty",
+  "/texlive/texmf-dist/tex/latex/fontawesome5/fontawesome5.sty",
+  "/texlive/texmf-dist/tex/latex/lato/lato.sty",
+  "/texlive/texmf-dist/tex/latex/roboto/roboto.sty",
+  "/texlive/texmf-dist/tex/latex/sourcesanspro/sourcesanspro.sty",
 ];
 
 /** The font map pdfTeX's tools read, as updmap wrote it for TeX Live's own tree. */
@@ -150,8 +285,14 @@ const PDFTEX_MAP = "/texlive/texmf-dist/texmf-var/fonts/map/pdftex/updmap/pdftex
 /** Where the Ubuntu tree keeps its font maps, none of which updmap saw. */
 const UBUNTU_MAPS = "/texmf/texmf-dist/fonts/map/dvips/";
 
-/** Where the two trees keep Type 1 outlines, which is where kpathsea looks for a map's files. */
-const TYPE1 = ["/texlive/texmf-dist/fonts/type1/", "/texmf/texmf-dist/fonts/type1/"];
+/**
+ * Where the two trees keep outline files, which is where kpathsea looks for the files a map names:
+ * Type 1, and TrueType and OpenType, which xdvipdfmx embeds as it does Type 1, though the page's
+ * reader takes only Type 1 (item 21 draws the others).
+ */
+const OUTLINES = ["/texlive/texmf-dist/fonts/", "/texmf/texmf-dist/fonts/"].flatMap((fonts) =>
+  ["type1/", "truetype/", "opentype/"].map((kind) => fonts + kind),
+);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".engine");
 const DOWNLOADS = join(ROOT, "downloads");
@@ -159,41 +300,85 @@ const FILES = join(ROOT, "files");
 const MANIFEST = join(ROOT, "manifest.json");
 const LOCK = join(ROOT, ".lock");
 
-async function sha256(file: string): Promise<string> {
-  const hash = createHash("sha256");
+/** A file pinned by its size and its digest, under the algorithm its source records. */
+interface Pin {
+  size: number;
+  algorithm: "sha256" | "sha512";
+  digest: string;
+}
+
+async function digestOf(file: string, algorithm: Pin["algorithm"]): Promise<string> {
+  const hash = createHash(algorithm);
   await pipeline(createReadStream(file), hash);
   return hash.digest("hex");
 }
 
-/** True when the file exists and matches its recorded hash and size. */
-async function verified(file: string, name: string): Promise<boolean> {
-  const want = ASSETS[name];
-  if (!want || !existsSync(file)) return false;
-  if ((await stat(file)).size !== want.size) return false;
-  return (await sha256(file)) === want.sha256;
+/** True when the file exists and matches its pinned size and digest. */
+async function verified(file: string, pin: Pin): Promise<boolean> {
+  if (!existsSync(file)) return false;
+  if ((await stat(file)).size !== pin.size) return false;
+  return (await digestOf(file, pin.algorithm)) === pin.digest;
 }
 
-/** Put one release file into `downloads/`, from `from` or from GitHub, and check it. */
-async function obtain(name: string, from: string | undefined): Promise<void> {
+/**
+ * Put one pinned file into `downloads/` as `name`, copied from the folder `from` when there is one
+ * and fetched from `url` when not, and check it. A file already there that matches is kept.
+ * Returns whether the file had to be put there.
+ */
+async function obtain(name: string, pin: Pin, url: string, from?: string): Promise<boolean> {
   const target = join(DOWNLOADS, name);
-  if (await verified(target, name)) return;
+  if (await verified(target, pin)) return false;
   const partial = `${target}.partial-${process.pid}`;
   if (from) {
     await copyFile(join(from, name), partial);
   } else {
-    const response = await fetch(RELEASE_URL + name);
+    const response = await fetch(url);
     if (!response.ok || !response.body)
-      throw new Error(`${name}: HTTP ${response.status} from ${RELEASE_URL}`);
+      throw new Error(`${name}: HTTP ${response.status} from ${url}`);
     // The DOM and Node type the same stream differently; at run time they are one object.
     const body = response.body as unknown as NodeReadableStream<Uint8Array>;
     await pipeline(Readable.fromWeb(body), createWriteStream(partial));
   }
-  if (!(await verified(partial, name))) {
+  if (!(await verified(partial, pin))) {
+    const size = (await stat(partial)).size;
+    const digest = await digestOf(partial, pin.algorithm);
     await rm(partial, { force: true });
-    throw new Error(`${name} does not match the recorded SHA-256 and size; refusing to use it`);
+    throw new Error(
+      `${name} is ${size} bytes with ${pin.algorithm.toUpperCase()} ${digest}, not the recorded ${pin.size} bytes and ${pin.digest || "no digest"}; refusing to use it`,
+    );
   }
   await rename(partial, target);
-  console.log(`  ${name}, ${((ASSETS[name]?.size ?? 0) / 1e6).toFixed(1)} MB`);
+  return true;
+}
+
+/** Put the release files into `downloads/`, and ready `.engine/` for their loaders. */
+async function obtainRelease(from: string | undefined) {
+  console.log(from ? `Copying the release from ${from}` : `Downloading ${RELEASE_URL}`);
+  mkdirSync(DOWNLOADS, { recursive: true });
+  // The editor's package is an ES module package, which would make Node load the release's
+  // CommonJS loaders as ES modules; this folder says otherwise.
+  await writeFile(join(ROOT, "package.json"), `${JSON.stringify({ type: "commonjs" })}\n`);
+  for (const [name, { sha256, size }] of Object.entries(ASSETS)) {
+    const pin: Pin = { size, algorithm: "sha256", digest: sha256 };
+    if (await obtain(name, pin, RELEASE_URL + name, from))
+      console.log(`  ${name}, ${(size / 1e6).toFixed(1)} MB`);
+  }
+}
+
+/** Put the container of every package of `PACKAGES` into `downloads/`, from the archive. */
+async function obtainPackages() {
+  console.log(`Downloading TeX Live 2023 packages from ${ARCHIVE_URL}archive/`);
+  let downloaded = 0;
+  for (const [name, { revision, size, sha512 }] of Object.entries(PACKAGES)) {
+    const file = containerName(name, revision);
+    const pin: Pin = { size, algorithm: "sha512", digest: sha512 };
+    if (await obtain(file, pin, `${ARCHIVE_URL}archive/${file}`)) downloaded++;
+  }
+  const names = Object.keys(PACKAGES);
+  const bytes = Object.values(PACKAGES).reduce((sum, { size }) => sum + size, 0);
+  console.log(
+    `  ${names.join(", ")}: ${names.length} packages, ${(bytes / 1e6).toFixed(1)} MB, ${downloaded} of them downloaded now`,
+  );
 }
 
 /** The part of Emscripten's file system API the walk uses. */
@@ -261,54 +446,159 @@ async function mount(): Promise<EmscriptenFs> {
   }
 }
 
-/** Copy every file under the roots out of the engine into `dir`, and list it. */
-function copyOut(fs: EmscriptenFs, dir: string): Record<string, number> {
-  const files: Record<string, number> = {};
+/** Every file under the roots of the engine's file system, in path order. */
+function treeFiles(fs: EmscriptenFs): string[] {
+  const paths: string[] = [];
   const walk = (path: string) => {
     for (const name of fs.readdir(path)) {
       if (name === "." || name === "..") continue;
       const child = `${path}/${name}`;
       const { mode } = fs.stat(child);
       if (fs.isDir(mode)) walk(child);
-      else if (fs.isFile(mode)) {
-        const data = fs.readFile(child);
-        const target = join(dir, child);
-        mkdirSync(dirname(target), { recursive: true });
-        writeFileSync(target, data);
-        files[child] = data.length;
-      }
+      else if (fs.isFile(mode)) paths.push(child);
     }
   };
   for (const root of ROOTS) if (fs.analyzePath(root).exists) walk(root);
-  return Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1)));
+  return paths.sort();
+}
+
+/** Copy every file under the roots out of the engine into `dir`, and list it, in path order. */
+function copyOut(fs: EmscriptenFs, dir: string): Record<string, number> {
+  const files: Record<string, number> = {};
+  for (const path of treeFiles(fs)) {
+    const data = fs.readFile(path);
+    const target = join(dir, path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, data);
+    files[path] = data.length;
+  }
+  return files;
+}
+
+/** The files a manifest lists, in path order. */
+const byPath = (files: Record<string, number>) =>
+  Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1)));
+
+/**
+ * Unpack an xz-compressed tar into `dir` with the system `tar`, which macOS and Linux both have
+ * and which reads xz on both, so that the script needs no decompressor of its own.
+ */
+function untar(file: string, dir: string) {
+  const run = spawnSync("tar", ["-xJf", file, "-C", dir], { encoding: "utf8" });
+  if (run.error) throw new Error(`the system tar did not run: ${run.error.message}`);
+  if (run.status !== 0) throw new Error(`tar could not unpack ${basename(file)}: ${run.stderr}`);
+}
+
+/** The regular files under a folder, by path relative to it. */
+function filesUnder(dir: string): string[] {
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(dir, join(entry.parentPath, entry.name)))
+    .sort();
 }
 
 /**
- * Merge the Ubuntu tree's font maps into the copied tree's `pdftex.map`, in path order, and give
- * the manifest its new size. This is what `updmap` does for a map it is told about; the Ubuntu
- * bundles were unpacked over TeX Live's tree without it, so their maps were never added to
- * `web2c/updmap.cfg` and `pdftex.map` names none of their fonts. Only entries whose outline file
- * the trees hold are added (`mergeFontMaps`). The files are read and written as Latin-1, one
- * character per byte, so that the map's other lines come back byte for byte.
+ * Unpack the container of each package of `PACKAGES` into the staging tree's
+ * `/texlive/texmf-dist`, list its files in `files`, and return the paths of the font maps the
+ * packages add, in package order.
+ *
+ * Each container is unpacked into a folder of its own first, since the tree takes from it only
+ * what TeX reads. The container of a relocated package holds its files relative to `texmf-dist`,
+ * and its entry in the database as `tlpkg/tlpobj/<name>.tlpobj`, which is read for the package's
+ * run files and maps and then dropped. A file either tree holds already stays as the bundles gave
+ * it, and is not shadowed by a copy in the first tree either: the stock formats were dumped from
+ * the bundles' files, and the templates read them, so a package the bundles hold in part keeps
+ * their version and gains only the files it lacks, as pgf's dependency xcolor gains only its
+ * rollback copy `xcolor-2022-06-12.sty`. What the tree gains is what the container holds; the run
+ * files its entry lists only check it, and one it lacks is reported.
+ *
+ * No `ls-R` is written, though item 19 of the milestone speaks of regenerating it: the engine
+ * session builds every tree's filename database from the manifest when it starts
+ * (`mountOnDemand` in `src/engine/session.ts`), so listing a file in the manifest is what puts
+ * it there.
  */
-function mergeMaps(dir: string, files: Record<string, number>) {
+function unpackPackages(staging: string, files: Record<string, number>): string[] {
+  const scratch = join(ROOT, `packages.partial-${process.pid}`);
+  const maps: string[] = [];
+  try {
+    for (const [name, { revision }] of Object.entries(PACKAGES)) {
+      const dir = join(scratch, name);
+      mkdirSync(dir, { recursive: true });
+      untar(join(DOWNLOADS, containerName(name, revision)), dir);
+      const entry = join(dir, "tlpkg", "tlpobj", `${name}.tlpobj`);
+      const pkg = existsSync(entry)
+        ? parseDatabase(readFileSync(entry, "utf8")).get(name)
+        : undefined;
+      if (!pkg) throw new Error(`the container of ${name} holds no tlpkg/tlpobj/${name}.tlpobj`);
+      if (!pkg.relocated)
+        throw new Error(
+          `${name} is not relocated, so its container may install outside texmf-dist`,
+        );
+      const held = filesUnder(dir).filter((file) => !file.startsWith("tlpkg/"));
+      let kept = 0;
+      for (const file of held) {
+        const path = `/texlive/texmf-dist/${file}`;
+        if (files[path] !== undefined || files[`/texmf/texmf-dist/${file}`] !== undefined) {
+          kept++;
+          continue;
+        }
+        const target = join(staging, path);
+        mkdirSync(dirname(target), { recursive: true });
+        renameSync(join(dir, file), target);
+        files[path] = statSync(target).size;
+      }
+      if (kept > 0) console.log(`  ${name}: the bundles' copy of ${kept} of its files stays`);
+      const holds = new Set(held.map((file) => `texmf-dist/${file}`));
+      const lacking = pkg.runfiles.filter((runfile) => !holds.has(runfile));
+      if (lacking.length > 0)
+        console.warn(`  ${name}: its container lacks ${lacking.join(", ")}, which it lists`);
+      for (const map of pkg.maps) {
+        const file = held.find((path) => path.startsWith("fonts/map/") && basename(path) === map);
+        if (file) maps.push(`/texlive/texmf-dist/${file}`);
+        else console.warn(`  ${name}: adds ${map} to the font maps, but its container lacks it`);
+      }
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  return maps;
+}
+
+/**
+ * Merge the font maps the added packages name and those of the Ubuntu tree into the copied tree's
+ * `pdftex.map`, and give the manifest its new size. This is what `updmap` does for a map it is
+ * told about; the packages and the bundles were unpacked over TeX Live's tree without it, so
+ * `pdftex.map` names none of their fonts. The packages' maps come first, in `packageMaps`'s order,
+ * since their files are in the tree kpathsea searches first, and then the Ubuntu tree's in path
+ * order. Only entries whose outline file the trees hold are added (`mergeFontMaps`). The files
+ * are read and written as Latin-1, one character per byte, so that the map's other lines come back
+ * byte for byte.
+ */
+function mergeMaps(dir: string, files: Record<string, number>, packageMaps: readonly string[]) {
   if (files[PDFTEX_MAP] === undefined) return; // the check for REQUIRED files names it
   const outlines = new Set(
     Object.keys(files)
-      .filter((path) => TYPE1.some((tree) => path.startsWith(tree)))
+      .filter((path) => OUTLINES.some((tree) => path.startsWith(tree)))
       .map((path) => basename(path)),
   );
-  const maps = Object.keys(files)
+  const ubuntuMaps = Object.keys(files)
     .filter((path) => path.startsWith(UBUNTU_MAPS) && path.endsWith(".map"))
-    .sort()
-    .map((path) => ({ path, text: readFileSync(join(dir, path), "latin1") }));
+    .sort();
+  const maps = [...packageMaps, ...ubuntuMaps].map((path) => ({
+    path,
+    text: readFileSync(join(dir, path), "latin1"),
+  }));
   const base = readFileSync(join(dir, PDFTEX_MAP), "latin1");
   const merged = mergeFontMaps(base, maps, (file) => outlines.has(file));
   writeFileSync(join(dir, PDFTEX_MAP), merged, "latin1");
   files[PDFTEX_MAP] = Buffer.byteLength(merged, "latin1");
 }
 
-/** True when `.engine/` holds a finished build of this release, layout and set of bundles. */
+/** The revision of each package of `PACKAGES`, by name, as the manifest records them. */
+const revisions = (): Record<string, number> =>
+  Object.fromEntries(Object.entries(PACKAGES).map(([name, { revision }]) => [name, revision]));
+
+/** True when `.engine/` holds a finished build of this release, layout, bundles and packages. */
 async function upToDate(): Promise<boolean> {
   try {
     const manifest = JSON.parse(await readFile(MANIFEST, "utf8")) as EngineManifest;
@@ -316,6 +606,7 @@ async function upToDate(): Promise<boolean> {
       manifest.release === RELEASE &&
       manifest.layout === LAYOUT &&
       manifest.bundles.join() === BUNDLES.join() &&
+      JSON.stringify(manifest.packages) === JSON.stringify(revisions()) &&
       ["busytex.js", "busytex.mjs", "busytex.wasm"].every((f) => existsSync(join(ROOT, f))) &&
       REQUIRED.every((path) => existsSync(join(FILES, path)))
     );
@@ -386,7 +677,8 @@ async function main() {
   const args = process.argv.slice(2);
   const fromAt = args.indexOf("--from");
   const from = fromAt >= 0 ? resolve(args[fromAt + 1] ?? ".") : undefined;
-  if (!args.includes("--force") && (await upToDate())) {
+  const resolving = args.includes("--resolve");
+  if (!resolving && !args.includes("--force") && (await upToDate())) {
     console.log(`.engine/ is up to date (${RELEASE}); --force rebuilds it`);
     return;
   }
@@ -394,19 +686,66 @@ async function main() {
   const unlock = await lock();
   try {
     await sweep();
-    await build(from);
+    await (resolving ? resolvePackages(from) : build(from));
   } finally {
     await unlock();
   }
 }
 
+/**
+ * Work `PACKAGES` out again from the archive's database and print it for pasting over the
+ * constant: `WANTED` and what they depend on, in name order, less the packages whose every run
+ * file the bundles hold. The bundles are mounted to list their files, and the archive is asked
+ * for each container the list names, so that a list the archive cannot serve is refused here
+ * rather than half way through a build. Nothing is built.
+ */
+async function resolvePackages(from: string | undefined) {
+  await obtainRelease(from);
+  console.log("Listing the bundles' files");
+  const bundled = new Set(treeFiles(await mount()));
+  const has = (path: string) => bundled.has(`/texlive/${path}`) || bundled.has(`/texmf/${path}`);
+  const url = ARCHIVE_URL + DATABASE.path;
+  console.log(`Reading ${url}`);
+  const database = basename(DATABASE.path);
+  await obtain(
+    database,
+    { size: DATABASE.size, algorithm: "sha256", digest: DATABASE.sha256 },
+    url,
+  );
+  const packages = packagesToFetch(
+    parseDatabase(await readFile(join(DOWNLOADS, database), "utf8")),
+    WANTED,
+    has,
+  );
+  const faults: string[] = [];
+  for (const pkg of packages) {
+    const file = containerName(pkg.name, pkg.revision);
+    if (!pkg.relocated) faults.push(`${pkg.name} is not relocated`);
+    if (pkg.containerSize === undefined || !pkg.containerChecksum)
+      faults.push(`the database records no container for ${pkg.name}`);
+    const response = await fetch(`${ARCHIVE_URL}archive/${file}`, { method: "HEAD" });
+    const length = response.headers.get("content-length");
+    if (!response.ok) faults.push(`${file}: HTTP ${response.status}`);
+    else if (length !== null && Number(length) !== pkg.containerSize)
+      faults.push(`${file} is ${length} bytes, not ${pkg.containerSize}`);
+  }
+  if (faults.length > 0)
+    throw new Error(`the archive cannot give the tree:\n  ${faults.join("\n  ")}`);
+  const bytes = packages.reduce((sum, pkg) => sum + (pkg.containerSize ?? 0), 0);
+  console.log(
+    `${packages.length} packages, ${(bytes / 1e6).toFixed(1)} MB, every container served; paste this over PACKAGES and bump LAYOUT:\n`,
+  );
+  console.log("const PACKAGES: Record<string, Container> = {");
+  for (const pkg of packages)
+    console.log(
+      `  ${JSON.stringify(pkg.name)}: { revision: ${pkg.revision}, size: ${pkg.containerSize}, sha512: "${pkg.containerChecksum}" },`,
+    );
+  console.log("};");
+}
+
 async function build(from: string | undefined) {
-  console.log(from ? `Copying the release from ${from}` : `Downloading ${RELEASE_URL}`);
-  mkdirSync(DOWNLOADS, { recursive: true });
-  // The editor's package is an ES module package, which would make Node load the release's
-  // CommonJS loaders as ES modules; this folder says otherwise.
-  await writeFile(join(ROOT, "package.json"), `${JSON.stringify({ type: "commonjs" })}\n`);
-  for (const name of Object.keys(ASSETS)) await obtain(name, from);
+  await obtainRelease(from);
+  await obtainPackages();
 
   console.log("Unpacking TeX Live");
   const started = performance.now();
@@ -417,7 +756,8 @@ async function build(from: string | undefined) {
   let files: Record<string, number>;
   try {
     files = copyOut(await mount(), staging);
-    mergeMaps(staging, files);
+    mergeMaps(staging, files, unpackPackages(staging, files));
+    files = byPath(files);
     const missing = REQUIRED.filter((path) => files[path] === undefined);
     if (missing.length) throw new Error(`the TeX Live tree lacks ${missing.join(", ")}`);
     // Swap the trees by renaming, so no run deletes files another run has put in place.
@@ -435,7 +775,13 @@ async function build(from: string | undefined) {
   // The worker is an ES module and cannot use importScripts, so it imports this copy.
   await writeFile(join(ROOT, "busytex.mjs"), `${loader}\nexport default busytex;\n`);
   await copyFile(join(DOWNLOADS, "busytex.wasm"), join(ROOT, "busytex.wasm"));
-  const manifest: EngineManifest = { release: RELEASE, layout: LAYOUT, bundles: BUNDLES, files };
+  const manifest: EngineManifest = {
+    release: RELEASE,
+    layout: LAYOUT,
+    bundles: BUNDLES,
+    packages: revisions(),
+    files,
+  };
   // Written under another name and renamed, so a run stopped while writing it leaves no
   // manifest rather than part of one.
   const partial = `${MANIFEST}.partial-${process.pid}`;

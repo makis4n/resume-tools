@@ -33,7 +33,7 @@ Editor, from the repository root:
 
 ```sh
 pnpm install
-pnpm --filter @resume-tools/editor fetch-engine   # the TeX engine and TeX Live, 220 MB, once
+pnpm --filter @resume-tools/editor fetch-engine   # the TeX engine and TeX Live, 260 MB, once
 pnpm dev            # the editor at http://localhost:5173
 pnpm check          # Biome: formatting and lint for the whole repo
 pnpm format         # the same, fixing what it can
