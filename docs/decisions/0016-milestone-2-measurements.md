@@ -56,68 +56,76 @@ rows below are left empty, to be filled by running the same command again once i
 ## Findings
 
 This machine is an Apple M4 Pro, 12 cores and 24 GB of memory, on macOS with Node 24.15, while
-other sessions' test runs kept its one-minute load average between 6.6 and 7.9. Two runs of the
-command agreed within 14 ms on the dump and 1 ms on an edit; the tables have the second. The
-browser is the desktop app's pane, Chrome 152, and its column is the second of five loads. The
-first, which also fetched the engine into the HTTP cache, was within 25 ms of it everywhere but
-the engine's start; three later loads, the pane hidden, came out three to four times slower (the
-engine's start 2.0 to 2.1 s, an edit's page 280 to 291 ms, the row layout 0.30 to 0.40 ms), as
-decision 0003's update also saw.
+other sessions' test runs kept its one-minute load average about 7. Three runs of the command, on
+this branch rebased onto item 18's merge, agreed within 6 ms on Jake's Resume's dump and 1 ms on
+its edit, and within 50 ms and 13 ms on AltaCV's; the tables have the third, at a load of 7.2.
+The browser is the desktop app's pane, Chrome 152, which was hidden: most loads there came out
+three to four times slower, as decision 0003's update also saw, and the column has the one load
+of Jake's Resume that did not, whose engine started in 0.4 s against 1.5 to 1.7 s throttled. No
+load of AltaCV escaped the throttling: its edit's page took 323 to 339 ms, against Jake's 243 ms
+in the same state, which is the ratio Node gives.
 
 Jake's Resume, next to decision 0003's numbers:
 
 | | Decision 0003 | This machine | Slow laptop |
 |---|---|---|---|
-| Node: dump the preamble into a format | 1.4 to 1.7 s (spike), 0.28 s (update) | 358 ms; a 6.74 MB format, from 57 files and 7.94 MB of TeX Live | |
-| Node: a new document's compile, two passes | | 163 ms (83 + 79); 36 files and 0.20 MB more | |
-| Node: the page drawn | 2 ms to parse the DVI and build the SVG, the fonts already loaded | 79 ms the first time, which loads the fonts; 2.5 ms in an edit | |
-| Node: an edit, from the command to the drawn page, median of 10 | 135 ms (spike), 68 ms (update), the compile alone | 82 ms: compile 79, draw 2.5; from 79 to 84 | |
+| Node: dump the preamble into a format | 1.4 to 1.7 s (spike), 0.28 s (update) | 350 ms; a 6.74 MB format, from 57 files and 7.94 MB of TeX Live | |
+| Node: a new document's compile, two passes | | 173 ms (87 + 85); 36 files and 0.20 MB more | |
+| Node: the page drawn | 2 ms to parse the DVI and build the SVG, the fonts already loaded | 81 ms the first time, which loads the fonts; 2.5 ms in an edit | |
+| Node: the first page, as the scheduler times it | | 604 ms | |
+| Node: an edit, from the command to the drawn page, median of 10 | 135 ms (spike), 68 ms (update), the compile alone | 84 ms: compile 80, draw 2.5; from 83 to 87 | |
 | Node: a keystroke's row layout, median of 100 | | 0.07 ms, 245 characters on 3 lines | |
-| Chrome: the engine's start | 0.3 s (update) | 349 ms; 1,011 ms on the first visit, which fetched the engine | |
-| Chrome: the first page, the dump and two passes and the draw | 0.37 s + 0.15 s (update) | 625 ms | |
-| Chrome: an edit's page, median of 10 | 100 to 110 ms (spike), 65 ms (update) | 84 ms; 186 ms from the command, the pause included | |
+| Node: fit to one page, on the sample 30 bullets too long | | 166 ms: 1 compile, to compact density | |
+| Chrome: the engine's start | 0.3 s (update) | 425 ms | |
+| Chrome: the first page, the dump and two passes and the draw | 0.37 s + 0.15 s (update) | 654 ms | |
+| Chrome: an edit's page, median of 10 | 100 to 110 ms (spike), 65 ms (update) | 79 ms; 182 ms from the command, the pause included | |
 | Chrome: a keystroke's row layout, median of 100 | | 0.10 ms, the browser's timer resolution | |
-| First load, uncompressed | about 14 MB compressed | 41.98 MB: engine 30.36, loader 0.30, manifest 1.83, TeX Live 8.14, fonts 1.35 | |
+| First load, uncompressed | about 14 MB compressed | 41.85 MB: engine 30.36, loader 0.30, manifest 1.83, TeX Live 8.14, fonts 1.22 | |
+| Opening the long bullet, uncompressed | | 0.13 MB more: its bold italic's metrics and outlines, which the page does not set | |
 
-The edit's compile, 79 ms against the update's 68 ms, compiles a larger template than the
+The edit's compile, 80 ms against the update's 68 ms, compiles a larger template than the
 spike's: Latin Modern in T1 where the spike set Computer Modern, geometry, xcolor and hyperref's
 dvipdfmx driver, and a body with a paragraph special beside every field.
 
-AltaCV and Awesome-CV, to fill once items 20 and 22 merge, with the same rows:
+AltaCV now, and Awesome-CV to fill once items 21 and 22 merge, with the same rows:
 
 | | AltaCV, this machine | AltaCV, slow laptop | Awesome-CV, this machine | Awesome-CV, slow laptop |
 |---|---|---|---|---|
-| Node: dump, new document, first draw | | | | |
-| Node: an edit, median of 10 | | | | |
-| Node: a keystroke's row layout, median of 100 | | | | |
-| Chrome (`?measure=altacv`, `?measure=awesome-cv`): the first page, an edit's page | | | | |
-| First load, uncompressed | | | | |
+| Node: dump, new document, first draw | 438 ms (a 7.06 MB format, from 145 files and 9.42 MB of TeX Live); 218 ms (109 + 109); 231 ms | | | |
+| Node: the first page, as the scheduler times it | 887 ms | | | |
+| Node: an edit, median of 10 | 115 ms: compile 109, draw 3.7; from 114 to 120 | | | |
+| Node: a keystroke's row layout, median of 100 | 0.11 ms, 139 characters on 4 lines | | | |
+| Node: fit to one page | 222 ms: 1 compile, to compact density, on the sample 9 bullets too long | | | |
+| Chrome (`?measure=altacv`, `?measure=awesome-cv`): the first page, an edit's page | Throttled only: 2.8 to 3.0 s, and 323 to 339 ms | | | |
+| First load, uncompressed | 44.44 MB: TeX Live 9.71, fonts 2.25, the rest as Jake's | | | |
 
-Against plan section 4.3, Jake's Resume:
+Against plan section 4.3:
 
-| Target | Limit | This machine | Slow laptop |
-|---|---|---|---|
-| Keystroke in the overlay | under 16 ms | 0.07 ms in Node, 0.10 ms in Chrome: met | |
-| True page updated after an edit, typical | 300 ms | 82 ms in Node, 84 ms in Chrome: met | |
-| True page updated after an edit, slow laptop | under 500 ms | not judged here | |
-| First load, cached afterwards | under 30 MB | 41.98 MB uncompressed: missed | |
+| Target | Limit | Jake's Resume, this machine | AltaCV, this machine | Slow laptop |
+|---|---|---|---|---|
+| Keystroke in the overlay | under 16 ms | 0.07 ms in Node, 0.10 ms in Chrome: met | 0.11 ms in Node: met | |
+| True page updated after an edit, typical | 300 ms | 84 ms in Node, 79 ms in Chrome: met | 115 ms in Node: met | |
+| True page updated after an edit, slow laptop | under 500 ms | not judged here | not judged here | |
+| First load, cached afterwards | under 30 MB | 41.85 MB uncompressed: missed | 44.44 MB uncompressed: missed | |
 
 To fill the slow laptop's column: set the repository up on it as its README says, with
 `pnpm install` and `pnpm --filter @resume-tools/editor fetch-engine`; run
 `pnpm --filter @resume-tools/editor measure --json slow-laptop.json`; then run `pnpm dev`, open
-`/?measure=1` in Chrome with the tab in front, and read the text under the page.
+`/?measure=1` and `/?measure=altacv` in Chrome with the tab in front, and read the text under
+the page.
 
 ## Consequences
 
 - The keystroke and the typical edit are met on this machine with room: the row layout is a
-  small fraction of a frame, and an edit's page takes under a third of the budget, under two
-  thirds with the pause. Whether the slow laptop keeps Jake's Resume's edit under 500 ms is the
-  open question.
+  small fraction of a frame, and an edit's page takes under a third of the budget on Jake's
+  Resume and under two fifths on AltaCV, under two thirds and about three quarters with the
+  scheduler's pause. Whether the slow laptop keeps them under 500 ms is the open question;
+  AltaCV's edit is about 1.4 times Jake's.
 - The first load is missed as the dev server serves it, uncompressed. Milestone 5 addresses it:
   the CDN compresses what it serves, and decision 0003 put the engine alone at 9.5 MB with
-  Brotli; the per-engine build shrinks the engine, nearly three quarters of the bytes; and a
-  template's format served from the cache removes the stock format, 6.48 MB of the 8.14 MB of
-  TeX Live.
+  Brotli; the per-engine build shrinks the engine, about seven tenths of the bytes; and a
+  template's format served from the cache removes the stock format, 6.48 MB of the TeX Live a
+  first load reads, 8.14 MB for Jake's Resume and 9.71 MB for AltaCV.
 - A first load counts the manifest once, and it is cached afterwards: the dev server sends it
   `no-cache` with an `ETag`, so a later fetch, the worker's as well as the next load's, is a
   revalidation answered 304, about 300 bytes, until a rebuilt tree changes it. Before this item
