@@ -9,17 +9,22 @@
  * click on the page and an edit to the model meet on one name. `fieldsOf` finds where each field
  * of a resume lives, in one walk, and gives each a reader and a writer. The writer copies the
  * nodes on the way down to the field and shares the rest with the resume it was given, which it
- * never changes, so a history of many documents costs little more than one.
+ * never changes, so a history of many documents costs little more than one. A structure command,
+ * which the side panel makes, names a node by its id instead, and adds, removes or moves it in the
+ * same way.
  */
 
 import {
   Dates,
   type Entry,
   Id,
+  type Link,
+  LinkKind,
   Resume,
   RichText,
   type Section,
-  type SectionKind,
+  SectionKind,
+  SectionRole,
 } from "@resume-tools/resume-model";
 import { z } from "zod";
 import { curated } from "../templates/curated";
@@ -215,6 +220,90 @@ export function fieldsOf(resume: Resume): Map<string, FieldRef> {
   return fields;
 }
 
+/**
+ * The text each kind of new node starts with. A new node has to be on the page at once, so that it
+ * can be clicked and edited there, and an empty field is not on the page (decision 0007), so a new
+ * node holds words that say what goes where. The panel marks a field that still holds one, so that
+ * none goes out on a resume by mistake. A new link starts without an address, which is typed in the
+ * panel, since the page shows only the label.
+ */
+export const PLACEHOLDERS = {
+  entry: { title: "Title", subtitle: "Organisation", place: "Place" },
+  bullet: "Describe what you did",
+  item: "Item",
+  labelledItem: { label: "Label", text: "Item" },
+  link: { label: "example.com" },
+} as const;
+
+/**
+ * The title a new section starts with, by its role: the usual title for such a section, which it
+ * often keeps, so it is not a placeholder the panel marks.
+ */
+export const SECTION_TITLES: Readonly<Record<SectionRole, string>> = {
+  summary: "Summary",
+  experience: "Experience",
+  education: "Education",
+  projects: "Projects",
+  skills: "Skills",
+  awards: "Awards",
+  publications: "Publications",
+  languages: "Languages",
+  other: "Other",
+};
+
+/** What a minted id is made of after its prefix: the lowercase letters and digits ids allow. */
+const ID_CHARACTERS = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+/**
+ * A new node's id: `prefix`, a hyphen and six random lowercase letters and digits, drawn again
+ * while `taken` has it, since an id is unique across the document (decision 0006). Random rather
+ * than counted, because the page on screen can be older than the document while a compile is in
+ * flight, and its markers name fields by id: a count would give a removed node's id to the next
+ * node added, and a click on the old page would open the new node's field.
+ */
+export function mintId(prefix: string, taken: ReadonlySet<string>): string {
+  const bytes = new Uint8Array(6);
+  let id: string;
+  do {
+    crypto.getRandomValues(bytes);
+    // A byte modulo 36 favours the first four characters slightly, which does not matter: an id
+    // has to be unique, which drawing again ensures, not evenly spread.
+    const drawn = Array.from(bytes, (byte) => ID_CHARACTERS.charAt(byte % ID_CHARACTERS.length));
+    id = `${prefix}-${drawn.join("")}`;
+  } while (taken.has(id));
+  return id;
+}
+
+/**
+ * A change to the resume's structure rather than to a field's text, as the side panel makes them
+ * (item 11): a node added, removed or moved, and what the page does not show, such as a section's
+ * role or a link's address. A node is named by its id. `at` is the index a new node takes, the end
+ * when it is left out, and `to` the index a moved node ends at among its siblings, which it never
+ * leaves: an entry stays in its section and a bullet in its entry. A new node gets its id from
+ * `mintId` and its text from `PLACEHOLDERS`, and a new section its role's title and nothing in it.
+ * A section's kind is its shape, which never changes under the user (decision 0006), so only its
+ * role can be set. `setHeader` and `setLink` leave a value the op leaves out as it is.
+ */
+export type StructureOp =
+  | { op: "addSection"; kind: SectionKind; role: SectionRole; at?: number }
+  | { op: "removeSection"; id: string }
+  | { op: "moveSection"; id: string; to: number }
+  | { op: "setSection"; id: string; role?: SectionRole }
+  | { op: "addEntry"; section: string; at?: number }
+  | { op: "removeEntry"; id: string }
+  | { op: "moveEntry"; id: string; to: number }
+  | { op: "addBullet"; entry: string; at?: number }
+  | { op: "removeBullet"; id: string }
+  | { op: "moveBullet"; id: string; to: number }
+  | { op: "addItem"; section: string; at?: number }
+  | { op: "removeItem"; id: string }
+  | { op: "moveItem"; id: string; to: number }
+  | { op: "addLink"; at?: number }
+  | { op: "removeLink"; id: string }
+  | { op: "moveLink"; id: string; to: number }
+  | { op: "setLink"; id: string; kind?: LinkKind; label?: string; href?: string }
+  | { op: "setHeader"; headline?: string; email?: string; phone?: string; location?: string };
+
 /** A choice for one of the template's controls; `undefined` goes back to the template's default. */
 type ControlCommand = {
   [K in keyof ControlValues]-?: { type: "control"; name: K; value: ControlValues[K] };
@@ -225,6 +314,7 @@ export type Command =
   | { type: "text"; field: string; text: string }
   | { type: "rich"; field: string; runs: RichText }
   | { type: "dates"; field: string; dates: Dates | undefined }
+  | { type: "structure"; op: StructureOp }
   | ControlCommand;
 
 /** A command the document cannot take. The commands come from the editor's code, never a user. */
@@ -250,9 +340,10 @@ function fieldOf<K extends FieldRef["kind"]>(
 /**
  * The document after a command, a new value that shares what the command left alone; the one
  * given is never changed. Throws a `CommandError` for a field the document does not have, a field
- * of another kind, runs or dates the model refuses, and a control value the template refuses, so
- * that no command makes a document `Document` would not read back. The runs and dates stored are
- * the model's parsed copies, so a caller that changes its own afterwards changes nothing here.
+ * of another kind, runs or dates the model refuses, a node the document does not have or an index
+ * its list does not have, and a control value the template refuses, so that no command makes a
+ * document `Document` would not read back. The runs and dates stored are the model's parsed
+ * copies, so a caller that changes its own afterwards changes nothing here.
  */
 export function apply(doc: Document, command: Command): Document {
   switch (command.type) {
@@ -278,6 +369,8 @@ export function apply(doc: Document, command: Command): Document {
         );
       return { ...doc, resume: field.set(doc.resume, dates.data) };
     }
+    case "structure":
+      return { ...doc, resume: restructure(doc.resume, command.op) };
     case "control": {
       const { package: pkg } = curated(doc.template);
       const next: Record<string, unknown> = { ...doc.controls };
@@ -290,6 +383,258 @@ export function apply(doc: Document, command: Command): Document {
       }
       return { ...doc, controls: controls.data };
     }
+  }
+}
+
+/** The kinds of node that sit in a list, which structure ops add, remove and move. */
+type NodeKind = "link" | "section" | "entry" | "bullet" | "item";
+
+/** Each kind of node as an error message names it. */
+const NODE_NAMES: Readonly<Record<NodeKind, string>> = {
+  link: "a link",
+  section: "a section",
+  entry: "an entry",
+  bullet: "a bullet",
+  item: "an item",
+};
+
+/**
+ * How long a node's list is, and how to take the node out or move it within the list. Both only
+ * drop or reorder what the list already holds, so one function builds them for any kind of node.
+ */
+interface Siblings {
+  length: number;
+  remove(resume: Resume): Resume;
+  move(resume: Resume, to: number): Resume;
+}
+
+function siblings<T>(list: Place<T[]>, index: number, length: number): Siblings {
+  return {
+    length,
+    remove: (resume) =>
+      list.put(
+        resume,
+        list.get(resume).filter((_, i) => i !== index),
+      ),
+    move: (resume, to) => {
+      const nodes = [...list.get(resume)];
+      nodes.splice(to, 0, ...nodes.splice(index, 1));
+      return list.put(resume, nodes);
+    },
+  };
+}
+
+/** A node's kind and where it sits, and the place of each node an op changes or adds to. */
+type Located =
+  | { kind: "link"; siblings: Siblings; node: Place<Link> }
+  | { kind: "section"; siblings: Siblings; node: Place<Section> }
+  | { kind: "entry"; siblings: Siblings; node: Place<Entry> }
+  | { kind: "bullet"; siblings: Siblings }
+  | { kind: "item"; siblings: Siblings };
+
+/**
+ * Every node of a resume by its id, found in one walk, as `fieldsOf` finds fields. Its indexes are
+ * the resume's, so it serves the one op it was built for.
+ */
+function nodesOf(resume: Resume): Map<string, Located> {
+  const nodes = new Map<string, Located>();
+  const { links } = resume.header;
+  links.forEach((link, l) => {
+    const node = at(LINKS, l, link.id);
+    nodes.set(link.id, { kind: "link", siblings: siblings(LINKS, l, links.length), node });
+  });
+  const { sections } = resume;
+  sections.forEach((section, s) => {
+    const node = at(SECTIONS, s, section.id);
+    nodes.set(section.id, {
+      kind: "section",
+      siblings: siblings(SECTIONS, s, sections.length),
+      node,
+    });
+    switch (section.kind) {
+      case "entries": {
+        const entries = under(ofKind(node, "entries"), "entries");
+        section.entries.forEach((entry, e) => {
+          const place = at(entries, e, entry.id);
+          const here = siblings(entries, e, section.entries.length);
+          nodes.set(entry.id, { kind: "entry", siblings: here, node: place });
+          const bullets = under(place, "bullets");
+          entry.bullets.forEach((bullet, b) => {
+            const among = siblings(bullets, b, entry.bullets.length);
+            nodes.set(bullet.id, { kind: "bullet", siblings: among });
+          });
+        });
+        break;
+      }
+      case "list": {
+        const items = under(ofKind(node, "list"), "items");
+        section.items.forEach((item, i) => {
+          nodes.set(item.id, { kind: "item", siblings: siblings(items, i, section.items.length) });
+        });
+        break;
+      }
+      case "labelled": {
+        const items = under(ofKind(node, "labelled"), "items");
+        section.items.forEach((item, i) => {
+          nodes.set(item.id, { kind: "item", siblings: siblings(items, i, section.items.length) });
+        });
+        break;
+      }
+      case "paragraph":
+        break;
+    }
+  });
+  return nodes;
+}
+
+/** Whether `index` is a whole number that indexes a list of `length`. */
+const isIndex = (index: number, length: number) =>
+  Number.isInteger(index) && index >= 0 && index < length;
+
+/** A value the model's schema reads, or a `CommandError` that says what refused it. */
+function checked<T>(schema: z.ZodType<T>, value: unknown, what: string): T {
+  const read = schema.safeParse(value);
+  if (!read.success) throw new CommandError(`${what} cannot be ${String(value)}`);
+  return read.data;
+}
+
+/** Text an op sets, which the types already require; the check keeps a slip out of the model. */
+function checkedText(value: unknown, what: string): string {
+  if (typeof value !== "string") throw new CommandError(`${what} takes text, not ${typeof value}`);
+  return value;
+}
+
+/** The resume with `node` in the list at `list`, at `index` or at the end. */
+function insertAt<T>(resume: Resume, list: Place<T[]>, index: number | undefined, node: T): Resume {
+  const nodes = list.get(resume);
+  const where = index ?? nodes.length;
+  if (!isIndex(where, nodes.length + 1))
+    throw new CommandError(`a list of ${nodes.length} has no place ${where} for a new node`);
+  return list.put(resume, [...nodes.slice(0, where), node, ...nodes.slice(where)]);
+}
+
+/** The resume with the node `id` moved to `to` among its siblings. */
+function moveTo(resume: Resume, { siblings }: Located, id: string, to: number): Resume {
+  if (!isIndex(to, siblings.length))
+    throw new CommandError(`${id} cannot move to ${to} in a list of ${siblings.length}`);
+  return siblings.move(resume, to);
+}
+
+/** A new section of a kind, titled for its role, with nothing in it yet. */
+function newSection(id: string, kind: SectionKind, role: SectionRole): Section {
+  const base = { id, title: SECTION_TITLES[role], role };
+  switch (kind) {
+    case "entries":
+      return { ...base, kind, entries: [] };
+    case "list":
+      return { ...base, kind, items: [] };
+    case "labelled":
+      return { ...base, kind, items: [] };
+    case "paragraph":
+      return { ...base, kind, text: [] };
+  }
+}
+
+/**
+ * The resume after a structure op, a new value that shares what the op left alone. Throws a
+ * `CommandError` for a node the resume does not have or of another kind than the op's, a section
+ * that cannot hold what is added to it, an index outside the list, and a kind, role or text the
+ * model refuses. A new node's id is minted against every id in the resume, so ids stay unique.
+ */
+function restructure(resume: Resume, op: StructureOp): Resume {
+  const nodes = nodesOf(resume);
+  const find = <K extends NodeKind>(id: string, kind: K): Extract<Located, { kind: K }> => {
+    const found = nodes.get(id);
+    if (found === undefined) throw new CommandError(`the document has no ${kind} ${id}`);
+    if (found.kind !== kind)
+      throw new CommandError(`${id} is ${NODE_NAMES[found.kind]}, not ${NODE_NAMES[kind]}`);
+    return found as Extract<Located, { kind: K }>;
+  };
+  const mint = (prefix: string) => mintId(prefix, new Set(nodes.keys()));
+  switch (op.op) {
+    case "addSection": {
+      const kind = checked(SectionKind, op.kind, "a section's kind");
+      const role = checked(SectionRole, op.role, "a section's role");
+      return insertAt(resume, SECTIONS, op.at, newSection(mint("sec"), kind, role));
+    }
+    case "removeSection":
+      return find(op.id, "section").siblings.remove(resume);
+    case "moveSection":
+      return moveTo(resume, find(op.id, "section"), op.id, op.to);
+    case "setSection": {
+      const { node } = find(op.id, "section");
+      if (op.role === undefined) return resume;
+      const role = checked(SectionRole, op.role, "a section's role");
+      return node.put(resume, { ...node.get(resume), role });
+    }
+    case "addEntry": {
+      const { node } = find(op.section, "section");
+      const { kind } = node.get(resume);
+      if (kind !== "entries")
+        throw new CommandError(`the ${kind} section ${op.section} holds no entries`);
+      const { title, subtitle, place } = PLACEHOLDERS.entry;
+      const entry: Entry = { id: mint("ent"), title, subtitle, place, bullets: [] };
+      return insertAt(resume, under(ofKind(node, "entries"), "entries"), op.at, entry);
+    }
+    case "removeEntry":
+      return find(op.id, "entry").siblings.remove(resume);
+    case "moveEntry":
+      return moveTo(resume, find(op.id, "entry"), op.id, op.to);
+    case "addBullet": {
+      const bullets = under(find(op.entry, "entry").node, "bullets");
+      const bullet = { id: mint("bul"), text: [{ text: PLACEHOLDERS.bullet }] };
+      return insertAt(resume, bullets, op.at, bullet);
+    }
+    case "removeBullet":
+      return find(op.id, "bullet").siblings.remove(resume);
+    case "moveBullet":
+      return moveTo(resume, find(op.id, "bullet"), op.id, op.to);
+    case "addItem": {
+      const { node } = find(op.section, "section");
+      const { kind } = node.get(resume);
+      if (kind === "list") {
+        const item = { id: mint("itm"), text: [{ text: PLACEHOLDERS.item }] };
+        return insertAt(resume, under(ofKind(node, "list"), "items"), op.at, item);
+      }
+      if (kind === "labelled") {
+        const { label, text } = PLACEHOLDERS.labelledItem;
+        const item = { id: mint("itm"), label, text: [{ text }] };
+        return insertAt(resume, under(ofKind(node, "labelled"), "items"), op.at, item);
+      }
+      throw new CommandError(`the ${kind} section ${op.section} holds no items`);
+    }
+    case "removeItem":
+      return find(op.id, "item").siblings.remove(resume);
+    case "moveItem":
+      return moveTo(resume, find(op.id, "item"), op.id, op.to);
+    case "addLink": {
+      const { label } = PLACEHOLDERS.link;
+      const link: Link = { id: mint("lnk"), kind: "website", label, href: "" };
+      return insertAt(resume, LINKS, op.at, link);
+    }
+    case "removeLink":
+      return find(op.id, "link").siblings.remove(resume);
+    case "moveLink":
+      return moveTo(resume, find(op.id, "link"), op.id, op.to);
+    case "setLink": {
+      const { node } = find(op.id, "link");
+      const link = { ...node.get(resume) };
+      if (op.kind !== undefined) link.kind = checked(LinkKind, op.kind, "a link's kind");
+      if (op.label !== undefined) link.label = checkedText(op.label, `${op.id}.label`);
+      if (op.href !== undefined) link.href = checkedText(op.href, `${op.id}'s address`);
+      return node.put(resume, link);
+    }
+    case "setHeader": {
+      const header = { ...resume.header };
+      for (const key of HEADER_TEXTS) {
+        const value = op[key];
+        if (value !== undefined) header[key] = checkedText(value, `header.${key}`);
+      }
+      return HEADER.put(resume, header);
+    }
+    default:
+      // The types rule this out; the check keeps a slip from leaving the document without a resume.
+      throw new CommandError(`there is no structure op ${String((op as { op: unknown }).op)}`);
   }
 }
 

@@ -105,7 +105,7 @@ end to end before the other two templates, so that the editing loop is proven on
 10. [ ] **Bold, italic and links.** Rich fields in Tiptap with the three marks and nothing else,
     TeX's line breaks shown through ProseMirror decorations, and one font face per run for the
     breaker. A link's address is edited in a popover.
-11. [ ] **Structure from the side panel.** Add, remove and reorder sections, entries, bullets and
+11. [x] **Structure from the side panel.** Add, remove and reorder sections, entries, bullets and
     header links, and edit what the page does not show, such as link addresses.
 12. [ ] **Undo and redo** across page and panel, with one step per field visit rather than per
     keystroke.

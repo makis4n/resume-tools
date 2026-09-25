@@ -4,8 +4,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
+import type { PageItem } from "../tex/dvi";
+import { collectFields } from "../tex/fields";
 import { parseType1 } from "../tex/type1";
-import { type DrawnPage, drawPage, type GlyphBox, glyphAt, paperSize } from "./draw";
+import { type DrawnPage, drawPage, fieldsShown, type GlyphBox, glyphAt, paperSize } from "./draw";
 import { FontLibrary } from "./fonts";
 import { TexLiveIndex } from "./texlive";
 
@@ -182,6 +184,24 @@ describe("paperSize", () => {
   it("gives up on anything else", () => {
     expect(paperSize(special("papersize=a4"))).toBeUndefined();
     expect(paperSize({ items: [] })).toBeUndefined();
+  });
+});
+
+describe("fieldsShown", () => {
+  it("is the fields with a glyph on the page, not one whose markers hold nothing", () => {
+    const special = (text: string): PageItem => ({ kind: "special", h: 0, v: 0, text });
+    const glyph: PageItem = { kind: "glyph", font: 0, code: 81, h: 0, v: 0, width: 1 };
+    // A first name in a script the fonts lack sets no glyph, but its markers are on the page.
+    const items = [
+      special("rt:b:header.first"),
+      special("rt:e:header.first"),
+      special("rt:b:header.last"),
+      glyph,
+      special("rt:e:header.last"),
+    ];
+    const fields = collectFields({ counters: [], items }, () => "Q");
+    expect([...fields.keys()]).toEqual(["header.first", "header.last"]);
+    expect(fieldsShown({ fields })).toEqual(new Set(["header.last"]));
   });
 });
 

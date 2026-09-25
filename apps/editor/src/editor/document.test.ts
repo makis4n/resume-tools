@@ -1,5 +1,13 @@
-import { Resume, type RichText } from "@resume-tools/resume-model";
-import { describe, expect, it } from "vitest";
+import {
+  type Entry,
+  Id,
+  Resume,
+  type RichText,
+  SECTION_KINDS,
+  type Section,
+  type SectionKind,
+} from "@resume-tools/resume-model";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { curated } from "../templates/curated";
 import { generateBody } from "../templates/generate";
 import { controlValuesFor, defaultControls, parsePackage } from "../templates/package";
@@ -11,7 +19,9 @@ import {
   fieldsOf,
   HISTORY_LIMIT,
   History,
+  mintId,
   newDocument,
+  type StructureOp,
 } from "./document";
 
 const { package: jake, sample } = curated("jake");
@@ -340,5 +350,321 @@ describe("History", () => {
     while (history.redo() !== undefined) steps--;
     expect(steps).toBe(0);
     expect(titleOf(history.present)).toBe(`Title ${HISTORY_LIMIT + 50}`);
+  });
+});
+
+describe("mintId", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("gives the prefix, a hyphen and six lowercase letters and digits, an id the model takes", () => {
+    for (const prefix of ["sec", "ent", "bul", "itm", "lnk"]) {
+      const id = mintId(prefix, new Set());
+      expect(id).toMatch(new RegExp(`^${prefix}-[a-z0-9]{6}$`));
+      expect(Id.safeParse(id).success, id).toBe(true);
+    }
+  });
+
+  it("never gives a taken id, and draws again until it has one that is free", () => {
+    // Each draw fills the six bytes with its own number, so the draws are aaaaaa, bbbbbb, cccccc.
+    let draws = 0;
+    vi.spyOn(crypto, "getRandomValues").mockImplementation((array) => {
+      if (array instanceof Uint8Array) array.fill(draws);
+      draws++;
+      return array;
+    });
+    expect(mintId("ent", new Set(["ent-aaaaaa", "ent-bbbbbb"]))).toBe("ent-cccccc");
+    expect(draws).toBe(3);
+    // The first draw again, under a prefix that has none of the taken ids.
+    draws = 0;
+    expect(mintId("bul", new Set(["ent-aaaaaa"]))).toBe("bul-aaaaaa");
+    expect(draws).toBe(1);
+  });
+});
+
+describe("structure", () => {
+  const doc = newDocument("jake", sample, "en-US");
+  const full = newDocument("jake", FULL, "en-US");
+  const structural = (op: StructureOp): Command => ({ type: "structure", op });
+
+  /**
+   * Apply a structure op and check what every op keeps: the document given is untouched, and the
+   * one made reads back as a document, so its ids are still unique across it. Returns the new one.
+   */
+  function restructured(from: Document, op: StructureOp): Document {
+    const before = structuredClone(from);
+    const after = apply(from, structural(op));
+    expect(Document.parse(after)).toStrictEqual(after);
+    expect(from).toStrictEqual(before);
+    return after;
+  }
+
+  const ids = (nodes: readonly { id: string }[]) => nodes.map((node) => node.id);
+
+  /** An id `mintId` made, which a test cannot know, under its prefix. */
+  const minted = (prefix: string) => expect.stringMatching(new RegExp(`^${prefix}-[a-z0-9]{6}$`));
+
+  /** The section `id` of a resume, which must be of `kind`. */
+  function sectionOf<K extends SectionKind>(resume: Resume, id: string, kind: K) {
+    const section = resume.sections.find((each) => each.id === id);
+    if (section?.kind !== kind) throw new Error(`the resume has no ${kind} section ${id}`);
+    return section as Extract<Section, { kind: K }>;
+  }
+
+  function entryOf(resume: Resume, id: string): Entry {
+    for (const section of resume.sections) {
+      const entry = section.kind === "entries" && section.entries.find((each) => each.id === id);
+      if (entry) return entry;
+    }
+    throw new Error(`the resume has no entry ${id}`);
+  }
+
+  it("adds a section of each kind, titled for its role and empty, at the end or an index", () => {
+    const empty = {
+      entries: { entries: [] },
+      list: { items: [] },
+      labelled: { items: [] },
+      paragraph: { text: [] },
+    };
+    for (const kind of SECTION_KINDS) {
+      const after = restructured(doc, { op: "addSection", kind, role: "awards" });
+      expect(ids(after.resume.sections).slice(0, -1)).toEqual(ids(doc.resume.sections));
+      expect(after.resume.sections.at(-1)).toEqual({
+        id: minted("sec"),
+        kind,
+        title: "Awards",
+        role: "awards",
+        ...empty[kind],
+      });
+    }
+    const first = restructured(doc, { op: "addSection", kind: "list", role: "skills", at: 0 });
+    expect(first.resume.sections[0]?.title).toBe("Skills");
+    expect(ids(first.resume.sections).slice(1)).toEqual(ids(doc.resume.sections));
+  });
+
+  it("removes a section with everything in it, and moves one, leaving the rest as they were", () => {
+    const removed = restructured(doc, { op: "removeSection", id: "exp" });
+    expect(ids(removed.resume.sections)).toEqual(["edu", "proj", "skills"]);
+    expect(fieldsOf(removed.resume).has("fennel-1.text")).toBe(false);
+    const up = restructured(doc, { op: "moveSection", id: "skills", to: 0 });
+    expect(ids(up.resume.sections)).toEqual(["skills", "edu", "exp", "proj"]);
+    const down = restructured(doc, { op: "moveSection", id: "edu", to: 1 });
+    expect(ids(down.resume.sections)).toEqual(["exp", "edu", "proj", "skills"]);
+    // The section moves whole, and the ones it passes are the same objects.
+    expect(up.resume.sections[0]).toBe(doc.resume.sections[3]);
+    expect(up.resume.sections[1]).toBe(doc.resume.sections[0]);
+  });
+
+  it("throws for an index outside the list, where a node is added or moved", () => {
+    for (const to of [-1, 4, 1.5, Number.NaN])
+      expect(() => apply(doc, structural({ op: "moveSection", id: "edu", to })), `${to}`).toThrow(
+        CommandError,
+      );
+    expect(() => apply(doc, structural({ op: "moveSection", id: "edu", to: 4 }))).toThrow(
+      "edu cannot move to 4 in a list of 4",
+    );
+    const past = structural({ op: "addSection", kind: "list", role: "skills", at: 5 });
+    expect(() => apply(doc, past)).toThrow("a list of 4 has no place 5 for a new node");
+    // The end is a place for a new node, though not for one that moves.
+    const end = restructured(doc, { op: "addSection", kind: "list", role: "skills", at: 4 });
+    expect(end.resume.sections).toHaveLength(5);
+    for (const op of [
+      { op: "addEntry", section: "exp", at: -1 },
+      { op: "moveEntry", id: "fennel", to: 2 },
+      { op: "addBullet", entry: "fennel", at: 4 },
+      { op: "moveBullet", id: "fennel-1", to: 3 },
+      // The research entry's bullets are a list of their own, whatever fennel's holds.
+      { op: "moveBullet", id: "research-1", to: 2 },
+      { op: "addItem", section: "skills", at: 3 },
+      { op: "moveItem", id: "tools", to: -1 },
+      { op: "addLink", at: 2 },
+      { op: "moveLink", id: "site", to: 1 },
+    ] satisfies StructureOp[])
+      expect(() => apply(doc, structural(op)), op.op).toThrow(CommandError);
+  });
+
+  it("sets a section's role and nothing else, and refuses a role or kind the model lacks", () => {
+    const after = restructured(doc, { op: "setSection", id: "proj", role: "other" });
+    expect(after.resume.sections[2]).toEqual({ ...doc.resume.sections[2], role: "other" });
+    expect(after.resume.sections[1]).toBe(doc.resume.sections[1]);
+    expect(restructured(doc, { op: "setSection", id: "proj" }).resume).toBe(doc.resume);
+    const hobbies = { op: "setSection", id: "proj", role: "hobbies" } as unknown as StructureOp;
+    expect(() => apply(doc, structural(hobbies))).toThrow("a section's role cannot be hobbies");
+    const table = { op: "addSection", kind: "table", role: "other" } as unknown as StructureOp;
+    expect(() => apply(doc, structural(table))).toThrow("a section's kind cannot be table");
+  });
+
+  it("adds an entry with its placeholders, and removes and moves one within its section", () => {
+    const added = restructured(doc, { op: "addEntry", section: "exp" });
+    const { entries } = sectionOf(added.resume, "exp", "entries");
+    expect(ids(entries).slice(0, 2)).toEqual(["fennel", "research"]);
+    // No dates and no bullets: the page's picker and the panel add those.
+    expect(entries[2]).toEqual({
+      id: minted("ent"),
+      title: "Title",
+      subtitle: "Organisation",
+      place: "Place",
+      bullets: [],
+    });
+    expect(added.resume.sections[0]).toBe(doc.resume.sections[0]);
+    const first = restructured(doc, { op: "addEntry", section: "edu", at: 0 });
+    const edu = sectionOf(first.resume, "edu", "entries");
+    expect(ids(edu.entries)).toEqual([minted("ent"), "northgate"]);
+    const removed = restructured(doc, { op: "removeEntry", id: "fennel" });
+    expect(ids(sectionOf(removed.resume, "exp", "entries").entries)).toEqual(["research"]);
+    const moved = restructured(doc, { op: "moveEntry", id: "research", to: 0 });
+    const exp = sectionOf(moved.resume, "exp", "entries");
+    expect(ids(exp.entries)).toEqual(["research", "fennel"]);
+    expect(() => apply(doc, structural({ op: "addEntry", section: "skills" }))).toThrow(
+      "the labelled section skills holds no entries",
+    );
+  });
+
+  it("adds, removes and moves the bullets of an entry", () => {
+    const added = restructured(doc, { op: "addBullet", entry: "northgate" });
+    expect(entryOf(added.resume, "northgate").bullets).toEqual([
+      { id: minted("bul"), text: [{ text: "Describe what you did" }] },
+    ]);
+    const between = restructured(doc, { op: "addBullet", entry: "fennel", at: 1 });
+    expect(ids(entryOf(between.resume, "fennel").bullets)).toEqual([
+      "fennel-1",
+      minted("bul"),
+      "fennel-2",
+      "fennel-3",
+    ]);
+    const removed = restructured(doc, { op: "removeBullet", id: "fennel-2" });
+    expect(ids(entryOf(removed.resume, "fennel").bullets)).toEqual(["fennel-1", "fennel-3"]);
+    const moved = restructured(doc, { op: "moveBullet", id: "fennel-3", to: 0 });
+    expect(ids(entryOf(moved.resume, "fennel").bullets)).toEqual([
+      "fennel-3",
+      "fennel-1",
+      "fennel-2",
+    ]);
+    expect(entryOf(moved.resume, "research")).toBe(entryOf(doc.resume, "research"));
+  });
+
+  it("adds, removes and moves the items of list and labelled sections, and of no other", () => {
+    const listed = restructured(full, { op: "addItem", section: "honours" });
+    expect(sectionOf(listed.resume, "honours", "list").items).toEqual([
+      { id: "medal", text: [{ text: "Silver at a lettering show" }] },
+      { id: minted("itm"), text: [{ text: "Item" }] },
+    ]);
+    const labelled = restructured(doc, { op: "addItem", section: "skills", at: 0 });
+    const [first, ...rest] = sectionOf(labelled.resume, "skills", "labelled").items;
+    expect(first).toEqual({ id: minted("itm"), label: "Label", text: [{ text: "Item" }] });
+    expect(ids(rest)).toEqual(["languages", "tools"]);
+    const removed = restructured(full, { op: "removeItem", id: "medal" });
+    expect(sectionOf(removed.resume, "honours", "list").items).toEqual([]);
+    const moved = restructured(doc, { op: "moveItem", id: "tools", to: 0 });
+    const skills = sectionOf(moved.resume, "skills", "labelled");
+    expect(ids(skills.items)).toEqual(["tools", "languages"]);
+    expect(() => apply(full, structural({ op: "addItem", section: "work" }))).toThrow(
+      "the entries section work holds no items",
+    );
+    expect(() => apply(full, structural({ op: "addItem", section: "about" }))).toThrow(
+      "the paragraph section about holds no items",
+    );
+  });
+
+  it("adds, moves, sets and removes links", () => {
+    const added = restructured(doc, { op: "addLink" });
+    const link = added.resume.header.links[1];
+    expect(link).toEqual({ id: minted("lnk"), kind: "website", label: "example.com", href: "" });
+    const id = link?.id ?? "";
+    const moved = restructured(added, { op: "moveLink", id, to: 0 });
+    expect(ids(moved.resume.header.links)).toEqual([id, "site"]);
+    const href = "https://quist.example.com/code";
+    const set = restructured(moved, { op: "setLink", id, kind: "github", href });
+    expect(set.resume.header.links[0]).toEqual({ id, kind: "github", label: "example.com", href });
+    expect(set.resume.header.links[1]).toBe(moved.resume.header.links[1]);
+    const unlabelled = restructured(set, { op: "setLink", id, label: "" });
+    expect(unlabelled.resume.header.links[0]).toEqual({ id, kind: "github", label: "", href });
+    const removed = restructured(set, { op: "removeLink", id: "site" });
+    expect(ids(removed.resume.header.links)).toEqual([id]);
+    const first = restructured(doc, { op: "addLink", at: 0 });
+    expect(ids(first.resume.header.links)).toEqual([minted("lnk"), "site"]);
+    const myspace = { op: "setLink", id: "site", kind: "myspace" } as unknown as StructureOp;
+    expect(() => apply(doc, structural(myspace))).toThrow("a link's kind cannot be myspace");
+  });
+
+  it("sets the header's fields an op names, and leaves the rest", () => {
+    const after = restructured(doc, {
+      op: "setHeader",
+      headline: "Engineer",
+      location: "Portland, OR",
+    });
+    expect(after.resume.header).toEqual({
+      ...doc.resume.header,
+      headline: "Engineer",
+      location: "Portland, OR",
+    });
+    expect(after.resume.header.links).toBe(doc.resume.header.links);
+    expect(after.resume.sections).toBe(doc.resume.sections);
+    const cleared = restructured(after, { op: "setHeader", email: "" });
+    expect(cleared.resume.header).toEqual({ ...after.resume.header, email: "" });
+    const number = { op: "setHeader", phone: 4155550132 } as unknown as StructureOp;
+    expect(() => apply(doc, structural(number))).toThrow("header.phone takes text, not number");
+  });
+
+  it("throws for a node the document does not have, or one of another kind than the op's", () => {
+    expect(() => apply(doc, structural({ op: "removeEntry", id: "nowhere" }))).toThrow(
+      new CommandError("the document has no entry nowhere"),
+    );
+    for (const [op, message] of [
+      [{ op: "removeBullet", id: "fennel" }, "fennel is an entry, not a bullet"],
+      [{ op: "addBullet", entry: "exp" }, "exp is a section, not an entry"],
+      [{ op: "addEntry", section: "fennel" }, "fennel is an entry, not a section"],
+      [{ op: "moveLink", id: "fennel-1", to: 0 }, "fennel-1 is a bullet, not a link"],
+      [{ op: "setLink", id: "languages", label: "x" }, "languages is an item, not a link"],
+      [{ op: "removeItem", id: "site" }, "site is a link, not an item"],
+    ] satisfies [StructureOp, string][])
+      expect(() => apply(doc, structural(op))).toThrow(message);
+    const fly = { op: "flySection", id: "exp" } as unknown as StructureOp;
+    expect(() => apply(doc, structural(fly))).toThrow("there is no structure op flySection");
+  });
+
+  it("gives each new node placeholders the page marks, so that it can be clicked at once", () => {
+    let after = restructured(doc, { op: "addSection", kind: "list", role: "awards" });
+    after = restructured(after, { op: "addSection", kind: "labelled", role: "languages" });
+    const [awards = "", languages = ""] = ids(after.resume.sections.slice(-2));
+    for (const op of [
+      { op: "addItem", section: awards },
+      { op: "addItem", section: languages },
+      { op: "addEntry", section: "exp" },
+      { op: "addBullet", entry: "fennel" },
+      { op: "addLink" },
+    ] satisfies StructureOp[])
+      after = restructured(after, op);
+    // Every field of the new nodes, but the new entry's dates, which it does not have yet.
+    const before = fieldsOf(doc.resume);
+    const added = [...fieldsOf(after.resume)].filter(
+      ([id, field]) => !before.has(id) && field.kind !== "dates",
+    );
+    const { texts } = generateBody(jake, after.resume, defaultControls(jake));
+    expect(added.map(([id]) => texts.get(id)).sort()).toEqual(
+      [
+        "Awards",
+        "Languages",
+        "Item",
+        "Label",
+        "Item",
+        "Title",
+        "Organisation",
+        "Place",
+        "Describe what you did",
+        "example.com",
+      ].sort(),
+    );
+  });
+
+  it("keeps ids unique however many nodes are added, and undoes an op as one step", () => {
+    let after = doc;
+    for (let i = 0; i < 30; i++)
+      after = restructured(after, { op: "addBullet", entry: "northgate" });
+    expect(new Set(ids(entryOf(after.resume, "northgate").bullets)).size).toBe(30);
+    const history = new History(doc);
+    history.dispatch(structural({ op: "removeSection", id: "exp" }));
+    expect(history.undo()).toBe(doc);
   });
 });
