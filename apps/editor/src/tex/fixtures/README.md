@@ -9,6 +9,9 @@ Nothing here is real resume content; the DVI files were compiled from invented t
 | `cm*.tfm` | Computer Modern font metrics from the amsfonts distribution in TeX Live |
 | `cmr10.pfb` | Computer Modern Roman 10 pt, Type 1, from the same distribution. Copyright (c) 1997, 2009 American Mathematical Society, SIL Open Font License 1.1 with Reserved Font Name CMR10; the licence is in `OFL.txt` |
 | `cmr10.outlines.json` | The reference for `type1.test.ts`: `cmr10.pfb` as fontTools reads it, see below |
+| `accents.dvi` | OT1 accents in `cmr10`: `caf\'e \'Etude na\"\i ve` in one field, and `\textasciitilde mara\^{}x` in another, compiled from the stock `pdflatex.fmt` by the editor's engine session in Node (`session.compile("pdftex", "stock", ...)`) |
+| `8r.enc` | The TeX Base 1 encoding vector, from TeX Live's `fonts/enc/dvips/base`, public domain |
+| `ptmr8t.vf`, `ptmr8t.tfm` | Times in T1, the virtual font over the raw `ptmr8r` and its metrics, from PSNFSS in TeX Live, LaTeX Project Public License |
 
 ## Regenerating `cmr10.outlines.json`
 

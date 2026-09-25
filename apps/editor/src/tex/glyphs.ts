@@ -3,7 +3,9 @@
  *
  * The outlines (SVG path data in a 1000-unit em, y pointing up) and the font's built-in
  * encoding come from reading the Type 1 font itself in the browser (`type1.ts`), so the
- * page can be drawn as one path per glyph from the same files the PDF driver embeds.
+ * page can be drawn as one path per glyph from the same files the PDF driver embeds. A font the
+ * map re-encodes, slants or stretches, and a virtual font, come out in the same shape
+ * (`outlines.ts`, `page/fonts.ts`).
  */
 
 export interface GlyphOutline {
@@ -90,10 +92,99 @@ const GLYPH_TEXT: Record<string, string> = {
   periodcentered: "·",
 };
 
-/** Text for a glyph name: single letters map to themselves, the rest come from the table. */
-export function glyphText(name: string): string | undefined {
-  if (name.length === 1 && /[A-Za-z]/.test(name)) return name;
-  return GLYPH_TEXT[name];
+/**
+ * The spacing accents TeX's `\accent` sets over a letter, by glyph name, and the combining mark
+ * each stands for there. OT1 sets every accented letter as an accent and the letter, and T1 the
+ * letters it has no glyph for, such as `ǎ`; a virtual font composes its accented letters from the
+ * same two glyphs. Either way the pair reads as the one letter the text holds.
+ */
+export const ACCENTS: ReadonlyMap<string, string> = new Map([
+  ["grave", "\u{300}"],
+  ["acute", "\u{301}"],
+  ["circumflex", "\u{302}"],
+  ["tilde", "\u{303}"],
+  ["macron", "\u{304}"],
+  ["breve", "\u{306}"],
+  ["dotaccent", "\u{307}"],
+  ["dieresis", "\u{308}"],
+  ["ring", "\u{30a}"],
+  ["hungarumlaut", "\u{30b}"],
+  ["caron", "\u{30c}"],
+  ["cedilla", "\u{327}"],
+  ["ogonek", "\u{328}"],
+]);
+
+/** A glyph name without the suffix from its first period on: `a.sc` is a form of `a`. */
+const baseName = (name: string) => {
+  const dot = name.indexOf(".");
+  return dot < 0 ? name : name.slice(0, dot);
+};
+
+/** The combining mark a glyph stands for when TeX's `\accent` sets it over a letter, if any. */
+export function accentMark(name: string): string | undefined {
+  return ACCENTS.get(baseName(name));
+}
+
+/**
+ * The Adobe Glyph List, TeX Live's `glyphlist.txt`: `name;XXXX` per line, several code points
+ * separated by spaces for a name that stands for more than one, and `#` comments. Lines of any
+ * other shape are skipped.
+ */
+export function parseAgl(text: string): Map<string, string> {
+  const agl = new Map<string, string>();
+  for (const line of text.split(/\r?\n/)) {
+    const entry = /^([A-Za-z0-9._]+);([0-9A-Fa-f]{4}(?: [0-9A-Fa-f]{4})*)\s*$/.exec(line);
+    if (!entry) continue;
+    const codes = (entry[2] as string).split(" ").map((hex) => Number.parseInt(hex, 16));
+    agl.set(entry[1] as string, String.fromCodePoint(...codes));
+  }
+  return agl;
+}
+
+/** Code points a `uniXXXX` or `uXXXX[XX]` name spells, as the AGL specification reads them. */
+function unicodeName(name: string): string | undefined {
+  const uni = /^uni((?:[0-9A-F]{4})+)$/.exec(name);
+  const u = /^u([0-9A-F]{4,6})$/.exec(name);
+  const hex = uni ? ((uni[1] as string).match(/.{4}/g) ?? []) : u ? [u[1] as string] : [];
+  const codes = hex.map((h) => Number.parseInt(h, 16));
+  const valid = (c: number) => c <= 0x10ffff && (c < 0xd800 || c > 0xdfff);
+  return codes.length > 0 && codes.every(valid) ? String.fromCodePoint(...codes) : undefined;
+}
+
+/** Text for one name with no `+` in it, by the lookups `glyphText` lists. */
+function nameText(name: string, agl: ReadonlyMap<string, string> | undefined): string | undefined {
+  const base = baseName(name);
+  if (base === "") return undefined;
+  if (Object.hasOwn(GLYPH_TEXT, base)) return GLYPH_TEXT[base];
+  if (base.length === 1 && /[A-Za-z]/.test(base)) return base;
+  const listed = agl?.get(base) ?? unicodeName(base);
+  if (listed !== undefined) return listed;
+  if (!base.includes("_")) return undefined;
+  const parts = base.split("_").map((part) => nameText(part, agl));
+  return parts.every((part) => part !== undefined) ? parts.join("") : undefined;
+}
+
+/**
+ * The text a glyph stands for, by its name, or undefined when the name says nothing. A suffix from
+ * the first period on is dropped first (`a.sc` reads as `a`). Then, in order: the table above,
+ * which gives Computer Modern's quote and ligature names the spellings the aligner expects and
+ * so wins (`quoteright` is `'`, `endash` is `--`); a single ASCII letter; the Adobe Glyph List,
+ * which fonts beyond Computer Modern name their glyphs by (`Aacute` is `Á`, and a name for
+ * several code points is their string); the `uniXXXX` and `uXXXX[XX]` forms; and a ligature's
+ * parts joined by `_` (`f_f_i`). A name that joins parts with `+`, as a virtual font's composed
+ * character is named (`fonts.ts`), is its parts' texts composed: a spacing accent becomes its
+ * combining mark after the rest, and the whole is NFC, so `A+breve` is `Ă`.
+ */
+export function glyphText(name: string, agl?: ReadonlyMap<string, string>): string | undefined {
+  if (!name.includes("+")) return nameText(name, agl);
+  const parts = name.split("+");
+  const texts = parts.map((part) => nameText(part, agl));
+  if (!texts.every((text) => text !== undefined)) return undefined;
+  const marks = parts.map((part) => accentMark(part));
+  const bases = texts.filter((_, i) => marks[i] === undefined);
+  // Accents alone, with no letter to go over, read as themselves.
+  if (bases.length === 0) return texts.join("");
+  return `${bases.join("")}${marks.filter((mark) => mark !== undefined).join("")}`.normalize("NFC");
 }
 
 /**

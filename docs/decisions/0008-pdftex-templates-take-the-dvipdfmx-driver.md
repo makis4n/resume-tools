@@ -45,6 +45,10 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
   typed `$`, `€` or `°` loses the whole page until item 16 brings the fonts in or item 8 softens
   the failure. Jake's list sections therefore set their items one to a line without bullets, as
   its skills block does.
+- Decision 0009 amends the list of what a port changes: a pdfTeX port also loads
+  `\usepackage[T1]{fontenc}` and `\usepackage{lmodern}`, so that the page can draw the letters OT1
+  cannot set, and the TS1 bullet and symbols; and `drawPage` no longer throws on a font it cannot
+  draw.
 - The loader imports each folder statically, as JSON and as text through Vite's `?raw`, since the
   app is a bundle with no file system; the same module serves the tests and item 7's harness, which
   therefore run under Vitest.

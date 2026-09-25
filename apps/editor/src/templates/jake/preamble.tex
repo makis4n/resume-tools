@@ -13,8 +13,12 @@
 % margins, so that the page size and margins controls are ordinary compiles. hyperref takes the
 % dvipdfmx driver, because the loop writes DVI and the editor makes the PDF from it with
 % xdvipdfmx, and makes no bookmarks, which a one-page resume has no use for and which cost time
-% that grows with the square of a section title's length. And the file ends where the body would
-% begin, because the editor generates the body from the resume. Everything else is upstream's.
+% that grows with the square of a section title's length. The fonts are Latin Modern in T1, where
+% upstream has Computer Modern in OT1: the editor draws the page from Type 1 outlines, and TeX
+% Live has none for Computer Modern in T1, while Latin Modern is the same design and has them;
+% and in OT1 LaTeX cannot set letters such as ą or Đ, or guillemets, at all. And the file ends
+% where the body would begin, because the editor generates the body from the resume. Everything
+% else is upstream's.
 %
 % Copyright (c) 2026 Sourabh Bajaj
 % Copyright (c) 2020 Jake Gutierrez
@@ -39,6 +43,9 @@
 
 \documentclass[letterpaper,11pt]{article}
 
+% Latin Modern in T1, in place of Computer Modern in OT1, as the note at the top says.
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
 \usepackage{latexsym}
 % Upstream loaded fullpage[empty] here and adjusted its margins below, which comes to half an inch
 % on every side of US Letter. The page size and margins controls call \geometry again after the

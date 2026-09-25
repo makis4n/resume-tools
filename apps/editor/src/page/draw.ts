@@ -13,7 +13,7 @@ import {
   pointsPerUnit,
 } from "../tex/dvi";
 import { alignGlyphs, collectFields, type Field, type GlyphTextOf } from "../tex/fields";
-import { glyphText } from "../tex/glyphs";
+import { accentMark } from "../tex/glyphs";
 import { INCH, type PageSize, renderPage, US_LETTER } from "../tex/svg";
 import { scaleTfm } from "../tex/tfm";
 import type { FontLibrary, PageFont } from "./fonts";
@@ -99,17 +99,23 @@ export function glyphAt(glyphs: GlyphBox[], x: number, y: number): GlyphBox | un
 
 /**
  * The text each glyph of a document stands for, which `collectFields` gives a field's glyphs:
- * the name its font's outlines give its code, read by `glyphText`. `loaded` holds the fonts that
- * loaded, by name; a glyph from any other font, or from one without outlines, has no text, and
- * so matches no character of a field's text. The validation harness names glyphs with this too.
+ * what its font says the code's glyph stands for (`PageFont.text`), and, for a spacing accent,
+ * the combining mark `collectFields` composes with the letter under it. `loaded` holds the fonts
+ * that loaded, by name; a glyph from any other font, or from one without outlines, has no text,
+ * and so matches no character of a field's text. The validation harness names glyphs with this.
  */
 export function glyphTextOf(doc: DviDocument, loaded: ReadonlyMap<string, PageFont>): GlyphTextOf {
-  return (item) => {
-    if (item.kind !== "glyph") return undefined;
-    const font = doc.fonts.get(item.font);
-    const name = font && loaded.get(font.name)?.outlines?.encoding[item.code];
-    return name ? glyphText(name) : undefined;
+  const fontOf = (item: PageItem) => {
+    const font = item.kind === "glyph" ? doc.fonts.get(item.font) : undefined;
+    return font && loaded.get(font.name);
   };
+  const textOf = (item: PageItem) =>
+    item.kind === "glyph" ? fontOf(item)?.text(item.code) : undefined;
+  const accent = (item: PageItem) => {
+    const name = item.kind === "glyph" ? fontOf(item)?.outlines?.encoding[item.code] : undefined;
+    return name === undefined ? undefined : accentMark(name);
+  };
+  return Object.assign(textOf, { accent });
 }
 
 /** The box of every Type 1 glyph on a page, with its field, for each glyph the SVG draws. */
@@ -122,7 +128,9 @@ function glyphBoxes(
   const pt = pointsPerUnit(doc);
   const fieldOf = new Map<number, { field: string; offset: number }>();
   for (const field of fields.values())
-    for (const g of field.glyphs) fieldOf.set(g.item, { field: field.id, offset: g.offset });
+    for (const g of field.glyphs)
+      for (const item of [g.item, ...(g.items ?? [])])
+        fieldOf.set(item, { field: field.id, offset: g.offset });
   const boxes: GlyphBox[] = [];
   page.items.forEach((item, index) => {
     if (item.kind !== "glyph") return;
@@ -151,7 +159,9 @@ function glyphBoxes(
 
 /**
  * Draw one page of a DVI. `texts` holds each field's text as the model has it; glyphs are
- * matched against it so a click can say which character it landed on.
+ * matched against it so a click can say which character it landed on. A font the page cannot
+ * draw, or whose files cannot be read this time, is left out and named in `missingFonts`, so that
+ * no font costs the page.
  */
 export async function drawPage(
   dvi: Uint8Array,
@@ -165,7 +175,13 @@ export async function drawPage(
   const missingFonts = new Map<string, string>();
   await Promise.all(
     names.map(async (name) => {
-      const font = await fonts.load(name);
+      let font: PageFont | undefined;
+      try {
+        font = await fonts.load(name);
+      } catch (error) {
+        missingFonts.set(name, error instanceof Error ? error.message : String(error));
+        return;
+      }
       if (!font) missingFonts.set(name, "TeX Live has no TFM for it");
       else {
         loaded.set(name, font);

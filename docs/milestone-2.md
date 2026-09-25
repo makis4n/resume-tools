@@ -128,7 +128,7 @@ end to end before the other two templates, so that the editing loop is proven on
     applied after the format and before `\begin{document}`, so a change costs one ordinary
     compile. This item covers page size, margins, accent colour, density and date format on
     Jake's Resume.
-16. [ ] **Fonts beyond Computer Modern.** `pdftex.map` entries, encoding vectors, virtual fonts
+16. [x] **Fonts beyond Computer Modern.** `pdftex.map` entries, encoding vectors, virtual fonts
     and glyph names from the Adobe Glyph List, in the renderer and in the web fonts. Both the
     font control and AltaCV need them, since TeX Live's other pdfTeX families are re-encoded or
     virtual.

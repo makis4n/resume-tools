@@ -11,6 +11,59 @@ import { TexLiveIndex } from "./texlive";
 const spike = (name: string) =>
   readFileSync(new URL(`../../spike/web/${name}`, import.meta.url), "utf8");
 
+const fixture = (name: string) =>
+  new Uint8Array(readFileSync(new URL(`../tex/fixtures/${name}`, import.meta.url)));
+
+/** A library over a tree holding only cmr10, whose reads of a path ending in `failing` fail. */
+function cmr10Library(failing = "never") {
+  const files: Record<string, Uint8Array> = {
+    "/texlive/texmf-dist/fonts/map/pdftex/pdftex.map": new TextEncoder().encode(
+      "cmr10 CMR10 <cmr10.pfb\n",
+    ),
+    "/texlive/texmf-dist/fonts/tfm/cm/cmr10.tfm": fixture("cmr10.tfm"),
+    "/texlive/texmf-dist/fonts/type1/cm/cmr10.pfb": fixture("cmr10.pfb"),
+  };
+  const manifest = { release: "test", layout: 2, bundles: [], files: {} } as EngineManifest;
+  for (const path of Object.keys(files)) manifest.files[path] = 1;
+  return new FontLibrary(new TexLiveIndex(manifest), async (path) => {
+    if (path.endsWith(failing)) throw new Error(`could not read ${path}`);
+    return files[path] as Uint8Array;
+  });
+}
+
+describe("drawPage over an invented tree", () => {
+  // accents.dvi sets `caf\'e \'Etude na\"\i ve` and `\textasciitilde mara\^{}x` in OT1's cmr10.
+  const texts = new Map([
+    ["word", "café Étude naïve"],
+    ["lone", "~mara^x"],
+  ]);
+
+  it("gives an accent the field and offset of its letter, in the SVG and the hit boxes", async () => {
+    const drawn = await drawPage(fixture("accents.dvi"), cmr10Library(), texts);
+    expect(drawn.missingFonts).toEqual(new Map());
+    expect(drawn.unmatched).toBe(0);
+    // Three accented letters of two glyphs each, and the lone tilde and circumflex on their own.
+    const word = drawn.glyphs.filter((glyph) => glyph.field === "word");
+    expect(word).toHaveLength("caféÉtudenaïve".length + 3);
+    const at = (offset: number) => word.filter((glyph) => glyph.offset === offset);
+    for (const offset of [3, 5, 13]) expect(at(offset), `offset ${offset}`).toHaveLength(2);
+    const marked = drawn.svg.match(/data-field="word" data-offset="3"/g) ?? [];
+    expect(marked).toHaveLength(2);
+    expect(drawn.fields.get("lone")?.glyphs.map((glyph) => glyph.offset)).toEqual([
+      0, 1, 2, 3, 4, 5, 6,
+    ]);
+  });
+
+  it("names a font whose files cannot be read, and draws the page without it", async () => {
+    const drawn = await drawPage(fixture("accents.dvi"), cmr10Library("cmr10.pfb"), texts);
+    expect(drawn.missingFonts).toEqual(
+      new Map([["cmr10", "could not read /texlive/texmf-dist/fonts/type1/cm/cmr10.pfb"]]),
+    );
+    expect(drawn.glyphs).toEqual([]);
+    expect(drawn.fields.get("word")?.glyphs.length).toBeGreaterThan(0);
+  });
+});
+
 /** Field texts straight from the spike's marked-up body, as the spike page read them. */
 function fieldTexts(body: string): Map<string, string> {
   const texts = new Map<string, string>();

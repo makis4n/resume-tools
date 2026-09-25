@@ -882,11 +882,10 @@ const TRICKY = {
 
 /**
  * The fields whose glyphs cannot all align with the model's text yet, which the round trip does
- * not count: OT1 sets `ą` as its base letter, which the aligner finds a few letters on; `é` as an
- * accent and a letter, which it does not pair; and `ễ` as its base letter alone, which it does not
- * pair with the composed letter either (item 16).
+ * not count: OT1 sets `ą` as its base letter, which the aligner finds a few letters on; and `ễ` as
+ * its base letter alone, which it does not pair with the composed letter.
  */
-const MISALIGNED = new Set(["tricky-t1.text", "tricky-nfd.text", "tricky-vietnamese.text"]);
+const MISALIGNED = new Set(["tricky-t1.text", "tricky-vietnamese.text"]);
 
 /**
  * The resume with every character the generator escapes or drops, in several contexts, and with
@@ -1138,7 +1137,9 @@ describe.skipIf(!engineAvailable())("the generated LaTeX through the engine", ()
           continue;
         }
         if (glyph.text === undefined) continue;
-        const spellings = SPELLINGS[glyph.text] ?? [glyph.text];
+        // A letter TeX set as an accent and a letter reads composed, and a model may hold it
+        // decomposed, as typed.
+        const spellings = SPELLINGS[glyph.text] ?? [glyph.text, glyph.text.normalize("NFD")];
         expect(
           spellings.some((spelling) => text.startsWith(spelling, glyph.offset)),
           `${field.id} at ${glyph.offset}: glyph "${glyph.text}"`,
@@ -1179,10 +1180,11 @@ describe.skipIf(!engineAvailable())("the generated LaTeX through the engine", ()
     const quotes = drawn.fields.get("tricky-quotes.text")?.glyphs ?? [];
     expect(quotes.map((glyph) => glyph.text)).toEqual([..."Rust's`?`operator"]);
     // The combining acute reaches LaTeX composed with its e, so nothing is left out: OT1 sets it
-    // as the accent, which has no text for the aligner yet, over the e.
+    // as the accent over the e, which the page reads as one é, drawn by both glyphs.
     expect(compiled.log).not.toContain("U+0301");
     const nfd = drawn.fields.get("tricky-nfd.text")?.glyphs ?? [];
-    expect(nfd.map((glyph) => glyph.text)).toEqual(["J", "o", "s", undefined, "e"]);
+    expect(nfd.map((glyph) => glyph.text)).toEqual(["J", "o", "s", "é"]);
+    expect(nfd.at(-1)?.items).toHaveLength(1);
   });
 
   it("sets two backticks and two quotes as OT1's double quotes", () => {
@@ -1232,9 +1234,9 @@ describe.skipIf(!engineAvailable())("the generated LaTeX through the engine", ()
 
   it("sets a dollar sign from TS1, which the page cannot draw yet", () => {
     // LaTeX 2023 sets \textdollar, like its itemize bullet, from the TS1 encoding even in an OT1
-    // document, since OT1 italic has a pound sign where the dollar goes. The engine tree has no
-    // Type 1 font for TS1, and `tfm.ts` refuses its TFMs, which are padded past the length their
-    // header gives, so the page that is drawn goes without it; here it is found in the DVI.
+    // document, since OT1 italic has a pound sign where the dollar goes. The engine tree has the
+    // metrics of Computer Modern's TS1 fonts but no Type 1 outlines for them, so the page that is
+    // drawn goes without it; here it is found in the DVI.
     expect(dollar.log).not.toMatch(/^! /m);
     const doc = parseDvi(dollar.output as Uint8Array, () => undefined);
     const page = doc.pages[0];

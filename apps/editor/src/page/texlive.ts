@@ -12,6 +12,7 @@ const KINDS = {
   type1: "/fonts/type1/",
   enc: "/fonts/enc/",
   map: "/fonts/map/",
+  vf: "/fonts/vf/",
 } as const;
 
 export type FileKind = keyof typeof KINDS;

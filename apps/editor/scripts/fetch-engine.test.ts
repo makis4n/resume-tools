@@ -9,6 +9,9 @@ const SCRIPT = new URL("./fetch-engine.ts", import.meta.url);
 const [, RELEASE, LAYOUT] =
   /const RELEASE = "([^"]+)";[\s\S]*const LAYOUT = (\d+);/.exec(readFileSync(SCRIPT, "utf8")) ?? [];
 
+/** The script and the modules it imports, by their paths from the editor's folder. */
+const SOURCES = ["scripts/fetch-engine.ts", "scripts/fontmaps.ts", "src/page/fontmap.ts"];
+
 /**
  * Run a copy of the script from a folder of its own, where `.engine/` holds only `manifest`, and
  * with an empty release folder, so a run that goes on to build stops at the first release file.
@@ -16,9 +19,11 @@ const [, RELEASE, LAYOUT] =
 function run(manifest: string) {
   const dir = mkdtempSync(join(tmpdir(), "fetch-engine-"));
   try {
-    for (const folder of ["scripts", ".engine", "release"]) mkdirSync(join(dir, folder));
+    for (const folder of ["scripts", "src/page", ".engine", "release"])
+      mkdirSync(join(dir, folder), { recursive: true });
     writeFileSync(join(dir, "package.json"), JSON.stringify({ type: "module" }));
-    copyFileSync(SCRIPT, join(dir, "scripts/fetch-engine.ts"));
+    for (const source of SOURCES)
+      copyFileSync(new URL(`../${source}`, import.meta.url), join(dir, source));
     writeFileSync(join(dir, ".engine/manifest.json"), manifest);
     return spawnSync(
       process.execPath,

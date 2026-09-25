@@ -526,13 +526,14 @@ function alignmentProblem(field: Field, text: string, coverage: boolean): string
 
 /**
  * `fonts`: every font the output uses can be drawn: TeX Live has its metrics, and outlines the
- * page draws as they are. A page the editor cannot draw is not a page it can edit, so a template
- * that needs a font the renderer does not handle yet, such as a re-encoded one (item 16), fails
- * here. Each font is loaded as the page loads it (`readFields`), so one whose files the loader
- * throws on, as it does on the metrics of the TS1 fonts, which `tfm.ts` refuses (decision 0007),
- * is named with what went wrong. A glyph from a font that cannot be drawn has no text, so a field
- * that holds one fails the alignment check as well. XeTeX's native fonts are not among them yet:
- * the page draws them from item 21 on.
+ * page can draw, whether the font map names them, re-encoded, slanted or stretched, or a virtual
+ * font composes them (decision 0009). A page the editor cannot draw is not a page it can edit, so
+ * a template that needs a font the tree has no outlines for fails here, such as the EC and TC
+ * fonts LaTeX's T1 and TS1 take for Computer Modern, which the tree has only the metrics of. Each
+ * font is loaded as the page loads it (`readFields`), and the loader says why one cannot be drawn,
+ * or what went wrong reading its files. A glyph from a font that cannot be drawn has no text, so a
+ * field that holds one fails the alignment check as well. XeTeX's native fonts are not among them
+ * yet: the page draws them from item 21 on.
  */
 function checkFonts(undrawable: ReadonlyMap<string, string>): Finding[] {
   return [...undrawable].map(

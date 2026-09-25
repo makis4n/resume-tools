@@ -74,8 +74,11 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
   const body: string[] = [];
   const colors: string[] = [];
   const fieldOfItem = new Map<number, { id: string; offset: number }>();
+  // An accented letter TeX set as an accent and a letter is one character: both carry it.
   for (const field of options.fields?.values() ?? []) {
-    for (const g of field.glyphs) fieldOfItem.set(g.item, { id: field.id, offset: g.offset });
+    for (const g of field.glyphs)
+      for (const item of [g.item, ...(g.items ?? [])])
+        fieldOfItem.set(item, { id: field.id, offset: g.offset });
   }
   const fill = () => {
     const c = colors[colors.length - 1];

@@ -220,6 +220,37 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     expect(baseline("marginalia.dates")).toBe(baseline("marginalia.title"));
   });
 
+  it("draws and aligns an accented letter, a dash and the symbols T1 and TS1 set", () => {
+    // The port sets Latin Modern in T1, so é, the en dash, $ and Đ are glyphs of ec-lmr10, and
+    // € and ° of TS1's ts1-lmr10, where OT1 and Computer Modern had nothing the page could draw.
+    const id = "research-2.text";
+    const text = generateBody(pkg, sample, values).texts.get(id) ?? "";
+    const glyphs = drawn.fields.get(id)?.glyphs ?? [];
+    const expected: [string, string, string][] = [
+      ["é", "é", "ec-lmr10"],
+      ["–", "--", "ec-lmr10"],
+      ["€", "€", "ts1-lmr10"],
+      ["$", "$", "ec-lmr10"],
+      ["°", "°", "ts1-lmr10"],
+      // T1 sets Đ with the glyph it sets Ð with, which the aligner takes for either.
+      ["\u{110}", "\u{d0}", "ec-lmr10"],
+    ];
+    for (const [char, read, font] of expected) {
+      const offset = text.indexOf(char);
+      expect(offset, char).toBeGreaterThanOrEqual(0);
+      expect(glyphs.find((glyph) => glyph.offset === offset)?.text, char).toBe(read);
+      // Drawn, where a click finds the character, in the font it comes from.
+      expect(
+        drawn.glyphs.filter((box) => box.field === id && box.offset === offset),
+        char,
+      ).toHaveLength(1);
+      const use = new RegExp(`data-font="${font}"[^>]*data-field="${id}" data-offset="${offset}"`);
+      expect(drawn.svg, char).toMatch(use);
+    }
+    expect(drawn.unmatched).toBe(0);
+    expect(drawn.missingFonts).toEqual(new Map());
+  });
+
   it("links the email and the website through hyperref's dvipdfmx driver", () => {
     // dvips's driver would write PostScript pdfmarks, which xdvipdfmx ignores.
     const links = items.flatMap((item) => {

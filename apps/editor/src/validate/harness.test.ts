@@ -325,9 +325,10 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
     }, 60_000);
 
     it("reports a font the page cannot draw, and nothing else, rather than throw", async () => {
-      // LaTeX 2023 sets itemize's own bullet from TS1, whose metrics tfm.ts refuses (decision
-      // 0007), so the font does not load; the harness names it. The bullet is \item's label,
-      // which LaTeX sets before the field's begin marker, so no field holds its glyph.
+      // LaTeX 2023 sets itemize's own bullet from TS1, whose Computer Modern font, tcrm1000, the
+      // tree has metrics for but no outlines, so the page cannot draw it; the harness names it.
+      // The bullet is \item's label, which LaTeX sets before the field's begin marker, so no
+      // field holds its glyph.
       const bulleted = plainWith("ts1-bullet", {
         entry: [
           "{{title}}\\par",
