@@ -25,6 +25,10 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
   against under a tenth of a second without; no marker macros, since the prelude defines them
   (decision 0007); and the file ends where the body would begin, since the generator writes the
   body.
+- A port sets no field's text inside a transformed group, a TikZ node or anything else between a
+  `pdf:btrans` and its `pdf:etrans`, since xdvipdfmx applies the transform and the page, drawn
+  from the DVI, applies none, so it would draw the field where the PDF does not put it (decision
+  0013, added after AltaCV's tags did). The harness's special check reports such a field.
 - The licence notices of the template and of what it derives from stay in the preamble,
   verbatim, with the attribution in the package. Jake's Resume is based on sb2nov/resume, and
   about half of its preamble's code is sb2nov's, so the port carries Sourabh Bajaj's copyright

@@ -201,6 +201,14 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   field holding one fails alignment at that glyph until the reader knows those names.
 - A tag's frame, which TikZ draws with `pdf:` specials, is in the PDF but not on the page, which
   draws glyphs, rules and colours only; a tag's text is on both, in the same place.
+- The rule the tags broke holds for every port, and decision 0008's port rules now say it: no
+  field's text is set inside a transformed group, a TikZ node or anything else between a
+  `pdf:btrans` and its `pdf:etrans`, since xdvipdfmx applies the transform and the page applies
+  none. The harness's special check reports a field whose begin marker or glyphs lie inside one,
+  under any of the names xdvipdfmx takes for the two specials, so that it holds for milestone 3's
+  imports too. A transform written as a literal `cm` in `pdf:code` or `pdf:literal` goes unseen:
+  pgf writes such pairs, which undo each other, around a node's text, and telling those from one
+  that moves the text would take the matrices multiplied out.
 - A tag is one box, so one of more than about 2,500 characters, taller than a page, is set on a
   page of its own and runs past its foot.
 - Known limits, each far past a page and far under the generator's 1 MB bound on the body: about

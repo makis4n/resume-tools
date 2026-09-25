@@ -15,6 +15,7 @@ import { type DrawnPage, drawPage, type GlyphBox, ruleCrossings } from "../page/
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
+import { checkSpecial } from "../validate/harness";
 import { mediaBoxes, shownTexts } from "../validate/pdf";
 import { CURATED, curated } from "./curated";
 import { generateBody, generateFormat } from "./generate";
@@ -1097,6 +1098,8 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
       expect(Math.abs(glyph.x - pdf.x * bp), id).toBeLessThan(0.5);
       expect(Math.abs(glyph.y - (media.height - pdf.y) * bp), id).toBeLessThan(0.5);
     }
+    // The harness's special check finds no field of the sample in a PDF-only transform.
+    expect(checkSpecial(parseDvi(output, () => undefined))).toEqual([]);
   });
 
   it("sets a tag wider than the column in lines of the column's width, even one of 3,500 characters", async () => {

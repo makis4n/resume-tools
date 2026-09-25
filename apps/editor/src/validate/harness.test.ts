@@ -11,9 +11,11 @@ import { TexLiveIndex } from "../page/texlive";
 import { CURATED, curated } from "../templates/curated";
 import { generateBody } from "../templates/generate";
 import { defaultControls, parsePackage, type TemplatePackage } from "../templates/package";
+import type { DviDocument, PageItem } from "../tex/dvi";
 import {
   CHECKS,
   type Check,
+  checkSpecial,
   editEverything,
   type Report,
   validateCurated,
@@ -33,7 +35,8 @@ const ENSURES: Record<Check, string> = {
   fields: "keeps every field's markers, once each, and the page finds each field with glyphs",
   alignment: "matches every glyph of every field to a character of its text, and shows it whole",
   fonts: "uses only fonts the page can draw",
-  special: "writes each field's paragraph special right after its begin marker",
+  special:
+    "writes each field's paragraph special right after its begin marker, and no field in a PDF-only transform",
   pdf: "makes its PDF from the same output: the page's size, readable, every field in its text",
 };
 
@@ -255,6 +258,101 @@ describe("editEverything", () => {
   });
 });
 
+describe("checkSpecial", () => {
+  const special = (text: string): PageItem => ({ kind: "special", h: 0, v: 0, text });
+  const glyph: PageItem = { kind: "glyph", font: 1, code: 65, h: 0, v: 0, width: 0 };
+  /** The keys decision 0007 gives the paragraph special, with values TeX might measure. */
+  const PARAGRAPH = [
+    "hsize=100.0pt",
+    "leftskip=0.0pt",
+    "rightskip=0.0pt",
+    "parfillskip=0.0pt plus 1.0fil",
+    "pretolerance=100",
+    "tolerance=200",
+    "emergencystretch=0.0pt",
+    "hangindent=0.0pt",
+    "hangafter=1",
+    "parshape=0",
+    "inner=0",
+    "shape=",
+  ].join(";");
+  /** A field as the prelude marks it, with a glyph, or with what is given. */
+  const field = (id: string, ...inside: PageItem[]): PageItem[] => [
+    special(`rt:b:${id}`),
+    special(`rt:p:${id}:${PARAGRAPH}`),
+    ...(inside.length > 0 ? inside : [glyph]),
+    special(`rt:e:${id}`),
+  ];
+  const documentOf = (...pages: PageItem[][]): DviDocument => ({
+    id: 2,
+    numerator: 25_400_000,
+    denominator: 473_628_672,
+    magnification: 1000,
+    comment: "",
+    fonts: new Map(),
+    nativeFonts: new Map(),
+    pages: pages.map((items) => ({ counters: [], items })),
+  });
+  const transformed = (id: string) => ({
+    check: "special",
+    field: id,
+    message: `field ${id} is set inside a PDF-only transform, so the page cannot place it where the PDF does`,
+  });
+
+  it("reports a field set inside a PDF-only transform, however it nests, and none outside one", () => {
+    const found = checkSpecial(
+      documentOf(
+        [
+          ...field("before"),
+          // What pgf's dvipdfmx driver writes around a TikZ node's text.
+          special("pdf:btrans matrix 1.0 0.0 0.0 1.0 -23.59927 0.0"),
+          ...field("node"),
+          special("pdf:etrans"),
+          ...field("after"),
+          // Every name xdvipdfmx takes for the two, nested: the field is inside the outer one.
+          special("pdf: begintransform rotate 90"),
+          special("pdf:bt scale 2"),
+          special("pdf:et"),
+          ...field("nested"),
+          special("pdf:endtransform"),
+          // A transform that starts inside a field moves the glyphs after it.
+          ...field("partly", glyph, special("pdf:btrans matrix 1 0 0 1 5 0"), glyph),
+          special("pdf:etrans"),
+          // A content scope moves nothing, and nor does a special that only begins like one.
+          special("pdf:bcontent"),
+          ...field("content"),
+          special("pdf:econtent"),
+          special("pdf:btransform"),
+          ...field("unknown"),
+          // A field that runs onto the next page, where a transform moves its glyphs.
+          special("rt:b:spans"),
+          special(`rt:p:spans:${PARAGRAPH}`),
+          glyph,
+        ],
+        [
+          special("pdf:btrans matrix 1 0 0 1 5 0"),
+          glyph,
+          special("pdf:etrans"),
+          special("rt:e:spans"),
+          // Left open at the end of the page.
+          special("pdf:btrans matrix 1 0 0 1 5 0"),
+          ...field("last"),
+        ],
+        // The transform left open ends with its page; and a field is reported once, however many
+        // of its copies are in one.
+        [...field("next"), special("pdf:btrans xscale 2"), ...field("node"), special("pdf:etrans")],
+      ),
+    );
+    expect(found).toEqual([
+      transformed("node"),
+      transformed("nested"),
+      transformed("partly"),
+      transformed("spans"),
+      transformed("last"),
+    ]);
+  });
+});
+
 describe("validatePackage, with a session that ships output the page cannot read", () => {
   it("reports it as a compile finding, rather than throw", async () => {
     const fetched = { files: 0, bytes: 0, paths: [] };
@@ -337,6 +435,23 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       // Everything else was read, and passed.
       expect(report.pages).toBe(1);
       expect(report.fields).toBe(4);
+    }, 60_000);
+
+    it("reports a field set inside a PDF-only transform, as a TikZ node's text is, and nothing else", async () => {
+      // xdvipdfmx sets the bullet 20 bp right of where the page, drawn from the DVI, draws it,
+      // and the PDF still shows its words, so only this check can tell.
+      const moved = plainWith("transformed", {
+        bullet: "\\special{pdf:btrans matrix 1 0 0 1 20 0}{{text}}\\special{pdf:etrans}\\par",
+      });
+      const report = await validatePackage(session, fonts, moved, RESUME);
+      expect(report.findings).toEqual([
+        {
+          check: "special",
+          field: "tern-1.text",
+          message:
+            "field tern-1.text is set inside a PDF-only transform, so the page cannot place it where the PDF does",
+        },
+      ]);
     }, 60_000);
 
     it("reports a font neither the page can draw nor xdvipdfmx embed, and nothing else", async () => {

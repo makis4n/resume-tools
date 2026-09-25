@@ -676,24 +676,64 @@ function checkFonts(undrawable: ReadonlyMap<string, string>): Finding[] {
 }
 
 /**
+ * The specials that begin and end a transform of what is set between them, under each name
+ * xdvipdfmx takes for them: `pdf:btrans matrix 1 0 0 1 -23.6 0`, say, and `pdf:etrans`.
+ */
+const TRANSFORM_BEGIN = /^pdf:\s*(?:btrans|begintransform|bt)(?!\w)/;
+const TRANSFORM_END = /^pdf:\s*(?:etrans|endtransform|et)(?!\w)/;
+
+/**
  * `special`: each field's begin marker is followed directly by its paragraph special, with the
  * keys decision 0007 lists, in its order; the values are TeX's to measure. Item 9's overlay reads
  * the special to break a field's lines where TeX will, so a template that sets anything between
  * the two, or redefines what the prelude writes them with, leaves a field the overlay cannot set
- * as the page does. Every copy of a field is checked, and a field is reported once.
+ * as the page does. And no field is set inside a PDF-only transform: xdvipdfmx moves, scales or
+ * turns what lies between a `pdf:btrans` and its `pdf:etrans`, however they nest, and the page,
+ * drawn from the DVI, does not, so it would draw the field where the PDF does not put it, as it
+ * drew the text of AltaCV's tags, TikZ nodes, before its port stopped setting it in one (decision
+ * 0013). A field is reported when its begin marker or a glyph of it is inside one; a transform
+ * left open at the end of a page ends with it, as it does in the PDF. Every copy of a field is
+ * checked, and a field is reported once for each problem.
  */
-function checkSpecial(doc: DviDocument): Finding[] {
+export function checkSpecial(doc: DviDocument): Finding[] {
   const findings: Finding[] = [];
   const reported = new Set<string>();
-  for (const { items } of doc.pages)
+  const transformed = new Set<string>();
+  const inTransform = (id: string) => {
+    if (transformed.has(id)) return;
+    transformed.add(id);
+    findings.push({
+      check: "special",
+      field: id,
+      message: `field ${id} is set inside a PDF-only transform, so the page cannot place it where the PDF does`,
+    });
+  };
+  // The fields begun and not yet ended where each item is set, read as one stream, since a field
+  // can run onto the next page; and the transforms open there, which end with their page.
+  const open = new Set<string>();
+  for (const { items } of doc.pages) {
+    let depth = 0;
     items.forEach((item, index) => {
-      const id = item.kind === "special" ? markerId(item.text, MARKER_BEGIN) : undefined;
-      if (id === undefined || reported.has(id)) return;
+      if (item.kind === "glyph" || item.kind === "native") {
+        if (depth > 0) for (const id of open) inTransform(id);
+        return;
+      }
+      if (item.kind !== "special") return;
+      if (TRANSFORM_BEGIN.test(item.text)) depth++;
+      else if (TRANSFORM_END.test(item.text)) depth = Math.max(0, depth - 1);
+      const ended = markerId(item.text, MARKER_END);
+      if (ended !== undefined) open.delete(ended);
+      const id = markerId(item.text, MARKER_BEGIN);
+      if (id === undefined) return;
+      open.add(id);
+      if (depth > 0) inTransform(id);
+      if (reported.has(id)) return;
       const problem = paragraphProblem(id, items[index + 1]);
       if (problem === undefined) return;
       reported.add(id);
       findings.push({ check: "special", field: id, message: problem });
     });
+  }
   return findings;
 }
 
