@@ -100,7 +100,10 @@ Sans Pro for the headings, one Font Awesome icon in the header) stands in for it
   since they set letters whole, where pdfTeX's is decomposed past Latin Extended-A (`escape.ts`).
   A glyph 0 the page still meets, which only a template's own text can set, reads as a character
   left out: it draws nothing, has no box, and the aligner puts it where the walk is and does not
-  count it as unmatched; the PDF shows it as the box.
+  count it as unmatched; the PDF shows it as the box. So the harness's fonts check names each font
+  a glyph 0 of the output is set in, or that XeTeX's log says lacks a character, with the
+  characters the log names, as a template that sets a character its font lacks: its package has
+  to set it in a font that has it.
 - **The overlay's native face.** `Face` is an interface either kind of font fills: `codeFor`,
   `widthOf`, `italicOf`, `slant`, `spaceGlue` and `hyphenChar`, and a TeX font's ligature and
   kern program, which `paragraphNodes` runs when the face has one. A native face's codes are

@@ -253,6 +253,7 @@ export async function validatePackage(
     ...fieldFindings,
     ...alignmentFindings,
     ...checkFonts(undrawable),
+    ...checkNotdefs(doc, first.log),
     ...checkSpecial(doc),
     ...pdfFindings,
     ...(pdf === undefined ? [] : checkPdf(pdf, doc, fields, body.texts, reported, natives)),
@@ -741,6 +742,42 @@ type GraphicsStateChange = "transforming" | "open" | "transform" | "close" | "sc
 /** What a special does to xdvipdfmx's graphics state, if anything. */
 function graphicsStateChange(text: string): GraphicsStateChange | undefined {
   return GRAPHICS_STATE.find(([pattern]) => pattern.test(text))?.[1];
+}
+
+/**
+ * XeTeX's log line for a character a native font lacks, which it sets the font's `.notdef` for:
+ * the character, its code point, and the font's file, as `[<file>]` begins its name.
+ */
+const MISSING_CHARACTER =
+  /Missing character: There is no (.+?) \(U\+([0-9A-F]+)\) in font \[([^\]]+)\]/g;
+
+/**
+ * `fonts`, as well: the template sets no character its font lacks. XeTeX sets a native font's
+ * `.notdef`, glyph 0, for one, a box the PDF shows and the page, which reads glyph 0 as a
+ * character left out, does not (decision 0014). The generator leaves out what a user types that
+ * the package's fonts lack, so such a glyph comes from the template's own text, which its package
+ * has to set in a font that has it. A finding names each font a glyph 0 of the output is set in, or
+ * that XeTeX's log says lacks a character, with the characters the log names for it.
+ */
+function checkNotdefs(doc: DviDocument, log: string): Finding[] {
+  const lacking = new Map<string, Set<string>>();
+  const of = (file: string) => {
+    const characters = lacking.get(file) ?? new Set<string>();
+    lacking.set(file, characters);
+    return characters;
+  };
+  for (const { items } of doc.pages)
+    for (const item of items) {
+      const font = item.kind === "native" ? doc.nativeFonts.get(item.font) : undefined;
+      if (font !== undefined && item.kind === "native" && item.glyphs.some(({ id }) => id === 0))
+        of(nativeFileName(font.name));
+    }
+  for (const [, char = "", point = "", file = ""] of log.matchAll(MISSING_CHARACTER))
+    of(nativeFileName(file)).add(`${char} (U+${point})`);
+  return [...lacking].map(([file, characters]) => ({
+    check: "fonts",
+    message: `the template sets a character ${file} lacks, ${[...characters].join(", ")}${characters.size > 0 ? ", " : ""}which the PDF shows as a box and the page leaves out`,
+  }));
 }
 
 /**

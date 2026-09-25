@@ -940,6 +940,25 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       expect(report.findings).toEqual([]);
     }, 120_000);
 
+    it("reports a character the template sets that its font lacks, which the page hides", async () => {
+      // Roboto has no check mark: XeTeX sets its .notdef, a box the PDF shows and the page, which
+      // reads glyph 0 as a character left out, does not. The body leaves out what a user types
+      // that the fonts lack, but not what the template's own snippets set.
+      const checked = parsePackage({
+        ...xetex,
+        id: "invented-xetex-checked",
+        snippets: { ...xetex.snippets, header: `${xetex.snippets.header}\n\u{2713}\\par` },
+      });
+      const report = await validatePackage(session, fonts, checked, sample);
+      expect(report.findings).toEqual([
+        {
+          check: "fonts",
+          message:
+            "the template sets a character Roboto-Regular.otf lacks, \u{2713} (U+2713), which the PDF shows as a box and the page leaves out",
+        },
+      ]);
+    }, 120_000);
+
     it("reports a native font XeTeX emboldens, which the page draws as boxes, and nothing else", async () => {
       const bolded = parsePackage({
         ...xetex,
