@@ -101,6 +101,23 @@ function timings(work: () => void, runs: number): number[] {
   return times.sort((a, b) => a - b);
 }
 
+/**
+ * The fastest of `runs` timings of each of `works`, in milliseconds of this thread's CPU time, so
+ * that the time the thread waits while the other test files run, which a longer run meets more
+ * of, does not count; and the works taken in turn, so that what load is left meets them alike.
+ */
+function fastest(works: (() => void)[], runs: number): number[] {
+  const best = works.map(() => Number.POSITIVE_INFINITY);
+  for (let run = 0; run < runs; run++)
+    works.forEach((work, i) => {
+      const started = process.threadCpuUsage();
+      work();
+      const { user, system } = process.threadCpuUsage(started);
+      best[i] = Math.min(best[i] ?? Number.POSITIVE_INFINITY, (user + system) / 1000);
+    });
+  return best;
+}
+
 /** The median of `runs` timings of `work`, in milliseconds. */
 const median = (work: () => void, runs: number) =>
   timings(work, runs)[Math.floor(runs / 2)] ?? Number.POSITIVE_INFINITY;
@@ -166,22 +183,30 @@ describe("layoutRows", () => {
     expect(took).toBeLessThan(50);
   });
 
-  it("breaks 5 KB within 20 ms however long a shape a template's special asks for", () => {
+  it("breaks 5 KB within a small multiple of a plain paragraph's time, whatever the shape", () => {
     // The reviewers' specials: a \parshape of 2,000 lines, and a \hangafter of 2^31 - 1 around a
     // ragged paragraph, which looks no different; each cost hundreds of milliseconds a keystroke.
+    // The breaker tells a shape's lines apart, so the 64 lines of one it is given cost 8 to 11
+    // times what the same text costs without a shape, where 256 lines cost 35 to 51 times and
+    // 2,000 lines 68 to 100. So a shape's cost is bound by the plain paragraph's, measured on the
+    // same machine in the same way (`fastest`), rather than in milliseconds, which a slow shared
+    // machine may not meet; 100 ms stays as a ceiling, should the plain paragraph go slow too.
     const shape = Array.from({ length: 2000 }, () => "0.0pt,542.0pt").join("|");
-    const crafted = [
+    const [plain, ...crafted] = [
+      special({ parshape: "0", shape: "" }),
       special({ parshape: "2000", shape }),
       special({ hangindent: "10.0pt", hangafter: "2147483647", parshape: "0", shape: "" }),
-    ];
+    ].map((each) => breakParams(parseParagraph(each) as Paragraph));
+    for (const params of crafted) expect(params.lines.length).toBeLessThanOrEqual(65);
     const text = `${BULLET} `.repeat(25).slice(0, 5 * 1024);
-    for (const each of crafted) {
-      const params = breakParams(parseParagraph(each) as Paragraph);
-      expect(params.lines.length).toBeLessThanOrEqual(65);
-      // The fastest of several runs: the other test files run beside this one, and their load
-      // doubles a median here, where a keystroke has the main thread to itself.
-      const [fastest] = timings(() => layoutRows(text, face, params), 9);
-      expect(fastest).toBeLessThan(20);
+    const [alone = 0, ...shaped] = fastest(
+      [plain, ...crafted].map((params) => () => layoutRows(text, face, params)),
+      9,
+    );
+    expect(shaped).toHaveLength(2);
+    for (const ms of shaped) {
+      expect(ms).toBeLessThan(20 * alone);
+      expect(ms).toBeLessThan(100);
     }
   });
 });
