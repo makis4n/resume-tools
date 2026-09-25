@@ -94,8 +94,13 @@ export interface Report {
  */
 const EDITOR_JOB = "doc";
 
-/** What `editEverything` adds to the end of a text field: a word, as a user typing on adds one. */
-const EDIT = " edited";
+/**
+ * The character `editEverything` puts at the end of a text field in place of its last one, and
+ * the one it uses when the last already is that: a change the page shows, and one that keeps
+ * the field's length, so that the edit cannot push a sample that nearly fills its page onto a
+ * second one and be taken for a field one edit behind.
+ */
+const EDIT = ["x", "y"] as const;
 
 /**
  * The keys of the paragraph special, in the order decision 0007 gives them and `prelude.ts`
@@ -118,10 +123,11 @@ const PARAGRAPH_KEYS = [
 
 /**
  * What the page may leave out of a field's text without a glyph, and the aligner skips:
- * whitespace, the invisible characters, and anything past ASCII, which pdfTeX drops where the
- * font has no glyph for it. What is left of a text without them is printable ASCII.
+ * whitespace, the invisible characters, anything past ASCII, which pdfTeX drops where the font
+ * has no glyph for it, and the underscore, which OT1 sets as a rule rather than a glyph. What is
+ * left of a text without them is printable ASCII.
  */
-const SETS_NO_GLYPH = new RegExp(`\\s|${INVISIBLE.source}|[^\\u0000-\\u007f]`, "gu");
+const SETS_NO_GLYPH = new RegExp(`\\s|${INVISIBLE.source}|[^\\u0000-\\u007f]|_`, "gu");
 
 /**
  * Check a package by compiling a resume through it as the editor does, with the document's
@@ -200,7 +206,7 @@ export async function validatePackage(
   report.pages = doc.pages.length;
   report.fields = fields.size;
   const fieldFindings = checkFields(doc, fields, body.texts);
-  const alignmentFindings = checkAlignment(fields, body.texts);
+  const alignmentFindings = checkAlignment(fields, body.texts, doc.pages.length === 1);
   // The edit is judged only on the fields these two checks pass as the resume has them.
   if (editedBody !== undefined && edited !== undefined) {
     const reported = new Set(
@@ -237,18 +243,28 @@ export async function validateCurated(
 }
 
 /**
- * A resume after an edit to every text field: each has a word added at its end, as a user typing
- * on adds one, and a rich text has it added to its last run. Dates and addresses stay as they
- * are, and so does a field that is blank, which the body does not mark, so that the edited body
- * marks the same fields as the resume's, under the same ids. The resume given is left as it was.
+ * A resume after an edit to every text field: each has its last character replaced, as a user
+ * retyping one does, and a rich text has the last character of its last run replaced. Dates and
+ * addresses stay as they are, and so does a field that is blank, which the body does not mark, so
+ * that the edited body marks the same fields as the resume's, under the same ids. The resume
+ * given is left as it was.
  */
 export function editEverything(resume: Resume): Resume {
   const edited = structuredClone(resume);
-  const edit = (text: string) => (isBlank(text) ? text : `${text}${EDIT}`);
+  const edit = (text: string) => {
+    if (isBlank(text)) return text;
+    const characters = Array.from(text);
+    characters[characters.length - 1] = characters.at(-1) === EDIT[0] ? EDIT[1] : EDIT[0];
+    return characters.join("");
+  };
   const editRuns = (runs: RichText) => {
-    const last = runs.at(-1);
-    if (last !== undefined && !isBlank(runs.map((run) => run.text).join("")))
-      last.text = `${last.text}${EDIT}`;
+    if (isBlank(runs.map((run) => run.text).join(""))) return;
+    for (let at = runs.length - 1; at >= 0; at--) {
+      const run = runs[at];
+      if (run === undefined || run.text === "") continue;
+      run.text = edit(run.text);
+      return;
+    }
   };
   const { header } = edited;
   header.name.first = edit(header.name.first);
@@ -385,8 +401,9 @@ async function checkEdits(
     return [{ check: "edits", message: `after an edit, ${messageOf(error)}` }];
   }
   const { fields } = await readFields(fonts, doc);
+  const onePage = doc.pages.length === 1;
   // A field's markers first, so that a field the edit cut short is not taken for one behind.
-  const problems = [...checkFields(doc, fields, texts), ...checkAlignment(fields, texts)];
+  const problems = [...checkFields(doc, fields, texts), ...checkAlignment(fields, texts, onePage)];
   const findings: Finding[] = [];
   const seen = new Set(reported);
   for (const { check, field: id, message } of problems) {
@@ -399,7 +416,7 @@ async function checkEdits(
       field !== undefined &&
       old !== undefined &&
       old !== texts.get(id) &&
-      alignmentProblem(field, old) === undefined;
+      alignmentProblem(field, old, onePage) === undefined;
     findings.push({
       check: "edits",
       field: id,
@@ -471,31 +488,37 @@ function checkFields(
  * inside the markers, or from a font whose glyphs the page cannot name, which the fonts check
  * names as well. Text after the last glyph is text the page does not show, as when a template
  * cuts a field short. It is looked at only when every glyph matched, since a walk that misses
- * stops short of text the page does show. A field is checked where the page first finds it, the
- * copy the user edits; a field the body does not mark is the fields check's to report.
+ * stops short of text the page does show, and only when the resume sets one page (`coverage`),
+ * since a spill splits a field across pages and is the pages check's to report. A field is
+ * checked where the page first finds it, the copy the user edits; a field the body does not mark
+ * is the fields check's to report.
  */
 function checkAlignment(
   found: ReadonlyMap<string, Field>,
   texts: ReadonlyMap<string, string>,
+  coverage: boolean,
 ): Finding[] {
   const findings: Finding[] = [];
   for (const field of found.values()) {
     const text = texts.get(field.id);
-    const problem = text === undefined ? undefined : alignmentProblem(field, text);
+    const problem = text === undefined ? undefined : alignmentProblem(field, text, coverage);
     if (problem !== undefined)
       findings.push({ check: "alignment", field: field.id, message: problem });
   }
   return findings;
 }
 
-/** What the alignment check finds wrong with a field's glyphs against a text, if anything. */
-function alignmentProblem(field: Field, text: string): string | undefined {
+/**
+ * What the alignment check finds wrong with a field's glyphs against a text, if anything: a
+ * glyph that matches no character, or, when `coverage` is asked for, text the glyphs leave out.
+ */
+function alignmentProblem(field: Field, text: string, coverage: boolean): string | undefined {
   const { unmatched, covered } = alignField(field, text);
   if (unmatched > 0) {
     const glyphs = `${unmatched} of the ${field.glyphs.length} glyphs of ${field.id}`;
     return `${glyphs} match no character of its text`;
   }
-  if (text.slice(covered).replace(SETS_NO_GLYPH, "") !== "")
+  if (coverage && text.slice(covered).replace(SETS_NO_GLYPH, "") !== "")
     return `the page shows only ${covered} of the ${text.length} characters of ${field.id}`;
   return undefined;
 }

@@ -161,21 +161,21 @@ describe("editEverything", () => {
     ],
   });
 
-  it("adds a word to every text field, and leaves dates, addresses, ids and blanks alone", () => {
+  it("changes the last character of every text field, and leaves dates, addresses, ids and blanks alone", () => {
     const before = structuredClone(resume);
     expect(editEverything(resume)).toEqual({
       version: 1,
       header: {
-        name: { first: "Ines edited", last: "Calloway edited" },
-        headline: "Typesetter edited",
-        email: "ines@example.com edited",
-        phone: "555-0100 edited",
+        name: { first: "Inex", last: "Callowax" },
+        headline: "Typesettex",
+        email: "ines@example.cox",
+        phone: "555-010x",
         location: " ",
         links: [
           {
             id: "site",
             kind: "website",
-            label: "tern.example.com edited",
+            label: "tern.example.cox",
             href: "tern.example.com",
           },
         ],
@@ -185,21 +185,18 @@ describe("editEverything", () => {
           id: "work",
           kind: "entries",
           role: "experience",
-          title: "Experience edited",
+          title: "Experiencx",
           entries: [
             {
               id: "tern",
-              title: "Typesetter edited",
-              subtitle: "Tern Press edited",
-              place: "Leeds edited",
+              title: "Typesettex",
+              subtitle: "Tern Presx",
+              place: "Leedx",
               dates: { start: "2020-01", end: "present" },
               bullets: [
                 {
                   id: "tern-1",
-                  text: [
-                    { text: "Set the " },
-                    { text: "report edited", bold: true, href: "example.com" },
-                  ],
+                  text: [{ text: "Set the " }, { text: "reporx", bold: true, href: "example.com" }],
                 },
               ],
             },
@@ -209,22 +206,22 @@ describe("editEverything", () => {
           id: "tools",
           kind: "list",
           role: "skills",
-          title: "Tools edited",
-          items: [{ id: "tools-1", text: [{ text: "Linotype edited" }] }],
+          title: "Toolx",
+          items: [{ id: "tools-1", text: [{ text: "Linotypx" }] }],
         },
         {
           id: "skills",
           kind: "labelled",
           role: "skills",
-          title: "Skills edited",
-          items: [{ id: "langs", label: "Languages edited", text: [{ text: "Welsh edited" }] }],
+          title: "Skillx",
+          items: [{ id: "langs", label: "Languagex", text: [{ text: "Welsx" }] }],
         },
         {
           id: "about",
           kind: "paragraph",
           role: "summary",
-          title: "About edited",
-          text: [{ text: "Sets. edited" }],
+          title: "Aboux",
+          text: [{ text: "Setsx" }],
         },
       ],
     });
