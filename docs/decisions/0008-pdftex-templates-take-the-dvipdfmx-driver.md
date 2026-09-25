@@ -63,3 +63,21 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
   harness cannot bound a compile either, since the engine's call is synchronous: CI bounds it
   with the check job's time limit, and milestone 3's probe step, which runs the harness in the
   browser, has to run it in a worker it can terminate.
+- Item 14 settled the two questions left to it above. Nothing is re-emitted: the PDF is PDF 1.5
+  with xdvipdfmx's own compression either way, and lacks only named destinations nothing links
+  to. The driver stays hyperref's alone: xdvipdfmx reads the dvips `color` and `papersize=`
+  specials that `color` and geometry write, so a coloured rule reaches the PDF as `rg` and `RG`
+  and the PDF is the page's size, and it passes over `l3backend`'s PostScript header. The
+  validation harness checks the PDF's size and text layer.
+- The page size comes from the output's `papersize=` special (pdfTeX) or its `pdf:pagesize` one
+  (XeTeX, and geometry's xetex/dvipdfmx driver), which the page, the PDF and the harness all read
+  the same way; xdvipdfmx is told a size (`-p`) only when the output names none, since a size given
+  to it overrides `pdf:pagesize`, which is all XeTeX writes, and would clip an A4 page to Letter.
+- xdvipdfmx does not honour `openin_any`, so a template's `\special` could read any file of the
+  engine and embed it in the PDF. Before it runs, `session.pdf` scans every special and refuses one
+  that reads a file or reconfigures the run: `pdf:image`, `pdf:img`, `pdf:epdf`, `pdf:fstream`,
+  `pdf:mapfile`, `pdf:mapline`, dvips's `psfile=`, and a `dvipdfmx:config` whose option is anything
+  but `C` (compatibility flags), `V` (PDF version) or `P` (permissions) — `f` loads a font map, `D`
+  runs a command, and the rest change the output. Version one's PDFs therefore carry no images at
+  all: a template's photo is an `extras` field (decision 0006), and a later item that wants images
+  in the PDF must give xdvipdfmx a folder of its own to read from, not the shared tree.

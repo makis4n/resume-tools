@@ -17,6 +17,8 @@
  * another, read another's text, or overwrite a format.
  */
 
+import { type DviDocument, parseDvi } from "../tex/dvi";
+import { paperSizeOf } from "../tex/svg";
 import { summariseLog } from "./log";
 import { filenameDatabase } from "./lsr";
 import type { EngineManifest } from "./manifest";
@@ -49,6 +51,12 @@ const ENGINES: Record<Engine, EngineSpec> = {
     args: [...COMMON, "--no-pdf"],
   },
 };
+
+/**
+ * How many of xdvipdfmx's own messages, the last it printed, say why it made no PDF: its fatal
+ * error, and the warnings before it that name the font or the special it stopped on.
+ */
+const LAST_MESSAGES = 4;
 
 const HOME = "/home/web_user";
 /** Each job's folder holds its body, the files the caller supplies, and what TeX writes. */
@@ -212,6 +220,22 @@ export interface CompileResult {
   fetched: Fetched;
 }
 
+export interface PdfOptions {
+  /** Deflate level 0 to 9; xdvipdfmx's default when left out. Tests read a level 0 PDF. */
+  compress?: number;
+}
+
+export interface PdfResult {
+  ok: boolean;
+  /** The PDF, when xdvipdfmx made one. */
+  pdf?: Uint8Array;
+  ms: number;
+  /** What xdvipdfmx printed to the terminal, where its warnings go. */
+  output: string;
+  /** Why there is no PDF: for the console, never for a user. */
+  error?: string;
+}
+
 export interface CompileOptions {
   /** The document's name, and the name of its folder; one per open document. Defaults to "doc". */
   job?: string;
@@ -299,6 +323,69 @@ function mountOnDemand(fs: EmscriptenFs, options: SessionOptions, tally: Tally) 
   }
 }
 
+/**
+ * Whether an output's first page names its own size, so xdvipdfmx need not be told one. geometry
+ * and hyperref write it in a `papersize=` special for pdfTeX, and XeTeX and the xetex/dvipdfmx
+ * driver in a `pdf:pagesize` one instead; `paperSizeOf` reads both, the same as the page and the
+ * harness, so all three agree and a set A4 size is not forced to Letter (`-p letter`).
+ */
+function namesPaperSize(parsed: DviDocument): boolean {
+  return paperSizeOf(parsed.pages[0]?.items ?? []) !== undefined;
+}
+
+/**
+ * The dvipdfmx `\special` commands that read a file from the engine's file system and embed it in
+ * the PDF, which xdvipdfmx runs whatever `openin_any` says (unlike TeX), by the keyword it
+ * dispatches on: `pdf:image`/`pdf:img`/`pdf:epdf` include a graphic, `pdf:fstream` a file as a
+ * stream, `pdf:mapfile`/`pdf:mapline` a font through a map. dvips's `\special{psfile=...}` names a
+ * PostScript file the same way.
+ */
+const READS_A_FILE = new Set(["image", "img", "epdf", "fstream", "mapfile", "mapline"]);
+
+/**
+ * The `dvipdfmx:config` options that only tune the PDF and reach nothing outside it: `C`
+ * compatibility flags, `V` the PDF version, `P` the permission flags. Every other option is a
+ * command-line flag that reads a file or reconfigures the run: `f` loads a font map (the same class
+ * as `pdf:mapfile`, and a map a job ships can point a font at a cross-job or absolute path), `D`
+ * sets a command to run, and the page and offset options change the output. The option is matched
+ * with regard to case, since `P` (permissions) and `p` (paper) differ only by it.
+ */
+const SAFE_CONFIG = new Set(["C", "V", "P"]);
+
+/**
+ * The command of a `\special` that would make xdvipdfmx read a file or reconfigure the run, or
+ * undefined for one that would not. It is the one thing between an output and a PDF that can reach
+ * outside the job's folder: resume text cannot emit a special (decision 0007 escapes every
+ * backslash), but a template can, so `pdf` scans every special and refuses the PDF rather than
+ * embed, say, another job's file or a TeX Live file (version one's PDFs carry no images at all;
+ * decision 0008).
+ *
+ * dvipdfmx parses a `pdf:` special as `pdf:` then optional spaces then the command keyword, and a
+ * `dvipdfmx:config` special as the prefix then optional spaces then `config` then the option, all
+ * matched without regard to case except the option letter; a dvips special is the raw
+ * `psfile=`/`PSfile=`. Harmless specials (`pdf:pagesize`, `pdf:literal`, `pdf:link`, `papersize=`,
+ * `color push`, the field markers, `dvipdfmx:config C`) name no such command and pass.
+ */
+export function refusedSpecial(text: string): string | undefined {
+  const special = text.trimStart();
+  if (/^psfile=/i.test(special)) return "psfile=";
+  const command = /^pdf:\s*([a-z]+)/i.exec(special)?.[1]?.toLowerCase();
+  if (command !== undefined) return READS_A_FILE.has(command) ? `pdf:${command}` : undefined;
+  const option = /^dvipdfmx:\s*config\b\s*([a-z]+)?/i.exec(special)?.[1];
+  if (option !== undefined && !SAFE_CONFIG.has(option)) return `dvipdfmx:config ${option}`;
+  return undefined;
+}
+
+/** The first `\special` of any page that would make xdvipdfmx read a file or reconfigure the run. */
+function refusedOutputSpecial(parsed: DviDocument): string | undefined {
+  for (const page of parsed.pages)
+    for (const item of page.items) {
+      const refused = item.kind === "special" ? refusedSpecial(item.text) : undefined;
+      if (refused !== undefined) return refused;
+    }
+  return undefined;
+}
+
 export class EngineSession {
   /**
    * The format each job was last compiled with, by engine and name, and the dump that made it.
@@ -310,6 +397,11 @@ export class EngineSession {
   private readonly generations = new Map<string, number>();
   /** The files each job was given, written back whenever the session clears its folder. */
   private readonly filesOf = new Map<string, JobFiles>();
+  /**
+   * The engine of each job whose last compile succeeded, which `pdf` needs. A failed compile can
+   * leave in the folder the pages TeX shipped before its error, which are not the document.
+   */
+  private readonly outputOf = new Map<string, Engine>();
 
   private constructor(
     private readonly engine: EngineModule,
@@ -486,6 +578,7 @@ export class EngineSession {
     else if (last.generation !== generation) this.clearFolder(job);
     this.formatOf.set(job, { format: key, generation });
     if (options.files) this.filesOf.set(job, { ...this.filesOf.get(job), ...options.files });
+    this.outputOf.delete(job);
 
     this.tally.take();
     let attempt = this.passes(spec, formatPath, job, body, maxPasses);
@@ -496,7 +589,74 @@ export class EngineSession {
       attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
     }
     const { fresh: _, ...result } = attempt;
+    if (result.ok) this.outputOf.set(job, engine);
     return { ...result, fetched: this.tally.take() };
+  }
+
+  /**
+   * The PDF of a job's last compile, which xdvipdfmx makes from the DVI or XDV that compile left
+   * in the job's folder, so that the PDF and the page come from one output (plan section 5.5). A
+   * job with no compile, or whose last compile failed, has none. The PDF is read and removed at
+   * once, and comes back with what xdvipdfmx printed, where its warnings go. Why a PDF could not
+   * be made is for the console, never for a user: xdvipdfmx speaks of fonts and specials.
+   *
+   * The page size is the output's own: geometry, hyperref and XeTeX write it in a `papersize=` or
+   * `pdf:pagesize` special, which the page is drawn to (`paperSize` in `src/page/draw.ts`) and
+   * which xdvipdfmx honours. An output without one is drawn on US Letter, so xdvipdfmx is told
+   * Letter for it, since its own default, from `dvipdfmx.cfg`, is A4. It is told only then, because
+   * a size given to it (`-p`) overrides the special, and XeTeX only ever writes the special.
+   *
+   * xdvipdfmx does not honour `openin_any`, so before it runs, every special of the output is
+   * scanned and the PDF refused when one would read a file or reconfigure the run (`refusedSpecial`):
+   * a template's special could otherwise embed another job's or a TeX Live file (decision 0008).
+   */
+  pdf(job: string, options: PdfOptions = {}): PdfResult {
+    checkName("job", job);
+    const { compress } = options;
+    if (compress !== undefined && !(Number.isInteger(compress) && compress >= 0 && compress <= 9))
+      throw new Error(`compress must be a whole number from 0 to 9: ${compress}`);
+    const engine = this.outputOf.get(job);
+    const file = engine === undefined ? undefined : `${job}.${ENGINES[engine].output}`;
+    const output = file === undefined ? undefined : this.read(`${JOBS}/${job}/${file}`);
+    if (file === undefined || output === undefined)
+      return { ok: false, ms: 0, output: "", error: `${job} has no output to make a PDF of` };
+    const parsed = parseDvi(output, () => undefined);
+    const refused = refusedOutputSpecial(parsed);
+    if (refused !== undefined)
+      return {
+        ok: false,
+        ms: 0,
+        output: "",
+        error: `the output has a \\special that reads a file or reconfigures xdvipdfmx: ${refused}`,
+      };
+    const args = [
+      "xdvipdfmx",
+      ...(namesPaperSize(parsed) ? [] : ["-p", "letter"]),
+      ...(compress === undefined ? [] : ["-z", String(compress)]),
+      "-o",
+      `${job}.pdf`,
+      file,
+    ];
+    const at = `${JOBS}/${job}/${job}.pdf`;
+    let run: RunResult;
+    let pdf: Uint8Array | undefined;
+    // A file TeX wrote under that name must not pass for the PDF.
+    this.removeTree(at);
+    try {
+      run = this.run(args, `${JOBS}/${job}`);
+      pdf = run.code === 0 ? this.read(at) : undefined;
+    } finally {
+      this.removeTree(at);
+    }
+    if (pdf !== undefined) return { ok: true, pdf, ms: run.ms, output: run.output };
+    const said = run.output.split("\n").filter((line) => line.startsWith("xdvipdfmx:"));
+    const why = run.code === 0 ? "xdvipdfmx wrote no PDF" : `xdvipdfmx exited with ${run.code}`;
+    return {
+      ok: false,
+      ms: run.ms,
+      output: run.output,
+      error: [why, ...said.slice(-LAST_MESSAGES)].join("\n"),
+    };
   }
 
   /** Forget a job: its folder, its files and its format, so its next compile starts afresh. */
@@ -505,6 +665,7 @@ export class EngineSession {
     this.clearFolder(job);
     this.formatOf.delete(job);
     this.filesOf.delete(job);
+    this.outputOf.delete(job);
   }
 
   /** Remove a job's folder, so it compiles as a new document; its files are written back. */

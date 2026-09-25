@@ -14,7 +14,7 @@ import {
 } from "../tex/dvi";
 import { alignGlyphs, collectFields, type Field, type GlyphTextOf } from "../tex/fields";
 import { accentMark, glyphOf } from "../tex/glyphs";
-import { INCH, type PageSize, renderPage, US_LETTER } from "../tex/svg";
+import { INCH, type PageSize, paperSizeOf, renderPage, US_LETTER } from "../tex/svg";
 import { scaleTfm } from "../tex/tfm";
 import type { FontLibrary, PageFont } from "./fonts";
 
@@ -51,28 +51,13 @@ export interface DrawnPage {
   missingFonts: Map<string, string>;
 }
 
-const UNITS: Record<string, number> = {
-  pt: 1,
-  bp: 72.27 / 72,
-  in: 72.27,
-  mm: 72.27 / 25.4,
-  cm: 72.27 / 2.54,
-};
-
-/** The page size a `papersize=` special gives, in TeX points, as geometry and hyperref write it. */
+/**
+ * The page size a page's specials give, in TeX points: `papersize=` as geometry and hyperref
+ * write it for pdfTeX, or `pdf:pagesize` as XeTeX and the xetex/dvipdfmx driver write it instead.
+ * `paperSizeOf` reads both, so the page, the PDF and the harness's PDF check agree on the size.
+ */
 export function paperSize(page: { items: PageItem[] }): PageSize | undefined {
-  for (const item of page.items) {
-    if (item.kind !== "special" || !item.text.startsWith("papersize=")) continue;
-    const dims = item.text
-      .slice("papersize=".length)
-      .split(",")
-      .map((dim) => /^\s*([\d.]+)\s*([a-z]{2})\s*$/.exec(dim));
-    const [w, h] = dims.map((m) =>
-      m ? Number(m[1]) * (UNITS[m[2] as string] ?? Number.NaN) : Number.NaN,
-    );
-    if (w && h && Number.isFinite(w) && Number.isFinite(h)) return { width: w, height: h };
-  }
-  return undefined;
+  return paperSizeOf(page.items);
 }
 
 /**

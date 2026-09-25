@@ -116,7 +116,7 @@ end to end before the other two templates, so that the editing loop is proven on
     TeX Live files use the HTTP cache under immutable paths, plus a prefetch of the files a
     template is known to read, since TeX asks for them synchronously. A small document list opens,
     creates and deletes documents.
-14. [ ] **Download a PDF, and warn about a second page.** xdvipdfmx in the worker turns the same
+14. [x] **Download a PDF, and warn about a second page.** xdvipdfmx in the worker turns the same
     DVI into the PDF. The PDF's text must be extractable, because the ATS reads it. A warning
     shows when the DVI has more than one page. The Ubuntu bundles' font maps are not in
     `pdftex.map`, which lists only TeX Live's basic fonts, so the fetch script has to merge them

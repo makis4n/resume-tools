@@ -192,8 +192,21 @@ describe("paperSize", () => {
     });
     expect(paperSize(special("papersize=210mm,297mm"))?.width).toBeCloseTo(597.508, 2);
   });
+  it("reads the pdf:pagesize XeTeX and geometry's xetex driver write, keys in either order", () => {
+    expect(paperSize(special("pdf:pagesize width 597.50787pt height 845.04684pt"))).toEqual({
+      width: 597.50787,
+      height: 845.04684,
+    });
+    // geometry may write the keys the other way round, and in other units.
+    const swapped = paperSize(special("pdf:pagesize height 297mm width 210mm"));
+    expect(swapped?.width).toBeCloseTo(597.508, 2);
+    expect(swapped?.height).toBeCloseTo(845.047, 2);
+  });
   it("gives up on anything else", () => {
     expect(paperSize(special("papersize=a4"))).toBeUndefined();
+    // XeTeX writes this when the size is the default; it names no dimensions.
+    expect(paperSize(special("pdf:pagesize default"))).toBeUndefined();
+    expect(paperSize(special("pdf:pagesize width 210mm"))).toBeUndefined();
     expect(paperSize({ items: [] })).toBeUndefined();
   });
 });

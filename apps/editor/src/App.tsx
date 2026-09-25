@@ -1,7 +1,7 @@
 import type { Resume, RichText } from "@resume-tools/resume-model";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Controls } from "./editor/Controls";
-import { Compiler, type CompilerEvents, type Shown } from "./editor/compiler";
+import { COULD_NOT_MAKE_PDF, Compiler, type CompilerEvents, type Shown } from "./editor/compiler";
 import { DocumentList } from "./editor/DocumentList";
 import {
   type Command,
@@ -11,6 +11,7 @@ import {
   fieldsOf,
   History,
 } from "./editor/document";
+import { pdfFileName, savePdf } from "./editor/download";
 import { Panel, shownFieldsOf } from "./editor/Panel";
 import { EngineClient } from "./engine/client";
 import type { EngineManifest } from "./engine/manifest";
@@ -131,10 +132,16 @@ export function App() {
   /** The latest page, and whether it is the one the document opened with. */
   const [shown, setShown] = useState<{ latest: Shown; opening: boolean }>();
   const [error, setError] = useState<string>();
+  // The PDF's own message, apart from the compile error the page event clears: a failed PDF can
+  // start a recompile (the compiler's losePdf), whose page would otherwise wipe the message before
+  // it is read. It is cleared only when the next download starts or succeeds, or another document
+  // opens, whose PDF it does not speak of; never by a page.
+  const [pdfError, setPdfError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [slow, setSlow] = useState(false);
   const [failed, setFailed] = useState(false);
   const [clicked, setClicked] = useState<Click>();
+  const [downloading, setDownloading] = useState(false);
 
   /** The list, fresh from the store, which writes what waits to be saved before it lists. */
   const showList = async (reason?: string) => {
@@ -192,6 +199,7 @@ export function App() {
     setNotice(undefined);
     setShown(undefined);
     setError(undefined);
+    setPdfError(undefined);
     setClicked(undefined);
     compiler.current?.open(pkg, document);
   };
@@ -372,6 +380,25 @@ export function App() {
     </p>
   ) : null;
 
+  /**
+   * Save the PDF of the page on screen, named after the open document's resume. What went wrong is
+   * for developers, and the user reads only that the PDF could not be made.
+   */
+  const download = async () => {
+    const owned = compiler.current;
+    if (owned === undefined) return;
+    setDownloading(true);
+    setPdfError(undefined);
+    try {
+      savePdf(await owned.pdf(), pdfFileName(history.present.resume.header.name));
+    } catch (error) {
+      console.error(error);
+      setPdfError(COULD_NOT_MAKE_PDF);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   // With no page yet there is nothing to keep showing, so a failure to make the first one is a
   // failure to show any. Fonts that did not load leave no compiler to ask again.
   if (failed)
@@ -413,7 +440,19 @@ export function App() {
       <div style={{ flex: "none" }}>
         {back}
         {saving}
-        <p>{error ?? (slow ? "Compiling…" : took)}</p>
+        <p>
+          {error ?? (slow ? "Compiling…" : took)}{" "}
+          {/* A document another tab has changed is not the one stored, so it gives no PDF. */}
+          <button
+            type="button"
+            onClick={() => void download()}
+            disabled={busy || downloading || stale}
+          >
+            Download PDF
+          </button>
+        </p>
+        {pdfError && <p>{pdfError}</p>}
+        {shown.latest.page.pageCount > 1 && <p>This resume runs onto a second page.</p>}
         {clicked && field && !stale && (
           <FieldBox click={clicked} field={field} resume={present.resume} onEdit={edit} />
         )}

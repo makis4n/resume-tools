@@ -49,6 +49,16 @@ describe("EngineClient", () => {
     await expect(later).rejects.toThrow("compile worker: out of memory");
   });
 
+  it("asks for a job's PDF, and resolves with the result the worker sends", async () => {
+    const worker = new FakeWorker();
+    const client = clientOf(worker);
+    const made = client.pdf("doc", { compress: 0 });
+    expect(worker.posted).toEqual([{ type: "pdf", job: "doc", options: { compress: 0 }, id: 1 }]);
+    const result = { ok: true, pdf: new TextEncoder().encode("%PDF-1.5"), ms: 20, output: "" };
+    worker.reply({ id: 1, result });
+    await expect(made).resolves.toEqual(result);
+  });
+
   it("fails every call after it is terminated", async () => {
     const worker = new FakeWorker();
     const client = clientOf(worker);

@@ -9,6 +9,8 @@ import type {
   DumpResult,
   Engine,
   JobFiles,
+  PdfOptions,
+  PdfResult,
   StartResult,
 } from "./session";
 
@@ -17,7 +19,8 @@ export type EngineRequest =
   | { type: "dump"; engine: Engine; name: string; preamble: string; files?: JobFiles }
   | { type: "putFormat"; engine: Engine; name: string; format: Uint8Array }
   | { type: "compile"; engine: Engine; format: string; body: string; options?: CompileOptions }
-  | { type: "forget"; job: string };
+  | { type: "forget"; job: string }
+  | { type: "pdf"; job: string; options?: PdfOptions };
 
 /** What each request resolves to. */
 export interface EngineResults {
@@ -26,6 +29,7 @@ export interface EngineResults {
   putFormat: null;
   compile: CompileResult;
   forget: null;
+  pdf: PdfResult;
 }
 
 export type EngineReply =
