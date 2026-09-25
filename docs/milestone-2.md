@@ -96,7 +96,7 @@ end to end before the other two templates, so that the editing loop is proven on
    style values as one JSON blob, changed only through commands, which gives undo for free. The
    scheduler debounces per engine, keeps one compile in flight and drops stale ones, and swaps
    the page without a flash. A compile error becomes a plain message, never a log.
-9. [ ] **Edit a plain field in place.** The spike's overlay as product code. A click opens the
+9. [x] **Edit a plain field in place.** The spike's overlay as product code. A click opens the
    field at the clicked character. The text is set in a web font built in the browser from the
    page's own Type 1 outlines, with opentype.js as the writer, which retires the Python script.
    Lines break with TeX's breaker, using the parameters the paragraph special carries. Dates

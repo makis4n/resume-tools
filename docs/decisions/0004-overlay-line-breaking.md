@@ -68,5 +68,8 @@ nothing hyphenates yet.
   did not, which moved a break in a justified paragraph ending in a hyphenated word.
 - The generated LaTeX grows a second special per field. The marker macro in the spike
   (`\rtfield`) does not emit it yet.
+- The overlay reads that special (milestone 2, item 9): a field breaks with the `\parshape` or
+  hanging indentation, skips, tolerances and emergency stretch TeX measured where it begins, and
+  one that starts after other text on its line loses the distance from the line's start to it.
 - The web fonts should be built with the TFM kerns and ligatures as GPOS and GSUB tables
   once the OpenType writer exists, so the within-line drift goes to zero too.

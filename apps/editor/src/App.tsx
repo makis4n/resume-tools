@@ -1,5 +1,4 @@
-import type { Resume, RichText } from "@resume-tools/resume-model";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Controls } from "./editor/Controls";
 import { COULD_NOT_MAKE_PDF, Compiler, type CompilerEvents, type Shown } from "./editor/compiler";
 import { DocumentList } from "./editor/DocumentList";
@@ -7,11 +6,10 @@ import {
   type Command,
   dropRefusedChoices,
   type Document as EditorDocument,
-  type FieldRef,
-  fieldsOf,
   History,
 } from "./editor/document";
 import { pdfFileName, savePdf } from "./editor/download";
+import { Overlay } from "./editor/Overlay";
 import { Panel, shownFieldsOf } from "./editor/Panel";
 import { EngineClient } from "./engine/client";
 import type { EngineManifest } from "./engine/manifest";
@@ -32,9 +30,10 @@ import { CURATED, curated } from "./templates/curated";
 
 /**
  * The editor as far as milestone 2 has come: the documents kept in this browser, and one of them
- * open at a time, whose page recompiles as it changes and which is saved after every command
- * (decision 0010). Only the dev server serves `/engine/`; hosting the engine is milestone 5, so a
- * production build keeps documents but shows the failure message for their pages until then.
+ * open at a time, whose page recompiles as it changes, which is saved after every command
+ * (decision 0010), and whose fields a click on the page opens in place (item 9). Only the dev
+ * server serves `/engine/`; hosting the engine is milestone 5, so a production build keeps
+ * documents but shows the failure message for their pages until then.
  */
 
 /** How long a compile may keep the page waiting before the message line says it is compiling. */
@@ -85,14 +84,18 @@ async function fetchAhead(url: string): Promise<void> {
   await (await fetch(url)).arrayBuffer();
 }
 
-/** A rich field's text as the page shows it: its runs joined, which click offsets count in. */
-const plain = (runs: RichText) => runs.map((run) => run.text).join("");
-
-/** A glyph that was clicked: its field, and the character in the field's text it stands for. */
+/**
+ * A field opened on the page: the glyph clicked, as its field and the character in the field's
+ * text it stands for, and which click it was, so that each click opens the field afresh.
+ */
 interface Click {
   field: string;
   offset: number;
+  click: number;
 }
+
+/** The element the page is drawn in, which the overlay is placed in. */
+const SHEET = { position: "relative" } as const;
 
 /** The document open in the editor. */
 interface Open {
@@ -142,11 +145,14 @@ export function App() {
   const [failed, setFailed] = useState(false);
   const [clicked, setClicked] = useState<Click>();
   const [downloading, setDownloading] = useState(false);
+  const clicks = useRef(0);
+  const [sheet, setSheet] = useState<HTMLDivElement | null>(null);
 
   /** The list, fresh from the store, which writes what waits to be saved before it lists. */
   const showList = async (reason?: string) => {
     opening.current++;
     setOpen(undefined);
+    setClicked(undefined);
     setNotice(reason);
     try {
       setDocuments((await store.current?.list()) ?? []);
@@ -434,7 +440,6 @@ export function App() {
   // Start-up is apart from the page's own time: it is paid once per worker, not per edit.
   const started = startMs === undefined ? "" : ` (engine started in ${startMs.toFixed(0)} ms)`;
   const took = `${shown.opening ? "Opened" : "Updated"} in ${ms.toFixed(0)} ms${started}.`;
-  const field = clicked && fieldsOf(present.resume).get(clicked.field);
   return (
     <main style={{ display: "flex", alignItems: "flex-start", gap: "1.5rem" }}>
       <div style={{ flex: "none" }}>
@@ -453,13 +458,27 @@ export function App() {
         </p>
         {pdfError && <p>{pdfError}</p>}
         {shown.latest.page.pageCount > 1 && <p>This resume runs onto a second page.</p>}
-        {clicked && field && !stale && (
-          <FieldBox click={clicked} field={field} resume={present.resume} onEdit={edit} />
-        )}
-        <Page
-          svg={shown.latest.page.svg}
-          onField={(field, offset) => setClicked({ field, offset })}
-        />
+        {/* The overlay, or the date picker, over the field clicked, which the latest page places
+            and its commands edit. A document another tab has changed takes no edits, so it closes
+            then, and showing the list or opening a document forgets the click. */}
+        <div ref={setSheet} style={SHEET}>
+          <Page
+            svg={shown.latest.page.svg}
+            onField={(field, offset) => setClicked({ field, offset, click: ++clicks.current })}
+          />
+          {clicked && sheet && !stale && (
+            <Overlay
+              key={clicked.click}
+              field={clicked.field}
+              offset={clicked.offset}
+              document={present}
+              shown={shown.latest}
+              page={sheet}
+              onCommand={edit}
+              onClose={() => setClicked(undefined)}
+            />
+          )}
+        </div>
       </div>
       {/* The side panel's column: the structure, with the style controls under it (item 15). Its
           commands are edits as the page's are, so a document another tab has changed takes none
@@ -478,63 +497,4 @@ export function App() {
       </aside>
     </main>
   );
-}
-
-/**
- * A plain box for the clicked field, standing in for item 9's overlay, which replaces it. It shows
- * the field's text as the document holds it, with the caret where the click landed, and every
- * change is a command that recompiles the page, so an edit can be seen reaching it. A rich field
- * shows its runs' text and is set back as one plain run, losing any bold, italic or link until
- * item 10. Dates open a picker in item 9, so they get no box.
- */
-function FieldBox({
-  click,
-  field,
-  resume,
-  onEdit,
-}: {
-  click: Click;
-  field: FieldRef;
-  resume: Resume;
-  onEdit: (command: Command) => void;
-}) {
-  // A new click is a new object, so the caret moves on each click and stays put while typing.
-  const place = useCallback(
-    (box: HTMLInputElement | HTMLTextAreaElement | null) => {
-      box?.focus();
-      box?.setSelectionRange(click.offset, click.offset);
-    },
-    [click],
-  );
-  const id = click.field;
-  switch (field.kind) {
-    case "text":
-      return (
-        <label>
-          {id}{" "}
-          <input
-            key={id}
-            ref={place}
-            value={field.get(resume) ?? ""}
-            onChange={(event) => onEdit({ type: "text", field: id, text: event.target.value })}
-          />
-        </label>
-      );
-    case "rich":
-      return (
-        <label>
-          {id}{" "}
-          <textarea
-            key={id}
-            ref={place}
-            value={plain(field.get(resume))}
-            onChange={(event) =>
-              onEdit({ type: "rich", field: id, runs: [{ text: event.target.value }] })
-            }
-          />
-        </label>
-      );
-    case "dates":
-      return <p>{id}: dates open a picker in item 9.</p>;
-  }
 }

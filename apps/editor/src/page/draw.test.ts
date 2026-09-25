@@ -86,6 +86,22 @@ describe("drawPage over an invented tree", () => {
     ]);
   });
 
+  it("gives each field its first glyph's font, size and place, and its line's start", async () => {
+    const drawn = await drawPage(fixture("accents.dvi"), cmr10Library(), texts);
+    for (const id of ["word", "lone"]) {
+      const layout = drawn.fields.get(id)?.layout;
+      const first = drawn.glyphs.find((glyph) => glyph.field === id);
+      expect(layout?.font.name, id).toBe("cmr10");
+      expect(layout?.size, id).toBeCloseTo(10, 5);
+      expect([layout?.x, layout?.y], id).toEqual([first?.x, first?.y]);
+      // Nothing is set before either field on its line.
+      const line = drawn.glyphs.filter((glyph) => glyph.y === first?.y);
+      expect(layout?.lineStart, id).toBe(Math.min(...line.map((glyph) => glyph.x)));
+      // The fixture was compiled without the prelude, so it has no paragraph specials.
+      expect(layout?.paragraph, id).toBeUndefined();
+    }
+  });
+
   it("names a font whose outlines cannot be read, and draws the page without it", async () => {
     const drawn = await drawPage(fixture("accents.dvi"), cmr10Library("cmr10.pfb"), texts);
     expect(drawn.missingFonts).toEqual(
@@ -447,6 +463,39 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
         expect(glyphs.find((glyph) => glyph.offset === offset)?.text, family).toBe("²");
     }
   }, 60_000);
+
+  it("finds a field's paragraph special and where its line starts, a rule included", async () => {
+    // The special is read whatever the case of its id, past another field's, and only between
+    // the begin marker and the field's first glyph.
+    const body = [
+      "\\documentclass{article}\\begin{document}",
+      "\\noindent\\rule{12pt}{0.4pt} Label: \\special{rt:b:f}\\special{rt:p:g:other}",
+      "\\special{RT:P:F:hsize=345.0pt}Text\\special{rt:e:f}\\par",
+      "\\noindent\\special{rt:b:g}Lat\\special{rt:p:g:late}e\\special{rt:e:g}",
+      "\\end{document}",
+    ].join("\n");
+    const compiled = session.compile("pdftex", "stock", body, { job: "layouts", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const page = await drawPage(
+      compiled.output,
+      fonts,
+      new Map([
+        ["f", "Text"],
+        ["g", "Late"],
+      ]),
+    );
+    const f = page.fields.get("f")?.layout;
+    expect(f?.paragraph).toBe("RT:P:F:hsize=345.0pt");
+    expect(f?.font.name).toBe("cmr10");
+    expect(f?.size).toBeCloseTo(10, 5);
+    // The line starts at the rule, before the label's glyphs and the field's.
+    const label = Math.min(...page.glyphs.filter((glyph) => glyph.y === f?.y).map((g) => g.x));
+    expect(f && label - f.lineStart).toBeGreaterThan(12);
+    expect(f && f.x - label).toBeGreaterThan(20);
+    const g = page.fields.get("g")?.layout;
+    expect(g?.paragraph).toBeUndefined();
+    expect(g?.lineStart).toBe(g?.x);
+  }, 30_000);
 
   it("gives a later page the size the first page set", async () => {
     const compiled = session.compile(

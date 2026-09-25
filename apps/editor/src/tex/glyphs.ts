@@ -238,16 +238,21 @@ export function glyphText(name: string, agl?: ReadonlyMap<string, string>): stri
  * The font code for each character of the source text, from a font's built-in encoding.
  * Where several glyphs stand for one character (an `i` and a dotless i both read as "i"),
  * the glyph at the character's own code wins, then the first in encoding order.
+ *
+ * `textOf` gives each code's text, by default what its glyph's name reads as. The overlay passes
+ * a page font's own texts (`PageFont.text`), which read names through the Adobe Glyph List and
+ * leave out codes the font does not draw, so that its breaker and its web font's character map
+ * (`webfont.ts`) give each character the same code. A code with no text gets no character.
  */
-export function textToCode(encoding: string[]): Map<string, number> {
+export function textToCode(
+  encoding: readonly string[],
+  textOf: (code: number) => string | undefined = (code) => glyphText(encoding[code] ?? ""),
+): Map<string, number> {
   const codes = new Map<string, number>();
   encoding.forEach((name, code) => {
-    const text = glyphText(name);
-    if (
-      text !== undefined &&
-      text.length === 1 &&
-      (!codes.has(text) || text.charCodeAt(0) === code)
-    )
+    const text = textOf(code);
+    if (text === undefined) return;
+    if (text.length === 1 && (!codes.has(text) || text.charCodeAt(0) === code))
       codes.set(text, code);
     // The characters inputenc maps onto the ligature glyphs, so "–" costs what "--" costs.
     const spelled = UNICODE_SPELLING.get(name);
