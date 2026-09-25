@@ -222,7 +222,8 @@ export interface Alignment {
  * characters that set no glyph at all, which the generator or TeX left out. The
  * alignment walks the text and the glyphs together. Before each glyph it skips
  * whitespace and the invisible characters. A glyph matches any spelling of its text or
- * of what else it stands for (`FieldGlyph.alternatives`). A glyph that does not match
+ * of what else it stands for (`FieldGlyph.alternatives`), or an accented letter whose base
+ * one is, set without its accents (`accentedAt`). A glyph that does not match
  * there is tried past each character that may set no glyph where it stands, such as an
  * emoji or a letter of a script the fonts lack; an unmatched hyphen is a break TeX
  * inserted, which is U+002D's glyph, the font's `\hyphenchar`, so a glyph that stands
@@ -258,7 +259,8 @@ export function alignField(field: Field, text: string): Alignment {
     }
     const own = glyph.alternatives === undefined ? [g] : [g, ...glyph.alternatives];
     const candidates = own.length === 1 ? spellingsOf(g) : [...new Set(own.flatMap(spellingsOf))];
-    const matchAt = (at: number) => candidates.find((c) => text.startsWith(c, at));
+    const matchAt = (at: number) =>
+      candidates.find((c) => text.startsWith(c, at)) ?? accentedAt(text, at, candidates);
     // The spellings are tried where the walk stands first, so "–" still matches the "--"
     // glyph, and only then past the characters that may set no glyph.
     let at = pos;
@@ -309,6 +311,24 @@ export function alignField(field: Field, text: string): Alignment {
   }
   return { unmatched, covered: pos };
 }
+
+/**
+ * The accented letter at `at` whose canonical decomposition is one of `spellings` and accents
+ * after it, when there is one: a letter set without the accents its font lacks, as the generator
+ * sets ǎ as a where a XeTeX template's fonts have neither ǎ nor the caron, and pdfTeX's LaTeX the
+ * base of a letter it has no definition for (`escape.ts`).
+ */
+function accentedAt(text: string, at: number, spellings: readonly string[]): string | undefined {
+  const char = charAt(text, at);
+  if (char.length === 0 || char < "\u{80}") return undefined;
+  const decomposed = char.normalize("NFD");
+  const base = spellings.find((spelling) => spelling !== "" && decomposed.startsWith(spelling));
+  if (base === undefined || base.length === decomposed.length) return undefined;
+  return ACCENTS.test(decomposed.slice(base.length)) ? char : undefined;
+}
+
+/** Combining marks and nothing else, as an accented letter's decomposition holds after its base. */
+const ACCENTS = /^\p{M}+$/u;
 
 /** Give each glyph its character offset, as `alignField` does, and count those it cannot place. */
 export function alignGlyphs(field: Field, text: string): number {

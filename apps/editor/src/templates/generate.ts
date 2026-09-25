@@ -23,7 +23,7 @@ import type {
 } from "@resume-tools/resume-model";
 import { INVISIBLE } from "../tex/fields";
 import { formatDates } from "./dates";
-import { escapeText, escapeUrl, isBlank } from "./escape";
+import { escapeText, escapeUrl, isBlank, type TextFonts } from "./escape";
 import {
   type BULLET_SLOTS,
   type ByRole,
@@ -70,8 +70,8 @@ export interface GeneratedFormat {
 
 /**
  * A body to compile from its format, with the text of each field it marks, by field id, and the
- * characters it left out of them where its fonts cannot set them (`BodyOptions.covers`), each once,
- * in the order the body met them.
+ * characters of them its fonts cannot set (`BodyOptions.covers`), which it left out, or set as the
+ * part of them the fonts can, an accented letter's base, each once, in the order the body met them.
  */
 export interface GeneratedBody {
   latex: string;
@@ -85,9 +85,9 @@ export interface BodyOptions {
    * Which characters a XeTeX package's declared fonts can set wherever its template sets a text,
    * from their files (`nativeCoverage`, decision 0014). XeTeX sets a font's `.notdef` box for a
    * character the font lacks, where pdfTeX's LaTeX leaves the character out (`prelude.ts`), so
-   * every character of a text this refuses is left out of the LaTeX, and named in
-   * `GeneratedBody.dropped`; the text is kept composed, as XeTeX's fonts set letters whole
-   * (`escapeText`). The field's text stays as the model holds it, and the page skips what the
+   * every character of a text this refuses is left out of the LaTeX, or set as the part of it this
+   * takes, an accented letter as its base, and named in `GeneratedBody.dropped`; the text is kept
+   * composed, as XeTeX's fonts set letters whole (`escapeText`). The field's text stays as the model holds it, and the page skips what the
    * LaTeX leaves out. Without it nothing is left out, as for a pdfTeX package.
    */
   covers?: (char: string) => boolean;
@@ -211,15 +211,9 @@ export function generateBody(
   const texts = new Map<string, string>();
   const dropped = new Set<string>();
   const { covers } = options;
-  const keep =
-    covers === undefined
-      ? undefined
-      : (char: string) => {
-          if (covers(char)) return true;
-          dropped.add(char);
-          return false;
-        };
-  const escape: Escape = (text) => escapeText(text, keep);
+  const fonts: TextFonts | undefined =
+    covers === undefined ? undefined : { covers, lacks: (char) => dropped.add(char) };
+  const escape: Escape = (text) => escapeText(text, fonts);
   for (const control of controlsOf(pkg, values)) {
     const scope = { value: valueSlot(control.text) } satisfies Scope;
     render({ nodes: tree(control.apply), scope }, out, texts, escape);

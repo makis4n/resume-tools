@@ -7,7 +7,7 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
-import { defaultControls } from "../templates/package";
+import { defaultControls, fontFiles } from "../templates/package";
 import { bound, fastestAsync } from "../test/timing";
 import { type DviDocument, type PageItem, parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
@@ -828,6 +828,28 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
       expect(glyphAtOffset("summary.title", "l\u{b7}l")?.text).toBe("l\u{b7}l");
       expect(glyphAtOffset("summary.text", "\u{1e5b}")?.text).toBe("\u{1e5b}");
       expect(glyphAtOffset("summary.text", "\u{1e0d}")?.text).toBe("\u{1e0d}");
+    }, 30_000);
+
+    it("sets the base of an accented letter its fonts lack, where the letter is", async () => {
+      // Roboto has neither ǎ nor the combining caron: the body sets the a, which the page reads
+      // at the ǎ, rather than leave the letter out.
+      const resume = structuredClone(sample);
+      const [summary] = resume.sections;
+      if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+      summary.text = [{ text: "Taught Xi\u{1ce}oming to set type." }];
+      const { covers } = await fonts.coverage(fontFiles(pkg));
+      const format = generateFormat(pkg, values);
+      const body = generateBody(pkg, resume, values, { covers });
+      expect(body.dropped).toEqual(["\u{1ce}"]);
+      const compiled = session.compile("xetex", format.name, body.latex, { job: "base" });
+      if (!compiled.output) throw new Error(compiled.error);
+      const page = await drawPage(compiled.output, fonts, body.texts);
+      expect(page.unmatched).toBe(0);
+      const text = body.texts.get("summary.text") ?? "";
+      const letter = page.fields
+        .get("summary.text")
+        ?.glyphs.find((g) => g.offset === text.indexOf("\u{1ce}"));
+      expect(letter?.text).toBe("a");
     }, 30_000);
 
     it("lays each field out in the native font and size of its first glyphs", () => {

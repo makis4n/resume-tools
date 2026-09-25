@@ -648,6 +648,23 @@ describe("generateBody", () => {
     expect(whole.dropped).toEqual([]);
   });
 
+  it("keeps the part of an accented letter the fonts can set: its base, and an accent they have", () => {
+    // As pdfTeX's LaTeX sets the base of a letter it has no definition for (`escape.ts`): Roboto
+    // has neither ǎ nor the combining caron, and the letter was dropped whole, Xioming.
+    const { package: xetex, sample } = INVENTED_XETEX;
+    const edited = structuredClone(sample);
+    const [summary] = edited.sections;
+    if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+    const typed = "Xi\u{1ce}oming and Ka\u{1e69}i";
+    summary.text = [{ text: typed }];
+    // Neither ǎ nor ṩ, nor the caron or the dot above; the dot below.
+    const lacking = ["\u{1ce}", "\u{30c}", "\u{1e69}", "\u{307}"];
+    const body = generateBody(xetex, edited, {}, { covers: (char) => !lacking.includes(char) });
+    expect(body.latex).toContain("{Xiaoming and Kas\u{323}i}");
+    expect(body.dropped).toEqual(["\u{1ce}", "\u{1e69}"]);
+    expect(body.texts.get("summary.text")).toBe(typed);
+  });
+
   it("keeps ASCII, spaces and what it escapes, whatever a coverage says", () => {
     const { package: xetex, sample } = INVENTED_XETEX;
     const edited = structuredClone(sample);

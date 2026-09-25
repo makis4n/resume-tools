@@ -523,6 +523,19 @@ describe("alignGlyphs", () => {
     expect(typed.glyphs.map((g) => g.offset)).toEqual([0, 1]);
   });
 
+  it("matches a letter set without the accent its font lacks to the accented letter", () => {
+    // The generator sets ǎ as a where the fonts have neither it nor the caron, as pdfTeX's LaTeX
+    // sets the base of a letter it has no definition for.
+    const f = fieldOf([..."Xiaoming"]);
+    expect(alignField(f, "Xi\u{1ce}oming")).toEqual({ unmatched: 0, covered: 8 });
+    expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    // And one typed decomposed, whose accent sets nothing.
+    const decomposed = fieldOf([..."Xiaoming"]);
+    expect(alignGlyphs(decomposed, "Xia\u{30c}oming")).toBe(0);
+    // A letter is not a base of another letter, nor of a character with anything but accents.
+    expect(alignGlyphs(fieldOf(["a"]), "\u{e6}")).toBe(1);
+  });
+
   it("matches a glyph to any character its font reaches it from", () => {
     // Source Sans's apostrophe is U+2019 and U+02BC, and its micro sign U+00B5 and U+03BC.
     const quote = ["\u{2019}", "\u{2bc}"];
@@ -581,8 +594,9 @@ describe("alignGlyphs", () => {
   });
 
   it("reads a run of characters that set no glyph once, however many glyphs miss in it", () => {
-    // OT1 sets é as an accent, which has no text, and an e, which no é matches; and … as three
-    // periods, which no … matches either. Each glyph used to walk the rest of the run.
+    // OT1 sets é as an accent, which has no text, and an e, which matches its é as the letter
+    // set without its accent; and … as three periods, which no … matches. Each glyph that missed
+    // used to walk the rest of the run.
     // Read once, each field costs 9.4 to 10.6 times what it costs at a tenth of its length, in CPU
     // time (`fastest`); walked again for each glyph, 97 to 116 times. So each is bound by three
     // times ten times its tenth, and by 100 ms.
@@ -593,7 +607,7 @@ describe("alignGlyphs", () => {
       ] as const;
     const dotted = (count: number) =>
       [fieldOf(Array.from({ length: 3 * count }, () => ".")), "\u{2026}".repeat(count)] as const;
-    expect(alignGlyphs(...accented(8_000))).toBe(16_000);
+    expect(alignGlyphs(...accented(8_000))).toBe(8_000);
     expect(alignGlyphs(...dotted(6_000))).toBe(18_000);
     for (const [shape, count] of [
       [accented, 8_000],

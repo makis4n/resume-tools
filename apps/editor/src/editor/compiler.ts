@@ -1116,9 +1116,10 @@ export class Compiler {
   }
 
   /**
-   * A character a XeTeX package's fonts cannot set is left out of the body, as pdfTeX's LaTeX
-   * leaves out one it has no definition for with a warning in its log; the console hears of each
-   * such character once, rather than on every compile.
+   * A character a XeTeX package's fonts cannot set is left out of the body, or set as the part of
+   * it they can, an accented letter's base, as pdfTeX's LaTeX leaves out one it has no definition
+   * for with a warning in its log; the console hears of each such character once, rather than on
+   * every compile.
    */
   private warnAboutLeftOut(dropped: readonly string[]) {
     const fresh = dropped.filter((char) => !this.leftOut.has(char));
@@ -1128,7 +1129,9 @@ export class Compiler {
       const point = (char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
       return `${char} (U+${point})`;
     });
-    console.warn(`The page leaves out characters its fonts cannot set: ${named.join(", ")}`);
+    console.warn(
+      `The page's fonts cannot set these characters, so it leaves them out, or their accents: ${named.join(", ")}`,
+    );
   }
 
   /**

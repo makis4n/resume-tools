@@ -78,7 +78,7 @@ const UNDEFINED_PAST_EXTENDED_A =
  * LaTeX defines there, so that a letter it has no definition for, such as Vietnamese's `ễ`, sets
  * its base letter, and the prelude leaves out the combining marks, rather than dropping the
  * letter whole. That is pdfTeX's reach; XeTeX's fonts set such letters as they are, so a text for
- * XeTeX's declared fonts stays composed (`escapeText`'s `keep`).
+ * XeTeX's declared fonts stays composed (`escapeText`'s `fonts`).
  */
 function normalized(text: string): string {
   return text.normalize("NFC").replace(UNDEFINED_PAST_EXTENDED_A, (run) => run.normalize("NFD"));
@@ -91,6 +91,28 @@ function normalized(text: string): string {
 const SET_AS_ITSELF = new RegExp(`(?!\\s|\\p{Zs}|${INVISIBLE.source})[^\\u{0}-\\u{7f}]`, "gu");
 
 /**
+ * What a XeTeX package's declared fonts can set among them (decision 0014), which `escapeText`
+ * takes a text's characters past ASCII to, and what hears of each character they cannot.
+ */
+export interface TextFonts {
+  covers: (char: string) => boolean;
+  /** Told of each character the fonts cannot set, which is left out, or set in part (`partOf`). */
+  lacks: (char: string) => void;
+}
+
+/**
+ * What the fonts can set of a character they cannot set whole: the parts of its canonical
+ * decomposition that are ASCII or that they cover, the base of an accented letter and each of its
+ * accents they have, as pdfTeX's LaTeX sets the base of a letter it has no definition for
+ * (`normalized`); nothing of a character that does not decompose.
+ */
+function partOf(char: string, covers: (char: string) => boolean): string {
+  const parts = [...char.normalize("NFD")];
+  if (parts.length < 2) return "";
+  return parts.filter((part) => part < "\u{80}" || covers(part)).join("");
+}
+
+/**
  * Escape text for a text, rich or date slot, typeset or raw. The text is first put in the form
  * LaTeX sets best, composed and then decomposed past Latin Extended-A (`normalized`). What is not
  * escaped passes through: letters outside ASCII, dashes and curly quotes, which LaTeX's UTF-8
@@ -99,16 +121,21 @@ const SET_AS_ITSELF = new RegExp(`(?!\\s|\\p{Zs}|${INVISIBLE.source})[^\\u{0}-\\
  * the font encoding no glyph.
  *
  * XeTeX sets a font's `.notdef` box for a character the font lacks, so for a XeTeX package that
- * declares its fonts the generator says which characters they can set (`keep`, decision 0014):
+ * declares its fonts the generator says which characters they can set (`fonts`, decision 0014):
  * the text then stays composed, since XeTeX's fonts set letters whole and HarfBuzz decomposes one
- * a font lacks, and every character that would pass through as itself and that `keep` refuses is
- * left out, so that it too either typesets as itself or is dropped.
+ * a font lacks, and every character that would pass through as itself and that they cannot set is
+ * set as the part of it they can, an accented letter as its base, or else left out, so that it too
+ * either typesets as itself, or as its letter, or is dropped.
  */
-export function escapeText(text: string, keep?: (char: string) => boolean): string {
+export function escapeText(text: string, fonts?: TextFonts): string {
   const form =
-    keep === undefined
+    fonts === undefined
       ? normalized(text)
-      : text.normalize("NFC").replace(SET_AS_ITSELF, (char) => (keep(char) ? char : ""));
+      : text.normalize("NFC").replace(SET_AS_ITSELF, (char) => {
+          if (fonts.covers(char)) return char;
+          fonts.lacks(char);
+          return partOf(char, fonts.covers);
+        });
   return form
     .replace(TEXT_CHANGES, (char) => TEXT_ESCAPES[char] ?? (SPACE_SEPARATOR.test(char) ? " " : ""))
     .replace(INVERTED_MARK, "$&{}");
