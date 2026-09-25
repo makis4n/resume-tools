@@ -21,6 +21,7 @@ packages/
   resume-model/         the editor's resume data model (Zod)  owner: @makis4n
 docs/
   editor-plan.md        the editor plan, converted from the shared page
+  ats-prd.md            the ATS product requirements
   decisions/            short records of decisions, one file each
 .github/                CI, pull request and issue templates
 ```
@@ -88,5 +89,6 @@ The editor is planned for Cloudflare Pages and Workers, with sign-in and saved r
 ## Documents
 
 - [docs/editor-plan.md](docs/editor-plan.md): the editor's version-one plan. The shareable page version is at https://claude.ai/code/artifact/c9403706-378d-475b-8599-48f4b0c6f569.
+- [docs/ats-prd.md](docs/ats-prd.md): the ATS product requirements, including its editor integration.
 - [docs/decisions/](docs/decisions/): the decision records.
 - [AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md): the short rules AI coding agents follow here.
