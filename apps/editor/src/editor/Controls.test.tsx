@@ -15,12 +15,16 @@ import {
   PageSizeControl,
   SWATCHES,
 } from "./Controls";
+import { History, newDocument } from "./document";
 
-const { package: jake } = curated("jake");
+const { package: jake, sample } = curated("jake");
+
+/** Nothing, for a control's `onChange` or `onSeal` that a test does not follow. */
+const ignore = () => {};
 
 /** The panel for Jake's Resume as HTML, with the document's own choices given. */
 const panel = (values: Parameters<typeof Controls>[0]["values"]) =>
-  renderToStaticMarkup(<Controls pkg={jake} values={values} onChange={() => {}} />);
+  renderToStaticMarkup(<Controls pkg={jake} values={values} onChange={ignore} onSeal={ignore} />);
 
 /** The opening tag of the one `name` element in some HTML with `attribute`, as `value="a4"`. */
 function tagWith(html: string, name: string, attribute: string): string {
@@ -68,6 +72,10 @@ function propsOf(tree: ReactNode, test: (element: ReactElement<Props>) => boolea
 /** Call a handler as the browser would, with an event whose target holds `value`. */
 const fire = (handler: unknown, value?: string) =>
   (handler as (event: { target: { value?: string } }) => void)({ target: { value } });
+
+/** Whether an element is a `type` element with each of `props`. */
+const is = (type: string, props: Props) => (element: ReactElement<Props>) =>
+  element.type === type && Object.entries(props).every(([key, v]) => element.props[key] === v);
 
 describe("Controls", () => {
   it("shows each control Jake's Resume offers at the package's default", () => {
@@ -151,7 +159,9 @@ describe("Controls", () => {
       id: "narrow",
       controls: { margins: { default: 0.7, apply: "\\geometry{margin={{value}}in}" } },
     });
-    const html = renderToStaticMarkup(<Controls pkg={narrow} values={{}} onChange={() => {}} />);
+    const html = renderToStaticMarkup(
+      <Controls pkg={narrow} values={{}} onChange={ignore} onSeal={ignore} />,
+    );
     expect(html).toContain("Margins");
     expect(tagWith(html, "input", 'type="range"')).toContain('value="0.7"');
     for (const other of [
@@ -171,7 +181,9 @@ describe("Controls", () => {
       id: "sized",
       controls: { fontSize: { default: 10, apply: "\\changefontsize{{{value}}pt}" } },
     });
-    const size = renderToStaticMarkup(<Controls pkg={sized} values={{}} onChange={() => {}} />);
+    const size = renderToStaticMarkup(
+      <Controls pkg={sized} values={{}} onChange={ignore} onSeal={ignore} />,
+    );
     expect(sizeSlider(size)).toContain('value="10"');
     expect(size).toContain(">10 pt</output>");
     expect(size).not.toContain("<select");
@@ -193,7 +205,9 @@ describe("Controls", () => {
         },
       },
     });
-    const menu = renderToStaticMarkup(<Controls pkg={typefaces} values={{}} onChange={() => {}} />);
+    const menu = renderToStaticMarkup(
+      <Controls pkg={typefaces} values={{}} onChange={ignore} onSeal={ignore} />,
+    );
     const options = [...menu.matchAll(/<option\b[^>]*>([^<]*)<\/option>/g)].map(([, name]) => name);
     expect(options).toEqual(["Invented Serif", "Invented Sans"]);
     expect(tagWith(menu, "option", 'value="sans"')).toContain('selected=""');
@@ -211,23 +225,25 @@ describe("Controls", () => {
 
   it("gives each change as the control's name and a value the package accepts", () => {
     const changes: ControlChange[] = [];
-    const onChange = (change: ControlChange) => changes.push(change);
-    const is = (type: string, props: Props) => (element: ReactElement<Props>) =>
-      element.type === type && Object.entries(props).every(([key, v]) => element.props[key] === v);
+    const groups: (string | undefined)[] = [];
+    const onChange = (change: ControlChange, group?: string) => {
+      changes.push(change);
+      groups.push(group);
+    };
 
     const pageSize = <PageSizeControl id="size" value="letter" onChange={onChange} />;
     fire(propsOf(pageSize, is("input", { value: "a4" })).onChange);
-    const margins = <MarginsControl id="margins" value={0.5} onChange={onChange} />;
+    const margins = <MarginsControl id="margins" value={0.5} onChange={onChange} onSeal={ignore} />;
     // The slider's value is text, read to the tenth.
     fire(propsOf(margins, is("input", { type: "range" })).onChange, "0.7000000000000001");
-    const size = <FontSizeControl id="size" value={11} onChange={onChange} />;
+    const size = <FontSizeControl id="size" value={11} onChange={onChange} onSeal={ignore} />;
     // Read to the half point, whatever the browser gives.
     fire(propsOf(size, is("input", { type: "range" })).onChange, "10.5");
     fire(propsOf(size, is("input", { type: "range" })).onChange, "11.999999999999998");
     const fonts = jake.controls.font?.choices ?? [];
     const font = <FontControl choices={fonts} value="lm" onChange={onChange} />;
     fire(propsOf(font, is("select", {})).onChange, "palatino");
-    const accent = <AccentControl value="#000000" onChange={onChange} />;
+    const accent = <AccentControl value="#000000" onChange={onChange} onSeal={ignore} />;
     fire(propsOf(accent, is("button", { "aria-label": "Teal" })).onClick);
     // The picker writes lower case, and the document keeps capitals.
     fire(propsOf(accent, is("input", { type: "color" })).onChange, "#aa0033");
@@ -250,5 +266,100 @@ describe("Controls", () => {
     const schema = controlValuesFor(jake);
     for (const { name, value } of changes)
       expect(schema.safeParse({ [name]: value }).success, name).toBe(true);
+    // A slider's and the picker's changes are a drag's; a click or a menu's choice is none.
+    expect(groups).toEqual([
+      undefined,
+      "control:margins",
+      "control:fontSize",
+      "control:fontSize",
+      undefined,
+      undefined,
+      "control:accent",
+      undefined,
+      undefined,
+    ]);
+  });
+});
+
+describe("a drag", () => {
+  /** A history of Jake's sample, which the controls' changes go to as the app sends them. */
+  const historyOf = () => {
+    const history = new History(newDocument("jake", sample));
+    return {
+      history,
+      onChange: (change: ControlChange, group?: string) =>
+        history.dispatch({ type: "control", ...change }, group),
+      onSeal: () => history.seal(),
+    };
+  };
+
+  it("makes 250 colours from the picker one step, which keeps the steps before it", () => {
+    const { history, onChange, onSeal } = historyOf();
+    const start = history.present;
+    // A step before the drag, as a visit to a field on the page makes.
+    const titled = history.dispatch({ type: "text", field: "fennel.title", text: "Staff" });
+    const accent = <AccentControl value="#000000" onChange={onChange} onSeal={onSeal} />;
+    const picker = propsOf(accent, is("input", { type: "color" }));
+    for (let i = 1; i <= 250; i++) fire(picker.onChange, `#${i.toString(16).padStart(6, "0")}`);
+    const dragged = history.present;
+    expect(dragged.controls.accent).toBe("#0000FA");
+    // A swatch is a click, a step of its own, which ends the drag's as any other command does.
+    fire(propsOf(accent, is("button", { "aria-label": "Teal" })).onClick);
+    const teal = history.present;
+    fire(propsOf(accent, is("button", { "aria-label": "Plum" })).onClick);
+    expect(history.undo()).toBe(teal);
+    expect(history.undo()).toBe(dragged);
+    // One undo takes back the whole drag, to the colour before it, the template's default.
+    expect(history.undo()).toBe(titled);
+    expect(history.present.controls.accent).toBeUndefined();
+    expect(history.undo()).toBe(start);
+    expect(history.canUndo).toBe(false);
+  });
+
+  it("ends a slider's step as it loses the focus, and a click on a density is one step", () => {
+    const { history, onChange, onSeal } = historyOf();
+    const start = history.present;
+    const slider = propsOf(
+      <MarginsControl id="margins" value={0.5} onChange={onChange} onSeal={onSeal} />,
+      is("input", { type: "range" }),
+    );
+    for (const inches of ["0.6", "0.7", "0.8"]) fire(slider.onChange, inches);
+    const first = history.present;
+    // Losing the focus ends the drag, so the slider's next drag is a step of its own.
+    fire(slider.onBlur);
+    for (const inches of ["0.9", "1"]) fire(slider.onChange, inches);
+    const second = history.present;
+    // Another control's drag, and a click, each begin a step of their own.
+    const size = propsOf(
+      <FontSizeControl id="size" value={11} onChange={onChange} onSeal={onSeal} />,
+      is("input", { type: "range" }),
+    );
+    for (const points of ["10.5", "10"]) fire(size.onChange, points);
+    const sized = history.present;
+    const density = <DensityControl value="normal" onChange={onChange} />;
+    fire(propsOf(density, is("button", { children: "Compact" })).onClick);
+    expect(history.undo()).toBe(sized);
+    expect(history.undo()).toBe(second);
+    expect(history.undo()).toBe(first);
+    expect(first.controls).toEqual({ margins: 0.8 });
+    expect(history.undo()).toBe(start);
+  });
+
+  it("sends nothing for a click on the density or the swatch already shown, the default too", () => {
+    const { history, onChange, onSeal } = historyOf();
+    const one = history.dispatch({ type: "text", field: "fennel.title", text: "One" });
+    history.undo();
+    // The template's defaults, which the document holds no choice for.
+    const normal = <DensityControl value="normal" onChange={onChange} />;
+    fire(propsOf(normal, is("button", { children: "Normal" })).onClick);
+    const black = <AccentControl value="#000000" onChange={onChange} onSeal={onSeal} />;
+    fire(propsOf(black, is("button", { "aria-label": "Black" })).onClick);
+    // A choice the document holds, shown in the picker's lower case.
+    const blue = <AccentControl value="#1f4e79" onChange={onChange} onSeal={onSeal} />;
+    fire(propsOf(blue, is("button", { "aria-label": "Dark blue" })).onClick);
+    expect(history.canUndo).toBe(false);
+    expect(history.redo()).toBe(one);
+    fire(propsOf(normal, is("button", { children: "Relaxed" })).onClick);
+    expect(history.present.controls).toEqual({ density: "relaxed" });
   });
 });

@@ -674,22 +674,47 @@ function restructure(resume: Resume, op: StructureOp): Resume {
 export const HISTORY_LIMIT = 200;
 
 /**
+ * Whether two of a document's JSON values are the same: the same value, or arrays or objects that
+ * hold the same values, in any order of an object's keys, since a command may move a key it sets
+ * (`dates` does), and with a key whose value is undefined taken as absent, as the JSON a document
+ * is kept as has it. A command copies only the nodes on its way down to what it changes and shares
+ * the rest (`fieldsOf`), so a comparison of a document with the one before it looks only along
+ * that path.
+ */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((each, i) => sameValue(each, b[i]));
+  }
+  const one = a as Record<string, unknown>;
+  const other = b as Record<string, unknown>;
+  const keys = new Set([...Object.keys(one), ...Object.keys(other)]);
+  return [...keys].every((key) => sameValue(one[key], other[key]));
+}
+
+/**
  * The document, with the ones before it for undo and the ones undone for redo, a step at a time. A
  * step is what one undo takes back: one command, or every command of one visit to a field, on the
- * page or in one of the panel's inputs, which the editor dispatches in one group (item 12), so
- * that undo takes back what was typed there rather than a keystroke of it. The past holds one
- * document per step, the one before the step began, so the bound counts steps however many
- * commands each took; undo and redo move along the past and the future, and a new command after an
- * undo clears what was undone.
+ * page or in one of the panel's inputs, or of one drag of a slider or the colour picker, which the
+ * editor dispatches in one group (item 12), so that undo takes back what was typed or dragged
+ * there rather than a keystroke or a movement of it.
+ * The past holds one document per step, the one before the step began, so the bound counts steps
+ * however many commands each took; undo and redo move along the past and the future, and a new
+ * command after an undo clears what was undone. Only a change is a step: a command that leaves the
+ * document as it was makes none, and a step that ends where it began is dropped, so that neither
+ * leaves an undo that does nothing, nor takes away what could have been redone.
  */
 export class History {
   private readonly past: Document[] = [];
   private future: Document[] = [];
   /**
-   * The group of the step the present document ends, which the next command in the same group
-   * extends; undefined for a step of one command, and once the step has ended.
+   * The step of several commands the present document ends, while more of its group can extend
+   * it: its group, and what could be redone before it began, which it gives back if it ends where
+   * it began. Undefined for a step of one command, and once the step has ended.
    */
-  private group: string | undefined;
+  private open: { group: string; future: Document[] } | undefined;
 
   constructor(private current: Document) {}
 
@@ -699,39 +724,45 @@ export class History {
 
   /**
    * Apply a command to the present document, or throw a `CommandError` and change nothing. With a
-   * group equal to the previous command's, the command extends that command's step, whose entry in
-   * the past stays the document before the step began; with none, or another, or once the step has
-   * ended (`seal`, `undo`, `redo`), it begins a step of its own. A structure op, a control's change
-   * and anything else that is a step by itself comes with no group, and so ends the step before it.
+   * group equal to the open step's, the command extends that step, whose entry in the past stays
+   * the document before the step began; with none, or another, or once the step has ended
+   * (`seal`, `undo`, `redo`), it ends the open step and begins its own. A structure op, a
+   * control's click and anything else that is a step by itself comes with no group. A command
+   * that leaves the document as it was changes nothing at all, and gives back the present: it
+   * makes no step, keeps what could be redone, and leaves the open step open.
    */
   dispatch(command: Command, group?: string): Document {
     const next = apply(this.current, command);
-    if (group === undefined || group !== this.group) {
+    if (sameValue(next, this.current)) return this.current;
+    if (group === undefined || group !== this.open?.group) {
+      this.end();
       this.past.push(this.current);
-      if (this.past.length > HISTORY_LIMIT) this.past.shift();
+      this.open = group === undefined ? undefined : { group, future: this.future };
+      // A step of one command is a change, so it stays; an open one is bound once it has ended.
+      if (this.open === undefined) this.bound();
     }
-    this.group = group;
     this.future = [];
     this.current = next;
     return next;
   }
 
   /**
-   * End the present step, whatever the next command's group: a visit to a field has ended, and the
-   * next visit to the same field is a step of its own.
+   * End the open step, whatever the next command's group: a visit to a field has ended, and the
+   * next visit to the same field is a step of its own. A step that ends where it began, as when
+   * what was typed has been deleted again, is dropped, and gives back what could be redone.
    */
   seal(): void {
-    this.group = undefined;
+    this.end();
   }
 
   /**
    * The document before the present step, which becomes the present; undefined at the start. The
-   * step is undone whole and ends there, so a command after it begins a new one.
+   * open step ends first (`seal`), and is undone whole, so a command after it begins a new one.
    */
   undo(): Document | undefined {
+    this.end();
     const previous = this.past.pop();
     if (previous === undefined) return undefined;
-    this.group = undefined;
     this.future.push(this.current);
     this.current = previous;
     return previous;
@@ -739,15 +770,36 @@ export class History {
 
   /**
    * The document the step last undone ended with, which becomes the present again; undefined when
-   * there is none. A command after it begins a step of its own, as after an undo.
+   * there is none. The open step ends first (`seal`), and a command after the redo begins a step
+   * of its own, as after an undo.
    */
   redo(): Document | undefined {
+    this.end();
     const next = this.future.pop();
     if (next === undefined) return undefined;
-    this.group = undefined;
     this.past.push(this.current);
     this.current = next;
     return next;
+  }
+
+  /** End the open step: dropped, with the future it cleared given back, if it changed nothing. */
+  private end(): void {
+    const step = this.open;
+    if (step === undefined) return;
+    this.open = undefined;
+    const start = this.past.at(-1);
+    if (start !== undefined && sameValue(start, this.current)) {
+      this.past.pop();
+      this.future = step.future;
+    } else this.bound();
+  }
+
+  /**
+   * Let the oldest steps go past `HISTORY_LIMIT`. An open step is bound only once it has ended, so
+   * that a step that is then dropped has not pushed out one that changed something.
+   */
+  private bound(): void {
+    while (this.past.length > HISTORY_LIMIT) this.past.shift();
   }
 
   get canUndo(): boolean {

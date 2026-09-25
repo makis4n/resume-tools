@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { historyKey, holdsTyping, type KeyPress } from "./undo";
+import {
+  historyKey,
+  holdsTyping,
+  type KeyPress,
+  type KeyTarget,
+  listenForHistoryKeys,
+  type Way,
+} from "./undo";
 
 /** A press of QWERTY's Z with no modifier, changed by `press`. */
 const pressed = (press: Partial<KeyPress>): KeyPress => ({
@@ -52,6 +59,146 @@ describe("historyKey", () => {
     expect(historyKey(pressed({ key: "Я", metaKey: true, shiftKey: true }))).toBe("redo");
     expect(historyKey(pressed({ key: "н", code: "KeyY", ctrlKey: true }))).toBe("redo");
     expect(historyKey(pressed({ key: "н", code: "KeyY", metaKey: true }))).toBeUndefined();
+  });
+});
+
+describe("listenForHistoryKeys", () => {
+  /** A key press as the listeners on its way see it, which they can prevent and stop. */
+  type Press = KeyPress & {
+    defaultPrevented: boolean;
+    stopped: boolean;
+    preventDefault(): void;
+    stopPropagation(): void;
+  };
+  const keydown = (press: Partial<KeyPress>): Press => {
+    const event: Press = {
+      ...pressed(press),
+      defaultPrevented: false,
+      stopped: false,
+      preventDefault: () => {
+        event.defaultPrevented = true;
+      },
+      stopPropagation: () => {
+        event.stopped = true;
+      },
+    };
+    return event;
+  };
+
+  type Listener = (event: Press) => void;
+
+  /** A stand-in for a node of the page, with its keydown listeners in the order they were added. */
+  class Place implements KeyTarget {
+    readonly listeners: { listener: Listener; capture: boolean }[] = [];
+    addEventListener(_type: string, listener: unknown, options?: boolean | { capture?: boolean }) {
+      const capture = typeof options === "boolean" ? options : options?.capture === true;
+      this.listeners.push({ listener: listener as Listener, capture });
+    }
+    removeEventListener(
+      _type: string,
+      listener: unknown,
+      options?: boolean | { capture?: boolean },
+    ) {
+      const capture = typeof options === "boolean" ? options : options?.capture === true;
+      const at = this.listeners.findIndex(
+        (each) => each.listener === listener && each.capture === capture,
+      );
+      if (at >= 0) this.listeners.splice(at, 1);
+    }
+  }
+
+  /**
+   * A key pressed at the last place of `path`, dispatched as the DOM dispatches it: to the capture
+   * listeners from the window down to the target, then to the others from the target up to the
+   * window, a place's listeners in order. Once one stops the key, no place after it hears it.
+   */
+  function dispatch(path: readonly Place[], press: Press) {
+    const invoke = (place: Place, capture: boolean) => {
+      if (press.stopped) return;
+      for (const each of [...place.listeners]) if (each.capture === capture) each.listener(press);
+    };
+    for (const place of path) invoke(place, true);
+    for (const place of [...path].reverse()) invoke(place, false);
+  }
+
+  /**
+   * The page with a rich field open: the window, the document, the body and ProseMirror's editor,
+   * whose keydown listener does what prosemirror-view's does: it prevents the browser's action for
+   * Mod with B, I, Y or Z and no other modifier, Mod being Cmd on a Mac and Ctrl elsewhere,
+   * whether or not the editor binds the key (`captureKeyDown`).
+   */
+  function richField(mac: boolean) {
+    const path = [new Place(), new Place(), new Place(), new Place()] as const;
+    const [window, , , editor] = path;
+    const heard: string[] = [];
+    editor.addEventListener("keydown", (press: Press) => {
+      heard.push(press.key);
+      const mod = mac ? press.metaKey && !press.ctrlKey : press.ctrlKey && !press.metaKey;
+      if (mod && !press.altKey && !press.shiftKey && /^[biyz]$/.test(press.key))
+        press.preventDefault();
+    });
+    const ways: Way[] = [];
+    const taking = { documentOpen: true };
+    const stop = listenForHistoryKeys(window, (way) => {
+      ways.push(way);
+      return taking.documentOpen;
+    });
+    const press = (keys: Partial<KeyPress>) => {
+      const event = keydown(keys);
+      dispatch(path, event);
+      return event;
+    };
+    return { window, heard, ways, taking, stop, press };
+  }
+
+  it("takes Cmd+Z in a rich field before ProseMirror, which would spend it, and stops it there", () => {
+    const field = richField(true);
+    const z = field.press({ metaKey: true });
+    expect(field.ways).toEqual(["undo"]);
+    expect(z.defaultPrevented).toBe(true);
+    expect(field.heard).toEqual([]);
+    field.press({ key: "Z", metaKey: true, shiftKey: true });
+    expect(field.ways).toEqual(["undo", "redo"]);
+    expect(field.heard).toEqual([]);
+    // Once the app stops listening, the key is ProseMirror's again.
+    field.stop();
+    expect(field.window.listeners).toEqual([]);
+    field.press({ metaKey: true });
+    expect(field.ways).toEqual(["undo", "redo"]);
+    expect(field.heard).toEqual(["z"]);
+  });
+
+  it("takes Ctrl+Z and Ctrl+Y in a rich field on Windows and Linux in the same way", () => {
+    const field = richField(false);
+    const z = field.press({ ctrlKey: true });
+    const y = field.press({ key: "y", code: "KeyY", ctrlKey: true });
+    expect(field.ways).toEqual(["undo", "redo"]);
+    expect([z.defaultPrevented, y.defaultPrevented]).toEqual([true, true]);
+    expect(field.heard).toEqual([]);
+  });
+
+  it("leaves alone a key it does not take: the field's own, one no document takes, one taken", () => {
+    const field = richField(true);
+    for (const key of ["b", "i", "k", "Enter", "Escape"])
+      field.press({ key, code: "", metaKey: key.length === 1 });
+    expect(field.heard).toEqual(["b", "i", "k", "Enter", "Escape"]);
+    expect(field.ways).toEqual([]);
+    // Asked, but not taken, as while the document list shows: ProseMirror hears it, as if the
+    // listener were not there.
+    field.taking.documentOpen = false;
+    const z = field.press({ metaKey: true });
+    expect(field.ways).toEqual(["undo"]);
+    expect(field.heard.at(-1)).toBe("z");
+    expect(z.stopped).toBe(false);
+    // A capture listener on the window before it, which has prevented the key, has taken it.
+    const window = new Place();
+    window.addEventListener("keydown", (press: Press) => press.preventDefault(), true);
+    const ways: Way[] = [];
+    listenForHistoryKeys(window, (way) => ways.push(way) > 0);
+    const prevented = keydown({ metaKey: true });
+    dispatch([window, new Place()], prevented);
+    expect(ways).toEqual([]);
+    expect(prevented.stopped).toBe(false);
   });
 });
 

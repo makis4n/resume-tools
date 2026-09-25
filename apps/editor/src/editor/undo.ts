@@ -5,6 +5,11 @@
  * wrong, and in the panel's inputs, whose typing reaches the document only at a pause. What the
  * user is typing in loses the focus first, which ends the visit to it (`holdsTyping`), and then the
  * history takes back a step, a visit to a field rather than a keystroke (`History`, `document.ts`).
+ *
+ * The keys are taken before any element sees them, in the capture phase on the window, since the
+ * rich editor would otherwise stop them: ProseMirror prevents the browser's action for Mod with Z
+ * or Y as they reach its editor, whether or not it binds them, and the rich fields bind neither,
+ * so a listener after it would find the key spent and nothing done.
  */
 
 import { useEffect, useLayoutEffect, useRef } from "react";
@@ -63,24 +68,41 @@ export function holdsTyping(
   return element.tagName === "INPUT" && TYPED.has(element.type ?? "text");
 }
 
+/** Where the keys are listened for: the window, or a stand-in for it. */
+export type KeyTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
+
+/** The listener's phase: the capture phase, before any element under the window sees a key. */
+const CAPTURE = { capture: true } as const;
+
+/**
+ * Listen on `target`, the window, for the undo and redo keys pressed anywhere in the page, and
+ * give each to `take`, which says whether it took the key; returns what stops the listening. The
+ * listener runs in the capture phase, after only the window's own capture listeners, so that no
+ * element, the rich editor least of all, spends the key before it. A key taken is stopped there:
+ * neither the browser's undo nor anything under the window acts on it. A key a capture listener
+ * on the window has prevented already is left to that listener, and a key not taken, as while no
+ * document is open, goes on as if the listener were not there.
+ */
+export function listenForHistoryKeys(target: KeyTarget, take: (way: Way) => boolean): () => void {
+  const listener = (event: Event) => {
+    const press = event as KeyboardEvent;
+    const way = historyKey(press);
+    if (way === undefined || press.defaultPrevented || !take(way)) return;
+    press.preventDefault();
+    press.stopPropagation();
+  };
+  target.addEventListener("keydown", listener, CAPTURE);
+  return () => target.removeEventListener("keydown", listener, CAPTURE);
+}
+
 /**
  * Give the undo and redo keys, pressed anywhere in the page, to `take`, the one from the latest
- * render, which says whether it took the key. A key taken does nothing more, so that the browser's
- * own undo never runs on the overlay's rows or a panel input's text; a key another listener has
- * taken already, and prevented the browser's action for, is left to that listener.
+ * render, which says whether it took the key (`listenForHistoryKeys`).
  */
 export function useHistoryKeys(take: (way: Way) => boolean): void {
   const latest = useRef(take);
   useLayoutEffect(() => {
     latest.current = take;
   });
-  useEffect(() => {
-    const listener = (event: KeyboardEvent) => {
-      const way = historyKey(event);
-      if (way !== undefined && !event.defaultPrevented && latest.current(way))
-        event.preventDefault();
-    };
-    window.addEventListener("keydown", listener);
-    return () => window.removeEventListener("keydown", listener);
-  }, []);
+  useEffect(() => listenForHistoryKeys(window, (way) => latest.current(way)), []);
 }

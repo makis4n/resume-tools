@@ -108,6 +108,13 @@ interface Open {
   history: History;
   /** The history's present, as state, so that an edit renders. */
   present: EditorDocument;
+  /**
+   * Whether the history has a step to undo, and one to redo, as state, so that the buttons follow
+   * it: a step that ends where it began is dropped when it ends (`History.seal`), which changes
+   * what there is to undo and redo with no new present.
+   */
+  canUndo: boolean;
+  canRedo: boolean;
   /** Whether another tab has changed it since it was read: it takes no edits until read again. */
   stale: boolean;
   /** Whether its newest save could not be written; it stays open until one is. */
@@ -203,6 +210,8 @@ export function App() {
       revision,
       history: new History(document),
       present: document,
+      canUndo: false,
+      canRedo: false,
       stale: false,
       unsaved: false,
     });
@@ -293,16 +302,29 @@ export function App() {
   }, [busy]);
 
   /**
-   * Make `next` the present of `doc`, the open document: shown, compiled and saved, as every change
-   * to it is (decision 0010), whether a command made it or an undo or a redo went back to it. It
-   * becomes the present of the document it was made for only, and not of one opened since.
+   * Render the history of `doc`, the open document, as it stands: its present, and whether it has
+   * a step to undo and one to redo. The history is not state, so every change to it comes here,
+   * and only the document it belongs to takes it, not one opened since.
    */
-  const setPresent = (doc: Open, next: EditorDocument) => {
+  const followHistory = ({ history }: Open) => {
+    const { present, canUndo, canRedo } = history;
     setOpen((current) =>
-      current?.history === doc.history ? { ...current, present: next } : current,
+      current?.history !== history ||
+      (current.present === present && current.canUndo === canUndo && current.canRedo === canRedo)
+        ? current
+        : { ...current, present, canUndo, canRedo },
     );
-    compiler.current?.update(next);
-    store.current?.save(doc.id, next, doc.revision);
+  };
+
+  /**
+   * The history of `doc` has a new present, from a command, an undo or a redo: it is rendered,
+   * compiled and saved, as every change to the document is (decision 0010).
+   */
+  const followPresent = (doc: Open) => {
+    followHistory(doc);
+    const { present } = doc.history;
+    compiler.current?.update(present);
+    store.current?.save(doc.id, present, doc.revision);
   };
 
   /**
@@ -310,19 +332,20 @@ export function App() {
    * 12), from the message line's buttons or from the keys anywhere in the page. What is being typed
    * in ends first, so that its edit is part of the step taken back rather than left to come after
    * it: an element that takes typing loses the focus, which makes a panel input send what it holds
-   * back for a pause and seal its step, and an open field closes, which ends the visit to it. A
-   * document another tab has changed takes neither, as it takes no edit. It comes before the returns
-   * below, since the hook that gives it the keys runs on every render, and says whether a document
-   * took the key, which then does nothing else.
+   * back for a pause and seal its step, and an open field closes; undo and redo end the open step
+   * themselves. A document another tab has changed takes neither, as it takes no edit. It comes
+   * before the returns below, since the hook that gives it the keys runs on every render, and says
+   * whether a document took the key, which then does nothing else.
    */
   const travel = (way: Way): boolean => {
     if (open === undefined || open.stale) return false;
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && holdsTyping(focused)) focused.blur();
-    open.history.seal();
     setClicked(undefined);
     const next = way === "undo" ? open.history.undo() : open.history.redo();
-    if (next !== undefined) setPresent(open, next);
+    // With nothing to take back, the step that ended may still have been dropped.
+    if (next === undefined) followHistory(open);
+    else followPresent(open);
     return true;
   };
   useHistoryKeys(travel);
@@ -365,18 +388,30 @@ export function App() {
     );
   }
 
-  const { id, history, present, stale, unsaved } = open;
+  const { id, history, present, canUndo, canRedo, stale, unsaved } = open;
 
   /**
    * Apply a command to the open document. One of a visit to a field, which the overlay and the
-   * panel's inputs make, comes with the visit's group, so that the visit is one step of the
-   * history (`History.dispatch`); any other is a step of its own.
+   * panel's inputs make, or of a drag of a slider, comes with the group of the visit or the drag,
+   * so that it is one step of the history (`History.dispatch`); any other is a step of its own. A
+   * command that changes nothing, such as a click on the density already chosen, is no step, and
+   * nothing is compiled or saved for it.
    */
   const edit = (command: Command, group?: string) => {
     // A document another tab has changed takes no edit until it is read again: one made here
     // could not be saved over the other tab's, and would be lost on the reload.
     if (stale) return;
-    setPresent(open, history.dispatch(command, group));
+    const before = history.present;
+    if (history.dispatch(command, group) !== before) followPresent(open);
+  };
+
+  /**
+   * End the history's open step, as a visit or a drag ends: one that ended where it began is
+   * dropped, which the buttons then follow.
+   */
+  const seal = () => {
+    history.seal();
+    followHistory(open);
   };
 
   /**
@@ -384,13 +419,13 @@ export function App() {
    * the field that was open went without closing.
    */
   const openField = (field: string, offset: number) => {
-    history.seal();
+    seal();
     setClicked({ field, offset, click: ++clicks.current });
   };
 
   /** Close the open field, which ends the visit to it, and with it the step its edits made. */
   const closeField = () => {
-    history.seal();
+    seal();
     setClicked(undefined);
   };
 
@@ -504,13 +539,12 @@ export function App() {
         {saving}
         <p>
           {error ?? (slow ? "Compiling…" : took)}{" "}
-          {/* The history changes only with the present, which is state, so this render reads it as
-              it stands. A document another tab has changed takes no undo, as it takes no edit. */}
+          {/* A document another tab has changed takes no undo, as it takes no edit. */}
           <button
             type="button"
             aria-keyshortcuts="Meta+Z Control+Z"
             onClick={() => travel("undo")}
-            disabled={stale || !history.canUndo}
+            disabled={stale || !canUndo}
           >
             Undo
           </button>{" "}
@@ -518,7 +552,7 @@ export function App() {
             type="button"
             aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y"
             onClick={() => travel("redo")}
-            disabled={stale || !history.canRedo}
+            disabled={stale || !canRedo}
           >
             Redo
           </button>{" "}
@@ -558,19 +592,21 @@ export function App() {
       {/* The side panel's column: the structure, with the style controls under it (item 15). Its
           commands are edits as the page's are, so a document another tab has changed takes none
           of them either, and the column is inert until the document is read again. What is typed
-          into one of its inputs goes in the group of a visit to it, which ends as the input loses
-          the focus; everything else it and the controls do is a step of its own. */}
+          into one of its inputs, and a drag of a slider or the colour picker, goes in one group,
+          which ends as the input or the control loses the focus; everything else is a step of its
+          own. */}
       <aside inert={stale} style={{ flex: "none", width: "24rem" }}>
         <Panel
           document={present}
           shownFields={shownFieldsOf(shown.latest, present)}
           onCommand={edit}
-          onSeal={() => history.seal()}
+          onSeal={seal}
         />
         <Controls
           pkg={curated(present.template).package}
           values={present.controls}
-          onChange={(change) => edit({ type: "control", ...change })}
+          onChange={(change, group) => edit({ type: "control", ...change }, group)}
+          onSeal={seal}
         />
       </aside>
     </main>
