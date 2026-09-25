@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "id": "altacv",
+  "name": "AltaCV",
+  "engine": "pdftex",
+  "source": {
+    "url": "https://github.com/liantze/AltaCV",
+    "license": "LPPL-1.3c",
+    "attribution": "LianTze Lim (liantze/AltaCV, altacv.cls v1.7.4 and its sample)"
+  },
+  "controls": {
+    "pageSize": {
+      "default": "a4",
+      "apply": {
+        "letter": "\\geometry{letterpaper}",
+        "a4": "\\geometry{a4paper}"
+      }
+    },
+    "margins": {
+      "default": 0.5,
+      "apply": "\\geometry{margin={{value}}in}"
+    },
+    "fontSize": {
+      "default": 10,
+      "apply": "\\rtfontsize{{{value}}}"
+    },
+    "font": {
+      "default": "lato",
+      "choices": [
+        {
+          "id": "lato",
+          "name": "Lato",
+          "apply": ""
+        },
+        {
+          "id": "roboto",
+          "name": "Roboto",
+          "apply": "\\renewcommand{\\familydefault}{Roboto-LF}"
+        },
+        {
+          "id": "sourcesans",
+          "name": "Source Sans",
+          "apply": "\\renewcommand{\\familydefault}{SourceSansPro-TLF}"
+        },
+        {
+          "id": "lm",
+          "name": "Latin Modern",
+          "apply": "\\renewcommand{\\familydefault}{lmr}"
+        }
+      ]
+    },
+    "accent": {
+      "default": "#8F0D0D",
+      "apply": "\\definecolor{rtaccent}{HTML}{{{value}}}\\rtaccentcolours"
+    },
+    "density": {
+      "default": "normal",
+      "apply": {
+        "compact": "\\rtdensity{50}",
+        "normal": "",
+        "relaxed": "\\rtdensity{150}"
+      }
+    },
+    "dateFormat": {
+      "default": "MMM yyyy"
+    }
+  },
+  "snippets": {
+    "document": "\\begin{document}\n{{header}}\n\\makecvheader\n\\columnratio{0.6}\n\\begin{paracol}{2}\n{{sections}}\n\\end{paracol}\n\\end{document}",
+    "header": "\\name{{{first}} {{last}}}\n\\tagline{{{headline}}}\n\\personalinfo{{{contacts}}}",
+    "contact": {
+      "phone": "\\printinfo{\\faPhone}{{{text}}}[{{{&href}}}]",
+      "email": "\\printinfo{\\faEnvelope}{{{text}}}[{{{&href}}}]",
+      "location": "\\printinfo{\\faMapMarker}{{{text}}}"
+    },
+    "link": {
+      "website": "{{#href}}\\printinfo{\\faGlobe}{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}[{{{&href}}}]{{/href}}{{^href}}\\printinfo{\\faGlobe}{{{label}}}{{/href}}",
+      "linkedin": "{{#href}}\\printinfo{\\faLinkedin}{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}[{{{&href}}}]{{/href}}{{^href}}\\printinfo{\\faLinkedin}{{{label}}}{{/href}}",
+      "github": "{{#href}}\\printinfo{\\faGithub}{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}[{{{&href}}}]{{/href}}{{^href}}\\printinfo{\\faGithub}{{{label}}}{{/href}}",
+      "twitter": "{{#href}}\\printinfo{\\faTwitter}{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}[{{{&href}}}]{{/href}}{{^href}}\\printinfo{\\faTwitter}{{{label}}}{{/href}}",
+      "orcid": "{{#href}}\\printinfo{\\faOrcid}{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}[{{{&href}}}]{{/href}}{{^href}}\\printinfo{\\faOrcid}{{{label}}}{{/href}}",
+      "other": "{{#href}}\\printinfo{\\faLink}{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}[{{{&href}}}]{{/href}}{{^href}}\\printinfo{\\faLink}{{{label}}}{{/href}}"
+    },
+    "section": {
+      "entries": {
+        "default": "\\cvsection{{{title}}}\n{{entries}}",
+        "summary": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{entries}}\n\\switchcolumn[0]",
+        "skills": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{entries}}\n\\switchcolumn[0]",
+        "awards": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{entries}}\n\\switchcolumn[0]",
+        "languages": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{entries}}\n\\switchcolumn[0]",
+        "other": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{entries}}\n\\switchcolumn[0]"
+      },
+      "list": {
+        "default": "\\cvsection{{{title}}}\n{{#items}}\n\\begin{itemize}\n{{items}}\n\\end{itemize}\n{{/items}}",
+        "summary": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#items}}\n\\begin{itemize}\n{{items}}\n\\end{itemize}\n{{/items}}\n\\switchcolumn[0]",
+        "skills": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{items}}\n\\switchcolumn[0]",
+        "awards": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#items}}\n\\begin{itemize}\n{{items}}\n\\end{itemize}\n{{/items}}\n\\switchcolumn[0]",
+        "languages": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#items}}\n\\begin{itemize}\n{{items}}\n\\end{itemize}\n{{/items}}\n\\switchcolumn[0]",
+        "other": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#items}}\n\\begin{itemize}\n{{items}}\n\\end{itemize}\n{{/items}}\n\\switchcolumn[0]"
+      },
+      "labelled": {
+        "default": "\\cvsection{{{title}}}\n{{#items}}\n{{items}}\n\\medskip\n{{/items}}",
+        "summary": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#items}}\n{{items}}\n\\medskip\n{{/items}}\n\\switchcolumn[0]",
+        "skills": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#items}}\n{{items}}\n\\medskip\n{{/items}}\n\\switchcolumn[0]",
+        "awards": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#items}}\n{{items}}\n\\medskip\n{{/items}}\n\\switchcolumn[0]",
+        "languages": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#items}}\n{{items}}\n\\medskip\n{{/items}}\n\\switchcolumn[0]",
+        "other": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#items}}\n{{items}}\n\\medskip\n{{/items}}\n\\switchcolumn[0]"
+      },
+      "paragraph": {
+        "default": "\\cvsection{{{title}}}\n{{#text}}\n{{text}}\\par\\medskip\n{{/text}}",
+        "summary": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#text}}\n{{text}}\\par\\medskip\n{{/text}}\n\\switchcolumn[0]",
+        "skills": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#text}}\n{{text}}\\par\\medskip\n{{/text}}\n\\switchcolumn[0]",
+        "awards": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#text}}\n{{text}}\\par\\medskip\n{{/text}}\n\\switchcolumn[0]",
+        "languages": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#text}}\n{{text}}\\par\\medskip\n{{/text}}\n\\switchcolumn[0]",
+        "other": "\\switchcolumn[1]\n\\cvsection{{{title}}}\n{{#text}}\n{{text}}\\par\\medskip\n{{/text}}\n\\switchcolumn[0]"
+      }
+    },
+    "entry": "\\cvevent{{{title}}}{{{subtitle}}}{{{dates}}}{{{place}}}\n{{#bullets}}\n\\begin{itemize}\n{{bullets}}\n\\end{itemize}\n{{/bullets}}",
+    "bullet": "\\item {{text}}",
+    "item": {
+      "default": "\\item {{text}}",
+      "skills": "{{#text}}\\cvtag{{{text}}}{{/text}}"
+    },
+    "labelledItem": "{{#label}}\\textbf{{{label}}}: {{/label}}{{text}}\\par",
+    "separators": {
+      "sections": "\n\n",
+      "entries": "\n\n\\divider\n\n"
+    }
+  }
+}
