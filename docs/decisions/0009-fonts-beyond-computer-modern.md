@@ -55,10 +55,14 @@ bullet, `$`, `€` and `°` from TS1 even in OT1, and in OT1 cannot set `ą`, `�
   any word, `constructor` and `__proto__` among them, so every `FontOutlines.glyphs` is a table
   with no prototype (`glyphTable`), read with `Object.hasOwn` (`glyphOf`), and every other table
   looked up by a glyph's name or text is a map or is read with `Object.hasOwn`.
-- **Glyph text through the Adobe Glyph List.** A glyph's text comes from its name: after a suffix
-  from the first period is dropped (`a.sc` is `a`), Computer Modern's own table first, which keeps
-  winning so that `quoteright` stays `'` and `endash` stays `--` for the aligner; then a single
-  ASCII letter; then the AGL, TeX Live's `glyphlist.txt`, which a name for several code points
+- **Glyph text through the Adobe Glyph List.** A glyph's text comes from its name. A name with
+  a suffix reads first as the AGL, TeX Live's `glyphlist.txt`, reads the suffix joined to the base,
+  unless that is a private-use character: Latin Modern's TS1 names its superior figures
+  `two.superior` and the like, which are the AGL's `twosuperior`, `²`, while the AGL puts Adobe's
+  expert glyphs such as `dollaroldstyle` in the Private Use Area, so `dollar.oldstyle` stays `$`.
+  Otherwise, after the suffix from the first period is dropped (`a.sc` is `a`), Computer Modern's
+  own table first, which keeps winning so that `quoteright` stays `'` and `endash` stays `--`
+  for the aligner; then a single ASCII letter; then the AGL, which a name for several code points
   reads as all of them; then the `uniXXXX` and `uXXXX[XX]` forms; then a ligature's parts joined
   by `_`. A virtual font's composed character is named after its parts, joined by `+` with any
   accent after the rest (`A+breve`), and a rule is `rule`; it reads as its parts' texts with each
@@ -122,9 +126,6 @@ bullet, `$`, `€` and `°` from TS1 even in OT1, and in OT1 cannot set `ą`, `�
   lowercase, from its encoding, though it draws them as scaled capitals; one in OT1, such as
   `ptmrc7t`, still reads them as the capitals it draws. Item 17 decides whether its families
   need small caps from a virtual font in OT1.
-- The Latin Modern TS1 vector names the superior figures `one.superior` and the like, which the
-  Adobe Glyph List's rule of dropping a suffix reads as `1`, so `¹`, `²` and `³` from TS1 read
-  as digits and do not align with the text, in Latin Modern and now in the URW fonts' TS1 too.
 - A hostile font within the budgets still costs what they allow: a chain of four virtual fonts of
   4 M characters each composes in about a quarter of a second on a recent laptop and holds 16 MB,
   on the thread that draws the page.

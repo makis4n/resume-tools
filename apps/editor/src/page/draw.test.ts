@@ -322,6 +322,27 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     }
   }, 60_000);
 
+  it("reads TS1's superior figures as themselves, in Times and in Latin Modern", async () => {
+    // LaTeX sets ² from TS1, whose glyph lm-ts1.enc names two.superior: read as 2, it matched
+    // nothing, and a click on it landed in the 20 after it.
+    const text = "Cut floor space by 10² 20 m²";
+    const families = ["\\renewcommand{\\rmdefault}{ptm}", "\\usepackage{lmodern}"];
+    for (const [i, family] of families.entries()) {
+      const body = `\\documentclass{article}\\usepackage[T1]{fontenc}${family}\\begin{document}\\special{rt:b:f}${text}\\special{rt:e:f}\\end{document}`;
+      const compiled = session.compile("pdftex", "stock", body, {
+        job: `superior-${i}`,
+        maxPasses: 1,
+      });
+      if (!compiled.output) throw new Error(compiled.error);
+      const page = await drawPage(compiled.output, fonts, new Map([["f", text]]));
+      expect(page.missingFonts, family).toEqual(new Map());
+      expect(page.unmatched, family).toBe(0);
+      const glyphs = page.fields.get("f")?.glyphs ?? [];
+      for (const offset of [text.indexOf("²"), text.lastIndexOf("²")])
+        expect(glyphs.find((glyph) => glyph.offset === offset)?.text, family).toBe("²");
+    }
+  }, 60_000);
+
   it("gives a later page the size the first page set", async () => {
     const compiled = session.compile(
       "pdftex",

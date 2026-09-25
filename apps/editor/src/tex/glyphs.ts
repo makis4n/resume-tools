@@ -143,6 +143,23 @@ const baseName = (name: string) => {
   return dot < 0 ? name : name.slice(0, dot);
 };
 
+/**
+ * A glyph name with its suffix joined to its base, `twosuperior` for `two.superior`, anything
+ * after a second period left out; undefined for a name with no suffix.
+ */
+function joinedName(name: string): string | undefined {
+  const dot = name.indexOf(".");
+  if (dot <= 0) return undefined;
+  const next = name.indexOf(".", dot + 1);
+  return name.slice(0, dot) + name.slice(dot + 1, next < 0 ? undefined : next);
+}
+
+/**
+ * A character of the Private Use Area, where the Adobe Glyph List puts Adobe's old expert glyphs
+ * (`dollaroldstyle` is U+F724): characters no model's text holds.
+ */
+const PRIVATE_USE = /\p{Co}/u;
+
 /** The combining mark a glyph stands for when TeX's `\accent` sets it over a letter, if any. */
 export function accentMark(name: string): string | undefined {
   return ACCENTS.get(baseName(name));
@@ -176,6 +193,9 @@ function unicodeName(name: string): string | undefined {
 
 /** Text for one name with no `+` in it, by the lookups `glyphText` lists. */
 function nameText(name: string, agl: ReadonlyMap<string, string> | undefined): string | undefined {
+  const joined = joinedName(name);
+  const variant = joined === undefined ? undefined : agl?.get(joined);
+  if (variant !== undefined && !PRIVATE_USE.test(variant)) return variant;
   const base = baseName(name);
   if (base === "") return undefined;
   if (Object.hasOwn(GLYPH_TEXT, base)) return GLYPH_TEXT[base];
@@ -188,8 +208,12 @@ function nameText(name: string, agl: ReadonlyMap<string, string> | undefined): s
 }
 
 /**
- * The text a glyph stands for, by its name, or undefined when the name says nothing. A suffix from
- * the first period on is dropped first (`a.sc` reads as `a`). Then, in order: the table above,
+ * The text a glyph stands for, by its name, or undefined when the name says nothing. A name with a
+ * suffix reads first as the Adobe Glyph List reads its suffix joined to its base, unless that is a
+ * private-use character: Latin Modern names its superior figures `two.superior`, which is the
+ * AGL's `twosuperior`, `²`, where dropping the suffix would read `2`; and the AGL puts
+ * `dollaroldstyle` in the Private Use Area, so `dollar.oldstyle` stays `$`. Otherwise the suffix
+ * from the first period on is dropped (`a.sc` reads as `a`), and then, in order: the table above,
  * which gives Computer Modern's quote and ligature names the spellings the aligner expects and
  * so wins (`quoteright` is `'`, `endash` is `--`); a single ASCII letter; the Adobe Glyph List,
  * which fonts beyond Computer Modern name their glyphs by (`Aacute` is `Á`, and a name for

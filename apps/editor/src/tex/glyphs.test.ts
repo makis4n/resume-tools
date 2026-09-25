@@ -78,6 +78,32 @@ describe("glyphText", () => {
     expect(glyphText(".notdef", AGL)).toBeUndefined();
   });
 
+  it("reads a suffix the glyph list knows joined to its base, unless for private use", () => {
+    // Latin Modern's TS1 names, as lm-ts1.enc gives them, and the glyph list's entries for them.
+    const agl = parseAgl(
+      [
+        "cent;00A2",
+        "centoldstyle;F7A2",
+        "dollaroldstyle;F724",
+        "onesuperior;00B9",
+        "threesuperior;00B3",
+        "twoinferior;2082",
+        "twosuperior;00B2",
+      ].join("\n"),
+    );
+    const superiors = ["one.superior", "two.superior", "three.superior", "two.inferior"];
+    expect(superiors.map((name) => glyphText(name, agl))).toEqual(["¹", "²", "³", "₂"]);
+    // The glyph list puts Adobe's old-style figures in the Private Use Area, which no text holds,
+    // so they read as their bases, as does a suffix it does not know.
+    expect(["dollar.oldstyle", "cent.oldstyle"].map((name) => glyphText(name, agl))).toEqual([
+      "$",
+      "¢",
+    ]);
+    expect(glyphText("zero.taboldstyle", agl)).toBe("0");
+    expect(glyphText("a.sc", agl)).toBe("a");
+    expect(glyphText(".notdef", agl)).toBeUndefined();
+  });
+
   it("composes a virtual font's parts, putting accents after the letter", () => {
     expect(glyphText("A+breve", AGL)).toBe("Ă");
     expect(glyphText("breve+A", AGL)).toBe("Ă");

@@ -337,6 +337,10 @@ describe.skipIf(!engineAvailable())("FontLibrary", () => {
       "«",
     ]);
     expect([136, 191, 176].map((code) => ts1?.text(code))).toEqual(["•", "€", "°"]);
+    // lm-ts1.enc names the superior figures two.superior and the like, and the old-style ones
+    // dollar.oldstyle and cent.oldstyle.
+    const figures = [185, 178, 179, 138, 139];
+    expect(figures.map((code) => ts1?.text(code))).toEqual(["¹", "²", "³", "$", "¢"]);
     // The same outline under both encodings.
     expect(ts1?.outlines?.glyphs.A).toBe(t1?.outlines?.glyphs.A);
   });
@@ -401,8 +405,10 @@ describe.skipIf(!engineAvailable())("FontLibrary", () => {
     expect([21, 22].map((code) => courier?.text(code))).toEqual(["--", "---"]);
     // A small-caps font's lowercase letters are smaller capitals.
     expect([65, 97, 233, 255].map((code) => caps?.text(code))).toEqual(["A", "a", "é", "ß"]);
-    // TS1: the Euro, which Times lacks and fontinst draws as a rule, and the centred asterisk.
+    // TS1: the Euro, which Times lacks and fontinst draws as a rule, the centred asterisk, and
+    // the superior figures, which lm-ts1.enc names one.superior and the like.
     expect([191, 42].map((code) => symbols?.text(code))).toEqual(["€", "\u{2217}"]);
+    expect([185, 178, 179].map((code) => symbols?.text(code))).toEqual(["¹", "²", "³"]);
     // OT1's layout depends on the shape, so it reads by the glyphs: Courier has < where a roman
     // font has ¡, and an italic font £ where an upright one has $.
     expect([60, 62, 123].map((code) => courierOt1?.text(code))).toEqual(["<", ">", "{"]);
