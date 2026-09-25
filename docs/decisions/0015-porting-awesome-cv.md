@@ -166,7 +166,8 @@ example's `awesome-red`, and `\colorlet{awesome}{rtaccent}`; `\setbool{acvSectio
   is patched to take the space. The plan named `\acvSectionContentTopSkip`, the 2.5 mm after a
   title, as well; it stays the class's at every density, because the class takes 3 mm back right
   after it in a paragraph section, and a compact paragraph at 9 points was set over its title.
-  Normal sets nothing, and no density at any size sets a line over another.
+  Normal sets nothing, and no density sets a line over another or a rule through a line, at any
+  size, in any font, on A4 or Letter, and on both pages where the sample spills onto a second.
 - **Font.** A choice sets `\bodyfont`, `\bodyfontlight` and the document's family, which is the
   text, the titles, the headline and the entries; the header's name, address and contacts stay
   Roboto, as the class sets them.
@@ -241,11 +242,12 @@ of 320 to 400 ms.
 
 ## Consequences
 
-- The port's default page is the example's but for the headline and the positions, upright where upstream's were small capitals; Roboto's tabular
-  figures; the margins, half an inch on every side; the contacts, in the resume's order; and what
-  has no place in the model. Small capitals and proportional figures can come back when the page
-  reads the texts of glyphs a single substitution makes, and a family can load one shape with
-  features of its own; both are additions to decision 0014.
+- The port's default page is the example's but for the headline and the positions, upright where
+  upstream's were small capitals; Roboto's tabular figures; the margins, half an inch on every
+  side; the contacts, in the resume's order; and what has no place in the model. Small capitals
+  and proportional figures can come back when the page reads the texts of glyphs a single
+  substitution makes, and a family can load one shape with features of its own; both are
+  additions to decision 0014.
 - Source Sans Pro reaches its apostrophe from several code points, and the page reads the glyph
   as the lowest, U+02BC, so a field that holds an apostrophe fails the harness's alignment check
   until the page reads every code point of such a glyph, which item 21's branch teaches it. Its
@@ -264,7 +266,8 @@ of 320 to 400 ms.
   before an entry and 4 mm around a list's items, which the font size does not scale; at 9 points
   they leave less room than at 11, and a density below the port's compact could set lines over
   each other there.
-- The sample fits on one page at every size and density but relaxed at 12 points; fitting on one
-  page is item 18's to do.
+- The sample fits on one page at every size, density and font, on A4 and on Letter, but relaxed at
+  12 points on A4 and relaxed at 11.5 and 12 points on Letter, which is shorter, where it spills
+  onto a second page in every font. Fitting on one page is item 18's to do.
 - New documents still start from Jake's Resume; choosing a template for a new one is not part of
   this item.

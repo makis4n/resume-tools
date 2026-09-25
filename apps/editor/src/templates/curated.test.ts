@@ -2137,7 +2137,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     }
   }, 60_000);
 
-  it("spaces sections, entries and bullets together by density, and sets nothing over anything at any size", async () => {
+  it("spaces sections, entries and bullets together by density, and sets nothing over anything at any size, font or page size", async () => {
     // Each gap from the last line before it: a section's title, an entry's organisation, and a
     // bullet.
     const first = (page: DrawnPage, id: string) => baselinesOf(page, id)[0] ?? Number.NaN;
@@ -2147,39 +2147,62 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
       first(page, "kestrel.subtitle") - last(page, "harbourline-3.text"),
       first(page, "harbourline-2.text") - last(page, "harbourline-1.text"),
     ];
+    // The default page size and font at 11 points, for each density.
     const pages: DrawnPage[] = [];
     const spills: string[] = [];
-    for (const density of ["compact", "normal", "relaxed"] as const)
-      for (const fontSize of SIZES) {
-        const spaced = { ...values, density, fontSize };
-        // An ordinary compile: the same format, and the spacing set again in the body.
-        expect(generateFormat(pkg, spaced).name).toBe(format.name);
-        const body = generateBody(pkg, sample, spaced);
-        const job = `density-${density}-${fontSize * 10}`;
-        const { result, page } = await compileAndDraw(body.latex, body.texts, job);
-        const at = `${density} at ${fontSize} pt`;
-        expect(result.log, at).not.toMatch(/^! /m);
-        expect(page.unmatched, at).toBe(0);
-        if (result.pages !== 1) spills.push(`${at}, ${result.pages} pages`);
-        // Nothing is set over anything else: the class takes space back after a section's title
-        // and before an entry, which a density that left less than it took would set lines over.
-        const doc = parseDvi(result.output as Uint8Array, () => undefined);
-        const struck = ruleCrossings(doc, page.glyphs).map(({ glyph }) => glyph.field ?? "");
-        expect([...new Set(struck)], `${at}: fields a rule is drawn through`).toEqual([]);
-        expect(linesSetOver(page), `${at}: lines set over the line above`).toEqual([]);
-        if (fontSize === 11) pages.push(page);
-      }
-    // Fitting on one page is item 18's to do, so a spill is reported here rather than failed.
-    console.log(
-      spills.length === 0
-        ? "Awesome-CV's sample fits on one page at every density and size"
-        : `Awesome-CV's sample spills: ${spills.join("; ")}`,
-    );
+    for (const pageSize of ["a4", "letter"] as const)
+      for (const font of ["sourcesans", "roboto", "lato"])
+        for (const density of ["compact", "normal", "relaxed"] as const)
+          for (const fontSize of SIZES) {
+            const spaced = { ...values, pageSize, font, density, fontSize };
+            // An ordinary compile: the same format, and the controls set again in the body.
+            expect(generateFormat(pkg, spaced).name).toBe(format.name);
+            const body = generateBody(pkg, sample, spaced);
+            const at = `${pageSize}, ${font}, ${density} at ${fontSize} pt`;
+            // One job for them all, whose auxiliary file each compile reads as it stands, so that
+            // each takes the one pass the page needs, and a second only where the page count moves.
+            const result = session.compile(pkg.engine, format.name, body.latex, {
+              job: "matrix",
+              maxPasses: 3,
+            });
+            if (!result.output) throw new Error(`${at}: ${result.error}`);
+            expect(result.log, at).not.toMatch(/^! /m);
+            if (result.pages !== 1) spills.push(`${at}: ${result.pages} pages`);
+            // Nothing is set over anything else, on any page: the class takes space back after a
+            // section's title and before an entry, which a density that left less than it took
+            // would set lines over.
+            const doc = parseDvi(result.output, () => undefined);
+            for (let index = 0; index < result.pages; index++) {
+              const page = await drawPage(result.output, fonts, body.texts, index);
+              const where = `${at}, page ${index + 1}`;
+              expect(page.unmatched, where).toBe(0);
+              const struck = ruleCrossings(doc, page.glyphs, index).map(
+                ({ glyph }) => glyph.field ?? "",
+              );
+              expect([...new Set(struck)], `${where}: fields a rule is drawn through`).toEqual([]);
+              expect(linesSetOver(page), `${where}: lines set over the line above`).toEqual([]);
+              if (pageSize === "a4" && font === "sourcesans" && fontSize === 11) pages.push(page);
+            }
+          }
+    // Fitting on one page is item 18's to do; these are the sample's spills, all relaxed, which
+    // decision 0015 lists: Letter is shorter than A4, and spills half a point sooner.
+    expect(spills).toEqual([
+      "a4, sourcesans, relaxed at 12 pt: 2 pages",
+      "a4, roboto, relaxed at 12 pt: 2 pages",
+      "a4, lato, relaxed at 12 pt: 2 pages",
+      "letter, sourcesans, relaxed at 11.5 pt: 2 pages",
+      "letter, sourcesans, relaxed at 12 pt: 2 pages",
+      "letter, roboto, relaxed at 11.5 pt: 2 pages",
+      "letter, roboto, relaxed at 12 pt: 2 pages",
+      "letter, lato, relaxed at 11.5 pt: 2 pages",
+      "letter, lato, relaxed at 12 pt: 2 pages",
+    ]);
     const bottoms = pages.map((page) => Math.max(...page.glyphs.map((glyph) => glyph.bottom)));
     const said = bottoms.map((bottom) => `${bottom.toFixed(1)} pt`).join(", ");
     console.log(`Awesome-CV's sample ends, compact, normal and relaxed, at ${said}`);
     const [compact, normal, relaxed] = pages;
-    if (!compact || !normal || !relaxed) throw new Error("a density drew no page");
+    if (!compact || !normal || !relaxed || pages.length !== 3)
+      throw new Error("a density drew no page, or more than one");
     expect(bottoms[0]).toBeLessThan(bottoms[1] ?? 0);
     expect(bottoms[1]).toBeLessThan(bottoms[2] ?? 0);
     // Normal is the class's spacing, the page the sample opens with.
@@ -2188,7 +2211,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
       expect(gaps(compact)[i], `gap ${i}`).toBeLessThan(gap);
       expect(gaps(relaxed)[i], `gap ${i}`).toBeGreaterThan(gap);
     });
-  }, 120_000);
+  }, 300_000);
 
   it("sets the headline, the places and each title's first three letters in the accent, and follows the accent control", async () => {
     const titles = sample.sections.map((section) => `${section.id}.title`);
