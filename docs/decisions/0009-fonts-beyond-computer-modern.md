@@ -144,4 +144,4 @@ bullet, `$`, `€` and `°` from TS1 even in OT1, and in OT1 cannot set `ą`, `�
   suffix. Item 9's web font writer has to take such names or give the glyphs its own.
 - Decision 0011 adds to the merge the maps of the packages it takes from TeX Live's archive, ahead
   of the Ubuntu tree's, counts a TrueType or OpenType file as an outline file, and makes the
-  layout 3; CI's key covers `scripts/tlpdb.ts` too.
+  layout 3; CI's key covers `scripts/containers.ts` and `scripts/tlpdb.ts` too.

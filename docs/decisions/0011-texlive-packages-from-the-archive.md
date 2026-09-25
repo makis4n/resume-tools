@@ -9,7 +9,7 @@ LaTeX and XeTeX collections, and four Ubuntu bundles of LaTeX packages and fonts
 milestone 2 item 1). It lacks what AltaCV and Awesome-CV need: pgf and TikZ, Font Awesome 5, Lato,
 Roboto and Source Sans Pro. The milestone settles that the tree is BusyTeX's TeX Live 2023,
 extended from TeX Live 2023's final package archive; item 19 does it, in
-`apps/editor/scripts/fetch-engine.ts` and `scripts/tlpdb.ts`.
+`apps/editor/scripts/fetch-engine.ts`, `scripts/containers.ts` and `scripts/tlpdb.ts`.
 
 ## Decision
 
@@ -46,8 +46,11 @@ extended from TeX Live 2023's final package archive; item 19 does it, in
   database that differs from the pin is refused with its hash and size printed, to record when
   the archive is meant to change.
 - **Where the files go.** Each container, `archive/<name>.r<revision>.tar.xz`, which is the name
-  the archive serves it under, is unpacked into a folder of its own. A relocated container holds
-  its files relative to `texmf-dist`, and they go into `/texlive/texmf-dist`, the tree kpathsea
+  the archive serves it under, is unpacked into a folder of its own. A container that holds
+  anything but files and folders, a symbolic or a hard link above all, is refused, naming the
+  entry, since a link could lead the tree out of the container's folder; every entry is read with
+  `lstat`, which follows no link, before any is read or moved. A relocated container holds its
+  files relative to `texmf-dist`, and they go into `/texlive/texmf-dist`, the tree kpathsea
   searches before the Ubuntu one; a package that is not relocated is refused, since it could
   install outside `texmf-dist`. The container's `tlpkg/tlpobj/<name>.tlpobj`, the package's own
   entry, is read for its run files and maps and dropped. What the tree gains is what the container
@@ -60,8 +63,11 @@ extended from TeX Live 2023's final package archive; item 19 does it, in
   or `addMixedMap`, before the Ubuntu tree's, since the packages' files are in the tree searched
   first, by the same rule: an entry for a TeX font `pdftex.map` does not have yet, whose outline
   file the trees hold. A TrueType or OpenType file now counts as an outline file, since xdvipdfmx
-  embeds them as it does Type 1, though the page reads only Type 1 (item 21). The four maps add
-  2,752 entries, all naming Type 1 files; the Ubuntu tree's 150 are unchanged.
+  embeds them as it does Type 1, though the page reads only Type 1 (item 21). Only a map a
+  container adds is merged as the package's; a map the tree held already stays the bundles' to
+  merge, as marvosym's would if it were taken, since the Ubuntu tree holds every file of it but
+  its TrueType one. The four maps add 2,752 entries, all naming Type 1 files; the Ubuntu tree's 150
+  are unchanged.
 - **What stays out.** Documentation and source containers, binaries, since the engine is one
   binary of its own, and a newer TeX Live, which waits for milestone 5 and the engine build it
   needs.
@@ -81,7 +87,7 @@ extended from TeX Live 2023's final package archive; item 19 does it, in
   Item 23 measures the browser on the slow laptop; if the start costs too much there, the tree can
   keep only what the templates read, or the session can mount lazily.
 - A first build, and CI on a cache miss, need the archive's host. CI keys its cached tree on
-  `scripts/tlpdb.ts` as well.
+  `scripts/containers.ts` and `scripts/tlpdb.ts` as well.
 - A package a style file loads, or an encoding it asks fontenc for, is found by reading the style
   files; `--resolve` does not read them. greek-fontenc is left out: only
   `sourcesanspro-type1-autoinst.sty` and Roboto's `\robotolgr` ask for its LGR encoding, and the

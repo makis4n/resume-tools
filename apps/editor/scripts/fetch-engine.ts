@@ -10,8 +10,8 @@
  * The bundles lack packages the templates need, pgf and Font Awesome 5 among them, so the script
  * then adds those from TeX Live 2023's final package archive (`PACKAGES`), each container checked
  * against the SHA-512 the archive's database records for it and unpacked with the system `tar`
- * (decision 0011). On the way out, the added packages' and the Ubuntu bundles' font maps are
- * merged into `pdftex.map` (`mergeMaps`), as `updmap` would merge them.
+ * (`scripts/containers.ts`, decision 0011). On the way out, the added packages' and the Ubuntu
+ * bundles' font maps are merged into `pdftex.map` (`mergeMaps`), as `updmap` would merge them.
  *
  *   node scripts/fetch-engine.ts [--from <dir>] [--force] [--resolve]
  *
@@ -40,7 +40,6 @@
  * runs that both got past the lock cannot overwrite each other's half-written files.
  */
 
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   createReadStream,
@@ -49,20 +48,18 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { copyFile, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { fileURLToPath } from "node:url";
 // Node runs this file by stripping its types, so the type import needs its real extension.
 import type { EngineManifest } from "../src/engine/manifest.ts";
+import { unpackPackages } from "./containers.ts";
 import { mergeFontMaps } from "./fontmaps.ts";
 import { containerName, packagesToFetch, parseDatabase } from "./tlpdb.ts";
 
@@ -72,10 +69,11 @@ const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELE
 /**
  * The version of what this script writes. Bump it whenever the output changes (the files, the
  * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt. CI keys its
- * cached `.engine/` on the four files the output depends on, this script, `tlpdb.ts`, which reads
- * the added packages' entries, and `fontmaps.ts` and `src/page/fontmap.ts`, which merge the font
- * maps into `pdftex.map`, so a change to any of them rebuilds it there; a `.engine/` built on a
- * machine is rebuilt only by the bump or by a change to `PACKAGES`.
+ * cached `.engine/` on the five files the output depends on, this script, `containers.ts` and
+ * `tlpdb.ts`, which unpack the added packages and read their entries, and `fontmaps.ts` and
+ * `src/page/fontmap.ts`, which merge the font maps into `pdftex.map`, so a change to any of them
+ * rebuilds it there; a `.engine/` built on a machine is rebuilt only by the bump or by a change to
+ * `PACKAGES`.
  */
 const LAYOUT = 3;
 
@@ -490,91 +488,6 @@ const byPath = (files: Record<string, number>) =>
   Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1)));
 
 /**
- * Unpack an xz-compressed tar into `dir` with the system `tar`, which macOS and Linux both have
- * and which reads xz on both, so that the script needs no decompressor of its own.
- */
-function untar(file: string, dir: string) {
-  const run = spawnSync("tar", ["-xJf", file, "-C", dir], { encoding: "utf8" });
-  if (run.error) throw new Error(`the system tar did not run: ${run.error.message}`);
-  if (run.status !== 0) throw new Error(`tar could not unpack ${basename(file)}: ${run.stderr}`);
-}
-
-/** The regular files under a folder, by path relative to it. */
-function filesUnder(dir: string): string[] {
-  return readdirSync(dir, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => relative(dir, join(entry.parentPath, entry.name)))
-    .sort();
-}
-
-/**
- * Unpack the container of each package of `PACKAGES` into the staging tree's
- * `/texlive/texmf-dist`, list its files in `files`, and return the paths of the font maps the
- * packages add, in package order.
- *
- * Each container is unpacked into a folder of its own first, since the tree takes from it only
- * what TeX reads. The container of a relocated package holds its files relative to `texmf-dist`,
- * and its entry in the database as `tlpkg/tlpobj/<name>.tlpobj`, which is read for the package's
- * run files and maps and then dropped. A file either tree holds already stays as the bundles gave
- * it, and is not shadowed by a copy in the first tree either: the stock formats were dumped from
- * the bundles' files, and the templates read them, so a package the bundles hold in part keeps
- * their version and gains only the files it lacks, as pgf's dependency xcolor gains only its
- * rollback copy `xcolor-2022-06-12.sty`. What the tree gains is what the container holds; the run
- * files its entry lists only check it, and one it lacks is reported.
- *
- * No `ls-R` is written, though item 19 of the milestone speaks of regenerating it: the engine
- * session builds every tree's filename database from the manifest when it starts
- * (`mountOnDemand` in `src/engine/session.ts`), so listing a file in the manifest is what puts
- * it there.
- */
-function unpackPackages(staging: string, files: Record<string, number>): string[] {
-  const scratch = join(ROOT, `packages.partial-${process.pid}`);
-  const maps: string[] = [];
-  try {
-    for (const [name, { revision }] of Object.entries(PACKAGES)) {
-      const dir = join(scratch, name);
-      mkdirSync(dir, { recursive: true });
-      untar(join(DOWNLOADS, containerName(name, revision)), dir);
-      const entry = join(dir, "tlpkg", "tlpobj", `${name}.tlpobj`);
-      const pkg = existsSync(entry)
-        ? parseDatabase(readFileSync(entry, "utf8")).get(name)
-        : undefined;
-      if (!pkg) throw new Error(`the container of ${name} holds no tlpkg/tlpobj/${name}.tlpobj`);
-      if (!pkg.relocated)
-        throw new Error(
-          `${name} is not relocated, so its container may install outside texmf-dist`,
-        );
-      const held = filesUnder(dir).filter((file) => !file.startsWith("tlpkg/"));
-      let kept = 0;
-      for (const file of held) {
-        const path = `/texlive/texmf-dist/${file}`;
-        if (files[path] !== undefined || files[`/texmf/texmf-dist/${file}`] !== undefined) {
-          kept++;
-          continue;
-        }
-        const target = join(staging, path);
-        mkdirSync(dirname(target), { recursive: true });
-        renameSync(join(dir, file), target);
-        files[path] = statSync(target).size;
-      }
-      if (kept > 0) console.log(`  ${name}: the bundles' copy of ${kept} of its files stays`);
-      const holds = new Set(held.map((file) => `texmf-dist/${file}`));
-      const lacking = pkg.runfiles.filter((runfile) => !holds.has(runfile));
-      if (lacking.length > 0)
-        console.warn(`  ${name}: its container lacks ${lacking.join(", ")}, which it lists`);
-      for (const map of pkg.maps) {
-        const file = held.find((path) => path.startsWith("fonts/map/") && basename(path) === map);
-        if (file) maps.push(`/texlive/texmf-dist/${file}`);
-        else console.warn(`  ${name}: adds ${map} to the font maps, but its container lacks it`);
-      }
-    }
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-  return maps;
-}
-
-/**
  * Merge the font maps the added packages name and those of the Ubuntu tree into the copied tree's
  * `pdftex.map`, and give the manifest its new size. This is what `updmap` does for a map it is
  * told about; the packages and the bundles were unpacked over TeX Live's tree without it, so
@@ -766,7 +679,16 @@ async function build(from: string | undefined) {
   let files: Record<string, number>;
   try {
     files = copyOut(await mount(), staging);
-    mergeMaps(staging, files, unpackPackages(staging, files));
+    const { maps } = unpackPackages(
+      {
+        packages: PACKAGES,
+        containers: DOWNLOADS,
+        scratch: join(ROOT, `packages.partial-${process.pid}`),
+        tree: staging,
+      },
+      files,
+    );
+    mergeMaps(staging, files, maps);
     files = byPath(files);
     const missing = REQUIRED.filter((path) => files[path] === undefined);
     if (missing.length) throw new Error(`the TeX Live tree lacks ${missing.join(", ")}`);
