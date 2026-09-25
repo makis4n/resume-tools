@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DviPage, PageItem } from "./dvi";
-import { alignGlyphs, collectFields } from "./fields";
+import { alignField, alignGlyphs, collectFields } from "./fields";
 
 const glyph = (code: number): PageItem => ({ kind: "glyph", font: 0, code, h: 0, v: 0, width: 1 });
 const special = (text: string): PageItem => ({ kind: "special", h: 0, v: 0, text });
@@ -141,12 +141,31 @@ describe("collectFields", () => {
   });
 });
 
-describe("alignGlyphs", () => {
-  const fieldOf = (glyphTexts: (string | undefined)[]) => ({
-    id: "f",
-    glyphs: glyphTexts.map((text, i) => ({ item: i, text, offset: -1 })),
+const fieldOf = (glyphTexts: (string | undefined)[]) => ({
+  id: "f",
+  glyphs: glyphTexts.map((text, i) => ({ item: i, text, offset: -1 })),
+});
+
+describe("alignField", () => {
+  it("says where in the text the glyphs end: past the last one matched", () => {
+    expect(alignField(fieldOf([..."Adaat"]), "Ada at")).toEqual({ unmatched: 0, covered: 6 });
+    // What sets no glyph after the last one is left past it, for the harness to look at.
+    const trailing = alignField(fieldOf([..."report"]), "report \u{1f4c8}  ");
+    expect(trailing).toEqual({ unmatched: 0, covered: 6 });
+    // A field cut short: every glyph matches, and the text goes on past them.
+    const cut = alignField(fieldOf([..."Setthe"]), "Set the report");
+    expect(cut).toEqual({ unmatched: 0, covered: 7 });
+    expect(alignField(fieldOf([]), "Set")).toEqual({ unmatched: 0, covered: 0 });
   });
 
+  it("counts what alignGlyphs counts", () => {
+    const f = fieldOf(["a", undefined, "b"]);
+    expect(alignField(f, "ab")).toEqual({ unmatched: 1, covered: 2 });
+    expect(alignGlyphs(fieldOf(["a", undefined, "b"]), "ab")).toBe(1);
+  });
+});
+
+describe("alignGlyphs", () => {
   it("skips the spaces TeX turned into moves", () => {
     const f = fieldOf([..."Adaat"]);
     expect(alignGlyphs(f, "Ada at")).toBe(0);

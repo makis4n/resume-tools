@@ -26,6 +26,9 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # The job takes about two minutes. A compile that never ends cannot be stopped from inside
+    # the test run, since the engine's call is synchronous, so the job's limit is what stops it.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

@@ -105,7 +105,9 @@ begin marker carrying the paragraph TeX sets the field in.
   editable one. A render in a PDF string, such as `pdfauthor`, or in a box `\settowidth` only
   measures never reaches the page, so a field set there first is found where the page shows it;
   and a later copy, such as the second of a link a header sets through both `{{contacts}}` and
-  `{{links}}`, sets glyphs that belong to no field. The page reads the markers case-insensitively,
+  `{{links}}`, sets glyphs that belong to no field, and the validation harness (item 7) reports
+  a package that marks a field more than once, since only the first copy is editable and a copy
+  in a running head would come first. The page reads the markers case-insensitively,
   since a template may set a field in `\MakeUppercase`, which uppercases its markers too, and ids
   are lowercase (decision 0006).
 - **Formats** are named `<id cut to 55 characters>-<8 hex digits>`, the digits the FNV-1a 32-bit

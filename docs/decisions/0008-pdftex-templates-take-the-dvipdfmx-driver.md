@@ -51,4 +51,7 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
 - Bookmarks off removes the one cost the review of item 6 found growing faster than a field's
   length, but nothing yet bounds a compile: the worker runs requests one at a time with no
   timeout, so a compile that runs long, for any reason, holds up every edit after it. Item 8,
-  whose scheduler keeps one compile in flight, has to give it a time limit.
+  whose scheduler keeps one compile in flight, has to give it a time limit. The validation
+  harness cannot bound a compile either, since the engine's call is synchronous: CI bounds it
+  with the check job's time limit, and milestone 3's probe step, which runs the harness in the
+  browser, has to run it in a worker it can terminate.

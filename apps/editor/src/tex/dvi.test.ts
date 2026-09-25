@@ -82,6 +82,31 @@ describe("parseDvi", () => {
   });
 });
 
+describe("parseDvi on a long special", () => {
+  const u32 = (n: number) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+
+  it("reads a special of 300,000 bytes, as one character for each byte", () => {
+    // pdfTeX allows a special as long as its string pool, megabytes, and passing a call one
+    // argument a byte overflows the stack at about 125,000. Every byte value is there, so a
+    // decoder that is not ISO-8859-1, as TextDecoder's "latin1" is not, shows too.
+    const bytes = Uint8Array.from({ length: 300_000 }, (_, i) => i % 256);
+    const head = [
+      ...[247, 2, ...u32(25_400_000), ...u32(473_628_672), ...u32(1_000), 0], // pre, no comment
+      ...[139, ...new Array<number>(44).fill(0)], // bop: ten counters and the previous bop
+      ...[242, ...u32(bytes.length)], // xxx4: the special's length, then its bytes
+    ];
+    const dvi = new Uint8Array(head.length + bytes.length + 1);
+    dvi.set(head);
+    dvi.set(bytes, head.length);
+    dvi[dvi.length - 1] = 140; // eop
+    const [special] = parseDvi(dvi, () => undefined).pages[0]?.items ?? [];
+    const text = special?.kind === "special" ? special.text : "";
+    expect(text).toHaveLength(bytes.length);
+    const expected = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+    expect(text === expected).toBe(true);
+  });
+});
+
 describe("parseDvi on XeTeX output", () => {
   const doc = parseDvi(fixture("hello.xdv"), () => undefined);
   const page = doc.pages[0];

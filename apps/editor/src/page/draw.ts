@@ -12,7 +12,7 @@ import {
   parseDvi,
   pointsPerUnit,
 } from "../tex/dvi";
-import { alignGlyphs, collectFields, type Field } from "../tex/fields";
+import { alignGlyphs, collectFields, type Field, type GlyphTextOf } from "../tex/fields";
 import { glyphText } from "../tex/glyphs";
 import { INCH, type PageSize, renderPage, US_LETTER } from "../tex/svg";
 import { scaleTfm } from "../tex/tfm";
@@ -97,6 +97,21 @@ export function glyphAt(glyphs: GlyphBox[], x: number, y: number): GlyphBox | un
   return undefined;
 }
 
+/**
+ * The text each glyph of a document stands for, which `collectFields` gives a field's glyphs:
+ * the name its font's outlines give its code, read by `glyphText`. `loaded` holds the fonts that
+ * loaded, by name; a glyph from any other font, or from one without outlines, has no text, and
+ * so matches no character of a field's text. The validation harness names glyphs with this too.
+ */
+export function glyphTextOf(doc: DviDocument, loaded: ReadonlyMap<string, PageFont>): GlyphTextOf {
+  return (item) => {
+    if (item.kind !== "glyph") return undefined;
+    const font = doc.fonts.get(item.font);
+    const name = font && loaded.get(font.name)?.outlines?.encoding[item.code];
+    return name ? glyphText(name) : undefined;
+  };
+}
+
 /** The box of every Type 1 glyph on a page, with its field, for each glyph the SVG draws. */
 function glyphBoxes(
   doc: DviDocument,
@@ -166,13 +181,7 @@ export async function drawPage(
   const page = doc.pages[pageIndex];
   if (!page) throw new Error(`the document has ${doc.pages.length} pages, not ${pageIndex + 1}`);
 
-  const textOf = (item: PageItem) => {
-    if (item.kind !== "glyph") return undefined;
-    const font = doc.fonts.get(item.font);
-    const name = font && loaded.get(font.name)?.outlines?.encoding[item.code];
-    return name ? glyphText(name) : undefined;
-  };
-  const fields = collectFields(page, textOf);
+  const fields = collectFields(page, glyphTextOf(doc, loaded));
   let unmatched = 0;
   for (const field of fields.values()) unmatched += alignGlyphs(field, texts.get(field.id) ?? "");
 

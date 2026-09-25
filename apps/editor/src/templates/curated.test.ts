@@ -4,16 +4,14 @@ import { Resume, SECTION_KINDS, SECTION_ROLES, type SectionRole } from "@resume-
 import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
-import type { CompileResult, EngineSession } from "../engine/session";
+import type { EngineSession } from "../engine/session";
 import { type DrawnPage, drawPage } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
-import { alignGlyphs, MARKER_BEGIN } from "../tex/fields";
 import { CURATED, curated } from "./curated";
-import { type GeneratedBody, generateBody, generateFormat } from "./generate";
+import { generateBody, generateFormat } from "./generate";
 import { type ByRole, defaultControls, type TemplatePackage } from "./package";
-import { PARAGRAPH_MARKER } from "./prelude";
 
 /** A snippet for a section's role: the role's own variant, or the default. */
 const forRole = (value: ByRole<string>, role: SectionRole) =>
@@ -111,6 +109,16 @@ describe("CURATED", () => {
     }
   });
 
+  it("marks every field its sample fills in, so the harness finds each on the page", () => {
+    // The harness checks that every field the body marks reaches the page, but a snippet that
+    // left a slot out would mark nothing to check. Each sample fills only fields its template
+    // shows, so the body must mark all of them.
+    for (const [id, { package: pkg, sample }] of CURATED) {
+      const { texts } = generateBody(pkg, sample, defaultControls(pkg));
+      expect([...texts.keys()].sort(), id).toEqual(filledFields(sample).sort());
+    }
+  });
+
   it("refuses an id no curated package has", () => {
     expect(() => curated("nope")).toThrow("no curated template has the id nope");
   });
@@ -158,6 +166,11 @@ function linksOf(items: PageItem[]) {
 
 const INCH = 72.27;
 
+// What every package must do with its sample, the validation harness checks for each curated
+// package (src/validate/harness.test.ts): it compiles to one page and converges, every field it
+// marks is on the page with glyphs that align with its text and a paragraph special after its
+// begin marker, and every font can be drawn. What follows is Jake's own: its entries on
+// upstream's lines, its links, its controls, and edits that must still compile.
 // Needs `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
 describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the engine", () => {
   const { package: pkg, sample } = curated("jake");
@@ -165,9 +178,6 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
   const format = generateFormat(pkg, values);
   let session: EngineSession;
   let fonts: FontLibrary;
-  let body: GeneratedBody;
-  let compiled: CompileResult;
-  let warm: CompileResult;
   let drawn: DrawnPage;
   let items: PageItem[];
 
@@ -189,53 +199,11 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );
-    body = generateBody(pkg, sample, values);
-    ({ result: compiled, page: drawn } = await compileAndDraw(body.latex, body.texts, "jake"));
-    // The same body again, as a document that compiled before: its auxiliary files are there.
-    warm = session.compile(pkg.engine, format.name, body.latex, { job: "jake", maxPasses: 3 });
-    items = parseDvi(compiled.output as Uint8Array, () => undefined).pages[0]?.items ?? [];
+    const body = generateBody(pkg, sample, values);
+    const { result, page } = await compileAndDraw(body.latex, body.texts, "jake");
+    drawn = page;
+    items = parseDvi(result.output as Uint8Array, () => undefined).pages[0]?.items ?? [];
   }, 60_000);
-
-  it("compiles the sample to one page, with every font drawn and no error in the log", () => {
-    expect(compiled.ok).toBe(true);
-    expect(compiled.pages).toBe(1);
-    expect(drawn.pageCount).toBe(1);
-    expect(drawn.missingFonts).toEqual(new Map());
-    expect(compiled.log).not.toMatch(/^! /m);
-    expect(compiled.log).not.toContain("Undefined control sequence");
-  });
-
-  it("marks every field the sample fills in, and the page finds each with glyphs", () => {
-    expect([...body.texts.keys()].sort()).toEqual(filledFields(sample).sort());
-    const begun = items.flatMap((item) =>
-      item.kind === "special" && item.text.startsWith(MARKER_BEGIN)
-        ? [item.text.slice(MARKER_BEGIN.length)]
-        : [],
-    );
-    expect(begun.sort()).toEqual([...body.texts.keys()].sort());
-    for (const id of body.texts.keys())
-      expect(drawn.fields.get(id)?.glyphs.length, id).toBeGreaterThan(0);
-  });
-
-  it("matches every glyph to its own character of its field's text", () => {
-    for (const field of drawn.fields.values()) {
-      const text = body.texts.get(field.id) ?? "";
-      expect(alignGlyphs(field, text), field.id).toBe(0);
-      for (const glyph of field.glyphs) {
-        if (glyph.inserted) {
-          expect(glyph.text).toBe("-");
-          continue;
-        }
-        // OT1 sets an en dash as the ligature of two hyphens.
-        const spellings = glyph.text === "--" ? ["--", "–"] : [glyph.text ?? "?"];
-        expect(
-          spellings.some((spelling) => text.startsWith(spelling, glyph.offset)),
-          `${field.id} at ${glyph.offset}: glyph "${glyph.text}"`,
-        ).toBe(true);
-      }
-    }
-    expect(drawn.unmatched).toBe(0);
-  });
 
   it("sets an entry's fields where upstream does, by the section's role", () => {
     const baseline = (id: string) => drawn.glyphs.find((glyph) => glyph.field === id)?.y;
@@ -250,28 +218,6 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     // A project: the name, what it is built with and the dates on one line.
     expect(baseline("marginalia.subtitle")).toBe(baseline("marginalia.title"));
     expect(baseline("marginalia.dates")).toBe(baseline("marginalia.title"));
-  });
-
-  it("writes each field's paragraph special right after its begin marker", () => {
-    let fields = 0;
-    items.forEach((item, index) => {
-      if (item.kind !== "special" || !item.text.startsWith(MARKER_BEGIN)) return;
-      fields++;
-      const id = item.text.slice(MARKER_BEGIN.length);
-      const next = items[index + 1];
-      expect(
-        next?.kind === "special" && next.text.startsWith(`${PARAGRAPH_MARKER}${id}:`),
-        id,
-      ).toBe(true);
-    });
-    expect(fields).toBe(body.texts.size);
-  });
-
-  it("converges in two passes, so a second compile of the same body takes one", () => {
-    expect(compiled.passes).toHaveLength(2);
-    expect(warm.ok).toBe(true);
-    expect(warm.passes).toHaveLength(1);
-    expect(warm.log).not.toMatch(/^! /m);
   });
 
   it("links the email and the website through hyperref's dvipdfmx driver", () => {

@@ -83,7 +83,7 @@ end to end before the other two templates, so that the editing loop is proven on
 6. [x] **Port Jake's Resume.** Confirm the MIT licence, keep the attribution, and change only what
    the loop needs: hyperref's dvipdfmx driver, and geometry for page size and margins. The sample
    resume is invented.
-7. [ ] **Run the validation harness in CI.** For each curated package, compile the sample in Node
+7. [x] **Run the validation harness in CI.** For each curated package, compile the sample in Node
    and check that two passes converge, that every field keeps its markers and its glyphs align
    with its text, and that it fits on one page, since decision 0006 declares no page count. The
    PDF and the controls join the harness when they land. CI already builds `.engine/` from a
