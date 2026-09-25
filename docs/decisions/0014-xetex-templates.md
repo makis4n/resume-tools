@@ -54,8 +54,16 @@ one Font Awesome icon in the header) stands in for it in the tests.
   its own, with its index in the run (`FieldGlyph.glyph`) and its own `data-field` and
   `data-offset`, so that a click lands on its character. The field's layout records the native
   font, its file and size, as the field's font.
-- **A native glyph's text.** The character the file's character map gives the glyph, the lowest
-  when it gives several. A ligature of the `liga` feature reads as its components, which is what
+- **A native glyph's text.** The character the file's character map gives the glyph. A map may
+  give one glyph several, as Source Sans Pro's gives its apostrophe U+2019 and U+02BC, its opening
+  quote U+2018 and U+02BB, its micro sign U+00B5 and U+03BC, and its hyphen U+002D, U+00AD, U+2010
+  and U+2011: the glyph then stands for each, and the aligner takes any of them as its spelling.
+  The one it reads as first is the one the generator's text likelier holds: ASCII, then any other
+  character, then a spacing modifier letter such as U+02BC, then what the text never holds, a
+  character composition replaces, such as the ohm sign, or one the generator leaves out, such as
+  the soft hyphen; the lowest of equals. So a typed hyphen reads as U+002D, and a hyphen the
+  aligner cannot match is the one TeX inserted at a line break only if it stands for U+002D, the
+  font's `\hyphenchar`. A ligature of the `liga` feature reads as its components, which is what
   a resume's text holds: Roboto's `fi` is also U+FB01 in its map, and a ligature the map reaches
   only through a character that decomposes to its components reads as them. A glyph neither
   reaches, such as a small capital that `+smcp` substitutes, has no text. Native fonts set

@@ -282,8 +282,9 @@ export function nativeProblem(
  * the combining mark `collectFields` composes with the letter under it. `loaded` holds the fonts
  * that loaded, by name; a glyph from any other font, or from one without outlines, has no text,
  * and so matches no character of a field's text. A glyph of a native run reads as its file says
- * (`NativeFontFile.textOf`), when the file, by its name in `natives`, loaded. The validation
- * harness names glyphs with this.
+ * (`NativeFontFile.textOf`), when the file, by its name in `natives`, loaded, and stands for the
+ * file's other characters for it as well (`alternatives`). The validation harness names glyphs
+ * with this.
  */
 export function glyphTextOf(
   doc: DviDocument,
@@ -294,17 +295,20 @@ export function glyphTextOf(
     const font = item.kind === "glyph" ? doc.fonts.get(item.font) : undefined;
     return font && loaded.get(font.name);
   };
-  const textOf = (item: PageItem, glyph?: number) => {
-    if (item.kind === "glyph") return fontOf(item)?.text(item.code);
-    if (item.kind !== "native" || glyph === undefined) return undefined;
+  /** Every text a native run's glyph stands for, as its file reads it. */
+  const nativeTexts = (item: PageItem, glyph?: number): readonly string[] => {
+    if (item.kind !== "native" || glyph === undefined) return [];
     const run = item.glyphs[glyph];
-    return run && fileOf(doc.nativeFonts.get(item.font), natives)?.textOf(run.id);
+    return (run && fileOf(doc.nativeFonts.get(item.font), natives)?.textsOf(run.id)) ?? [];
   };
+  const textOf = (item: PageItem, glyph?: number) =>
+    item.kind === "glyph" ? fontOf(item)?.text(item.code) : nativeTexts(item, glyph)[0];
   const accent = (item: PageItem) => {
     const name = item.kind === "glyph" ? fontOf(item)?.outlines?.encoding[item.code] : undefined;
     return name === undefined ? undefined : accentMark(name);
   };
-  return Object.assign(textOf, { accent });
+  const alternatives = (item: PageItem, glyph?: number) => nativeTexts(item, glyph).slice(1);
+  return Object.assign(textOf, { accent, alternatives });
 }
 
 /**

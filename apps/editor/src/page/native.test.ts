@@ -20,7 +20,10 @@ function box(width: number): Path {
 /**
  * An invented OpenType font, written by opentype.js: a space; an f and an i, and their ligature,
  * which its `liga` feature makes of them and its character map also gives U+FB01 ﬁ, as Roboto's
- * does; an a the map gives two characters; a small capital a nothing reaches; and a hyphen.
+ * does; an a the map gives two characters; a small capital a nothing reaches; a hyphen the map
+ * also gives the soft hyphen, U+2010 and U+2011, an apostrophe it also gives U+02BC ʼ, and a
+ * micro sign it also gives Greek mu, as Source Sans's map does; and an Omega it gives the ohm sign
+ * too, as Roboto's does.
  */
 function inventedFont(): Uint8Array {
   const glyphs = [
@@ -32,6 +35,15 @@ function inventedFont(): Uint8Array {
     new Glyph({ name: "a", unicodes: [0xaa, 0x61], advanceWidth: 480, path: box(480) }),
     new Glyph({ name: "a.sc", advanceWidth: 460, path: box(460) }),
     new Glyph({ name: "hyphen", unicodes: [0x2d], advanceWidth: 330, path: box(330) }),
+    new Glyph({
+      name: "hyphentwo",
+      unicodes: [0x2011, 0xad, 0x2010, 0x2d0],
+      advanceWidth: 330,
+      path: box(330),
+    }),
+    new Glyph({ name: "quoteright", unicodes: [0x2bc, 0x2019], advanceWidth: 200, path: box(200) }),
+    new Glyph({ name: "mu", unicodes: [0x3bc, 0xb5], advanceWidth: 520, path: box(520) }),
+    new Glyph({ name: "Omega", unicodes: [0x2126, 0x3a9], advanceWidth: 700, path: box(700) }),
   ];
   const font = new Font({
     familyName: "Invented",
@@ -60,11 +72,26 @@ describe("parseNativeFont on an invented font", () => {
     expect(file.boxOf(1)).toBeUndefined();
   });
 
-  it("reads a glyph as the lowest character the character map gives it", () => {
-    // The a is U+0061 and U+00AA ª: it reads as the a.
-    expect(file.textOf(5)).toBe("a");
+  it("reads a glyph as the character the character map gives it", () => {
     expect(file.textOf(2)).toBe("f");
     expect(file.textOf(7)).toBe("-");
+    expect(file.textsOf(2)).toEqual(["f"]);
+  });
+
+  it("reads a glyph the map gives several characters as each, the one a text likelier holds first", () => {
+    // ASCII first: the a is U+0061 and U+00AA ª.
+    expect(file.textsOf(5)).toEqual(["a", "ª"]);
+    // A spacing modifier letter last but for what a text never holds: U+02D0 ː after the hyphens,
+    // and the soft hyphen, which the generator leaves out, after it.
+    expect(file.textOf(8)).toBe("\u{2010}");
+    expect(file.textsOf(8)).toEqual(["\u{2010}", "\u{2011}", "\u{2d0}", "\u{ad}"]);
+    // General punctuation before a spacing modifier letter, as tex-text curls the apostrophe.
+    expect(file.textOf(9)).toBe("\u{2019}");
+    expect(file.textsOf(9)).toEqual(["\u{2019}", "\u{2bc}"]);
+    // The micro sign, which a keyboard types, before Greek mu, lowest first.
+    expect(file.textsOf(10)).toEqual(["\u{b5}", "\u{3bc}"]);
+    // A character composition replaces, as the ohm sign by Omega, last: the text is composed.
+    expect(file.textsOf(11)).toEqual(["\u{3a9}", "\u{2126}"]);
   });
 
   it("reads a ligature as its components, though the character map gives it U+FB01", () => {
@@ -74,8 +101,10 @@ describe("parseNativeFont on an invented font", () => {
 
   it("gives a glyph nothing reaches no text, and one past the font's glyphs nothing at all", () => {
     expect(file.textOf(6)).toBeUndefined();
-    for (const glyph of [8, 1000, -1, 1.5]) {
+    expect(file.textsOf(6)).toEqual([]);
+    for (const glyph of [12, 1000, -1, 1.5]) {
       expect(file.textOf(glyph), String(glyph)).toBeUndefined();
+      expect(file.textsOf(glyph), String(glyph)).toEqual([]);
       expect(file.advanceOf(glyph), String(glyph)).toBeUndefined();
       expect(file.pathOf(glyph), String(glyph)).toBeUndefined();
     }

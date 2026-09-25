@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Resume } from "@resume-tools/resume-model";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
@@ -755,6 +756,43 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
         expect(hit, field.id).toBe(middle);
       }
     });
+
+    /** The invented template's page for another resume, compiled in a job of its own. */
+    const drawnFor = async (resume: Resume, job: string) => {
+      const format = generateFormat(pkg, values);
+      const body = generateBody(pkg, resume, values);
+      const compiled = session.compile("xetex", format.name, body.latex, { job });
+      if (!compiled.output) throw new Error(compiled.error);
+      return { page: await drawPage(compiled.output, fonts, body.texts), texts: body.texts };
+    };
+
+    it("reads a Source Sans glyph its map gives several characters as the one the text holds", async () => {
+      // The headings are Source Sans Pro bold, whose map gives one glyph U+2019 and U+02BC, which
+      // tex-text makes of every ', one U+2018 and U+02BB, which it makes of `, one U+00B5 and
+      // U+03BC, and one U+002D, U+00AD, U+2010 and U+2011.
+      const resume = structuredClone(sample);
+      const titles = [
+        "Maker's Summary",
+        "`Chosen' Work in 5 \u{b5}m and 5 \u{3bc}m",
+        "Non\u{2011}stop Skills",
+      ];
+      resume.sections.forEach((section, i) => {
+        section.title = titles[i] ?? section.title;
+      });
+      const { page, texts } = await drawnFor(resume, "aliases");
+      expect(page.missingFonts).toEqual(new Map());
+      expect(page.unmatched).toBe(0);
+      const glyphAtOffset = (id: string, spelling: string) =>
+        page.fields.get(id)?.glyphs.find((g) => g.offset === texts.get(id)?.indexOf(spelling));
+      expect(glyphAtOffset("summary.title", "'s")?.text).toBe("\u{2019}");
+      expect(glyphAtOffset("work.title", "`")?.text).toBe("\u{2018}");
+      expect(glyphAtOffset("work.title", "\u{b5}")?.text).toBe("\u{b5}");
+      expect(glyphAtOffset("work.title", "\u{3bc}")?.text).toBe("\u{b5}");
+      // U+2011 is the character the text holds, not a hyphen TeX inserted before it.
+      const hyphen = glyphAtOffset("skills.title", "\u{2011}");
+      expect(hyphen?.text).toBe("-");
+      expect(hyphen?.inserted).toBeUndefined();
+    }, 30_000);
 
     it("lays each field out in the native font and size of its first glyphs", () => {
       const layout = (id: string) => xetex.fields.get(id)?.layout;

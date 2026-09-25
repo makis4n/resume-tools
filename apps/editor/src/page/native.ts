@@ -5,12 +5,14 @@
  * it by the outline's box, and reads the character it stands for from the file's character map;
  * the overlay measures a character by its glyph's advance, and sets its rows in the file itself.
  *
- * A glyph's text is the character the character map gives it, the lowest when it gives several;
- * a ligature of the `liga` feature, such as the `fi` XeTeX's shaping makes of an f and an i, reads
- * as its components, and so does a ligature the character map reaches only through a character
- * that stands for those letters, as Roboto's `fi` is also U+FB01 ﬁ, which a resume's text never
- * holds where the page shows the ligature. A glyph reached neither way, such as a small capital,
- * has no text.
+ * A glyph's text is the character the character map gives it. A map may give one glyph several,
+ * as Source Sans's gives its apostrophe U+2019 and U+02BC, and its hyphen U+002D, U+00AD, U+2010
+ * and U+2011: the glyph then stands for each (`textsOf`), the one a field's text likelier holds
+ * first (`likelihood`), and the aligner takes any of them. A ligature of the `liga` feature, such
+ * as the `fi` XeTeX's shaping makes of an f and an i, reads as its components, and so does a
+ * ligature the character map reaches only through a character that stands for those letters, as
+ * Roboto's `fi` is also U+FB01 ﬁ, which a resume's text never holds where the page shows the
+ * ligature. A glyph reached neither way, such as a small capital, has no text.
  *
  * A file is read whole, so it is bounded as decision 0009 bounds a virtual font: a file of more
  * than 32 MB, or with more than 65,535 glyphs, is refused. Every file comes from the TeX Live tree,
@@ -18,6 +20,7 @@
  */
 
 import { type Font, parse } from "opentype.js";
+import { INVISIBLE } from "../tex/fields";
 import type { NativeOutlines } from "../tex/svg";
 
 /** The largest font file the page reads, in bytes. */
@@ -39,8 +42,17 @@ export interface NativeFontFile extends NativeOutlines {
   pathOf: (glyph: number) => string | undefined;
   /** The box of the glyph's outline, in font units, when `pathOf` gives one. */
   boxOf: (glyph: number) => NativeBox | undefined;
-  /** The character or characters the glyph stands for, or undefined when nothing says. */
+  /**
+   * The character or characters the glyph stands for, or undefined when nothing says: the first
+   * of `textsOf`.
+   */
   textOf: (glyph: number) => string | undefined;
+  /**
+   * Every text the glyph stands for, the one a field's text likelier holds first: each character
+   * the character map gives it (`likelihood`), or a ligature's components. Empty when nothing
+   * says.
+   */
+  textsOf: (glyph: number) => readonly string[];
   /** The glyph's advance in font units, or undefined past the file's glyphs. */
   advanceOf: (glyph: number) => number | undefined;
   /** The glyph the character map gives a character, or undefined when it gives none. */
@@ -141,31 +153,58 @@ function ligaturesOf(font: Font): { glyph: number; components: number[] }[] {
   return ligatures;
 }
 
+/** One of what the generator leaves out of a text: a control, a format character and the like. */
+const LEFT_OUT = new RegExp(INVISIBLE.source, "u");
+
 /**
- * Each glyph's text: the character map's lowest character for it, then the `liga` ligatures'
- * components, a pass for each level a ligature may be made of others, up to `LIGATURE_DEPTH`. A
- * ligature takes its components' text when it has none, or when the character map reaches it only
- * through a character that decomposes to that text, as U+FB01 ﬁ decomposes to fi.
+ * How unlikely a field's text is to hold a character, among those the character map gives one
+ * glyph: 0 for ASCII, which the ASCII hyphen of Source Sans's four is; 1 for any other, as U+2019
+ * ’ and the micro sign, which a keyboard types; 2 for a spacing modifier letter, as U+02BC ʼ, which
+ * a text holds rarely beside U+2019; and 3 for what the generator's text never holds: a character
+ * composition replaces, as it replaces the ohm sign with Omega, since the text is composed, or one
+ * it leaves out, as the soft hyphen. Characters equally likely go lowest first.
  */
-function textsOf(font: Font, cmap: Readonly<Record<number, number>>): Map<number, string> {
-  const lowest = new Map<number, number>();
+function likelihood(point: number): number {
+  const char = String.fromCodePoint(point);
+  if (char.normalize("NFC") !== char || LEFT_OUT.test(char)) return 3;
+  if (point < 0x80) return 0;
+  return point >= 0x2b0 && point <= 0x2ff ? 2 : 1;
+}
+
+/**
+ * Each glyph's texts: every character the character map gives it, the likeliest first, then the
+ * `liga` ligatures' components, a pass for each level a ligature may be made of others, up to
+ * `LIGATURE_DEPTH`, each component read as its first text. A ligature takes its components' text
+ * when it has none, or when the character map reaches it only through a character that decomposes
+ * to that text, as U+FB01 ﬁ decomposes to fi.
+ */
+function glyphTexts(font: Font, cmap: Readonly<Record<number, number>>): Map<number, string[]> {
+  const points = new Map<number, number[]>();
   for (const [code, glyph] of Object.entries(cmap)) {
-    const point = Number(code);
-    const had = lowest.get(glyph);
-    if (glyph > 0 && (had === undefined || point < had)) lowest.set(glyph, point);
+    if (!(glyph > 0)) continue;
+    const had = points.get(glyph);
+    if (had) had.push(Number(code));
+    else points.set(glyph, [Number(code)]);
   }
-  const texts = new Map([...lowest].map(([glyph, point]) => [glyph, String.fromCodePoint(point)]));
+  const texts = new Map<number, string[]>();
+  for (const [glyph, codes] of points) {
+    codes.sort((a, b) => likelihood(a) - likelihood(b) || a - b);
+    texts.set(
+      glyph,
+      codes.map((point) => String.fromCodePoint(point)),
+    );
+  }
   const ligatures = ligaturesOf(font);
   for (let pass = 0; pass < LIGATURE_DEPTH; pass++) {
     let changed = false;
     for (const { glyph, components } of ligatures) {
-      const parts = components.map((component) => texts.get(component));
+      const parts = components.map((component) => texts.get(component)?.[0]);
       if (parts.some((part) => part === undefined)) continue;
       const joined = parts.join("");
-      const had = texts.get(glyph);
+      const had = texts.get(glyph)?.[0];
       if (had === joined) continue;
       if (had === undefined || had.normalize("NFKD") === joined) {
-        texts.set(glyph, joined);
+        texts.set(glyph, [joined]);
         changed = true;
       }
     }
@@ -228,7 +267,11 @@ export function parseNativeFont(bytes: Uint8Array): NativeFontFile {
     }
     return outlines.get(glyph);
   };
-  let texts: Map<number, string> | undefined;
+  let texts: Map<number, string[]> | undefined;
+  const textsOf = (glyph: number): readonly string[] => {
+    texts ??= glyphTexts(font, map);
+    return texts.get(glyph) ?? [];
+  };
   const space = glyphFor(" ");
   const angle = Number(font.tables.post?.italicAngle ?? 0);
   const slant = Number.isFinite(angle) ? -Math.tan((angle * Math.PI) / 180) : 0;
@@ -236,10 +279,8 @@ export function parseNativeFont(bytes: Uint8Array): NativeFontFile {
     unitsPerEm,
     pathOf: (glyph) => outline(glyph)?.d,
     boxOf: (glyph) => outline(glyph)?.box,
-    textOf: (glyph) => {
-      texts ??= textsOf(font, map);
-      return texts.get(glyph);
-    },
+    textOf: (glyph) => textsOf(glyph)[0],
+    textsOf,
     advanceOf,
     glyphFor,
     spaceAdvance: (space === undefined ? undefined : advanceOf(space)) ?? 0,

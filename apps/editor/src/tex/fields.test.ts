@@ -2,7 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { bound, fastest } from "../test/timing";
 import { type DviPage, type PageItem, parseDvi } from "./dvi";
-import { alignField, alignGlyphs, collectFields, type GlyphTextOf } from "./fields";
+import {
+  alignField,
+  alignGlyphs,
+  collectFields,
+  type FieldGlyph,
+  type GlyphTextOf,
+} from "./fields";
 import { accentMark, glyphText } from "./glyphs";
 import { parseTfm, scaleTfm } from "./tfm";
 import { parseType1 } from "./type1";
@@ -193,6 +199,22 @@ describe("collectFields with XeTeX's native runs", () => {
     const field = collectFields(page([special("rt:b:f"), acute, run("e")]), named).get("f");
     expect(field?.glyphs.map((g) => g.text)).toEqual(["´", "e"]);
   });
+
+  it("keeps every character a glyph's font reaches it from, for the aligner", () => {
+    // As Source Sans's map gives its apostrophe U+2019 and U+02BC.
+    const aliased: GlyphTextOf = Object.assign(nativeText, {
+      alternatives: (item: PageItem, glyph?: number) =>
+        item.kind === "native" && glyph !== undefined && item.glyphs[glyph]?.id === 0x2019
+          ? ["\u{2bc}"]
+          : undefined,
+    });
+    const field = collectFields(page([special("rt:b:f"), run("a\u{2019}s")]), aliased).get("f");
+    expect(field?.glyphs.map((g) => [g.text, g.alternatives])).toEqual([
+      ["a", undefined],
+      ["\u{2019}", ["\u{2bc}"]],
+      ["s", undefined],
+    ]);
+  });
 });
 
 describe("collectFields with accents", () => {
@@ -338,7 +360,20 @@ describe("collectFields with accents", () => {
 
 const fieldOf = (glyphTexts: (string | undefined)[]) => ({
   id: "f",
-  glyphs: glyphTexts.map((text, i) => ({ item: i, text, offset: -1 })),
+  glyphs: glyphTexts.map((text, i) => ({ item: i, text, offset: -1 })) as FieldGlyph[],
+});
+
+/** A field of one glyph per text, each glyph standing for the characters its entry lists. */
+const aliasedFieldOf = (glyphTexts: string[][]) => ({
+  id: "f",
+  glyphs: glyphTexts.map(
+    ([text, ...alternatives], i): FieldGlyph => ({
+      item: i,
+      text,
+      ...(alternatives.length > 0 ? { alternatives } : {}),
+      offset: -1,
+    }),
+  ),
 });
 
 describe("alignField", () => {
@@ -455,6 +490,35 @@ describe("alignGlyphs", () => {
     const typed = fieldOf(["\u{2019}", "\u{2013}"]);
     expect(alignGlyphs(typed, "\u{2019}\u{2013}")).toBe(0);
     expect(typed.glyphs.map((g) => g.offset)).toEqual([0, 1]);
+  });
+
+  it("matches a glyph to any character its font reaches it from", () => {
+    // Source Sans's apostrophe is U+2019 and U+02BC, and its micro sign U+00B5 and U+03BC.
+    const quote = ["\u{2019}", "\u{2bc}"];
+    const typed = aliasedFieldOf([["O"], quote, ["N"], quote, ["s"]]);
+    expect(alignGlyphs(typed, "O'N\u{2bc}s")).toBe(0);
+    expect(typed.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 4]);
+    const mu = ["\u{b5}", "\u{3bc}"];
+    const micro = aliasedFieldOf([["5"], mu, ["m"], ["5"], mu, ["m"]]);
+    expect(alignGlyphs(micro, "5 \u{b5}m 5 \u{3bc}m")).toBe(0);
+    expect(micro.glyphs.map((g) => g.offset)).toEqual([0, 2, 3, 5, 7, 8]);
+  });
+
+  it("takes a hyphen that is also U+2011 for the U+2011 a text holds, not for one TeX inserted", () => {
+    // Source Sans's hyphen is U+002D, U+2010, U+2011 and the soft hyphen.
+    const hyphen = ["-", "\u{2010}", "\u{2011}", "\u{ad}"];
+    const f = aliasedFieldOf([["N"], ["o"], ["n"], hyphen, ["s"], ["t"], ["o"], ["p"]]);
+    expect(alignGlyphs(f, "Non\u{2011}stop")).toBe(0);
+    expect(f.glyphs[3]?.offset).toBe(3);
+    expect(f.glyphs[3]?.inserted).toBeUndefined();
+    // Where the text holds nothing for it, it is the hyphen TeX inserted at a line break.
+    const broken = aliasedFieldOf([["t"], ["y"], ["p"], ["e"], hyphen, ["s"], ["e"], ["t"]]);
+    expect(alignGlyphs(broken, "typeset")).toBe(0);
+    expect(broken.glyphs[4]?.inserted).toBe(true);
+    // A glyph that is only U+2010 or U+2011 is not the hyphen TeX inserts, which is U+002D's.
+    const other = aliasedFieldOf([["t"], ["y"], ["p"], ["e"], ["\u{2010}", "\u{2011}"], ["s"]]);
+    expect(alignGlyphs(other, "types")).toBe(1);
+    expect(other.glyphs[4]?.inserted).toBeUndefined();
   });
 
   it("matches T1's one glyph for Ð and Đ to either", () => {

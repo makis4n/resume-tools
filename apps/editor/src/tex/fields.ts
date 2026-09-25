@@ -25,6 +25,12 @@ export interface FieldGlyph {
   items?: number[];
   /** The text this glyph stands for, e.g. "fi" for a ligature; undefined when unknown. */
   text: string | undefined;
+  /**
+   * What else the glyph stands for, when its font gives it several characters, as Source Sans
+   * sets U+2019 and U+02BC with one glyph (decision 0014): a native font's glyph only. The aligner
+   * takes any of them, and `text`, as the glyph's spelling.
+   */
+  alternatives?: readonly string[];
   /** Offset of the glyph's first character in the field's source text, once aligned. */
   offset: number;
   /** True for a hyphen TeX added at a line break, which has no source character. */
@@ -58,6 +64,11 @@ export interface GlyphTextOf {
    * `ACCENTS`), and undefined for any other item. Without it, no accent is paired with its letter.
    */
   accent?: (item: PageItem) => string | undefined;
+  /**
+   * What else a native run's glyph at index `glyph` stands for, past the text the call gives,
+   * when its font gives it several characters; undefined or empty when it gives one.
+   */
+  alternatives?: (item: PageItem, glyph?: number) => readonly string[] | undefined;
 }
 
 /** A text of one letter, which an accent before it may go over. */
@@ -101,8 +112,9 @@ const LETTER = /^\p{L}$/u;
  * validation harness both parse the DVI with them.
  *
  * A native run's glyphs are collected one by one, each with its index in the run and the text
- * `textOf` gives it, so that each is aligned with the text as a TeX font's glyph is. Native fonts
- * set accented letters whole, so none of their glyphs is paired with another.
+ * `textOf` gives it, and what else it stands for (`textOf.alternatives`), so that each is aligned
+ * with the text as a TeX font's glyph is. Native fonts set accented letters whole, so none of their
+ * glyphs is paired with another.
  */
 export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, Field> {
   const fields = new Map<string, Field>();
@@ -134,9 +146,17 @@ export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, F
     if (!field) return;
     if (item.kind === "native") {
       accents.delete(field);
-      item.glyphs.forEach((_, glyph) =>
-        field.glyphs.push({ item: index, glyph, text: textOf(item, glyph), offset: -1 }),
-      );
+      item.glyphs.forEach((_, glyph) => {
+        const text = textOf(item, glyph);
+        const alternatives = textOf.alternatives?.(item, glyph);
+        field.glyphs.push({
+          item: index,
+          glyph,
+          text,
+          ...(alternatives?.length ? { alternatives } : {}),
+          offset: -1,
+        });
+      });
       return;
     }
     const text = textOf(item);
@@ -190,11 +210,14 @@ export interface Alignment {
  * one ligature glyph, and may add a hyphen at a line break; and a field's text holds
  * characters that set no glyph at all, which the generator or TeX left out. The
  * alignment walks the text and the glyphs together. Before each glyph it skips
- * whitespace and the invisible characters. A glyph that does not match there is tried
- * past each character that may set no glyph where it stands, such as an emoji or a
- * letter of a script the fonts lack; an unmatched hyphen is a break TeX inserted; and
- * a glyph a few code units on resynchronises the walk. Returns the number of glyphs
- * that could not be matched, and how much of the text the glyphs account for.
+ * whitespace and the invisible characters. A glyph matches any spelling of its text or
+ * of what else it stands for (`FieldGlyph.alternatives`). A glyph that does not match
+ * there is tried past each character that may set no glyph where it stands, such as an
+ * emoji or a letter of a script the fonts lack; an unmatched hyphen is a break TeX
+ * inserted, which is U+002D's glyph, the font's `\hyphenchar`, so a glyph that stands
+ * for U+2010 or U+2011 and not for it is not one; and a glyph a few code units on
+ * resynchronises the walk. Returns the number of glyphs that could not be matched, and
+ * how much of the text the glyphs account for.
  *
  * A run of such characters is read once, however many glyphs fail to match in it: a
  * glyph whose spellings all begin with printable ASCII, which no character of the run
@@ -216,7 +239,8 @@ export function alignField(field: Field, text: string): Alignment {
       unmatched++;
       continue;
     }
-    const candidates = spellingsOf(g);
+    const own = glyph.alternatives === undefined ? [g] : [g, ...glyph.alternatives];
+    const candidates = own.length === 1 ? spellingsOf(g) : [...new Set(own.flatMap(spellingsOf))];
     const matchAt = (at: number) => candidates.find((c) => text.startsWith(c, at));
     // The spellings are tried where the walk stands first, so "–" still matches the "--"
     // glyph, and only then past the characters that may set no glyph.
@@ -241,15 +265,25 @@ export function alignField(field: Field, text: string): Alignment {
       glyph.offset = at;
       pos = at + match.length;
     } else if (g === "-") {
-      // A hyphen TeX inserted at a line break: it belongs to the character before it.
+      // A hyphen TeX inserted at a line break: it belongs to the character before it. A native
+      // glyph that stands for U+2010 or U+2011 as well reads as U+002D first; one that does not
+      // stand for U+002D is not the font's \hyphenchar, and reads as one of the others.
       glyph.offset = Math.max(0, pos - 1);
       glyph.inserted = true;
     } else {
       // Try to resynchronise a little further on; otherwise count it as unmatched.
-      const ahead = [1, 2, 3].find((k) => text.startsWith(g, pos + k));
+      let ahead: number | undefined;
+      let spelled = g;
+      for (const k of [1, 2, 3]) {
+        const found = own.find((each) => text.startsWith(each, pos + k));
+        if (found === undefined) continue;
+        ahead = k;
+        spelled = found;
+        break;
+      }
       if (ahead !== undefined) {
         glyph.offset = pos + ahead;
-        pos += ahead + g.length;
+        pos += ahead + spelled.length;
       } else {
         glyph.offset = pos;
         unmatched++;
