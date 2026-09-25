@@ -205,6 +205,9 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
         const slant = (font.slant ?? 0) / 65536;
         const matrix = `matrix(${s * extend} 0 ${s * slant} ${-s} 0 0)`;
         item.glyphs.forEach((g, glyph) => {
+          // Glyph 0 is the font's .notdef, which XeTeX sets for a character its font lacks: the
+          // page reads it as the character left out and draws nothing (decision 0014).
+          if (g.id === 0) return;
           const id = `n${item.font}-${g.id}`;
           if (!defs.has(id)) {
             let d: string | undefined;

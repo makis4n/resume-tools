@@ -398,6 +398,14 @@ export type TemplatePackage = z.infer<typeof TemplatePackage>;
 /** Read a package, or throw Zod's error, which lists every problem with its path. */
 export const parsePackage = (value: unknown): TemplatePackage => TemplatePackage.parse(value);
 
+/**
+ * Every font file a XeTeX package's `fonts` section names, each once, in the order the families
+ * and their shapes name them; none for a package without the section.
+ */
+export function fontFiles(pkg: TemplatePackage): string[] {
+  return [...new Set((pkg.fonts ?? []).flatMap(({ shapes }) => Object.values(shapes)))];
+}
+
 /** A document's choices for its package's controls. A choice left out is the package default. */
 export const ControlValues = z.strictObject({
   pageSize: PageSize.optional(),

@@ -30,7 +30,12 @@ import { nativeFileName } from "../page/native";
 import { CURATED } from "../templates/curated";
 import { isBlank } from "../templates/escape";
 import { generateBody, generateFormat } from "../templates/generate";
-import { ControlValues, defaultControls, type TemplatePackage } from "../templates/package";
+import {
+  ControlValues,
+  defaultControls,
+  fontFiles,
+  type TemplatePackage,
+} from "../templates/package";
 import { PARAGRAPH_MARKER } from "../templates/prelude";
 import { type DviDocument, type PageItem, parseDvi } from "../tex/dvi";
 import {
@@ -168,6 +173,10 @@ export async function validatePackage(
     findings: [],
   };
   const { findings } = report;
+  // What a XeTeX package's fonts can set, as the editor reads it, so that every body leaves out
+  // what they cannot, as the editor's does (decision 0014).
+  const files = fontFiles(pkg);
+  const covers = files.length === 0 ? undefined : await fonts.coverage(files);
 
   // The generator throws for what it cannot render, such as a body past MAX_BODY or a font the
   // package no longer lists, and the session for a run the engine cannot finish; either is a
@@ -188,7 +197,7 @@ export async function validatePackage(
   // that a template that needs a third as a new document shows.
   const compile = (latex: string) =>
     session.compile(pkg.engine, format.name, latex, { job, maxPasses: 3 });
-  const body = attempt(findings, "compile", () => generateBody(pkg, sample, chosen));
+  const body = attempt(findings, "compile", () => generateBody(pkg, sample, chosen, { covers }));
   if (body === undefined) return report;
   const first = attempt(findings, "compile", () => compile(body.latex));
   if (first === undefined) return report;
@@ -208,7 +217,7 @@ export async function validatePackage(
   findings.push(...checkConverges(first, output, second));
 
   const editedBody = attempt(findings, "edits", () =>
-    generateBody(pkg, editEverything(sample), chosen),
+    generateBody(pkg, editEverything(sample), chosen, { covers }),
   );
   const edited =
     editedBody === undefined
@@ -222,7 +231,7 @@ export async function validatePackage(
   // in the editor. So nothing is restored after them. The first reads the auxiliary files the
   // edit's compile wrote, so only a template whose page shows what they hold, which the edits
   // check reports, could pass a control that does nothing.
-  const controls = checkControls(session, pkg, sample, chosen, format.name, output, job);
+  const controls = checkControls(session, pkg, sample, chosen, format.name, output, job, covers);
   report.passes.push(...controls.passes);
   findings.push(...controls.findings);
 
@@ -413,6 +422,7 @@ function checkControls(
   format: string,
   output: Uint8Array,
   job: string,
+  covers: ((char: string) => boolean) | undefined,
 ): { findings: Finding[]; passes: number[] } {
   const findings: Finding[] = [];
   const passes: number[] = [];
@@ -427,7 +437,7 @@ function checkControls(
           continue;
         }
       }
-      const body = generateBody(pkg, sample, values);
+      const body = generateBody(pkg, sample, values, { covers });
       const result = session.compile(pkg.engine, probe.name, body.latex, { job, maxPasses: 3 });
       passes.push(...result.passes);
       const error = compileError(result);

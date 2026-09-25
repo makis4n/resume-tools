@@ -59,6 +59,19 @@ export interface NativeFontFile extends NativeOutlines {
   advanceOf: (glyph: number) => number | undefined;
   /** The glyph the character map gives a character, or undefined when it gives none. */
   glyphFor: (char: string) => number | undefined;
+  /**
+   * Whether XeTeX can set a character in the font rather than its `.notdef`, as HarfBuzz's
+   * normalisation sets it: the character map gives it a glyph, or it decomposes to a character the
+   * font covers and a mark the map gives a glyph, which HarfBuzz sets in its place, as Roboto sets
+   * ṛ as r and U+0323; or it is U+2011, which HarfBuzz sets as U+2010 where the font lacks it.
+   */
+  covers: (char: string) => boolean;
+  /**
+   * Whether text is set in the font: its map gives a glyph to a character past ASCII outside the
+   * Private Use Area. An icon font does not, as Font Awesome's map gives only its icons, in the
+   * Private Use Area, and ASCII.
+   */
+  setsText: boolean;
   /** The advance of the space's glyph, in font units, which XeTeX makes `\fontdimen2`; 0 without. */
   spaceAdvance: number;
   /**
@@ -284,6 +297,22 @@ export function parseNativeFont(bytes: Uint8Array): NativeFontFile {
     texts ??= glyphTexts(font, map);
     return texts.get(glyph) ?? [];
   };
+  const privateUse = (point: number) => (point >= 0xe000 && point <= 0xf8ff) || point >= 0xf0000;
+  const setsText = Object.keys(map).some(
+    (code) => Number(code) >= 0x80 && !privateUse(Number(code)),
+  );
+  const covers = (char: string): boolean => {
+    if (glyphFor(char) !== undefined) return true;
+    if (char === "\u{2011}") return glyphFor("\u{2010}") !== undefined;
+    // HarfBuzz takes a canonical decomposition a pair at a time: the last mark, and what the rest
+    // composes to, which it may decompose in turn. A singleton, such as the ohm sign's Omega, is
+    // a pair with no mark.
+    const parts = [...char.normalize("NFD")];
+    const last = parts.pop();
+    if (last === undefined || last === char) return false;
+    if (parts.length === 0) return covers(last);
+    return glyphFor(last) !== undefined && [...parts.join("").normalize("NFC")].every(covers);
+  };
   const space = glyphFor(" ");
   const angle = Number(font.tables.post?.italicAngle ?? 0);
   const slant = Number.isFinite(angle) ? -Math.tan((angle * Math.PI) / 180) : 0;
@@ -295,6 +324,8 @@ export function parseNativeFont(bytes: Uint8Array): NativeFontFile {
     textsOf,
     advanceOf,
     glyphFor,
+    covers,
+    setsText,
     spaceAdvance: (space === undefined ? undefined : advanceOf(space)) ?? 0,
     slant: slant === 0 ? 0 : slant,
     // A font whose vertical metrics make no sense is laid out as the TeX fonts' web fonts are.
@@ -302,6 +333,24 @@ export function parseNativeFont(bytes: Uint8Array): NativeFontFile {
     descent: Number.isFinite(font.descender) ? -font.descender / unitsPerEm : 0.2,
     bytes,
   };
+}
+
+/**
+ * What a XeTeX package's fonts can set wherever its template sets a text (decision 0014): a
+ * character every text font of the files its `fonts` section names covers
+ * (`NativeFontFile.covers`), since the generator cannot tell which family a template sets a text
+ * in, and XeTeX sets a font's `.notdef` box for a character that font lacks, though another has
+ * it: Source Sans Pro has an arrow, and Roboto does not. An icon font such as Font Awesome is no
+ * text font (`NativeFontFile.setsText`), and a file that did not load is one that covers
+ * nothing, so that the generator leaves its characters out rather than have XeTeX set boxes for
+ * them. Files none of which is a text font leave everything to XeTeX.
+ */
+export function nativeCoverage(
+  files: readonly (NativeFontFile | undefined)[],
+): (char: string) => boolean {
+  const texts = files.filter((file) => file === undefined || file.setsText);
+  if (files.length > 0 && texts.length === 0) return () => true;
+  return (char) => texts.length > 0 && texts.every((file) => file?.covers(char) === true);
 }
 
 /**

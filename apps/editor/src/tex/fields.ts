@@ -35,6 +35,12 @@ export interface FieldGlyph {
   offset: number;
   /** True for a hyphen TeX added at a line break, which has no source character. */
   inserted?: boolean;
+  /**
+   * True for glyph 0 of a native run, the font's `.notdef`, which XeTeX sets for a character its
+   * font lacks: the page reads it as that character left out, as the generator leaves out one the
+   * package's fonts lack (decision 0014), so it has no text, draws nothing, and is not unmatched.
+   */
+  dropped?: boolean;
 }
 
 export interface Field {
@@ -114,7 +120,8 @@ const LETTER = /^\p{L}$/u;
  * A native run's glyphs are collected one by one, each with its index in the run and the text
  * `textOf` gives it, and what else it stands for (`textOf.alternatives`), so that each is aligned
  * with the text as a TeX font's glyph is. Native fonts set accented letters whole, so none of their
- * glyphs is paired with another.
+ * glyphs is paired with another. A run's glyph 0, the font's `.notdef`, is collected as a character
+ * left out (`FieldGlyph.dropped`).
  */
 export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, Field> {
   const fields = new Map<string, Field>();
@@ -146,7 +153,11 @@ export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, F
     if (!field) return;
     if (item.kind === "native") {
       accents.delete(field);
-      item.glyphs.forEach((_, glyph) => {
+      item.glyphs.forEach(({ id }, glyph) => {
+        if (id === 0) {
+          field.glyphs.push({ item: index, glyph, text: undefined, offset: -1, dropped: true });
+          return;
+        }
         const text = textOf(item, glyph);
         const alternatives = textOf.alternatives?.(item, glyph);
         field.glyphs.push({
@@ -216,8 +227,9 @@ export interface Alignment {
  * emoji or a letter of a script the fonts lack; an unmatched hyphen is a break TeX
  * inserted, which is U+002D's glyph, the font's `\hyphenchar`, so a glyph that stands
  * for U+2010 or U+2011 and not for it is not one; and a glyph a few code units on
- * resynchronises the walk. Returns the number of glyphs that could not be matched, and
- * how much of the text the glyphs account for.
+ * resynchronises the walk. A native font's `.notdef` (`FieldGlyph.dropped`) stands where
+ * the walk is and matches nothing. Returns the number of glyphs that could not be
+ * matched, and how much of the text the glyphs account for.
  *
  * A run of such characters is read once, however many glyphs fail to match in it: a
  * glyph whose spellings all begin with printable ASCII, which no character of the run
@@ -233,6 +245,11 @@ export function alignField(field: Field, text: string): Alignment {
   let runEnd = -1;
   for (const glyph of field.glyphs) {
     while (pos < text.length && SKIPPED.test(charAt(text, pos))) pos += charAt(text, pos).length;
+    if (glyph.dropped) {
+      // A character the font lacks, which the next glyph skips as one that may set no glyph.
+      glyph.offset = pos;
+      continue;
+    }
     const g = glyph.text;
     if (g === undefined) {
       glyph.offset = pos;

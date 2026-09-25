@@ -68,11 +68,33 @@ export interface GeneratedFormat {
   files: Record<string, string>;
 }
 
-/** A body to compile from its format, with the text of each field it marks, by field id. */
+/**
+ * A body to compile from its format, with the text of each field it marks, by field id, and the
+ * characters it left out of them where its fonts cannot set them (`BodyOptions.covers`), each once,
+ * in the order the body met them.
+ */
 export interface GeneratedBody {
   latex: string;
   texts: Map<string, string>;
+  dropped: string[];
 }
+
+/** What a body is generated with besides the package, the resume and the document's values. */
+export interface BodyOptions {
+  /**
+   * Which characters a XeTeX package's declared fonts can set wherever its template sets a text,
+   * from their files (`nativeCoverage`, decision 0014). XeTeX sets a font's `.notdef` box for a
+   * character the font lacks, where pdfTeX's LaTeX leaves the character out (`prelude.ts`), so
+   * every character of a text this refuses is left out of the LaTeX, and named in
+   * `GeneratedBody.dropped`; the text is kept composed, as XeTeX's fonts set letters whole
+   * (`escapeText`). The field's text stays as the model holds it, and the page skips what the
+   * LaTeX leaves out. Without it nothing is left out, as for a pdfTeX package.
+   */
+  covers?: (char: string) => boolean;
+}
+
+/** How a slot's user text is escaped for the body: `escapeText`, with the body's coverage. */
+type Escape = (text: string) => string;
 
 /**
  * What a slot holds while a snippet renders. User text carries the id of its field. Whether a
@@ -125,7 +147,7 @@ export function generateFormat(pkg: TemplatePackage, values: ControlValues): Gen
   for (const control of controlsOf(pkg, values))
     if (control.format) scope[control.id] = valueSlot(control.text);
   const out = new Output(Number.POSITIVE_INFINITY);
-  render({ nodes: parseSnippet(pkg.preamble), scope }, out, new Map());
+  render({ nodes: parseSnippet(pkg.preamble), scope }, out, new Map(), escapeText);
   const fonts = pkg.fonts === undefined ? "" : `${fontDeclarations(pkg.fonts)}\n`;
   const preamble = `${out.join()}\n${fonts}${PRELUDE}`;
   // By name, so that the same files listed in another order are the same dump. Names are keys,
@@ -166,12 +188,14 @@ export function fontDeclarations(fonts: readonly FontFamily[]): string {
  * `\begin{document}` to `\end{document}`. Every render of a field is marked, however often the
  * package sets it, and `texts` holds each field the body marks once, with the text the page shows
  * for it: the text, a rich field's runs joined, or the formatted dates. The page keeps the first
- * copy of a field that reaches it (`collectFields`), which is the one the user edits.
+ * copy of a field that reaches it (`collectFields`), which is the one the user edits. A character
+ * `options.covers` says the package's fonts cannot set is left out (`BodyOptions`).
  */
 export function generateBody(
   pkg: TemplatePackage,
   resume: Resume,
   values: ControlValues,
+  options: BodyOptions = {},
 ): GeneratedBody {
   // Packages were validated, so a snippet that does not parse here is a bug, and may throw.
   const trees = new Map<string, readonly SnippetNode[]>();
@@ -185,9 +209,20 @@ export function generateBody(
   };
   const out = new Output(MAX_BODY);
   const texts = new Map<string, string>();
+  const dropped = new Set<string>();
+  const { covers } = options;
+  const keep =
+    covers === undefined
+      ? undefined
+      : (char: string) => {
+          if (covers(char)) return true;
+          dropped.add(char);
+          return false;
+        };
+  const escape: Escape = (text) => escapeText(text, keep);
   for (const control of controlsOf(pkg, values)) {
     const scope = { value: valueSlot(control.text) } satisfies Scope;
-    render({ nodes: tree(control.apply), scope }, out, texts);
+    render({ nodes: tree(control.apply), scope }, out, texts, escape);
     out.add("\n");
   }
   const build: Build = {
@@ -195,9 +230,9 @@ export function generateBody(
     tree,
     dateFormat: values.dateFormat ?? defaultControls(pkg).dateFormat,
   };
-  render(documentPart(build, resume), out, texts);
+  render(documentPart(build, resume), out, texts, escape);
   out.add("\n");
-  return { latex: out.join(), texts };
+  return { latex: out.join(), texts, dropped: [...dropped] };
 }
 
 /** The controls that have a snippet, which is every one but the date format. */
@@ -521,7 +556,7 @@ type Frame =
  * block reads the presence its slot's value was built with, and a block over a list never
  * iterates: a list renders only through its slot.
  */
-function render(part: Part, out: Output, texts: Map<string, string>) {
+function render(part: Part, out: Output, texts: Map<string, string>, escape: Escape) {
   const stack: Frame[] = [{ kind: "nodes", nodes: part.nodes, next: 0, scope: part.scope }];
   for (let frame = stack.at(-1); frame !== undefined; frame = stack.at(-1)) {
     out.step();
@@ -546,7 +581,7 @@ function render(part: Part, out: Output, texts: Map<string, string>) {
         stack.push({ kind: "nodes", nodes: node.children, next: 0, scope: frame.scope });
     } else {
       const value = slot(frame.scope, node.name);
-      if (value.type !== "list") out.add(renderValue(value, node.raw, out, texts));
+      if (value.type !== "list") out.add(renderValue(value, node.raw, out, texts, escape));
       else if (node.raw) throw new Error(`${node.name} is a list, which never goes in raw`);
       else stack.push({ kind: "list", list: value, next: 0 });
     }
@@ -571,6 +606,7 @@ function renderValue(
   raw: boolean,
   out: Output,
   texts: Map<string, string>,
+  escape: Escape,
 ): string {
   switch (value.type) {
     case "value":
@@ -583,17 +619,19 @@ function renderValue(
       return escapeUrl(value.url);
     case "text":
       out.charge(value.text.length);
-      if (raw) return escapeText(value.text);
-      return value.present ? field(value.field, value.text, escapeText(value.text), texts) : "";
+      if (raw) return escape(value.text);
+      return value.present ? field(value.field, value.text, escape(value.text), texts) : "";
     case "rich":
       out.charge(value.size);
-      if (raw) return richLatex(value.runs);
-      return value.present ? field(value.field, value.text, richLatex(value.runs), texts) : "";
+      if (raw) return richLatex(value.runs, escape);
+      return value.present
+        ? field(value.field, value.text, richLatex(value.runs, escape), texts)
+        : "";
     case "date":
       if (value.text === undefined) return "";
       out.charge(value.text.length);
-      if (raw) return escapeText(value.text);
-      return field(value.field, value.text, escapeText(value.text), texts);
+      if (raw) return escape(value.text);
+      return field(value.field, value.text, escape(value.text), texts);
   }
 }
 
@@ -612,10 +650,10 @@ function field(id: string, text: string, latex: string, texts: Map<string, strin
  * Rich text as LaTeX, run by run: bold outside italic, and a link outside both, to the address
  * `linkAddress` gives. A run whose address the editor does not link is set as its text alone.
  */
-function richLatex(runs: RichText): string {
+function richLatex(runs: RichText, escape: Escape): string {
   let latex = "";
   for (const run of runs) {
-    let part = escapeText(run.text);
+    let part = escape(run.text);
     if (part === "") continue;
     if (run.italic) part = `\\textit{${part}}`;
     if (run.bold) part = `\\textbf{${part}}`;

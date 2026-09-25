@@ -43,7 +43,7 @@ import { parseTfm, type Tfm } from "../tex/tfm";
 import { parseType1 } from "../tex/type1";
 import { expand, type Placement, parseVf } from "../tex/vf";
 import { type FontMapEntry, parseFontMaps } from "./fontmap";
-import { type NativeFontFile, parseNativeFont } from "./native";
+import { type NativeFontFile, nativeCoverage, parseNativeFont } from "./native";
 import type { TexLiveIndex } from "./texlive";
 
 /** Reads a TeX Live file by its path in the engine's file system. */
@@ -219,8 +219,27 @@ export class FontLibrary {
     );
   }
 
+  /**
+   * What a XeTeX package's native font files `names` can set wherever its template sets a text
+   * (`nativeCoverage`), each loaded as `loadNative` loads it: a file the tree lacks, or that
+   * cannot be read, covers nothing. The generator leaves out of the package's texts what they
+   * cannot set (decision 0014).
+   */
+  async coverage(names: readonly string[]): Promise<(char: string) => boolean> {
+    const fonts = await Promise.all(names.map((name) => this.loadNative(name)));
+    return nativeCoverage(fonts.map((font) => font?.file));
+  }
+
+  /**
+   * Where the tree keeps the native font file `name`: among its OpenType files, or its TrueType
+   * ones; undefined when it has neither.
+   */
+  nativePath(name: string): string | undefined {
+    return this.index.find("opentype", name) ?? this.index.find("truetype", name);
+  }
+
   private async loadNativeNow(name: string): Promise<NativePageFont | undefined> {
-    const path = this.index.find("opentype", name) ?? this.index.find("truetype", name);
+    const path = this.nativePath(name);
     if (!path) return undefined;
     try {
       return { kind: "native", name, file: parseNativeFont(await this.fetch(path)) };

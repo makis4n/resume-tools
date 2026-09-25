@@ -897,6 +897,17 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       for (const ms of report.passes) expect(ms).toBeLessThan(2_000);
     }, 120_000);
 
+    it("leaves out a character no font of the package has, rather than set a box for it", async () => {
+      // Roboto has no arrow and no emoji: XeTeX would set its .notdef for each.
+      const lacking = structuredClone(sample);
+      const work = lacking.sections.find((section) => section.id === "work");
+      const bullet = work?.kind === "entries" ? work.entries[1]?.bullets[0] : undefined;
+      if (bullet === undefined) throw new Error("the sample has gull-1");
+      bullet.text = [{ text: "Cut the build from 40 \u{2192} 12 minutes \u{1f600}." }];
+      const report = await validatePackage(session, fonts, xetex, lacking);
+      expect(report.findings).toEqual([]);
+    }, 120_000);
+
     it("reports a native font XeTeX emboldens, which the page draws as boxes, and nothing else", async () => {
       const bolded = parsePackage({
         ...xetex,

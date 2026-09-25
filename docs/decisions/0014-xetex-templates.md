@@ -78,6 +78,24 @@ one Font Awesome icon in the header) stands in for it in the tests.
   `missingFonts` and the harness's fonts check, by its file's name, when the tree lacks the file,
   the file cannot be read or parsed, XeTeX set a face of a collection other than the first, or
   XeTeX emboldened it, which xdvipdfmx strokes and the page does not.
+- **A character the fonts lack.** XeTeX has a definition for every character and sets a font's
+  `.notdef` box, glyph 0, for one the font lacks, where pdfTeX's LaTeX leaves the character out
+  (`prelude.ts`), so an arrow, a check mark, an emoji or CJK would show as a crossed box on the
+  page and in the PDF, whose text reads it as U+FFFF. So the generator leaves out of a XeTeX
+  package's texts every character its fonts cannot set, and the console hears of each once, as
+  pdfTeX's log does: any character past ASCII, not a space, that a text font of the `fonts`
+  section does not cover, from its character map or, as HarfBuzz sets a character a font lacks,
+  as the character it composes from and a mark the map has (`nativeCoverage`), and U+2011 as
+  U+2010. A template may set a text in any of its families, and the generator cannot tell which,
+  so a character must be one every text font covers: Source Sans Pro has an arrow and Roboto does
+  not, so an arrow is left out of a heading in Source Sans too. An icon font, whose map gives only
+  ASCII and the Private Use Area, as Font Awesome's does, is no text font. The compiler reads the
+  files while the engine starts, as the page reads them anyway, and the harness before its first
+  compile; a file that cannot be read covers nothing. A text for XeTeX's fonts stays composed,
+  since they set letters whole, where pdfTeX's is decomposed past Latin Extended-A (`escape.ts`).
+  A glyph 0 the page still meets, which only a template's own text can set, reads as a character
+  left out: it draws nothing, has no box, and the aligner puts it where the walk is and does not
+  count it as unmatched; the PDF shows it as the box.
 - **The overlay's native face.** `Face` is an interface either kind of font fills: `codeFor`,
   `widthOf`, `spaceGlue` and `hyphenChar`, and a TeX font's ligature and kern program, which
   `paragraphNodes` runs when the face has one. A native face's codes are glyphs from the
@@ -164,3 +182,7 @@ within their rows, which is Roboto's kerning and ligatures, left to the page.
 - A package is refused for fonts only where the schema can tell. A file the tree does not have
   dumps, since the declarations load nothing, and fails the first compile that selects it, which
   the harness reports as the compile's error.
+- A character only some of a package's text fonts cover is left out wherever the template sets
+  it, though the family it is set in may have it, since the generator cannot tell which family
+  sets a text. Knowing that is the template's, and a later record may give the package a way to
+  say it.

@@ -77,12 +77,18 @@ const UNDEFINED_PAST_EXTENDED_A =
  * and Latin Extended-A has. Past those it is decomposed again (NFD), except for the few letters
  * LaTeX defines there, so that a letter it has no definition for, such as Vietnamese's `ễ`, sets
  * its base letter, and the prelude leaves out the combining marks, rather than dropping the
- * letter whole. That is pdfTeX's reach today; item 21 may keep text composed for XeTeX, whose
- * fonts set such letters as they are.
+ * letter whole. That is pdfTeX's reach; XeTeX's fonts set such letters as they are, so a text for
+ * XeTeX's declared fonts stays composed (`escapeText`'s `keep`).
  */
 function normalized(text: string): string {
   return text.normalize("NFC").replace(UNDEFINED_PAST_EXTENDED_A, (run) => run.normalize("NFD"));
 }
+
+/**
+ * What escaping would pass through as itself and a font would have to set: anything past ASCII
+ * but spaces, which become spaces or ties, and the invisible characters, which escaping drops.
+ */
+const SET_AS_ITSELF = new RegExp(`(?!\\s|\\p{Zs}|${INVISIBLE.source})[^\\u{0}-\\u{7f}]`, "gu");
 
 /**
  * Escape text for a text, rich or date slot, typeset or raw. The text is first put in the form
@@ -91,9 +97,19 @@ function normalized(text: string): string {
  * input and XeTeX typeset; a straight double quote, which OT1 sets as a closing quote, as LaTeX
  * does; and anything else, which the prelude has LaTeX drop when it has no definition for it or
  * the font encoding no glyph.
+ *
+ * XeTeX sets a font's `.notdef` box for a character the font lacks, so for a XeTeX package that
+ * declares its fonts the generator says which characters they can set (`keep`, decision 0014):
+ * the text then stays composed, since XeTeX's fonts set letters whole and HarfBuzz decomposes one
+ * a font lacks, and every character that would pass through as itself and that `keep` refuses is
+ * left out, so that it too either typesets as itself or is dropped.
  */
-export function escapeText(text: string): string {
-  return normalized(text)
+export function escapeText(text: string, keep?: (char: string) => boolean): string {
+  const form =
+    keep === undefined
+      ? normalized(text)
+      : text.normalize("NFC").replace(SET_AS_ITSELF, (char) => (keep(char) ? char : ""));
+  return form
     .replace(TEXT_CHANGES, (char) => TEXT_ESCAPES[char] ?? (SPACE_SEPARATOR.test(char) ? " " : ""))
     .replace(INVERTED_MARK, "$&{}");
 }

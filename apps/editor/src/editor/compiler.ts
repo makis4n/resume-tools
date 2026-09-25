@@ -66,7 +66,12 @@ import {
   generateBody,
   generateFormat,
 } from "../templates/generate";
-import { type ControlValues, controlValuesFor, type TemplatePackage } from "../templates/package";
+import {
+  type ControlValues,
+  controlValuesFor,
+  fontFiles,
+  type TemplatePackage,
+} from "../templates/package";
 import type { Document } from "./document";
 
 /**
@@ -362,6 +367,8 @@ export class Compiler {
   private closed = false;
   /** The fonts the console has been told the page cannot draw. */
   private readonly warned = new Set<string>();
+  /** The characters the console has been told the body leaves out, which its fonts cannot set. */
+  private readonly leftOut = new Set<string>();
   /**
    * The page on screen while it is the newest document's. A compile that fails, or a page that is
    * dropped, clears it, since a PDF of an older page is not what the user asked for.
@@ -619,7 +626,9 @@ export class Compiler {
     const { pkg, document: doc } = run;
     try {
       const format = generateFormat(pkg, doc.controls);
-      const body = generateBody(pkg, doc.resume, doc.controls);
+      // A XeTeX package's fonts load while the engine starts: the page needs them anyway, and the
+      // body leaves out what they cannot set.
+      const covering = this.coverage(pkg);
       const instance = this.currentInstance();
       const { engine } = instance;
       let startMs: number | undefined;
@@ -652,6 +661,15 @@ export class Compiler {
         await this.request(run, run.limit, () => engine.forget(JOB));
         if (!this.current(run)) return;
       }
+      const covers = await this.within(
+        run,
+        run.limit,
+        () => covering,
+        () => this.drop(run, "to read its fonts"),
+      );
+      if (!this.current(run)) return;
+      const body = generateBody(pkg, doc.resume, doc.controls, { covers });
+      this.warnAboutLeftOut(body.dropped);
       this.opened = false;
       instance.compiled = true;
       // A worker's first compile of a format reads, as TeX asks for them, the files the body needs
@@ -746,7 +764,21 @@ export class Compiler {
     const { pkg, document: doc } = trial;
     try {
       const format = generateFormat(pkg, doc.controls);
-      const body = generateBody(pkg, doc.resume, doc.controls);
+      // The body leaves out what a XeTeX package's fonts cannot set, as the document's does (see
+      // `run`), so that the trial sets the pages the document would. The document's compile has
+      // read the fonts by now, so this waits on nothing, and never past a compile's limit.
+      const reading = this.limits[pkg.engine];
+      const covers = await new Promise<((char: string) => boolean) | undefined>(
+        (resolve, reject) => {
+          trial.timer = setTimeout(
+            () => reject(new Error(`the fonts took over ${reading} ms to read`)),
+            reading,
+          );
+          this.coverage(pkg).then(resolve, reject);
+        },
+      ).finally(() => clearTimeout(trial.timer));
+      if (this.trying !== trial) return;
+      const body = generateBody(pkg, doc.resume, doc.controls, { covers });
       const instance = this.currentInstance();
       const { engine } = instance;
       const work: Work = {
@@ -904,14 +936,15 @@ export class Compiler {
   }
 
   /**
-   * A page has not drawn within its run's time limit, waiting on fonts from the network. The
-   * engine did its part and stays. The run is dropped, and with it whatever the draw brings back
-   * later; the user gets the plain message, and the pending document, if one waits, compiles.
+   * A page has not drawn within its run's time limit, waiting on fonts from the network, or a
+   * XeTeX package's fonts have not loaded for its body (`coverage`). The engine did its part and
+   * stays. The run is dropped, and with it whatever the draw brings back later; the user gets the
+   * plain message, and the pending document, if one waits, compiles.
    */
-  private drop(run: Run) {
+  private drop(run: Run, what = "to draw") {
     if (this.running !== run) return;
     this.running = undefined;
-    if (this.current(run)) this.fail(`the page took over ${run.limit} ms to draw`);
+    if (this.current(run)) this.fail(`the page took over ${run.limit} ms ${what}`);
     this.generation++;
     this.next();
   }
@@ -961,6 +994,17 @@ export class Compiler {
       this.prefetched.set(pkg.id, asked);
     }
     return asked;
+  }
+
+  /**
+   * What a XeTeX package's declared fonts can set, read from their files, which the page draws
+   * with anyway (`FontLibrary.coverage`), so that the body leaves out a character none of them has
+   * rather than have XeTeX set a font's box for it (decision 0014); undefined for a package that
+   * declares no fonts, whose body leaves nothing out.
+   */
+  private coverage(pkg: TemplatePackage): Promise<((char: string) => boolean) | undefined> {
+    const files = fontFiles(pkg);
+    return files.length === 0 ? Promise.resolve(undefined) : this.fonts.coverage(files);
   }
 
   /** The format an earlier session kept under this name, when the store has one. */
@@ -1032,6 +1076,22 @@ export class Compiler {
     this.busy = busy;
     this.events.busy(busy);
     if (!busy) for (const wake of this.settled.splice(0)) wake();
+  }
+
+  /**
+   * A character a XeTeX package's fonts cannot set is left out of the body, as pdfTeX's LaTeX
+   * leaves out one it has no definition for with a warning in its log; the console hears of each
+   * such character once, rather than on every compile.
+   */
+  private warnAboutLeftOut(dropped: readonly string[]) {
+    const fresh = dropped.filter((char) => !this.leftOut.has(char));
+    if (fresh.length === 0) return;
+    for (const char of fresh) this.leftOut.add(char);
+    const named = fresh.map((char) => {
+      const point = (char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
+      return `${char} (U+${point})`;
+    });
+    console.warn(`The page leaves out characters its fonts cannot set: ${named.join(", ")}`);
   }
 
   /**

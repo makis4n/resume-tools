@@ -342,8 +342,8 @@ function glyphBoxes(
       const extend = (def.extend ?? 65536) / 65536;
       const slant = (def.slant ?? 0) / 65536;
       item.glyphs.forEach((g, glyph) => {
-        // A glyph with no outline is not drawn, and has no box.
-        const box = file.boxOf(g.id);
+        // A glyph with no outline is not drawn, and has no box, and nor is the font's .notdef.
+        const box = g.id === 0 ? undefined : file.boxOf(g.id);
         if (box === undefined) return;
         const [xMin, yMin, xMax, yMax] = box;
         const across = [xMin, xMax].flatMap((x) => [yMin, yMax].map((y) => extend * x + slant * y));

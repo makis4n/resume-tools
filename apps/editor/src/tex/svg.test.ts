@@ -141,6 +141,23 @@ describe("renderPage on a hand-built native run", () => {
     expect(boxed).toMatch(/<rect [^>]*data-field="f" data-offset="0"/);
   });
 
+  it("draws nothing for glyph 0, the .notdef XeTeX sets for a character its font lacks", () => {
+    const { doc: d, page } = doc({}, [
+      { id: 7, x: 0, y: 0 },
+      { id: 0, x: 5 * PT, y: 0 },
+      { id: 7, x: 10 * PT, y: 0 },
+    ]);
+    const svg = renderPage(d, page, {
+      outlines: () => undefined,
+      native: () => ({
+        ...outlines,
+        pathOf: (id: number) => (id < 8 ? "M0 0L500 700Z" : undefined),
+      }),
+    });
+    expect(svg.match(/<use /g)).toHaveLength(2);
+    expect(svg).not.toContain('data-glyph="0"');
+  });
+
   it("leaves out a glyph whose outline throws and keeps the rest", () => {
     const { doc: d, page } = doc({}, [
       { id: 7, x: 0, y: 0 },

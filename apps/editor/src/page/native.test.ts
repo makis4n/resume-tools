@@ -4,7 +4,7 @@ import { Font, Glyph, Path } from "opentype.js";
 import { describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable } from "../engine/node";
-import { MAX_FONT_BYTES, nativeFileName, parseNativeFont } from "./native";
+import { MAX_FONT_BYTES, nativeCoverage, nativeFileName, parseNativeFont } from "./native";
 
 /** A glyph's outline: a box 700 units tall, 50 units in from each side of its advance. */
 function box(width: number): Path {
@@ -139,10 +139,73 @@ describe("parseNativeFont on an invented font", () => {
     expect(file.spaceAdvance).toBe(250);
   });
 
+  it("covers a character its map gives a glyph, or whose letter and marks it does", () => {
+    expect(file.covers("f")).toBe(true);
+    expect(file.covers("\u{2019}")).toBe(true);
+    // HarfBuzz sets a character the font lacks as its decomposition, when the font has it all.
+    expect(file.covers("\u{1e0d}")).toBe(true);
+    expect(file.covers("z")).toBe(false);
+    expect(file.covers("\u{1e0c}")).toBe(false);
+    expect(file.covers("\u{2192}")).toBe(false);
+  });
+
   it("gives the ascent and descent as fractions of the em, and keeps the file's bytes", () => {
     expect(file.ascent).toBeCloseTo(0.9, 6);
     expect(file.descent).toBeCloseTo(0.3, 6);
     expect(file.bytes).toBe(bytes);
+  });
+});
+
+/** A font of a box for each character a list gives, written by opentype.js. */
+function fontOf(family: string, characters: number[]): Uint8Array {
+  const glyphs = [
+    new Glyph({ name: ".notdef", advanceWidth: 500, path: new Path() }),
+    ...characters.map(
+      (point) =>
+        new Glyph({
+          name: `u${point.toString(16)}`,
+          unicodes: [point],
+          advanceWidth: 500,
+          path: box(500),
+        }),
+    ),
+  ];
+  const font = new Font({
+    familyName: family,
+    styleName: "Regular",
+    unitsPerEm: 1000,
+    ascender: 900,
+    descender: -300,
+    glyphs,
+  });
+  return new Uint8Array(font.toArrayBuffer());
+}
+
+describe("nativeCoverage", () => {
+  // As Source Sans Pro has an arrow and Roboto does not: a template may set a text in either.
+  const serif = parseNativeFont(fontOf("Serif", [0x61, 0xe9, 0x2192]));
+  const sans = parseNativeFont(fontOf("Sans", [0x61, 0xe9]));
+  // As Font Awesome's map gives only ASCII and its icons, in the Private Use Area.
+  const icons = parseNativeFont(fontOf("Icons", [0x41, 0x61, 0xf0e0]));
+
+  it("covers what every text font covers, and leaves an icon font out", () => {
+    expect([serif.setsText, sans.setsText, icons.setsText]).toEqual([true, true, false]);
+    const covers = nativeCoverage([serif, sans, icons]);
+    expect(covers("a")).toBe(true);
+    expect(covers("\u{e9}")).toBe(true);
+    expect(covers("\u{2192}")).toBe(false);
+    expect(covers("\u{f0e0}")).toBe(false);
+    expect(nativeCoverage([serif])("\u{2192}")).toBe(true);
+  });
+
+  it("takes a file that did not load for a text font that covers nothing", () => {
+    expect(nativeCoverage([serif, undefined])("a")).toBe(false);
+    expect(nativeCoverage([undefined])("a")).toBe(false);
+    expect(nativeCoverage([])("a")).toBe(false);
+  });
+
+  it("leaves everything to XeTeX when no file is a text font, having nothing to judge by", () => {
+    expect(nativeCoverage([icons])("\u{e9}")).toBe(true);
   });
 });
 

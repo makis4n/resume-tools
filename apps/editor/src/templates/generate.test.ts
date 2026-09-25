@@ -24,6 +24,7 @@ import {
   linkAddress,
   MAX_BODY,
 } from "./generate";
+import { INVENTED_XETEX } from "./invented";
 import { type ControlValues, defaultControls, parsePackage, type TemplatePackage } from "./package";
 import { PARAGRAPH_MARKER, PRELUDE } from "./prelude";
 
@@ -623,6 +624,40 @@ describe("generateBody", () => {
     expect(latex).toContain(String.raw`\textbf{C \& C\#}: \textbf{50\%}\par`);
     expect(latex).toContain(String.raw`R\&D {[}lab{]}{*} (2020)`);
     expect([...texts.keys()].filter((id) => /^(langs|x)\./.test(id))).toEqual([]);
+  });
+
+  it("leaves out what a XeTeX package's fonts cannot set, says which, and keeps the text", () => {
+    // XeTeX would set each font's .notdef box for them, where pdfTeX's LaTeX leaves them out.
+    const { package: xetex, sample } = INVENTED_XETEX;
+    const edited = structuredClone(sample);
+    const [summary] = edited.sections;
+    if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+    const typed = "Cut 40 \u{2192} 12 minutes \u{1f600} for the caf\u{e9}, and \u{2192} again";
+    summary.text = [{ text: typed }];
+    const covers = (char: string) => char !== "\u{2192}" && char !== "\u{1f600}";
+    const body = generateBody(xetex, edited, {}, { covers });
+    expect(body.latex).toContain(
+      "\\rtfield{summary.text}{Cut 40  12 minutes  for the caf\u{e9}, and  again}",
+    );
+    expect(body.dropped).toEqual(["\u{2192}", "\u{1f600}"]);
+    // The page aligns its glyphs with the text as the model holds it.
+    expect(body.texts.get("summary.text")).toBe(typed);
+    // Without a coverage, nothing is left out, as for a pdfTeX package, whose prelude does it.
+    const whole = generateBody(xetex, edited, {});
+    expect(whole.latex).toContain(typed);
+    expect(whole.dropped).toEqual([]);
+  });
+
+  it("keeps ASCII, spaces and what it escapes, whatever a coverage says", () => {
+    const { package: xetex, sample } = INVENTED_XETEX;
+    const edited = structuredClone(sample);
+    const [summary] = edited.sections;
+    if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+    summary.text = [{ text: "A & B\u{a0}{c}_d \u{2019}e" }];
+    const body = generateBody(xetex, edited, {}, { covers: () => false });
+    expect(body.latex).toContain(String.raw`\rtfield{summary.text}{A \& B~\{c\}\_d e}`);
+    // And the en dash the dates are formatted with, which is text the generator sets too.
+    expect(body.dropped).toEqual(["\u{2019}", "\u{2013}"]);
   });
 
   it("refuses a body past MAX_BODY, quickly", () => {

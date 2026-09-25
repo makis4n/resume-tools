@@ -200,6 +200,37 @@ describe("collectFields with XeTeX's native runs", () => {
     expect(field?.glyphs.map((g) => g.text)).toEqual(["´", "e"]);
   });
 
+  it("reads glyph 0, the font's .notdef, as a character left out, not as one unmatched", () => {
+    // XeTeX sets a font's .notdef for a character the font lacks, where pdfTeX's LaTeX leaves the
+    // character out; the generator leaves out what the package's fonts lack, so only a template's
+    // own text, or a character one family has and another lacks, can still set one.
+    const withNotdef: PageItem = {
+      kind: "native",
+      font: 1,
+      h: 0,
+      v: 0,
+      width: 5,
+      glyphs: [..."ab"].map((char, i) => ({ id: char.charCodeAt(0), x: i, y: 0 })),
+    };
+    const glyphs = withNotdef.kind === "native" ? withNotdef.glyphs : [];
+    glyphs.splice(1, 0, { id: 0, x: 1, y: 0 });
+    const field = collectFields(page([special("rt:b:f"), withNotdef]), (item, glyph) =>
+      item.kind === "native" && glyph !== undefined && item.glyphs[glyph]?.id !== 0
+        ? String.fromCharCode(item.glyphs[glyph]?.id ?? 0)
+        : undefined,
+    ).get("f");
+    expect(field?.glyphs.map((g) => [g.text, g.dropped])).toEqual([
+      ["a", undefined],
+      [undefined, true],
+      ["b", undefined],
+    ]);
+    if (!field) return;
+    // It stands where the walk is, and the character it stands for is skipped as one that sets
+    // no glyph.
+    expect(alignField(field, "a\u{2192}b")).toEqual({ unmatched: 0, covered: 3 });
+    expect(field.glyphs.map((g) => g.offset)).toEqual([0, 1, 2]);
+  });
+
   it("keeps every character a glyph's font reaches it from, for the aligner", () => {
     // As Source Sans's map gives its apostrophe U+2019 and U+02BC.
     const aliased: GlyphTextOf = Object.assign(nativeText, {

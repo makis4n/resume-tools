@@ -24,6 +24,7 @@ import {
   type TemplatePackage,
 } from "../templates/package";
 import { INCH, US_LETTER } from "../tex/svg";
+import { shownStrings } from "../validate/pdf";
 import {
   COULD_NOT_MAKE_PDF,
   COULD_NOT_UPDATE,
@@ -1246,6 +1247,33 @@ describe("Compiler", () => {
     expect(s.engines).toHaveLength(1);
   });
 
+  it("leaves out of a trial's body what the XeTeX package's fonts cannot set, as the document's", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { package: xetex, sample: invented } = INVENTED_XETEX;
+    const resume = structuredClone(invented);
+    const [summary] = resume.sections;
+    if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+    summary.text = [{ text: "From 40 \u{2192} 12 minutes." }];
+    const doc = Document.parse({ version: 1, template: xetex.id, resume, controls: {} });
+    // The fake library has no font file, so the fonts set nothing past ASCII.
+    const s = scheduler();
+    s.compiler.open(xetex, doc);
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    expect(s.engine().compiles[0]?.body).toContain("From 40  12 minutes.");
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    const trial = s.compiler.tryControls({ ...defaultControls(xetex), margins: 1 });
+    await settle();
+    const tried = s.engine().compiles[1];
+    expect(tried?.options?.job).toBe("fit");
+    expect(tried?.body).toContain("From 40  12 minutes.");
+    expect(tried?.body).not.toContain("\u{2192}");
+    tried?.resolve(compiled(2));
+    await expect(trial).resolves.toBe(1);
+  });
+
   it("fails a trial whose compile fails, with TeX's words for the console, and keeps the engine", async () => {
     const s = scheduler();
     await opened(s);
@@ -1549,5 +1577,52 @@ describe.skipIf(!engineAvailable())("Compiler through the engine", () => {
     const ms = (shown: Shown) => `${Math.round(shown.ms)} ms`;
     const timings = `first page ${ms(first)}, an edit ${ms(edited)}, a margin ${ms(moved)}`;
     console.log(`jake through the compiler: ${timings}`);
+  }, 60_000);
+
+  it("sets no box for a character the invented XeTeX template's fonts lack, on the page or in the PDF", async () => {
+    const engine: Engine = {
+      start: async () => {},
+      dump: async (kind, name, preamble, files) => session.dump(kind, name, preamble, files),
+      putFormat: async (kind, name, format) => session.putFormat(kind, name, format),
+      forget: async (job) => session.forget(job),
+      compile: async (kind, format, body, options) => session.compile(kind, format, body, options),
+      // Uncompressed, so that the test can read the PDF's text.
+      pdf: async (job) => session.pdf(job, { compress: 0 }),
+      terminate: () => {},
+    };
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { package: xetex, sample: invented } = INVENTED_XETEX;
+    const resume = structuredClone(invented);
+    const work = resume.sections.find((section) => section.id === "work");
+    const bullet = work?.kind === "entries" ? work.entries[1]?.bullets[0] : undefined;
+    if (bullet === undefined) throw new Error("the sample has gull-1");
+    // Roboto has neither: XeTeX would set its .notdef, a crossed box, for each.
+    const text = "Cut the build from 40 \u{2192} 12 minutes \u{1f600}.";
+    bullet.text = [{ text }];
+    const doc = Document.parse({ version: 1, template: xetex.id, resume, controls: {} });
+    let onPage: (shown: Shown) => void = () => {};
+    let onError: (error: Error) => void = () => {};
+    const shown = new Promise<Shown>((resolve, reject) => {
+      onPage = resolve;
+      onError = reject;
+    });
+    const compiler = new Compiler(() => engine, fonts, {
+      page: (page) => onPage(page),
+      error: (message) => onError(new Error(message)),
+      busy: () => {},
+    });
+    compiler.open(xetex, doc);
+    const { page } = await shown;
+    expect(page.svg).not.toContain('data-glyph="0"');
+    expect(page.unmatched).toBe(0);
+    // Neither was set at all, as the font's .notdef or otherwise.
+    expect(page.fields.get("gull-1.text")?.glyphs.every((g) => g.text !== undefined)).toBe(true);
+    const pdf = await compiler.pdf();
+    compiler.close();
+    const shownText = shownStrings(pdf).join("");
+    expect(shownText).toContain("Cutthebuildfrom4012minutes.");
+    expect(shownText).not.toContain("\u{ffff}");
+    // The console hears which characters were left out, once.
+    expect(warned).toHaveBeenCalledWith(expect.stringContaining("\u{2192}"));
   }, 60_000);
 });
