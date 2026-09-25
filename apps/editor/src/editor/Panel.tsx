@@ -111,7 +111,7 @@ export function fieldStatus(
  * Jake's projects entry has no place, no character of its text may set a glyph, or it may be on a
  * page after the first, which the editor does not draw. Before the first page `shownFields` is
  * undefined, and every field counts as shown, so that the panel does not fill with inputs while
- * the document opens.
+ * the document opens; once the first page could not be made it is empty, and every field needs one.
  */
 export function needsInput(
   field: string,
@@ -130,13 +130,17 @@ export function needsInput(
  * a compile behind, and a field added since has had no page to be on yet, so it counts as shown
  * until one comes, as every field does before the first page. Otherwise a new section's title,
  * which is not a placeholder, would get an input for as long as the compile takes and lose it when
- * the page arrives. Undefined while there is no page.
+ * the page arrives. Undefined while there is no page, unless the first page could not be made
+ * (`failed`): then no field is shown, and none will be until an edit compiles, so the set is empty
+ * and `needsInput` gives every field an input, where the edit that stopped the compile can be taken
+ * back. A page that came before a failure still shows its fields, and goes on counting them.
  */
 export function shownFieldsOf(
   latest: { page: Pick<DrawnPage, "fields">; document: Document } | undefined,
   present: Document,
+  failed = false,
 ): Set<string> | undefined {
-  if (latest === undefined) return undefined;
+  if (latest === undefined) return failed ? new Set() : undefined;
   const shown = fieldsShown(latest.page);
   const drawn = fieldsOf(latest.document.resume);
   for (const id of fieldsOf(present.resume).keys()) if (!drawn.has(id)) shown.add(id);

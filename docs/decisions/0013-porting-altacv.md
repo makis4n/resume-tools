@@ -251,9 +251,9 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   each, the compile stops from 3,183 to 4,746, and the other tags move from 4,747 to 6,328; a run of
   ordinary letters, about half as wide, takes about twice as many. Each edit is saved whatever the
   compile does, so a document can be saved in a state whose first compile fails. The editor, not the
-  class, gives the way back: the side panel stays when the page cannot be shown, so the edit can be
-  undone or the item removed, which comes with the review's change to the app once item 9's rewrite
-  of the page column has landed.
+  class, gives the way back: when the page cannot be shown, the side panel stays under the message,
+  and with no page to click it gives each field an input, so the edit can be taken back or the item
+  removed, and the page comes back with the compile that edit starts.
 - The port's default page is the sample's but for the capitals, the margins, a pale rule in place
   of the gold, and what has no place in the model.
 - xdvipdfmx warns once for each of the editor's marker specials, which it does not know, as it
