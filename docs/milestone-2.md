@@ -112,7 +112,7 @@ end to end before the other two templates, so that the editing loop is proven on
 
 ### Stage 4. Keeping and exporting
 
-13. [ ] **Keep documents in the browser.** Dexie holds documents and each template's formats.
+13. [x] **Keep documents in the browser.** Dexie holds documents and each template's formats.
     TeX Live files use the HTTP cache under immutable paths, plus a prefetch of the files a
     template is known to read, since TeX asks for them synchronously. A small document list opens,
     creates and deletes documents.
@@ -220,5 +220,5 @@ that pull request. Four questions it settled by assigning them to a later item r
 |---|---|
 | Format names, one per combination of format-bound values, that fit the session's 64-character rule whatever the length of the package id | Item 5 |
 | A bound on the generated body, since a package may expand a list slot any number of times | Item 5 |
-| A stored choice a revised package no longer offers: store only the choices the user made, and decide whether such a document opens on the default or refuses | Item 13 |
+| A stored choice a revised package no longer offers: store only the choices the user made, and decide whether such a document opens on the default or refuses | Item 13, done: a document keeps only its own choices, and one the package no longer offers is dropped, so it opens on the default (decision 0010) |
 | Ids unique across packages: the loader refuses or re-mints an imported id not minted under the prefix decision 0006 sets | Milestone 3 |

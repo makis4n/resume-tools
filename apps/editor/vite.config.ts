@@ -1,20 +1,12 @@
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
-import { serveFolder } from "./scripts/serve-folder.ts";
-
-/** What the worker loads from `.engine/`: the engine, the manifest and the TeX Live tree. */
-const ENGINE_FILES = new Set(["busytex.mjs", "busytex.wasm", "manifest.json"]);
+import { serveEngine, serveFolder } from "./scripts/serve-folder.ts";
 
 export default defineConfig({
   plugins: [
     react(),
-    serveFolder(
-      "engine-server",
-      "/engine/",
-      resolve(import.meta.dirname, ".engine"),
-      (path) => ENGINE_FILES.has(path) || path.startsWith("files/"),
-    ),
+    serveEngine(resolve(import.meta.dirname, ".engine")),
     serveFolder("spike-server", "/spike/", resolve(import.meta.dirname, "spike/web")),
   ],
   test: {

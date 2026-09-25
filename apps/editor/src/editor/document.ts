@@ -1,9 +1,9 @@
 /**
  * The open document: the resume and the document's choices for its template's style controls,
- * as one JSON value. That value is what item 13 stores and milestone 4 syncs. It changes only
- * through commands, which `apply` turns into a new document without touching the old one, so undo
- * is keeping the documents that came before (`History`): the command stack for undo that plan
- * section 8.1 chooses, with nothing to invert.
+ * as one JSON value. That value is what the browser keeps (`src/storage/store.ts`) and milestone 4
+ * syncs. It changes only through commands, which `apply` turns into a new document without
+ * touching the old one, so undo is keeping the documents that came before (`History`): the command
+ * stack for undo that plan section 8.1 chooses, with nothing to invert.
  *
  * A command names its field as the page's markers do, `<node id>.<name>` (decision 0006), so a
  * click on the page and an edit to the model meet on one name. `fieldsOf` finds where each field
@@ -28,7 +28,12 @@ import {
 } from "@resume-tools/resume-model";
 import { z } from "zod";
 import { curated } from "../templates/curated";
-import { ControlValues, controlValuesFor, defaultControls } from "../templates/package";
+import {
+  ControlValues,
+  controlValuesFor,
+  pageSizeFor,
+  type TemplatePackage,
+} from "../templates/package";
 
 export const Document = z.strictObject({
   version: z.literal(1),
@@ -41,14 +46,37 @@ export const Document = z.strictObject({
 export type Document = z.infer<typeof Document>;
 
 /**
- * A new document for a curated template: the resume, and the template's default for each of its
- * controls, the page size following `locale` when one is given, as plan section 5.4 has it.
- * Throws for a template no curated package has, or a resume the model refuses.
+ * A new document for a curated template: the resume, and the page size `locale` implies when one
+ * is given and the template offers the control, as plan section 5.4 has it. Every other control is
+ * left out, and so on the template's default, since a document keeps only the choices made for it:
+ * a default kept in the document would outlive a revision of the template that changed it, as if
+ * the user had chosen it (decision 0010). Throws for a template no curated package has, or a resume
+ * the model refuses.
  */
 export function newDocument(template: string, resume: Resume, locale?: string): Document {
   const { package: pkg } = curated(template);
+  const controls =
+    pkg.controls.pageSize && locale !== undefined ? { pageSize: pageSizeFor(locale) } : {};
   // Parsed, so the document holds a copy of the resume rather than the caller's.
-  return Document.parse({ version: 1, template, resume, controls: defaultControls(pkg, locale) });
+  return Document.parse({ version: 1, template, resume, controls });
+}
+
+/**
+ * A stored document as its package reads it now: every choice the package refuses, for a control
+ * it no longer offers or a font it no longer lists, is dropped, so the document opens on the
+ * package's default for it, and `dropped` names them. Refusing the document instead would keep the
+ * user from their own text over a revision of the template (decision 0010).
+ */
+export function dropRefusedChoices(
+  pkg: TemplatePackage,
+  doc: Document,
+): { document: Document; dropped: string[] } {
+  const schema = controlValuesFor(pkg);
+  const read = schema.safeParse(doc.controls);
+  if (read.success) return { document: doc, dropped: [] };
+  const dropped = [...new Set(read.error.issues.map((issue) => String(issue.path[0])))];
+  const kept = Object.entries(doc.controls).filter(([name]) => !dropped.includes(name));
+  return { document: { ...doc, controls: schema.parse(Object.fromEntries(kept)) }, dropped };
 }
 
 /**

@@ -16,6 +16,7 @@ import {
   type Command,
   CommandError,
   Document,
+  dropRefusedChoices,
   fieldsOf,
   HISTORY_LIMIT,
   History,
@@ -112,22 +113,16 @@ const FULL = Resume.parse({
 const sortedKeys = (map: ReadonlyMap<string, unknown>) => [...map.keys()].sort();
 
 describe("newDocument", () => {
-  it("starts on the template's defaults, the page size following the locale", () => {
+  it("keeps only the page size the locale chooses, and leaves the rest to the defaults", () => {
     const us = newDocument("jake", sample, "en-US");
     expect(us).toEqual({
       version: 1,
       template: "jake",
       resume: sample,
-      controls: {
-        pageSize: "letter",
-        margins: 0.5,
-        accent: "#000000",
-        density: "normal",
-        dateFormat: "MMM yyyy",
-      },
+      controls: { pageSize: "letter" },
     });
-    expect(newDocument("jake", sample, "de-DE").controls.pageSize).toBe("a4");
-    expect(newDocument("jake", sample).controls).toEqual(defaultControls(jake));
+    expect(newDocument("jake", sample, "de-DE").controls).toEqual({ pageSize: "a4" });
+    expect(newDocument("jake", sample).controls).toEqual({});
     // A copy, so nothing done to the document can reach the curated sample.
     expect(us.resume).not.toBe(sample);
   });
@@ -260,12 +255,7 @@ describe("apply", () => {
     expect(a4.controls.pageSize).toBe("a4");
     readsBack(a4);
     const reset = apply(a4, { type: "control", name: "margins", value: undefined });
-    expect(reset.controls).toEqual({
-      pageSize: "a4",
-      accent: "#000000",
-      density: "normal",
-      dateFormat: "MMM yyyy",
-    });
+    expect(reset.controls).toEqual({ pageSize: "a4" });
     expect("margins" in reset.controls).toBe(false);
     readsBack(reset);
   });
@@ -309,6 +299,64 @@ describe("apply", () => {
     expect(() =>
       apply(doc, { type: "dates", field: "fennel.dates", dates: { start: "2020-13" } }),
     ).toThrow(CommandError);
+  });
+});
+
+describe("dropRefusedChoices", () => {
+  /** A stored document for `template`, with the choices given. */
+  const stored = (template: string, controls: object): Document =>
+    Document.parse({ version: 1, template, resume: sample, controls });
+
+  it("drops a choice for a control the template no longer offers, and keeps the rest", () => {
+    // Jake's Resume offers no font or font size.
+    const doc = stored("jake", {
+      pageSize: "a4",
+      margins: 0.7,
+      fontSize: 11,
+      font: "lato",
+      density: "compact",
+      dateFormat: "yyyy",
+    });
+    const before = structuredClone(doc);
+    const { document, dropped } = dropRefusedChoices(jake, doc);
+    expect(dropped).toEqual(["fontSize", "font"]);
+    expect(document.controls).toEqual({
+      pageSize: "a4",
+      margins: 0.7,
+      density: "compact",
+      dateFormat: "yyyy",
+    });
+    expect(controlValuesFor(jake).parse(document.controls)).toEqual(document.controls);
+    expect(document.resume).toBe(doc.resume);
+    expect(doc).toStrictEqual(before);
+  });
+
+  it("drops a font the template no longer lists", () => {
+    const fonts = parsePackage({
+      ...EVERY,
+      controls: {
+        font: {
+          default: "serif",
+          choices: [
+            { id: "serif", name: "Serif", apply: "\\rmfamily" },
+            { id: "sans", name: "Sans", apply: "\\sffamily" },
+          ],
+        },
+      },
+    });
+    const { document, dropped } = dropRefusedChoices(
+      fonts,
+      stored("every", { font: "mono", dateFormat: "MM/yyyy" }),
+    );
+    expect(dropped).toEqual(["font"]);
+    expect(document.controls).toEqual({ dateFormat: "MM/yyyy" });
+    expect(dropRefusedChoices(fonts, stored("every", { font: "sans" })).dropped).toEqual([]);
+  });
+
+  it("gives back the document itself when the template refuses nothing", () => {
+    const doc = newDocument("jake", sample, "en-GB");
+    expect(dropRefusedChoices(jake, doc)).toEqual({ document: doc, dropped: [] });
+    expect(dropRefusedChoices(jake, doc).document).toBe(doc);
   });
 });
 

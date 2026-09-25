@@ -28,12 +28,19 @@
  * compile limit times only what TeX does with an edit. Drawing the page waits on fonts from the
  * network, so it has the compile's limit too; past it the page is dropped, but the worker, which
  * did its part, stays.
+ *
+ * Given the app's stores (`src/storage/store.ts`), formats and the TeX Live files each template
+ * reads outlive the session: a format the store holds is handed to the engine rather than dumped,
+ * and the files are fetched into the HTTP cache while the engine starts, since the worker reads
+ * each with a synchronous request of its own (decision 0010). The stores only ever save time, so
+ * one that fails or stalls is gone around rather than waited on.
  */
 
 import type {
   CompileOptions,
   CompileResult,
   DumpResult,
+  Fetched,
   JobFiles,
   Engine as SessionEngine,
 } from "../engine/session";
@@ -61,6 +68,8 @@ export interface Engine {
   ): Promise<DumpResult>;
   /** Hand the engine a format made earlier. It may take the bytes' buffer, as the client does. */
   putFormat(engine: SessionEngine, name: string, format: Uint8Array): Promise<void>;
+  /** Clear a job's folder, so that its next compile starts afresh and reads nothing left there. */
+  forget(job: string): Promise<void>;
   compile(
     engine: SessionEngine,
     format: string,
@@ -69,6 +78,21 @@ export interface Engine {
   ): Promise<CompileResult>;
   /** Stop the engine at once, whatever it is doing; what waits on it fails. */
   terminate(): void;
+}
+
+/**
+ * Formats kept from one session to the next, by engine and name. They must be the formats of the
+ * engine build the worker runs, since TeX refuses a format another build dumped.
+ */
+export interface FormatStore {
+  get(engine: SessionEngine, name: string): Promise<Uint8Array | undefined>;
+  put(engine: SessionEngine, name: string, format: Uint8Array): Promise<void>;
+}
+
+/** The TeX Live files each template is known to read, by the paths TeX reads them at. */
+export interface PrefetchStore {
+  get(template: string): Promise<string[]>;
+  add(template: string, paths: string[]): Promise<void>;
 }
 
 /** A page from one compile, whole: the page, the body and texts it was drawn from, the document. */
@@ -112,6 +136,15 @@ export interface CompilerOptions {
   startLimit?: number;
   /** How a page is drawn from the output; tests draw without fonts. */
   draw?: typeof drawPage;
+  /** Where formats are kept for later sessions, and looked for before a dump. */
+  formats?: FormatStore;
+  /** Where the files each template reads are noted, for the prefetch of later sessions. */
+  prefetch?: PrefetchStore;
+  /**
+   * Fetch a TeX Live file, by its path, into the HTTP cache the worker's reads go through, and
+   * drop it; without it, nothing is fetched ahead.
+   */
+  fetchFile?: (path: string) => Promise<unknown>;
 }
 
 /** What the user reads when a page cannot be made, whatever the reason; never TeX's words. */
@@ -139,9 +172,17 @@ const LIMITS: Record<SessionEngine, number> = { pdftex: 10_000, xetex: 20_000 };
 const START_LIMIT = 60_000;
 
 /**
- * The job every document compiles in. It is the validation harness's `EDITOR_JOB`, since TeX tells
- * a document its job's name and the harness checks a package as the editor compiles it; item 13
- * may name jobs after documents, and must change the harness with it.
+ * How long the scheduler waits for a store before it goes on without it. IndexedDB answers in
+ * milliseconds, a format of several MB included, but it has been known to hang in some browsers,
+ * and waiting for a store should never cost more than the dump it saves.
+ */
+const STORE_LIMIT = 2_000;
+
+/**
+ * The job every document compiles in, one document open at a time (decision 0010). It is the
+ * validation harness's `EDITOR_JOB`, since TeX tells a document its job's name and the harness
+ * checks a package as the editor compiles it. A stored document's id never reaches TeX: opening a
+ * document starts the job afresh instead (see `run`).
  */
 const JOB = "doc";
 
@@ -184,6 +225,8 @@ interface Instance {
   started: boolean;
   /** The formats it holds, by engine and name. */
   installed: Set<string>;
+  /** Whether a document has compiled in its job, whose files the folder may still hold. */
+  compiled: boolean;
 }
 
 export class Compiler {
@@ -191,6 +234,15 @@ export class Compiler {
   private readonly limits: Record<SessionEngine, number>;
   private readonly startLimit: number;
   private readonly draw: typeof drawPage;
+  private readonly formatStore: FormatStore | undefined;
+  private readonly prefetchStore: PrefetchStore | undefined;
+  private readonly fetchFile: ((path: string) => Promise<unknown>) | undefined;
+  /** The fetches ahead asked for each template, by id, once per session. */
+  private readonly prefetched = new Map<string, Promise<void>>();
+  /** Whether a document has opened since one last reached the job, which it then starts afresh. */
+  private opened = false;
+  /** The time limits running on requests to a store, which `close` stops. */
+  private readonly waits = new Set<ReturnType<typeof setTimeout>>();
   /** The engine every request goes to, made when a document first needs one. */
   private instance: Instance | undefined;
   /**
@@ -219,17 +271,23 @@ export class Compiler {
     this.limits = { ...LIMITS, ...options.limits };
     this.startLimit = options.startLimit ?? START_LIMIT;
     this.draw = options.draw ?? drawPage;
+    this.formatStore = options.formats;
+    this.prefetchStore = options.prefetch;
+    this.fetchFile = options.fetchFile;
   }
 
   /**
    * Open a document set with a package, and compile it at once, dumping its format first if this
    * compiler has not. A compile in flight for what was open before is dropped when it lands, and
-   * this document compiles then.
+   * this document compiles then, starting the job afresh. The files the package is known to read
+   * start on their way now, while the engine starts.
    */
   open(pkg: TemplatePackage, doc: Document) {
     if (this.closed) return;
     checkTemplate(pkg, doc);
     this.pkg = pkg;
+    this.opened = true;
+    void this.prefetchFor(pkg);
     clearTimeout(this.debounce);
     this.debounce = undefined;
     this.pending = doc;
@@ -274,6 +332,8 @@ export class Compiler {
     this.debounce = undefined;
     this.running = undefined;
     this.pending = undefined;
+    for (const wait of this.waits) clearTimeout(wait);
+    this.waits.clear();
     this.instance?.engine.terminate();
     this.instance = undefined;
   }
@@ -317,10 +377,18 @@ export class Compiler {
         if (!this.current(run)) return;
       }
       const started = performance.now();
+      // The files the template is known to read are on their way before TeX asks for any.
+      await this.prefetchFor(pkg);
+      if (!this.current(run)) return;
       const key = `${pkg.engine}:${format.name}`;
       if (!instance.installed.has(key)) {
-        const kept = this.formats.get(key);
+        // A format an earlier session kept saves the dump: 0.37 s in Chrome on a fast laptop, and
+        // on a cold cache the 7.5 MiB of TeX Live files a dump reads, most of it the stock format
+        // (decision 0003).
+        const kept = this.formats.get(key) ?? (await this.stored(pkg.engine, format.name));
+        if (!this.current(run)) return;
         if (kept !== undefined) {
+          this.formats.set(key, kept);
           // putFormat may move the buffer it is given to the worker, so it gets a copy.
           await this.request(run, run.limit, () =>
             engine.putFormat(pkg.engine, format.name, kept.slice()),
@@ -334,19 +402,33 @@ export class Compiler {
           const dumped = await this.request(run, this.startLimit, () =>
             engine.dump(pkg.engine, format.name, format.preamble, format.files),
           );
+          this.record(pkg, dumped.fetched);
           if (!dumped.ok || dumped.format === undefined) {
             if (this.current(run))
               this.fail(`the format did not dump: ${dumped.error}`, dumped.log);
             return;
           }
-          this.formats.set(key, dumped.format);
+          const bytes = dumped.format;
+          this.formats.set(key, bytes);
+          const store = this.formatStore;
+          if (store) this.keep("keep a format", () => store.put(pkg.engine, format.name, bytes));
         }
         instance.installed.add(key);
         if (!this.current(run)) return;
       }
+      // The job's folder may hold another document's auxiliary files, which this one must not
+      // read. The scheduler knows no document ids, so a document opened on an engine that has
+      // compiled starts afresh, which costs one pass when it is the same document again.
+      if (this.opened && instance.compiled) {
+        await this.request(run, run.limit, () => engine.forget(JOB));
+        if (!this.current(run)) return;
+      }
+      this.opened = false;
+      instance.compiled = true;
       const result = await this.request(run, run.limit, () =>
         engine.compile(pkg.engine, format.name, body.latex, { job: JOB, maxPasses: MAX_PASSES }),
       );
+      this.record(pkg, result.fetched);
       if (!this.current(run)) return;
       if (!result.ok || result.output === undefined) {
         this.fail(`the body did not compile: ${result.error}`, result.log);
@@ -454,8 +536,85 @@ export class Compiler {
   }
 
   private currentInstance(): Instance {
-    this.instance ??= { engine: this.newEngine(), started: false, installed: new Set() };
+    this.instance ??= {
+      engine: this.newEngine(),
+      started: false,
+      installed: new Set(),
+      compiled: false,
+    };
     return this.instance;
+  }
+
+  /**
+   * Fetch the files a template is known to read into the HTTP cache, once per session, so that
+   * the worker's synchronous reads, one round trip each, find them there. It settles once every
+   * fetch has been asked for, and never with an error; it waits on none of them, since a file not
+   * yet fetched is read when TeX asks for it, as it would have been anyway.
+   */
+  private prefetchFor(pkg: TemplatePackage): Promise<void> {
+    const { prefetchStore: store, fetchFile } = this;
+    if (store === undefined || fetchFile === undefined) return Promise.resolve();
+    let asked = this.prefetched.get(pkg.id);
+    if (asked === undefined) {
+      asked = this.ask("read the files to fetch ahead", () => store.get(pkg.id), [] as string[])
+        .then((paths) => {
+          for (const path of paths) fetchFile(path).catch(() => {});
+        })
+        .catch((error: unknown) => console.warn("The files could not be fetched ahead", error));
+      this.prefetched.set(pkg.id, asked);
+    }
+    return asked;
+  }
+
+  /** The format an earlier session kept under this name, when the store has one. */
+  private stored(engine: SessionEngine, name: string): Promise<Uint8Array | undefined> {
+    const store = this.formatStore;
+    if (store === undefined) return Promise.resolve(undefined);
+    return this.ask("read a kept format", () => store.get(engine, name), undefined);
+  }
+
+  /**
+   * Note the TeX Live files a dump or a compile read, for the prefetch of later sessions. The
+   * tree's own formats are left out: a dump reads the stock format once, so fetching it ahead
+   * saves no round trip, and once the template's own format comes from the store, as it does
+   * after the first session, it would be 6.5 MB fetched for nothing (decision 0003).
+   */
+  private record(pkg: TemplatePackage, fetched: Fetched) {
+    const store = this.prefetchStore;
+    const paths = fetched.paths.filter((path) => !path.endsWith(".fmt"));
+    if (store === undefined || paths.length === 0) return;
+    this.keep("note the files to fetch ahead", () => store.add(pkg.id, paths));
+  }
+
+  /**
+   * What a store answers, or `fallback` when it fails or has not answered within `STORE_LIMIT`:
+   * a store that is broken or stuck costs a dump or some round trips, never the page.
+   */
+  private async ask<T>(what: string, call: () => Promise<T>, fallback: T): Promise<T> {
+    let wait: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<T>((resolve) => {
+      wait = setTimeout(() => {
+        console.warn(`The store did not ${what} within ${STORE_LIMIT} ms, so it is gone around`);
+        resolve(fallback);
+      }, STORE_LIMIT);
+      this.waits.add(wait);
+    });
+    try {
+      return await Promise.race([Promise.resolve().then(call), late]);
+    } catch (error) {
+      console.warn(`The store could not ${what}`, error);
+      return fallback;
+    } finally {
+      clearTimeout(wait);
+      if (wait !== undefined) this.waits.delete(wait);
+    }
+  }
+
+  /** A write to a store that nothing waits on; one that fails costs a later session time. */
+  private keep(what: string, write: () => Promise<unknown>) {
+    Promise.resolve()
+      .then(write)
+      .catch((error: unknown) => console.warn(`The store could not ${what}`, error));
   }
 
   /** The plain message for the user, and what went wrong for developers. */
