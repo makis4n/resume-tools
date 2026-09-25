@@ -13,9 +13,15 @@ begin marker carrying the paragraph TeX sets the field in.
 ## Decision
 
 - **Text.** User text enters LaTeX only through slots, and every character of it typesets or is
-  dropped. It is composed first (NFC), so an accent typed as a combining mark reaches LaTeX as the
-  letter it has a definition for. Dropped: Unicode's controls, format characters such as
-  zero-width joiners and U+FEFF, lone surrogates, which UTF-8 cannot encode, and the line and
+  dropped. It is composed (NFC), so that an accent typed as a combining mark reaches LaTeX as the
+  letter it has a definition for, as every letter of Latin-1 and Latin Extended-A has; then it
+  is decomposed again (NFD) past Latin Extended-A, from U+0180 on, except for the 48 composed
+  letters there that LaTeX's UTF-8 input defines, in the `t1enc.dfu` every pdfTeX format loads,
+  such as Romanian's `ș` and `ț` and Pinyin's `ǎ`. A letter LaTeX has no definition for, such as
+  Vietnamese's `ễ`, then sets its base letter, and the prelude drops the combining marks, where
+  it would drop the letter whole. That is pdfTeX's reach today; item 21 may keep text composed for
+  XeTeX, whose fonts set such letters whole. Dropped: Unicode's controls, format characters such
+  as zero-width joiners and U+FEFF, lone surrogates, which UTF-8 cannot encode, and the line and
   paragraph separators, except that tab, newline, carriage return, U+2028 and U+2029 become a
   space, since a field is one paragraph. Every space separator becomes a space, since LaTeX
   defines none of them and would join the words on either side, except the no-break ones, U+00A0,
@@ -25,16 +31,17 @@ begin marker carrying the paragraph TeX sets the field in.
   `>` and `|` are `\textless{}`, `\textgreater{}` and `\textbar{}`, because OT1, the encoding of
   LaTeX's default fonts, holds ¡, ¿ and an em dash at their codes. `[`, `]` and `*` are braced,
   as `{[}`, `{]}` and `{*}`, so that raw text right after `\\` or `\item` is never read as an
-  optional argument or a star; and a backtick follows an empty group, so that a `?` or `!` before
-  it cannot make OT1's ¿ or ¡, and still sets as OT1's opening quote. Everything else passes
-  through: letters outside ASCII, dashes and curly quotes, which LaTeX's UTF-8 input and XeTeX
-  set; `--` and the like, which become ligatures; and a straight double quote, which OT1 sets as
-  a closing quote, as LaTeX does, and T1 (item 16) as itself. A character LaTeX has no definition
-  for, such as an emoji, the prelude drops with a warning in the log where LaTeX would stop with
-  an error, and so it does with a command the UTF-8 input maps a character onto that the font
-  encoding has no glyph for, such as `\k` for `ą` or `\guillemetleft` for `«` in OT1: a symbol
-  sets nothing, and an accented letter its base letter. XeTeX drops a character its font lacks by
-  itself.
+  optional argument or a star; and an empty group goes between a `?` or `!` and a backtick right
+  after it, in one text or across two runs of rich text, so that the two cannot make OT1's ¿ or
+  ¡, and the backtick still sets as OT1's opening quote. Any other backtick is left alone, so
+  that two of them still make OT1's opening double quote. Everything else passes through: letters
+  outside ASCII, dashes and curly quotes, which LaTeX's UTF-8 input and XeTeX set; `--` and the
+  like, which become ligatures; and a straight double quote, which OT1 sets as a closing quote, as
+  LaTeX does, and T1 (item 16) as itself. A character LaTeX has no definition for, such as an
+  emoji, the prelude drops with a warning in the log where LaTeX would stop with an error, and so
+  it does with a command the UTF-8 input maps a character onto that the font encoding has no glyph
+  for, such as `\k` for `ą` or `\guillemetleft` for `«` in OT1: a symbol sets nothing, and an
+  accented letter its base letter. XeTeX drops a character its font lacks by itself.
 - **Presence.** A text is present when more than whitespace is left after the drops. A typeset
   slot that is absent renders nothing, markers included, and `{{#name}}` keeps its block only when
   the slot is present: text by that rule, a date that exists, a list with items. Presence is
@@ -49,7 +56,9 @@ begin marker carrying the paragraph TeX sets the field in.
   kept, since an address may be encoded already. Rich runs are bold outside italic and a link
   outside both: `\href{...}{\textbf{\textit{...}}}`. A contact snippet's `href` is the address the
   generator builds: `mailto:` and the email, trimmed; `tel:` and the phone with its whitespace
-  taken out; and none for the location.
+  taken out; and none for the location. The field is typed as text, so its `#`, `?`, `&`, `%` and
+  `/` are percent-encoded before the URL slot's own encoding, since an address reads them as its
+  syntax: in `mailto:a#b@example.com` the address would be `a`, and the rest a fragment.
 - **Dates** are the generator's, never TeX's, with English month names: `Jun 2020`, `June 2020`,
   `06/2020` or `2020`, and a date stored as a year is the year in every format. A range is joined
   by an en dash between spaces, an ongoing one ends in `Present`, and a single date stands alone.
@@ -78,9 +87,11 @@ begin marker carrying the paragraph TeX sets the field in.
 - **Fields** are named `<node id>.<slot>`, and the header's `header.<slot>`; a contact snippet's
   `text` is the header field. The body comes with `texts`, the page's source for each field's
   text: the model's text, so offsets are the model's, a rich field's runs joined, or the dates as
-  formatted. A field is marked the first time it renders, and a later render of it, such as a
-  link a header sets through both `{{contacts}}` and `{{links}}`, goes in without markers: the
-  first appearance of a field is the editable one. The page reads the markers case-insensitively,
+  formatted. Every render is marked; the page keeps the first copy that reaches it, which is the
+  editable one. A render in a PDF string, such as `pdfauthor`, or in a box `\settowidth` only
+  measures never reaches the page, so a field set there first is found where the page shows it;
+  and a later copy, such as the second of a link a header sets through both `{{contacts}}` and
+  `{{links}}`, sets glyphs that belong to no field. The page reads the markers case-insensitively,
   since a template may set a field in `\MakeUppercase`, which uppercases its markers too, and ids
   are lowercase (decision 0006).
 - **Formats** are named `<id cut to 55 characters>-<8 hex digits>`, the digits the FNV-1a 32-bit
@@ -120,11 +131,14 @@ begin marker carrying the paragraph TeX sets the field in.
 - LaTeX 2023 sets `\$`, its itemize bullet and characters such as `•`, `°` and `€` from TS1, even
   in an OT1 document. The engine tree has no Type 1 fonts for TS1, and `tfm.ts` refuses its TFMs,
   which are padded past the length their header gives, so the page cannot draw them yet.
-- An address is only ever a URL slot: the schema refuses a text slot, raw or typeset, inside
-  `\href` or `\url`, where the escapes for typesetting break, and contact snippets get `href`
-  from the generator. The check reads a snippet's own text, so a class whose own macro builds an
-  address from a slot's text, as a template's email macro may, is outside it: a port has to link
-  the contact through `href` instead.
+- An address is only ever a URL slot: the schema refuses any other slot, raw or typeset, in the
+  first argument of `\href`, `\url`, `\nolinkurl` or `\hyperlink`, where the escapes for
+  typesetting break, and names the slot's type; contact snippets get `href` from the generator.
+  The check skips comments and finds the address past an optional argument, as TeX does, and it
+  refuses a slot right after a backslash as well, since its text would become a command's name.
+  It reads a snippet's own text, so a class whose own macro builds an address from a slot's
+  text, as a template's email macro may, is outside it: a port has to link the contact through
+  `href` instead.
 - A template that needs a separator only between the contacts present uses `{{contacts}}`.
 - Anything a package cannot express is still a generator feature or a new record, never package
   code.

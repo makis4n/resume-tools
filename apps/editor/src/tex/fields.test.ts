@@ -76,6 +76,49 @@ describe("collectFields", () => {
     expect(fields.get("f")?.glyphs).toHaveLength(1);
   });
 
+  it("keeps the first copy of a field, and opens a later one only to close it", () => {
+    // A link a header sets twice, the second time inside another field.
+    const p = page([
+      special("rt:b:code.label"),
+      ...word("code"),
+      special("rt:e:code.label"),
+      ...word("|"),
+      special("rt:b:outer"),
+      ...word("a"),
+      special("rt:b:code.label"),
+      ...word("code"),
+      special("rt:e:code.label"),
+      ...word("b"),
+      special("rt:e:outer"),
+    ]);
+    const fields = collectFields(p, textOf);
+    expect([...fields.keys()]).toEqual(["code.label", "outer"]);
+    expect(fields.get("code.label")?.glyphs.map((g) => g.item)).toEqual([1, 2, 3, 4]);
+    // The later copy's glyphs go to no field, and its end marker leaves the outer one open.
+    expect(
+      fields
+        .get("outer")
+        ?.glyphs.map((g) => g.text)
+        .join(""),
+    ).toBe("ab");
+  });
+
+  it("finds a field at the copy the page shows when its first render left no begin marker", () => {
+    const p = page([
+      // The name in the PDF's author, a string with no markers; and the end of a copy that
+      // began on the page before, whose begin marker is not on this page.
+      special("pdf:docinfo<</Author(Ilse Marrow)>>"),
+      ...word("se"),
+      special("rt:e:header.first"),
+      special("rt:b:header.first"),
+      ...word("Ilse"),
+      special("rt:e:header.first"),
+    ]);
+    const field = collectFields(p, textOf).get("header.first");
+    expect(field?.glyphs.map((g) => g.text).join("")).toBe("Ilse");
+    expect(field?.glyphs.map((g) => g.item)).toEqual([5, 6, 7, 8]);
+  });
+
   it("reads markers whatever their case, as \\MakeUppercase leaves them, and lowercases the id", () => {
     const p = page([
       special("RT:B:WORK.TITLE"),
@@ -174,5 +217,16 @@ describe("alignGlyphs", () => {
     const far = fieldOf(["a", "f"]);
     expect(alignGlyphs(far, "abcdef")).toBe(1);
     expect(far.glyphs.map((g) => g.offset)).toEqual([0, 1]);
+  });
+
+  it("reads a run of characters that set no glyph once, however many glyphs miss in it", () => {
+    // OT1 sets é as an accent, which has no text, and an e, which no é matches; and … as three
+    // periods, which no … matches either. Each glyph used to walk the rest of the run.
+    const accented = fieldOf(Array.from({ length: 16_000 }, (_, i) => (i % 2 ? "e" : undefined)));
+    const dotted = fieldOf(Array.from({ length: 18_000 }, () => "."));
+    const started = performance.now();
+    expect(alignGlyphs(accented, "\u{e9}".repeat(8_000))).toBe(16_000);
+    expect(alignGlyphs(dotted, "\u{2026}".repeat(6_000))).toBe(18_000);
+    expect(performance.now() - started).toBeLessThan(100);
   });
 });

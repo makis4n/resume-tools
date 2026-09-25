@@ -280,6 +280,20 @@ const TEXTS = {
 /** The ids of the fields a body marks, in order, once for each time it marks one. */
 const marked = (latex: string) => [...latex.matchAll(/\\rtfield\{([^}]*)\}/g)].map((m) => m[1]);
 
+/**
+ * The package with a header that sets fields twice: the name in the PDF's author before it shows
+ * it, and the links in the contacts and again on their own. Its preamble is the package's, so it
+ * compiles from the same format.
+ */
+const twice = packageWith((pkg) => {
+  pkg.snippets.header = [
+    "\\hypersetup{pdfauthor={{{first}} {{last}}}}",
+    "{\\Large {{first}} {{last}}}\\\\",
+    "{{contacts}}\\\\",
+    "{{links}}",
+  ].join("\n");
+});
+
 /** What a call throws. */
 function thrown(run: () => unknown): Error {
   try {
@@ -391,6 +405,29 @@ describe("generateBody", () => {
     );
   });
 
+  it("keeps a ? or ! that ends a run from a backtick that begins the next", () => {
+    const quoted = Resume.parse({
+      ...resume,
+      sections: [
+        {
+          id: "summary",
+          kind: "paragraph",
+          role: "summary",
+          title: "Summary",
+          text: [
+            { text: "Really?" },
+            { text: "` and `" },
+            { text: "!", bold: true },
+            { text: "`x" },
+          ],
+        },
+      ],
+    });
+    const { latex } = generateBody(pkg, quoted, {});
+    // A bold run is set in a font of its own, so the backtick after it needs no group.
+    expect(latex).toContain("\\rtfield{summary.text}{Really?{}` and `\\textbf{!}`x}");
+  });
+
   it("joins the contacts that are there with their separator, then the links", () => {
     const { latex } = generateBody(pkg, resume, {});
     const contacts = [
@@ -437,21 +474,36 @@ describe("generateBody", () => {
     expect(latex).toContain(String.raw`no address: \rtfield{header.location}{Quillford}`);
   });
 
-  /** The package with a header that sets the links twice: in the contacts, and on their own. */
-  const bothLists = packageWith((pkg) => {
-    pkg.snippets.header = "{{contacts}}\\\\\n{{links}}";
+  it("percent-encodes what an address would read as its own syntax in a contact field", () => {
+    // A # would begin a fragment, so that the address would be a's; a / would begin a path.
+    const header = { ...resume.header, email: "a#b@example.com", phone: "+1 555/0100" };
+    const { latex } = generateBody(pkg, { ...resume, header }, {});
+    expect(latex).toContain(String.raw`\href{mailto:a\%23b@example.com}`);
+    expect(latex).toContain(String.raw`\href{tel:+1555\%2F0100}`);
+    // And ?, & and %, a % once, since escapeUrl keeps one it finds.
+    const other = { ...resume.header, email: "q?x&y%z@example.com" };
+    expect(generateBody(pkg, { ...resume, header: other }, {}).latex).toContain(
+      String.raw`\href{mailto:q\%3Fx\%26y\%25z@example.com}`,
+    );
   });
 
-  it("marks a field once, where it first appears, however often the package sets it", () => {
-    const { latex, texts } = generateBody(bothLists, resume, {});
+  it("marks every render of a field, and holds each field's text once", () => {
+    const { latex, texts } = generateBody(twice, resume, {});
     const ids = marked(latex);
-    const links = ["code.label", "site.label"];
-    expect(ids.filter((id) => id !== undefined && links.includes(id))).toEqual(links);
-    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ["header.first", "header.last", "code.label", "site.label"])
+      expect(
+        ids.filter((each) => each === id),
+        id,
+      ).toHaveLength(2);
+    expect(new Set(ids)).toEqual(new Set(texts.keys()));
     expect(texts.get("code.label")).toBe("code.example/ilse");
-    // The links again, through {{links}}, set without their markers.
+    // The name in the PDF's author as well as on the page, and the links in both lists: here
+    // through {{links}}, whose separator is a comma.
     expect(latex).toContain(
-      String.raw`Code: \href{https://code.example/ilse}{code.example/ilse}, \href{https://marrow.example/}{marrow.example}`,
+      String.raw`\hypersetup{pdfauthor={\rtfield{header.first}{Ilse} \rtfield{header.last}{Marrow}}}`,
+    );
+    expect(latex).toContain(
+      String.raw`Code: \href{https://code.example/ilse}{\rtfield{code.label}{code.example/ilse}}, \href{https://marrow.example/}{\rtfield{site.label}{marrow.example}}`,
     );
   });
 
@@ -463,7 +515,7 @@ describe("generateBody", () => {
         links: [...resume.header.links, { id: "new", kind: "other" as const, ...link }],
       },
     });
-    for (const each of [pkg, bothLists]) {
+    for (const each of [pkg, twice]) {
       const without = generateBody(each, resume, {});
       const fresh = generateBody(each, withLink({ label: "", href: " " }), {});
       expect(fresh.latex).toBe(without.latex);
@@ -712,20 +764,27 @@ const TRICKY = {
   hidden: "zero\u{200b}\u{200b}\u{200b}\u{200b}width",
   // Characters LaTeX's UTF-8 input defines only for T1, which OT1 has no glyph for.
   t1: "\u{ab} Zarz\u{105}dzanie \u{110} \u{201e}x\u{201c} \u{bb}",
-  // A ? before a backtick, which OT1 would set as its inverted question mark.
+  // A ? before a backtick, which OT1 would set as its inverted question mark; and two backticks
+  // and two quotes, which OT1 sets as its double quotes.
   quotes: "Rust's `?` operator",
+  doubled: "``x''",
   // An accent typed as a combining mark, which LaTeX has no definition for on its own.
   nfd: "Jose\u{301}",
+  // A letter LaTeX has no definition for, as a keyboard composes it and decomposed, which sets
+  // its base letter.
+  vietnamese: "Nguy\u{1ec5}n",
+  decomposed: "Nguye\u{302}\u{303}n",
   // Brackets and a star, which raw text right after \\ or \item would give to the command.
   brackets: "[3 people] led a team*",
 };
 
 /**
  * The fields whose glyphs cannot all align with the model's text yet, which the round trip does
- * not count: OT1 sets `ą` as its base letter, which the aligner finds a few letters on, and `é`
- * as an accent and a letter, which it does not pair (item 16).
+ * not count: OT1 sets `ą` as its base letter, which the aligner finds a few letters on; `é` as an
+ * accent and a letter, which it does not pair; and `ễ` as its base letter alone, which it does not
+ * pair with the composed letter either (item 16).
  */
-const MISALIGNED = new Set(["tricky-t1.text", "tricky-nfd.text"]);
+const MISALIGNED = new Set(["tricky-t1.text", "tricky-nfd.text", "tricky-vietnamese.text"]);
 
 /**
  * The resume with every character the generator escapes or drops, in several contexts, and with
@@ -973,6 +1032,28 @@ describe.skipIf(!engineAvailable())("the generated LaTeX through the engine", ()
     expect(nfd.map((glyph) => glyph.text)).toEqual(["J", "o", "s", undefined, "e"]);
   });
 
+  it("sets two backticks and two quotes as OT1's double quotes", () => {
+    const glyphs = drawn.fields.get("tricky-doubled.text")?.glyphs ?? [];
+    expect(glyphs.map((glyph) => glyph.text)).toEqual(["``", "x", "''"]);
+    const codes = glyphs.map((glyph) => {
+      const item = items[glyph.item];
+      return item?.kind === "glyph" ? item.code : undefined;
+    });
+    // OT1's quotedblleft and quotedblright, where ASCII has \ and ".
+    expect(codes).toEqual([92, 120, 34]);
+  });
+
+  it("sets the base letter of a letter LaTeX has no definition for, typed either way", () => {
+    // ễ reaches LaTeX as an e and two combining marks, which the prelude leaves out.
+    for (const key of ["vietnamese", "decomposed"]) {
+      const glyphs = drawn.fields.get(`tricky-${key}.text`)?.glyphs ?? [];
+      expect(glyphs.map((glyph) => glyph.text).join(""), key).toBe("Nguyen");
+    }
+    expect(compiled.log).toMatch(/\(U\+0302\)\s+is left out/);
+    expect(compiled.log).toMatch(/\(U\+0303\)\s+is left out/);
+    expect(compiled.log).not.toContain("U+1EC5");
+  });
+
   it("sets a caret and a tilde as OT1's accent glyphs, which read as the characters", () => {
     // OT1 has no ASCII caret or tilde, so LaTeX sets \textasciicircum and \textasciitilde as the
     // circumflex and tilde accents, codes 94 and 126, which `glyphs.ts` reads as the characters.
@@ -1065,6 +1146,46 @@ describe.skipIf(!engineAvailable())("the generated LaTeX through the engine", ()
     expect(addresses).toContain("mailto:Ilse%20%3Cilse@example.com%3E");
     expect(addresses).toContain("tel:+15550100%7C+442079460000");
     expect(addresses).toContain("https://code.example/ilse");
+  });
+
+  describe("with a package that sets the name in the PDF's author, and the links twice", () => {
+    let result: CompileResult;
+    let page: DrawnPage;
+    let pageItems: PageItem[];
+    beforeAll(async () => {
+      // The header is all that differs, so the format is the one the page above compiled from.
+      const twiceBody = generateBody(twice, resume, {});
+      result = session.compile("pdftex", generateFormat(twice, {}).name, twiceBody.latex, {
+        job: "twice",
+      });
+      if (!result.output) throw new Error(result.error);
+      page = await drawPage(result.output, fonts, twiceBody.texts);
+      pageItems = parseDvi(result.output, () => undefined).pages[0]?.items ?? [];
+    }, 60_000);
+
+    /** Where the page begins a copy of a field. */
+    const begins = (id: string) =>
+      pageItems.flatMap((item, index) =>
+        item.kind === "special" && item.text === `${MARKER_BEGIN}${id}` ? [index] : [],
+      );
+
+    it("finds the name at the copy the page shows, after one in the author with no markers", () => {
+      expect(result.log).not.toMatch(/^! /m);
+      expect(begins("header.first")).toHaveLength(1);
+      const field = page.fields.get("header.first");
+      expect(field?.glyphs.map((glyph) => glyph.text).join("")).toBe("Ilse");
+      expect(field && alignGlyphs(field, "Ilse")).toBe(0);
+      expect(page.unmatched).toBe(0);
+    });
+
+    it("finds a link set twice once, with its first copy's glyphs", () => {
+      const [first = -1, second = -1, ...more] = begins("code.label");
+      expect(more).toEqual([]);
+      expect(second).toBeGreaterThan(first);
+      const glyphs = page.fields.get("code.label")?.glyphs ?? [];
+      expect(glyphs).toHaveLength("code.example/ilse".length);
+      expect(glyphs.every((glyph) => glyph.item > first && glyph.item < second)).toBe(true);
+    });
   });
 
   describe("with a package that uppercases, makes _ active and sets a field in a cell", () => {

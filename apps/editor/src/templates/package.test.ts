@@ -158,7 +158,7 @@ describe("TemplatePackage", () => {
       });
     const path = "snippets.contact.email";
     expect(issues(emailed("\\href{mailto:{{&text}}}{{{text}}}"))).toEqual([
-      { path, message: "text is text; inside \\href or \\url use a url slot, such as href" },
+      { path, message: "text is a text slot; inside \\href use a url slot, such as href" },
     ]);
     expect(issues(emailed("\\href{{{&href}}}{{{text}}}"))).toEqual([]);
     // A typeset URL is refused by the rule for URLs, as before, and by nothing else.
@@ -172,7 +172,7 @@ describe("TemplatePackage", () => {
     expect(issues(accented)).toEqual([
       {
         path: "controls.accent.apply",
-        message: "value is text; inside \\href or \\url use a url slot, such as href",
+        message: "value is a text slot; inside \\url use a url slot, such as href",
       },
     ]);
   });

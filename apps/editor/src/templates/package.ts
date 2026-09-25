@@ -54,7 +54,8 @@ export const HEADER_SLOTS = {
 /**
  * One contact field, as `{{contacts}}` shows it: its `text`, and an `href` the generator builds,
  * since an address is only ever a URL slot. For the email it is `mailto:` and the address,
- * trimmed; for the phone `tel:` and the number with all whitespace taken out; and the location
+ * trimmed; for the phone `tel:` and the number with all whitespace taken out, each with the
+ * `#`, `?`, `&`, `%` and `/` an address would read as its syntax percent-encoded; and the location
  * has none, so that `{{#href}}` is false and `{{&href}}` sets nothing.
  */
 export const CONTACT_SLOTS = { text: "text", href: "url" } satisfies Slots;

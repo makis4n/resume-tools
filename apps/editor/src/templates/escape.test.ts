@@ -63,14 +63,32 @@ describe("escapeText", () => {
     expect(escapeText("[3 people] led a team*")).toBe("{[}3 people{]} led a team{*}");
   });
 
-  it("puts an empty group before a backtick, so that ? or ! before it makes no ligature", () => {
-    expect(escapeText("`?`")).toBe("{}`?{}`");
-    expect(escapeText("Rust's `!` too")).toBe("Rust's {}`!{}` too");
+  it("keeps a ? or ! from a backtick after it, and two backticks together", () => {
+    expect(escapeText("``quoted''")).toBe("``quoted''");
+    expect(escapeText("Rust's `?` operator")).toBe("Rust's `?{}` operator");
+    expect(escapeText("`!` and ?``x''")).toBe("`!{}` and ?{}``x''");
+    // A character the generator drops between them does not keep them apart on its own.
+    expect(escapeText("?\u{200b}`")).toBe("?{}`");
   });
 
-  it("composes an accent typed as a combining mark with its letter", () => {
-    expect(escapeText("e\u{301}")).toBe("\u{e9}");
-    expect(escapeText("Nguye\u{302}\u{303}n")).toBe("Nguy\u{1ec5}n");
+  it("composes an accent typed as a combining mark with its letter, up to Latin Extended-A", () => {
+    expect(escapeText("Jose\u{301}")).toBe("Jos\u{e9}");
+    expect(escapeText("Zo\u{308}e \u{142}\u{105}ka")).toBe("Z\u{f6}e \u{142}\u{105}ka");
+  });
+
+  it("decomposes a letter past Latin Extended-A, so that its base letter sets", () => {
+    // LaTeX has no definition for ễ, so the prelude leaves out the two marks and the e sets.
+    expect(escapeText("Nguye\u{302}\u{303}n")).toBe("Nguye\u{302}\u{303}n");
+    expect(escapeText("Nguy\u{1ec5}n")).toBe("Nguye\u{302}\u{303}n");
+    expect(escapeText("\u{1ec5}")).toBe("e\u{302}\u{303}");
+    expect(escapeText("Ph\u{1b0}\u{1edd}ng")).toBe("Phu\u{31b}o\u{31b}\u{300}ng");
+  });
+
+  it("keeps composed a letter past Latin Extended-A that LaTeX defines", () => {
+    // Romanian's ș and ț, which LaTeX sets with \textcommabelow, and Pinyin's ǎ, with a caron.
+    expect(escapeText("s\u{326}coal\u{103}")).toBe("\u{219}coal\u{103}");
+    expect(escapeText("\u{21b}ar\u{103}")).toBe("\u{21b}ar\u{103}");
+    expect(escapeText("ha\u{30c}o")).toBe("h\u{1ce}o");
   });
 });
 
@@ -99,7 +117,7 @@ describe("isBlank", () => {
   it("is true for text that would show nothing", () => {
     for (const text of ["", "  ", "\t\n", " ", "​", " ‍﻿ "])
       expect(isBlank(text), JSON.stringify(text)).toBe(true);
-    for (const text of ["a", " . ", "​x", "\u{1f642}", "e\u{301}"])
+    for (const text of ["a", " . ", "​x", "\u{1f642}", "e\u{301}", "\u{1ec5}"])
       expect(isBlank(text), JSON.stringify(text)).toBe(false);
   });
 });

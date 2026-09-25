@@ -154,10 +154,11 @@ describe("checkSnippet", () => {
 });
 
 describe("checkAddresses", () => {
-  const slots = { text: "text", href: "url", summary: "rich" } as const;
+  const slots = { text: "text", href: "url", summary: "rich", dates: "date" } as const;
   const check = (source: string) => checkAddresses(source, slots);
-  const refused = (name: string) =>
-    `${name} is text; inside \\href or \\url use a url slot, such as href`;
+  const refused = (name: string, type = "text", command = "href") =>
+    `${name} is a ${type} slot; inside \\${command} use a url slot, such as href`;
+  const backslashed = "a slot cannot follow a backslash; the text would become a command";
 
   it("passes a URL slot in an address, and any slot outside one", () => {
     expect(check("\\href{{{&href}}}{\\underline{{{text}}}}")).toEqual([]);
@@ -166,14 +167,46 @@ describe("checkAddresses", () => {
     expect(check("\\href{{{&nothing}}}{x}")).toEqual([]);
   });
 
-  it("refuses any other slot in an address, raw or typeset, however deep", () => {
+  it("refuses any other slot in an address, raw or typeset, however deep, naming its type", () => {
     expect(check("\\href{mailto:{{&text}}}{{{text}}}")).toEqual([refused("text")]);
-    expect(check("\\mbox{\\url{x{y{{{summary}}}}}}")).toEqual([refused("summary")]);
+    expect(check("\\mbox{\\url{x{y{{{summary}}}}}}")).toEqual([refused("summary", "rich", "url")]);
     expect(check("\\href{{{#text}}{{&text}}{{/text}}}{x}")).toEqual([refused("text")]);
     expect(check("\\href\n  {tel:{{&text}}}{x} \\url{{{&summary}}}")).toEqual([
       refused("text"),
-      refused("summary"),
+      refused("summary", "rich", "url"),
     ]);
+    expect(check("\\href{{{&dates}}}{x}")).toEqual([
+      "dates is a date slot; inside \\href use a url slot, such as href",
+    ]);
+  });
+
+  it("reads the first argument of \\nolinkurl and \\hyperlink as an address too", () => {
+    expect(check("\\nolinkurl{{{&text}}}")).toEqual([refused("text", "text", "nolinkurl")]);
+    expect(check("\\hyperlink{{{&summary}}}{x}")).toEqual([
+      refused("summary", "rich", "hyperlink"),
+    ]);
+    expect(check("\\nolinkurl{{{&href}}} \\hyperlink{top}{{{text}}}")).toEqual([]);
+  });
+
+  it("finds the address after an optional argument, counting braces inside it", () => {
+    expect(check("\\href[pdfnewwindow]{mailto:{{&text}}}{{{text}}}")).toEqual([refused("text")]);
+    expect(check("\\href [page=2] {mailto:{{&text}}}{x}")).toEqual([refused("text")]);
+    // A ] inside braces does not end the optional argument.
+    expect(check("\\href[pdfborder={]}]{{{&text}}}{x}")).toEqual([refused("text")]);
+    expect(check("\\href[pdfnewwindow]{{{&href}}}{{{text}}}")).toEqual([]);
+    // Only one optional argument: a second [ is the address itself, a token and no group.
+    expect(check("\\href[a][{{&text}}]{x}")).toEqual([]);
+  });
+
+  it("reads no comment, but a \\% as the character", () => {
+    expect(check("{{text}} % was \\href{mailto:{{&text}}}{x}")).toEqual([]);
+    expect(check("% see \\href{\n{{&text}}")).toEqual([]);
+    // The comment ends with its line, and the command it follows still takes its address.
+    expect(check("\\href%\n{mailto:{{&text}}}{x}")).toEqual([refused("text")]);
+    expect(check("\\href{mailto:%}\n{{&text}}}{x}")).toEqual([refused("text")]);
+    expect(check("\\href{50\\%{{&text}}}{x}")).toEqual([refused("text")]);
+    // A tag that runs past the line's end takes the comment with it.
+    expect(check("% {{\n&text}} \\href{mailto:{{&text}}}\nx")).toEqual([]);
   });
 
   it("reads a backslash before a brace or a backslash as a control symbol", () => {
@@ -181,6 +214,14 @@ describe("checkAddresses", () => {
     expect(check("\\\\href{{{&text}}}")).toEqual([]);
     expect(check("\\href{a\\}{{&text}}}")).toEqual([refused("text")]);
     expect(check("\\href{a}{{&text}}")).toEqual([]);
+  });
+
+  it("refuses a slot right after a backslash, which would make its text a command", () => {
+    expect(check("\\item \\{{&text}}")).toEqual([backslashed]);
+    expect(check("\\item \\\\\\{{text}}")).toEqual([backslashed]);
+    expect(check("\\item \\\\{{&text}}")).toEqual([]);
+    expect(check("\\item \\{{{&text}}}")).toEqual([]);
+    expect(check("% \\{{&text}}")).toEqual([]);
   });
 });
 
@@ -206,11 +247,20 @@ describe("crafted snippets", () => {
   it("checks addresses in one pass, however deep they nest or often they open", () => {
     const deep = `${"\\href{".repeat(100_000)}{{&text}}${"}".repeat(100_000)}`;
     const unclosed = "\\href{\\url{ {{#text}}".repeat(50_000);
+    // Comments, optional arguments and runs of backslashes, each read once.
+    const commented = "%\\href{{{&text}}\n".repeat(50_000);
+    const optional = "\\href[{[".repeat(100_000);
+    const backslashes = `${"\\".repeat(500_001)}{{&text}}${"\\{{&text}}".repeat(50_000)}`;
     const started = performance.now();
     expect(checkAddresses(deep, { text: "text" })).toEqual([
-      "text is text; inside \\href or \\url use a url slot, such as href",
+      "text is a text slot; inside \\href use a url slot, such as href",
     ]);
     expect(checkAddresses(unclosed, { text: "text" })).toEqual([]);
+    expect(checkAddresses(commented, { text: "text" })).toEqual([]);
+    expect(checkAddresses(optional, { text: "text" })).toEqual([]);
+    expect(checkAddresses(backslashes, { text: "text" })).toEqual([
+      "a slot cannot follow a backslash; the text would become a command",
+    ]);
     expect(performance.now() - started).toBeLessThan(1000);
   });
 });

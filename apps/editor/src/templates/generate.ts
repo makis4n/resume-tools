@@ -135,9 +135,10 @@ export function generateFormat(pkg: TemplatePackage, values: ControlValues): Gen
  * What the session compiles from the format: each control's snippet for its value, a line each,
  * in the schema's order and whether or not the control is format-bound, since a format-bound
  * value is applied as well as dumped (decision 0006); then the `document` snippet, which runs from
- * `\begin{document}` to `\end{document}`. `texts` holds every field the body marks, once each,
- * with the text the page shows for it: the text, a rich field's runs joined, or the formatted
- * dates. A field's first appearance is the one marked, so the one the user edits.
+ * `\begin{document}` to `\end{document}`. Every render of a field is marked, however often the
+ * package sets it, and `texts` holds each field the body marks once, with the text the page shows
+ * for it: the text, a rich field's runs joined, or the formatted dates. The page keeps the first
+ * copy of a field that reaches it (`collectFields`), which is the one the user edits.
  */
 export function generateBody(
   pkg: TemplatePackage,
@@ -256,18 +257,31 @@ const CONTACTS = ["phone", "email", "location"] as const;
 
 /**
  * The address a contact links to, its snippet's `href`: `mailto:` and the address, trimmed;
- * `tel:` and the number with every space taken out; and none for the location.
+ * `tel:` and the number with every space taken out; and none for the location. The field is
+ * typed as text, so what an address reads as its own syntax is percent-encoded first (`encoded`);
+ * the rest of the encoding is `escapeUrl`'s, which keeps a `%` it finds as it is.
  */
 function contactAddress(kind: (typeof CONTACTS)[number], text: string): string {
   switch (kind) {
     case "email":
-      return `mailto:${text.trim()}`;
+      return `mailto:${encoded(text.trim())}`;
     case "phone":
-      return `tel:${text.replace(/\s/g, "")}`;
+      return `tel:${encoded(text.replace(/\s/g, ""))}`;
     case "location":
       return "";
   }
 }
+
+/**
+ * The characters of a contact field that an address would read as syntax rather than as the
+ * field's: `#` and `?` would begin a fragment or a query, `&` would part a query, `/` a path, and
+ * `%` would begin an escape, so that `a#b@example.com` would link to `a` with a fragment.
+ */
+const ADDRESS_SYNTAX = /[#?&%/]/g;
+
+/** A contact field with its address syntax percent-encoded. */
+const encoded = (text: string) =>
+  text.replace(ADDRESS_SYNTAX, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 
 function documentPart(build: Build, resume: Resume): Part {
   const { snippets } = build.pkg;
@@ -519,12 +533,12 @@ function renderValue(
 }
 
 /**
- * A field in its markers, the first time it renders. A later render of the same field, such as a
- * link a header sets through both `{{links}}` and `{{contacts}}`, goes in without them, so the
- * page finds one copy of each field: the first, which is the one the user edits.
+ * A field in its markers, every time it renders. A render may never reach the page, as one in a
+ * PDF string or one `\settowidth` only measures does, so the page keeps the first copy that does
+ * reach it, such as the first of a link a header sets through both `{{contacts}}` and
+ * `{{links}}`: the one the user edits.
  */
 function field(id: string, text: string, latex: string, texts: Map<string, string>): string {
-  if (texts.has(id)) return latex;
   texts.set(id, text);
   return `\\rtfield{${id}}{${latex}}`;
 }
@@ -539,6 +553,9 @@ function richLatex(runs: RichText): string {
     if (run.bold) part = `\\textbf{${part}}`;
     if (run.href !== undefined && !isBlank(run.href))
       part = `\\href{${escapeUrl(run.href)}}{${part}}`;
+    // Two runs that neither wrap meet in one font, so a ? or ! that ends one would make OT1's ¿
+    // or ¡ with a backtick that begins the next: they are kept apart as `escapeText` keeps them.
+    if (part.startsWith("`") && /[?!]$/.test(latex)) latex += "{}";
     latex += part;
   }
   return latex;
