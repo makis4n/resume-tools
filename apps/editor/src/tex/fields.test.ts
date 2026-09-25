@@ -386,6 +386,17 @@ describe("alignGlyphs", () => {
     expect(far.glyphs.map((g) => g.offset)).toEqual([0, 1]);
   });
 
+  it("matches T1's low double quote to the two commas it sets it for, or to „ itself", () => {
+    // T1's glyph for two commas, quotedblbase, as the page reads it through the Adobe Glyph List.
+    const low = "\u{201e}";
+    const commas = fieldOf(["a", low, "b", ","]);
+    expect(alignGlyphs(commas, "a,,b,")).toBe(0);
+    expect(commas.glyphs.map((g) => g.offset)).toEqual([0, 1, 3, 4]);
+    const quote = fieldOf(["a", low, "b"]);
+    expect(alignGlyphs(quote, "a\u{201e}b")).toBe(0);
+    expect(quote.glyphs.map((g) => g.offset)).toEqual([0, 1, 2]);
+  });
+
   it("matches T1's one glyph for Ð and Đ to either", () => {
     const f = fieldOf(["\u{d0}", "a", "\u{d0}"]);
     expect(alignGlyphs(f, "\u{110}a\u{d0}")).toBe(0);

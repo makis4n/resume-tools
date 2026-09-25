@@ -33,6 +33,16 @@ describe("refusedSpecial", () => {
     expect(refusedSpecial("dvipdfmx:config p a4")).toBe("dvipdfmx:config p");
   });
 
+  it("names an x:fontmapfile special, which loads a font map from a file", () => {
+    expect(refusedSpecial("x:fontmapfile pdftex.map")).toBe("x:fontmapfile");
+    expect(refusedSpecial(" x: FontMapFile +../victim/fonts.map")).toBe("x:fontmapfile");
+  });
+
+  it("names an x:fontmapline special, which can point a font at any file", () => {
+    expect(refusedSpecial("x:fontmapline cmr10 cmr10 <../victim/victim.dvi")).toBe("x:fontmapline");
+    expect(refusedSpecial("\tx:  FONTMAPLINE cmr10 cmr10 <x.pfb")).toBe("x:fontmapline");
+  });
+
   it("passes a special that reads no file", () => {
     for (const text of [
       "pdf:pagesize width 210mm height 297mm",
@@ -48,6 +58,10 @@ describe("refusedSpecial", () => {
       "dvipdfmx:config P -44",
       "rt:b:header.first",
       "header=l3backend-dvips.pro",
+      // x: specials that load nothing.
+      "x:gsave",
+      "x:scale 2 2",
+      "x:textcolor rgb 1 0 0",
     ])
       expect(refusedSpecial(text), text).toBeUndefined();
   });
@@ -439,10 +453,18 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
   describe("makes the PDF of a job's last compile", () => {
     const { package: jake, sample } = curated("jake");
     const text = (pdf: Uint8Array) => new TextDecoder("latin1").decode(pdf);
-    const jobFiles = (job: string) =>
+    const fs = () =>
       (
-        session as unknown as { engine: { FS: { readdir(path: string): string[] } } }
-      ).engine.FS.readdir(`/home/web_user/jobs/${job}`);
+        session as unknown as {
+          engine: {
+            FS: {
+              readdir(path: string): string[];
+              writeFile(path: string, data: Uint8Array): void;
+            };
+          };
+        }
+      ).engine.FS;
+    const jobFiles = (job: string) => fs().readdir(`/home/web_user/jobs/${job}`);
     const doc = (body: string) => `\\documentclass{article}\\begin{document}${body}\\end{document}`;
 
     /** Jake's sample, compiled as the editor compiles it, on the page size given. */
@@ -555,6 +577,35 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(made.output).toContain("xdvipdfmx:fatal:");
     }, 60_000);
 
+    it("fails with the reason, rather than throw, when xdvipdfmx aborts, and makes the next", () => {
+      // The tree's xdvipdfmx stops with a memory fault on an x:escale with no x:bscale open
+      // (decision 0013), which the run throws. The PDF is refused, and the engine, put back as
+      // start-up left it, makes the next one.
+      const unscaled = doc("x\\special{x:escale}");
+      expect(session.compile("pdftex", "stock", unscaled, { job: "aborted" }).ok).toBe(true);
+      const made = session.pdf("aborted");
+      expect(made.ok).toBe(false);
+      expect(made.pdf).toBeUndefined();
+      expect(made.error).toMatch(/^xdvipdfmx aborted: memory access out of bounds/);
+      expect(made.output).toContain("aborted.dvi -> aborted.pdf");
+      expect(made.ms).toBeGreaterThan(0);
+      expect(jobFiles("aborted")).not.toContain("aborted.pdf");
+      // Again, the same, and then the same job with the special gone.
+      expect(session.pdf("aborted").error).toBe(made.error);
+      expect(session.compile("pdftex", "stock", doc("x"), { job: "aborted" }).ok).toBe(true);
+      expect(session.pdf("aborted").ok).toBe(true);
+    }, 60_000);
+
+    it("fails, rather than throw, for an output it cannot read, and runs nothing", () => {
+      // Its specials cannot be scanned for one that reads a file, so xdvipdfmx never sees it.
+      expect(session.compile("pdftex", "stock", doc("x"), { job: "garbled" }).ok).toBe(true);
+      fs().writeFile("/home/web_user/jobs/garbled/garbled.dvi", new Uint8Array([247, 2, 1]));
+      const made = session.pdf("garbled");
+      expect(made.ok).toBe(false);
+      expect(made.error).toMatch(/^the output cannot be read: /);
+      expect(made.output).toBe("");
+    }, 60_000);
+
     it("keeps a XeTeX document's set size, which it writes as pdf:pagesize, not papersize=", () => {
       // Dumped as decision 0003's loop does: fontenc before the class, geometry on A4, hyperref.
       // XeTeX writes the size in a pdf:pagesize special, and -p would override it to Letter.
@@ -608,6 +659,20 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(made.error).toContain("dvipdfmx:config f");
       expect(made.output).toBe("");
     }, 60_000);
+
+    for (const special of ["x:fontmapfile pdftex.map", "x:fontmapline cmr10 cmr10 <cmr10.pfb"])
+      it(`refuses an output with ${special.split(" ")[0]}, which loads a font map`, () => {
+        // The same class as pdf:mapfile and pdf:mapline, which xdvipdfmx runs for pdfTeX's output
+        // too; the map is never read, since the special is caught in the output first.
+        const job = special.startsWith("x:fontmapfile") ? "mapfile" : "mapline";
+        const attack = doc(`hi\\special{${special}}`);
+        expect(session.compile("pdftex", "stock", attack, { job }).ok).toBe(true);
+        const made = session.pdf(job, { compress: 0 });
+        expect(made.ok).toBe(false);
+        expect(made.pdf).toBeUndefined();
+        expect(made.error).toContain(special.split(" ")[0]);
+        expect(made.output).toBe("");
+      }, 60_000);
 
     it("refuses a compression level that is not a whole number from 0 to 9", () => {
       for (const compress of [-1, 10, 1.5, Number.NaN])

@@ -292,6 +292,8 @@ const LIGATURE_ALTERNATIVES: ReadonlyMap<string, readonly string[]> = new Map([
   ["''", ["''", "”", '"']],
   ["'", ["'", "’"]],
   ["`", ["`", "‘"]],
+  // T1's fonts set two commas as one glyph, the low double quote, which they name quotedblbase.
+  ["\u{201e}", ["\u{201e}", ",,"]],
   // T1 sets Đ (`\DJ`) with the glyph it sets Ð (`\DH`) with, at 208, which its fonts name Eth.
   ["\u{d0}", ["\u{d0}", "\u{110}"]],
   // LaTeX's UTF-8 input sets TS1's angle brackets from three code points each (ts1enc.dfu): the

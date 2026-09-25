@@ -1,0 +1,209 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Noor", "last": "Castellan" },
+    "headline": "Front-end engineer for design tools & print",
+    "email": "noor@example.com",
+    "phone": "+44 20 7946 0958",
+    "location": "Leeds, UK",
+    "links": [
+      {
+        "id": "site",
+        "kind": "website",
+        "label": "castellan.example.com",
+        "href": "https://castellan.example.com"
+      },
+      {
+        "id": "code",
+        "kind": "github",
+        "label": "ncastellan",
+        "href": "https://code.example.com/ncastellan"
+      },
+      {
+        "id": "profile",
+        "kind": "linkedin",
+        "label": "noor-castellan",
+        "href": "https://people.example.com/noor-castellan"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "experience",
+      "kind": "entries",
+      "role": "experience",
+      "title": "Experience",
+      "entries": [
+        {
+          "id": "tidewater",
+          "title": "Senior Front-End Engineer",
+          "subtitle": "Tidewater Studio",
+          "place": "Leeds, UK",
+          "dates": { "start": "2021-03", "end": "present" },
+          "bullets": [
+            {
+              "id": "tidewater-1",
+              "text": [
+                {
+                  "text": "Led the rebuild of the studio's design-system site, cutting page weight by 60% and its builds from minutes to seconds."
+                }
+              ]
+            },
+            {
+              "id": "tidewater-2",
+              "text": [
+                {
+                  "text": "Built a print pipeline that typesets product sheets from structured data in twelve languages."
+                }
+              ]
+            },
+            {
+              "id": "tidewater-3",
+              "text": [
+                {
+                  "text": "Mentored four engineers through their first releases, and wrote the team's review guide."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "larkspur",
+          "title": "Front-End Engineer",
+          "subtitle": "Larkspur Maps",
+          "place": "Montréal, QC",
+          "dates": { "start": "2018-06", "end": "2021-02" },
+          "bullets": [
+            {
+              "id": "larkspur-1",
+              "text": [
+                {
+                  "text": "Shipped an offline-first map editor that field teams use across three regions."
+                }
+              ]
+            },
+            {
+              "id": "larkspur-2",
+              "text": [
+                {
+                  "text": "Cut the editor's first load from 9 MB to 2.4 MB by splitting out its tile renderer."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "summary",
+      "kind": "paragraph",
+      "role": "summary",
+      "title": "About",
+      "text": [
+        {
+          "text": "Seven years of building tools for designers, from design systems to print pipelines. Happiest where careful typography meets fast software."
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "kind": "entries",
+      "role": "education",
+      "title": "Education",
+      "entries": [
+        {
+          "id": "northmoor",
+          "title": "BSc Computer Science",
+          "subtitle": "University of Northmoor",
+          "place": "York, UK",
+          "dates": { "start": "2014-09", "end": "2018-06" },
+          "bullets": [
+            {
+              "id": "northmoor-1",
+              "text": [
+                {
+                  "text": "Dissertation on line breaking for mixed scripts, graded first class."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "kind": "list",
+      "role": "skills",
+      "title": "Skills",
+      "items": [
+        { "id": "typescript", "text": [{ "text": "TypeScript" }] },
+        { "id": "react", "text": [{ "text": "React" }] },
+        { "id": "performance", "text": [{ "text": "Web performance" }] },
+        { "id": "systems", "text": [{ "text": "Design systems" }] },
+        { "id": "accessibility", "text": [{ "text": "Accessibility" }] },
+        { "id": "typesetting", "text": [{ "text": "Typesetting" }] }
+      ]
+    },
+    {
+      "id": "projects",
+      "kind": "entries",
+      "role": "projects",
+      "title": "Projects",
+      "entries": [
+        {
+          "id": "kerning",
+          "title": "Kerning Club",
+          "subtitle": "TypeScript, Canvas",
+          "dates": { "start": "2022", "end": "2023" },
+          "bullets": [
+            {
+              "id": "kerning-1",
+              "text": [
+                {
+                  "text": "A browser tool for pairing type specimens, which two design schools teach with."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "languages",
+      "kind": "labelled",
+      "role": "languages",
+      "title": "Languages",
+      "items": [
+        { "id": "english", "label": "English", "text": [{ "text": "native" }] },
+        { "id": "arabic", "label": "Arabic", "text": [{ "text": "fluent" }] },
+        { "id": "french", "label": "French", "text": [{ "text": "conversational" }] }
+      ]
+    },
+    {
+      "id": "awards",
+      "kind": "entries",
+      "role": "awards",
+      "title": "Awards",
+      "entries": [
+        {
+          "id": "designweek",
+          "title": "Best Tool",
+          "subtitle": "Leeds Design Week",
+          "dates": { "start": "2023" },
+          "bullets": []
+        }
+      ]
+    },
+    {
+      "id": "interests",
+      "kind": "list",
+      "role": "other",
+      "title": "Interests",
+      "items": [
+        { "id": "letterpress", "text": [{ "text": "Letterpress printing" }] },
+        { "id": "running", "text": [{ "text": "Fell running" }] },
+        { "id": "clubs", "text": [{ "text": "Coding clubs for teenagers" }] }
+      ]
+    }
+  ]
+}

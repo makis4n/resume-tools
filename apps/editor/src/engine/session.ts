@@ -343,6 +343,13 @@ function namesPaperSize(parsed: DviDocument): boolean {
 const READS_A_FILE = new Set(["image", "img", "epdf", "fstream", "mapfile", "mapline"]);
 
 /**
+ * The `x:` specials, XeTeX's, which xdvipdfmx runs for pdfTeX's output too, that load a font map
+ * from a file or a line as `pdf:mapfile` and `pdf:mapline` do: a map line can point a font at any
+ * file of the engine's, which xdvipdfmx then embeds.
+ */
+const X_READS_A_FILE = new Set(["fontmapfile", "fontmapline"]);
+
+/**
  * The `dvipdfmx:config` options that only tune the PDF and reach nothing outside it: `C`
  * compatibility flags, `V` the PDF version, `P` the permission flags. Every other option is a
  * command-line flag that reads a file or reconfigures the run: `f` loads a font map (the same class
@@ -360,21 +367,26 @@ const SAFE_CONFIG = new Set(["C", "V", "P"]);
  * embed, say, another job's file or a TeX Live file (version one's PDFs carry no images at all;
  * decision 0008).
  *
- * dvipdfmx parses a `pdf:` special as `pdf:` then optional spaces then the command keyword, and a
- * `dvipdfmx:config` special as the prefix then optional spaces then `config` then the option, all
- * matched without regard to case except the option letter; a dvips special is the raw
- * `psfile=`/`PSfile=`. Harmless specials (`pdf:pagesize`, `pdf:literal`, `pdf:link`, `papersize=`,
- * `color push`, the field markers, `dvipdfmx:config C`) name no such command and pass.
+ * dvipdfmx parses a `pdf:` or `x:` special as the prefix then optional spaces then the command
+ * keyword, and a `dvipdfmx:config` special as the prefix then optional spaces then `config` then
+ * the option, all matched without regard to case except the option letter; a dvips special is the
+ * raw `psfile=`/`PSfile=`. Harmless specials (`pdf:pagesize`, `pdf:literal`, `pdf:link`, `x:gsave`,
+ * `papersize=`, `color push`, the field markers, `dvipdfmx:config C`) name no such command and pass.
  */
 export function refusedSpecial(text: string): string | undefined {
   const special = text.trimStart();
   if (/^psfile=/i.test(special)) return "psfile=";
   const command = /^pdf:\s*([a-z]+)/i.exec(special)?.[1]?.toLowerCase();
   if (command !== undefined) return READS_A_FILE.has(command) ? `pdf:${command}` : undefined;
+  const xCommand = /^x:\s*([a-z]+)/i.exec(special)?.[1]?.toLowerCase();
+  if (xCommand !== undefined) return X_READS_A_FILE.has(xCommand) ? `x:${xCommand}` : undefined;
   const option = /^dvipdfmx:\s*config\b\s*([a-z]+)?/i.exec(special)?.[1];
   if (option !== undefined && !SAFE_CONFIG.has(option)) return `dvipdfmx:config ${option}`;
   return undefined;
 }
+
+/** What an error thrown says, for a result's `error`. */
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** The first `\special` of any page that would make xdvipdfmx read a file or reconfigure the run. */
 function refusedOutputSpecial(parsed: DviDocument): string | undefined {
@@ -609,6 +621,13 @@ export class EngineSession {
    * xdvipdfmx does not honour `openin_any`, so before it runs, every special of the output is
    * scanned and the PDF refused when one would read a file or reconfigure the run (`refusedSpecial`):
    * a template's special could otherwise embed another job's or a TeX Live file (decision 0008).
+   *
+   * Whatever becomes of the PDF, the result says so, and `pdf` throws only for arguments it
+   * refuses, as every method does: an output it cannot read, whose specials it cannot scan, is not
+   * handed to xdvipdfmx, and a run of xdvipdfmx that aborts rather than exits, as the tree's does
+   * with a memory fault on an `x:escale` with no `x:bscale` open (decision 0013), is a PDF it
+   * could not make, with the reason. `run` has put the engine back as start-up left it, so the
+   * session goes on.
    */
   pdf(job: string, options: PdfOptions = {}): PdfResult {
     checkName("job", job);
@@ -620,7 +639,17 @@ export class EngineSession {
     const output = file === undefined ? undefined : this.read(`${JOBS}/${job}/${file}`);
     if (file === undefined || output === undefined)
       return { ok: false, ms: 0, output: "", error: `${job} has no output to make a PDF of` };
-    const parsed = parseDvi(output, () => undefined);
+    let parsed: DviDocument;
+    try {
+      parsed = parseDvi(output, () => undefined);
+    } catch (error) {
+      return {
+        ok: false,
+        ms: 0,
+        output: "",
+        error: `the output cannot be read: ${messageOf(error)}`,
+      };
+    }
     const refused = refusedOutputSpecial(parsed);
     if (refused !== undefined)
       return {
@@ -638,23 +667,36 @@ export class EngineSession {
       file,
     ];
     const at = `${JOBS}/${job}/${job}.pdf`;
-    let run: RunResult;
+    let run: RunResult | undefined;
+    let aborted: unknown;
     let pdf: Uint8Array | undefined;
+    const started = performance.now();
     // A file TeX wrote under that name must not pass for the PDF.
     this.removeTree(at);
     try {
       run = this.run(args, `${JOBS}/${job}`);
       pdf = run.code === 0 ? this.read(at) : undefined;
+    } catch (error) {
+      // xdvipdfmx aborted rather than exited; `run` has put the engine back as start-up left it.
+      aborted = error;
     } finally {
       this.removeTree(at);
     }
-    if (pdf !== undefined) return { ok: true, pdf, ms: run.ms, output: run.output };
-    const said = run.output.split("\n").filter((line) => line.startsWith("xdvipdfmx:"));
-    const why = run.code === 0 ? "xdvipdfmx wrote no PDF" : `xdvipdfmx exited with ${run.code}`;
+    if (run !== undefined && pdf !== undefined)
+      return { ok: true, pdf, ms: run.ms, output: run.output };
+    // What xdvipdfmx printed: all of it when it exited, and what it had when it aborted.
+    const printed = run?.output ?? this.printed.join("\n");
+    const said = printed.split("\n").filter((line) => line.startsWith("xdvipdfmx:"));
+    const why =
+      run === undefined
+        ? `xdvipdfmx aborted: ${messageOf(aborted)}`
+        : run.code === 0
+          ? "xdvipdfmx wrote no PDF"
+          : `xdvipdfmx exited with ${run.code}`;
     return {
       ok: false,
-      ms: run.ms,
-      output: run.output,
+      ms: run?.ms ?? performance.now() - started,
+      output: printed,
       error: [why, ...said.slice(-LAST_MESSAGES)].join("\n"),
     };
   }

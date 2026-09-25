@@ -434,7 +434,8 @@ export function App() {
   /**
    * Open the document again after its first page could not be made. The compiler outlives a
    * document it gave up and a page it dropped, and opening compiles at once, on a new worker if
-   * the last was lost; with no page there is no field to edit, so nothing else would try again.
+   * the last was lost. An edit in the side panel, which stays under the message, compiles as any
+   * edit does; this compiles the document as it stands, for a failure that was not its own.
    */
   const tryAgain = () => {
     setError(undefined);
@@ -499,6 +500,32 @@ export function App() {
     }
   };
 
+  // The side panel's column: the structure, with the style controls under it (item 15). Its
+  // commands are edits as the page's are, so a document another tab has changed takes none of them
+  // either, and the column is inert until the document is read again. What is typed into one of
+  // its inputs, and a drag of a slider or the colour picker, goes in one group, which ends as the
+  // input or the control loses the focus; everything else is a step of its own. The column stays
+  // when the first page could not be made, since a document can be saved in a state that does not
+  // compile (decision 0013): with no page to click, the panel gives each field an input
+  // (`shownFieldsOf`), bar a rich one it would strip of its marks, so the edit that stopped the
+  // compile can be taken back, or its item removed, and the page that edit makes then shows.
+  const side = (
+    <aside inert={stale} style={{ flex: "none", width: "24rem" }}>
+      <Panel
+        document={present}
+        shownFields={shownFieldsOf(shown?.latest, present, error !== undefined)}
+        onCommand={edit}
+        onSeal={seal}
+      />
+      <Controls
+        pkg={curated(present.template).package}
+        values={present.controls}
+        onChange={(change, group) => edit({ type: "control", ...change }, group)}
+        onSeal={seal}
+      />
+    </aside>
+  );
+
   // With no page yet there is nothing to keep showing, so a failure to make the first one is a
   // failure to show any. Fonts that did not load leave no compiler to ask again.
   if (failed)
@@ -509,17 +536,23 @@ export function App() {
         <p>The page could not be shown.</p>
       </main>
     );
+  // The message, with the side panel under it. The two are the main element's children as the
+  // page's column and the panel's are below, so that the panel stays as it is, with what is open in
+  // it and an input that has had the focus, when an edit there brings the page.
   if (error !== undefined && shown === undefined)
     return (
       <main>
-        {back}
-        {saving}
-        <p>
-          The page could not be shown.{" "}
-          <button type="button" onClick={tryAgain}>
-            Try again
-          </button>
-        </p>
+        <div>
+          {back}
+          {saving}
+          <p>
+            The page could not be shown.{" "}
+            <button type="button" onClick={tryAgain}>
+              Try again
+            </button>
+          </p>
+        </div>
+        {side}
       </main>
     );
   if (!shown)
@@ -591,26 +624,7 @@ export function App() {
           )}
         </div>
       </div>
-      {/* The side panel's column: the structure, with the style controls under it (item 15). Its
-          commands are edits as the page's are, so a document another tab has changed takes none
-          of them either, and the column is inert until the document is read again. What is typed
-          into one of its inputs, and a drag of a slider or the colour picker, goes in one group,
-          which ends as the input or the control loses the focus; everything else is a step of its
-          own. */}
-      <aside inert={stale} style={{ flex: "none", width: "24rem" }}>
-        <Panel
-          document={present}
-          shownFields={shownFieldsOf(shown.latest, present)}
-          onCommand={edit}
-          onSeal={seal}
-        />
-        <Controls
-          pkg={curated(present.template).package}
-          values={present.controls}
-          onChange={(change, group) => edit({ type: "control", ...change }, group)}
-          onSeal={seal}
-        />
-      </aside>
+      {side}
     </main>
   );
 }

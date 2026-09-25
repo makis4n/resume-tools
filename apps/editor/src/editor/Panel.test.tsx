@@ -120,6 +120,16 @@ describe("shownFieldsOf", () => {
   it("is undefined before the first page, when every field counts as shown", () => {
     expect(shownFieldsOf(undefined, drawnFrom)).toBeUndefined();
   });
+
+  it("counts no field as shown once the first page could not be made, so each needs an input", () => {
+    // The side panel stays when the page cannot be shown, and is then the only way to take back
+    // the edit that stopped the compile (decision 0013).
+    const shown = shownFieldsOf(undefined, drawnFrom, true);
+    expect(shown).toEqual(new Set());
+    expect(needsInput("header.last", "Quist", undefined, shown)).toBe(true);
+    // A page that came before the failure still shows its fields, which it leaves to itself.
+    expect(shownFieldsOf(latest, drawnFrom, true)).toEqual(shownFieldsOf(latest, drawnFrom));
+  });
 });
 
 describe("thisMonth", () => {
@@ -261,5 +271,19 @@ describe("Panel", () => {
       [{ type: "structure", op: { op: "removeLink", id: "site" } }, undefined],
       [{ type: "structure", op: { op: "addLink" } }, undefined],
     ]);
+  });
+
+  it("gives every field an input when the first page could not be made", () => {
+    const html = render([], shownFieldsOf(undefined, newDocument("jake", sample, "en-US"), true));
+    for (const text of [
+      "First name",
+      'value="Mara"',
+      "Last name",
+      'value="Quist"',
+      'value="Education"',
+      'value="Technical Skills"',
+    ])
+      expect(html).toContain(text);
+    expect(html).not.toContain("\\");
   });
 });

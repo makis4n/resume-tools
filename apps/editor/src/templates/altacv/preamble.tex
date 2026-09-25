@@ -1,0 +1,194 @@
+%%%%%%%%%%%%%%%%%
+% This is the resume editor's preamble for rt-altacv.cls, a modified version of the sample
+% CV altacv-sample.tex (v1.7.4, 30 July 2025) that LianTze Lim (liantze@gmail.com) wrote
+% to go with altacv.cls. It is not the original, which is at
+% https://github.com/liantze/AltaCV and on CTAN as altacv.
+%
+%% It may be distributed and/or modified under the
+%% conditions of the LaTeX Project Public License, either version 1.3
+%% of this license or (at your option) any later version.
+%% The latest version of this license is in
+%%    http://www.latex-project.org/lppl.txt
+%% and version 1.3 or later is part of all distributions of LaTeX
+%% version 2003/12/01 or later.
+%%%%%%%%%%%%%%%%
+
+% This is the editor's port of AltaCV. The layout, the fonts pdfLaTeX takes, the colours and the
+% fonts of the name and the section titles are the sample's, and the class is AltaCV's with only
+% what the editor's compile loop needs changed, as rt-altacv.cls says at its top. The port changes
+% the sample only as follows, each where it is made. The class is the renamed one, and takes no
+% withhyper option, since it always loads hyperref. The name and the section titles are not set in
+% capitals, because the editor's page cannot yet match a capital to the lower-case letter the
+% resume holds. A symbol of LaTeX's TS1 encoding that a family lacks, such as an arrow
+% in Roboto Slab, is set in Latin Modern, where LaTeX would take Computer Modern, whose TS1 fonts
+% the editor's TeX Live has no outlines for, so that neither the page nor the PDF could show it. The
+% margins control sets the margins after the format, the same on every side, and its default is half
+% an inch, the nearest it has to the sample's 1.25 cm at the sides and 1.5 cm at the top and bottom,
+% so only the space between the columns is set here. The accent colour is named, rtaccent, and the
+% sample's red is its default; the colours the sample sets from that red, and the section titles'
+% and their rules', are set from rtaccent by \rtaccentcolours, so that the accent control recolours
+% the tagline, the icons, the entries' subtitles and the section titles with their rules. The
+% sample's rule is a gold no accent can derive, so it becomes a tint of the accent. The class sets
+% its sizes once, as it loads, from LaTeX's size10.clo, while the font size control takes half
+% points from 9 to 12 as an ordinary compile: \rtfontsize sets those sizes and the spacing that goes
+% with them scaled by the size asked for over 10 points, and \rtdensity scales the space between
+% sections, entries and bullets. At 10 points and normal density, the controls' defaults, every
+% length is the class's. The photo, the publications and the wheel chart are left out, since the
+% editor's model has no place for them. And the file ends where the body would begin, because the
+% editor generates the body from the resume.
+
+\documentclass[10pt,a4paper]{rt-altacv}
+
+% The sample's space between the columns. The margins control sets the margins after the format.
+\geometry{columnsep=1.2cm}
+
+% The paracol package lets you typeset columns of text in parallel
+\usepackage{paracol}
+
+% The fonts the sample takes on pdfLaTeX: Roboto Slab as the roman family, which the name and the
+% section titles are set in, and Lato as the sans-serif family, which is the text's. The font
+% control sets the text's family again after the format.
+\usepackage[rm]{roboto}
+\usepackage[defaultsans]{lato}
+\renewcommand{\familydefault}{\sfdefault}
+% TS1 symbols a family lacks, such as arrows, come from Latin Modern, which has their outlines.
+\def\rmsubstdefault{lmr}
+\def\sfsubstdefault{lmss}
+\def\ttsubstdefault{lmtt}
+
+% The font size control's sizes, and the density control's spacing, as the note at the top says.
+% \rt@size is the size in scaled points, 10 points until \rtfontsize sets another, and
+% \rt@pt{<points>} is a length of size10.clo's scaled by it over 10 points and rounded to a
+% hundredth of a point, TeX arithmetic throughout. A length to two decimals rounds back to what TeX
+% reads for it, so at 10 points every length is the class's.
+\makeatletter
+\newcommand*\rt@size{655360}
+\newcommand*\rt@pt[1]{%
+  \the\dimexpr\numexpr\dimexpr#1\p@*\rt@size/655360\relax*100/65536\relax\p@/100\relax}
+% size10.clo's sizes, with the display skips and the lists' spacing it sets with them, each length
+% through \rt@pt.
+\DeclareRobustCommand\normalsize{%
+  \@setfontsize\normalsize{\rt@pt{10}}{\rt@pt{12}}%
+  \abovedisplayskip \rt@pt{10}\@plus\rt@pt{2}\@minus\rt@pt{5}%
+  \abovedisplayshortskip \z@ \@plus\rt@pt{3}%
+  \belowdisplayshortskip \rt@pt{6}\@plus\rt@pt{3}\@minus\rt@pt{3}%
+  \belowdisplayskip \abovedisplayskip
+  \let\@listi\@listI}
+\DeclareRobustCommand\small{%
+  \@setfontsize\small{\rt@pt{9}}{\rt@pt{11}}%
+  \abovedisplayskip \rt@pt{8.5}\@plus\rt@pt{3}\@minus\rt@pt{4}%
+  \abovedisplayshortskip \z@ \@plus\rt@pt{2}%
+  \belowdisplayshortskip \rt@pt{4}\@plus\rt@pt{2}\@minus\rt@pt{2}%
+  \def\@listi{\leftmargin\leftmargini
+    \topsep \rt@pt{4}\@plus\rt@pt{2}\@minus\rt@pt{2}%
+    \parsep \rt@pt{2}\@plus\rt@pt{1}\@minus\rt@pt{1}%
+    \itemsep \parsep}%
+  \belowdisplayskip \abovedisplayskip}
+\DeclareRobustCommand\footnotesize{%
+  \@setfontsize\footnotesize{\rt@pt{8}}{\rt@pt{9.5}}%
+  \abovedisplayskip \rt@pt{6}\@plus\rt@pt{2}\@minus\rt@pt{4}%
+  \abovedisplayshortskip \z@ \@plus\rt@pt{1}%
+  \belowdisplayshortskip \rt@pt{3}\@plus\rt@pt{1}\@minus\rt@pt{2}%
+  \def\@listi{\leftmargin\leftmargini
+    \topsep \rt@pt{3}\@plus\rt@pt{1}\@minus\rt@pt{1}%
+    \parsep \rt@pt{2}\@plus\rt@pt{1}\@minus\rt@pt{1}%
+    \itemsep \parsep}%
+  \belowdisplayskip \abovedisplayskip}
+\DeclareRobustCommand\scriptsize{\@setfontsize\scriptsize{\rt@pt{7}}{\rt@pt{8}}}
+\DeclareRobustCommand\tiny{\@setfontsize\tiny{\rt@pt{5}}{\rt@pt{6}}}
+\DeclareRobustCommand\large{\@setfontsize\large{\rt@pt{12}}{\rt@pt{14}}}
+\DeclareRobustCommand\Large{\@setfontsize\Large{\rt@pt{14.4}}{\rt@pt{18}}}
+\DeclareRobustCommand\LARGE{\@setfontsize\LARGE{\rt@pt{17.28}}{\rt@pt{22}}}
+\DeclareRobustCommand\huge{\@setfontsize\huge{\rt@pt{20.74}}{\rt@pt{25}}}
+\DeclareRobustCommand\Huge{\@setfontsize\Huge{\rt@pt{24.88}}{\rt@pt{30}}}
+% size10.clo's list spacing: the first level's at the normal size, which \normalsize hands to
+% \@listi, and the second and third levels'. The class's lists take enumitem's spacing over them.
+\def\rt@listI{%
+  \parsep \rt@pt{4}\@plus\rt@pt{2}\@minus\rt@pt{1}%
+  \topsep \rt@pt{8}\@plus\rt@pt{2}\@minus\rt@pt{4}%
+  \itemsep \rt@pt{4}\@plus\rt@pt{2}\@minus\rt@pt{1}}
+\def\@listI{\leftmargin\leftmargini\rt@listI}
+\def\@listii{\leftmargin\leftmarginii
+  \labelwidth\leftmarginii
+  \advance\labelwidth-\labelsep
+  \topsep \rt@pt{4}\@plus\rt@pt{2}\@minus\rt@pt{1}%
+  \parsep \rt@pt{2}\@plus\rt@pt{1}\@minus\rt@pt{1}%
+  \itemsep \parsep}
+\def\@listiii{\leftmargin\leftmarginiii
+  \labelwidth\leftmarginiii
+  \advance\labelwidth-\labelsep
+  \topsep \rt@pt{2}\@plus\rt@pt{1}\@minus\rt@pt{1}%
+  \parsep \z@
+  \partopsep \rt@pt{1}\@plus\z@ \@minus\rt@pt{1}%
+  \itemsep \topsep}
+% The space the class's macros leave is size10.clo's \smallskip, \medskip and \bigskip: \cvsection
+% leaves a \bigskip before a title and a \medskip after its rule, \cvevent a \smallskip after its
+% title and its subtitle and a \medskip after its dates, \divider a \medskip, and \makecvheader a
+% \medskip after each of its lines. \rt@density is a percentage of them, 100 until \rtdensity sets
+% another, and \rt@gap{<points>} is a length through \rt@pt, scaled by it and rounded again.
+\newcommand*\rt@density{100}
+\newcommand*\rt@gap[1]{%
+  \the\dimexpr\numexpr\dimexpr\rt@pt{#1}*\rt@density/100\relax*100/65536\relax\p@/100\relax}
+\newcommand*\rt@skips{%
+  \setlength\smallskipamount{\rt@gap{3}\@plus\rt@gap{1}\@minus\rt@gap{1}}%
+  \setlength\medskipamount{\rt@gap{6}\@plus\rt@gap{2}\@minus\rt@gap{2}}%
+  \setlength\bigskipamount{\rt@gap{12}\@plus\rt@gap{4}\@minus\rt@gap{4}}}
+% \rtfontsize{<points>}: every size and its spacing from <points> in place of 10, then the normal
+% size, the first list level's spacing and \partopsep outside any list, where \trivlist takes them,
+% and the skips, as size10.clo sets them as it loads. The paragraph indent stays the class's 0pt.
+\newcommand*\rtfontsize[1]{%
+  \edef\rt@size{\number\dimexpr#1\p@\relax}%
+  \normalsize
+  \rt@listI
+  \partopsep \rt@pt{2}\@plus\rt@pt{1}\@minus\rt@pt{1}\relax
+  \rt@skips}
+% \rtdensity{<percent>}: the skips at that share of what the size gives them, and the space
+% enumitem leaves between items and after a list, which the class sets to a quarter of a line, at
+% that share of a quarter.
+\newcommand*\rtdensity[1]{%
+  \edef\rt@density{\number#1}%
+  \rt@skips
+  \edef\rt@items{\strip@pt\dimexpr0.25\p@*\rt@density/100\relax}%
+  \setlist*{itemsep=\rt@items\baselineskip,after=\vspace{\rt@items\baselineskip}}}
+\makeatother
+
+% The sample's colours. The accent is its red, named rtaccent; the accent control defines it again
+% after the format and sets \rtaccentcolours again, since \colorlet takes a colour's value when it
+% runs. The name, the entries' titles and the text keep the sample's colours.
+\definecolor{SlateGrey}{HTML}{2E2E2E}
+\definecolor{LightGrey}{HTML}{666666}
+\definecolor{rtaccent}{HTML}{8F0D0D}
+\colorlet{name}{black}
+\colorlet{emphasis}{SlateGrey}
+\colorlet{body}{LightGrey}
+% The colours the sample sets from its red, from the accent: the tagline, the icons and the
+% entries' subtitles in it, the section titles in it darkened by half, which is the sample's
+% DarkPastelRed to within a few units, and the rules under them in a light tint of it.
+\newcommand*\rtaccentcolours{%
+  \colorlet{accent}{rtaccent}%
+  \colorlet{tagline}{rtaccent}%
+  \colorlet{subheading}{rtaccent}%
+  \colorlet{heading}{rtaccent!50!black}%
+  \colorlet{headingrule}{rtaccent!30}}
+\rtaccentcolours
+
+% Change some fonts, if necessary
+\renewcommand{\namefont}{\Huge\rmfamily\bfseries}
+\renewcommand{\personalinfofont}{\footnotesize}
+\renewcommand{\cvsectionfont}{\LARGE\rmfamily\bfseries}
+\renewcommand{\cvsubsectionfont}{\large\bfseries}
+
+% The name and the section titles as the user types them. The class sets both in capitals through
+% \MakeUppercase, which the port takes out of \makecvheader and \cvsection: the editor's page
+% cannot yet match a capital it draws to the lower-case letter the resume holds, so a click would
+% land on the wrong one; and \MakeUppercase takes time that grows with the square of its argument's
+% length, about 2 seconds a pass for a title of 8,000 characters. In \cvsection, whose optional
+% argument makes \cvsection a wrapper around the macro that sets the title, \leavevmode takes its
+% place, so that a blank title still starts the line the class ends with \\, which would otherwise
+% stop the compile. A class that no longer has them stops the dump.
+\makeatletter
+\newcommand*\rt@unpatched[1]{\errmessage{rt-altacv: no \string\MakeUppercase\space in \string#1}}
+\patchcmd{\makecvheader}{\MakeUppercase}{}{}{\rt@unpatched\makecvheader}
+\expandafter\patchcmd\csname\string\cvsection\endcsname{\MakeUppercase}{\leavevmode}{}%
+  {\rt@unpatched\cvsection}
+\makeatother
