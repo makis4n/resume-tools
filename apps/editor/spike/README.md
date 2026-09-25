@@ -15,6 +15,10 @@ preamble and its marked-up body, are test fixtures now, in `src/tex/fixtures/`. 
 that built the page's web fonts went with it: the editor builds them in the browser from the
 page's own outlines (`src/page/webfont.ts`).
 
+A checkout from before then may still hold the page's downloaded assets in `spike/web/assets/`,
+about 500 MB. Nothing reads them now, and git still ignores the folder, so delete it:
+`rm -r spike/web`.
+
 ## Assets
 
 Everything large lives outside git, in `spike/assets/`, which is ignored. Every script takes

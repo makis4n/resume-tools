@@ -31,5 +31,9 @@ apps/editor/.engine
 # Spike harness inputs and outputs: engine, bundles, fonts, templates (hundreds of MB)
 apps/editor/spike/assets/
 
+# The retired spike page's folder (milestone 2 item 23). Checkouts from before then may still hold
+# the assets it downloaded, hundreds of MB; they are safe to delete
+apps/editor/spike/web/
+
 # Worktrees the desktop app creates for background agents
 .claude/worktrees/
