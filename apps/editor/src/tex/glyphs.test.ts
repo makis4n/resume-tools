@@ -68,6 +68,24 @@ describe("glyphText", () => {
     expect(glyphText("u12345678", AGL)).toBeUndefined();
   });
 
+  it("reads a Latin ligature's code point as its letters, however the name comes to it", () => {
+    const hex = ["FB00", "FB01", "FB02", "FB03", "FB04", "FB05", "FB06"];
+    const letters = ["ff", "fi", "fl", "ffi", "ffl", "\u{17f}t", "st"];
+    expect(hex.map((h) => glyphText(`uni${h}`, AGL))).toEqual(letters);
+    expect(hex.map((h) => glyphText(`u${h}`, AGL))).toEqual(letters);
+    // Without the glyph list, as `textToCode` reads a name.
+    expect(hex.map((h) => glyphText(`uni${h}`))).toEqual(letters);
+    // A glyph list naming one, a suffix joined to its base there, and a suffix dropped.
+    const agl = parseAgl(["ff;FB00", "st;FB06"].join("\n"));
+    expect(glyphText("st", agl)).toBe("st");
+    expect(glyphText("f.f", agl)).toBe("ff");
+    expect(glyphText("uniFB01.sc", AGL)).toBe("fi");
+    // Several code points in one name, a ligature's parts, and a virtual font's with an accent.
+    expect(glyphText("uniFB01FB02", AGL)).toBe("fifl");
+    expect(glyphText("uniFB00_i", AGL)).toBe("ffi");
+    expect(glyphText("uniFB01+acute", AGL)).toBe("f\u{ed}");
+  });
+
   it("joins a ligature's parts, and drops a suffix from the first period", () => {
     expect(glyphText("f_f_i", AGL)).toBe("ffi");
     expect(glyphText("T_h", AGL)).toBe("Th");

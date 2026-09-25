@@ -191,8 +191,35 @@ function unicodeName(name: string): string | undefined {
   return codes.length > 0 && codes.every(valid) ? String.fromCodePoint(...codes) : undefined;
 }
 
-/** Text for one name with no `+` in it, by the lookups `glyphText` lists. */
+/**
+ * The letters of each Latin ligature Unicode encodes, U+FB00 to U+FB06. A model's text spells a
+ * ligature out and TeX sets the glyph for its letters, so the aligner needs the letters, which
+ * Computer Modern's `fi` reads as; but the AGL reads `fi` as U+FB01, and fonts beyond Computer
+ * Modern may name the glyph `uniFB01`, as Lato and Roboto do.
+ */
+const LIGATURE_LETTERS: ReadonlyMap<string, string> = new Map([
+  ["\u{fb00}", "ff"],
+  ["\u{fb01}", "fi"],
+  ["\u{fb02}", "fl"],
+  ["\u{fb03}", "ffi"],
+  ["\u{fb04}", "ffl"],
+  ["\u{fb05}", "\u{17f}t"],
+  ["\u{fb06}", "st"],
+]);
+
+/** Text for one name with no `+` in it, as `lookUpName` reads it, each ligature spelled out. */
 function nameText(name: string, agl: ReadonlyMap<string, string> | undefined): string | undefined {
+  return lookUpName(name, agl)?.replace(
+    /[\u{fb00}-\u{fb06}]/gu,
+    (ligature) => LIGATURE_LETTERS.get(ligature) ?? ligature,
+  );
+}
+
+/** Text for one name with no `+` in it, by the lookups `glyphText` lists. */
+function lookUpName(
+  name: string,
+  agl: ReadonlyMap<string, string> | undefined,
+): string | undefined {
   const joined = joinedName(name);
   const variant = joined === undefined ? undefined : agl?.get(joined);
   if (variant !== undefined && !PRIVATE_USE.test(variant)) return variant;
@@ -218,9 +245,11 @@ function nameText(name: string, agl: ReadonlyMap<string, string> | undefined): s
  * so wins (`quoteright` is `'`, `endash` is `--`); a single ASCII letter; the Adobe Glyph List,
  * which fonts beyond Computer Modern name their glyphs by (`Aacute` is `Á`, and a name for
  * several code points is their string); the `uniXXXX` and `uXXXX[XX]` forms; and a ligature's
- * parts joined by `_` (`f_f_i`). A name that joins parts with `+`, as a virtual font's composed
- * character is named (`fonts.ts`), is its parts' texts composed: a spacing accent becomes its
- * combining mark after the rest, and the whole is NFC, so `A+breve` is `Ă`.
+ * parts joined by `_` (`f_f_i`). Whichever of these reads a name, a Latin ligature's code point,
+ * U+FB00 to U+FB06, is spelled as its letters, as the table spells Computer Modern's ligatures:
+ * `uniFB01` is `fi`, as `fi` is, and `uniFB05` is `ſt`. A name that joins parts with `+`, as a
+ * virtual font's composed character is named (`fonts.ts`), is its parts' texts composed: a spacing
+ * accent becomes its combining mark after the rest, and the whole is NFC, so `A+breve` is `Ă`.
  */
 export function glyphText(name: string, agl?: ReadonlyMap<string, string>): string | undefined {
   if (!name.includes("+")) return nameText(name, agl);
