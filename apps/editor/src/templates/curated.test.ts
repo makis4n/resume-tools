@@ -177,9 +177,13 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
   const values = defaultControls(pkg);
   const format = generateFormat(pkg, values);
   let session: EngineSession;
+  let manifest: EngineManifest;
   let fonts: FontLibrary;
   let drawn: DrawnPage;
   let items: PageItem[];
+  /** The sample's output and its fields' texts, which `drawn` is drawn from. */
+  let output: Uint8Array;
+  let texts: Map<string, string>;
 
   /** Compile a body from Jake's format as a job of its own, and draw its page. */
   async function compileAndDraw(latex: string, texts: Map<string, string>, job: string) {
@@ -193,7 +197,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     // As the app does: the format under its name with the package's files, then the body.
     const dumped = session.dump(pkg.engine, format.name, format.preamble, format.files);
     if (!dumped.ok) throw new Error(dumped.error);
-    const manifest = JSON.parse(
+    manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
@@ -202,7 +206,9 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     const body = generateBody(pkg, sample, values);
     const { result, page } = await compileAndDraw(body.latex, body.texts, "jake");
     drawn = page;
-    items = parseDvi(result.output as Uint8Array, () => undefined).pages[0]?.items ?? [];
+    output = result.output as Uint8Array;
+    texts = body.texts;
+    items = parseDvi(output, () => undefined).pages[0]?.items ?? [];
   }, 60_000);
 
   it("sets an entry's fields where upstream does, by the section's role", () => {
@@ -218,6 +224,64 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     // A project: the name, what it is built with and the dates on one line.
     expect(baseline("marginalia.subtitle")).toBe(baseline("marginalia.title"));
     expect(baseline("marginalia.dates")).toBe(baseline("marginalia.title"));
+  });
+
+  it("draws and aligns an accented letter, a dash and the symbols T1 and TS1 set", () => {
+    // The port sets Latin Modern in T1, so é, the en dash, $ and Đ are glyphs of ec-lmr10, and
+    // € and ° of TS1's ts1-lmr10, where OT1 and Computer Modern had nothing the page could draw.
+    const id = "research-2.text";
+    const text = generateBody(pkg, sample, values).texts.get(id) ?? "";
+    const glyphs = drawn.fields.get(id)?.glyphs ?? [];
+    const expected: [string, string, string][] = [
+      ["é", "é", "ec-lmr10"],
+      ["–", "--", "ec-lmr10"],
+      ["€", "€", "ts1-lmr10"],
+      ["$", "$", "ec-lmr10"],
+      ["°", "°", "ts1-lmr10"],
+      // T1 sets Đ with the glyph it sets Ð with, which the aligner takes for either.
+      ["\u{110}", "\u{d0}", "ec-lmr10"],
+    ];
+    for (const [char, read, font] of expected) {
+      const offset = text.indexOf(char);
+      expect(offset, char).toBeGreaterThanOrEqual(0);
+      expect(glyphs.find((glyph) => glyph.offset === offset)?.text, char).toBe(read);
+      // Drawn, where a click finds the character, in the font it comes from.
+      expect(
+        drawn.glyphs.filter((box) => box.field === id && box.offset === offset),
+        char,
+      ).toHaveLength(1);
+      const use = new RegExp(`data-font="${font}"[^>]*data-field="${id}" data-offset="${offset}"`);
+      expect(drawn.svg, char).toMatch(use);
+    }
+    expect(drawn.unmatched).toBe(0);
+    expect(drawn.missingFonts).toEqual(new Map());
+  });
+
+  it("keeps the glyphs after a font in place when its outlines cannot be read this time", async () => {
+    // A reader that fails once on Latin Modern Bold's outlines, as a dropped request would. A
+    // project's name is bold, and what it is built with and its dates follow it on its line;
+    // they moved left when the page lost the bold font's metrics with its outlines.
+    let failed = false;
+    const flaky = new FontLibrary(new TexLiveIndex(manifest), async (path) => {
+      if (path.endsWith("/lmbx10.pfb") && !failed) {
+        failed = true;
+        throw new Error("HTTP 503");
+      }
+      return readFileSync(join(ENGINE_DIR, "files", path));
+    });
+    const first = await drawPage(output, flaky, texts);
+    expect(first.missingFonts).toEqual(new Map([["ec-lmbx10", "HTTP 503"]]));
+    const xs = (page: DrawnPage, id: string) =>
+      page.glyphs.filter((glyph) => glyph.field === id).map((glyph) => glyph.x);
+    for (const id of ["marginalia.subtitle", "marginalia.dates"]) {
+      expect(xs(first, id).length, id).toBeGreaterThan(0);
+      expect(xs(first, id), id).toEqual(xs(drawn, id));
+    }
+    // The next draw reads the file again, and draws the page whole.
+    const second = await drawPage(output, flaky, texts);
+    expect(second.missingFonts).toEqual(new Map());
+    expect(second.glyphs).toEqual(drawn.glyphs);
+    expect(second.unmatched).toBe(0);
   });
 
   it("links the email and the website through hyperref's dvipdfmx driver", () => {

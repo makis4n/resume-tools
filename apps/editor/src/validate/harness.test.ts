@@ -325,9 +325,10 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
     }, 60_000);
 
     it("reports a font the page cannot draw, and nothing else, rather than throw", async () => {
-      // LaTeX 2023 sets itemize's own bullet from TS1, whose metrics tfm.ts refuses (decision
-      // 0007), so the font does not load; the harness names it. The bullet is \item's label,
-      // which LaTeX sets before the field's begin marker, so no field holds its glyph.
+      // LaTeX 2023 sets itemize's own bullet from TS1, whose Computer Modern font, tcrm1000, the
+      // tree has metrics for but no outlines, so the page cannot draw it; the harness names it.
+      // The bullet is \item's label, which LaTeX sets before the field's begin marker, so no
+      // field holds its glyph.
       const bulleted = plainWith("ts1-bullet", {
         entry: [
           "{{title}}\\par",
@@ -469,6 +470,21 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       ]);
       const elsewhere = await validatePackage(session, fonts, telling, RESUME, {}, "elsewhere");
       expect(elsewhere.findings).toEqual([]);
+    }, 60_000);
+  });
+
+  describe("over Jake's Resume with a letter narrower than its accent", () => {
+    it("reports no alignment finding, as the page aligns the letter", async () => {
+      // T1 has no Ī, so LaTeX sets it with \accent: the macron, and the I after it, which is
+      // narrower and so starts after it. The harness parsed the output without the fonts' widths,
+      // where the macron advances by nothing, took the two for two glyphs, and failed a sample
+      // the page draws and aligns whole.
+      const { package: jake, sample } = curated("jake");
+      const bullet = JSON.stringify(sample).replace("Đurva", "Īvars Đurva");
+      expect(bullet).toContain("Īvars");
+      const report = await validatePackage(session, fonts, jake, Resume.parse(JSON.parse(bullet)));
+      expect(report.findings.filter((finding) => finding.check === "alignment")).toEqual([]);
+      expect(report.findings).toEqual([]);
     }, 60_000);
   });
 

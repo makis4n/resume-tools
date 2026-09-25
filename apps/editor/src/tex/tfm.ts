@@ -81,7 +81,10 @@ export function parseTfm(bytes: Uint8Array): Tfm {
   const nk = half(9);
   const ne = half(10);
   const np = half(11);
-  if (lf * 4 !== bytes.byteLength) {
+  // TeX reads the `lf` words the header gives and stops only on a file that ends before them
+  // (tex.web §575), and some files have more: the EC and TC fonts' TFMs, such as `tcrm1000.tfm`
+  // that LaTeX's TS1 bullet uses, are padded past their length. So only a short file is refused.
+  if (lf * 4 > bytes.byteLength) {
     throw new Error(
       `TFM length mismatch: header says ${lf * 4} bytes, file has ${bytes.byteLength}`,
     );

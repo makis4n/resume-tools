@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ENGINE_DIR, engineAvailable } from "../engine/node";
 import { parseTfm, scaleFixWord, scaleTfm } from "./tfm";
 
 const fixture = (name: string) =>
@@ -17,6 +19,33 @@ describe("parseTfm", () => {
 
   it("rejects a truncated file", () => {
     expect(() => parseTfm(fixture("cmr10.tfm").subarray(0, 100))).toThrow(/length mismatch/);
+  });
+
+  it("reads a file padded past the length its header gives, as TeX does", () => {
+    const plain = fixture("cmr10.tfm");
+    const padded = new Uint8Array(plain.length + 100);
+    padded.set(plain);
+    expect(parseTfm(padded)).toEqual(parseTfm(plain));
+    // The tables must still add up to the header's length, whatever follows them.
+    const inflated = padded.slice();
+    new DataView(inflated.buffer).setUint16(0, plain.length / 4 + 1);
+    expect(() => parseTfm(inflated)).toThrow(/do not add up/);
+  });
+});
+
+// Needs `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
+describe.skipIf(!engineAvailable())("parseTfm over the tree's TS1 fonts", () => {
+  const tree = (path: string) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path)));
+
+  it("reads Latin Modern's and the EC fonts' TS1 metrics, the latter padded", () => {
+    const lm = parseTfm(tree("/texlive/texmf-dist/fonts/tfm/public/lm/ts1-lmr10.tfm"));
+    const tc = tree("/texlive/texmf-dist/fonts/tfm/jknappen/ec/tcrm1000.tfm");
+    expect(tc.length).toBeGreaterThan(new DataView(tc.buffer, tc.byteOffset).getUint16(0) * 4);
+    // Code 136 is TS1's bullet, which LaTeX's itemize sets.
+    for (const tfm of [lm, parseTfm(tc)]) {
+      expect(tfm.designSize).toBe(10);
+      expect(tfm.chars[136 - tfm.bc]).toBeDefined();
+    }
   });
 });
 

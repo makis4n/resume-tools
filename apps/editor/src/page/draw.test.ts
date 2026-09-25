@@ -4,12 +4,163 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
+import { parseType1 } from "../tex/type1";
 import { type DrawnPage, drawPage, type GlyphBox, glyphAt, paperSize } from "./draw";
 import { FontLibrary } from "./fonts";
 import { TexLiveIndex } from "./texlive";
 
 const spike = (name: string) =>
   readFileSync(new URL(`../../spike/web/${name}`, import.meta.url), "utf8");
+
+const fixture = (name: string) =>
+  new Uint8Array(readFileSync(new URL(`../tex/fixtures/${name}`, import.meta.url)));
+
+const ONE = 2 ** 20;
+const bytes = (n: number, value: number) =>
+  Array.from({ length: n }, (_, i) => (value >>> (8 * (n - 1 - i))) & 0xff);
+
+/** cmr10 and its map entry, by path under the first TeX Live tree. */
+const CMR10: Record<string, Uint8Array | string> = {
+  "/fonts/map/pdftex/pdftex.map": "cmr10 CMR10 <cmr10.pfb\n",
+  "/fonts/tfm/cm/cmr10.tfm": fixture("cmr10.tfm"),
+  "/fonts/type1/cm/cmr10.pfb": fixture("cmr10.pfb"),
+};
+
+/**
+ * A library over a tree of the given files, by path under the first TeX Live tree, whose reads of
+ * a path ending in `failing` fail, the first `times` of them.
+ */
+function libraryOf(
+  files: Record<string, Uint8Array | string>,
+  failing = "never",
+  times = Number.POSITIVE_INFINITY,
+) {
+  const root = "/texlive/texmf-dist";
+  const manifest = { release: "test", layout: 2, bundles: [], files: {} } as EngineManifest;
+  for (const path of Object.keys(files)) manifest.files[`${root}${path}`] = 1;
+  let failed = 0;
+  return new FontLibrary(new TexLiveIndex(manifest), async (path) => {
+    if (path.endsWith(failing) && failed++ < times) throw new Error(`could not read ${path}`);
+    const file = files[path.slice(root.length)];
+    if (file === undefined) throw new Error(`no ${path}`);
+    return typeof file === "string" ? new TextEncoder().encode(file) : file;
+  });
+}
+
+/** A library over a tree holding only cmr10, whose reads of a path ending in `failing` fail. */
+const cmr10Library = (failing = "never") => libraryOf(CMR10, failing);
+
+describe("drawPage over an invented tree", () => {
+  // accents.dvi sets `caf\'e \'Etude na\"\i ve` and `\textasciitilde mara\^{}x` in OT1's cmr10.
+  const texts = new Map([
+    ["word", "café Étude naïve"],
+    ["lone", "~mara^x"],
+  ]);
+
+  it("gives an accent the field and offset of its letter, in the SVG and the hit boxes", async () => {
+    const drawn = await drawPage(fixture("accents.dvi"), cmr10Library(), texts);
+    expect(drawn.missingFonts).toEqual(new Map());
+    expect(drawn.unmatched).toBe(0);
+    // Three accented letters of two glyphs each, and the lone tilde and circumflex on their own.
+    const word = drawn.glyphs.filter((glyph) => glyph.field === "word");
+    expect(word).toHaveLength("caféÉtudenaïve".length + 3);
+    const at = (offset: number) => word.filter((glyph) => glyph.offset === offset);
+    for (const offset of [3, 5, 13]) expect(at(offset), `offset ${offset}`).toHaveLength(2);
+    const marked = drawn.svg.match(/data-field="word" data-offset="3"/g) ?? [];
+    expect(marked).toHaveLength(2);
+    expect(drawn.fields.get("lone")?.glyphs.map((glyph) => glyph.offset)).toEqual([
+      0, 1, 2, 3, 4, 5, 6,
+    ]);
+  });
+
+  it("names a font whose outlines cannot be read, and draws the page without it", async () => {
+    const drawn = await drawPage(fixture("accents.dvi"), cmr10Library("cmr10.pfb"), texts);
+    expect(drawn.missingFonts).toEqual(
+      new Map([["cmr10", "could not read /texlive/texmf-dist/fonts/type1/cm/cmr10.pfb"]]),
+    );
+    expect(drawn.glyphs).toEqual([]);
+    expect(drawn.fields.get("word")?.glyphs.length).toBeGreaterThan(0);
+  });
+
+  it("draws a font whose outlines could not be read the time before", async () => {
+    const fonts = libraryOf(CMR10, "cmr10.pfb", 1);
+    expect((await drawPage(fixture("accents.dvi"), fonts, texts)).missingFonts.size).toBe(1);
+    const again = await drawPage(fixture("accents.dvi"), fonts, texts);
+    expect(again.missingFonts).toEqual(new Map());
+    const good = await drawPage(fixture("accents.dvi"), cmr10Library(), texts);
+    expect(again.glyphs).toEqual(good.glyphs);
+    expect(again.unmatched).toBe(0);
+  });
+
+  it("rejects when a font's metrics, the font map or the glyph list cannot be read", async () => {
+    // Without them every glyph after the font's would be drawn in the wrong place, or named
+    // wrongly, with no error; the caller keeps the page it had.
+    const withList = { ...CMR10, "/fonts/map/glyphlist/glyphlist.txt": "A;0041\n" };
+    for (const failing of ["cmr10.tfm", "pdftex.map", "glyphlist.txt"]) {
+      const fonts = libraryOf(withList, failing, 1);
+      await expect(drawPage(fixture("accents.dvi"), fonts, texts), failing).rejects.toThrow(
+        `could not read /texlive/texmf-dist/fonts/`,
+      );
+      expect((await drawPage(fixture("accents.dvi"), fonts, texts)).unmatched, failing).toBe(0);
+    }
+  });
+
+  it("leaves out the codes an encoding names after an object's members, rather than throw", async () => {
+    // An encoding vector may give a glyph any name: here cmr10's a, c, e and f are named
+    // constructor, toString, __proto__ and valueOf, as they are and slanted, whose glyphs
+    // `transform` makes anew.
+    const names = parseType1(fixture("cmr10.pfb")).encoding;
+    const renamed = new Map([
+      [97, "constructor"],
+      [99, "toString"],
+      [101, "__proto__"],
+      [102, "valueOf"],
+    ]);
+    const vector = names.map((name, code) => `/${renamed.get(code) ?? name}`).join("\n");
+    for (const entry of ["<proto.enc <cmr10.pfb", '" .167 SlantFont " <proto.enc <cmr10.pfb']) {
+      const fonts = libraryOf({
+        ...CMR10,
+        "/fonts/map/pdftex/pdftex.map": `cmr10 CMR10 ${entry}\n`,
+        "/fonts/enc/test/proto.enc": `/Proto [\n${vector}\n] def\n`,
+      });
+      const drawn = await drawPage(fixture("accents.dvi"), fonts, texts);
+      expect(drawn.missingFonts, entry).toEqual(new Map());
+      expect(drawn.svg, entry).not.toMatch(/data-code="(97|99|101|102)"/);
+      expect(drawn.svg, entry).toMatch(/data-code="100"/);
+      // Their glyphs have no text, which the fields count.
+      const lone = drawn.fields.get("lone")?.glyphs.map((glyph) => glyph.text);
+      expect(lone, entry).toEqual(["~", "m", undefined, "r", undefined, "^", "x"]);
+      expect(drawn.unmatched, entry).toBeGreaterThan(0);
+    }
+  });
+
+  it("aligns a virtual font's glyph whose text is a word an object has, rather than throw", async () => {
+    // The reviewers' virtual font: cmr10 drawn over base10, the same font under another name,
+    // with its a composed of c, o, n and the rest, which reads as "constructor".
+    const packets: Record<number, number[]> = {};
+    for (let code = 0; code < 128; code++) packets[code] = [code];
+    packets[97] = [..."constructor"].map((c) => c.charCodeAt(0));
+    const out = [247, 202, 0, ...bytes(4, 0), ...bytes(4, 10 * ONE)];
+    out.push(243, 0, ...bytes(4, 0), ...bytes(4, ONE), ...bytes(4, 10 * ONE), 0, 6);
+    out.push(...[..."base10"].map((c) => c.charCodeAt(0)));
+    for (const [code, dvi] of Object.entries(packets))
+      out.push(dvi.length, Number(code), ...bytes(3, ONE / 2), ...dvi);
+    out.push(248, 248, 248, 248);
+    const fonts = libraryOf({
+      "/fonts/map/pdftex/pdftex.map": "base10 CMR10 <cmr10.pfb\n",
+      "/fonts/tfm/cm/cmr10.tfm": fixture("cmr10.tfm"),
+      "/fonts/tfm/cm/base10.tfm": fixture("cmr10.tfm"),
+      "/fonts/type1/cm/cmr10.pfb": fixture("cmr10.pfb"),
+      "/fonts/vf/test/cmr10.vf": new Uint8Array(out),
+    });
+    const drawn = await drawPage(fixture("accents.dvi"), fonts, texts);
+    expect(drawn.missingFonts).toEqual(new Map());
+    const word = drawn.fields.get("word")?.glyphs.map((glyph) => glyph.text);
+    expect(word?.slice(0, 4)).toEqual(["c", "constructor", "f", "é"]);
+    // The four a's, in café, naïve and mara, match nothing in their fields' texts.
+    expect(drawn.unmatched).toBe(4);
+  });
+});
 
 /** Field texts straight from the spike's marked-up body, as the spike page read them. */
 function fieldTexts(body: string): Map<string, string> {
@@ -120,6 +271,77 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
       expect(hit, field.id).toBe(middle);
     }
   });
+
+  it("pairs an accent with its letter however wide or tall, and never across a line", async () => {
+    const draw = async (preamble: string, latex: string, text: string, job: string) => {
+      const body = `\\documentclass{article}${preamble}\\begin{document}${latex}\\end{document}`;
+      const compiled = session.compile("pdftex", "stock", body, { job, maxPasses: 1 });
+      if (!compiled.output) throw new Error(compiled.error);
+      const page = await drawPage(compiled.output, fonts, new Map([["f", text]]));
+      return { page, texts: page.fields.get("f")?.glyphs.map((glyph) => glyph.text) };
+    };
+    const field = (latex: string) => `\\special{rt:b:f}${latex}\\special{rt:e:f}`;
+    const t1 = "\\usepackage[T1]{fontenc}\\usepackage{lmodern}";
+    // Letters neither encoding has a glyph for, which LaTeX sets with \accent: an I narrower
+    // than its accent, which starts after it; a W and an M wider than the dot, which start before
+    // it by more than its width; and capitals the accent is raised over.
+    const cases: [string, string, string][] = [
+      [t1, "\\=Ivo \\v{I} \\=a \\v{\\i} \\~I \\.W \\.M \\v{A}", "Īvo Ǐ ā ǐ Ĩ Ẇ Ṁ Ǎ"],
+      ["", "\\'I\\'E \\^I \\\"I \\'l \\.W \\.M \\u{g}", "ÍÉ Î Ï ĺ Ẇ Ṁ ğ"],
+    ];
+    for (const [i, [preamble, latex, text]] of cases.entries()) {
+      const { page, texts } = await draw(preamble, field(latex), text, `accents-${i}`);
+      expect(texts?.join(""), text).toBe(text.replaceAll(" ", ""));
+      expect(page.unmatched, text).toBe(0);
+    }
+    // The reviewers' \parbox cases, where an accent standing alone ends a line and the next line
+    // starts at the left margin: OT1's ~, and TS1's ´ in T1.
+    const ended: [string, string, string][] = [
+      ["", "Cut build times by \\textasciitilde{} half across the monorepo", "by ~ half"],
+      [t1, "Rated ´ marks as noise in scanned forms", "Rated ´ marks"],
+    ];
+    for (const [i, [preamble, latex, words]] of ended.entries()) {
+      const text = latex.replace("\\textasciitilde{}", "~");
+      const { page, texts } = await draw(
+        preamble,
+        `\\parbox{21mm}{${field(latex)}}`,
+        text,
+        `ended-${i}`,
+      );
+      expect(texts?.join(""), words).toBe(text.replaceAll(" ", ""));
+      expect(page.unmatched, words).toBe(0);
+      const accent = page.fields
+        .get("f")
+        ?.glyphs.find((glyph) => glyph.text === "~" || glyph.text === "´");
+      const next = page.glyphs.find(
+        (box) => box.field === "f" && box.offset === (accent?.offset ?? 0) + 2,
+      );
+      const at = page.glyphs.find((box) => box.field === "f" && box.offset === accent?.offset);
+      // The accent ends its line, and the letter after it starts the next.
+      expect(next && at && next.y > at.y, words).toBe(true);
+    }
+  }, 60_000);
+
+  it("reads TS1's superior figures as themselves, in Times and in Latin Modern", async () => {
+    // LaTeX sets ² from TS1, whose glyph lm-ts1.enc names two.superior: read as 2, it matched
+    // nothing, and a click on it landed in the 20 after it.
+    const text = "Cut floor space by 10² 20 m²";
+    const families = ["\\renewcommand{\\rmdefault}{ptm}", "\\usepackage{lmodern}"];
+    for (const [i, family] of families.entries()) {
+      const body = `\\documentclass{article}\\usepackage[T1]{fontenc}${family}\\begin{document}\\special{rt:b:f}${text}\\special{rt:e:f}\\end{document}`;
+      const compiled = session.compile("pdftex", "stock", body, {
+        job: `superior-${i}`,
+        maxPasses: 1,
+      });
+      if (!compiled.output) throw new Error(compiled.error);
+      const page = await drawPage(compiled.output, fonts, new Map([["f", text]]));
+      expect(page.missingFonts, family).toEqual(new Map());
+      expect(page.unmatched, family).toBe(0);
+      const glyphs = page.fields.get("f")?.glyphs ?? [];
+      for (const offset of [text.indexOf("²"), text.lastIndexOf("²")])
+        expect(glyphs.find((glyph) => glyph.offset === offset)?.text, family).toBe("²");
+    }
+  }, 60_000);
 
   it("gives a later page the size the first page set", async () => {
     const compiled = session.compile(

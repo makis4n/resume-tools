@@ -5,7 +5,8 @@
  * and checks every file against the hash recorded below. The release packs TeX Live into bundles
  * that only the engine can unpack, so the script mounts them in the engine under Node and copies
  * every file out, one file per path, with a manifest of paths and sizes. The worker fetches files
- * from that tree one at a time, the first time TeX opens each.
+ * from that tree one at a time, the first time TeX opens each. On the way out, the Ubuntu
+ * bundles' font maps are merged into `pdftex.map` (`mergeMaps`), as `updmap` would merge them.
  *
  *   node scripts/fetch-engine.ts [--from <dir>] [--force]
  *
@@ -34,6 +35,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   writeFileSync,
 } from "node:fs";
 import { copyFile, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -45,15 +47,19 @@ import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { fileURLToPath } from "node:url";
 // Node runs this file by stripping its types, so the type import needs its real extension.
 import type { EngineManifest } from "../src/engine/manifest.ts";
+import { mergeFontMaps } from "./fontmaps.ts";
 
 const RELEASE = "build_wasm_4499aa69fd3cf77ad86a47287d9a5193cf5ad993_7936974349_1";
 const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELEASE}/`;
 
 /**
  * The version of what this script writes. Bump it whenever the output changes (the files, the
- * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt.
+ * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt. CI keys its
+ * cached `.engine/` on the three files the output depends on, this script, `fontmaps.ts` and
+ * `src/page/fontmap.ts`, which merge the Ubuntu tree's font maps into `pdftex.map`, so a change to
+ * any of them rebuilds it there; a `.engine/` built on a machine is rebuilt only by the bump.
  */
-const LAYOUT = 1;
+const LAYOUT = 2;
 
 /** Release files with their SHA-256 and size, recorded from the copies the spike measured. */
 const ASSETS: Record<string, { sha256: string; size: number }> = {
@@ -132,9 +138,20 @@ const REQUIRED = [
   "/texlive/texmf-dist/ls-R",
   "/texlive/texmf-dist/tex/latex/base/article.cls",
   "/texlive/texmf-dist/fonts/tfm/public/cm/cmr10.tfm",
+  "/texlive/texmf-dist/fonts/map/glyphlist/glyphlist.txt",
   "/texmf/texmf-dist/tex/latex/xcolor/xcolor.sty",
   "/texmf/texmf-dist/tex/latex/enumitem/enumitem.sty",
+  "/texmf/texmf-dist/fonts/map/dvips/marvosym/marvosym.map",
 ];
+
+/** The font map pdfTeX's tools read, as updmap wrote it for TeX Live's own tree. */
+const PDFTEX_MAP = "/texlive/texmf-dist/texmf-var/fonts/map/pdftex/updmap/pdftex.map";
+
+/** Where the Ubuntu tree keeps its font maps, none of which updmap saw. */
+const UBUNTU_MAPS = "/texmf/texmf-dist/fonts/map/dvips/";
+
+/** Where the two trees keep Type 1 outlines, which is where kpathsea looks for a map's files. */
+const TYPE1 = ["/texlive/texmf-dist/fonts/type1/", "/texmf/texmf-dist/fonts/type1/"];
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".engine");
 const DOWNLOADS = join(ROOT, "downloads");
@@ -266,6 +283,31 @@ function copyOut(fs: EmscriptenFs, dir: string): Record<string, number> {
   return Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1)));
 }
 
+/**
+ * Merge the Ubuntu tree's font maps into the copied tree's `pdftex.map`, in path order, and give
+ * the manifest its new size. This is what `updmap` does for a map it is told about; the Ubuntu
+ * bundles were unpacked over TeX Live's tree without it, so their maps were never added to
+ * `web2c/updmap.cfg` and `pdftex.map` names none of their fonts. Only entries whose outline file
+ * the trees hold are added (`mergeFontMaps`). The files are read and written as Latin-1, one
+ * character per byte, so that the map's other lines come back byte for byte.
+ */
+function mergeMaps(dir: string, files: Record<string, number>) {
+  if (files[PDFTEX_MAP] === undefined) return; // the check for REQUIRED files names it
+  const outlines = new Set(
+    Object.keys(files)
+      .filter((path) => TYPE1.some((tree) => path.startsWith(tree)))
+      .map((path) => basename(path)),
+  );
+  const maps = Object.keys(files)
+    .filter((path) => path.startsWith(UBUNTU_MAPS) && path.endsWith(".map"))
+    .sort()
+    .map((path) => ({ path, text: readFileSync(join(dir, path), "latin1") }));
+  const base = readFileSync(join(dir, PDFTEX_MAP), "latin1");
+  const merged = mergeFontMaps(base, maps, (file) => outlines.has(file));
+  writeFileSync(join(dir, PDFTEX_MAP), merged, "latin1");
+  files[PDFTEX_MAP] = Buffer.byteLength(merged, "latin1");
+}
+
 /** True when `.engine/` holds a finished build of this release, layout and set of bundles. */
 async function upToDate(): Promise<boolean> {
   try {
@@ -375,6 +417,7 @@ async function build(from: string | undefined) {
   let files: Record<string, number>;
   try {
     files = copyOut(await mount(), staging);
+    mergeMaps(staging, files);
     const missing = REQUIRED.filter((path) => files[path] === undefined);
     if (missing.length) throw new Error(`the TeX Live tree lacks ${missing.join(", ")}`);
     // Swap the trees by renaming, so no run deletes files another run has put in place.

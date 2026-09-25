@@ -14,6 +14,11 @@ import type { DviPage, PageItem } from "./dvi";
 export interface FieldGlyph {
   /** Index of the glyph in the page's item list. */
   item: number;
+  /**
+   * The other page items that draw this character: the accent TeX's `\accent` set over the
+   * letter `item` draws, which reads with it as one accented letter (`collectFields`).
+   */
+  items?: number[];
   /** The text this glyph stands for, e.g. "fi" for a ligature; undefined when unknown. */
   text: string | undefined;
   /** Offset of the glyph's first character in the field's source text, once aligned. */
@@ -39,7 +44,17 @@ export const MARKER_END = "rt:e:";
 export const INVISIBLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu;
 
 /** Text a page item stands for, or undefined for items that are not glyphs. */
-export type GlyphTextOf = (item: PageItem) => string | undefined;
+export interface GlyphTextOf {
+  (item: PageItem): string | undefined;
+  /**
+   * The combining mark a glyph stands for when it is a spacing accent (its glyph name is in
+   * `ACCENTS`), and undefined for any other item. Without it, no accent is paired with its letter.
+   */
+  accent?: (item: PageItem) => string | undefined;
+}
+
+/** A text of one letter, which an accent before it may go over. */
+const LETTER = /^\p{L}$/u;
 
 /**
  * Collect the glyphs of every marked field on a page, in stream order.
@@ -57,12 +72,34 @@ export type GlyphTextOf = (item: PageItem) => string | undefined;
  * lowercase (decision 0006), so the id survives. Item 9 must read the paragraph special's id the
  * same way; its values are never uppercased, because `\rt@par` is protected and writes them when
  * it runs, after the case change.
+ *
+ * TeX's `\accent`, which OT1 sets every accented letter with and T1 the letters it has no glyph
+ * for, puts the accent in the DVI first and the letter after it, as two glyphs. It centres the
+ * accent over the letter (tex.web's `make_accent`): the accent moves right by half the letter's
+ * width less its own, plus a little in a slanted font, and the letter goes back to where the
+ * accent began. So a letter narrower than the accent starts after it, and a wider one before it,
+ * by less than twice the accent's width for every accent and letter of every T1 and OT1 font the
+ * page can draw (a dot over a W is the most, 1.83 widths in Avant Garde's oblique). A spacing
+ * accent (`textOf.accent`) directly followed in the same field by a glyph whose text is a letter
+ * and that starts within that span, from twice the accent's width before it to the end of its
+ * advance, becomes one glyph whose text is the two composed (NFC), `é` for `\'e`: the letter's
+ * item, with the accent's in `items`, so that a click on either lands on the character. The
+ * position matters: OT1 sets `\textasciitilde` and `\textasciicircum` as the same accent glyphs
+ * standing alone, and a letter after one of them starts where it ends, so `~mara` still reads as
+ * typed; and the first letter of the next line, back at the left margin, starts far before an
+ * accent that ended a line, unless the line held almost nothing else. An accent with no letter
+ * over which it stands stays a glyph of its own. The accent may sit higher or lower than the
+ * letter, in the box TeX shifts for a letter taller or shorter than the x-height, so the test does
+ * not look at v. It needs the fonts' widths, so the page and the validation harness both parse
+ * the DVI with them.
  */
 export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, Field> {
   const fields = new Map<string, Field>();
   // The copies open where the walk stands, the innermost last. A later copy of a field already
   // found has no field, so what it sets goes nowhere.
   const open: { id: string; field: Field | undefined }[] = [];
+  // The combining mark of the accent each field's last glyph is, while it waits for a letter.
+  const accents = new Map<Field, string>();
   page.items.forEach((item, index) => {
     if (item.kind === "special") {
       const begun = markerId(item.text, MARKER_BEGIN);
@@ -83,7 +120,25 @@ export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, F
     }
     if (item.kind !== "glyph" && item.kind !== "native") return;
     const field = open.at(-1)?.field;
-    if (field) field.glyphs.push({ item: index, text: textOf(item), offset: -1 });
+    if (!field) return;
+    const text = textOf(item);
+    const mark = accents.get(field);
+    accents.delete(field);
+    const accent = field.glyphs.at(-1);
+    const over = accent && page.items[accent.item];
+    const under =
+      over?.kind === "glyph" &&
+      item.kind === "glyph" &&
+      item.h >= over.h - 2 * over.width &&
+      item.h < over.h + over.width;
+    if (mark !== undefined && accent && under && text !== undefined && LETTER.test(text)) {
+      const letter = { item: index, text: `${text}${mark}`.normalize("NFC"), offset: -1 };
+      field.glyphs[field.glyphs.length - 1] = { ...letter, items: [accent.item] };
+      return;
+    }
+    field.glyphs.push({ item: index, text, offset: -1 });
+    const own = textOf.accent?.(item);
+    if (own !== undefined) accents.set(field, own);
   });
   return fields;
 }
@@ -143,7 +198,7 @@ export function alignField(field: Field, text: string): Alignment {
       unmatched++;
       continue;
     }
-    const candidates = LIGATURE_ALTERNATIVES[g] ?? [g];
+    const candidates = spellingsOf(g);
     const matchAt = (at: number) => candidates.find((c) => text.startsWith(c, at));
     // The spellings are tried where the walk stands first, so "–" still matches the "--"
     // glyph, and only then past the characters that may set no glyph.
@@ -213,12 +268,29 @@ function endOfRun(text: string, from: number): number {
   return at;
 }
 
-/** Source spellings that produce a given glyph; the plain form first. */
-const LIGATURE_ALTERNATIVES: Record<string, string[]> = {
-  "--": ["--", "–"],
-  "---": ["---", "—"],
-  "``": ["``", "“", '"'],
-  "''": ["''", "”", '"'],
-  "'": ["'", "’"],
-  "`": ["`", "‘"],
-};
+/**
+ * The spellings a glyph's text may have in a field's text: a ligature's alternatives, or the text
+ * itself and, for a composed letter such as the `é` an accent and its letter make, the letter
+ * decomposed, as a model holds a letter typed with a combining mark.
+ */
+function spellingsOf(text: string): readonly string[] {
+  const alternatives = LIGATURE_ALTERNATIVES.get(text);
+  if (alternatives) return alternatives;
+  const decomposed = text.normalize("NFD");
+  return decomposed === text ? [text] : [text, decomposed];
+}
+
+/**
+ * Source spellings that produce a given glyph, the plain form first. A map, since it is looked up
+ * by a glyph's text, which may be any word a glyph name spells, `constructor` among them.
+ */
+const LIGATURE_ALTERNATIVES: ReadonlyMap<string, readonly string[]> = new Map([
+  ["--", ["--", "–"]],
+  ["---", ["---", "—"]],
+  ["``", ["``", "“", '"']],
+  ["''", ["''", "”", '"']],
+  ["'", ["'", "’"]],
+  ["`", ["`", "‘"]],
+  // T1 sets Đ (`\DJ`) with the glyph it sets Ð (`\DH`) with, at 208, which its fonts name Eth.
+  ["\u{d0}", ["\u{d0}", "\u{110}"]],
+]);

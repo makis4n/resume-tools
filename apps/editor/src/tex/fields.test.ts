@@ -1,6 +1,13 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { DviPage, PageItem } from "./dvi";
-import { alignField, alignGlyphs, collectFields } from "./fields";
+import { type DviPage, type PageItem, parseDvi } from "./dvi";
+import { alignField, alignGlyphs, collectFields, type GlyphTextOf } from "./fields";
+import { accentMark, glyphText } from "./glyphs";
+import { parseTfm, scaleTfm } from "./tfm";
+import { parseType1 } from "./type1";
+
+const fixture = (name: string) =>
+  new Uint8Array(readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
 
 const glyph = (code: number): PageItem => ({ kind: "glyph", font: 0, code, h: 0, v: 0, width: 1 });
 const special = (text: string): PageItem => ({ kind: "special", h: 0, v: 0, text });
@@ -141,6 +148,128 @@ describe("collectFields", () => {
   });
 });
 
+describe("collectFields with accents", () => {
+  // accents.dvi sets, in cmr10, OT1's `caf\'e \'Etude na\"\i ve` in one field, and
+  // `\textasciitilde mara\^{}x` in another: the same accent glyphs, standing alone.
+  const encoding = parseType1(fixture("cmr10.pfb")).encoding;
+  const nameOf = (item: PageItem) =>
+    item.kind === "glyph" ? (encoding[item.code] ?? ".notdef") : ".notdef";
+  const textOf: GlyphTextOf = Object.assign((item: PageItem) => glyphText(nameOf(item)), {
+    accent: (item: PageItem) => accentMark(nameOf(item)),
+  });
+  const bytes = fixture("accents.dvi");
+  const cmr10 = parseTfm(fixture("cmr10.tfm"));
+
+  it("finds TeX's \\accent setting the accent, then the letter moved back under it", () => {
+    const [page] = parseDvi(bytes, () => undefined).pages;
+    const glyphs = page?.items.filter((item) => item.kind === "glyph") ?? [];
+    const acute = glyphs.findIndex((item) => item.kind === "glyph" && item.code === 19);
+    const [accent, letter] = [glyphs[acute], glyphs[acute + 1]];
+    expect(accent?.kind === "glyph" && accent.code).toBe(19);
+    expect(letter?.kind === "glyph" && letter.code).toBe(101);
+    expect(letter && accent && letter.h < accent.h).toBe(true);
+  });
+
+  // With the widths, as the page and the harness parse the DVI.
+  it("reads each accent and the letter under it as one accented letter", () => {
+    const page = parseDvi(bytes, () => scaleTfm(cmr10, 655360).widths).pages[0] as DviPage;
+    const fields = collectFields(page, textOf);
+    const word = fields.get("word");
+    expect(word?.glyphs.map((g) => g.text).join("")).toBe("caféÉtudenaïve");
+    expect(alignGlyphs(word as NonNullable<typeof word>, "café Étude naïve")).toBe(0);
+    // The accented letter is the letter's item, and the accent's is listed with it.
+    const accented = word?.glyphs.filter((g) => g.items) ?? [];
+    expect(accented.map((g) => g.text)).toEqual(["é", "É", "ï"]);
+    for (const g of accented) {
+      const [accent] = g.items ?? [];
+      expect(page.items[g.item]?.kind).toBe("glyph");
+      expect(page.items[accent as number]?.kind === "glyph").toBe(true);
+      expect(accent).toBeLessThan(g.item);
+    }
+    // A tilde or circumflex standing alone is not over the letter after it.
+    const lone = fields.get("lone");
+    expect(lone?.glyphs.map((g) => g.text)).toEqual(["~", "m", "a", "r", "a", "^", "x"]);
+    expect(lone?.glyphs.some((g) => g.items)).toBe(false);
+  });
+
+  it("pairs a letter that starts within twice the accent's width before it or its advance", () => {
+    // cmr10's tilde, 50 wide at 100 unless given, and an n after it, as \accent leaves them.
+    const tilde = (h: number, width = 50, v = 0): PageItem => ({
+      kind: "glyph",
+      font: 0,
+      code: 126,
+      h,
+      v,
+      width,
+    });
+    const n = (h: number, v = 0): PageItem => ({
+      kind: "glyph",
+      font: 0,
+      code: 110,
+      h,
+      v,
+      width: 55,
+    });
+    const read = (accent: PageItem, letter: PageItem) =>
+      collectFields(page([special("rt:b:f"), accent, letter, special("rt:e:f")]), textOf)
+        .get("f")
+        ?.glyphs.map((g) => g.text);
+    // A letter narrower than the accent starts after it, as an I under T1's macron does, which
+    // the harness took for two glyphs when it parsed the DVI without widths.
+    expect(read(tilde(100), n(107))).toEqual(["ñ"]);
+    // A letter wider than the accent starts before it, by up to 1.83 of its widths, as a W under
+    // a dot does; and the accent may sit higher, over a tall letter, or lower.
+    expect(read(tilde(100, 20), n(64))).toEqual(["ñ"]);
+    expect(read(tilde(100, 50, -30), n(100))).toEqual(["ñ"]);
+    expect(read(tilde(100, 50, 12), n(100))).toEqual(["ñ"]);
+    // A letter that starts where the accent's advance ends is after it, not under it.
+    expect(read(tilde(100), n(150))).toEqual(["~", "n"]);
+    // Nor is the first letter of the next line, back at the left margin, under an accent that
+    // ended the line before, as in the reviewers' \parbox with OT1's ~ at a line's end.
+    expect(read(tilde(300), n(0, 12))).toEqual(["~", "n"]);
+    expect(read(tilde(120), n(0, 12))).toEqual(["~", "n"]);
+  });
+
+  it("pairs only an accent and a letter in the same field, and only a letter", () => {
+    const at = (code: number, h: number): PageItem => ({
+      kind: "glyph",
+      font: 0,
+      code,
+      h,
+      v: 0,
+      width: 5,
+    });
+    const names: Record<number, string> = { 1: "acute", 2: "e", 3: "one" };
+    const agl = new Map([["acute", "´"]]);
+    const named: GlyphTextOf = Object.assign(
+      (item: PageItem) =>
+        item.kind === "glyph" ? glyphText(names[item.code] ?? "", agl) : undefined,
+      {
+        accent: (item: PageItem) =>
+          item.kind === "glyph" ? accentMark(names[item.code] ?? "") : undefined,
+      },
+    );
+    const p = page([
+      special("rt:b:a"),
+      at(1, 10),
+      special("rt:b:b"),
+      at(2, 9), // in another field
+      special("rt:e:b"),
+      at(1, 20),
+      at(3, 19), // not a letter
+      special("rt:e:a"),
+    ]);
+    const fields = collectFields(p, named);
+    expect(fields.get("a")?.glyphs.map((g) => g.text)).toEqual(["´", "´", "1"]);
+    expect(fields.get("b")?.glyphs.map((g) => g.text)).toEqual(["e"]);
+    // Without the accent function, nothing is paired.
+    const plain = collectFields(page([special("rt:b:a"), at(1, 10), at(2, 9)]), (item) =>
+      named(item),
+    );
+    expect(plain.get("a")?.glyphs.map((g) => g.text)).toEqual(["´", "e"]);
+  });
+});
+
 const fieldOf = (glyphTexts: (string | undefined)[]) => ({
   id: "f",
   glyphs: glyphTexts.map((text, i) => ({ item: i, text, offset: -1 })),
@@ -236,6 +365,26 @@ describe("alignGlyphs", () => {
     const far = fieldOf(["a", "f"]);
     expect(alignGlyphs(far, "abcdef")).toBe(1);
     expect(far.glyphs.map((g) => g.offset)).toEqual([0, 1]);
+  });
+
+  it("matches T1's one glyph for Ð and Đ to either", () => {
+    const f = fieldOf(["\u{d0}", "a", "\u{d0}"]);
+    expect(alignGlyphs(f, "\u{110}a\u{d0}")).toBe(0);
+    expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 2]);
+  });
+
+  it("matches a glyph whose text is a word an object has as a member", () => {
+    // A virtual font's glyph composed of c, o, n and the rest reads as "constructor", whose
+    // spellings the aligner looked up on a plain object, finding a function there.
+    const f = fieldOf(["constructor", "toString", "__proto__", "valueOf"]);
+    expect(alignGlyphs(f, "constructor toString __proto__ valueOf")).toBe(0);
+    expect(f.glyphs.map((g) => g.offset)).toEqual([0, 12, 21, 31]);
+  });
+
+  it("matches a composed letter where the text holds it decomposed", () => {
+    const f = fieldOf(["J", "o", "s", "\u{e9}", "!"]);
+    expect(alignGlyphs(f, "Jose\u{301}!")).toBe(0);
+    expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 5]);
   });
 
   it("reads a run of characters that set no glyph once, however many glyphs miss in it", () => {

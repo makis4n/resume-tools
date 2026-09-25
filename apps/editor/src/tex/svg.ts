@@ -11,7 +11,7 @@
 import type { DviDocument, DviPage, NativeFont } from "./dvi";
 import { pointsPerUnit } from "./dvi";
 import type { Field } from "./fields";
-import type { FontOutlines } from "./glyphs";
+import { type FontOutlines, glyphOf } from "./glyphs";
 
 export interface PageSize {
   width: number;
@@ -74,8 +74,11 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
   const body: string[] = [];
   const colors: string[] = [];
   const fieldOfItem = new Map<number, { id: string; offset: number }>();
+  // An accented letter TeX set as an accent and a letter is one character: both carry it.
   for (const field of options.fields?.values() ?? []) {
-    for (const g of field.glyphs) fieldOfItem.set(g.item, { id: field.id, offset: g.offset });
+    for (const g of field.glyphs)
+      for (const item of [g.item, ...(g.items ?? [])])
+        fieldOfItem.set(item, { id: field.id, offset: g.offset });
   }
   const fill = () => {
     const c = colors[colors.length - 1];
@@ -92,8 +95,7 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
         const font = doc.fonts.get(item.font);
         const outlines = font && options.outlines(font.name);
         if (!font || !outlines) return;
-        const name = outlines.encoding[item.code];
-        const glyph = name && outlines.glyphs[name];
+        const glyph = glyphOf(outlines, item.code);
         if (!glyph) return;
         const id = `g${item.font}-${item.code}`;
         if (!defs.has(id)) {

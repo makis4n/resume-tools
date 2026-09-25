@@ -19,6 +19,7 @@ const index = new TexLiveIndex({
       "/texmf/texmf-dist/fonts/map/dvips/tex-gyre/qbk.map",
       "/texmf/texmf-dist/fonts/tfm/public/cm/cmr10.tfm",
       "/texmf/texmf-dist/fonts/tfm/public/lm/lmr10.tfm",
+      "/texmf/texmf-dist/fonts/vf/adobe/times/ptmr8t.vf",
     ].map((path) => [path, 1]),
   ),
 } satisfies EngineManifest);
@@ -32,6 +33,7 @@ describe("TexLiveIndex", () => {
       "/texlive/texmf-dist/texmf-var/fonts/map/pdftex/updmap/pdftex.map",
     );
     expect(index.find("tfm", "lmr10.tfm")).toBe("/texmf/texmf-dist/fonts/tfm/public/lm/lmr10.tfm");
+    expect(index.find("vf", "ptmr8t.vf")).toBe("/texmf/texmf-dist/fonts/vf/adobe/times/ptmr8t.vf");
   });
 
   it("looks only in the folder the kind of file belongs in, and only in the trees", () => {

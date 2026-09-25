@@ -217,6 +217,9 @@ describe("type1Outlines on hand-built glyphs", () => {
     charstrings: new Map([
       ["a", square],
       ["acute", accent],
+      // Names an ordinary object would read as its members.
+      ["constructor", square],
+      ["__proto__", accent],
       // seac: asb adx ady bchar achar, with 'a' (97) as base and 'acute' (194) as accent.
       ["aacute", charstring(50, 600, "hsbw", 10, 200, 300, 97, 194, "seac")],
       // Hint replacement through OtherSubrs[3], then a line drawn with a divided length.
@@ -325,6 +328,14 @@ describe("type1Outlines on hand-built glyphs", () => {
     ],
   };
   const outlines = type1Outlines(font);
+
+  it("keeps glyphs named after an object's members as glyphs of their own", () => {
+    expect(Object.getPrototypeOf(outlines.glyphs)).toBeNull();
+    expect(Object.hasOwn(outlines.glyphs, "__proto__")).toBe(true);
+    expect(outlines.glyphs["__proto__"]?.w).toBe(300);
+    expect(outlines.glyphs["constructor"]?.w).toBe(600);
+    expect(Object.hasOwn(outlines.glyphs, "toString")).toBe(false);
+  });
 
   it("draws a plain glyph from its side bearing", () => {
     expect(outlines.glyphs.a).toEqual({
