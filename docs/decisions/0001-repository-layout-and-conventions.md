@@ -14,7 +14,7 @@ Two people are building two products that share one moment of contact: the edito
 - Toolchain: pnpm workspaces, Node 24, Biome, TypeScript strict, Vitest; uv, Python 3.12, Ruff, pytest.
 - Trunk-based work on short-lived branches, squash merges, Conventional Commits with area scopes, review required across areas and on shared paths, one CI workflow per area with path filters.
 - No licence file while private, which means all rights reserved.
-- The editor plan lives in `docs/plan.md`, converted from the shared page, which stays the shareable copy.
+- The editor plan lives in `docs/editor-plan.md`, converted from the shared page, which stays the shareable copy.
 
 ## Consequences
 

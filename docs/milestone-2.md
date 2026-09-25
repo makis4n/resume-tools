@@ -1,7 +1,8 @@
 # Milestone 2: the curated editor
 
 Written 24 September 2026, after the spike. This is the working plan for the second milestone in
-[plan.md](plan.md) section 9. It turns the spike's harness into the editor and says in what order.
+[editor-plan.md](editor-plan.md) section 9. It turns the spike's harness into the editor and says in
+what order.
 Each numbered item is one pull request, or a few if it grows past ten minutes of reading. Tick the
 item in the same pull request that finishes it.
 
@@ -11,7 +12,7 @@ From the plan: the package format, the three ported templates, page plus side-pa
 style controls and fit to one page, browser storage, PDF export, and a warning when content spills
 onto a second page.
 
-**Done means** all three templates edit end to end within the targets in plan.md section 4.3,
+**Done means** all three templates edit end to end within the targets in editor-plan.md section 4.3,
 every style control works on all three, and the validation harness runs on every change.
 
 Not in this milestone: import (milestone 3), accounts (milestone 4), hosting and our own engine

@@ -128,13 +128,13 @@ export type DateFormat = z.infer<typeof DateFormat>;
 const format = z.boolean().optional();
 
 /**
- * The style controls a package offers, from the closed set in docs/plan.md section 5.4, and how
- * each is applied. An `apply` snippet goes in the body before `\begin{document}`, so changing the
- * control costs one ordinary compile. A control marked `format` is one the class fixes when it
- * loads, such as the font size in `article`: its value is also a slot of the preamble, named after
- * the control, and one format is dumped for each combination of the format-bound values. The date
- * format has no snippet, because the generator formats every date. Every package offers it and
- * may only choose its default.
+ * The style controls a package offers, from the closed set in docs/editor-plan.md section 5.4,
+ * and how each is applied. An `apply` snippet goes in the body before `\begin{document}`, so
+ * changing the control costs one ordinary compile. A control marked `format` is one the class
+ * fixes when it loads, such as the font size in `article`: its value is also a slot of the
+ * preamble, named after the control, and one format is dumped for each combination of the
+ * format-bound values. The date format has no snippet, because the generator formats every date.
+ * Every package offers it and may only choose its default.
  */
 const Controls = z.strictObject({
   pageSize: z

@@ -18,8 +18,8 @@ The only link between the two products: the editor sends a PDF to the ATS over H
 
 ## Before you touch anything
 
-- Read `docs/plan.md` before changing anything architectural in the editor. Its decisions table is
-  authoritative; do not re-decide settled questions in code.
+- Read `docs/editor-plan.md` before changing anything architectural in the editor. Its decisions
+  table is authoritative; do not re-decide settled questions in code.
 - Read the relevant `docs/decisions/` files. If your change contradicts one, write a new decision
   record in the same pull request instead of diverging silently.
 - Work on a branch. Never commit to `main`.
@@ -125,8 +125,8 @@ These come from the plan and are not negotiable in code:
 - Changing the Node or Python version pins without a decision record.
 - Using Docker for development. It is for building the TeX engines and for deploying the ATS,
   nothing else.
-- Editing `docs/plan.md` beyond fixing a typo. It mirrors a shared page; substantive changes go
-  through the owner.
+- Editing `docs/editor-plan.md` beyond fixing a typo. It mirrors a shared page; substantive
+  changes go through the owner.
 
 ## Before you say you are done
 

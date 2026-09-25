@@ -4,7 +4,7 @@ Two tools for job seekers, in one repository.
 
 | Part | Where | Language | Owner | What it is |
 |---|---|---|---|---|
-| Editor | `apps/editor` | TypeScript | @makis4n | A browser editor for LaTeX resumes: you edit the typeset page directly and never see LaTeX. The plan is in [docs/plan.md](docs/plan.md). |
+| Editor | `apps/editor` | TypeScript | @makis4n | A browser editor for LaTeX resumes: you edit the typeset page directly and never see LaTeX. The plan is in [docs/editor-plan.md](docs/editor-plan.md). |
 | ATS | `apps/ats` | Python | @keaenlim | An applicant-tracking-system simulator and resume optimiser. It takes a finished PDF and returns an analysis. |
 
 The two meet in exactly one place. The editor sends a PDF to the ATS service over HTTP and shows the result in a panel. The shape of that request and response is the contract in `packages/contracts`, and both of us own it.
@@ -20,7 +20,7 @@ packages/
   contracts/            JSON Schemas for what crosses between the two   owner: both
   resume-model/         the editor's resume data model (Zod)  owner: @makis4n
 docs/
-  plan.md               the editor plan, converted from the shared page
+  editor-plan.md        the editor plan, converted from the shared page
   decisions/            short records of decisions, one file each
 .github/                CI, pull request and issue templates
 ```
@@ -87,6 +87,6 @@ The editor is planned for Cloudflare Pages and Workers, with sign-in and saved r
 
 ## Documents
 
-- [docs/plan.md](docs/plan.md): the editor's version-one plan. The shareable page version is at https://claude.ai/code/artifact/c9403706-378d-475b-8599-48f4b0c6f569.
+- [docs/editor-plan.md](docs/editor-plan.md): the editor's version-one plan. The shareable page version is at https://claude.ai/code/artifact/c9403706-378d-475b-8599-48f4b0c6f569.
 - [docs/decisions/](docs/decisions/): the decision records.
 - [AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md): the short rules AI coding agents follow here.
