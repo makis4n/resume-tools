@@ -16,12 +16,19 @@
 % that grows with the square of a section title's length. The fonts are Latin Modern in T1, where
 % upstream has Computer Modern in OT1: the editor draws the page from Type 1 outlines, and TeX
 % Live has none for Computer Modern in T1, while Latin Modern is the same design and has them;
-% and in OT1 LaTeX cannot set letters such as ą or Đ, or guillemets, at all. The port names the
-% accent colour, rtaccent, and sets the section titles and the rules under them in it, where
-% upstream set the rules in black, so that the accent colour control can set it; its default is
-% black, which keeps upstream's look. xcolor takes the place of color, because the control gives
-% the colour as six hex digits, which only xcolor reads. And the file ends where the body would
-% begin, because the editor generates the body from the resume. Everything else is upstream's.
+% and in OT1 LaTeX cannot set letters such as ą or Đ, or guillemets, at all. article sets its
+% sizes once, as it loads, and only at 10, 11 or 12 points, while the font size control takes half
+% points from 9 to 12 as an ordinary compile, so that one format serves every size: the port's
+% \rtfontsize sets article's 11-point sizes and the spacing that goes with them, as its size11.clo
+% has them, scaled by the size asked for over 11 points and rounded to a hundredth of a point, so
+% that every size, the name's, the titles' and the text's, and the space between lines, grows with
+% the control, and at 11 points, the class's size and the control's default, the page is
+% upstream's to the byte. The port names the accent colour, rtaccent, and sets the section titles
+% and the rules under them in it, where upstream set the rules in black, so that the accent colour
+% control can set it; its default is black, which keeps upstream's look. xcolor takes the place of
+% color, because the control gives the colour as six hex digits, which only xcolor reads. And the
+% file ends where the body would begin, because the editor generates the body from the resume.
+% Everything else is upstream's.
 %
 % Copyright (c) 2026 Sourabh Bajaj
 % Copyright (c) 2020 Jake Gutierrez
@@ -49,6 +56,85 @@
 % Latin Modern in T1, in place of Computer Modern in OT1, as the note at the top says.
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
+% A symbol a family's TS1 font lacks, such as an arrow in Charter, is set in Latin Modern, where
+% LaTeX would take Computer Modern, whose TS1 fonts the tree has TFMs for and no outlines.
+\def\rmsubstdefault{lmr}
+\def\sfsubstdefault{lmss}
+\def\ttsubstdefault{lmtt}
+% The font size control's sizes, as the note at the top says. \rt@size is the size in scaled points,
+% 11 points until \rtfontsize sets another, and \rt@pt{<points>} is a length of size11.clo's scaled
+% by it over 11 points and rounded to a hundredth of a point, TeX arithmetic throughout. A length
+% to two decimals rounds back to what TeX reads for it, so at 11 points every length is article's.
+\makeatletter
+\newcommand*\rt@size{720896}
+\newcommand*\rt@pt[1]{%
+  \the\dimexpr\numexpr\dimexpr#1\p@*\rt@size/720896\relax*100/65536\relax\p@/100\relax}
+% size11.clo's sizes, with the display skips and the lists' spacing it sets with them, each length
+% through \rt@pt.
+\DeclareRobustCommand\normalsize{%
+  \@setfontsize\normalsize{\rt@pt{10.95}}{\rt@pt{13.6}}%
+  \abovedisplayskip \rt@pt{11}\@plus\rt@pt{3}\@minus\rt@pt{6}%
+  \abovedisplayshortskip \z@ \@plus\rt@pt{3}%
+  \belowdisplayshortskip \rt@pt{6.5}\@plus\rt@pt{3.5}\@minus\rt@pt{3}%
+  \belowdisplayskip \abovedisplayskip
+  \let\@listi\@listI}
+\DeclareRobustCommand\small{%
+  \@setfontsize\small{\rt@pt{10}}{\rt@pt{12}}%
+  \abovedisplayskip \rt@pt{10}\@plus\rt@pt{2}\@minus\rt@pt{5}%
+  \abovedisplayshortskip \z@ \@plus\rt@pt{3}%
+  \belowdisplayshortskip \rt@pt{6}\@plus\rt@pt{3}\@minus\rt@pt{3}%
+  \def\@listi{\leftmargin\leftmargini
+    \topsep \rt@pt{6}\@plus\rt@pt{2}\@minus\rt@pt{2}%
+    \parsep \rt@pt{3}\@plus\rt@pt{2}\@minus\rt@pt{1}%
+    \itemsep \parsep}%
+  \belowdisplayskip \abovedisplayskip}
+\DeclareRobustCommand\footnotesize{%
+  \@setfontsize\footnotesize{\rt@pt{9}}{\rt@pt{11}}%
+  \abovedisplayskip \rt@pt{8}\@plus\rt@pt{2}\@minus\rt@pt{4}%
+  \abovedisplayshortskip \z@ \@plus\rt@pt{1}%
+  \belowdisplayshortskip \rt@pt{4}\@plus\rt@pt{2}\@minus\rt@pt{2}%
+  \def\@listi{\leftmargin\leftmargini
+    \topsep \rt@pt{4}\@plus\rt@pt{2}\@minus\rt@pt{2}%
+    \parsep \rt@pt{2}\@plus\rt@pt{1}\@minus\rt@pt{1}%
+    \itemsep \parsep}%
+  \belowdisplayskip \abovedisplayskip}
+\DeclareRobustCommand\scriptsize{\@setfontsize\scriptsize{\rt@pt{8}}{\rt@pt{9.5}}}
+\DeclareRobustCommand\tiny{\@setfontsize\tiny{\rt@pt{6}}{\rt@pt{7}}}
+\DeclareRobustCommand\large{\@setfontsize\large{\rt@pt{12}}{\rt@pt{14}}}
+\DeclareRobustCommand\Large{\@setfontsize\Large{\rt@pt{14.4}}{\rt@pt{18}}}
+\DeclareRobustCommand\LARGE{\@setfontsize\LARGE{\rt@pt{17.28}}{\rt@pt{22}}}
+\DeclareRobustCommand\huge{\@setfontsize\huge{\rt@pt{20.74}}{\rt@pt{25}}}
+\DeclareRobustCommand\Huge{\@setfontsize\Huge{\rt@pt{24.88}}{\rt@pt{30}}}
+% size11.clo's list spacing: the first level's at the normal size, which \normalsize hands to
+% \@listi, and the second and third levels', the second being the bullets'.
+\def\rt@listI{%
+  \parsep \rt@pt{4.5}\@plus\rt@pt{2}\@minus\rt@pt{1}%
+  \topsep \rt@pt{9}\@plus\rt@pt{3}\@minus\rt@pt{5}%
+  \itemsep \rt@pt{4.5}\@plus\rt@pt{2}\@minus\rt@pt{1}}
+\def\@listI{\leftmargin\leftmargini\rt@listI}
+\def\@listii{\leftmargin\leftmarginii
+  \labelwidth\leftmarginii
+  \advance\labelwidth-\labelsep
+  \topsep \rt@pt{4.5}\@plus\rt@pt{2}\@minus\rt@pt{1}%
+  \parsep \rt@pt{2}\@plus\rt@pt{1}\@minus\rt@pt{1}%
+  \itemsep \parsep}
+\def\@listiii{\leftmargin\leftmarginiii
+  \labelwidth\leftmarginiii
+  \advance\labelwidth-\labelsep
+  \topsep \rt@pt{2}\@plus\rt@pt{1}\@minus\rt@pt{1}%
+  \parsep \z@
+  \partopsep \rt@pt{1}\@plus\z@ \@minus\rt@pt{1}%
+  \itemsep \topsep}
+% \rtfontsize{<points>}: every size and its spacing from <points> in place of 11, then the normal
+% size, and the first list level's spacing and \partopsep outside any list, where \trivlist, and
+% so center, takes them, as size11.clo sets them as it loads. The paragraph indent stays the 0pt
+% \raggedright sets.
+\newcommand*\rtfontsize[1]{%
+  \edef\rt@size{\number\dimexpr#1\p@\relax}%
+  \normalsize
+  \rt@listI
+  \partopsep \rt@pt{3}\@plus\rt@pt{1}\@minus\rt@pt{1}\relax}
+\makeatother
 \usepackage{latexsym}
 % Upstream loaded fullpage[empty] here and adjusted its margins below, which comes to half an inch
 % on every side of US Letter. The page size and margins controls call \geometry again after the
@@ -99,8 +185,9 @@
 
 % Sections formatting
 % The density control respaces what follows, after the format. Normal leaves it as it is:
-% titlesec's 3.5ex before a section title and 2.3ex after it, 16.5pt and 10.8pt here, and the
-% lists' topsep and itemsep, 9pt and 4.5pt for the entries and 4.5pt and 2pt for their bullets.
+% titlesec's 3.5ex before a section title and 2.3ex after it, 16.5pt and 10.8pt at 11 points, and
+% the lists' topsep and itemsep, 9pt and 4.5pt for the entries and 4.5pt and 2pt for their
+% bullets, which \rtfontsize above scales with the font size at the other sizes.
 % Compact sets each of them lower and relaxed each higher, so that the space between sections,
 % entries and bullets moves together, and both set the two levels apart: relaxed since a value
 % above the entries' would more than double the bullets', and compact so that an entry stays
@@ -111,7 +198,8 @@
 % rule's -5pt and the next title's -4pt take back 9pt, since titlesec drops the space before a
 % title that follows another; 10pt before a title, which keeps the title a font size below an
 % entry with no bullets, though the entry's heading takes back 7pt after it and the title 4pt
-% before itself; and no itemsep below 0pt.
+% before itself; and no itemsep below 0pt. At 9 points normal's space after a title, 8.9pt, is
+% the one that falls under compact's, and sets nothing over anything else all the same.
 \titleformat{\section}{
   \vspace{-4pt}\scshape\raggedright\large\color{rtaccent}
 }{}{0em}{}[\color{rtaccent}\titlerule \vspace{-5pt}]

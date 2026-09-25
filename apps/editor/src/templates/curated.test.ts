@@ -11,7 +11,7 @@ import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
 import { CURATED, curated } from "./curated";
 import { generateBody, generateFormat } from "./generate";
-import { type ByRole, defaultControls, type TemplatePackage } from "./package";
+import { type ByRole, defaultControls, parsePackage, type TemplatePackage } from "./package";
 
 /** A snippet for a section's role: the role's own variant, or the default. */
 const forRole = (value: ByRole<string>, role: SectionRole) =>
@@ -198,6 +198,64 @@ function linksOf(items: PageItem[]) {
 }
 
 const INCH = 72.27;
+
+/** Every font size the control offers: 9 to 12 points in half points (plan section 5.4). */
+const SIZES = [9, 9.5, 10, 10.5, 11, 11.5, 12];
+
+/**
+ * What each of Jake's fonts sets the sample in, by TeX Live's names for the family's fonts: what
+ * the name of every font a field is set in begins with, T1's and TS1's alike, and the T1 fonts the
+ * page must use, for the upright, bold, italic and small-caps text the sample has. Helvetica's
+ * italic is its oblique, and each PostScript family's small caps are a virtual font.
+ */
+const FAMILIES: Record<string, { prefix: RegExp; t1: string[] }> = {
+  lm: { prefix: /^(ec|ts1)-lm/, t1: ["ec-lmr10", "ec-lmbx10", "ec-lmri10", "ec-lmcsc10"] },
+  charter: { prefix: /^bch/, t1: ["bchr8t", "bchb8t", "bchri8t", "bchrc8t"] },
+  palatino: { prefix: /^ppl/, t1: ["pplr8t", "pplb8t", "pplri8t", "pplrc8t"] },
+  helvetica: { prefix: /^phv/, t1: ["phvr8t", "phvb8t", "phvro8t", "phvrc8t"] },
+};
+
+/** How tall a page's text is set: from the highest glyph's top to the lowest glyph's bottom. */
+const blockHeight = (page: DrawnPage) =>
+  Math.max(...page.glyphs.map((glyph) => glyph.bottom)) -
+  Math.min(...page.glyphs.map((glyph) => glyph.top));
+
+/** The TeX fonts an output uses, by name. */
+const fontsOf = (output: Uint8Array) => [
+  ...new Set([...parseDvi(output, () => undefined).fonts.values()].map((font) => font.name)),
+];
+
+/**
+ * Whether two outputs are the same bytes, but for the comment in the DVI's preamble, which
+ * records the minute TeX ran (` TeX output 2026.09.25:0738`): the preamble is 15 bytes, the last
+ * giving the comment's length.
+ */
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length || a[14] !== b[14]) return false;
+  const after = 15 + (a[14] ?? 0);
+  return a.every((byte, i) => (i >= 15 && i < after) || byte === b[i]);
+}
+
+/** The size a field's glyphs are set at, in points, as the SVG gives each glyph's. */
+function sizeOf(page: DrawnPage, id: string): number {
+  const uses = page.svg.matchAll(new RegExp(`data-size="([^"]*)"[^>]*data-field="${id}"`, "g"));
+  const sizes = new Set([...uses].map(([, size]) => size));
+  const [size] = sizes;
+  if (sizes.size !== 1 || size === undefined)
+    throw new Error(`${id} is set at ${sizes.size} sizes`);
+  return Number(size);
+}
+
+/** A length article's size11.clo sets, at another size: scaled by it over 11, to a hundredth. */
+const scaled = (points: number, size: number) => Math.round((points * size * 100) / 11) / 100;
+
+/** The fonts a page sets its fields' glyphs in, as the SVG names each glyph's font. */
+const fieldFontsOf = (page: DrawnPage) =>
+  new Set(
+    [...page.svg.matchAll(/<use [^>]*data-font="([^"]*)"[^>]*data-field="/g)].flatMap(
+      ([, font]) => font ?? [],
+    ),
+  );
 
 // What every package must do with its sample, the validation harness checks for each curated
 // package (src/validate/harness.test.ts): it compiles to one page and converges, every field it
@@ -404,6 +462,185 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     // Upstream's look by default: nothing on the page the sample opens with has a colour.
     expect(drawn.svg).not.toMatch(/fill="rgb/);
   });
+
+  it("sets article's own sizes at the default size, to the byte", async () => {
+    // Upstream's look by default (decision 0008): at 11 points \rtfontsize sets every length
+    // article's size11.clo sets, so the output is the one upstream's preamble sets, with no size
+    // asked for, byte for byte.
+    const sizes = /^% The font size control's sizes[\s\S]*?\\makeatother\n/m;
+    expect(pkg.preamble.match(new RegExp(sizes.source, "gm"))).toHaveLength(1);
+    const upstream = parsePackage({
+      ...pkg,
+      id: "jake-upstream",
+      preamble: pkg.preamble.replace(sizes, ""),
+      controls: { ...pkg.controls, fontSize: { default: 11, apply: "" } },
+    });
+    // Nothing of the sizes is left but the notes that mention them.
+    expect(upstream.preamble).not.toMatch(
+      /\\DeclareRobustCommand|\\rt@pt|\\newcommand\*\\rtfontsize/,
+    );
+    const plain = generateFormat(upstream, values);
+    const dumped = session.dump(upstream.engine, plain.name, plain.preamble, plain.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    const body = generateBody(upstream, sample, values);
+    const result = session.compile(upstream.engine, plain.name, body.latex, {
+      job: "upstream",
+      maxPasses: 3,
+    });
+    if (!result.output) throw new Error(result.error);
+    expect(sameBytes(output, result.output)).toBe(true);
+    // size11.clo's: the name in \Huge at 24.88pt, and the section titles in \large at 12pt.
+    expect(sizeOf(drawn, "header.first")).toBe(24.88);
+    expect(sizeOf(drawn, "edu.title")).toBe(12);
+    // TeX reads the size as a length, so 11 written to the tenth sets the same bytes.
+    const eleven = generateBody(pkg, sample, values).latex;
+    expect(eleven).toContain("\\rtfontsize{11}\n");
+    const tenth = eleven.replace("\\rtfontsize{11}\n", "\\rtfontsize{11.0}\n");
+    const again = session.compile(pkg.engine, format.name, tenth, { job: "jake", maxPasses: 1 });
+    expect(again.output && sameBytes(output, again.output)).toBe(true);
+  }, 60_000);
+
+  it("sets every font size from one format, each size and the page growing with it", async () => {
+    // \rtfontsize scales article's sizes and the spacing that goes with them by the size over
+    // 11 points, after the format, so a size is an ordinary compile, and everything follows it:
+    // the name, the section titles titlesec sets, the text and the space between its lines.
+    // Fitting on one page is item 18's to do, so a size that spills is not failed here; the
+    // sample fits at every size.
+    const rows: { name: number; title: number; leading: number; height: number }[] = [];
+    for (const fontSize of SIZES) {
+      const sized = { ...values, fontSize };
+      expect(generateFormat(pkg, sized).name).toBe(format.name);
+      const body = generateBody(pkg, sample, sized);
+      const { result, page } = await compileAndDraw(
+        body.latex,
+        body.texts,
+        `size-${fontSize * 10}`,
+      );
+      expect(result.log, `${fontSize}`).not.toMatch(/^! /m);
+      expect(page.missingFonts, `${fontSize}`).toEqual(new Map());
+      expect(page.unmatched, `${fontSize}`).toBe(0);
+      // The first bullet runs over two lines at every size, set \small, 12pt apart at 11 points.
+      const [first, second] = baselinesOf(page, "fennel-1.text");
+      if (first === undefined || second === undefined) throw new Error("the bullet fits one line");
+      const row = {
+        name: sizeOf(page, "header.first"),
+        title: sizeOf(page, "edu.title"),
+        leading: second - first,
+        height: blockHeight(page),
+      };
+      expect(row.name, `${fontSize}`).toBeCloseTo(scaled(24.88, fontSize), 2);
+      expect(row.title, `${fontSize}`).toBeCloseTo(scaled(12, fontSize), 2);
+      expect(row.leading, `${fontSize}`).toBeCloseTo(scaled(12, fontSize), 2);
+      rows.push(row);
+    }
+    const said = rows.map(({ name, title, leading, height }, i) => {
+      const lines = `lines ${leading.toFixed(2)} apart`;
+      return `${SIZES[i]} pt: name ${name}, titles ${title}, ${lines}, ${height.toFixed(1)} tall`;
+    });
+    console.log(`Jake's sample by font size: ${said.join("; ")}`);
+    rows.forEach((row, i) => {
+      const before = rows[i - 1];
+      if (before === undefined) return;
+      for (const key of ["name", "title", "leading", "height"] as const)
+        expect(row[key], `${key} at ${SIZES[i]}`).toBeGreaterThan(before[key]);
+    });
+  }, 60_000);
+
+  it("draws the sample in each font it offers, every field in the family's own fonts", async () => {
+    const choices = pkg.controls.font?.choices ?? [];
+    expect(choices.map(({ id, name }) => [id, name])).toEqual([
+      ["lm", "Latin Modern"],
+      ["charter", "Charter"],
+      ["palatino", "Palatino"],
+      ["helvetica", "Helvetica"],
+    ]);
+    const costs: string[] = [];
+    for (const { id } of choices) {
+      const family = FAMILIES[id];
+      if (!family) throw new Error(`no family for ${id}`);
+      const chosen = { ...values, font: id };
+      // An ordinary compile: the same format, and the family chosen in the body.
+      expect(generateFormat(pkg, chosen).name).toBe(format.name);
+      const body = generateBody(pkg, sample, chosen);
+      const job = `font-${id}`;
+      const { result, page } = await compileAndDraw(body.latex, body.texts, job);
+      expect(result.log, id).not.toMatch(/^! /m);
+      // A family must draw as well as compile: every glyph drawn, and matched to its text.
+      expect(page.missingFonts, id).toEqual(new Map());
+      expect(page.unmatched, id).toBe(0);
+      expect(fontsOf(result.output as Uint8Array), id).toEqual(expect.arrayContaining(family.t1));
+      const others = [...fieldFontsOf(page)].filter((font) => !family.prefix.test(font));
+      expect(others, `${id}: fields set in another family`).toEqual([]);
+      // A change of font costs one ordinary pass, loading any package it needs in the body.
+      const again = session.compile(pkg.engine, format.name, body.latex, { job, maxPasses: 1 });
+      costs.push(`${id} ${Math.round(again.passes[0] ?? Number.NaN)} ms`);
+    }
+    console.log(`Jake's sample compiles again in one pass in ${costs.join(", ")}`);
+  }, 60_000);
+
+  it("sets the symbols a family lacks in Latin Modern, on the page and in the PDF", async () => {
+    // LaTeX sets a symbol a family's TS1 font lacks in the substitution family, as it does → (a
+    // level 4 symbol) and № (level 5) in the three PostScript families, whose TS1 subset is 5.
+    // Unless the preamble names another, that family is Computer Modern, whose TS1 fonts, such as
+    // tcrm1000 and tcss1000, the tree has TFMs for and no outlines: the page drew nothing there,
+    // and xdvipdfmx made no PDF. Jake's preamble names Latin Modern, and Latin Modern Sans for
+    // Helvetica, the sans family; Latin Modern itself has both symbols.
+    const id = "research-2.text";
+    const symbols = Resume.parse(structuredClone(sample));
+    const bullet = symbols.sections
+      .flatMap((section) => (section.kind === "entries" ? section.entries : []))
+      .flatMap((entry) => entry.bullets)
+      .find((each) => `${each.id}.text` === id);
+    if (!bullet) throw new Error("the sample moved");
+    bullet.text = [{ text: "Cut the nightly build from 40 → 12 minutes, the team's № 1 request." }];
+    for (const { id: font } of pkg.controls.font?.choices ?? []) {
+      const body = generateBody(pkg, symbols, { ...values, font });
+      const job = `symbols-${font}`;
+      const { result, page } = await compileAndDraw(body.latex, body.texts, job);
+      expect(result.log, font).not.toMatch(/^! /m);
+      expect(page.missingFonts, font).toEqual(new Map());
+      expect(page.unmatched, font).toBe(0);
+      // Each symbol drawn where a click finds it, in Latin Modern's TS1 font at the bullets' size.
+      const ts1 = font === "helvetica" ? "ts1-lmss10" : "ts1-lmr10";
+      const text = body.texts.get(id) ?? "";
+      for (const char of ["→", "№"]) {
+        const offset = text.indexOf(char);
+        expect(offset, char).toBeGreaterThanOrEqual(0);
+        const boxes = page.glyphs.filter((box) => box.field === id && box.offset === offset);
+        expect(boxes, `${font} ${char}`).toHaveLength(1);
+        const use = new RegExp(`data-font="${ts1}"[^>]*data-field="${id}" data-offset="${offset}"`);
+        expect(page.svg, `${font} ${char}`).toMatch(use);
+      }
+      // Computer Modern's TS1 fonts are named tc, as tcrm1000 is, and none is used.
+      const computerModern = fontsOf(result.output as Uint8Array).filter((name) =>
+        name.startsWith("tc"),
+      );
+      expect(computerModern, font).toEqual([]);
+      const pdf = session.pdf(job);
+      expect(pdf.ok, `${font}: ${pdf.error}`).toBe(true);
+    }
+  }, 60_000);
+
+  it("compiles in every font at every size, and says which set more than one page", () => {
+    // Fitting on one page is item 18's to do, so a spill is reported here rather than failed.
+    const spills: string[] = [];
+    for (const { id } of pkg.controls.font?.choices ?? [])
+      for (const fontSize of SIZES) {
+        const body = generateBody(pkg, sample, { ...values, font: id, fontSize });
+        const result = session.compile(pkg.engine, format.name, body.latex, {
+          job: `every-${id}`,
+          maxPasses: 3,
+        });
+        expect(result.ok, `${id} ${fontSize}`).toBe(true);
+        expect(result.log, `${id} ${fontSize}`).not.toMatch(/^! /m);
+        if (result.pages !== 1) spills.push(`${id} at ${fontSize} pt, ${result.pages} pages`);
+      }
+    console.log(
+      spills.length === 0
+        ? "Jake's sample fits on one page in every font at every size"
+        : `Jake's sample spills: ${spills.join("; ")}`,
+    );
+  }, 120_000);
 
   it("compiles every section kind, empty sections and an empty item, as edits pass through", async () => {
     const edges = Resume.parse({

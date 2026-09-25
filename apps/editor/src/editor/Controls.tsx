@@ -74,7 +74,7 @@ const EXAMPLE_DATE = "2024-01";
 export function Controls({ pkg, values, onChange }: ControlsProps) {
   const id = useId();
   const shown = { ...defaultControls(pkg), ...values };
-  const { pageSize, margins, accent, density, dateFormat } = pkg.controls;
+  const { pageSize, margins, fontSize, font, accent, density, dateFormat } = pkg.controls;
   return (
     <aside aria-label="Style" style={PANEL}>
       {pageSize && (
@@ -88,6 +88,20 @@ export function Controls({ pkg, values, onChange }: ControlsProps) {
         <MarginsControl
           id={`${id}-margins`}
           value={shown.margins ?? margins.default}
+          onChange={onChange}
+        />
+      )}
+      {fontSize && (
+        <FontSizeControl
+          id={`${id}-font-size`}
+          value={shown.fontSize ?? fontSize.default}
+          onChange={onChange}
+        />
+      )}
+      {font && (
+        <FontControl
+          choices={font.choices}
+          value={shown.font ?? font.default}
           onChange={onChange}
         />
       )}
@@ -178,6 +192,83 @@ export function MarginsControl({
         ))}
       </div>
     </div>
+  );
+}
+
+/** A size to the nearest half point, the step every font size is taken in. */
+const halfPoints = (size: number) => Math.round(size * 2) / 2;
+
+/**
+ * A slider over the font sizes, 9 to 12 points in half points, with the size in points beside it;
+ * `id` names the slider. The slider's value is text, which the change reads to the half point, so
+ * that no size the browser gives can be one the package refuses. A whole size shows as `11 pt`
+ * and a half as `10.5 pt`.
+ */
+export function FontSizeControl({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: number;
+  onChange: OnChange;
+}) {
+  const slider = `${id}-slider`;
+  const shown = String(halfPoints(value));
+  return (
+    <div style={GROUP}>
+      <div style={SPREAD}>
+        <label htmlFor={slider} style={LEGEND}>
+          Font size
+        </label>
+        <output htmlFor={slider} style={QUIET}>
+          {shown} pt
+        </output>
+      </div>
+      <input
+        id={slider}
+        type="range"
+        min={9}
+        max={12}
+        step={0.5}
+        value={value}
+        aria-valuetext={`${shown} points`}
+        onChange={(event) =>
+          onChange({ name: "fontSize", value: halfPoints(Number(event.target.value)) })
+        }
+      />
+    </div>
+  );
+}
+
+/**
+ * The package's fonts as a menu, each by the name the package gives it and in the package's
+ * order. A choice shows only its name and gives only its id, since the snippet that applies it
+ * is LaTeX, which a user never sees.
+ */
+export function FontControl({
+  choices,
+  value,
+  onChange,
+}: {
+  choices: readonly { id: string; name: string }[];
+  value: string;
+  onChange: OnChange;
+}) {
+  return (
+    <label style={GROUP}>
+      <span style={LEGEND}>Font</span>
+      <select
+        value={value}
+        onChange={(event) => onChange({ name: "font", value: event.target.value })}
+      >
+        {choices.map(({ id, name }) => (
+          <option key={id} value={id}>
+            {name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
