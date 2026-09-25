@@ -5,11 +5,14 @@ import { type DrawnPage, drawPage } from "./page/draw";
 import { FontLibrary } from "./page/fonts";
 import { Page } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
+import { curated } from "./templates/curated";
+import { generateBody, generateFormat } from "./templates/generate";
+import { defaultControls } from "./templates/package";
 
 /**
- * Until the editor has documents (milestone 2, item 8), the app compiles the spike's marked-up
- * Jake's Resume and shows its page, so the engine, the fonts and field clicks can be seen working.
- * Only the dev server serves `/engine/` and `/spike/`; hosting the engine is milestone 5, so a
+ * Until the editor has documents (milestone 2, item 8), the app shows the curated Jake's Resume
+ * sample through the generator, so the package, the engine, the fonts and field clicks can be
+ * seen working. Only the dev server serves `/engine/`; hosting the engine is milestone 5, so a
  * production build shows the failure message until then.
  */
 async function load(
@@ -21,24 +24,21 @@ async function load(
     if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
     return response;
   };
-  const [manifest, preamble, body] = await Promise.all([
-    get("/engine/manifest.json").then((r) => r.json() as Promise<EngineManifest>),
-    get("/spike/jake-preamble.tex").then((r) => r.text()),
-    get("/spike/body.tex").then((r) => r.text()),
-  ]);
-  const dumped = await engine.dump("pdftex", "jake", preamble);
+  const manifest = (await get("/engine/manifest.json").then((r) => r.json())) as EngineManifest;
+  const { package: pkg, sample } = curated("jake");
+  const values = defaultControls(pkg, navigator.language);
+  const format = generateFormat(pkg, values);
+  const dumped = await engine.dump(pkg.engine, format.name, format.preamble, format.files);
   if (!dumped.ok) throw new Error(dumped.error);
-  const compiled = await engine.compile("pdftex", "jake", body);
+  const body = generateBody(pkg, sample, values);
+  const compiled = await engine.compile(pkg.engine, format.name, body.latex);
   if (!compiled.output) throw new Error(compiled.error);
   const fonts = new FontLibrary(
     new TexLiveIndex(manifest),
     async (path) => new Uint8Array(await (await get(`/engine/files${path}`)).arrayBuffer()),
   );
-  const texts = new Map<string, string>();
-  for (const m of body.matchAll(/\\rtfield\{([^}]*)\}\{([^{}]*)\}/g))
-    texts.set(m[1] ?? "", m[2] ?? "");
-  const page = await drawPage(compiled.output, fonts, texts);
-  return { page, texts, ms: performance.now() - started };
+  const page = await drawPage(compiled.output, fonts, body.texts);
+  return { page, texts: body.texts, ms: performance.now() - started };
 }
 
 export function App() {
