@@ -275,6 +275,8 @@ describe("checkSpecial", () => {
     "parshape=0",
     "inner=0",
     "shape=",
+    "spaceskip=0.0pt",
+    "xspaceskip=0.0pt",
   ].join(";");
   /** A field as the prelude marks it, with a glyph, or with what is given. */
   const field = (id: string, ...inside: PageItem[]): PageItem[] => [
