@@ -119,7 +119,8 @@ file and a backend file. On the tree before, whose `fonts.conf` had fontconfig s
 own `fonts/opentype` and `fonts/type1` folders, the first compile read 565 files, 22 MB, which
 the browser's worker reads one synchronous request at a time, and fontconfig scanned them again,
 from memory, on every compile: the body took 284 to 312 ms, of which the scan was about 200, and
-the XDV was the same byte for byte.
+the XDV was the same byte for byte. A worker's first compile of a format has the start-up's time
+limit, as its dump has, since it reads these files as TeX asks for them (`src/editor/compiler.ts`).
 
 Decision 0003 measured 459 ms for Awesome-CV's body on the same loop, on a tree whose fontconfig
 scanned the release's folders on every compile. The invented template's body is lighter than

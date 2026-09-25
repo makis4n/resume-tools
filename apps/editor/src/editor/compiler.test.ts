@@ -16,6 +16,7 @@ import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
+import { INVENTED_XETEX } from "../templates/invented";
 import {
   type ControlValues,
   defaultControls,
@@ -33,7 +34,7 @@ import {
   type PrefetchStore,
   type Shown,
 } from "./compiler";
-import { apply, type Document, History, newDocument } from "./document";
+import { apply, Document, History, newDocument } from "./document";
 import { fit } from "./fit";
 
 const { package: jake, sample } = curated("jake");
@@ -694,6 +695,47 @@ describe("Compiler", () => {
     expect(s.shown[0]?.ms).toBe(59_999);
   });
 
+  it("gives a worker's first compile of a format the start-up's limit, as it reads the template's files", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { package: xetex, sample: invented } = INVENTED_XETEX;
+    // Not curated, so the document is made by hand.
+    const doc = Document.parse({ version: 1, template: xetex.id, resume: invented, controls: {} });
+    const name = formatOf(doc, xetex);
+    const s = scheduler();
+    s.compiler.open(xetex, doc);
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    // The body's first compile reads the fonts it selects, which the dump never loaded: past the
+    // compile's limit, within the start's, the worker is kept and the page arrives.
+    await wait(30_000);
+    expect(s.engines).toHaveLength(1);
+    expect(s.engine().terminated).toBe(false);
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([doc]);
+    expect(s.shown[0]?.ms).toBe(30_000);
+    expect(s.errors).toEqual([]);
+    // Later compiles on that worker keep the compile's limit.
+    const edited = apply(doc, { type: "text", field: "harbor.title", text: "Harbour Lane Press" });
+    s.compiler.update(edited);
+    await wait(400);
+    await wait(19_999);
+    expect(s.engines[0]?.terminated).toBe(false);
+    await wait(1);
+    await settle();
+    expect(s.engines[0]?.terminated).toBe(true);
+    // The worker in its place is handed the format, and its first compile of it reads the files
+    // again, so it has the start's limit as well.
+    expect(s.engine().calls).toEqual(["start", `put ${name}`, `compile ${name}`]);
+    await wait(30_000);
+    expect(s.engines).toHaveLength(2);
+    s.engine().compiles[0]?.resolve(compiled(2));
+    await settle();
+    expect(s.shown.map((page) => page.document)).toEqual([doc, edited]);
+    expect(s.errors).toEqual([]);
+  });
+
   it("tries a document again on a new engine when one does not start in time, or fails to", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1180,6 +1222,28 @@ describe("Compiler", () => {
     s.compiler.update(wide);
     await wait(100);
     expect(s.engine().calls.slice(5)).toEqual([`compile ${wideName}`]);
+  });
+
+  it("gives a trial's first compile of a format the start-up's limit, as the document's has", async () => {
+    // A worker's first compile of a format reads the files its body needs, in whichever job.
+    const margins = jake.controls.margins;
+    if (margins === undefined) throw new Error("Jake's Resume has margins");
+    const bound = parsePackage({
+      ...jake,
+      preamble: `${jake.preamble}\n% margins {{margins}}`,
+      controls: { ...jake.controls, margins: { ...margins, format: true } },
+    });
+    const s = scheduler();
+    await opened(s, bound);
+    const trial = s.compiler.tryControls({ ...defaultControls(bound), margins: 0.8 });
+    await settle();
+    s.engine().dumps[1]?.resolve(dumped(new Uint8Array([9])));
+    await settle();
+    await wait(30_000);
+    expect(s.engine().terminated).toBe(false);
+    s.engine().compiles[1]?.resolve(compiled(2));
+    await expect(trial).resolves.toBe(1);
+    expect(s.engines).toHaveLength(1);
   });
 
   it("fails a trial whose compile fails, with TeX's words for the console, and keeps the engine", async () => {
