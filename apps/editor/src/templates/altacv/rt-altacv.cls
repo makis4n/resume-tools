@@ -45,6 +45,13 @@
 %   raw one prints. The editor has escaped every such character already, and writes ~
 %   for a no-break space, which the re-read would print as a tilde. The space the re-read
 %   left after the text stays, so the contacts are as far apart as upstream's.
+% - \cvtag sets a tag's text as an ordinary box, and TikZ draws only its frame. Upstream
+%   sets the tag as a TikZ node, whose text pgf's dvipdfmx driver places through a
+%   pdf:btrans transform, which xdvipdfmx applies and the editor's page, drawn from the
+%   DVI, does not, so the page drew the text half its width right of where the PDF has it.
+%   The frame and the text are where the node puts them in the PDF. A text wider than the
+%   column less its frame is set in lines of that width, where the node's one line ran off
+%   the page, and past about 3,000 characters stopped TeX with Dimension too large.
 % Everything else is upstream's.
 
 %%%%%%%%%%%%%%%%
@@ -386,8 +393,40 @@
   \smallskip
 }
 
+% rt: a tag's text is an ordinary box, and TikZ draws only the frame around it, as the note at the
+% top says. The frame is upstream's node's: 1ex of padding at the sides, and 0.75ex over and under
+% a text 1.5ex high and 0.25ex deep, in a 0.4pt line whose outer edge is the tag's. A text wider
+% than the column less its frame is set in lines of that width, ragged right, the frame around
+% them all. The text is set in those lines first, which says whether it fits on one: only then is
+% it measured whole, since a long text's width can pass TeX's largest dimension. The space after
+% the tag is the one upstream's node leaves.
+\newsavebox\rt@tag
+\newsavebox\rt@tagline
+\newdimen\rt@tagwd
+\newdimen\rt@tagdp
 \newcommand{\cvtag}[1]{%
-  \tikz[baseline]\node[anchor=base,draw=body!30,rounded corners,inner xsep=1ex,inner ysep =0.75ex,text height=1.5ex,text depth=.25ex]{#1};
+  \leavevmode
+  \begingroup
+    \rt@tagwd=\dimexpr\linewidth-2ex-0.4pt\relax
+    \sbox\rt@tag{\parbox[t]{\rt@tagwd}{\raggedright\leavevmode#1\par
+      \xdef\rt@taglines{\the\prevgraf}\xdef\rt@tagbadness{\the\badness}%
+      \xdef\rt@taglast{\the\prevdepth}}}%
+    \rt@tagdp=\dimexpr\dp\rt@tag-\rt@taglast+.25ex\relax
+    \ifnum\rt@taglines=\@ne\ifnum\rt@tagbadness<1000000
+      \sbox\rt@tagline{#1}%
+      \ifdim\wd\rt@tagline>\rt@tagwd\else
+        \setbox\rt@tag\box\rt@tagline
+        \rt@tagwd=\wd\rt@tag
+        \rt@tagdp=.25ex
+      \fi
+    \fi\fi
+    \ht\rt@tag\z@ \dp\rt@tag\z@
+    \rlap{\tikz[baseline=0pt]{%
+      \useasboundingbox (0pt,-\rt@tagdp-0.75ex-0.2pt) rectangle (\rt@tagwd+2ex+0.4pt,2.25ex+0.2pt);
+      \draw[draw=body!30,rounded corners]
+        (0.2pt,-\rt@tagdp-0.75ex) rectangle (\rt@tagwd+2ex+0.2pt,2.25ex);}}%
+    \kern\dimexpr1ex+0.2pt\relax\usebox\rt@tag\kern\dimexpr1ex+0.2pt\relax
+  \endgroup\space
 }
 
 % v1.6: Use accsupp so that the actual numeric value is copied/pasted

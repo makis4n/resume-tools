@@ -15,7 +15,7 @@ import { type DrawnPage, drawPage, type GlyphBox, ruleCrossings } from "../page/
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
-import { shownTexts } from "../validate/pdf";
+import { mediaBoxes, shownTexts } from "../validate/pdf";
 import { CURATED, curated } from "./curated";
 import { generateBody, generateFormat } from "./generate";
 import { type ByRole, defaultControls, parsePackage, type TemplatePackage } from "./package";
@@ -936,6 +936,27 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
   const rgb = (fill: string) =>
     (/^rgb\((\d+),(\d+),(\d+)\)$/.exec(fill) ?? []).slice(1).map(Number);
 
+  /**
+   * Where each glyph of a field starts and where its advance ends, as the SVG places it, in TeX
+   * points: its origin, and its origin with its width from the font's metrics, which hold for
+   * Lato too, whose outlines the page draws at twice their size until it reads their matrix.
+   */
+  function extentsOf(page: DrawnPage, id: string): { left: number; right: number }[] {
+    const uses = page.svg.matchAll(
+      new RegExp(`<use [^>]* x="([^"]*)" [^>]*data-w="([^"]*)"[^>]*data-field="${id}"`, "g"),
+    );
+    return [...uses].map(([, x, w]) => ({ left: Number(x), right: Number(x) + Number(w) }));
+  }
+
+  /** Where the right column starts and ends on A4 at the default margins, in TeX points. */
+  const COLUMN = (() => {
+    const margin = 0.5 * INCH;
+    const gap = (1.2 / 2.54) * INCH;
+    const width = (210 / 25.4) * INCH;
+    const start = margin + 0.6 * (width - 2 * margin - gap) + gap;
+    return { start, end: width - margin };
+  })();
+
   /** The size a field's glyphs are set at, in points, as the SVG gives each glyph's. */
   function sizeOf(page: DrawnPage, id: string): number {
     const uses = page.svg.matchAll(new RegExp(`data-size="([^"]*)"[^>]*data-field="${id}"`, "g"));
@@ -1052,6 +1073,71 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     ).toBe("Experience");
     expect(drawn.unmatched).toBe(0);
   });
+
+  it("sets each tag's text where the PDF has it, as the page shows it", () => {
+    // pgf's dvipdfmx driver places a TikZ node's text through a pdf:btrans transform, which
+    // xdvipdfmx applies and the page, drawn from the DVI, does not, so the page drew each tag of
+    // upstream's, a node, half its width right of where the PDF has it (decision 0013).
+    const made = session.pdf("altacv", { compress: 0 });
+    if (!made.pdf) throw new Error(made.error);
+    const shown = shownTexts(made.pdf);
+    const [media] = mediaBoxes(made.pdf);
+    if (!media) throw new Error("the PDF gives no page size");
+    const skills = sample.sections.find((section) => section.role === "skills");
+    if (skills?.kind !== "list") throw new Error("the sample moved");
+    const bp = INCH / 72;
+    for (const { id, text } of skills.items) {
+      // The tag's first glyph on the page, and the text operator that shows the tag in the PDF,
+      // whose strings are the tag's words.
+      const glyph = drawn.glyphs.find((each) => each.field === `${id}.text`);
+      const words = text.map((run) => run.text.replace(/\s/g, "")).join("");
+      const [pdf, ...more] = shown.filter((each) => each.text === words);
+      if (!glyph || !pdf) throw new Error(`${id} is not on the page or in the PDF`);
+      expect(more, id).toEqual([]);
+      expect(Math.abs(glyph.x - pdf.x * bp), id).toBeLessThan(0.5);
+      expect(Math.abs(glyph.y - (media.height - pdf.y) * bp), id).toBeLessThan(0.5);
+    }
+  });
+
+  it("sets a tag wider than the column in lines of the column's width, even one of 3,500 characters", async () => {
+    // Upstream's tag is one line, so a skill wider than the column ran off the page, and one of
+    // about 3,000 characters stopped TeX with Dimension too large (decision 0013).
+    const skills = [
+      "JavaScript, TypeScript, React, Node.js, GraphQL, PostgreSQL, Docker",
+      "Managing workflows, Web Accessibility, WebGL, Moodboards ".repeat(62).slice(0, 3_500),
+    ];
+    for (const [index, skill] of skills.entries()) {
+      const wide = Resume.parse(structuredClone(sample));
+      const section = wide.sections.find((each) => each.role === "skills");
+      const tag = section?.kind === "list" ? section.items[0] : undefined;
+      if (!tag) throw new Error("the sample moved");
+      tag.text = [{ text: skill }];
+      const body = generateBody(pkg, wide, values);
+      const { result } = await compileAndDraw(body.latex, body.texts, `wide-tag-${index}`);
+      const length = `${skill.length} characters`;
+      expect(result.log, length).not.toMatch(/^! /m);
+      // Every page drawn and aligned. A tag is one box, so the long one, taller than a page, is
+      // set on a page of its own.
+      const output = result.output as Uint8Array;
+      const pages: DrawnPage[] = [];
+      for (let at = 0; at < result.pages; at++)
+        pages.push(await drawPage(output, fonts, body.texts, at));
+      for (const page of pages) {
+        expect(page.missingFonts, length).toEqual(new Map());
+        expect(page.unmatched, length).toBe(0);
+      }
+      const id = `${tag.id}.text`;
+      const [page, ...others] = pages.filter((each) => each.fields.has(id));
+      if (!page) throw new Error(`${id} is on no page`);
+      expect(others, length).toEqual([]);
+      // In lines, every glyph inside the column, on the page and so in the PDF.
+      expect(baselinesOf(page, id).length, length).toBeGreaterThan(1);
+      const extents = extentsOf(page, id);
+      expect(extents.length, length).toBeGreaterThan(0);
+      expect(Math.min(...extents.map(({ left }) => left)), length).toBeGreaterThan(COLUMN.start);
+      expect(Math.max(...extents.map(({ right }) => right)), length).toBeLessThan(COLUMN.end);
+    }
+  }, 60_000);
 
   it("draws the contacts' icons in the accent and the entries' markers, from Font Awesome's Type 1 fonts", () => {
     expect(drawn.missingFonts).toEqual(new Map());

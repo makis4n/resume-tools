@@ -72,6 +72,18 @@ review of the port found the editor's page and text need of the class's macros:
   (U+00A0, U+202F, U+2007), which the re-read printed as a tilde on the page and in the PDF, so that
   a pasted phone number failed alignment. The space the re-read left after the text stays, so the
   contacts are as far apart as upstream's.
+- **`\cvtag` sets a tag's text as an ordinary box, and TikZ draws only its frame.** Upstream sets a
+  tag as a TikZ node, whose text pgf's dvipdfmx driver places through a `pdf:btrans` transform,
+  which xdvipdfmx applies and the page, drawn from the DVI, does not: the page drew every tag half
+  its width right of where the PDF has it, the sample's "Web performance" past the margin, so the
+  page the user edits was not the PDF's. The port measures the text and draws the node's frame
+  around it, the same padding, corners and line, so the sample's frames and text are where the node
+  put them in the PDF, to a thousandth of a point, and each tag's text is where the page draws it. A
+  text wider than the column less its frame is set in lines of that width, ragged right, in one
+  frame: upstream's one line ran off the page past about 45 characters, and past about 3,000 (1,357
+  of `W` at 12 points in Latin Modern) stopped TeX with `Dimension too large`. It is set in those
+  lines first, which says whether it fits on one, and only then measured whole, since a long text's
+  width can pass TeX's largest dimension.
 
 The class's other `\RequirePackage`s are all in the tree but simpleicons, which it loads only if
 present, falling back from `\xtwitter` to `\twitter`, and academicons, which it loads only when
@@ -184,13 +196,21 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   the letters they join and the aligner folds case; the capitals then need a way around
   `\MakeUppercase`'s cost, as the bookmarks did in decision 0008.
 - 17 of TS1's symbols draw and reach the PDF but match no character of their field in a title:
-  `glyphText` has no reading for the names Latin Modern's TS1 encoding gives twelve of them, such
-  as `baht` and `naira`, and reads five of Roboto Slab's as other text, `‖` as two bars and `‽` as
-  `!?`. A field holding one fails alignment at that glyph until the reader knows those names.
+  `glyphText` has no reading for eleven of their glyphs' names, such as Latin Modern's `baht` and
+  `naira`, and reads six as other text, such as Roboto Slab's `‖` as two bars and `‽` as `!?`. A
+  field holding one fails alignment at that glyph until the reader knows those names.
 - A tag's frame, which TikZ draws with `pdf:` specials, is in the PDF but not on the page, which
-  draws glyphs, rules and colours only; a tag's text is on both.
-- A single tag of more than about 3,300 characters is wider than TeX's largest dimension, and TikZ
-  stops the compile with `Dimension too large`.
+  draws glyphs, rules and colours only; a tag's text is on both, in the same place.
+- A tag is one box, so one of more than about 2,500 characters, taller than a page, is set on a
+  page of its own and runs past its foot.
+- Known limits, each far past a page and far under the generator's 1 MB bound on the body: about
+  3,250 one-word tags compile, to 24 pages, and 3,500 exhaust TeX's main memory; about 1,386 items
+  in a list in the right column stop paracol with `Too many unprocessed columns/floats`, as the
+  review of this item found; and 1,500 tags take about 5 s a pass, so that a new document of them,
+  two passes, reaches the scheduler's 10 s limit. Each edit is saved whatever the compile does, so
+  a document can be saved in a state whose first compile fails. The editor, not the class, has to
+  give the way back: the side panel stays when the page cannot be shown, so the edit can be
+  undone or the item removed, which comes once item 9's rewrite of the page column has landed.
 - The port's default page is the sample's but for the capitals, the ligatures, the margins, a pale
   rule in place of the gold, and what has no place in the model.
 - xdvipdfmx warns once for each of the editor's marker specials, which it does not know, as it
