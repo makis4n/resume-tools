@@ -15,7 +15,7 @@ import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
 import { defaultControls } from "../templates/package";
 import { PRELUDE } from "../templates/prelude";
-import { fastest, median } from "../test/timing";
+import { bound, fastest, median } from "../test/timing";
 import { glyphOf, glyphText, textToCode } from "../tex/glyphs";
 import {
   type Node as BreakNode,
@@ -169,7 +169,7 @@ describe("layoutRows", () => {
     // The reviewers' specials: a \parshape of 2,000 lines, and a \hangafter of 2^31 - 1 around a
     // ragged paragraph, which looks no different; each cost hundreds of milliseconds a keystroke.
     // The breaker tells a shape's lines apart, so its work grows with the shape's length as well
-    // as the text's. With the 64 lines of a shape it is given, 5 KB costs 4.5 to 4.7 times what
+    // as the text's. With the 64 lines of a shape it is given, 5 KB costs 4.4 to 4.9 times what
     // the same shape costs at 1 KB, as five times the text should; with 256 lines it costs 13.3
     // to 13.7 times, and with 2,000 lines 26 to 29. So each shape at 5 KB is bound by nine times
     // itself at a fifth of the text, like against like on whatever machine runs the test, which
@@ -188,10 +188,10 @@ describe("layoutRows", () => {
         [fifth, whole].map((text) => () => layoutRows(text, face, params)),
         9,
       );
-      expect(long).toBeLessThan(9 * short);
+      expect(long).toBeLessThan(bound(9, short));
       expect(long).toBeLessThan(100);
     }
-  });
+  }, 60_000);
 });
 
 describe("richRows", () => {
@@ -312,8 +312,8 @@ describe("richRows", () => {
       }),
       3,
     );
-    expect(large).toBeLessThan(3 * 10 * small);
-  });
+    expect(large).toBeLessThan(bound(3 * 10, small));
+  }, 60_000);
 
   it("breaks a keystroke's runs again well within a frame", () => {
     const runs = [

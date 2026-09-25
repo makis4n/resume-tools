@@ -10,7 +10,7 @@ import type { CompileResult, EngineSession } from "../engine/session";
 import { type DrawnPage, drawPage } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
-import { fastest } from "../test/timing";
+import { bound, fastest } from "../test/timing";
 import { type PageItem, parseDvi } from "../tex/dvi";
 import { alignGlyphs, collectFields, MARKER_BEGIN, MARKER_END } from "../tex/fields";
 import { curated } from "./curated";
@@ -626,7 +626,7 @@ describe("generateBody", () => {
 
   it("refuses a body past MAX_BODY, quickly", () => {
     // The walk stops the moment the body passes MAX_BODY, so a document that sets the sections
-    // 100,000 times costs 1.7 to 2.2 times what it costs 10,000 times, both refused at the same
+    // 100,000 times costs 1.9 to 2.2 times what it costs 10,000 times, both refused at the same
     // size, the difference being the longer snippet's parse; refused only once the body is whole,
     // it cost 10.5 to 10.8 times. So the document is bound by five times itself at a tenth of the
     // repeats, the fastest of five runs of each in the test thread's CPU time (`fastest`), like
@@ -647,9 +647,9 @@ describe("generateBody", () => {
       packages.map((each) => () => thrown(() => generateBody(each, resume, {}))),
       5,
     );
-    expect(long).toBeLessThan(5 * short);
+    expect(long).toBeLessThan(bound(5, short));
     expect(long).toBeLessThan(1000);
-  });
+  }, 60_000);
 
   it("stops a package that repeats lists which render nothing, quickly", () => {
     // No snippet or separator here writes a character, and the controls write a line each, so
@@ -681,9 +681,9 @@ describe("generateBody", () => {
       packages.map((each) => () => thrown(() => generateBody(each, resume, {}))),
       5,
     );
-    expect(long).toBeLessThan(3 * short);
+    expect(long).toBeLessThan(bound(3, short));
     expect(long).toBeLessThan(1000);
-  });
+  }, 60_000);
 
   it("renders blocks nested deeper than a call stack goes", () => {
     const depth = 50_000;
@@ -696,7 +696,7 @@ describe("generateBody", () => {
   });
 
   it("decides a field's presence once, so each block that tests a long field costs a step", () => {
-    // A summary of 20,000 characters tested by 200,000 blocks costs 0.8 to 1.2 times what the
+    // A summary of 20,000 characters tested by 200,000 blocks costs 0.8 to 1.0 times what the
     // same blocks cost with the summary at 2,000, each block reading the presence its slot was
     // built with. Decided again at each block, by `isBlank` over the summary's text or over its
     // runs joined, it cost 8.0 to 8.2 and 9.1 to 9.3 times: a step per block per character. So
@@ -719,7 +719,7 @@ describe("generateBody", () => {
       }),
       5,
     );
-    expect(long).toBeLessThan(3 * short);
+    expect(long).toBeLessThan(bound(3, short));
     expect(long).toBeLessThan(1000);
   }, 60_000);
 

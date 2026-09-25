@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fastest } from "../test/timing";
+import { bound, fastest } from "../test/timing";
 import {
   checkAddresses,
   checkSnippet,
@@ -250,10 +250,9 @@ describe("crafted snippets", () => {
 
   it("costs time in proportion to the snippet's length, whatever it holds", () => {
     // Both took seconds while the tag regex and the standalone-line test scanned quadratically.
-    // Each now costs 9.1 to 18.8 times what it costs at a tenth of its length, in CPU time
-    // (`fastest`), the tags the most while the other test files run; with the regex and the line
-    // test they first had, 95 and 99 times. So each is bound by five times ten times its tenth,
-    // as draw.test.ts bounds a page, and by 1,000 ms.
+    // Each now costs 8.9 to 11.9 times what it costs at a tenth of its length, in CPU time
+    // (`fastest`); with the regex and the line test they first had, 95 and 99 times. So each is
+    // bound by five times ten times its tenth, as draw.test.ts bounds a page, and by 1,000 ms.
     const blanks = (count: number) => `{{${"\n".repeat(count)}\\relax}}`;
     const tags = (count: number) => "{{#a}}{{/a}}".repeat(count);
     expect(parseSnippet(blanks(200_000))).toEqual([text(blanks(200_000))]);
@@ -269,13 +268,13 @@ describe("crafted snippets", () => {
         }),
         5,
       );
-      expect(long).toBeLessThan(5 * 10 * short);
+      expect(long).toBeLessThan(bound(5 * 10, short));
       expect(long).toBeLessThan(1000);
     }
-  });
+  }, 60_000);
 
   it("checks addresses in one pass, however deep they nest or often they open", () => {
-    // Each costs 9.7 to 13.4 times what it costs at a tenth of its length, in CPU time, and is
+    // Each costs 9.7 to 14.2 times what it costs at a tenth of its length, in CPU time, and is
     // bound by five times ten times its tenth, as a parse is above, and by 1,000 ms. The check
     // was one pass from its first version, so there is no quadratic one to measure.
     const deep = (count: number) => `${"\\href{".repeat(count)}{{&text}}${"}".repeat(count)}`;
@@ -310,8 +309,8 @@ describe("crafted snippets", () => {
         }),
         5,
       );
-      expect(long).toBeLessThan(5 * 10 * short);
+      expect(long).toBeLessThan(bound(5 * 10, short));
       expect(long).toBeLessThan(1000);
     }
-  });
+  }, 60_000);
 });

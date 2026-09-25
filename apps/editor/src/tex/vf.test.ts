@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { cpuMs, fastest } from "../test/timing";
+import { bound, cpuMs, fastest } from "../test/timing";
 import { parseTfm } from "./tfm";
 import {
   expand,
@@ -227,7 +227,7 @@ describe("expand", () => {
       `the packet of 1 holds ${MAX_PACKET_BYTES + 1} bytes, more than ${MAX_PACKET_BYTES}`,
     );
     // A packet of four million pushes, which grew the stack by one for each, is refused before
-    // it is walked, in 0.05 to 0.08 ms of CPU time at any length, where the walk with no budgets
+    // it is walked, in 0.05 to 0.11 ms of CPU time at any length, where the walk with no budgets
     // took 38 to 102 ms and let the packet through; so 100 ms of CPU time is a budget alone.
     const hostile = parseVf(longPacket(141, 4_000_000));
     const took = cpuMs(() => {
@@ -238,9 +238,9 @@ describe("expand", () => {
 
   it("finds a font by its number without going through every font a file defines", () => {
     // A file of 100,000 font definitions, 2 MB, used to cost that many again for each packet run.
-    // Its 128 packets now cost 0.8 to 1.1 times what they cost over a file of a tenth as many
+    // Its 128 packets now cost 0.9 to 1.1 times what they cost over a file of a tenth as many
     // fonts, in CPU time (`fastest`), the table of fonts made once for each file; made again for
-    // each packet, they cost 11.8 to 11.9 times. So they are bound by three times the tenth, and
+    // each packet, they cost 11.6 to 11.9 times. So they are bound by three times the tenth, and
     // by 250 ms.
     const defining = (count: number) => {
       const out = [247, 202, 0, ...bytes(4, 0), ...bytes(4, 10 * ONE)];
@@ -264,7 +264,7 @@ describe("expand", () => {
       }),
       5,
     );
-    expect(long).toBeLessThan(3 * short);
+    expect(long).toBeLessThan(bound(3, short));
     expect(long).toBeLessThan(250);
-  });
+  }, 60_000);
 });

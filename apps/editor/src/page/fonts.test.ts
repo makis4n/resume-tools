@@ -275,7 +275,7 @@ describe("FontLibrary over an invented tree", () => {
     // Two fit in a glyph, three do not.
     expect(size).toBeGreaterThan((64 * 1024) / 3);
     expect(size).toBeLessThan((64 * 1024) / 2);
-    // The limits bound the work: composed up to them, the four cost 70 to 95 ms of CPU time, and
+    // The limits bound the work: composed up to them, the four cost 70 to 116 ms of CPU time, and
     // 153 to 156 ms with no limits at all, which the refusals catch rather than the time. So 2,000
     // ms of CPU time is a budget alone, with no smaller case to compare them with.
     const took = await cpuMsAsync(async () => {

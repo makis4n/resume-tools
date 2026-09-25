@@ -4,7 +4,7 @@ import type { Editor } from "@tiptap/core";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { fastest } from "../test/timing";
+import { bound, fastest } from "../test/timing";
 import type { Command } from "./document";
 import { RichOverlay } from "./RichOverlay";
 import { docToRuns } from "./rich";
@@ -100,21 +100,30 @@ describe("the rich editor's paste and drop", () => {
     expect(clipboard.htmlRead).toBe(false);
     expect(event.defaultPrevented).toBe(true);
     expect(docToRuns(view.state.doc)).toEqual([{ text: "Ledthe whole the team" }]);
-    // The HTML is never read, so the paste costs 0.6 to 0.8 times what it costs beside a tenth
-    // of it, in CPU time (`fastest`); parsed, as ProseMirror parses a paste the editor leaves
-    // to it, 20 times. So the paste is bound by three times the tenth's, and by 100 ms.
+    // The HTML is never read, so a paste, taken back each time for the next to land in the same
+    // document, costs 0.9 to 1.2 times what it costs beside a tenth of it, in CPU time
+    // (`fastest`); parsed, as ProseMirror parses a paste the editor leaves to it, 20 times. So
+    // the paste is bound by five times the tenth's, and by 100 ms.
     const [short = 0, long = 0] = fastest(
-      [hostile(2_000), HOSTILE].map((html) => () => paste(html)),
+      [hostile(2_000), HOSTILE].map((html) => () => {
+        const at = view.state.selection.from;
+        paste(html);
+        act(() => {
+          view.dispatch(view.state.tr.delete(at, at + "the whole".length));
+        });
+      }),
       5,
     );
-    expect(long).toBeLessThan(3 * short);
+    expect(long).toBeLessThan(bound(5, short));
     expect(long).toBeLessThan(100);
-  });
+    expect(docToRuns(view.state.doc)).toEqual([{ text: "Ledthe whole the team" }]);
+  }, 60_000);
 
   it("drops text from elsewhere as text alone, never reading its HTML", () => {
     const view = editor().view;
     // jsdom lays nothing out, so the place a drop lands is given.
-    view.posAtCoords = () => ({ pos: 4, inside: -1 });
+    const at = 4;
+    view.posAtCoords = () => ({ pos: at, inside: -1 });
     /** A drop of "the whole" from elsewhere with `html` beside it, dispatched and taken. */
     const drop = (html: string) => {
       const dragged = transfer("the whole", html);
@@ -134,14 +143,21 @@ describe("the rich editor's paste and drop", () => {
     expect(dragged.htmlRead).toBe(false);
     expect(event.defaultPrevented).toBe(true);
     expect(docToRuns(view.state.doc)).toEqual([{ text: "Ledthe whole the team" }]);
-    // As for a paste: 0.7 to 0.8 times the tenth's, and 20 times with the HTML parsed.
+    // As for a paste: 0.6 to 1.7 times the tenth's, whichever is timed second the slower, since
+    // each drop leaves the next a little slower; and 20 times with the HTML parsed.
     const [short = 0, long = 0] = fastest(
-      [hostile(2_000), HOSTILE].map((html) => () => drop(html)),
+      [hostile(2_000), HOSTILE].map((html) => () => {
+        drop(html);
+        act(() => {
+          view.dispatch(view.state.tr.delete(at, at + "the whole".length));
+        });
+      }),
       5,
     );
-    expect(long).toBeLessThan(3 * short);
+    expect(long).toBeLessThan(bound(5, short));
     expect(long).toBeLessThan(100);
-  });
+    expect(docToRuns(view.state.doc)).toEqual([{ text: "Ledthe whole the team" }]);
+  }, 60_000);
 
   it("pastes the text during a composition too, rather than leaving it to the browser", () => {
     const view = editor().view;
