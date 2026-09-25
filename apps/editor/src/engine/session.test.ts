@@ -67,8 +67,9 @@ describe("refusedSpecial", () => {
   });
 });
 
+/** The spike's Jake's Resume, its preamble and its marked-up body, kept as fixtures. */
 const spike = (name: string) =>
-  readFileSync(new URL(`../../spike/web/${name}`, import.meta.url), "utf8");
+  readFileSync(new URL(`../tex/fixtures/${name}`, import.meta.url), "utf8");
 
 // These run the real engine and need `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
 describe.skipIf(!engineAvailable())("EngineSession", () => {

@@ -9,6 +9,7 @@ overlay's characters sit within a few points of TeX's glyphs, but the browser an
 a three-line bullet differently, which moved 7 of 204 glyphs to another line and shifted
 words by up to 36 pt. The plan foresaw this and named the fix: the overlay gets its own line
 breaker using the TeX font metrics. This record says how, and what it measured.
+The spike's page it was measured on was retired in milestone 2 item 23; the scripts remain.
 
 ## Findings
 

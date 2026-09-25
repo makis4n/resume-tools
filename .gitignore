@@ -28,9 +28,6 @@ __pycache__/
 # The engine and TeX Live tree that scripts/fetch-engine.ts builds; hundreds of MB
 apps/editor/.engine
 
-# Engine, TeX Live bundles and fonts the spike page serves in dev; hundreds of MB, fetched by scripts
-apps/editor/spike/web/assets
-
 # Spike harness inputs and outputs: engine, bundles, fonts, templates (hundreds of MB)
 apps/editor/spike/assets/
 

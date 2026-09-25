@@ -1,7 +1,7 @@
 /**
- * Serve a folder at a route in the dev server only. The engine and TeX Live tree
- * (`.engine/`, built by `scripts/fetch-engine.ts`) and the spike's page assets (`spike/web/`)
- * are hundreds of MB each; keeping them out of `public/` keeps them out of `dist/`.
+ * Serve a folder at a route in the dev server only. The engine and TeX Live tree (`.engine/`,
+ * built by `scripts/fetch-engine.ts`) is hundreds of MB; keeping it out of `public/` keeps it out
+ * of `dist/`.
  */
 
 import { createReadStream, readFileSync, statSync } from "node:fs";
@@ -55,7 +55,8 @@ export function serveFolder(
     apply: "serve",
     configureServer(server) {
       server.middlewares.use(route, (req, res, next) => {
-        // Connect also hands this route "/spike.html" and "/spike", which are not in the folder.
+        // Connect also hands a route such as "/engine/" the paths "/engine" and "/engine.json",
+        // which are not in the folder.
         if (!req.originalUrl?.startsWith(route)) return next();
         const notFound = () => {
           res.statusCode = 404;

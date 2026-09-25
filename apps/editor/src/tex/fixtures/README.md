@@ -12,6 +12,7 @@ Nothing here is real resume content; the DVI files were compiled from invented t
 | `accents.dvi` | OT1 accents in `cmr10`: `caf\'e \'Etude na\"\i ve` in one field, and `\textasciitilde mara\^{}x` in another, compiled from the stock `pdflatex.fmt` by the editor's engine session in Node (`session.compile("pdftex", "stock", ...)`) |
 | `8r.enc` | The TeX Base 1 encoding vector, from TeX Live's `fonts/enc/dvips/base`, public domain |
 | `ptmr8t.vf`, `ptmr8t.tfm` | Times in T1, the virtual font over the raw `ptmr8r` and its metrics, from PSNFSS in TeX Live, LaTeX Project Public License |
+| `jake-preamble.tex`, `body.tex` | The spike page's Jake's Resume, kept when the page was retired (milestone 2 item 23): the template's preamble with the spike's `\rtfield` marker macro, and a body of invented content with 30 marked fields. The session and page tests compile them, and so does `spike/jake-fls.cjs` |
 
 ## Regenerating `cmr10.outlines.json`
 

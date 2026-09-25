@@ -22,8 +22,9 @@ import {
 import { FontLibrary } from "./fonts";
 import { TexLiveIndex } from "./texlive";
 
+/** The spike's Jake's Resume, its preamble and its marked-up body, kept as fixtures. */
 const spike = (name: string) =>
-  readFileSync(new URL(`../../spike/web/${name}`, import.meta.url), "utf8");
+  readFileSync(new URL(`../tex/fixtures/${name}`, import.meta.url), "utf8");
 
 const fixture = (name: string) =>
   new Uint8Array(readFileSync(new URL(`../tex/fixtures/${name}`, import.meta.url)));
