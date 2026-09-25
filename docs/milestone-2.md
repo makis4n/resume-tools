@@ -142,9 +142,9 @@ end to end before the other two templates, so that the editing loop is proven on
 
 19. [x] **Grow the TeX Live tree.** TeX Live 2023 packages from the historic `tlnet-final`
     archive, checked against its package database, with `ls-R` and `pdftex.map` regenerated.
-    This brings in pgf and TikZ, tcolorbox, Font Awesome 5, Lato, Roboto and Source Sans. It
-    needs network access to a TeX Live mirror, which this development environment does not have
-    yet.
+    This brings in pgf and TikZ, Font Awesome 5, Lato, Roboto and Source Sans, and tikzfill, which
+    tcolorbox's skins library loads. It needs network access to a TeX Live mirror, which this
+    development environment does not have yet.
 20. [ ] **Port AltaCV.** It stays on pdfTeX. A renamed class under the LPPL with attribution, pdfx
     dropped because the loop writes DVI, two columns through paracol, and icons from Font
     Awesome's Type 1 fonts. Measure what TikZ and tcolorbox in the format cost per compile before

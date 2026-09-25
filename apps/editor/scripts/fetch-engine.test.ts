@@ -3,6 +3,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { engineAvailable, startNodeSession } from "../src/engine/node";
 
 const SCRIPT = new URL("./fetch-engine.ts", import.meta.url);
 /** The pinned release and layout, so a manifest can match them and be read further. */
@@ -53,4 +54,22 @@ describe("fetch-engine", () => {
     expect(stderr).toContain("busytex.js");
     expect(status).toBe(1);
   });
+});
+
+// These run the real engine on the tree the script built, and need `.engine/`.
+describe.skipIf(!engineAvailable())("the tree fetch-engine builds", () => {
+  // tcolorbox's skins library, which Awesome-CV's class and AltaCV's load, loads tikzfill.image,
+  // which the bundles lack and `WANTED` names for it.
+  test("loads tcolorbox's skins library", async () => {
+    const session = await startNodeSession();
+    const result = session.compile(
+      "pdftex",
+      "stock",
+      String.raw`\documentclass{article}\usepackage[skins]{tcolorbox}\begin{document}\tcbox[enhanced]{Quilt}\end{document}`,
+      { job: "skins" },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.ok).toBe(true);
+    expect(result.pages).toBe(1);
+  }, 60_000);
 });

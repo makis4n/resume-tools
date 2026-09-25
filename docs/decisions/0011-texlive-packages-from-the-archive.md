@@ -31,11 +31,14 @@ extended from TeX Live 2023's final package archive; item 19 does it, in
   the encodings they ask fontenc for, whenever `WANTED` changes, and what the bundles lack of what
   they load is named in `WANTED` too: mweights, which `roboto.sty` and `sourcesanspro.sty` load,
   and ly1, whose LY1 encoding `sourcesanspro.sty` asks fontenc for. pgfopts is named as well,
-  since bundled packages such as beamertheme-metropolis and handin load it. A package whose every
-  run file the bundles hold is left out. That gives nine packages, 44.9 MB of containers:
-  fontawesome5 r63207 (0.9 MB), lato r54512 (12.7 MB), ly1 r63565 (55 KB), mweights r53520
-  (1 KB), pgf r65553 (0.7 MB), pgfopts r56615 (2 KB), roboto r64350 (25.4 MB), sourcesanspro
-  r54892 (5.2 MB), and xcolor r68864 (18 KB), which pgf depends on.
+  since bundled packages such as beamertheme-metropolis and handin load it. So is tikzfill, whose
+  `tikzfill.image` the bundles' tcolorbox 6.0.1 loads for its skins library, which Awesome-CV's
+  class and AltaCV's load; tcolorbox's entry names no dependency, so only its files say so. A
+  package whose every run file the bundles hold is left out. That gives ten packages, 44.9 MB of
+  containers: fontawesome5 r63207 (0.9 MB), lato r54512 (12.7 MB), ly1 r63565 (55 KB), mweights
+  r53520 (1 KB), pgf r65553 (0.7 MB), pgfopts r56615 (2 KB), roboto r64350 (25.4 MB),
+  sourcesanspro r54892 (5.2 MB), tikzfill r67847 (5 KB), and xcolor r68864 (18 KB), which pgf
+  depends on.
 - **How it is refreshed.** Change `WANTED`, run `fetch-engine --resolve`, paste the list it prints
   over `PACKAGES`, and bump `LAYOUT`. `--resolve` mounts the bundles to list their files, reads
   the database, works the list out as above, and asks the archive for each container it names, so
@@ -68,7 +71,7 @@ extended from TeX Live 2023's final package archive; item 19 does it, in
 ## Consequences
 
 - A first build downloads 45 MB more, about 260 MB in all, and the tree grows from 17,087 files
-  and 285 MB to 25,827 files and 429 MB. Roboto is 4,793 of the new files and 76 MB, Lato 1,834
+  and 285 MB to 25,835 files and 429 MB. Roboto is 4,793 of the new files and 76 MB, Lato 1,834
   and 44 MB, Source Sans Pro 1,504 and 16 MB, most of them metrics and virtual fonts for each
   encoding, weight and figure style, and their OpenType files, which the XeTeX templates read.
 - The session mounts every file of the manifest when it starts, so the engine starts later: in

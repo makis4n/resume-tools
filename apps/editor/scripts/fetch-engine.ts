@@ -171,7 +171,10 @@ const DATABASE = {
  * files load that the bundles lack is named here too: mweights, which `roboto.sty` and
  * `sourcesanspro.sty` load, and ly1, whose LY1 encoding `sourcesanspro.sty` asks fontenc for.
  * And pgfopts, pgf's option parser, which none of them loads but bundled packages such as
- * beamertheme-metropolis and handin do, and could not while the tree lacked it.
+ * beamertheme-metropolis and handin do, and could not while the tree lacked it. And tikzfill,
+ * whose `tikzfill.image` the bundles' tcolorbox 6.0.1 loads for its skins library, which
+ * Awesome-CV's class and AltaCV's load; tcolorbox's entry names no dependency, so only its files
+ * say so.
  */
 const WANTED = [
   "pgf",
@@ -182,6 +185,7 @@ const WANTED = [
   "mweights",
   "ly1",
   "pgfopts",
+  "tikzfill",
 ];
 
 /** A package's container of run files in the archive: its revision, size and SHA-512. */
@@ -247,6 +251,12 @@ const PACKAGES: Record<string, Container> = {
     size: 5153396,
     sha512:
       "0511dcf736273d80f7143c9dad96dd9f631b016183b4078243ed061d35889fea62e50c5f48e9842ffae7b654fd2e08a21d1c46403e56349c0b515ff2eb62e164",
+  },
+  tikzfill: {
+    revision: 67847,
+    size: 4652,
+    sha512:
+      "4864d0859490cd07e123e1160a35fb7817c3ffcc1f409a8c61285823f655357473e0dc7ab92434b5b552cbfca3e88d9181e57cf944d2422467b466cbdcd743a0",
   },
   xcolor: {
     revision: 68864,
