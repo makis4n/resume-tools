@@ -12,11 +12,19 @@ import {
   pointsPerUnit,
   type WidthProvider,
 } from "../tex/dvi";
-import { alignGlyphs, collectFields, type Field, type GlyphTextOf } from "../tex/fields";
+import {
+  alignGlyphs,
+  collectFields,
+  type Field,
+  type GlyphTextOf,
+  MARKER_BEGIN,
+  markerId,
+} from "../tex/fields";
 import { accentMark, glyphOf } from "../tex/glyphs";
 import { INCH, type PageSize, paperSizeOf, renderPage, US_LETTER } from "../tex/svg";
 import { scaleTfm } from "../tex/tfm";
 import type { FontLibrary, PageFont } from "./fonts";
+import { paragraphId } from "./paragraph";
 
 /**
  * Where a drawn glyph sits, in TeX points from the page's top-left corner. The box is the glyph's
@@ -36,11 +44,74 @@ export interface GlyphBox {
   offset?: number;
 }
 
+/** A font a field's glyphs are set in, and how much of the field it sets. */
+export interface FieldFont {
+  /** The TeX font, as the page loaded it. */
+  font: PageFont;
+  /** The size the page uses it at, in TeX points. */
+  size: number;
+  /** How many of the field's glyphs it sets. */
+  glyphs: number;
+  /** How many of those stand for letters or digits. */
+  letters: number;
+}
+
+/**
+ * What the editing overlay needs to set a field where TeX set it (item 9): the paragraph TeX set
+ * it in, the fonts of its glyphs, where its first glyph is, and what the page shows around it
+ * that says where its lines start.
+ */
+export interface FieldLayout {
+  /**
+   * The field's paragraph special, `rt:p:<id>:` and its values (decision 0007): the first after
+   * the field's begin marker and before its first glyph. Undefined when the page has none there.
+   */
+  paragraph: string | undefined;
+  /**
+   * The fonts the field's glyphs are set in, the one that sets the most of its letters and digits
+   * first, then the one with more glyphs, then the one that comes first. LaTeX sets a field's
+   * text in one font and takes a few characters from another, such as `€`, `×` or `•` from
+   * TS1 in a T1 paragraph, so the first glyph's font may be one that has no letters at all.
+   */
+  fonts: FieldFont[];
+  /**
+   * The first of `fonts`, the field's letter font, and its size in TeX points: the overlay
+   * measures the field in it and sets its rows in its web font.
+   */
+  font: PageFont;
+  size: number;
+  /** The first glyph's origin on its baseline, in TeX points from the page's top-left corner. */
+  x: number;
+  y: number;
+  /**
+   * Where the field's second line starts on the page: the x of its first glyph there, in TeX
+   * points; undefined when the page shows the field on one line. A paragraph's lines after its
+   * first start at its left edge and their indent, so this says where its first line starts too.
+   */
+  secondLine: number | undefined;
+  /**
+   * The x of each glyph and drawn rule on the first glyph's baseline, in TeX points, ascending,
+   * whichever field or column it belongs to: what a field shown on one line guesses its line's
+   * start from. A glyph or rule is on the baseline of the first the page sets within half a point
+   * of it, the nearest when there are two, and the fields on one baseline share it.
+   */
+  baseline: readonly number[];
+}
+
+/**
+ * A field on the page: its glyphs, and how the overlay sets it, when its first glyph is a glyph
+ * and a font of its glyphs loaded. The layout is optional so that a page's fields as
+ * `collectFields` gives them, which is all `fieldsShown` reads, still pass for a page's.
+ */
+export interface PageField extends Field {
+  layout?: FieldLayout;
+}
+
 export interface DrawnPage {
   svg: string;
   size: PageSize;
   /** The page's fields, each glyph given its offset in the field's text. */
-  fields: Map<string, Field>;
+  fields: Map<string, PageField>;
   /** Every Type 1 glyph drawn, in the order the SVG paints them, one for each of its glyphs. */
   glyphs: GlyphBox[];
   /** Pages in the whole document, for the warning when a resume spills onto a second one. */
@@ -205,6 +276,189 @@ function glyphBoxes(
   return boxes;
 }
 
+/** How far from a baseline a glyph or rule may sit and still be on it, in TeX points. */
+const ON_BASELINE = 0.5;
+
+/** A glyph's text that stands for letters or digits, a ligature's included. */
+const LETTERS = /^[\p{L}\p{N}]+$/u;
+
+/**
+ * The fonts a field's glyphs are set in, with how many glyphs and letters each sets, in the order
+ * `FieldLayout.fonts` gives them. A font that did not load is left out.
+ */
+function fontsOf(
+  doc: DviDocument,
+  page: DviPage,
+  loaded: ReadonlyMap<string, PageFont>,
+  field: Field,
+): FieldFont[] {
+  const counts = new Map<number, { glyphs: number; letters: number; order: number }>();
+  for (const glyph of field.glyphs) {
+    const item = page.items[glyph.item];
+    if (item?.kind !== "glyph") continue;
+    const count = counts.get(item.font) ?? { glyphs: 0, letters: 0, order: counts.size };
+    count.glyphs++;
+    if (glyph.text !== undefined && LETTERS.test(glyph.text)) count.letters++;
+    counts.set(item.font, count);
+  }
+  const pt = pointsPerUnit(doc);
+  return [...counts]
+    .sort(([, a], [, b]) => b.letters - a.letters || b.glyphs - a.glyphs || a.order - b.order)
+    .flatMap(([number, { glyphs, letters }]) => {
+      const dviFont = doc.fonts.get(number);
+      const font = dviFont && loaded.get(dviFont.name);
+      return dviFont && font ? [{ font, size: dviFont.scale * pt, glyphs, letters }] : [];
+    });
+}
+
+/**
+ * How the overlay sets each field of a page (`FieldLayout`), or undefined for a field whose first
+ * glyph is not a glyph, or none of whose fonts loaded. It walks the page once, whatever the number
+ * of fields: a page may hold thousands, and each is laid out after every edit's compile.
+ */
+function layoutsOf(
+  doc: DviDocument,
+  page: DviPage,
+  loaded: ReadonlyMap<string, PageFont>,
+  fields: ReadonlyMap<string, Field>,
+): Map<string, FieldLayout | undefined> {
+  const pt = pointsPerUnit(doc);
+  // The fields each item is the first glyph of.
+  const firsts = new Map<number, string[]>();
+  for (const field of fields.values()) {
+    const first = field.glyphs[0];
+    if (first) append(firsts, first.item, field.id);
+  }
+  // A field's paragraph special is the first after its first begin marker and before its first
+  // glyph. Everything drawn goes to its baseline as the walk meets it, and each field's first
+  // glyph says which baseline is the field's.
+  const paragraphs = new Map<string, string>();
+  const begun = new Set<string>();
+  const waiting = new Set<string>();
+  const baselines = new Baselines(ON_BASELINE / pt);
+  const baselineOf = new Map<string, Baseline>();
+  page.items.forEach((item, index) => {
+    // The fields whose first glyph this is.
+    const startsHere = firsts.get(index) ?? [];
+    for (const id of startsHere) waiting.delete(id);
+    if (item.kind === "special") {
+      const begin = markerId(item.text, MARKER_BEGIN);
+      if (begin !== undefined && !begun.has(begin)) {
+        begun.add(begin);
+        waiting.add(begin);
+      }
+      const id = begin === undefined ? paragraphId(item.text) : undefined;
+      if (id !== undefined && waiting.delete(id)) paragraphs.set(id, item.text);
+    } else if (
+      item.kind === "glyph" ||
+      (item.kind === "rule" && item.width > 0 && item.height > 0)
+    ) {
+      const baseline = baselines.at(item.v);
+      baseline.h.push(item.h);
+      for (const id of startsHere) baselineOf.set(id, baseline);
+    }
+  });
+  /** A baseline's x, in points and in order, sorted the first time a field asks for them. */
+  const sorted = (baseline: Baseline | undefined): readonly number[] => {
+    if (baseline === undefined) return [];
+    baseline.x ??= baseline.h.map((h) => INCH + h * pt).sort((a, b) => a - b);
+    return baseline.x;
+  };
+  const layouts = new Map<string, FieldLayout | undefined>();
+  for (const [id, field] of fields) {
+    const first = field.glyphs[0];
+    const item = first && page.items[first.item];
+    const fonts = fontsOf(doc, page, loaded, field);
+    const [primary] = fonts;
+    if (item?.kind !== "glyph" || !primary) {
+      layouts.set(id, undefined);
+      continue;
+    }
+    layouts.set(id, {
+      paragraph: paragraphs.get(id),
+      fonts,
+      font: primary.font,
+      size: primary.size,
+      x: INCH + item.h * pt,
+      y: INCH + item.v * pt,
+      secondLine: secondLineOf(page, field, item.v, primary.size / 2 / pt, pt),
+      baseline: sorted(baselineOf.get(id)),
+    });
+  }
+  return layouts;
+}
+
+/** Add `value` to the list `key` holds in `lists`. */
+function append<K, V>(lists: Map<K, V[]>, key: K, value: V) {
+  const list = lists.get(key);
+  if (list) list.push(value);
+  else lists.set(key, [value]);
+}
+
+/** The glyphs and rules a page draws on one baseline. */
+interface Baseline {
+  /** The baseline, the v of the first glyph or rule on it, in DVI units. */
+  v: number;
+  /** The h of each glyph and rule on it, in DVI units, in the order the page sets them. */
+  h: number[];
+  /** Their x in TeX points, ascending, once a field has asked. */
+  x?: number[];
+}
+
+/**
+ * A page's baselines, gathered in one walk over its items, so that finding what shares a field's
+ * baseline costs the same however close together a page sets its baselines: a template may
+ * raise each of thousands of glyphs by a scaled point more than the last, and a window of half a
+ * point gathered and sorted anew for each baseline cost 2.2 s to draw such a page. A glyph or
+ * rule goes to the nearest baseline already met within `within` of it, or starts one of its own.
+ * Each baseline is kept under its v quantised to steps of `within`: two v in one step lie within
+ * `within` of each other, so a step holds at most one baseline, and the only baselines that can
+ * be near enough to a v are those of its own step and the two beside it.
+ */
+class Baselines {
+  private readonly steps = new Map<number, Baseline>();
+
+  constructor(private readonly within: number) {}
+
+  /** The baseline a glyph or rule at `v` is on, in DVI units. */
+  at(v: number): Baseline {
+    const step = Math.floor(v / this.within);
+    let nearest: Baseline | undefined;
+    for (let near = step - 1; near <= step + 1; near++) {
+      const baseline = this.steps.get(near);
+      const distance = baseline === undefined ? Number.POSITIVE_INFINITY : Math.abs(baseline.v - v);
+      if (distance <= this.within && (!nearest || distance < Math.abs(nearest.v - v)))
+        nearest = baseline;
+    }
+    if (nearest) return nearest;
+    const baseline: Baseline = { v, h: [] };
+    this.steps.set(step, baseline);
+    return baseline;
+  }
+}
+
+/**
+ * Where a field's second line starts, in TeX points: the x of the first of its glyphs, in the
+ * order TeX set them, that sits a line below its first, more than `gap` DVI units down, half the
+ * font's size, so that an accent TeX lowered over an empty box is not taken for one. Undefined
+ * when the field's glyphs run out on its first line, or go up instead, to the top of the next
+ * column or page.
+ */
+function secondLineOf(
+  page: DviPage,
+  field: Field,
+  v: number,
+  gap: number,
+  pt: number,
+): number | undefined {
+  for (const glyph of field.glyphs) {
+    const item = page.items[glyph.item];
+    if (item?.kind !== "glyph" || Math.abs(item.v - v) <= gap) continue;
+    return item.v > v ? INCH + item.h * pt : undefined;
+  }
+  return undefined;
+}
+
 /**
  * Each font's widths at the size a DVI uses it, from the fonts that loaded, which `parseDvi` moves
  * right by after each glyph. Where a glyph starts decides where it is drawn and whether an accent
@@ -251,9 +505,12 @@ export async function drawPage(
   const page = doc.pages[pageIndex];
   if (!page) throw new Error(`the document has ${doc.pages.length} pages, not ${pageIndex + 1}`);
 
-  const fields = collectFields(page, glyphTextOf(doc, loaded));
+  const found = collectFields(page, glyphTextOf(doc, loaded));
   let unmatched = 0;
-  for (const field of fields.values()) unmatched += alignGlyphs(field, texts.get(field.id) ?? "");
+  for (const field of found.values()) unmatched += alignGlyphs(field, texts.get(field.id) ?? "");
+  const layouts = layoutsOf(doc, page, loaded, found);
+  const fields = new Map<string, PageField>();
+  for (const [id, field] of found) fields.set(id, { ...field, layout: layouts.get(id) });
 
   const size = sizeOf(doc, pageIndex);
   const svg = renderPage(doc, page, {

@@ -23,8 +23,10 @@ export const PARAGRAPH_MARKER = "rt:p:";
  *   break the field's lines where TeX will. `\parshape` has as many lines as the template gave it,
  *   so they are gathered with e-TeX's `\parshapeindent` and `\parshapelength` into a macro first;
  *   `\special` expands its argument fully, so `\the` of each parameter expands inside it. `inner`
- *   is `\ifinner`, true in a tabular cell or an `\mbox`, where TeX never breaks the line. The
- *   group keeps the loop's counter and the macro to itself. It is protected, so a moving argument,
+ *   is `\ifinner`, true in a tabular cell or an `\mbox`, where TeX never breaks the line.
+ *   `spaceskip` and `xspaceskip` come last: the glue between words is built from them when they
+ *   are not zero, as ragged2e's `\RaggedRight` sets them to make its spaces rigid. The group
+ *   keeps the loop's counter and the macro to itself. It is protected, so a moving argument,
  *   such as a section title bound for the table of contents, writes the command instead of
  *   expanding it: nothing the loop assigns happens in a write, so the loop could run forever.
  * - A character LaTeX's UTF-8 input has no definition for, such as an emoji or a letter of a
@@ -60,7 +62,7 @@ export const PRELUDE = String.raw`\makeatletter
       parfillskip=\the\parfillskip;pretolerance=\the\pretolerance;tolerance=\the\tolerance;%
       emergencystretch=\the\emergencystretch;hangindent=\the\hangindent;%
       hangafter=\the\hangafter;parshape=\the\parshape;inner=\ifinner1\else0\fi;%
-      shape=\rt@shape}%
+      shape=\rt@shape;spaceskip=\the\spaceskip;xspaceskip=\the\xspaceskip}%
   \endgroup
 }
 % A character LaTeX has no definition for is left out rather than stopping the compile. The

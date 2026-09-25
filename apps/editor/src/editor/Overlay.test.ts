@@ -1,0 +1,807 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Resume } from "@resume-tools/resume-model";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { EngineManifest } from "../engine/manifest";
+import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
+import type { EngineSession } from "../engine/session";
+import { type DrawnPage, drawPage, type FieldLayout } from "../page/draw";
+import { FontLibrary, type PageFont } from "../page/fonts";
+import { breakParams, type Paragraph, parseParagraph } from "../page/paragraph";
+import { TexLiveIndex } from "../page/texlive";
+import { curated } from "../templates/curated";
+import { generateBody, generateFormat } from "../templates/generate";
+import { defaultControls } from "../templates/package";
+import { PRELUDE } from "../templates/prelude";
+import { glyphOf, glyphText, textToCode } from "../tex/glyphs";
+import {
+  type Face,
+  FIL_GLUE,
+  type Glue,
+  LATEX_PARAMS,
+  paragraphNodes,
+  ZERO_GLUE,
+} from "../tex/linebreak";
+import { parseTfm, scaleTfm } from "../tex/tfm";
+import { parseType1 } from "../tex/type1";
+import { fieldsOf } from "./document";
+import {
+  datesCommand,
+  deleteAt,
+  deleteRange,
+  faceFor,
+  layoutRows,
+  lineStartOf,
+  placementFor,
+  type Row,
+  rowOf,
+  type Setting,
+  settingFor,
+  shouldClose,
+  spaceWidths,
+} from "./Overlay";
+
+const fixture = (name: string) =>
+  new Uint8Array(readFileSync(new URL(`../tex/fixtures/${name}`, import.meta.url)));
+const PT = 65536;
+
+/** cmr10 at 10 pt from the fixtures, which the spike measured Jake's bullets in. */
+function cmr10(): Face {
+  const tfm = parseTfm(fixture("cmr10.tfm"));
+  const codes = textToCode(parseType1(fixture("cmr10.pfb")).encoding);
+  return { tfm, metrics: scaleTfm(tfm, 10 * PT), codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+}
+
+/** cmr10 as the page has it, with each code's text read from its glyph's name. */
+function cmr10Font(): PageFont {
+  const outlines = parseType1(fixture("cmr10.pfb"));
+  return {
+    name: "cmr10",
+    tfm: parseTfm(fixture("cmr10.tfm")),
+    outlines,
+    text: (code) =>
+      glyphOf(outlines, code) === undefined ? undefined : glyphText(outlines.encoding[code] ?? ""),
+  };
+}
+
+/** The spike's three-line bullet, set in Jake's `\resumeItem`. */
+const BULLET =
+  "Built a document pipeline that turns structured data into typeset pages, cutting the office's turnaround from days to minutes and removing a whole class of formatting errors, then wrote the runbook so the next team could operate it without help.";
+
+/** The paragraph special of a bullet in Jake's `\resumeItem`, as `\rt@par` writes it. */
+const BULLET_SPECIAL =
+  "rt:p:fennel-1.text:hsize=542.02501pt;leftskip=0.0pt;rightskip=0.0pt plus 1.0fil;" +
+  "parfillskip=0.0pt plus 1.0fil;pretolerance=100;tolerance=200;emergencystretch=0.0pt;" +
+  "hangindent=0.0pt;hangafter=1;parshape=1;inner=0;shape=34.93008pt,507.09492pt;" +
+  "spaceskip=0.0pt;xspaceskip=0.0pt";
+const BULLET_PARAGRAPH = parseParagraph(BULLET_SPECIAL) as Paragraph;
+
+/** The bullet's special with some values replaced, in decision 0007's order. */
+function special(values: Record<string, string>): string {
+  const pairs = BULLET_SPECIAL.slice(BULLET_SPECIAL.indexOf(":", 5) + 1)
+    .split(";")
+    .map((pair) => {
+      const key = pair.slice(0, pair.indexOf("="));
+      return `${key}=${values[key] ?? pair.slice(key.length + 1)}`;
+    });
+  return `rt:p:fennel-1.text:${pairs.join(";")}`;
+}
+
+/** The text each row holds. */
+const texts = (text: string, rows: Row[]) => rows.map((row) => text.slice(row.from, row.to));
+
+/**
+ * The CPU time this thread spends on `work`, in milliseconds. The time it waits while the other
+ * test files run does not count, and a longer run meets more of that wait, so a bound in CPU time
+ * holds on a slow shared machine where one in elapsed time may not.
+ */
+function cpuMs(work: () => void): number {
+  const started = process.threadCpuUsage();
+  work();
+  const { user, system } = process.threadCpuUsage(started);
+  return (user + system) / 1000;
+}
+
+/** The median of `runs` timings of `work`, in milliseconds of CPU time (`cpuMs`). */
+function median(work: () => void, runs: number): number {
+  const times = Array.from({ length: runs }, () => cpuMs(work)).sort((a, b) => a - b);
+  return times[Math.floor(runs / 2)] ?? Number.POSITIVE_INFINITY;
+}
+
+/**
+ * The fastest of `runs` timings of each of `works`, in milliseconds of CPU time (`cpuMs`), the
+ * works taken in turn, so that what load is left meets them alike.
+ */
+function fastest(works: (() => void)[], runs: number): number[] {
+  const best = works.map(() => Number.POSITIVE_INFINITY);
+  for (let run = 0; run < runs; run++)
+    works.forEach((work, i) => {
+      best[i] = Math.min(best[i] ?? Number.POSITIVE_INFINITY, cpuMs(work));
+    });
+  return best;
+}
+
+describe("layoutRows", () => {
+  const face = cmr10();
+  const params = breakParams(BULLET_PARAGRAPH);
+
+  it("breaks the spike's bullet where TeX did, and spreads TeX's shrink over the spaces", () => {
+    const rows = layoutRows(BULLET, face, params);
+    expect(rows.map((row) => [row.from, row.to])).toEqual([
+      [0, 115],
+      [115, 229],
+      [229, 245],
+    ]);
+    expect(texts(BULLET, rows).join("")).toBe(BULLET);
+    // TeX shrank the second line by 1.46 pt to fit it; the ragged lines keep their spaces.
+    expect(rows[0]?.wordSpacingSp).toBe(0);
+    expect(rows[2]?.wordSpacingSp).toBe(0);
+    const spaces = (texts(BULLET, rows)[1]?.trimEnd().match(/ /g) ?? []).length;
+    expect(((rows[1]?.wordSpacingSp ?? 0) * spaces) / PT).toBeCloseTo(-1.46, 2);
+  });
+
+  it("widens a row's spaces by the extra space TeX sets after a sentence", () => {
+    // The browser sets each space as the font's; TeX sets the one after "it." an extra 1.11 pt.
+    const text = "Shipped it. Then wrote the notes.";
+    const [row] = layoutRows(text, face, params);
+    expect(((row?.wordSpacingSp ?? 0) * 5) / PT).toBeCloseTo(1.11111, 4);
+    expect(layoutRows("Shipped it, then wrote the notes.", face, params)[0]?.wordSpacingSp).toBe(0);
+  });
+
+  it("stretches the full lines of a justified paragraph, and not its last", () => {
+    const justified = { ...params, rightSkip: LATEX_PARAMS.rightSkip };
+    const rows = layoutRows(BULLET, face, justified);
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows.slice(0, -1)) expect(row.wordSpacingSp).not.toBe(0);
+    expect(rows.at(-1)?.wordSpacingSp).toBe(0);
+  });
+
+  it("shares a finite right skip's stretch with the spaces, unless they are rigid", () => {
+    // ragged2e's \RaggedRight: \rightskip 0pt plus 2em, and \spaceskip the font's space alone.
+    const raggedRight = { ...params, rightSkip: { ...ZERO_GLUE, stretch: 20 * PT } };
+    const shared = layoutRows(BULLET, face, raggedRight);
+    expect(shared[0]?.wordSpacingSp).toBeGreaterThan(0);
+    const rigid = { ...raggedRight, spaceSkip: { ...ZERO_GLUE, width: face.metrics.space } };
+    for (const row of layoutRows(BULLET, face, rigid)) expect(row.wordSpacingSp).toBe(0);
+  });
+
+  it("sets a field TeX never breaks on one row, and an empty field on one empty row", () => {
+    expect(layoutRows(BULLET, face, undefined)).toEqual([
+      { from: 0, to: BULLET.length, wordSpacingSp: 0 },
+    ]);
+    expect(layoutRows("", face, params)).toEqual([{ from: 0, to: 0, wordSpacingSp: 0 }]);
+  });
+
+  it("breaks a keystroke's text again well within a frame", () => {
+    // What a keystroke costs besides the DOM: the bullet's nodes, breaks and rows, each time, in
+    // CPU time, against the 50 ms the plan asks of Node, a bound a real keystroke is far below.
+    let i = 0;
+    const took = median(() => {
+      const at = 100 + (i++ % 25);
+      layoutRows(`${BULLET.slice(0, at)}x${BULLET.slice(at)}`, face, params);
+    }, 25);
+    expect(took).toBeLessThan(50);
+  });
+
+  it("breaks 5 KB within a small multiple of a plain paragraph's time, whatever the shape", () => {
+    // The reviewers' specials: a \parshape of 2,000 lines, and a \hangafter of 2^31 - 1 around a
+    // ragged paragraph, which looks no different; each cost hundreds of milliseconds a keystroke.
+    // The breaker tells a shape's lines apart, so the 64 lines of one it is given cost 8 to 11
+    // times what the same text costs without a shape, where 256 lines cost 35 to 51 times and
+    // 2,000 lines 68 to 100. So a shape's cost is bound by the plain paragraph's, measured on the
+    // same machine in the same way (`fastest`), rather than in milliseconds, which a slow shared
+    // machine may not meet; 100 ms stays as a ceiling, should the plain paragraph go slow too.
+    const shape = Array.from({ length: 2000 }, () => "0.0pt,542.0pt").join("|");
+    const [plain, ...crafted] = [
+      special({ parshape: "0", shape: "" }),
+      special({ parshape: "2000", shape }),
+      special({ hangindent: "10.0pt", hangafter: "2147483647", parshape: "0", shape: "" }),
+    ].map((each) => breakParams(parseParagraph(each) as Paragraph));
+    for (const params of crafted) expect(params.lines.length).toBeLessThanOrEqual(65);
+    const text = `${BULLET} `.repeat(25).slice(0, 5 * 1024);
+    const [alone = 0, ...shaped] = fastest(
+      [plain, ...crafted].map((params) => () => layoutRows(text, face, params)),
+      9,
+    );
+    expect(shaped).toHaveLength(2);
+    for (const ms of shaped) {
+      expect(ms).toBeLessThan(20 * alone);
+      expect(ms).toBeLessThan(100);
+    }
+  });
+});
+
+describe("spaceWidths", () => {
+  const space = (stretch: number, shrink = 0): Glue => ({
+    ...ZERO_GLUE,
+    width: 3 * PT,
+    stretch,
+    shrink,
+  });
+
+  it("shares a shortfall between the spaces and a finite skip, by their stretch", () => {
+    const skip = { ...ZERO_GLUE, stretch: 2 * PT };
+    expect(spaceWidths([space(PT), space(PT)], [skip], 4 * PT)).toEqual([4 * PT, 4 * PT]);
+  });
+
+  it("gives all of it to fil glue, and none to rigid spaces", () => {
+    expect(spaceWidths([space(PT)], [FIL_GLUE], 4 * PT)).toEqual([3 * PT]);
+    expect(spaceWidths([space(0)], [{ ...ZERO_GLUE, stretch: PT }], 4 * PT)).toEqual([3 * PT]);
+    expect(spaceWidths([space(0)], [ZERO_GLUE], 4 * PT)).toEqual([3 * PT]);
+  });
+
+  it("shrinks the spaces by their shrink, and never past it", () => {
+    expect(spaceWidths([space(0, PT), space(0, PT)], [], -PT)).toEqual([2.5 * PT, 2.5 * PT]);
+    expect(spaceWidths([space(0, PT)], [], -10 * PT)).toEqual([2 * PT]);
+  });
+});
+
+describe("faceFor", () => {
+  it("measures what the letter font lacks in the field's other fonts, at their size", () => {
+    const letters = { font: cmr10Font(), size: 10 };
+    // A companion font whose $ glyph stands for €, as TS1 holds € beside a T1 font's letters.
+    const companion = {
+      font: { ...cmr10Font(), text: (code: number) => (code === 36 ? "€" : undefined) },
+      size: 12,
+    };
+    const face = faceFor(letters, [letters, companion]);
+    expect(face.codeFor("€")).toBeUndefined();
+    const dollar = scaleTfm(companion.font.tfm, 12 * PT).widths[36];
+    expect(face.widthOf?.("€")).toBe(dollar);
+    expect(face.widthOf?.("\u{1f680}")).toBeUndefined();
+    const nodes = paragraphNodes("Raised €3", face).filter((node) => node.kind === "box");
+    expect(nodes.find((node) => node.offset === 7)?.width).toBe(dollar);
+  });
+});
+
+/** A field's layout as `draw.ts` gives it, for the pure tests. */
+function layoutAt(x: number, more: Partial<FieldLayout> = {}): FieldLayout {
+  const font = cmr10Font();
+  return {
+    paragraph: undefined,
+    fonts: [{ font, size: 10, glyphs: 1, letters: 1 }],
+    font,
+    size: 10,
+    x,
+    y: 100,
+    secondLine: undefined,
+    baseline: [x],
+    ...more,
+  };
+}
+
+describe("lineStartOf", () => {
+  const hsize = 400 * PT;
+  const lines = [{ indent: 20 * PT, width: 380 * PT }];
+
+  it("finds the paragraph's edge from the field's second line", () => {
+    // A bullet whose first line starts at its label's distance past a bullet in the margin: the
+    // second line, at the edge and the shape's indent, says the first starts there too.
+    const layout = layoutAt(92, { secondLine: 92, baseline: [80, 92, 97] });
+    expect(lineStartOf(layout, lines, hsize, ZERO_GLUE)).toBe(92);
+    // Hanging indentation: the second line is indented by 30 pt more than the first.
+    const hung = [
+      { indent: 0, width: 400 * PT },
+      { indent: 30 * PT, width: 370 * PT },
+    ];
+    expect(lineStartOf(layoutAt(160, { secondLine: 102 }), hung, hsize, ZERO_GLUE)).toBe(72);
+    // A centred paragraph's lines start where their stretch puts them, so the baseline decides.
+    const centred = { ...ZERO_GLUE, stretchOrder: 1, stretch: PT };
+    expect(lineStartOf(layoutAt(160, { secondLine: 102 }), hung, hsize, centred)).toBe(160);
+  });
+
+  it("guesses a field on one line's start from its baseline, within the line's reach", () => {
+    // A label set before the field, and a column 500 pt to the left, past the line's width.
+    const layout = layoutAt(700, { baseline: [150, 160, 640, 650, 700, 720] });
+    expect(lineStartOf(layout, lines, hsize, ZERO_GLUE)).toBe(640);
+    expect(lineStartOf(layoutAt(700, { baseline: [150, 700] }), lines, hsize, ZERO_GLUE)).toBe(700);
+    // Never further back than \hsize, even with a wider first line.
+    const wide = [{ indent: 0, width: 800 * PT }];
+    expect(lineStartOf(layout, wide, 100 * PT, ZERO_GLUE)).toBe(640);
+    expect(lineStartOf(layout, wide, 600 * PT, ZERO_GLUE)).toBe(150);
+  });
+});
+
+describe("rowOf", () => {
+  // "Led the migration of " and "three services": a break at the space before "three".
+  const rows: Row[] = [
+    { from: 0, to: 21, wordSpacingSp: 0 },
+    { from: 21, to: 35, wordSpacingSp: 0 },
+  ];
+
+  it("puts an offset in its row, at its column", () => {
+    expect(rowOf(rows, 0)).toEqual({ row: 0, column: 0 });
+    expect(rowOf(rows, 4)).toEqual({ row: 0, column: 4 });
+    expect(rowOf(rows, 20)).toEqual({ row: 0, column: 20 });
+  });
+
+  it("puts the offset after the space TeX broke at at the start of the next row", () => {
+    expect(rowOf(rows, 21)).toEqual({ row: 1, column: 0 });
+    expect(rowOf(rows, 22)).toEqual({ row: 1, column: 1 });
+  });
+
+  it("puts the text's end at the end of the last row, and one row's start at its start", () => {
+    expect(rowOf(rows, 35)).toEqual({ row: 1, column: 14 });
+    expect(rowOf(rows, 99)).toEqual({ row: 1, column: 14 });
+    expect(rowOf([{ from: 0, to: 0, wordSpacingSp: 0 }], 0)).toEqual({ row: 0, column: 0 });
+  });
+});
+
+describe("deleting across rows", () => {
+  const text = "Led the migration of three services";
+
+  it("deletes the character before or after an offset, a whole grapheme", () => {
+    expect(deleteAt(text, 21, "backward")).toEqual({
+      text: "Led the migration ofthree services",
+      offset: 20,
+    });
+    expect(deleteAt(text, 20, "forward")).toEqual({
+      text: "Led the migration ofthree services",
+      offset: 20,
+    });
+    expect(deleteAt("Shipped 👍🏽 it", 12, "backward")).toEqual({ text: "Shipped  it", offset: 8 });
+    expect(deleteAt("café bar", 5, "backward")).toEqual({ text: "caf bar", offset: 3 });
+    expect(deleteAt(text, 0, "backward")).toEqual({ text, offset: 0 });
+    expect(deleteAt(text, text.length, "forward")).toEqual({ text, offset: text.length });
+  });
+
+  it("deletes a range either way round", () => {
+    expect(deleteRange(text, 18, 27)).toEqual({ text: "Led the migration services", offset: 18 });
+    expect(deleteRange(text, 27, 18)).toEqual({ text: "Led the migration services", offset: 18 });
+    expect(deleteRange(text, 30, 99)).toEqual({
+      text: "Led the migration of three ser",
+      offset: 30,
+    });
+  });
+
+  it("puts the caret where the deletion was, in the rows the text breaks into then", () => {
+    // Backspace at the start of the second row, which the browser would only join to the first:
+    // the space goes, and "ofthree" no longer fits the first row.
+    const face = cmr10();
+    const params = { ...LATEX_PARAMS, lines: [{ indent: 0, width: 95 * PT }], rightSkip: FIL_GLUE };
+    const before = layoutRows(text, face, params);
+    expect(texts(text, before)).toEqual(["Led the migration of ", "three services"]);
+    const edit = deleteAt(text, before[1]?.from ?? 0, "backward");
+    const after = layoutRows(edit.text, face, params);
+    expect(texts(edit.text, after)).toEqual(["Led the migration ", "ofthree services"]);
+    expect(rowOf(after, edit.offset)).toEqual({ row: 1, column: 2 });
+  });
+});
+
+describe("datesCommand", () => {
+  it("sends a start alone, a start and an end, and an ongoing range", () => {
+    expect(datesCommand("fennel.dates", "2020-07", undefined)).toEqual({
+      type: "dates",
+      field: "fennel.dates",
+      dates: { start: "2020-07" },
+    });
+    expect(datesCommand("fennel.dates", "2020-07", "2023-02")).toEqual({
+      type: "dates",
+      field: "fennel.dates",
+      dates: { start: "2020-07", end: "2023-02" },
+    });
+    expect(datesCommand("fennel.dates", "2020-07", "present")).toEqual({
+      type: "dates",
+      field: "fennel.dates",
+      dates: { start: "2020-07", end: "present" },
+    });
+  });
+
+  it("keeps a start or an end stored as a year, and reads an end the model refuses as none", () => {
+    expect(datesCommand("marginalia.dates", "2023", "present")).toMatchObject({
+      dates: { start: "2023", end: "present" },
+    });
+    // The sample's Marginalia runs 2023 to 2024: a new start month keeps the year it ends in.
+    expect(datesCommand("marginalia.dates", "2023-01", "2024")).toEqual({
+      type: "dates",
+      field: "marginalia.dates",
+      dates: { start: "2023-01", end: "2024" },
+    });
+    expect(datesCommand("marginalia.dates", "2023-01", "")).toMatchObject({
+      dates: { start: "2023-01" },
+    });
+    expect(datesCommand("marginalia.dates", "2023-01", "2024-13")).toMatchObject({
+      dates: { start: "2023-01" },
+    });
+  });
+
+  it("sends nothing without a start", () => {
+    expect(datesCommand("fennel.dates", "", "2023-02")).toBeUndefined();
+    expect(datesCommand("fennel.dates", "2020-13", undefined)).toBeUndefined();
+  });
+});
+
+describe("when an open field closes, and where it stays", () => {
+  it("closes only when the document no longer has the field", () => {
+    // The reviewers' case, where a page without the field closed it: select a bullet's text,
+    // delete it, and type its replacement while the empty text compiles. The page for the empty
+    // text lands without the bullet, which Jake's template leaves out once emptied, as it does
+    // every one of the sample's 30 text and rich fields; the document still has it.
+    expect(shouldClose(true, false)).toBe(false);
+    expect(shouldClose(true, true)).toBe(false);
+    // The panel removed the node: the page may still show the field, compiled before that.
+    expect(shouldClose(false, true)).toBe(true);
+    expect(shouldClose(false, false)).toBe(true);
+  });
+
+  /** A page of one field, or of none. */
+  const pageOf = (layout: FieldLayout | undefined): DrawnPage => ({
+    svg: "",
+    size: { width: 600, height: 800 },
+    fields: new Map(layout ? [["fennel-1.text", { id: "fennel-1.text", glyphs: [], layout }]] : []),
+    glyphs: layout
+      ? [
+          { x: 0, y: 200, left: 0, top: 0, right: 0, bottom: 0, field: "fennel-1.text", offset: 0 },
+          { x: 0, y: 212, left: 0, top: 0, right: 0, bottom: 0, field: "fennel-1.text", offset: 9 },
+        ]
+      : [],
+    pageCount: 1,
+    unmatched: 0,
+    missingFonts: new Map(),
+  });
+
+  it("keeps its place from the last page that showed the field, until one shows it again", () => {
+    const first = placementFor("fennel-1.text", pageOf(layoutAt(72)), undefined);
+    expect(first).toMatchObject({ baselines: [200, 212], pageWidth: 600 });
+    expect(first?.layout.x).toBe(72);
+    const empty = pageOf(undefined);
+    expect(placementFor("fennel-1.text", empty, first)).toBe(first);
+    expect(placementFor("fennel-1.text", empty, undefined)).toBeUndefined();
+    expect(placementFor("fennel-1.text", pageOf(layoutAt(80)), first)?.layout.x).toBe(80);
+  });
+});
+
+/** The offset each line of a field starts at on the page, down the page. */
+function pageLines(page: DrawnPage, id: string): number[] {
+  const lines = new Map<number, number>();
+  const lowest = new Map<number, number>();
+  for (const glyph of page.glyphs)
+    if (glyph.field === id && glyph.offset !== undefined)
+      lowest.set(glyph.offset, Math.max(glyph.y, lowest.get(glyph.offset) ?? glyph.y));
+  for (const [offset, y] of lowest) lines.set(y, Math.min(offset, lines.get(y) ?? offset));
+  return [...lines.entries()].sort(([a], [b]) => a - b).map(([, offset]) => offset);
+}
+
+/** The offset each row's first character is at, past the spaces it starts with. */
+function rowStarts(text: string, rows: Row[]): number[] {
+  return rows.map((row) => {
+    let at = row.from;
+    while (at < row.to && /\s/.test(text[at] ?? "")) at++;
+    return at;
+  });
+}
+
+/** The rows the overlay sets a field of a page in, and the lines the page set it in. */
+function compare(page: DrawnPage, id: string, text: string) {
+  const layout = page.fields.get(id)?.layout;
+  if (!layout) throw new Error(`${id} has no layout`);
+  const setting = settingFor(id, layout, page.size.width);
+  const rows = layoutRows(text, setting.face, setting.params);
+  return { rows: rowStarts(text, rows), page: pageLines(page, id), setting, layout };
+}
+
+/**
+ * How far each row's last glyph sits from its first, in points, as the overlay sets the row: the
+ * boxes and kerns, and each space as the browser sets it, the font's space and the row's word
+ * spacing.
+ */
+function overlayEnds(text: string, setting: Setting): { first: number; last: number; x: number }[] {
+  const { face, params } = setting;
+  const nodes = paragraphNodes(text, face, params);
+  const rows = layoutRows(text, face, params);
+  return rows.flatMap((row) => {
+    let x = 0;
+    let first: number | undefined;
+    let last = { offset: 0, x: 0 };
+    for (const node of nodes) {
+      const offset = node.kind === "box" || node.kind === "glue" ? node.offset : undefined;
+      if (offset !== undefined && (offset < row.from || offset >= row.to)) continue;
+      if (node.kind === "box") {
+        first ??= node.offset;
+        last = { offset: node.offset, x };
+        x += node.width;
+      } else if (node.kind === "kern") x += first === undefined ? 0 : node.width;
+      else if (node.kind === "glue" && first !== undefined)
+        x += face.metrics.space + row.wordSpacingSp;
+    }
+    return first === undefined ? [] : [{ first, last: last.offset, x: last.x / PT }];
+  });
+}
+
+/** A sentence of `count` invented words, different for each `seed`. */
+function sentence(seed: number, count: number): string {
+  const words =
+    "Designed built and shipped a streaming ingestion service that cut reporting latency from hours to minutes while keeping costs flat across three regions and two cloud providers with careful capacity planning and automated failover drills every quarter for the operations team".split(
+      " ",
+    );
+  const out: string[] = [];
+  for (let i = 0; i < count; i++)
+    out.push(words[(seed * 7 + i * 3 + ((i * i) % 5)) % words.length] as string);
+  return `${out.join(" ")}.`;
+}
+
+// Needs `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
+describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
+  let session: EngineSession;
+  let fonts: FontLibrary;
+
+  beforeAll(async () => {
+    session = await startNodeSession();
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+      readFileSync(join(ENGINE_DIR, "files", path)),
+    );
+  }, 60_000);
+
+  /** The page of an article in Latin Modern with the prelude, its fields' texts given. */
+  async function article(job: string, preamble: string, body: string, texts: Map<string, string>) {
+    const latex = [
+      "\\documentclass{article}\\usepackage[T1]{fontenc}\\usepackage{lmodern}",
+      PRELUDE,
+      preamble,
+      "\\begin{document}",
+      body,
+      "\\end{document}",
+    ].join("\n");
+    const compiled = session.compile("pdftex", "stock", latex, { job });
+    if (!compiled.output) throw new Error(compiled.error);
+    const page = await drawPage(compiled.output, fonts, texts);
+    expect(page.missingFonts, job).toEqual(new Map());
+    return page;
+  }
+
+  describe("on Jake's Resume", () => {
+    const { package: pkg, sample } = curated("jake");
+    const values = defaultControls(pkg);
+    const format = generateFormat(pkg, values);
+
+    /** The page of a resume set with Jake's Resume, and its fields' texts. */
+    async function jake(resume: Resume, job: string) {
+      const dumped = session.dump(pkg.engine, format.name, format.preamble, format.files);
+      if (!dumped.ok) throw new Error(dumped.error);
+      const body = generateBody(pkg, resume, values);
+      const result = session.compile(pkg.engine, format.name, body.latex, { job, maxPasses: 3 });
+      if (!result.output) throw new Error(result.error);
+      return { page: await drawPage(result.output, fonts, body.texts), texts: body.texts };
+    }
+
+    /** The sample with its first entry's bullets replaced by `bullets`, named `<prefix>-<i>`. */
+    function withBullets(prefix: string, bullets: string[]): Resume {
+      const resume = structuredClone(sample);
+      const section = resume.sections.find((each) => each.kind === "entries");
+      const entry = section?.kind === "entries" ? section.entries[0] : undefined;
+      if (!entry) throw new Error("the sample has no entry");
+      entry.bullets = bullets.map((text, i) => ({ id: `${prefix}-${i}`, text: [{ text }] }));
+      return resume;
+    }
+
+    it("reads every field's paragraph, and breaks each where TeX did", async () => {
+      const { page, texts } = await jake(sample, "overlay-jake");
+      expect(page.fields.size).toBeGreaterThan(20);
+      let broken = 0;
+      for (const [id, field] of page.fields) {
+        const layout = field.layout;
+        expect(layout, id).toBeDefined();
+        expect(parseParagraph(layout?.paragraph ?? ""), id).toBeDefined();
+        const { rows, page: lines, setting } = compare(page, id, texts.get(id) ?? "");
+        expect(rows, id).toEqual(lines);
+        if (setting.params) broken++;
+      }
+      // The name, the phone, the section titles, the bullets and the skills with their labels are
+      // set as paragraphs; the rest sit in tabular cells or boxes, where TeX breaks nothing.
+      expect(broken).toBe(17);
+      expect(pageLines(page, "fennel-1.text")).toHaveLength(3);
+    }, 60_000);
+
+    it("breaks a skill list that wraps after its label where TeX did", async () => {
+      const skills =
+        "TypeScript, Python, Rust, SQL, Go, Kotlin, Swift, Haskell, OCaml, Elixir, Clojure, Scala, Julia, Fortran, Zig, Nim, Crystal, Dart, Lua, Perl, Ruby, Erlang, Racket, Prolog";
+      const resume = structuredClone(sample);
+      const section = resume.sections.find((each) => each.id === "skills");
+      if (section?.kind !== "labelled") throw new Error("the sample has no skills");
+      const languages = section.items.find((item) => item.id === "languages");
+      if (!languages) throw new Error("the sample has no languages");
+      languages.text = [{ text: skills }];
+      const { page } = await jake(resume, "overlay-skills");
+      const { rows, page: lines, setting } = compare(page, "languages.text", skills);
+      expect(lines).toHaveLength(2);
+      expect(rows).toEqual(lines);
+      // The first line is shorter by the label, and the second starts back under it.
+      const [first, second] = setting.params?.lines ?? [];
+      expect(first && second && second.width - first.width).toBeGreaterThan(50 * PT);
+    }, 60_000);
+
+    it("measures what LaTeX sets from other fonts, and a field that starts with it", async () => {
+      // The reviewers' bullets: •, €, ×, °, ™ come from TS1 in Jake's T1 paragraphs, and … is
+      // three periods. Measured as nothing, three of the first six broke late; the seventh, which
+      // starts with €, took TS1 for its face and set every letter as nothing.
+      const bullets = [
+        "Cut the nightly build from forty to nine minutes, 4× faster, and made test runs 3× faster by caching dependencies, splitting suites across workers, and pruning steps nobody needed any more.",
+        "Skills used daily • TypeScript • Python • Rust • SQL • Go • Kotlin • Swift • Haskell • OCaml • Elixir • Clojure • Scala • Julia • Fortran • Zig • Nim • Crystal • Dart • Lua • Perl",
+        "Raised €2.4M across two rounds… then grew revenue 5× to €12M while keeping churn under 2% and the team under twenty people across three offices and two continents.",
+        "Ran cold-chain logistics at 20°C below zero to 4°C for 300 sites, cutting spoilage 3× and saving €1.1M a year while meeting every audit on the first attempt without exception.",
+        "Wrote the SDK™ that forty partner teams build on, with guides, samples and a review process that keeps releases consistent as the teams grow and change over the years ahead.",
+        "Built a document pipeline that turns structured data into typeset pages × 10 per day, cutting turnaround from days to minutes • zero formatting errors… and wrote the runbook.",
+        "€2.4M raised in seed funding after building the first prototype, then hired and led a team of six engineers through launch, growth and a migration to a new cloud platform.",
+        "…and then rebuilt the reporting stack from scratch so that analysts could answer questions in minutes rather than days, with dashboards used by every team in the company.",
+      ];
+      const { page } = await jake(withBullets("cc", bullets), "overlay-companion");
+      bullets.forEach((text, i) => {
+        const { rows, page: lines, layout } = compare(page, `cc-${i}.text`, text);
+        expect(lines.length, text).toBeGreaterThan(1);
+        expect(rows, text).toEqual(lines);
+        expect(layout.font.name, text).toBe("ec-lmr10");
+      });
+      const euro = page.fields.get("cc-6.text")?.layout;
+      expect(euro?.fonts.map((each) => each.font.name)).toEqual(["ec-lmr10", "ts1-lmr10"]);
+      expect(euro?.fonts[1]).toMatchObject({ glyphs: 1, letters: 0 });
+    }, 60_000);
+
+    it("never breaks at a no-break space, wherever it stands", async () => {
+      // The reviewers' twelve bullets, each with a no-break space between another pair of words;
+      // at 114, where TeX would break, it moved the break back to 110.
+      const words =
+        "Built a document pipeline that turns structured data into typeset pages, cutting the office's turnaround from days to minutes and removing a whole class of formatting errors".split(
+          " ",
+        );
+      const bullets = Array.from({ length: 12 }, (_, k) =>
+        words.map((word, i) => (i === 0 ? word : `${i === k + 10 ? " " : " "}${word}`)).join(""),
+      );
+      const { page } = await jake(withBullets("nb", bullets), "overlay-nbsp");
+      const moved = bullets.filter((text, i) => {
+        const { rows, page: lines } = compare(page, `nb-${i}.text`, text);
+        expect(rows, text).toEqual(lines);
+        return lines[1] !== 115;
+      });
+      expect(moved).toEqual([bullets[7]]);
+    }, 60_000);
+
+    it("keeps an emptied field's place while the page lacks it", async () => {
+      // Jake's template leaves an emptied bullet out, so the page compiled from the empty text has
+      // none of its glyphs; the overlay stays where the bullet was, and open.
+      const id = "fennel-1.text";
+      const before = await jake(sample, "overlay-before-emptied");
+      const field = fieldsOf(sample).get(id);
+      if (field?.kind !== "rich") throw new Error(`the sample has no ${id}`);
+      const emptied = field.set(sample, [{ text: "" }]);
+      const after = await jake(emptied, "overlay-emptied");
+      expect(after.page.fields.has(id)).toBe(false);
+      const placed = placementFor(id, before.page, undefined);
+      expect(placed?.layout).toBe(before.page.fields.get(id)?.layout);
+      expect(placementFor(id, after.page, placed)).toBe(placed);
+      expect(shouldClose(fieldsOf(emptied).has(id), after.page.fields.has(id))).toBe(false);
+    }, 60_000);
+  });
+
+  it("breaks hanging, shaped, justified and ragged paragraphs where TeX did", async () => {
+    const texts = new Map([
+      [
+        "hang.text",
+        "Organised a volunteer reading programme across four branch libraries, recruiting tutors, scheduling weekly sessions and tracking progress for more than two hundred young readers over three years.",
+      ],
+      [
+        "shape.text",
+        "Designed the shared component library that three product teams now build on, with documented patterns for forms, tables and navigation, and a review process that keeps them consistent as the teams grow.",
+      ],
+      [
+        "right.text",
+        "Measured and cut the build pipeline from forty minutes to nine by caching dependencies, splitting the test suite across workers and removing steps nobody had needed for years.",
+      ],
+      [
+        "mid.text",
+        "TypeScript, Python, Rust, SQL, Go, Kotlin, Swift, Haskell, OCaml, Elixir, Clojure, Scala, Julia, Fortran, Zig, Nim, Crystal, Dart, Lua, Perl, Ruby, Erlang, Racket and Prolog.",
+      ],
+      [
+        "ragged.text",
+        "Wrote the evaluation harness for a typesetting study and ran it across four hundred documents, then turned its findings into a short guide that the next cohort of students used from their first week.",
+      ],
+    ]);
+    const field = (id: string) => `\\rtfield{${id}}{${texts.get(id)}}`;
+    // No hyphenation, which the overlay's breaker leaves as a hook (decision 0004).
+    const page = await article(
+      "overlay-shapes",
+      "\\hyphenpenalty=10000\\parindent=0pt",
+      [
+        `{\\hangindent=3em\\hangafter=1 ${field("hang.text")}\\par}`,
+        `{\\parshape 3 0pt 250pt 20pt 230pt 40pt 210pt ${field("shape.text")}\\par}`,
+        `{\\hangindent=-6em\\hangafter=-2 ${field("right.text")}\\par}`,
+        `Skills and tools: ${field("mid.text")}\\par`,
+        `{\\raggedright ${field("ragged.text")}\\par}`,
+      ].join("\n"),
+      texts,
+    );
+    for (const [id, text] of texts) {
+      const { rows, page: lines, setting } = compare(page, id, text);
+      expect(lines.length, id).toBeGreaterThan(1);
+      expect(rows, id).toEqual(lines);
+      expect(setting.params, id).toBeDefined();
+    }
+  }, 60_000);
+
+  it("finds where a field's lines start past a list's label, an indent and a column", async () => {
+    // The reviewers' cases, where the leftmost glyph on the first baseline was not the line's
+    // start: itemize's bullet sits on it, in the margin; \parindent's box draws nothing; and a
+    // minipage beside the field's sets text on its baseline. Every field here has two lines or
+    // more, whose second says where the paragraph's edge is.
+    const itemize = new Map<string, string>();
+    for (let i = 0; i < 12; i++) itemize.set(`b${i}.text`, sentence(i, 28 + (i % 5)));
+    const indented = new Map<string, string>();
+    for (let i = 0; i < 12; i++) indented.set(`p${i}.text`, sentence(i + 3, 28 + (i % 5)));
+    const columns = new Map([["left.text", "Contact and skills"]]);
+    for (let i = 0; i < 3; i++) columns.set(`r${i}.text`, sentence(i + 5, 30));
+    const field = (texts: Map<string, string>) => (id: string) =>
+      `\\rtfield{${id}}{${texts.get(id)}}`;
+    const cases: [string, string, Map<string, string>, string][] = [
+      [
+        "itemize",
+        "\\hyphenpenalty=10000",
+        itemize,
+        `\\begin{itemize}\n${[...itemize.keys()].map((id) => `\\item ${field(itemize)(id)}`).join("\n")}\n\\end{itemize}`,
+      ],
+      [
+        "indent",
+        "\\hyphenpenalty=10000",
+        indented,
+        [...indented.keys()].map((id) => `${field(indented)(id)}\\par`).join("\n"),
+      ],
+      [
+        "columns",
+        "\\hyphenpenalty=10000\\parindent=0pt",
+        columns,
+        `\\noindent\\begin{minipage}[t]{0.3\\textwidth}${field(columns)("left.text")}\\end{minipage}\\hfill\\begin{minipage}[t]{0.65\\textwidth}${field(columns)("r0.text")}\\par ${field(columns)("r1.text")}\\par ${field(columns)("r2.text")}\\end{minipage}`,
+      ],
+    ];
+    for (const [name, preamble, texts, body] of cases) {
+      const page = await article(`overlay-starts-${name}`, preamble, body, texts);
+      let broken = 0;
+      for (const [id, text] of texts) {
+        const { rows, page: lines } = compare(page, id, text);
+        if (lines.length < 2) continue;
+        broken++;
+        expect(rows, `${name} ${id}`).toEqual(lines);
+      }
+      expect(broken, name).toBeGreaterThan(name === "columns" ? 2 : 11);
+    }
+  }, 60_000);
+
+  it("ends each row where TeX ends its line, ragged2e's rigid spaces included", async () => {
+    // The reviewers' case: \RaggedRight's \rightskip has finite stretch and its \spaceskip makes
+    // the spaces rigid, so the right skip takes each line's whole shortfall, where the overlay
+    // widened the spaces and set the last word 17 pt right of TeX's.
+    const text =
+      "Measured and cut the build pipeline from forty minutes to nine by caching dependencies, splitting the test suite across workers and removing steps nobody had needed for years. Then wrote it up so the next team could run it.";
+    const texts = new Map([
+      ["rr.text", text],
+      ["just.text", text],
+      ["rag.text", text],
+      [
+        "over.text",
+        "Maintained the build at https://ci.example.com/organisation/monorepo/pipelines/nightly-integration-suite and the release tooling for all teams.",
+      ],
+    ]);
+    const field = (id: string) => `\\rtfield{${id}}{${texts.get(id)}}`;
+    const page = await article(
+      "overlay-spacing",
+      "\\usepackage{ragged2e}\\hyphenpenalty=10000\\parindent=0pt",
+      [
+        `{\\RaggedRight ${field("rr.text")}\\par}`,
+        `{${field("just.text")}\\par}`,
+        `{\\raggedright ${field("rag.text")}\\par}`,
+        `\\begin{minipage}{200pt}${field("over.text")}\\par\\end{minipage}`,
+      ].join("\n"),
+      texts,
+    );
+    for (const [id, text] of texts) {
+      const { rows, page: lines, setting } = compare(page, id, text);
+      expect(rows, id).toEqual(lines);
+      const glyphs = page.glyphs.filter((glyph) => glyph.field === id);
+      const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+      for (const row of overlayEnds(text, setting)) {
+        const tex = at(row.last) - at(row.first);
+        expect(Math.abs(row.x - tex), `${id} at ${row.last}`).toBeLessThan(0.01);
+      }
+    }
+  }, 60_000);
+});

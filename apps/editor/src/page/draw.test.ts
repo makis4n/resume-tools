@@ -86,6 +86,28 @@ describe("drawPage over an invented tree", () => {
     ]);
   });
 
+  it("gives each field its fonts, its first glyph's place, and its baseline", async () => {
+    const drawn = await drawPage(fixture("accents.dvi"), cmr10Library(), texts);
+    for (const id of ["word", "lone"]) {
+      const layout = drawn.fields.get(id)?.layout;
+      const glyphs = drawn.fields.get(id)?.glyphs ?? [];
+      const first = drawn.glyphs.find((glyph) => glyph.field === id);
+      expect(layout?.font.name, id).toBe("cmr10");
+      expect(layout?.size, id).toBeCloseTo(10, 5);
+      expect(
+        layout?.fonts.map((each) => [each.font, each.glyphs]),
+        id,
+      ).toEqual([[layout?.font, glyphs.length]]);
+      expect([layout?.x, layout?.y], id).toEqual([first?.x, first?.y]);
+      // Each field is one line, and the only one on its baseline.
+      expect(layout?.secondLine, id).toBeUndefined();
+      const line = drawn.glyphs.filter((glyph) => glyph.y === first?.y).map((glyph) => glyph.x);
+      expect(layout?.baseline, id).toEqual(line.sort((a, b) => a - b));
+      // The fixture was compiled without the prelude, so it has no paragraph specials.
+      expect(layout?.paragraph, id).toBeUndefined();
+    }
+  });
+
   it("names a font whose outlines cannot be read, and draws the page without it", async () => {
     const drawn = await drawPage(fixture("accents.dvi"), cmr10Library("cmr10.pfb"), texts);
     expect(drawn.missingFonts).toEqual(
@@ -446,6 +468,159 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
       for (const offset of [text.indexOf("²"), text.lastIndexOf("²")])
         expect(glyphs.find((glyph) => glyph.offset === offset)?.text, family).toBe("²");
     }
+  }, 60_000);
+
+  it("finds a field's paragraph special and where its line starts, a rule included", async () => {
+    // The special is read whatever the case of its id, past another field's, and only between
+    // the begin marker and the field's first glyph.
+    const body = [
+      "\\documentclass{article}\\begin{document}",
+      "\\noindent\\rule{12pt}{0.4pt} Label: \\special{rt:b:f}\\special{rt:p:g:other}",
+      "\\special{RT:P:F:hsize=345.0pt}Text\\special{rt:e:f}\\par",
+      "\\noindent\\special{rt:b:g}Lat\\special{rt:p:g:late}e\\special{rt:e:g}",
+      "\\end{document}",
+    ].join("\n");
+    const compiled = session.compile("pdftex", "stock", body, { job: "layouts", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const page = await drawPage(
+      compiled.output,
+      fonts,
+      new Map([
+        ["f", "Text"],
+        ["g", "Late"],
+      ]),
+    );
+    const f = page.fields.get("f")?.layout;
+    expect(f?.paragraph).toBe("RT:P:F:hsize=345.0pt");
+    expect(f?.font.name).toBe("cmr10");
+    expect(f?.size).toBeCloseTo(10, 5);
+    // The baseline starts at the rule, before the label's glyphs and the field's.
+    const label = Math.min(...page.glyphs.filter((glyph) => glyph.y === f?.y).map((g) => g.x));
+    expect(f && label - (f.baseline[0] ?? Number.NaN)).toBeGreaterThan(12);
+    expect(f && f.x - label).toBeGreaterThan(20);
+    expect(f?.baseline).toContain(f?.x);
+    const g = page.fields.get("g")?.layout;
+    expect(g?.paragraph).toBeUndefined();
+    expect(g?.baseline[0]).toBe(g?.x);
+  }, 30_000);
+
+  it("gives a field its letter font first, and where its second line starts", async () => {
+    // LaTeX sets € from TS1 in a T1 paragraph: a field that starts with one is still measured and
+    // set in the font of its letters. The field's second line starts at the paragraph's edge.
+    const text =
+      "\u20ac2.4M raised after building the first prototype, then hired and led a team of six engineers through launch and growth.";
+    const body = [
+      "\\documentclass{article}\\usepackage[T1]{fontenc}\\usepackage{lmodern}\\begin{document}",
+      `\\noindent\\parbox{150pt}{\\special{rt:b:f}${text}\\special{rt:e:f}}`,
+      "\\end{document}",
+    ].join("\n");
+    const compiled = session.compile("pdftex", "stock", body, { job: "letters", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const page = await drawPage(compiled.output, fonts, new Map([["f", text]]));
+    const f = page.fields.get("f")?.layout;
+    expect(f?.fonts.map((each) => [each.font.name, each.glyphs, each.letters])).toEqual([
+      ["ec-lmr10", (page.fields.get("f")?.glyphs.length ?? 0) - 1, expect.any(Number)],
+      ["ts1-lmr10", 1, 0],
+    ]);
+    expect(f?.font.name).toBe("ec-lmr10");
+    const glyphs = page.glyphs.filter((glyph) => glyph.field === "f");
+    const second = glyphs.find((glyph) => glyph.y > (f?.y ?? 0) + 5);
+    expect(f?.secondLine).toBe(second?.x);
+    expect(f?.secondLine).toBe(f?.x);
+  }, 30_000);
+
+  /**
+   * The page of `count` fields of one glyph each, `cell` the LaTeX of the i-th, 40 to a line of
+   * the source, each line ending in `line`, as the engine compiles it.
+   */
+  function crowded(job: string, count: number, cell: (i: number) => string, line: string) {
+    const cells = Array.from({ length: count }, (_, i) => cell(i));
+    const lines = Array.from(
+      { length: Math.ceil(count / 40) },
+      (_, i) => `${cells.slice(i * 40, i * 40 + 40).join("")}${line}`,
+    );
+    const body = [
+      "\\documentclass{article}\\usepackage[margin=0.2in]{geometry}\\begin{document}\\tiny\\noindent",
+      ...lines,
+      "\\end{document}",
+    ].join("\n");
+    const compiled = session.compile("pdftex", "stock", body, { job, maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    return compiled.output;
+  }
+
+  /**
+   * A page drawn, and the CPU time this thread spent drawing it, in milliseconds: the time it
+   * waits while the other test files run does not count, so a bound in CPU time holds on a slow
+   * shared machine where one in elapsed time may not.
+   */
+  async function timedDraw(output: Uint8Array): Promise<{ page: DrawnPage; ms: number }> {
+    const started = process.threadCpuUsage();
+    const page = await drawPage(output, fonts, new Map());
+    const { user, system } = process.threadCpuUsage(started);
+    return { page, ms: (user + system) / 1000 };
+  }
+
+  /**
+   * A page of 8,000 fields of one glyph each (`crowded`), and the same page with a tenth of them:
+   * each drawn once to load its fonts, then five times, in turn, and the fastest draw of each in
+   * CPU time (`timedDraw`), with the larger page as drawn.
+   */
+  async function tenfold(job: string, cell: (i: number) => string, line: string) {
+    const [small, large] = [800, 8000].map((count) =>
+      crowded(`${job}-${count}`, count, cell, line),
+    );
+    if (!small || !large) throw new Error("no pages");
+    await drawPage(small, fonts, new Map());
+    let page = await drawPage(large, fonts, new Map());
+    let smallMs = Number.POSITIVE_INFINITY;
+    let largeMs = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 5; run++) {
+      smallMs = Math.min(smallMs, (await timedDraw(small)).ms);
+      const drawn = await timedDraw(large);
+      largeMs = Math.min(largeMs, drawn.ms);
+      page = drawn.page;
+    }
+    expect(page.fields.size, job).toBe(8000);
+    expect(page.pageCount, job).toBe(1);
+    expect(
+      [...page.fields.values()].every((field) => field.layout),
+      job,
+    ).toBe(true);
+    return { page, small: smallMs, large: largeMs };
+  }
+
+  it("lays out thousands of fields in time proportional to the page", async () => {
+    // The reviewers' page: 8,000 fields of one glyph each, which a template could mark. Laid out
+    // field by field over the whole page, it drew in 636 to 726 ms, after every edit's compile.
+    // Ten times the fields cost 12 times the CPU time of the page's tenth now, and cost 73 times
+    // then; so the page is bound by three times ten times its tenth, drawn on the same machine
+    // in the same way, rather than in milliseconds, which a slow shared machine may not meet.
+    // 500 ms stays as a ceiling, should the tenth go slow too.
+    const { small, large } = await tenfold(
+      "many",
+      (i) => `\\special{rt:b:f${i}}x\\special{rt:e:f${i}}`,
+      " ",
+    );
+    expect(large).toBeLessThan(3 * 10 * small);
+    expect(large).toBeLessThan(500);
+  }, 60_000);
+
+  it("gathers each baseline once, however close a page's baselines lie", async () => {
+    // The verifier's page: the 8,000 fields on one line, each raised a scaled point more than the
+    // one before, so that each glyph has a baseline of its own within half a point of every other.
+    // Gathered and sorted anew for each baseline, what shares a field's baseline took 2.2 s, and
+    // 88 times the CPU time of the page's tenth where it now takes 12 times; bound as above.
+    const { page, small, large } = await tenfold(
+      "close",
+      (i) => `\\special{rt:b:f${i}}\\rlap{\\raisebox{${i}sp}{x}}\\special{rt:e:f${i}}`,
+      "%",
+    );
+    const baselines = new Set([...page.fields.values()].map((field) => field.layout?.baseline));
+    expect(baselines.size).toBe(1);
+    expect([...baselines][0]).toHaveLength(8000);
+    expect(large).toBeLessThan(3 * 10 * small);
+    expect(large).toBeLessThan(500);
   }, 60_000);
 
   it("gives a later page the size the first page set", async () => {

@@ -13,6 +13,7 @@
  * All dimensions are in scaled points, integers, as in TeX.
  */
 
+import { INVISIBLE } from "./fields";
 import type { ScaledMetrics, Tfm } from "./tfm";
 import { applyLigKern } from "./tfm";
 
@@ -67,6 +68,13 @@ export interface BreakParams {
   leftSkip: Glue;
   rightSkip: Glue;
   parFillSkip: Glue;
+  /**
+   * `\spaceskip` and `\xspaceskip`: when not zero, the glue between words, and after a sentence,
+   * in place of the font's. `breakLines` never reads them; `paragraphNodes` builds the list with
+   * them (`TextOptions`), as TeX does when it appends a space, so they travel with the paragraph.
+   */
+  spaceSkip: Glue;
+  xspaceSkip: Glue;
 }
 
 /** Plain TeX and LaTeX defaults; `\raggedright` sets rightskip and parfillskip to fil. */
@@ -81,6 +89,8 @@ export const LATEX_PARAMS: Omit<BreakParams, "lines"> = {
   leftSkip: ZERO_GLUE,
   rightSkip: ZERO_GLUE,
   parFillSkip: FIL_GLUE,
+  spaceSkip: ZERO_GLUE,
+  xspaceSkip: ZERO_GLUE,
 };
 
 export interface Line {
@@ -133,9 +143,15 @@ interface Active {
 /** Break a paragraph's node list into lines the way TeX would. */
 export function breakLines(nodes: Node[], params: BreakParams): Line[] {
   const n = nodes.length;
-  // Cumulative sums, so the width of any span is a difference.
+  // Cumulative sums, so the width of any span is a difference: the stretch by order of infinity.
   const sumW = new Float64Array(n + 1);
   const sumS = [0, 1, 2, 3].map(() => new Float64Array(n + 1));
+  const [sumS0, sumS1, sumS2, sumS3] = sumS as [
+    Float64Array,
+    Float64Array,
+    Float64Array,
+    Float64Array,
+  ];
   const sumSh = new Float64Array(n + 1);
   const sumShOrder = new Uint8Array(n + 1);
   for (let i = 0; i < n; i++) {
@@ -164,6 +180,11 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
   const easyLine = lastSpecialLine; // looseness is 0
   const lineWidthOf = (l: number) =>
     l > lastSpecialLine ? secondWidth : (specs[l - 1] as LineSpec).width;
+  // The width of each line up to the last special one, by line number, for the breaker's loop.
+  const specialWidths = Float64Array.from({ length: lastSpecialLine + 1 }, (_, l) =>
+    l === 0 ? 0 : lineWidthOf(l),
+  );
+  const { adjDemerits, linePenalty } = params;
   const background = {
     width: params.leftSkip.width + params.rightSkip.width,
     stretch: [0, 0, 0, 0],
@@ -224,6 +245,19 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
         !atEnd && (nodes[cur] as Node).kind === "disc"
           ? (nodes[cur] as { preWidth: number }).preWidth
           : 0;
+      // The stretch every line ending here has besides its own glue's, by order of infinity: the
+      // skips', \parfillskip's at the paragraph's end, and the emergency stretch. The loop below
+      // runs for every active break at every breakpoint, so it allocates nothing.
+      const extra = (order: number) =>
+        (background.stretch[order] ?? 0) +
+        (atEnd && params.parFillSkip.stretchOrder === order ? params.parFillSkip.stretch : 0);
+      const extra0 = extra(0) + pass.emergency;
+      const extra1 = extra(1);
+      const extra2 = extra(2);
+      const extra3 = extra(3);
+      const naturalExtra = pre + background.width;
+      const shrinkExtra = background.shrink + (atEnd ? params.parFillSkip.shrink : 0);
+      const { threshold, final } = pass;
       let prevR = head;
       let r = head.next as Active;
       let oldL = 0;
@@ -236,7 +270,7 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
         if (l > oldL) {
           if (minimum < AWFUL_BAD && (oldL !== easyLine || r === last)) {
             for (let fit = 0; fit < 4; fit++) {
-              if ((minimal[fit] as number) <= minimum + params.adjDemerits) {
+              if ((minimal[fit] as number) <= minimum + adjDemerits) {
                 const q: Active = {
                   line: (bestLine[fit] as number) + 1,
                   fitness: fit,
@@ -258,36 +292,24 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
           if (l > easyLine) oldL = MAX_LINE - 1;
           else oldL = l;
         }
-        const lineWidth = l > easyLine ? secondWidth : lineWidthOf(l);
+        const lineWidth = l > easyLine ? secondWidth : (specialWidths[l] as number);
         // The line from r's break to this one.
         const from = r.from;
-        const natural = (sumW[cur] as number) - (sumW[from] as number) + pre + background.width;
-        const stretch = [0, 1, 2, 3].map(
-          (o) =>
-            ((sumS[o] as Float64Array)[cur] as number) -
-            ((sumS[o] as Float64Array)[from] as number) +
-            (background.stretch[o] ?? 0) +
-            (atEnd && params.parFillSkip.stretchOrder === o ? params.parFillSkip.stretch : 0) +
-            (o === 0 ? pass.emergency : 0),
-        );
-        const shrink =
-          (sumSh[cur] as number) -
-          (sumSh[from] as number) +
-          background.shrink +
-          (atEnd ? params.parFillSkip.shrink : 0);
+        const natural = (sumW[cur] as number) - (sumW[from] as number) + naturalExtra;
+        const shrink = (sumSh[cur] as number) - (sumSh[from] as number) + shrinkExtra;
         const shortfall = lineWidth - natural;
         let b: number;
         let fit: number;
         if (shortfall > 0) {
           if (
-            (stretch[1] as number) !== 0 ||
-            (stretch[2] as number) !== 0 ||
-            (stretch[3] as number) !== 0
+            (sumS1[cur] as number) - (sumS1[from] as number) + extra1 !== 0 ||
+            (sumS2[cur] as number) - (sumS2[from] as number) + extra2 !== 0 ||
+            (sumS3[cur] as number) - (sumS3[from] as number) + extra3 !== 0
           ) {
             b = 0;
             fit = 2;
           } else {
-            b = badness(shortfall, stretch[0] as number);
+            b = badness(shortfall, (sumS0[cur] as number) - (sumS0[from] as number) + extra0);
             fit = b > 12 ? (b > 99 ? 0 : 1) : 2;
           }
         } else if (-shortfall > shrink) {
@@ -300,9 +322,9 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
         let artificial = false;
         let stays: boolean;
         if (b > INF_BAD || pi === EJECT_PENALTY) {
-          if (pass.final && minimum === AWFUL_BAD && r.next === last && prevR === head) {
+          if (final && minimum === AWFUL_BAD && r.next === last && prevR === head) {
             artificial = true;
-          } else if (b > pass.threshold) {
+          } else if (b > threshold) {
             // Deactivate r: later breaks can only make this line worse.
             prevR.next = r.next;
             r = r.next as Active;
@@ -311,7 +333,7 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
           stays = false;
         } else {
           prevR = r;
-          if (b > pass.threshold) {
+          if (b > threshold) {
             r = r.next as Active;
             continue;
           }
@@ -320,7 +342,7 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
         let d: number;
         if (artificial) d = 0;
         else {
-          d = params.linePenalty + b;
+          d = linePenalty + b;
           d = Math.abs(d) >= 10000 ? 100000000 : d * d;
           if (pi !== 0) {
             if (pi > 0) d += pi * pi;
@@ -328,7 +350,7 @@ export function breakLines(nodes: Node[], params: BreakParams): Line[] {
           }
           if (hyphenatedBreak && r.hyphenated)
             d += atEnd ? params.finalHyphenDemerits : params.doubleHyphenDemerits;
-          if (Math.abs(fit - r.fitness) > 1) d += params.adjDemerits;
+          if (Math.abs(fit - r.fitness) > 1) d += adjDemerits;
         }
         d += r.demerits;
         if (d <= (minimal[fit] as number)) {
@@ -417,6 +439,13 @@ export interface Face {
   codeFor: (ch: string) => number | undefined;
   /** `\hyphenchar` of the font; 45 for text fonts. */
   hyphenChar: number;
+  /**
+   * The width, in scaled points, of a character this font has no code for but another font of
+   * the field sets, as LaTeX sets `€`, `×` or `°` from TS1 in a T1 paragraph; undefined when none
+   * does. Such a character is a box of its own, which takes part in no ligature or kern, since
+   * TeX's ligature and kern program runs within one font.
+   */
+  widthOf?: (ch: string) => number | undefined;
 }
 
 export interface TextOptions {
@@ -426,6 +455,10 @@ export interface TextOptions {
   hyphenate?: (word: string) => number[];
   /** Text offset the paragraph starts at, for fields that begin mid-paragraph. */
   offset?: number;
+  /** `\spaceskip`, which sets the glue between words in place of the font's when not zero. */
+  spaceSkip?: Glue;
+  /** `\xspaceskip`, which sets the glue after a sentence in place of the font's when not zero. */
+  xspaceSkip?: Glue;
 }
 
 /** LaTeX's space factor codes: uppercase 999, sentence-ending punctuation raised, some zero. */
@@ -460,30 +493,90 @@ function nextSpaceFactor(current: number, sf: number): number {
   return current < 1000 ? 1000 : sf;
 }
 
-/** tex.web §1041–1044: the interword glue for a space factor. */
-export function spaceGlue(metrics: ScaledMetrics, spaceFactor: number): Glue {
-  if (spaceFactor === 1000)
-    return {
-      width: metrics.space,
-      stretch: metrics.stretch,
-      shrink: metrics.shrink,
-      stretchOrder: 0,
-      shrinkOrder: 0,
-    };
+/** tex.web §107: `x * n / d`, truncated towards zero, as TeX scales glue by a space factor. */
+function xnOverD(x: number, n: number, d: number): number {
+  return x < 0 ? -Math.floor((-x * n) / d) : Math.floor((x * n) / d);
+}
+
+/** Whether glue is TeX's `zero_glue`, which a skip set to nothing becomes (tex.web §1229). */
+const isZero = (glue: Glue) => glue.width === 0 && glue.stretch === 0 && glue.shrink === 0;
+
+/**
+ * tex.web §1041–1044: the interword glue for a space factor. `\xspaceskip`, when not zero, is the
+ * glue after a sentence as it stands; otherwise the space is `\spaceskip`, when not zero, or the
+ * font's, widened after a sentence and its stretch and shrink scaled by the space factor.
+ * ragged2e's `\RaggedRight` sets `\spaceskip` to the font's space with neither, so its spaces are
+ * rigid and its `\rightskip` takes a line's whole shortfall.
+ */
+export function spaceGlue(
+  metrics: ScaledMetrics,
+  spaceFactor: number,
+  skips: Pick<TextOptions, "spaceSkip" | "xspaceSkip"> = {},
+): Glue {
+  const { spaceSkip = ZERO_GLUE, xspaceSkip = ZERO_GLUE } = skips;
+  if (spaceFactor >= 2000 && !isZero(xspaceSkip)) return { ...xspaceSkip };
+  const space = isZero(spaceSkip)
+    ? {
+        width: metrics.space,
+        stretch: metrics.stretch,
+        shrink: metrics.shrink,
+        stretchOrder: 0,
+        shrinkOrder: 0,
+      }
+    : { ...spaceSkip };
+  if (spaceFactor === 1000) return space;
   return {
-    width: metrics.space + (spaceFactor >= 2000 ? metrics.extraSpace : 0),
-    stretch: Math.floor((metrics.stretch * spaceFactor) / 1000),
-    shrink: Math.floor((metrics.shrink * 1000) / spaceFactor),
-    stretchOrder: 0,
-    shrinkOrder: 0,
+    ...space,
+    width: space.width + (spaceFactor >= 2000 ? metrics.extraSpace : 0),
+    stretch: xnOverD(space.stretch, spaceFactor, 1000),
+    shrink: xnOverD(space.shrink, 1000, spaceFactor),
   };
 }
 
 /**
- * Build the node list for a paragraph of text in one font: characters become boxes
- * after the font's ligature and kern program, spaces become glue sized by the space
- * factor, an explicit hyphen gets a discretionary after it, and a trailing space is
- * dropped as TeX drops it at `\par`.
+ * The characters the generator writes as `~` (decision 0007), the no-break spaces: LaTeX's
+ * `\nobreakspace`, `\leavevmode\nobreak\ `, which is a penalty of 10000 and then a control
+ * space, the interword glue at a space factor of 1000 whatever the space factor is.
+ */
+const NO_BREAK_SPACE = /^[\u00a0\u202f\u2007]$/u;
+
+/**
+ * The characters the generator writes as a space: the line breaks and every other space
+ * separator. A run of them is one space token to TeX, and so one glue.
+ */
+const SPACE = /^[\t\n\r\u2028\u2029\p{Zs}]$/u;
+
+/**
+ * What the generator leaves out of the LaTeX, and so TeX never sees: the invisible characters,
+ * U+FEFF and the zero-width space among them, other than the line breaks, which are spaces. They
+ * cost nothing and never break, and a word runs on through them, its ligatures and kerns too.
+ */
+const LEFT_OUT = new RegExp(`^(?:${INVISIBLE.source})$`, "u");
+
+/** What a character of a field's text is to TeX once the generator has written it. */
+function kindOf(ch: string): "space" | "tie" | "none" | "char" {
+  if (NO_BREAK_SPACE.test(ch)) return "tie";
+  if (SPACE.test(ch)) return "space";
+  if (LEFT_OUT.test(ch)) return "none";
+  return "char";
+}
+
+/**
+ * LaTeX's `\textellipsis`, which it sets `…` with when the font has no glyph for it, as neither
+ * OT1 nor T1 has: three periods, each followed by a kern of `\fontdimen3`, the font's interword
+ * stretch. A kern ends a ligature and kern run, and does not change the space factor, so a space
+ * after `…` is a space after a period.
+ */
+const ELLIPSIS = "\u2026";
+
+/**
+ * Build the node list for a paragraph of text as the generator writes it and TeX sets it:
+ * characters become boxes after the font's ligature and kern program, a run of spaces becomes
+ * one glue sized by the space factor (or `\spaceskip` and `\xspaceskip`), a no-break space a
+ * penalty of 10000 and a normal space, and an explicit hyphen gets a discretionary after it. A
+ * character the font lacks is a box of another of the field's fonts when one has it
+ * (`Face.widthOf`), and is dropped otherwise, as TeX drops a missing character. Leading spaces
+ * are dropped, and so is a trailing one, as TeX drops it at `\par`.
  */
 export function paragraphNodes(text: string, face: Face, options: TextOptions = {}): Node[] {
   const sfCode = options.sfCode ?? latexSfCode;
@@ -491,68 +584,120 @@ export function paragraphNodes(text: string, face: Face, options: TextOptions = 
   const nodes: Node[] = [];
   let spaceFactor = 1000;
   // Characters are code points; offsets are UTF-16 indices, which is what callers slice by.
-  const chars: { ch: string; at: number }[] = [];
+  const chars: { ch: string; at: number; kind: ReturnType<typeof kindOf> }[] = [];
   let pos = 0;
   for (const ch of text) {
-    chars.push({ ch, at: pos });
+    chars.push({ ch, at: pos, kind: kindOf(ch) });
     pos += ch.length;
   }
   const at = (k: number) => base + (chars[k]?.at ?? text.length);
-  const isSpace = (k: number) => /\s/.test(chars[k]?.ch ?? "");
+  const kind = (k: number) => chars[k]?.kind;
+  const glue = (factor: number) => spaceGlue(face.metrics, factor, options);
+  const period = face.codeFor(".");
+
+  /**
+   * Set the word from character `from` to `to`. It is cut into runs of the face's own
+   * characters, each put through the font's ligature and kern program; a character another font
+   * sets, and each period of an ellipsis, ends a run, as a font change or a kern ends one in TeX.
+   */
+  const setWord = (from: number, to: number) => {
+    // Where each character stands in the word as `hyphenate` sees it, without the left-out ones.
+    const place: number[] = [];
+    let letters = "";
+    for (let k = from; k <= to; k++) {
+      place.push(letters.length);
+      const c = chars[k];
+      if (k < to && c?.kind === "char") letters += c.ch;
+    }
+    const hyphens = new Set(options.hyphenate ? options.hyphenate(letters) : []);
+    // The run being gathered: the face's codes, and the character each came from.
+    let codes: number[] = [];
+    let sources: number[] = [];
+    const setRun = (end: number) => {
+      const lig = applyLigKern(face.tfm, codes);
+      lig.codes.forEach((code, k) => {
+        const first = sources[lig.source[k] as number] as number;
+        const next = lig.source[k + 1];
+        const last = next === undefined ? end : (sources[next] as number);
+        nodes.push({
+          kind: "box",
+          width: face.metrics.widths[code] ?? 0,
+          offset: at(first),
+          end: at(last),
+          code,
+        });
+        for (let s = first; s < last; s++) {
+          const c = chars[s];
+          if (c?.kind === "char") spaceFactor = nextSpaceFactor(spaceFactor, sfCode(c.ch));
+        }
+        if (code === face.hyphenChar)
+          nodes.push({ kind: "disc", preWidth: 0, hyphenation: false, offset: at(last) });
+        if (hyphens.has(place[last - from] ?? -1) && k < lig.codes.length - 1)
+          nodes.push({
+            kind: "disc",
+            preWidth: face.metrics.widths[face.hyphenChar] ?? 0,
+            hyphenation: true,
+            offset: at(last),
+          });
+        const kern = lig.kernAfter[k] as number;
+        if (kern >= 0 && k < lig.codes.length - 1)
+          nodes.push({ kind: "kern", width: face.metrics.kerns[kern] ?? 0 });
+      });
+      codes = [];
+      sources = [];
+    };
+    for (let k = from; k < to; k++) {
+      const c = chars[k];
+      if (c?.kind !== "char") continue;
+      const code = face.codeFor(c.ch);
+      if (code !== undefined) {
+        codes.push(code);
+        sources.push(k);
+      } else if (c.ch === ELLIPSIS && period !== undefined) {
+        // The first period joins the run before it, as TeX sets it right after the letter
+        // before; the kern after each period ends a run.
+        for (let dot = 0; dot < 3; dot++) {
+          codes.push(period);
+          sources.push(k);
+          setRun(k + 1);
+          nodes.push({ kind: "kern", width: face.metrics.stretch });
+        }
+        spaceFactor = nextSpaceFactor(spaceFactor, sfCode("."));
+      } else {
+        // TeX drops a character no font of the field has, and the run goes on past it.
+        const width = face.widthOf?.(c.ch);
+        if (width === undefined) continue;
+        setRun(k);
+        nodes.push({ kind: "box", width, offset: at(k), end: at(k + 1) });
+        spaceFactor = nextSpaceFactor(spaceFactor, sfCode(c.ch));
+      }
+    }
+    setRun(to);
+  };
+
   let i = 0;
   let pendingSpace: { offset: number; end: number } | undefined;
+  const flushSpace = () => {
+    if (pendingSpace) nodes.push({ kind: "glue", ...glue(spaceFactor), ...pendingSpace });
+    pendingSpace = undefined;
+  };
   while (i < chars.length) {
-    if (isSpace(i)) {
-      const from = i;
-      while (i < chars.length && isSpace(i)) i++;
-      if (nodes.length) pendingSpace = { offset: at(from), end: at(i) };
-      continue;
-    }
+    const here = kind(i);
     const from = i;
-    while (i < chars.length && !isSpace(i)) i++;
-    if (pendingSpace) {
-      nodes.push({ kind: "glue", ...spaceGlue(face.metrics, spaceFactor), ...pendingSpace });
-      pendingSpace = undefined;
+    if (here === "none") i++;
+    else if (here === "space") {
+      while (i < chars.length && (kind(i) === "space" || kind(i) === "none")) i++;
+      if (nodes.length) pendingSpace = { offset: at(from), end: at(i) };
+    } else if (here === "tie") {
+      flushSpace();
+      nodes.push({ kind: "penalty", penalty: INF_PENALTY });
+      nodes.push({ kind: "glue", ...glue(1000), offset: at(i), end: at(i + 1) });
+      i++;
+    } else {
+      flushSpace();
+      while (i < chars.length && (kind(i) === "char" || kind(i) === "none")) i++;
+      setWord(from, i);
     }
-    const word = chars.slice(from, i);
-    const codes: number[] = [];
-    const sources: number[] = [];
-    word.forEach((c, k) => {
-      const code = face.codeFor(c.ch);
-      if (code === undefined) return; // TeX drops a missing character
-      codes.push(code);
-      sources.push(from + k);
-    });
-    const hyphens = new Set(
-      options.hyphenate ? options.hyphenate(word.map((c) => c.ch).join("")) : [],
-    );
-    const lig = applyLigKern(face.tfm, codes);
-    lig.codes.forEach((code, k) => {
-      const first = sources[lig.source[k] as number] as number;
-      const nextSource = lig.source[k + 1];
-      const end = nextSource === undefined ? i : (sources[nextSource] as number);
-      nodes.push({
-        kind: "box",
-        width: face.metrics.widths[code] ?? 0,
-        offset: at(first),
-        end: at(end),
-        code,
-      });
-      for (let s = first; s < end; s++)
-        spaceFactor = nextSpaceFactor(spaceFactor, sfCode(chars[s]?.ch ?? ""));
-      if (code === face.hyphenChar)
-        nodes.push({ kind: "disc", preWidth: 0, hyphenation: false, offset: at(end) });
-      if (hyphens.has(end - from) && k < lig.codes.length - 1)
-        nodes.push({
-          kind: "disc",
-          preWidth: face.metrics.widths[face.hyphenChar] ?? 0,
-          hyphenation: true,
-          offset: at(end),
-        });
-      const kern = lig.kernAfter[k] as number;
-      if (kern >= 0 && k < lig.codes.length - 1)
-        nodes.push({ kind: "kern", width: face.metrics.kerns[kern] ?? 0 });
-    });
   }
   return nodes;
 }
