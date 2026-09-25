@@ -33,6 +33,7 @@ import {
   type DOCUMENT_SLOTS,
   defaultControls,
   type ENTRY_SLOTS,
+  type FontFamily,
   type HEADER_SLOTS,
   type ITEM_SLOTS,
   type LABELLED_ITEM_SLOTS,
@@ -108,8 +109,9 @@ export function formatName(pkg: TemplatePackage, values: ControlValues): string 
 
 /**
  * What the session dumps: the package's preamble with each format-bound control's slot set to its
- * value, followed by the prelude, which comes after the template's own preamble so that it sees
- * hyperref; and the package's files, which the session writes beside it.
+ * value, then a XeTeX package's font declarations (`fontDeclarations`), then the prelude, which
+ * comes after the template's own preamble so that it sees hyperref; and the package's files,
+ * which the session writes beside it.
  *
  * The format is named `<id>-<8 hex digits>`, with the id cut to 55 characters so that the name
  * fits the session's 64 however long the id is, and the digits an FNV-1a hash of exactly what is
@@ -124,13 +126,37 @@ export function generateFormat(pkg: TemplatePackage, values: ControlValues): Gen
     if (control.format) scope[control.id] = valueSlot(control.text);
   const out = new Output(Number.POSITIVE_INFINITY);
   render({ nodes: parseSnippet(pkg.preamble), scope }, out, new Map());
-  const preamble = `${out.join()}\n${PRELUDE}`;
+  const fonts = pkg.fonts === undefined ? "" : `${fontDeclarations(pkg.fonts)}\n`;
+  const preamble = `${out.join()}\n${fonts}${PRELUDE}`;
   // By name, so that the same files listed in another order are the same dump. Names are keys,
   // so no two are equal.
   const files = Object.entries(pkg.files).sort(([a], [b]) => (a < b ? -1 : 1));
   const hash = fnv1a(JSON.stringify([preamble, files]));
   const name = `${pkg.id.slice(0, 55)}-${hash.toString(16).padStart(8, "0")}`;
   return { name, preamble, files: pkg.files };
+}
+
+/**
+ * A XeTeX package's fonts as NFSS declarations, decision 0003's loop: each family in the TU
+ * encoding, with `\DeclareFontFamily{TU}{<family>}{}`, and each shape as its file at every size,
+ * with `\DeclareFontShape{TU}{<family>}{<series>}{<shape>}{<->"[<file>]:<features>"}{}`, or
+ * `[<file>]` alone for a family without features. XeTeX finds the file by its name through
+ * kpathsea, and loads nothing until a shape is selected, so the format they are dumped in holds no
+ * native font and dumps; a template selects them in the body, as its preamble's
+ * `\renewcommand{\rmdefault}{<family>}` does at `\begin{document}`. In the families' and shapes'
+ * order, a line each (decision 0014).
+ */
+export function fontDeclarations(fonts: readonly FontFamily[]): string {
+  const lines: string[] = [];
+  for (const { family, shapes, features } of fonts) {
+    lines.push(`\\DeclareFontFamily{TU}{${family}}{}`);
+    for (const [key, file] of Object.entries(shapes)) {
+      const [series, shape] = key.split("/");
+      const name = features === undefined ? `[${file}]` : `[${file}]:${features}`;
+      lines.push(`\\DeclareFontShape{TU}{${family}}{${series}}{${shape}}{<->"${name}"}{}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 /**

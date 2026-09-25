@@ -10,6 +10,7 @@ import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { CURATED, curated } from "../templates/curated";
 import { generateBody } from "../templates/generate";
+import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls, parsePackage, type TemplatePackage } from "../templates/package";
 import type { DviDocument, PageItem } from "../tex/dvi";
 import {
@@ -879,6 +880,57 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       );
       expect(report.findings).toEqual([]);
     }, 60_000);
+  });
+
+  describe("over the invented XeTeX template", () => {
+    const { package: xetex, sample } = INVENTED_XETEX;
+
+    it("passes every check: fonts declared by file, drawn from their files, a readable PDF", async () => {
+      const report = await validatePackage(session, fonts, xetex, sample);
+      expect(report.findings).toEqual([]);
+      expect(report.pages).toBe(1);
+      expect(report.fields).toBe(generateBody(xetex, sample, defaultControls(xetex)).texts.size);
+      const timings = report.passes.map((ms) => `${Math.round(ms)} ms`).join(", ");
+      console.log(`invented XeTeX template: format ${report.format}; passes ${timings}`);
+      // A new document's two passes, the same body again, an edit, and the margins and accent.
+      expect(report.passes).toHaveLength(6);
+      for (const ms of report.passes) expect(ms).toBeLessThan(2_000);
+    }, 120_000);
+
+    it("reports a native font XeTeX emboldens, which the page draws as boxes, and nothing else", async () => {
+      const bolded = parsePackage({
+        ...xetex,
+        id: "invented-xetex-bolded",
+        fonts: xetex.fonts?.map((font) =>
+          font.family === "SourceSans"
+            ? { ...font, features: `${font.features};embolden=1.5` }
+            : font,
+        ),
+      });
+      const report = await validatePackage(session, fonts, bolded, sample);
+      expect(report.findings).toEqual([
+        {
+          check: "fonts",
+          message:
+            "the page cannot draw SourceSansPro-Bold.otf: XeTeX emboldens it, which the page draws as boxes",
+        },
+      ]);
+    }, 120_000);
+
+    it("reports a font file TeX Live does not have as the compile's error", async () => {
+      const missing = parsePackage({
+        ...xetex,
+        id: "invented-xetex-missing",
+        fonts: xetex.fonts?.map((font) =>
+          font.family === "SourceSans" ? { ...font, shapes: { "bx/n": "Nosuch-Bold.otf" } } : font,
+        ),
+      });
+      const report = await validatePackage(session, fonts, missing, sample);
+      // The declarations load nothing, so the format dumps; the first heading asks for the file.
+      expect(report.findings).toEqual([
+        { check: "compile", message: expect.stringContaining("Nosuch-Bold.otf") },
+      ]);
+    }, 120_000);
   });
 
   describe("over an invented package in T1 and Latin Modern, as Jake's is", () => {

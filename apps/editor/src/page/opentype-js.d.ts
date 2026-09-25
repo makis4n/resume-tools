@@ -1,4 +1,4 @@
-// The parts of opentype.js 2 the editor uses: the reader, for XeTeX's native fonts in the spike,
+// The parts of opentype.js 2 the editor uses: the reader, for XeTeX's native fonts (`native.ts`),
 // and the writer, for the overlay's web fonts (`webfont.ts`). The package ships no declarations.
 declare module "opentype.js" {
   export interface BoundingBox {
@@ -57,11 +57,17 @@ declare module "opentype.js" {
   export class Font {
     constructor(options: FontOptions);
     unitsPerEm: number;
+    /** The glyphs a parsed font holds, as its `maxp` table says. */
+    numGlyphs?: number;
     ascender: number;
     descender: number;
     glyphs: { length: number; get(index: number): Glyph | undefined };
     tables: Record<string, Record<string, unknown> | undefined>;
+    /** The font's GSUB table as the writer makes it; the tests add a ligature through it. */
+    substitution: { add(feature: string, rule: { sub: number[]; by: number }): void };
     charToGlyphIndex(char: string): number;
+    /** The kerning between two glyphs, by index, in font units, from GPOS or the `kern` table. */
+    getKerningValue(left: number, right: number): number;
     getEnglishName(name: string): string | undefined;
     toArrayBuffer(): ArrayBuffer;
   }

@@ -3,16 +3,19 @@ import { join } from "node:path";
 import type { Resume, RichText, Run } from "@resume-tools/resume-model";
 import { getSchema } from "@tiptap/core";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Font, Glyph, Path, parse } from "opentype.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
-import { type DrawnPage, drawPage, type FieldLayout } from "../page/draw";
-import { FontLibrary, type PageFont } from "../page/fonts";
+import { type DrawnPage, drawPage, type FieldLayout, type GlyphBox } from "../page/draw";
+import { FontLibrary, type NativePageFont, type PageFont } from "../page/fonts";
+import { parseNativeFont } from "../page/native";
 import { breakParams, type Paragraph, parseParagraph } from "../page/paragraph";
 import { TexLiveIndex } from "../page/texlive";
 import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
+import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls } from "../templates/package";
 import { PRELUDE } from "../templates/prelude";
 import { bound, fastest, median } from "../test/timing";
@@ -26,6 +29,7 @@ import {
   LATEX_PARAMS,
   paragraphNodes,
   richParagraphNodes,
+  tfmFace,
   ZERO_GLUE,
 } from "../tex/linebreak";
 import { parseTfm, scaleTfm } from "../tex/tfm";
@@ -62,13 +66,14 @@ const PT = 65536;
 function cmr10(): Face {
   const tfm = parseTfm(fixture("cmr10.tfm"));
   const codes = textToCode(parseType1(fixture("cmr10.pfb")).encoding);
-  return { tfm, metrics: scaleTfm(tfm, 10 * PT), codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+  return tfmFace(tfm, scaleTfm(tfm, 10 * PT), (ch) => codes.get(ch));
 }
 
 /** cmr10 as the page has it, with each code's text read from its glyph's name. */
 function cmr10Font(): PageFont {
   const outlines = parseType1(fixture("cmr10.pfb"));
   return {
+    kind: "tex",
     name: "cmr10",
     tfm: parseTfm(fixture("cmr10.tfm")),
     outlines,
@@ -143,7 +148,7 @@ describe("layoutRows", () => {
     const raggedRight = { ...params, rightSkip: { ...ZERO_GLUE, stretch: 20 * PT } };
     const shared = layoutRows(BULLET, face, raggedRight);
     expect(shared[0]?.wordSpacingSp).toBeGreaterThan(0);
-    const rigid = { ...raggedRight, spaceSkip: { ...ZERO_GLUE, width: face.metrics.space } };
+    const rigid = { ...raggedRight, spaceSkip: { ...ZERO_GLUE, width: face.spaceGlue().space } };
     for (const row of layoutRows(BULLET, face, rigid)) expect(row.wordSpacingSp).toBe(0);
   });
 
@@ -199,7 +204,7 @@ describe("richRows", () => {
   const codes = textToCode(parseType1(fixture("cmr10.pfb")).encoding);
   const faceOf = (name: string): Face => {
     const tfm = parseTfm(fixture(`${name}.tfm`));
-    return { tfm, metrics: scaleTfm(tfm, 10 * PT), codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+    return tfmFace(tfm, scaleTfm(tfm, 10 * PT), (ch) => codes.get(ch));
   };
   const roman = cmr10();
   const bold = faceOf("cmbx10");
@@ -291,9 +296,9 @@ describe("richRows", () => {
       layout,
     );
     const width = (tfm: string) => scaleTfm(parseTfm(fixture(`${tfm}.tfm`)), 10 * PT).widths[36];
-    expect(both.variants.get("regular")?.widthOf?.("\u20ac")).toBe(width("cmr10"));
-    expect(both.variants.get("bold")?.widthOf?.("\u20ac")).toBe(width("cmbx10"));
-    expect(both.letter.widthOf?.("\u20ac")).toBe(width("cmr10"));
+    expect(both.variants.get("regular")?.fallbackWidth?.("\u20ac")).toBe(width("cmr10"));
+    expect(both.variants.get("bold")?.fallbackWidth?.("\u20ac")).toBe(width("cmbx10"));
+    expect(both.letter.fallbackWidth?.("\u20ac")).toBe(width("cmr10"));
   });
 
   it("breaks tens of thousands of runs in time proportional to their number", () => {
@@ -371,10 +376,73 @@ describe("faceFor", () => {
     const face = faceFor(letters, [letters, companion]);
     expect(face.codeFor("€")).toBeUndefined();
     const dollar = scaleTfm(companion.font.tfm, 12 * PT).widths[36];
-    expect(face.widthOf?.("€")).toBe(dollar);
-    expect(face.widthOf?.("\u{1f680}")).toBeUndefined();
+    expect(face.fallbackWidth?.("€")).toBe(dollar);
+    expect(face.fallbackWidth?.("\u{1f680}")).toBeUndefined();
     const nodes = paragraphNodes("Raised €3", face).filter((node) => node.kind === "box");
     expect(nodes.find((node) => node.offset === 7)?.width).toBe(dollar);
+  });
+
+  /**
+   * An invented native font, written by opentype.js and read as the page reads one: a space 250
+   * units wide, an f, an i and their ligature, a hyphen, and a glyph for € when `euro` is set, in
+   * a 2000-unit em.
+   */
+  function nativeFont(name: string, euro = false): NativePageFont {
+    const glyph = (glyphName: string, unicodes: number[], advanceWidth: number) =>
+      new Glyph({ name: glyphName, unicodes, advanceWidth, path: new Path() });
+    const glyphs = [
+      glyph(".notdef", [], 1000),
+      glyph("space", [0x20], 500),
+      glyph("f", [0x66], 600),
+      glyph("i", [0x69], 480),
+      glyph("f_i", [0xfb01], 1050),
+      glyph("hyphen", [0x2d], 660),
+      ...(euro ? [glyph("Euro", [0x20ac], 1111)] : []),
+    ];
+    const font = new Font({
+      familyName: "Invented",
+      styleName: "Regular",
+      unitsPerEm: 2000,
+      ascender: 1800,
+      descender: -400,
+      glyphs,
+    });
+    font.substitution.add("liga", { sub: [2, 3], by: 4 });
+    return { kind: "native", name, file: parseNativeFont(new Uint8Array(font.toArrayBuffer())) };
+  }
+
+  it("measures a native font's characters by their glyphs' advances, with no ligature or kern", () => {
+    const face = faceFor({ font: nativeFont("Invented-Regular.otf"), size: 10 });
+    const f = face.codeFor("f");
+    expect(f).toBe(2);
+    // 600 units of a 2000-unit em at 10 pt, rounded to a scaled point.
+    expect(face.widthOf(f ?? -1)).toBe(Math.round((600 * 10 * PT) / 2000));
+    expect(face.ligKern).toBeUndefined();
+    expect(face.hyphenChar).toBe(face.codeFor("-"));
+    // XeTeX sets f and i as its fi; the overlay leaves that to the page and sets them apart.
+    const boxes = paragraphNodes("fi", face).filter((node) => node.kind === "box");
+    expect(boxes.map((node) => node.kind === "box" && node.code)).toEqual([2, 3]);
+  });
+
+  it("gives a native font XeTeX's interword glue: its space, half to stretch, a third to shrink", () => {
+    const space = Math.round((500 * 10 * PT) / 2000);
+    expect(faceFor({ font: nativeFont("Invented-Regular.otf"), size: 10 }).spaceGlue()).toEqual({
+      space,
+      stretch: Math.trunc(space / 2),
+      shrink: Math.trunc(space / 3),
+      extraSpace: Math.trunc(space / 3),
+    });
+  });
+
+  it("measures what a native font lacks in another native font of the field", () => {
+    const letters = { font: nativeFont("Invented-Regular.otf"), size: 10 };
+    const symbols = { font: nativeFont("Invented-Symbols.otf", true), size: 12 };
+    const face = faceFor(letters, [letters, symbols]);
+    expect(face.codeFor("€")).toBeUndefined();
+    expect(face.fallbackWidth?.("€")).toBe(Math.round((1111 * 12 * PT) / 2000));
+    // And a TeX font's in a native one's, as a field that mixes the two measures them.
+    const mixed = faceFor({ font: cmr10Font(), size: 10 }, [symbols]);
+    expect(mixed.fallbackWidth?.("€")).toBe(Math.round((1111 * 12 * PT) / 2000));
   });
 });
 
@@ -615,7 +683,7 @@ function compare(page: DrawnPage, id: string, text: string) {
 function overlayEnds(text: string, setting: Setting): { first: number; last: number; x: number }[] {
   const { face, params } = setting;
   const nodes = paragraphNodes(text, face, params);
-  return rowEnds(nodes, layoutRows(text, face, params), () => face.metrics.space);
+  return rowEnds(nodes, layoutRows(text, face, params), () => face.spaceGlue().space);
 }
 
 /** `overlayEnds` for rows of `nodes` whose spaces the browser sets at `space` before spacing. */
@@ -660,7 +728,7 @@ function richEnds(runs: RichText, faces: RichFaces, params: BreakParams) {
     return faces.letter;
   };
   const rows = richRows(runs, faces, params);
-  return rowEnds(nodes, rows, (offset) => faceAt(offset).metrics.space);
+  return rowEnds(nodes, rows, (offset) => faceAt(offset).spaceGlue().space);
 }
 
 /**
@@ -742,6 +810,50 @@ function richBullet(k: number): RichText {
     runs.push({ text: `${stop}${after}` });
   });
   return normalised(runs);
+}
+
+/**
+ * How far a field's glyphs sit from where the overlay sets them, within their rows: each glyph's x
+ * from its row's first glyph's on the page, against the overlay's, for every glyph the page shows
+ * whose offset begins one of the overlay's boxes. The most and the mean, in points, and over how
+ * many glyphs.
+ */
+function rowDrift(
+  text: string,
+  setting: Setting,
+  glyphs: readonly GlyphBox[],
+): { most: number; mean: number; glyphs: number } {
+  const { face, params } = setting;
+  const nodes = paragraphNodes(text, face, params);
+  const pageX = new Map<number, number>();
+  for (const glyph of glyphs)
+    if (glyph.offset !== undefined && !pageX.has(glyph.offset)) pageX.set(glyph.offset, glyph.x);
+  let most = 0;
+  let total = 0;
+  let count = 0;
+  for (const row of layoutRows(text, face, params)) {
+    let x = 0;
+    let first: number | undefined;
+    for (const node of nodes) {
+      const offset = node.kind === "box" || node.kind === "glue" ? node.offset : undefined;
+      if (offset !== undefined && (offset < row.from || offset >= row.to)) continue;
+      if (node.kind === "box") {
+        first ??= node.offset;
+        const at = pageX.get(node.offset);
+        const start = pageX.get(first);
+        if (at !== undefined && start !== undefined) {
+          const drift = Math.abs(x / PT - (at - start));
+          most = Math.max(most, drift);
+          total += drift;
+          count++;
+        }
+        x += node.width;
+      } else if (node.kind === "kern") x += first === undefined ? 0 : node.width;
+      else if (node.kind === "glue" && first !== undefined)
+        x += face.spaceGlue().space + row.wordSpacingSp;
+    }
+  }
+  return { most, mean: count > 0 ? total / count : 0, glyphs: count };
 }
 
 /** A sentence of `count` invented words, different for each `seed`. */
@@ -1107,6 +1219,121 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
       expect(placed?.layout).toBe(before.page.fields.get(id)?.layout);
       expect(placementFor(id, after.page, placed)).toBe(placed);
       expect(shouldClose(fieldsOf(emptied).has(id), after.page.fields.has(id))).toBe(false);
+    }, 60_000);
+  });
+
+  describe("on the invented XeTeX template", () => {
+    const { package: pkg, sample } = INVENTED_XETEX;
+    const values = defaultControls(pkg);
+    const format = generateFormat(pkg, values);
+
+    /** The page of a resume set with the invented XeTeX template, drawn with every font. */
+    async function invented(resume: Resume, job: string) {
+      const dumped = session.dump(pkg.engine, format.name, format.preamble, format.files);
+      if (!dumped.ok) throw new Error(dumped.error);
+      const body = generateBody(pkg, resume, values);
+      const result = session.compile(pkg.engine, format.name, body.latex, { job, maxPasses: 3 });
+      if (!result.output) throw new Error(result.error);
+      const page = await drawPage(result.output, fonts, body.texts);
+      expect(page.missingFonts, job).toEqual(new Map());
+      return page;
+    }
+
+    /** The sample with its first entry's bullets replaced by `bullets`, named `<prefix>-<i>`. */
+    function withBullets(prefix: string, bullets: string[]): Resume {
+      const resume = structuredClone(sample);
+      const section = resume.sections.find((each) => each.kind === "entries");
+      const entry = section?.kind === "entries" ? section.entries[0] : undefined;
+      if (!entry) throw new Error("the sample has no entry");
+      entry.bullets = bullets.map((text, i) => ({ id: `${prefix}-${i}`, text: [{ text }] }));
+      return resume;
+    }
+
+    it("gives a native font the interword glue XeTeX gives it", async () => {
+      // XeTeX's \fontdimen2, 3, 4 and 7 of Roboto at the invented template's 10.95 pt, printed in
+      // scaled points: the space glyph's advance, half of it, a third and a third.
+      const latex = String.raw`\documentclass{article}\begin{document}
+\font\roboto="[Roboto-Regular.otf]" at 10.95pt
+\typeout{DIMENS=\number\fontdimen2\roboto,\number\fontdimen3\roboto,\number\fontdimen4\roboto,\number\fontdimen7\roboto}
+x\end{document}`;
+      const printed = session.compile("xetex", "stock", latex, { job: "dimens", maxPasses: 1 });
+      const dimens = /DIMENS=(\d+),(\d+),(\d+),(\d+)/.exec(printed.log)?.slice(1).map(Number);
+      const roboto = await fonts.loadNative("Roboto-Regular.otf");
+      if (!roboto) throw new Error("the tree has no Roboto");
+      const { space, stretch, shrink, extraSpace } = faceFor({
+        font: roboto,
+        size: 10.95,
+      }).spaceGlue();
+      expect([space, stretch, shrink, extraSpace]).toEqual(dimens);
+    }, 60_000);
+
+    it("gives a native font the slant and italic corrections XeTeX gives it", async () => {
+      // XeTeX's \fontdimen1 of Roboto Italic, and what \/ adds after an f and a d, in scaled
+      // points at 10 pt: the tangent of its italic angle, and what each outline reaches past its
+      // advance. LaTeX's \textit reads the first to set the second at its end (item 10).
+      const latex = String.raw`\documentclass{article}\begin{document}
+\font\it="[Roboto-Italic.otf]" at 10pt
+\setbox0\hbox{\it f}\setbox2\hbox{\it f\/}\setbox4\hbox{\it d}\setbox6\hbox{\it d\/}
+\typeout{ITALIC=\number\fontdimen1\it,\number\numexpr\wd2-\wd0\relax,\number\numexpr\wd6-\wd4\relax}
+x\end{document}`;
+      const printed = session.compile("xetex", "stock", latex, { job: "italic", maxPasses: 1 });
+      const [slant, f, d] =
+        /ITALIC=(\d+),(\d+),(\d+)/.exec(printed.log)?.slice(1).map(Number) ?? [];
+      const italic = await fonts.loadNative("Roboto-Italic.otf");
+      if (!italic?.file) throw new Error("the tree has no Roboto Italic");
+      const face = faceFor({ font: italic, size: 10 });
+      expect(Math.round(face.slant * PT)).toBe(slant);
+      expect(face.italicOf(italic.file.glyphFor("f") ?? -1)).toBe(f);
+      expect(face.italicOf(italic.file.glyphFor("d") ?? -1)).toBe(d);
+      // And an upright font leans nothing.
+      const upright = await fonts.loadNative("Roboto-Regular.otf");
+      if (!upright) throw new Error("the tree has no Roboto");
+      expect(faceFor({ font: upright, size: 10 }).slant).toBe(0);
+    }, 60_000);
+
+    it("breaks a paragraph Roboto neither kerns nor joins where XeTeX did, row for row", async () => {
+      // No two letters of a word here are a pair Roboto kerns, and no f is joined to what
+      // follows it, so XeTeX's words are as wide as their glyphs' advances, which the overlay
+      // measures; the rows must end where XeTeX's lines do, to a hundredth of a point.
+      const text =
+        "Built and shipped a new build system that cut the nightly build down in minutes while also making the tests run in all machines in the lab and it now helps the whole company plan its launches with much less guesswork than it used.";
+      const roboto = await fonts.loadNative("Roboto-Regular.otf");
+      const file = roboto?.file;
+      if (!file) throw new Error("the tree has no Roboto");
+      const opened = parse(file.bytes.slice().buffer);
+      for (const word of text.split(" ")) {
+        expect(word, word).not.toMatch(/f[il]/);
+        for (let i = 0; i + 1 < word.length; i++) {
+          const pair = [word[i], word[i + 1]].map((char) => file.glyphFor(char ?? "") ?? 0);
+          expect(opened.getKerningValue(pair[0] ?? 0, pair[1] ?? 0), word).toBe(0);
+        }
+      }
+      const page = await invented(withBullets("plain", [text]), "overlay-xetex");
+      const { rows, page: lines, setting, layout } = compare(page, "plain-0.text", text);
+      expect(layout.font.kind).toBe("native");
+      expect(lines).toHaveLength(3);
+      expect(rows).toEqual(lines);
+      const glyphs = page.glyphs.filter((glyph) => glyph.field === "plain-0.text");
+      const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+      for (const row of overlayEnds(text, setting)) {
+        const tex = at(row.last) - at(row.first);
+        expect(Math.abs(row.x - tex), `at ${row.last}`).toBeLessThan(0.01);
+      }
+    }, 60_000);
+
+    it("says how far the rows drift from a paragraph XeTeX kerns and joins", async () => {
+      // Reported, not asserted: XeTeX kerns and joins within a word, which the overlay leaves to
+      // the page (decision 0014), so its rows drift within a line, and may break a line apart.
+      const text =
+        "Wrote the typesetting service from scratch, cutting every proof's turnaround to forty minutes; every regional office now relies on it, and every team reviews layouts faster than before, with fewer errors and far less rework for the editors every year.";
+      const page = await invented(withBullets("kerned", [text]), "overlay-xetex-kerned");
+      const { rows, page: lines, setting } = compare(page, "kerned-0.text", text);
+      const glyphs = page.glyphs.filter((glyph) => glyph.field === "kerned-0.text");
+      const drift = rowDrift(text, setting, glyphs);
+      console.log(
+        `invented XeTeX template, a kerned paragraph: rows ${JSON.stringify(rows)}, XeTeX's lines ${JSON.stringify(lines)}; drift within a row at most ${drift.most.toFixed(2)} pt, ${drift.mean.toFixed(2)} pt on average over ${drift.glyphs} glyphs`,
+      );
+      expect(drift.glyphs).toBeGreaterThan(100);
     }, 60_000);
   });
 

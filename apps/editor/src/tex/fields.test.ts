@@ -149,6 +149,52 @@ describe("collectFields", () => {
   });
 });
 
+describe("collectFields with XeTeX's native runs", () => {
+  /** A native run of a glyph per character, glyph ids being the characters' codes. */
+  const run = (text: string, at = 0): PageItem => ({
+    kind: "native",
+    font: 1,
+    h: at,
+    v: 0,
+    width: text.length,
+    glyphs: [...text].map((char, i) => ({ id: char.charCodeAt(0), x: i, y: 0 })),
+  });
+  const nativeText: GlyphTextOf = (item, glyph) =>
+    item.kind === "native" && glyph !== undefined
+      ? String.fromCharCode(item.glyphs[glyph]?.id ?? 0)
+      : textOf(item);
+
+  it("collects each glyph of a run as a glyph of its own, with its index in the run", () => {
+    const p = page([special("rt:b:f"), run("Ada"), glyph(32), run("Lov", 4), special("rt:e:f")]);
+    const field = collectFields(p, nativeText).get("f");
+    expect(field?.glyphs.map((g) => [g.item, g.glyph, g.text])).toEqual([
+      [1, 0, "A"],
+      [1, 1, "d"],
+      [1, 2, "a"],
+      [2, undefined, " "],
+      [3, 0, "L"],
+      [3, 1, "o"],
+      [3, 2, "v"],
+    ]);
+    // A glyph the font has no text for is a glyph all the same.
+    const blind = collectFields(
+      page([special("rt:b:f"), run("xy"), special("rt:e:f")]),
+      () => undefined,
+    );
+    expect(blind.get("f")?.glyphs.map((g) => g.text)).toEqual([undefined, undefined]);
+  });
+
+  it("pairs no native glyph with an accent before it: native fonts set letters whole", () => {
+    const acute: PageItem = { kind: "glyph", font: 0, code: 19, h: 0, v: 0, width: 5 };
+    const named: GlyphTextOf = Object.assign(
+      (item: PageItem, glyph?: number) => (item.kind === "glyph" ? "´" : nativeText(item, glyph)),
+      { accent: (item: PageItem) => (item.kind === "glyph" ? "́" : undefined) },
+    );
+    const field = collectFields(page([special("rt:b:f"), acute, run("e")]), named).get("f");
+    expect(field?.glyphs.map((g) => g.text)).toEqual(["´", "e"]);
+  });
+});
+
 describe("collectFields with accents", () => {
   // accents.dvi sets, in cmr10, OT1's `caf\'e \'Etude na\"\i ve` in one field, and
   // `\textasciitilde mara\^{}x` in another: the same accent glyphs, standing alone.
@@ -396,6 +442,19 @@ describe("alignGlyphs", () => {
     const quote = fieldOf(["a", low, "b"]);
     expect(alignGlyphs(quote, "a\u{201e}b")).toBe(0);
     expect(quote.glyphs.map((g) => g.offset)).toEqual([0, 1, 2]);
+  });
+
+  it("matches what XeTeX's tex-text mapping sets to what the text spells", () => {
+    // A native font's glyph reads as the character its map gives it, which the mapping made of
+    // the text's --, ---, ', `, '', ``, " and ,, as TeX's ligatures do.
+    const glyphs = ["\u{2019}", "\u{2013}", "\u{2014}", "\u{201c}", "\u{201d}", "\u{2018}"];
+    const f = fieldOf([...glyphs, "\u{201d}", "\u{201e}"]);
+    expect(alignGlyphs(f, "'-- ---``''`\",,")).toBe(0);
+    expect(f.glyphs.map((g) => g.offset)).toEqual([0, 1, 4, 7, 9, 11, 12, 13]);
+    // And each still matches itself, where a text holds it.
+    const typed = fieldOf(["\u{2019}", "\u{2013}"]);
+    expect(alignGlyphs(typed, "\u{2019}\u{2013}")).toBe(0);
+    expect(typed.glyphs.map((g) => g.offset)).toEqual([0, 1]);
   });
 
   it("matches T1's one glyph for Ð and Đ to either", () => {

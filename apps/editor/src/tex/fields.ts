@@ -6,15 +6,18 @@
  * and come out in the DVI at the positions where the field starts and ends. The first
  * copy of a field on the page is the field: every glyph that sits between its markers in
  * stream order belongs to it, and aligning those glyphs with the field's source text
- * gives each glyph its character offset.
+ * gives each glyph its character offset. A glyph is a TeX font's character, one page item, or one
+ * glyph of a run XeTeX set in a native font, which is one item for the whole run (decision 0014).
  */
 
 import type { DviPage, PageItem } from "./dvi";
 import { accented } from "./glyphs";
 
 export interface FieldGlyph {
-  /** Index of the glyph in the page's item list. */
+  /** Index of the glyph in the page's item list, or of the native run it is a glyph of. */
   item: number;
+  /** The glyph's index in its native run's `glyphs`, when `item` is a native run. */
+  glyph?: number;
   /**
    * The other page items that draw this character: the accent TeX's `\accent` set over the
    * letter `item` draws, which reads with it as one accented letter (`collectFields`).
@@ -44,9 +47,12 @@ export const MARKER_END = "rt:e:";
  */
 export const INVISIBLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu;
 
-/** Text a page item stands for, or undefined for items that are not glyphs. */
+/**
+ * Text a page item stands for, or undefined for items that are not glyphs: for a native run, the
+ * text of its glyph at index `glyph`, since each glyph of a run is a glyph of its own.
+ */
 export interface GlyphTextOf {
-  (item: PageItem): string | undefined;
+  (item: PageItem, glyph?: number): string | undefined;
   /**
    * The combining mark a glyph stands for when it is a spacing accent (its glyph name is in
    * `ACCENTS`), and undefined for any other item. Without it, no accent is paired with its letter.
@@ -93,6 +99,10 @@ const LETTER = /^\p{L}$/u;
  * or lower than the letter, in the box TeX shifts for a letter taller or shorter than the
  * x-height, so the test does not look at v. It needs the fonts' widths, so the page and the
  * validation harness both parse the DVI with them.
+ *
+ * A native run's glyphs are collected one by one, each with its index in the run and the text
+ * `textOf` gives it, so that each is aligned with the text as a TeX font's glyph is. Native fonts
+ * set accented letters whole, so none of their glyphs is paired with another.
  */
 export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, Field> {
   const fields = new Map<string, Field>();
@@ -122,6 +132,13 @@ export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, F
     if (item.kind !== "glyph" && item.kind !== "native") return;
     const field = open.at(-1)?.field;
     if (!field) return;
+    if (item.kind === "native") {
+      accents.delete(field);
+      item.glyphs.forEach((_, glyph) =>
+        field.glyphs.push({ item: index, glyph, text: textOf(item, glyph), offset: -1 }),
+      );
+      return;
+    }
     const text = textOf(item);
     const mark = accents.get(field);
     accents.delete(field);
@@ -284,6 +301,12 @@ function spellingsOf(text: string): readonly string[] {
 /**
  * Source spellings that produce a given glyph, the plain form first. A map, since it is looked up
  * by a glyph's text, which may be any word a glyph name spells, `constructor` among them.
+ *
+ * The first entries are a TeX font's ligatures and quotes, named as Computer Modern names them,
+ * and the characters T1 and TS1 set from more than one. The rest are the characters XeTeX's
+ * `tex-text` mapping (`tex-text.map`), which a XeTeX template's text fonts take (decision 0014),
+ * makes of what a text spells as TeX would, the low double quote among the first: a native font's
+ * glyph reads as the character its character map gives it, `–` for the `--` it was set from.
  */
 const LIGATURE_ALTERNATIVES: ReadonlyMap<string, readonly string[]> = new Map([
   ["--", ["--", "–"]],
@@ -300,4 +323,16 @@ const LIGATURE_ALTERNATIVES: ReadonlyMap<string, readonly string[]> = new Map([
   // mathematical ones, the CJK ones, and the deprecated ones, which NFC makes the CJK ones.
   ["\u{27e8}", ["\u{27e8}", "\u{3008}", "\u{2329}"]],
   ["\u{27e9}", ["\u{27e9}", "\u{3009}", "\u{232a}"]],
+  // What XeTeX's tex-text mapping sets for what a text spells as TeX would; its low double quote
+  // is T1's, above.
+  ["–", ["–", "--"]],
+  ["—", ["—", "---"]],
+  ["’", ["’", "'"]],
+  ["‘", ["‘", "`"]],
+  ["”", ["”", "''", '"']],
+  ["“", ["“", "``"]],
+  ["¡", ["¡", "!`"]],
+  ["¿", ["¿", "?`"]],
+  ["«", ["«", "<<"]],
+  ["»", ["»", ">>"]],
 ]);

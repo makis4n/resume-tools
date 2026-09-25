@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
+import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls } from "../templates/package";
 import { parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
@@ -157,6 +158,33 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     const page = parseDvi(first.output as Uint8Array, () => undefined).pages[0];
     const fields = collectFields(page as NonNullable<typeof page>, () => undefined);
     expect(fields.size).toBe(30);
+  }, 60_000);
+
+  it("compiles a XeTeX template's body from a format that holds no native font", () => {
+    // Decision 0003's loop on the invented XeTeX template (decision 0014): the declarations are
+    // dumped, and the fonts load when the body selects them, on every compile.
+    const { package: pkg, sample } = INVENTED_XETEX;
+    const values = defaultControls(pkg);
+    const format = generateFormat(pkg, values);
+    const dumped = session.dump("xetex", format.name, format.preamble, format.files);
+    expect(dumped.error).toBeUndefined();
+    const body = generateBody(pkg, sample, values).latex;
+    const first = session.compile("xetex", format.name, body, { job: "xetime" });
+    expect(first.error).toBeUndefined();
+    expect(first.passes).toHaveLength(2);
+    const times: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const again = session.compile("xetex", format.name, body, { job: "xetime" });
+      expect(again.passes).toHaveLength(1);
+      times.push(...again.passes);
+    }
+    times.sort((a, b) => a - b);
+    const median = ((times[4] ?? 0) + (times[5] ?? 0)) / 2;
+    console.log(
+      `invented XeTeX template: dump ${dumped.ms.toFixed(0)} ms, ${((dumped.format?.length ?? 0) / 2 ** 20).toFixed(1)} MB; first open ${first.passes.map((ms) => ms.toFixed(0)).join(" + ")} ms; body median of ten ${median.toFixed(0)} ms`,
+    );
+    // Generous, so that a pathological slowdown fails and an ordinary slow machine does not.
+    expect(median).toBeLessThan(2_000);
   }, 60_000);
 
   it("forgets a job's files when it moves to another format", () => {
@@ -621,6 +649,69 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(more).toEqual([]);
       expect(box?.width).toBeCloseTo(595.28, 1);
       expect(box?.height).toBeCloseTo(841.89, 1);
+    }, 60_000);
+
+    it("from a XeTeX template's format as from a whole compile, but for what nothing links to", () => {
+      // Decision 0003's loop: the format holds the preamble and the fonts' declarations, and the
+      // body alone is compiled. \dump drops what hyperref and xcolor write at the first shipout,
+      // which a whole compile from the stock format keeps (decision 0014).
+      const { package: pkg, sample } = INVENTED_XETEX;
+      const values = defaultControls(pkg);
+      const format = generateFormat(pkg, values);
+      expect(session.dump("xetex", format.name, format.preamble, format.files).ok).toBe(true);
+      const body = generateBody(pkg, sample, values);
+      const loop = session.compile("xetex", format.name, body.latex, { job: "xeloop" });
+      const whole = session.compile("xetex", "stock", `${format.preamble}\n${body.latex}`, {
+        job: "xewhole",
+      });
+      expect(loop.error).toBeUndefined();
+      expect(whole.error).toBeUndefined();
+      const [looped, wholly] = [loop, whole].map((result) => {
+        const doc = parseDvi(result.output as Uint8Array, () => undefined);
+        const items = doc.pages.flatMap((page) => page.items);
+        const specials = items.flatMap((item) => (item.kind === "special" ? [item.text] : []));
+        return { specials, drawn: items.filter((item) => item.kind !== "special") };
+      });
+      // The same glyphs, rules and runs, and the same specials but for these, which the whole
+      // compile writes first: the PDF's version, a compatibility flag that keeps named
+      // destinations nothing links to, and a black to start the colour stack with.
+      expect(looped?.drawn).toEqual(wholly?.drawn);
+      const lost = [...(wholly?.specials ?? [])];
+      const gained: string[] = [];
+      for (const special of looped?.specials ?? []) {
+        const at = lost.indexOf(special);
+        if (at < 0) gained.push(special);
+        else lost.splice(at, 1);
+      }
+      expect(gained).toEqual([]);
+      expect(lost.sort()).toEqual([
+        "color push gray 0",
+        "dvipdfmx:config C 0x0010",
+        "pdf:majorversion 1",
+        "pdf:minorversion 5",
+      ]);
+      // So the PDFs are the same version, size, text, links and colours; the whole compile's
+      // only has the two named destinations hyperref makes, which nothing links to.
+      const fromLoop = session.pdf("xeloop", { compress: 0 }).pdf ?? new Uint8Array();
+      const fromWhole = session.pdf("xewhole", { compress: 0 }).pdf ?? new Uint8Array();
+      const read = (pdf: Uint8Array) => {
+        const all = text(pdf);
+        return {
+          version: all.slice(0, 8),
+          boxes: mediaBoxes(pdf),
+          shown: shownStrings(pdf),
+          links: [...all.matchAll(/\/URI\s*\(([^)]*)\)/g)].map((match) => match[1]),
+          colours: [...all.matchAll(/[\d.]+ [\d.]+ [\d.]+ (?:rg|RG)\b/g)].map((match) => match[0]),
+        };
+      };
+      expect(read(fromLoop)).toEqual(read(fromWhole));
+      expect(read(fromLoop).version).toBe("%PDF-1.5");
+      // The page's size from geometry's pdf:pagesize, which xdvipdfmx is left to honour.
+      expect(read(fromLoop).boxes).toEqual([{ width: 612, height: 792 }]);
+      expect(read(fromLoop).shown.join(" ")).toContain(sample.header.name.last);
+      expect(read(fromLoop).colours.length).toBeGreaterThan(0);
+      expect(text(fromWhole)).toMatch(/\/Names\s*\[\(Doc-Start\)\d+ 0 R\(page\.1\)\d+ 0 R\]/);
+      expect(text(fromLoop)).not.toMatch(/\(Doc-Start\)|\(page\.1\)/);
     }, 60_000);
 
     it("honours a pdf:pagesize special in a pdfTeX DVI too", () => {

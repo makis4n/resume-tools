@@ -1,20 +1,24 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Font, parse } from "opentype.js";
+import { Font, Glyph, Path, parse } from "opentype.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable } from "../engine/node";
 import { type FontOutlines, glyphOf, glyphTable, glyphText } from "../tex/glyphs";
 import { parseTfm } from "../tex/tfm";
 import { parseType1 } from "../tex/type1";
-import { FontLibrary, type PageFont } from "./fonts";
+import { FontLibrary, type NativePageFont, type PageFont } from "./fonts";
+import { parseNativeFont } from "./native";
 import { TexLiveIndex } from "./texlive";
 import {
+  ASCENT,
   buildWebFont,
+  nativeWebFontOf,
   pathOf,
   registerWebFont,
   typedCodes,
   webFontFamily,
+  webFontMetrics,
   webFontOf,
 } from "./webfont";
 
@@ -25,6 +29,7 @@ const fixture = (name: string) =>
 function cmr10(): PageFont {
   const outlines = parseType1(fixture("cmr10.pfb"));
   return {
+    kind: "tex",
     name: "cmr10",
     tfm: parseTfm(fixture("cmr10.tfm")),
     outlines,
@@ -190,6 +195,7 @@ describe("registerWebFont", () => {
     // What FontLibrary gives while a font's outlines cannot be read, as when its .pfb's request
     // fails once: its metrics, and why it has no outlines.
     const spoiled: PageFont = {
+      kind: "tex",
       name: page.name,
       tfm: page.tfm,
       missing: "HTTP 503",
@@ -207,6 +213,65 @@ describe("registerWebFont", () => {
     expect(added).toEqual(["rt-cmr10-again"]);
     expect(await registerWebFont(page.name, build(page))).toBe(face);
     expect(builds).toBe(2);
+  });
+});
+
+describe("a native font's web font", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A native font as the page loads it, from a file opentype.js writes: an x and its metrics. */
+  function invented(): NativePageFont {
+    const x = new Path();
+    x.moveTo(0, 0);
+    x.lineTo(400, 600);
+    x.close();
+    const font = new Font({
+      familyName: "Invented",
+      styleName: "Regular",
+      unitsPerEm: 2000,
+      ascender: 1900,
+      descender: -500,
+      glyphs: [
+        new Glyph({ name: ".notdef", advanceWidth: 500, path: new Path() }),
+        new Glyph({ name: "x", unicodes: [0x78], advanceWidth: 400, path: x }),
+      ],
+    });
+    const file = parseNativeFont(new Uint8Array(font.toArrayBuffer()));
+    return { kind: "native", name: "Invented-Regular.otf", file };
+  }
+
+  it("is the file itself, which the browser registers as it is, with nothing built", async () => {
+    const native = invented();
+    const bytes = nativeWebFontOf(native);
+    expect(new Uint8Array(bytes)).toEqual(native.file?.bytes);
+    // A copy, which the browser may take.
+    expect(bytes).not.toBe(native.file?.bytes.buffer);
+    const faces: { family: string; data: ArrayBuffer }[] = [];
+    class FakeFontFace {
+      constructor(
+        readonly family: string,
+        readonly data: ArrayBuffer,
+      ) {}
+      load() {
+        return Promise.resolve(this);
+      }
+    }
+    vi.stubGlobal("FontFace", FakeFontFace);
+    vi.stubGlobal("document", { fonts: { add: (face: FakeFontFace) => faces.push(face) } });
+    await registerWebFont(native.name, () => nativeWebFontOf(native));
+    expect(faces.map((face) => face.family)).toEqual(["rt-Invented-Regular.otf"]);
+    expect(parse(faces[0]?.data as ArrayBuffer).unitsPerEm).toBe(2000);
+    // A font whose file could not be read has none.
+    expect(() => nativeWebFontOf({ ...native, file: undefined, missing: "HTTP 503" })).toThrow(
+      "HTTP 503",
+    );
+  });
+
+  it("lays its rows out with the file's own ascent and descent", () => {
+    expect(webFontMetrics(invented())).toEqual({ ascent: 0.95, descent: 0.25 });
+    expect(webFontMetrics(cmr10())).toEqual({ ascent: ASCENT, descent: 1 - ASCENT });
   });
 });
 

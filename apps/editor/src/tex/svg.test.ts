@@ -115,6 +115,32 @@ describe("renderPage on a hand-built native run", () => {
     expect(svg).not.toContain("Infinity");
   });
 
+  it("gives each glyph of a run its own field and offset, and a run's box its first glyph's", () => {
+    const glyphs = [
+      { id: 7, x: 0, y: 0 },
+      { id: 7, x: 5 * PT, y: 0 },
+    ];
+    const { doc: d, page } = doc({}, glyphs);
+    const fields = new Map([
+      [
+        "f",
+        {
+          id: "f",
+          glyphs: [
+            { item: 0, glyph: 0, text: "a", offset: 0 },
+            { item: 0, glyph: 1, text: "b", offset: 2 },
+          ],
+        },
+      ],
+    ]);
+    const svg = renderPage(d, page, { outlines: () => undefined, native: () => outlines, fields });
+    const uses = svg.match(/<use [^>]*>/g) ?? [];
+    expect(uses[0]).toContain('data-field="f" data-offset="0"');
+    expect(uses[1]).toContain('data-field="f" data-offset="2"');
+    const boxed = renderPage(d, page, { outlines: () => undefined, fields });
+    expect(boxed).toMatch(/<rect [^>]*data-field="f" data-offset="0"/);
+  });
+
   it("leaves out a glyph whose outline throws and keeps the rest", () => {
     const { doc: d, page } = doc({}, [
       { id: 7, x: 0, y: 0 },

@@ -14,9 +14,10 @@ import {
   paragraphNodes,
   richParagraphNodes,
   spaceGlue,
+  tfmFace,
   ZERO_GLUE,
 } from "./linebreak";
-import { applyLigKern, parseTfm, scaleTfm } from "./tfm";
+import { applyLigKern, parseTfm, type ScaledMetrics, scaleTfm } from "./tfm";
 import { parseType1 } from "./type1";
 
 const fixture = (name: string) =>
@@ -132,7 +133,7 @@ describe("paragraphNodes with Computer Modern", () => {
   const metrics = scaleTfm(tfm, 10 * PT);
   const outlines = parseType1(fixture("cmr10.pfb"));
   const codes = textToCode(outlines.encoding);
-  const face: Face = { tfm, metrics, codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+  const face = tfmFace(tfm, metrics, (ch) => codes.get(ch));
 
   it("turns ligatures into one box that covers their characters", () => {
     const nodes = paragraphNodes("office", face);
@@ -174,7 +175,7 @@ describe("paragraphNodes over the text as the generator writes it", () => {
   const tfm = parseTfm(fixture("cmr10.tfm"));
   const metrics = scaleTfm(tfm, 10 * PT);
   const codes = textToCode(parseType1(fixture("cmr10.pfb")).encoding);
-  const face: Face = { tfm, metrics, codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+  const face = tfmFace(tfm, metrics, (ch) => codes.get(ch));
   const glues = (nodes: Node[]) => nodes.filter((n) => n.kind === "glue");
   const boxes = (nodes: Node[]) =>
     nodes.flatMap((n) => (n.kind === "box" ? [[n.offset, n.end, n.width]] : []));
@@ -263,7 +264,7 @@ describe("paragraphNodes over the text as the generator writes it", () => {
     // LaTeX takes € from TS1 in a T1 paragraph: a box of that font, which ends the f's run, so the
     // f and the i beside it make no ligature.
     const euro = 7 * PT;
-    const withEuro: Face = { ...face, widthOf: (ch) => (ch === "\u20ac" ? euro : undefined) };
+    const withEuro: Face = { ...face, fallbackWidth: (ch) => (ch === "\u20ac" ? euro : undefined) };
     expect(boxes(paragraphNodes("f\u20aci", withEuro))).toEqual([
       [0, 1, metrics.widths[102]],
       [1, 2, euro],
@@ -276,13 +277,55 @@ describe("paragraphNodes over the text as the generator writes it", () => {
   });
 });
 
+describe("paragraphNodes with a face that has no ligature and kern program", () => {
+  // A native font's face, as XeTeX sets one: codes are glyphs, here a character's code plus 1000,
+  // each as wide as its code's last two digits in points, and nothing is joined or kerned.
+  const space = { space: 3 * PT, stretch: 1.5 * PT, shrink: PT, extraSpace: PT };
+  const face: Face = {
+    codeFor: (ch) => (ch === "\u{1f600}" ? undefined : 1000 + (ch.codePointAt(0) ?? 0)),
+    widthOf: (glyph) => (glyph % 100) * PT,
+    italicOf: () => 0,
+    slant: 0,
+    spaceGlue: () => space,
+    hyphenChar: 1000 + 45,
+  };
+
+  it("sets each character as a box of its own, with no ligature or kern", () => {
+    const nodes = paragraphNodes("office AV", face);
+    expect(nodes.filter((node) => node.kind === "kern")).toEqual([]);
+    const boxes = nodes.flatMap((node) =>
+      node.kind === "box" ? [[node.offset, node.end, node.code]] : [],
+    );
+    expect(boxes).toEqual(
+      [..."officeAV"].map((ch, i) => [
+        i < 6 ? i : i + 1,
+        i < 6 ? i + 1 : i + 2,
+        1000 + (ch.codePointAt(0) ?? 0),
+      ]),
+    );
+    expect(nodes[0]).toMatchObject({ kind: "box", width: ((1000 + 111) % 100) * PT });
+  });
+
+  it("builds its spaces from the face's glue, and breaks after its hyphen", () => {
+    const [glue] = paragraphNodes("end. Next", face).filter((node) => node.kind === "glue");
+    expect(glue).toMatchObject({ width: 4 * PT, stretch: 4.5 * PT });
+    expect(paragraphNodes("re-use", face).some((node) => node.kind === "disc")).toBe(true);
+    // A character the face has no glyph for sets nothing, as XeTeX drops it.
+    expect(paragraphNodes("a\u{1f600}b", face).filter((node) => node.kind === "box")).toHaveLength(
+      2,
+    );
+  });
+});
+
 describe("richParagraphNodes over runs in several fonts", () => {
   // Computer Modern's roman, bold and italic share OT1's layout for letters, so cmr10's glyph
   // names give the codes of all three.
   const codes = textToCode(parseType1(fixture("cmr10.pfb")).encoding);
-  const faceOf = (name: string): Face => {
+  /** A face of a TFM at 10 pt, with its scaled metrics beside it for the tests to measure by. */
+  const faceOf = (name: string): Face & { metrics: ScaledMetrics } => {
     const tfm = parseTfm(fixture(`${name}.tfm`));
-    return { tfm, metrics: scaleTfm(tfm, 10 * PT), codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+    const metrics = scaleTfm(tfm, 10 * PT);
+    return { ...tfmFace(tfm, metrics, (ch) => codes.get(ch)), metrics };
   };
   const roman = faceOf("cmr10");
   const bold = faceOf("cmbx10");
@@ -290,7 +333,8 @@ describe("richParagraphNodes over runs in several fonts", () => {
   const boxes = (nodes: Node[]) =>
     nodes.flatMap((n) => (n.kind === "box" ? [[n.offset, n.end, n.width]] : []));
   const glues = (nodes: Node[]) => nodes.filter((n) => n.kind === "glue");
-  const widthOf = (face: Face, ch: string) => face.metrics.widths[codes.get(ch) ?? -1];
+  const widthOf = (face: ReturnType<typeof faceOf>, ch: string) =>
+    face.metrics.widths[codes.get(ch) ?? -1];
 
   it("sets a bold word in the middle of a line in the bold face's widths", () => {
     const nodes = richParagraphNodes([
@@ -452,8 +496,8 @@ describe("richParagraphNodes over runs in several fonts", () => {
     const correction = Math.round(1.0655 * PT);
     const withDegree: Face = {
       ...italic,
-      widthOf: (ch) => (ch === "\u00b0" ? 4 * PT : undefined),
-      italicOf: (ch) => (ch === "\u00b0" ? correction : undefined),
+      fallbackWidth: (ch) => (ch === "\u00b0" ? 4 * PT : undefined),
+      fallbackItalic: (ch) => (ch === "\u00b0" ? correction : undefined),
     };
     const nodes = richParagraphNodes([
       { text: "minus 20\u00b0", face: withDegree, italicCorrection: true },
@@ -527,7 +571,7 @@ describe("breaking the spike's three-line bullet where TeX did", () => {
   const metrics = scaleTfm(tfm, 10 * PT);
   const outlines = parseType1(fixture("cmr10.pfb"));
   const codes = textToCode(outlines.encoding);
-  const face: Face = { tfm, metrics, codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+  const face = tfmFace(tfm, metrics, (ch) => codes.get(ch));
 
   // What TeX did, read back from the DVI: the field's glyphs grouped by baseline.
   const widthsFor = (font: DviFont) =>
@@ -601,7 +645,7 @@ describe("line ranges tile the text", () => {
   const tfm = parseTfm(fixture("cmr10.tfm"));
   const metrics = scaleTfm(tfm, 10 * PT);
   const codes = textToCode(parseType1(fixture("cmr10.pfb")).encoding);
-  const face: Face = { tfm, metrics, codeFor: (ch) => codes.get(ch), hyphenChar: 45 };
+  const face = tfmFace(tfm, metrics, (ch) => codes.get(ch));
   const narrow = { ...LATEX_PARAMS, lines: [{ indent: 0, width: 60 * PT }], rightSkip: FIL_GLUE };
   const rangesOf = (text: string, params = narrow) => {
     const nodes = paragraphNodes(text, face);

@@ -11,11 +11,16 @@
  * The font has no `liga`, `kern` or other layout features. The breaker lays the overlay's lines
  * out with TeX's ligature and kern program, but the rows are plain text the browser shapes, and
  * giving the browser those programs as GSUB and GPOS tables is decision 0004's later step.
+ *
+ * A field XeTeX set in a native font is shown in the font's own file (decision 0014), registered
+ * as it is under `rt-<file name>`, with nothing built: the page draws from the same file. The
+ * overlay turns off the browser's kerning and ligatures, so the file's shapes set a row as the
+ * breaker measured it.
  */
 
 import { Font, Glyph, Path } from "opentype.js";
 import { type FontOutlines, type GlyphOutline, glyphOf, textToCode } from "../tex/glyphs";
-import type { PageFont } from "./fonts";
+import type { NativePageFont, PageFont } from "./fonts";
 
 /** The em the outlines are in, as Type 1 fonts and `FontOutlines` have it. */
 const UNITS_PER_EM = 1000;
@@ -30,9 +35,26 @@ export const ASCENT = 0.8;
 const ASCENDER = ASCENT * UNITS_PER_EM;
 const DESCENDER = ASCENDER - UNITS_PER_EM;
 
-/** The CSS font family the web font for the TeX font `name` is registered as. */
+/**
+ * The CSS font family the web font for the TeX font `name`, or the native font file `name`, is
+ * registered as. A TeX font's name never ends in `.otf` or `.ttf`, so the two never meet.
+ */
 export function webFontFamily(name: string): string {
   return `rt-${name}`;
+}
+
+/**
+ * The ascent and descent a web font's rows are laid out with, as fractions of the em: `ASCENT`
+ * and the rest of the em for a font built from a TeX font's outlines, and a native font's own,
+ * from its file (`NativeFontFile.ascent`), which a browser reads there.
+ */
+export function webFontMetrics(font: PageFont | NativePageFont): {
+  ascent: number;
+  descent: number;
+} {
+  if (font.kind === "native" && font.file !== undefined)
+    return { ascent: font.file.ascent, descent: font.file.descent };
+  return { ascent: ASCENT, descent: 1 - ASCENT };
 }
 
 /**
@@ -168,13 +190,23 @@ export function webFontOf(font: PageFont): ArrayBuffer {
   return buildWebFont(font.name, font.outlines, font.text, space);
 }
 
+/**
+ * The web font for a native font: a copy of the file's own bytes, an OpenType or TrueType font a
+ * browser reads as it is. Throws for a font whose file could not be read.
+ */
+export function nativeWebFontOf(font: NativePageFont): ArrayBuffer {
+  if (font.file === undefined) throw new Error(`${font.name} cannot be read: ${font.missing}`);
+  return font.file.bytes.slice().buffer;
+}
+
 /** The web fonts registered with the document, by family, each for the page's life. */
 const registered = new Map<string, Promise<FontFace>>();
 
 /**
- * The web font for the TeX font `name`, registered with the document: built by `build` the first
- * time any field in the font is opened and kept for the page's life, so that each font is built
- * once. It resolves once the browser has loaded the font, so that text set in it lays out in its
+ * The web font for the TeX font or the native font file `name`, registered with the document:
+ * made by `build`, which builds a TeX font's or copies a native font's file, the first time any
+ * field in the font is opened, and kept for the page's life, so that each font is made once. It
+ * resolves once the browser has loaded the font, so that text set in it lays out in its
  * metrics from the first frame. It rejects when the build throws or the browser refuses the font,
  * and that is forgotten once it settles, so that the next field opened in the font tries again: a
  * font whose outlines could not be read this time has them after a later page reads them again,

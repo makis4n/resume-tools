@@ -24,8 +24,9 @@
 import type { Resume, RichText } from "@resume-tools/resume-model";
 import { summariseLog } from "../engine/log";
 import type { CompileResult, DumpResult, EngineSession, PdfResult } from "../engine/session";
-import { glyphTextOf, paperSize, widthsOf } from "../page/draw";
-import type { FontLibrary, PageFont } from "../page/fonts";
+import { glyphTextOf, nativeProblem, paperSize, widthsOf } from "../page/draw";
+import type { FontLibrary, NativePageFont, PageFont } from "../page/fonts";
+import { nativeFileName } from "../page/native";
 import { CURATED } from "../templates/curated";
 import { isBlank } from "../templates/escape";
 import { generateBody, generateFormat } from "../templates/generate";
@@ -663,8 +664,10 @@ function alignmentProblem(field: Field, text: string, coverage: boolean): string
  * fonts LaTeX's T1 and TS1 take for Computer Modern, which the tree has only the metrics of. Each
  * font is loaded as the page loads it (`readFields`), and the loader says why one cannot be drawn,
  * or what went wrong reading its files. A glyph from a font that cannot be drawn has no text, so a
- * field that holds one fails the alignment check as well. XeTeX's native fonts are not among them
- * yet: the page draws them from item 21 on.
+ * field that holds one fails the alignment check as well. XeTeX's native fonts are among them, by
+ * their file's name (decision 0014): one the tree lacks, one that cannot be read, and one XeTeX
+ * set emboldened or from a later face of a collection, which the page draws as boxes
+ * (`nativeProblem`).
  */
 function checkFonts(undrawable: ReadonlyMap<string, string>): Finding[] {
   return [...undrawable].map(
@@ -842,6 +845,12 @@ const PDF_SIZE_TOLERANCE = 0.01;
 const SHOWN_AS_ITSELF = /^[A-Za-z0-9.,:;!?'()[\]@#%&*+=/-]+$/;
 
 /**
+ * The single quotes XeTeX's `tex-text` mapping sets for the straight apostrophe and backtick a
+ * text holds, which a native font's ToUnicode map reads as themselves (decision 0014).
+ */
+const CURLED = /[\u2018\u2019]/g;
+
+/**
  * Characters TeX's text fonts may set as one glyph, a ligature, under a code of its own, which
  * differs from OT1 to T1: ff, fi and fl, the dashes, the closing double quote, and in T1 the low
  * double quote that two commas make.
@@ -856,7 +865,9 @@ const LIGATURE = /ff|fi|fl|--|''|,,/;
  * A field is looked for by its first word, its text up to the first space, among the strings the
  * PDF's text operators show, where the glyphs' codes stand for the characters, which holds only
  * for what `SHOWN_AS_ITSELF` allows, and not for a ligature; a field whose first word has a
- * character outside ASCII, or anything else those rule out, is skipped. A first word TeX broke at
+ * character outside ASCII, or anything else those rule out, is skipped. A native font's text,
+ * XeTeX's, is read through its ToUnicode map (`shownStrings`), where the quotes XeTeX's
+ * `tex-text` mapping curls read as the straight ones the text holds. A first word TeX broke at
  * a line end lands in two text operators, its halves split by a hyphen TeX inserted, so a word not
  * in any one string is looked for in the strings joined, with that hyphen anywhere inside it. A
  * field the fields or alignment checks report (`reported`) is left to them. A PDF xdvipdfmx cannot
@@ -895,7 +906,7 @@ function checkPdf(
       check: "pdf",
       message: "no font of the PDF has a ToUnicode map, so its text cannot be read",
     });
-  const shown = shownStrings(pdf);
+  const shown = shownStrings(pdf).map((text) => text.replace(CURLED, "'"));
   // The operators joined in order, nothing between them, so a first word broken across two of them
   // reads as one, its halves split by the hyphen TeX inserted at the break.
   const joined = shown.join("");
@@ -940,11 +951,11 @@ function readDvi(output: Uint8Array): DviDocument {
 /**
  * The fields an output's pages show, and the fonts the page cannot draw them with, with the
  * reason. Each font `doc`, the output as `readDvi` parsed it, uses is loaded once, as the page
- * loads it; the output is parsed again with their widths, as the page parses it, since whether an
- * accent stands over the letter after it depends on where each starts (`collectFields`); and each
- * glyph is named as the page names it (`glyphTextOf`), so a glyph from a font that cannot be
- * drawn has no text. A field is the first copy the pages show, page by page, as `collectFields`
- * keeps it on each.
+ * loads it, TeX fonts and XeTeX's native ones alike; the output is parsed again with the TeX
+ * fonts' widths, as the page parses it, since whether an accent stands over the letter after it
+ * depends on where each starts (`collectFields`); and each glyph is named as the page names it
+ * (`glyphTextOf`), so a glyph from a font that cannot be drawn has no text. A field is the first
+ * copy the pages show, page by page, as `collectFields` keeps it on each.
  */
 async function readFields(
   fonts: FontLibrary,
@@ -968,8 +979,22 @@ async function readFields(
     loaded.set(name, font);
     if (font.missing !== undefined) undrawable.set(name, font.missing);
   }
+  const natives = new Map<string, NativePageFont>();
+  for (const name of new Set([...doc.nativeFonts.values()].map((f) => nativeFileName(f.name)))) {
+    try {
+      const font = await fonts.loadNative(name);
+      if (font !== undefined) natives.set(name, font);
+    } catch (error) {
+      undrawable.set(name, messageOf(error));
+    }
+  }
+  for (const def of doc.nativeFonts.values()) {
+    const name = nativeFileName(def.name);
+    const problem = undrawable.has(name) ? undefined : nativeProblem(def, natives.get(name));
+    if (problem !== undefined) undrawable.set(name, problem);
+  }
   const placed = parseDvi(output, widthsOf(loaded));
-  return { fields: fieldsOf(placed, glyphTextOf(placed, loaded)), undrawable };
+  return { fields: fieldsOf(placed, glyphTextOf(placed, loaded, natives)), undrawable };
 }
 
 /** The first copy of each field the pages show, page by page, as `collectFields` finds them. */

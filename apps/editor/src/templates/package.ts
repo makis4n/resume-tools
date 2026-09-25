@@ -12,6 +12,10 @@
  * address, so a package that parses is one the generator can render. The marker macros are not a
  * package's: they are the editor's, and the generator appends them to the preamble when it dumps
  * the format.
+ *
+ * A XeTeX package names its fonts by file (decision 0014): each family's shapes as OpenType or
+ * TrueType files of the TeX Live tree, which the generator declares to NFSS in the format, and
+ * which XeTeX loads only when a shape is selected, so that the format holds no native font.
  */
 
 import {
@@ -204,6 +208,62 @@ const Snippets = z.strictObject({
     .prefault({}),
 });
 
+/**
+ * A shape of a font family, as `<series>/<shape>` of the NFSS values a resume needs: the series
+ * medium, bold and bold extended, which LaTeX's `\bfseries` asks for, and the shapes upright,
+ * italic, slanted and small capitals.
+ */
+export const FontShapeKey = z.enum([
+  "m/n",
+  "m/it",
+  "m/sl",
+  "m/sc",
+  "b/n",
+  "b/it",
+  "b/sl",
+  "b/sc",
+  "bx/n",
+  "bx/it",
+  "bx/sl",
+  "bx/sc",
+]);
+export type FontShapeKey = z.infer<typeof FontShapeKey>;
+
+/**
+ * A font file of the tree, by its plain name, as XeTeX's `[<file>]` syntax takes it inside a
+ * declaration's quotes: letters, digits, `.`, `_`, `+` and `-`, not starting with a dot, and an
+ * OpenType or TrueType extension. Every font file of the tree's `fonts/opentype` and
+ * `fonts/truetype` has such a name.
+ */
+const FontFile = z
+  .string()
+  .refine(
+    (name) => isFileName(name) && /^[A-Za-z0-9._+-]+\.(?:otf|ttf)$/.test(name),
+    "a font file is a plain file name of letters, digits, ., _, + and -, ending in .otf or .ttf",
+  );
+
+/**
+ * One family of a XeTeX package's fonts (decision 0014): its NFSS name, the file each shape is
+ * set from, and the XeTeX features every shape loads with, such as `mapping=tex-text`, which
+ * sets `--` as an en dash and quotes as curly ones as TeX's own fonts do. The features go inside
+ * the declaration's quotes after a colon, so they hold none of `[`, `]`, `"` or `:`, and nothing
+ * else TeX would read as syntax either: letters, digits, `=`, `;`, `+`, `-`, `.` and `_`.
+ */
+const FontFamily = z.strictObject({
+  family: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/, "a font family is letters and digits"),
+  shapes: z
+    .partialRecord(FontShapeKey, FontFile)
+    .refine((shapes) => Object.keys(shapes).length > 0, "a font family has at least one shape"),
+  features: z
+    .string()
+    .regex(
+      /^[A-Za-z0-9=;+._-]+$/,
+      "font features are letters, digits, =, ;, +, -, . and _, as XeTeX's feature syntax has them",
+    )
+    .optional(),
+});
+export type FontFamily = z.infer<typeof FontFamily>;
+
 /** A package id is a model id that the engine also takes as a format name. */
 const PackageId = z
   .string()
@@ -237,6 +297,11 @@ export const TemplatePackage = z
             });
       })
       .default({}),
+    /**
+     * A XeTeX package's fonts, each family's shapes by file, which the generator declares after
+     * the preamble (decision 0014). A pdfTeX package has none: its fonts come from TeX Live's maps.
+     */
+    fonts: z.array(FontFamily).optional(),
     /** Everything before `\begin{document}`, dumped as the format. */
     preamble: Snippet,
     controls: Controls,
@@ -266,6 +331,25 @@ export const TemplatePackage = z
       if (typeof value === "string") check(value, slots, path);
       else checkEach(value, slots, path);
     };
+
+    if (pkg.fonts !== undefined) {
+      if (pkg.engine !== "xetex")
+        ctx.addIssue({
+          code: "custom",
+          message: "only a XeTeX package declares its fonts by file",
+          path: ["fonts"],
+        });
+      const families = new Set<string>();
+      pkg.fonts.forEach(({ family }, i) => {
+        if (families.has(family))
+          ctx.addIssue({
+            code: "custom",
+            message: `the font family ${family} is declared twice`,
+            path: ["fonts", i, "family"],
+          });
+        families.add(family);
+      });
+    }
 
     const { controls, snippets } = pkg;
     const formatBound: Record<string, SlotType> = {};

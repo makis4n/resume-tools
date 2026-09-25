@@ -26,6 +26,7 @@ const fixture = (name: string) =>
 function fontOf(name: string, tfm: string): PageFont {
   const outlines = parseType1(fixture("cmr10.pfb"));
   return {
+    kind: "tex",
     name,
     tfm: parseTfm(fixture(`${tfm}.tfm`)),
     outlines,

@@ -10,7 +10,8 @@
  * after the scheduler's pause. The browser wraps nothing: each row is a `<div>` of its own with
  * `white-space: pre`, and its `word-spacing` is the glue TeX sets on the line: the line's shortfall
  * shared between its spaces and its skips as TeX shares it. The rows are set in a web font built
- * from the page's own outlines (`page/webfont.ts`), and wait for it. When the compile's page
+ * from the page's own outlines (`page/webfont.ts`), or, for a field XeTeX set in a native font,
+ * in the font's own file (decision 0014), and wait for it. When the compile's page
  * arrives the overlay reads its place from the new page and stays open with its text and caret; a
  * page without the field leaves it where it was (`placementFor`), and only a document without the
  * field closes it (`shouldClose`).
@@ -29,11 +30,18 @@
 
 import { type Dates, type Resume, type RichText, YearMonth } from "@resume-tools/resume-model";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { DrawnPage, FieldFont, FieldLayout } from "../page/draw";
+import type { DrawnPage, FieldFont, FieldLayout, LayoutFont } from "../page/draw";
 import { companionName, variantFontNames } from "../page/fontnames";
-import type { FontLibrary, PageFont } from "../page/fonts";
+import type { FontLibrary, NativePageFont, PageFont } from "../page/fonts";
 import { breakParams, parseParagraph, startingAt } from "../page/paragraph";
-import { ASCENT, registerWebFont, typedCodes, webFontFamily, webFontOf } from "../page/webfont";
+import {
+  nativeWebFontOf,
+  registerWebFont,
+  typedCodes,
+  webFontFamily,
+  webFontMetrics,
+  webFontOf,
+} from "../page/webfont";
 import {
   type Node as BreakNode,
   type BreakParams,
@@ -45,6 +53,7 @@ import {
   lineRanges,
   paragraphNodes,
   richParagraphNodes,
+  tfmFace,
   ZERO_GLUE,
 } from "../tex/linebreak";
 import { scaleTfm } from "../tex/tfm";
@@ -141,7 +150,7 @@ export function layoutRows(text: string, face: Face, params: BreakParams | undef
   if (params === undefined) return [{ from: 0, to: text.length, wordSpacingSp: 0 }];
   const { spaceSkip, xspaceSkip } = params;
   const nodes = paragraphNodes(text, face, { spaceSkip, xspaceSkip });
-  return rowsOf(nodes, text.length, params, () => face.metrics.space);
+  return rowsOf(nodes, text.length, params, () => face.spaceGlue().space);
 }
 
 /**
@@ -155,7 +164,7 @@ export interface RichFaces {
 }
 
 /** Whether a face's font is slanted: its `\fontdimen1`, as LaTeX's `\maybe@ic` reads it. */
-const slanted = (face: Face) => (face.tfm.params[1] ?? 0) > 0;
+const slanted = (face: Face) => face.slant > 0;
 
 /**
  * Whether each variant's font is slanted, which decides LaTeX's italic corrections (`breakRuns`).
@@ -208,7 +217,7 @@ export function richRows(runs: RichText, faces: RichFaces, params: BreakParams |
     }
     return set[low]?.face ?? faces.letter;
   };
-  return rowsOf(nodes, length, params, (space) => faceAt(space.offset).metrics.space);
+  return rowsOf(nodes, length, params, (space) => faceAt(space.offset).spaceGlue().space);
 }
 
 /**
@@ -305,7 +314,7 @@ export function rowOf(rows: readonly Row[], offset: number): { row: number; colu
 
 /** A font at the size a page uses it, in TeX points. */
 export interface SizedFont {
-  font: PageFont;
+  font: LayoutFont;
   size: number;
 }
 
@@ -314,43 +323,84 @@ const codesOf = (font: PageFont) =>
   font.outlines ? typedCodes(font.outlines, font.text) : new Map<string, number>();
 
 /**
- * The breaker's face for a field: its letter font's TFM scaled as TeX scales it, and the code for
- * each character by the rule its web font's character map follows (`typedCodes`), so that a
- * character the breaker measures is the glyph the browser draws. A character the letter font has
- * no code for is measured in the first of `others`, the field's other fonts, that has one, at the
- * size the page uses it, as LaTeX takes `€`, `×` or `•` from a companion font such as TS1, with
- * that font's italic correction for a `\/` after it; the browser draws such a character in its
- * serif, a little off within the row but on the row TeX puts it on. A font with no outlines has no
- * codes, and what only it sets measures as nothing.
+ * A TeX font's face at a size in scaled points: its TFM scaled as TeX scales it, its ligature and
+ * kern program, and the code for each character by the rule its web font's character map follows
+ * (`typedCodes`), so that a character the breaker measures is the glyph the browser draws.
+ */
+function texFace(font: PageFont, size: number): Face {
+  const codes = codesOf(font);
+  return tfmFace(font.tfm, scaleTfm(font.tfm, size), (char) => codes.get(char));
+}
+
+/**
+ * A native font's face at a size in scaled points (decision 0014): each character's glyph from
+ * the file's character map, the glyph its web font, the file itself, draws, measured by its
+ * advance at the size, as XeTeX measures a glyph; the space the space glyph's advance, which XeTeX
+ * makes `\fontdimen2`, with half of it to stretch and a third to shrink, and a third more after a
+ * sentence, as XeTeX gives every native font its `\fontdimen3`, `4` and `7`; and neither
+ * ligatures nor kerns, which XeTeX's shaping applies within a word and the overlay leaves to the
+ * page. Its slant is its file's (`NativeFontFile.slant`), and a glyph's italic correction what
+ * its outline reaches past its advance, as XeTeX measures both. A font whose file could not be
+ * read measures every character as nothing.
+ */
+function nativeFace(font: NativePageFont, size: number): Face {
+  const { file } = font;
+  const scale = file === undefined ? 0 : size / file.unitsPerEm;
+  const space = Math.round((file?.spaceAdvance ?? 0) * scale);
+  const glue = {
+    space,
+    stretch: Math.trunc(space / 2),
+    shrink: Math.trunc(space / 3),
+    extraSpace: Math.trunc(space / 3),
+  };
+  return {
+    codeFor: (char) => file?.glyphFor(char),
+    widthOf: (glyph) => Math.round((file?.advanceOf(glyph) ?? 0) * scale),
+    italicOf: (glyph) => {
+      const past = (file?.boxOf(glyph)?.[2] ?? 0) - (file?.advanceOf(glyph) ?? 0);
+      return past > 0 ? Math.round(past * scale) : 0;
+    },
+    slant: file?.slant ?? 0,
+    spaceGlue: () => glue,
+    hyphenChar: file?.glyphFor("-") ?? -1,
+  };
+}
+
+/** A font's face at the size the page uses it, by its kind. */
+function faceOf({ font, size }: SizedFont): Face {
+  const scaled = Math.round(size * PT);
+  return font.kind === "native" ? nativeFace(font, scaled) : texFace(font, scaled);
+}
+
+/**
+ * The breaker's face for a field: its letter font's (`texFace` or `nativeFace`, by the font's
+ * kind). A character the letter font has no code for is measured in the first of `others`, the
+ * field's other fonts, that has one, at the size the page uses it, as LaTeX takes `€`, `×` or `•`
+ * from a companion font such as TS1, with that font's italic correction for a `\/` after it; the
+ * browser draws such a character in its serif, a little off within the row but on the row TeX
+ * puts it on. A font with no outlines has no codes, and what only it sets measures as nothing.
  */
 export function faceFor(primary: SizedFont, others: readonly SizedFont[] = []): Face {
-  const codes = codesOf(primary.font);
   const fallbacks = others
     .filter((other) => other.font !== primary.font || other.size !== primary.size)
-    .map((other) => ({
-      codes: codesOf(other.font),
-      metrics: scaleTfm(other.font.tfm, Math.round(other.size * PT)),
-    }));
+    .map(faceOf);
   // The first of the other fonts that sets a character, and its code there.
   const fallbackFor = (char: string) => {
     for (const fallback of fallbacks) {
-      const code = fallback.codes.get(char);
-      if (code !== undefined) return { metrics: fallback.metrics, code };
+      const code = fallback.codeFor(char);
+      if (code !== undefined) return { fallback, code };
     }
     return undefined;
   };
   return {
-    tfm: primary.font.tfm,
-    metrics: scaleTfm(primary.font.tfm, Math.round(primary.size * PT)),
-    codeFor: (char) => codes.get(char),
-    hyphenChar: 45,
-    widthOf: (char) => {
+    ...faceOf(primary),
+    fallbackWidth: (char) => {
       const found = fallbackFor(char);
-      return found && found.metrics.widths[found.code];
+      return found && found.fallback.widthOf(found.code);
     },
-    italicOf: (char) => {
+    fallbackItalic: (char) => {
       const found = fallbackFor(char);
-      return found && found.metrics.italics[found.code];
+      return found && found.fallback.italicOf(found.code);
     },
   };
 }
@@ -606,7 +656,7 @@ export function Overlay(props: OverlayProps) {
 
 /** The web font a field is set in, and the page font it was built from. */
 interface Ready {
-  font: PageFont;
+  font: LayoutFont;
   /** The CSS font family to set the rows in. */
   family: string;
 }
@@ -615,12 +665,14 @@ interface Ready {
 const refused = new Set<string>();
 
 /**
- * The CSS font family for a page font once its web font is registered: its own, or the browser's
- * serif for a font the page cannot draw or whose web font the browser refuses, so that the field
- * can still be edited, set as the page is not.
+ * The CSS font family for a page font once its web font is registered: one built from a TeX font's
+ * outlines, or a native font's own file, or the browser's serif for a font the page cannot draw or
+ * whose web font the browser refuses, so that the field can still be edited, set as the page is
+ * not.
  */
-function webFamily(font: PageFont): Promise<string> {
-  return registerWebFont(font.name, () => webFontOf(font)).then(
+function webFamily(font: LayoutFont): Promise<string> {
+  const build = () => (font.kind === "native" ? nativeWebFontOf(font) : webFontOf(font));
+  return registerWebFont(font.name, build).then(
     () => `${cssString(webFontFamily(font.name))}, serif`,
     (error: unknown) => {
       if (!refused.has(font.name)) {
@@ -637,7 +689,7 @@ function webFamily(font: PageFont): Promise<string> {
  * is, there is none; a later font keeps the one before until it is ready, so that the rows never go
  * blank.
  */
-function useWebFont(font: PageFont): Ready | undefined {
+function useWebFont(font: LayoutFont): Ready | undefined {
   const [ready, setReady] = useState<Ready>();
   useEffect(() => {
     let live = true;
@@ -655,7 +707,7 @@ function useWebFont(font: PageFont): Ready | undefined {
  * The web fonts for the fonts a rich field is set in, their CSS families by TeX font name, each
  * added once it is registered (`webFamily`) and kept while the field is open.
  */
-function useWebFonts(fonts: readonly PageFont[]): ReadonlyMap<string, string> {
+function useWebFonts(fonts: readonly LayoutFont[]): ReadonlyMap<string, string> {
   const [families, setFamilies] = useState<ReadonlyMap<string, string>>(() => new Map());
   useEffect(() => {
     let live = true;
@@ -707,7 +759,9 @@ interface Frame {
  * The frame for a field placed in `container`: its first row's baseline and left edge on its first
  * glyph's, the font's size scaled as the page is, and the line height the page's baselines give
  * when the field has two lines or more, else 1.2 em. The first row is as wide as the field's
- * first line, the measure TeX breaks it at, so a line TeX would fill is not cut short.
+ * first line, the measure TeX breaks it at, so a line TeX would fill is not cut short. The
+ * baseline sits where the web font's ascent and descent put it in a row of that height, as a
+ * browser lays out a line.
  */
 function frameOf(
   container: HTMLElement,
@@ -725,8 +779,10 @@ function frameOf(
   const [first, second] = baselines;
   const lineHeightPx =
     first !== undefined && second !== undefined ? (second - first) * scale : 1.2 * fontPx;
-  // With the web font's ascent at 0.8 em and descent 0.2 em, the baseline sits this far down a row.
-  const baseline = (lineHeightPx - fontPx) / 2 + ASCENT * fontPx;
+  // The leading is shared above and below the font's ascent and descent, which the baseline is
+  // between.
+  const { ascent, descent } = webFontMetrics(ready.font);
+  const baseline = (lineHeightPx - (ascent + descent) * fontPx) / 2 + ascent * fontPx;
   const setting = settingFor(id, { ...layout, font: ready.font }, pageWidth);
   const lines = setting.params?.lines ?? [];
   const pxPerSp = scale / PT;

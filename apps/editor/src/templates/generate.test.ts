@@ -15,6 +15,7 @@ import { type PageItem, parseDvi } from "../tex/dvi";
 import { alignGlyphs, collectFields, MARKER_BEGIN, MARKER_END } from "../tex/fields";
 import { curated } from "./curated";
 import {
+  fontDeclarations,
   formatName,
   type GeneratedBody,
   GenerateError,
@@ -833,6 +834,39 @@ describe("generateFormat", () => {
     const last = "\\renewcommand{\\labelitemi}{$\\bullet$}";
     expect(format.preamble.endsWith(`\n${last}\n${PRELUDE}`)).toBe(true);
     expect(format.files).toEqual(input.files);
+  });
+
+  it("declares a XeTeX package's fonts by file, after its preamble and before the prelude", () => {
+    const xetex = parsePackage({
+      ...input,
+      engine: "xetex",
+      preamble: "\\RequirePackage[OT1]{fontenc}\n\\documentclass{article}",
+      fonts: [
+        {
+          family: "Roboto",
+          shapes: { "m/n": "Roboto-Regular.otf", "bx/n": "Roboto-Bold.otf" },
+          features: "mapping=tex-text",
+        },
+        { family: "Icons", shapes: { "m/n": "FontAwesome5Free-Solid-900.otf" } },
+      ],
+    });
+    const declared = [
+      "\\DeclareFontFamily{TU}{Roboto}{}",
+      '\\DeclareFontShape{TU}{Roboto}{m}{n}{<->"[Roboto-Regular.otf]:mapping=tex-text"}{}',
+      '\\DeclareFontShape{TU}{Roboto}{bx}{n}{<->"[Roboto-Bold.otf]:mapping=tex-text"}{}',
+      "\\DeclareFontFamily{TU}{Icons}{}",
+      '\\DeclareFontShape{TU}{Icons}{m}{n}{<->"[FontAwesome5Free-Solid-900.otf]"}{}',
+    ].join("\n");
+    expect(fontDeclarations(xetex.fonts ?? [])).toBe(declared);
+    expect(generateFormat(xetex, {}).preamble).toBe(
+      `\\RequirePackage[OT1]{fontenc}\n\\documentclass{article}\n${declared}\n${PRELUDE}`,
+    );
+    // The fonts are part of what is dumped, so they name the format too.
+    const other = parsePackage({
+      ...xetex,
+      fonts: [{ family: "Roboto", shapes: { "m/n": "Roboto-Light.otf" } }],
+    });
+    expect(formatName(other, {})).not.toBe(formatName(xetex, {}));
   });
 });
 

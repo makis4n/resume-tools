@@ -4,8 +4,11 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
+import { generateBody, generateFormat } from "../templates/generate";
+import { INVENTED_XETEX } from "../templates/invented";
+import { defaultControls } from "../templates/package";
 import { bound, fastestAsync } from "../test/timing";
-import type { DviDocument, PageItem } from "../tex/dvi";
+import { type DviDocument, type PageItem, parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { INCH } from "../tex/svg";
 import { parseType1 } from "../tex/type1";
@@ -195,6 +198,23 @@ describe("drawPage over an invented tree", () => {
     expect(word?.slice(0, 4)).toEqual(["c", "constructor", "f", "é"]);
     // The four a's, in café, naïve and mara, match nothing in their fields' texts.
     expect(drawn.unmatched).toBe(4);
+  });
+});
+
+describe("drawPage on XeTeX's XDV over an invented tree", () => {
+  it("names a native font the tree lacks by its file, and draws its runs as boxes", async () => {
+    // hello.xdv sets a line in Source Sans 3, from a file of the spike's own the tree lacks.
+    const drawn = await drawPage(fixture("hello.xdv"), libraryOf({}), new Map());
+    expect(drawn.missingFonts).toEqual(
+      new Map([["SourceSans3-Regular.otf", "TeX Live has no SourceSans3-Regular.otf"]]),
+    );
+    const runs = parseDvi(fixture("hello.xdv"), () => undefined).pages[0]?.items.filter(
+      (item) => item.kind === "native",
+    );
+    expect(drawn.svg.match(/<rect [^>]*stroke="rgb\(200,60,60\)"/g)).toHaveLength(
+      runs?.length ?? -1,
+    );
+    expect(drawn.glyphs).toEqual([]);
   });
 });
 
@@ -648,6 +668,126 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
         text,
       ).toEqual(characters.map((c) => c.offset));
     }
+  }, 30_000);
+
+  describe("on the invented XeTeX template's page", () => {
+    const { package: pkg, sample } = INVENTED_XETEX;
+    const values = defaultControls(pkg);
+    let xetex: DrawnPage;
+    let xetexTexts: Map<string, string>;
+    beforeAll(async () => {
+      const format = generateFormat(pkg, values);
+      const dumped = session.dump("xetex", format.name, format.preamble, format.files);
+      if (!dumped.ok) throw new Error(dumped.error);
+      const body = generateBody(pkg, sample, values);
+      const compiled = session.compile("xetex", format.name, body.latex, { job: "xetex" });
+      if (!compiled.output) throw new Error(compiled.error);
+      xetexTexts = body.texts;
+      // A library of its own, so that the draw reads and parses every font file as a first does.
+      const manifest = JSON.parse(
+        readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+      ) as EngineManifest;
+      const cold = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+        readFileSync(join(ENGINE_DIR, "files", path)),
+      );
+      const started = performance.now();
+      xetex = await drawPage(compiled.output, cold, xetexTexts);
+      const first = performance.now() - started;
+      const again = performance.now();
+      await drawPage(compiled.output, cold, xetexTexts);
+      console.log(
+        `invented XeTeX page: first draw ${first.toFixed(0)} ms, again ${(performance.now() - again).toFixed(0)} ms`,
+      );
+    }, 60_000);
+
+    it("draws every native font, and finds every field with its glyphs", () => {
+      expect(xetex.missingFonts).toEqual(new Map());
+      expect(xetex.pageCount).toBe(1);
+      expect(xetex.fields.size).toBe(xetexTexts.size);
+      for (const field of xetex.fields.values())
+        expect(field.glyphs.length, field.id).toBeGreaterThan(0);
+      expect(xetex.unmatched).toBe(0);
+    });
+
+    it("gives each glyph of a run its own character, ligatures and tex-text's quotes included", () => {
+      const text = xetexTexts.get("harbor-1.text") ?? "";
+      const glyphs = xetex.fields.get("harbor-1.text")?.glyphs ?? [];
+      // Roboto's fi, an apostrophe XeTeX curls, and a dash it makes of two hyphens.
+      const at = (spelling: string) => glyphs.find((g) => g.offset === text.indexOf(spelling));
+      expect(at("fice")?.text).toBe("fi");
+      expect(at("'s")?.text).toBe("\u{2019}");
+      expect(at("--")?.text).toBe("\u{2013}");
+      for (const glyph of glyphs) expect(glyph.glyph, String(glyph.offset)).toBeDefined();
+    });
+
+    it("draws each native glyph where its hit box says, with its field and offset", () => {
+      const uses = [
+        ...xetex.svg.matchAll(/<use href="#n[^"]*" x="([\d.-]+)" y="([\d.-]+)"([^>]*)\/>/g),
+      ];
+      expect(uses.length).toBe(xetex.glyphs.length);
+      uses.forEach((use, i) => {
+        const box = xetex.glyphs[i] as GlyphBox;
+        expect(use[1]).toBe(box.x.toFixed(3));
+        expect(use[2]).toBe(box.y.toFixed(3));
+        const field = /data-field="([^"]*)" data-offset="(\d+)"/.exec(use[3] ?? "");
+        expect(field?.[1]).toBe(box.field);
+        expect(field ? Number(field[2]) : undefined).toBe(box.offset);
+        // A letter's box has ink in it, around its origin on the baseline.
+        expect(box.right).toBeGreaterThan(box.left);
+        expect(box.bottom).toBeGreaterThan(box.top);
+      });
+      // The icon in the header is drawn, and belongs to no field.
+      const icon = uses.filter((use) => use[3]?.includes("FontAwesome5Free-Solid-900.otf"));
+      expect(icon).toHaveLength(1);
+      expect(icon[0]?.[3]).not.toContain("data-field");
+    });
+
+    it("resolves every field from a click at the centre of its middle glyph", () => {
+      for (const field of xetex.fields.values()) {
+        const boxes = xetex.glyphs.filter((g) => g.field === field.id);
+        const middle = boxes[Math.floor(boxes.length / 2)] as GlyphBox;
+        expect(middle, field.id).toBeDefined();
+        const hit = glyphAt(
+          xetex.glyphs,
+          (middle.left + middle.right) / 2,
+          (middle.top + middle.bottom) / 2,
+        );
+        expect(hit, field.id).toBe(middle);
+      }
+    });
+
+    it("lays each field out in the native font and size of its first glyphs", () => {
+      const layout = (id: string) => xetex.fields.get(id)?.layout;
+      const name = layout("header.first");
+      expect(name?.font.kind).toBe("native");
+      expect(name?.font.name).toBe("Roboto-Bold.otf");
+      expect(name?.size).toBeCloseTo(17.28, 2);
+      expect(layout("work.title")?.font.name).toBe("SourceSansPro-Bold.otf");
+      expect(layout("work.title")?.size).toBeCloseTo(12, 2);
+      const bullet = layout("harbor-1.text");
+      expect(bullet?.font.name).toBe("Roboto-Regular.otf");
+      expect(bullet?.size).toBeCloseTo(10.95, 2);
+      expect(bullet?.paragraph).toMatch(/^rt:p:harbor-1\.text:hsize=/);
+      // The bullet takes two lines, whose second starts at the paragraph's edge.
+      const first = xetex.glyphs.find((g) => g.field === "harbor-1.text");
+      expect([bullet?.x, bullet?.y]).toEqual([first?.x, first?.y]);
+      expect(bullet?.secondLine).toBeDefined();
+      expect(bullet?.secondLine).toBeCloseTo(bullet?.x ?? 0, 3);
+    });
+  });
+
+  it("names a native font XeTeX emboldens, and draws its runs as boxes", async () => {
+    const body = String.raw`\documentclass{article}\pagestyle{empty}\begin{document}
+\font\bolded="[Roboto-Regular.otf]:embolden=2" {\bolded Boxed} \font\plain="[Roboto-Regular.otf]" {\plain Drawn}
+\end{document}`;
+    const compiled = session.compile("xetex", "stock", body, { job: "bolded", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const drawn = await drawPage(compiled.output, fonts, new Map());
+    expect(drawn.missingFonts.get("Roboto-Regular.otf")).toBe(
+      "XeTeX emboldens it, which the page draws as boxes",
+    );
+    expect(drawn.svg.match(/<rect [^>]*stroke="rgb\(200,60,60\)"/g)).toHaveLength(1);
+    expect(drawn.svg.match(/<use href="#n/g)).toHaveLength("Drawn".length);
   }, 30_000);
 
   it("gives a later page the size the first page set", async () => {

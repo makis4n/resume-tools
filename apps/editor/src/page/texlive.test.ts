@@ -20,6 +20,8 @@ const index = new TexLiveIndex({
       "/texmf/texmf-dist/fonts/tfm/public/cm/cmr10.tfm",
       "/texmf/texmf-dist/fonts/tfm/public/lm/lmr10.tfm",
       "/texmf/texmf-dist/fonts/vf/adobe/times/ptmr8t.vf",
+      "/texlive/texmf-dist/fonts/opentype/google/roboto/Roboto-Regular.otf",
+      "/texlive/texmf-dist/fonts/truetype/typoland/lato/Lato-Regular.ttf",
     ].map((path) => [path, 1]),
   ),
 } satisfies EngineManifest);
@@ -44,6 +46,17 @@ describe("TexLiveIndex", () => {
     expect(index.find("type1", "cmr10.pfb")).toBe(
       "/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb",
     );
+  });
+
+  it("finds the TrueType and OpenType files XeTeX reads, each in its own folder", () => {
+    expect(index.find("opentype", "Roboto-Regular.otf")).toBe(
+      "/texlive/texmf-dist/fonts/opentype/google/roboto/Roboto-Regular.otf",
+    );
+    expect(index.find("truetype", "Lato-Regular.ttf")).toBe(
+      "/texlive/texmf-dist/fonts/truetype/typoland/lato/Lato-Regular.ttf",
+    );
+    expect(index.find("truetype", "Roboto-Regular.otf")).toBeUndefined();
+    expect(index.find("opentype", "Lato-Regular.ttf")).toBeUndefined();
   });
 
   it("lists every file of a kind with a suffix, from every tree", () => {

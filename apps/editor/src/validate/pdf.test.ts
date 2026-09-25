@@ -132,6 +132,55 @@ describe("strokedPaths", () => {
   });
 });
 
+describe("shownStrings in a composite font", () => {
+  /** An object stream holding the objects given, by number, as xdvipdfmx writes one at level 0. */
+  const objectStream = (object: number, held: Record<number, string>) => {
+    let offset = 0;
+    const header: string[] = [];
+    const bodies: string[] = [];
+    for (const [number, body] of Object.entries(held)) {
+      header.push(`${number} ${offset}`);
+      bodies.push(body);
+      offset += body.length + 1;
+    }
+    const head = `${header.join(" ")} `;
+    const data = `${head}${bodies.join("\n")}\n`;
+    return stream(object, data, `/Type/ObjStm/N ${bodies.length}/First ${head.length}`);
+  };
+  // A ToUnicode map as xdvipdfmx writes one for a native font: single codes, a range counted up,
+  // a range of an array, and a ligature's two letters.
+  const cmap = [
+    "/CIDInit /ProcSet findresource begin",
+    "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange",
+    "3 beginbfchar\n<0026> <0042>\n<0378> <00660069>\n<0338> <2013>\nendbfchar",
+    "2 beginbfrange\n<0045> <0047> <0061>\n<0050> <0051> [<006C> <006F>]\nendbfrange",
+    "endcmap",
+  ].join("\n");
+  // Font F1 is a composite font with the map; F2 a simple font, whose bytes are its codes.
+  const fonts = objectStream(10, {
+    3: "<</Type/Page/Parent 2 0 R/Contents[4 0 R]/Resources<</Font<</F1 5 0 R/F2 6 0 R>>>>>>",
+    5: "<</Type/Font/Subtype/Type0/BaseFont/ABCDEF+Roboto-Regular-Identity-H/Encoding/Identity-H/ToUnicode 7 0 R>>",
+    6: "<</Type/Font/Subtype/Type1/BaseFont/CMR10>>",
+  });
+  const hex = (codes: number[]) =>
+    `<${codes.map((code) => code.toString(16).padStart(4, "0")).join("")}>`;
+  const pdf = (content: string) =>
+    bytes(["%PDF-1.5", stream(4, content), stream(7, cmap), fonts, "%%EOF"].join("\n"));
+
+  it("reads a composite font's two-byte codes through its ToUnicode map", () => {
+    const shown = shownStrings(
+      pdf(
+        `BT /F1 9.96 Tf [${hex([0x26, 0x45, 0x46])}-247${hex([0x50, 0x51, 0x378])}]TJ ${hex([0x338, 0x47])}Tj /F2 10 Tf (Plain)Tj ET`,
+      ),
+    );
+    expect(shown).toEqual(["Bablofi", "\u{2013}c", "Plain"]);
+  });
+
+  it("reads a code the map does not name as nothing", () => {
+    expect(shownStrings(pdf(`BT /F1 10 Tf ${hex([0x26, 0x999, 0x45])}Tj ET`))).toEqual(["Ba"]);
+  });
+});
+
 describe("mediaBoxes and hasToUnicode", () => {
   it("read every page size, in big points, and whether a font has a ToUnicode map", () => {
     const letter = pdfWith("");
