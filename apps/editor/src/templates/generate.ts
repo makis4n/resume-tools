@@ -22,6 +22,7 @@ import type {
   SectionRole,
 } from "@resume-tools/resume-model";
 import { INVISIBLE } from "../tex/fields";
+import { runBreaks, UNBROKEN_RUN } from "../tex/runs";
 import { formatDates } from "./dates";
 import { escapeText, escapeUrl, isBlank, type TextFonts } from "./escape";
 import {
@@ -42,7 +43,7 @@ import {
   type TemplatePackage,
 } from "./package";
 import { PRELUDE } from "./prelude";
-import { parseSnippet, type SlotType, type SnippetNode } from "./snippet";
+import { parseSnippet, type SlotType, type SnippetNode, shownSlots } from "./snippet";
 
 /** A package the generator cannot render: the body would pass MAX_BODY, or a variant is missing. */
 export class GenerateError extends Error {
@@ -147,7 +148,7 @@ export function generateFormat(pkg: TemplatePackage, values: ControlValues): Gen
   for (const control of controlsOf(pkg, values))
     if (control.format) scope[control.id] = valueSlot(control.text);
   const out = new Output(Number.POSITIVE_INFINITY);
-  render({ nodes: parseSnippet(pkg.preamble), scope }, out, new Map(), escapeText);
+  render({ nodes: parseSnippet(pkg.preamble), scope }, out, new Map(), escapeText, new WeakSet());
   const fonts = pkg.fonts === undefined ? "" : `${fontDeclarations(pkg.fonts)}\n`;
   const preamble = `${out.join()}\n${fonts}${PRELUDE}`;
   // By name, so that the same files listed in another order are the same dump. Names are keys,
@@ -197,13 +198,16 @@ export function generateBody(
   values: ControlValues,
   options: BodyOptions = {},
 ): GeneratedBody {
-  // Packages were validated, so a snippet that does not parse here is a bug, and may throw.
+  // Packages were validated, so a snippet that does not parse here is a bug, and may throw. Each
+  // snippet's slot nodes that it shows in `\href`'s text are found as it is parsed (`shownSlots`).
   const trees = new Map<string, readonly SnippetNode[]>();
+  const shown = new WeakSet<SnippetNode>();
   const tree = (source: string) => {
     let nodes = trees.get(source);
     if (nodes === undefined) {
       nodes = parseSnippet(source);
       trees.set(source, nodes);
+      markShown(nodes, shownSlots(source), shown);
     }
     return nodes;
   };
@@ -216,7 +220,7 @@ export function generateBody(
   const escape: Escape = (text) => escapeText(text, fonts);
   for (const control of controlsOf(pkg, values)) {
     const scope = { value: valueSlot(control.text) } satisfies Scope;
-    render({ nodes: tree(control.apply), scope }, out, texts, escape);
+    render({ nodes: tree(control.apply), scope }, out, texts, escape, shown);
     out.add("\n");
   }
   const build: Build = {
@@ -224,9 +228,30 @@ export function generateBody(
     tree,
     dateFormat: values.dateFormat ?? defaultControls(pkg).dateFormat,
   };
-  render(documentPart(build, resume), out, texts, escape);
+  render(documentPart(build, resume), out, texts, escape, shown);
   out.add("\n");
   return { latex: out.join(), texts, dropped: [...dropped] };
+}
+
+/**
+ * Add to `shown` the slot nodes of a parsed snippet at the places `ordinals` gives among its slot
+ * nodes in order, which are the places of its slot tags. The walk keeps its own stack, as
+ * `render` does, since blocks nest to any depth.
+ */
+function markShown(
+  nodes: readonly SnippetNode[],
+  ordinals: ReadonlySet<number>,
+  shown: WeakSet<SnippetNode>,
+) {
+  if (ordinals.size === 0) return;
+  const stack = [...nodes].reverse();
+  let k = 0;
+  for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
+    if (node.kind === "slot") {
+      if (ordinals.has(k)) shown.add(node);
+      k++;
+    } else if (node.kind === "block") stack.push(...[...node.children].reverse());
+  }
 }
 
 /** The controls that have a snippet, which is every one but the date format. */
@@ -548,9 +573,16 @@ type Frame =
  * `checkSnippet` does, since blocks nest to any depth in a snippet that parses; and a list's items
  * join the stack one at a time, so every step is small and each is counted against MAX_BODY. A
  * block reads the presence its slot's value was built with, and a block over a list never
- * iterates: a list renders only through its slot.
+ * iterates: a list renders only through its slot. `shown` holds the slot nodes a snippet shows in
+ * `\href`'s text (`markShown`).
  */
-function render(part: Part, out: Output, texts: Map<string, string>, escape: Escape) {
+function render(
+  part: Part,
+  out: Output,
+  texts: Map<string, string>,
+  escape: Escape,
+  shown: WeakSet<SnippetNode>,
+) {
   const stack: Frame[] = [{ kind: "nodes", nodes: part.nodes, next: 0, scope: part.scope }];
   for (let frame = stack.at(-1); frame !== undefined; frame = stack.at(-1)) {
     out.step();
@@ -575,7 +607,8 @@ function render(part: Part, out: Output, texts: Map<string, string>, escape: Esc
         stack.push({ kind: "nodes", nodes: node.children, next: 0, scope: frame.scope });
     } else {
       const value = slot(frame.scope, node.name);
-      if (value.type !== "list") out.add(renderValue(value, node.raw, out, texts, escape));
+      if (value.type !== "list")
+        out.add(renderValue(value, node.raw, out, texts, escape, shown.has(node)));
       else if (node.raw) throw new Error(`${node.name} is a list, which never goes in raw`);
       else stack.push({ kind: "list", list: value, next: 0 });
     }
@@ -601,6 +634,7 @@ function renderValue(
   out: Output,
   texts: Map<string, string>,
   escape: Escape,
+  shownHere: boolean,
 ): string {
   switch (value.type) {
     case "value":
@@ -610,11 +644,13 @@ function renderValue(
       // The schema refuses a typeset URL, since its markers would end up in the address.
       if (!raw) throw new Error("a URL goes in raw");
       out.charge(value.url.length);
-      return escapeUrl(value.url);
+      return shownHere ? escapeUrl(value.url, UNBROKEN_RUN, BREAK) : escapeUrl(value.url);
     case "text":
       out.charge(value.text.length);
-      if (raw) return escape(value.text);
-      return value.present ? field(value.field, value.text, escape(value.text), texts) : "";
+      if (raw) return escapeRun(value.text, escape);
+      return value.present
+        ? field(value.field, value.text, escapeRun(value.text, escape), texts)
+        : "";
     case "rich":
       out.charge(value.size);
       if (raw) return richLatex(value.runs, escape);
@@ -624,8 +660,8 @@ function renderValue(
     case "date":
       if (value.text === undefined) return "";
       out.charge(value.text.length);
-      if (raw) return escape(value.text);
-      return field(value.field, value.text, escape(value.text), texts);
+      if (raw) return escapeRun(value.text, escape);
+      return field(value.field, value.text, escapeRun(value.text, escape), texts);
   }
 }
 
@@ -646,8 +682,12 @@ function field(id: string, text: string, latex: string, texts: Map<string, strin
  */
 function richLatex(runs: RichText, escape: Escape): string {
   let latex = "";
+  // A run of characters with no space goes on from one run of rich text into the next.
+  let carried = 0;
   for (const run of runs) {
-    let part = escape(run.text);
+    const cut = runBreaks(run.text, carried);
+    carried = cut.carried;
+    let part = escapeRun(run.text, escape, cut.breaks);
     if (part === "") continue;
     if (run.italic) part = `\\textit{${part}}`;
     if (run.bold) part = `\\textbf{${part}}`;
@@ -659,6 +699,25 @@ function richLatex(runs: RichText, escape: Escape): string {
     latex += part;
   }
   return latex;
+}
+
+/** A break opportunity that sets nothing, where TeX may end a line (`runBreaks`). */
+const BREAK = "\\allowbreak ";
+
+/**
+ * Text as `escape` escapes it, with a break opportunity at each of `breaks`, UTF-16 offsets into
+ * it, after every `UNBROKEN_RUN` characters of a run with no space in it unless given
+ * (`runBreaks`). None comes where the pieces would escape otherwise than the whole, such as
+ * before a combining mark (`runBreaks`).
+ */
+function escapeRun(text: string, escape: Escape, breaks = runBreaks(text).breaks): string {
+  let latex = "";
+  let from = 0;
+  for (const at of breaks) {
+    latex += escape(text.slice(from, at)) + BREAK;
+    from = at;
+  }
+  return latex + escape(text.slice(from));
 }
 
 /** Output as it grows, which stops the moment it passes its limit. */

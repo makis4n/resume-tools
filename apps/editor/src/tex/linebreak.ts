@@ -16,6 +16,7 @@
  */
 
 import { INVISIBLE } from "./fields";
+import { runBreaks } from "./runs";
 import type { LigKernResult, ScaledMetrics, Tfm } from "./tfm";
 import { applyLigKern } from "./tfm";
 
@@ -691,7 +692,11 @@ export function paragraphNodes(text: string, face: Face, options: TextOptions = 
  * character the run's font lacks is a box of another of the field's fonts when one has it
  * (`Face.fallbackWidth`), and is dropped otherwise, as TeX drops a missing character. Leading
  * spaces are dropped, and so is a trailing one, as TeX drops it at `\par`. A font without a
- * ligature and kern program, a native font's, sets each character as a box of its own.
+ * ligature and kern program, a native font's, sets each character as a box of its own. A run of
+ * characters with no space longer than the generator lets one be has a penalty of 0 where the
+ * generator writes its break opportunity, `\allowbreak`, which ends the font's ligatures and kerns
+ * there as TeX does (`runBreaks`), the count going on from one run into the next as the
+ * generator's does.
  *
  * Each run is set in its own face, and ligatures and kerns never cross from one run into the
  * next, as they never cross a font change in TeX. A space's glue is its run's font's, since TeX
@@ -716,6 +721,8 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
   };
   // The last character's box set, and its italic correction, for a `\/` after it.
   let lastChar: { node: Node; italic: number } | undefined;
+  // How many characters of a run with no space the runs so far end in (`runBreaks`).
+  let carried = 0;
 
   /** Set one run's text, whose first character is at offset `base` in the paragraph. */
   const setText = (text: string, face: Face, base: number) => {
@@ -729,6 +736,11 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
     const at = (k: number) => base + (chars[k]?.at ?? text.length);
     const kind = (k: number) => chars[k]?.kind;
     const period = face.codeFor(".");
+    // Where the generator breaks a long run, by the character the break comes before.
+    const cut = runBreaks(text, carried);
+    carried = cut.carried;
+    const breaks = new Set(cut.breaks);
+    const breaksBefore = (k: number) => breaks.has(chars[k]?.at ?? -1);
 
     /**
      * Set the word from character `from` to `to`. It is cut into runs of the face's own
@@ -837,7 +849,16 @@ export function richParagraphNodes(runs: readonly FaceRun[], options: TextOption
       } else {
         flushSpace();
         while (i < chars.length && (kind(i) === "char" || kind(i) === "none")) i++;
-        setWord(from, i);
+        // A word the generator breaks is set in pieces, a penalty of 0 before each but the first,
+        // and before the first too where the break comes as the run begins.
+        let start = from;
+        for (let k = from; k < i; k++)
+          if (breaksBefore(k)) {
+            if (k > start) setWord(start, k);
+            nodes.push({ kind: "penalty", penalty: 0 });
+            start = k;
+          }
+        setWord(start, i);
       }
     }
   };

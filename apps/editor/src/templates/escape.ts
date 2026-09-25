@@ -163,13 +163,31 @@ const UTF8 = new TextEncoder();
  * Escape an address for a raw URL slot, as in `\href{{{&href}}}{...}`. Whitespace around it is
  * dropped, as a browser drops it; anything else a URL may not hold is percent-encoded as UTF-8;
  * and the characters TeX would read are escaped the way hyperref undoes, which holds whether or
- * not the `\href` sits in another macro's argument, as a link in rich text always does.
+ * not the `\href` sits in another macro's argument, as a link in rich text always does. An
+ * address a snippet shows as text, as a link with no label shows its own, gets a break
+ * opportunity, `breakAfter`, wherever the next character would take what it sets past
+ * `breakEvery` characters, as a run of text does (`runBreaks`): a character it keeps sets one,
+ * and one it encodes three for each byte, `%` and two hex digits. An address it links to never
+ * gets one.
  */
-export function escapeUrl(url: string): string {
+export function escapeUrl(
+  url: string,
+  breakEvery = Number.POSITIVE_INFINITY,
+  breakAfter = "",
+): string {
   let escaped = "";
+  // What the address sets since the last break, in characters.
+  let sets = 0;
   for (const char of url.replace(INVISIBLE, "").trim()) {
-    if (URL_KEPT.test(char)) escaped += URL_ESCAPES[char] ?? char;
-    else for (const byte of UTF8.encode(char)) escaped += `\\%${hex(byte)}`;
+    const bytes = URL_KEPT.test(char) ? undefined : UTF8.encode(char);
+    const width = bytes === undefined ? 1 : 3 * bytes.length;
+    if (sets > 0 && sets + width > breakEvery) {
+      escaped += breakAfter;
+      sets = 0;
+    }
+    sets += width;
+    if (bytes === undefined) escaped += URL_ESCAPES[char] ?? char;
+    else for (const byte of bytes) escaped += `\\%${hex(byte)}`;
   }
   return escaped;
 }

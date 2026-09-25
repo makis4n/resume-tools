@@ -1233,6 +1233,29 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
       expect(after?.kind === "kern" && after.width / PT).toBeCloseTo(1.0655, 4);
     }, 60_000);
 
+    it("breaks a run of 8,000 characters with no space where TeX does, at the generator's breaks", async () => {
+      // The generator writes a break opportunity every 200 characters of a run with no space in
+      // it, and the overlay's breaker has the same ones, so that a pasted address, say, wraps on
+      // the page and in the overlay alike.
+      const text = "abcdefghij".repeat(800);
+      const { page } = await jake(withBullets("run", [text]), "overlay-unbroken");
+      const { rows, page: lines } = compare(page, "run-0.text", text);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(rows).toEqual(lines);
+    }, 60_000);
+
+    it("breaks rich runs with no space where TeX does, the count going on from run to run", async () => {
+      // The generator counts a run with no space on from one run of rich text into the next, and so
+      // does the overlay's breaker: a break inside the bold run, and one just where the italic run
+      // begins, before its first letter.
+      const { page, resume } = await richPage("unbroken", [
+        [{ text: "abcdefghij".repeat(15) }, { text: "klmnopqrst".repeat(85), bold: true }],
+        [{ text: "abcdefghij".repeat(20) }, { text: "klmnopqrst".repeat(80), italic: true }],
+      ]);
+      await sameAsTex(page, resume, "unbroken-0.text");
+      await sameAsTex(page, resume, "unbroken-1.text");
+    }, 60_000);
+
     it("keeps an emptied field's place while the page lacks it", async () => {
       // Jake's template leaves an emptied bullet out, so the page compiled from the empty text has
       // none of its glyphs; the overlay stays where the bullet was, and open.

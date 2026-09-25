@@ -315,6 +315,24 @@ describe("paragraphNodes with a face that has no ligature and kern program", () 
       2,
     );
   });
+
+  it("breaks a run with no space where the generator does, every 200 characters, and no sooner", () => {
+    /** The offsets of the boxes a penalty of 0 comes right before. */
+    const breaks = (text: string) => {
+      const nodes = paragraphNodes(text, face);
+      return nodes.flatMap((node, i) => {
+        const after = nodes[i + 1];
+        return node.kind === "penalty" && node.penalty === 0 && after?.kind === "box"
+          ? [after.offset]
+          : [];
+      });
+    };
+    expect(breaks("a".repeat(200))).toEqual([]);
+    expect(breaks("a".repeat(450))).toEqual([200, 400]);
+    // A space begins a run again, and a mark goes with its letter.
+    expect(breaks(`${"a".repeat(150)} ${"b".repeat(201)}`)).toEqual([351]);
+    expect(breaks("e\u0301".repeat(201))).toEqual([400]);
+  });
 });
 
 describe("richParagraphNodes over runs in several fonts", () => {
@@ -375,6 +393,40 @@ describe("richParagraphNodes over runs in several fonts", () => {
     const ranges = lineRanges(nodes, breakLines(nodes, narrow), text.length);
     expect(ranges.length).toBeGreaterThan(2);
     expect(ranges.map((r) => text.slice(r.from, r.to)).join("")).toBe(text);
+  });
+
+  it("carries a run with no space from one run into the next, as the generator does", () => {
+    /** The offsets of the boxes a penalty of 0 comes right before. */
+    const breaks = (runs: { text: string; face: Face }[]) => {
+      const nodes = richParagraphNodes(runs);
+      return nodes.flatMap((node, i) => {
+        const after = nodes[i + 1];
+        return node.kind === "penalty" && node.penalty === 0 && after?.kind === "box"
+          ? [after.offset]
+          : [];
+      });
+    };
+    const a = (count: number) => "a".repeat(count);
+    // The word's 201st letter is the bold run's 51st.
+    expect(
+      breaks([
+        { text: a(150), face: roman },
+        { text: a(100), face: bold },
+      ]),
+    ).toEqual([200]);
+    // A break where a run begins comes before its first letter, and a space begins a run again.
+    expect(
+      breaks([
+        { text: a(200), face: roman },
+        { text: a(10), face: italic },
+      ]),
+    ).toEqual([200]);
+    expect(
+      breaks([
+        { text: `${a(150)} `, face: roman },
+        { text: a(200), face: bold },
+      ]),
+    ).toEqual([]);
   });
 
   it("makes no ligature or kern across a run boundary inside a word", () => {

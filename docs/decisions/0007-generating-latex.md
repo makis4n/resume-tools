@@ -73,6 +73,8 @@ begin marker carrying the paragraph TeX sets the field in.
   linked. A link's `href` that is not linked is absent, as a blank one is, so `{{#href}}` is false
   and `{{&href}}` sets nothing; a rich run with such an address is set without `\href`. The
   contacts' addresses, which the generator builds, are not read this way.
+- **Long runs.** A text, or an address `\href` shows as its text, gets `\allowbreak` after every
+  200 characters it sets with no space, as XeTeX fails on a word of about 1,100 (`runBreaks`).
 - **Dates** are the generator's, never TeX's, with English month names: `Jun 2020`, `June 2020`,
   `06/2020` or `2020`, and a date stored as a year is the year in every format. A range is joined
   by an en dash between spaces, an ongoing one ends in `Present`, and a single date stands alone.

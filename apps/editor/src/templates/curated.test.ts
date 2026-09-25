@@ -2573,6 +2573,43 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(page.fields.get("tool.label")?.glyphs).toHaveLength("Portfolio".length);
   });
 
+  it("sets 8,000 characters with no space in a bullet, a name and a link's shown address", async () => {
+    // XeTeX builds one node of a run of characters with nothing to break it, and one of about
+    // 1,100 overflowed the engine's stack and stopped the compile; the generator breaks a run
+    // every 200 characters (decision 0007), and a link's address stays whole where it links.
+    const run = "abcdefghij".repeat(800);
+    const address = `https://example.com/${run}`;
+    const long = Resume.parse(structuredClone(sample));
+    long.header.name.last = run;
+    long.header.links = [
+      { id: "far", kind: "website", label: "", href: address },
+      { id: "near", kind: "website", label: "Portfolio", href: address },
+    ];
+    const experience = long.sections.find((section) => section.kind === "entries");
+    const entry = experience?.kind === "entries" ? experience.entries[0] : undefined;
+    if (!entry) throw new Error("the sample moved");
+    entry.bullets = [{ id: "unbroken", text: [{ text: run }] }];
+    const body = generateBody(pkg, long, values);
+    const result = session.compile(pkg.engine, format.name, body.latex, {
+      job: "unbroken",
+      maxPasses: 3,
+    });
+    expect(result.ok, result.error).toBe(true);
+    expect(result.log).not.toMatch(/^! /m);
+    // The runs take pages of their own; each field is found on one of them.
+    const found = new Set<string>();
+    for (let index = 0; index < result.pages; index++) {
+      const page = await drawPage(result.output as Uint8Array, fonts, body.texts, index);
+      for (const id of page.fields.keys()) found.add(id);
+    }
+    for (const id of ["header.last", "unbroken.text", "near.label"])
+      expect(found.has(id), id).toBe(true);
+    // Both links go to the address whole, the one shown as its address and the one with a label.
+    const dvi = parseDvi(result.output as Uint8Array, () => undefined);
+    const uris = dvi.pages.flatMap((each) => nativeLinksOf(each.items).map((link) => link.uri));
+    expect(uris.filter((uri) => uri === address)).toHaveLength(2);
+  }, 120_000);
+
   it("compiles a section title and a name of 8,000 characters in under a second", () => {
     // hyperref's bookmarks, which the class turns off, cost time that grows with the square of a
     // title's length.

@@ -648,6 +648,78 @@ describe("generateBody", () => {
     expect(whole.dropped).toEqual([]);
   });
 
+  it("writes a break opportunity after every 200 characters of a run with no space, and none before", () => {
+    // XeTeX builds one node of a run of characters with nothing to break it, and one of about
+    // 1,100 overflows the engine's stack; the break sets nothing, so every character still typesets.
+    const BREAK = "\\allowbreak ";
+    /** The LaTeX of a bullet of the runs given, as the package's bullet snippet sets it. */
+    const bullet = (text: string | { text: string; bold?: boolean }[]) => {
+      const runs = typeof text === "string" ? [{ text }] : text;
+      const one = Resume.parse({
+        version: 1,
+        header: { name: { first: "Ilse", last: "Marrow" }, links: [] },
+        sections: [
+          {
+            id: "work",
+            kind: "entries",
+            role: "experience",
+            title: "Work",
+            entries: [{ id: "tern", title: "Typesetter", bullets: [{ id: "b", text: runs }] }],
+          },
+        ],
+      });
+      const body = generateBody(pkg, one, {});
+      expect(body.texts.get("b.text")).toBe(runs.map((run) => run.text).join(""));
+      return /\\rtfield\{b\.text\}\{(.*)\}\n/.exec(body.latex)?.[1];
+    };
+    const a = (count: number) => "a".repeat(count);
+    const b = (count: number) => "b".repeat(count);
+    expect(bullet(a(200))).toBe(a(200));
+    expect(bullet(a(201))).toBe(`${a(200)}${BREAK}a`);
+    expect(bullet(a(450))).toBe(`${a(200)}${BREAK}${a(200)}${BREAK}${a(50)}`);
+    // A space, or a no-break space, begins a run again.
+    expect(bullet(`${a(150)} ${b(200)}`)).toBe(`${a(150)} ${b(200)}`);
+    expect(bullet(`${a(150)}\u00a0${b(200)}`)).toBe(`${a(150)}~${b(200)}`);
+    // A run goes on across rich text's runs, and an escaped character is one character.
+    expect(bullet([{ text: a(150) }, { text: b(100), bold: true }])).toBe(
+      `${a(150)}\\textbf{${b(50)}${BREAK}${b(50)}}`,
+    );
+    expect(bullet("&".repeat(201))).toBe(`${"\\&".repeat(200)}${BREAK}\\&`);
+    // A combining mark goes with the letter before it, and no break comes between them.
+    expect(bullet("e\u0301".repeat(201))).toBe(`${"\u00e9".repeat(200)}${BREAK}\u00e9`);
+  });
+
+  it("breaks an address it shows as text, and never one it links to", () => {
+    const shows = packageWith((pkg) => {
+      pkg.snippets.link.other =
+        "\\href{{{&href}}}{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}";
+    });
+    const long = `https://example.com/${"a".repeat(430)}`;
+    const encoded = `https://example.com/${"é".repeat(100)}`;
+    const links = Resume.parse({
+      version: 1,
+      header: {
+        name: { first: "Ilse", last: "Marrow" },
+        links: [
+          { id: "far", kind: "other", label: "", href: long },
+          { id: "near", kind: "other", label: "Near", href: long },
+          { id: "wide", kind: "other", label: "", href: encoded },
+        ],
+      },
+      sections: [],
+    });
+    const { latex } = generateBody(shows, links, {});
+    const BREAK = "\\allowbreak ";
+    const shown = `${long.slice(0, 200)}${BREAK}${long.slice(200, 400)}${BREAK}${long.slice(400)}`;
+    expect(latex).toContain(`\\href{${long}}{${shown}}`);
+    expect(latex).toContain(`\\href{${long}}{\\rtfield{near.label}{Near}}`);
+    // An encoded character sets three characters for each of its bytes, and a break never comes
+    // inside it: `é` sets six, `%C3%A9`, so 30 fit after the 20 of the scheme and host, then 33.
+    const e = (count: number) => "\\%C3\\%A9".repeat(count);
+    const pieces = [`https://example.com/${e(30)}`, e(33), e(33), e(4)];
+    expect(latex).toContain(`\\href{https://example.com/${e(100)}}{${pieces.join(BREAK)}}`);
+  });
+
   it("keeps the part of an accented letter the fonts can set: its base, and an accent they have", () => {
     // As pdfTeX's LaTeX sets the base of a letter it has no definition for (`escape.ts`): Roboto
     // has neither ǎ nor the combining caron, and the letter was dropped whole, Xioming.
