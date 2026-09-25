@@ -579,9 +579,10 @@ export function RichOverlay({
  * text; Escape goes back to the text. The generator decides what an address links to
  * (`linkAddress`, decision 0007), and the popover says what that is, as the user types, or that
  * the text will not be linked, so that no address is a surprise on the page. The undo and redo
- * keys in it are the browser's (`NATIVE_UNDO`), which undoes the typing in the input: an address
- * reaches the document only when it is applied, so the app's history holds none of it, and the
- * app's undo would take the focus out of the popover, which closes the editor and loses it.
+ * keys in it are the browser's (`NATIVE_UNDO`), which undoes the typing in the input and nothing
+ * else (`refuseNativeUndo`): an address reaches the document only when it is applied, so the
+ * app's history holds none of it, and the app's undo would take the focus out of the popover,
+ * which closes the editor and loses it.
  */
 function LinkPopover({
   href,

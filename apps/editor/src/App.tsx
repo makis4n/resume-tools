@@ -348,7 +348,9 @@ export function App() {
     else followPresent(open);
     return true;
   };
-  useHistoryKeys(travel);
+  // While a document is open, the browser's own undo and redo are refused but in the link
+  // popover, whose typing they take back (`refuseNativeUndo`).
+  useHistoryKeys(travel, open !== undefined);
 
   const startDocument = async () => {
     let id: string | undefined;

@@ -6,6 +6,7 @@ import {
   type KeyTarget,
   listenForHistoryKeys,
   NATIVE_UNDO,
+  refuseNativeUndo,
   type Way,
 } from "./undo";
 
@@ -63,21 +64,29 @@ describe("historyKey", () => {
   });
 });
 
-describe("listenForHistoryKeys", () => {
+describe("listenForHistoryKeys and refuseNativeUndo", () => {
   /**
-   * A key press as the listeners on its way see it, which they can prevent and stop, with the place
-   * it was pressed at once it is dispatched.
+   * An event as the listeners on its way see it, which they can prevent and stop, with the place it
+   * happened at once it is dispatched.
    */
-  type Press = KeyPress & {
+  interface Dispatched {
+    type: string;
     target: Place | null;
     defaultPrevented: boolean;
     stopped: boolean;
     preventDefault(): void;
     stopPropagation(): void;
-  };
-  const keydown = (press: Partial<KeyPress>): Press => {
-    const event: Press = {
-      ...pressed(press),
+  }
+  /** A key press, as `keydown` gives it. */
+  type Press = KeyPress & Dispatched;
+  /** An input the browser is about to make, as `beforeinput` gives it. */
+  type Input = Dispatched & { inputType: string };
+
+  /** A new event of `type`, with `details`, not yet dispatched. */
+  function newEvent<Details extends object>(type: string, details: Details): Details & Dispatched {
+    const event: Details & Dispatched = {
+      ...details,
+      type,
       target: null,
       defaultPrevented: false,
       stopped: false,
@@ -89,17 +98,19 @@ describe("listenForHistoryKeys", () => {
       },
     };
     return event;
-  };
+  }
+  const keydown = (press: Partial<KeyPress>): Press => newEvent("keydown", pressed(press));
+  const beforeinput = (inputType: string): Input => newEvent("beforeinput", { inputType });
 
-  type Listener = (event: Press) => void;
+  type Listener = (event: Dispatched) => void;
 
   /**
-   * A stand-in for a node of the page, in `parent`: its keydown listeners in the order they were
-   * added, and the attributes it has, which `closest` looks for as the DOM's does, at the place and
-   * then at each place it is in.
+   * A stand-in for a node of the page, in `parent`: its listeners in the order they were added,
+   * and the attributes it has, which `closest` looks for as the DOM's does, at the place and then
+   * at each place it is in.
    */
   class Place implements KeyTarget {
-    readonly listeners: { listener: Listener; capture: boolean }[] = [];
+    readonly listeners: { type: string; listener: Listener; capture: boolean }[] = [];
     constructor(
       readonly parent?: Place,
       readonly attributes: readonly string[] = [],
@@ -108,43 +119,45 @@ describe("listenForHistoryKeys", () => {
       if (this.attributes.some((name) => selector === `[${name}]`)) return this;
       return this.parent?.closest(selector) ?? null;
     }
-    addEventListener(_type: string, listener: unknown, options?: boolean | { capture?: boolean }) {
+    addEventListener(type: string, listener: unknown, options?: boolean | { capture?: boolean }) {
       const capture = typeof options === "boolean" ? options : options?.capture === true;
-      this.listeners.push({ listener: listener as Listener, capture });
+      this.listeners.push({ type, listener: listener as Listener, capture });
     }
     removeEventListener(
-      _type: string,
+      type: string,
       listener: unknown,
       options?: boolean | { capture?: boolean },
     ) {
       const capture = typeof options === "boolean" ? options : options?.capture === true;
       const at = this.listeners.findIndex(
-        (each) => each.listener === listener && each.capture === capture,
+        (each) => each.type === type && each.listener === listener && each.capture === capture,
       );
       if (at >= 0) this.listeners.splice(at, 1);
     }
   }
 
   /**
-   * A key pressed at `target`, dispatched as the DOM dispatches it: to the capture listeners from
-   * the window down to the target, then to the others from the target up to the window, a place's
-   * listeners in order. Once one stops the key, no place after it hears it.
+   * An event at `target`, dispatched as the DOM dispatches it: to the capture listeners for its
+   * type from the window down to the target, then to the others from the target up to the window,
+   * a place's listeners in order. Once one stops the event, no place after it hears it.
    */
-  function dispatch(target: Place, press: Press) {
+  function dispatch(target: Place, event: Dispatched) {
     const path: Place[] = [];
     for (let place: Place | undefined = target; place; place = place.parent) path.unshift(place);
-    press.target = target;
+    event.target = target;
     const invoke = (place: Place, capture: boolean) => {
-      if (press.stopped) return;
-      for (const each of [...place.listeners]) if (each.capture === capture) each.listener(press);
+      if (event.stopped) return;
+      for (const each of [...place.listeners])
+        if (each.type === event.type && each.capture === capture) each.listener(event);
     };
     for (const place of path) invoke(place, true);
     for (const place of [...path].reverse()) invoke(place, false);
   }
 
   /**
-   * The page with a rich field open: the window, the document, the body and the rich editor, which
-   * holds ProseMirror's editor and the link popover. ProseMirror's keydown listener does what
+   * The page with a rich field open, and the app listening on its window as `useHistoryKeys` does:
+   * the window, the document, the body, the rich editor, which holds ProseMirror's editor and the
+   * link popover, and an input of the side panel. ProseMirror's keydown listener does what
    * prosemirror-view's does: it prevents the browser's action for Mod with B, I, Y or Z and no
    * other modifier, Mod being Cmd on a Mac and Ctrl elsewhere, whether or not the editor binds the
    * key (`captureKeyDown`). A key is pressed in ProseMirror's editor, unless at another place.
@@ -156,6 +169,8 @@ describe("listenForHistoryKeys", () => {
     const editor = new Place(wrapper);
     // The popover, marked as `RichOverlay.tsx` marks it, and the address's input in its label.
     const address = new Place(new Place(new Place(wrapper, [NATIVE_UNDO])));
+    // A text input of the side panel, in its column beside the page.
+    const panel = new Place(new Place(body));
     const heard: string[] = [];
     editor.addEventListener("keydown", (press: Press) => {
       heard.push(press.key);
@@ -165,16 +180,27 @@ describe("listenForHistoryKeys", () => {
     });
     const ways: Way[] = [];
     const taking = { documentOpen: true };
-    const stop = listenForHistoryKeys(window, (way) => {
+    const stopKeys = listenForHistoryKeys(window, (way) => {
       ways.push(way);
       return taking.documentOpen;
     });
+    const stopRefusing = refuseNativeUndo(window, () => taking.documentOpen);
+    const stop = () => {
+      stopKeys();
+      stopRefusing();
+    };
     const press = (keys: Partial<KeyPress>, at: Place = editor) => {
       const event = keydown(keys);
       dispatch(at, event);
       return event;
     };
-    return { window, address, heard, ways, taking, stop, press };
+    /** The browser about to make an input of `inputType` at `at`. */
+    const input = (inputType: string, at: Place) => {
+      const event = beforeinput(inputType);
+      dispatch(at, event);
+      return event;
+    };
+    return { window, address, panel, heard, ways, taking, stop, press, input };
   }
 
   it("takes Cmd+Z in a rich field before ProseMirror, which would spend it, and stops it there", () => {
@@ -249,6 +275,31 @@ describe("listenForHistoryKeys", () => {
     expect(field.ways).toEqual(["undo"]);
     expect(z.defaultPrevented).toBe(true);
     expect(field.heard).toEqual([]);
+  });
+
+  it("refuses the browser's undo and redo outside the popover while a document is open", () => {
+    const field = richField(true);
+    // The browser's undo goes to the element whose typing it takes back: after the address's own
+    // typing, a panel input's, which it would change and move the focus to, as its Edit menu would.
+    const refused = ["historyUndo", "historyRedo"].map((type) => field.input(type, field.panel));
+    expect(refused.map((input) => input.defaultPrevented)).toEqual([true, true]);
+    expect(refused.map((input) => input.stopped)).toEqual([false, false]);
+    // In the address, the browser takes back and makes again what was typed there; and typing is
+    // typing anywhere.
+    const allowed = [
+      field.input("historyUndo", field.address),
+      field.input("historyRedo", field.address),
+      field.input("insertText", field.panel),
+    ];
+    expect(allowed.map((input) => input.defaultPrevented)).toEqual([false, false, false]);
+    // With no document open, as while the list shows, and once the app stops listening, the
+    // browser's undo is its own again.
+    field.taking.documentOpen = false;
+    expect(field.input("historyUndo", field.panel).defaultPrevented).toBe(false);
+    field.taking.documentOpen = true;
+    field.stop();
+    expect(field.window.listeners).toEqual([]);
+    expect(field.input("historyUndo", field.panel).defaultPrevented).toBe(false);
   });
 });
 

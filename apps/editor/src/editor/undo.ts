@@ -8,6 +8,10 @@
  * Only inside an element marked `NATIVE_UNDO`, as the link popover is, do the keys stay the
  * browser's: what is typed there reaches the document only when it is applied, so the history has
  * none of it to take back, and taking the focus out of it would close the rich editor and lose it.
+ * The browser keeps a single undo for the page, though, whose step after the last of that typing
+ * may be typing in another element, such as a panel input, which it would take back there and move
+ * the focus to; so while a document is open, the browser's own undo and redo, from the keys or its
+ * Edit menu, are refused anywhere else (`refuseNativeUndo`).
  *
  * The keys are taken before any element sees them, in the capture phase on the window, since the
  * rich editor would otherwise stop them: ProseMirror prevents the browser's action for Mod with Z
@@ -74,24 +78,26 @@ export function holdsTyping(
 /**
  * The attribute that marks an element whose typing keeps the browser's own undo and redo, as the
  * link popover's does (`RichOverlay.tsx`): the keys pressed anywhere inside it are the browser's,
- * which undoes and redoes the typing in the input that has the focus.
+ * which undoes and redoes the typing in the input that has the focus, and never typing elsewhere,
+ * which is refused (`refuseNativeUndo`).
  */
 export const NATIVE_UNDO = "data-native-undo";
 
 /**
- * Whether a key was pressed at or inside an element marked `NATIVE_UNDO`. A key goes to the
- * element with the focus, or else to the body; one sent to the document or the window, which
- * have no `closest`, is in no element.
+ * Whether an event happened at or inside an element marked `NATIVE_UNDO`. A key goes to the
+ * element with the focus, or else to the body, and the browser's undo to the element whose typing
+ * it takes back; an event sent to the document or the window, which have no `closest`, is in no
+ * element.
  */
 function inNativeUndo(target: EventTarget | null): boolean {
   const element = target as Partial<Pick<Element, "closest">> | null;
   return typeof element?.closest === "function" && element.closest(`[${NATIVE_UNDO}]`) !== null;
 }
 
-/** Where the keys are listened for: the window, or a stand-in for it. */
+/** Where the keys and the browser's inputs are listened for: the window, or a stand-in for it. */
 export type KeyTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
 
-/** The listener's phase: the capture phase, before any element under the window sees a key. */
+/** The listeners' phase: the capture phase, before any element under the window sees an event. */
 const CAPTURE = { capture: true } as const;
 
 /**
@@ -117,15 +123,47 @@ export function listenForHistoryKeys(target: KeyTarget, take: (way: Way) => bool
   return () => target.removeEventListener("keydown", listener, CAPTURE);
 }
 
+/** The inputs of the browser's own undo and redo, as `beforeinput` names them. */
+const NATIVE_HISTORY = new Set(["historyUndo", "historyRedo"]);
+
+/**
+ * Refuse the browser's own undo and redo on `target`, the window, while `refusing` says to, as it
+ * does while a document is open, anywhere but at or inside an element marked `NATIVE_UNDO`;
+ * returns what stops the refusing. The browser keeps a single undo for the page and takes back its
+ * latest step wherever that was typed: its Edit menu's undo in a panel input would go around the
+ * app's history, and an undo key pressed in the link popover, once the typing there is all undone,
+ * would take back typing in another element and move the focus there. The `beforeinput` of the
+ * browser's undo goes to the element whose typing it takes back, so that one anywhere else is
+ * refused before it changes anything, and one in the popover goes on. The overlays refuse the
+ * browser's undo and redo in their own elements too (`REFUSED`).
+ */
+export function refuseNativeUndo(target: KeyTarget, refusing: () => boolean): () => void {
+  const listener = (event: Event) => {
+    const { inputType } = event as InputEvent;
+    if (NATIVE_HISTORY.has(inputType) && refusing() && !inNativeUndo(event.target))
+      event.preventDefault();
+  };
+  target.addEventListener("beforeinput", listener, CAPTURE);
+  return () => target.removeEventListener("beforeinput", listener, CAPTURE);
+}
+
 /**
  * Give the undo and redo keys, pressed anywhere in the page but inside an element that keeps the
  * browser's own (`NATIVE_UNDO`), to `take`, the one from the latest render, which says whether it
- * took the key (`listenForHistoryKeys`).
+ * took the key (`listenForHistoryKeys`); and while `documentOpen`, refuse the browser's own undo
+ * and redo anywhere but inside such an element (`refuseNativeUndo`).
  */
-export function useHistoryKeys(take: (way: Way) => boolean): void {
-  const latest = useRef(take);
+export function useHistoryKeys(take: (way: Way) => boolean, documentOpen: boolean): void {
+  const latest = useRef({ take, documentOpen });
   useLayoutEffect(() => {
-    latest.current = take;
+    latest.current = { take, documentOpen };
   });
-  useEffect(() => listenForHistoryKeys(window, (way) => latest.current(way)), []);
+  useEffect(() => {
+    const stopKeys = listenForHistoryKeys(window, (way) => latest.current.take(way));
+    const stopRefusing = refuseNativeUndo(window, () => latest.current.documentOpen);
+    return () => {
+      stopKeys();
+      stopRefusing();
+    };
+  }, []);
 }
