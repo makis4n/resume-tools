@@ -23,6 +23,14 @@ describe("refusedSpecial", () => {
     // dvips's file-inclusion special, in both spellings.
     expect(refusedSpecial("psfile=drawing.eps llx=0")).toBe("psfile=");
     expect(refusedSpecial("PSfile=drawing.eps")).toBe("psfile=");
+    // A dvipdfmx:config whose option is not C, V or P reads a file (f) or reconfigures the run.
+    expect(refusedSpecial("dvipdfmx:config f pdftex.map")).toBe("dvipdfmx:config f");
+    expect(refusedSpecial('dvipdfmx:  config D "gs -q -sDEVICE=..."')).toBe("dvipdfmx:config D");
+    expect(refusedSpecial("dvipdfmx:config f /texlive/texmf-dist/web2c/texmf.cnf")).toBe(
+      "dvipdfmx:config f",
+    );
+    // p (paper) is a different option from P (permissions), so case is kept.
+    expect(refusedSpecial("dvipdfmx:config p a4")).toBe("dvipdfmx:config p");
   });
 
   it("passes a special that reads no file", () => {
@@ -34,7 +42,10 @@ describe("refusedSpecial", () => {
       "pdf:dest (page.1) [@thispage /XYZ @xpos @ypos null]",
       "papersize=614.295pt,794.96999pt",
       "color push rgb 1 0 0",
+      // The only dvipdfmx:config options that reach nothing outside the PDF.
       "dvipdfmx:config C 0x0010",
+      "dvipdfmx:config V 5",
+      "dvipdfmx:config P -44",
       "rt:b:header.first",
       "header=l3backend-dvips.pro",
     ])
@@ -584,6 +595,18 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       // Nothing ran, so nothing was fetched or written under the PDF's name.
       expect(made.output).toBe("");
       expect(jobFiles("reader")).not.toContain("reader.pdf");
+    }, 60_000);
+
+    it("refuses a dvipdfmx:config special whose option reads a file or reconfigures the run", () => {
+      // config f loads a font map, the same class as pdf:mapfile; the map is never read, since the
+      // special is caught in the output and the PDF refused before xdvipdfmx runs (decision 0008).
+      const attack = doc("hi\\special{dvipdfmx:config f pdftex.map}");
+      expect(session.compile("pdftex", "stock", attack, { job: "config" }).ok).toBe(true);
+      const made = session.pdf("config", { compress: 0 });
+      expect(made.ok).toBe(false);
+      expect(made.pdf).toBeUndefined();
+      expect(made.error).toContain("dvipdfmx:config f");
+      expect(made.output).toBe("");
     }, 60_000);
 
     it("refuses a compression level that is not a whole number from 0 to 9", () => {

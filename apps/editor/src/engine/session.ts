@@ -343,26 +343,41 @@ function namesPaperSize(parsed: DviDocument): boolean {
 const READS_A_FILE = new Set(["image", "img", "epdf", "fstream", "mapfile", "mapline"]);
 
 /**
- * The command of a `\special` that would make xdvipdfmx read a file, or undefined for one that
- * would not. It is the one thing between an output and a PDF that can reach outside the job's
- * folder: resume text cannot emit a special (decision 0007 escapes every backslash), but a
- * template can, so `pdf` scans every special and refuses the PDF rather than embed, say, another
- * job's file or a TeX Live file (version one's PDFs carry no images at all; decision 0008).
+ * The `dvipdfmx:config` options that only tune the PDF and reach nothing outside it: `C`
+ * compatibility flags, `V` the PDF version, `P` the permission flags. Every other option is a
+ * command-line flag that reads a file or reconfigures the run: `f` loads a font map (the same class
+ * as `pdf:mapfile`, and a map a job ships can point a font at a cross-job or absolute path), `D`
+ * sets a command to run, and the page and offset options change the output. The option is matched
+ * with regard to case, since `P` (permissions) and `p` (paper) differ only by it.
+ */
+const SAFE_CONFIG = new Set(["C", "V", "P"]);
+
+/**
+ * The command of a `\special` that would make xdvipdfmx read a file or reconfigure the run, or
+ * undefined for one that would not. It is the one thing between an output and a PDF that can reach
+ * outside the job's folder: resume text cannot emit a special (decision 0007 escapes every
+ * backslash), but a template can, so `pdf` scans every special and refuses the PDF rather than
+ * embed, say, another job's file or a TeX Live file (version one's PDFs carry no images at all;
+ * decision 0008).
  *
- * dvipdfmx parses a `pdf:` special as `pdf:` then optional spaces then the command keyword, both
- * matched without regard to case; a dvips special is the raw `psfile=`/`PSfile=`. Harmless
- * specials (`pdf:pagesize`, `pdf:literal`, `pdf:link`, `papersize=`, `color push`, the field
- * markers, `dvipdfmx:config`) name no such command and pass.
+ * dvipdfmx parses a `pdf:` special as `pdf:` then optional spaces then the command keyword, and a
+ * `dvipdfmx:config` special as the prefix then optional spaces then `config` then the option, all
+ * matched without regard to case except the option letter; a dvips special is the raw
+ * `psfile=`/`PSfile=`. Harmless specials (`pdf:pagesize`, `pdf:literal`, `pdf:link`, `papersize=`,
+ * `color push`, the field markers, `dvipdfmx:config C`) name no such command and pass.
  */
 export function refusedSpecial(text: string): string | undefined {
   const special = text.trimStart();
   if (/^psfile=/i.test(special)) return "psfile=";
   const command = /^pdf:\s*([a-z]+)/i.exec(special)?.[1]?.toLowerCase();
-  return command !== undefined && READS_A_FILE.has(command) ? `pdf:${command}` : undefined;
+  if (command !== undefined) return READS_A_FILE.has(command) ? `pdf:${command}` : undefined;
+  const option = /^dvipdfmx:\s*config\b\s*([a-z]+)?/i.exec(special)?.[1];
+  if (option !== undefined && !SAFE_CONFIG.has(option)) return `dvipdfmx:config ${option}`;
+  return undefined;
 }
 
-/** The first `\special` of any page that would make xdvipdfmx read a file, or undefined. */
-function fileReadingSpecial(parsed: DviDocument): string | undefined {
+/** The first `\special` of any page that would make xdvipdfmx read a file or reconfigure the run. */
+function refusedOutputSpecial(parsed: DviDocument): string | undefined {
   for (const page of parsed.pages)
     for (const item of page.items) {
       const refused = item.kind === "special" ? refusedSpecial(item.text) : undefined;
@@ -592,8 +607,8 @@ export class EngineSession {
    * a size given to it (`-p`) overrides the special, and XeTeX only ever writes the special.
    *
    * xdvipdfmx does not honour `openin_any`, so before it runs, every special of the output is
-   * scanned and the PDF refused when one would read a file (`refusedSpecial`): a template's
-   * special could otherwise embed another job's or a TeX Live file (decision 0008).
+   * scanned and the PDF refused when one would read a file or reconfigure the run (`refusedSpecial`):
+   * a template's special could otherwise embed another job's or a TeX Live file (decision 0008).
    */
   pdf(job: string, options: PdfOptions = {}): PdfResult {
     checkName("job", job);
@@ -606,13 +621,13 @@ export class EngineSession {
     if (file === undefined || output === undefined)
       return { ok: false, ms: 0, output: "", error: `${job} has no output to make a PDF of` };
     const parsed = parseDvi(output, () => undefined);
-    const reads = fileReadingSpecial(parsed);
-    if (reads !== undefined)
+    const refused = refusedOutputSpecial(parsed);
+    if (refused !== undefined)
       return {
         ok: false,
         ms: 0,
         output: "",
-        error: `the output has a \\special that reads a file, which the PDF must not embed: ${reads}`,
+        error: `the output has a \\special that reads a file or reconfigures xdvipdfmx: ${refused}`,
       };
     const args = [
       "xdvipdfmx",

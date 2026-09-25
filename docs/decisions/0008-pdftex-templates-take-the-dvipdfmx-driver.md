@@ -75,7 +75,9 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
   to it overrides `pdf:pagesize`, which is all XeTeX writes, and would clip an A4 page to Letter.
 - xdvipdfmx does not honour `openin_any`, so a template's `\special` could read any file of the
   engine and embed it in the PDF. Before it runs, `session.pdf` scans every special and refuses one
-  that reads a file (`pdf:image`, `pdf:img`, `pdf:epdf`, `pdf:fstream`, `pdf:mapfile`,
-  `pdf:mapline`, dvips's `psfile=`). Version one's PDFs therefore carry no images at all: a
-  template's photo is an `extras` field (decision 0006), and a later item that wants images in the
-  PDF must give xdvipdfmx a folder of its own to read from, not the shared tree.
+  that reads a file or reconfigures the run: `pdf:image`, `pdf:img`, `pdf:epdf`, `pdf:fstream`,
+  `pdf:mapfile`, `pdf:mapline`, dvips's `psfile=`, and a `dvipdfmx:config` whose option is anything
+  but `C` (compatibility flags), `V` (PDF version) or `P` (permissions) — `f` loads a font map, `D`
+  runs a command, and the rest change the output. Version one's PDFs therefore carry no images at
+  all: a template's photo is an `extras` field (decision 0006), and a later item that wants images
+  in the PDF must give xdvipdfmx a folder of its own to read from, not the shared tree.
