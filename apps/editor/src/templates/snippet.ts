@@ -151,10 +151,12 @@ const LINK_COMMANDS = new Set(["href", "url", "nolinkurl", "hyperlink"]);
  * `\{{&text}}` with `LaTeX rocks` sets the logo.
  *
  * The check reads as much of TeX as that takes: a comment, from a `%` to the end of its line, is
- * not read, tags and all; a control symbol, such as `\{`, `\%` or `\\`, is one token; and an
+ * not read, tags and all; a control symbol, such as `\{`, `\%` or `\\`, is one token; an
  * optional argument may come between a command and its address, its braces counted as any
- * others. One pass over the source counts braces, however the arguments nest, so the check costs
- * time in proportion to its length.
+ * others; `\url` and `\nolinkurl` may take their address between a pair of any other character,
+ * as `\url|...|`; and a block tag between a backslash and a slot sets nothing, so the backslash
+ * still reaches the slot. One pass over the source counts braces, however the arguments nest, so
+ * the check costs time in proportion to its length.
  */
 export function checkAddresses(
   source: string,
@@ -162,14 +164,19 @@ export function checkAddresses(
 ): string[] {
   const problems = new Set<string>();
   const tags = scan(source);
-  // Each address that is open, the innermost last, with the brace depth inside it.
-  const addresses: { command: string; depth: number }[] = [];
+  // Each address that is open, the innermost last: with the brace depth inside it, or with the
+  // character that closes it, for `\url|...|` and the like, which take any delimiter.
+  const addresses: { command: string; depth: number; delimiter?: string }[] = [];
   // A link command whose address has not opened yet: right after its name, inside its optional
   // argument, which ends at a `]` at the brace depth it began at, or after that argument.
   let link: { command: string; stage: "name" | "options" | "argument"; depth: number } | undefined;
   let depth = 0;
   let next = 0;
   let at = 0;
+  // Where the text TeX reads has got to: the index after the last character outside a tag. A
+  // block tag sets nothing, so the character before a slot, once the tags are gone, is the one
+  // before the block tags in between, and a backslash there still makes the slot's text a command.
+  let rendered = 0;
   while (at < source.length) {
     const tag = tags[next];
     if (tag !== undefined && tag.at <= at) {
@@ -179,8 +186,9 @@ export function checkAddresses(
       if (tag.sigil !== "" && tag.sigil !== "&") continue;
       // A slot where a link's argument would begin is that argument, and no address opens.
       if (link?.stage !== "options") link = undefined;
-      if (followsBackslash(source, tag.at))
+      if (followsBackslash(source, rendered))
         problems.add("a slot cannot follow a backslash; the text would become a command");
+      rendered = at;
       const address = addresses.at(-1);
       // A name the place does not offer is checkSnippet's to report.
       const type = Object.hasOwn(slots, tag.name) ? slots[tag.name] : undefined;
@@ -198,6 +206,7 @@ export function checkAddresses(
       for (let inside = tags[next]; inside !== undefined && inside.at < end; inside = tags[++next])
         if (inside.to > end) end = lineEnd(source, inside.to);
       at = end;
+      rendered = at;
       continue;
     }
     if (char === "\\") {
@@ -206,6 +215,7 @@ export function checkAddresses(
       // A control symbol, such as \{, \% or \\, is two characters, unless a tag begins right
       // after the backslash, which the tag's own check reports.
       at = command === null ? at + (tag?.at === at + 1 ? 1 : 2) : COMMAND.lastIndex;
+      rendered = at;
       // Inside an optional argument a command is part of it. Elsewhere it may begin a link, and
       // where a link's argument would begin it is that argument.
       if (link?.stage !== "options") {
@@ -215,6 +225,14 @@ export function checkAddresses(
             ? { command: name, stage: "name", depth }
             : undefined;
       }
+      continue;
+    }
+    const delimited = addresses.at(-1);
+    if (delimited?.delimiter === char) {
+      // The address `\url|...|` opened closes at its own delimiter, whatever the braces inside.
+      addresses.pop();
+      at++;
+      rendered = at;
       continue;
     }
     if (link?.stage === "options") {
@@ -227,7 +245,17 @@ export function checkAddresses(
       } else if (char === "[" && link.stage === "name") {
         link.stage = "options";
         link.depth = depth;
-      } else if (!/\s/.test(char)) {
+      } else if (/\s/.test(char)) {
+        // The spaces after a command are TeX's to skip; the address may still follow.
+      } else if (DELIMITED_COMMANDS.has(link.command) && link.stage === "name") {
+        // `\url` and `\nolinkurl` take their address between any character but a brace, as
+        // `\url|...|` does, and it runs to that character's next appearance.
+        addresses.push({ command: link.command, depth: -1, delimiter: char });
+        link = undefined;
+        at++;
+        rendered = at;
+        continue;
+      } else {
         link = undefined;
       }
     }
@@ -237,9 +265,13 @@ export function checkAddresses(
       depth--;
     }
     at++;
+    rendered = at;
   }
   return [...problems];
 }
+
+/** The link commands that also take their address between a pair of any other character. */
+const DELIMITED_COMMANDS = new Set(["url", "nolinkurl"]);
 
 /** A control word, and the spaces TeX skips after it. */
 const COMMAND = /\\([A-Za-z]+)\s*/y;

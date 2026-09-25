@@ -222,6 +222,19 @@ describe("checkAddresses", () => {
     expect(check("\\item \\\\{{&text}}")).toEqual([]);
     expect(check("\\item \\{{{&text}}}")).toEqual([]);
     expect(check("% \\{{&text}}")).toEqual([]);
+    // A block tag between sets nothing, so the backslash still reaches the slot.
+    expect(check("\\{{#text}}{{&text}}{{/text}}")).toEqual([backslashed]);
+    expect(check("\\\\{{#text}}{{&text}}{{/text}}")).toEqual([]);
+  });
+
+  it("reads an address \\url and \\nolinkurl take between any other character", () => {
+    expect(check("\\url|{{text}}|")).toEqual([refused("text", "text", "url")]);
+    expect(check("\\nolinkurl |{{&summary}}| after")).toEqual([
+      refused("summary", "rich", "nolinkurl"),
+    ]);
+    expect(check("\\url|{{&href}}| {{text}}")).toEqual([]);
+    expect(check("\\url|plain{}|{{text}}")).toEqual([]);
+    expect(check("\\href|{{text}}|")).toEqual([]);
   });
 });
 
