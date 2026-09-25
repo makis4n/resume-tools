@@ -275,6 +275,66 @@ describe("DocumentStore", () => {
     page.leave();
   });
 
+  it("writes one save a tick, however many are made while its write is on its way", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const { store, name } = storeForTest();
+    const id = await store.create("jake", sample);
+    const { document, revision } = await read(store, id);
+    const results: Flushed[] = [];
+    store.onFlushed((result) => results.push(result));
+    // Five keystrokes, each made while the write before it is on its way.
+    const typing = ["Ada", "Bo", "Cy", "Di", "Ed"];
+    let puts = 0;
+    const put = IDBObjectStore.prototype.put;
+    vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (
+      this: IDBObjectStore,
+      ...args: Parameters<IDBObjectStore["put"]>
+    ) {
+      if (this.name === "documents") {
+        puts++;
+        const first = typing.shift();
+        if (first !== undefined) store.save(id, named(document, first), revision);
+      }
+      return put.apply(this, args);
+    });
+    store.save(id, named(document, "Zed"), revision);
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY);
+    await eventually(() => results.length === 1);
+    expect(puts).toBe(1);
+    expect(await storedName(name, id)).toBe("Zed");
+    // The keystroke made meanwhile waits a whole delay, and its tick writes it alone.
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY - 1);
+    expect(puts).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await eventually(() => results.length === 2);
+    expect(puts).toBe(2);
+    expect(await storedName(name, id)).toBe("Ada");
+  });
+
+  it("writes every save made while writes were on their way before a flush settles", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const { store, name } = storeForTest();
+    const id = await store.create("jake", sample);
+    const { document, revision } = await read(store, id);
+    // A keystroke made while the flush's own write of Bo is on its way.
+    const put = IDBObjectStore.prototype.put;
+    vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (
+      this: IDBObjectStore,
+      ...args: Parameters<IDBObjectStore["put"]>
+    ) {
+      const row = args[0] as { document?: Document };
+      if (this.name === "documents" && row.document?.resume.header.name.first === "Bo")
+        store.save(id, named(document, "Cy"), revision);
+      return put.apply(this, args);
+    });
+    store.save(id, named(document, "Ada"), revision);
+    // The timer's write of Ada is on its way when Bo is saved and a flush is asked for.
+    vi.advanceTimersByTime(SAVE_DELAY);
+    store.save(id, named(document, "Bo"), revision);
+    expect(await store.flush()).toEqual(flushed(3));
+    expect(await storedName(name, id)).toBe("Cy");
+  });
+
   it.each([
     ["left", (page: FakePage) => page.leave()],
     ["hidden", (page: FakePage) => page.hide()],

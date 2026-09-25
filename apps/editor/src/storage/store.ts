@@ -131,6 +131,14 @@ interface Held {
   stale: boolean;
 }
 
+/**
+ * Who asked for a flush. The timer writes what waits and leaves a save made meanwhile to its next
+ * tick, so that a document typed into while it is written is still written at most twice a
+ * second. Anyone else, a caller or the page being hidden or going away, writes that too, so that
+ * no answer leaves a newer save behind; the page's flush writes unchecked (see `write`).
+ */
+type Asker = "timer" | "caller" | "leaving";
+
 /** A save not written yet. */
 interface Save {
   document: Document;
@@ -235,7 +243,7 @@ export class DocumentStore {
     }
     const page = options.page ?? (typeof window === "undefined" ? undefined : { window, document });
     // The page may run no task after either, so what waits is written unchecked (see `write`).
-    const leaving = () => void this.flushAll(true);
+    const leaving = () => void this.flushAll("leaving");
     const hidden = () => {
       if (page?.document.visibilityState === "hidden") leaving();
     };
@@ -329,7 +337,7 @@ export class DocumentStore {
    * failed and waiting to be tried again, or refused over another tab's change.
    */
   flush(): Promise<Flushed> {
-    return this.flushAll(false);
+    return this.flushAll("caller");
   }
 
   /** Delete a document, and any save of it not written yet. */
@@ -428,13 +436,14 @@ export class DocumentStore {
   }
 
   /**
-   * Write what waits, and settle once every save made meanwhile is written too, so that a flush
-   * leaves no save behind that it does not report; a save that fails is not tried twice in one
-   * flush. `final` when the page is being hidden or going away (see `write`).
+   * Write what waits, and settle once those writes and every one before them are done, saying what
+   * came of them. Unless the timer asked (`Asker`), a save made meanwhile is written too, and the
+   * flush settles only once none is left; a save that fails is not tried twice in one flush.
    */
-  private async flushAll(final: boolean): Promise<Flushed> {
+  private async flushAll(asker: Asker): Promise<Flushed> {
     clearTimeout(this.timer);
     this.timer = undefined;
+    const final = asker === "leaving";
     const results: Flushed[] = [];
     let tried = 0;
     do {
@@ -447,7 +456,10 @@ export class DocumentStore {
       }
       tried = this.serials;
       results.push(...(await Promise.all(this.writing)));
-    } while ([...this.pending.values()].some((save) => save.serial > tried));
+    } while (asker !== "timer" && [...this.pending.values()].some((save) => save.serial > tried));
+    // A save made while the timer's writes were on their way waits for its next tick, set when the
+    // save was made; `schedule` sets one only where none is.
+    if (asker === "timer") this.schedule();
     const result: Flushed = {
       written: results.reduce((sum, { written }) => sum + written, 0),
       failed: [...new Set(results.flatMap(({ failed }) => failed))],
@@ -541,7 +553,7 @@ export class DocumentStore {
     const delay = Math.max(SAVE_DELAY, this.retryAt - Date.now());
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.flush();
+      void this.flushAll("timer");
     }, delay);
   }
 
