@@ -173,6 +173,7 @@ export async function validatePackage(
     findings: [],
   };
   const { findings } = report;
+  findings.push(...checkFontFiles(pkg, fonts));
   // What a XeTeX package's fonts can set, as the editor reads it, so that every body leaves out
   // what they cannot, as the editor's does (decision 0014).
   const files = fontFiles(pkg);
@@ -346,6 +347,29 @@ export function editEverything(resume: Resume): Resume {
 function checkDump(dumped: DumpResult): Finding[] {
   if (dumped.ok) return [];
   return [{ check: "dump", message: dumped.error ?? "the preamble did not dump" }];
+}
+
+/**
+ * `dump`, before it: every font file a XeTeX package's `fonts` section names is one TeX Live has
+ * in `fonts/opentype` or `fonts/truetype`, where XeTeX and the page find it (decision 0014). The
+ * declarations load nothing, so the format dumps whatever they name, and a file the tree lacks
+ * fails every compile that selects its shape, which the sample may never do, as a bold italic run
+ * would. A finding names each such file and the shapes that name it, and the run goes on.
+ */
+function checkFontFiles(pkg: TemplatePackage, fonts: FontLibrary): Finding[] {
+  const shapesOf = new Map<string, string[]>();
+  for (const { family, shapes } of pkg.fonts ?? [])
+    for (const [shape, file] of Object.entries(shapes)) {
+      const named = shapesOf.get(file) ?? [];
+      named.push(`${family} ${shape}`);
+      shapesOf.set(file, named);
+    }
+  return [...shapesOf]
+    .filter(([file]) => fonts.nativePath(file) === undefined)
+    .map(([file, shapes]) => ({
+      check: "dump",
+      message: `${file}, the font file of ${shapes.join(" and ")}, is not one TeX Live has in fonts/opentype or fonts/truetype`,
+    }));
 }
 
 /**

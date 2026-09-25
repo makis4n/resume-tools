@@ -48,8 +48,11 @@ function virtualFont(local: string, packets: number[] | Record<number, number[]>
   return new Uint8Array(out);
 }
 
-/** An invented OpenType font of one glyph, an x, 500 units wide, which opentype.js writes. */
-function nativeFont(): Uint8Array {
+/**
+ * An invented OpenType font of one glyph, an x, 500 units wide, which opentype.js writes, and a
+ * glyph of the same for each character `more` gives.
+ */
+function nativeFont(more: number[] = []): Uint8Array {
   const x = new Path();
   x.moveTo(0, 0);
   x.lineTo(500, 700);
@@ -57,6 +60,15 @@ function nativeFont(): Uint8Array {
   const glyphs = [
     new Glyph({ name: ".notdef", advanceWidth: 500, path: new Path() }),
     new Glyph({ name: "x", unicodes: [0x78], advanceWidth: 500, path: x }),
+    ...more.map(
+      (point) =>
+        new Glyph({
+          name: `u${point.toString(16)}`,
+          unicodes: [point],
+          advanceWidth: 500,
+          path: x,
+        }),
+    ),
   ];
   const font = new Font({
     familyName: "Invented",
@@ -295,6 +307,24 @@ describe("FontLibrary over an invented tree", () => {
     expect(broken?.missing).toBeDefined();
     expect(await fonts.loadNative("Broken.otf")).toBe(broken);
     expect(reads.get("/fonts/opentype/invented/Broken.otf")).toBe(1);
+  });
+
+  it("reads what a package's native fonts can set, leaving out a file the tree lacks", async () => {
+    const { fonts } = libraryOver({
+      "/fonts/opentype/invented/Invented-Regular.otf": nativeFont([0xe9]),
+      "/fonts/opentype/invented/Broken.otf": new Uint8Array([0, 1, 0, 0, 0, 0]),
+    });
+    // XeTeX cannot load a file the tree lacks either, so it sets no text to judge by.
+    const covers = await fonts.coverage(["Invented-Regular.otf", "Nosuch.otf"]);
+    expect(covers("\u{e9}")).toBe(true);
+    expect(covers("\u{2192}")).toBe(false);
+    // One the tree has that cannot be read might set anything, so it covers nothing.
+    const unread = await fonts.coverage(["Invented-Regular.otf", "Broken.otf"]);
+    expect(unread("\u{e9}")).toBe(false);
+    expect(fonts.nativePath("Invented-Regular.otf")).toBe(
+      "/texlive/texmf-dist/fonts/opentype/invented/Invented-Regular.otf",
+    );
+    expect(fonts.nativePath("Nosuch.otf")).toBeUndefined();
   });
 
   it("refuses a chain of virtual fonts more than four deep", async () => {

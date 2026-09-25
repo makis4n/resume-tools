@@ -960,7 +960,28 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       ]);
     }, 120_000);
 
-    it("reports a font file TeX Live does not have as the compile's error", async () => {
+    it("reports a font file TeX Live does not have for a shape the sample never selects", async () => {
+      // A resume that sets a run in bold italic would fail every compile, though the sample passes.
+      const misspelled = parsePackage({
+        ...xetex,
+        id: "invented-xetex-misspelled",
+        fonts: xetex.fonts?.map((font) =>
+          font.family === "Roboto"
+            ? { ...font, shapes: { ...font.shapes, "b/it": "Roboto-BoldItalc.otf" } }
+            : font,
+        ),
+      });
+      const report = await validatePackage(session, fonts, misspelled, sample);
+      expect(report.findings).toEqual([
+        {
+          check: "dump",
+          message:
+            "Roboto-BoldItalc.otf, the font file of Roboto b/it, is not one TeX Live has in fonts/opentype or fonts/truetype",
+        },
+      ]);
+    }, 120_000);
+
+    it("reports a font file TeX Live does not have, and as the compile's error where it is selected", async () => {
       const missing = parsePackage({
         ...xetex,
         id: "invented-xetex-missing",
@@ -971,6 +992,11 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       const report = await validatePackage(session, fonts, missing, sample);
       // The declarations load nothing, so the format dumps; the first heading asks for the file.
       expect(report.findings).toEqual([
+        {
+          check: "dump",
+          message:
+            "Nosuch-Bold.otf, the font file of SourceSans bx/n, is not one TeX Live has in fonts/opentype or fonts/truetype",
+        },
         { check: "compile", message: expect.stringContaining("Nosuch-Bold.otf") },
       ]);
     }, 120_000);

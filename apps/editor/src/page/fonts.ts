@@ -221,13 +221,13 @@ export class FontLibrary {
 
   /**
    * What a XeTeX package's native font files `names` can set wherever its template sets a text
-   * (`nativeCoverage`), each loaded as `loadNative` loads it: a file the tree lacks, or that
-   * cannot be read, covers nothing. The generator leaves out of the package's texts what they
-   * cannot set (decision 0014).
+   * (`nativeCoverage`), each loaded as `loadNative` loads it. A file the tree lacks sets no text,
+   * since XeTeX cannot load it either, and is left out; one that cannot be read or parsed covers
+   * nothing. The generator leaves out of the package's texts what they cannot set (decision 0014).
    */
   async coverage(names: readonly string[]): Promise<(char: string) => boolean> {
     const fonts = await Promise.all(names.map((name) => this.loadNative(name)));
-    return nativeCoverage(fonts.map((font) => font?.file));
+    return nativeCoverage(fonts.flatMap((font) => (font === undefined ? [] : [font.file])));
   }
 
   /**

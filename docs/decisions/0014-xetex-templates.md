@@ -193,8 +193,11 @@ within their rows, which is Roboto's kerning and ligatures, left to the page.
 - The fonts a package declares must be the tree's: XeTeX finds them through kpathsea, the page
   through the manifest, and a template cannot ship one, since a package's files are text.
 - A package is refused for fonts only where the schema can tell. A file the tree does not have
-  dumps, since the declarations load nothing, and fails the first compile that selects it, which
-  the harness reports as the compile's error.
+  dumps, since the declarations load nothing, and fails every compile that selects it, which the
+  sample may never do, as a bold italic run would; so the harness's dump check names every file the
+  `fonts` section names that the tree lacks in `fonts/opentype` or `fonts/truetype`, and the
+  shapes that name it, before it dumps, and the compile's error follows where the sample selects
+  one. Such a file sets no text, so it counts for nothing in what the generator leaves out.
 - A character only some of a package's text fonts cover is left out wherever the template sets
   it, though the family it is set in may have it, since the generator cannot tell which family
   sets a text. Knowing that is the template's, and a later record may give the package a way to
