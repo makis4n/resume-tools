@@ -306,6 +306,31 @@ function thrown(run: () => unknown): Error {
   throw new Error("nothing was thrown");
 }
 
+/**
+ * The CPU time this thread spends on `work`, in milliseconds. The time it waits while the other
+ * test files run does not count, and a longer run meets more of that wait, so a bound in CPU time
+ * holds on a slow shared machine where one in elapsed time may not.
+ */
+function cpuMs(work: () => void): number {
+  const started = process.threadCpuUsage();
+  work();
+  const { user, system } = process.threadCpuUsage(started);
+  return (user + system) / 1000;
+}
+
+/**
+ * The fastest of `runs` timings of each of `works`, in milliseconds of CPU time (`cpuMs`), the
+ * works taken in turn, so that what load is left meets them alike.
+ */
+function fastest(works: (() => void)[], runs: number): number[] {
+  const best = works.map(() => Number.POSITIVE_INFINITY);
+  for (let run = 0; run < runs; run++)
+    works.forEach((work, i) => {
+      best[i] = Math.min(best[i] ?? Number.POSITIVE_INFINITY, cpuMs(work));
+    });
+  return best;
+}
+
 describe("generateBody", () => {
   it("applies each control's snippet in the schema's order, then sets the document", () => {
     const lines = (values: Parameters<typeof generateBody>[2]) =>
@@ -624,37 +649,64 @@ describe("generateBody", () => {
   });
 
   it("refuses a body past MAX_BODY, quickly", () => {
-    const repeated = packageWith((pkg) => {
-      pkg.snippets.document = `\\begin{document}\n${"{{sections}}\n".repeat(100_000)}\\end{document}`;
-    });
-    const started = performance.now();
-    const error = thrown(() => generateBody(repeated, resume, {}));
-    expect(performance.now() - started).toBeLessThan(1000);
-    expect(error).toBeInstanceOf(GenerateError);
-    expect(error.message).toContain("MAX_BODY");
-    expect(error.message).toContain(String(MAX_BODY));
+    // The walk stops the moment the body passes MAX_BODY, so a document that sets the sections
+    // 100,000 times costs 1.7 to 2.1 times what it costs 10,000 times, both refused at the same
+    // size, the difference being the longer snippet's parse; refused only once the body is whole,
+    // it cost 10.5 to 10.8 times. So the document is bound by five times itself at a tenth of the
+    // repeats, the fastest of five runs of each in the test thread's CPU time (`fastest`), like
+    // against like on whatever machine runs the test, rather than in milliseconds, which a slow
+    // shared machine may not meet. 1,000 ms stays as a ceiling, should the tenth go slow too.
+    const repeated = (count: number) =>
+      packageWith((pkg) => {
+        pkg.snippets.document = `\\begin{document}\n${"{{sections}}\n".repeat(count)}\\end{document}`;
+      });
+    const packages = [repeated(10_000), repeated(100_000)];
+    for (const each of packages) {
+      const error = thrown(() => generateBody(each, resume, {}));
+      expect(error).toBeInstanceOf(GenerateError);
+      expect(error.message).toContain("MAX_BODY");
+      expect(error.message).toContain(String(MAX_BODY));
+    }
+    const [short = 0, long = 0] = fastest(
+      packages.map((each) => () => thrown(() => generateBody(each, resume, {}))),
+      5,
+    );
+    expect(long).toBeLessThan(5 * short);
+    expect(long).toBeLessThan(1000);
   });
 
   it("stops a package that repeats lists which render nothing, quickly", () => {
     // No snippet or separator here writes a character, and the controls write a line each, so
-    // only the steps of the walk can reach the limit: billions of them, without it.
-    const hollow = packageWith((pkg) => {
-      pkg.snippets.document = "{{sections}}".repeat(1000);
-      pkg.snippets.section = {
-        entries: "{{entries}}".repeat(1000),
-        list: "",
-        labelled: "",
-        paragraph: "",
-      };
-      pkg.snippets.entry = "{{bullets}}".repeat(1000);
-      pkg.snippets.bullet = "";
-      pkg.snippets.separators = { sections: "", entries: "", bullets: "" };
-    });
-    const started = performance.now();
-    const error = thrown(() => generateBody(hollow, resume, {}));
-    expect(performance.now() - started).toBeLessThan(1000);
-    expect(error).toBeInstanceOf(GenerateError);
-    expect(error.message).toContain("MAX_BODY");
+    // only the steps of the walk can reach the limit: billions of them, without it. Counted, they
+    // stop the package at the limit, where it costs 1.0 to 1.1 times what it costs with a tenth
+    // of the repeats; uncounted, the walk grows as the cube of the repeats, took 111 ms at the
+    // tenth, and at the whole ran 13 s, until its output outgrew the longest array V8 allows. So
+    // the package is bound by three times itself at a tenth, as above, and by 1,000 ms.
+    const hollow = (count: number) =>
+      packageWith((pkg) => {
+        pkg.snippets.document = "{{sections}}".repeat(count);
+        pkg.snippets.section = {
+          entries: "{{entries}}".repeat(count),
+          list: "",
+          labelled: "",
+          paragraph: "",
+        };
+        pkg.snippets.entry = "{{bullets}}".repeat(count);
+        pkg.snippets.bullet = "";
+        pkg.snippets.separators = { sections: "", entries: "", bullets: "" };
+      });
+    const packages = [hollow(100), hollow(1000)];
+    for (const each of packages) {
+      const error = thrown(() => generateBody(each, resume, {}));
+      expect(error).toBeInstanceOf(GenerateError);
+      expect(error.message).toContain("MAX_BODY");
+    }
+    const [short = 0, long = 0] = fastest(
+      packages.map((each) => () => thrown(() => generateBody(each, resume, {}))),
+      5,
+    );
+    expect(long).toBeLessThan(3 * short);
+    expect(long).toBeLessThan(1000);
   });
 
   it("renders blocks nested deeper than a call stack goes", () => {
@@ -668,18 +720,32 @@ describe("generateBody", () => {
   });
 
   it("decides a field's presence once, so each block that tests a long field costs a step", () => {
+    // A summary of 20,000 characters tested by 200,000 blocks costs 0.8 to 1.1 times what the
+    // same blocks cost with the summary at 2,000, each block reading the presence its slot was
+    // built with. Decided again at each block, by `isBlank` over the summary's text or over its
+    // runs joined, it cost 8.0 to 8.2 and 9.1 to 9.3 times: a step per block per character. So
+    // the long summary is bound by three times the short, as above, and by 1,000 ms, where 300 ms
+    // of elapsed time failed on a shared runner at 305 ms, which is also why its ten runs are
+    // given a minute rather than vitest's default five seconds.
     const tested = packageWith((pkg) => {
       pkg.snippets.section.paragraph = "{{#text}}{{/text}}".repeat(200_000);
     });
-    const long = withSummary(20_000);
-    const started = performance.now();
-    try {
-      generateBody(tested, long, {});
-    } catch (error) {
-      if (!(error instanceof GenerateError)) throw error;
-    }
-    expect(performance.now() - started).toBeLessThan(300);
-  });
+    const [short = 0, long = 0] = fastest(
+      [2_000, 20_000].map((length) => {
+        const summarised = withSummary(length);
+        return () => {
+          try {
+            generateBody(tested, summarised, {});
+          } catch (error) {
+            if (!(error instanceof GenerateError)) throw error;
+          }
+        };
+      }),
+      5,
+    );
+    expect(long).toBeLessThan(3 * short);
+    expect(long).toBeLessThan(1000);
+  }, 60_000);
 
   it("charges each render of a field its length, so repeating a long field stops", () => {
     const repeated = packageWith((pkg) => {
