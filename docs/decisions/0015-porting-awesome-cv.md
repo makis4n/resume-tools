@@ -248,13 +248,15 @@ of 320 to 400 ms.
   and proportional figures can come back when the page reads the texts of glyphs a single
   substitution makes, and a family can load one shape with features of its own; both are
   additions to decision 0014.
-- Source Sans Pro reaches its apostrophe from several code points, and the page reads the glyph
-  as the lowest, U+02BC, so a field that holds an apostrophe fails the harness's alignment check
-  until the page reads every code point of such a glyph, which item 21's branch teaches it. Its
-  hyphen is reached the same way, and xdvipdfmx's ToUnicode map reads it as U+2011, the
-  non-breaking hyphen, so the harness's PDF check misses a field whose first word holds a hyphen,
-  whatever the page reads; the page aligns the hyphen. The sample holds no apostrophe, and no
-  hyphen in a field's first word, until both are settled.
+- Source Sans Pro reaches its apostrophe and its hyphen from several code points each, and
+  xdvipdfmx's ToUnicode map shows the hyphen as U+2011, the non-breaking hyphen: the page takes
+  any of a glyph's code points as its text, and the harness's PDF check reads the hyphen as typed
+  (decision 0014). The sample holds both, an apostrophe in a bullet and in an award's first word,
+  and a hyphen in a bullet's and an interest's first word, and aligns and passes the harness.
+- The generator leaves out of a text any character one of the six text families lacks (decision
+  0014), since it cannot tell which of them sets the text: whichever the font control chooses, a
+  character is set only when Roboto, Source Sans Pro and Lato all have it, so an arrow, which
+  Source Sans Pro has and Roboto does not, is left out in Source Sans as well.
 - The harness's PDF check reads text operators that abut, each starting where the one before it
   ends, as one text, so that a word a template colours in part is found whole: the PDF reader
   (`src/validate/pdf.ts`) gives each operator its end, from its font's glyph widths and its
