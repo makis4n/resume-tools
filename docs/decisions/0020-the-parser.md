@@ -8,9 +8,10 @@ Milestone 3 item 4 turns the body of a resume the intake took in and the referen
 compiled (decision 0019) into a tree: what the probe (item 5) wraps in markers, the naming step
 (item 6) describes to a model, and the assembly (item 7) maps onto the model, and what prints back
 to source that sets the reference's glyphs. Plan section 6 step 2 describes it. The code is under
-`apps/editor/src/import/`: `signatures.ts` asks the engine what a body's commands are, `parse.ts`
-splits, inlines and builds the tree, with `arguments.ts`, `standard.ts`, `richtext.ts` and
-`dates.ts` under it, and `print.ts` prints it back. `corpus parse` runs it over the corpus.
+`apps/editor/src/import/`: `signatures.ts` asks the engine what a body's commands are, with
+`packages.ts` for a few packages' commands, `parse.ts` splits, inlines and builds the tree, with
+`arguments.ts`, `standard.ts`, `richtext.ts` and `dates.ts` under it, and `print.ts` prints it
+back. `corpus parse` runs it over the corpus.
 
 ## Decision
 
@@ -29,18 +30,28 @@ splits, inlines and builds the tree, with `arguments.ts`, `standard.ts`, `richte
   it, since TeX drops a line's trailing spaces and a robust command's real macro ends in one, and
   stops the run with `\@@end`, so no page ships and no end-of-document hook runs. The `import.*`
   names are ones the intake refuses in an upload (decision 0019), so none can be the upload's.
-- `\write` writes a line to a file whole: `max_print_line` bounds only the terminal and the log.
-  With `\newlinechar` off, a record's lines are its lines; a meaning of 27,000 characters comes
-  back whole (`signatures.test.ts`). The session gains `written(job, path)`, which reads a file of a
-  job's own folder by a path inside it and nothing else.
+- `\write` writes a line to a file whole: `max_print_line` bounds only the terminal and the log;
+  a meaning of 27,000 characters comes back whole (`signatures.test.ts`). With `\newlinechar` off
+  a record's lines would be its lines, but TeX writes a few control characters raw: pdfTeX the
+  characters 9, 10 and 11, XeTeX the character 10, which the kernel's `\GenericError` family
+  holds as `^^J`. The first version's records split on them in 62 corpus documents of 111, a
+  meaning cut short and the rest read as lines of no record, and a meaning holding one hashed
+  differently on the two engines. The code writes those three as `^^I`, `^^J` and `^^K`
+  (`\str_replace_all:Nnn`), as both engines write every other control character, and each line
+  of the file is read alone, as UTF-8 or, where it is not, as Latin-1. No corpus document's file
+  now has a line that is no record's, and a meaning holding each control character reads the same
+  on both engines (`signatures.test.ts`). The session gains `written(job, path)`, which reads a
+  file of a job's own folder by a path inside it and nothing else.
 - The compile then follows every macro's meaning to the macros it names and prints theirs, the
   body's names first and a level at a time, to 2,048 names, passing over the table's names,
   LaTeX's scratch macros (`\reserved@a` and its kin, whose meaning is whatever was put in them
   last) and expl3's functions and variables. It reads a meaning back as tokens with every printable
   character a letter, so that a name TeX printed whole, `\cv@entry-style `, reads back whole; and
   beside a macro of a shape below it prints the macro that shape hands its work to, which reading
-  back would split: `\x ` (a name ending in a space), `\\x` (a name starting with a backslash), and
-  xparse's `\x code` and an environment's code.
+  back would split: `\x ` (a name ending in a space), `\\x` (a name starting with a backslash),
+  twoopt's `\2\x`, and xparse's `\x code` and an environment's code. The same catcodes are in
+  force while it prints, so TeX prints a space after every control sequence but the control
+  space, and a meaning's names read back from the file the same way.
 - A second compile, from `\documentclass{article}` alone on the same engine, prints the same names
   in LaTeX's kernel. A macro defined the same way there is standard; every other macro is the
   template's, whether its class, a package or its preamble defines it. A name that is undefined, a
@@ -54,15 +65,53 @@ splits, inlines and builds the tree, with `arguments.ts`, `standard.ts`, `richte
 
 ### How a meaning gives a signature
 
-- A plain macro, `macro:#1#2->...`, takes one mandatory argument for each parameter: `m m`.
+- A plain macro, `macro:#1#2->...`, takes one mandatory argument for each parameter, `m m`, and
+  then what the command its replacement text ends with takes beyond the brace groups that follow
+  it there: `\ding` is `\Pisymbol {pzd}`, and `\Pisymbol` takes two, so `\ding` takes one;
+  `\newcommand\cvsection{\section}` takes `s o m`. The tail's arguments are its own signature's,
+  the engine's or the table's, or, for an expl3 function, what its name's signature says
+  (`\__cmd_if_no_value:nTF` takes three), followed three commands deep at most. A conditional
+  whose every branch ends with `\expandafter` and a command, as etoolbox's `\ifblank` does, hands
+  on to those commands when they take the same. A name another command takes as its own argument
+  (`\def\x{...}`, `\let\x\y`, `\setlength\x\y`, `\kern\z@`, `2\p@`) is no tail.
+- A tail whose arguments cannot be read leaves the macro the arguments its meaning shows, marked
+  `tail: "unresolved"`, so that the parser can keep a call to it cautious: a look ahead at the
+  end, `\futurelet`, a name built with `\csname`, `\expandafter` before the last command, a
+  primitive or a register the walk does not print, or a chain past three commands. Of the 800
+  template macros the corpus's bodies call, 24 are marked: paracol's `\columnratio`, which looks
+  ahead for its second ratio, in nine documents; europecv's `\ecvitem`, which ends with
+  `\tabularnewline`, `\relax` when the preamble ends and a look ahead for `[` inside the table, in
+  six; four text symbols LaTeX dispatches by the font encoding; and five others.
 - A `\newcommand` with an optional first argument is `\@protected@testopt \x \\x {default}`; its
-  second macro, `\\x`, has the parameters, `[#1]#2`: `o m`. A command written by hand that looks
-  ahead with `\@ifnextchar [` or `\@ifstar` is read through the branch it hands to, `[#1]#2` or the
-  star's; the table counts these with the optional-argument form. They made europecv's entries
-  calls, where the first run left 12 of its macros unresolved.
-- A `\DeclareRobustCommand` is `\protect \x  `, or `\x@protect \x\protect \x  ` for a control
+  second macro, `\\x`, has the parameters, `[#1]#2`: `o m`, and what its tail takes. twoopt's
+  `\newcommandtwoopt{\x}[n][a][b]` makes this form, whose second macro scans for a second
+  optional argument (`\to@ScanSecondOptArg`) before handing both to `\2\x`: `o o` and n - 2
+  mandatory arguments, one corpus document's `\cvitem`, which the first version read as `o`.
+- A command written by hand that looks ahead with `\@ifnextchar [`, `\@ifnextchar *` or `\@ifstar`
+  is read through the branch it hands to, walked past the flags it sets (`\@xtrue`, `\@xfalse`,
+  `\let` and its two tokens, `\def` and its kin with their bodies, `\relax`, `\global`) and past
+  commands that take nothing, to the first that takes arguments: after `[`, one whose parameters
+  are `[#1]#2` or whose first argument is optional; after `\@ifnextchar *`, which leaves the star
+  in place, one whose parameters are `*#1`; and after `\@ifstar`, the same arguments in both
+  branches. A branch with no such command, or a star's two branches that differ, leave the
+  command unresolved: it is never read as a star alone. europecv's `\ecvitem`,
+  `\@ifstar{\@ecvitemstartrue\@ecvitem}{\@ecvitemstarfalse\@ecvitem}` over `\@ecvitem`'s
+  `[#1]#2#3`, reads `s o m m`, where the first version read `s` and left the arguments of its 213
+  calls outside them; bibentry's `\nobibliography`, whose star branch gives its argument and plain
+  branch takes it, is unresolved in three documents. The table counts these with the
+  optional-argument form.
+- A `\DeclareRobustCommand` is `\protect \x  `, or `\x@protect \x \protect \x  ` for a control
   symbol; its real macro is `\x `, read in turn as any of the others.
 - An xparse command's specification is its own, its processors (`>{...}`) taken out.
+- Some packages' commands take arguments their meaning does not show: ulem's underlines
+  (`\uline`, `\uuline`, `\uwave`, `\sout`, `\xout`, `\dashuline`, `\dotuline`) hand theirs on
+  from inside a conditional, soul's (`\so`, `\ul`, `\st`, `\hl`, `\caps`) scan them a token at a
+  time, and ifthen's `\ifthenelse` takes its test and leaves its two branches to `\@firstoftwo` or
+  `\@secondoftwo`. `packages.ts` gives their arguments, and pifont's `\ding`'s, before the
+  meaning's, when the name is one of them and its meaning holds a mark of the package's
+  definition, so that a document's own `\uline` is read from its own meaning. The signature names
+  the package (`package`), and `how` keeps the shape of the meaning. The corpus calls `\ding` and
+  `\uline` in a document each and `\ifthenelse` in two.
 - An alias of a command the table knows, `\let\x\textbf` or `\let\x\section`, whose real macro the
   walk never prints, takes the table's arguments.
 - A macro with delimited parameters, one that looks ahead any other way, and an xparse
@@ -71,11 +120,47 @@ splits, inlines and builds the tree, with `arguments.ts`, `standard.ts`, `richte
 
 ### Definitions and hashes
 
-- A template macro's definition is its meaning, closed over the template macros it names and those
-  it hands its work to, the first reached first, to 64 macros and 64 KB of meanings together; the
-  closure says when it stopped at its cap. Each macro keeps the SHA-256 of its meaning in UTF-8,
-  which item 6's cache key is built from with its dependencies' and the naming version. The same
-  macro hashes the same on pdfTeX and on XeTeX (`signatures.test.ts`).
+- A template macro whose replacement text holds no parameter and names nothing but text is data,
+  the person's: a preamble's `\name{Quill}{Invented}` sets `\@firstname` to one, `\email{...}`
+  `\@email`, and AltaCV's `\personalinfo{...}` `\@personalinfo`. Text is characters, `~`,
+  `\relax`, `\@empty`, `\protect` and `\space`; what the table decodes as text (the escapes,
+  symbols, letters and accents, `\textbf` and the other marks, the declarations, `\href`, `\url`,
+  `\\`); spacing and breaks (`\enskip`, `\quad`, `\,`, `\smallskip`, `\par`, `\hspace{...}` and
+  their kin, and `\cdotp`, which Awesome-CV's example puts between a person's positions); and a
+  template command that takes arguments, given them as brace groups, as `\email{...}` in a list
+  of contacts, when the macro itself takes none. A narrower rule, characters and those first five
+  alone, left a name with an accent (`Jos\'e`), Awesome-CV's positions and AltaCV's contacts as
+  definitions holding the person's text. The result keeps a data macro's kind and the length of
+  its text, never the text; a closure names it, follows it no further and counts it against
+  neither cap, and it takes no part in any hash or key. 6,436 of the corpus's 42,833 template
+  macros are data.
+- Every other template macro is a definition, and its meaning is kept with what item 11's
+  patterns find masked, before it is hashed or stored: links (a scheme and an address, `www.` and
+  one, or a domain and a path), email addresses, and runs of seven digits or more with
+  separators, which phone numbers are, each by a placeholder of its own length,
+  `<email______________>`. A definition then hashes the same whoever's address it holds; the
+  corpus's definitions hold 1,114 placeholders.
+- Scratch macros are neither, and take no part in any closure or hash: LaTeX's `\@temp...`,
+  `\reserved@...`, `\...@tempa` to `\...@tempf`, `\@gtemp...`, `\@curr...`, `\@x...`
+  (`\@ifnextchar`'s helpers) and `\CurrentOption`, xkeyval's `\XKV@...` and ltxcmds'
+  `\LTXcmds@...`, expl3's `l_`, `g_` and `c_` variables, and what `\@ifpackageloaded` reads,
+  `\ver@...` and `\opt@...`. Their meaning is whatever was put in them last, a preamble's
+  `\setkeys` or its options among it.
+- A definition's closure is the template macros its meaning names and those it hands its work
+  to, then theirs, the first reached first, to 64 definitions and 64 KB of meanings together; the
+  closure says when it stopped at its cap. Each definition keeps the SHA-256 of its masked meaning
+  in UTF-8, and `keysOf` gives its key, the SHA-256 of its hash and its definition dependencies'
+  hashes in order: item 6's cache key but for the naming version. Two documents whose class or
+  style is the same file give each macro the file defines, and the preamble leaves alone, the
+  same key, whatever the person's name, contacts and settings (`signatures.test.ts`). In the
+  corpus, three moderncv documents in the classic style, three in the casual, three Awesome-CV
+  forks sharing a class file and two europecv documents give every class macro that both of a
+  pair call one key; where keys differ, the preamble defines or redefines the macro, as Jake's
+  Resume forks do their `\resumeSubheading`. The same macro hashes the same on pdfTeX and XeTeX.
+- What still holds a person's text is a definition a preamble builds of the person's details and
+  code, as two europecv documents' `\SignatureAndDate` holds the place they sign in, or a class a
+  fork edited to hold them. Item 11 masks those by the document's own header values before
+  anything leaves the browser.
 - A package's macros are the template's by this rule, and TikZ's and pgf's fill a closure fast:
   a command that draws a tag reaches 63 of them. The walk's cap of 2,048 names stops nine corpus
   documents early, six AltaCV forks and three moderncv documents, whose classes load TikZ with
@@ -350,17 +435,21 @@ only in a box's dimensions, and 29 are five documents' own, which the signatures
 - **A document calls few template macros**: 6 at the median, 15 for AltaCV's, 2 for a hand-rolled
   one; 800 in the corpus, 105 environments besides. Item 6 names few macros a document, and forks
   share them, which is what its per-macro cache is for.
-- **The engine resolves all but 3 of the 800**: 702 from their meaning, 90 from the
-  optional-argument form, 2 from the robust form, 3 from xparse. What item 6 describes for a call
+- **The engine resolves all but 6 of the 800**: 702 from their meaning, and their tail's where
+  they hand on, 87 from the optional-argument form, 2 from the robust form and 3 from xparse, 5 of
+  them by a package's table; 24 have a tail it could not read. What item 6 describes for a call
   has its arguments right.
 - **Closures are large where TikZ or paracol is loaded**: a median of 31 template macros a
   document, but 1,734 for AltaCV's and 1,756 for moderncv's, most of them pgf's, microtype's and
   paracol's. By this record's rule they are the template's; item 6 sends a macro's closure capped at
-  64 macros and 64 KB, and a closure that reaches TikZ is mostly TikZ. Item 6 may want to send the
-  preamble's and the class's macros before a package's, which only a source's own text can tell.
+  64 definitions and 64 KB, the data it names by name alone, and a closure that reaches TikZ is
+  mostly TikZ. Item 6 may want to send the preamble's and the class's macros before a package's,
+  which only a source's own text can tell.
 - **Time**: parsing takes 7 ms at the median and 101 ms at most. The signatures' two compiles take
-  232 ms for a Jake's Resume fork and up to 1.5 s for an Awesome-CV fork, the preamble's compile
-  from the stock format, fontspec's scan included, most of it: an import pays them once.
+  232 ms at the median for a Jake's Resume fork and 1.5 s for an Awesome-CV fork, and 2.4 s for
+  the slowest document, the preamble's compile from the stock format, fontspec's scan included,
+  most of it: an import pays them once. Reading the meanings, their tails and their data, and
+  hashing, add at most 120 ms, for a document that loads TikZ.
 
 ## Consequences
 
@@ -377,6 +466,13 @@ only in a box's dimensions, and 29 are five documents' own, which the signatures
   for one that gives an optional argument.
 - The walk prints a package's macros as the template's, and caps at 2,048 names; a document that
   loads TikZ spends most of its cap, and of its closures, on TikZ.
+- A template macro that holds data never leaves `signatures`: the result keeps its length, a
+  definition's meaning is kept masked, and neither the person's text nor which of a class's fields
+  a preamble sets moves a hash or a key. What a definition still holds of a person, item 11 masks
+  by the document's own header values.
+- A signature marked `tail` may take more arguments than it says: the parser keeps a call to it
+  raw where a brace group follows its arguments, as it does a call that takes no mandatory
+  argument.
 - The session reads a file a compile wrote in its job, by a path inside its folder; the reference
   compile gives back its files (`referenceFiles`) and compiles a document as it did
   (`compileLikeReference`); and `difference` says how two glyph streams first differ, which the
