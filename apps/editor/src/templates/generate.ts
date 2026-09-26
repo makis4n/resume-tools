@@ -22,6 +22,7 @@ import type {
   SectionRole,
 } from "@resume-tools/resume-model";
 import { INVISIBLE } from "../tex/fields";
+import { type RunBreaks, runBreaks, runBreaksWithin, UNBROKEN_RUN } from "../tex/runs";
 import { formatDates } from "./dates";
 import { escapeText, escapeUrl, isBlank, type TextFonts } from "./escape";
 import {
@@ -42,7 +43,7 @@ import {
   type TemplatePackage,
 } from "./package";
 import { PRELUDE } from "./prelude";
-import { parseSnippet, type SlotType, type SnippetNode } from "./snippet";
+import { parseSnippet, type SlotType, type SnippetNode, shownSlots } from "./snippet";
 
 /** A package the generator cannot render: the body would pass MAX_BODY, or a variant is missing. */
 export class GenerateError extends Error {
@@ -71,12 +72,14 @@ export interface GeneratedFormat {
 /**
  * A body to compile from its format, with the text of each field it marks, by field id, and the
  * characters of them its fonts cannot set (`BodyOptions.covers`), which it left out, or set as the
- * part of them the fonts can, an accented letter's base, each once, in the order the body met them.
+ * part of them the fonts can, an accented letter's base, each once, in the order the body met them;
+ * and the accents it left out past `MAX_MARKS` on one letter (`runBreaks`), each once likewise.
  */
 export interface GeneratedBody {
   latex: string;
   texts: Map<string, string>;
   dropped: string[];
+  surplus: string[];
 }
 
 /** What a body is generated with besides the package, the resume and the document's values. */
@@ -93,8 +96,14 @@ export interface BodyOptions {
   covers?: (char: string) => boolean;
 }
 
-/** How a slot's user text is escaped for the body: `escapeText`, with the body's coverage. */
-type Escape = (text: string) => string;
+/**
+ * How a slot's user text is escaped for the body: `escapeText`, with the body's coverage; and what
+ * hears of each accent it leaves out past `MAX_MARKS` on one letter (`escapeRun`).
+ */
+interface Escape {
+  (text: string): string;
+  surplus?: (mark: string) => void;
+}
 
 /**
  * What a slot holds while a snippet renders. User text carries the id of its field. Whether a
@@ -147,7 +156,7 @@ export function generateFormat(pkg: TemplatePackage, values: ControlValues): Gen
   for (const control of controlsOf(pkg, values))
     if (control.format) scope[control.id] = valueSlot(control.text);
   const out = new Output(Number.POSITIVE_INFINITY);
-  render({ nodes: parseSnippet(pkg.preamble), scope }, out, new Map(), escapeText);
+  render({ nodes: parseSnippet(pkg.preamble), scope }, out, new Map(), escapeText, new WeakSet());
   const fonts = pkg.fonts === undefined ? "" : `${fontDeclarations(pkg.fonts)}\n`;
   const preamble = `${out.join()}\n${fonts}${PRELUDE}`;
   // By name, so that the same files listed in another order are the same dump. Names are keys,
@@ -197,13 +206,16 @@ export function generateBody(
   values: ControlValues,
   options: BodyOptions = {},
 ): GeneratedBody {
-  // Packages were validated, so a snippet that does not parse here is a bug, and may throw.
+  // Packages were validated, so a snippet that does not parse here is a bug, and may throw. Each
+  // snippet's slot nodes that it shows in `\href`'s text are found as it is parsed (`shownSlots`).
   const trees = new Map<string, readonly SnippetNode[]>();
+  const shown = new WeakSet<SnippetNode>();
   const tree = (source: string) => {
     let nodes = trees.get(source);
     if (nodes === undefined) {
       nodes = parseSnippet(source);
       trees.set(source, nodes);
+      markShown(nodes, shownSlots(source), shown);
     }
     return nodes;
   };
@@ -213,10 +225,13 @@ export function generateBody(
   const { covers } = options;
   const fonts: TextFonts | undefined =
     covers === undefined ? undefined : { covers, lacks: (char) => dropped.add(char) };
-  const escape: Escape = (text) => escapeText(text, fonts);
+  const surplus = new Set<string>();
+  const escape: Escape = Object.assign((text: string) => escapeText(text, fonts), {
+    surplus: (mark: string) => surplus.add(mark),
+  });
   for (const control of controlsOf(pkg, values)) {
     const scope = { value: valueSlot(control.text) } satisfies Scope;
-    render({ nodes: tree(control.apply), scope }, out, texts, escape);
+    render({ nodes: tree(control.apply), scope }, out, texts, escape, shown);
     out.add("\n");
   }
   const build: Build = {
@@ -224,9 +239,30 @@ export function generateBody(
     tree,
     dateFormat: values.dateFormat ?? defaultControls(pkg).dateFormat,
   };
-  render(documentPart(build, resume), out, texts, escape);
+  render(documentPart(build, resume), out, texts, escape, shown);
   out.add("\n");
-  return { latex: out.join(), texts, dropped: [...dropped] };
+  return { latex: out.join(), texts, dropped: [...dropped], surplus: [...surplus] };
+}
+
+/**
+ * Add to `shown` the slot nodes of a parsed snippet at the places `ordinals` gives among its slot
+ * nodes in order, which are the places of its slot tags. The walk keeps its own stack, as
+ * `render` does, since blocks nest to any depth.
+ */
+function markShown(
+  nodes: readonly SnippetNode[],
+  ordinals: ReadonlySet<number>,
+  shown: WeakSet<SnippetNode>,
+) {
+  if (ordinals.size === 0) return;
+  const stack = [...nodes].reverse();
+  let k = 0;
+  for (let node = stack.pop(); node !== undefined; node = stack.pop()) {
+    if (node.kind === "slot") {
+      if (ordinals.has(k)) shown.add(node);
+      k++;
+    } else if (node.kind === "block") stack.push(...[...node.children].reverse());
+  }
 }
 
 /** The controls that have a snippet, which is every one but the date format. */
@@ -548,9 +584,16 @@ type Frame =
  * `checkSnippet` does, since blocks nest to any depth in a snippet that parses; and a list's items
  * join the stack one at a time, so every step is small and each is counted against MAX_BODY. A
  * block reads the presence its slot's value was built with, and a block over a list never
- * iterates: a list renders only through its slot.
+ * iterates: a list renders only through its slot. `shown` holds the slot nodes a snippet shows in
+ * `\href`'s text (`markShown`).
  */
-function render(part: Part, out: Output, texts: Map<string, string>, escape: Escape) {
+function render(
+  part: Part,
+  out: Output,
+  texts: Map<string, string>,
+  escape: Escape,
+  shown: WeakSet<SnippetNode>,
+) {
   const stack: Frame[] = [{ kind: "nodes", nodes: part.nodes, next: 0, scope: part.scope }];
   for (let frame = stack.at(-1); frame !== undefined; frame = stack.at(-1)) {
     out.step();
@@ -575,7 +618,8 @@ function render(part: Part, out: Output, texts: Map<string, string>, escape: Esc
         stack.push({ kind: "nodes", nodes: node.children, next: 0, scope: frame.scope });
     } else {
       const value = slot(frame.scope, node.name);
-      if (value.type !== "list") out.add(renderValue(value, node.raw, out, texts, escape));
+      if (value.type !== "list")
+        out.add(renderValue(value, node.raw, out, texts, escape, shown.has(node)));
       else if (node.raw) throw new Error(`${node.name} is a list, which never goes in raw`);
       else stack.push({ kind: "list", list: value, next: 0 });
     }
@@ -601,6 +645,7 @@ function renderValue(
   out: Output,
   texts: Map<string, string>,
   escape: Escape,
+  shownHere: boolean,
 ): string {
   switch (value.type) {
     case "value":
@@ -610,11 +655,13 @@ function renderValue(
       // The schema refuses a typeset URL, since its markers would end up in the address.
       if (!raw) throw new Error("a URL goes in raw");
       out.charge(value.url.length);
-      return escapeUrl(value.url);
+      return shownHere ? escapeUrl(value.url, UNBROKEN_RUN, BREAK) : escapeUrl(value.url);
     case "text":
       out.charge(value.text.length);
-      if (raw) return escape(value.text);
-      return value.present ? field(value.field, value.text, escape(value.text), texts) : "";
+      if (raw) return escapeRun(value.text, escape);
+      return value.present
+        ? field(value.field, value.text, escapeRun(value.text, escape), texts)
+        : "";
     case "rich":
       out.charge(value.size);
       if (raw) return richLatex(value.runs, escape);
@@ -624,8 +671,8 @@ function renderValue(
     case "date":
       if (value.text === undefined) return "";
       out.charge(value.text.length);
-      if (raw) return escape(value.text);
-      return field(value.field, value.text, escape(value.text), texts);
+      if (raw) return escapeRun(value.text, escape);
+      return field(value.field, value.text, escapeRun(value.text, escape), texts);
   }
 }
 
@@ -646,8 +693,14 @@ function field(id: string, text: string, latex: string, texts: Map<string, strin
  */
 function richLatex(runs: RichText, escape: Escape): string {
   let latex = "";
+  // A run of characters with no space goes on from one run of rich text into the next, so the
+  // runs are cut where their texts joined are.
+  const cut = runBreaks(runs.map((run) => run.text).join(""));
+  let from = 0;
   for (const run of runs) {
-    let part = escape(run.text);
+    const to = from + run.text.length;
+    let part = escapeRun(run.text, escape, runBreaksWithin(cut, from, to));
+    from = to;
     if (part === "") continue;
     if (run.italic) part = `\\textit{${part}}`;
     if (run.bold) part = `\\textbf{${part}}`;
@@ -659,6 +712,41 @@ function richLatex(runs: RichText, escape: Escape): string {
     latex += part;
   }
   return latex;
+}
+
+/** A break opportunity that sets nothing, where TeX may end a line (`runBreaks`). */
+const BREAK = "\\allowbreak ";
+
+/**
+ * Text as `escape` escapes it, cut as `cut` says, the text's own `runBreaks` unless given: with a
+ * break opportunity before each of its `breaks`, where a run with no space would pass
+ * `UNBROKEN_RUN` characters that set a glyph, and without its `surplus`, the accents past
+ * `MAX_MARKS` on one letter, each of which `escape.surplus` hears of. No break comes where the
+ * pieces would escape otherwise than the whole, such as before a combining mark.
+ */
+function escapeRun(text: string, escape: Escape, cut: RunBreaks = runBreaks(text)): string {
+  if (cut.breaks.length === 0 && cut.surplus.length === 0) return escape(text);
+  let latex = "";
+  let from = 0;
+  let next = 0;
+  // The text from `from` to `to`, without the surplus accents in it, escaped.
+  const piece = (to: number) => {
+    let kept = "";
+    let at = from;
+    for (; next < cut.surplus.length && (cut.surplus[next] as number) < to; next++) {
+      const skipped = cut.surplus[next] as number;
+      const mark = String.fromCodePoint(text.codePointAt(skipped) ?? 0);
+      kept += text.slice(at, skipped);
+      escape.surplus?.(mark);
+      at = skipped + mark.length;
+    }
+    return escape(kept + text.slice(at, to));
+  };
+  for (const at of cut.breaks) {
+    latex += piece(at) + BREAK;
+    from = at;
+  }
+  return latex + piece(text.length);
 }
 
 /** Output as it grows, which stops the moment it passes its limit. */

@@ -15,11 +15,17 @@ import { type DrawnPage, drawPage, type GlyphBox, ruleCrossings } from "../page/
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { type PageItem, parseDvi } from "../tex/dvi";
-import { checkSpecial } from "../validate/harness";
+import { checkSpecial, validatePackage } from "../validate/harness";
 import { mediaBoxes, shownTexts, strokedPaths } from "../validate/pdf";
 import { CURATED, curated } from "./curated";
 import { generateBody, generateFormat } from "./generate";
-import { type ByRole, defaultControls, parsePackage, type TemplatePackage } from "./package";
+import {
+  type ByRole,
+  defaultControls,
+  fontFiles,
+  parsePackage,
+  type TemplatePackage,
+} from "./package";
 
 /** A snippet for a section's role: the role's own variant, or the default. */
 const forRole = (value: ByRole<string>, role: SectionRole) =>
@@ -135,6 +141,54 @@ describe("CURATED", () => {
     // What the port leaves out, which the note at the class's top explains.
     expect(cls).not.toMatch(/^\\RequirePackage(\[[^\]]*\])?\{(pdfx|accsupp|tcolorbox)\}/m);
     expect(cls).toContain("\\RequirePackage[dvipdfmx,bookmarks=false,hidelinks]{hyperref}");
+  });
+
+  it("holds Awesome-CV, ported under the LPPL as a renamed class with its author's notice", () => {
+    const awesome = curated("awesome-cv");
+    expect(awesome.package.engine).toBe("xetex");
+    expect(awesome.package.source).toEqual({
+      url: "https://github.com/posquit0/Awesome-CV",
+      license: "LPPL-1.3c",
+      attribution:
+        "Claud D. Park (posquit0/Awesome-CV, awesome-cv.cls at its last revision for Font Awesome 5)",
+    });
+    // The LPPL asks that a modified file not carry the original's name: the class is renamed,
+    // says what it derives from and that it is not the original, and keeps the original's notice.
+    expect(Object.keys(awesome.package.files)).toEqual(["rt-awesome-cv.cls"]);
+    const cls = awesome.package.files["rt-awesome-cv.cls"] ?? "";
+    expect(cls).toMatch(/^\\ProvidesClass\{rt-awesome-cv\}\[[^\]]*not the original\]$/m);
+    expect(cls).not.toContain("\\ProvidesClass{awesome-cv}");
+    expect(cls).toMatch(
+      /^% This is rt-awesome-cv\.cls, the resume editor's modified version of awesome-cv\.cls, the class$/m,
+    );
+    expect(cls).toContain("Claud D. Park (posquit0.bj@gmail.com)");
+    expect(cls).toContain(
+      [
+        "%% Start of file `awesome-cv.cls'.",
+        "% Awesome CV Class File",
+        "%",
+        "% This class has been downloaded from:",
+        "% https://github.com/posquit0/Awesome-CV",
+        "%",
+        "% Author:",
+        "% Claud D. Park <posquit0.bj@gmail.com>",
+        "% http://www.posquit0.com",
+      ].join("\n"),
+    );
+    expect(cls).toContain("% Class license:\n% LPPL v1.3c (http://www.latex-project.org/lppl)");
+    // What the port leaves out, which the note at the class's top explains: fontspec and every
+    // package that loads it, since a format cannot hold the native font it loads, and bookmark.
+    expect(cls).not.toMatch(
+      /^\\RequirePackage(\[[^\]]*\])?\{(fontspec|unicode-math|fontawesome5|roboto|sourcesanspro|bookmark)\}/m,
+    );
+    expect(cls).not.toMatch(/^\\defaultfontfeatures/m);
+    expect(cls).toContain(
+      "\\RequirePackage[hidelinks,unicode,pdfpagelabels=false,bookmarks=false]{hyperref}",
+    );
+    // OT1 until the class has loaded, so that nothing selects a native font before the dump.
+    expect(awesome.package.preamble).toMatch(
+      /^\\RequirePackage\[OT1\]\{fontenc\}\n\\documentclass\[11pt,a4paper\]\{rt-awesome-cv\}$/m,
+    );
   });
 
   it("has a snippet for every section's role, and a sample that reaches each role's variant", () => {
@@ -1689,6 +1743,1007 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
   it("compiles a section title and a name of 8,000 characters in under a second", () => {
     // hyperref's bookmarks, which the class turns off, and the class's \MakeUppercase, which the
     // port takes out, both cost time that grows with the square of a title's length.
+    const long = Resume.parse(structuredClone(sample));
+    const [first] = long.sections;
+    if (!first) throw new Error("the sample moved");
+    first.title = "Research and teaching ".repeat(400).slice(0, 8_000);
+    long.header.name.last = first.title;
+    const { latex } = generateBody(pkg, long, values);
+    const result = session.compile(pkg.engine, format.name, latex, {
+      job: "long-title",
+      maxPasses: 1,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.log).not.toMatch(/^! /m);
+    expect(result.passes[0]).toBeLessThan(1000);
+  });
+});
+
+// What follows is Awesome-CV's own: its fonts, declared by file, and its icons; its header,
+// entries, awards, skills and lists where the class sets them; its links; its controls; and
+// edits that must still compile. The harness checks the rest, as it does the other two.
+// Needs `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
+describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engine", () => {
+  const { package: pkg, sample } = curated("awesome-cv");
+  const values = defaultControls(pkg);
+  const format = generateFormat(pkg, values);
+  let session: EngineSession;
+  let manifest: EngineManifest;
+  let fonts: FontLibrary;
+  let drawn: DrawnPage;
+  let items: PageItem[];
+  /** The sample's output, which `drawn` is drawn from. */
+  let output: Uint8Array;
+
+  /** The font file each glyph of a field is drawn from, by field, as the SVG names it. */
+  function filesByField(page: DrawnPage): Map<string, Set<string>> {
+    const found = new Map<string, Set<string>>();
+    for (const [, font, id] of page.svg.matchAll(
+      /<use [^>]*data-font="([^"]*)"[^>]*data-field="([^"]*)"/g,
+    )) {
+      if (font === undefined || id === undefined) continue;
+      found.set(id, (found.get(id) ?? new Set()).add(font.split("/").pop() ?? font));
+    }
+    return found;
+  }
+
+  /** The colour each glyph of a field is drawn in, once each; `black` for the SVG's default. */
+  function fillsOf(page: DrawnPage, id: string): Set<string> {
+    const uses = page.svg.matchAll(new RegExp(`<use [^>]*data-field="${id}"[^>]*>`, "g"));
+    return new Set([...uses].map(([use]) => /fill="([^"]*)"/.exec(use)?.[1] ?? "black"));
+  }
+
+  /** The glyphs that Font Awesome's fonts draw, as the SVG has them, with their font file. */
+  const iconsOf = (page: DrawnPage) =>
+    [...page.svg.matchAll(/<use [^>]*data-font="[^"]*\/(FontAwesome5[^"]*)"[^>]*>/g)].map(
+      ([use, file]) => ({
+        file: file ?? "",
+        y: Number(/ y="([^"]*)"/.exec(use)?.[1]),
+        field: /data-field="/.test(use),
+      }),
+    );
+
+  /** Each link on a page, in order: the address its URI action opens, and the glyphs it spans. */
+  function nativeLinksOf(page: PageItem[]) {
+    const links: { uri: string | undefined; glyphs: number }[] = [];
+    let open: (typeof links)[number] | undefined;
+    for (const item of page) {
+      if (item.kind === "native" && open) open.glyphs += item.glyphs.length;
+      if (item.kind !== "special") continue;
+      if (item.text.startsWith("pdf:bann")) {
+        open = { uri: /\/S\/URI\/URI\(((?:\\.|[^\\)])*)\)/.exec(item.text)?.[1], glyphs: 0 };
+        links.push(open);
+      } else if (item.text.startsWith("pdf:eann")) open = undefined;
+    }
+    return links;
+  }
+
+  /** Compile a body from Awesome-CV's format as a job of its own, and draw its page. */
+  async function compileAndDraw(latex: string, texts: Map<string, string>, job: string) {
+    const result = session.compile(pkg.engine, format.name, latex, { job, maxPasses: 3 });
+    if (!result.output) throw new Error(result.error);
+    return { result, page: await drawPage(result.output, fonts, texts) };
+  }
+
+  beforeAll(async () => {
+    session = await startNodeSession();
+    const dumped = session.dump(pkg.engine, format.name, format.preamble, format.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+      readFileSync(join(ENGINE_DIR, "files", path)),
+    );
+    const body = generateBody(pkg, sample, values);
+    const { result, page } = await compileAndDraw(body.latex, body.texts, "awesome");
+    drawn = page;
+    output = result.output as Uint8Array;
+    items = parseDvi(output, () => undefined).pages[0]?.items ?? [];
+  }, 60_000);
+
+  it("declares each family's shapes by file, every file one of the tree's font files", () => {
+    // By file, since the packages' fonts are hidden from fontconfig (decision 0011): Roboto and
+    // its light weight for the header, Source Sans Pro, Roboto and Lato and their light weights
+    // for the text, and Font Awesome's Free Solid and Brands fonts for the icons.
+    const files = new Set(
+      Object.keys(manifest.files).flatMap((path) =>
+        /\/fonts\/(opentype|truetype)\//.test(path) ? [path.split("/").pop() ?? path] : [],
+      ),
+    );
+    expect(pkg.fonts?.map((font) => font.family)).toEqual([
+      "Roboto",
+      "RobotoLight",
+      "SourceSans",
+      "SourceSansLight",
+      "Lato",
+      "LatoLight",
+      "FontAwesome",
+      "FontAwesomeBrands",
+    ]);
+    for (const { family, shapes, features } of pkg.fonts ?? []) {
+      for (const [shape, file] of Object.entries(shapes))
+        expect(files.has(file), `${family} ${shape}: ${file}`).toBe(true);
+      // tex-text for the text, which is what fontspec's Ligatures=TeX set for the class; none for
+      // the icons, which are set by their code points.
+      const text = !family.startsWith("FontAwesome");
+      expect(features, family).toBe(text ? "mapping=tex-text" : undefined);
+      // Small capitals are the family's upright, since a glyph that +smcp substitutes has no text
+      // the page can match (decision 0014).
+      if (text) expect(shapes["m/sc"], family).toBe(shapes["m/n"]);
+    }
+  });
+
+  it("sets the header as the class does: the name in Roboto's light and bold, then the headline, the address and the contacts", () => {
+    const baseline = (id: string) => baselinesOf(drawn, id)[0] ?? Number.NaN;
+    const files = filesByField(drawn);
+    // The first name light and grey, the last bold, on one line, centred on the page.
+    expect(baseline("header.last")).toBe(baseline("header.first"));
+    expect([...(files.get("header.first") ?? [])]).toEqual(["Roboto-Light.otf"]);
+    expect([...(files.get("header.last") ?? [])]).toEqual(["Roboto-Bold.otf"]);
+    const name = drawn.glyphs.filter(
+      (glyph) => glyph.field === "header.first" || glyph.field === "header.last",
+    );
+    const middle =
+      (Math.min(...name.map((g) => g.left)) + Math.max(...name.map((g) => g.right))) / 2;
+    expect(middle).toBeCloseTo(drawn.size.width / 2, -1);
+    // Then the headline, in the text's family, the address in Roboto's italic, and the contacts
+    // on one line in Roboto, each line below the one before.
+    expect([...(files.get("header.headline") ?? [])]).toEqual(["SourceSansPro-Regular.otf"]);
+    expect([...(files.get("header.location") ?? [])]).toEqual(["Roboto-Italic.otf"]);
+    const contacts = ["header.phone", "header.email", "site.label", "code.label", "profile.label"];
+    for (const id of contacts) {
+      expect(baseline(id), id).toBe(baseline("header.phone"));
+      expect([...(files.get(id) ?? [])], id).toEqual(["Roboto-Regular.otf"]);
+    }
+    const lines = ["header.first", "header.headline", "header.location", "header.phone"];
+    const ys = lines.map(baseline);
+    expect(ys).toEqual([...ys].sort((a, b) => a - b));
+    expect(new Set(ys).size).toBe(lines.length);
+    // The sizes the class gives each: 32, 7.6, 8 and 6.8 points.
+    expect(sizeOf(drawn, "header.first")).toBe(32);
+    expect(sizeOf(drawn, "header.headline")).toBe(7.6);
+    expect(sizeOf(drawn, "header.location")).toBe(8);
+    expect(sizeOf(drawn, "header.phone")).toBe(6.8);
+  });
+
+  it("draws the contacts' icons from Font Awesome's fonts, outside every field, and links each contact", () => {
+    // Every native font drawn: the text's and the icons'.
+    expect(drawn.missingFonts).toEqual(new Map());
+    expect(drawn.unmatched).toBe(0);
+    const icons = iconsOf(drawn);
+    // No icon is part of a field, so a click on one opens nothing.
+    expect(icons.filter((icon) => icon.field)).toEqual([]);
+    // The phone, the email and the website from the Solid font, GitHub's and LinkedIn's marks
+    // from the Brands font, all on the contacts' line.
+    expect(icons.map((icon) => icon.file)).toEqual([
+      "FontAwesome5Free-Solid-900.otf",
+      "FontAwesome5Free-Solid-900.otf",
+      "FontAwesome5Free-Solid-900.otf",
+      "FontAwesome5Brands-Regular-400.otf",
+      "FontAwesome5Brands-Regular-400.otf",
+    ]);
+    for (const icon of icons)
+      expect(icon.y).toBeCloseTo(baselinesOf(drawn, "header.phone")[0] ?? 0, 3);
+    // Each contact links through hyperref's XeTeX driver, to the address the resume gives, and
+    // the link covers its icon and its text, as upstream's did.
+    expect(nativeLinksOf(items)).toEqual([
+      { uri: "tel:+31205550147", glyphs: 1 + "+31205550147".length },
+      { uri: "mailto:linnea@example.com", glyphs: 1 + "linnea@example.com".length },
+      { uri: "https://okafor.example.com", glyphs: 1 + "okafor.example.com".length },
+      { uri: "https://code.example.com/lokafor", glyphs: 1 + "lokafor".length },
+      { uri: "https://people.example.com/linnea-okafor", glyphs: 1 + "linnea-okafor".length },
+    ]);
+    // And the PDF made from the same output can be read.
+    const made = session.pdf("awesome", { compress: 0 });
+    if (!made.pdf) throw new Error(made.error);
+    expect(shownTexts(made.pdf).map((shown) => shown.text)).toEqual(
+      expect.arrayContaining(["HarbourlineLogistics", "SeniorInfrastructureEngineer"]),
+    );
+  });
+
+  it("sets an entry as \\cventry does: the organisation and place, then the title and dates, then the bullets", () => {
+    const baseline = (id: string) => baselinesOf(drawn, id)[0] ?? Number.NaN;
+    const x = (id: string) => drawn.glyphs.find((glyph) => glyph.field === id)?.x ?? Number.NaN;
+    // The model's subtitle is the class's title, the organisation, bold on the first line with the
+    // place; its title is the class's position, on the second line with the dates; the places and
+    // the dates end at the right margin, the ink of their last glyph within a point and a half of it.
+    const right = drawn.size.width - 0.5 * INCH;
+    const end = (id: string) =>
+      right - Math.max(...drawn.glyphs.filter((glyph) => glyph.field === id).map((g) => g.right));
+    for (const entry of ["harbourline", "kestrel", "tulip", "noordveld"]) {
+      expect(baseline(`${entry}.place`), entry).toBe(baseline(`${entry}.subtitle`));
+      expect(baseline(`${entry}.dates`), entry).toBe(baseline(`${entry}.title`));
+      expect(baseline(`${entry}.title`), entry).toBeGreaterThan(baseline(`${entry}.subtitle`));
+      expect(x(`${entry}.subtitle`), entry).toBeCloseTo(0.5 * INCH, 2);
+      expect(x(`${entry}.title`), entry).toBeCloseTo(0.5 * INCH, 2);
+      for (const field of ["place", "dates"])
+        expect(Math.abs(end(`${entry}.${field}`)), `${entry}.${field}`).toBeLessThan(1.5);
+    }
+    expect(sizeOf(drawn, "harbourline.subtitle")).toBe(10);
+    expect(sizeOf(drawn, "harbourline.title")).toBe(8);
+    expect(sizeOf(drawn, "harbourline-1.text")).toBe(9);
+    // The bullets under the second line, one below the other, with their marks in the margin.
+    const bullets = ["harbourline-1.text", "harbourline-2.text", "harbourline-3.text"];
+    const ys = bullets.map(baseline);
+    expect(ys[0]).toBeGreaterThan(baseline("harbourline.title"));
+    expect(ys).toEqual([...ys].sort((a, b) => a - b));
+    // A bold run and an italic one, in the light weight's semibold and italic.
+    const files = filesByField(drawn);
+    expect([...(files.get("harbourline-1.text") ?? [])].sort()).toEqual([
+      "SourceSansPro-Light.otf",
+      "SourceSansPro-Semibold.otf",
+    ]);
+    expect([...(files.get("tulip-1.text") ?? [])].sort()).toEqual([
+      "SourceSansPro-Light.otf",
+      "SourceSansPro-LightIt.otf",
+    ]);
+    // The entries sit apart as upstream's, each organisation the same way below the bullet before.
+    expect(
+      baseline("tulip.subtitle") - (baselinesOf(drawn, "kestrel-2.text").at(-1) ?? 0),
+    ).toBeCloseTo(
+      baseline("kestrel.subtitle") - (baselinesOf(drawn, "harbourline-3.text").at(-1) ?? 0),
+      3,
+    );
+  });
+
+  it("sets awards through cvhonors, skills through cvskills, and a list's items where a paragraph's text is", () => {
+    const baseline = (id: string) => baselinesOf(drawn, id)[0] ?? Number.NaN;
+    const x = (id: string) => drawn.glyphs.find((glyph) => glyph.field === id)?.x ?? Number.NaN;
+    // An award is a row: its year, its title with its event after a comma, and its place.
+    for (const award of ["hackathon", "talk"]) {
+      const fields = ["dates", "title", "subtitle", "place"].map((field) => `${award}.${field}`);
+      for (const id of fields) expect(baseline(id), id).toBe(baseline(`${award}.dates`));
+      const xs = fields.map(x);
+      expect(xs, award).toEqual([...xs].sort((a, b) => a - b));
+    }
+    expect(baseline("talk.dates")).toBeGreaterThan(baseline("hackathon.dates"));
+    // A skill is a row: its label, bold, ending where every label ends, then its text.
+    const ends = ["languages", "infrastructure", "practices"].map((id) =>
+      Math.max(...drawn.glyphs.filter((g) => g.field === `${id}.label`).map((g) => g.right)),
+    );
+    for (const end of ends) expect(end).toBeCloseTo(ends[0] ?? 0, 0);
+    for (const id of ["languages", "infrastructure", "practices"]) {
+      expect(baseline(`${id}.text`), id).toBe(baseline(`${id}.label`));
+      expect(x(`${id}.text`), id).toBeCloseTo(x("languages.text"), 3);
+    }
+    // A list section's first item is as far below its title as a paragraph section's text is.
+    expect(baseline("cycling.text") - baseline("interests.title")).toBeCloseTo(
+      baseline("summary.text") - baseline("summary.title"),
+      3,
+    );
+    expect(sizeOf(drawn, "cycling.text")).toBe(9);
+    const items = ["cycling.text", "letterpress.text", "mentoring.text"].map(baseline);
+    expect(items).toEqual([...items].sort((a, b) => a - b));
+  });
+
+  it("sets A4 with half-inch margins, and follows the page size and margins controls", async () => {
+    expect(drawn.size.width).toBeCloseTo((210 / 25.4) * INCH, 2);
+    expect(drawn.size.height).toBeCloseTo((297 / 25.4) * INCH, 2);
+    expect(leftmost(drawn)).toBeCloseTo(0.5 * INCH, 2);
+    // The controls are ordinary compiles: the same format, and geometry again in the body.
+    const letter = { ...values, pageSize: "letter", margins: 0.8 } as const;
+    expect(generateFormat(pkg, letter).name).toBe(format.name);
+    const moved = generateBody(pkg, sample, letter);
+    const { page } = await compileAndDraw(moved.latex, moved.texts, "letter");
+    expect(page.size.width).toBeCloseTo(8.5 * INCH, 2);
+    expect(page.size.height).toBeCloseTo(11 * INCH, 2);
+    expect(leftmost(page)).toBeCloseTo(0.8 * INCH, 2);
+    expect(page.unmatched).toBe(0);
+  });
+
+  it("sets the class's own sizes at the default size, to the byte", async () => {
+    // Upstream's look by default: at 11 points \rtfontsize sets every size the class and
+    // size11.clo set, and parskip's space, so the output is the one the preamble sets without
+    // it, byte for byte.
+    const sizes = /^% The font size control's sizes[\s\S]*?\\makeatother\n/m;
+    expect(pkg.preamble.match(new RegExp(sizes.source, "gm"))).toHaveLength(1);
+    const upstream = parsePackage({
+      ...pkg,
+      id: "awesome-cv-upstream",
+      preamble: pkg.preamble.replace(sizes, ""),
+      controls: { ...pkg.controls, fontSize: { default: 11, apply: "" } },
+    });
+    // Nothing of the sizes is left but the notes that mention them.
+    expect(upstream.preamble).not.toMatch(/\\DeclareRobustCommand|\\rt@pt|\\patchcmd/);
+    const plain = generateFormat(upstream, values);
+    const dumped = session.dump(upstream.engine, plain.name, plain.preamble, plain.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    const body = generateBody(upstream, sample, values);
+    const result = session.compile(upstream.engine, plain.name, body.latex, {
+      job: "upstream",
+      maxPasses: 3,
+    });
+    if (!result.output) throw new Error(result.error);
+    expect(sameBytes(output, result.output)).toBe(true);
+  }, 60_000);
+
+  it("sets every font size from the one format, each size and the page growing with it", async () => {
+    const rows: { name: number; title: number; leading: number; bottom: number }[] = [];
+    for (const fontSize of SIZES) {
+      const sized = { ...values, fontSize };
+      expect(generateFormat(pkg, sized).name).toBe(format.name);
+      const body = generateBody(pkg, sample, sized);
+      const { result, page } = await compileAndDraw(
+        body.latex,
+        body.texts,
+        `size-${fontSize * 10}`,
+      );
+      expect(result.log, `${fontSize}`).not.toMatch(/^! /m);
+      expect(result.pages, `${fontSize}`).toBe(1);
+      expect(page.missingFonts, `${fontSize}`).toEqual(new Map());
+      expect(page.unmatched, `${fontSize}`).toBe(0);
+      // The bullets are a line apart, 1em of the text around them, 10.95pt at 11 points.
+      const [first, second] = [
+        baselinesOf(page, "harbourline-1.text")[0],
+        baselinesOf(page, "harbourline-2.text")[0],
+      ];
+      if (first === undefined || second === undefined) throw new Error("a bullet is missing");
+      const row = {
+        name: sizeOf(page, "header.first"),
+        title: sizeOf(page, "experience.title"),
+        leading: second - first,
+        bottom: Math.max(...page.glyphs.map((glyph) => glyph.bottom)),
+      };
+      expect(row.name, `${fontSize}`).toBeCloseTo(scaled(32, fontSize), 2);
+      expect(row.title, `${fontSize}`).toBeCloseTo(scaled(16, fontSize), 2);
+      expect(sizeOf(page, "harbourline-1.text"), `${fontSize}`).toBeCloseTo(scaled(9, fontSize), 2);
+      expect(row.leading, `${fontSize}`).toBeCloseTo(scaled(10.95, fontSize), 1);
+      rows.push(row);
+    }
+    const said = rows.map(({ bottom }, i) => `${SIZES[i]} pt ${bottom.toFixed(1)} pt`);
+    console.log(`Awesome-CV's sample ends, by font size, at ${said.join(", ")}`);
+    rows.forEach((row, i) => {
+      const before = rows[i - 1];
+      if (before === undefined) return;
+      for (const key of ["name", "title", "leading", "bottom"] as const)
+        expect(row[key], `${key} at ${SIZES[i]}`).toBeGreaterThan(before[key]);
+    });
+  }, 60_000);
+
+  it("draws the sample in each font it offers, the header staying Roboto", async () => {
+    const choices = pkg.controls.font?.choices ?? [];
+    expect(choices.map(({ id, name }) => [id, name])).toEqual([
+      ["sourcesans", "Source Sans"],
+      ["roboto", "Roboto"],
+      ["lato", "Lato"],
+    ]);
+    // What the file of every font a field of the text is set in begins with, by choice.
+    const FILES: Record<string, RegExp> = {
+      sourcesans: /^SourceSansPro-/,
+      roboto: /^Roboto-/,
+      lato: /^Lato-/,
+    };
+    const header = new Set([
+      "header.first",
+      "header.last",
+      "header.location",
+      "header.phone",
+      "header.email",
+      ...sample.header.links.map((link) => `${link.id}.label`),
+    ]);
+    for (const { id } of choices) {
+      const family = FILES[id];
+      if (!family) throw new Error(`no family for ${id}`);
+      const chosen = { ...values, font: id };
+      // An ordinary compile: the same format, and the family chosen in the body.
+      expect(generateFormat(pkg, chosen).name).toBe(format.name);
+      const body = generateBody(pkg, sample, chosen);
+      const { result, page } = await compileAndDraw(body.latex, body.texts, `font-${id}`);
+      expect(result.log, id).not.toMatch(/^! /m);
+      expect(result.pages, id).toBe(1);
+      // A family must draw as well as compile: every glyph drawn, and matched to its text.
+      expect(page.missingFonts, id).toEqual(new Map());
+      expect(page.unmatched, id).toBe(0);
+      const byField = filesByField(page);
+      expect(byField.size, id).toBe(body.texts.size);
+      for (const [field, files] of byField)
+        for (const file of files)
+          expect(file, `${id} ${field}`).toMatch(header.has(field) ? /^Roboto-/ : family);
+    }
+  }, 60_000);
+
+  it("spaces sections, entries and bullets together by density, and sets nothing over anything at any size, font or page size", async () => {
+    // Each gap from the last line before it: a section's title, an entry's organisation, and a
+    // bullet.
+    const first = (page: DrawnPage, id: string) => baselinesOf(page, id)[0] ?? Number.NaN;
+    const last = (page: DrawnPage, id: string) => baselinesOf(page, id).at(-1) ?? Number.NaN;
+    const gaps = (page: DrawnPage) => [
+      first(page, "experience.title") - last(page, "summary.text"),
+      first(page, "kestrel.subtitle") - last(page, "harbourline-3.text"),
+      first(page, "harbourline-2.text") - last(page, "harbourline-1.text"),
+    ];
+    // The default page size and font at 11 points, for each density.
+    const pages: DrawnPage[] = [];
+    const spills: string[] = [];
+    for (const pageSize of ["a4", "letter"] as const)
+      for (const font of ["sourcesans", "roboto", "lato"])
+        for (const density of ["compact", "normal", "relaxed"] as const)
+          for (const fontSize of SIZES) {
+            const spaced = { ...values, pageSize, font, density, fontSize };
+            // An ordinary compile: the same format, and the controls set again in the body.
+            expect(generateFormat(pkg, spaced).name).toBe(format.name);
+            const body = generateBody(pkg, sample, spaced);
+            const at = `${pageSize}, ${font}, ${density} at ${fontSize} pt`;
+            // One job for them all, whose auxiliary file each compile reads as it stands, so that
+            // each takes the one pass the page needs, and a second only where the page count moves.
+            const result = session.compile(pkg.engine, format.name, body.latex, {
+              job: "matrix",
+              maxPasses: 3,
+            });
+            if (!result.output) throw new Error(`${at}: ${result.error}`);
+            expect(result.log, at).not.toMatch(/^! /m);
+            if (result.pages !== 1) spills.push(`${at}: ${result.pages} pages`);
+            // Nothing is set over anything else, on any page: the class takes space back after a
+            // section's title and before an entry, which a density that left less than it took
+            // would set lines over.
+            const doc = parseDvi(result.output, () => undefined);
+            for (let index = 0; index < result.pages; index++) {
+              const page = await drawPage(result.output, fonts, body.texts, index);
+              const where = `${at}, page ${index + 1}`;
+              expect(page.unmatched, where).toBe(0);
+              const struck = ruleCrossings(doc, page.glyphs, index).map(
+                ({ glyph }) => glyph.field ?? "",
+              );
+              expect([...new Set(struck)], `${where}: fields a rule is drawn through`).toEqual([]);
+              expect(linesSetOver(page), `${where}: lines set over the line above`).toEqual([]);
+              if (pageSize === "a4" && font === "sourcesans" && fontSize === 11) pages.push(page);
+            }
+          }
+    // Fitting on one page is item 18's to do; these are the sample's spills, all relaxed, which
+    // decision 0015 lists: Letter is shorter than A4, and spills half a point sooner.
+    expect(spills).toEqual([
+      "a4, sourcesans, relaxed at 12 pt: 2 pages",
+      "a4, roboto, relaxed at 12 pt: 2 pages",
+      "a4, lato, relaxed at 12 pt: 2 pages",
+      "letter, sourcesans, relaxed at 11.5 pt: 2 pages",
+      "letter, sourcesans, relaxed at 12 pt: 2 pages",
+      "letter, roboto, relaxed at 11.5 pt: 2 pages",
+      "letter, roboto, relaxed at 12 pt: 2 pages",
+      "letter, lato, relaxed at 11.5 pt: 2 pages",
+      "letter, lato, relaxed at 12 pt: 2 pages",
+    ]);
+    const bottoms = pages.map((page) => Math.max(...page.glyphs.map((glyph) => glyph.bottom)));
+    const said = bottoms.map((bottom) => `${bottom.toFixed(1)} pt`).join(", ");
+    console.log(`Awesome-CV's sample ends, compact, normal and relaxed, at ${said}`);
+    const [compact, normal, relaxed] = pages;
+    if (!compact || !normal || !relaxed || pages.length !== 3)
+      throw new Error("a density drew no page, or more than one");
+    expect(bottoms[0]).toBeLessThan(bottoms[1] ?? 0);
+    expect(bottoms[1]).toBeLessThan(bottoms[2] ?? 0);
+    // Normal is the class's spacing, the page the sample opens with.
+    expect(normal.glyphs).toEqual(drawn.glyphs);
+    gaps(normal).forEach((gap, i) => {
+      expect(gaps(compact)[i], `gap ${i}`).toBeLessThan(gap);
+      expect(gaps(relaxed)[i], `gap ${i}`).toBeGreaterThan(gap);
+    });
+  }, 300_000);
+
+  it("sets the headline, the places and each title's first three letters in the accent, and follows the accent control", async () => {
+    const titles = sample.sections.map((section) => `${section.id}.title`);
+    const places = ["harbourline", "kestrel", "tulip", "noordveld", "hackathon", "talk"].map(
+      (id) => `${id}.place`,
+    );
+    /** The one colour a set of fields is drawn in. */
+    const fillOf = (page: DrawnPage, ids: string[]) => {
+      const fills = new Set(ids.flatMap((id) => [...fillsOf(page, id)]));
+      expect(fills.size, ids.join(", ")).toBe(1);
+      return [...fills][0] ?? "";
+    };
+    /**
+     * Each title's glyphs' colours by their offsets: upstream's highlight, the first three letters
+     * in the accent and the rest in the text's grey, which the sample's titles have no space in.
+     */
+    const highlighted = (page: DrawnPage, accent: string) => {
+      for (const id of titles) {
+        const uses = page.svg.matchAll(
+          new RegExp(`<use [^>]*data-field="${id}" data-offset="(\\d+)"[^>]*>`, "g"),
+        );
+        for (const [use, offset] of uses)
+          expect(/fill="([^"]*)"/.exec(use)?.[1], `${id} at ${offset}`).toBe(
+            Number(offset) < 3 ? accent : "rgb(51,51,51)",
+          );
+      }
+    };
+    // The example's red, awesome-red, by default, where the name, the organisations and the text
+    // keep the class's greys.
+    expect(fillOf(drawn, ["header.headline", ...places])).toBe("rgb(220,53,34)");
+    highlighted(drawn, "rgb(220,53,34)");
+    expect(fillOf(drawn, ["header.first"])).toBe("rgb(93,93,93)");
+    expect(fillOf(drawn, ["header.last", "harbourline-1.text"])).toBe("rgb(51,51,51)");
+    expect(fillOf(drawn, ["harbourline.subtitle"])).toBe("rgb(65,65,65)");
+    // Another accent is an ordinary compile, and moves all of them with it.
+    const blue = { ...values, accent: "#1F4E79" };
+    expect(generateFormat(pkg, blue).name).toBe(format.name);
+    const body = generateBody(pkg, sample, blue);
+    const { page } = await compileAndDraw(body.latex, body.texts, "accent");
+    expect(fillOf(page, ["header.headline", ...places])).toBe("rgb(31,78,121)");
+    highlighted(page, "rgb(31,78,121)");
+    expect(fillOf(page, ["header.last", "harbourline-1.text"])).toBe("rgb(51,51,51)");
+    expect(page.unmatched).toBe(0);
+  });
+
+  it("wraps a label of 110 characters, or 4,000, and leaves the skills' text a third of the width", async () => {
+    // Measured on one line, a label of 4,000 characters passed TeX's largest dimension and stopped
+    // the compile, and one of 110 left the skills' text no width at all: a label now wraps in what
+    // a third of the text's width for the text leaves, measured as it wraps.
+    const withLabel = (label: string) => {
+      const resume = Resume.parse(structuredClone(sample));
+      const skills = resume.sections.find((section) => section.kind === "labelled");
+      const [first] = skills?.kind === "labelled" ? skills.items : [];
+      if (!first) throw new Error("the sample moved");
+      first.label = label;
+      return resume;
+    };
+    const words = "Distributed systems, platform engineering and the tools developers use, ";
+    const labels = {
+      short: words.repeat(2).slice(0, 110).trim(),
+      long: words.repeat(60).slice(0, 4000).trim(),
+    };
+    const skills = /^(languages|infrastructure|practices)\./;
+    for (const [size, label] of Object.entries(labels)) {
+      const body = generateBody(pkg, withLabel(label), values);
+      const result = session.compile(pkg.engine, format.name, body.latex, {
+        job: `label-${size}`,
+        maxPasses: 3,
+      });
+      if (!result.output) throw new Error(`${size}: ${result.error}`);
+      expect(result.log, size).not.toMatch(/^! /m);
+      const shown: DrawnPage["glyphs"] = [];
+      for (let index = 0; index < result.pages; index++) {
+        const page = await drawPage(result.output, fonts, body.texts, index);
+        expect(page.unmatched, `${size}, page ${index + 1}`).toBe(0);
+        const glyphs = page.glyphs.filter((glyph) => skills.test(glyph.field ?? ""));
+        // Every glyph of the skills on the page, inside its edges.
+        for (const glyph of glyphs) {
+          const at = `${size}, page ${index + 1}: ${glyph.field}`;
+          expect(glyph.left, at).toBeGreaterThanOrEqual(0);
+          expect(glyph.right, at).toBeLessThanOrEqual(page.size.width);
+          expect(glyph.top, at).toBeGreaterThanOrEqual(0);
+          expect(glyph.bottom, at).toBeLessThanOrEqual(page.size.height);
+        }
+        shown.push(...glyphs);
+      }
+      // The whole label is set, and the skills' text in a column of a third of the text's width
+      // or more, which ends at the right margin.
+      const inLabel = shown.filter((glyph) => glyph.field === "languages.label");
+      expect(inLabel, size).toHaveLength(label.replace(/\s/g, "").length);
+      const text = shown.filter((glyph) => /\.text$/.test(glyph.field ?? ""));
+      const margin = drawn.size.width - 0.5 * INCH;
+      const third = (drawn.size.width - INCH) / 3;
+      expect(Math.min(...text.map((glyph) => glyph.left)), size).toBeLessThan(margin - third + 1);
+      expect(Math.max(...text.map((glyph) => glyph.right)), size).toBeLessThan(margin + 1);
+      if (size === "short") expect(result.pages, size).toBe(1);
+    }
+  }, 120_000);
+
+  it("keeps a skill's text on the page whatever its label, and the sample's skills as upstream", async () => {
+    // Upstream's cvskills sets the skills' text in a column 0.9 of the text's width after a
+    // column as wide as the widest label, so a label of two or three words set the text past the
+    // page's edge, on the page and in the PDF.
+    const labelled = Resume.parse(structuredClone(sample));
+    const skills = labelled.sections.find((section) => section.kind === "labelled");
+    const [first] = skills?.kind === "labelled" ? skills.items : [];
+    if (!first) throw new Error("the sample moved");
+    first.label = "Programming Languages";
+    first.text = [
+      {
+        text: "Go, Python, TypeScript, Rust, SQL, Bash, Terraform, Kubernetes, Helm, Prometheus, Grafana, Bazel, Buildkite, Build Actions, Postgres, Redis, Kafka, Nomad and Vault",
+      },
+    ];
+    for (const pageSize of ["a4", "letter"] as const)
+      for (const fontSize of [11, 12]) {
+        const at = `${pageSize} at ${fontSize} pt`;
+        const body = generateBody(pkg, labelled, { ...values, pageSize, fontSize });
+        const { result, page } = await compileAndDraw(
+          body.latex,
+          body.texts,
+          `skills-${pageSize}-${fontSize}`,
+        );
+        expect(result.log, at).not.toMatch(/^! /m);
+        expect(page.unmatched, at).toBe(0);
+        // Every glyph of the skills inside the right margin, the ink of an italic overhang aside.
+        const edge = page.size.width - 0.5 * INCH + 1;
+        for (const id of [...body.texts.keys()].filter((id) =>
+          /^(languages|infrastructure|practices)\./.test(id),
+        ))
+          for (const glyph of page.glyphs.filter((each) => each.field === id))
+            expect(glyph.right, `${at}: ${id}`).toBeLessThan(edge);
+        expect(baselinesOf(page, "languages.text").length, at).toBeGreaterThan(1);
+      }
+    // The sample's labels leave its skills where upstream's column sets them.
+    const cls = pkg.files["rt-awesome-cv.cls"] ?? "";
+    const skillsTable =
+      /^% rt: the skills' text in the column[\s\S]*?^% Define a line of cv information\(skill\)/m;
+    expect(cls.match(new RegExp(skillsTable.source, "gm"))).toHaveLength(1);
+    const upstream = parsePackage({
+      ...pkg,
+      id: "awesome-cv-skills",
+      files: {
+        "rt-awesome-cv.cls": cls.replace(
+          skillsTable,
+          [
+            "\\newenvironment{cvskills}{%",
+            "  \\vspace{\\acvSectionContentTopSkip}",
+            "  \\vspace{-2.0mm}",
+            "  \\begin{center}",
+            "    \\setlength\\tabcolsep{1ex}",
+            "    \\setlength{\\extrarowheight}{0pt}",
+            "    \\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}} r L{\\textwidth * \\real{0.9}}}",
+            "}{%",
+            "    \\end{tabular*}",
+            "  \\end{center}",
+            "}",
+            "% Define a line of cv information(skill)",
+          ].join("\n"),
+        ),
+      },
+    });
+    const plain = generateFormat(upstream, values);
+    const dumped = session.dump(upstream.engine, plain.name, plain.preamble, plain.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    const body = generateBody(upstream, sample, values);
+    const result = session.compile(upstream.engine, plain.name, body.latex, {
+      job: "skills-upstream",
+      maxPasses: 3,
+    });
+    if (!result.output) throw new Error(result.error);
+    expect((await drawPage(result.output, fonts, body.texts)).glyphs).toEqual(drawn.glyphs);
+    // And the harness reports upstream's column under the long label, which set the text past the
+    // page's edge, where neither the page nor the PDF shows it.
+    const report = await validatePackage(session, fonts, upstream, labelled, values, "skills-edge");
+    expect(report.findings.filter((finding) => finding.check === "pages")).toEqual([
+      {
+        check: "pages",
+        field: "languages.text",
+        message: "languages.text runs past the page's edge",
+      },
+    ]);
+  }, 120_000);
+
+  it("sets an award's dates on one line in every date format, a range included, and the sample's as upstream", async () => {
+    // Upstream's column for an award's date is 1.5 cm, for a year; the model's dates are ranges
+    // too, which wrapped there, their first line up against the title.
+    const ranged = Resume.parse(structuredClone(sample));
+    const awards = ranged.sections.find((section) => section.role === "awards");
+    if (awards?.kind !== "entries") throw new Error("the sample moved");
+    awards.entries = [
+      {
+        id: "years",
+        title: "Mentor",
+        subtitle: "Coding club",
+        dates: { start: "2019", end: "2021" },
+      },
+      {
+        id: "ongoing",
+        title: "Reviewer",
+        subtitle: "Build Systems Journal",
+        place: "Online",
+        dates: { start: "2022-05", end: "present" },
+      },
+      {
+        id: "months",
+        title: "Chair",
+        subtitle: "Platform Days",
+        dates: { start: "2023-09", end: "2023-11" },
+      },
+      { id: "single", title: "Speaker", subtitle: "Lowlands Meetup", dates: { start: "2022-09" } },
+    ].map((entry) => ({ ...entry, bullets: [] }));
+    for (const dateFormat of ["MMM yyyy", "MMMM yyyy", "MM/yyyy", "yyyy"] as const) {
+      const body = generateBody(pkg, ranged, { ...values, dateFormat });
+      const job = `award-dates-${dateFormat.replace(/\W/g, "")}`;
+      const { result, page } = await compileAndDraw(body.latex, body.texts, job);
+      expect(result.log, dateFormat).not.toMatch(/^! /m);
+      expect(page.unmatched, dateFormat).toBe(0);
+      for (const { id } of awards.entries) {
+        const at = `${id} in ${dateFormat}`;
+        expect(baselinesOf(page, `${id}.dates`), at).toHaveLength(1);
+        // And a gap of at least a point before the award's title.
+        const dates = page.glyphs.filter((glyph) => glyph.field === `${id}.dates`);
+        const title = page.glyphs.find((glyph) => glyph.field === `${id}.title`);
+        expect(
+          (title?.left ?? 0) - Math.max(...dates.map((glyph) => glyph.right)),
+          at,
+        ).toBeGreaterThan(1);
+      }
+    }
+    // The sample's awards are years, which upstream's column holds, and are set as there.
+    const cls = pkg.files["rt-awesome-cv.cls"] ?? "";
+    const honors =
+      /^% rt: the column of an award's date[\s\S]*?^% Define a line of cv information\(honor/m;
+    expect(cls.match(new RegExp(honors.source, "gm"))).toHaveLength(1);
+    const upstream = parsePackage({
+      ...pkg,
+      id: "awesome-cv-honors",
+      files: {
+        "rt-awesome-cv.cls": cls.replace(
+          honors,
+          [
+            "\\newenvironment{cvhonors}{%",
+            "  \\vspace{\\acvSectionContentTopSkip}",
+            "  \\vspace{-2mm}",
+            "  \\begin{center}",
+            "    \\setlength\\tabcolsep{0pt}",
+            "    \\setlength{\\extrarowheight}{0pt}",
+            "    \\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}} C{1.5cm} L{\\textwidth - 4.0cm} R{2.5cm}}",
+            "}{%",
+            "    \\end{tabular*}",
+            "  \\end{center}",
+            "}",
+            "% Define a line of cv information(honor",
+          ].join("\n"),
+        ),
+      },
+    });
+    const plain = generateFormat(upstream, values);
+    const dumped = session.dump(upstream.engine, plain.name, plain.preamble, plain.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    const body = generateBody(upstream, sample, values);
+    const result = session.compile(upstream.engine, plain.name, body.latex, {
+      job: "honors-upstream",
+      maxPasses: 3,
+    });
+    if (!result.output) throw new Error(result.error);
+    expect((await drawPage(result.output, fonts, body.texts)).glyphs).toEqual(drawn.glyphs);
+  }, 60_000);
+
+  it("sets a name with a blank first half as upstream does, the rest centred on the page", async () => {
+    // Upstream's class drops the space between the two halves at the start of the name's line when
+    // the first is blank, so the last is centred on its own; a blank name of both halves stops its
+    // compile, which the port's does not (the next test).
+    const lastOnly = Resume.parse(structuredClone(sample));
+    lastOnly.header.name.first = "";
+    const body = generateBody(pkg, lastOnly, values);
+    const { result, page } = await compileAndDraw(body.latex, body.texts, "last-only");
+    expect(result.log).not.toMatch(/^! /m);
+    const last = page.glyphs.filter((glyph) => glyph.field === "header.last");
+    // Where upstream's own class, through fontspec, sets the O of the sample's last name, with the
+    // port's half-inch margins: the port kept the space between the halves, and set it 4 pt right.
+    expect(last[0]?.x).toBeCloseTo(251.46, 1);
+  });
+
+  it("compiles blank fields, empty sections, a bare header and bullets under an award, as edits pass through", async () => {
+    // Every argument a macro of the class takes may come empty, as a user's edits leave it.
+    const edges = Resume.parse({
+      ...structuredClone(sample),
+      header: {
+        name: { first: "Ada", last: "" },
+        links: [
+          { id: "portfolio", kind: "other", label: "Portfolio", href: "run:x" },
+          { id: "home", kind: "website", label: "", href: "https://ada.example.com" },
+          { id: "social", kind: "twitter", label: "adab", href: "https://social.example.com/adab" },
+          { id: "record", kind: "orcid", label: "0000-0002", href: "" },
+        ],
+      },
+      sections: [
+        { id: "untitled", kind: "entries", role: "experience", title: "", entries: [] },
+        { id: "short", kind: "paragraph", role: "summary", title: "AI", text: [] },
+        { id: "letter", kind: "paragraph", role: "other", title: "X", text: [] },
+        { id: "spaced", kind: "paragraph", role: "other", title: "My Skills", text: [] },
+        {
+          id: "blanks",
+          kind: "list",
+          role: "other",
+          title: "",
+          items: [
+            { id: "blank-0", text: [] },
+            { id: "blank-1", text: [{ text: "One" }] },
+          ],
+        },
+        {
+          id: "spoken",
+          kind: "labelled",
+          role: "languages",
+          title: "Spoken",
+          items: [
+            { id: "spoken-0", label: "", text: [] },
+            { id: "spoken-1", label: "Welsh", text: [] },
+            { id: "spoken-2", label: "", text: [{ text: "Some Breton" }] },
+          ],
+        },
+        {
+          id: "talks",
+          kind: "entries",
+          role: "other",
+          title: "Talks",
+          entries: [
+            { id: "talk-0", title: "", bullets: [] },
+            { id: "talk-1", title: "Only a title", bullets: [{ id: "talk-1-0", text: [] }] },
+            { id: "talk-2", title: "", subtitle: "Only an organisation", bullets: [] },
+            { id: "talk-3", title: "", place: "Only a place", bullets: [] },
+            {
+              id: "talk-4",
+              title: "Type on the web",
+              subtitle: "Northmoor Meetup",
+              dates: { start: "2024-05" },
+              bullets: [
+                {
+                  id: "talk-4-0",
+                  text: [
+                    { text: "Slides " },
+                    { text: "online", bold: true, href: "slides.example.com" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          id: "prizes",
+          kind: "entries",
+          role: "awards",
+          title: "Prizes",
+          entries: [
+            { id: "prize-0", title: "", bullets: [] },
+            { id: "prize-1", title: "", subtitle: "Only an event", bullets: [] },
+            {
+              id: "prize-2",
+              title: "Runner-up",
+              subtitle: "Harbour Hack",
+              place: "Leeds",
+              dates: { start: "2020" },
+              bullets: [
+                { id: "prize-2-0", text: [{ text: "A bullet under an award." }] },
+                { id: "prize-2-1", text: [{ text: "And another." }] },
+              ],
+            },
+          ],
+        },
+        { id: "tools", kind: "list", role: "skills", title: "Tools", items: [] },
+        { id: "note", kind: "paragraph", role: "publications", title: "Note", text: [] },
+      ],
+    });
+    for (const [job, resume] of [
+      ["edges", edges],
+      [
+        "bare",
+        Resume.parse({
+          version: 1,
+          header: { name: { first: "", last: "" }, links: [] },
+          sections: [],
+        }),
+      ],
+    ] as const) {
+      const body = generateBody(pkg, resume, values);
+      const { result, page } = await compileAndDraw(body.latex, body.texts, job);
+      expect(result.ok, job).toBe(true);
+      expect(result.pages, job).toBe(1);
+      expect(result.log, job).not.toMatch(/^! /m);
+      expect(page.missingFonts, job).toEqual(new Map());
+      expect([...body.texts.keys()].sort(), job).toEqual(filledFields(resume).sort());
+      for (const id of body.texts.keys())
+        expect(page.fields.get(id)?.glyphs.length, id).toBeGreaterThan(0);
+      expect(page.unmatched, job).toBe(0);
+    }
+    // An award's bullets are set under it as an entry's are, so that none of its text is lost.
+    const body = generateBody(pkg, edges, values);
+    const { page } = await compileAndDraw(body.latex, body.texts, "edges");
+    const baseline = (id: string) => baselinesOf(page, id)[0] ?? Number.NaN;
+    expect(baseline("prize-2-0.text")).toBeGreaterThan(baseline("prize-2.title"));
+    expect(baseline("prize-2-1.text")).toBeGreaterThan(baseline("prize-2-0.text"));
+    // A title of one letter is all in the accent; a space among a title's first three letters
+    // is kept, and the highlight runs on to the third letter past it.
+    const accentAt = (id: string) =>
+      [
+        ...page.svg.matchAll(
+          new RegExp(`<use [^>]*data-field="${id}" data-offset="(\\d+)"[^>]*>`, "g"),
+        ),
+      ]
+        .filter(([use]) => use.includes('fill="rgb(220,53,34)"'))
+        .map(([, offset]) => Number(offset));
+    expect(accentAt("letter.title")).toEqual([0]);
+    expect(accentAt("short.title")).toEqual([0, 1]);
+    expect(accentAt("spaced.title")).toEqual([0, 1, 3]);
+    const spaced = page.fields
+      .get("spaced.title")
+      ?.glyphs.map((glyph) => glyph.text)
+      .join("");
+    expect(spaced).toBe("MySkills");
+  }, 60_000);
+
+  it("sets a link with no label as its address, and one it does not link as its label alone", async () => {
+    const blank = Resume.parse(structuredClone(sample));
+    const [site] = blank.header.links;
+    if (!site) throw new Error("the sample moved");
+    site.label = "";
+    blank.header.links.push({ id: "tool", kind: "other", label: "Portfolio", href: "run:x" });
+    const blankBody = generateBody(pkg, blank, values);
+    const { result, page } = await compileAndDraw(blankBody.latex, blankBody.texts, "blank");
+    expect(result.log).not.toMatch(/^! /m);
+    expect(page.unmatched).toBe(0);
+    expect(blankBody.latex).toContain(
+      String.raw`\href{https://okafor.example.com}{\faHome\acvHeaderIconSep{}https://okafor.example.com}`,
+    );
+    expect(blankBody.latex).toContain(String.raw`\rtfield{tool.label}{Portfolio}}`);
+    const dvi = parseDvi(result.output as Uint8Array, () => undefined).pages[0]?.items ?? [];
+    expect(nativeLinksOf(dvi).map((link) => link.uri)).toEqual([
+      "tel:+31205550147",
+      "mailto:linnea@example.com",
+      "https://okafor.example.com",
+      "https://code.example.com/lokafor",
+      "https://people.example.com/linnea-okafor",
+    ]);
+    expect(page.fields.get("tool.label")?.glyphs).toHaveLength("Portfolio".length);
+  });
+
+  it("sets letters that carry accents in pieces the engine takes, every glyph on the page and in order", async () => {
+    // A run of 200 letters with five accents each, 1,200 characters and no space, set nothing at
+    // all, and 427 such letters, or one letter with 1,280 accents, stopped the engine: each accent
+    // sets a glyph, so each counts toward the generator's bound, and a letter keeps 30 of them.
+    const accents = "\u0300\u0301\u0303\u0309\u030f";
+    const { covers } = await fonts.coverage(fontFiles(pkg));
+    for (const accent of accents) expect(covers(accent), accent).toBe(true);
+    /** The sample with its first entry's bullets replaced by one bullet of `text`, and its body. */
+    const bodyOf = (text: string) => {
+      const resume = Resume.parse(structuredClone(sample));
+      const experience = resume.sections.find((section) => section.kind === "entries");
+      const entry = experience?.kind === "entries" ? experience.entries[0] : undefined;
+      if (!entry) throw new Error("the sample moved");
+      entry.bullets = [{ id: "accented", text: [{ text }] }];
+      return generateBody(pkg, resume, values, { covers });
+    };
+    const run = `a${accents}`.repeat(200);
+    const body = bodyOf(run);
+    const { result, page } = await compileAndDraw(body.latex, body.texts, "accented");
+    expect(result.log).not.toMatch(/^! /m);
+    expect(result.pages).toBe(1);
+    expect(page.unmatched).toBe(0);
+    // Each letter sets five glyphs: the à composing makes of it and its grave, and the other four
+    // accents; and the page reads them in the text's order.
+    const offsets = page.glyphs
+      .filter((glyph) => glyph.field === "accented.text")
+      .map((glyph) => glyph.offset ?? -1);
+    expect(offsets).toHaveLength(200 * 5);
+    expect(offsets).toEqual([...offsets].sort((a, b) => a - b));
+    for (let letter = 0; letter < 200; letter++) expect(offsets).toContain(letter * 6);
+    // A letter keeps 30 accents, and the generator says it left the rest out.
+    const crowded = bodyOf(`a${"\u0301".repeat(1280)}`);
+    expect(crowded.surplus).toEqual(["\u0301"]);
+    const many = await compileAndDraw(crowded.latex, crowded.texts, "crowded");
+    expect(many.result.log).not.toMatch(/^! /m);
+    expect(many.page.glyphs.filter((glyph) => glyph.field === "accented.text")).toHaveLength(30);
+  }, 120_000);
+
+  it("sets 8,000 characters with no space in a bullet, a name and a link's shown address", async () => {
+    // XeTeX builds one node of a run of characters with nothing to break it, and one of about
+    // 1,100 overflowed the engine's stack and stopped the compile; the generator breaks a run
+    // every 200 characters (decision 0007), and a link's address stays whole where it links.
+    const run = "abcdefghij".repeat(800);
+    const address = `https://example.com/${run}`;
+    const long = Resume.parse(structuredClone(sample));
+    long.header.name.last = run;
+    long.header.links = [
+      { id: "far", kind: "website", label: "", href: address },
+      { id: "near", kind: "website", label: "Portfolio", href: address },
+    ];
+    const experience = long.sections.find((section) => section.kind === "entries");
+    const entry = experience?.kind === "entries" ? experience.entries[0] : undefined;
+    if (!entry) throw new Error("the sample moved");
+    entry.bullets = [{ id: "unbroken", text: [{ text: run }] }];
+    const body = generateBody(pkg, long, values);
+    const result = session.compile(pkg.engine, format.name, body.latex, {
+      job: "unbroken",
+      maxPasses: 3,
+    });
+    expect(result.ok, result.error).toBe(true);
+    expect(result.log).not.toMatch(/^! /m);
+    // The runs take pages of their own; each field is found on one of them.
+    const found = new Set<string>();
+    for (let index = 0; index < result.pages; index++) {
+      const page = await drawPage(result.output as Uint8Array, fonts, body.texts, index);
+      for (const id of page.fields.keys()) found.add(id);
+    }
+    for (const id of ["header.last", "unbroken.text", "near.label"])
+      expect(found.has(id), id).toBe(true);
+    // Both links go to the address whole, the one shown as its address and the one with a label.
+    const dvi = parseDvi(result.output as Uint8Array, () => undefined);
+    const uris = dvi.pages.flatMap((each) => nativeLinksOf(each.items).map((link) => link.uri));
+    expect(uris.filter((uri) => uri === address)).toHaveLength(2);
+  }, 120_000);
+
+  it("compiles a section title and a name of 8,000 characters in under a second", () => {
+    // hyperref's bookmarks, which the class turns off, cost time that grows with the square of a
+    // title's length.
     const long = Resume.parse(structuredClone(sample));
     const [first] = long.sections;
     if (!first) throw new Error("the sample moved");

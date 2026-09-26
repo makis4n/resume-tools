@@ -163,10 +163,55 @@ export function checkAddresses(
   slots: Readonly<Record<string, SlotType>>,
 ): string[] {
   const problems = new Set<string>();
+  for (const { tag, address, afterBackslash } of slotPlaces(source)) {
+    if (afterBackslash)
+      problems.add("a slot cannot follow a backslash; the text would become a command");
+    // A name the place does not offer is checkSnippet's to report.
+    const type = Object.hasOwn(slots, tag.name) ? slots[tag.name] : undefined;
+    if (address !== undefined && type !== undefined && type !== "url")
+      problems.add(
+        `${tag.name} is a ${type} slot; inside \\${address} use a url slot, such as href`,
+      );
+  }
+  return [...problems];
+}
+
+/**
+ * Which of a snippet's slots it shows rather than links to, by their place among its slot tags in
+ * order, which is the order `parseSnippet` gives its slot nodes: those in the text argument of
+ * `\href`, its second, which hyperref typesets, as the address a link with no label shows as its
+ * text. The generator writes break opportunities into a long address shown there, and never into
+ * one it links to, where they would become part of the address (decision 0007).
+ */
+export function shownSlots(source: string): Set<number> {
+  return new Set(slotPlaces(source).flatMap((place, k) => (place.shown ? [k] : [])));
+}
+
+/** A slot tag, and where the snippet puts it in TeX. */
+interface SlotPlace {
+  tag: Tag;
+  /** The link command whose address the slot is in, when it is in one. */
+  address: string | undefined;
+  /** Whether it is in the text argument of `\href`, which hyperref sets. */
+  shown: boolean;
+  /** Whether a backslash comes right before it, which would make its text a command's name. */
+  afterBackslash: boolean;
+}
+
+/**
+ * Each slot tag of a snippet, and where it sits in TeX, read as `checkAddresses` says: in a link
+ * command's address, in `\href`'s text argument, and right after a backslash or not.
+ */
+function slotPlaces(source: string): SlotPlace[] {
+  const places: SlotPlace[] = [];
   const tags = scan(source);
   // Each address that is open, the innermost last: with the brace depth inside it, or with the
   // character that closes it, for `\url|...|` and the like, which take any delimiter.
   const addresses: { command: string; depth: number; delimiter?: string }[] = [];
+  // Each `\href` text argument that is open, by the brace depth inside it; and the depth at which
+  // an `\href` whose address has closed expects its text argument next, if one does.
+  const texts: number[] = [];
+  let textAt: number | undefined;
   // A link command whose address has not opened yet: right after its name, inside its optional
   // argument, which ends at a `]` at the brace depth it began at, or after that argument.
   let link: { command: string; stage: "name" | "options" | "argument"; depth: number } | undefined;
@@ -184,18 +229,18 @@ export function checkAddresses(
       at = Math.max(at, tag.to);
       // A block tag sets nothing itself, so an address may still follow it.
       if (tag.sigil !== "" && tag.sigil !== "&") continue;
-      // A slot where a link's argument would begin is that argument, and no address opens.
+      // A slot where a link's argument would begin is that argument, and no address opens; one
+      // where `\href`'s text would begin is that text.
       if (link?.stage !== "options") link = undefined;
-      if (followsBackslash(source, rendered))
-        problems.add("a slot cannot follow a backslash; the text would become a command");
+      const shown = texts.length > 0 || textAt !== undefined;
+      textAt = undefined;
+      places.push({
+        tag,
+        address: addresses.at(-1)?.command,
+        shown,
+        afterBackslash: followsBackslash(source, rendered),
+      });
       rendered = at;
-      const address = addresses.at(-1);
-      // A name the place does not offer is checkSnippet's to report.
-      const type = Object.hasOwn(slots, tag.name) ? slots[tag.name] : undefined;
-      if (address !== undefined && type !== undefined && type !== "url")
-        problems.add(
-          `${tag.name} is a ${type} slot; inside \\${address.command} use a url slot, such as href`,
-        );
       continue;
     }
     const char = source.charAt(at);
@@ -209,6 +254,9 @@ export function checkAddresses(
       rendered = at;
       continue;
     }
+    // Where `\href`'s text would begin, anything but a space or a brace means it has none.
+    if (textAt !== undefined && !/\s/.test(char) && !(char === "{" && depth === textAt))
+      textAt = undefined;
     if (char === "\\") {
       COMMAND.lastIndex = at;
       const command = COMMAND.exec(source);
@@ -259,15 +307,24 @@ export function checkAddresses(
         link = undefined;
       }
     }
-    if (char === "{") depth++;
-    else if (char === "}") {
-      if (addresses.at(-1)?.depth === depth) addresses.pop();
+    if (char === "{") {
+      if (textAt === depth) {
+        texts.push(depth + 1);
+        textAt = undefined;
+      }
+      depth++;
+    } else if (char === "}") {
+      if (texts.at(-1) === depth) texts.pop();
+      if (addresses.at(-1)?.depth === depth) {
+        // An `\href`'s address has closed, and its text argument comes next.
+        if (addresses.pop()?.command === "href") textAt = depth - 1;
+      }
       depth--;
     }
     at++;
     rendered = at;
   }
-  return [...problems];
+  return places;
 }
 
 /** The link commands that also take their address between a pair of any other character. */

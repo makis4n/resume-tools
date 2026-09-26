@@ -648,6 +648,120 @@ describe("generateBody", () => {
     expect(whole.dropped).toEqual([]);
   });
 
+  it("writes a break opportunity after every 200 characters of a run with no space, and none before", () => {
+    // XeTeX builds one node of a run of characters with nothing to break it, and one of about
+    // 1,100 overflows the engine's stack; the break sets nothing, so every character still typesets.
+    const BREAK = "\\allowbreak ";
+    /** The LaTeX of a bullet of the runs given, as the package's bullet snippet sets it. */
+    const bullet = (text: string | { text: string; bold?: boolean }[]) => {
+      const runs = typeof text === "string" ? [{ text }] : text;
+      const one = Resume.parse({
+        version: 1,
+        header: { name: { first: "Ilse", last: "Marrow" }, links: [] },
+        sections: [
+          {
+            id: "work",
+            kind: "entries",
+            role: "experience",
+            title: "Work",
+            entries: [{ id: "tern", title: "Typesetter", bullets: [{ id: "b", text: runs }] }],
+          },
+        ],
+      });
+      const body = generateBody(pkg, one, {});
+      expect(body.texts.get("b.text")).toBe(runs.map((run) => run.text).join(""));
+      return /\\rtfield\{b\.text\}\{(.*)\}\n/.exec(body.latex)?.[1];
+    };
+    const a = (count: number) => "a".repeat(count);
+    const b = (count: number) => "b".repeat(count);
+    expect(bullet(a(200))).toBe(a(200));
+    expect(bullet(a(201))).toBe(`${a(200)}${BREAK}a`);
+    expect(bullet(a(450))).toBe(`${a(200)}${BREAK}${a(200)}${BREAK}${a(50)}`);
+    // A space, or a no-break space, begins a run again.
+    expect(bullet(`${a(150)} ${b(200)}`)).toBe(`${a(150)} ${b(200)}`);
+    expect(bullet(`${a(150)}\u00a0${b(200)}`)).toBe(`${a(150)}~${b(200)}`);
+    // A run goes on across rich text's runs, and an escaped character is one character.
+    expect(bullet([{ text: a(150) }, { text: b(100), bold: true }])).toBe(
+      `${a(150)}\\textbf{${b(50)}${BREAK}${b(50)}}`,
+    );
+    expect(bullet("&".repeat(201))).toBe(`${"\\&".repeat(200)}${BREAK}\\&`);
+    // An accent sets a glyph and counts, and goes with the letter before it: no break comes
+    // between them, so a letter goes on to the next piece with its accents.
+    expect(bullet("e\u0301".repeat(201))).toBe(
+      `${"\u00e9".repeat(100)}${BREAK}${"\u00e9".repeat(100)}${BREAK}\u00e9`,
+    );
+    expect(bullet(`${a(199)}e\u0301`)).toBe(`${a(199)}${BREAK}\u00e9`);
+    // A hyphen is a break already, TeX's discretionary after it, so the break goes after the
+    // letter that follows it, and no two stand together, where a ragged line set an empty one;
+    // in a run of hyphens alone it waits no longer than twice the bound.
+    expect(bullet(`${a(199)}-${b(300)}`)).toBe(`${a(199)}-b${BREAK}${b(200)}${BREAK}${b(99)}`);
+    expect(bullet("-".repeat(450))).toBe(`${"-".repeat(400)}${BREAK}${"-".repeat(50)}`);
+  });
+
+  it("keeps 30 accents on a letter, as Unicode's stream-safe form does, and says it left the rest out", () => {
+    const text = `a${"\u0301".repeat(40)}`;
+    const one = Resume.parse({
+      version: 1,
+      header: { name: { first: "Ilse", last: "Marrow" }, links: [] },
+      sections: [
+        {
+          id: "work",
+          kind: "entries",
+          role: "experience",
+          title: "Work",
+          entries: [{ id: "tern", title: "Typesetter", bullets: [{ id: "b", text: [{ text }] }] }],
+        },
+      ],
+    });
+    const body = generateBody(pkg, one, {});
+    // Composed as the escape composes it, the a and its first accent one letter.
+    expect(/\\rtfield\{b\.text\}\{(.*)\}\n/.exec(body.latex)?.[1]).toBe(
+      `\u00e1${"\u0301".repeat(29)}`,
+    );
+    expect(body.surplus).toEqual(["\u0301"]);
+    // The field's text stays the model's, and the page skips what the body leaves out.
+    expect(body.texts.get("b.text")).toBe(text);
+    expect(generateBody(pkg, resume, {}).surplus).toEqual([]);
+  });
+
+  it("breaks an address it shows as text, and never one it links to", () => {
+    const shows = packageWith((pkg) => {
+      pkg.snippets.link.other =
+        "\\href{{{&href}}}{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}";
+    });
+    const long = `https://example.com/${"a".repeat(430)}`;
+    // The 200th character it shows is a hyphen.
+    const dashed = `https://example.com/${"b".repeat(179)}-${"b".repeat(100)}`;
+    const encoded = `https://example.com/${"é".repeat(100)}`;
+    const links = Resume.parse({
+      version: 1,
+      header: {
+        name: { first: "Ilse", last: "Marrow" },
+        links: [
+          { id: "far", kind: "other", label: "", href: long },
+          { id: "near", kind: "other", label: "Near", href: long },
+          { id: "wide", kind: "other", label: "", href: encoded },
+          { id: "dash", kind: "other", label: "", href: dashed },
+        ],
+      },
+      sections: [],
+    });
+    const { latex } = generateBody(shows, links, {});
+    const BREAK = "\\allowbreak ";
+    const shown = `${long.slice(0, 200)}${BREAK}${long.slice(200, 400)}${BREAK}${long.slice(400)}`;
+    expect(latex).toContain(`\\href{${long}}{${shown}}`);
+    expect(latex).toContain(`\\href{${long}}{\\rtfield{near.label}{Near}}`);
+    // An encoded character sets three characters for each of its bytes, and a break never comes
+    // inside it: `é` sets six, `%C3%A9`, so 30 fit after the 20 of the scheme and host, then 33.
+    const e = (count: number) => "\\%C3\\%A9".repeat(count);
+    const pieces = [`https://example.com/${e(30)}`, e(33), e(33), e(4)];
+    expect(latex).toContain(`\\href{https://example.com/${e(100)}}{${pieces.join(BREAK)}}`);
+    // A hyphen it shows is a break already, so the break goes after the character that follows.
+    expect(latex).toContain(
+      `\\href{${dashed}}{${dashed.slice(0, 201)}${BREAK}${dashed.slice(201)}}`,
+    );
+  });
+
   it("keeps the part of an accented letter the fonts can set: its base, and an accent they have", () => {
     // As pdfTeX's LaTeX sets the base of a letter it has no definition for (`escape.ts`): Roboto
     // has neither ǎ nor the combining caron, and the letter was dropped whole, Xioming.

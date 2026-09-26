@@ -181,6 +181,43 @@ describe("shownStrings in a composite font", () => {
   });
 });
 
+describe("shownTexts' ends", () => {
+  it("ends each operator where its glyphs' widths, its kerns and its spacing take it", () => {
+    // F1 a simple font whose widths are given by reference from its first character on; F2 a
+    // composite font whose /W gives CIDs 0x26 to 0x28 a width each and 0x45 to 0x47 one, and /DW
+    // the rest.
+    const pdf = pdfWith(
+      [
+        "BT /F1 10 Tf 72 700 Td (AB)Tj [(A)-500(B)]TJ ET",
+        "BT 2 Tc 1 Tw /F1 10 Tf 72 680 Td (A B)Tj ET",
+        "BT 0 Tc 0 Tw /F2 20 Tf 72 660 Td <00260027>Tj <0045>Tj <0099>Tj ET",
+        "BT /F3 10 Tf 72 640 Td (Unknown)Tj (After)Tj ET",
+      ].join(" "),
+      "5 0 obj\n<</Type/Font/Subtype/Type1/FirstChar 32/Widths 8 0 R>>\nendobj",
+      "8 0 obj\n[250 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 600 700]\nendobj",
+      "6 0 obj\n<</Type/Font/Subtype/Type0/Encoding/Identity-H/DescendantFonts[7 0 R]>>\nendobj",
+      "7 0 obj\n<</Type/Font/Subtype/CIDFontType0/DW 500/W[38[100 200 300]69 71 400]>>\nendobj",
+      "9 0 obj\n<</Font<</F1 5 0 R/F2 6 0 R/F3 10 0 R>>>>\nendobj",
+      "10 0 obj\n<</Type/Font/Subtype/Type1/BaseFont/CMR10>>\nendobj",
+    );
+    const ends = shownTexts(pdf).map((shown) => shown.end && [shown.end.x, shown.end.y]);
+    expect(ends).toEqual([
+      // A and B, 6 and 7 at 10 pt; then the same again, with 5 of a kern between them.
+      [85, 700],
+      [103, 700],
+      // Each glyph 2 more, and the space 1 more again.
+      [72 + 6 + 2 + 2.5 + 2 + 1 + 7 + 2, 680],
+      // CIDs 0x26 and 0x27, 100 and 200 at 20 pt; 0x45, 400 of the range; 0x99, /DW's 500.
+      [78, 660],
+      [86, 660],
+      [96, 660],
+      // A font with no widths gives no end, and nor does what follows it.
+      undefined,
+      undefined,
+    ]);
+  });
+});
+
 describe("mediaBoxes and hasToUnicode", () => {
   it("read every page size, in big points, and whether a font has a ToUnicode map", () => {
     const letter = pdfWith("");

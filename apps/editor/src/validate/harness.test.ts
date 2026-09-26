@@ -32,7 +32,7 @@ const ENSURES: Record<Check, string> = {
   converges: "converges: two passes as a new document, then one again, to the same output",
   controls: "compiles with each control it offers set another way, with no error, to other output",
   edits: "shows every field's new text after an edit, compiled once as the editor does",
-  pages: "sets its sample on one page",
+  pages: "sets its sample on one page, no field past the page's edges",
   fields: "keeps every field's markers, once each, and the page finds each field with glyphs",
   alignment: "matches every glyph of every field to a character of its text, and shows it whole",
   fonts: "uses only fonts the page can draw",
@@ -526,6 +526,26 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
   }
 
   describe("over an invented package", () => {
+    it("reports a field set past the page's edge, right or below, and nothing else", async () => {
+      // A table wider than the text, as a template's column of a fixed width after a column as wide
+      // as its longest label can make one, sets text off the page, where neither the page nor the
+      // PDF shows it: the harness reads each field's glyphs against the page's edges.
+      const right = plainWith("past-right", {
+        bullet: "\\noindent\\makebox[0pt][l]{\\hspace*{\\paperwidth}{{text}}}\\par",
+      });
+      const report = await validatePackage(session, fonts, right, RESUME);
+      expect(report.findings).toEqual([
+        { check: "pages", field: "tern-1.text", message: "tern-1.text runs past the page's edge" },
+      ]);
+      const below = plainWith("past-bottom", {
+        bullet: "\\noindent\\raisebox{-\\paperheight}[0pt][0pt]{{{text}}}\\par",
+      });
+      const under = await validatePackage(session, fonts, below, RESUME);
+      expect(under.findings).toEqual([
+        { check: "pages", field: "tern-1.text", message: "tern-1.text runs past the page's edge" },
+      ]);
+    }, 60_000);
+
     it("reports a field whose markers never reach the page, and nothing else", async () => {
       // A box \settowidth measures is never shipped out, so the specials in it never reach the
       // page (decision 0007), and the bullet cannot be found by a click.
@@ -826,6 +846,62 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
         unshown("work.title", "Experience"),
         unshown("tern.title", "Typesetter"),
         unshown("tern-1.text", "Set"),
+      ]);
+    }, 60_000);
+
+    it("finds a first word a colour change parts between two abutting text operators, and no other", async () => {
+      // A template that colours part of a word, as Awesome-CV colours a title's first three
+      // letters, has xdvipdfmx show the word in two operators, the second starting where the first
+      // ends; a reader of the PDF's text reads them as one word. Two operators apart are two words.
+      // The PDFs are made by hand, on US Letter with a font of every glyph 500 units wide, so that
+      // 'Callo' at 10 bp ends 25 bp after it starts.
+      const handMade = (split: string) => {
+        const content = [
+          "BT /F1 10 Tf 72 720 Td (Ines)Tj ET",
+          `BT /F1 10 Tf 100 720 Td (Callo)Tj 0 0 1 rg ${split} (way)Tj ET`,
+          "BT /F1 10 Tf 72 700 Td (Experience)Tj ET",
+          "BT /F1 10 Tf 72 680 Td (Typesetter)Tj ET",
+          "BT /F1 10 Tf 72 660 Td [(Set)-250(the)]TJ ET",
+        ].join("\n");
+        const widths = Array.from({ length: 95 }, () => 500).join(" ");
+        const source = [
+          "%PDF-1.5",
+          `4 0 obj\n<</Length ${content.length}>>\nstream\n${content}\nendstream\nendobj`,
+          "3 0 obj\n<</Type/Page/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>/MediaBox[0 0 612 792]>>\nendobj",
+          `5 0 obj\n<</Type/Font/Subtype/Type1/FirstChar 32/LastChar 126/Widths[${widths}]/ToUnicode 6 0 R>>\nendobj`,
+          "%%EOF",
+        ].join("\n");
+        const pdf = Uint8Array.from(source, (char) => char.charCodeAt(0));
+        return {
+          dump: session.dump.bind(session),
+          compile: session.compile.bind(session),
+          pdf: (): PdfResult => ({ ok: true, pdf, ms: 1, output: "" }),
+        } as unknown as EngineSession;
+      };
+      // Shown on where the first left off, and moved to where it ends, as xdvipdfmx moves it.
+      for (const split of ["", "25 0 Td"]) {
+        const abutting = await validatePackage(
+          handMade(split),
+          fonts,
+          plainWith("abutting", {}),
+          RESUME,
+        );
+        expect(abutting.findings, split).toEqual([]);
+      }
+      // Moved to 5 bp past where the first ends, as a space would part them: two words.
+      const apart = await validatePackage(
+        handMade("30 0 Td"),
+        fonts,
+        plainWith("apart", {}),
+        RESUME,
+      );
+      expect(apart.findings).toEqual([
+        {
+          check: "pdf",
+          field: "header.last",
+          message:
+            "the PDF's text does not show header.last: no text operator shows its first word, Calloway",
+        },
       ]);
     }, 60_000);
 

@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Linnea", "last": "Okafor" },
+    "headline": "Infrastructure Engineer · Build Systems",
+    "email": "linnea@example.com",
+    "phone": "+31 20 555 0147",
+    "location": "Utrecht, Netherlands",
+    "links": [
+      {
+        "id": "site",
+        "kind": "website",
+        "label": "okafor.example.com",
+        "href": "https://okafor.example.com"
+      },
+      {
+        "id": "code",
+        "kind": "github",
+        "label": "lokafor",
+        "href": "https://code.example.com/lokafor"
+      },
+      {
+        "id": "profile",
+        "kind": "linkedin",
+        "label": "linnea-okafor",
+        "href": "https://people.example.com/linnea-okafor"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "summary",
+      "kind": "paragraph",
+      "role": "summary",
+      "title": "Summary",
+      "text": [
+        {
+          "text": "Infrastructure engineer with eight years of building the systems other engineers ship on, from build farms to deployment pipelines. Happiest making a slow, fragile process fast and boring, then writing it down so the next team can run it."
+        }
+      ]
+    },
+    {
+      "id": "experience",
+      "kind": "entries",
+      "role": "experience",
+      "title": "Work Experience",
+      "entries": [
+        {
+          "id": "harbourline",
+          "title": "Senior Infrastructure Engineer",
+          "subtitle": "Harbourline Logistics",
+          "place": "Rotterdam, Netherlands",
+          "dates": { "start": "2021-04", "end": "present" },
+          "bullets": [
+            {
+              "id": "harbourline-1",
+              "text": [
+                { "text": "Rebuilt the build farm on shared caches, cutting a full build from " },
+                { "text": "forty minutes to six", "bold": true },
+                { "text": " and the monthly compute bill by a third." }
+              ]
+            },
+            {
+              "id": "harbourline-2",
+              "text": [
+                {
+                  "text": "Led the move of forty services to one deployment pipeline, with staged rollouts and automatic rollback, which halved failed releases."
+                }
+              ]
+            },
+            {
+              "id": "harbourline-3",
+              "text": [
+                {
+                  "text": "Wrote the on-call handbook and ran the rota for twelve engineers across two time zones."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "kestrel",
+          "title": "Platform Engineer",
+          "subtitle": "Kestrel Payments",
+          "place": "Amsterdam, Netherlands",
+          "dates": { "start": "2018-09", "end": "2021-03" },
+          "bullets": [
+            {
+              "id": "kestrel-1",
+              "text": [
+                {
+                  "text": "Moved the payment services from hand-built servers to containers, with every change reviewed as code."
+                }
+              ]
+            },
+            {
+              "id": "kestrel-2",
+              "text": [
+                {
+                  "text": "Built the team's metrics and alerting, which it still runs, and cut noisy pages by 70%."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "tulip",
+          "title": "Junior Systems Engineer",
+          "subtitle": "Tulip Data Centres",
+          "place": "Eindhoven, Netherlands",
+          "dates": { "start": "2016-09", "end": "2018-08" },
+          "bullets": [
+            {
+              "id": "tulip-1",
+              "text": [
+                { "text": "Automated the racking checklist for new servers, " },
+                { "text": "the first script the team kept", "italic": true },
+                { "text": ", and trained four colleagues to extend it." }
+              ]
+            },
+            {
+              "id": "tulip-2",
+              "text": [
+                {
+                  "text": "Co-led the night shift for two data halls and wrote up every incident."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "awards",
+      "kind": "entries",
+      "role": "awards",
+      "title": "Honors & Awards",
+      "entries": [
+        {
+          "id": "hackathon",
+          "title": "First Place",
+          "subtitle": "Lowlands Open Infrastructure Hackathon",
+          "place": "Utrecht",
+          "dates": { "start": "2023" },
+          "bullets": []
+        },
+        {
+          "id": "talk",
+          "title": "Attendees' Choice",
+          "subtitle": "Platform Days Europe",
+          "place": "Ghent",
+          "dates": { "start": "2022" },
+          "bullets": []
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "kind": "labelled",
+      "role": "skills",
+      "title": "Skills",
+      "items": [
+        {
+          "id": "languages",
+          "label": "Languages",
+          "text": [{ "text": "Go, Python, TypeScript, SQL" }]
+        },
+        {
+          "id": "infrastructure",
+          "label": "Infrastructure",
+          "text": [{ "text": "Kubernetes, Terraform, build caching, observability" }]
+        },
+        {
+          "id": "practices",
+          "label": "Practices",
+          "text": [{ "text": "Incident review, capacity planning, technical writing" }]
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "kind": "entries",
+      "role": "education",
+      "title": "Education",
+      "entries": [
+        {
+          "id": "noordveld",
+          "title": "MSc Computer Science",
+          "subtitle": "University of Noordveld",
+          "place": "Groningen, Netherlands",
+          "dates": { "start": "2014-09", "end": "2016-08" },
+          "bullets": [
+            {
+              "id": "noordveld-1",
+              "text": [{ "text": "Thesis on scheduling builds across machines that fail." }]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interests",
+      "kind": "list",
+      "role": "other",
+      "title": "Interests",
+      "items": [
+        { "id": "cycling", "text": [{ "text": "Long-distance road cycling" }] },
+        { "id": "letterpress", "text": [{ "text": "Letterpress printing" }] },
+        { "id": "mentoring", "text": [{ "text": "Mentoring at a weekend coding club" }] }
+      ]
+    }
+  ]
+}

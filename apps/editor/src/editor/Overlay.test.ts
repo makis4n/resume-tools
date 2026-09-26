@@ -1233,6 +1233,45 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
       expect(after?.kind === "kern" && after.width / PT).toBeCloseTo(1.0655, 4);
     }, 60_000);
 
+    it("breaks a run of 8,000 characters with no space where TeX does, at the generator's breaks", async () => {
+      // The generator writes a break opportunity every 200 characters of a run with no space in
+      // it, and the overlay's breaker has the same ones, so that a pasted address, say, wraps on
+      // the page and in the overlay alike.
+      const text = "abcdefghij".repeat(800);
+      const { page } = await jake(withBullets("run", [text]), "overlay-unbroken");
+      const { rows, page: lines } = compare(page, "run-0.text", text);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(rows).toEqual(lines);
+    }, 60_000);
+
+    it("breaks a run whose 200th character is a hyphen where TeX does, with no line left empty", async () => {
+      // A break right after the hyphen's discretionary gave TeX two breaks at one place, and the
+      // ragged bullet an empty line between them, which the overlay did not set: the generator
+      // breaks after the letter that follows the hyphen instead, and the overlay with it.
+      const text = `${"abcdefghij".repeat(20).slice(0, 199)}-${"abcdefghij".repeat(30)}`;
+      const { page } = await jake(withBullets("dash", [text]), "overlay-dash");
+      const { rows, page: lines } = compare(page, "dash-0.text", text);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(rows).toEqual(lines);
+      const baselines = [
+        ...new Set(page.glyphs.filter((glyph) => glyph.field === "dash-0.text").map((g) => g.y)),
+      ].sort((a, b) => a - b);
+      const gaps = baselines.slice(1).map((y, i) => y - (baselines[i] ?? y));
+      for (const gap of gaps) expect(gap).toBeCloseTo(gaps[0] ?? 0, 2);
+    }, 60_000);
+
+    it("breaks rich runs with no space where TeX does, the count going on from run to run", async () => {
+      // The generator counts a run with no space on from one run of rich text into the next, and so
+      // does the overlay's breaker: a break inside the bold run, and one just where the italic run
+      // begins, before its first letter.
+      const { page, resume } = await richPage("unbroken", [
+        [{ text: "abcdefghij".repeat(15) }, { text: "klmnopqrst".repeat(85), bold: true }],
+        [{ text: "abcdefghij".repeat(20) }, { text: "klmnopqrst".repeat(80), italic: true }],
+      ]);
+      await sameAsTex(page, resume, "unbroken-0.text");
+      await sameAsTex(page, resume, "unbroken-1.text");
+    }, 60_000);
+
     it("keeps an emptied field's place while the page lacks it", async () => {
       // Jake's template leaves an emptied bullet out, so the page compiled from the empty text has
       // none of its glyphs; the overlay stays where the bullet was, and open.
@@ -1426,6 +1465,56 @@ x\end{document}`;
         `invented XeTeX template, a kerned paragraph: rows ${JSON.stringify(rows)}, XeTeX's lines ${JSON.stringify(lines)}; drift within a row at most ${drift.most.toFixed(2)} pt, ${drift.mean.toFixed(2)} pt on average over ${drift.glyphs} glyphs`,
       );
       expect(drift.glyphs).toBeGreaterThan(100);
+    }, 60_000);
+  });
+
+  describe("on Awesome-CV with its text in Roboto", () => {
+    const { package: pkg, sample } = curated("awesome-cv");
+    const values = { ...defaultControls(pkg), font: "roboto" };
+    const format = generateFormat(pkg, values);
+
+    it("breaks a bullet Roboto Light neither kerns nor joins where XeTeX did, row for row", async () => {
+      // The class sets an entry's bullets justified, in its light weight, which the font control
+      // makes Roboto Light. No two letters of a word here are a pair Roboto Light kerns, and no
+      // f is joined to what follows it, so XeTeX's words are as wide as their glyphs' advances,
+      // which the overlay measures; the rows must end where XeTeX's lines do.
+      const text =
+        "Built and shipped a new build system that cut the nightly build down in minutes while also making the tests run in all machines in the lab and it now helps the whole company plan its launches with much less guesswork than it used, and then built the guide that the team still checks when it adds a machine or changes how the builds run in the lab each month.";
+      const light = await fonts.loadNative("Roboto-Light.otf");
+      const file = light?.file;
+      if (!file) throw new Error("the tree has no Roboto Light");
+      const opened = parse(file.bytes.slice().buffer);
+      for (const word of text.split(" ")) {
+        expect(word, word).not.toMatch(/f[il]/);
+        for (let i = 0; i + 1 < word.length; i++) {
+          const pair = [word[i], word[i + 1]].map((char) => file.glyphFor(char ?? "") ?? 0);
+          expect(opened.getKerningValue(pair[0] ?? 0, pair[1] ?? 0), word).toBe(0);
+        }
+      }
+      const resume = structuredClone(sample);
+      const section = resume.sections.find((each) => each.kind === "entries");
+      const entry = section?.kind === "entries" ? section.entries[0] : undefined;
+      if (!entry) throw new Error("the sample has no entry");
+      entry.bullets = [{ id: "plain-0", text: [{ text }] }];
+      const dumped = session.dump(pkg.engine, format.name, format.preamble, format.files);
+      if (!dumped.ok) throw new Error(dumped.error);
+      const body = generateBody(pkg, resume, values);
+      const job = "overlay-awesome";
+      const result = session.compile(pkg.engine, format.name, body.latex, { job, maxPasses: 3 });
+      if (!result.output) throw new Error(result.error);
+      const page = await drawPage(result.output, fonts, body.texts);
+      expect(page.missingFonts).toEqual(new Map());
+      const { rows, page: lines, setting, layout } = compare(page, "plain-0.text", text);
+      expect(layout.font.kind).toBe("native");
+      expect(layout.font.name).toBe("Roboto-Light.otf");
+      expect(lines).toHaveLength(3);
+      expect(rows).toEqual(lines);
+      const glyphs = page.glyphs.filter((glyph) => glyph.field === "plain-0.text");
+      const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+      for (const row of overlayEnds(text, setting)) {
+        const tex = at(row.last) - at(row.first);
+        expect(Math.abs(row.x - tex), `at ${row.last}`).toBeLessThan(0.01);
+      }
     }, 60_000);
   });
 

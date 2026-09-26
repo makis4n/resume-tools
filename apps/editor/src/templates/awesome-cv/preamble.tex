@@ -1,0 +1,141 @@
+%%%%%%%%%%%%%%%%%
+% This is the resume editor's preamble for rt-awesome-cv.cls, its modified version of
+% awesome-cv.cls, the class file of Awesome CV by Claud D. Park (posquit0.bj@gmail.com), which
+% is at https://github.com/posquit0/Awesome-CV. The class is under the LaTeX Project Public
+% License 1.3c, and rt-awesome-cv.cls says what the editor changed in it. This preamble is the
+% editor's own. It takes from the example resume.tex that comes with the class, which is under
+% CC BY-SA 4.0, only the class options, the margins and the settings that restate the class's
+% defaults, and none of its text.
+%%%%%%%%%%%%%%%%
+
+% This is the editor's port of Awesome CV. The fonts, the colours and the layout are the class's,
+% as its example sets them, and the preamble changes the example only as follows. The font
+% encoding is OT1 until the class has loaded, and TU after it, so that the format the editor
+% dumps from this preamble holds no native font; XeTeX loads each font the first time the
+% document selects it. The margins control sets the margins after the format, the same on every
+% side, and its default is half an inch, which of what the control offers comes nearest the
+% example's margins taken together, 1.4 cm at the sides, 0.8 cm at the top and 1.8 cm at the
+% bottom, so the example's geometry below sets only the space for the footer. The accent colour
+% is named, rtaccent, and the example's red, awesome-red, is its default; the accent control
+% defines it again and sets the class's awesome from it. The class sets its text in sizes of its
+% own, fixed in points, from its 11 points, while the font size control takes half points from 9
+% to 12 as an ordinary compile: \rtfontsize sets every size of the class's and of article's
+% size11.clo scaled by the size asked for over 11 points, with the space between paragraphs that
+% goes with it, and \rtdensity scales the space between sections, entries and bullets. At 11
+% points and normal density, the controls' defaults, every size and every space is the class's.
+% The font control sets the text in Source Sans Pro, Roboto or Lato, and the header stays
+% Roboto. A list section sets its items as the class sets an entry's, in a paragraph of its own.
+% And the file ends where the body would begin, because the editor generates the body from the
+% resume.
+
+% OT1 until the class has loaded, as decision 0003 has a XeTeX port, so that nothing selects a
+% native font before the format is dumped; the document's encoding is TU, XeTeX's, from below.
+\RequirePackage[OT1]{fontenc}
+\documentclass[11pt,a4paper]{rt-awesome-cv}
+
+% The example's page. The margins control sets the margins after the format.
+\geometry{left=1.4cm, top=.8cm, right=1.4cm, bottom=1.8cm, footskip=.5cm}
+
+% The fonts. The document's text is TU, in Source Sans Pro, as sourcesanspro's default option
+% makes it. \rtbodyfonts{<family>}{<light family>} is the font control's: the text in another
+% of the families the package declares, the header staying Roboto.
+\renewcommand{\encodingdefault}{TU}
+\renewcommand{\familydefault}{SourceSans}
+\newcommand*\rtbodyfonts[2]{%
+  \renewcommand*{\bodyfont}{\fontencoding{TU}\fontfamily{#1}\selectfont}%
+  \renewcommand*{\bodyfontlight}{\fontencoding{TU}\fontfamily{#2}\selectfont}%
+  \renewcommand*{\familydefault}{#1}}
+
+% The font size control's sizes, and the density control's spacing, as the note at the top says.
+% \rt@size is the size in scaled points, 11 points until \rtfontsize sets another, and
+% \rt@pt{<points>} is a length scaled by it over 11 points and rounded to a hundredth of a point,
+% TeX arithmetic throughout. A length to two decimals rounds back to what TeX reads for it, so at
+% 11 points every length is the class's.
+\makeatletter
+\newcommand*\rt@size{720896}
+\newcommand*\rt@pt[1]{%
+  \the\dimexpr\numexpr\dimexpr#1\p@*\rt@size/720896\relax*100/65536\relax\p@/100\relax}
+% size11.clo's sizes, with the display skips it sets with them, each length through \rt@pt. The
+% lists' spacing is parskip's, which the class loads: no space above or between items, and the
+% space between paragraphs within one.
+\DeclareRobustCommand\normalsize{%
+  \@setfontsize\normalsize{\rt@pt{10.95}}{\rt@pt{13.6}}%
+  \abovedisplayskip \rt@pt{11}\@plus\rt@pt{3}\@minus\rt@pt{6}%
+  \abovedisplayshortskip \z@ \@plus\rt@pt{3}%
+  \belowdisplayshortskip \rt@pt{6.5}\@plus\rt@pt{3.5}\@minus\rt@pt{3}%
+  \belowdisplayskip \abovedisplayskip
+  \let\@listi\@listI}
+\DeclareRobustCommand\small{\@setfontsize\small{\rt@pt{10}}{\rt@pt{12}}}
+\DeclareRobustCommand\footnotesize{\@setfontsize\footnotesize{\rt@pt{9}}{\rt@pt{11}}}
+\DeclareRobustCommand\scriptsize{\@setfontsize\scriptsize{\rt@pt{8}}{\rt@pt{9.5}}}
+\DeclareRobustCommand\tiny{\@setfontsize\tiny{\rt@pt{6}}{\rt@pt{7}}}
+\DeclareRobustCommand\large{\@setfontsize\large{\rt@pt{12}}{\rt@pt{14}}}
+\DeclareRobustCommand\Large{\@setfontsize\Large{\rt@pt{14.4}}{\rt@pt{18}}}
+\DeclareRobustCommand\LARGE{\@setfontsize\LARGE{\rt@pt{17.28}}{\rt@pt{22}}}
+\DeclareRobustCommand\huge{\@setfontsize\huge{\rt@pt{20.74}}{\rt@pt{25}}}
+\DeclareRobustCommand\Huge{\@setfontsize\Huge{\rt@pt{24.88}}{\rt@pt{30}}}
+% The class's own sizes: each of its styles sets its text with \fontsize{<size>}{1em}, which is
+% patched to \rt@fontsize, the size through \rt@pt. A class that no longer has one stops the dump.
+\newcommand*\rt@fontsize[1]{\fontsize{\rt@pt{\strip@pt\dimexpr#1\relax}}}
+\newcommand*\rt@scalestyle[1]{%
+  \expandafter\patchcmd\csname#1\endcsname{\fontsize}{\rt@fontsize}{}%
+    {\errmessage{rt-awesome-cv: no \string\fontsize\space in \string\\#1}}}
+\@for\rt@style:=%
+    headerfirstnamestyle,headerlastnamestyle,headerpositionstyle,headeraddressstyle,%
+    headersocialstyle,headerquotestyle,footerstyle,sectionstyle,subsectionstyle,%
+    paragraphstyle,entrytitlestyle,entrypositionstyle,entrydatestyle,entrylocationstyle,%
+    descriptionstyle,subentrytitlestyle,subentrypositionstyle,subentrydatestyle,%
+    subentrylocationstyle,subdescriptionstyle,honortitlestyle,honorpositionstyle,%
+    honordatestyle,honorlocationstyle,skilltypestyle,skillsetstyle,lettersectionstyle,%
+    recipientaddressstyle,recipienttitlestyle,lettertitlestyle,letterdatestyle,%
+    lettertextstyle,letternamestyle,letterenclosurestyle%
+  \do{\expandafter\rt@scalestyle\expandafter{\rt@style}}
+% The space the class puts before a section's title is \acvSectionTopSkip, 3 mm, and parskip's
+% space between paragraphs, half a line, which is also what parts one entry from the next; a
+% list's bullets have none between them. The space after a title, \acvSectionContentTopSkip, stays
+% the class's 2.5 mm at every density, since the class takes 3 mm back right after it in a
+% paragraph section, and 2 mm in the others, and at less than the 2.5 mm a paragraph at the
+% smaller sizes would be set over its title. \rt@density is a percentage, 100 until \rtdensity
+% sets another, and \rt@gap{<length>} is the length at that share, rounded to a hundredth of a
+% point. \rt@itemsep is the space between bullets, which cvitems is patched to take, none at
+% normal density and a point less or more for every half of it less or more.
+\newcommand*\rt@density{100}
+\newcommand*\rt@gap[1]{%
+  \the\dimexpr\numexpr\dimexpr#1*\rt@density/100\relax*100/65536\relax\p@/100\relax}
+\newcommand*\rt@itemsep{0pt}
+\patchcmd{\cvitems}{noitemsep}{noitemsep, itemsep=\rt@itemsep}{}%
+  {\errmessage{rt-awesome-cv: no noitemsep in \string\cvitems}}
+\newcommand*\rt@skips{%
+  \setlength\parskip{\rt@gap{\rt@pt{6.8}}\@plus\rt@gap{\rt@pt{2}}}}
+% \rtfontsize{<points>}: every size from <points> in place of 11, then the normal size and the
+% space between paragraphs, as size11.clo and parskip set them as the class loads.
+\newcommand*\rtfontsize[1]{%
+  \edef\rt@size{\number\dimexpr#1\p@\relax}%
+  \normalsize
+  \rt@skips}
+% \rtdensity{<percent>}: the space before a section's title and between paragraphs at that share
+% of what the class and the size give them, and the space between bullets.
+\newcommand*\rtdensity[1]{%
+  \edef\rt@density{\number#1}%
+  \edef\acvSectionTopSkip{\rt@gap{3mm}}%
+  \edef\rt@itemsep{\the\dimexpr\numexpr\rt@density-100\relax\p@/50\relax}%
+  \rt@skips}
+\makeatother
+
+% A list section's items, which the editor sets through the class's cvitems in a cvparagraph.
+% cvitems takes 4 mm back above its list and below it, space that the row before it leaves in
+% \cventry's table; outside a table the list would be set over the section's title, so the port
+% gives the 4 mm back, and a list's first line falls where a paragraph's does.
+\newenvironment{rtlist}
+  {\begin{cvparagraph}\vspace{4mm}\begin{cvitems}}
+  {\end{cvitems}\vspace{4mm}\end{cvparagraph}}
+
+% The example's colours. The accent is its red, named rtaccent; the accent control defines it
+% again after the format, and sets awesome from it again, since \colorlet takes a colour's value
+% when it runs.
+\definecolor{rtaccent}{HTML}{DC3522}
+\colorlet{awesome}{rtaccent}
+\setbool{acvSectionColorHighlight}{true}
+
+% The example's separator between the header's contacts, a bar, which is the class's own.
+\renewcommand{\acvHeaderSocialSep}{\quad\textbar\quad}
