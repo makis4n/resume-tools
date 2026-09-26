@@ -364,7 +364,7 @@ export function decodeText(bytes: Uint8Array): string {
  * A text as bytes the way `original` was: UTF-8, its byte-order mark kept, when `original` is
  * UTF-8, and Latin-1 otherwise; undefined when the text holds a character Latin-1 cannot.
  */
-function encodeLike(original: Uint8Array, text: string): Uint8Array | undefined {
+export function encodeLike(original: Uint8Array, text: string): Uint8Array | undefined {
   try {
     new TextDecoder("utf-8", { fatal: true }).decode(original);
   } catch {

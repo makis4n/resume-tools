@@ -6,6 +6,7 @@
  *   pnpm --filter @resume-tools/editor corpus fetch [--only <id>]
  *   pnpm --filter @resume-tools/editor corpus survey [--json <file>] [--tree <file>]
  *   pnpm --filter @resume-tools/editor corpus reference [--only <id>] [--json <file>]
+ *   pnpm --filter @resume-tools/editor corpus parse [--only <id>] [--json <file>]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
  *                 upstream templates' forks give the candidates, public repositories only, and
@@ -41,6 +42,14 @@
  *   --only <id>   that document only
  *   --json <file> write each document's row as JSON too, names and numbers only, with every name
  *                 a refusal gave and its count, in place of the list under the table
+ *   parse         take every document that compiles to a reference, ask the engine for the
+ *                 signatures of what its body uses, parse its body into a tree, print the tree back,
+ *                 and compile the printed body with the document's own preamble as the reference
+ *                 was compiled, in the same pool; print one table of what became of them, and keep
+ *                 under `.corpus/parse/` the printed document and its log for each round trip that
+ *                 did not set the reference's glyphs (`scripts/corpus-parse.ts`, decision 0020)
+ *   --only <id>   that document only
+ *   --json <file> write each document's row as JSON too, macros' names and numbers only
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -72,6 +81,7 @@ import {
   printable,
   writeAtomically,
 } from "./corpus-manifest.ts";
+import { type ParseChildRow, type ParseRow, parseNames, parseTable } from "./corpus-parse.ts";
 import {
   type ChildRow,
   LIMIT_MS,
@@ -86,7 +96,7 @@ import {
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>]";
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
@@ -99,6 +109,15 @@ const REFERENCE_CHILD = fileURLToPath(new URL("./corpus-reference-child.ts", imp
 
 /** Where the reference runner keeps each document's log, which quotes its source. */
 const REFERENCE_LOGS = join(CORPUS_DIR, "reference");
+
+/** The parse runner's child, which Node runs in each process of its pool. */
+const PARSE_CHILD = fileURLToPath(new URL("./corpus-parse-child.ts", import.meta.url));
+
+/**
+ * Where the parse runner keeps, for a round trip that did not set the reference's glyphs, the
+ * printed document and its log, which quote the source.
+ */
+const PARSE_KEPT = join(CORPUS_DIR, "parse");
 
 /** The corpus holds at least this many documents, and at least this many of them are `other`. */
 const MIN_DOCUMENTS = 200;
@@ -271,10 +290,8 @@ function treeFonts(files: Readonly<Record<string, number>>) {
   };
 }
 
-async function runReference(only: string | undefined, json: string | undefined) {
-  if (!existsSync(ENGINE_MANIFEST))
-    throw new Error("reference compiles on the engine in .engine/: run fetch-engine first");
-  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+/** The fetched documents, or the one `--only` names, as the reference and parse runners take them. */
+function fetchedDocuments(only: string | undefined) {
   const manifest = readManifest();
   const report = existsSync(FETCH_REPORT_FILE)
     ? parseJson(FetchReport, readFileSync(FETCH_REPORT_FILE, "utf8"), FETCH_REPORT_FILE)
@@ -290,6 +307,14 @@ async function runReference(only: string | undefined, json: string | undefined) 
         ? "No document is fetched: run `corpus fetch` first"
         : `${only} is no document the last fetch fetched`,
     );
+  return documents;
+}
+
+async function runReference(only: string | undefined, json: string | undefined) {
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("reference compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const documents = fetchedDocuments(only);
   const treeFont = treeFonts(engine.files);
   const tasks = documents.map((doc) => ({
     id: doc.id,
@@ -351,6 +376,70 @@ async function runReference(only: string | undefined, json: string | undefined) 
     );
 }
 
+async function runParse(only: string | undefined, json: string | undefined) {
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("parse compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const documents = fetchedDocuments(only);
+  const treeFont = treeFonts(engine.files);
+  const tasks = documents.map((doc) => ({
+    id: doc.id,
+    message: () => ({
+      name: `${doc.id}.zip`,
+      bytes: uploadOf(
+        doc,
+        (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
+        treeFont,
+      ),
+    }),
+  }));
+  const families = new Map(documents.map((doc) => [doc.id, doc.family]));
+  const rows: ParseRow[] = [];
+  const started = performance.now();
+  print([
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${LIMIT_MS / 1000} s each at most`,
+  ]);
+  await runPool({
+    script: PARSE_CHILD,
+    tasks,
+    onResult: (task, result) => {
+      const reply = result.reply as
+        | { row: ParseChildRow; document?: string; log?: string }
+        | undefined;
+      const row: ParseRow = {
+        id: task.id,
+        family: families.get(task.id) ?? "other",
+        ...(reply?.row ?? { outcome: result.timedOut ? "timeout" : "crashed" }),
+        wall: Math.round(result.wall),
+      };
+      rows.push(row);
+      if (reply?.document !== undefined)
+        writeAtomically(join(PARSE_KEPT, `${task.id}.tex`), reply.document);
+      if (reply?.log !== undefined) writeAtomically(join(PARSE_KEPT, `${task.id}.log`), reply.log);
+      const what =
+        row.outcome === "parsed"
+          ? `${row.engine}, ${row.roundTrip}${row.difference === undefined ? "" : ` (${row.difference})`}${row.printed ? "" : ", printed differently"}, parse ${row.parseMs} ms`
+          : `${row.outcome}${row.refused === undefined ? "" : ` (${row.refused})`}`;
+      print([`${rows.length}/${documents.length} ${task.id}: ${what}`]);
+    },
+  });
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const minutes = (performance.now() - started) / 60_000;
+  print(["", ...parseTable(rows).trimEnd().split("\n")]);
+  print(["", `Took ${minutes.toFixed(1)} min.`]);
+  if (json !== undefined)
+    writeAtomically(
+      json,
+      formatJson({
+        version: 1,
+        tree: { layout: engine.layout, files: Object.keys(engine.files).length },
+        limitMs: LIMIT_MS,
+        names: parseNames(rows),
+        documents: rows,
+      }),
+    );
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -372,13 +461,24 @@ async function main() {
     command !== "collect" &&
     command !== "fetch" &&
     command !== "survey" &&
-    command !== "reference"
+    command !== "reference" &&
+    command !== "parse"
   )
     throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
-  if (values.only !== undefined && command !== "fetch" && command !== "reference")
-    throw new Error("--only goes with fetch or reference");
-  if (values.json !== undefined && command !== "survey" && command !== "reference")
-    throw new Error("--json goes with survey or reference");
+  if (
+    values.only !== undefined &&
+    command !== "fetch" &&
+    command !== "reference" &&
+    command !== "parse"
+  )
+    throw new Error("--only goes with fetch, reference or parse");
+  if (
+    values.json !== undefined &&
+    command !== "survey" &&
+    command !== "reference" &&
+    command !== "parse"
+  )
+    throw new Error("--json goes with survey, reference or parse");
   if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
   if (command === "fetch") return runFetch(values.only);
   if (command === "collect") return runCollect();
@@ -386,6 +486,7 @@ async function main() {
   const caller = (path: string | undefined) =>
     path === undefined ? undefined : resolve(process.env.INIT_CWD ?? ".", path);
   if (command === "reference") return runReference(values.only, caller(values.json));
+  if (command === "parse") return runParse(values.only, caller(values.json));
   return runSurvey(caller(values.json), caller(values.tree));
 }
 

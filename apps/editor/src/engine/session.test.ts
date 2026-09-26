@@ -454,6 +454,19 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(input.error).toBe("LaTeX Error: File `planted.tex' not found.");
     }, 60_000);
 
+    it("gives back a file a job's compile wrote, and nothing outside the job's folder", () => {
+      const write = String.raw`\newwrite\w\immediate\openout\w=\jobname.rtm\immediate\write\w{written line}\immediate\closeout\w x`;
+      expect(session.compile("pdftex", "stock", doc(write), { job: "writer" }).ok).toBe(true);
+      expect(new TextDecoder().decode(session.written("writer", "writer.rtm"))).toBe(
+        "written line\n",
+      );
+      expect(session.written("writer", "missing.txt")).toBeUndefined();
+      expect(session.written("reader", "writer.rtm")).toBeUndefined();
+      expect(() => session.written("writer", "../planter/planted.tex")).toThrow();
+      expect(() => session.written("writer", ".fonts.conf")).toThrow();
+      expect(() => session.written("../writer", "writer.rtm")).toThrow();
+    }, 60_000);
+
     it("stops a job writing outside its folder", () => {
       const escape = (path: string) =>
         String.raw`\newwrite\w\immediate\openout\w=${path}\immediate\write\w{x}\immediate\closeout\w x`;
