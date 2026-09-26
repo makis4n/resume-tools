@@ -1,0 +1,10 @@
+# The image needs pyproject.toml, uv.lock and src/ only.
+.venv/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+tests/
+.env
+.env.*
+Dockerfile
+.dockerignore
