@@ -61,6 +61,16 @@ What stands in the way:
 - The harness's `controls` check compiles each font but does not draw it; a curated package's
   round trip does, an imported one has none (decision 0012).
 - The harness edits every field at once; an import has to find which field breaks.
+- The ports patched their classes by hand wherever a macro defeats markers or alignment, and an
+  import cannot patch a class: Awesome-CV colours a title's first three tokens, which come apart
+  around a marker, builds each contact's address from the argument it also typesets, and stops
+  on a blank name (decision 0015); AltaCV uppercases its name and titles, which the aligner
+  cannot match to lowercase text, and places its skill tags through a transform the page does
+  not apply (decision 0013). Each is a locked field in every fork unless the pipeline has the
+  same fix.
+- A glyph a font feature substitutes has no text (decision 0014): Awesome-CV's small capitals
+  and Roboto's proportional figures, which the ports gave up and an import's reference compile
+  sets.
 - Nothing serves a request: the first two milestones needed no service, and the model step is
   the first.
 
@@ -153,9 +163,12 @@ of each launch template must find editable what the hand-written port marks.
    arguments until each failing one stands alone, and classified: the compile stopped, the
    marker vanished (a length, a colour, a key, an address), the marker came twice (an argument
    used twice), it moved (a running head), or the glyphs did not align. The result is per macro
-   and argument, not per call, and text the reference sets that no marker covers is locked. Done
-   when the probe, run on the three launch templates' upstream samples, finds editable every
-   argument the ports' snippets mark, and locks what the ports leave out of the model.
+   and argument, not per call, and text the reference sets that no marker covers is locked. The
+   aligner learns to fold case, so that a title a class sets through `\MakeUppercase`, as AltaCV
+   sets its name and section titles, aligns with the lowercase text the resume holds, and the
+   overlay shows such a field in capitals; decisions 0007 and 0013 left this to a later item.
+   Done when the probe, run on the three launch templates' upstream samples, finds editable
+   every argument the ports' snippets mark, and locks what the ports leave out of the model.
 6. [ ] **The naming contract, and the seed answers.** `packages/naming` holds the request and the
    answer as Zod schemas. The request: each template macro's normalised definition and its
    dependencies, a few call sites with each argument's text replaced by a placeholder of the same
@@ -166,26 +179,36 @@ of each launch template must find editable what the hand-written port marks.
    blank one looks like, which pairs open and close a list, the mapping onto the model with a
    role for each section, and the style parameters in the preamble, page size, margins, base
    size, fonts and colours, with how each is set. It carries a version, which is part of the
-   cache key. The seed: the answers for the three launch templates' macros, written by hand from
-   the ports and committed under `corpus/answers/<hash>.json`. They are the fixtures the
-   pipeline's tests run on with no model, and the first cache entries, so that forks of the three
-   hit the cache from day one, as plan section 7 wants. Done when the pipeline assembles a
-   package for each upstream sample from the seed alone.
+   cache key. An answer may also carry redefinitions: LaTeX a person wrote, never the model,
+   that redefines or adds macros after the document class, which the snippets it maps to may
+   use, so that a macro that defeats markers or alignment gets the fix its port has. A
+   redefinition must keep upstream's output: the reference check of item 7 proves it on every
+   document, and one that changes the page, as AltaCV's port did by taking the capitals out, does
+   not qualify. The seed: the answers for the three launch templates' macros, written by hand
+   from the ports and committed under `corpus/answers/<hash>.json`, with the ports' class patches
+   that keep upstream's output as their redefinitions: Awesome-CV's section colour, its header's
+   blank lines and its contacts, AltaCV's contact text, tag frames and wrapping dates. They are
+   the fixtures the pipeline's tests run on with no model, and the first cache entries, so that
+   forks of the three hit the cache from day one, as plan section 7 wants. Done when the pipeline
+   assembles a package for each upstream sample from the seed alone.
 7. [ ] **Validate and assemble.** Plan section 6's four checks, each a compile from the format,
    bisected as the probe is: the body generated from the model and the assembled snippets sets
    the reference's glyph stream with the markers stripped, a new harness check; every field
    mutated with long, empty and special-character text still compiles, the `edits` check grown
-   to find the field that breaks, which is locked; an entry of each repeatable kind added and
-   removed still compiles; and each style parameter overridden compiles and changes the output,
-   or is dropped. Then assembly: the package, whose preamble is rewritten as decisions 0008 and
-   0009 have every pdfTeX port, geometry, hyperref's dvipdfmx driver, T1 and Latin Modern, with
-   the template's files in `files`, the proven controls, and snippets derived from the answer,
-   under the id `import-` and a hash of the assembled package; the document, whose header is
-   found without the model, since its text may not leave the browser: the block before the first
-   section holding the largest text, contact strings by pattern, and `\href` calls as links by
-   the kind their address gives; and the report. Done when the three upstream samples assemble
-   into packages that pass the full harness and set the reference's glyphs, and a fork of Jake's
-   Resume from the corpus goes through every step in Node.
+   to find the field that breaks: one that breaks only when empty becomes required, a slot the
+   package marks and the editor refuses to empty, as a required form field is, since Awesome-CV
+   stops on a blank name (decision 0015), and one that breaks on ordinary text is locked; an
+   entry of each repeatable kind added and removed still compiles; and each style parameter
+   overridden compiles and changes the output, or is dropped. Then assembly: the package, whose
+   preamble is rewritten as decisions 0008 and 0009 have every pdfTeX port, geometry, hyperref's
+   dvipdfmx driver, T1 and Latin Modern, and carries the answer's redefinitions after the
+   document class, with the template's files in `files`, the proven controls, and snippets
+   derived from the answer, under the id `import-` and a hash of the assembled package; the
+   document, whose header is found without the model, since its text may not leave the browser:
+   the block before the first section holding the largest text, contact strings by pattern, and
+   `\href` calls as links by the kind their address gives; and the report. Done when the three
+   upstream samples assemble into packages that pass the full harness and set the reference's
+   glyphs, and a fork of Jake's Resume from the corpus goes through every step in Node.
 
 ### Stage 4. XeTeX imports
 
@@ -194,12 +217,18 @@ of each launch template must find editable what the hand-written port marks.
    fontawesome5 among them, are translated at intake into the package's `fonts` (decision 0014)
    through a table from font names to the tree's files and shapes, with `Ligatures=TeX` becoming
    `mapping=tex-text`, files named through `Path=` matched to the tree by name and never kept,
-   and the features the loop supports. fontspec goes out of the preamble before the dump, and
-   unicode-math with it, its symbols taken from a plain family as decision 0003 did. A family the
-   table cannot map refuses the import, naming the font. The rewritten preamble is checked as the
-   body is: the whole document compiled from it must set the reference's glyph stream. Done when
-   Awesome-CV's upstream example and its forks in the corpus import, and the survey says how
-   many XeTeX resumes the table covers.
+   and the features upstream loads carried over. The reference compile sets them, so the loop
+   must too, or the two glyph streams differ and the first check of item 7 fails on every
+   Awesome-CV fork: its positions in small capitals (`+smcp`) and Roboto's proportional lining
+   figures (`+pnum;+lnum`), which the port gave up. That takes the two additions decision 0014
+   named: features per shape, so that `sc` loads with `+smcp` while the other shapes do not, and
+   a text for a glyph a single substitution makes, read back through the font's substitution
+   table, so that the page, the aligner and the overlay know it. fontspec goes out of the
+   preamble before the dump, and unicode-math with it, its symbols taken from a plain family as
+   decision 0003 did. A family the table cannot map refuses the import, naming the font. The
+   rewritten preamble is checked as the body is: the whole document compiled from it must set the
+   reference's glyph stream. Done when Awesome-CV's upstream example and its forks in the corpus
+   import, and the survey says how many XeTeX resumes the table covers.
 
 ### Stage 5. The model, the service and privacy
 
@@ -291,8 +320,9 @@ of each launch template must find editable what the hand-written port marks.
     goes to the job summary and the JSON to an artifact; the run fails when the success rate falls
     more than a point under `corpus/baseline.json`, which a pull request raises by hand when the
     rate rises. A reviewed answer is one a person has corrected under `corpus/answers/`, marked
-    so; the top twenty templates get that review, as plan section 10 asks, and the reviewed set
-    seeds the service's cache in milestone 5. Done when three nightly runs in a row agree.
+    so, with any redefinitions it needs (item 6); the top twenty templates get that review, as
+    plan section 10 asks, and the reviewed set seeds the service's cache in milestone 5. Done
+    when three nightly runs in a row agree.
 18. [ ] **Benchmark the candidates.** `corpus.ts bench --model <id>` runs the naming step over
     the corpus for two or three candidates, Gemini Flash and a Claude model at least, and reports
     the editable rate, the refused and partial shares, and the cost per import; a decision
@@ -331,9 +361,20 @@ pull request that acts on it. The first two are the owner's to confirm before th
   outside it, which closes what item 4's review left to this milestone.
 - **Locked content is model data** (item 15): a `locked` section kind and typed extras the
   generator re-emits verbatim through raw extras slots; never in a snippet, never in the cache.
-- **XeTeX imports resolve fonts to the tree by name** (item 8) and refuse the rest; a font
-  shipped in a zip is matched by file name and never kept. Fonts a user supplies wait for a
-  package format that carries binary files, and for the storage to hold them.
+- **A field that breaks only when empty is required, not locked** (item 7): the package marks
+  the slot and the editor refuses to empty it, as a required form field does; a field that
+  breaks on ordinary text is locked. Plan section 6's step 5 demotes anything that fails a check
+  to locked, and this is the one refinement.
+- **Reviewed answers may carry redefinitions** (items 6 and 17): LaTeX a person wrote, never
+  the model, that redefines or adds macros after the document class, keyed by the macro hash as
+  the answer is, and proven on every document by the reference check, so that a fix a port made
+  by hand reaches every fork with the same macros. The naming step's model never writes LaTeX;
+  only item 16's rewrite does, under its own rule.
+- **XeTeX imports resolve fonts to the tree by name** (item 8) and refuse the rest, and carry
+  the features the reference sets, per shape, with the page reading a substituted glyph's text
+  through the font's substitution table, the two additions decision 0014 named; a font shipped
+  in a zip is matched by file name and never kept. Fonts a user supplies wait for a package
+  format that carries binary files, and for the storage to hold them.
 - **The reference compile is the one compile that lets fontconfig see the tree** (item 3), since
   fontspec by name needs it; the loop's compiles never do (decision 0011).
 - **Images are dropped at intake** (item 3) and named in the report; version one's PDFs carry
@@ -396,6 +437,7 @@ pull request that acts on it. The first two are the owner's to confirm before th
 | The `controls` check draws each font an import proves (decision 0012) | Item 14 |
 | A template chooser for a new document | Item 12 |
 | The slow laptop's column in decision 0016 | The owner's, with the same command; item 19 adds the import to it |
-| Small capitals and per-shape features for Awesome-CV (decision 0014's additions) | Not this milestone: fidelity of a curated port, not import |
+| Small capitals and per-shape features for Awesome-CV (decision 0014's additions) | Item 8: an import's reference compile sets them, so the loop must too |
+| Case folding in the aligner, for a field set through `\MakeUppercase` (decisions 0007 and 0013) | Item 5 |
 | The first load at 42 to 44 MB uncompressed | Milestone 5 |
 | The PDF's text layer showing a hyphen as U+2011 in some XeTeX fonts (decision 0014) | The ATS's reader; not this milestone |
