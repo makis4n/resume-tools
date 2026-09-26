@@ -123,7 +123,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 2. Intake and the parse
 
-3. [ ] **Intake and the reference compile.** A `.tex` file or a zip (fflate, one new dependency).
+3. [x] **Intake and the reference compile.** A `.tex` file or a zip (fflate, one new dependency).
    The main file is the one with `\documentclass`; `\input` and `\include` are inlined from the
    zip; a zip past a size and file-count cap, or with a path that steps out of it, is refused as
    decision 0011 refuses containers. The engine is read from the class and packages: fontspec,

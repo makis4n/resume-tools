@@ -280,12 +280,12 @@ export function parseDvi(bytes: Uint8Array, widthsFor: WidthProvider): DviDocume
       r.unsigned(2);
     } else if (op === 249) {
       break;
-    } else if (op === 251) {
-      // XDV pic_file: box type, six transform words, page number, path
-      r.u8();
-      for (let i = 0; i < 6; i++) r.fix32();
-      r.unsigned(2);
-      r.bytes_(r.unsigned(2));
+    } else if (op === 250 || op === 251) {
+      // XDV's begin_reflect and end_reflect, TeX--XeT's, which take nothing from the stream: so
+      // the TeX Live 2023 xdvipdfmx reads them, checked, where 251 was once `pic_file`, a picture
+      // placed from a file. XeTeX 2023 writes neither, and writes a picture as a `pdf:image`
+      // special, so reading them as xdvipdfmx does keeps the page's reading of a stream and the
+      // PDF step's the same, byte for byte (decision 0008).
     } else if (op === 252) {
       const k = r.signed(4);
       const size = r.signed(4);

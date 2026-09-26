@@ -392,3 +392,15 @@ lists both. No pull request downloads a resume, and item 17 adds the runner to t
 - The rule is written down, so the next survey grows the tree the same way: a package three
   documents need that makes one of them importable, within the budget. `corpus survey` in CI
   reruns the table every night against whatever tree the cache holds.
+
+## Update, 26 September 2026
+
+Two changes from milestone 3 item 3 (decision 0019). The survey now reads LuaTeX's PDF settings,
+`\pdfvariable`, `\pdfextension` and `\pdffeedback`, as LuaTeX's, and reads an argument through a
+window of 2,048 characters, where it read 8,192: on layout 5, one moderncv document moves from
+XeTeX to LuaTeX, so that 65 documents need XeTeX and 3 LuaTeX, and nothing else in the table
+moves. And the tree is layout 6, which adds by this record's rule what item 3's reference compile
+finds that source cannot show, lm-math, babel-french, babel-german, biblatex-ieee and tipa: 23
+packages and 68.0 MB of containers, 28,658 files and 489.8 MB, where layout 5 was 18, 64.8 MB,
+28,392 and 485.0; the survey's table is the same on it, since none of the five is a need source
+names.

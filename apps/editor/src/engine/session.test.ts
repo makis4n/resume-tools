@@ -1,14 +1,25 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
+import { ONE_BY_ONE, standIn, xbb } from "../import/images";
+import { GRAPHICS_CFG } from "../import/reference";
 import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls } from "../templates/package";
+import { fastest } from "../test/timing";
 import { parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { hasToUnicode, mediaBoxes, shownStrings } from "../validate/pdf";
-import { engineAvailable, startNodeSession } from "./node";
-import { type Engine, type EngineSession, refusedSpecial } from "./session";
+import { ENGINE_DIR, engineAvailable, startNodeSession } from "./node";
+import {
+  type Engine,
+  type EngineSession,
+  imageFileOf,
+  insideJob,
+  isJobPath,
+  isShowableImage,
+  refusedSpecial,
+} from "./session";
 
 const PREAMBLE = String.raw`\documentclass{article}
 \usepackage[hidelinks]{hyperref}`;
@@ -65,6 +76,69 @@ describe("refusedSpecial", () => {
       "x:textcolor rgb 1 0 0",
     ])
       expect(refusedSpecial(text), text).toBeUndefined();
+  });
+});
+
+describe("an image special's file", () => {
+  it("is the first PDF string after the command, as a path inside the job's folder", () => {
+    expect(imageFileOf("pdf:image bbox 0 0 1 1 clip 0 width 72.27pt (photo.png) ")).toBe(
+      "photo.png",
+    );
+    expect(imageFileOf("pdf:epdf pagebox cropbox bbox 0 0 10 10 clip 0 (logo.pdf)")).toBe(
+      "logo.pdf",
+    );
+    expect(
+      imageFileOf("pdf:image matrix 1.0 0.0 0.0 1.0 0.0 0.0 page 0 pagebox cropbox (./a/b.pdf)"),
+    ).toBe("a/b.pdf");
+    expect(imageFileOf("PDF:IMG @im1 width 10pt (img/photo.png) << /Interpolate true >>")).toBe(
+      "img/photo.png",
+    );
+  });
+
+  it("is none that a comment, an escape, a nested string or a path outside could hide", () => {
+    for (const text of [
+      "pdf:image % (photo.png)\n(secret.png)",
+      "pdf:image (photo\\).png)",
+      "pdf:image ((photo.png))",
+      "pdf:image <</F (x)>> (photo.png)",
+      "pdf:image (../victim/photo.png)",
+      "pdf:image (/texlive/texmf-dist/tex/latex/mwe/example-image.png)",
+      "pdf:image (.hidden.png)",
+      "pdf:fstream @x (photo.png)",
+    ])
+      expect(imageFileOf(text), text).toBeUndefined();
+  });
+
+  it("can be listed as a stand-in only when its path is of plain characters", () => {
+    for (const path of ["photo.png", "img/Invented_Photo-2.jpg", "a/b.c/d.pdf"])
+      expect(isShowableImage(path), path).toBe(true);
+    for (const path of [
+      "my photo.png",
+      "img/(photo).png",
+      "café.png",
+      "photo%.png",
+      "../photo.png",
+      "img/../photo.png",
+      ".photo.png",
+      "img/.hidden/photo.png",
+      "/photo.png",
+      "",
+    ])
+      expect(isShowableImage(path), path).toBe(false);
+  });
+
+  it("is a path in the job only when it stays inside the job's folder", () => {
+    expect(isJobPath("sections/part.tex")).toBe(true);
+    for (const path of ["", "../x.tex", "a//b.tex", "a/./b.tex", ".fonts.conf", "a/.b/c.tex", "/x"])
+      expect(isJobPath(path), path).toBe(false);
+    expect(insideJob("import", "/home/web_user/jobs/import/fonts/Invented.otf")).toBe(
+      "fonts/Invented.otf",
+    );
+    expect(insideJob("import", "./fonts/Invented.otf")).toBe("fonts/Invented.otf");
+    expect(insideJob("import", "/home/web_user/jobs/doc/fonts/Invented.otf")).toBeUndefined();
+    expect(
+      insideJob("import", "/texlive/texmf-dist/fonts/opentype/x/Invented.otf"),
+    ).toBeUndefined();
   });
 });
 
@@ -259,6 +333,77 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     );
     expect(result.error).toBeUndefined();
   }, 30_000);
+
+  it("puts an upload's files at their paths in the job's folder, and no path outside it", () => {
+    const files = {
+      "sections/part.tex": "Invented part, \\input{sections/deeper/more}",
+      "sections/deeper/more.tex": "and more of it.",
+    };
+    const body = "\\documentclass{article}\\begin{document}\\input{sections/part}\\end{document}";
+    const result = session.compile("pdftex", "stock", body, { job: "paths", files });
+    expect(result.error).toBeUndefined();
+    for (const path of ["a//b.tex", ".fonts.conf", "sections/../../x.tex", "a/.git/config"])
+      expect(
+        () => session.compile("pdftex", "stock", body, { job: "paths", files: { [path]: "x" } }),
+        path,
+      ).toThrow("not a path inside the job's folder");
+  }, 30_000);
+
+  describe("lets XeTeX find a font by name for one compile", () => {
+    const byName = (font: string) =>
+      `\\documentclass{article}\\usepackage{fontspec}\\setmainfont{${font}}\\begin{document}Invented.\\end{document}`;
+    const conf = () =>
+      (
+        session as unknown as { engine: { FS: { analyzePath(path: string): { exists: boolean } } } }
+      ).engine.FS.analyzePath("/home/web_user/jobs/byname/.fonts.conf").exists;
+
+    it("through fontconfig, which scans the tree's font folders for that compile alone", () => {
+      const without = session.compile("xetex", "stock", byName("Roboto"), { job: "byname" });
+      expect(without.error).toBe('Package fontspec Error: The font "Roboto" cannot be found.');
+      const withFonts = session.compile("xetex", "stock", byName("Roboto"), {
+        job: "byname",
+        fontsByName: true,
+      });
+      expect(withFonts.error).toBeUndefined();
+      expect(conf()).toBe(false);
+      // A font the job's own folder holds is found by name too, as one a zip ships.
+      session.forget("byname");
+      const roboto = readFileSync(
+        `${ENGINE_DIR}/files/texlive/texmf-dist/fonts/opentype/google/roboto/Roboto-Regular.otf`,
+      );
+      const shipped = session.compile("xetex", "stock", byName("Roboto"), {
+        job: "byname",
+        fontsByName: true,
+        files: { "fonts/Invented-Copy.otf": roboto },
+      });
+      expect(shipped.error).toBeUndefined();
+      // And the next compile of the job scans no folder again.
+      expect(session.compile("xetex", "stock", byName("Roboto"), { job: "byname" }).error).toBe(
+        'Package fontspec Error: The font "Roboto" cannot be found.',
+      );
+    }, 60_000);
+
+    it("at a cost to each pass that decision 0019 records", () => {
+      // The same document, its font by file, which needs no fontconfig: what the option adds is
+      // fontconfig's scan of the tree's OpenType and TrueType folders, which XeTeX starts on every
+      // pass. Decision 0019 measured about 30 ms a pass on an M4 Pro. Each is timed in the CPU
+      // time of this thread, where the engine runs, the fastest of five, so that other test files
+      // running beside it do not count (`src/test/timing.ts`).
+      const document = byName("Roboto-Regular.otf");
+      const pass = (fontsByName: boolean) => () => {
+        session.forget("cost");
+        session.compile("xetex", "stock", document, { job: "cost", maxPasses: 1, fontsByName });
+      };
+      // The first scan reads the tree's font files, which later ones find read.
+      pass(true)();
+      const [plain = 0, scanned = 0] = fastest([pass(false), pass(true)], 5);
+      console.log(
+        `fontconfig's scan: ${Math.round(scanned - plain)} ms of CPU time a pass (${Math.round(plain)} ms without it, ${Math.round(scanned)} ms with it)`,
+      );
+      // Generous, so that a slow runner passes and a scan of every font the tree has fails.
+      expect(scanned - plain).toBeLessThan(250);
+    }, 120_000);
+  });
 
   it("keeps working after hundreds of runs", () => {
     // A run moves the engine's stack pointer, which lives outside the heap. Unless the session
@@ -765,6 +910,53 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
         expect(made.error).toContain(special.split(" ")[0]);
         expect(made.output).toBe("");
       }, 60_000);
+
+    it("shows a stand-in the caller lists, and only while it holds the bytes the caller gave", () => {
+      const files = {
+        "photos/portrait.png": standIn(ONE_BY_ONE),
+        "photos/portrait.xbb": xbb(ONE_BY_ONE),
+        "other.png": standIn(ONE_BY_ONE),
+        "other.xbb": xbb(ONE_BY_ONE),
+        "graphics.cfg": GRAPHICS_CFG,
+      };
+      const shows = (name: string, before = "") =>
+        `\\documentclass{article}\\usepackage{graphicx}\\begin{document}${before}Invented \\includegraphics[width=1cm]{${name}}\\end{document}`;
+      expect(
+        session.compile("pdftex", "stock", shows("photos/portrait.png"), { job: "standin", files })
+          .ok,
+      ).toBe(true);
+      expect(session.pdf("standin", { images: ["photos/portrait.png"] }).ok).toBe(true);
+      // Not listed, or another file listed: refused, as every image is without the list.
+      expect(session.pdf("standin").error).toContain("pdf:image");
+      expect(session.pdf("standin", { images: ["other.png"] }).ok).toBe(false);
+      // A document that writes over its stand-in, as TeX may write in its folder, is refused too.
+      const overwrite =
+        "\\newwrite\\w\\immediate\\openout\\w=photos/portrait.png\\immediate\\write\\w{Invented}\\immediate\\closeout\\w ";
+      const written = shows("photos/portrait.png", overwrite);
+      expect(session.compile("pdftex", "stock", written, { job: "standin", files }).ok).toBe(true);
+      expect(session.pdf("standin", { images: ["photos/portrait.png"] }).ok).toBe(false);
+    }, 60_000);
+
+    it("shows a XeTeX document's PDF image only as a stand-in the caller lists, by a plain path", () => {
+      // XeTeX writes every picture, a PDF's page among them, as a `pdf:image` special.
+      const logo = standIn({ kind: "pdf", box: [0, 0, 200, 100], rotate: 0 });
+      const shows = (name: string) =>
+        `\\documentclass{article}\\usepackage{fontspec}\\usepackage{graphicx}\\begin{document}Invented \\includegraphics[width=1cm]{${name}}\\end{document}`;
+      const files = { "logo.pdf": logo, "my logo.pdf": logo };
+      expect(
+        session.compile("xetex", "stock", shows("logo.pdf"), { job: "xepdf", files }).error,
+      ).toBeUndefined();
+      // A PDF the job holds that the caller does not list as a stand-in is refused.
+      expect(session.pdf("xepdf").error).toContain("pdf:image");
+      expect(session.pdf("xepdf", { images: ["my logo.pdf"] }).ok).toBe(false);
+      // Listed, it is made.
+      expect(session.pdf("xepdf", { images: ["logo.pdf"] }).ok).toBe(true);
+      // A stand-in whose path holds a space cannot be listed, so its PDF is refused.
+      expect(
+        session.compile("xetex", "stock", shows("my logo.pdf"), { job: "xepdf", files }).error,
+      ).toBeUndefined();
+      expect(session.pdf("xepdf", { images: ["my logo.pdf"] }).error).toContain("pdf:image");
+    }, 60_000);
 
     it("refuses a compression level that is not a whole number from 0 to 9", () => {
       for (const compress of [-1, 10, 1.5, Number.NaN])

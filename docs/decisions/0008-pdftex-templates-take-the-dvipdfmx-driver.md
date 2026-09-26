@@ -90,3 +90,21 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
   one's PDFs therefore carry no images at all: a template's photo is an `extras` field (decision
   0006), and a later item that wants images in the PDF must give xdvipdfmx a folder of its own to
   read from, not the shared tree.
+
+## Update, 26 September 2026
+
+Milestone 3 item 3 lets `session.pdf` show one kind of image: a blank stand-in of an upload's
+image's size, which the caller wrote into the job and lists (`PdfOptions.images`), shown by a
+`pdf:image`, `pdf:img` or `pdf:epdf` special that names it inside the job's folder, while the file
+still holds the bytes the caller gave. Every other image special is refused as before, so the PDFs
+still carry no picture of anything (decision 0019).
+
+After item 3's review, only a path of letters, digits, `.`, `_`, `-` and `/`, no part of which
+starts with a dot, can be listed (`isShowableImage`), so that nothing in a special's string can
+mean anything to xdvipdfmx but the file; a stand-in at any other path, one with a space in it, is
+not shown. And XeTeX 2023 writes every picture as a `pdf:image` special, one of the tree's among
+them, which this check covers: the XDV opcode that once placed a picture from a file, 251,
+`pic_file`, is TeX--XeT's `end_reflect` to the tree's xdvipdfmx, as 250 is `begin_reflect`, each
+taking nothing from the stream and reading no file (checked). `parseDvi` reads the two as xdvipdfmx
+does, so that the scan and xdvipdfmx read an output the same, byte for byte, and no special can
+hide from the scan in what a picture's parameters would have been.

@@ -115,3 +115,12 @@ extended from TeX Live 2023's final package archive; item 19 does it, in
 - xcolor stays at the bundles' v2.14, the version current when pgf 3.1.10 came out, while the
   archive's is v3.01; a template that needs the newer one would have to replace the bundle's, and
   every template would move with it.
+
+## Update, 26 September 2026
+
+The import pipeline's reference compile (milestone 3 item 3) is the one compile that lets
+fontconfig see the tree, since fontspec finds a font by name only through it (decision 0019). The
+engine reads its environment once, when it starts, so the session points fontconfig at
+`.fonts.conf` in the folder a run is in, which only a compile that asks for fonts by name gets,
+listing the tree's OpenType and TrueType folders and the job's; every other run reads the tree's
+`fonts.conf` through a link, and scans no folder, as before.

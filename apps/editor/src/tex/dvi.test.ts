@@ -107,6 +107,30 @@ describe("parseDvi on a long special", () => {
   });
 });
 
+describe("parseDvi on XDV's opcodes 250 and 251", () => {
+  const u32 = (n: number) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+
+  it("reads them as xdvipdfmx does, taking nothing from the stream, so no special hides after them", () => {
+    // 251 was once XDV's `pic_file`, a picture placed from a file, which took a path and 29 bytes
+    // besides; the TeX Live 2023 xdvipdfmx reads 250 and 251 as TeX--XeT's begin and end reflect,
+    // with nothing after them (checked). Read as a picture, the bytes that follow 251 would be its
+    // parameters to the page and a special to xdvipdfmx.
+    const special = [..."pdf:image (invented.png)"].map((char) => char.charCodeAt(0));
+    const xdv = new Uint8Array([
+      ...[247, 7, ...u32(25_400_000), ...u32(473_628_672), ...u32(1_000), 0], // pre, no comment
+      ...[139, ...new Array<number>(44).fill(0)], // bop
+      250,
+      ...[145, 0, 65, 0], // right3: 16,640 sp
+      251,
+      ...[239, special.length, ...special], // xxx1
+      140, // eop
+    ]);
+    expect(parseDvi(xdv, () => undefined).pages[0]?.items).toEqual([
+      { kind: "special", h: 16_640, v: 0, text: "pdf:image (invented.png)" },
+    ]);
+  });
+});
+
 describe("parseDvi on XeTeX output", () => {
   const doc = parseDvi(fixture("hello.xdv"), () => undefined);
   const page = doc.pages[0];
