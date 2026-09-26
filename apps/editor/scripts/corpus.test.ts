@@ -26,7 +26,7 @@ import {
   resolveReference,
   type Upstream,
 } from "./corpus-collect";
-import { fetchCorpus, PINNED } from "./corpus-fetch";
+import { fetchCorpus } from "./corpus-fetch";
 import { type Fetch, GitHub, Limiter, readBody, SEARCH_INTERVAL_MS } from "./corpus-github";
 import {
   type CorpusDocument,
@@ -41,6 +41,7 @@ import {
   type LiveDocument,
   Manifest,
   matchingEntries,
+  PINNED,
   printable,
   temporaryName,
 } from "./corpus-manifest";
@@ -141,6 +142,9 @@ describe("the manifest", () => {
     "res\nume.tex",
     "res\u007fume.tex",
     "res\u0085ume.tex",
+    ".pinned",
+    ".pinned/part.tex",
+    "parts/.pinned",
   ])("refuses the path %j", (path) => {
     expect(isSafePath(path)).toBe(false);
     const file = { path, sha256: "b".repeat(64), bytes: 1 };

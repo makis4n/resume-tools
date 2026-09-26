@@ -73,15 +73,20 @@ export const MAX_DOCUMENT_BYTES = 2_000_000;
 /** A document names at most this many fonts. */
 export const MAX_ASSETS = 200;
 
+/** The file in a document's folder that names the repository and commit its files are from. */
+export const PINNED = ".pinned";
+
 /**
  * Whether a path is one the manifest may hold: relative, parts joined by `/`, none of them empty,
- * `.` or `..`, and no backslash or control character anywhere, so that it names a file inside the
- * folder it is joined to on every system.
+ * `.`, `..` or the marker file's name, and no backslash or control character anywhere, so that it
+ * names a file inside the folder it is joined to on every system and never the marker.
  */
 export function isSafePath(path: string): boolean {
   if (path === "" || path.startsWith("/") || path.includes("\\") || /\p{Cc}/u.test(path))
     return false;
-  return path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+  return path
+    .split("/")
+    .every((part) => part !== "" && part !== "." && part !== ".." && part !== PINNED);
 }
 
 /** A path's extension in lower case with its dot, or "" when its name has none. */

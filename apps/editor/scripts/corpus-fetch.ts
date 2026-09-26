@@ -37,6 +37,7 @@ import {
   type LiveDocument,
   type Manifest,
   matchingEntries,
+  PINNED,
   parseJson,
   printable,
   temporaryName,
@@ -81,9 +82,6 @@ export interface Fetched {
   downloaded: number;
   problems: Problem[];
 }
-
-/** The file in a document's folder that names the repository and commit its files are from. */
-export const PINNED = ".pinned";
 
 /**
  * A document's state is the first of these any of its files came to, so that a document with a
