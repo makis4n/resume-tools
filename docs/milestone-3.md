@@ -18,8 +18,8 @@ import, and a cached template imports in under 5 seconds.
 Not in this milestone: accounts and the private storage of originals (milestone 4), hosting the
 app, the engine and the naming service (milestone 5), the pre-warmed cache beyond what the corpus
 leaves behind (milestone 5), fonts a user supplies, images in the PDF, LuaTeX templates, Overleaf
-links, and importing from a PDF alone. The pipeline runs on a laptop with the dev server and a
-local copy of the naming service.
+links, and importing from a PDF alone. The pipeline runs on a laptop with the dev server, which
+answers the naming route itself.
 
 ## Where milestone 2 left us
 
@@ -80,7 +80,7 @@ What stands in the way:
 |---|---|
 | `apps/editor/src/import/` | The pipeline in the browser and in Node: intake, parse, probe, the naming client, validate, assemble, the report. It runs on the editor's engine session in a job of its own |
 | `packages/naming/` | The naming step's contract and logic: the request and answer schemas, the prompt, `name(request)` on the AI SDK, a cache interface. The Worker and the corpus runner both call it |
-| `apps/api/` | The naming service: a Cloudflare Worker with `POST /v1/name`, a KV cache and `wrangler dev` for development. A third app in the repository (a decision record) |
+| `apps/editor/functions/` | The naming service, inside the editor's own project: `POST /v1/name` as a Cloudflare Pages Function with a KV cache, or as the app's Worker if milestone 5 hosts the app as a Worker with static assets. In development the dev server answers the same route through a middleware |
 | `apps/editor/corpus/` | The manifest of public resumes (sources and hashes, never content), the reviewed answers, and the baseline the nightly run is held to |
 | `apps/editor/.corpus/` | Ignored: the fetched documents, the runner's results and the uncommitted answer cache |
 | `apps/editor/scripts/corpus.ts` | The runner: `fetch`, `survey`, `run` and `bench` |
@@ -241,14 +241,19 @@ of each launch template must find editable what the hand-written port marks.
    in Node: the committed `corpus/answers/` and the ignored `.corpus/cache/`. Done when the
    corpus runner, with a key in the environment, names every macro of a document outside the
    seed, and its import validates.
-10. [ ] **The naming service.** `apps/api`, a Cloudflare Worker: `POST /v1/name` takes a request,
-    checks KV by the cache key, calls the module on a miss and stores the answer; a cap on the
-    request's size and a rate limit per address; the key in `.dev.vars` locally and in the
-    provider's secrets later, never in the browser. `wrangler dev` serves it in development and
-    the editor reads its address from `VITE_NAMING_URL`, listed in `.env.example`. Deploying it
-    is milestone 5's, with the rest of hosting. Tests: the module's own, and the handler against a
-    fake KV. Done when an import in the browser hits the local service and the second import of
-    the same template hits the cache.
+10. [ ] **The naming service.** `POST /v1/name`, inside the editor's own project: it takes a
+    request, checks the cache by key, calls the module on a miss and stores the answer, with a cap
+    on the request's size and a rate limit per address. One handler, written against the fetch
+    API, serves it in every setting: in development a middleware of the dev server, so that no
+    second process runs and the key comes from a server-only variable of the editor's `.env`,
+    listed in `.env.example` without the `VITE_` prefix that would expose it to the page, with
+    the file cache of item 9; in production a Pages Function under `apps/editor/functions/`, or
+    the app's Worker if milestone 5 hosts the app as a Worker with static assets, with KV. The
+    browser calls a relative address, so there is no second origin. The function's folder has a
+    TypeScript config of its own with the Workers types, and Vite's build never includes it, which
+    a test asserts. Deploying it is milestone 5's, with the rest of hosting. Tests: the module's
+    own, and the handler against a fake cache. Done when an import in the browser hits the dev
+    server's route and the second import of the same template hits the cache.
 11. [ ] **What leaves the browser.** Before a request is built, names, emails, phone numbers,
     addresses and links found in definitions are replaced, by pattern and by the document's own
     header values; call sites carry placeholders of the same length and character class in place
@@ -300,14 +305,20 @@ of each launch template must find editable what the hand-written port marks.
     click opens nothing. The side panel lists a locked part as a row that can be removed or
     moved, not edited. Done when every locked chunk of the upstream samples draws where the
     reference drew it, and the harness passes on packages that hold them.
-16. [ ] **Describe-in-words edits.** Plan section 6.1: a sentence typed at a locked chunk, the
-    chunk's LaTeX and the sentence go to a second endpoint, `POST /v1/rewrite`, with no cache;
-    the chunk comes back rewritten, compiles in the import job, and is accepted only when the
-    document compiles and the glyph stream outside the chunk is unchanged; the user sees the new
-    page or a plain refusal. This sends part of the resume to the model, which the product rule
-    in AGENTS.md forbids as written, so it waits for the decision below, and can slip to
-    milestone 5 without touching the done criteria. Done when each upstream sample's locked
-    chunks take a rewrite.
+16. [ ] **Editing locked chunks, decided by the corpus.** Plan section 6.1's edit, a sentence
+    typed at a locked chunk that a model rewrites, sends part of the resume to the model, which
+    the product rule in AGENTS.md forbids as written. The rule stays absolute until the corpus
+    says what is locked in practice: the nightly run (item 17) reports the share of body words
+    locked and of what kind. If the share is small, the edit goes to the after-launch list and
+    the plan's decision table gets a one-line revision. If it is material, the first form is a
+    text substitution with no model: for a locked chunk whose glyphs align to source text, the
+    user retypes the text, the bytes are substituted in the chunk, it recompiles in the import
+    job, and the edit is accepted only when the document compiles and the glyph stream outside
+    the chunk is unchanged, so nothing leaves the browser. Only if that leaves too much locked
+    does the model rewrite follow, through a second endpoint with no cache, under a per-edit
+    consent and a change to the rule. Locked chunks render, and can be removed or moved, in every
+    case. Done when the corpus number is recorded with the choice it led to, and whatever form
+    was chosen works on the upstream samples' locked chunks.
 
 ### Stage 8. The corpus loop and closing
 
@@ -337,18 +348,20 @@ of each launch template must find editable what the hand-written port marks.
 ## Decisions this milestone makes
 
 These are the defaults the work above assumes. Each gets a record in `docs/decisions/` in the
-pull request that acts on it. The first two are the owner's to confirm before their items start.
+pull request that acts on it. The first two the owner settled on 26 September.
 
-- **Describe-in-words edits and the product rule** (item 16). The rule in AGENTS.md and the
+- **Editing locked chunks waits for the corpus** (item 16). The rule in AGENTS.md and the
   README says the pipeline sends only macro definitions and placeholdered call sites to the
-  model, never the resume's text; plan section 6.1's edit sends a locked chunk's text. The
-  default here is an exception the user consents to at each such edit, in a sentence that says
-  what is sent, recorded and reflected in AGENTS.md and the README; the alternative is to leave
-  6.1 out of version one. Locked chunks still render and can be removed or moved either way.
-- **The naming service is a third app** (item 10), `apps/api`, owned with the editor, with its
-  logic in `packages/naming` so that Node runs it for the corpus and the Worker stays thin. The
-  alternative is functions inside the editor's Pages project; the Worker is what plan section
-  8.1 chose and keeps the model call in one place.
+  model, never the resume's text; plan section 6.1's edit sends a locked chunk's text. The rule
+  stays absolute, and the corpus's locked share decides: nothing if it is small, a text
+  substitution with no model if it is material, and the model rewrite under per-edit consent
+  only if that is not enough. Locked chunks render and can be removed or moved either way.
+- **The naming service lives inside the editor's project** (item 10), not in an app of its own:
+  one handler on the fetch API, served by the dev server's middleware in development and by a
+  Pages Function or the app's Worker in production, with the logic in `packages/naming` so that
+  Node runs it for the corpus. One project, one origin and one deploy, at the cost of keeping the
+  function's folder out of Vite's bundle and under its own TypeScript config, which a test
+  asserts. The plan's hosting row names a separate Worker; milestone 5 revises it.
 - **The corpus lives outside git** (item 1): a manifest of sources with hashes, content fetched
   and never committed; the answers are committed, since they name macros and never text.
 - **The engine gives the parser its signatures and its definitions** (item 4): `\meaning` from a
@@ -388,7 +401,7 @@ pull request that acts on it. The first two are the owner's to confirm before th
   a benchmarked candidate (item 18). New dependencies this milestone expects: unified-latex's
   parse, arguments, argspec, macros, to-string, visit and ctan packages (editor), fflate
   (editor), `ai` with `@ai-sdk/google` and `@ai-sdk/anthropic` (naming), and wrangler as a dev
-  dependency (api). Each is named in the pull request that adds it.
+  dependency of the editor for the function. Each is named in the pull request that adds it.
 
 ## Risks
 
@@ -425,8 +438,11 @@ pull request that acts on it. The first two are the owner's to confirm before th
 - **Network.** GitHub's API and raw files are reachable from this environment (item 1); the
   TeX Live mirror is not (item 2), so growing the tree needs a machine that reaches it, as
   milestone 2's item 19 did.
-- **A third app changes the repository.** CI gains a job for `apps/api`, AGENTS.md and the
-  README gain a line, and the workflow's path filters keep it from slowing the editor's.
+- **Server code inside the browser package.** The function's folder must never reach Vite's
+  bundle, and the key must never reach the page: a build-output test and the `VITE_` prefix
+  rule guard both, and the folder's own TypeScript config keeps the DOM and Workers types apart.
+- **The endpoint is open once deployed.** A public route that calls a paid model needs the rate
+  limit of item 10 and, before launch, a bot check; both are milestone 5's to finish.
 
 ## Owed from milestone 2, and where each lands
 
