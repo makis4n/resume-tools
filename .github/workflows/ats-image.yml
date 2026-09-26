@@ -29,19 +29,23 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request cancels the older run. Runs on main queue one at a time, so an
-# older image can never overwrite `main` after a newer one; a run still waiting when another is
-# queued is dropped, which only skips an image that was about to be superseded.
+# A newer push to a pull request cancels the older run. Runs on main go one at a time, and a run
+# still waiting when another is queued is dropped. Usually that only skips an image about to be
+# superseded; but re-running an old run can drop a newer one that was waiting, and then `main`
+# stays behind until the newest run is re-run. Queuing alone also does not stop `main` moving
+# backwards, since the order runs start in is not guaranteed; the publish job checks for that.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  IMAGE: ghcr.io/makis4n/resume-tools-ats
+  # The package's one name; the image is ghcr.io/<repository owner>/<package>.
+  PACKAGE: resume-tools-ats
 
 jobs:
   image:
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest: the publish job relies on this image's skopeo, gh and jq.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -54,41 +58,35 @@ jobs:
       - run: uv sync --frozen && uv run pytest
         working-directory: apps/ats
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ env.IMAGE }}
-          # `sha-<commit>` names one build; `main` moves to the newest.
-          tags: |
-            type=sha,format=long
-            type=raw,value=main,enable={{is_default_branch}}
-      # No provenance or SBOM attestations, so the image is one manifest and pruning old versions
-      # cannot delete part of an image that is still tagged.
+      # One tarball for both jobs: `docker load` reads it for the smoke test, and the publish job
+      # pushes its OCI layout with skopeo, byte for byte. Pushing with Docker instead could wrap
+      # the image in an index, whose parts the registry lists as versions of their own and pruning
+      # would then delete from under tagged images. Without provenance or SBOM attestations the
+      # tarball holds one manifest. The source label links the package to this repository; the
+      # revision label names the commit the publish job compares `main` against.
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: apps/ats
-          load: true
+          outputs: type=docker,dest=${{ runner.temp }}/ats-image.tar,name=ats:smoke,oci-mediatypes=true
           provenance: false
           sbom: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            org.opencontainers.image.title=ats
+            org.opencontainers.image.description=ATS simulator and resume optimiser
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=ats-image
-          cache-to: type=gha,scope=ats-image,mode=max
-      - env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: bash .github/scripts/smoke-ats-image.sh "$(head -n 1 <<<"$TAGS")"
+          # A cache that cannot be written makes the next build slower, not this one fail.
+          cache-to: type=gha,scope=ats-image,mode=max,ignore-error=true
+      - run: |
+          docker load --input "$RUNNER_TEMP/ats-image.tar"
+          bash .github/scripts/smoke-ats-image.sh ats:smoke
       # Handed to the publish job as is, so what is published is exactly what was tested.
-      - if: github.event_name == 'push'
-        env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          mapfile -t tags <<<"$TAGS"
-          docker save "${tags[@]}" | gzip >ats-image.tar.gz
       - if: github.event_name == 'push'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ats-image
-          path: ats-image.tar.gz
+          path: ${{ runner.temp }}/ats-image.tar
           if-no-files-found: error
           retention-days: 1
           overwrite: true
@@ -97,28 +95,91 @@ jobs:
   publish:
     needs: image
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
+      contents: read
       packages: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ats-image
-      - run: gunzip -c ats-image.tar.gz | docker load
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+          path: ${{ runner.temp }}
+      # `sha-<commit>` always. `main` only if this commit is at or after the one `main` holds now,
+      # read from that image's revision label, so a run that was overtaken or a re-run of an old
+      # one cannot roll it back. Not "is this main's tip": a merge elsewhere in the repository
+      # during the run would then leave `main` behind until the next ATS change. A registry or API
+      # error fails the job: re-run it within a day, while the image artifact lasts, or re-run all
+      # jobs after that.
+      - id: push
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$PACKAGE"
+          build="docker://$image:sha-$GITHUB_SHA"
+          skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+          skopeo copy --quiet --digestfile "$RUNNER_TEMP/digest" \
+            "oci-archive:$RUNNER_TEMP/ats-image.tar" "$build"
+
+          # The package exists now, so a missing `main` is the registry's "manifest unknown".
+          err="$RUNNER_TEMP/inspect.err"
+          if info=$(skopeo inspect --no-tags "docker://$image:main" 2>"$err"); then
+            current=$(jq -r '.Labels["org.opencontainers.image.revision"] // empty' <<<"$info")
+            main_digest=$(jq -r .Digest <<<"$info")
+            if [ -z "$current" ]; then
+              echo "::error::The image tagged main has no revision label, so this run cannot" \
+                "tell whether it is newer. Copy the right sha- tag to main with skopeo."
+              exit 1
+            fi
+            compare="repos/$GITHUB_REPOSITORY/compare/$current...$GITHUB_SHA?per_page=1"
+            if ! order=$(gh api "$compare" --jq .status); then
+              echo "::error::Could not compare this commit with $current, which main holds. If" \
+                "that commit is not in the repository, copy the right sha- tag to main with skopeo."
+              exit 1
+            fi
+          elif grep -qi "manifest unknown" "$err"; then
+            order=first
+          else
+            cat "$err" >&2
+            exit 1
+          fi
+
+          # A run behind `main` skips pruning, so re-running an old run cannot push a newer build
+          # out of the five kept.
+          prune=true
+          case $order in
+            first | ahead | identical)
+              skopeo copy --quiet "$build" "docker://$image:main"
+              main_digest=$(<"$RUNNER_TEMP/digest")
+              ;;
+            behind)
+              echo "::notice::main stays on $current, which is newer than this commit."
+              prune=false
+              ;;
+            diverged)
+              echo "::warning::main stays on $current, which is not in this commit's history." \
+                "To move it by hand, copy $build to docker://$image:main with skopeo."
+              ;;
+            *)
+              echo "::error::Unexpected comparison with $current: '$order'."
+              exit 1
+              ;;
+          esac
+
+          if [[ ! $main_digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Could not tell which image main holds: '$main_digest'."
+            exit 1
+          fi
+          echo "main-digest=$main_digest" >>"$GITHUB_OUTPUT"
+          echo "prune=$prune" >>"$GITHUB_OUTPUT"
+      # The free plan stores 500 MB of private packages and an image is about 50 MB compressed, so
+      # only the newest five builds are kept, and older `sha-` tags stop resolving. The build `main`
+      # holds is kept whatever its age, since it can lag behind newer builds.
+      - if: steps.push.outputs.prune == 'true'
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - run: |
-          docker image ls "$IMAGE" --format '{{.Repository}}:{{.Tag}}' | while read -r tag; do
-            docker push "$tag"
-          done
-      # The free plan stores 500 MB of private packages and an image is about 50 MB compressed,
-      # so only the newest five builds are kept; older `sha-` tags stop resolving.
-      - uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
-        with:
-          package-name: resume-tools-ats
+          package-name: ${{ env.PACKAGE }}
           package-type: container
           min-versions-to-keep: 5
+          ignore-versions: ^${{ steps.push.outputs.main-digest }}$
