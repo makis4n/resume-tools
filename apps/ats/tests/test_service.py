@@ -199,6 +199,20 @@ def test_allows_the_editor_origin(client: TestClient) -> None:
     assert response.headers["access-control-allow-origin"] == EDITOR_ORIGIN
 
 
+@pytest.mark.parametrize(
+    ("origin", "method"),
+    [(EDITOR_ORIGIN, "PUT"), ("https://elsewhere.example", "POST")],
+)
+def test_a_refused_preflight_is_plain_text(client: TestClient, origin: str, method: str) -> None:
+    # error.schema.json excludes this reply; browsers never show it to page code.
+    response = client.options(
+        "/v1/analyze",
+        headers={"Origin": origin, "Access-Control-Request-Method": method},
+    )
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/plain")
+
+
 def test_refuses_other_origins(client: TestClient) -> None:
     response = client.post(
         "/v1/analyze",

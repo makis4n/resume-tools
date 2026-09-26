@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/makis4n/resume-tools/packages/contracts/ats/v1/error.schema.json",
   "title": "ATS error, v1 (draft)",
-  "description": "Body of every non-2xx response from the ATS service. Clients branch on `code` and may show `message` to the user; neither contains internal details. Clients ignore properties they do not know. Draft: expect changes until both owners mark it stable.",
+  "description": "Body of every non-2xx response from the ATS service, except the plain-text 400 that refuses a CORS preflight (an OPTIONS request that the CORS settings do not allow); browsers never show that reply to page code. Clients branch on `code` and may show `message` to the user; neither contains internal details. Clients ignore properties they do not know. Draft: expect changes until both owners mark it stable.",
   "type": "object",
   "required": ["error"],
   "properties": {

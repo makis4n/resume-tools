@@ -344,7 +344,7 @@ Editor -> multipart PDF + requirement list -> POST /v1/analyze -> analysis JSON 
 ```
 
 Milestone 0 uses the `ats/v1` response shape unchanged, and adds `error.schema.json` for every
-non-2xx reply.
+non-2xx reply except a refused CORS preflight, which the CORS layer answers in plain text.
 
 ### 10.2 v1 revision
 

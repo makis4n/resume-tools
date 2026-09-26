@@ -186,6 +186,7 @@ def create_app(
     app.add_middleware(UnexpectedErrorMiddleware)
     app.add_middleware(BodyLimitMiddleware, max_upload_bytes=max_upload_bytes)
     # Added last so it is outermost, and every error response carries CORS headers too.
+    # A preflight it refuses gets its own plain-text 400, which error.schema.json excludes.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
