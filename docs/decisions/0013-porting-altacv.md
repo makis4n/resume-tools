@@ -99,7 +99,8 @@ review of the port found the editor's page and text need of the class's macros:
 
 The class's other `\RequirePackage`s are all in the tree but simpleicons, which it loads only if
 present, falling back from `\xtwitter` to `\twitter`, and academicons, which it loads only when
-Font Awesome lacks `\faOrcid`, and the tree's has it.
+Font Awesome lacks `\faOrcid`, and the tree's has it. Decision 0018 later added academicons to
+the tree for the corpus; the class still never loads it, since `\faOrcid` is there.
 
 ### What the preamble changes, and why
 
