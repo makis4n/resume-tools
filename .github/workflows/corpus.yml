@@ -1,0 +1,51 @@
+name: corpus
+
+# The corpus of public resumes, fetched from the sources its manifest names, and surveyed
+# (decisions 0017 and 0018). It runs nightly and on demand, never on a pull request, so that no
+# pull request downloads real resumes; milestone 3's item 17 adds the import runner to it.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  survey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The engine and TeX Live tree under editor.yml's key, so that either workflow's build serves
+      # the other: the survey checks every document against the tree's file list.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            apps/editor/.engine
+            !apps/editor/.engine/downloads
+          key: engine-${{ hashFiles('apps/editor/scripts/fetch-engine.ts', 'apps/editor/scripts/containers.ts', 'apps/editor/scripts/fontconfig.ts', 'apps/editor/scripts/tlpdb.ts', 'apps/editor/scripts/fontmaps.ts', 'apps/editor/src/page/fontmap.ts') }}
+      - run: pnpm --filter @resume-tools/editor fetch-engine
+      # GitHub allows 60 requests an hour without a token, and the fetch asks once per document.
+      - run: pnpm --filter @resume-tools/editor corpus fetch
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # The table names classes, packages, fonts and counts, and survey.json each document's row by
+      # its id: never a document's text.
+      - run: pnpm --filter @resume-tools/editor corpus survey --json survey.json > survey.md
+      - run: |
+          {
+            echo "## What the corpus needs"
+            echo
+            cat survey.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: survey
+          path: survey.json

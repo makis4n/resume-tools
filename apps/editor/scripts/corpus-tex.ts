@@ -291,7 +291,7 @@ function skipOptional(text: string, at: number): number | undefined {
  * The braced group at `at`, after any spaces, and the index after it; undefined if there is none,
  * or it does not close within WINDOW characters of `at`.
  */
-function group(text: string, at: number): { value: string; end: number } | undefined {
+export function group(text: string, at: number): { value: string; end: number } | undefined {
   const stop = Math.min(text.length, at + WINDOW);
   const start = skipSpace(text, at, stop);
   if (start >= stop || text[start] !== "{") return undefined;

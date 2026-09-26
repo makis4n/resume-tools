@@ -1900,12 +1900,16 @@ describe("the command", () => {
   test("says how it is run", () => {
     const help = run("--help");
     expect(help.status).toBe(0);
-    expect(help.stdout).toContain("pnpm --filter @resume-tools/editor corpus collect | fetch");
+    expect(help.stdout).toContain(
+      "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>]",
+    );
   });
 
   test("refuses what it does not know, before it asks GitHub anything", () => {
-    expect(run("survey").stderr).toContain("there is no command survey");
+    expect(run("bogus").stderr).toContain("there is no command bogus");
     expect(run("collect", "--only", "jake-0001").stderr).toContain("--only goes with fetch");
+    expect(run("survey", "--only", "jake-0001").stderr).toContain("--only goes with fetch");
+    expect(run("fetch", "--json", "survey.json").stderr).toContain("--json goes with survey");
     const only = run("fetch", "--only", "jake-9999");
     expect(only.status).toBe(1);
     expect(only.stderr).toContain("the manifest has no document jake-9999");

@@ -7,13 +7,13 @@
  * every file out, one file per path, with a manifest of paths and sizes. The worker fetches files
  * from that tree one at a time, the first time TeX opens each.
  *
- * The bundles lack packages the templates need, pgf and Font Awesome 5 among them, so the script
- * then adds those from TeX Live 2023's final package archive (`PACKAGES`), each container checked
- * against the SHA-512 the archive's database records for it and unpacked with the system `tar`
- * (`scripts/containers.ts`, decision 0011). On the way out, the added packages' and the Ubuntu
- * bundles' font maps are merged into `pdftex.map` (`mergeMaps`), as `updmap` would merge them,
- * and fontconfig's configuration loses its font folders (`bareFontConf`), so that XeTeX scans no
- * fonts on any run.
+ * The bundles lack packages the templates need, pgf and Font Awesome 5 among them, and packages
+ * the corpus's documents need (decision 0018), so the script then adds those from TeX Live 2023's
+ * final package archive (`PACKAGES`), each container checked against the SHA-512 the archive's
+ * database records for it and unpacked with the system `tar` (`scripts/containers.ts`, decision
+ * 0011). On the way out, the added packages' and the Ubuntu bundles' font maps are merged into
+ * `pdftex.map` (`mergeMaps`), as `updmap` would merge them, and fontconfig's configuration loses
+ * its font folders (`bareFontConf`), so that XeTeX scans no fonts on any run.
  *
  *   node scripts/fetch-engine.ts [--from <dir>] [--force] [--resolve]
  *
@@ -78,7 +78,7 @@ const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELE
  * font maps into `pdftex.map`, so a change to any of them rebuilds it there; a `.engine/` built on
  * a machine is rebuilt only by the bump or by a change to `PACKAGES`.
  */
-const LAYOUT = 4;
+const LAYOUT = 5;
 
 /** Release files with their SHA-256 and size, recorded from the copies the spike measured. */
 const ASSETS: Record<string, { sha256: string; size: number }> = {
@@ -176,6 +176,13 @@ const DATABASE = {
  * whose `tikzfill.image` the bundles' tcolorbox 6.0.1 loads for its skins library, which
  * Awesome-CV's class and AltaCV's load; tcolorbox's entry names no dependency, so only its files
  * say so.
+ *
+ * Then what the corpus's documents need that the tree lacks, as `corpus survey` counts them
+ * (decision 0018): every package three documents or more need, the most needed first, within
+ * 80 MB of containers: fontawesome, Font Awesome 4, for its package and its `FontAwesome.otf`;
+ * biblatex, whose `depend` brings logreq; tex-gyre; ulem; simpleicons; academicons; soul; fira;
+ * plex; and raleway. Their style files load nothing the tree lacks, and ask fontenc for T1, LY1
+ * and OT1 only.
  */
 const WANTED = [
   "pgf",
@@ -187,6 +194,16 @@ const WANTED = [
   "ly1",
   "pgfopts",
   "tikzfill",
+  "fontawesome",
+  "biblatex",
+  "tex-gyre",
+  "ulem",
+  "simpleicons",
+  "academicons",
+  "soul",
+  "fira",
+  "plex",
+  "raleway",
 ];
 
 /** A package's container of run files in the archive: its revision, size and SHA-512. */
@@ -205,6 +222,30 @@ interface Container {
  * here, and bump `LAYOUT`.
  */
 const PACKAGES: Record<string, Container> = {
+  academicons: {
+    revision: 62622,
+    size: 35252,
+    sha512:
+      "10fed2cdb2533a7291626eee2f3d46e79fe972eadd83cf7177f22228dcd13422549819dc5e1cf0b03e8397e23badc02a965857aca886ba004a3279efeb49b288",
+  },
+  biblatex: {
+    revision: 66403,
+    size: 254400,
+    sha512:
+      "e07cd6233021bbe2f3591f866c3b3eeae083574f705da9505f6bcbb7284c243ac7f24440253c4557f0a300e9995188bf5915a42643e63eb80ff9e0fa4ffaff1c",
+  },
+  fira: {
+    revision: 64422,
+    size: 15529824,
+    sha512:
+      "5faf4cdf1690f9d6c690cddbef813c8973517309144495016ef5d61ff5e5df9ce73f70b262d1c36ba72fa92f93c7a1d550b96acc4965d7ab88efce21ee20d682",
+  },
+  fontawesome: {
+    revision: 48145,
+    size: 276180,
+    sha512:
+      "e08643104006c9e14c40bb965b4401a8fe296f43e5f39b285cd19d5aa0ed33602cc0eb6ffcc996e1d6e5aaa57dd906903324626ee40facdcb3cedc5216a3deb6",
+  },
   fontawesome5: {
     revision: 63207,
     size: 866312,
@@ -216,6 +257,12 @@ const PACKAGES: Record<string, Container> = {
     size: 12721308,
     sha512:
       "2f8454888913ec6a024c53cf157509b8b769f948ac2c92d0683e80ff8e22865545a6a65864876be35569bf4a5d56ed871c8112b216561e3ce585136bd062c9ce",
+  },
+  logreq: {
+    revision: 53003,
+    size: 3212,
+    sha512:
+      "df61c0c6c0b8520f5ec38780d8eb69cfd5fccd21f5120e48eee71e02b004d3da4cc9cb9371a36766852e3ca09a3db86655f1a2639a49741f00134cff1246acd2",
   },
   ly1: {
     revision: 63565,
@@ -241,11 +288,35 @@ const PACKAGES: Record<string, Container> = {
     sha512:
       "7d672d626428c37fa749a810c57be43c6102e1325a6d3e16c57bc560b6d65a57bae94e619a73f3e0efb46ce7b4783d05a6e98c64b1e90c6e0f94f1dd9acd676f",
   },
+  plex: {
+    revision: 69154,
+    size: 11533644,
+    sha512:
+      "4180d4b5ff2d6843ac375a52bc3c63570638cc29f7d3bbda476dee962998293ce4b201817e056d5e87c20bd8280336b65bc689a8e1580ab8aa6f24164002732c",
+  },
+  raleway: {
+    revision: 42629,
+    size: 2336284,
+    sha512:
+      "8ce708ec993b1405dc04ddd96b6d39da324799f404e2798448c12cd03749f11685f840ba4f986b1b0f7696f9141923f3b91f5318de634979720af5af5b07781c",
+  },
   roboto: {
     revision: 64350,
     size: 25354284,
     sha512:
       "d82d9ce9480bf0c9d7f6559e7bcbb5fe8f22179adc44113121f67fc0daadd66c938b9fcf9a41073843e1cc981162972a79f15fe6162f68ba7a01b74732b0f01a",
+  },
+  simpleicons: {
+    revision: 70519,
+    size: 3429140,
+    sha512:
+      "336d8cc4f3a20bb6b9f7f956dc09dcb3184a333b0e82f9b72ebfdc7f73c757fa53a48ce0bc31a1b397c42bda9826944e3004d881ee1d6dac4f3430919b4cb9cd",
+  },
+  soul: {
+    revision: 67365,
+    size: 8944,
+    sha512:
+      "233f1178521296d5cccc7db50c98425995b8708c97d750a5c24f698bd0de2e54ed5c57f9641f402bb8a42721e348355e6f7e9092b4056999b032d001c8203aba",
   },
   sourcesanspro: {
     revision: 54892,
@@ -253,11 +324,23 @@ const PACKAGES: Record<string, Container> = {
     sha512:
       "0511dcf736273d80f7143c9dad96dd9f631b016183b4078243ed061d35889fea62e50c5f48e9842ffae7b654fd2e08a21d1c46403e56349c0b515ff2eb62e164",
   },
+  "tex-gyre": {
+    revision: 68624,
+    size: 7748428,
+    sha512:
+      "5422f349d15233e6f49576fe3a65f8afb5cae6a3c51e5ad7cb56617d7d064e9cf574f233f789c029c04bbfc24e5948c115b2d33569e881373d68615ac709153f",
+  },
   tikzfill: {
     revision: 67847,
     size: 4652,
     sha512:
       "4864d0859490cd07e123e1160a35fb7817c3ffcc1f409a8c61285823f655357473e0dc7ab92434b5b552cbfca3e88d9181e57cf944d2422467b466cbdcd743a0",
+  },
+  ulem: {
+    revision: 53365,
+    size: 6512,
+    sha512:
+      "bb7fc8d93d38a847431f9f62f1447520890f3904654ef6f3cdffd14537600da35d54bd0839cd8fd8d26e1e3146463cd9ced79f706df54df075292eea8a40ed4c",
   },
   xcolor: {
     revision: 68864,
