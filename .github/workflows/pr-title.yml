@@ -1,0 +1,32 @@
+name: pr-title
+
+# The squash merge uses the pull request's title as the commit message on main, so the title is
+# what has to follow Conventional Commits with an area scope (AGENTS.md, decision 0020).
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          # Through the environment, never interpolated into the script: a title is untrusted input.
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          types='feat|fix|docs|refactor|test|chore|ci'
+          scopes='editor|ats|contracts|model|docs|repo'
+          # The summary starts with neither a capital nor a space, and ends in neither a period nor
+          # a space.
+          pattern="^($types)\(($scopes)\): [^[:upper:][:space:]](.*[^.[:space:]])?\$"
+          if [[ "$TITLE" =~ $pattern ]]; then
+            echo "Title follows the convention."
+          else
+            echo "::error::The title must read '<type>(<scope>): <lower-case summary, no period>'."
+            echo "Types: ${types//|/ }. Scopes: ${scopes//|/ }."
+            echo "Got: $TITLE"
+            exit 1
+          fi
