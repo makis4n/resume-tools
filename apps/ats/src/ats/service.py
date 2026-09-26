@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from python_multipart.multipart import parse_options_header
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -39,6 +40,10 @@ PDF_CONTENT_TYPES = {"application/pdf", "application/x-pdf", "application/octet-
 # Codes for HTTP errors raised by the framework rather than by this module.
 HTTP_ERROR_CODES = {400: "invalid-request", 404: "not-found", 405: "method-not-allowed"}
 HTTP_ERROR_MESSAGE = "The request could not be handled."
+
+# Headers an HTTP error may carry onto its reply; framing headers such as Content-Type stay the
+# reply's own.
+PASSED_ERROR_HEADERS = {"allow", "retry-after", "www-authenticate"}
 
 
 class ServiceError(HTTPException):
@@ -168,8 +173,9 @@ def create_app(
         else:
             code = HTTP_ERROR_CODES.get(error.status_code, "http-error")
             reply = error_response(error.status_code, code, HTTP_ERROR_MESSAGE)
-        # Keep headers the error carries, such as Allow on a 405.
-        reply.headers.update(error.headers or {})
+        for name, value in (error.headers or {}).items():
+            if name.lower() in PASSED_ERROR_HEADERS:
+                reply.headers[name] = value
         return reply
 
     @app.exception_handler(RequestValidationError)
@@ -193,8 +199,8 @@ def create_app(
 
     @app.post("/v1/analyze")
     async def analyze_resume(file: UploadFile) -> dict[str, Any]:
-        media_type = (file.content_type or "").split(";")[0].strip().lower()
-        if media_type not in PDF_CONTENT_TYPES:
+        media_type, _ = parse_options_header(file.content_type or "")
+        if media_type.decode("latin-1").lower() not in PDF_CONTENT_TYPES:
             raise ServiceError(415, "not-a-pdf", NOT_A_PDF)
         pdf = await file.read(max_upload_bytes + 1)
         if len(pdf) > max_upload_bytes:

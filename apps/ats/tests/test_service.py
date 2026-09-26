@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
@@ -213,3 +214,16 @@ def test_does_not_log_resume_contents(client: TestClient, caplog: pytest.LogCapt
         upload(client, minimal_pdf(marker))
         upload(client, marker.encode())
     assert marker not in caplog.text
+
+
+def test_an_error_keeps_safe_headers_but_not_framing_ones() -> None:
+    app = create_app(max_upload_bytes=MAX_UPLOAD_BYTES, allowed_origins=[EDITOR_ORIGIN])
+
+    @app.get("/limited")
+    async def limited() -> None:
+        raise HTTPException(429, headers={"Retry-After": "5", "Content-Type": "text/plain"})
+
+    response = TestClient(app).get("/limited")
+    assert_error(response, 429, "http-error")
+    assert response.headers["retry-after"] == "5"
+    assert response.headers["content-type"] == "application/json"
