@@ -26,10 +26,11 @@ could check. The editor's production home needs the engine and TeX Live on R2 fi
 - Every third-party action is pinned to a commit, with its version in a comment. Dependabot opens
   one grouped pull request a month to move the pins.
 - Nothing deploys yet. When the engine is on R2, a Cloudflare Pages job goes into the editor
-  workflow, building with the production `VITE_` values. When the ATS service is on `main`, the
-  ATS workflow builds its image on pull requests and pushes it to
-  `ghcr.io/makis4n/resume-tools-ats` on `main`, and deploying it anywhere is one more job that pulls
-  that image.
+  workflow, building with the production `VITE_` values. When the ATS service is on `main`, an
+  `ats-image` workflow builds the image from `apps/ats/Dockerfile` and smoke-tests it on every
+  pull request, pushes that same image to `ghcr.io/makis4n/resume-tools-ats` from `main`, tagged
+  with the commit and `main`, and keeps the newest five versions. Deploying it anywhere is one more
+  job that pulls that image.
 
 ## Consequences
 
@@ -37,6 +38,7 @@ could check. The editor's production home needs the engine and TeX Live on R2 fi
   says, but `repo` and `pr-title` run on every pull request, so they could be.
 - The private repository's free plan has 2,000 Actions minutes and 500 MB of package storage a
   month. The new checks take seconds, the build adds about a minute to the editor's job, and the
-  ATS image job will have to delete old image versions to stay under the storage limit.
+  ATS image, about 50 MB compressed, stays under the storage limit only because old versions are
+  deleted.
 - A new lockfile type or config file that AGENTS.md forbids has to be added to
   `check-repo.sh` as well, or it goes unchecked.
