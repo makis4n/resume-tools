@@ -147,9 +147,10 @@ describe("fonts fontspec loads", () => {
 
   test("drops a face whose name would pass the cap, and reads at most four option groups", () => {
     // Each star is the font's name: 8,000 of them and a name of 8,000 letters made a face of
-    // 64,000,000 characters from 16 KB of source.
-    const name = "Invented".repeat(1_000);
-    const hostile = fontsOf(`\\setmainfont[BoldFont=${"*".repeat(8_000)}]{${name}}`);
+    // 64,000,000 characters from 16 KB of source. 2,000 of each, which the readers' window of
+    // 2,048 characters takes in, make 4,000,000.
+    const name = "Invented".repeat(250);
+    const hostile = fontsOf(`\\setmainfont[BoldFont=${"*".repeat(2_000)}]{${name}}`);
     expect(hostile).toEqual({ families: [name], files: [] });
     expect(fontsOf("\\setmainfont[BoldFont=** Bold]{Invented}").families).toEqual([
       "Invented",

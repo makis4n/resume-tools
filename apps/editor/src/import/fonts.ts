@@ -66,7 +66,7 @@ export function readTree(files: Readonly<Record<string, number>>): Tree {
  * Lato; Source Sans Pro; Font Awesome 5 Free and Brands; Latin Modern's sixteen, and the names of
  * its design sizes, "LM Roman 10" and so on; Philokalia; and Sparks. Layout 5 adds Font Awesome 4
  * and Academicons; IBM Plex Sans, Sans Condensed, Serif and Mono; and TeX Gyre's nine (decision
- * 0018). A name matches a family when it is the family's name, or that name followed by style
+ * 0018). Layout 6 adds Latin Modern Math, unicode-math's default (decision 0019). A name matches a family when it is the family's name, or that name followed by style
  * words or a design size ("Roboto Light", "SourceSansPro-Bold", "LM Roman 12"), whatever its case,
  * spaces, hyphens and underscores, as fontconfig ignores case and spaces in a family's name.
  */
@@ -117,6 +117,7 @@ export const TREE_FAMILIES: Readonly<Record<string, string>> = {
   "TeX Gyre Pagella": "texgyrepagella-regular.otf",
   "TeX Gyre Schola": "texgyreschola-regular.otf",
   "TeX Gyre Termes": "texgyretermes-regular.otf",
+  "Latin Modern Math": "latinmodern-math.otf",
 };
 
 /** A font's name as fontconfig compares it, and as the family table is keyed. */

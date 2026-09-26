@@ -6,6 +6,7 @@ import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls } from "../templates/package";
+import { fastest } from "../test/timing";
 import { parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { hasToUnicode, mediaBoxes, shownStrings } from "../validate/pdf";
@@ -16,6 +17,7 @@ import {
   imageFileOf,
   insideJob,
   isJobPath,
+  isShowableImage,
   refusedSpecial,
 } from "./session";
 
@@ -105,6 +107,24 @@ describe("an image special's file", () => {
       "pdf:fstream @x (photo.png)",
     ])
       expect(imageFileOf(text), text).toBeUndefined();
+  });
+
+  it("can be listed as a stand-in only when its path is of plain characters", () => {
+    for (const path of ["photo.png", "img/Invented_Photo-2.jpg", "a/b.c/d.pdf"])
+      expect(isShowableImage(path), path).toBe(true);
+    for (const path of [
+      "my photo.png",
+      "img/(photo).png",
+      "café.png",
+      "photo%.png",
+      "../photo.png",
+      "img/../photo.png",
+      ".photo.png",
+      "img/.hidden/photo.png",
+      "/photo.png",
+      "",
+    ])
+      expect(isShowableImage(path), path).toBe(false);
   });
 
   it("is a path in the job only when it stays inside the job's folder", () => {
@@ -366,23 +386,19 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     it("at a cost to each pass that decision 0019 records", () => {
       // The same document, its font by file, which needs no fontconfig: what the option adds is
       // fontconfig's scan of the tree's OpenType and TrueType folders, which XeTeX starts on every
-      // pass. Decision 0019 measured about 30 ms a pass on an M4 Pro, where this took 160 ms.
+      // pass. Decision 0019 measured about 30 ms a pass on an M4 Pro. Each is timed in the CPU
+      // time of this thread, where the engine runs, the fastest of five, so that other test files
+      // running beside it do not count (`src/test/timing.ts`).
       const document = byName("Roboto-Regular.otf");
-      const median = (fontsByName: boolean) => {
-        const passes = Array.from({ length: 7 }, () => {
-          session.forget("cost");
-          return (
-            session.compile("xetex", "stock", document, { job: "cost", maxPasses: 1, fontsByName })
-              .passes[0] ?? Number.NaN
-          );
-        }).sort((a, b) => a - b);
-        return passes[3] ?? Number.NaN;
+      const pass = (fontsByName: boolean) => () => {
+        session.forget("cost");
+        session.compile("xetex", "stock", document, { job: "cost", maxPasses: 1, fontsByName });
       };
-      median(true);
-      const plain = median(false);
-      const scanned = median(true);
+      // The first scan reads the tree's font files, which later ones find read.
+      pass(true)();
+      const [plain = 0, scanned = 0] = fastest([pass(false), pass(true)], 5);
       console.log(
-        `fontconfig's scan: ${Math.round(scanned - plain)} ms a pass (${Math.round(plain)} ms without it, ${Math.round(scanned)} ms with it)`,
+        `fontconfig's scan: ${Math.round(scanned - plain)} ms of CPU time a pass (${Math.round(plain)} ms without it, ${Math.round(scanned)} ms with it)`,
       );
       // Generous, so that a slow runner passes and a scan of every font the tree has fails.
       expect(scanned - plain).toBeLessThan(250);
@@ -919,6 +935,27 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       const written = shows("photos/portrait.png", overwrite);
       expect(session.compile("pdftex", "stock", written, { job: "standin", files }).ok).toBe(true);
       expect(session.pdf("standin", { images: ["photos/portrait.png"] }).ok).toBe(false);
+    }, 60_000);
+
+    it("shows a XeTeX document's PDF image only as a stand-in the caller lists, by a plain path", () => {
+      // XeTeX writes every picture, a PDF's page among them, as a `pdf:image` special.
+      const logo = standIn({ kind: "pdf", box: [0, 0, 200, 100], rotate: 0 });
+      const shows = (name: string) =>
+        `\\documentclass{article}\\usepackage{fontspec}\\usepackage{graphicx}\\begin{document}Invented \\includegraphics[width=1cm]{${name}}\\end{document}`;
+      const files = { "logo.pdf": logo, "my logo.pdf": logo };
+      expect(
+        session.compile("xetex", "stock", shows("logo.pdf"), { job: "xepdf", files }).error,
+      ).toBeUndefined();
+      // A PDF the job holds that the caller does not list as a stand-in is refused.
+      expect(session.pdf("xepdf").error).toContain("pdf:image");
+      expect(session.pdf("xepdf", { images: ["my logo.pdf"] }).ok).toBe(false);
+      // Listed, it is made.
+      expect(session.pdf("xepdf", { images: ["logo.pdf"] }).ok).toBe(true);
+      // A stand-in whose path holds a space cannot be listed, so its PDF is refused.
+      expect(
+        session.compile("xetex", "stock", shows("my logo.pdf"), { job: "xepdf", files }).error,
+      ).toBeUndefined();
+      expect(session.pdf("xepdf", { images: ["my logo.pdf"] }).error).toContain("pdf:image");
     }, 60_000);
 
     it("refuses a compression level that is not a whole number from 0 to 9", () => {

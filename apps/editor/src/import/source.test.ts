@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { bound, fastest } from "../test/timing";
-import { classOptions, optionValues, readSource } from "./source";
+import { classOptions, engineFrom, optionValues, readSource, viewNeeds } from "./source";
 
 // Every source here is invented for these tests: invented classes, packages and conditionals that
 // say so. Nothing is taken from a real resume or template. The corpus's survey reads with these
@@ -52,6 +52,26 @@ describe("reading a source as the engines take it", () => {
     for (const name of ["onxetex", "onpdftex", "lua"]) expect(has(reading.live, name)).toBe(true);
     // A probe is the guard's own, never a need of the branch taken.
     expect(reading.pdftex).not.toContain("\\directlua");
+  });
+
+  test("reads LuaTeX's PDF settings as LuaTeX's, set or asked after", () => {
+    const needs = (source: string) => {
+      const reading = readSource(source);
+      return engineFrom(
+        viewNeeds([reading.pdftex], []),
+        viewNeeds([reading.xetex], []),
+        reading.guarded,
+      );
+    };
+    for (const command of ["pdfvariable", "pdfextension", "pdffeedback"])
+      expect(needs(`\\${command} compresslevel=0`), command).toBe("luatex");
+    // Asked after, it is a guard like `\directlua`: the branch for LuaTeX is LuaTeX's alone.
+    expect(
+      needs(
+        "\\ifdefined\\pdfvariable \\pdfvariable compresslevel=0 \\else \\pdfcompresslevel=0 \\fi",
+      ),
+    ).toBe("both");
+    expect(needs("\\ifx\\pdfextension\\undefined \\usepackage{invented} \\fi")).toBe("both");
   });
 
   test("pairs each \\fi with its conditional, whatever the macro-style conditionals around it", () => {
@@ -240,7 +260,7 @@ describe("a class's options", () => {
     };
     // A class declaring each conditional and an option that sets it, and running every option
     // ten times over in \ExecuteOptions: matching each against each took time that grew as the
-    // cube of their number.
+    // cube of their number. Each list of 300 options fits the readers' window (`WINDOW`).
     const hostile = (declared: number) => {
       const names = Array.from({ length: declared }, (_, i) => letters(i));
       const list = Array.from({ length: declared * 10 }, (_, i) => `o${names[i % declared]}`);
@@ -248,8 +268,8 @@ describe("a class's options", () => {
         ...names.map((name) => `\\newif\\if@x${name}`),
         ...names.map((name) => `\\DeclareOption{o${name}}{\\@x${name}true}`),
         ...Array.from(
-          { length: list.length / 500 },
-          (_, i) => `\\ExecuteOptions{${list.slice(i * 500, (i + 1) * 500).join(",")}}`,
+          { length: list.length / 300 },
+          (_, i) => `\\ExecuteOptions{${list.slice(i * 300, (i + 1) * 300).join(",")}}`,
         ),
       ].join("\n");
     };

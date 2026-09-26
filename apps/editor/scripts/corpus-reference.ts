@@ -299,6 +299,7 @@ const REASON_LABELS: Readonly<Record<RefusalReason, string>> = {
   package: "Refused: a package the tree lacks",
   font: "Refused: a font the tree lacks",
   file: "Refused: a file the upload or the tree lacks",
+  image: "Refused: shows an image in a format with no stand-in",
   stopped: "Refused: stopped for another reason",
   passes: "Refused: did not settle in three passes",
   timeout: `Refused: timed out, past ${LIMIT_MS / 1000} s`,
@@ -315,8 +316,58 @@ function median(values: readonly number[]): number | undefined {
     : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
 }
 
-/** How many names the table lists under each reason. */
+/** How many names the table lists under each reason; `referenceNames` gives them all. */
 export const TOP_NAMES = 15;
+
+/** The reasons whose refusals name what stopped them, and what the names are of. */
+const NAMED_REASONS: readonly [RefusalReason, string][] = [
+  ["class", "Templates the tree lacks"],
+  ["package", "Packages the tree lacks"],
+  ["font", "Fonts the tree lacks"],
+  ["file", "Files the upload or the tree lacks"],
+  ["image", "Images in a format with no stand-in"],
+  ["stopped", "Stopped on an undefined command, by the command"],
+];
+
+/**
+ * Every name the refusals of a reason give, with how many documents gave it, the most first and
+ * then by name: what the table's lists are the top of.
+ */
+function tallyOf(rows: readonly ReferenceRow[], reason: RefusalReason): [string, number][] {
+  const tally = new Map<string, number>();
+  for (const row of rows)
+    if (row.outcome === reason && row.name !== undefined)
+      tally.set(row.name, (tally.get(row.name) ?? 0) + 1);
+  return [...tally].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** Every name each reason's refusals give, with its count (`tallyOf`), for the JSON. */
+export function referenceNames(
+  rows: readonly ReferenceRow[],
+): Partial<Record<RefusalReason, Record<string, number>>> {
+  const names: Partial<Record<RefusalReason, Record<string, number>>> = {};
+  for (const [reason] of NAMED_REASONS) {
+    const tally = tallyOf(rows, reason);
+    if (tally.length > 0) names[reason] = Object.fromEntries(tally);
+  }
+  return names;
+}
+
+/**
+ * Every name each reason's refusals give, with its count, as lines under the table: a list for
+ * each reason that names any, every name of it and not only the table's top TOP_NAMES. Every line
+ * is one line, whatever a name holds (`printable`).
+ */
+export function referenceNameLines(rows: readonly ReferenceRow[]): string[] {
+  const lines: string[] = [];
+  for (const [reason, label] of NAMED_REASONS) {
+    const tally = tallyOf(rows, reason);
+    if (tally.length === 0) continue;
+    lines.push(`${label}, all ${tally.length}:`);
+    lines.push(`  ${tally.map(([name, count]) => `${name} ${count}`).join(", ")}`);
+  }
+  return lines.map(printable);
+}
 
 /**
  * What the corpus's reference compiles came to, as one Markdown table, per family and in all: how
@@ -353,14 +404,9 @@ export function referenceTable(rows: readonly ReferenceRow[]): string {
       COLUMNS.map(() => ""),
     );
   const reference = (row: ReferenceRow) => row.outcome === "reference";
-  const named = (reason: RefusalReason, label: string) => {
-    const tally = new Map<string, number>();
-    for (const row of rows)
-      if (row.outcome === reason && row.name !== undefined)
-        tally.set(row.name, (tally.get(row.name) ?? 0) + 1);
-    const top = [...tally]
-      .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
-      .slice(0, TOP_NAMES);
+  const named = (reason: RefusalReason) => {
+    const label = NAMED_REASONS.find(([each]) => each === reason)?.[1] ?? reason;
+    const top = tallyOf(rows, reason).slice(0, TOP_NAMES);
     if (top.length === 0) return [];
     return [
       section(label),
@@ -410,17 +456,18 @@ export function referenceTable(rows: readonly ReferenceRow[]): string {
     time("Compile time, slowest", (values) =>
       values.length === 0 ? undefined : Math.max(...values),
     ),
-    ...named("class", "Templates the tree lacks"),
-    ...named("package", "Packages the tree lacks"),
-    ...named("font", "Fonts the tree lacks"),
-    ...named("file", "Files the upload or the tree lacks"),
+    ...named("class"),
+    ...named("package"),
+    ...named("font"),
+    ...named("file"),
+    ...named("image"),
     ...(kinds.length === 0
       ? []
       : [
           section("Stopped, by the first error"),
           ...kinds.map((kind) => count(kind, (row) => row.stopped === kind)),
         ]),
-    ...named("stopped", "Stopped on an undefined command, by the command"),
+    ...named("stopped"),
   ];
   return `${lines.map(printable).join("\n")}\n`;
 }

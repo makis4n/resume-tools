@@ -1,15 +1,19 @@
 import { unzlibSync, zlibSync } from "fflate";
 import { describe, expect, test } from "vitest";
+import { bound, cpuMs, fastest } from "../test/timing";
 import {
   boundingBox,
   crc32,
   imageInfo,
+  MAX_SIDE,
   ONE_BY_ONE,
   ONE_POINT_PDF,
   type PdfInfo,
   type RasterInfo,
   standIn,
+  tooLarge,
   xbb,
+  zlibOfZeros,
 } from "./images";
 
 // Every image here is made in the test: headers and boxes only, no picture of anything.
@@ -169,6 +173,53 @@ describe("reading an image's size", () => {
     expect(imageInfo(file)).toEqual({ kind: "pdf", box: [0, 0, 300, 150], rotate: 0 });
   });
 
+  test("of a PDF past twice its window, from its start or its end, and a rotation read as before", () => {
+    const filler = "%".repeat(600_000);
+    const atEnd = bytes(`%PDF-1.4\n${filler}\n3 0 obj << /Type /Page /MediaBox [ 0 0 90 45 ] >>`);
+    expect(imageInfo(atEnd)).toEqual({ kind: "pdf", box: [0, 0, 90, 45], rotate: 0 });
+    const atStart = bytes(`%PDF-1.4\n<< /MediaBox [0 0 90 45] /Rotate\n90 >>\n${filler}`);
+    expect(imageInfo(atStart)).toEqual({ kind: "pdf", box: [0, 0, 90, 45], rotate: 90 });
+    // A box written by reference, or with no space between its numbers, is not one.
+    expect(imageInfo(pdf("/MediaBox 5 0 R /CropBox [0 0 10-10 10]"))).toBeUndefined();
+    expect(imageInfo(pdf("/MediaBox [-.5 0 .5e 1]"))).toBeUndefined();
+    expect(imageInfo(pdf("/MediaBox [-.5 0 .5 1] /Rotate 450"))).toEqual({
+      kind: "pdf",
+      box: [-0.5, 0, 0.5, 1],
+      rotate: 90,
+    });
+  });
+
+  test("of a PDF made to be slow to read, in time linear in its length", () => {
+    // The reviewers' files: a crop box of 200,000 digits, which a regular expression read in time
+    // that grew with the square of its length (5 s at 200,000), and 40,000 object streams' markers
+    // before one `endstream`, each of which searched to the end (1.4 s at 40,000). Each is now read
+    // in about ten times what a tenth of it takes, in CPU time, as its length is ten times.
+    const digits = (n: number) => bytes(`%PDF-1.4\n/CropBox [${"1".repeat(n)}\n`);
+    const markers = (n: number) =>
+      bytes(`%PDF-1.5\n${"/Type/ObjStm stream\n".repeat(n)}endstream\n`);
+    for (const make of [digits, markers]) {
+      const small = make(make === digits ? 20_000 : 4_000);
+      const large = make(make === digits ? 200_000 : 40_000);
+      expect(imageInfo(large)).toBeUndefined();
+      const [short = 0, long = 0] = fastest(
+        [small, large].map((file) => () => imageInfo(file)),
+        5,
+      );
+      expect(long).toBeLessThan(bound(3 * 10, short));
+      expect(long).toBeLessThan(250);
+    }
+  }, 60_000);
+
+  test("of a PDF whose object streams inflate past what the reading allows, cut short", () => {
+    // 64 MB of zeros, and no box in them: inflating stops at 16 MB and a piece.
+    const bomb = zlibSync(new Uint8Array(64 * 1024 * 1024), { level: 9 });
+    const head =
+      "%PDF-1.5\n4 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /FlateDecode >>\nstream\n";
+    const file = new Uint8Array([...bytes(head), ...bomb, ...bytes("\nendstream\nendobj\n")]);
+    const took = cpuMs(() => expect(imageInfo(file)).toBeUndefined());
+    expect(took).toBeLessThan(2_000);
+  }, 60_000);
+
   test("of nothing that is not one it can read", () => {
     expect(imageInfo(bytes("Invented text, no image."))).toBeUndefined();
     expect(imageInfo(png(0, 20))).toBeUndefined();
@@ -228,12 +279,34 @@ describe("a stand-in", () => {
   });
 
   test("of a huge image keeps its size with fewer, larger pixels", () => {
+    // The intake drops an image past MAX_SIDE; a caller that asks for one gets its size still.
     const huge: RasterInfo = { kind: "png", width: 40_000, height: 30_000, xdpi: 300, ydpi: 300 };
+    expect(tooLarge(huge)).toBe(true);
     const back = raster(imageInfo(standIn(huge)));
     expect(back.width * back.height).toBeLessThan(huge.width * huge.height);
     const [, , width, height] = boundingBox(back);
     expect(width).toBeCloseTo(9600, -1);
     expect(height).toBeCloseTo(7200, -1);
+  });
+
+  test("of the largest image the intake stands in for costs next to nothing, and keeps every pixel", () => {
+    const largest: RasterInfo = {
+      kind: "png",
+      width: MAX_SIDE,
+      height: MAX_SIDE,
+      xdpi: 72,
+      ydpi: 72,
+    };
+    expect(tooLarge(largest)).toBe(false);
+    expect(tooLarge({ ...largest, height: MAX_SIDE + 1 })).toBe(true);
+    let made: Uint8Array = new Uint8Array();
+    // Compressing its 12.5 MB of zeros took 60 to 70 ms at level 1; writing them takes under 1.
+    expect(cpuMs(() => (made = standIn(largest)))).toBeLessThan(50);
+    expect(made.length).toBeLessThan(100_000);
+    expect(raster(imageInfo(made))).toMatchObject({ width: MAX_SIDE, height: MAX_SIDE });
+    // A header of 2^31 by 2^31, which the intake drops, is quick to stand in for all the same.
+    const header: RasterInfo = { ...largest, width: 2 ** 31 - 1, height: 2 ** 31 - 1 };
+    expect(cpuMs(() => standIn(header))).toBeLessThan(250);
   });
 
   test("of a PDF is a blank page of its box and rotation, whose table of objects is right", () => {
@@ -256,6 +329,34 @@ describe("a stand-in", () => {
   test("of a file the upload lacks is 1 by 1", () => {
     expect(boundingBox(raster(imageInfo(standIn(ONE_BY_ONE))))).toEqual([0, 0, 1, 1]);
     expect(imageInfo(standIn(ONE_POINT_PDF))).toEqual(ONE_POINT_PDF);
+  });
+});
+
+describe("a zlib stream of zeros", () => {
+  /** Adler-32, computed as zlib does, independently of the writer. */
+  const adler32 = (data: Uint8Array) => {
+    let a = 1;
+    let b = 0;
+    for (const byte of data) {
+      a = (a + byte) % 65521;
+      b = (b + a) % 65521;
+    }
+    return ((b << 16) | a) >>> 0;
+  };
+
+  test("inflates to that many zeros, at every length a copy's codes can end on", () => {
+    for (const length of [
+      0, 1, 2, 3, 4, 10, 11, 258, 259, 260, 261, 262, 516, 517, 1000, 65_521, 100_003,
+    ]) {
+      const stream = zlibOfZeros(length);
+      const data = unzlibSync(stream);
+      expect(data.length, String(length)).toBe(length);
+      expect(data.every((byte) => byte === 0)).toBe(true);
+      const view = new DataView(stream.buffer, stream.byteOffset, stream.byteLength);
+      expect(view.getUint32(stream.length - 4), String(length)).toBe(adler32(data));
+      // The header is zlib's: its check makes it a multiple of 31.
+      expect((stream[0] ?? 0) * 256 + (stream[1] ?? 0)).toSatisfy((n: number) => n % 31 === 0);
+    }
   });
 });
 

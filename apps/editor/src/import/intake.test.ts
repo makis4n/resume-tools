@@ -1,5 +1,6 @@
 import { strToU8, zipSync, zlibSync } from "fflate";
 import { describe, expect, test } from "vitest";
+import { cpuMs } from "../test/timing";
 import { readTree } from "./fonts";
 import { imageInfo } from "./images";
 import { CAPS, decodeText, type Intake, intake, treeImages } from "./intake";
@@ -264,6 +265,106 @@ describe("the job", () => {
     expect(Object.keys(beside.files)).toEqual([]);
   });
 
+  test("rewrites a path above the main file's folder to the job's path of what it names", () => {
+    const result = taken({
+      "src/cv.tex": whole(
+        "\\documentclass{article}",
+        "\\usepackage{graphicx}",
+        "\\graphicspath{{../img/}}",
+        "\\input{../common/part} % \\input{../common/commented}",
+        "\\includegraphics[width=1cm]{../img/badge.png}",
+        "\\includegraphics{photo.png}",
+        "\\includegraphics{../img/lacked.png}",
+        "\\addbibresource{../refs/invented.bib}",
+        "\\includegraphics{../../outside.png}",
+      ),
+      "img/photo.png": png(40, 20),
+      "img/badge.png": png(10, 10),
+      "common/part.tex": "\\includegraphics{../img/badge.png}",
+      "refs/invented.bib": "@misc{invented}",
+    });
+    expect(result.main.text).toContain("\\graphicspath{{img/}}");
+    expect(result.main.text).toContain("\\input{common/part} % \\input{../common/commented}");
+    expect(result.main.text).toContain("\\includegraphics[width=1cm]{img/badge.png}");
+    expect(result.main.text).toContain("\\addbibresource{refs/invented.bib}");
+    expect(result.main.text).toContain("\\includegraphics{../../outside.png}");
+    expect(text(result.main.bytes)).toBe(result.main.text);
+    // The file the main file inputs is read, and rewritten, too.
+    expect(text(result.files["common/part.tex"])).toBe("\\includegraphics{img/badge.png}");
+    // The photo is found through the folder, at its size; one the upload lacks is missing.
+    expect(result.images.replaced).toEqual([
+      { name: "img/badge.png", path: "img/badge.png", kind: "png" },
+      { name: "img/photo.png", path: "img/photo.png", kind: "png" },
+      { name: "img/lacked.png", path: "img/lacked.png", kind: "png", missing: true },
+    ]);
+    expect(result.images.dropped).toEqual([{ name: "../../outside.png", why: "outside" }]);
+    expect(result.warnings).toEqual([
+      "../img/ is read as img/, the upload's path it names: this editor reads nothing above the main file's folder.",
+      "../common/part is read as common/part, the upload's path it names: this editor reads nothing above the main file's folder.",
+      "../img/badge.png is read as img/badge.png, the upload's path it names: this editor reads nothing above the main file's folder.",
+      "../img/lacked.png is read as img/lacked.png, the upload's path it names: this editor reads nothing above the main file's folder.",
+      "../refs/invented.bib is read as refs/invented.bib, the upload's path it names: this editor reads nothing above the main file's folder.",
+    ]);
+  });
+
+  test("keeps a path above the main file's folder whose job path holds another of the upload's files", () => {
+    const result = taken({
+      "src/cv.tex": whole("\\documentclass{article}", "\\input{../part}"),
+      "src/part.tex": "Invented, beside.",
+      "part.tex": "Invented, above.",
+    });
+    expect(result.main.text).toContain("\\input{../part}");
+    expect(result.warnings).toEqual([
+      "part.tex is left out: a file of the same path beside the main file comes first.",
+    ]);
+  });
+
+  test("sets \\pdfoutput to 0 where the main file or a file it inputs sets it above, and says so", () => {
+    const latin1 = new Uint8Array([
+      ...strToU8("\\pdfoutput=1\n\\documentclass{article}% caf"),
+      0xe9,
+      ...strToU8("\n\\input{part}\n\\begin{document}x\\end{document}\n"),
+    ]);
+    const result = taken({
+      "cv.tex": latin1,
+      "part.tex":
+        "\\ifnum\\pdfoutput=1 \\relax\\fi \\pdfoutput 1\\relax % \\pdfoutput=1\n\\global\\pdfoutput=0",
+    });
+    expect(result.main.bytes).toEqual(
+      new Uint8Array([...strToU8("\\pdfoutput=0"), ...latin1.subarray("\\pdfoutput=1".length)]),
+    );
+    expect(result.main.text.startsWith("\\pdfoutput=0\n")).toBe(true);
+    expect(text(result.files["part.tex"])).toBe(
+      "\\ifnum\\pdfoutput=1 \\relax\\fi \\pdfoutput=0\\relax % \\pdfoutput=1\n\\global\\pdfoutput=0",
+    );
+    expect(result.warnings).toEqual([
+      "cv.tex asks for PDF output, which this editor makes from DVI: it is compiled for DVI.",
+      "part.tex asks for PDF output, which this editor makes from DVI: it is compiled for DVI.",
+    ]);
+    // A UTF-8 file keeps its byte-order mark.
+    const marked = taken({
+      "cv.tex": new Uint8Array([
+        0xef,
+        0xbb,
+        0xbf,
+        ...strToU8(whole("\\pdfoutput=1", "\\documentclass{article}")),
+      ]),
+    });
+    expect([...marked.main.bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(text(marked.main.bytes)).toContain("\\pdfoutput=0");
+  });
+
+  test("reads each source once, in time linear in its length, however its brackets are laid out", () => {
+    // The reviewers' megabyte of `\input{`, none of which closes: each read it through the window
+    // of the next 8,192 characters, and it was read four times over, in 5.2 s of CPU time.
+    const unit = "\\input{";
+    const main = `\\documentclass{article}\n${unit.repeat(Math.floor(1_000_000 / unit.length))}\n\\begin{document}x\\end{document}\n`;
+    const bytes = zip({ "cv.tex": main });
+    let result: Intake | Refusal | undefined;
+    expect(cpuMs(() => (result = intake({ name: "cv.zip", bytes })))).toBeLessThan(1_000);
+    expect(result && !isRefusal(result) && result.engine).toBe("pdftex");
+  }, 60_000);
+
   test("keeps a file beside the main file over one of the same path above it", () => {
     const result = taken({
       "cv/cv.tex": whole("\\documentclass{article}"),
@@ -319,6 +420,26 @@ describe("the engine", () => {
       reason: "luatex",
       message: "This resume needs LuaTeX, which this editor does not have.",
     });
+  });
+
+  test("refuses a source that sets LuaTeX's PDF settings, and takes one that asks after them", () => {
+    for (const command of ["pdfvariable", "pdfextension", "pdffeedback"])
+      expect(
+        refused(
+          intake({
+            name: "cv.tex",
+            bytes: strToU8(whole("\\documentclass{article}", `\\${command} compresslevel=0`)),
+          }),
+        ),
+        command,
+      ).toMatchObject({ reason: "luatex" });
+    const asks = taken({
+      "cv.tex": whole(
+        "\\documentclass{article}",
+        "\\ifdefined\\pdfvariable \\pdfvariable compresslevel=0 \\else \\pdfcompresslevel=0 \\fi",
+      ),
+    });
+    expect([asks.engine, asks.source]).toEqual(["pdftex", "both"]);
   });
 
   test("counts a package loaded only if present when the tree or the upload has it", () => {
@@ -433,12 +554,124 @@ describe("images", () => {
       "photo.pdf": png(10, 10),
     });
     expect(result.images.dropped).toEqual([
-      { name: "figures/chart.eps", why: "format" },
-      { name: "figures/chart.svg", why: "format" },
-      { name: "broken.png", why: "unreadable" },
-      { name: "photo.pdf", why: "unreadable" },
+      { name: "figures/chart.eps", why: "format", path: "figures/chart.eps" },
+      { name: "figures/chart.svg", why: "format", path: "figures/chart.svg" },
+      { name: "broken.png", why: "unreadable", path: "broken.png" },
+      { name: "photo.pdf", why: "unreadable", path: "photo.pdf" },
     ]);
     expect(Object.keys(result.files)).toEqual([]);
+  });
+
+  test("past 10,000 pixels on a side are dropped as unreadable, with a warning, at little cost", () => {
+    // PNG headers of 2^31 by 2^31 pixels, which cost a stand-in 60 to 100 ms each to make, and
+    // 50 of them five seconds.
+    const huge = png(2 ** 31 - 1, 2 ** 31 - 1);
+    const one = taken({ "cv.tex": whole("\\documentclass{article}"), "huge.png": huge });
+    expect(one.images).toEqual({
+      replaced: [],
+      dropped: [{ name: "huge.png", why: "unreadable", path: "huge.png" }],
+    });
+    expect(one.warnings).toEqual([
+      "huge.png is left out: at 2,147,483,647 by 2,147,483,647 pixels, it is larger than this editor stands in for, 10,000 pixels on a side.",
+    ]);
+    expect(
+      taken({ "cv.tex": whole("\\documentclass{article}"), "wide.png": png(10_001, 1) }).images
+        .dropped,
+    ).toHaveLength(1);
+    expect(
+      taken({ "cv.tex": whole("\\documentclass{article}"), "edge.png": png(10_000, 10_000) }).images
+        .replaced,
+    ).toHaveLength(1);
+    const fifty = zip({
+      "cv.tex": whole("\\documentclass{article}"),
+      ...Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`huge${i}.png`, huge])),
+    });
+    let result: Intake | Refusal | undefined;
+    expect(cpuMs(() => (result = intake({ name: "cv.zip", bytes: fifty })))).toBeLessThan(500);
+    expect(result && !isRefusal(result) && result.images.dropped).toHaveLength(50);
+  });
+
+  test("beside the main file come before one of the same path above it, which is reported", () => {
+    const result = taken({
+      "zz/cv.tex": whole("\\documentclass{article}", "\\includegraphics{img/photo.png}"),
+      "zz/img/photo.png": png(400, 200),
+      "img/photo.png": png(40, 20),
+    });
+    expect(result.images.replaced).toEqual([
+      { name: "zz/img/photo.png", path: "img/photo.png", kind: "png" },
+    ]);
+    expect(imageInfo(result.files["img/photo.png"] ?? new Uint8Array())).toMatchObject({
+      width: 400,
+    });
+    expect(result.images.dropped).toEqual([{ name: "img/photo.png", why: "duplicate" }]);
+    expect(result.warnings).toEqual([
+      "img/photo.png is left out: an image of the same path beside the main file comes first.",
+    ]);
+  });
+
+  test("of one name have one .xbb, of the image graphicx takes for the name, the other shadowed", () => {
+    const files = {
+      "cv.tex": whole(
+        "\\documentclass{article}",
+        "\\usepackage{graphicx}",
+        "\\includegraphics{logo}",
+      ),
+      "logo.png": png(40, 20),
+      "logo.pdf": pdf("0 0 200 100"),
+    };
+    const result = taken(files);
+    expect(text(result.files["logo.xbb"])).toContain("%%BoundingBox: 0 0 200 100\n");
+    expect(result.warnings).toEqual([
+      "logo.png is shadowed by logo.pdf, of the same name, which graphicx takes when the document names neither's extension.",
+    ]);
+    // Named with its extension, the PNG reads the PDF's size, which a second warning says.
+    const named = taken({
+      ...files,
+      "cv.tex": whole(
+        "\\documentclass{article}",
+        "\\usepackage{graphicx}",
+        "\\includegraphics{logo.png}",
+      ),
+    });
+    expect(text(named.files["logo.xbb"])).toContain("%%BoundingBox: 0 0 200 100\n");
+    expect(named.warnings).toContain(
+      "logo.png is shown at the size of logo.pdf: on pdfTeX, this editor sizes the two by the name they share.",
+    );
+    // A stand-in for a name the upload lacks keeps an upload's image's size for their name.
+    const lacked = taken({
+      "cv.tex": whole("\\documentclass{article}", "\\includegraphics{photo.jpg}"),
+      "photo.png": png(40, 20),
+    });
+    expect(text(lacked.files["photo.xbb"])).toContain("%%BoundingBox: 0 0 40 20\n");
+  });
+
+  test("in a format with no stand-in get none for a name that finds only them, and are listed once", () => {
+    const eps = "%!PS-Adobe-3.0 EPSF-3.0 invented";
+    const bare = taken({
+      "cv.tex": whole("\\documentclass{article}", "\\includegraphics{figure}"),
+      "figure.eps": eps,
+    });
+    expect(bare.images).toEqual({
+      replaced: [],
+      dropped: [{ name: "figure.eps", why: "format", path: "figure.eps" }],
+    });
+    expect(bare.files["figure.png"]).toBeUndefined();
+    const named = taken({
+      "cv/cv.tex": whole("\\documentclass{article}", "\\includegraphics{figure.eps}"),
+      "cv/figure.eps": eps,
+      // A file at the top, so that cv/ is not the zip's wrapping folder.
+      "README.md": "Invented.",
+    });
+    expect(named.images.dropped).toEqual([
+      { name: "cv/figure.eps", why: "format", path: "figure.eps" },
+    ]);
+    // A PNG of the name comes before the EPS in graphicx's order, and stands in as ever.
+    const both = taken({
+      "cv.tex": whole("\\documentclass{article}", "\\includegraphics{figure}"),
+      "figure.eps": eps,
+      "figure.png": png(40, 20),
+    });
+    expect(both.images.replaced).toEqual([{ name: "figure.png", path: "figure.png", kind: "png" }]);
   });
 
   test("never reach the job as they were", () => {

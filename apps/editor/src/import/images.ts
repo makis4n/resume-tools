@@ -14,7 +14,7 @@
  * thing it cannot read, and an image it cannot read is none (`imageInfo` gives undefined).
  */
 
-import { unzlibSync, zlibSync } from "fflate";
+import { Unzlib } from "fflate";
 
 /** A PNG's or a JPEG's size and resolution. */
 export interface RasterInfo {
@@ -129,22 +129,39 @@ function pngInfo(bytes: Uint8Array): RasterInfo | undefined {
 }
 
 /**
- * The most bytes a stand-in's image data may take before it is compressed: a 1-bit image of
- * 11,000 by 11,000 pixels. A stand-in for a larger one keeps its size with fewer, larger pixels.
+ * The most pixels a PNG or a JPEG may have on a side to be stood in for; the intake drops a larger
+ * one as unreadable (decision 0019). A stand-in of 10,000 by 10,000 pixels is 12.5 MB of image
+ * data to xdvipdfmx, which reads it all to make the PDF, where a header can say 2^31 on a side.
+ */
+export const MAX_SIDE = 10_000;
+
+/** Whether an image has more pixels on a side than a stand-in is made for (MAX_SIDE). */
+export const tooLarge = (info: ImageInfo) =>
+  info.kind !== "pdf" && (info.width > MAX_SIDE || info.height > MAX_SIDE);
+
+/**
+ * The most bytes a stand-in's image data may take unpacked, which xdvipdfmx reads all of: a 1-bit
+ * image of 11,000 by 11,000 pixels, past MAX_SIDE. A stand-in for a larger one, which only a
+ * caller past the intake's cap asks for, keeps its size with fewer, larger pixels.
  */
 const MAX_RAW = 16 * 1024 * 1024;
 
 /**
  * A transparent PNG of the image's pixels and resolution: one bit of grey a pixel, every pixel the
- * grey `tRNS` makes transparent, which compresses to almost nothing. A PNG's own `pHYs` goes in as
+ * grey `tRNS` makes transparent, so that its image data is zero bytes alone, which are written as
+ * a compressed stream directly (`zlibOfZeros`), never held unpacked. A PNG's own `pHYs` goes in as
  * it was; a JPEG's resolution becomes one, in pixels per metre, as PNG records it, unless it is 72
  * dots per inch, the engines' default. An image past MAX_RAW keeps its size in points with pixels
  * as many times larger as it takes.
  */
 function standInPng(info: RasterInfo): Uint8Array {
   const rawOf = (width: number, height: number) => (1 + Math.ceil(width / 8)) * height;
-  let scale = 1;
-  while (rawOf(Math.ceil(info.width / scale), Math.ceil(info.height / scale)) > MAX_RAW) scale++;
+  const fits = (scale: number) =>
+    rawOf(Math.ceil(info.width / scale), Math.ceil(info.height / scale)) <= MAX_RAW;
+  // Near the least scale that fits from the start, so that a header of 2^31 by 2^31 takes a few
+  // steps to it and not hundreds of thousands.
+  let scale = Math.max(1, Math.floor(Math.sqrt((info.width * info.height) / 8 / MAX_RAW)));
+  while (!fits(scale)) scale++;
   const width = Math.ceil(info.width / scale);
   const height = Math.ceil(info.height / scale);
   const header = new Uint8Array(13);
@@ -164,9 +181,81 @@ function standInPng(info: RasterInfo): Uint8Array {
   if (phys !== undefined) chunks.push(chunk("pHYs", phys));
   chunks.push(chunk("tRNS", new Uint8Array([0, 0])));
   // Every row is a filter byte, 0, and pixels of grey 0, the transparent one.
-  chunks.push(chunk("IDAT", zlibSync(new Uint8Array(rawOf(width, height)), { level: 9 })));
+  chunks.push(chunk("IDAT", zlibOfZeros(rawOf(width, height))));
   chunks.push(chunk("IEND", new Uint8Array(0)));
   return concat([new Uint8Array(PNG_SIGNATURE), ...chunks]);
+}
+
+/** The lengths deflate's length codes 257 to 285 start at, and their extra bits. */
+const LENGTH_BASE = [
+  ...[3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115],
+  ...[131, 163, 195, 227, 258],
+];
+const LENGTH_EXTRA = [
+  ...[0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0],
+];
+
+/**
+ * A zlib stream of `length` zero bytes, written directly rather than compressed: one block of
+ * deflate's fixed codes, a literal 0 and then copies of the byte before, 258 at a time, 13 bits
+ * for each, and the Adler-32 of zeros. It costs a copy for each 258 bytes it stands for, where
+ * compressing 12.5 MB of them took 60 ms at level 1, and holds no unpacked data at all.
+ */
+export function zlibOfZeros(length: number): Uint8Array {
+  const out = new Uint8Array(16 + Math.ceil((13 * Math.ceil(length / 258)) / 8));
+  let at = 2;
+  let bits = 0;
+  let count = 0;
+  /** Write `n` bits of `value`, its lowest first, as deflate packs numbers. */
+  const put = (value: number, n: number) => {
+    bits |= value << count;
+    count += n;
+    while (count >= 8) {
+      out[at++] = bits & 0xff;
+      bits >>>= 8;
+      count -= 8;
+    }
+  };
+  /** Write a code of `n` bits, its highest first, as deflate packs Huffman codes. */
+  const code = (value: number, n: number) => {
+    let reversed = 0;
+    for (let i = 0; i < n; i++) reversed |= ((value >> i) & 1) << (n - 1 - i);
+    put(reversed, n);
+  };
+  /** A fixed code for a literal or length symbol from 0 to 287. */
+  const symbol = (s: number) => {
+    if (s < 144) code(0x30 + s, 8);
+    else if (s < 256) code(0x190 + s - 144, 9);
+    else if (s < 280) code(s - 256, 7);
+    else code(0xc0 + s - 280, 8);
+  };
+  /** A copy of `n` bytes, 3 to 258, from one byte back, at distance code 0. */
+  const copy = (n: number) => {
+    let index = LENGTH_BASE.length - 1;
+    while ((LENGTH_BASE[index] ?? 0) > n) index--;
+    symbol(257 + index);
+    put(n - (LENGTH_BASE[index] ?? 0), LENGTH_EXTRA[index] ?? 0);
+    code(0, 5);
+  };
+  // zlib's header: deflate with a 32 KB window, no dictionary, the fastest level.
+  out[0] = 0x78;
+  out[1] = 0x01;
+  put(1, 1); // the last block
+  put(1, 2); // of fixed codes
+  let left = length;
+  if (left > 0) {
+    symbol(0);
+    left--;
+  }
+  for (; left >= 258; left -= 258) copy(258);
+  if (left >= 3) copy(left);
+  else for (; left > 0; left--) symbol(0);
+  symbol(256);
+  if (count > 0) put(0, 8 - count);
+  // Adler-32 of zeros: its sum stays 1, and the sum of sums is the length.
+  const adler = (((length % 65521) << 16) | 1) >>> 0;
+  new DataView(out.buffer).setUint32(at, adler);
+  return out.slice(0, at + 4);
 }
 
 /** A PNG chunk: its length, type, data and CRC. */
@@ -301,55 +390,191 @@ function exifDensity(data: Uint8Array): { xdpi: number; ydpi: number } | undefin
 
 // PDF.
 
-const NUMBER = String.raw`(-?(?:\d+\.?\d*|\.\d+))`;
-const BOX = (name: string) =>
-  new RegExp(String.raw`/${name}\s*\[\s*${NUMBER}\s+${NUMBER}\s+${NUMBER}\s+${NUMBER}\s*\]`);
-const CROP_BOX = BOX("CropBox");
-const MEDIA_BOX = BOX("MediaBox");
-const ROTATE = /\/Rotate\s+(-?\d+)/;
+/**
+ * How much of a PDF's start and of its end its boxes are looked for in, in bytes: a page's
+ * dictionary is near one or the other, before the images and fonts it shows or after them, and
+ * reading no more keeps a PDF of any size to the same work.
+ */
+const PDF_WINDOW = 256 * 1024;
 
-/** The most bytes the object streams a PDF's boxes are looked for in may inflate to, together. */
+/**
+ * The most bytes the object streams a PDF's boxes are looked for in may inflate to, together,
+ * each stream tried charged what it cost whether or not it inflates, and the most streams tried.
+ */
 const MAX_INFLATED = 16 * 1024 * 1024;
+const MAX_OBJECT_STREAMS = 32;
+
+/** Compressed bytes given the inflater at a time, which inflate to 1 MB at most. */
+const INFLATE_PIECE = 1024;
 
 /**
  * A PDF's first page's box and rotation, read from its text: the first crop box, or media box when
- * there is none, and the first rotation. A PDF an image is made from has one page, whose box its
- * page or its page tree gives. When its plain text gives no box, its compressed object streams,
- * where PDF 1.5 keeps its dictionaries, are inflated, within MAX_INFLATED, and read too.
+ * there is none, and the first rotation, in its first and last PDF_WINDOW bytes. A PDF an image is
+ * made from has one page, whose box its page or its page tree gives. When that text gives no box,
+ * its compressed object streams, where PDF 1.5 keeps its dictionaries, are inflated and read, in
+ * one pass over the file's streams, within MAX_INFLATED and MAX_OBJECT_STREAMS. Every search moves
+ * forward and every number is read over a bounded number of characters, so that the work is
+ * linear in the file's length however it is laid out.
  */
 function pdfInfo(bytes: Uint8Array): PdfInfo | undefined {
-  const plain = latin1(bytes);
-  const found = pageBox(plain);
-  if (found) return found;
-  let budget = MAX_INFLATED;
-  const streams = /\/Type\s*\/ObjStm[\s\S]{0,512}?stream\r?\n/g;
-  for (const match of plain.matchAll(streams)) {
-    const start = match.index + match[0].length;
-    const end = plain.indexOf("endstream", start);
-    if (end < 0 || budget <= 0) break;
-    let inflated: Uint8Array;
-    try {
-      inflated = unzlibSync(bytes.subarray(start, end), { out: new Uint8Array(budget) });
-    } catch {
-      continue;
+  const text =
+    bytes.length <= 2 * PDF_WINDOW
+      ? latin1(bytes)
+      : `${latin1(bytes.subarray(0, PDF_WINDOW))}\n${latin1(bytes.subarray(-PDF_WINDOW))}`;
+  return pageBox(text) ?? objectStreamBox(bytes);
+}
+
+/** The box and rotation a PDF's text gives, if it gives a box. */
+function pageBox(text: string): PdfInfo | undefined {
+  const box = firstBox(text, "/CropBox") ?? firstBox(text, "/MediaBox");
+  if (box === undefined) return undefined;
+  const [left, bottom, right, top] = box;
+  if (right <= left || top <= bottom) return undefined;
+  const turned = firstRotate(text) ?? 0;
+  const rotate = turned % 90 === 0 ? ((turned % 360) + 360) % 360 : 0;
+  return { kind: "pdf", box: [left, bottom, right, top], rotate };
+}
+
+/** PDF's white-space characters. */
+const WHITE = new Set(["\0", "\t", "\n", "\f", "\r", " "]);
+
+/** The most white space read between two tokens of a box or a rotation. */
+const MAX_WHITE = 64;
+
+/** The most characters a number of a box or a rotation is read over. */
+const MAX_NUMBER = 32;
+
+/** The index after the white space at `at`, or undefined past MAX_WHITE characters of it. */
+function skipWhite(text: string, at: number): number | undefined {
+  const stop = at + MAX_WHITE;
+  while (at < text.length && WHITE.has(text[at] ?? "")) if (++at > stop) return undefined;
+  return at;
+}
+
+/**
+ * The number at `at`, a minus, digits and a point, as PDF writes a real, and the index after it;
+ * or undefined when there is none, or it runs past MAX_NUMBER characters.
+ */
+function readNumber(text: string, at: number): { value: number; end: number } | undefined {
+  let end = at;
+  if (text[end] === "-") end++;
+  let digits = 0;
+  let point = false;
+  for (; end < text.length && end - at <= MAX_NUMBER; end++) {
+    const char = text[end] ?? "";
+    if (char >= "0" && char <= "9") digits++;
+    else if (char === "." && !point) point = true;
+    else break;
+  }
+  if (digits === 0 || end - at > MAX_NUMBER) return undefined;
+  const value = Number(text.slice(at, end));
+  return Number.isFinite(value) ? { value, end } : undefined;
+}
+
+/**
+ * The first box of the name, `/CropBox` or `/MediaBox`, whose array of four numbers the text
+ * gives in place, as `[0 0 612 792]`, each number after white space.
+ */
+function firstBox(text: string, name: string): [number, number, number, number] | undefined {
+  for (let found = text.indexOf(name); found >= 0; found = text.indexOf(name, found + 1)) {
+    let at = skipWhite(text, found + name.length);
+    if (at === undefined || text[at] !== "[") continue;
+    const numbers: number[] = [];
+    for (let i = 0; i < 4 && at !== undefined; i++) {
+      const start: number | undefined = skipWhite(text, at + (i === 0 ? 1 : 0));
+      if (start === undefined || (i > 0 && start === at)) break;
+      const number = readNumber(text, start);
+      if (number === undefined) break;
+      numbers.push(number.value);
+      at = number.end;
     }
-    budget -= inflated.length;
-    const box = pageBox(latin1(inflated));
+    const close = numbers.length === 4 && at !== undefined ? skipWhite(text, at) : undefined;
+    if (close === undefined || text[close] !== "]") continue;
+    const [left = 0, bottom = 0, right = 0, top = 0] = numbers;
+    return [left, bottom, right, top];
+  }
+  return undefined;
+}
+
+/** The first `/Rotate` the text gives as a whole number after white space. */
+function firstRotate(text: string): number | undefined {
+  const name = "/Rotate";
+  for (let found = text.indexOf(name); found >= 0; found = text.indexOf(name, found + 1)) {
+    const at = skipWhite(text, found + name.length);
+    if (at === undefined || at === found + name.length) continue;
+    const digits = /^-?\d{1,32}(?!\d)/.exec(text.slice(at, at + MAX_NUMBER + 2))?.[0];
+    if (digits !== undefined) return Number(digits);
+  }
+  return undefined;
+}
+
+const STREAM = [..."stream"].map((char) => char.charCodeAt(0));
+const ENDSTREAM = [..."endstream"].map((char) => char.charCodeAt(0));
+
+/** Where `pattern` next is in `bytes` from `from`, or -1. */
+function find(bytes: Uint8Array, pattern: readonly number[], from: number): number {
+  const [first = 0] = pattern;
+  for (let at = bytes.indexOf(first, from); at >= 0; at = bytes.indexOf(first, at + 1))
+    if (pattern.every((byte, i) => bytes[at + i] === byte)) return at;
+  return -1;
+}
+
+/**
+ * The box and rotation of the first page a PDF's compressed object streams give: one pass over
+ * the file's `stream` and `endstream` pairs, each pair's data inflated when the dictionary before
+ * it says `/ObjStm`, MAX_OBJECT_STREAMS of them at most, their costs within MAX_INFLATED.
+ */
+function objectStreamBox(bytes: Uint8Array): PdfInfo | undefined {
+  let budget = MAX_INFLATED;
+  let tried = 0;
+  /** Where the last stream ended, before which no dictionary of a later one is looked for. */
+  let ended = 0;
+  let from = 0;
+  for (let at = find(bytes, STREAM, from); at >= 0; at = find(bytes, STREAM, from)) {
+    from = at + 1;
+    // The keyword, not `endstream`'s end, followed by the end of its line; the data after it.
+    const eol =
+      bytes[at + 6] === 0x0d && bytes[at + 7] === 0x0a ? 2 : bytes[at + 6] === 0x0a ? 1 : 0;
+    if (eol === 0 || latin1(bytes.subarray(Math.max(0, at - 3), at)) === "end") continue;
+    const start = at + 6 + eol;
+    const end = find(bytes, ENDSTREAM, start);
+    if (end < 0) return undefined;
+    const dictionary = latin1(bytes.subarray(Math.max(ended, at - 512), at));
+    ended = end + ENDSTREAM.length;
+    from = ended;
+    if (!/\/Type\s*\/ObjStm/.test(dictionary)) continue;
+    if (++tried > MAX_OBJECT_STREAMS || budget <= 0) return undefined;
+    const inflated = inflateWithin(bytes.subarray(start, end), budget);
+    budget -= inflated.cost;
+    const box = inflated.bytes === undefined ? undefined : pageBox(latin1(inflated.bytes));
     if (box) return box;
   }
   return undefined;
 }
 
-/** The box and rotation a PDF's text gives, if it gives a box. */
-function pageBox(text: string): PdfInfo | undefined {
-  const match = CROP_BOX.exec(text) ?? MEDIA_BOX.exec(text);
-  if (!match) return undefined;
-  const [left = 0, bottom = 0, right = 0, top = 0] = match.slice(1).map(Number);
-  if (![left, bottom, right, top].every(Number.isFinite) || right <= left || top <= bottom)
-    return undefined;
-  const turned = Number(ROTATE.exec(text)?.[1] ?? 0);
-  const rotate = Number.isInteger(turned) && turned % 90 === 0 ? ((turned % 360) + 360) % 360 : 0;
-  return { kind: "pdf", box: [left, bottom, right, top], rotate };
+/**
+ * A zlib stream inflated a piece at a time, stopping once its output passes `budget`: what it gave,
+ * which is none when it could not be inflated, and what it cost, the bytes it read or gave, the
+ * more of the two, whether or not it could be.
+ */
+function inflateWithin(data: Uint8Array, budget: number): { bytes?: Uint8Array; cost: number } {
+  const parts: Uint8Array[] = [];
+  let given = 0;
+  const inflater = new Unzlib((part) => {
+    parts.push(part);
+    given += part.length;
+  });
+  let read = 0;
+  try {
+    while (read < data.length && given <= budget) {
+      const piece = data.subarray(read, read + INFLATE_PIECE);
+      read += piece.length;
+      inflater.push(piece, read >= data.length);
+    }
+  } catch {
+    return { cost: Math.max(read, given, 1) };
+  }
+  return { bytes: concat(parts), cost: Math.max(read, given, 1) };
 }
 
 /**

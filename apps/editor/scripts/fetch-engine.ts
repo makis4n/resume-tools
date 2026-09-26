@@ -78,7 +78,7 @@ const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELE
  * font maps into `pdftex.map`, so a change to any of them rebuilds it there; a `.engine/` built on
  * a machine is rebuilt only by the bump or by a change to `PACKAGES`.
  */
-const LAYOUT = 5;
+const LAYOUT = 6;
 
 /** Release files with their SHA-256 and size, recorded from the copies the spike measured. */
 const ASSETS: Record<string, { sha256: string; size: number }> = {
@@ -183,6 +183,11 @@ const DATABASE = {
  * fontawesome, Font Awesome 4, for its package and its `FontAwesome.otf`; biblatex, whose
  * `depend` brings logreq; tex-gyre; ulem; academicons; soul; and plex. Their style files load
  * nothing the tree lacks, and ask fontenc for T1, LY1 and OT1 only.
+ *
+ * Then, by the same rule, what the reference compile's refusals over the corpus name (decision
+ * 0019), which reading source cannot see: lm-math, for `latinmodern-math.otf`, unicode-math's
+ * default math font, which Awesome-CV's class loads; babel's French and German; biblatex's IEEE
+ * style; and tipa, for its T3 encoding's `t3enc.def`.
  */
 const WANTED = [
   "pgf",
@@ -201,6 +206,11 @@ const WANTED = [
   "academicons",
   "soul",
   "plex",
+  "lm-math",
+  "babel-french",
+  "babel-german",
+  "biblatex-ieee",
+  "tipa",
 ];
 
 /** A package's container of run files in the archive: its revision, size and SHA-512. */
@@ -225,11 +235,29 @@ const PACKAGES: Record<string, Container> = {
     sha512:
       "10fed2cdb2533a7291626eee2f3d46e79fe972eadd83cf7177f22228dcd13422549819dc5e1cf0b03e8397e23badc02a965857aca886ba004a3279efeb49b288",
   },
+  "babel-french": {
+    revision: 70261,
+    size: 15772,
+    sha512:
+      "5a0ad21862209980813cf8b6a89884ca977bbd2036b3e9c6217d2ae0f69f4c0e9567bf07afa4c9e75cdc6959b3169f270de38c9307c531a44b5ba07707c2e1e0",
+  },
+  "babel-german": {
+    revision: 69506,
+    size: 4208,
+    sha512:
+      "372ba15d67ae4a5299a8d193d4fbe1c01a89db686c4d152ce2fef05088be63e7d85a7cf4fb712629d1ec8b21517bf3881ad3de947e03e127af940714a6d059ec",
+  },
   biblatex: {
     revision: 66403,
     size: 254400,
     sha512:
       "e07cd6233021bbe2f3591f866c3b3eeae083574f705da9505f6bcbb7284c243ac7f24440253c4557f0a300e9995188bf5915a42643e63eb80ff9e0fa4ffaff1c",
+  },
+  "biblatex-ieee": {
+    revision: 61243,
+    size: 5564,
+    sha512:
+      "2f4dd68ea556dc56fde888294bd9a3368efcf4099b95b0c90e60225c3b99181de52b406a7e40a09792b6b58410174d74d774a0aeb1feb4c8bef69fd513861303",
   },
   fontawesome: {
     revision: 48145,
@@ -248,6 +276,12 @@ const PACKAGES: Record<string, Container> = {
     size: 12721308,
     sha512:
       "2f8454888913ec6a024c53cf157509b8b769f948ac2c92d0683e80ff8e22865545a6a65864876be35569bf4a5d56ed871c8112b216561e3ce585136bd062c9ce",
+  },
+  "lm-math": {
+    revision: 67718,
+    size: 377796,
+    sha512:
+      "2fad475b347824d564525de51ed5bd1cc7ab2fc27fd826a00e86ebabd7d85afce2f7a4c85d9620c9b66d14ea0c813a269a13843a0b27eb7d0ca3e294114aad26",
   },
   logreq: {
     revision: 53003,
@@ -314,6 +348,12 @@ const PACKAGES: Record<string, Container> = {
     size: 4652,
     sha512:
       "4864d0859490cd07e123e1160a35fb7817c3ffcc1f409a8c61285823f655357473e0dc7ab92434b5b552cbfca3e88d9181e57cf944d2422467b466cbdcd743a0",
+  },
+  tipa: {
+    revision: 29349,
+    size: 2876104,
+    sha512:
+      "7919b8f5a416cab24c02675ee0a24c60f64e9dfb3bbacb416eb74e29badf6b4dfd8a0528cc8b38dab6395b8c74ec5c808ad84d3a8d4ae5e8212691bed9066129",
   },
   ulem: {
     revision: 53365,

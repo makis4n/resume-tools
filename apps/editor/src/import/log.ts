@@ -7,7 +7,9 @@
  *
  * A log quotes the source it stopped in, so what these return is names alone: of classes,
  * packages, fonts, files and commands, as TeX and LaTeX name them, never a line of the log. The
- * session sets `max_print_line` high enough that TeX does not wrap the lines read here.
+ * session sets `max_print_line` high enough that TeX does not wrap the lines read here; a package's
+ * message that expl3 wraps itself, as fontspec's are, goes on in lines that start with the
+ * package's name in parentheses, which are read as one line with it (`firstError`).
  */
 
 import { summariseLog } from "../engine/log";
@@ -26,8 +28,23 @@ const ASKS_FOR_A_FILE = /^Type X to quit or <RETURN> to proceed,/;
 /** TeX's own error for a file `\input` names in its primitive form. */
 const CANNOT_FIND = /^I can't find file `(.+)'\.$/;
 
+/** XeTeX's error for a picture or a PDF it cannot load, as graphicx names one it could not find. */
+const CANNOT_LOAD_PICTURE = /^Unable to load picture or PDF file '(.+)'\.$/;
+
 /** fontspec's error for a font fontconfig or kpathsea cannot find. */
 const FONTSPEC_FONT = /^Package fontspec Error: The font "(.+)" cannot be found\.$/;
+
+/**
+ * LuaTeX's primitives, which only LuaTeX defines: a document that stops on one of them undefined
+ * needs LuaTeX. LuaTeX's PDF settings among them, `\pdfvariable`, `\pdfextension` and
+ * `\pdffeedback`, which a document written for LuaLaTeX sets as pdfTeX's are set.
+ */
+const LUATEX_PRIMITIVES: ReadonlySet<string> = new Set(
+  [
+    ...["directlua", "latelua", "luaescapestring", "luafunction", "luadef", "luatexversion"],
+    ...["pdfvariable", "pdfextension", "pdffeedback"],
+  ].map((name) => `\\${name}`),
+);
 
 /** TeX's error for a font it cannot load: pdfTeX's TFM, or XeTeX's installed font or file. */
 const NOT_LOADABLE = /^Font \S+?=(.+?)(?: at [\d.]+pt| scaled \d+)? not loadable: /;
@@ -67,12 +84,23 @@ const BABEL_PACKAGES: Readonly<Record<string, string>> = {
  */
 export const babelPackage = (option: string) => `babel-${BABEL_PACKAGES[option] ?? option}`;
 
-/** The first error of a log, `! ` taken off, and the lines after it. */
+/**
+ * The first error of a log, `! ` taken off, and the lines after it. A package's or a class's error
+ * that goes on in lines starting with its name in parentheses, as expl3 wraps fontspec's at about
+ * 79 columns whatever `max_print_line` says, is one line, each part after the first joined to it
+ * by a space: expl3 wraps between words.
+ */
 function firstError(log: string): { error: string; after: string[] } | undefined {
   const lines = log.split(/\r?\n/);
   const at = lines.findIndex((line) => line.startsWith("! "));
   if (at < 0) return undefined;
-  return { error: (lines[at] ?? "").slice(2), after: lines.slice(at + 1, at + 12) };
+  let error = (lines[at] ?? "").slice(2);
+  let next = at + 1;
+  const owner = /^(?:Fatal )?(?:Package|Class) (\S+) Error:/.exec(error)?.[1];
+  if (owner !== undefined)
+    for (const prefix = `(${owner})`; lines[next]?.startsWith(prefix); next++)
+      error += ` ${(lines[next] ?? "").slice(prefix.length).trim()}`;
+  return { error, after: lines.slice(next, next + 12) };
 }
 
 /** The first line after an error that is not blank. */
@@ -90,10 +118,20 @@ export function fontName(given: string): string {
 }
 
 /**
+ * A font's name as fontspec's error gives it, which is what the document asked for: a family's
+ * name, or a file's by a path, which is named by its file, `fonts/Invented` as `Invented`.
+ */
+export const fontspecName = (given: string) => given.slice(given.lastIndexOf("/") + 1).trim();
+
+/** Whether a path leads out of the main file's folder, where no stand-in or file can be. */
+const leavesFolder = (path: string) => path.startsWith("/") || path.split("/").includes("..");
+
+/**
  * Why a compile that stopped did, as a refusal: the template, package or file LaTeX could not
  * find, by the name it gives; the font fontspec or TeX could not load; LuaTeX, when an error says
- * only it will do; and stopped for anything else, with an undefined command's name, which is for
- * developers and never shown. The log goes with it, for developers.
+ * only it will do or the command it stopped on undefined is LuaTeX's; and stopped for anything
+ * else, with an undefined command's name, which is for developers and never shown. The log goes
+ * with it, for developers.
  */
 export function refusalOf(log: string): Refusal {
   const found = firstError(log);
@@ -106,21 +144,26 @@ export function refusalOf(log: string): Refusal {
     if (extension === ".sty") return refusal("package", file.slice(0, -4), log);
     return refusal("file", file, log);
   }
-  // A graphic named by a path out of the main file's folder, which no stand-in can take the place of.
-  if (file !== undefined && (file.startsWith("/") || file.split("/").includes("..")))
-    return refusal("file", file, log);
+  // A graphic named by a path out of the main file's folder, which no stand-in can take the place
+  // of, as graphicx, XeTeX or the job's graphics configuration names it.
+  const graphic = file ?? CANNOT_LOAD_PICTURE.exec(error)?.[1] ?? unsizedName(error);
+  if (graphic !== undefined && leavesFolder(graphic)) return refusal("file", graphic, log);
   const input = CANNOT_FIND.exec(error)?.[1];
   if (input !== undefined) return refusal("file", input, log);
-  const style = /^Package biblatex Error: Style '([^']+)' not found\.$/.exec(error)?.[1];
+  const style = /^Package biblatex Error: Style '([^']+)' not found\./.exec(error)?.[1];
   if (style !== undefined) return refusal("package", `biblatex-${style}`, log);
   const language = /^Package babel Error: Unknown option '([^']+)'\./.exec(error)?.[1];
   if (language !== undefined) return refusal("package", babelPackage(language), log);
-  const font = FONTSPEC_FONT.exec(error)?.[1] ?? NOT_LOADABLE.exec(error)?.[1];
+  const byFontspec = FONTSPEC_FONT.exec(error)?.[1];
+  if (byFontspec !== undefined) return refusal("font", fontspecName(byFontspec), log);
+  const font = NOT_LOADABLE.exec(error)?.[1];
   if (font !== undefined) return refusal("font", fontName(font), log);
   if (NEEDS_LUATEX.test([error, ...after.slice(0, 4)].join(" ")))
     return refusal("luatex", undefined, log);
   if (error === "Undefined control sequence.") {
     const command = /(\\[A-Za-z@]+|\\.)\s*$/.exec(nextLine(after))?.[1];
+    if (command !== undefined && LUATEX_PRIMITIVES.has(command))
+      return refusal("luatex", undefined, log);
     return refusal("stopped", command, log);
   }
   return refusal("stopped", undefined, log);
@@ -153,21 +196,42 @@ export function needsPdfMode(log: string): boolean {
  * The graphic a compile stopped on because graphicx could not find it, as graphicx names it, when
  * a stand-in can take its place: a name with no extension, or a PNG's, JPEG's or PDF's. graphicx's
  * error is LaTeX's for a missing file, but not the one that asks for a file by name; and for a name
- * with an extension, graphicx only warns that it is missing and goes on to read its `.xbb`, which
- * dvipdfmx's driver, finding none, asks `extractbb` for through a pipe the engine does not have.
+ * with an extension, graphicx only warns that it is missing and goes on: on pdfTeX to read its
+ * `.xbb`, which dvipdfmx's driver, finding none, asks `extractbb` for through a pipe the engine does
+ * not have; on XeTeX to load it, which XeTeX says it cannot.
  */
 export function missingGraphic(log: string): string | undefined {
+  const file = graphicNotFound(log);
+  return file !== undefined && STAND_IN_EXTENSIONS.has(extensionOf(file)) ? file : undefined;
+}
+
+/** The graphic a compile stopped on as graphicx or XeTeX could not find it, whatever its name. */
+function graphicNotFound(log: string): string | undefined {
   const found = firstError(log);
   if (found === undefined) return undefined;
-  let file = FILE_NOT_FOUND.exec(found.error)?.[1];
+  let file = FILE_NOT_FOUND.exec(found.error)?.[1] ?? CANNOT_LOAD_PICTURE.exec(found.error)?.[1];
   if (file !== undefined && ASKS_FOR_A_FILE.test(nextLine(found.after))) return undefined;
   if (file === undefined && /^LaTeX Error: Cannot run pipe command/.test(found.error)) {
-    const before = log.slice(0, log.indexOf(`! ${found.error}`));
+    const lines = log.split(/\r?\n/);
+    const before = lines
+      .slice(
+        0,
+        lines.findIndex((line) => line.startsWith("! ")),
+      )
+      .join("\n");
     file = [...before.matchAll(/^LaTeX Warning: File `(.+)' not found on input line/gm)].at(
       -1,
     )?.[1];
   }
-  return file !== undefined && STAND_IN_EXTENSIONS.has(extensionOf(file)) ? file : undefined;
+  return file;
+}
+
+/**
+ * The graphic a compile stopped on, whatever its format: one graphicx or XeTeX could not find, or
+ * one the job's graphics configuration could not size (`unsizedGraphic`), as it names it.
+ */
+export function stoppedGraphic(log: string): string | undefined {
+  return graphicNotFound(log) ?? unsizedGraphic(log);
 }
 
 /**
@@ -176,13 +240,15 @@ export function missingGraphic(log: string): string | undefined {
  */
 export const UNSIZED = "No size for";
 
+/** The image an error of the job's graphics configuration names, if it is one. */
+function unsizedName(error: string): string | undefined {
+  return new RegExp(`^Package resume-tools Error: ${UNSIZED} \`(.+)'\\.?$`).exec(error)?.[1];
+}
+
 /** The image graphicx found and could not size, by the name it found it under, if it said so. */
 export function unsizedGraphic(log: string): string | undefined {
   const found = firstError(log);
-  return (
-    found &&
-    new RegExp(`^Package resume-tools Error: ${UNSIZED} \`(.+)'\\.?$`).exec(found.error)?.[1]
-  );
+  return found && unsizedName(found.error);
 }
 
 /**

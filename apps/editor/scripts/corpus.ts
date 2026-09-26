@@ -34,11 +34,13 @@
  *   reference     take every document the last fetch marks fetched in as a zip of its files, and
  *                 compile it to the import pipeline's reference, or refuse it, on the engine in
  *                 `.engine/`, in a pool of four child processes with 90 s a document; print one
- *                 table of what became of them, and keep each document's log under
- *                 `.corpus/reference/` (`scripts/corpus-reference.ts`, decision 0019). It takes 10
- *                 to 20 minutes for the corpus
+ *                 table of what became of them and, under it, every name a refusal gave with how
+ *                 many documents gave it; and keep each document's log under `.corpus/reference/`
+ *                 (`scripts/corpus-reference.ts`, decision 0019). It takes about a minute for the
+ *                 corpus
  *   --only <id>   that document only
- *   --json <file> write each document's row as JSON too, names and numbers only
+ *   --json <file> write each document's row as JSON too, names and numbers only, with every name
+ *                 a refusal gave and its count, in place of the list under the table
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -75,6 +77,8 @@ import {
   LIMIT_MS,
   POOL_SIZE,
   type ReferenceRow,
+  referenceNameLines,
+  referenceNames,
   referenceTable,
   runPool,
   uploadOf,
@@ -330,7 +334,10 @@ async function runReference(only: string | undefined, json: string | undefined) 
   });
   rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const minutes = (performance.now() - started) / 60_000;
-  print(["", ...referenceTable(rows).trimEnd().split("\n"), "", `Took ${minutes.toFixed(1)} min.`]);
+  print(["", ...referenceTable(rows).trimEnd().split("\n")]);
+  // The table lists the names most documents give; all of them go under it, or in the JSON.
+  if (json === undefined) print(["", ...referenceNameLines(rows)]);
+  print(["", `Took ${minutes.toFixed(1)} min.`]);
   if (json !== undefined)
     writeAtomically(
       json,
@@ -338,6 +345,7 @@ async function runReference(only: string | undefined, json: string | undefined) 
         version: 1,
         tree: { layout: engine.layout, files: Object.keys(engine.files).length },
         limitMs: LIMIT_MS,
+        names: referenceNames(rows),
         documents: rows,
       }),
     );

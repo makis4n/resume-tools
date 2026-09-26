@@ -249,8 +249,10 @@ export interface PdfOptions {
   /**
    * The images the PDF may show: paths of files in the job's folder that the caller gave the job
    * as blank stand-ins for an upload's images (decision 0019). A `pdf:image`, `pdf:img` or
-   * `pdf:epdf` special whose file, resolved inside the job's folder, is one of them, and still holds
-   * the bytes the caller gave, is taken; every other is refused, as without the list.
+   * `pdf:epdf` special whose file, resolved inside the job's folder, is one of them, and still
+   * holds the bytes the caller gave, is taken; every other is refused, as without the list. Only a
+   * path of letters, digits, `.`, `_`, `-` and `/` can be listed, with no part that starts with a
+   * dot (`isShowableImage`): any other in the list counts for nothing.
    */
   images?: readonly string[];
 }
@@ -476,8 +478,18 @@ export function imageFileOf(text: string): string | undefined {
 }
 
 /**
+ * Whether a path in a job's folder may be listed as an image the PDF shows (`PdfOptions.images`):
+ * letters, digits, `.`, `_`, `-` and `/` only, and no part empty or starting with a dot, so none is
+ * `..`. Nothing in such a name can mean anything to xdvipdfmx's reading of a special but the file.
+ */
+export const isShowableImage = (path: string) =>
+  /^[A-Za-z0-9._\-/]+$/.test(path) && isJobPath(path);
+
+/**
  * The first `\special` of any page that would make xdvipdfmx read a file or reconfigure the run,
- * but for one that shows an image whose file `allowed` takes.
+ * but for one that shows an image whose file `allowed` takes. XeTeX writes a picture as such a
+ * special too, and the XDV opcode that once placed one from a file, `pic_file`, is TeX--XeT's
+ * end_reflect to this xdvipdfmx, which reads no file (`parseDvi`, decision 0008).
  */
 function refusedOutputSpecial(
   parsed: DviDocument,
@@ -729,8 +741,8 @@ export class EngineSession {
    * scanned and the PDF refused when one would read a file or reconfigure the run (`refusedSpecial`):
    * a template's special could otherwise embed another job's or a TeX Live file (decision 0008).
    * The one exception is an image the caller wrote into the job as a blank stand-in and lists in
-   * `images` (decision 0019): a special that shows it, by a path inside the job's folder, is taken
-   * while the file still holds the bytes the caller gave.
+   * `images` (decision 0019): a special that shows it, by a path inside the job's folder of plain
+   * characters (`isShowableImage`), is taken while the file still holds the bytes the caller gave.
    *
    * Whatever becomes of the PDF, the result says so, and `pdf` throws only for arguments it
    * refuses, as every method does: an output it cannot read, whose specials it cannot scan, is not
@@ -760,10 +772,10 @@ export class EngineSession {
         error: `the output cannot be read: ${messageOf(error)}`,
       };
     }
-    const images = new Set(options.images ?? []);
+    const images = new Set((options.images ?? []).filter(isShowableImage));
     const refused = refusedOutputSpecial(
       parsed,
-      (file) => images.has(file) && this.holds(job, file),
+      (file) => isShowableImage(file) && images.has(file) && this.holds(job, file),
     );
     if (refused !== undefined)
       return {

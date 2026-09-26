@@ -10,10 +10,13 @@ import type { LiveDocument } from "./corpus-manifest";
 import {
   type PoolResult,
   type ReferenceRow,
+  referenceNameLines,
+  referenceNames,
   referenceTable,
   rowOf,
   runPool,
   stoppedKind,
+  TOP_NAMES,
   uploadOf,
 } from "./corpus-reference";
 
@@ -102,6 +105,54 @@ describe("the table", () => {
     ]);
     expect(hostile).not.toContain("\u001b");
     expect(hostile.split("\n").every((line) => line === "" || line.startsWith("|"))).toBe(true);
+    expect(
+      referenceNameLines([
+        row("other-0009", "other", { outcome: "class", name: "a\nb\u001b[2J" }),
+      ]).join("\n"),
+    ).not.toContain("\u001b");
+  });
+
+  test("lists the top names under each reason, and gives every name with its count apart", () => {
+    // 20 packages, the first named by two documents: the table lists 15, and every one is given
+    // under it, or in the JSON.
+    const many = Array.from({ length: 20 }, (_, i) =>
+      row(`other-${String(i).padStart(4, "0")}`, "other", {
+        outcome: "package",
+        name: `inventedpkg${String.fromCharCode(97 + i)}`,
+      }),
+    );
+    const twice = row("jake-0009", "jake", { outcome: "package", name: "inventedpkga" });
+    const shown = referenceTable([...many, twice])
+      .split("\n")
+      .filter((line) => line.startsWith("| `inventedpkg"));
+    expect(shown).toHaveLength(TOP_NAMES);
+    expect(shown[0]).toMatch(/^\| `inventedpkga` \|/);
+    expect(referenceNames([...many, twice]).package).toMatchObject({
+      inventedpkga: 2,
+      inventedpkgt: 1,
+    });
+    expect(Object.keys(referenceNames([...many, twice]).package ?? {})).toHaveLength(20);
+    const lines = referenceNameLines([
+      ...many,
+      twice,
+      row("other-0099", "other", { outcome: "image", name: "invented.eps" }),
+    ]);
+    expect(lines[0]).toBe("Packages the tree lacks, all 20:");
+    expect(lines[1]).toContain("inventedpkga 2, inventedpkgb 1");
+    expect(lines[1]).toContain("inventedpkgt 1");
+    expect(lines.slice(2)).toEqual([
+      "Images in a format with no stand-in, all 1:",
+      "  invented.eps 1",
+    ]);
+  });
+
+  test("counts a document refused for an image in a format with no stand-in", () => {
+    const table = referenceTable([
+      row("other-0010", "other", { outcome: "image", name: "invented.eps" }),
+    ]);
+    const found = table.split("\n").find((line) => line.startsWith("| Refused: shows an image"));
+    expect(found?.split("|").at(-2)?.trim()).toBe("1");
+    expect(table).toContain("| `invented.eps` |");
   });
 });
 

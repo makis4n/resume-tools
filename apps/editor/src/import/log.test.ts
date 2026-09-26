@@ -103,6 +103,39 @@ describe("a refusal from the log", () => {
     );
   });
 
+  test("names a long font whose name fontspec's message wraps, and a font asked for by its path", () => {
+    // expl3 wraps fontspec's messages at about 79 columns, between words, whatever
+    // max_print_line says, and goes on in lines that start with `(fontspec)`.
+    expect(
+      refusalOf(
+        stopped(
+          '! Package fontspec Error: The font "Invented Grotesk Condensed Display" cannot',
+          "(fontspec)                be found.",
+          "",
+          "For immediate help type H <return>.",
+        ),
+      ),
+    ).toMatchObject({
+      reason: "font",
+      name: "Invented Grotesk Condensed Display",
+      message:
+        "This resume needs the font Invented Grotesk Condensed Display, which this editor does not have.",
+    });
+    expect(
+      refusalOf(
+        stopped(
+          '! Package fontspec Error: The font "Invented Grotesk Condensed Display Extra',
+          '(fontspec)                Wide" cannot be found.',
+        ),
+      ).name,
+    ).toBe("Invented Grotesk Condensed Display Extra Wide");
+    expect(
+      refusalOf(
+        stopped('! Package fontspec Error: The font "fonts/InventedGrotesk" cannot be found.'),
+      ),
+    ).toMatchObject({ reason: "font", name: "InventedGrotesk" });
+  });
+
   test("names the package a biblatex style or a babel language is in", () => {
     expect(
       refusalOf(stopped("! Package biblatex Error: Style 'inventedstyle' not found.")),
@@ -141,6 +174,13 @@ describe("a refusal from the log", () => {
     expect(refusalOf(stopped(...asked("/usr/share/invented/cv.cls"))).message).toMatch(
       /outside its own folder/,
     );
+    // XeTeX's error for a picture it cannot load, and the job's graphics configuration's.
+    expect(
+      refusalOf(stopped("! Unable to load picture or PDF file '../photos/invented.png'.")),
+    ).toMatchObject({ reason: "file", name: "../photos/invented.png" });
+    expect(
+      refusalOf(stopped("! Package resume-tools Error: No size for `../photos/invented.pdf'.")),
+    ).toMatchObject({ reason: "file", name: "../photos/invented.pdf" });
   });
 
   test("says LuaTeX when an error says only it will do", () => {
@@ -149,6 +189,22 @@ describe("a refusal from the log", () => {
         stopped("! Package luacode Error: LuaTeX is required for this package. Aborting.."),
       ),
     ).toMatchObject({ reason: "luatex", message: expect.stringContaining("LuaTeX") });
+  });
+
+  test("says LuaTeX when the command a compile stops on undefined is one of LuaTeX's own", () => {
+    for (const command of ["pdfvariable", "pdfextension", "pdffeedback", "directlua"])
+      expect(
+        refusalOf(
+          stopped("! Undefined control sequence.", `l.4 \\${command}`, "   compresslevel=0"),
+        ),
+        command,
+      ).toMatchObject({
+        reason: "luatex",
+        message: "This resume needs LuaTeX, which this editor does not have.",
+      });
+    expect(refusalOf(stopped("! Undefined control sequence.", "l.4 \\pdfvariables"))).toMatchObject(
+      { reason: "stopped", name: "\\pdfvariables" },
+    );
   });
 
   test("says only that it could not compile otherwise, keeping an undefined command for developers", () => {
@@ -192,6 +248,18 @@ describe("what a compile can go on from", () => {
     expect(missingGraphic(stopped(...graphic("invented.eps")))).toBeUndefined();
     expect(missingGraphic(stopped(...asked("invented.tex")))).toBeUndefined();
     expect(missingGraphic("No pages of output.")).toBeUndefined();
+  });
+
+  test("a picture XeTeX could not load, which graphicx names with its extension", () => {
+    for (const name of ["photos/invented.png", "invented.jpg", "invented.pdf"])
+      expect(
+        missingGraphic(
+          stopped(`! Unable to load picture or PDF file '${name}'.`, "<to be read again>"),
+        ),
+      ).toBe(name);
+    expect(
+      missingGraphic(stopped("! Unable to load picture or PDF file 'invented.eps'.")),
+    ).toBeUndefined();
   });
 
   test("a graphic named with its extension, which graphicx only warns of and asks a pipe to size", () => {

@@ -9,31 +9,42 @@
  * Its main file is the `.tex` that starts a document with `\documentclass` and that no other
  * `.tex` inputs; none, or more than one, is refused, and so is LaTeX 2.09's `\documentstyle`. Its
  * text files are read as UTF-8, or as Latin-1 when their bytes are not UTF-8, and the job gets
- * their bytes as they are.
+ * their bytes as they are, but for the two edits below.
  *
  * The job is the main file's folder: each file there or below keeps its path from it, as TeX's
  * working folder is the main file's; each file elsewhere keeps its path from the top of the
  * upload, a zip's one wrapping folder aside, where a template such as Awesome-CV keeps its class
  * and fonts beside an `examples/` folder; and a class or package the document loads that the upload
  * holds anywhere else is put where TeX finds it, beside the main file, as the corpus's survey takes
- * one (decision 0017).
+ * one (decision 0017). A path the main file or a file it inputs names above its folder, `../img/`,
+ * is rewritten to the path the job holds that file at, and `\pdfoutput=1` to `\pdfoutput=0`, since
+ * the editor's pdfTeX writes DVI; each with a warning.
  *
  * The engine is read from the source as the survey reads it (`source.ts`): LuaTeX is refused, XeTeX
  * is XeTeX, and pdfTeX or either is pdfTeX. Fonts the upload ships go into the job for the
  * reference compile alone, and are named for item 8. Images never do (decision 0008): each PNG,
- * JPEG and PDF becomes a blank stand-in of the same size (`images.ts`), with its `.xbb` for
- * pdfTeX, and so does each file `\includegraphics` names that the upload lacks, of the tree's
- * image's size when the tree has one and 1 by 1 otherwise; every other image is dropped, and the
- * result names each.
+ * JPEG and PDF becomes a blank stand-in of the same size (`images.ts`), with a `.xbb` for pdfTeX
+ * for each name graphicx sizes by, and so does each file `\includegraphics` names that the upload
+ * lacks, of the tree's image's size when the tree has one and 1 by 1 otherwise; every other image
+ * is dropped, and the result names each.
  *
  * It is a function of the upload's bytes, and of the tree when it is given the tree's, and runs in
- * the browser and in Node alike.
+ * the browser and in Node alike. Each reader of the source runs once for each text it reads.
  */
 
 import { unzipSync } from "fflate";
 import type { Engine } from "../engine/session";
 import type { Tree } from "./fonts";
-import { type ImageInfo, imageInfo, ONE_BY_ONE, ONE_POINT_PDF, standIn, xbb } from "./images";
+import {
+  type ImageInfo,
+  imageInfo,
+  MAX_SIDE,
+  ONE_BY_ONE,
+  ONE_POINT_PDF,
+  standIn,
+  tooLarge,
+  xbb,
+} from "./images";
 import { extensionOf, folderOf, isSafePath, joinPath, nameOf, withoutExtension } from "./paths";
 import { type Refusal, refusal, refusedAtIntake, shownInMessage } from "./refusal";
 import {
@@ -44,7 +55,10 @@ import {
   holdsDocumentClass,
   holdsDocumentStyle,
   optionValues,
+  pathsAbove,
+  pdfOutputSettings,
   type Reading,
+  type Reference,
   readSource,
   references,
   type SourceEngine,
@@ -87,12 +101,19 @@ export interface StandIn {
 }
 
 /**
- * An image the intake dropped, and why: a format it has no stand-in for (`format`), bytes it cannot
- * read as the image its name says (`unreadable`), or a name outside the job (`outside`).
+ * An image the intake dropped, and why: a format it has no stand-in for (`format`); bytes it
+ * cannot read as the image its name says, or more pixels on a side than it stands in for
+ * (`unreadable`); a name outside the job (`outside`); or an image at the same path in the job as
+ * one beside the main file, which comes first (`duplicate`).
  */
 export interface Dropped {
   name: string;
-  why: "format" | "unreadable" | "outside";
+  why: "format" | "unreadable" | "outside" | "duplicate";
+  /**
+   * Where it would be in the job, for one the upload holds that is not there: the reference compile
+   * refuses a document that shows one in a format it has no stand-in for (decision 0019).
+   */
+  path?: string;
 }
 
 export interface Intake {
@@ -100,7 +121,10 @@ export interface Intake {
   engine: Engine;
   /** What the source asks for (`engineFrom`), which chose the engine. */
   source: Exclude<SourceEngine, "luatex">;
-  /** The main file: its path in the upload, its text for reading, and its bytes for the engine. */
+  /**
+   * The main file: its path in the upload, its text for reading, and its bytes for the engine, as
+   * the job has them, its paths above its folder and `\pdfoutput` rewritten.
+   */
   main: { path: string; text: string; bytes: Uint8Array };
   /** Every file of the job, by its path in the job, but the main file, which is the compile's body. */
   files: Record<string, Uint8Array>;
@@ -150,11 +174,36 @@ const OTHER_IMAGE_EXTENSIONS: readonly string[] = [
   ...[".webp", ".heic", ".heif", ".avif", ".mps", ".emf", ".wmf", ".ico", ".xbm", ".pnm"],
 ];
 
+/** Whether a name's extension is of a format the intake drops. */
+export const isDroppedFormat = (name: string) => OTHER_IMAGE_EXTENSIONS.includes(extensionOf(name));
+
 /**
- * The extensions graphicx tries, in its order, for a name `\includegraphics` gives without one,
- * of those a stand-in can be: `dvipdfmx.def` and `xetex.def` try PDF first, then PNG, then JPEG.
+ * The extensions graphicx tries, in its order, for a name `\includegraphics` gives without one:
+ * `dvipdfmx.def`'s and `xetex.def`'s, which are the same (checked).
  */
-const TRIED_EXTENSIONS = [".pdf", ".PDF", ".png", ".PNG", ".jpg", ".JPG", ".jpeg", ".JPEG"];
+export const DRIVER_EXTENSIONS: readonly string[] = [
+  ...[".pdf", ".PDF", ".ai", ".AI", ".png", ".PNG", ".jpg", ".JPG", ".jpeg", ".JPEG"],
+  ...[".jp2", ".JP2", ".jpf", ".JPF", ".bmp", ".BMP", ".ps", ".PS", ".eps", ".EPS"],
+  ...[".mps", ".MPS"],
+];
+
+/** Of DRIVER_EXTENSIONS, those a stand-in can be, in graphicx's order. */
+const STAND_IN_TRIES = DRIVER_EXTENSIONS.filter((each) =>
+  IMAGE_EXTENSIONS.includes(each.toLowerCase()),
+);
+
+/**
+ * Of images of one name but for their extensions, in one folder, the one graphicx takes for the
+ * name without an extension: the first in the drivers' order, the extension's case counting as
+ * it does to them; one of an extension they do not try comes after the rest.
+ */
+export function pickedImage(paths: readonly string[]): string | undefined {
+  const rank = (path: string) => {
+    const at = DRIVER_EXTENSIONS.indexOf(path.slice(withoutExtension(path).length));
+    return at < 0 ? DRIVER_EXTENSIONS.length : at;
+  };
+  return [...paths].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0))[0];
+}
 
 type Kind = "text" | "bbl" | "font" | "image" | "other-image";
 
@@ -199,27 +248,35 @@ interface Entry {
 const STOP = new Error("the upload was refused while it was unpacked");
 
 /**
- * Take an upload in: unpack it, find its main file, lay out its job, read its engine, and stand in
- * for its images; or refuse it, saying why.
+ * Take an upload in: unpack it, find its main file, lay out its job, edit its sources' paths above
+ * its folder and its PDF mode, read its engine, and stand in for its images; or refuse it, saying
+ * why.
  */
 export function intake(upload: Upload, options: IntakeOptions = {}): Intake | Refusal {
   const unpacked = unpack(upload);
   if ("refused" in unpacked) return unpacked;
   const { entries, droppedFormats } = unpacked;
+  const referencesOf = once(references);
 
   const texts = new Map<string, string>();
   for (const entry of entries)
     if (entry.kind === "text") texts.set(entry.path, decodeText(entry.bytes));
-  const main = mainFile(entries, texts);
+  const main = mainFile(entries, texts, referencesOf);
   if ("refused" in main) return main;
-  const mainText = texts.get(main.path) ?? "";
 
   const job = layOut(entries, main.path);
-  const reached = reachable(mainText, job.files, entries);
-  const read = [
-    { path: "", text: mainText },
-    ...reached.map((path) => ({ path, text: jobText(job.files, path) })),
-  ]
+  const images = placeImages(job, entries, main.path, droppedFormats);
+  const edit = editor(job, main.path);
+  const edited = edit(main.path, texts.get(main.path) ?? "", main.bytes);
+  const mainText = edited.text;
+  const reached = reachable(mainText, job, entries, referencesOf, (path, text) => {
+    const bytes = job.files[path];
+    if (bytes === undefined) return text;
+    const done = edit(path, text, bytes);
+    job.files[path] = done.bytes;
+    return done.text;
+  });
+  const read = [{ path: "", text: mainText }, ...reached]
     .filter((file) => extensionOf(file.path) !== ".bib")
     .map((file) => ({ ...file, isClass: extensionOf(file.path) === ".cls" }));
   const known = optionValues(read, classOptions(mainText));
@@ -228,7 +285,7 @@ export function intake(upload: Upload, options: IntakeOptions = {}): Intake | Re
     job.files[`${name}.sty`] !== undefined || options.tree?.styles.has(`${name}.sty`) === true;
   const needsOf = (view: (reading: Reading) => string) => {
     const views = readings.map((file) => view(file.reading));
-    return viewNeeds(views, loadedPackages(views, present));
+    return viewNeeds(views, loadedPackages(views, present, referencesOf));
   };
   const source = engineFrom(
     needsOf((reading) => reading.pdftex),
@@ -241,15 +298,35 @@ export function intake(upload: Upload, options: IntakeOptions = {}): Intake | Re
   const views = readings.map((file) =>
     engine === "xetex" ? file.reading.xetex : file.reading.pdftex,
   );
-  const images = standIns(job, entries, main.path, engine, views, options.treeImage);
+  const folders = [
+    "",
+    ...views
+      .flatMap(graphicsPaths)
+      .flatMap((each) => joinPath("", each.replace(/^(\.\/)+/, "")) ?? []),
+  ];
+  const named = [...new Set(views.flatMap(graphicsNames))];
+  standInNamed(job, images, named, folders, options.treeImage);
+  if (engine === "pdftex") boundingBoxes(job, images, named, folders);
   return {
     engine,
     source,
-    main: { path: main.path, text: mainText, bytes: main.bytes },
+    main: { path: main.path, text: mainText, bytes: edited.bytes },
     files: job.files,
     fonts: job.fonts,
-    images: { replaced: images.replaced, dropped: [...droppedFormats, ...images.dropped] },
+    images: { replaced: images.replaced, dropped: images.dropped },
     warnings: job.warnings,
+  };
+}
+
+/** A reader of text that reads each text once, however many times it is asked for it. */
+function once<T>(read: (text: string) => T): (text: string) => T {
+  const done = new Map<string, T>();
+  return (text) => {
+    const found = done.get(text);
+    if (found !== undefined) return found;
+    const result = read(text);
+    done.set(text, result);
+    return result;
   };
 }
 
@@ -265,6 +342,27 @@ export function decodeText(bytes: Uint8Array): string {
   }
 }
 
+/**
+ * A text as bytes the way `original` was: UTF-8, its byte-order mark kept, when `original` is
+ * UTF-8, and Latin-1 otherwise; undefined when the text holds a character Latin-1 cannot.
+ */
+function encodeLike(original: Uint8Array, text: string): Uint8Array | undefined {
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(original);
+  } catch {
+    const bytes = new Uint8Array(text.length);
+    for (let at = 0; at < text.length; at++) {
+      const code = text.charCodeAt(at);
+      if (code > 0xff) return undefined;
+      bytes[at] = code;
+    }
+    return bytes;
+  }
+  const encoded = new TextEncoder().encode(text);
+  const marked = original[0] === 0xef && original[1] === 0xbb && original[2] === 0xbf;
+  return marked ? new Uint8Array([0xef, 0xbb, 0xbf, ...encoded]) : encoded;
+}
+
 // Unpacking.
 
 /**
@@ -272,7 +370,7 @@ export function decodeText(bytes: Uint8Array): string {
  * images of other formats named apart; or a refusal for a cap, a name, or bytes that are neither a
  * `.tex` file nor a zip.
  */
-function unpack(upload: Upload): { entries: Entry[]; droppedFormats: Dropped[] } | Refusal {
+function unpack(upload: Upload): { entries: Entry[]; droppedFormats: string[] } | Refusal {
   const extension = extensionOf(upload.name);
   const isZip =
     extension === ".zip" ||
@@ -345,10 +443,7 @@ function unpack(upload: Upload): { entries: Entry[]; droppedFormats: Dropped[] }
     if (kind !== undefined) entries.push({ path: name.slice(top.length), kind, bytes });
   }
   entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return {
-    entries,
-    droppedFormats: droppedNames.map((name) => ({ name: name.slice(top.length), why: "format" })),
-  };
+  return { entries, droppedFormats: droppedNames.map((name) => name.slice(top.length)) };
 }
 
 /**
@@ -372,11 +467,15 @@ function wrapper(names: readonly string[]): string {
  * inputs; a refusal when there is none, when there is more than one, or when the one holds LaTeX
  * 2.09's `\documentstyle` alone.
  */
-function mainFile(entries: readonly Entry[], texts: ReadonlyMap<string, string>): Entry | Refusal {
+function mainFile(
+  entries: readonly Entry[],
+  texts: ReadonlyMap<string, string>,
+  referencesOf: (text: string) => Reference[],
+): Entry | Refusal {
   const sources = entries.filter((entry) => extensionOf(entry.path) === ".tex");
   const inputted = new Set<string>();
   for (const source of sources)
-    for (const reference of references(texts.get(source.path) ?? "")) {
+    for (const reference of referencesOf(texts.get(source.path) ?? "")) {
       if (reference.kind !== "input") continue;
       const name = extensionOf(reference.name) === "" ? `${reference.name}.tex` : reference.name;
       for (const folder of [folderOf(source.path), ""]) {
@@ -410,9 +509,20 @@ function mainFile(entries: readonly Entry[], texts: ReadonlyMap<string, string>)
 
 interface Job {
   files: Record<string, Uint8Array>;
+  /** The upload's path of each file of the job that is one of the upload's, or a stand-in of one. */
+  source: Map<string, string>;
   fonts: string[];
   warnings: string[];
+  /** The main file's folder in the upload, "" at its top. */
+  folder: string;
 }
+
+/** A path of the upload as a path of the job: from the main file's folder when it is there. */
+const jobPathOf = (folder: string, path: string) =>
+  folder !== "" && path.startsWith(`${folder}/`) ? path.slice(folder.length + 1) : path;
+
+/** Whether a path of the upload is in the main file's folder, or below it. */
+const insideOf = (folder: string, path: string) => folder === "" || path.startsWith(`${folder}/`);
 
 /**
  * The job's files but for its stand-ins: each text file, bibliography and font at its path from
@@ -422,19 +532,18 @@ interface Job {
  */
 function layOut(entries: readonly Entry[], main: string): Job {
   const folder = folderOf(main);
-  const inside = (path: string) => folder === "" || path.startsWith(`${folder}/`);
-  const job: Job = { files: {}, fonts: [], warnings: [] };
+  const job: Job = { files: {}, source: new Map(), fonts: [], warnings: [], folder };
   const place = (entry: Entry, path: string) => {
     if (!inJob(path)) return;
     job.files[path] = entry.bytes;
+    job.source.set(path, entry.path);
     if (entry.kind === "font") job.fonts.push(path);
   };
   const kept = entries.filter((entry) => entry.kind !== "image" && entry.path !== main);
   for (const entry of kept)
-    if (inside(entry.path))
-      place(entry, folder === "" ? entry.path : entry.path.slice(folder.length + 1));
+    if (insideOf(folder, entry.path)) place(entry, jobPathOf(folder, entry.path));
   for (const entry of kept) {
-    if (inside(entry.path)) continue;
+    if (insideOf(folder, entry.path)) continue;
     if (job.files[entry.path] === undefined) place(entry, entry.path);
     else
       job.warnings.push(
@@ -451,23 +560,97 @@ const jobText = (files: Readonly<Record<string, Uint8Array>>, path: string) => {
 };
 
 /**
+ * What edits a source of the main file's, the main file or a file it inputs, into what the job
+ * compiles, with a warning for each edit, once: a path it names above the main file's folder, in
+ * `pathsAbove`' commands, becomes the path the job holds that file or folder at, as its path
+ * from the upload's top, since TeX reads nothing above its folder; unless the job holds another
+ * of the upload's files there, or the path leaves the upload. A path that names nothing is
+ * rewritten too, and is missing as any other. And `\pdfoutput` set above 0 is set to 0: the
+ * editor's pdfTeX writes DVI (decision 0003), which a document written for PDF mode ships as any.
+ */
+function editor(
+  job: Job,
+  main: string,
+): (path: string, text: string, bytes: Uint8Array) => { text: string; bytes: Uint8Array } {
+  const warned = new Set<string>();
+  const warn = (warning: string) => {
+    if (!warned.has(warning)) job.warnings.push(warning);
+    warned.add(warning);
+  };
+  /** Whether the job's files at a path, or in a folder, are the upload's of `upload` there. */
+  const holdsOnly = (upload: string, path: string, folder: boolean) => {
+    for (const [at, from] of job.source)
+      if (folder) {
+        if (at.startsWith(`${path}/`) && !from.startsWith(`${upload}/`)) return false;
+      } else if (
+        (at === path || at.startsWith(`${path}.`)) &&
+        from !== upload + at.slice(path.length)
+      )
+        return false;
+    return true;
+  };
+  const rewrite = (given: string, folder: boolean): string | undefined => {
+    const relative = given.replace(/^(?:\.\/)+/, "");
+    if (!relative.startsWith("../")) return undefined;
+    const upload = joinPath(job.folder, relative);
+    if (upload === undefined) return undefined;
+    const path = jobPathOf(job.folder, upload);
+    if (!holdsOnly(upload, path, folder)) return undefined;
+    return folder && given.endsWith("/") ? `${path}/` : path;
+  };
+  return (path, text, bytes) => {
+    const edits: { start: number; end: number; to: string }[] = [];
+    for (const argument of pathsAbove(text)) {
+      const to = rewrite(argument.path, argument.folder);
+      if (to === undefined) continue;
+      edits.push({ start: argument.start, end: argument.end, to });
+      warn(
+        `${shownInMessage(argument.path)} is read as ${shownInMessage(to)}, the upload's path it names: this editor reads nothing above the main file's folder.`,
+      );
+    }
+    const settings = pdfOutputSettings(text);
+    for (const { start, end } of settings) edits.push({ start, end, to: "\\pdfoutput=0" });
+    if (settings.length > 0)
+      warn(
+        `${shownInMessage(path)} asks for PDF output, which this editor makes from DVI: it is compiled for DVI.`,
+      );
+    if (edits.length === 0) return { text, bytes };
+    edits.sort((a, b) => a.start - b.start);
+    let out = "";
+    let at = 0;
+    for (const { start, end, to } of edits) {
+      if (start < at) continue;
+      out += text.slice(at, start) + to;
+      at = end;
+    }
+    out += text.slice(at);
+    const encoded = encodeLike(bytes, out);
+    return encoded === undefined ? { text, bytes } : { text: out, bytes: encoded };
+  };
+}
+
+/**
  * The text files of the job the main file loads, followed as far as they go, in the order they are
- * reached: classes and packages beside the main file or at the path they are named by, and sources
- * at the path they are named by, from the main file's folder, TeX's working folder, or from the
- * caller's for `\subimport`. A class or package the upload holds anywhere but where TeX finds it is
- * put there, the shallowest of its name first, as the corpus's survey takes it to be the
- * document's (decision 0017).
+ * reached, with their text as the job has it: classes and packages beside the main file or at the
+ * path they are named by, and sources at the path they are named by, from the main file's folder,
+ * TeX's working folder, or from the caller's for `\subimport`, each source `edit`ed before it is
+ * read. A class or package the upload holds anywhere but where TeX finds it is put there, the
+ * shallowest of its name first, as the corpus's survey takes it to be the document's (decision
+ * 0017).
  */
 function reachable(
   mainText: string,
-  files: Record<string, Uint8Array>,
+  job: Job,
   entries: readonly Entry[],
-): string[] {
-  const reached: string[] = [];
+  referencesOf: (text: string) => Reference[],
+  edit: (path: string, text: string) => string,
+): { path: string; text: string }[] {
+  const { files } = job;
+  const reached: { path: string; text: string }[] = [];
   const seen = new Set<string>();
   const queue = [{ path: "", text: mainText }];
   for (let file = queue.shift(); file; file = queue.shift()) {
-    for (const reference of references(file.text)) {
+    for (const reference of referencesOf(file.text)) {
       let path: string | undefined;
       if (reference.kind === "class" || reference.kind === "package") {
         const extension = reference.kind === "class" ? ".cls" : ".sty";
@@ -479,7 +662,10 @@ function reachable(
           const elsewhere = entries
             .filter((entry) => entry.kind === "text" && nameOf(entry.path) === name)
             .sort((a, b) => a.path.split("/").length - b.path.split("/").length)[0];
-          if (elsewhere) files[path] = elsewhere.bytes;
+          if (elsewhere) {
+            files[path] = elsewhere.bytes;
+            job.source.set(path, elsewhere.path);
+          }
         }
       } else if (reference.kind === "input") {
         const name = kindOf(reference.name) === "text" ? reference.name : `${reference.name}.tex`;
@@ -488,8 +674,10 @@ function reachable(
       if (path === undefined || files[path] === undefined || seen.has(path)) continue;
       if (kindOf(path) !== "text") continue;
       seen.add(path);
-      reached.push(path);
-      queue.push({ path, text: jobText(files, path) });
+      const text = jobText(files, path);
+      const read = reference.kind === "input" ? edit(path, text) : text;
+      reached.push({ path, text: read });
+      queue.push({ path, text: read });
     }
   }
   return reached;
@@ -500,10 +688,14 @@ function reachable(
  * `\IfFileExists`'s branch for a file that is there, and which is not `present`: TeX loads such a
  * package only when it is there, as the survey reads it.
  */
-function loadedPackages(views: readonly string[], present: (name: string) => boolean): string[] {
+function loadedPackages(
+  views: readonly string[],
+  present: (name: string) => boolean,
+  referencesOf: (text: string) => Reference[],
+): string[] {
   const optional = new Map<string, boolean>();
   for (const view of views)
-    for (const reference of references(view))
+    for (const reference of referencesOf(view))
       if (reference.kind === "package")
         optional.set(
           reference.name,
@@ -517,96 +709,181 @@ function loadedPackages(views: readonly string[], present: (name: string) => boo
 /** Raster images a PNG stands in for. */
 const RASTER = new Set([".png", ".jpg", ".jpeg"]);
 
+/** The images of an intake so far, and each stand-in's image, by its path in the job. */
+interface Images {
+  replaced: StandIn[];
+  dropped: Dropped[];
+  infos: Map<string, ImageInfo>;
+}
+
 /**
- * Blank stand-ins for the upload's images and for the files `\includegraphics` names that it
- * lacks, into the job's files, with each one's `.xbb` for pdfTeX; and what is dropped. An image of
- * the upload stands in at its place in the job; a PDF named as the main file is, beside it, is the
- * document compiled, and is left out. A name `\includegraphics` gives, in the engine's view of the
- * files the main file loads, is the upload's when graphicx would find a file of it, from TeX's
- * working folder or a folder `\graphicspath` names, with an extension it tries when the name has
- * none; the tree's when `treeImage` finds one, whose stand-in is of its size; otherwise a 1 by 1
- * stand-in goes where graphicx looks first: a PDF for a name ending in `.pdf`, and a PNG
- * otherwise, `.png` added to a name without an extension.
+ * Blank stand-ins for the upload's images, each at its place in the job, those beside the main
+ * file first, as `layOut` places other files, so that one at the same path above them is left out;
+ * a PDF named as the main file is, beside it, is the document compiled, and is left out too. An
+ * image that cannot be read, or that has more than MAX_SIDE pixels on a side, is dropped, and so is
+ * every image of another format, at the path it would have had.
  */
-function standIns(
+function placeImages(
   job: Job,
   entries: readonly Entry[],
   main: string,
-  engine: Engine,
-  views: readonly string[],
-  treeImage: IntakeOptions["treeImage"],
-): { replaced: StandIn[]; dropped: Dropped[] } {
-  const replaced: StandIn[] = [];
-  const dropped: Dropped[] = [];
-  const put = (path: string, info: ImageInfo) => {
-    job.files[path] = standIn(info);
-    if (engine === "pdftex")
-      job.files[`${withoutExtension(path)}.xbb`] = new TextEncoder().encode(xbb(info));
+  droppedFormats: readonly string[],
+): Images {
+  const images: Images = {
+    replaced: [],
+    dropped: droppedFormats.map((name) => ({
+      name,
+      why: "format",
+      path: jobPathOf(job.folder, name),
+    })),
+    infos: new Map(),
   };
-  const folder = folderOf(main);
-  const inside = (path: string) => folder === "" || path.startsWith(`${folder}/`);
   const compiled = `${withoutExtension(main)}.pdf`;
-  for (const entry of entries) {
-    if (entry.kind !== "image" || entry.path === compiled) continue;
-    const info = imageInfo(entry.bytes);
-    const isPdf = extensionOf(entry.path) === ".pdf";
-    if (info === undefined || (info.kind === "pdf") !== isPdf) {
-      dropped.push({ name: entry.path, why: "unreadable" });
+  const candidates = entries.filter((entry) => entry.kind === "image" && entry.path !== compiled);
+  const beside = candidates.filter((entry) => insideOf(job.folder, entry.path));
+  const above = candidates.filter((entry) => !insideOf(job.folder, entry.path));
+  for (const entry of [...beside, ...above]) {
+    const path = jobPathOf(job.folder, entry.path);
+    if (!inJob(path)) continue;
+    const shown = shownInMessage(entry.path);
+    if (job.files[path] !== undefined) {
+      images.dropped.push({ name: entry.path, why: "duplicate" });
+      job.warnings.push(
+        `${shown} is left out: an image of the same path beside the main file comes first.`,
+      );
       continue;
     }
-    const path =
-      inside(entry.path) && folder !== "" ? entry.path.slice(folder.length + 1) : entry.path;
-    if (job.files[path] !== undefined || !inJob(path)) continue;
-    put(path, info);
-    replaced.push({ name: entry.path, path, kind: info.kind });
+    const info = imageInfo(entry.bytes);
+    if (info === undefined || (info.kind === "pdf") !== (extensionOf(entry.path) === ".pdf")) {
+      images.dropped.push({ name: entry.path, why: "unreadable", path });
+      continue;
+    }
+    if (tooLarge(info) && info.kind !== "pdf") {
+      images.dropped.push({ name: entry.path, why: "unreadable", path });
+      job.warnings.push(
+        `${shown} is left out: at ${info.width.toLocaleString("en")} by ${info.height.toLocaleString("en")} pixels, it is larger than this editor stands in for, ${MAX_SIDE.toLocaleString("en")} pixels on a side.`,
+      );
+      continue;
+    }
+    job.files[path] = standIn(info);
+    job.source.set(path, entry.path);
+    images.infos.set(path, info);
+    images.replaced.push({ name: entry.path, path, kind: info.kind });
   }
+  return images;
+}
 
-  const folders = [
-    "",
-    ...views
-      .flatMap(graphicsPaths)
-      .flatMap((each) => joinPath("", each.replace(/^(\.\/)+/, "")) ?? []),
-  ];
-  const named = new Set(views.flatMap(graphicsNames));
+/**
+ * Stand-ins for the files `\includegraphics` names, in the engine's view of the files the main file
+ * loads, that the job lacks. A name is the upload's when graphicx would find a file of it, from
+ * TeX's working folder or a folder `\graphicspath` names, with an extension it tries when the name
+ * has none; one that finds only an image of the upload's in a format with no stand-in gets none, so
+ * that the compile, if the document shows it, stops on it and the reference compile refuses it; a
+ * name the tree's when `treeImage` finds one, whose stand-in is of its size; otherwise a 1 by 1
+ * stand-in goes where graphicx looks first: a PDF for a name ending in `.pdf`, and a PNG otherwise,
+ * `.png` added to a name without an extension. A name out of the job, or of another format that the
+ * upload lacks, is dropped, once.
+ */
+function standInNamed(
+  job: Job,
+  images: Images,
+  named: readonly string[],
+  folders: readonly string[],
+  treeImage: IntakeOptions["treeImage"],
+) {
+  const put = (path: string, info: ImageInfo, standing: StandIn) => {
+    job.files[path] = standIn(info);
+    images.infos.set(path, info);
+    images.replaced.push(standing);
+  };
+  const droppedAt = new Set(
+    images.dropped.flatMap((each) => (each.why === "format" && each.path ? [each.path] : [])),
+  );
+  const found = (tries: readonly string[], held: (path: string) => boolean) =>
+    folders.some((folder) =>
+      tries.some((tried) => {
+        const at = joinPath(folder, tried);
+        return at !== undefined && held(at);
+      }),
+    );
   for (const name of named) {
     const path = joinPath("", name.replace(/^(\.\/)+/, ""));
     if (path === undefined) {
-      dropped.push({ name, why: "outside" });
+      images.dropped.push({ name, why: "outside" });
       continue;
     }
     const extension = extensionOf(path);
-    const tries = extension === "" ? TRIED_EXTENSIONS.map((each) => `${path}${each}`) : [path];
-    const found = folders.some((each) =>
-      tries.some((tried) => {
-        const at = joinPath(each, tried);
-        return at !== undefined && job.files[at] !== undefined;
-      }),
-    );
-    if (found) continue;
+    const tries = extension === "" ? STAND_IN_TRIES.map((each) => `${path}${each}`) : [path];
+    if (found(tries, (at) => job.files[at] !== undefined)) continue;
+    const anyTries = extension === "" ? DRIVER_EXTENSIONS.map((each) => `${path}${each}`) : [path];
+    if (found(anyTries, (at) => droppedAt.has(at))) continue;
     const inTree =
       treeImage &&
       tries.flatMap((tried) => {
         const bytes = treeImage(tried);
         const info = bytes && imageInfo(bytes);
-        return info && (info.kind === "pdf") === (extensionOf(tried) === ".pdf")
+        return info && !tooLarge(info) && (info.kind === "pdf") === (extensionOf(tried) === ".pdf")
           ? [{ tried, info }]
           : [];
       })[0];
     if (inTree) {
-      put(inTree.tried, inTree.info);
-      replaced.push({ name, path: inTree.tried, kind: inTree.info.kind, tree: true });
+      put(inTree.tried, inTree.info, {
+        name,
+        path: inTree.tried,
+        kind: inTree.info.kind,
+        tree: true,
+      });
       continue;
     }
     if (extension !== "" && extension !== ".pdf" && !RASTER.has(extension)) {
-      dropped.push({ name, why: "format" });
+      images.dropped.push({ name, why: "format" });
       continue;
     }
     const at = extension === "" ? `${path}.png` : path;
     const info = extension === ".pdf" ? ONE_POINT_PDF : ONE_BY_ONE;
-    put(at, info);
-    replaced.push({ name, path: at, kind: info.kind, missing: true });
+    put(at, info, { name, path: at, kind: info.kind, missing: true });
   }
-  return { replaced, dropped };
+}
+
+/**
+ * The `.xbb` files pdfTeX's graphicx reads an image's size from, with dvipdfmx's driver: one for
+ * each name, for the image graphicx takes for the name without an extension (`pickedImage`), since
+ * the driver reads `<name>.xbb` whatever the extension. Another image of the name is shadowed,
+ * which a warning says, and one more when the document names it with its extension, since it then
+ * takes the other's size.
+ */
+function boundingBoxes(
+  job: Job,
+  images: Images,
+  named: readonly string[],
+  folders: readonly string[],
+) {
+  const byName = new Map<string, string[]>();
+  for (const { path } of images.replaced) {
+    const base = withoutExtension(path);
+    byName.set(base, [...(byName.get(base) ?? []), path]);
+  }
+  const shows = new Set(
+    named
+      .filter((name) => extensionOf(name) !== "")
+      .flatMap((name) => folders.flatMap((folder) => joinPath(folder, name) ?? [])),
+  );
+  for (const [base, paths] of byName) {
+    const picked = pickedImage(paths) ?? "";
+    const info = images.infos.get(picked);
+    if (info === undefined) continue;
+    job.files[`${base}.xbb`] = new TextEncoder().encode(xbb(info));
+    for (const other of paths) {
+      if (other === picked) continue;
+      job.warnings.push(
+        `${shownInMessage(other)} is shadowed by ${shownInMessage(picked)}, of the same name, which graphicx takes when the document names neither's extension.`,
+      );
+      if (shows.has(other))
+        job.warnings.push(
+          `${shownInMessage(other)} is shown at the size of ${shownInMessage(picked)}: on pdfTeX, this editor sizes the two by the name they share.`,
+        );
+    }
+  }
 }
 
 /**

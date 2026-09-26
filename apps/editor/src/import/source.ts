@@ -168,15 +168,41 @@ const BARE_NAME = /\s+([^\s{}\\%]+)/y;
 /**
  * How many characters past where it starts an argument is looked for: a bracket that has not
  * closed by then is taken never to, so that reading one command's arguments costs at most this
- * much, and reading a source costs at most this much for each command in it.
+ * much, and reading a source costs at most this much for each command in it. 2,048 characters is
+ * some 25 full lines, and the corpus's survey reads every document the same with it as with four
+ * times as many; it keeps a megabyte of `\input{` to a fraction of a second (decision 0019).
  */
-export const WINDOW = 8_192;
+export const WINDOW = 2_048;
 
 /** The index after any spaces at `at`, looking no further than `stop`. */
 function skipSpace(text: string, at: number, stop: number): number {
-  while (at < stop && /\s/.test(text[at] ?? "")) at++;
+  while (at < stop && isSpace(text.charCodeAt(at))) at++;
   return at;
 }
+
+/** Whether a character's code is one of the spaces `\s` matches, as the readers take spaces. */
+function isSpace(code: number): boolean {
+  return (
+    code === 32 ||
+    (code >= 9 && code <= 13) ||
+    code === 0xa0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
+}
+
+/** The codes of the characters the bracket readers look for. */
+const BACKSLASH = 92;
+const OPEN_BRACE = 123;
+const CLOSE_BRACE = 125;
+const OPEN_BRACKET = 91;
+const CLOSE_BRACKET = 93;
 
 /**
  * The index after any `[...]` optional arguments at `at` and the spaces around them, or undefined
@@ -187,15 +213,15 @@ function skipOptional(text: string, at: number): number | undefined {
   for (;;) {
     at = skipSpace(text, at, stop);
     if (at >= stop) return stop === text.length ? at : undefined;
-    if (text[at] !== "[") return at;
+    if (text.charCodeAt(at) !== OPEN_BRACKET) return at;
     let depth = 0;
     let i = at + 1;
     for (; i < stop; i++) {
-      const char = text[i];
-      if (char === "\\") i++;
-      else if (char === "{") depth++;
-      else if (char === "}") depth--;
-      else if (char === "]" && depth <= 0) break;
+      const code = text.charCodeAt(i);
+      if (code === BACKSLASH) i++;
+      else if (code === OPEN_BRACE) depth++;
+      else if (code === CLOSE_BRACE) depth--;
+      else if (code === CLOSE_BRACKET && depth <= 0) break;
     }
     if (i >= stop) return undefined;
     at = i + 1;
@@ -209,13 +235,14 @@ function skipOptional(text: string, at: number): number | undefined {
 export function group(text: string, at: number): { value: string; end: number } | undefined {
   const stop = Math.min(text.length, at + WINDOW);
   const start = skipSpace(text, at, stop);
-  if (start >= stop || text[start] !== "{") return undefined;
+  if (start >= stop || text.charCodeAt(start) !== OPEN_BRACE) return undefined;
   let depth = 0;
   for (let i = start; i < stop; i++) {
-    const char = text[i];
-    if (char === "\\") i++;
-    else if (char === "{") depth++;
-    else if (char === "}" && --depth === 0) return { value: text.slice(start + 1, i), end: i + 1 };
+    const code = text.charCodeAt(i);
+    if (code === BACKSLASH) i++;
+    else if (code === OPEN_BRACE) depth++;
+    else if (code === CLOSE_BRACE && --depth === 0)
+      return { value: text.slice(start + 1, i), end: i + 1 };
   }
   return undefined;
 }
@@ -229,16 +256,16 @@ function argument(text: string, at: number): string | undefined {
 /** The bracketed argument at `at`, after any spaces, and the index after it, if there is one. */
 export function bracketed(text: string, at: number): { value: string; end: number } | undefined {
   const stop = Math.min(text.length, at + WINDOW);
-  let start = at;
-  while (start < stop && /\s/.test(text[start] ?? "")) start++;
-  if (text[start] !== "[") return undefined;
+  const start = skipSpace(text, at, stop);
+  if (text.charCodeAt(start) !== OPEN_BRACKET) return undefined;
   let depth = 0;
   for (let i = start + 1; i < stop; i++) {
-    const char = text[i];
-    if (char === "\\") i++;
-    else if (char === "{") depth++;
-    else if (char === "}") depth--;
-    else if (char === "]" && depth <= 0) return { value: text.slice(start + 1, i), end: i + 1 };
+    const code = text.charCodeAt(i);
+    if (code === BACKSLASH) i++;
+    else if (code === OPEN_BRACE) depth++;
+    else if (code === CLOSE_BRACE) depth--;
+    else if (code === CLOSE_BRACKET && depth <= 0)
+      return { value: text.slice(start + 1, i), end: i + 1 };
   }
   return undefined;
 }
@@ -293,13 +320,20 @@ const DEFINERS = new Set([
   "providerobustcmd",
 ]);
 
-/** The engines' own commands, which only the engine that has them defines. */
+/**
+ * The engines' own commands, which only the engine that has them defines: among LuaTeX's, its
+ * PDF settings, `\pdfvariable`, `\pdfextension` and `\pdffeedback`, which a document asks after
+ * as it asks after `\directlua`.
+ */
 const ENGINE_PROBES: Readonly<Record<string, "pdftex" | "xetex" | "luatex">> = {
   XeTeXversion: "xetex",
   XeTeXrevision: "xetex",
   directlua: "luatex",
   luatexversion: "luatex",
   luatexrevision: "luatex",
+  pdfvariable: "luatex",
+  pdfextension: "luatex",
+  pdffeedback: "luatex",
   pdftexversion: "pdftex",
   pdftexrevision: "pdftex",
 };
@@ -899,9 +933,13 @@ export const LUATEX_PACKAGES: ReadonlySet<string> = new Set([
   "lua-widow-control",
 ]);
 
-/** LuaTeX's primitives, but for the version tests guards make, and luacode's environments. */
+/**
+ * LuaTeX's primitives, but for the version tests guards make, its PDF settings, which pdfTeX
+ * names `\pdfcompresslevel` and the like and LuaTeX `\pdfvariable compresslevel`, and luacode's
+ * commands and environments.
+ */
 export const LUATEX_COMMANDS =
-  /\\(?:directlua|luaexec|luadirect|latelua|luaescapestring|begin\s*\{luacode\*?\})(?![A-Za-z@])/;
+  /\\(?:directlua|luaexec|luadirect|latelua|luaescapestring|pdfvariable|pdfextension|pdffeedback|begin\s*\{luacode\*?\})(?![A-Za-z@])/;
 
 /**
  * The engine a document's source asks for: `both` when it guards on the engine and its pdfTeX
@@ -962,6 +1000,113 @@ export function graphicsNames(tex: string): string[] {
     if (name !== "" && !/[\\#]/.test(name)) names.push(name);
   }
   return names;
+}
+
+/** A source with each comment's characters made spaces, so that every index is the source's. */
+const maskComments = (tex: string) =>
+  tex.replace(
+    /(^|[^\\])((?:\\\\)*)(%.*)$/gm,
+    (_, before: string, escapes: string, comment: string) =>
+      `${before}${escapes}${" ".repeat(comment.length)}`,
+  );
+
+/**
+ * A path a command names in a source above TeX's working folder, and where: from `start` to before
+ * `end`, spaces around it left out; `folder` when it names a folder, as `\graphicspath`'s do and
+ * `\import`'s first.
+ */
+export interface PathAbove {
+  command: string;
+  path: string;
+  start: number;
+  end: number;
+  folder: boolean;
+}
+
+/** The commands whose arguments name paths from TeX's working folder, the main file's. */
+const PATH_COMMANDS =
+  /\\(graphicspath|includegraphics\*?|input|include|subfile|import|addbibresource|bibliography)(?![A-Za-z@])/g;
+
+/** A path that leaves the folder it is named from: `../`, after any `./`. */
+const ABOVE = /^(?:\.\/)*\.\.\//;
+
+/**
+ * The paths a source names above TeX's working folder, `../` and what follows, outside its
+ * comments, where it names them: `\graphicspath`'s folders, `\includegraphics`'s file, `\input`'s,
+ * `\include`'s and `\subfile`'s, `\import`'s folder, `\addbibresource`'s file and each of
+ * `\bibliography`'s, in the source's order. A path built by a macro, holding a backslash or a `#`,
+ * is left out, as `references` leaves one out. An argument of one path is looked at only as far
+ * as its start, and read only when it starts above, so that this takes time linear in the
+ * source's length for any of them it holds.
+ */
+export function pathsAbove(tex: string): PathAbove[] {
+  const text = maskComments(tex);
+  const found: PathAbove[] = [];
+  /** A group's value, which starts at `start`, as a path, if it is one above. */
+  const add = (command: string, value: string, start: number, folder = false) => {
+    const path = value.trim();
+    const at = start + value.length - value.trimStart().length;
+    if (ABOVE.test(path) && !/[\\#]/.test(path))
+      found.push({ command, path, start: at, end: at + path.length, folder });
+  };
+  /** Where a group's value starts, from the group `group` returns. */
+  const valueAt = (braced: { value: string; end: number }) => braced.end - 1 - braced.value.length;
+  /** The group at `at` when the path it holds starts above, as a look at its start says. */
+  const above = (at: number) => {
+    const start = skipSpace(text, at, Math.min(text.length, at + WINDOW));
+    if (text.charCodeAt(start) !== OPEN_BRACE) return undefined;
+    const first = skipSpace(text, start + 1, Math.min(text.length, start + 1 + WINDOW));
+    return ABOVE.test(text.slice(first, first + 3 * 64)) ? group(text, at) : undefined;
+  };
+  for (const match of text.matchAll(PATH_COMMANDS)) {
+    const command = (match[1] ?? "").replace("*", "");
+    const at = match.index + match[0].length;
+    if (command === "graphicspath") {
+      const list = group(text, at);
+      if (!list) continue;
+      for (let each = group(list.value, 0); each; each = group(list.value, each.end))
+        add(command, each.value, valueAt(list) + valueAt(each), true);
+    } else if (command === "bibliography") {
+      const braced = group(text, at);
+      if (!braced) continue;
+      let start = valueAt(braced);
+      for (const part of braced.value.split(",")) {
+        add(command, part, start);
+        start += part.length + 1;
+      }
+    } else if (command === "input") {
+      BARE_NAME.lastIndex = at;
+      const bare =
+        text.charCodeAt(skipSpace(text, at, text.length)) === OPEN_BRACE
+          ? undefined
+          : BARE_NAME.exec(text);
+      const braced = bare ? undefined : above(at);
+      if (braced) add(command, braced.value, valueAt(braced));
+      else if (bare?.[1]) add(command, bare[1], bare.index + bare[0].length - bare[1].length);
+    } else {
+      const after =
+        command === "includegraphics" || command === "addbibresource" ? skipOptional(text, at) : at;
+      const braced = after === undefined ? undefined : above(after);
+      if (braced) add(command, braced.value, valueAt(braced), command === "import");
+    }
+  }
+  return found;
+}
+
+/**
+ * Where a source sets `\pdfoutput` to a number above 0, asking pdfTeX for PDF, outside its
+ * comments: `\pdfoutput=1` or `\pdfoutput 1`, but not a test of it, `\ifnum\pdfoutput=1`, which
+ * reads it. Each is from `start` to before `end`.
+ */
+export function pdfOutputSettings(tex: string): { start: number; end: number }[] {
+  const text = maskComments(tex);
+  const found: { start: number; end: number }[] = [];
+  for (const match of text.matchAll(
+    /(?<!\\if(?:num|dim|odd|case)\s*)\\pdfoutput(?![A-Za-z@])\s*=?\s*(\d+)/g,
+  ))
+    if (Number(match[1]) > 0)
+      found.push({ start: match.index, end: match.index + match[0].length });
+  return found;
 }
 
 /**

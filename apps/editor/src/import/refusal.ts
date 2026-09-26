@@ -10,8 +10,9 @@
 /**
  * Why a resume was refused: at intake, for its size, its files or its engine (`intake`, `luatex`);
  * or by the reference compile, for a template, package, font or file the editor or the upload
- * lacks, another error (`stopped`), or output that changed on every pass (`passes`); or by the
- * corpus runner, for a compile past its time (`timeout`).
+ * lacks, an image it shows in a format with no stand-in (`image`), another error (`stopped`), or
+ * output that changed on every pass (`passes`); or by the corpus runner, for a compile past its
+ * time (`timeout`).
  */
 export const REFUSAL_REASONS = [
   "intake",
@@ -20,6 +21,7 @@ export const REFUSAL_REASONS = [
   "package",
   "font",
   "file",
+  "image",
   "stopped",
   "passes",
   "timeout",
@@ -79,6 +81,7 @@ export function refusal(reason: RefusalReason, name?: string, log?: string): Ref
     file: /\.tex$|^[^.]*$/i.test(shown)
       ? `This resume needs the file ${shown}, which is not in the upload.`
       : `This resume needs the file ${shown}, which this editor does not have.`,
+    image: `This resume shows the image ${shown}, in a format this editor does not take: it takes PNG, JPEG and PDF images.`,
     stopped: "This resume could not be compiled by this editor.",
     passes:
       "This resume came out differently every time it was compiled, so this editor cannot take it.",
@@ -93,11 +96,15 @@ export function refusal(reason: RefusalReason, name?: string, log?: string): Ref
   };
 }
 
-/** A refusal at intake with its own message, which names the upload's file when one is at fault. */
-export const refusedAtIntake = (message: string): Refusal => ({
+/**
+ * A refusal at intake with its own message, which names the upload's file when one is at fault,
+ * and that file's name for developers.
+ */
+export const refusedAtIntake = (message: string, name?: string): Refusal => ({
   refused: true,
   reason: "intake",
   message,
+  ...(name === undefined ? {} : { name }),
 });
 
 /** Whether a result is a refusal. */
