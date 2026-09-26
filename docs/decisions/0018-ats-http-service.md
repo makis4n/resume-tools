@@ -1,4 +1,4 @@
-# 0006. The ATS HTTP service
+# 0018. The ATS HTTP service
 
 Date: 2026-09-25 · Status: proposed
 

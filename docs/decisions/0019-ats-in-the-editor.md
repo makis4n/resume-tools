@@ -1,4 +1,4 @@
-# 0007. The ATS in the editor
+# 0019. The ATS in the editor
 
 Date: 2026-09-25 · Status: proposed; needs the editor owner's agreement
 
@@ -21,23 +21,23 @@ they need its owner's agreement. `editor-plan.md` is not edited; this record car
   the editor.
 - **One implementation.** The panel and the check page share one API client, one requirement-review
   component and one results component, all in `apps/editor/src/features/ats`. The client validates
-  responses against `packages/contracts` and ignores properties it does not know (decision 0006).
-- **The PDF.** The compile path exposes the downloadable PDF's bytes to the panel, the same bytes
-  the download button saves. The panel compiles first if the resume has changed since the last
-  compile.
+  responses against `packages/contracts` and ignores properties it does not know (decision 0018).
+- **The PDF.** The panel takes the PDF from `Compiler.pdf()`, the call the download button uses,
+  so it analyses the bytes a user would download. That call already waits for the newest document
+  to compile.
 - **Who builds what.** Keaen builds the contents of `features/ats`. The editor owner decides where
-  the tab and the route sit, and adds the hook that exposes the PDF.
+  the tab and the route sit, and passes the panel a way to get the PDF.
 - **Curated-template gate.** Each curated template, compiled with invented content, passes the ATS
   readiness checks with no critical finding and no layout warning. A failure is a template bug.
-  The mechanism is settled when the editor first produces PDFs: most likely the editor's CI
-  compiles the templates and hands the PDFs to a job that runs the ATS checks over HTTP or its
-  command line, so neither app imports the other.
+  The editor's validation harness already compiles every curated package in CI and checks that
+  its PDF's text can be extracted. The ATS gate extends that job: it hands the harness's PDFs to
+  the ATS checks over HTTP or their command line, so neither app imports the other.
 
 ## Consequences
 
 - The side panel gains a second purpose, and the product gains a page the plan does not describe.
-- ATS milestone 2 waits on the editor's PDF export, which is part of the curated-editor milestone.
-  ATS milestones 0 and 1 do not wait: they use synthetic PDFs.
+- ATS milestone 2 needs only what the editor already has: `Compiler.pdf()` and the side panel.
+  ATS milestones 0 and 1 use synthetic PDFs.
 - Templates that fail the gate need fixing before launch, such as missing Unicode mappings for
   icon fonts or ligatures, or a two-column reading order. That is editor work the plan did not
   count.

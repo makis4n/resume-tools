@@ -13,7 +13,7 @@ uv run ruff check . && uv run ruff format --check .
 
 For reloading on changes while developing, run `uv run uvicorn ats.service:app --reload` instead.
 
-`src/ats/service.py` is the HTTP layer, FastAPI served by Uvicorn (decision 0006): `POST /v1/analyze` takes multipart form data with a `file` field holding a PDF, and `GET /health` answers the host's checks. `src/ats/analyze.py` is the analysis itself and is still a placeholder that returns an empty result.
+`src/ats/service.py` is the HTTP layer, FastAPI served by Uvicorn (decision 0018): `POST /v1/analyze` takes multipart form data with a `file` field holding a PDF, and `GET /health` answers the host's checks. `src/ats/analyze.py` is the analysis itself and is still a placeholder that returns an empty result.
 
 Settings come from the environment:
 

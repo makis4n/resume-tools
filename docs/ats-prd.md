@@ -17,19 +17,24 @@ returns JSON defined in `packages/contracts`.
 
 This document covers the ATS product and its editor integration. The editor itself remains
 governed by `docs/editor-plan.md` and the decisions in `docs/decisions/`. The HTTP service is
-decision 0006; the editor's side of the integration is decision 0007.
+decision 0018; the editor's side of the integration is decision 0019.
 
 ## 2. Current state
 
 - `apps/ats/src/ats/analyze.py` checks the PDF signature and returns an empty analysis.
 - The ATS has no HTTP server, PDF extractor, scoring engine or model integration.
 - `apps/editor/src/features/ats` contains only a README; there is no panel or API client.
-- The editor does not yet export PDFs; PDF export is part of the editor's curated-editor milestone.
+- The editor's milestone 2 has landed: three curated templates, the side panel, documents kept in
+  the browser and PDF download. `Compiler.pdf()` in `apps/editor/src/editor/compiler.ts` returns the
+  bytes the download button saves, which are the bytes the panel sends.
+- The editor's validation harness (`apps/editor/src/validate/harness.ts`) already fails a curated
+  template in CI when its PDF has no ToUnicode map or its extracted text differs from the page.
 - `packages/contracts/ats/v1/analysis.schema.json` defines a draft response containing `contract`,
-  `score` and `findings`, and rejects unknown properties.
+  `score` and `findings`.
 - `apps/editor/.env.example` already declares `VITE_ATS_SERVICE_URL=http://localhost:8000`.
-- `docs/editor-plan.md` does not yet mention the ATS panel or the check page; decision 0007
-  proposes them.
+- `docs/editor-plan.md` does not yet mention the ATS panel or the check page; decision 0019
+  proposes them. `docs/milestone-2.md` already requires the PDF's text to be extractable because
+  the ATS reads it.
 
 The first milestone is therefore an end-to-end integration with placeholder analysis, not an AI
 feature.
@@ -219,7 +224,7 @@ session. Persistent history is deferred.
 
 ### 8.2 ATS HTTP service
 
-Decision 0006 records the service's shape.
+Decision 0018 records the service's shape.
 
 - Expose `POST /v1/analyze`, `POST /v1/job-requirements` and a lightweight health endpoint.
 - `POST /v1/analyze` is deterministic and never calls a model provider.
@@ -340,7 +345,7 @@ Milestone 0 uses the existing `ats/v1` response unchanged.
 
 ### 10.2 v1 revision
 
-The contract is still a draft and no client consumes it yet. Decision 0006 proposes these changes
+The contract is still a draft and no client consumes it yet. Decision 0018 proposes these changes
 within `ats/v1`:
 
 - **Tolerate additions.** Remove `additionalProperties: false` from the response and from
@@ -408,7 +413,10 @@ invented people and experience. The corpus should include:
 
 **Curated templates are a gate.** Each curated template, compiled with invented content, must pass
 the readiness checks with no `critical` finding and no `layout` warning. A failure is a template
-bug for the editor to fix, not something a user should see. Decision 0007 covers how this runs.
+bug for the editor to fix, not something a user should see. The editor's validation harness
+already checks that each curated PDF's text can be extracted and matches the page; the ATS gate
+adds what it cannot see, such as reading order, sections and contact details. Decision 0019 covers
+how this runs.
 
 ### 12.2 Initial success measures
 
@@ -436,7 +444,7 @@ Version one is milestones 0 to 3.
 
 ### Milestone 0: integration skeleton
 
-- Add the FastAPI service around the placeholder `analyze` function (decision 0006).
+- Add the FastAPI service around the placeholder `analyze` function (decision 0018).
 - Add the editor API client and a minimal analysis panel.
 - Send a synthetic fixture PDF and display the empty response.
 - Add contract validation and integration tests.
@@ -458,7 +466,7 @@ a job description or model provider.
 
 ### Milestone 2: production editor connection and check page
 
-- Expose the editor's actual downloadable PDF bytes.
+- Take the PDF from `Compiler.pdf()`, the same bytes the download button saves.
 - Analyse the latest successful compile and mark results stale after edits.
 - Add the check page, sharing the panel's client and results display.
 - Complete loading, cancellation, rate-limit and failure states.
@@ -492,9 +500,9 @@ with the provider disabled.
 ## 14. Dependencies and sequencing
 
 - ATS milestones 0 and 1 can proceed before the curated editor is complete by using synthetic PDFs.
-- The panel tab, the check page and the PDF exposure are editor changes; decision 0007 needs the
+- The panel tab, the check page and the PDF exposure are editor changes; decision 0019 needs the
   editor owner's agreement before milestone 2.
-- Milestone 2 depends on the editor's PDF export from its curated-editor milestone.
+- The editor's PDF export, which milestone 2 needs, has landed.
 - Contract changes affect both products. Decision 0005 means no review is requested automatically,
   so the author tells the other owner directly.
 - Milestone 3 needs a model provider chosen and an API key held by the ATS service.
@@ -550,8 +558,8 @@ required notices. Dependencies added to this repository must be named in the pul
 
 ## 18. Immediate next actions
 
-1. Agree decision 0007 with the editor owner: panel tab, check page and PDF exposure.
-2. Accept decision 0006 and land the contract's tolerance change while the schema is a draft.
+1. Agree decision 0019 with the editor owner: panel tab, check page and PDF exposure.
+2. Accept decision 0018 and land the contract's tolerance change while the schema is a draft.
 3. Create the integration-skeleton issue and keep it separate from PDF analysis.
 4. Build the fixture-based editor-to-ATS request using the existing response contract.
 5. Benchmark pdfminer.six and pypdfium2 on the fixture corpus before designing the rubric around
