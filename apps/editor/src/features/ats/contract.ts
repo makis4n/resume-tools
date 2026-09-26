@@ -5,7 +5,7 @@ import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
 /**
  * TypeScript view of `packages/contracts/ats/v1`. The schemas are the truth; these types only
  * describe what validation has already guaranteed. The schemas accept properties they do not
- * list (decision 0006), so a reply may carry more than these types show, and code here ignores it.
+ * list (decision 0018), so a reply may carry more than these types show, and code here ignores it.
  */
 export type Severity = "info" | "warning" | "critical";
 
