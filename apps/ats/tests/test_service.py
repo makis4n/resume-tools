@@ -1,5 +1,6 @@
 import json
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
-from ats.service import create_app
+from ats.service import create_app, readable_size
 
 CONTRACTS = Path(__file__).parents[3] / "packages" / "contracts" / "ats" / "v1"
 EDITOR_ORIGIN = "http://localhost:5173"
@@ -23,8 +24,9 @@ ERROR = load_schema("error.schema.json")
 
 
 def minimal_pdf(text: str = "Invented Person") -> bytes:
-    """A one-page PDF with one line of text, built by hand so the tests need no PDF library."""
-    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    """A one-page PDF with a line of ASCII text, built by hand so the tests need no PDF library."""
+    escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    stream = f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET".encode("ascii")
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -73,10 +75,28 @@ def test_health(client: TestClient) -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_sizes_read_naturally() -> None:
+    assert [readable_size(size) for size in (5 * 1024**2, 1572864, 4096)] == [
+        "5 MB",
+        "1.5 MB",
+        "4 KB",
+    ]
+
+
 def test_analyze_returns_a_schema_valid_analysis(client: TestClient) -> None:
     response = upload(client, minimal_pdf())
     assert response.status_code == 200
     ANALYSIS.validate(response.json())
+
+
+def test_accepts_a_pdf_declared_with_a_generic_type(client: TestClient) -> None:
+    response = upload(client, minimal_pdf(), "application/octet-stream")
+    assert response.status_code == 200
+    ANALYSIS.validate(response.json())
+
+
+def test_the_contract_tolerates_properties_it_does_not_know() -> None:
+    ANALYSIS.validate({"contract": "ats/v1", "score": None, "findings": [], "added_later": 1})
 
 
 def test_rejects_a_declared_type_other_than_pdf(client: TestClient) -> None:
@@ -93,7 +113,9 @@ def test_rejects_an_empty_file(client: TestClient) -> None:
 
 def test_rejects_a_file_over_the_limit_after_reading(client: TestClient) -> None:
     oversized = minimal_pdf() + b" " * MAX_UPLOAD_BYTES
-    assert_error(upload(client, oversized), 413, "file-too-large")
+    response = upload(client, oversized)
+    assert_error(response, 413, "file-too-large")
+    assert response.json()["error"]["message"] == "The PDF must be 4 KB or smaller."
 
 
 def test_rejects_a_body_over_the_limit_from_its_headers(client: TestClient) -> None:
@@ -103,8 +125,56 @@ def test_rejects_a_body_over_the_limit_from_its_headers(client: TestClient) -> N
     assert response.headers["access-control-allow-origin"] == EDITOR_ORIGIN
 
 
+def test_rejects_an_undeclared_body_over_the_limit(client: TestClient) -> None:
+    boundary = "invented-boundary"
+    head = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="resume.pdf"\r\n'
+        "Content-Type: application/pdf\r\n\r\n"
+    ).encode()
+
+    def body() -> Iterator[bytes]:
+        yield head + minimal_pdf()
+        for _ in range(200):
+            yield b" " * 1024
+        yield f"\r\n--{boundary}--\r\n".encode()
+
+    response = client.post(
+        "/v1/analyze",
+        content=body(),
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Origin": EDITOR_ORIGIN,
+        },
+    )
+    assert "content-length" not in response.request.headers
+    assert_error(response, 413, "file-too-large")
+    assert response.headers["access-control-allow-origin"] == EDITOR_ORIGIN
+
+
 def test_rejects_a_request_without_a_file(client: TestClient) -> None:
     assert_error(client.post("/v1/analyze"), 422, "invalid-request")
+
+
+def test_unknown_paths_and_methods_follow_the_error_contract(client: TestClient) -> None:
+    assert_error(client.get("/v1/nothing"), 404, "not-found")
+    assert_error(client.get("/v1/analyze"), 405, "method-not-allowed")
+
+
+def test_an_unexpected_error_follows_the_contract_without_leaking(
+    client: TestClient, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_: bytes) -> dict[str, Any]:
+        raise RuntimeError("Invented Person, 12 Invented Street")
+
+    monkeypatch.setattr("ats.service.analyze", fail)
+    with caplog.at_level(logging.DEBUG):
+        response = upload(client, minimal_pdf())
+    assert_error(response, 500, "internal-error")
+    assert response.headers["access-control-allow-origin"] == EDITOR_ORIGIN
+    assert "Invented Street" not in response.text
+    assert "Invented Street" not in caplog.text
+    assert "RuntimeError" in caplog.text
 
 
 def test_allows_the_editor_origin(client: TestClient) -> None:
