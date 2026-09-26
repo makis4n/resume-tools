@@ -5,6 +5,7 @@
  *   pnpm --filter @resume-tools/editor corpus collect
  *   pnpm --filter @resume-tools/editor corpus fetch [--only <id>]
  *   pnpm --filter @resume-tools/editor corpus survey [--json <file>] [--tree <file>]
+ *   pnpm --filter @resume-tools/editor corpus reference [--only <id>] [--json <file>]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
  *                 upstream templates' forks give the candidates, public repositories only, and
@@ -30,6 +31,14 @@
  *   --json <file> write each document's row as JSON too, from where pnpm was run
  *   --tree <file> check the documents against another engine manifest's file list, such as a
  *                 checkout's of an older layout, from where pnpm was run, in place of `.engine/`'s
+ *   reference     take every document the last fetch marks fetched in as a zip of its files, and
+ *                 compile it to the import pipeline's reference, or refuse it, on the engine in
+ *                 `.engine/`, in a pool of four child processes with 90 s a document; print one
+ *                 table of what became of them, and keep each document's log under
+ *                 `.corpus/reference/` (`scripts/corpus-reference.ts`, decision 0019). It takes 10
+ *                 to 20 minutes for the corpus
+ *   --only <id>   that document only
+ *   --json <file> write each document's row as JSON too, names and numbers only
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -43,6 +52,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 // Node runs this file by stripping its types, so the type import needs its real extension.
 import type { EngineManifest } from "../src/engine/manifest.ts";
+import { fileKey, readTree } from "../src/import/fonts.ts";
 import { collect, REASONS, type Reason } from "./corpus-collect.ts";
 import { fetchCorpus } from "./corpus-fetch.ts";
 import { environmentToken, GitHub } from "./corpus-github.ts";
@@ -55,17 +65,36 @@ import {
   isLive,
   MANIFEST_FILE,
   Manifest,
+  matchingEntries,
   parseJson,
   printable,
   writeAtomically,
 } from "./corpus-manifest.ts";
-import { readTree, surveyCorpus, surveyTable } from "./corpus-survey.ts";
+import {
+  type ChildRow,
+  LIMIT_MS,
+  POOL_SIZE,
+  type ReferenceRow,
+  referenceTable,
+  runPool,
+  uploadOf,
+} from "./corpus-reference.ts";
+import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>]";
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
+
+/** The engine's tree, whose files the reference runner puts in a zip for the fonts it names. */
+const ENGINE_FILES = fileURLToPath(new URL("../.engine/files", import.meta.url));
+
+/** The reference runner's child, which Node runs in each process of its pool. */
+const REFERENCE_CHILD = fileURLToPath(new URL("./corpus-reference-child.ts", import.meta.url));
+
+/** Where the reference runner keeps each document's log, which quotes its source. */
+const REFERENCE_LOGS = join(CORPUS_DIR, "reference");
 
 /** The corpus holds at least this many documents, and at least this many of them are `other`. */
 const MIN_DOCUMENTS = 200;
@@ -216,6 +245,104 @@ function runSurvey(json: string | undefined, tree: string | undefined) {
   }
 }
 
+/**
+ * The tree's font files by name, without the extension, in lower case: OpenType and TrueType for
+ * a font the manifest names as either, and Type 1 for one it names as `.pfb`.
+ */
+function treeFonts(files: Readonly<Record<string, number>>) {
+  const found = new Map<string, string>();
+  for (const path of Object.keys(files)) {
+    const kind = /\/fonts\/(?:opentype|truetype)\/.*\.(?:otf|ttf)$/i.test(path)
+      ? "outline"
+      : /\/fonts\/type1\/.*\.pfb$/i.test(path)
+        ? "pfb"
+        : undefined;
+    const key = kind && `${kind}:${fileKey(path)}`;
+    if (key && !found.has(key)) found.set(key, path);
+  }
+  return (name: string) => {
+    const kind = /\.pfb$/i.test(name) ? "pfb" : "outline";
+    const path = found.get(`${kind}:${fileKey(name)}`);
+    return path === undefined ? undefined : new Uint8Array(readFileSync(join(ENGINE_FILES, path)));
+  };
+}
+
+async function runReference(only: string | undefined, json: string | undefined) {
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("reference compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const manifest = readManifest();
+  const report = existsSync(FETCH_REPORT_FILE)
+    ? parseJson(FetchReport, readFileSync(FETCH_REPORT_FILE, "utf8"), FETCH_REPORT_FILE)
+    : undefined;
+  const entries = matchingEntries(manifest, report);
+  const fetched = manifest.documents
+    .filter(isLive)
+    .filter((doc) => entries.get(doc.id)?.state === "fetched");
+  const documents = only === undefined ? fetched : fetched.filter((doc) => doc.id === only);
+  if (documents.length === 0)
+    throw new Error(
+      only === undefined
+        ? "No document is fetched: run `corpus fetch` first"
+        : `${only} is no document the last fetch fetched`,
+    );
+  const treeFont = treeFonts(engine.files);
+  const tasks = documents.map((doc) => ({
+    id: doc.id,
+    message: () => ({
+      name: `${doc.id}.zip`,
+      bytes: uploadOf(
+        doc,
+        (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
+        treeFont,
+      ),
+    }),
+  }));
+  const families = new Map(documents.map((doc) => [doc.id, doc.family]));
+  const rows: ReferenceRow[] = [];
+  const started = performance.now();
+  print([
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${LIMIT_MS / 1000} s each at most`,
+  ]);
+  await runPool({
+    script: REFERENCE_CHILD,
+    tasks,
+    onResult: (task, result) => {
+      const reply = result.reply as { row: ChildRow; log?: string } | undefined;
+      const row: ReferenceRow = {
+        id: task.id,
+        family: families.get(task.id) ?? "other",
+        ...(reply?.row ??
+          (result.timedOut
+            ? { outcome: "timeout" }
+            : { outcome: "stopped", stopped: "its child process died" })),
+        wall: Math.round(result.wall),
+      };
+      rows.push(row);
+      if (reply?.log !== undefined)
+        writeAtomically(join(REFERENCE_LOGS, `${task.id}.log`), reply.log);
+      const what =
+        row.outcome === "reference"
+          ? `reference, ${row.engine}, ${row.pages} ${row.pages === 1 ? "page" : "pages"}, ${row.ms} ms`
+          : `refused: ${row.outcome}${row.name === undefined ? "" : ` (${row.name})`}${row.stopped === undefined ? "" : `, ${row.stopped}`}`;
+      print([`${rows.length}/${documents.length} ${task.id}: ${what}`]);
+    },
+  });
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const minutes = (performance.now() - started) / 60_000;
+  print(["", ...referenceTable(rows).trimEnd().split("\n"), "", `Took ${minutes.toFixed(1)} min.`]);
+  if (json !== undefined)
+    writeAtomically(
+      json,
+      formatJson({
+        version: 1,
+        tree: { layout: engine.layout, files: Object.keys(engine.files).length },
+        limitMs: LIMIT_MS,
+        documents: rows,
+      }),
+    );
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -233,16 +360,24 @@ async function main() {
   }
   const [command, ...rest] = positionals;
   if (rest.length > 0) throw new Error(`${rest.join(" ")} is not an option: ${USAGE}`);
-  if (command !== "collect" && command !== "fetch" && command !== "survey")
+  if (
+    command !== "collect" &&
+    command !== "fetch" &&
+    command !== "survey" &&
+    command !== "reference"
+  )
     throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
-  if (values.only !== undefined && command !== "fetch") throw new Error("--only goes with fetch");
-  if (values.json !== undefined && command !== "survey") throw new Error("--json goes with survey");
+  if (values.only !== undefined && command !== "fetch" && command !== "reference")
+    throw new Error("--only goes with fetch or reference");
+  if (values.json !== undefined && command !== "survey" && command !== "reference")
+    throw new Error("--json goes with survey or reference");
   if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
   if (command === "fetch") return runFetch(values.only);
   if (command === "collect") return runCollect();
   // pnpm runs the script in the editor's folder; a path is the caller's, from where pnpm was run.
   const caller = (path: string | undefined) =>
     path === undefined ? undefined : resolve(process.env.INIT_CWD ?? ".", path);
+  if (command === "reference") return runReference(values.only, caller(values.json));
   return runSurvey(caller(values.json), caller(values.tree));
 }
 

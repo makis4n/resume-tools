@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
+import { isWholeDocument, references, WINDOW, withoutComments } from "../src/import/source";
 import { bound, fastest } from "../src/test/timing";
 import {
   assetsOf,
@@ -51,14 +52,10 @@ import {
   differsByMoreThan,
   editDistance,
   isSlides,
-  isWholeDocument,
   namedAsResume,
   nonLatinShare,
   normalisedHash,
-  references,
   resumeHeadings,
-  WINDOW,
-  withoutComments,
 } from "./corpus-tex";
 
 // Every document here is invented for these tests, under `example/` repositories: a class, a few

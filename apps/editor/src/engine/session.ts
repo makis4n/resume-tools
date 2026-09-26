@@ -67,6 +67,20 @@ const BUILDS = `${HOME}/builds`;
 const FORMATS = `${HOME}/formats`;
 
 /**
+ * The name fontconfig reads its configuration under, from the folder a run is in first and then
+ * from FONTCONFIG_HOME. A dot file, which TeX may neither write nor read (`openin_any` and
+ * `openout_any` below) and no caller may supply (`isJobPath`), so that only the session writes one.
+ */
+const FONTCONFIG_FILE = ".fonts.conf";
+/**
+ * Where fontconfig finds its configuration when the run's folder has none: a link to the tree's
+ * own, `/etc/fonts/fonts.conf`, which lists no font folder (decision 0011).
+ */
+const FONTCONFIG_HOME = `${HOME}/fontconfig`;
+/** The tree's own fontconfig configuration. */
+const TREE_FONTCONFIG = "/etc/fonts/fonts.conf";
+
+/**
  * The TeX Live trees kpathsea searches, in order: TeX Live's own configuration, generated files
  * and distribution, then the Ubuntu bundles' packages (see `scripts/fetch-engine.ts`). kpathsea
  * finds files in each through a filename database the session builds from the manifest, and never
@@ -87,7 +101,12 @@ const ENV: Record<string, string> = {
   TEXMFDIST: "/texlive/texmf-dist:/texmf/texmf-dist",
   TEXMFVAR: "/texlive/texmf-dist/texmf-var",
   TEXMFCNF: "/texlive/texmf-dist/web2c",
-  FONTCONFIG_PATH: "/texlive",
+  // The engine reads its environment once, when it starts, so a compile cannot change it. These
+  // point fontconfig at a file a compile can: `.fonts.conf` in the folder the run is in, which the
+  // session writes for a compile that asks for fonts by name (`CompileOptions.fontsByName`), and
+  // otherwise the tree's own, through FONTCONFIG_HOME.
+  FONTCONFIG_FILE,
+  FONTCONFIG_PATH: `.:${FONTCONFIG_HOME}`,
   // TeX may open only files below the folder it runs in: no absolute paths, no "..", no dot
   // files. Files kpathsea finds in the trees are not affected.
   openin_any: "p",
@@ -116,6 +135,7 @@ interface EmscriptenStream {
 export interface EmscriptenFs {
   mkdirTree(path: string): void;
   create(path: string, mode: number): MemfsNode;
+  symlink(target: string, path: string): void;
   writeFile(path: string, data: string | Uint8Array): void;
   readFile(path: string): Uint8Array;
   readFile(path: string, options: { encoding: "utf8" }): string;
@@ -172,7 +192,10 @@ export interface SessionOptions {
   verifyHeap?: boolean;
 }
 
-/** Files a template supplies, such as a class file, by plain file name. */
+/**
+ * Files a template supplies, such as a class file, by plain file name; or, for a compile, the
+ * files of an upload, by their paths in the job's folder (`isJobPath`).
+ */
 export type JobFiles = Record<string, string | Uint8Array>;
 
 /** TeX Live files read since the last result: how many, how many bytes, and which. */
@@ -223,6 +246,13 @@ export interface CompileResult {
 export interface PdfOptions {
   /** Deflate level 0 to 9; xdvipdfmx's default when left out. Tests read a level 0 PDF. */
   compress?: number;
+  /**
+   * The images the PDF may show: paths of files in the job's folder that the caller gave the job
+   * as blank stand-ins for an upload's images (decision 0019). A `pdf:image`, `pdf:img` or
+   * `pdf:epdf` special whose file, resolved inside the job's folder, is one of them, and still holds
+   * the bytes the caller gave, is taken; every other is refused, as without the list.
+   */
+  images?: readonly string[];
 }
 
 export interface PdfResult {
@@ -246,13 +276,22 @@ export interface CompileOptions {
    */
   maxPasses?: number;
   /**
-   * Files to put in the job's folder, such as a template's own files. They stay with the job, so
-   * they need passing only once, until it is forgotten or compiled with another format (another
-   * engine or another name). A format name stands for one template: dumping or putting it again
-   * keeps a job's files, so give another template another name, or forget the job before moving
-   * it over.
+   * Files to put in the job's folder, such as a template's own files, or an upload's by their
+   * paths in it (`isJobPath`). They stay with the job, so they need passing only once, until it is
+   * forgotten or compiled with another format (another engine or another name). A format name
+   * stands for one template: dumping or putting it again keeps a job's files, so give another
+   * template another name, or forget the job before moving it over.
    */
   files?: JobFiles;
+  /**
+   * Let XeTeX find fonts by name for this compile's passes, as fontspec asks fontconfig for them:
+   * the session writes a fontconfig configuration into the job's folder that lists the tree's
+   * `fonts/opentype` and `fonts/truetype` folders and the job's own, for fonts an upload ships, and
+   * takes it out after, so that fontconfig scans no folder again (decision 0011). Only the import
+   * pipeline's reference compile asks for it (decision 0019); the scan costs every XeTeX pass that
+   * reads it, and pdfTeX never uses fontconfig.
+   */
+  fontsByName?: boolean;
 }
 
 const checkName = (kind: string, name: string) => {
@@ -260,6 +299,14 @@ const checkName = (kind: string, name: string) => {
 };
 const checkFileName = (name: string) => {
   if (!isFileName(name)) throw new Error(`not a plain file name: ${name}`);
+};
+/**
+ * A file's path in a job's folder: plain file names joined by `/`, so no part is empty, `.`, `..`
+ * or a dot file, and the path stays inside the folder.
+ */
+export const isJobPath = (path: string) => path !== "" && path.split("/").every(isFileName);
+const checkJobPath = (path: string) => {
+  if (!isJobPath(path)) throw new Error(`not a path inside the job's folder: ${path}`);
 };
 /** A name for a format `dump` or `putFormat` makes; `stock` means the engine's own format. */
 const checkFormatName = (name: string) => {
@@ -385,15 +432,64 @@ export function refusedSpecial(text: string): string | undefined {
   return undefined;
 }
 
+/** The folders of each tree that hold OpenType or TrueType fonts, as the manifest lists them. */
+function fontFoldersOf(manifest: EngineManifest): string[] {
+  const folders = TREES.flatMap((tree) => [`${tree}/fonts/opentype`, `${tree}/fonts/truetype`]);
+  const paths = Object.keys(manifest.files);
+  return folders.filter((folder) => paths.some((path) => path.startsWith(`${folder}/`)));
+}
+
 /** What an error thrown says, for a result's `error`. */
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-/** The first `\special` of any page that would make xdvipdfmx read a file or reconfigure the run. */
-function refusedOutputSpecial(parsed: DviDocument): string | undefined {
+/**
+ * A path an output names, as a path in the job's folder: a relative one, from the folder, as TeX
+ * and XeTeX write a file they found there, with `./` or without; or an absolute one inside it, as
+ * fontconfig gives a font it found there. Undefined for any other.
+ */
+export function insideJob(job: string, path: string): string | undefined {
+  const folder = `${JOBS}/${job}/`;
+  const relative = path.startsWith(folder)
+    ? path.slice(folder.length)
+    : path.startsWith("/")
+      ? undefined
+      : path;
+  const name = relative?.replace(/^(?:\.\/)+/, "");
+  return name !== undefined && isJobPath(name) ? name : undefined;
+}
+
+/** The specials that show an image, which may be a stand-in's (`PdfOptions.images`). */
+const SHOWS_AN_IMAGE = new Set(["pdf:image", "pdf:img", "pdf:epdf"]);
+
+/**
+ * The file an image special names, as a path inside the folder xdvipdfmx runs in, or undefined
+ * when it names none that can be told so: the first PDF string after the command, as
+ * `(photo.png)`, with no parenthesis or escape in it, and nothing before it but the words, numbers
+ * and `@name` the image specials take (`width 72pt`, `bbox 0 0 10 10`, `pagebox cropbox`), so that
+ * no comment or other object can hide the file xdvipdfmx would read from this reading. A leading
+ * `./`, which XeTeX writes, is dropped; a path that would leave the folder names none.
+ */
+export function imageFileOf(text: string): string | undefined {
+  const match = /^\s*pdf:\s*(?:image|img|epdf)\b[\sA-Za-z0-9.+\-@_]*\(([^()\\]*)\)/i.exec(text);
+  const name = match?.[1]?.replace(/^(?:\.\/)+/, "");
+  return name !== undefined && isJobPath(name) ? name : undefined;
+}
+
+/**
+ * The first `\special` of any page that would make xdvipdfmx read a file or reconfigure the run,
+ * but for one that shows an image whose file `allowed` takes.
+ */
+function refusedOutputSpecial(
+  parsed: DviDocument,
+  allowed: (file: string) => boolean,
+): string | undefined {
   for (const page of parsed.pages)
     for (const item of page.items) {
-      const refused = item.kind === "special" ? refusedSpecial(item.text) : undefined;
-      if (refused !== undefined) return refused;
+      if (item.kind !== "special") continue;
+      const refused = refusedSpecial(item.text);
+      if (refused === undefined) continue;
+      const file = SHOWS_AN_IMAGE.has(refused) ? imageFileOf(item.text) : undefined;
+      if (file === undefined || !allowed(file)) return refused;
     }
   return undefined;
 }
@@ -422,6 +518,8 @@ export class EngineSession {
     private readonly printed: string[],
     private readonly tally: Tally,
     private readonly afterRun: (() => void) | undefined,
+    /** The tree's folders of OpenType and TrueType fonts, which `fontsByName` lists. */
+    private readonly fontFolders: readonly string[],
   ) {}
 
   static async start(
@@ -439,8 +537,9 @@ export class EngineSession {
           const { FS, ENV: env } = moduleOptions;
           if (!FS || !env) throw new Error("the engine did not provide FS and ENV before preRun");
           Object.assign(env, ENV);
-          for (const folder of [JOBS, BUILDS, FORMATS]) FS.mkdirTree(folder);
+          for (const folder of [JOBS, BUILDS, FORMATS, FONTCONFIG_HOME]) FS.mkdirTree(folder);
           mountOnDemand(FS, options, tally);
+          FS.symlink(TREE_FONTCONFIG, `${FONTCONFIG_HOME}/${FONTCONFIG_FILE}`);
         },
       ],
       print: (text) => printed.push(text),
@@ -460,6 +559,7 @@ export class EngineSession {
       printed,
       tally,
       options.afterRun,
+      fontFoldersOf(options.manifest),
     );
     const result: StartResult = {
       ms: performance.now() - started,
@@ -565,7 +665,7 @@ export class EngineSession {
   compile(
     engine: Engine,
     format: string,
-    body: string,
+    body: string | Uint8Array,
     options: CompileOptions = {},
   ): CompileResult {
     const job = options.job ?? "doc";
@@ -573,7 +673,7 @@ export class EngineSession {
     checkEngine(engine);
     checkName("job", job);
     checkPasses(maxPasses);
-    for (const name of Object.keys(options.files ?? {})) checkFileName(name);
+    for (const path of Object.keys(options.files ?? {})) checkJobPath(path);
     const spec = ENGINES[engine];
     const key = `${engine}:${format}`;
     let formatPath = spec.stockFormat;
@@ -593,12 +693,19 @@ export class EngineSession {
     this.outputOf.delete(job);
 
     this.tally.take();
-    let attempt = this.passes(spec, formatPath, job, body, maxPasses);
-    const left = maxPasses - attempt.passes.length;
-    if (!attempt.ok && !attempt.fresh && left > 0) {
-      this.clearFolder(job);
-      const again = this.passes(spec, formatPath, job, body, left);
-      attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
+    const fonts = options.fontsByName && engine === "xetex" ? this.fontconfig(job) : undefined;
+    let attempt: ReturnType<EngineSession["passes"]>;
+    try {
+      attempt = this.passes(spec, formatPath, job, body, maxPasses, fonts);
+      const left = maxPasses - attempt.passes.length;
+      if (!attempt.ok && !attempt.fresh && left > 0) {
+        this.clearFolder(job);
+        const again = this.passes(spec, formatPath, job, body, left, fonts);
+        attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
+      }
+    } finally {
+      // The session's default again: the next compile of the job scans no folder.
+      if (fonts) this.removeTree(`${JOBS}/${job}/${FONTCONFIG_FILE}`);
     }
     const { fresh: _, ...result } = attempt;
     if (result.ok) this.outputOf.set(job, engine);
@@ -621,6 +728,9 @@ export class EngineSession {
    * xdvipdfmx does not honour `openin_any`, so before it runs, every special of the output is
    * scanned and the PDF refused when one would read a file or reconfigure the run (`refusedSpecial`):
    * a template's special could otherwise embed another job's or a TeX Live file (decision 0008).
+   * The one exception is an image the caller wrote into the job as a blank stand-in and lists in
+   * `images` (decision 0019): a special that shows it, by a path inside the job's folder, is taken
+   * while the file still holds the bytes the caller gave.
    *
    * Whatever becomes of the PDF, the result says so, and `pdf` throws only for arguments it
    * refuses, as every method does: an output it cannot read, whose specials it cannot scan, is not
@@ -650,7 +760,11 @@ export class EngineSession {
         error: `the output cannot be read: ${messageOf(error)}`,
       };
     }
-    const refused = refusedOutputSpecial(parsed);
+    const images = new Set(options.images ?? []);
+    const refused = refusedOutputSpecial(
+      parsed,
+      (file) => images.has(file) && this.holds(job, file),
+    );
     if (refused !== undefined)
       return {
         ok: false,
@@ -715,19 +829,24 @@ export class EngineSession {
     this.removeTree(`${JOBS}/${job}`);
   }
 
-  /** Compile a job's body once, and again while it is new or its log asks. */
+  /**
+   * Compile a job's body once, and again while it is new or its log asks, with `fonts`, when
+   * given, as fontconfig's configuration in the job's folder.
+   */
   private passes(
     spec: EngineSpec,
     formatPath: string,
     job: string,
-    body: string,
+    body: string | Uint8Array,
     maxPasses: number,
+    fonts?: string,
   ): Omit<CompileResult, "fetched"> & { fresh: boolean } {
     const folder = `${JOBS}/${job}`;
     const at = (extension: string) => `${folder}/${job}.${extension}`;
     this.engine.FS.mkdirTree(folder);
-    this.writeFiles(folder, this.filesOf.get(job) ?? {});
+    this.writeFiles(folder, this.filesOf.get(job) ?? {}, checkJobPath);
     this.engine.FS.writeFile(at("tex"), body);
+    if (fonts !== undefined) this.engine.FS.writeFile(`${folder}/${FONTCONFIG_FILE}`, fonts);
     const fresh = !this.engine.FS.analyzePath(at("aux")).exists;
     const passes: number[] = [];
     let run: RunResult;
@@ -775,11 +894,42 @@ export class EngineSession {
     return `${FORMATS}/${engine}-${name}.fmt`;
   }
 
-  private writeFiles(folder: string, files: JobFiles) {
+  /**
+   * Write files into a folder, each after `check` takes its name: a plain file name for a dump's,
+   * a path in the job's folder for a compile's, whose folders are made first.
+   */
+  private writeFiles(folder: string, files: JobFiles, check = checkFileName) {
     for (const [name, data] of Object.entries(files)) {
-      checkFileName(name);
+      check(name);
+      const slash = name.lastIndexOf("/");
+      if (slash > 0) this.engine.FS.mkdirTree(`${folder}/${name.slice(0, slash)}`);
       this.engine.FS.writeFile(`${folder}/${name}`, data);
     }
+  }
+
+  /**
+   * A fontconfig configuration that lists the tree's OpenType and TrueType folders and the job's
+   * own, so that XeTeX finds a font by name there (`CompileOptions.fontsByName`).
+   */
+  private fontconfig(job: string): string {
+    const folders = [...this.fontFolders, `${JOBS}/${job}`];
+    return [
+      '<?xml version="1.0"?>',
+      '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">',
+      "<fontconfig>",
+      ...folders.map((folder) => `  <dir>${folder}</dir>`),
+      "</fontconfig>",
+      "",
+    ].join("\n");
+  }
+
+  /** Whether a file of a job's folder holds what the caller gave the job under its path. */
+  private holds(job: string, path: string): boolean {
+    const given = this.filesOf.get(job)?.[path];
+    const held = this.read(`${JOBS}/${job}/${path}`);
+    if (given === undefined || held === undefined) return false;
+    const bytes = typeof given === "string" ? new TextEncoder().encode(given) : given;
+    return bytes.length === held.length && bytes.every((byte, i) => byte === held[i]);
   }
 
   private removeTree(path: string) {

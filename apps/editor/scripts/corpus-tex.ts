@@ -1,16 +1,17 @@
 /**
- * Reading a LaTeX document's source as far as collecting the corpus needs (decision 0017): whether
- * it is a whole document, which family it belongs to, whether it looks like a resume, how much of
- * it is Latin script, which files it loads, and whether it is a copy of another text or only a few
- * lines from one. They are pure functions over text, so that they can be tested on invented
- * documents; none of them keeps or returns a document's text beyond the names of the files it
- * loads.
+ * Reading a LaTeX document's source as far as collecting the corpus needs (decision 0017): which
+ * family it belongs to, whether it looks like a resume, how much of it is Latin script, and whether
+ * it is a copy of another text or only a few lines from one. Whether it is a whole document, its
+ * class and which files it loads are read by `src/import/source.ts`, which the import pipeline's
+ * intake reads uploads with too. They are pure functions over text, so that they can be tested on
+ * invented documents; none of them keeps or returns a document's text.
  *
  * Everything but the hashes and the line comparison reads the source with its comments taken out,
  * so that a commented-out `\documentclass` or `\input` counts for nothing, as it does for TeX.
  */
 
 import { createHash } from "node:crypto";
+import { documentClass, withoutComments } from "../src/import/source.ts";
 import type { Family } from "./corpus-manifest.ts";
 
 /** A file's bytes as text, for reading. A byte that is not UTF-8 becomes U+FFFD, not an error. */
@@ -33,29 +34,6 @@ export function normalisedHash(bytes: Uint8Array): string {
     } else out[length++] = byte;
   }
   return sha256(out.subarray(0, length));
-}
-
-/** The source with TeX's comments taken out: from a `%` that no backslash escapes to its line's end. */
-export function withoutComments(tex: string): string {
-  return tex.replace(/(^|[^\\])((?:\\\\)*)%.*$/gm, "$1$2");
-}
-
-/** Whether the source is a whole document: `\documentclass`, `\begin{document}`, `\end{document}`. */
-export function isWholeDocument(tex: string): boolean {
-  const text = withoutComments(tex);
-  return (
-    /\\documentclass(?![A-Za-z@])/.test(text) &&
-    /\\begin\s*\{document\}/.test(text) &&
-    /\\end\s*\{document\}/.test(text)
-  );
-}
-
-/** The class the source's first `\documentclass` names, if any. */
-export function documentClass(tex: string): string | undefined {
-  const text = withoutComments(tex);
-  const match = /\\documentclass(?![A-Za-z@])/.exec(text);
-  if (!match) return undefined;
-  return argument(text, match.index + match[0].length)?.trim();
 }
 
 /** A macro's name right after one of these is being defined, not called. */
@@ -166,184 +144,6 @@ export function nonLatinShare(tex: string): number {
   const letters = text.match(/\p{L}/gu)?.length ?? 0;
   if (letters === 0) return 0;
   return (text.match(/(?!\p{Script=Latin})\p{L}/gu)?.length ?? 0) / letters;
-}
-
-/**
- * A file a document loads, by the name it gives: a class through `\documentclass` or `\LoadClass`,
- * a package through `\usepackage` or `\RequirePackage`, a source through `\input`, `\include`,
- * `\subfile`, `\InputIfFileExists`, `\import` or `\subimport`, or a bibliography through
- * `\bibliography` or `\addbibresource`. `\subimport` names its file from the folder of the file
- * that calls it, where the others name theirs from the main file's, as TeX's working folder is.
- * One loaded in the second argument of `\IfFileExists`, the code it runs when the file it asks
- * after is there, is `optional`: TeX loads it only then.
- */
-export interface Reference {
-  kind: "class" | "package" | "input" | "bibliography";
-  name: string;
-  fromCaller?: boolean;
-  optional?: boolean;
-}
-
-const COMMANDS =
-  /\\(documentclass|LoadClass|LoadClassWithOptions|usepackage|RequirePackage|RequirePackageWithOptions|input|include|subfile|InputIfFileExists|import|subimport|bibliography|addbibresource)(?![A-Za-z@])/g;
-
-/**
- * The files a source loads, in the order it names them. A name built by a macro, holding a
- * backslash or a `#`, cannot be read without running TeX and is left out, and so is one whose
- * brackets do not close within WINDOW characters, which keeps the time this takes linear in the
- * source's length however its brackets are laid out.
- */
-export function references(tex: string): Reference[] {
-  const text = withoutComments(tex);
-  const found: Reference[] = [];
-  const within = ifFileExists(text);
-  /** Whether the command being read is in `\IfFileExists`'s branch for a file that is there. */
-  let optional = false;
-  const add = (kind: Reference["kind"], names: string[], fromCaller = false) => {
-    for (const raw of names) {
-      const name = raw.trim();
-      if (name !== "" && !/[\\#]/.test(name))
-        found.push({
-          kind,
-          name,
-          ...(fromCaller ? { fromCaller } : {}),
-          ...(optional ? { optional } : {}),
-        });
-    }
-  };
-  for (const match of text.matchAll(COMMANDS)) {
-    const command = match[1] ?? "";
-    const at = match.index + match[0].length;
-    optional = within(match.index);
-    switch (command) {
-      case "documentclass":
-      case "LoadClass":
-      case "LoadClassWithOptions":
-        add("class", [argument(text, at) ?? ""]);
-        break;
-      case "usepackage":
-      case "RequirePackage":
-      case "RequirePackageWithOptions":
-        add("package", (argument(text, at) ?? "").split(","));
-        break;
-      case "input": {
-        // LaTeX's \input takes a group; TeX's primitive takes a name that ends at a space.
-        const braced = group(text, at);
-        BARE_NAME.lastIndex = at;
-        add("input", [braced?.value ?? BARE_NAME.exec(text)?.[1] ?? ""]);
-        break;
-      }
-      case "include":
-      case "subfile":
-      case "InputIfFileExists":
-        add("input", [group(text, at)?.value ?? ""]);
-        break;
-      case "import":
-      case "subimport": {
-        const folder = group(text, at);
-        const file = folder && group(text, folder.end);
-        if (folder && file) {
-          const path = folder.value.trim().replace(/\/?$/, "/") + file.value.trim();
-          add("input", [path.replace(/^\//, "")], command === "subimport");
-        }
-        break;
-      }
-      case "bibliography":
-        add("bibliography", (group(text, at)?.value ?? "").split(","));
-        break;
-      case "addbibresource":
-        add("bibliography", [argument(text, at) ?? ""]);
-        break;
-    }
-  }
-  return found;
-}
-
-/**
- * Whether an index of the text is in the second argument of an `\IfFileExists`, the code TeX runs
- * only when the file named first is there, asked of indexes that do not go down: each argument is
- * passed once, so that this takes time linear in the text's length however many there are.
- */
-function ifFileExists(text: string): (at: number) => boolean {
-  const spans: [start: number, end: number][] = [];
-  for (const match of text.matchAll(/\\IfFileExists(?![A-Za-z@])/g)) {
-    const file = group(text, match.index + match[0].length);
-    const exists = file && group(text, file.end);
-    if (exists) spans.push([file.end, exists.end]);
-  }
-  spans.sort(([a], [b]) => a - b);
-  let next = 0;
-  /** The furthest end of the arguments that start at or before the last index asked. */
-  let reach = -1;
-  return (at) => {
-    for (let span = spans[next]; span && span[0] <= at; span = spans[++next])
-      reach = Math.max(reach, span[1]);
-    return at < reach;
-  };
-}
-
-/** TeX's primitive `\input` name: spaces, then everything up to a space, a brace or a comment. */
-const BARE_NAME = /\s+([^\s{}\\%]+)/y;
-
-/**
- * How many characters past where it starts an argument is looked for: a bracket that has not
- * closed by then is taken never to, so that reading one command's arguments costs at most this
- * much, and reading a source costs at most this much for each command in it.
- */
-export const WINDOW = 8_192;
-
-/** The index after any spaces at `at`, looking no further than `stop`. */
-function skipSpace(text: string, at: number, stop: number): number {
-  while (at < stop && /\s/.test(text[at] ?? "")) at++;
-  return at;
-}
-
-/**
- * The index after any `[...]` optional arguments at `at` and the spaces around them, or undefined
- * when they do not end within WINDOW characters of `at`.
- */
-function skipOptional(text: string, at: number): number | undefined {
-  const stop = Math.min(text.length, at + WINDOW);
-  for (;;) {
-    at = skipSpace(text, at, stop);
-    if (at >= stop) return stop === text.length ? at : undefined;
-    if (text[at] !== "[") return at;
-    let depth = 0;
-    let i = at + 1;
-    for (; i < stop; i++) {
-      const char = text[i];
-      if (char === "\\") i++;
-      else if (char === "{") depth++;
-      else if (char === "}") depth--;
-      else if (char === "]" && depth <= 0) break;
-    }
-    if (i >= stop) return undefined;
-    at = i + 1;
-  }
-}
-
-/**
- * The braced group at `at`, after any spaces, and the index after it; undefined if there is none,
- * or it does not close within WINDOW characters of `at`.
- */
-export function group(text: string, at: number): { value: string; end: number } | undefined {
-  const stop = Math.min(text.length, at + WINDOW);
-  const start = skipSpace(text, at, stop);
-  if (start >= stop || text[start] !== "{") return undefined;
-  let depth = 0;
-  for (let i = start; i < stop; i++) {
-    const char = text[i];
-    if (char === "\\") i++;
-    else if (char === "{") depth++;
-    else if (char === "}" && --depth === 0) return { value: text.slice(start + 1, i), end: i + 1 };
-  }
-  return undefined;
-}
-
-/** A command's mandatory argument at `at`, after its optional ones; undefined if unreadable. */
-function argument(text: string, at: number): string | undefined {
-  const after = skipOptional(text, at);
-  return after === undefined ? undefined : group(text, after)?.value;
 }
 
 /**

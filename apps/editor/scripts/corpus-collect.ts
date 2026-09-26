@@ -27,6 +27,7 @@
  * through `printable`.
  */
 
+import { isWholeDocument, type Reference, references } from "../src/import/source.ts";
 import type { GitHub } from "./corpus-github.ts";
 import { PER_PAGE } from "./corpus-github.ts";
 import {
@@ -59,12 +60,9 @@ import {
   decode,
   differsByMoreThan,
   isSlides,
-  isWholeDocument,
   namedAsResume,
   nonLatinShare,
   normalisedHash,
-  type Reference,
-  references,
   resumeHeadings,
   sha256,
 } from "./corpus-tex.ts";

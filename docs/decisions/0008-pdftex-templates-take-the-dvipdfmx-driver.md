@@ -90,3 +90,11 @@ no links. Milestone 2 lists the driver as a decision item 6, the port of Jake's 
   one's PDFs therefore carry no images at all: a template's photo is an `extras` field (decision
   0006), and a later item that wants images in the PDF must give xdvipdfmx a folder of its own to
   read from, not the shared tree.
+
+## Update, 26 September 2026
+
+Milestone 3 item 3 lets `session.pdf` show one kind of image: a blank stand-in of an upload's
+image's size, which the caller wrote into the job and lists (`PdfOptions.images`), shown by a
+`pdf:image`, `pdf:img` or `pdf:epdf` special that names it inside the job's folder, while the file
+still holds the bytes the caller gave. Every other image special is refused as before, so the PDFs
+still carry no picture of anything (decision 0019).
