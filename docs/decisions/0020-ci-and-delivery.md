@@ -29,8 +29,9 @@ could check. The editor's production home needs the engine and TeX Live on R2 fi
   workflow, building with the production `VITE_` values. When the ATS service is on `main`, an
   `ats-image` workflow builds the image from `apps/ats/Dockerfile` and smoke-tests it on every
   pull request, pushes that same image to `ghcr.io/makis4n/resume-tools-ats` from `main`, tagged
-  with the commit and `main`, and keeps the newest five versions. Deploying it anywhere is one more
-  job that pulls that image.
+  with the commit and `main`, and keeps the newest five versions plus the one `main` holds. `main`
+  only moves forward: a run for an older commit, or a re-run of one, leaves it where it is.
+  Deploying it anywhere is one more job that pulls that image.
 
 ## Consequences
 
