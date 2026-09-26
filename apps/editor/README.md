@@ -1,6 +1,6 @@
 # Editor
 
-The browser editor for LaTeX resumes. Owner: @makis4n. The plan, including the build order, is in [../../docs/plan.md](../../docs/plan.md); the current milestone's plan is in [../../docs/milestone-2.md](../../docs/milestone-2.md).
+The browser editor for LaTeX resumes. Owner: @makis4n. The plan, including the build order, is in [../../docs/editor-plan.md](../../docs/editor-plan.md); the current milestone's plan is in [../../docs/milestone-2.md](../../docs/milestone-2.md).
 
 ```sh
 pnpm install        # from the repository root

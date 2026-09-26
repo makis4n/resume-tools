@@ -2,7 +2,8 @@ import { z } from "zod";
 
 /**
  * The canonical resume model, version 1: the one structure every resume is stored in, whatever
- * template it uses. Decision 0006 settles it, and docs/plan.md section 5.2 says why there is one.
+ * template it uses. Decision 0006 settles it, and docs/editor-plan.md section 5.2 says why
+ * there is one.
  *
  * It checks structure, not content. Any text may be empty, because an edit passes through the
  * empty string on its way to anything else, so only ids, dates and kinds are constrained. Its

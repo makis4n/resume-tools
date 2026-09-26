@@ -1,7 +1,7 @@
 # Engine spike
 
-The Node scripts of the first milestone of [the plan](../../../docs/plan.md), kept because the
-decision records cite them. The findings and the decisions they led to are in
+The Node scripts of the first milestone of [the plan](../../../docs/editor-plan.md), kept because
+the decision records cite them. The findings and the decisions they led to are in
 [0003](../../../docs/decisions/0003-engine-spike-findings.md) and
 [0004](../../../docs/decisions/0004-overlay-line-breaking.md), and the XeTeX loop's breakdown is
 in [xetex-loop-report.md](xetex-loop-report.md).

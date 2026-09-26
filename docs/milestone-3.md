@@ -1,10 +1,10 @@
 # Milestone 3: import
 
 Written 26 September 2026, as milestone 2 closes. This is the working plan for the third
-milestone in [plan.md](plan.md) section 9. It turns the curated editor into one that takes the
-`.tex` resume a person already has, and says in what order. Each numbered item is one pull
-request, or a few if it grows past ten minutes of reading. Tick the item in the same pull request
-that finishes it.
+milestone in [editor-plan.md](editor-plan.md) section 9. It turns the curated editor into one
+that takes the `.tex` resume a person already has, and says in what order. Each numbered item is
+one pull request, or a few if it grows past ten minutes of reading. Tick the item in the same pull
+request that finishes it.
 
 ## The goal
 
