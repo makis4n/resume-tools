@@ -333,6 +333,8 @@ describe("paragraphNodes with a face that has no ligature and kern program", () 
     expect(breaks(`${"a".repeat(150)} ${"b".repeat(201)}`)).toEqual([351]);
     expect(breaks("e\u0301".repeat(201))).toEqual([200, 400]);
     expect(breaks(`${"a".repeat(199)}e\u0301`)).toEqual([199]);
+    // No break right after a hyphen, whose discretionary is one: it goes after the next letter.
+    expect(breaks(`${"a".repeat(199)}-${"b".repeat(300)}`)).toEqual([201, 401]);
   });
 
   it("leaves out the accents past 30 on one letter, as the generator does", () => {

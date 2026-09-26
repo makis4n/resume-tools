@@ -44,6 +44,13 @@ const LEFT_OUT = new RegExp(`^(?:${INVISIBLE.source})$`, "u");
  */
 const JOINS = /^[\p{M}\u1160-\u11FF\uD7B0-\uD7FF]$/u;
 
+/**
+ * What TeX follows with a discretionary, a break of its own: the explicit hyphen. A break
+ * opportunity right after one would be a second break at the same place, where a ragged-right
+ * paragraph can end a line and set an empty one after it.
+ */
+export const HYPHEN = "-";
+
 /** Where a text's runs with no space are broken, and what of them is left out. */
 export interface RunBreaks {
   /** The UTF-16 offset of each character a break opportunity goes before, in order. */
@@ -60,8 +67,10 @@ export interface RunBreaks {
  * cut before a letter where the run's characters that set a glyph, since the last cut, would pass
  * `UNBROKEN_RUN` with the letter and those that go with it (`JOINS`), at most `MAX_MARKS` of them,
  * the rest being left out (`surplus`); a character the generator leaves out counts for nothing, and
- * no cut comes before it or before one that goes with the letter before it. A run of rich text
- * goes on from one run into the next, so rich text is read as its runs' texts joined.
+ * no cut comes before it, before one that goes with the letter before it, or right after a hyphen,
+ * where the cut moves to after the letter that follows, unless the run has reached twice the
+ * bound. A run of rich text goes on from one run into the next, so rich text is read as its runs'
+ * texts joined.
  */
 export function runBreaks(text: string): RunBreaks {
   const chars: { ch: string; at: number }[] = [];
@@ -72,15 +81,17 @@ export function runBreaks(text: string): RunBreaks {
   }
   const breaks: number[] = [];
   const surplus: number[] = [];
-  // The characters that set a glyph since the last cut or space, and the ones that go with the
-  // last letter kept so far.
+  // The characters that set a glyph since the last cut or space, the ones that go with the last
+  // letter kept so far, and that letter.
   let count = 0;
   let marks = 0;
+  let letter: string | undefined;
   chars.forEach(({ ch, at }, i) => {
     if (LEFT_OUT.test(ch)) return;
     if (SPACE.test(ch)) {
       count = 0;
       marks = 0;
+      letter = undefined;
     } else if (JOINS.test(ch)) {
       if (marks === MAX_MARKS) surplus.push(at);
       else {
@@ -97,12 +108,14 @@ export function runBreaks(text: string): RunBreaks {
         kept++;
         size++;
       }
-      if (count > 0 && count + size > UNBROKEN_RUN) {
+      const due = count > 0 && count + size > UNBROKEN_RUN;
+      if (due && (letter !== HYPHEN || count >= 2 * UNBROKEN_RUN)) {
         breaks.push(at);
         count = 0;
       }
       count++;
       marks = 0;
+      letter = ch;
     }
   });
   return { breaks, surplus };

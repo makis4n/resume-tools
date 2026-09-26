@@ -691,6 +691,11 @@ describe("generateBody", () => {
       `${"\u00e9".repeat(100)}${BREAK}${"\u00e9".repeat(100)}${BREAK}\u00e9`,
     );
     expect(bullet(`${a(199)}e\u0301`)).toBe(`${a(199)}${BREAK}\u00e9`);
+    // A hyphen is a break already, TeX's discretionary after it, so the break goes after the
+    // letter that follows it, and no two stand together, where a ragged line set an empty one;
+    // in a run of hyphens alone it waits no longer than twice the bound.
+    expect(bullet(`${a(199)}-${b(300)}`)).toBe(`${a(199)}-b${BREAK}${b(200)}${BREAK}${b(99)}`);
+    expect(bullet("-".repeat(450))).toBe(`${"-".repeat(400)}${BREAK}${"-".repeat(50)}`);
   });
 
   it("keeps 30 accents on a letter, as Unicode's stream-safe form does, and says it left the rest out", () => {
@@ -725,6 +730,8 @@ describe("generateBody", () => {
         "\\href{{{&href}}}{{{#label}}{{label}}{{/label}}{{^label}}{{&href}}{{/label}}}";
     });
     const long = `https://example.com/${"a".repeat(430)}`;
+    // The 200th character it shows is a hyphen.
+    const dashed = `https://example.com/${"b".repeat(179)}-${"b".repeat(100)}`;
     const encoded = `https://example.com/${"é".repeat(100)}`;
     const links = Resume.parse({
       version: 1,
@@ -734,6 +741,7 @@ describe("generateBody", () => {
           { id: "far", kind: "other", label: "", href: long },
           { id: "near", kind: "other", label: "Near", href: long },
           { id: "wide", kind: "other", label: "", href: encoded },
+          { id: "dash", kind: "other", label: "", href: dashed },
         ],
       },
       sections: [],
@@ -748,6 +756,10 @@ describe("generateBody", () => {
     const e = (count: number) => "\\%C3\\%A9".repeat(count);
     const pieces = [`https://example.com/${e(30)}`, e(33), e(33), e(4)];
     expect(latex).toContain(`\\href{https://example.com/${e(100)}}{${pieces.join(BREAK)}}`);
+    // A hyphen it shows is a break already, so the break goes after the character that follows.
+    expect(latex).toContain(
+      `\\href{${dashed}}{${dashed.slice(0, 201)}${BREAK}${dashed.slice(201)}}`,
+    );
   });
 
   it("keeps the part of an accented letter the fonts can set: its base, and an accent they have", () => {

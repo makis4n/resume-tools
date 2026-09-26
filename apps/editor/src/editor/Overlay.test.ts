@@ -1244,6 +1244,22 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
       expect(rows).toEqual(lines);
     }, 60_000);
 
+    it("breaks a run whose 200th character is a hyphen where TeX does, with no line left empty", async () => {
+      // A break right after the hyphen's discretionary gave TeX two breaks at one place, and the
+      // ragged bullet an empty line between them, which the overlay did not set: the generator
+      // breaks after the letter that follows the hyphen instead, and the overlay with it.
+      const text = `${"abcdefghij".repeat(20).slice(0, 199)}-${"abcdefghij".repeat(30)}`;
+      const { page } = await jake(withBullets("dash", [text]), "overlay-dash");
+      const { rows, page: lines } = compare(page, "dash-0.text", text);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(rows).toEqual(lines);
+      const baselines = [
+        ...new Set(page.glyphs.filter((glyph) => glyph.field === "dash-0.text").map((g) => g.y)),
+      ].sort((a, b) => a - b);
+      const gaps = baselines.slice(1).map((y, i) => y - (baselines[i] ?? y));
+      for (const gap of gaps) expect(gap).toBeCloseTo(gaps[0] ?? 0, 2);
+    }, 60_000);
+
     it("breaks rich runs with no space where TeX does, the count going on from run to run", async () => {
       // The generator counts a run with no space on from one run of rich text into the next, and so
       // does the overlay's breaker: a break inside the bold run, and one just where the italic run
