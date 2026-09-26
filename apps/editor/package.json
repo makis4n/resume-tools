@@ -7,6 +7,7 @@
     "dev": "vite",
     "fetch-engine": "node scripts/fetch-engine.ts",
     "measure": "node scripts/measure.ts",
+    "corpus": "node scripts/corpus.ts",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
