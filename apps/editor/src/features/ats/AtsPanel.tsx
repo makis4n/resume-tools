@@ -1,6 +1,12 @@
-import { useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { analyzeResume } from "./client";
-import { groupFindings, initialPanelState, panelReducer } from "./panel-state";
+import {
+  failureMessage,
+  groupFindings,
+  initialPanelState,
+  PREPARE_FAILED,
+  panelReducer,
+} from "./panel-state";
 
 export interface AtsPanelProps {
   /** Produces the PDF to analyse. */
@@ -9,20 +15,35 @@ export interface AtsPanelProps {
 
 const SEVERITY_LABEL = { critical: "Critical", warning: "Warnings", info: "Notes" } as const;
 
-/** The Resume analysis panel, milestone 0: send a PDF and show the reply. */
+/**
+ * The Resume analysis panel, milestone 0: send a PDF and show the reply. The button is disabled
+ * while a request runs, so there is at most one; it is cancelled if the panel goes away.
+ */
 export function AtsPanel({ getPdf }: AtsPanelProps) {
   const [state, dispatch] = useReducer(panelReducer, initialPanelState);
-  const current = useRef<{ request: number; controller: AbortController } | null>(null);
+  const inFlight = useRef<AbortController | null>(null);
+
+  useEffect(() => () => inFlight.current?.abort(), []);
 
   async function run() {
-    current.current?.controller.abort();
-    const request = (current.current?.request ?? 0) + 1;
     const controller = new AbortController();
-    current.current = { request, controller };
-    dispatch({ type: "start", request });
+    inFlight.current = controller;
+    dispatch({ type: "start" });
 
-    const result = await analyzeResume(await getPdf(), { signal: controller.signal });
-    dispatch({ type: "settle", request, result, at: new Date() });
+    let pdf: Blob;
+    try {
+      pdf = await getPdf();
+    } catch {
+      dispatch({ type: "fail", message: PREPARE_FAILED });
+      return;
+    }
+
+    try {
+      const result = await analyzeResume(pdf, { signal: controller.signal });
+      dispatch({ type: "settle", result, at: new Date() });
+    } catch {
+      dispatch({ type: "fail", message: failureMessage({ kind: "unexpected", status: 0 }) });
+    }
   }
 
   return (

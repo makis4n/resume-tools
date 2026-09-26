@@ -1,45 +1,49 @@
 import { describe, expect, it } from "vitest";
 import type { AnalyzeResult } from "./client";
+import type { Analysis } from "./contract";
 import { groupFindings, type PanelState, panelReducer } from "./panel-state";
 
 const AT = new Date("2026-09-25T10:00:00Z");
-const EMPTY: AnalyzeResult = {
-  ok: true,
-  analysis: { contract: "ats/v1", score: null, findings: [] },
-};
+const ANALYSIS: Analysis = { contract: "ats/v1", score: null, findings: [] };
+const ANALYSING: PanelState = { status: "analysing" };
 
-function settle(state: PanelState, request: number, result: AnalyzeResult): PanelState {
-  return panelReducer(state, { type: "settle", request, result, at: AT });
+function settle(state: PanelState, result: AnalyzeResult): PanelState {
+  return panelReducer(state, { type: "settle", result, at: AT });
 }
 
 describe("panelReducer", () => {
-  it("shows the analysis of the request it is waiting for", () => {
-    const waiting = panelReducer({ status: "idle" }, { type: "start", request: 1 });
-    expect(settle(waiting, 1, EMPTY)).toEqual({
+  it("shows the analysis when it arrives", () => {
+    const waiting = panelReducer({ status: "idle" }, { type: "start" });
+    expect(settle(waiting, { ok: true, analysis: ANALYSIS })).toEqual({
       status: "complete",
-      analysis: EMPTY.ok && EMPTY.analysis,
+      analysis: ANALYSIS,
       finishedAt: AT,
     });
   });
 
-  it("ignores an older request that finishes after a newer one started", () => {
-    const first = panelReducer({ status: "idle" }, { type: "start", request: 1 });
-    const second = panelReducer(first, { type: "start", request: 2 });
-    expect(settle(second, 1, EMPTY)).toBe(second);
+  it("ignores a result when nothing is waiting for one", () => {
+    const idle: PanelState = { status: "idle" };
+    expect(settle(idle, { ok: true, analysis: ANALYSIS })).toBe(idle);
+    expect(panelReducer(idle, { type: "fail", message: "Late." })).toBe(idle);
   });
 
-  it("shows a plain-language message on failure", () => {
-    const waiting = panelReducer({ status: "idle" }, { type: "start", request: 1 });
-    const state = settle(waiting, 1, { ok: false, failure: { kind: "unexpected", status: 500 } });
+  it("shows a plain-language message when the request fails", () => {
+    const state = settle(ANALYSING, { ok: false, failure: { kind: "unexpected", status: 500 } });
     expect(state).toEqual({
       status: "error",
       message: "The analysis service sent a reply we could not read. Please try again.",
     });
   });
 
+  it("shows the given message when something before the request fails", () => {
+    expect(panelReducer(ANALYSING, { type: "fail", message: "Could not prepare." })).toEqual({
+      status: "error",
+      message: "Could not prepare.",
+    });
+  });
+
   it("returns to idle when the request was cancelled", () => {
-    const waiting = panelReducer({ status: "idle" }, { type: "start", request: 1 });
-    expect(settle(waiting, 1, { ok: false, failure: { kind: "cancelled" } })).toEqual({
+    expect(settle(ANALYSING, { ok: false, failure: { kind: "cancelled" } })).toEqual({
       status: "idle",
     });
   });

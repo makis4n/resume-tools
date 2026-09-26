@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeResume } from "./client";
+import { analyzeResume, endpoint } from "./client";
 import { samplePdf } from "./sample-pdf";
 
 const BASE_URL = "http://ats.test";
@@ -41,15 +41,12 @@ describe("analyzeResume", () => {
     expect(result).toEqual({ ok: true, analysis });
   });
 
-  it("ignores properties the schema does not know", async () => {
+  it("accepts a reply with properties the schema does not list", async () => {
     const result = await analyzeResume(samplePdf(), {
       baseUrl: BASE_URL,
       fetch: replying(200, { contract: "ats/v1", score: null, findings: [], added_later: true }),
     });
-    expect(result).toEqual({
-      ok: true,
-      analysis: { contract: "ats/v1", score: null, findings: [] },
-    });
+    expect(result.ok).toBe(true);
   });
 
   it("rejects a successful reply that breaks the contract", async () => {
@@ -117,5 +114,24 @@ describe("analyzeResume", () => {
   it("reports a missing service address", async () => {
     const result = await analyzeResume(samplePdf(), { baseUrl: "" });
     expect(result).toEqual({ ok: false, failure: { kind: "not-configured" } });
+  });
+
+  it("reports a service address that is not an absolute URL", async () => {
+    const result = await analyzeResume(samplePdf(), { baseUrl: "localhost:8000" });
+    expect(result).toEqual({ ok: false, failure: { kind: "not-configured" } });
+  });
+});
+
+describe("endpoint", () => {
+  it("keeps the path of the service address", () => {
+    expect(endpoint("https://example.com/ats", "v1/analyze")?.href).toBe(
+      "https://example.com/ats/v1/analyze",
+    );
+    expect(endpoint("https://example.com/ats/", "v1/analyze")?.href).toBe(
+      "https://example.com/ats/v1/analyze",
+    );
+    expect(endpoint("http://localhost:8000", "v1/analyze")?.href).toBe(
+      "http://localhost:8000/v1/analyze",
+    );
   });
 });

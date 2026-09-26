@@ -27,15 +27,15 @@ export async function analyzeResume(
   pdf: Blob,
   options: AnalyzeOptions = {},
 ): Promise<AnalyzeResult> {
-  const baseUrl = options.baseUrl ?? import.meta.env.VITE_ATS_SERVICE_URL;
-  if (!baseUrl) return fail({ kind: "not-configured" });
+  const url = endpoint(options.baseUrl ?? import.meta.env.VITE_ATS_SERVICE_URL, "v1/analyze");
+  if (!url) return fail({ kind: "not-configured" });
 
   const body = new FormData();
   body.append("file", new Blob([pdf], { type: "application/pdf" }), "resume.pdf");
 
   let response: Response;
   try {
-    response = await (options.fetch ?? fetch)(new URL("/v1/analyze", baseUrl), {
+    response = await (options.fetch ?? fetch)(url, {
       method: "POST",
       body,
       signal: options.signal,
@@ -61,6 +61,18 @@ export async function analyzeResume(
     return fail({ kind: "service", status: response.status, code, message });
   }
   return fail({ kind: "unexpected", status: response.status });
+}
+
+/**
+ * The endpoint's URL under the service's base URL, keeping any path the base has, so that
+ * `https://example.com/ats` gives `https://example.com/ats/v1/analyze`. Null when the base URL is
+ * missing or is not an http or https URL; `localhost:8000` parses, but as the scheme `localhost:`.
+ */
+export function endpoint(baseUrl: string | undefined, path: string): URL | null {
+  if (!baseUrl) return null;
+  const base = URL.parse(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+  if (base?.protocol !== "http:" && base?.protocol !== "https:") return null;
+  return new URL(path, base);
 }
 
 function fail(failure: AnalyzeFailure): AnalyzeResult {
