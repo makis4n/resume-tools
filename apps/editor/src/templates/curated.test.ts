@@ -2263,6 +2263,60 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(page.unmatched).toBe(0);
   });
 
+  it("wraps a label of 110 characters, or 4,000, and leaves the skills' text a third of the width", async () => {
+    // Measured on one line, a label of 4,000 characters passed TeX's largest dimension and stopped
+    // the compile, and one of 110 left the skills' text no width at all: a label now wraps in what
+    // a third of the text's width for the text leaves, measured as it wraps.
+    const withLabel = (label: string) => {
+      const resume = Resume.parse(structuredClone(sample));
+      const skills = resume.sections.find((section) => section.kind === "labelled");
+      const [first] = skills?.kind === "labelled" ? skills.items : [];
+      if (!first) throw new Error("the sample moved");
+      first.label = label;
+      return resume;
+    };
+    const words = "Distributed systems, platform engineering and the tools developers use, ";
+    const labels = {
+      short: words.repeat(2).slice(0, 110).trim(),
+      long: words.repeat(60).slice(0, 4000).trim(),
+    };
+    const skills = /^(languages|infrastructure|practices)\./;
+    for (const [size, label] of Object.entries(labels)) {
+      const body = generateBody(pkg, withLabel(label), values);
+      const result = session.compile(pkg.engine, format.name, body.latex, {
+        job: `label-${size}`,
+        maxPasses: 3,
+      });
+      if (!result.output) throw new Error(`${size}: ${result.error}`);
+      expect(result.log, size).not.toMatch(/^! /m);
+      const shown: DrawnPage["glyphs"] = [];
+      for (let index = 0; index < result.pages; index++) {
+        const page = await drawPage(result.output, fonts, body.texts, index);
+        expect(page.unmatched, `${size}, page ${index + 1}`).toBe(0);
+        const glyphs = page.glyphs.filter((glyph) => skills.test(glyph.field ?? ""));
+        // Every glyph of the skills on the page, inside its edges.
+        for (const glyph of glyphs) {
+          const at = `${size}, page ${index + 1}: ${glyph.field}`;
+          expect(glyph.left, at).toBeGreaterThanOrEqual(0);
+          expect(glyph.right, at).toBeLessThanOrEqual(page.size.width);
+          expect(glyph.top, at).toBeGreaterThanOrEqual(0);
+          expect(glyph.bottom, at).toBeLessThanOrEqual(page.size.height);
+        }
+        shown.push(...glyphs);
+      }
+      // The whole label is set, and the skills' text in a column of a third of the text's width
+      // or more, which ends at the right margin.
+      const inLabel = shown.filter((glyph) => glyph.field === "languages.label");
+      expect(inLabel, size).toHaveLength(label.replace(/\s/g, "").length);
+      const text = shown.filter((glyph) => /\.text$/.test(glyph.field ?? ""));
+      const margin = drawn.size.width - 0.5 * INCH;
+      const third = (drawn.size.width - INCH) / 3;
+      expect(Math.min(...text.map((glyph) => glyph.left)), size).toBeLessThan(margin - third + 1);
+      expect(Math.max(...text.map((glyph) => glyph.right)), size).toBeLessThan(margin + 1);
+      if (size === "short") expect(result.pages, size).toBe(1);
+    }
+  }, 120_000);
+
   it("keeps a skill's text on the page whatever its label, and the sample's skills as upstream", async () => {
     // Upstream's cvskills sets the skills' text in a column 0.9 of the text's width after a
     // column as wide as the widest label, so a label of two or three words set the text past the

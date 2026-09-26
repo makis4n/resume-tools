@@ -83,8 +83,13 @@ Only what the loop needs, and what the editor's page, text and PDF need of the c
   takes more than the tenth of the text's width upstream's table leaves it, and in upstream's 0.9
   of the width otherwise. Upstream's text column was 0.9 of the text's width whatever the labels,
   so a label of two or three words, such as Programming Languages, set a long skill's text past
-  the page's edge, on the page and in the PDF. The environment reads its body first and measures
-  each label in a box it throws away; the sample's skills are where upstream's table sets them.
+  the page's edge, on the page and in the PDF. The text never takes less than a third of the
+  width: the labels' column takes at most the rest, and a label wider than that wraps in it,
+  right-aligned, so a label of 110 characters leaves the text a readable column, and one of 4,000
+  fits a page. The environment reads its body first and sets each label as a paragraph that wide,
+  in a box it throws away, taking its widest line: measured on one line, as first ported, a label
+  of 4,000 characters passed TeX's largest dimension and stopped the compile. The sample's skills
+  are where upstream's table sets them.
 
 tcolorbox stays, loaded with its `skins` library for the photo, which the editor never sets; the
 tree has tikzfill now (decision 0011). It costs about 120 ms of the dump, 0.37 MB of the format,

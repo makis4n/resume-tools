@@ -41,7 +41,9 @@
 %   dates are ranges too, which wrapped there, up against the award's title.
 % - cvskills sets the skills' text in what the labels' column leaves of the text's width when
 %   its widest label takes more than upstream's tenth of it: upstream's text column was 0.9 of the
-%   text's width whatever the labels, so a label of two or three words set it past the page.
+%   text's width whatever the labels, so a label of two or three words set it past the page. The
+%   labels' column takes at most what a third of the width for the text leaves, and a label wider
+%   than that wraps in it, measured as it wraps.
 % Everything else is upstream's.
 %%%%%%%%%%%%%%%%
 
@@ -871,20 +873,58 @@
 % rt: the skills' text in the column upstream's has, 0.9 of the text's width, or in what the labels'
 % column leaves of the text's width when its widest label takes more than a tenth of it, where
 % upstream's set the text past the right margin, and a label of two or three words set it past the
-% page's edge. So the environment reads its body first, and \rt@skilllabels measures each label
-% in a box it throws away, which is never shipped, so no field is found there.
+% page's edge; and never in less than a third of the text's width, so that the labels' column
+% takes at most the rest, \rt@labelroom, and a label wider than that wraps in it, right-aligned.
+% So the environment reads its body first, and \rt@skilllabels sets each label as a paragraph as
+% wide as \rt@labelroom, in a box it throws away, which is never shipped, so no field is found
+% there, and takes its widest line (\rt@widestline), taking the lines back off the box one by one:
+% the paragraph ends with the primitive \@@par, since LaTeX's \par leaves a whatsit after it, which
+% nothing takes off. Measured on one line, a label of thousands of characters passed TeX's largest
+% dimension and stopped the compile. A label on one line is as wide as it was, so labels that all
+% fit leave the table as it was.
 \newlength\rt@labelwidth
+\newlength\rt@labelroom
 \newlength\rt@skillwidth
+\newcount\rt@labellines
+\newif\ifrt@labelswrap
+\newcommand\rt@widestline{%
+  \unskip\unpenalty\unskip\unpenalty
+  \setbox\tw@\lastbox
+  \ifvoid\tw@\else
+    \global\advance\rt@labellines\@ne
+    \setbox\tw@\hbox{\unhbox\tw@}%
+    \ifdim\wd\tw@>\rt@labelwidth \global\rt@labelwidth\wd\tw@ \fi
+    \expandafter\rt@widestline
+  \fi}
 \newcommand\rt@skilllabels[1]{%
+  \setlength\rt@labelroom{\textwidth - \textwidth / 3 - 3\tabcolsep}%
   \global\rt@labelwidth\z@
+  \global\rt@labelswrapfalse
   \setbox\z@\hbox{%
     \def\cvskill##1##2{%
-      \settowidth\dimen@{\skilltypestyle{##1}}%
-      \ifdim\dimen@>\rt@labelwidth \global\rt@labelwidth\dimen@ \fi}%
+      \global\rt@labellines\z@
+      \setbox\z@\vbox{%
+        \hsize\rt@labelroom \leftskip\z@ \rightskip\z@\@plus1fil \parfillskip\z@\@plus1fil
+        \everypar{}\noindent\skilltypestyle{##1}\@@par
+        \rt@widestline}%
+      \ifnum\rt@labellines>\@ne \global\rt@labelswraptrue \fi}%
     #1}%
+  \ifdim\rt@labelwidth>\rt@labelroom
+    \global\rt@labelswraptrue
+    \global\rt@labelwidth\rt@labelroom
+  \fi
   \setlength\rt@skillwidth{\textwidth * \real{0.9}}%
   \setlength\dimen@{\textwidth - \rt@labelwidth - 3\tabcolsep}%
-  \ifdim\dimen@<\rt@skillwidth \setlength\rt@skillwidth{\dimen@}\fi}
+  \ifdim\dimen@<\rt@skillwidth \setlength\rt@skillwidth{\dimen@}\fi
+  \ifrt@labelswrap
+    \def\rt@labelcolumn{R{\rt@labelwidth}}%
+  \else
+    \def\rt@labelcolumn{r}%
+  \fi}
+\newcommand\rt@skilltable[2]{%
+  \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} #1 L{\rt@skillwidth}}
+    #2
+  \end{tabular*}}
 \NewDocumentEnvironment{cvskills}{+b}{%
   \vspace{\acvSectionContentTopSkip}
   \vspace{-2.0mm}
@@ -892,9 +932,7 @@
     \setlength\tabcolsep{1ex}
     \setlength{\extrarowheight}{0pt}
     \rt@skilllabels{#1}%
-    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} r L{\rt@skillwidth}}
-      #1
-    \end{tabular*}
+    \expandafter\rt@skilltable\expandafter{\rt@labelcolumn}{#1}%
   \end{center}
 }{}
 % Define a line of cv information(skill)
