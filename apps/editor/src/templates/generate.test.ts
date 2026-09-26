@@ -685,8 +685,38 @@ describe("generateBody", () => {
       `${a(150)}\\textbf{${b(50)}${BREAK}${b(50)}}`,
     );
     expect(bullet("&".repeat(201))).toBe(`${"\\&".repeat(200)}${BREAK}\\&`);
-    // A combining mark goes with the letter before it, and no break comes between them.
-    expect(bullet("e\u0301".repeat(201))).toBe(`${"\u00e9".repeat(200)}${BREAK}\u00e9`);
+    // An accent sets a glyph and counts, and goes with the letter before it: no break comes
+    // between them, so a letter goes on to the next piece with its accents.
+    expect(bullet("e\u0301".repeat(201))).toBe(
+      `${"\u00e9".repeat(100)}${BREAK}${"\u00e9".repeat(100)}${BREAK}\u00e9`,
+    );
+    expect(bullet(`${a(199)}e\u0301`)).toBe(`${a(199)}${BREAK}\u00e9`);
+  });
+
+  it("keeps 30 accents on a letter, as Unicode's stream-safe form does, and says it left the rest out", () => {
+    const text = `a${"\u0301".repeat(40)}`;
+    const one = Resume.parse({
+      version: 1,
+      header: { name: { first: "Ilse", last: "Marrow" }, links: [] },
+      sections: [
+        {
+          id: "work",
+          kind: "entries",
+          role: "experience",
+          title: "Work",
+          entries: [{ id: "tern", title: "Typesetter", bullets: [{ id: "b", text: [{ text }] }] }],
+        },
+      ],
+    });
+    const body = generateBody(pkg, one, {});
+    // Composed as the escape composes it, the a and its first accent one letter.
+    expect(/\\rtfield\{b\.text\}\{(.*)\}\n/.exec(body.latex)?.[1]).toBe(
+      `\u00e1${"\u0301".repeat(29)}`,
+    );
+    expect(body.surplus).toEqual(["\u0301"]);
+    // The field's text stays the model's, and the page skips what the body leaves out.
+    expect(body.texts.get("b.text")).toBe(text);
+    expect(generateBody(pkg, resume, {}).surplus).toEqual([]);
   });
 
   it("breaks an address it shows as text, and never one it links to", () => {

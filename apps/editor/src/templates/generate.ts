@@ -22,7 +22,7 @@ import type {
   SectionRole,
 } from "@resume-tools/resume-model";
 import { INVISIBLE } from "../tex/fields";
-import { runBreaks, UNBROKEN_RUN } from "../tex/runs";
+import { type RunBreaks, runBreaks, runBreaksWithin, UNBROKEN_RUN } from "../tex/runs";
 import { formatDates } from "./dates";
 import { escapeText, escapeUrl, isBlank, type TextFonts } from "./escape";
 import {
@@ -72,12 +72,14 @@ export interface GeneratedFormat {
 /**
  * A body to compile from its format, with the text of each field it marks, by field id, and the
  * characters of them its fonts cannot set (`BodyOptions.covers`), which it left out, or set as the
- * part of them the fonts can, an accented letter's base, each once, in the order the body met them.
+ * part of them the fonts can, an accented letter's base, each once, in the order the body met them;
+ * and the accents it left out past `MAX_MARKS` on one letter (`runBreaks`), each once likewise.
  */
 export interface GeneratedBody {
   latex: string;
   texts: Map<string, string>;
   dropped: string[];
+  surplus: string[];
 }
 
 /** What a body is generated with besides the package, the resume and the document's values. */
@@ -94,8 +96,14 @@ export interface BodyOptions {
   covers?: (char: string) => boolean;
 }
 
-/** How a slot's user text is escaped for the body: `escapeText`, with the body's coverage. */
-type Escape = (text: string) => string;
+/**
+ * How a slot's user text is escaped for the body: `escapeText`, with the body's coverage; and what
+ * hears of each accent it leaves out past `MAX_MARKS` on one letter (`escapeRun`).
+ */
+interface Escape {
+  (text: string): string;
+  surplus?: (mark: string) => void;
+}
 
 /**
  * What a slot holds while a snippet renders. User text carries the id of its field. Whether a
@@ -217,7 +225,10 @@ export function generateBody(
   const { covers } = options;
   const fonts: TextFonts | undefined =
     covers === undefined ? undefined : { covers, lacks: (char) => dropped.add(char) };
-  const escape: Escape = (text) => escapeText(text, fonts);
+  const surplus = new Set<string>();
+  const escape: Escape = Object.assign((text: string) => escapeText(text, fonts), {
+    surplus: (mark: string) => surplus.add(mark),
+  });
   for (const control of controlsOf(pkg, values)) {
     const scope = { value: valueSlot(control.text) } satisfies Scope;
     render({ nodes: tree(control.apply), scope }, out, texts, escape, shown);
@@ -230,7 +241,7 @@ export function generateBody(
   };
   render(documentPart(build, resume), out, texts, escape, shown);
   out.add("\n");
-  return { latex: out.join(), texts, dropped: [...dropped] };
+  return { latex: out.join(), texts, dropped: [...dropped], surplus: [...surplus] };
 }
 
 /**
@@ -682,12 +693,14 @@ function field(id: string, text: string, latex: string, texts: Map<string, strin
  */
 function richLatex(runs: RichText, escape: Escape): string {
   let latex = "";
-  // A run of characters with no space goes on from one run of rich text into the next.
-  let carried = 0;
+  // A run of characters with no space goes on from one run of rich text into the next, so the
+  // runs are cut where their texts joined are.
+  const cut = runBreaks(runs.map((run) => run.text).join(""));
+  let from = 0;
   for (const run of runs) {
-    const cut = runBreaks(run.text, carried);
-    carried = cut.carried;
-    let part = escapeRun(run.text, escape, cut.breaks);
+    const to = from + run.text.length;
+    let part = escapeRun(run.text, escape, runBreaksWithin(cut, from, to));
+    from = to;
     if (part === "") continue;
     if (run.italic) part = `\\textit{${part}}`;
     if (run.bold) part = `\\textbf{${part}}`;
@@ -705,19 +718,35 @@ function richLatex(runs: RichText, escape: Escape): string {
 const BREAK = "\\allowbreak ";
 
 /**
- * Text as `escape` escapes it, with a break opportunity at each of `breaks`, UTF-16 offsets into
- * it, after every `UNBROKEN_RUN` characters of a run with no space in it unless given
- * (`runBreaks`). None comes where the pieces would escape otherwise than the whole, such as
- * before a combining mark (`runBreaks`).
+ * Text as `escape` escapes it, cut as `cut` says, the text's own `runBreaks` unless given: with a
+ * break opportunity before each of its `breaks`, where a run with no space would pass
+ * `UNBROKEN_RUN` characters that set a glyph, and without its `surplus`, the accents past
+ * `MAX_MARKS` on one letter, each of which `escape.surplus` hears of. No break comes where the
+ * pieces would escape otherwise than the whole, such as before a combining mark.
  */
-function escapeRun(text: string, escape: Escape, breaks = runBreaks(text).breaks): string {
+function escapeRun(text: string, escape: Escape, cut: RunBreaks = runBreaks(text)): string {
+  if (cut.breaks.length === 0 && cut.surplus.length === 0) return escape(text);
   let latex = "";
   let from = 0;
-  for (const at of breaks) {
-    latex += escape(text.slice(from, at)) + BREAK;
+  let next = 0;
+  // The text from `from` to `to`, without the surplus accents in it, escaped.
+  const piece = (to: number) => {
+    let kept = "";
+    let at = from;
+    for (; next < cut.surplus.length && (cut.surplus[next] as number) < to; next++) {
+      const skipped = cut.surplus[next] as number;
+      const mark = String.fromCodePoint(text.codePointAt(skipped) ?? 0);
+      kept += text.slice(at, skipped);
+      escape.surplus?.(mark);
+      at = skipped + mark.length;
+    }
+    return escape(kept + text.slice(at, to));
+  };
+  for (const at of cut.breaks) {
+    latex += piece(at) + BREAK;
     from = at;
   }
-  return latex + escape(text.slice(from));
+  return latex + piece(text.length);
 }
 
 /** Output as it grows, which stops the moment it passes its limit. */

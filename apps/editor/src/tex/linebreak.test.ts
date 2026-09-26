@@ -329,9 +329,16 @@ describe("paragraphNodes with a face that has no ligature and kern program", () 
     };
     expect(breaks("a".repeat(200))).toEqual([]);
     expect(breaks("a".repeat(450))).toEqual([200, 400]);
-    // A space begins a run again, and a mark goes with its letter.
+    // A space begins a run again; an accent counts, and goes with its letter.
     expect(breaks(`${"a".repeat(150)} ${"b".repeat(201)}`)).toEqual([351]);
-    expect(breaks("e\u0301".repeat(201))).toEqual([400]);
+    expect(breaks("e\u0301".repeat(201))).toEqual([200, 400]);
+    expect(breaks(`${"a".repeat(199)}e\u0301`)).toEqual([199]);
+  });
+
+  it("leaves out the accents past 30 on one letter, as the generator does", () => {
+    const nodes = paragraphNodes(`a${"\u0301".repeat(40)}b`, face);
+    const offsets = nodes.flatMap((node) => (node.kind === "box" ? [node.offset] : []));
+    expect(offsets).toEqual([...Array.from({ length: 31 }, (_, k) => k), 41]);
   });
 });
 

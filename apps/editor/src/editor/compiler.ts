@@ -370,6 +370,8 @@ export class Compiler {
   private readonly warned = new Set<string>();
   /** The characters the console has been told the body leaves out, which its fonts cannot set. */
   private readonly leftOut = new Set<string>();
+  /** The accents the console has been told the body leaves out, past 30 on one letter. */
+  private readonly crowded = new Set<string>();
   /** The declared font files the console has been told could not be read, until one is. */
   private readonly unreadFonts = new Set<string>();
   /**
@@ -677,6 +679,7 @@ export class Compiler {
       this.warnAboutUnread(coverage);
       const body = generateBody(pkg, doc.resume, doc.controls, { covers: coverage?.covers });
       this.warnAboutLeftOut(body.dropped);
+      this.warnAboutCrowded(body.surplus);
       this.opened = false;
       instance.compiled = true;
       const result = await this.request(run, limit, () =>
@@ -1131,6 +1134,23 @@ export class Compiler {
     });
     console.warn(
       `The page's fonts cannot set these characters, so it leaves them out, or their accents: ${named.join(", ")}`,
+    );
+  }
+
+  /**
+   * A letter keeps at most 30 accents in the body, as Unicode's stream-safe form allows, and the
+   * rest are left out (`runBreaks`); the console hears of each such accent once.
+   */
+  private warnAboutCrowded(surplus: readonly string[]) {
+    const fresh = surplus.filter((mark) => !this.crowded.has(mark));
+    if (fresh.length === 0) return;
+    for (const mark of fresh) this.crowded.add(mark);
+    const named = fresh.map((mark) => {
+      const point = (mark.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
+      return `U+${point}`;
+    });
+    console.warn(
+      `A letter carries more than 30 accents, so the page leaves the rest of them out: ${named.join(", ")}`,
     );
   }
 

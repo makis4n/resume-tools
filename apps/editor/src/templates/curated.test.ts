@@ -19,7 +19,13 @@ import { checkSpecial, validatePackage } from "../validate/harness";
 import { mediaBoxes, shownTexts, strokedPaths } from "../validate/pdf";
 import { CURATED, curated } from "./curated";
 import { generateBody, generateFormat } from "./generate";
-import { type ByRole, defaultControls, parsePackage, type TemplatePackage } from "./package";
+import {
+  type ByRole,
+  defaultControls,
+  fontFiles,
+  parsePackage,
+  type TemplatePackage,
+} from "./package";
 
 /** A snippet for a section's role: the role's own variant, or the default. */
 const forRole = (value: ByRole<string>, role: SectionRole) =>
@@ -2605,6 +2611,44 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     ]);
     expect(page.fields.get("tool.label")?.glyphs).toHaveLength("Portfolio".length);
   });
+
+  it("sets letters that carry accents in pieces the engine takes, every glyph on the page and in order", async () => {
+    // A run of 200 letters with five accents each, 1,200 characters and no space, set nothing at
+    // all, and 427 such letters, or one letter with 1,280 accents, stopped the engine: each accent
+    // sets a glyph, so each counts toward the generator's bound, and a letter keeps 30 of them.
+    const accents = "\u0300\u0301\u0303\u0309\u030f";
+    const { covers } = await fonts.coverage(fontFiles(pkg));
+    for (const accent of accents) expect(covers(accent), accent).toBe(true);
+    /** The sample with its first entry's bullets replaced by one bullet of `text`, and its body. */
+    const bodyOf = (text: string) => {
+      const resume = Resume.parse(structuredClone(sample));
+      const experience = resume.sections.find((section) => section.kind === "entries");
+      const entry = experience?.kind === "entries" ? experience.entries[0] : undefined;
+      if (!entry) throw new Error("the sample moved");
+      entry.bullets = [{ id: "accented", text: [{ text }] }];
+      return generateBody(pkg, resume, values, { covers });
+    };
+    const run = `a${accents}`.repeat(200);
+    const body = bodyOf(run);
+    const { result, page } = await compileAndDraw(body.latex, body.texts, "accented");
+    expect(result.log).not.toMatch(/^! /m);
+    expect(result.pages).toBe(1);
+    expect(page.unmatched).toBe(0);
+    // Each letter sets five glyphs: the à composing makes of it and its grave, and the other four
+    // accents; and the page reads them in the text's order.
+    const offsets = page.glyphs
+      .filter((glyph) => glyph.field === "accented.text")
+      .map((glyph) => glyph.offset ?? -1);
+    expect(offsets).toHaveLength(200 * 5);
+    expect(offsets).toEqual([...offsets].sort((a, b) => a - b));
+    for (let letter = 0; letter < 200; letter++) expect(offsets).toContain(letter * 6);
+    // A letter keeps 30 accents, and the generator says it left the rest out.
+    const crowded = bodyOf(`a${"\u0301".repeat(1280)}`);
+    expect(crowded.surplus).toEqual(["\u0301"]);
+    const many = await compileAndDraw(crowded.latex, crowded.texts, "crowded");
+    expect(many.result.log).not.toMatch(/^! /m);
+    expect(many.page.glyphs.filter((glyph) => glyph.field === "accented.text")).toHaveLength(30);
+  }, 120_000);
 
   it("sets 8,000 characters with no space in a bullet, a name and a link's shown address", async () => {
     // XeTeX builds one node of a run of characters with nothing to break it, and one of about
