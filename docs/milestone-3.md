@@ -98,7 +98,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 1. The corpus, before the pipeline
 
-1. [ ] **Collect the corpus.** `apps/editor/corpus/manifest.json` names at least 200 public
+1. [x] **Collect the corpus.** `apps/editor/corpus/manifest.json` names at least 200 public
    `.tex` resumes: for each, its files at a pinned commit on GitHub (the main file, class and
    style files, a fonts folder), a SHA-256 for each file, the licence the repository states, if
    any, and its family: `jake`, `awesome-cv`, `altacv`, `moderncv`, `europecv` or `other`.

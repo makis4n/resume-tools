@@ -28,6 +28,10 @@ __pycache__/
 # The engine and TeX Live tree that scripts/fetch-engine.ts builds; hundreds of MB
 apps/editor/.engine
 
+# The corpus's documents, which scripts/corpus.ts fetches from the sources corpus/manifest.json
+# names, and its reports: real people's resumes, never committed (decision 0017)
+apps/editor/.corpus
+
 # Spike harness inputs and outputs: engine, bundles, fonts, templates (hundreds of MB)
 apps/editor/spike/assets/
 
