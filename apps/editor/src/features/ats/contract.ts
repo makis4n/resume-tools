@@ -28,11 +28,17 @@ export interface ServiceErrorBody {
 }
 
 // Compiled on first use rather than at import: Ajv generates code with `new Function`, and the
-// app should not pay for that, or depend on it being allowed, until someone runs an analysis.
+// app should not pay for that, or depend on it being allowed, until someone runs an analysis. The
+// client calls prepareValidators before uploading, so a failure to compile costs no upload.
 let validators: {
   analysis: ValidateFunction<Analysis>;
   error: ValidateFunction<ServiceErrorBody>;
 } | null = null;
+
+/** Compile the validators now if they are not yet. Throws if they cannot be compiled. */
+export function prepareValidators(): void {
+  compiled();
+}
 
 function compiled() {
   if (!validators) {

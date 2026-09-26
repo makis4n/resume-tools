@@ -116,6 +116,21 @@ describe("analyzeResume", () => {
     expect(result).toEqual({ ok: false, failure: { kind: "not-configured" } });
   });
 
+  it("refuses a PDF over the limit without sending it", async () => {
+    let sent = false;
+    const fetch: typeof globalThis.fetch = async () => {
+      sent = true;
+      return new Response("{}");
+    };
+    const result = await analyzeResume(new Blob([new Uint8Array(11)]), {
+      baseUrl: BASE_URL,
+      fetch,
+      maxUploadBytes: 10,
+    });
+    expect(result).toEqual({ ok: false, failure: { kind: "too-large", maxBytes: 10 } });
+    expect(sent).toBe(false);
+  });
+
   it("reports a service address that is not an absolute URL", async () => {
     const result = await analyzeResume(samplePdf(), { baseUrl: "localhost:8000" });
     expect(result).toEqual({ ok: false, failure: { kind: "not-configured" } });
@@ -132,6 +147,12 @@ describe("endpoint", () => {
     );
     expect(endpoint("http://localhost:8000", "v1/analyze")?.href).toBe(
       "http://localhost:8000/v1/analyze",
+    );
+  });
+
+  it("keeps the path and drops the query and fragment of the service address", () => {
+    expect(endpoint("https://example.com/ats?k=1#top", "v1/analyze")?.href).toBe(
+      "https://example.com/ats/v1/analyze",
     );
   });
 });

@@ -16,8 +16,8 @@ export interface AtsPanelProps {
 const SEVERITY_LABEL = { critical: "Critical", warning: "Warnings", info: "Notes" } as const;
 
 /**
- * The Resume analysis panel, milestone 0: send a PDF and show the reply. The button is disabled
- * while a request runs, so there is at most one; it is cancelled if the panel goes away.
+ * The Resume analysis panel, milestone 0: send a PDF and show the reply. A request still running
+ * is cancelled when a newer one starts or the panel goes away.
  */
 export function AtsPanel({ getPdf }: AtsPanelProps) {
   const [state, dispatch] = useReducer(panelReducer, initialPanelState);
@@ -26,23 +26,27 @@ export function AtsPanel({ getPdf }: AtsPanelProps) {
   useEffect(() => () => inFlight.current?.abort(), []);
 
   async function run() {
+    // At most one request: a newer one cancels the older, whose result is then ignored.
+    inFlight.current?.abort();
     const controller = new AbortController();
     inFlight.current = controller;
+    const isCurrent = () => inFlight.current === controller;
     dispatch({ type: "start" });
 
     let pdf: Blob;
     try {
       pdf = await getPdf();
     } catch {
-      dispatch({ type: "fail", message: PREPARE_FAILED });
+      if (isCurrent()) dispatch({ type: "fail", message: PREPARE_FAILED });
       return;
     }
 
     try {
       const result = await analyzeResume(pdf, { signal: controller.signal });
-      dispatch({ type: "settle", result, at: new Date() });
+      if (isCurrent()) dispatch({ type: "settle", result, at: new Date() });
     } catch {
-      dispatch({ type: "fail", message: failureMessage({ kind: "unexpected", status: 0 }) });
+      const message = failureMessage({ kind: "unexpected", status: 0 });
+      if (isCurrent()) dispatch({ type: "fail", message });
     }
   }
 

@@ -1,4 +1,10 @@
-import { type Analysis, isAnalysis, isServiceError } from "./contract";
+import { type Analysis, isAnalysis, isServiceError, prepareValidators } from "./contract";
+
+/**
+ * The largest PDF sent, matching the service's default ATS_MAX_UPLOAD_BYTES. Checked here as well
+ * because a browser usually sees the service's early 413 as a reset connection, not a reply.
+ */
+export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 /**
  * Why an analysis did not arrive. `service` carries the service's own code and a message safe to
@@ -8,6 +14,7 @@ export type AnalyzeFailure =
   | { kind: "not-configured" }
   | { kind: "cancelled" }
   | { kind: "network" }
+  | { kind: "too-large"; maxBytes: number }
   | { kind: "service"; status: number; code: string; message: string }
   | { kind: "unexpected"; status: number };
 
@@ -20,6 +27,8 @@ export interface AnalyzeOptions {
   baseUrl?: string;
   signal?: AbortSignal;
   fetch?: typeof fetch;
+  /** Defaults to MAX_UPLOAD_BYTES. */
+  maxUploadBytes?: number;
 }
 
 /** Send a PDF to `POST /v1/analyze` and return the validated analysis or why there is none. */
@@ -29,6 +38,17 @@ export async function analyzeResume(
 ): Promise<AnalyzeResult> {
   const url = endpoint(options.baseUrl ?? import.meta.env.VITE_ATS_SERVICE_URL, "v1/analyze");
   if (!url) return fail({ kind: "not-configured" });
+
+  const maxBytes = options.maxUploadBytes ?? MAX_UPLOAD_BYTES;
+  if (pdf.size > maxBytes) return fail({ kind: "too-large", maxBytes });
+
+  // Compile the reply's validators before the resume leaves the browser: if the page's security
+  // policy forbids the code Ajv generates, nothing is uploaded only to be unreadable.
+  try {
+    prepareValidators();
+  } catch {
+    return fail({ kind: "not-configured" });
+  }
 
   const body = new FormData();
   body.append("file", new Blob([pdf], { type: "application/pdf" }), "resume.pdf");
@@ -65,13 +85,22 @@ export async function analyzeResume(
 
 /**
  * The endpoint's URL under the service's base URL, keeping any path the base has, so that
- * `https://example.com/ats` gives `https://example.com/ats/v1/analyze`. Null when the base URL is
- * missing or is not an http or https URL; `localhost:8000` parses, but as the scheme `localhost:`.
+ * `https://example.com/ats` gives `https://example.com/ats/v1/analyze`. The base's query and
+ * fragment belong to no endpoint and are dropped. Null when the base URL is missing or is not an
+ * http or https URL; `localhost:8000` parses, but as the scheme `localhost:`.
  */
 export function endpoint(baseUrl: string | undefined, path: string): URL | null {
   if (!baseUrl) return null;
-  const base = URL.parse(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
-  if (base?.protocol !== "http:" && base?.protocol !== "https:") return null;
+  let base: URL;
+  try {
+    base = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (base.protocol !== "http:" && base.protocol !== "https:") return null;
+  base.search = "";
+  base.hash = "";
+  if (!base.pathname.endsWith("/")) base.pathname += "/";
   return new URL(path, base);
 }
 

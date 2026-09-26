@@ -43,6 +43,8 @@ export function failureMessage(failure: Exclude<AnalyzeFailure, { kind: "cancell
   switch (failure.kind) {
     case "service":
       return failure.message;
+    case "too-large":
+      return `The PDF must be ${Math.floor((failure.maxBytes / 1024 ** 2) * 10) / 10} MB or smaller.`;
     case "network":
       return "The analysis service could not be reached. Check your connection and try again.";
     case "not-configured":
