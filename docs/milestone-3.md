@@ -111,7 +111,7 @@ of each launch template must find editable what the hand-written port marks.
    them into the ignored `.corpus/`, checks every hash, and CI fetches the same way. Tests never
    quote a corpus document, and the runner's output holds counts and macro names, never text.
    Done when the fetch reproduces the manifest on a clean machine.
-2. [ ] **Survey the corpus, and grow the tree from it.** `corpus.ts survey` reads every
+2. [x] **Survey the corpus, and grow the tree from it.** `corpus.ts survey` reads every
    document's class, packages, engine, font loading (fontspec by name, by file, or font
    packages), custom macro count, and what it needs that the engine has not: a package or font
    the tree lacks, LuaTeX, biber or bibtex, shell escape, images. It prints one table, which goes

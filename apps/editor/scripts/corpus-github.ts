@@ -83,6 +83,20 @@ export interface TreeFile {
   size: number;
 }
 
+/**
+ * A GitHub token from the environment, `GH_TOKEN` before `GITHUB_TOKEN` as gh itself reads them,
+ * for a machine where gh is not logged in, as CI's is not; none when neither is set.
+ */
+export function environmentToken(
+  env: Readonly<Record<string, string | undefined>>,
+): string | undefined {
+  for (const name of ["GH_TOKEN", "GITHUB_TOKEN"]) {
+    const token = env[name]?.trim();
+    if (token) return token;
+  }
+  return undefined;
+}
+
 /** Runs at most `limit` tasks at once, and the others in the order they came. */
 export class Limiter {
   private active = 0;

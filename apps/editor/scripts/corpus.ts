@@ -4,6 +4,7 @@
  *
  *   pnpm --filter @resume-tools/editor corpus collect
  *   pnpm --filter @resume-tools/editor corpus fetch [--only <id>]
+ *   pnpm --filter @resume-tools/editor corpus survey [--json <file>] [--tree <file>]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
  *                 upstream templates' forks give the candidates, public repositories only, and
@@ -17,9 +18,18 @@
  *                 SHA-256 and size, and write `.corpus/fetch-report.json`
  *                 (`scripts/corpus-fetch.ts`). A file already there with the right hash is kept.
  *                 It exits 1 when a file differs from its hash or cannot be downloaded; a document
- *                 whose repository is gone, private or blocked is reported unavailable. It takes the
- *                 token `gh` has, which it needs for GitHub's rate: one request for each document
+ *                 whose repository is gone, private or blocked is reported unavailable. It needs a
+ *                 token for GitHub's rate, one request for each document: the one `gh` has, or else
+ *                 `GH_TOKEN` or `GITHUB_TOKEN` from the environment, as CI gives it
  *   --only <id>   fetch that document only
+ *   survey        read every document the last fetch marks fetched, and the tree's file list in
+ *                 `.engine/manifest.json`, and print one Markdown table of what the documents ask
+ *                 of the engine: classes, packages, engines, fonts, and what the tree lacks
+ *                 (`scripts/corpus-survey.ts`, decision 0018). It needs `.engine/`, which
+ *                 `fetch-engine` builds
+ *   --json <file> write each document's row as JSON too, from where pnpm was run
+ *   --tree <file> check the documents against another engine manifest's file list, such as a
+ *                 checkout's of an older layout, from where pnpm was run, in place of `.engine/`'s
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -28,10 +38,14 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+// Node runs this file by stripping its types, so the type import needs its real extension.
+import type { EngineManifest } from "../src/engine/manifest.ts";
 import { collect, REASONS, type Reason } from "./corpus-collect.ts";
 import { fetchCorpus } from "./corpus-fetch.ts";
-import { GitHub } from "./corpus-github.ts";
+import { environmentToken, GitHub } from "./corpus-github.ts";
 import {
   CORPUS_DIR,
   FAMILIES,
@@ -45,12 +59,23 @@ import {
   printable,
   writeAtomically,
 } from "./corpus-manifest.ts";
+import { readTree, surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
-const USAGE = "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>]";
+const USAGE =
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>]";
+
+/** The engine's manifest, whose file list is the tree the survey checks documents against. */
+const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
 
 /** The corpus holds at least this many documents, and at least this many of them are `other`. */
 const MIN_DOCUMENTS = 200;
 const MIN_OTHER = 60;
+
+/**
+ * The token for GitHub's API: the one `gh` holds, or failing that `GH_TOKEN` or `GITHUB_TOKEN`
+ * from the environment, as CI gives one; none when there is none. It is never printed.
+ */
+const githubToken = () => ghToken() ?? environmentToken(process.env);
 
 /** The token `gh` holds, or none when gh is missing or logged out. It is never printed. */
 function ghToken(): string | undefined {
@@ -83,10 +108,10 @@ function tally(values: string[]): string {
 }
 
 async function runCollect() {
-  const token = ghToken();
+  const token = githubToken();
   if (!token)
     throw new Error(
-      "collect searches GitHub's code, which needs a token: run `gh auth login` first",
+      "collect searches GitHub's code, which needs a token: run `gh auth login`, or set GH_TOKEN",
     );
   const manifest = existsSync(MANIFEST_FILE) ? readManifest() : undefined;
   const report = existsSync(FETCH_REPORT_FILE)
@@ -134,7 +159,7 @@ async function runCollect() {
 
 async function runFetch(only: string | undefined) {
   const result = await fetchCorpus({
-    github: new GitHub({ token: ghToken(), log: console.log }),
+    github: new GitHub({ token: githubToken(), log: console.log }),
     manifest: readManifest(),
     dir: CORPUS_DIR,
     only,
@@ -152,10 +177,54 @@ async function runFetch(only: string | undefined) {
   }
 }
 
+function runSurvey(json: string | undefined, tree: string | undefined) {
+  if (tree === undefined && !existsSync(ENGINE_MANIFEST))
+    throw new Error(
+      "survey checks documents against the tree's file list in .engine/manifest.json: run fetch-engine first",
+    );
+  const engine = JSON.parse(readFileSync(tree ?? ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const manifest = readManifest();
+  const report = existsSync(FETCH_REPORT_FILE)
+    ? parseJson(FetchReport, readFileSync(FETCH_REPORT_FILE, "utf8"), FETCH_REPORT_FILE)
+    : undefined;
+  const survey = surveyCorpus({
+    manifest,
+    report,
+    tree: readTree(engine.files),
+    read: (doc, file) => {
+      try {
+        return readFileSync(join(CORPUS_DIR, doc.id, ...file.path.split("/")));
+      } catch {
+        return undefined;
+      }
+    },
+  });
+  print(surveyTable(survey).trimEnd().split("\n"));
+  if (json !== undefined)
+    writeAtomically(
+      json,
+      formatJson({
+        version: 1,
+        tree: { layout: engine.layout, files: Object.keys(engine.files).length },
+        skipped: survey.skipped,
+        documents: survey.documents,
+      }),
+    );
+  if (survey.documents.length === 0) {
+    console.error("No document is fetched: run `corpus fetch` first");
+    process.exitCode = 1;
+  }
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
-    options: { only: { type: "string" }, help: { type: "boolean", short: "h" } },
+    options: {
+      only: { type: "string" },
+      json: { type: "string" },
+      tree: { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
     allowPositionals: true,
   });
   if (values.help) {
@@ -164,10 +233,17 @@ async function main() {
   }
   const [command, ...rest] = positionals;
   if (rest.length > 0) throw new Error(`${rest.join(" ")} is not an option: ${USAGE}`);
+  if (command !== "collect" && command !== "fetch" && command !== "survey")
+    throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
+  if (values.only !== undefined && command !== "fetch") throw new Error("--only goes with fetch");
+  if (values.json !== undefined && command !== "survey") throw new Error("--json goes with survey");
+  if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
   if (command === "fetch") return runFetch(values.only);
-  if (command === "collect" && values.only === undefined) return runCollect();
-  if (command === "collect") throw new Error("--only goes with fetch");
-  throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
+  if (command === "collect") return runCollect();
+  // pnpm runs the script in the editor's folder; a path is the caller's, from where pnpm was run.
+  const caller = (path: string | undefined) =>
+    path === undefined ? undefined : resolve(process.env.INIT_CWD ?? ".", path);
+  return runSurvey(caller(values.json), caller(values.tree));
 }
 
 main().catch((error: unknown) => {

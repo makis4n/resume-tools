@@ -356,6 +356,19 @@ describe("reading a document's source", () => {
     ]);
   });
 
+  test("marks what \\IfFileExists loads when its file is there as loaded only then", () => {
+    const source = String.raw`\IfFileExists{alpha.sty}{\usepackage{alpha}\input{beta}}{\usepackage{gamma}}
+\IfFileExists{delta.sty}{\IfFileExists{x}{}{\RequirePackage{delta}}}{}
+\usepackage{epsilon}`;
+    expect(references(source)).toEqual([
+      { kind: "package", name: "alpha", optional: true },
+      { kind: "input", name: "beta", optional: true },
+      { kind: "package", name: "gamma" },
+      { kind: "package", name: "delta", optional: true },
+      { kind: "package", name: "epsilon" },
+    ]);
+  });
+
   test("takes a bracket that has not closed within the window as never closing", () => {
     const far = "x".repeat(WINDOW);
     expect(references(`\\usepackage[${far}]{late}\\usepackage[near]{near}`)).toEqual([
@@ -371,7 +384,9 @@ describe("reading a document's source", () => {
     // Brackets that never close, from every command: looking for each one's close to the end of
     // the source made reading it take time that grows as the square of its length.
     const hostile = (bytes: number) =>
-      "\\usepackage[".repeat(bytes / 24) + "\\input{".repeat(bytes / 14);
+      "\\usepackage[".repeat(bytes / 24) +
+      "\\input{".repeat(bytes / 28) +
+      "\\IfFileExists{".repeat(bytes / 28);
     const small = hostile(20_160);
     const large = hostile(201_600);
     const [short = 0, long = 0] = fastest([() => references(small), () => references(large)], 3);
@@ -1900,12 +1915,21 @@ describe("the command", () => {
   test("says how it is run", () => {
     const help = run("--help");
     expect(help.status).toBe(0);
-    expect(help.stdout).toContain("pnpm --filter @resume-tools/editor corpus collect | fetch");
+    expect(help.stdout).toContain(
+      "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>]",
+    );
   });
 
   test("refuses what it does not know, before it asks GitHub anything", () => {
-    expect(run("survey").stderr).toContain("there is no command survey");
+    expect(run("bogus").stderr).toContain("there is no command bogus");
     expect(run("collect", "--only", "jake-0001").stderr).toContain("--only goes with fetch");
+    expect(run("survey", "--only", "jake-0001").stderr).toContain("--only goes with fetch");
+    expect(run("fetch", "--json", "survey.json").stderr).toContain("--json goes with survey");
+    expect(run("fetch", "--tree", "manifest.json").stderr).toContain("--tree goes with survey");
+    // The survey reads the tree --tree names in place of .engine/'s, and here there is none.
+    const tree = run("survey", "--tree", join(tmpdir(), "resume-tools-no-tree", "manifest.json"));
+    expect(tree.status).toBe(1);
+    expect(tree.stderr).toContain("resume-tools-no-tree");
     const only = run("fetch", "--only", "jake-9999");
     expect(only.status).toBe(1);
     expect(only.stderr).toContain("the manifest has no document jake-9999");
