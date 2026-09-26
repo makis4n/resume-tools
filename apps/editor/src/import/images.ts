@@ -11,7 +11,8 @@
  * resolution counts only in pixels per metre; a JPEG's frame header, and its resolution from its
  * JFIF header, or failing that from its Exif data; 72 dots per inch when an image gives none; and a
  * PDF's first crop box, or media box when it has none, and its rotation. Reading stops at the first
- * thing it cannot read, and an image it cannot read is none (`imageInfo` gives undefined).
+ * thing it cannot read, and an image it cannot read is none (`imageInfo` gives undefined). A PDF's
+ * box is read within a budget (`Budget`), which one intake shares across every image of its upload.
  */
 
 import { Unzlib } from "fflate";
@@ -43,13 +44,43 @@ export interface PdfInfo {
 
 export type ImageInfo = RasterInfo | PdfInfo;
 
-/** The size, kind and resolution of an image, by its content, or undefined when it is not one. */
-export function imageInfo(bytes: Uint8Array): ImageInfo | undefined {
+/**
+ * The size, kind and resolution of an image, by its content, or undefined when it is not one. A
+ * PDF's box is read within `budget`, by default one PDF's alone; one the budget has no room for is
+ * not read, or not read further, and is none, which `budget.spent` says.
+ */
+export function imageInfo(bytes: Uint8Array, budget = oneImage()): ImageInfo | undefined {
   if (startsWith(bytes, PNG_SIGNATURE)) return pngInfo(bytes);
   if (bytes[0] === 0xff && bytes[1] === 0xd8) return jpegInfo(bytes);
-  if (latin1(bytes.subarray(0, 1024)).includes("%PDF-")) return pdfInfo(bytes);
+  if (latin1(bytes.subarray(0, 1024)).includes("%PDF-")) return pdfInfo(bytes, budget);
   return undefined;
 }
+
+/**
+ * What reading images' boxes may yet spend, shared by the images read with it: the PDFs whose
+ * boxes may be read, and the bytes their object streams may inflate to, together, each stream
+ * tried charged what it cost whether or not it inflated. `spent` says that a PDF was not read, or
+ * not read to its end, because one of the two ran out; a PDF's own allowance, MAX_INFLATED and
+ * MAX_OBJECT_STREAMS, ends its reading without setting it.
+ */
+export interface Budget {
+  pdfs: number;
+  inflated: number;
+  spent: boolean;
+}
+
+/**
+ * What one intake may spend reading its upload's images, all of them together (decision 0019): 64
+ * PDFs, and 32 MB inflated from their object streams. A PDF's own allowance bounds one PDF alone,
+ * and 399 PDFs of two 8 MB streams each, from a zip of 134 KB, took 91 s of CPU time within it.
+ */
+export const UPLOAD_BUDGET = { pdfs: 64, inflated: 32 * 1024 * 1024 } as const;
+
+/** A budget of UPLOAD_BUDGET, for one intake. */
+export const uploadBudget = (): Budget => ({ ...UPLOAD_BUDGET, spent: false });
+
+/** A budget for one image read alone: its own allowance and no other. */
+const oneImage = (): Budget => ({ pdfs: 1, inflated: MAX_INFLATED, spent: false });
 
 /**
  * Where an image's box lies in big points, as `extractbb` gives it and graphicx reads it: from the
@@ -391,14 +422,7 @@ function exifDensity(data: Uint8Array): { xdpi: number; ydpi: number } | undefin
 // PDF.
 
 /**
- * How much of a PDF's start and of its end its boxes are looked for in, in bytes: a page's
- * dictionary is near one or the other, before the images and fonts it shows or after them, and
- * reading no more keeps a PDF of any size to the same work.
- */
-const PDF_WINDOW = 256 * 1024;
-
-/**
- * The most bytes the object streams a PDF's boxes are looked for in may inflate to, together,
+ * The most bytes the object streams one PDF's boxes are looked for in may inflate to, together,
  * each stream tried charged what it cost whether or not it inflates, and the most streams tried.
  */
 const MAX_INFLATED = 16 * 1024 * 1024;
@@ -409,19 +433,21 @@ const INFLATE_PIECE = 1024;
 
 /**
  * A PDF's first page's box and rotation, read from its text: the first crop box, or media box when
- * there is none, and the first rotation, in its first and last PDF_WINDOW bytes. A PDF an image is
- * made from has one page, whose box its page or its page tree gives. When that text gives no box,
- * its compressed object streams, where PDF 1.5 keeps its dictionaries, are inflated and read, in
- * one pass over the file's streams, within MAX_INFLATED and MAX_OBJECT_STREAMS. Every search moves
- * forward and every number is read over a bounded number of characters, so that the work is
- * linear in the file's length however it is laid out.
+ * there is none, and the first rotation, anywhere in the file, since a page's dictionary may sit
+ * between the images and fonts it shows. A PDF an image is made from has one page, whose box its
+ * page or its page tree gives. When that text gives no box, its compressed object streams, where
+ * PDF 1.5 keeps its dictionaries, are inflated and read, in one pass over the file's streams,
+ * within MAX_INFLATED and MAX_OBJECT_STREAMS and within `budget`. Every search moves forward and
+ * every number is read over a bounded number of characters, so that the work is linear in the
+ * file's length however it is laid out; the intake unpacks no file past 10 MB.
  */
-function pdfInfo(bytes: Uint8Array): PdfInfo | undefined {
-  const text =
-    bytes.length <= 2 * PDF_WINDOW
-      ? latin1(bytes)
-      : `${latin1(bytes.subarray(0, PDF_WINDOW))}\n${latin1(bytes.subarray(-PDF_WINDOW))}`;
-  return pageBox(text) ?? objectStreamBox(bytes);
+function pdfInfo(bytes: Uint8Array, budget: Budget): PdfInfo | undefined {
+  if (budget.spent || budget.pdfs <= 0) {
+    budget.spent = true;
+    return undefined;
+  }
+  budget.pdfs--;
+  return pageBox(latin1(bytes)) ?? objectStreamBox(bytes, budget);
 }
 
 /** The box and rotation a PDF's text gives, if it gives a box. */
@@ -522,10 +548,11 @@ function find(bytes: Uint8Array, pattern: readonly number[], from: number): numb
 /**
  * The box and rotation of the first page a PDF's compressed object streams give: one pass over
  * the file's `stream` and `endstream` pairs, each pair's data inflated when the dictionary before
- * it says `/ObjStm`, MAX_OBJECT_STREAMS of them at most, their costs within MAX_INFLATED.
+ * it says `/ObjStm`, MAX_OBJECT_STREAMS of them at most, their costs within MAX_INFLATED and within
+ * what `budget` has left, which they are charged to.
  */
-function objectStreamBox(bytes: Uint8Array): PdfInfo | undefined {
-  let budget = MAX_INFLATED;
+function objectStreamBox(bytes: Uint8Array, budget: Budget): PdfInfo | undefined {
+  let left = MAX_INFLATED;
   let tried = 0;
   /** Where the last stream ended, before which no dictionary of a later one is looked for. */
   let ended = 0;
@@ -543,9 +570,14 @@ function objectStreamBox(bytes: Uint8Array): PdfInfo | undefined {
     ended = end + ENDSTREAM.length;
     from = ended;
     if (!/\/Type\s*\/ObjStm/.test(dictionary)) continue;
-    if (++tried > MAX_OBJECT_STREAMS || budget <= 0) return undefined;
-    const inflated = inflateWithin(bytes.subarray(start, end), budget);
-    budget -= inflated.cost;
+    if (++tried > MAX_OBJECT_STREAMS || left <= 0) return undefined;
+    if (budget.inflated <= 0) {
+      budget.spent = true;
+      return undefined;
+    }
+    const inflated = inflateWithin(bytes.subarray(start, end), Math.min(left, budget.inflated));
+    left -= inflated.cost;
+    budget.inflated -= inflated.cost;
     const box = inflated.bytes === undefined ? undefined : pageBox(latin1(inflated.bytes));
     if (box) return box;
   }
@@ -621,13 +653,12 @@ function concat(parts: readonly Uint8Array[]): Uint8Array {
   return out;
 }
 
-/** Bytes decoded per call of `String.fromCharCode`, well within what a call may be passed. */
-const CHUNK = 8192;
+/**
+ * A decoder of Latin-1, which TextDecoder decodes as windows-1252: its bytes 0x80 to 0x9F are
+ * other characters than Latin-1's, but still one each, and nothing here compares one. It reads the
+ * whole of a PDF of 10 MB in about 10 ms, where `String.fromCharCode` took 130.
+ */
+const LATIN1 = new TextDecoder("latin1");
 
 /** Bytes as text, one character per byte, so that a string's offsets are the bytes'. */
-function latin1(bytes: Uint8Array): string {
-  let text = "";
-  for (let at = 0; at < bytes.length; at += CHUNK)
-    text += String.fromCharCode(...bytes.subarray(at, at + CHUNK));
-  return text;
-}
+const latin1 = (bytes: Uint8Array) => LATIN1.decode(bytes);

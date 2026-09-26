@@ -12,6 +12,7 @@ import {
   type RasterInfo,
   standIn,
   tooLarge,
+  uploadBudget,
   xbb,
   zlibOfZeros,
 } from "./images";
@@ -173,12 +174,15 @@ describe("reading an image's size", () => {
     expect(imageInfo(file)).toEqual({ kind: "pdf", box: [0, 0, 300, 150], rotate: 0 });
   });
 
-  test("of a PDF past twice its window, from its start or its end, and a rotation read as before", () => {
+  test("of a PDF from anywhere in it, its start, its end or between, and a rotation read as before", () => {
     const filler = "%".repeat(600_000);
     const atEnd = bytes(`%PDF-1.4\n${filler}\n3 0 obj << /Type /Page /MediaBox [ 0 0 90 45 ] >>`);
     expect(imageInfo(atEnd)).toEqual({ kind: "pdf", box: [0, 0, 90, 45], rotate: 0 });
     const atStart = bytes(`%PDF-1.4\n<< /MediaBox [0 0 90 45] /Rotate\n90 >>\n${filler}`);
     expect(imageInfo(atStart)).toEqual({ kind: "pdf", box: [0, 0, 90, 45], rotate: 90 });
+    // 600 KB from either end, where the first and last 256 KB, all that was once read, missed it.
+    const between = bytes(`%PDF-1.4\n${filler}\n<< /MediaBox [0 0 90 45] >>\n${filler}`);
+    expect(imageInfo(between)).toEqual({ kind: "pdf", box: [0, 0, 90, 45], rotate: 0 });
     // A box written by reference, or with no space between its numbers, is not one.
     expect(imageInfo(pdf("/MediaBox 5 0 R /CropBox [0 0 10-10 10]"))).toBeUndefined();
     expect(imageInfo(pdf("/MediaBox [-.5 0 .5e 1]"))).toBeUndefined();
@@ -208,6 +212,37 @@ describe("reading an image's size", () => {
       expect(long).toBeLessThan(bound(3 * 10, short));
       expect(long).toBeLessThan(250);
     }
+  }, 60_000);
+
+  test("of PDFs read within a budget they share, which says when it ran out", () => {
+    // Two object streams of 8 MB of zeros each, and no box: one PDF inflates 16 MB, its own
+    // allowance, and a budget of 32 MB has room for two of them; a third is past it.
+    const zeros = zlibSync(new Uint8Array(8 * 1024 * 1024), { level: 9 });
+    const stream = [
+      ...bytes("<< /Type /ObjStm /Filter /FlateDecode >>\nstream\n"),
+      ...zeros,
+      ...bytes("\nendstream\n"),
+    ];
+    const bombs = new Uint8Array([...bytes("%PDF-1.5\n"), ...stream, ...stream]);
+    const budget = uploadBudget();
+    expect(budget).toEqual({ pdfs: 64, inflated: 32 * 1024 * 1024, spent: false });
+    expect(imageInfo(bombs, budget)).toBeUndefined();
+    expect(imageInfo(bombs, budget)).toBeUndefined();
+    expect(budget).toEqual({ pdfs: 62, inflated: 0, spent: false });
+    // A box in a PDF's text needs nothing inflated, but a box in its object streams does.
+    expect(imageInfo(pdf("/MediaBox [0 0 60 40]"), budget)).toMatchObject({ box: [0, 0, 60, 40] });
+    expect(budget.spent).toBe(false);
+    expect(imageInfo(bombs, budget)).toBeUndefined();
+    expect(budget).toMatchObject({ pdfs: 60, inflated: 0, spent: true });
+    // Once spent, a budget reads no PDF, and a PNG or a JPEG costs it nothing.
+    expect(imageInfo(pdf("/MediaBox [0 0 60 40]"), budget)).toBeUndefined();
+    expect(imageInfo(png(30, 20), budget)).toMatchObject({ width: 30 });
+    // One PDF read alone has its own allowance and no other.
+    expect(imageInfo(pdf("/MediaBox [0 0 60 40]"))).toMatchObject({ box: [0, 0, 60, 40] });
+    const few = { pdfs: 1, inflated: 32 * 1024 * 1024, spent: false };
+    expect(imageInfo(pdf("/MediaBox [0 0 60 40]"), few)).toMatchObject({ box: [0, 0, 60, 40] });
+    expect(imageInfo(pdf("/MediaBox [0 0 60 40]"), few)).toBeUndefined();
+    expect(few).toMatchObject({ pdfs: 0, spent: true });
   }, 60_000);
 
   test("of a PDF whose object streams inflate past what the reading allows, cut short", () => {

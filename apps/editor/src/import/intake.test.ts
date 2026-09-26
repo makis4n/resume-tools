@@ -69,6 +69,49 @@ const jpeg = (width: number, height: number) =>
 const pdf = (box: string) =>
   strToU8(`%PDF-1.4\n1 0 obj\n<< /Type /Page /MediaBox [${box}] >>\nendobj\n%%EOF\n`);
 
+/**
+ * A whole one-page PDF of about 800 KB, its table of objects right, whose page of 300 by 150 sits
+ * between an image's stream and a font's, of 400 KB each; and where its page is in it.
+ */
+function pdfBetweenStreams(): { bytes: Uint8Array; page: number } {
+  const filler = "0123456789abcdef".repeat(25_000);
+  const content = "q 300 0 0 150 0 0 cm /Im1 Do Q";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+    `<< /Type /XObject /Subtype /Image /Width 400 /Height 1000 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length ${filler.length} >>\nstream\n${filler}\nendstream`,
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 150] /Resources << /XObject << /Im1 3 0 R >> /Font << /F1 6 0 R >> >> /Contents 5 0 R >>",
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Invented /FontFile 7 0 R >>",
+    `<< /Length ${filler.length} >>\nstream\n${filler}\nendstream`,
+  ];
+  let text = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objects.forEach((object, i) => {
+    offsets.push(text.length);
+    text += `${i + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const table = text.length;
+  text += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) text += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  text += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${table}\n%%EOF\n`;
+  return { bytes: strToU8(text), page: offsets[3] ?? 0 };
+}
+
+/**
+ * The reviewers' PDF: two object streams, each a zlib stream of 8 MB of zeros, 16 KB in all, and no
+ * box anywhere.
+ */
+function pdfOfBombs(): Uint8Array {
+  const zeros = zlibSync(new Uint8Array(8 * 1024 * 1024), { level: 9 });
+  const stream = (n: number) => [
+    ...strToU8(`${n} 0 obj\n<< /Type /ObjStm /Filter /FlateDecode >>\nstream\n`),
+    ...zeros,
+    ...strToU8("\nendstream\nendobj\n"),
+  ];
+  return new Uint8Array([...strToU8("%PDF-1.5\n"), ...stream(1), ...stream(2)]);
+}
+
 describe("taking an upload in", () => {
   test("takes one .tex file as the main file", () => {
     const result = intake({
@@ -562,6 +605,35 @@ describe("images", () => {
     expect(Object.keys(result.files)).toEqual([]);
   });
 
+  test("that are PDFs are read whole for their box, a page between two large streams among them, and one with none is named", () => {
+    const between = pdfBetweenStreams();
+    // The page is more than 256 KB from either end: the first and last 256 KB were all that was
+    // once read of a PDF.
+    expect(between.page).toBeGreaterThan(256 * 1024);
+    expect(between.bytes.length - between.page).toBeGreaterThan(256 * 1024);
+    const result = taken({
+      "cv.tex": whole("\\documentclass{article}", "\\usepackage{graphicx}"),
+      "badge.pdf": between.bytes,
+      "seal.pdf": strToU8(
+        "%PDF-1.4\n1 0 obj\n<< /Type /Page /MediaBox 5 0 R >>\nendobj\n5 0 obj\n[0 0 60 40]\nendobj\n%%EOF\n",
+      ),
+    });
+    expect(result.images.replaced).toEqual([{ name: "badge.pdf", path: "badge.pdf", kind: "pdf" }]);
+    expect(imageInfo(result.files["badge.pdf"] ?? new Uint8Array())).toEqual({
+      kind: "pdf",
+      box: [0, 0, 300, 150],
+      rotate: 0,
+    });
+    expect(text(result.files["badge.xbb"])).toContain("%%BoundingBox: 0 0 300 150\n");
+    // A box given by reference is none this editor reads: the PDF is left out, and named.
+    expect(result.images.dropped).toEqual([
+      { name: "seal.pdf", why: "unreadable", path: "seal.pdf" },
+    ]);
+    expect(result.warnings).toEqual([
+      "seal.pdf is left out: this editor could not read its page's size.",
+    ]);
+  });
+
   test("past 10,000 pixels on a side are dropped as unreadable, with a warning, at little cost", () => {
     // PNG headers of 2^31 by 2^31 pixels, which cost a stand-in 60 to 100 ms each to make, and
     // 50 of them five seconds.
@@ -590,6 +662,54 @@ describe("images", () => {
     expect(cpuMs(() => (result = intake({ name: "cv.zip", bytes: fifty })))).toBeLessThan(500);
     expect(result && !isRefusal(result) && result.images.dropped).toHaveLength(50);
   });
+
+  test("past the upload's budget, 64 PDFs read or 32 MB inflated in all, are dropped with one warning, at little cost", () => {
+    // The reviewers' zip: 399 PDFs of two 8 MB object streams each, 16 MB a PDF, which its own
+    // allowance let through, and which took 91 s of CPU time together from a zip of 134 KB. Two
+    // are read, 32 MB inflated, neither giving a box, and the rest are dropped: 60 ms on the M4.
+    const bombs = pdfOfBombs();
+    const bytes = zip({
+      "cv.tex": whole("\\documentclass{article}"),
+      ...Object.fromEntries(Array.from({ length: 399 }, (_, i) => [`img/logo${i}.pdf`, bombs])),
+    });
+    let result: Intake | Refusal | undefined;
+    expect(cpuMs(() => (result = intake({ name: "cv.zip", bytes })))).toBeLessThan(1_000);
+    if (result === undefined || isRefusal(result)) throw new Error("refused");
+    expect(result.images.replaced).toEqual([]);
+    expect(result.images.dropped).toHaveLength(399);
+    expect(result.images.dropped.every((each) => each.why === "unreadable")).toBe(true);
+    expect(result.warnings).toEqual([
+      "img/logo0.pdf is left out: this editor could not read its page's size.",
+      "img/logo1.pdf is left out: this editor could not read its page's size.",
+      "This upload has too many images to read: 397 of them are left out.",
+    ]);
+    // 64 PDFs are read, each giving its box; the 65th is past the budget, and it and every image
+    // after it, a PNG among them, are dropped unread, where a PNG before them is stood in for.
+    const many = taken({
+      "cv.tex": whole("\\documentclass{article}"),
+      "aa.png": png(40, 20),
+      ...Object.fromEntries(
+        Array.from({ length: 70 }, (_, i) => [
+          `badge${String(i).padStart(2, "0")}.pdf`,
+          pdf("0 0 144 72"),
+        ]),
+      ),
+      "zz.png": png(40, 20),
+    });
+    expect(many.images.replaced).toHaveLength(65);
+    expect(many.images.replaced.at(-1)).toEqual({
+      name: "badge63.pdf",
+      path: "badge63.pdf",
+      kind: "pdf",
+    });
+    expect(many.images.dropped.map((each) => each.name)).toEqual([
+      ...["badge64.pdf", "badge65.pdf", "badge66.pdf", "badge67.pdf", "badge68.pdf"],
+      ...["badge69.pdf", "zz.png"],
+    ]);
+    expect(many.warnings).toEqual([
+      "This upload has too many images to read: 7 of them are left out.",
+    ]);
+  }, 60_000);
 
   test("beside the main file come before one of the same path above it, which is reported", () => {
     const result = taken({
@@ -643,6 +763,29 @@ describe("images", () => {
       "photo.png": png(40, 20),
     });
     expect(text(lacked.files["photo.xbb"])).toContain("%%BoundingBox: 0 0 40 20\n");
+  });
+
+  test("that the upload holds give their name's .xbb before a stand-in for one it lacks, which a warning names as shadowed", () => {
+    // The reviewers' case: the source names photo.pdf, which the upload lacks, in a command it
+    // never uses, and shows photo.png, which it holds. graphicx tries .pdf first, but the 1 by 1
+    // stand-in for photo.pdf would give photo.png its size, and move the line 39 pt.
+    const result = taken({
+      "cv.tex": whole(
+        "\\documentclass{article}",
+        "\\usepackage{graphicx}",
+        "\\newcommand{\\unusedalt}{\\includegraphics{photo.pdf}}",
+        "\\includegraphics{photo.png}",
+      ),
+      "photo.png": png(40, 20),
+    });
+    expect(result.images.replaced).toEqual([
+      { name: "photo.png", path: "photo.png", kind: "png" },
+      { name: "photo.pdf", path: "photo.pdf", kind: "pdf", missing: true },
+    ]);
+    expect(text(result.files["photo.xbb"])).toContain("%%BoundingBox: 0 0 40 20\n");
+    expect(result.warnings).toEqual([
+      "photo.pdf, which the upload lacks, is shadowed by photo.png, of the same name, whose size it takes: on pdfTeX, this editor sizes the two by the name they share.",
+    ]);
   });
 
   test("in a format with no stand-in get none for a name that finds only them, and are listed once", () => {

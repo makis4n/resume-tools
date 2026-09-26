@@ -114,12 +114,24 @@ the survey and the intake both call.
   of the byte before for each 258 bytes, rather than compressed: 10,000 by 10,000 pixels, which
   took 60 to 70 ms at level 1, take under a millisecond, and 400 of them nothing to speak of. A
   document that shows an image dropped as unreadable gets the 1 by 1 stand-in of one missing.
-- A PDF's box is read from its first and last 256 KB, by a scanner that reads a number over 32
+- A PDF's box is read from the whole file, 10 MB at most, by a scanner that reads a number over 32
   characters at most and moves forward only, and then from its compressed object streams in one
   pass over the file's `stream` and `endstream` pairs, 32 object streams and 16 MB inflated at
   most, each stream tried charged what it read or gave, whether or not it inflated. The reviewers'
   crop box of 200,000 digits took 13.5 s of CPU time and their 40,000 object streams' markers 9.1
-  s; they take 1 and 8 ms, and `images.test.ts` bounds both against a tenth of each.
+  s; they take 1 and 5 ms, and `images.test.ts` bounds both against a tenth of each. Reading the
+  first and last 256 KB alone, as the corrections first did, missed a whole PDF of 800 KB whose
+  page sits between an image's stream and a font's. The file is read as Latin-1 by `TextDecoder`,
+  10 MB in about 10 ms, where building the string from its bytes took 130. A PDF whose box still
+  cannot be read, as one whose box is given by reference, is dropped as unreadable with a warning
+  that names it, where it was dropped silently.
+- An intake reads its upload's images within one budget (`UPLOAD_BUDGET`): 64 PDFs, and 32 MB
+  inflated from their object streams, all together. A PDF's own 16 MB and 32 streams bound one PDF
+  alone, and the reviewers' 399 PDFs of two 8 MB object streams each, from a zip of 134 KB, took 91
+  s of CPU time within them. A PDF past the budget, the 65th or one whose object streams the 32 MB
+  has no room left for, is dropped as unreadable, and so is every image after it, with one warning:
+  "This upload has too many images to read: 397 of them are left out." The reviewers' zip takes 60
+  ms. The tree's images, TeX Live's own, are read outside it.
 - For pdfTeX, the job gets one `.xbb` for each name, the bounding box `extractbb` would write for
   the image graphicx takes for the name without an extension, exact, not rounded to whole points:
   dvipdfmx's driver reads `<name>.xbb` whatever the extension, and graphicx tries `.pdf`, `.PDF`,
@@ -128,6 +140,12 @@ the survey and the intake both call.
   one the document names with its extension takes the other's size on pdfTeX, which a second
   warning says; `logo.png` beside `logo.pdf` wrote `logo.xbb` with the PNG's size, and moved the
   line 160 pt. A stand-in the compile adds keeps a name's `.xbb` for the image graphicx takes.
+- But an image the job has, the upload's or the tree's, gives its name's `.xbb` before a stand-in
+  for a name the upload lacks, whatever graphicx's order says, since the stand-in's 1 by 1 is a
+  guess (`sizedImage`): a `photo.pdf` named in a command the document never uses, and lacked, took
+  `photo.xbb` from the `photo.png` the upload holds, and moved the line 39 pt. One warning names
+  the stand-in's name as shadowed: "photo.pdf, which the upload lacks, is shadowed by photo.png, of
+  the same name, whose size it takes: on pdfTeX, this editor sizes the two by the name they share."
 - Every PNG, JPEG and PDF of the upload is stood in for at its place, but for a PDF named as the
   main file is, beside it, which is the document compiled. A file `\includegraphics` names, in the
   engine's view of the files the main file loads, that graphicx would not find in the job, from
@@ -426,7 +444,8 @@ suite passes on the new tree, 1,226 tests in 64 files.
 - An image in a format with no stand-in, EPS above all, stops a document that shows it, and the
   reference compile says so; the corpus shows none it holds. A path above the main file's folder
   that a macro builds cannot be reached: two documents stop there. An image past 10,000 pixels on a
-  side that a document shows gets a 1 by 1 stand-in, and moves the page.
+  side that a document shows gets a 1 by 1 stand-in, and moves the page, and so does one past the
+  upload's budget for reading images, or a PDF whose box cannot be read.
 - A stand-in whose path holds a character past letters, digits, `.`, `_`, `-` and `/`, a space
   among them, is not shown, so the PDF of a document that shows one is refused: item 12, which
   makes an imported resume's PDF, has to give such a stand-in a plain path, and the document's

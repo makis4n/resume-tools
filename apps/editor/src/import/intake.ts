@@ -26,7 +26,9 @@
  * JPEG and PDF becomes a blank stand-in of the same size (`images.ts`), with a `.xbb` for pdfTeX
  * for each name graphicx sizes by, and so does each file `\includegraphics` names that the upload
  * lacks, of the tree's image's size when the tree has one and 1 by 1 otherwise; every other image
- * is dropped, and the result names each.
+ * is dropped, and the result names each. The upload's images are read within one budget
+ * (`UPLOAD_BUDGET`), past which the rest are dropped, with one warning; a PDF whose page's size
+ * cannot be read is dropped with a warning that names it.
  *
  * It is a function of the upload's bytes, and of the tree when it is given the tree's, and runs in
  * the browser and in Node alike. Each reader of the source runs once for each text it reads.
@@ -43,6 +45,7 @@ import {
   ONE_POINT_PDF,
   standIn,
   tooLarge,
+  uploadBudget,
   xbb,
 } from "./images";
 import { extensionOf, folderOf, isSafePath, joinPath, nameOf, withoutExtension } from "./paths";
@@ -102,9 +105,10 @@ export interface StandIn {
 
 /**
  * An image the intake dropped, and why: a format it has no stand-in for (`format`); bytes it
- * cannot read as the image its name says, or more pixels on a side than it stands in for
- * (`unreadable`); a name outside the job (`outside`); or an image at the same path in the job as
- * one beside the main file, which comes first (`duplicate`).
+ * cannot read as the image its name says, more pixels on a side than it stands in for, or an image
+ * past the upload's budget for reading them (`unreadable`); a name outside the job (`outside`); or
+ * an image at the same path in the job as one beside the main file, which comes first
+ * (`duplicate`).
  */
 export interface Dropped {
   name: string;
@@ -203,6 +207,20 @@ export function pickedImage(paths: readonly string[]): string | undefined {
     return at < 0 ? DRIVER_EXTENSIONS.length : at;
   };
   return [...paths].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0))[0];
+}
+
+/**
+ * Of images of one name but for their extensions, in one folder, the one whose size pdfTeX's
+ * graphicx reads for every one of them, from the name's `.xbb`: of those the job has an image of,
+ * the upload's or the tree's, the one graphicx takes (`pickedImage`); a stand-in for a name the
+ * upload lacks (`lacked`) only when every one is such a stand-in, whatever the drivers' order says,
+ * since its 1 by 1 is a guess and an image's size is not.
+ */
+export function sizedImage(
+  paths: readonly string[],
+  lacked: (path: string) => boolean,
+): string | undefined {
+  return pickedImage(paths.filter((path) => !lacked(path))) ?? pickedImage(paths);
 }
 
 type Kind = "text" | "bbl" | "font" | "image" | "other-image";
@@ -721,7 +739,9 @@ interface Images {
  * file first, as `layOut` places other files, so that one at the same path above them is left out;
  * a PDF named as the main file is, beside it, is the document compiled, and is left out too. An
  * image that cannot be read, or that has more than MAX_SIDE pixels on a side, is dropped, and so is
- * every image of another format, at the path it would have had.
+ * every image of another format, at the path it would have had; a PDF whose page's size cannot be
+ * read is named in a warning. The images are read within one budget (`UPLOAD_BUDGET`): once a PDF
+ * is past it, that one and every image after it are dropped, and one warning says so.
  */
 function placeImages(
   job: Job,
@@ -742,6 +762,8 @@ function placeImages(
   const candidates = entries.filter((entry) => entry.kind === "image" && entry.path !== compiled);
   const beside = candidates.filter((entry) => insideOf(job.folder, entry.path));
   const above = candidates.filter((entry) => !insideOf(job.folder, entry.path));
+  const budget = uploadBudget();
+  let unread = 0;
   for (const entry of [...beside, ...above]) {
     const path = jobPathOf(job.folder, entry.path);
     if (!inJob(path)) continue;
@@ -753,9 +775,17 @@ function placeImages(
       );
       continue;
     }
-    const info = imageInfo(entry.bytes);
-    if (info === undefined || (info.kind === "pdf") !== (extensionOf(entry.path) === ".pdf")) {
+    const info = budget.spent ? undefined : imageInfo(entry.bytes, budget);
+    if (budget.spent) {
       images.dropped.push({ name: entry.path, why: "unreadable", path });
+      unread++;
+      continue;
+    }
+    const isPdf = extensionOf(entry.path) === ".pdf";
+    if (info === undefined || (info.kind === "pdf") !== isPdf) {
+      images.dropped.push({ name: entry.path, why: "unreadable", path });
+      if (isPdf)
+        job.warnings.push(`${shown} is left out: this editor could not read its page's size.`);
       continue;
     }
     if (tooLarge(info) && info.kind !== "pdf") {
@@ -770,6 +800,10 @@ function placeImages(
     images.infos.set(path, info);
     images.replaced.push({ name: entry.path, path, kind: info.kind });
   }
+  if (unread > 0)
+    job.warnings.push(
+      `This upload has too many images to read: ${unread} of them ${unread === 1 ? "is" : "are"} left out.`,
+    );
   return images;
 }
 
@@ -847,10 +881,12 @@ function standInNamed(
 
 /**
  * The `.xbb` files pdfTeX's graphicx reads an image's size from, with dvipdfmx's driver: one for
- * each name, for the image graphicx takes for the name without an extension (`pickedImage`), since
- * the driver reads `<name>.xbb` whatever the extension. Another image of the name is shadowed,
- * which a warning says, and one more when the document names it with its extension, since it then
- * takes the other's size.
+ * each name, since the driver reads `<name>.xbb` whatever the extension, for the image graphicx
+ * takes for the name without an extension, but that an image the job has, the upload's or the
+ * tree's, comes before a stand-in for one the upload lacks (`sizedImage`). Another image of the
+ * name is shadowed, which a warning says, and one more when the document names it with its
+ * extension, since it then takes the other's size; a stand-in for one the upload lacks, shadowed
+ * by an image, has one warning, which says so.
  */
 function boundingBoxes(
   job: Job,
@@ -859,9 +895,11 @@ function boundingBoxes(
   folders: readonly string[],
 ) {
   const byName = new Map<string, string[]>();
-  for (const { path } of images.replaced) {
+  const lacked = new Set<string>();
+  for (const { path, missing } of images.replaced) {
     const base = withoutExtension(path);
     byName.set(base, [...(byName.get(base) ?? []), path]);
+    if (missing) lacked.add(path);
   }
   const shows = new Set(
     named
@@ -869,12 +907,18 @@ function boundingBoxes(
       .flatMap((name) => folders.flatMap((folder) => joinPath(folder, name) ?? [])),
   );
   for (const [base, paths] of byName) {
-    const picked = pickedImage(paths) ?? "";
+    const picked = sizedImage(paths, (path) => lacked.has(path)) ?? "";
     const info = images.infos.get(picked);
     if (info === undefined) continue;
     job.files[`${base}.xbb`] = new TextEncoder().encode(xbb(info));
     for (const other of paths) {
       if (other === picked) continue;
+      if (lacked.has(other) && !lacked.has(picked)) {
+        job.warnings.push(
+          `${shownInMessage(other)}, which the upload lacks, is shadowed by ${shownInMessage(picked)}, of the same name, whose size it takes: on pdfTeX, this editor sizes the two by the name they share.`,
+        );
+        continue;
+      }
       job.warnings.push(
         `${shownInMessage(other)} is shadowed by ${shownInMessage(picked)}, of the same name, which graphicx takes when the document names neither's extension.`,
       );
