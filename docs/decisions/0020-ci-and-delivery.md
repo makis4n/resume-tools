@@ -37,7 +37,7 @@ could check. The editor's production home needs the engine and TeX Live on R2 fi
 - Branch protection still requires no checks. A path-filtered check cannot be required, as 0001
   says, but `repo` and `pr-title` run on every pull request, so they could be.
 - The private repository's free plan has 2,000 Actions minutes and 500 MB of package storage a
-  month. The new checks take seconds, the build adds about a minute to the editor's job, and the
+  month. The new checks take seconds, the build adds seconds to the editor's job, and the
   ATS image, about 50 MB compressed, stays under the storage limit only because old versions are
   deleted.
 - A new lockfile type or config file that AGENTS.md forbids has to be added to
