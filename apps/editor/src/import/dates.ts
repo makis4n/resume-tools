@@ -8,6 +8,8 @@
  * a year alone. A range is two dates joined by any dash, a hyphen, `--`, `---`, an en or em dash,
  * or the word `to`, and an end that is still open reads `Present`, `Current`, `Now`, `Ongoing` or
  * `Today`, in any case. Years run from 1900 to 2100, so that a number that is not one stays text.
+ * An academic year, `2019-20`, whose second part is the next year's last two digits, is the range
+ * of the two years; `2020-01` is a month, and the second part is one only from 01 to 12.
  */
 
 import type { Dates, YearMonth } from "@resume-tools/resume-model";
@@ -78,6 +80,19 @@ const JOIN = new RegExp(
   "gi",
 );
 
+/** An academic year, a year and the next's last two digits, joined by a hyphen or an en dash. */
+const ACADEMIC = new RegExp(`^(\\d{4})${SPACE}*[-\\u2013]${SPACE}*(\\d{2})$`);
+
+/** The range of two years an academic year is, `2019-20`, or undefined for any other text. */
+function academicYear(text: string): Dates | undefined {
+  const match = ACADEMIC.exec(text);
+  const first = match?.[1] ?? "";
+  const next = String(Number(first) + 1);
+  if (match === null || !isYear(first) || !isYear(next) || next.slice(2) !== match[2])
+    return undefined;
+  return { start: first, end: next };
+}
+
 /**
  * A date or a range the whole text reads as, or undefined when it reads as neither. A range's
  * start is a date; its end a date, or open.
@@ -85,6 +100,8 @@ const JOIN = new RegExp(
 export function readDates(text: string): Dates | undefined {
   const trimmed = text.trim();
   if (trimmed === "" || trimmed.length > 64) return undefined;
+  const academic = academicYear(trimmed);
+  if (academic !== undefined) return academic;
   const single = readDate(trimmed);
   if (single !== undefined) return { start: single };
   for (const join of trimmed.matchAll(JOIN)) {

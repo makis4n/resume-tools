@@ -4,25 +4,29 @@
  *
  * The escapes, symbols and letters become their characters; the ligatures `--`, `---` and the
  * quotes become the dashes and curly quotes they set, and `~` a tie; an accent is composed with its
- * letter; `\textbf`, `\textit` and `\emph` mark their argument bold or italic, `\emph` and `\em`
- * turning italic over, and `\textsc` keeps its argument as text with no mark; `\bfseries`, `\bf`,
- * `\itshape`, `\it` and `\em` mark the rest of the group they are in, and only inside a group, since
- * an argument is not one; `\href{url}{text}` makes its text a link, `\url{x}` its address a linked
- * text, and `\nolinkurl{x}` its address a text alone; and `\\` inside a paragraph is a space, since
- * a field is one paragraph. Whitespace is TeX's: a run of spaces and a single line's end are one
- * space, a blank line ends a paragraph, a space after a control word is skipped, and a comment
- * takes its line's end with it.
+ * letter, where the generator writes the letter back as it is (`reproduces`); `\textbf`, `\textit`
+ * and `\emph` mark their argument bold or italic, `\emph` and `\em` turning italic over, and
+ * `\textsc` keeps its argument as text with no mark; `\bfseries`, `\itshape` and `\em` mark the
+ * rest of the group they are in, and `\bf` and `\it`, which are `\normalfont` and one of them, clear
+ * the other mark first, and only inside a group, since an argument is not one; `\href{url}{text}`
+ * makes its text a link, `\url{x}` its address a linked text, and `\nolinkurl{x}` its address a
+ * text alone; and `\\` inside a paragraph is a space, since a field is one paragraph. Whitespace is
+ * TeX's: a run of spaces and a single line's end are one space, a blank line ends a paragraph, a
+ * space after a control word is skipped, and a comment takes its line's end with it.
  *
  * Anything else, a command the table keeps raw, one the template defines, math, an environment, a
  * group holding any of these or a paragraph's end, is not text, and the decoder says so, so that
- * the parser places it as a node of its own. The decoder reads the arguments of the commands it
- * meets (`arguments.ts`), which the parser then finds already read.
+ * the parser places it as a node of its own. So is what the generator cannot write back as it
+ * sets: an accent over nothing or over a letter the generator decomposes, and typewriter text. The
+ * decoder reads the arguments of the commands it meets (`arguments.ts`), which the parser then
+ * finds already read.
  */
 
 import type { RichText } from "@resume-tools/resume-model";
 import type * as Ast from "@unified-latex/unified-latex-types";
+import { escapeText } from "../templates/escape";
 import { type Read, readArguments, spanOf } from "./arguments";
-import { type Mark, STANDARD } from "./standard";
+import { type FontChange, type Mark, STANDARD } from "./standard";
 
 /** The marks text is set with. */
 export interface Marks {
@@ -53,16 +57,23 @@ export interface TextItem {
   start: number;
   end: number;
   pieces: Piece[];
-  /** What the item is at a paragraph's edge: nothing (a space or a comment), or `\\`, a break. */
+  /**
+   * What the item is at a paragraph's edge: nothing (a space, a comment or a group that sets
+   * nothing), or `\\`, a break.
+   */
   edge?: "space" | "break";
   /** The item ends the paragraph: a blank line. */
   par?: true;
 }
 
-/** The state text is read in: its marks, and whether it is inside a group, where declarations go. */
+/**
+ * The state text is read in: its marks; whether it is inside a group, where declarations go; and
+ * whether it is typewriter, as after `\ttfamily`, where nothing is text.
+ */
 export interface TextState {
   marks: Marks;
   grouped: boolean;
+  typewriter?: boolean;
 }
 
 /** Groups whose content is known not to decode, so that none is read twice (`decodeGroup`). */
@@ -89,7 +100,7 @@ export function textItem(
 ): Found | undefined {
   const node = nodes[i];
   const span = spanOf(node);
-  if (node === undefined || span === undefined) return undefined;
+  if (node === undefined || span === undefined || state.typewriter === true) return undefined;
   switch (node.type) {
     case "string":
       return {
@@ -111,9 +122,12 @@ export function textItem(
         next: i + 1,
       };
     case "comment": {
-      // A comment on a line of its own follows the line's end before it, which is a space; one
-      // after a space follows that space.
-      const spaced = node.sameline === false || node.leadingWhitespace === true;
+      // A comment on a line of its own follows the line's end before it, which is a space, but for
+      // one a comment took; one after a space follows that space.
+      const spaced =
+        node.sameline === false
+          ? nodes[i - 1]?.type !== "comment"
+          : node.leadingWhitespace === true;
       return {
         item: {
           ...span,
@@ -131,10 +145,15 @@ export function textItem(
         next: i + 1,
       };
     case "group": {
+      // A group that sets nothing, `{}`, is no text at a paragraph's edge, as a space is not.
       const pieces = decodeGroup(node, state, source);
       return pieces === undefined
         ? undefined
-        : { item: { ...span, pieces }, skipsNext: false, next: i + 1 };
+        : {
+            item: { ...span, pieces, ...(pieces.length === 0 ? { edge: "space" as const } : {}) },
+            skipsNext: false,
+            next: i + 1,
+          };
     }
     case "macro":
       return macroItem(nodes, i, node, state, source);
@@ -178,36 +197,33 @@ function macroItem(
     ...(edge === undefined ? {} : { edge }),
   });
   // A control word with nothing after it, as `\ss` or `\bf`, has TeX skip the spaces after it; so
-  // does a control space, and an argument that is a control word alone, as `\i` in `\"\i ve`.
+  // does an argument that is a control word alone, as `\i` in `\"\i ve`.
   const last = read.args.filter((arg) => arg.present).at(-1);
   const token = last?.open === "" ? last.content[0] : undefined;
   const skipsNext =
     (isControlWord(node.content) && end === span.end) ||
-    node.content === " " ||
     (token?.type === "macro" && isControlWord(token.content));
   switch (role.kind) {
     case "symbol":
       return {
-        item: item([
-          node.content === " "
-            ? { kind: "space", hard: true, marks: state.marks }
-            : { kind: "text", text: role.text, marks: state.marks },
-        ]),
+        item: item([{ kind: "text", text: role.text, marks: state.marks }]),
         skipsNext,
         next,
       };
     case "declaration": {
       // The declaration changes the marks of the rest of its group, which `decodeNodes` carries.
-      state.marks = marked(state.marks, role.mark);
+      state.marks = changed(state.marks, role.change);
       return { item: item([]), skipsNext, next };
     }
     case "accent": {
+      // Over nothing, an accent sets a glyph of its own, which no character the generator writes
+      // sets; over a letter, it is text only where the generator writes the letter back as it is.
       const base = plainOf(read, 0, state, source);
-      if (base === undefined) return undefined;
+      if (base === undefined || base === "") return undefined;
+      const letter = composed(base, role.mark, role.alone);
+      if (!reproduces(letter)) return undefined;
       return {
-        item: item([
-          { kind: "text", text: composed(base, role.mark, role.alone), marks: state.marks },
-        ]),
+        item: item([{ kind: "text", text: letter, marks: state.marks }]),
         skipsNext,
         next,
       };
@@ -261,13 +277,36 @@ function marked(marks: Marks, mark: Mark): Marks {
   return marks;
 }
 
+/** Marks as a font declaration leaves them: those it clears cleared, then its mark set. */
+export function changed(marks: Marks, change: FontChange): Marks {
+  const cleared =
+    change.clear === "all"
+      ? { ...marks, bold: false, italic: false }
+      : change.clear === "bold"
+        ? { ...marks, bold: false }
+        : change.clear === "italic"
+          ? { ...marks, italic: false }
+          : marks;
+  return change.mark === undefined ? cleared : marked(cleared, change.mark);
+}
+
+/**
+ * Whether the generator writes a composed letter back as the one character it is, so that it sets
+ * what the accent command set: it does for the letters of Latin-1, of Latin Extended-A and the few
+ * past them LaTeX defines, but on pdfTeX decomposes every other (`escapeText`), as `\d{a}`'s `ạ` or
+ * a stacked accent's `ễ`, and leaves a mark nothing composes with, as `\t{oo}`'s tie, to a font.
+ */
+export function reproduces(letter: string): boolean {
+  return escapeText(letter) === letter && !/\p{M}/u.test(letter);
+}
+
 /**
  * A group's pieces, its declarations kept inside it, or undefined when it does not decode: a
  * group that holds anything but text, or a paragraph's end, since a field is one paragraph.
  */
 function decodeGroup(node: Ast.Group, state: TextState, source: string): Piece[] | undefined {
   if (undecodable.has(node)) return undefined;
-  const pieces = decodeNodes(node.content, { marks: state.marks, grouped: true }, source);
+  const pieces = decodeNodes(node.content, { ...state, grouped: true }, source);
   if (pieces === undefined) undecodable.add(node);
   return pieces;
 }
@@ -281,7 +320,7 @@ export function decodeNodes(
   state: TextState,
   source: string,
 ): Piece[] | undefined {
-  const local: TextState = { marks: state.marks, grouped: state.grouped };
+  const local: TextState = { ...state };
   const pieces: Piece[] = [];
   let skip = false;
   for (let i = 0; i < nodes.length; ) {

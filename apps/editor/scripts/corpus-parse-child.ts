@@ -2,9 +2,11 @@
  * One child of `corpus parse`'s pool (`corpus-parse.ts`, decision 0020): an engine session and
  * fonts of its own, which take one document at a time, as a zip, through the intake, the reference
  * compile, the signatures' two compiles, the parse and the print, and compile the printed body as
- * the reference was compiled; and answer with the document's row, names of macros and numbers
- * only, and, for a round trip that did not set the reference's glyphs, the printed document and
- * its log, which the parent keeps under `.corpus/` alone.
+ * the reference was compiled, twice, printed byte for byte and regenerated (`regenerate`); and
+ * answer with the document's row, names of macros, hashes and numbers only, and, for a round trip
+ * that did not set the reference's glyphs, the printed document and its log, which the parent
+ * keeps under `.corpus/` alone: the byte-for-byte one's, or the regenerated one's when only it
+ * differs.
  *
  * The editor's modules are written for Vite, so this file, which Node runs as it is, loads them
  * through Vite's module runner with the app's own config, as `corpus-reference-child.ts` does, and
@@ -12,14 +14,26 @@
  * reaches a terminal.
  */
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
+import type { Intake } from "../src/import/intake.ts";
 import type { Refusal } from "../src/import/refusal.ts";
-import { charactersOf, datesOf, type ParseChildRow, signatureCounts } from "./corpus-parse.ts";
+import type { EngineSignatures } from "../src/import/signatures.ts";
+import {
+  charactersOf,
+  datesOf,
+  definedNames,
+  fileMacros,
+  type HeldFile,
+  type ParseChildRow,
+  signatureCounts,
+  suspectsOf,
+} from "./corpus-parse.ts";
 
 type NodeEngine = typeof import("../src/engine/node.ts");
 type Fonts = typeof import("../src/page/fonts.ts");
@@ -38,6 +52,27 @@ interface Task {
   type: "task";
   id: string;
   message: { name: string; bytes: Uint8Array };
+}
+
+/**
+ * Each template macro's key, by name, as item 6's cache would take it.
+ * TODO(merge): part A adds `keysOf(signatures)` to `signatures.ts`; take it from the module
+ * runner's import there, in place of this, which keys each macro by its own meaning's hash.
+ */
+const keysOf = (found: EngineSignatures): Record<string, string> =>
+  Object.fromEntries(Object.entries(found.macros).map(([name, macro]) => [name, macro.hash]));
+
+/**
+ * The class and style files a job holds, each by the SHA-256 of its bytes, with the keys of the
+ * macros it defines that the signatures found.
+ */
+function heldFiles(taken: Intake, keys: Readonly<Record<string, string>>): HeldFile[] {
+  return Object.entries(taken.files)
+    .filter(([path]) => /\.(?:cls|sty)$/i.test(path))
+    .map(([, bytes]) => ({
+      hash: createHash("sha256").update(bytes).digest("hex"),
+      macros: fileMacros(keys, definedNames(new TextDecoder().decode(bytes))),
+    }));
 }
 
 async function main() {
@@ -60,7 +95,7 @@ async function main() {
   const { readTree } = await runner.import<ImportFonts>("/src/import/fonts.ts");
   const { bodyOf, buildTree, PARSE_REFUSALS, readBody, usesOf } =
     await runner.import<ParseModule>("/src/import/parse.ts");
-  const { print } = await runner.import<PrintModule>("/src/import/print.ts");
+  const { print, regenerate } = await runner.import<PrintModule>("/src/import/print.ts");
   const { signatures } = await runner.import<SignaturesModule>("/src/import/signatures.ts");
 
   const manifest = JSON.parse(
@@ -110,17 +145,31 @@ async function main() {
     const counts = signatureCounts(found);
     if ("refused" in built)
       return done({ outcome: "refused", refused: ruleOf(built), engine, ...counts, signaturesMs });
+    /** The body compiled as the reference was, with the document's preamble and its end. */
+    const compiled = async (printed: string) => {
+      const document = body.before + printed + body.after;
+      const main = encodeLike(taken.main.bytes, document) ?? new TextEncoder().encode(document);
+      const result = await compileLikeReference(session, fonts, taken, made, main, { treeImage });
+      const differs = "refused" in result ? undefined : difference(made, result.stream);
+      const trip: ParseChildRow["roundTrip"] =
+        "refused" in result ? "stopped" : differs === undefined ? "same" : "differs";
+      return { document, log: result.log, trip, differs };
+    };
     const printed = print(built);
-    const document = body.before + printed + body.after;
-    const main = encodeLike(taken.main.bytes, document) ?? new TextEncoder().encode(document);
-    const again = await compileLikeReference(session, fonts, taken, made, main, { treeImage });
-    const differs = "refused" in again ? undefined : difference(made, again.stream);
+    const byte = await compiled(printed);
+    const regenerated = await compiled(regenerate(built, engine));
     const row: ParseChildRow = {
       outcome: "parsed",
       engine,
       printed: printed === body.text,
-      roundTrip: "refused" in again ? "stopped" : differs === undefined ? "same" : "differs",
-      ...(differs === undefined ? {} : { difference: differs.kind }),
+      roundTrip: byte.trip,
+      ...(byte.differs === undefined ? {} : { difference: byte.differs.kind }),
+      regenerated: regenerated.trip,
+      ...(regenerated.differs === undefined
+        ? {}
+        : { regeneratedDifference: regenerated.differs.kind }),
+      suspects: suspectsOf(built),
+      files: heldFiles(taken, keysOf(found)),
       ...counts,
       chars: charactersOf(built),
       dates: datesOf(built),
@@ -129,7 +178,9 @@ async function main() {
       parseMs: Math.round(parseMs),
       signaturesMs,
     };
-    done(row, row.roundTrip === "same" ? undefined : { document, log: again.log });
+    const kept =
+      byte.trip !== "same" ? byte : regenerated.trip !== "same" ? regenerated : undefined;
+    done(row, kept === undefined ? undefined : { document: kept.document, log: kept.log });
   });
   send({ type: "ready" });
 }

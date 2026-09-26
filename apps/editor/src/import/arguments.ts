@@ -14,7 +14,9 @@
  * which a body of many short calls makes quadratic. The one change it makes is where a token is
  * split off a string, whose rest takes the string's place. It keeps what it read for the command
  * (`readArguments`), so that a command whose text cannot be decoded is placed with the arguments
- * already read, and none is read twice.
+ * already read, and none is read twice. A delimited argument's closer is looked for as far as the
+ * paragraph's end or MAX_DELIMITED characters, whichever comes first, so that a body of `\\[` or
+ * `\item[` that never closes costs each command that much at most, not the rest of the body.
  */
 
 import type * as Ast from "@unified-latex/unified-latex-types";
@@ -60,6 +62,12 @@ export const startOf = (node: Ast.Node | undefined) => spanOf(node)?.start ?? -1
 
 /** A node's end in the body; -1 for one without a position. */
 export const endOf = (node: Ast.Node | undefined) => spanOf(node)?.end ?? -1;
+
+/**
+ * How far past its opener a delimited argument's closer is looked for, in characters: longer than
+ * any optional argument a resume gives, a length, a label, a key list.
+ */
+export const MAX_DELIMITED = 2048;
 
 const specs = new Map<string, ArgSpecAst.Node[] | undefined>();
 
@@ -258,17 +266,19 @@ function readOne(
     return single("mandatory", taken, ["", ""], [taken], taken === target ? i + 1 : i);
   }
   // A delimited argument, `[...]` or another pair, which unified-latex's reader matches, given
-  // only the nodes up to the first that closes it, so that it takes none out of the array.
+  // only the nodes up to the first that closes it, so that it takes none out of the array. The
+  // closer is looked for up to the paragraph's end or MAX_DELIMITED characters on.
   const kind = part.type === "optional" ? "optional" : "mandatory";
   const missing = () => (kind === "optional" ? absent(kind, open, close) : undefined);
   if (target?.type !== "string" || !target.content.startsWith(open)) return missing();
+  const limit = startOf(target) + MAX_DELIMITED;
   const first = splitAt(nodes, i, open.length);
   if (first === undefined) return missing();
   const rest = first === target ? i + 1 : i;
   let stop = rest;
   for (; stop < nodes.length; stop++) {
     const node = nodes[stop];
-    if (node?.type === "parbreak") return missing();
+    if (node?.type === "parbreak" || startOf(node) > limit) return missing();
     if (node?.type === "string" && node.content.startsWith(close)) break;
   }
   const closing = splitAt(nodes, stop, close.length);

@@ -88,16 +88,33 @@ splits, inlines and builds the tree, with `arguments.ts`, `standard.ts`, `richte
   outside comments; one without both is refused. The preamble stays text for item 7.
 - `\input`, `\include` and `\subfile` of a `.tex` file the job holds are inlined, never one of the
   tree: `\input{x}` and `\subfile{x}` add `.tex` to a name without an extension, `\include{x}`
-  always, as LaTeX does. `\endinput` ends a file after the rest of its line, which TeX reads; a
-  newline is added where a file lacks a final one; a subfile gives its body alone. An `\include` is
-  inlined between two `\clearpage`s, as LaTeX reads one, and as the one `\clearpage` it leaves when
-  the preamble's `\includeonly` leaves it out. An input the job does not hold, one of another kind,
-  one already being read and one past 16 inputs deep stay as they are. The body records where each
-  of its spans came from: a file and an offset in it, or the parser, for what inlining adds.
-- The added newline makes the inlined body read as TeX reads the input in every case the corpus has,
-  a `\input` on a line of its own, where TeX's two spaces and the body's blank line both come in
-  vertical mode. Mid-paragraph, the blank line would end the paragraph where TeX sets a space; the
-  round trip would show it.
+  always, as LaTeX does. A subfile gives its body alone. An `\include` is inlined between two
+  `\clearpage`s, as LaTeX reads one, and as the one `\clearpage` it leaves when the preamble's
+  `\includeonly` leaves it out. An input the job does not hold, one of another kind, one already
+  being read and one past 16 inputs deep stay as they are. The body records where each of its spans
+  came from: a file and an offset in it, or the parser, for what inlining adds.
+- `\endinput` is honoured only where it begins its line, spaces aside: the file is read up to that
+  line and none of it, and adds no newline. One after something else on its line is not honoured,
+  and the file is inlined whole, the command with it: that is most often a guard,
+  `\ifdefined\x\endinput\fi`, which TeX reads through the first time. An unconditional `\endinput`
+  in the middle of a line, which the first version cut at, no longer is; the corpus has no
+  `\endinput` at all.
+- A file ends in a newline, one added where it lacks one, as TeX ends every line it reads with a
+  line's end; an empty file is one empty line to TeX, which ends a paragraph, so it is a blank
+  line wherever its input is. Where the input is the last thing on its line, TeX reads the file's
+  last line's end and then the input's own: two spaces in a paragraph (the engine shows them, the
+  second as wide as the first). The two newlines alone, as the first version gave, make a blank
+  line, which ends the paragraph; one alone, as the review proposed, sets one space. So an empty
+  group goes before the input's line's end, `{}`, the parser's in the body's record of its spans:
+  it gives the second space and sets nothing, and in vertical mode it starts no paragraph. It keeps
+  the line of an input whose file `\endinput` ends on its first line a space, not a blank line,
+  too. A bare name, `\input x`, is different: TeX takes the line's end after it as the name's end,
+  so the file's last line's end stands for it, and no group is added. Twelve shapes of input, on a
+  line of their own or in one, braced or bare, a file with a newline or without, empty or ended at
+  once, and `\include`, now set the reference's glyphs printed byte for byte, where the first
+  version's differed for an input alone on its line inside a paragraph (`parse.test.ts` compiles one
+  document holding seven of them); regenerated, the model's text holds one space where TeX set two,
+  which the second round trip shows.
 
 ### The tree
 
@@ -114,23 +131,46 @@ splits, inlines and builds the tree, with `arguments.ts`, `standard.ts`, `richte
   0.3 s.
 - **Rich text**, the model's `RichText`, is what the table decodes, a paragraph at a time: the
   escapes `\& \% \$ \# \_ \{ \}` and `\textbackslash`; the ligatures `--`, `---`, the quotes and the
-  inverted question and exclamation marks; `~` a no-break space, `\,` a thin space, U+2009;
-  `\textbullet`, the letters `\ss`, `\ae`, `\o`, `\l`, `\i` and their kin, the dashes, quotes and
-  dots by name, and what the generator writes for the characters TeX reads as something else
-  (decision 0007), `\textless{}` and its kin and `\allowbreak`; every accent command, `` \` \' \^ \"
-  \~ \= \. \u \v \H \c \d \b \r \k \t ``, composed with its letter, `\i` taken for `i`; `\textbf`,
-  `\textit`, `\emph` (which turns italic over) and `\textsc` (text with no mark); `\bfseries`,
-  `\itshape`, `\bf`, `\it` and `\em` inside a group, since an argument is not one;
-  `\href{url}{text}` a link, its address as hyperref turns it back; `\url{x}` its address, linked;
-  `\nolinkurl{x}` its address alone; and `\\` a space inside a paragraph, since a field is one.
-  Whitespace is TeX's: a run of spaces and a single line's end are one space, a blank line ends a
-  paragraph, the spaces after a control word are skipped, and a comment takes its line's end with
-  it. A group is text when all it holds is text in one paragraph.
+  inverted question and exclamation marks; `~` a no-break space; `\textbullet`, the letters `\ss`,
+  `\ae`, `\o`, `\l`, `\i` and their kin, the dashes, quotes and dots by name, and what the generator
+  writes for the characters TeX reads as something else (decision 0007), `\textless{}` and its kin
+  and `\allowbreak`; every accent command, `` \` \' \^ \" \~ \= \. \u \v \H \c \d \b \r \k \t ``,
+  composed with its letter, `\i` taken for `i`, where the generator writes the letter back as the
+  one character it is (below); `\textbf`, `\textit`, `\emph` (which turns italic over) and
+  `\textsc` (text with no mark); `\bfseries`, `\itshape` and `\em` inside a group, since an argument
+  is not one, and `\bf` and `\it` there too, each `\normalfont` and one attribute, so that it clears
+  the other mark first; `\href{url}{text}` a link, its address as hyperref turns it back; `\url{x}`
+  its address, linked; `\nolinkurl{x}` its address alone; and `\\` a space inside a paragraph,
+  since a field is one. Whitespace is TeX's: a run of spaces and a single line's end are one space,
+  a blank line ends a paragraph, the spaces after a control word are skipped, and a comment takes
+  its line's end with it, and one on a line of its own adds no space where a comment took the line
+  end before it. A group is text when all it holds is text in one paragraph, and one that sets
+  nothing, `{}`, is no text at a paragraph's edge. An `\item`'s label is read in a state of its
+  own, as LaTeX sets it in a box: a declaration in it marks nothing after it.
+- **What the generator cannot write back stays raw**, the smallest node, where the first version
+  decoded it and the regenerated round trip (below) showed other glyphs, or a compile that
+  stopped: a control space, which the generator writes as a space that stretches after a period;
+  `\,`, which it writes as a word space; `\@`; an accent over nothing, `\~{}`, `\^{}` or `\'{}`, which
+  sets the text font's accent where the character sets another font's or an ASCII glyph; an accent
+  whose letter lies past Latin Extended-A and is not one of the few LaTeX defines there, `\d{a}`,
+  `\b{a}`, a stacked `\~{\^e}`, which the generator decomposes on pdfTeX (a mark LaTeX has no
+  definition for stops the compile), or that leaves a mark nothing composes with, `\t{oo}` (the
+  test is the generator's own `escapeText` giving the letter back unchanged, with no mark); and
+  typewriter text, `\texttt{...}`, and what `\ttfamily` or `\tt` sets to the end of its group, or
+  of a list's items, which share its font, since the model has no monospace mark and typewriter
+  fonts make no ligature of `--`. `\d{s}`, `\v{a}` and the like, which LaTeX defines, decode.
+- **Font declarations the model has no mark for**, `\normalfont`, `\rm`, `\sf`, `\sl`, `\sc`,
+  `\upshape`, `\slshape`, `\scshape`, `\mdseries`, `\rmfamily`, `\sffamily`, stay raw, in place, and
+  inside a group clear the marks of the text after them that their axis holds: `\sc` both, as
+  `\normalfont` and a shape, `\scshape` italic, `\mdseries` bold.
 - **Dates**: a whole argument or a whole text with no mark that reads as a date or a range becomes
   the model's `Dates`, with the text as it reads: English months full or in three letters, with or
   without a period, and `Sept`; `01/2020` and `2020-01`; a year, 1900 to 2100; ranges on a hyphen,
   `--`, `---`, an en or em dash, or `to`; and an open end, `Present`, `Current`, `Now`, `Ongoing`
-  or `Today` in any case. Anything else stays text; `Jun - Aug 2019` does.
+  or `Today` in any case. An academic year, `2019-20` or `2019–20`, whose second part is the next
+  year's last two digits, is the range of the two years; otherwise the second part is a month only
+  from 01 to 12, so `2010-11` is 2010 to 2011, and `2020-12` December. Anything else stays text;
+  `Jun - Aug 2019` does.
 - **Sections**: `\part`, `\chapter`, `\section` and down to `\subparagraph`, their star, their
   optional title and their title, placed as any argument is.
 - **Lists**: `itemize`, `enumerate` and `description`, their options kept as they are, and an item
@@ -140,25 +180,53 @@ splits, inlines and builds the tree, with `arguments.ts`, `standard.ts`, `richte
   line, or anything else the parser places.
 - **Template calls** and **template environments**: a command or an environment the engine says
   the template defines, its arguments read by its signature, each a subtree, the optional ones
-  marked and the star kept. A call a mandatory argument of which is missing stays raw.
+  marked and the star kept. A call a mandatory argument of which is missing stays raw. So does a
+  call whose signature takes no mandatory argument, or ends in an optional one, and which a group
+  follows, spaces and comments between: the signature of a macro that hands its arguments on to
+  another, `\ding` to `\Pisymbol{pzd}`, or looks ahead for them, reads so from its meaning, and the
+  group would otherwise read as text the call in fact takes. The call and the groups after it are
+  one raw chunk, unresolved and marked `suspect`, and the runner counts them per family. A template
+  environment whose own macros' meanings open an alignment, `tabular`, `tabular*`, `tabularx`,
+  `tabulary`, `array`, `longtable` or `\halign`, keeps its arguments placed and its body one raw
+  chunk, since the body is cells.
 - **Groups** and **blocks**: a braced group that is not text, and `center`, `flushleft`,
-  `flushright`, `quote`, `quotation`, `verse`, `minipage` and `multicols`, whose content the parser
-  places.
+  `flushright`, `quote`, `quotation`, `verse`, `raggedright`, `raggedleft`, `centering`,
+  `samepage`, `sloppypar`, `minipage` and `multicols`, whose content the parser places; and a
+  declaration used as an environment, a size, `\begin{small}` or `\begin{footnotesize}`, a series,
+  a shape or a family, `\begin{bfseries}`, whose body is placed with the marks the declaration sets,
+  bold, italic or `\em`'s turn, and the rest left to the generator's snippets. The first version
+  kept them raw, the whole body of two corpus documents set in `footnotesize`; `\begin{ttfamily}`
+  stays raw.
+- **Conditionals whose branch is known**: what `\iffalse` skips, to its `\else` or `\fi` among the
+  nodes after it, the conditionals between counted as TeX counts them (its own, and a name starting
+  `if` the engine says is a primitive, as `\newif` makes), is one raw chunk, and so is what `\iftrue`
+  skips from its `\else`; the branch TeX takes is placed as any content is, `\iftrue` and `\fi` raw
+  alone. One whose `\fi` is in another group, and every other conditional, stays as it was, raw.
 - **Raw chunks**, byte for byte: mathematics, verbatim, `tabular` and every environment the table
   does not place and the engine did not resolve as the template's; commands whose effect is not
   text, from the table (spacing, breaks, sizes, font switches, rules, boxes, colours, graphics,
   lengths, references, definitions), with the arguments LaTeX's kernel, xcolor, hyperref, multicol
   and geometry give them in unified-latex's CTAN table, but for a few it has wrong; TeX's own
   definitions, `\def` with its parameters and body and `\let` with its token, whole; a primitive or
-  a register with the quantity after it, `\vskip 3pt plus 1pt`; and any command the table does not
-  know and the engine did not resolve, alone. A raw chunk is the smallest node the parser cannot
-  place: `\vspace{2pt}` between two paragraphs is one chunk, and a command whose argument is text
-  the page shows, `\textcolor{red}{...}`, `\underline`, a box, `\textbf` over a call, keeps that
-  argument placed inside it, so that a call in it is still a call.
+  a register with the quantity after it, `\vskip 3pt plus 1pt`; a paragraph with an alignment's `&`
+  in it, one of the source's and not `\&`, which is a template's cells; and any command the table
+  does not know and the engine did not resolve, alone. A raw chunk is the smallest node the parser
+  cannot place: `\vspace{2pt}` between two paragraphs is one chunk, and a command whose argument is
+  text the page shows, `\textcolor{red}{...}`, `\underline`, a box, `\textbf` over a call, keeps
+  that argument placed inside it, so that a call in it is still a call.
 - Every node keeps its span in the inlined body, and every argument its span and its content's.
   `print(tree)` gives back the body's bytes for every span, a node's children in turn and the
   body's between them, so that a tree printed as it was parsed is the inlined body exactly, and a
   caller can put what it makes in the place of any node or argument.
+- Printed so, a tree that is wrong gives back its bytes all the same, and the first version's round
+  trip could not fail on what it read. `regenerate(tree, engine)` prints it the way item 7 will: every
+  text as the generator writes its runs, escaped by `escapeText` (composed for XeTeX, whose fonts
+  set letters whole), bold outside italic and a link outside both as `generate.ts`'s `richLatex`
+  writes them, with its break opportunities; every date formatted by the generator's `formatDates`
+  in the one of its four formats the date is spelled in, or left as its own text when it is spelled
+  in none of them (`Sept 2019`, `2019-20`, a hyphen between the two ends). Where the text follows a
+  control word, braces go before a letter or a space, which would join the name or be skipped; where
+  it ended in one, which had TeX skip the spaces after it, `\relax` goes after it.
 
 ### The caps
 
@@ -171,6 +239,15 @@ splits, inlines and builds the tree, with `arguments.ts`, `standard.ts`, `richte
 - The parser's work grows linearly: `parse.test.ts` bounds a megabyte of groups nested 50 deep and
   a megabyte of short calls against a tenth of each, in CPU time. unified-latex's parse takes about
   1.5 s a megabyte of it.
+- Every look ahead is bounded, where the first version's were not and the review timed openers that
+  never close growing with the square of the body: a delimited argument's closer is looked for up
+  to the paragraph's end or 2,048 characters on, whichever comes first (`MAX_DELIMITED`); an
+  address, an `\href`'s options and a `\verb`'s text on their line and 2,048 characters at most,
+  each line's end found once; and conditionals are matched to their `\else` and `\fi` in one pass a
+  sequence. `parse.test.ts` bounds `\\[` repeated to 192 KB, `\item[x ` outside a list to 256 KB and
+  `\iftrue` to 200 KB, parsed, and `\url{` to 400 KB on one line and `\verb!x!` to 1.4 MB, read
+  before unified-latex parses, each against a tenth of it. 96 KB of `\\[` took 4 s to build a tree
+  of; 192 KB now takes 0.7 s, and 400 KB of `\url{` 0.25 s to read, where 24 s.
 
 ### Dependencies
 
@@ -180,6 +257,37 @@ it pulls Prettier 2 and 3 into the browser's bundle, and printing by spans needs
 unified-latex's. `-util-macros`, which expands macros, is not needed either.
 
 ## The corpus
+
+### What the runner checks
+
+- **Two round trips.** Each parsed document compiles again as the reference was, twice: its tree
+  printed byte for byte, which says the body was split and inlined as TeX reads it and the tree lost
+  no byte; and regenerated (`regenerate`), which says the tree read its texts and dates as the page
+  sets them, since only that can fail on a tree that is wrong. The table counts both, and the first
+  difference's kind of each. For a round trip that did not set the reference's glyphs, the runner
+  keeps the printed document and its log under `.corpus/parse/`: the byte-for-byte one's, or the
+  regenerated one's when only it differs.
+- **Calls a group after them belies**, kept raw (`suspect`), counted per family: how many calls the
+  engine's signatures still read short once the package-known ones are in.
+- **Keys of a shared file.** For each two documents that hold a class or style file byte for byte,
+  a pair for each file, whether the keys of the file's macros (the names its definitions give,
+  read from the file, and those they hand their work to) found in both are the same: item 6's cache
+  holds only if they are. The file is named by its SHA-256, and a macro by its name only when it is
+  plainly one. A macro's key is `keysOf`'s (TODO(merge): until part A's `keysOf` is merged, the
+  runner keys a macro by its meaning's hash).
+- **Its first documents.** On `jake-0001`, `altacv-0001` and `awesome-cv-0003`, the last on XeTeX,
+  both round trips set the reference's glyphs. `other-0009` and `other-0010`, whose bodies are set in
+  `footnotesize` and were raw, now parse through, and set the reference's glyphs byte for byte;
+  regenerated, each differs first in a position, in a paragraph with `\\` in it, which the model
+  reads as a space. What the regenerated round trip finds on invented documents are the decodings
+  this record keeps for the model but the generator cannot set as the source did: `\\` inside a
+  paragraph, a line's break lost; `\textsc`'s small capitals; `\url`'s typewriter; an `\href`
+  whose address has no scheme, which the generator gives `https://`; `{\it ...}`, which the
+  generator writes as `\textit{...}` and so adds an italic correction; and the second of TeX's two
+  spaces around a mid-paragraph input. Item 7 decides what to make of each.
+
+The table below is the first run's, before the review's fixes, whose round trip is the byte-for-byte
+one alone; the run after them replaces it.
 
 `corpus parse` on 26 September 2026, the tree of layout 6, the M4 Pro, four children: 1.4 minutes.
 
@@ -230,7 +338,9 @@ only in a box's dimensions, and 29 are five documents' own, which the signatures
 
 - **The round trip holds on every document**: the tree prints back the inlined body byte for byte,
   and that body, with the preamble, sets the reference's glyphs, on all 117, pdfTeX and XeTeX. What
-  item 5 wraps and item 7 splices starts from a body that compiles as the original did.
+  item 5 wraps and item 7 splices starts from a body that compiles as the original did. That round
+  trip cannot fail on what the tree reads wrong, which the regenerated one, added after the review,
+  measures.
 - **A third of a resume's characters are in template calls' arguments**, and a quarter in rich
   text, the rest the commands' own names, delimiters, spaces and raw chunks. Jake's Resume forks
   (50%), Awesome-CV's (53%) and moderncv's (66%) are mostly calls: item 5's probe has most of their

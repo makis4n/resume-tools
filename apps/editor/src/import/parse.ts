@@ -5,8 +5,9 @@
  *
  * The main file is split at `\begin{document}` and `\end{document}`, outside comments; the
  * preamble stays text. The body's `\input`, `\include` and `\subfile` of `.tex` files the job
- * holds are inlined, never a file of the tree, `\endinput` honoured and a newline added where a
- * file lacks a final one, and the body remembers which spans came from which file (`bodyOf`).
+ * holds are inlined, never a file of the tree, `\endinput` honoured where it begins a line and the
+ * spaces TeX reads around a file kept, and the body remembers which spans came from which file
+ * (`bodyOf`).
  *
  * unified-latex parses the body (`readBody`), with nothing attached; the parser then reads each
  * command's arguments (`arguments.ts`) by its table of standard commands (`standard.ts`) or by the
@@ -19,29 +20,39 @@
  * - **template calls**, a call to a macro the engine says the template defines, each argument a
  *   subtree, the optional ones marked, and the star;
  * - **template environments**, one the engine says the template defines, its arguments and body;
- * - **groups** and **blocks**, a braced group or a standard environment such as `center` whose
- *   content the parser places;
+ * - **groups** and **blocks**, a braced group or a standard environment such as `center`, or a
+ *   declaration used as one, `small` or `bfseries`, whose content the parser places;
  * - and **raw chunks**, everything else, byte for byte: math, verbatim, `tabular` and the
- *   environments the table does not know, commands whose effect is not text, and any command the
- *   table does not know and the engine did not resolve. A raw chunk is the smallest node the
- *   parser cannot place: a raw command whose argument is text a page shows keeps that argument
- *   placed inside it.
+ *   environments the table does not know, commands whose effect is not text, typewriter text, a
+ *   paragraph an alignment's `&` is in, what a constant-false conditional skips, and any command
+ *   the table does not know and the engine did not resolve, or resolved with a signature a group
+ *   after the call belies. A raw chunk is the smallest node the parser cannot place: a raw command
+ *   whose argument is text a page shows keeps that argument placed inside it.
  *
  * Every node keeps its span in the body, so that the printer gives back the bytes of what nobody
  * changed. A body past 5 MB, nested past 64 levels, or making a tree of more than 200,000 nodes or
- * 64 levels, is refused with a plain message; the parser's work grows linearly with the body.
+ * 64 levels, is refused with a plain message; the parser's work grows linearly with the body, every
+ * look ahead in it bounded.
  */
 
 import type { Dates, RichText } from "@resume-tools/resume-model";
 import type * as Ast from "@unified-latex/unified-latex-types";
 import { parseMinimal } from "@unified-latex/unified-latex-util-parse";
 import { visit } from "@unified-latex/unified-latex-util-visit";
-import { isReadable, type ReadArgument, readArguments, spanOf, splitAt } from "./arguments";
+import {
+  isReadable,
+  MAX_DELIMITED,
+  type ReadArgument,
+  readArguments,
+  readSpec,
+  spanOf,
+  splitAt,
+} from "./arguments";
 import { readDates } from "./dates";
 import { CAPS, decodeText, type Intake } from "./intake";
 import { extensionOf, joinPath, nameOf } from "./paths";
 import { type Refusal, refusedParse } from "./refusal";
-import { PLAIN, runsOf, type TextItem, type TextState, textItem } from "./richtext";
+import { changed, PLAIN, runsOf, type TextItem, type TextState, textItem } from "./richtext";
 import { group as braced, maskComments } from "./source";
 import { STANDARD, STANDARD_ENVIRONMENTS, type Standard } from "./standard";
 
@@ -168,25 +179,25 @@ function inputPath(command: string, name: string): string | undefined {
   return file === undefined ? undefined : joinPath("", file);
 }
 
+/** An `\endinput` outside comments that begins its line, but for spaces before it. */
+const END_INPUT = /(?:^|\n)[ \t]*\\endinput(?![A-Za-z@])/;
+
 /**
- * A file's text as TeX reads it through `\input`: up to its first `\endinput` outside comments,
- * and the rest of that line, which TeX reads before it stops. The parts it keeps, as spans of the
- * text.
+ * What of a file's span TeX reads through `\input`: up to the line of its first `\endinput`
+ * outside comments that begins a line, spaces aside, none of that line; or all of it. An
+ * `\endinput` after something else on its line is not honoured, since it is most often a guard,
+ * `\ifdefined\x\endinput\fi`, which reads the whole file the first time; the file is inlined whole,
+ * and the command with it.
  */
-function beforeEndInput(text: string): { start: number; end: number }[] {
-  const masked = maskComments(text);
-  for (const match of masked.matchAll(/\\endinput(?![A-Za-z@])/g)) {
-    if (!isCommandAt(masked, match.index)) continue;
-    const after = match.index + match[0].length;
-    const newline = text.indexOf("\n", after);
-    const lineEnd = newline < 0 ? text.length : newline + 1;
-    return [
-      { start: 0, end: match.index },
-      { start: after, end: lineEnd },
-    ];
-  }
-  return [{ start: 0, end: text.length }];
+function beforeEndInput(text: string, span: { start: number; end: number }) {
+  const match = END_INPUT.exec(maskComments(text.slice(span.start, span.end)));
+  if (match === null) return { ...span, cut: false };
+  const end = span.start + match.index + (match[0][0] === "\n" ? 1 : 0);
+  return { start: span.start, end, cut: true };
 }
+
+/** The rest of an input's line after its name when the input is the last thing on it. */
+const LINE_REST = /^[ \t]*\n/;
 
 /** A subfile's body: what lies between its own `\begin{document}` and `\end{document}`. */
 function subfileBody(text: string): { start: number; end: number } | undefined {
@@ -203,10 +214,17 @@ function subfileBody(text: string): { start: number; end: number } | undefined {
  * `.tex` files its `\input`, `\include` and `\subfile` name inlined, when the job holds them; or a
  * refusal when the main file does not start and end a document, or the body is past its cap.
  *
- * An `\include` is inlined between two `\clearpage`s, as LaTeX reads one, or as the one
- * `\clearpage` it leaves when the preamble's `\includeonly` leaves it out. An input the job does
- * not hold, a file of another kind, one already being read, or one nested past 16 inputs stays as
- * it is, a command in the body.
+ * A file read in ends in a newline, one added where it lacks one, as TeX ends every line it reads
+ * with a line's end, and an empty file is one empty line, a blank line. Where its input is the last
+ * thing on its line, TeX reads the file's last line's end and then the input's own, two spaces in
+ * a paragraph; the two newlines alone would be a blank line, which ends one, as would the input's
+ * line left empty by a file `\endinput` ends on its first line, so an empty group goes before the
+ * input's line's end, `{}`, which gives the second space and sets nothing. A bare name, `\input x`,
+ * takes its line's end as its own end, and the file's last line's end stands for it. An `\include`
+ * is inlined between two `\clearpage`s, as LaTeX reads one, or as the one `\clearpage` it leaves
+ * when the preamble's `\includeonly` leaves it out. An input the job does not hold, a file of
+ * another kind, one already being read, or one nested past 16 inputs stays as it is, a command in
+ * the body.
  */
 export function bodyOf(intake: Pick<Intake, "main" | "files">): Body | Refusal {
   const text = intake.main.text;
@@ -261,11 +279,11 @@ export function bodyOf(intake: Pick<Intake, "main" | "files">): Body | Refusal {
       if (match.index < at || !isCommandAt(hidden, match.index)) continue;
       const command = match[1] ?? "";
       const after = match.index + match[0].length;
-      let name: { value: string; end: number } | undefined = braced(hidden, after);
+      let name: { value: string; end: number; bare?: true } | undefined = braced(hidden, after);
       if (name === undefined && command === "input") {
         BARE_NAME.lastIndex = after;
         const bare = BARE_NAME.exec(hidden);
-        if (bare) name = { value: bare[1] ?? "", end: after + bare[0].length };
+        if (bare) name = { value: bare[1] ?? "", end: after + bare[0].length, bare: true };
       }
       if (name === undefined) continue;
       const path = inputPath(command, name.value);
@@ -283,14 +301,28 @@ export function bodyOf(intake: Pick<Intake, "main" | "files">): Body | Refusal {
         command === "subfile"
           ? (subfileBody(content) ?? { start: 0, end: content.length })
           : { start: 0, end: content.length };
-      const read = beforeEndInput(content.slice(span.start, span.end)).map((piece) => ({
-        start: piece.start + span.start,
-        end: piece.end + span.start,
-      }));
-      inline(content, read, path, [...stack, path]);
-      const last = read.at(-1);
-      if (last === undefined || !content.slice(last.start, last.end).endsWith("\n")) emit("\n");
-      if (command === "include") emit("\\clearpage\n");
+      const from = length;
+      const read = beforeEndInput(content, span);
+      // An empty file is one empty line to TeX, which ends a paragraph, a blank line wherever the
+      // input is; one `\endinput` ends on its first line is none.
+      if (read.start === read.end && !read.cut && command !== "subfile")
+        emit(parts.at(-1)?.endsWith("\n") ? "\n" : "\n\n");
+      else inline(content, [read], path, [...stack, path]);
+      const ended = length > from ? (parts.at(-1)?.endsWith("\n") ?? false) : undefined;
+      if (command === "include") {
+        if (ended === false) emit("\n");
+        emit("\\clearpage\n");
+        continue;
+      }
+      // An input last on its line: TeX reads a space for the file's last line's end and another
+      // for the input's line's end, which an empty group before that line's end gives, where the
+      // two line ends alone, or the input's line left empty, would make a blank line. A bare
+      // name's end is that line's end, which TeX takes with the name: the file's stands for it.
+      const rest = LINE_REST.exec(kept.slice(at, at + 256));
+      if (rest === null) {
+        if (ended === false) emit("\n");
+      } else if (name.bare !== true) emit(ended === false ? "\n{}" : "{}");
+      else if (ended !== false) at += rest[0].length;
     }
     emitKept(at, kept.length);
   };
@@ -329,33 +361,60 @@ export interface ReadBody {
 const ADDRESS = /^\\(?:href|url|nolinkurl)(?![A-Za-z@])/;
 
 /**
+ * Where each line of a text ends, asked at places that only move forward: the index of the first
+ * line's end at or after `at`, or the text's length. Each line's end is looked for once, so that
+ * reading a line of many commands costs the line's length once, not once for each command.
+ */
+function lineEnds(text: string): (at: number) => number {
+  let from = 0;
+  let end = -1;
+  return (at) => {
+    if (at < from || at > end) {
+      const newline = text.indexOf("\n", at);
+      end = newline < 0 ? text.length : newline;
+    }
+    from = at;
+    return end;
+  };
+}
+
+/** The first `char` in `text` from `from` to before `to`, or -1. */
+function charWithin(text: string, char: string, from: number, to: number): number {
+  for (let i = from; i < to; i++) if (text[i] === char) return i;
+  return -1;
+}
+
+/**
  * The body as unified-latex is given it, every character where it is: a line's end in `\r\n` a
  * space and a line's end, as TeX reads one line there, and a lone `\r` a line's end; and a `%` in
  * the braced address of `\href`, `\url` or `\nolinkurl` a character of the private use area,
  * which unified-latex does not take for a comment, as hyperref does not. Each line is read from
  * its start, so that an address's `%` does not hide what follows it on the line, and a comment
- * does; the parser reads an address's text from the body itself.
+ * does; the parser reads an address's text from the body itself. An address, an `\href`'s options
+ * and a `\verb`'s text are looked for on their line and MAX_DELIMITED characters on at most, so
+ * that the text is read once.
  */
 export function maskedForParse(text: string): string {
   const lines = text.replace(/\r\n?/g, (end) => (end.length === 2 ? " \n" : "\n"));
   const marks: number[] = [];
+  const lineEnd = lineEnds(lines);
   let i = 0;
   while (i < lines.length) {
     const char = lines[i];
     if (char === "%") {
-      const newline = lines.indexOf("\n", i);
-      if (newline < 0) break;
+      const newline = lineEnd(i);
+      if (newline >= lines.length) break;
       i = newline + 1;
     } else if (char === "\\") {
       const head = lines.slice(i, i + 12);
       const command = ADDRESS.exec(head);
       const verb = /^\\verb\*?([^A-Za-z\s*])/.exec(head);
-      if (command !== null) i = addressEnd(lines, i + command[0].length, marks);
+      const stop = Math.min(lineEnd(i), i + MAX_DELIMITED);
+      if (command !== null) i = addressEnd(lines, i + command[0].length, marks, stop);
       else if (verb !== null) {
         // `\verb`'s text is its own, a `%` in it no comment.
-        const close = lines.indexOf(verb[1] ?? "", i + verb[0].length);
-        const newline = lines.indexOf("\n", i);
-        i = close >= 0 && (newline < 0 || close < newline) ? close + 1 : i + verb[0].length;
+        const close = charWithin(lines, verb[1] ?? "", i + verb[0].length, stop);
+        i = close >= 0 ? close + 1 : i + verb[0].length;
       } else i += 2;
     } else i++;
   }
@@ -368,23 +427,22 @@ export function maskedForParse(text: string): string {
 /**
  * Where an address command's braced address ends, from just after the command's name, past an
  * `\href`'s options: the `%` in it are added to `marks`. The address is on one line, as every
- * address is; one that does not close on its line marks nothing, and reading goes on after the
- * name.
+ * address is, and closes before `stop`; one that does not marks nothing, and reading goes on after
+ * the name.
  */
-function addressEnd(lines: string, from: number, marks: number[]): number {
+function addressEnd(lines: string, from: number, marks: number[], stop: number): number {
   let at = from;
   while (lines[at] === " " || lines[at] === "\t") at++;
   if (lines[at] === "[") {
-    const close = lines.indexOf("]", at);
-    const newline = lines.indexOf("\n", at);
-    if (close < 0 || (newline >= 0 && newline < close)) return from;
+    const close = charWithin(lines, "]", at, stop);
+    if (close < 0) return from;
     at = close + 1;
     while (lines[at] === " " || lines[at] === "\t") at++;
   }
   if (lines[at] !== "{") return from;
   const found: number[] = [];
   let depth = 0;
-  for (let i = at; i < lines.length && lines[i] !== "\n"; i++) {
+  for (let i = at; i < stop; i++) {
     const char = lines[i];
     if (char === "\\") i++;
     else if (char === "{") depth++;
@@ -399,16 +457,17 @@ function addressEnd(lines: string, from: number, marks: number[]): number {
 /**
  * How deep a text nests its groups and environments, read before unified-latex parses it, whose
  * parse recurses with them: past `limit` it stops counting and says so. Comments and `\verb` count
- * for nothing.
+ * for nothing, a `\verb`'s text looked for as `maskedForParse` looks for it.
  */
 export function nestsPast(text: string, limit: number): boolean {
   let depth = 0;
+  const lineEnd = lineEnds(text);
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
     if (code === 37) {
       // A comment runs to the line's end.
-      const newline = text.indexOf("\n", i);
-      if (newline < 0) break;
+      const newline = lineEnd(i);
+      if (newline >= text.length) break;
       i = newline;
     } else if (code === 92) {
       const next = text[i + 1];
@@ -422,9 +481,9 @@ export function nestsPast(text: string, limit: number): boolean {
         let at = i + 5;
         if (text[at] === "*") at++;
         const delimiter = text[at];
-        const close = delimiter === undefined ? -1 : text.indexOf(delimiter, at + 1);
-        const newline = text.indexOf("\n", at);
-        if (close >= 0 && (newline < 0 || close < newline)) i = close;
+        const stop = Math.min(lineEnd(i), i + MAX_DELIMITED);
+        const close = delimiter === undefined ? -1 : charWithin(text, delimiter, at + 1, stop);
+        if (close >= 0) i = close;
       }
     } else if (code === 123) depth++;
     else if (code === 125) depth = Math.max(0, depth - 1);
@@ -578,7 +637,10 @@ export interface BlockNode extends Span {
  * Why a chunk is raw: a command whose effect is not text (`command`), one the table does not know
  * and the engine did not resolve (`unknown`), or one it resolved with no arguments it can read
  * (`unresolved`); a definition in TeX's syntax (`definition`); an environment the parser does not
- * place (`environment`); mathematics (`math`); or verbatim text (`verbatim`).
+ * place (`environment`); mathematics (`math`); verbatim text (`verbatim`); typewriter text, which
+ * the model has no mark for (`typewriter`); what a constant-false conditional skips (`skipped`);
+ * or an alignment's cells, a template environment's body that is one or a paragraph with an
+ * alignment's `&` in it (`alignment`).
  */
 export type RawWhy =
   | "command"
@@ -587,7 +649,10 @@ export type RawWhy =
   | "definition"
   | "environment"
   | "math"
-  | "verbatim";
+  | "verbatim"
+  | "typewriter"
+  | "skipped"
+  | "alignment";
 
 /** A chunk the parser keeps byte for byte, and, for a command, what it read of its arguments. */
 export interface RawNode extends Span {
@@ -596,6 +661,12 @@ export interface RawNode extends Span {
   /** The command's or environment's name. */
   name?: string;
   args?: Argument[];
+  /**
+   * A call to a template macro whose signature takes no mandatory argument, or ends in an optional
+   * one, and which a group follows: a signature the group belies, as a macro that hands its
+   * arguments on to another has, so the call and the groups after it are kept raw, unresolved.
+   */
+  suspect?: true;
 }
 
 export type Node =
@@ -628,10 +699,16 @@ export interface Known {
   spec?: string;
 }
 
-/** What the engine said of the names a body uses (`signatures.ts`), as far as the parser needs it. */
+/**
+ * What the engine said of the names a body uses (`signatures.ts`), as far as the parser needs it:
+ * and the template's macros' meanings, which say whether an environment is an alignment.
+ */
 export interface Signatures {
   commands: Readonly<Record<string, Known>>;
   environments: Readonly<Record<string, Known>>;
+  // TODO(merge): part A keeps a data macro's text out of its record; the parser reads meanings
+  // only of an environment's own macros, which are never data, so a record without one is fine.
+  macros?: Readonly<Record<string, { meaning?: string }>>;
 }
 
 /**
@@ -709,12 +786,23 @@ function deeper(context: Context): Context {
  * A sequence of nodes placed: text gathered into paragraphs, and every other node placed on its
  * own, in order. A node that starts before the last one placed ended, as unified-latex gives some
  * verbatim commands' parts, is inside it, and passed over.
+ *
+ * Three things change what follows them in the sequence. A font declaration the model has no
+ * mark for changes the marks after it inside a group, as `\scshape` clears italic, and stays raw.
+ * `\ttfamily` and `\tt` make the rest of the sequence typewriter, one raw chunk with them, and
+ * the rest of a list's items too, which share its state. And `\iffalse`, up to the `\else` or
+ * `\fi` that ends what it skips, nesting counted, is one raw chunk, as is what an `\iftrue` skips
+ * from its `\else`; the branch TeX takes is placed as any content is.
  */
 function sequence(nodes: Ast.Node[], context: Context, state: TextState): Node[] {
   const out: Node[] = [];
   let items: TextItem[] = [];
   let skip = false;
   let reached = -1;
+  /** What an `\iftrue` skips, found with it: from its `\else` to its `\fi`, by index. */
+  let skipped: Map<number, number> | undefined;
+  /** The conditionals' `\else` and `\fi`, matched once, at the first constant one. */
+  let conditionals: Map<number, Matched> | undefined;
   // Appended a node at a time: a spread of a long list would pass each as an argument.
   const add = (nodes: readonly Node[]) => {
     for (const node of nodes) out.push(node);
@@ -723,11 +811,44 @@ function sequence(nodes: Ast.Node[], context: Context, state: TextState): Node[]
     if (items.length > 0) add(paragraphs(items, context));
     items = [];
   };
+  if (state.typewriter === true) return rawRun(nodes, 0, nodes.length, "typewriter", context);
   for (let i = 0; i < nodes.length; ) {
     const node = nodes[i];
     const span = spanOf(node);
     if (node === undefined || span === undefined || span.start < reached) {
       i++;
+      continue;
+    }
+    const role = node.type === "macro" ? STANDARD.get(node.content)?.role : undefined;
+    const skippedTo = skipped?.get(i);
+    if (role?.kind === "conditional") conditionals ??= matchConditionals(nodes, context);
+    const branch =
+      skippedTo === undefined && role?.kind === "conditional"
+        ? branchOf(conditionals?.get(i), role.value)
+        : undefined;
+    if (skippedTo !== undefined || role?.kind === "typewriter" || branch !== undefined) {
+      flush();
+      skip = false;
+      if (role?.kind === "typewriter" && skippedTo === undefined) {
+        state.typewriter = true;
+        add(rawRun(nodes, i, nodes.length, "typewriter", context));
+        break;
+      }
+      // A constant conditional: what it skips raw, the `\iftrue` alone when it skips nothing yet.
+      const to = skippedTo ?? branch?.skipsTo ?? i;
+      if (branch?.skips !== undefined)
+        (skipped ??= new Map()).set(branch.skips.from, branch.skips.to);
+      add(
+        rawRun(
+          nodes,
+          i,
+          to + 1,
+          skippedTo !== undefined || to > i ? "skipped" : "command",
+          context,
+        ),
+      );
+      reached = spanOf(nodes[to])?.end ?? span.end;
+      i = to + 1;
       continue;
     }
     const found = textItem(nodes, i, state, context.source, skip);
@@ -742,6 +863,8 @@ function sequence(nodes: Ast.Node[], context: Context, state: TextState): Node[]
     skip = false;
     const placed = place(nodes, i, context, state);
     add(placed.nodes);
+    if (role?.kind === "raw" && role.change !== undefined && state.grouped)
+      state.marks = changed(state.marks, role.change);
     reached = placed.nodes.reduce((end, each) => Math.max(end, each.end), span.end);
     i = Math.max(placed.next, i + 1);
   }
@@ -750,10 +873,118 @@ function sequence(nodes: Ast.Node[], context: Context, state: TextState): Node[]
 }
 
 /**
+ * The nodes from `from` to before `to` as one raw chunk, the spaces and comments at either end
+ * left out, or none when there is nothing else; `name` the first's, a command's or an
+ * environment's.
+ */
+function rawRun(
+  nodes: readonly Ast.Node[],
+  from: number,
+  to: number,
+  why: RawWhy,
+  context: Context,
+): Node[] {
+  const kept = (node: Ast.Node | undefined) =>
+    node !== undefined &&
+    node.type !== "whitespace" &&
+    node.type !== "comment" &&
+    node.type !== "parbreak";
+  let first = from;
+  while (first < to && !kept(nodes[first])) first++;
+  let last = to - 1;
+  while (last >= first && !kept(nodes[last])) last--;
+  const start = spanOf(nodes[first]);
+  const end = spanOf(nodes[last]);
+  if (first > last || start === undefined || end === undefined) return [];
+  const head = nodes[first];
+  const name =
+    head?.type === "macro" ? head.content : head?.type === "environment" ? head.env : undefined;
+  return [
+    made(context, {
+      kind: "raw",
+      why,
+      ...(typeof name === "string" ? { name } : {}),
+      start: start.start,
+      end: end.end,
+    } satisfies RawNode),
+  ];
+}
+
+/** TeX's conditionals, and e-TeX's and pdfTeX's, which TeX counts when it skips a branch. */
+const CONDITIONALS: ReadonlySet<string> = new Set([
+  ...["if", "ifcat", "ifnum", "ifdim", "ifodd", "ifvmode", "ifhmode", "ifmmode", "ifinner"],
+  ...["ifvoid", "ifhbox", "ifvbox", "ifx", "ifeof", "iftrue", "iffalse", "ifcase", "ifdefined"],
+  ...["ifcsname", "iffontchar", "ifincsname", "ifpdfprimitive", "ifprimitive", "ifpdfabsnum"],
+  ...["ifpdfabsdim", "ifabsnum", "ifabsdim"],
+]);
+
+/**
+ * Whether a command is a conditional TeX counts when it skips: one of its own, or one the engine
+ * says is a primitive whose name starts with `if`, as `\newif` makes one.
+ */
+const isConditional = (name: string, context: Context) =>
+  CONDITIONALS.has(name) ||
+  (name.startsWith("if") && known(context.signatures?.commands, name)?.kind === "primitive");
+
+/** A conditional's `\else` and `\fi` among the nodes after it, by index, nesting counted. */
+interface Matched {
+  otherwise?: number;
+  fi?: number;
+}
+
+/**
+ * Every conditional among a sequence's nodes with its `\else` and `\fi` there, found in one pass
+ * with a stack, as TeX counts them when it skips; one whose `\fi` is not there has none.
+ */
+function matchConditionals(nodes: readonly Ast.Node[], context: Context): Map<number, Matched> {
+  const matched = new Map<number, Matched>();
+  const open: Matched[] = [];
+  nodes.forEach((node, j) => {
+    if (node?.type !== "macro") return;
+    if (isConditional(node.content, context)) {
+      const entry: Matched = {};
+      matched.set(j, entry);
+      open.push(entry);
+    } else if (node.content === "else") {
+      const top = open.at(-1);
+      if (top !== undefined) top.otherwise ??= j;
+    } else if (node.content === "fi") {
+      const top = open.pop();
+      if (top !== undefined) top.fi = j;
+    }
+  });
+  return matched;
+}
+
+/**
+ * What a constant conditional skips, given its `\else` and `\fi`: `\iffalse` skips to its `\else`
+ * or its `\fi` (`skipsTo`, the index of the one it skips to, which it takes), and `\iftrue` from
+ * its `\else` to its `\fi` (`skips`), or nothing. Undefined when its `\fi` is not among the nodes
+ * after it, as when it closes in another group: it stays as it is.
+ */
+function branchOf(
+  matched: Matched | undefined,
+  value: boolean,
+): { skipsTo?: number; skips?: { from: number; to: number } } | undefined {
+  const fi = matched?.fi;
+  if (fi === undefined) return undefined;
+  const otherwise = matched?.otherwise;
+  if (!value) return { skipsTo: otherwise ?? fi };
+  return otherwise === undefined ? {} : { skips: { from: otherwise, to: fi } };
+}
+
+/** Whether a text item holds an alignment's `&`, one of the source's, not the escape `\&`. */
+const aligns = (item: TextItem) =>
+  item.pieces.some(
+    (piece) => piece.kind === "text" && piece.literal !== undefined && piece.text.includes("&"),
+  );
+
+/**
  * Text items as paragraphs, a blank line ending one: each paragraph's text from its first item
  * that is not a space, a comment or a break to its last, which is a date when all of it reads as
  * one and it has no mark, and a text otherwise; a break at a paragraph's edge is raw, since it is
- * no space between words there.
+ * no space between words there. A paragraph that holds an alignment's `&` is an alignment's
+ * cells, as a template's `tabular` sets them, and raw.
  */
 function paragraphs(items: readonly TextItem[], context: Context): Node[] {
   const out: Node[] = [];
@@ -782,10 +1013,14 @@ function paragraphs(items: readonly TextItem[], context: Context): Node[] {
     }
     edges(paragraph.slice(0, first));
     const inside = paragraph.slice(first, last + 1);
-    const runs = runsOf(inside.flatMap((item) => item.pieces));
     const start = inside[0]?.start ?? 0;
     const end = inside.at(-1)?.end ?? start;
-    if (runs.length > 0) out.push(textOrDate(runs, start, end, context));
+    if (inside.some(aligns))
+      out.push(made(context, { kind: "raw", why: "alignment", start, end } satisfies RawNode));
+    else {
+      const runs = runsOf(inside.flatMap((item) => item.pieces));
+      if (runs.length > 0) out.push(textOrDate(runs, start, end, context));
+    }
     edges(paragraph.slice(last + 1));
   }
   return out;
@@ -825,7 +1060,7 @@ function place(nodes: Ast.Node[], i: number, context: Context, state: TextState)
           made(context, {
             kind: "group",
             ...span,
-            content: sequence(node.content, inner, { marks: state.marks, grouped: true }),
+            content: sequence(node.content, inner, { ...state, grouped: true }),
           } satisfies GroupNode),
         ],
         next: i + 1,
@@ -962,6 +1197,23 @@ function placeMacro(
       ],
       next: read.next,
     };
+  const belied = openEnded(said.spec) ? groupsAfter(nodes, read.next) : undefined;
+  const last = belied?.args.at(-1);
+  if (belied !== undefined && last !== undefined)
+    return {
+      nodes: [
+        made(context, {
+          kind: "raw",
+          why: "unresolved",
+          name,
+          start: span.start,
+          end: last.end,
+          args: [...read.args, ...belied.args].map((arg) => argumentOf(arg)),
+          suspect: true,
+        } satisfies RawNode),
+      ],
+      next: belied.next,
+    };
   return {
     nodes: [
       made(context, {
@@ -975,6 +1227,46 @@ function placeMacro(
     ],
     next: read.next,
   };
+}
+
+/**
+ * Whether a signature leaves a call open to a group after it: it takes no mandatory argument, or
+ * ends in an optional one, as the signature of a macro that hands its arguments on to another,
+ * `\ding` to `\Pisymbol{pzd}`, or looks ahead for them, reads from its meaning.
+ */
+function openEnded(spec: string): boolean {
+  // TODO(merge): part A marks a signature whose delegated tail did not resolve `tail:
+  // unresolved`; the call to one a group follows is as suspect whatever its spec, and `Known`
+  // should carry the mark for `placeMacro` to test here.
+  const parts = readSpec(spec) ?? [];
+  return !parts.some((part) => part.type === "mandatory") || parts.at(-1)?.type === "optional";
+}
+
+/**
+ * The groups right after a call, spaces and comments between them, as TeX would read them as its
+ * arguments, and the index after the last; none when a group does not come next.
+ */
+function groupsAfter(nodes: Ast.Node[], at: number): { args: ReadArgument[]; next: number } {
+  const args: ReadArgument[] = [];
+  let next = at;
+  for (let j = at; j < nodes.length; j++) {
+    const node = nodes[j];
+    if (node?.type === "whitespace" || node?.type === "comment") continue;
+    const span = spanOf(node);
+    if (node?.type !== "group" || span === undefined) break;
+    args.push({
+      kind: "mandatory",
+      present: true,
+      ...span,
+      open: "{",
+      close: "}",
+      content: node.content,
+      innerStart: span.start + 1,
+      innerEnd: span.end - 1,
+    });
+    next = j + 1;
+  }
+  return { args, next };
 }
 
 /** A section: its star, its optional title for the contents, and its title, placed. */
@@ -1028,15 +1320,26 @@ function placeItem(
   let stop = from;
   while (stop < nodes.length && isItemContent(nodes[stop], context)) stop++;
   const inner = deeper(context);
+  const args = labelOf(read?.args ?? [], inner, state);
   const content = sequence(nodes.slice(from, stop), inner, state);
-  const args = (read?.args ?? []).map((arg) =>
-    argumentOf(arg, arg.present ? sequence(arg.content, inner, state) : undefined),
-  );
   const end = Math.max(endAfter(read?.args ?? [], span.end), content.at(-1)?.end ?? 0);
   return {
     nodes: [made(context, { kind: "item", start: span.start, end, args, content })],
     next: stop,
   };
+}
+
+/**
+ * An `\item`'s label placed, in a state of its own, since LaTeX sets it in a box: a declaration
+ * in it marks nothing after it.
+ */
+function labelOf(args: readonly ReadArgument[], context: Context, state: TextState): Argument[] {
+  return args.map((arg) =>
+    argumentOf(
+      arg,
+      arg.present ? sequence(arg.content, context, { ...state, grouped: true }) : undefined,
+    ),
+  );
 }
 
 /**
@@ -1184,6 +1487,33 @@ function beginEnd(source: string, start: number): number {
   return start + (match?.[0].length ?? 0);
 }
 
+/** A meaning that begins an alignment: `tabular` and its kin, `array`, `longtable`, `\halign`. */
+const ALIGNMENT =
+  /\\begin \{(?:tabular\*?|tabularx|tabulary|array|longtable)\}|\\(?:tabular|tabularx|tabulary|array|longtable|halign)(?![A-Za-z@])/;
+
+/**
+ * Whether a template environment is an alignment, as a `skills` environment that opens a
+ * `tabular` is: its own macros' meanings, `\x`, `\endx` and those they hand their work to, name
+ * one. Its body is then cells, raw, where text would read `&` as a character.
+ */
+function isAlignment(name: string, context: Context): boolean {
+  const macros = context.signatures?.macros;
+  if (macros === undefined) return false;
+  const own = [name, `end${name}`].flatMap((each) => [
+    each,
+    `${each} `,
+    `\\${each}`,
+    `${each} code`,
+  ]);
+  return [
+    ...own,
+    ...["code", "end", "end aux", "end code"].map((part) => `environment ${name} ${part}`),
+  ].some((each) => {
+    const meaning = Object.hasOwn(macros, each) ? macros[each]?.meaning : undefined;
+    return meaning !== undefined && ALIGNMENT.test(meaning);
+  });
+}
+
 /** Place an environment: a list, a block, raw, the template's, or raw for want of knowing it. */
 function placeEnvironment(
   nodes: Ast.Node[],
@@ -1219,7 +1549,26 @@ function placeEnvironment(
     { marks: PLAIN, grouped: false },
     standard === undefined ? undefined : [],
   );
-  const body = { marks: state.marks, grouped: true };
+  // A declaration used as an environment marks its body as it marks what follows it.
+  const change = standard?.change;
+  const body = {
+    ...state,
+    marks: change === undefined ? state.marks : changed(state.marks, change),
+    grouped: true,
+  };
+  if (standard === undefined && isAlignment(name, context))
+    return {
+      nodes: [
+        made(context, {
+          kind: "environment",
+          name,
+          ...span,
+          args,
+          content: rawRun(bodyNodes, 0, bodyNodes.length, "alignment", inner),
+        } satisfies EnvironmentNode),
+      ],
+      next: i + 1,
+    };
   if (standard?.role === "block")
     return {
       nodes: [
@@ -1264,9 +1613,7 @@ function withItems(nodes: Ast.Node[], context: Context, state: TextState): Node[
     const span = spanOf(node) ?? { start: 0, end: 0 };
     const segment = nodes.slice(index + 1, at[k + 1] ?? nodes.length);
     const read = readArguments(segment, 0, "o", span.end, node);
-    const args = (read?.args ?? []).map((arg) =>
-      argumentOf(arg, arg.present ? sequence(arg.content, inner, state) : undefined),
-    );
+    const args = labelOf(read?.args ?? [], inner, state);
     const content = sequence(segment.slice(read?.next ?? 0), inner, state);
     const end = Math.max(endAfter(read?.args ?? [], span.end), content.at(-1)?.end ?? 0);
     out.push(made(context, { kind: "item", start: span.start, end, args, content }));

@@ -57,6 +57,17 @@ describe("reading dates and ranges", () => {
     expect(readDates("2018 – May 2021")).toEqual({ start: "2018", end: "2021-05" });
   });
 
+  test("reads an academic year as the range of its two years, and a month from 01 to 12", () => {
+    expect(readDates("2019-20")).toEqual({ start: "2019", end: "2020" });
+    expect(readDates("2010-11")).toEqual({ start: "2010", end: "2011" });
+    expect(readDates("2011\u201312")).toEqual({ start: "2011", end: "2012" });
+    expect(readDates("1999-00")).toEqual({ start: "1999", end: "2000" });
+    expect(readDates("2020-01")).toEqual({ start: "2020-01" });
+    expect(readDates("2020-12")).toEqual({ start: "2020-12" });
+    for (const text of ["2019-13", "2019-22", "2100-01x"])
+      expect(readDates(text), text).toBeUndefined();
+  });
+
   test("reads an end still open, in any case", () => {
     for (const word of ["Present", "present", "CURRENT", "Now", "Ongoing", "today"])
       expect(readDates(`Jan 2020 – ${word}`), word).toEqual({

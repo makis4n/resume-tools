@@ -1,7 +1,7 @@
 import type * as Ast from "@unified-latex/unified-latex-types";
 import { parseMinimal } from "@unified-latex/unified-latex-util-parse";
 import { describe, expect, test } from "vitest";
-import { isReadable, readArguments } from "./arguments";
+import { isReadable, MAX_DELIMITED, readArguments } from "./arguments";
 
 // Every command here is invented for these tests.
 
@@ -32,6 +32,13 @@ describe("reading arguments", () => {
     expect(read?.args[0]).toMatchObject({ open: "", start: 5, end: 6 });
     expect(nodes[read?.next ?? 0]).toMatchObject({ type: "string", content: "uill" });
     expect(spans("\\cvx\\cvy{a}", "m")).toEqual(["\\cvy"]);
+  });
+
+  test("looks for a delimited argument's closer up to MAX_DELIMITED characters on", () => {
+    const near = "a".repeat(MAX_DELIMITED - 8);
+    expect(spans(`\\cvx[${near}]{b}`, "o m")).toEqual([`[${near}]`, "{b}"]);
+    // Past it, the optional argument is not there, and the mandatory one takes the bracket.
+    expect(spans(`\\cvx[${"a ".repeat(MAX_DELIMITED)}]{b}`, "o m")).toEqual([null, "["]);
   });
 
   test("does not look for an argument past a blank line", () => {

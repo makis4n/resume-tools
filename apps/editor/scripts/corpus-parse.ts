@@ -4,13 +4,20 @@
  * reference asks the engine for its signatures (`src/import/signatures.ts`), parses its body into a
  * tree (`src/import/parse.ts`), prints the tree back (`src/import/print.ts`), and compiles the
  * printed body with the document's own preamble as the reference was compiled, to see whether it
- * sets the reference's glyphs. It prints one table of what became of them, per family and in all.
+ * sets the reference's glyphs, twice: printed byte for byte, which says the body was split and
+ * inlined as TeX reads it and the tree lost nothing; and regenerated, every text and date as the
+ * generator writes what the model holds of it (`regenerate`), which says the tree read them right,
+ * since a tree that is wrong prints back its bytes all the same. It prints one table of what
+ * became of them, per family and in all: with the calls it kept raw because a group after them
+ * belies their signature, and, for each two documents that hold the same class or style file byte
+ * for byte, whether that file's macros get the same keys in both, as item 6's cache needs.
  *
  * The documents go to the reference runner's pool of child processes (`runPool`), one at a time
  * each, with LIMIT_MS each; the child is `corpus-parse-child.ts`.
  *
  * What is printed and written names macros and counts, never a document's text: a macro's name
- * only when it is plainly one, and every line through `printable`.
+ * only when it is plainly one, and every line through `printable`; a class or style file by its
+ * hash, never its name.
  */
 
 // Node runs this file by stripping its types, so it imports values only from files that import
@@ -54,6 +61,15 @@ export interface Characters {
   raw: number;
 }
 
+/**
+ * A class or style file the document's job holds: the SHA-256 of its bytes, and the keys of the
+ * template macros it defines that the signatures found, by name.
+ */
+export interface HeldFile {
+  hash: string;
+  macros: Record<string, string>;
+}
+
 /** One document's row: names of macros and numbers only, never its text. */
 export interface ParseRow {
   id: string;
@@ -64,9 +80,18 @@ export interface ParseRow {
   engine?: "pdftex" | "xetex";
   /** Whether the tree printed back to the inlined body, byte for byte. */
   printed?: boolean;
+  /** The round trip of the tree printed byte for byte. */
   roundTrip?: RoundTrip;
   /** The first difference's kind, for a round trip that differs. */
   difference?: DifferenceKind;
+  /** The round trip of the tree with its texts and dates regenerated (`regenerate`). */
+  regenerated?: RoundTrip;
+  /** The first difference's kind, for a regenerated round trip that differs. */
+  regeneratedDifference?: DifferenceKind;
+  /** Calls kept raw because a group after them belies their signature (`RawNode.suspect`). */
+  suspects?: number;
+  /** The class and style files the job holds, by hash, with their macros' keys. */
+  files?: HeldFile[];
   /** The template macros the body calls, by how their arguments were read. */
   templates?: Record<Resolution, number>;
   /** The template macros the body calls whose arguments could not be read, and why. */
@@ -166,14 +191,73 @@ export function parseNames(rows: readonly ParseRow[]): {
 }
 
 /**
+ * Two documents that hold one class or style file byte for byte: their families, how many of the
+ * file's macros both documents' signatures found, and those whose keys differ between the two.
+ */
+export interface FilePair {
+  families: [Family, Family];
+  common: number;
+  differing: string[];
+}
+
+/**
+ * Every two documents that hold a class or style file byte for byte, a pair for each file they
+ * share, and how the keys of the file's macros compare: item 6's cache holds only where a file
+ * byte for byte the same gives its macros the same keys in every document that holds it.
+ */
+export function filePairs(rows: readonly ParseRow[]): FilePair[] {
+  const holders = new Map<string, { family: Family; macros: Record<string, string> }[]>();
+  for (const row of rows) {
+    const seen = new Set<string>();
+    for (const file of row.files ?? []) {
+      if (seen.has(file.hash)) continue;
+      seen.add(file.hash);
+      const list = holders.get(file.hash) ?? [];
+      list.push({ family: row.family, macros: file.macros });
+      holders.set(file.hash, list);
+    }
+  }
+  const pairs: FilePair[] = [];
+  for (const list of holders.values())
+    for (const [a, first] of list.entries())
+      for (const second of list.slice(a + 1)) {
+        const names = Object.keys(first.macros).filter((name) =>
+          Object.hasOwn(second.macros, name),
+        );
+        pairs.push({
+          families: [first.family, second.family],
+          common: names.length,
+          differing: names.filter((name) => first.macros[name] !== second.macros[name]).sort(),
+        });
+      }
+  return pairs;
+}
+
+/**
+ * Every macro whose keys differ in two documents sharing its file, by the name it is called by
+ * (`baseName`), with in how many pairs.
+ */
+function differingTally(pairs: readonly FilePair[]): [string, number][] {
+  const tally = new Map<string, number>();
+  for (const pair of pairs)
+    for (const shown of new Set(pair.differing.map((name) => shownMacro(baseName(name))))) {
+      if (shown !== undefined) tally.set(shown, (tally.get(shown) ?? 0) + 1);
+    }
+  return [...tally].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
  * What parsing the corpus came to, as one Markdown table, per family and in all: the documents
  * that reached the parser, how many it parsed, refused or could not get signatures for, how many
- * printed back byte for byte, and how many round trips set the reference's glyphs or differ, and
- * how first; the template macros the bodies call, by how their arguments were read, per document
- * and in all; the environments, the macros found with their closures, the names undefined when the
- * preamble ends; the share of the bodies' characters in rich text, in template calls' arguments
- * and in raw chunks; the dates read; and the parse's median and slowest time. Under it, why the
- * unresolved macros are, and the names most documents call unresolved.
+ * printed back byte for byte; how many round trips set the reference's glyphs or differ, and how
+ * first, printed byte for byte and regenerated; the template macros the bodies call, by how their
+ * arguments were read, per document and in all, and the calls kept raw because a group after
+ * them belies their signature; the environments, the macros found with their closures, the names
+ * undefined when the preamble ends; for each two documents that share a class or style file byte
+ * for byte, whether its macros' keys are the same; the share of the bodies' characters in rich
+ * text, in template calls' arguments and in raw chunks; the dates read; and the parse's median and
+ * slowest time. Under it, why the unresolved macros are, the names most documents call
+ * unresolved, and the macros whose keys differ in a shared file.
  */
 export function parseTable(rows: readonly ParseRow[]): string {
   const of = (column: (typeof COLUMNS)[number]) =>
@@ -213,6 +297,39 @@ export function parseTable(rows: readonly ParseRow[]): string {
       `**${label}**`,
       COLUMNS.map(() => ""),
     );
+  /** A round trip's lines: how many set the reference's glyphs, differ, and how, or stopped. */
+  const trip = (
+    label: string,
+    outcome: (row: ParseRow) => RoundTrip | undefined,
+    first: (row: ParseRow) => DifferenceKind | undefined,
+  ) => [
+    count(`Round trip ${label} sets the reference's glyphs`, (row) => outcome(row) === "same"),
+    count(`Round trip ${label} differs`, (row) => outcome(row) === "differs"),
+    ...COUNTED_DIFFERENCES.map((kind) =>
+      count(`Round trip ${label} differs first in a ${kind}`, (row) => first(row) === kind),
+    ),
+    count(`Round trip ${label} differs first otherwise: pages, size, count, rule`, (row) => {
+      const kind = first(row);
+      return (
+        outcome(row) === "differs" && kind !== undefined && !COUNTED_DIFFERENCES.includes(kind)
+      );
+    }),
+    count(`Round trip ${label} did not compile`, (row) => outcome(row) === "stopped"),
+  ];
+  /** A count of the pairs of documents sharing a file, a pair in a family's column when both are. */
+  const pairs = filePairs(rows);
+  const pairCount = (label: string, test: (pair: FilePair) => boolean) =>
+    line(
+      label,
+      COLUMNS.map(
+        (column) =>
+          pairs.filter(
+            (pair) =>
+              test(pair) &&
+              (column === "all" || pair.families.every((family) => family === column)),
+          ).length,
+      ),
+    );
   const parsed = (row: ParseRow) => row.outcome === "parsed";
   const templates = (row: ParseRow) =>
     RESOLUTIONS.reduce((total, how) => total + (row.templates?.[how] ?? 0), 0);
@@ -221,6 +338,7 @@ export function parseTable(rows: readonly ParseRow[]): string {
   ].sort();
   const top = unresolvedTally(rows).slice(0, TOP_UNRESOLVED);
   const undefinedTop = undefinedTally(rows).slice(0, TOP_UNRESOLVED);
+  const differingTop = differingTally(pairs).slice(0, TOP_UNRESOLVED);
   const lines = [
     line("", COLUMNS),
     `|---|${COLUMNS.map(() => "--:").join("|")}|`,
@@ -233,31 +351,37 @@ export function parseTable(rows: readonly ParseRow[]): string {
     ),
     count("Timed out or died", (row) => row.outcome === "timeout" || row.outcome === "crashed"),
     count("Printed back byte for byte", (row) => row.printed === true),
-    count("Round trip sets the reference's glyphs", (row) => row.roundTrip === "same"),
-    count("Round trip differs", (row) => row.roundTrip === "differs"),
-    ...COUNTED_DIFFERENCES.map((kind) =>
-      count(`Round trip differs first in a ${kind}`, (row) => row.difference === kind),
+    ...trip(
+      "byte for byte",
+      (row) => row.roundTrip,
+      (row) => row.difference,
     ),
-    count(
-      "Round trip differs first otherwise: pages, size, count, rule",
-      (row) =>
-        row.roundTrip === "differs" &&
-        row.difference !== undefined &&
-        !COUNTED_DIFFERENCES.includes(row.difference),
+    ...trip(
+      "regenerated",
+      (row) => row.regenerated,
+      (row) => row.regeneratedDifference,
     ),
-    count("Round trip did not compile", (row) => row.roundTrip === "stopped"),
     section("Template macros the body calls"),
     sum("In all", templates),
     middle("Per document, median", (row) => (parsed(row) ? templates(row) : undefined)),
     ...RESOLUTIONS.map((how) =>
       sum(`Arguments read ${LABELS[how]}`, (row) => row.templates?.[how] ?? 0),
     ),
+    sum("Calls kept raw: a group after them belies their signature", (row) => row.suspects ?? 0),
     sum("Template environments the body opens", (row) => row.environments ?? 0),
     middle("Template macros with their closures, per document, median", (row) =>
       parsed(row) ? row.macros : undefined,
     ),
     count("Signatures stopped at the cap of names", (row) => row.truncated === true),
     sum("Names undefined when the preamble ends", (row) => row.undefined ?? 0),
+    section("Two documents sharing a class or style file byte for byte"),
+    pairCount("Pairs of documents, a pair for each file they share", () => true),
+    pairCount(
+      "Its macros found in both have the same keys",
+      (pair) => pair.common > 0 && pair.differing.length === 0,
+    ),
+    pairCount("Some of its macros have other keys", (pair) => pair.differing.length > 0),
+    pairCount("None of its macros found in both", (pair) => pair.common === 0),
     section("The body's characters"),
     share("In rich text and dates", (chars) => chars.text),
     share("In template calls' arguments", (chars) => chars.calls),
@@ -297,6 +421,16 @@ export function parseTable(rows: readonly ParseRow[]): string {
           ...undefinedTop.map(([name]) =>
             count(`\`${name}\``, (row) =>
               (row.undefinedNames ?? []).some((each) => shownMacro(each) === name),
+            ),
+          ),
+        ]),
+    ...(differingTop.length === 0
+      ? []
+      : [
+          section("Other keys in a shared file, by the macro: pairs"),
+          ...differingTop.map(([name]) =>
+            pairCount(`\`${name}\``, (pair) =>
+              pair.differing.some((each) => shownMacro(baseName(each)) === name),
             ),
           ),
         ]),
@@ -365,6 +499,72 @@ export function datesOf(tree: Tree): number {
   };
   walk(tree.content);
   return dates;
+}
+
+/** How many calls a tree keeps raw because a group after them belies their signature. */
+export function suspectsOf(tree: Tree): number {
+  let suspects = 0;
+  const walk = (nodes: readonly Node[]) => {
+    for (const node of nodes) {
+      if (node.kind === "raw" && node.suspect === true) suspects++;
+      if ("args" in node) for (const arg of node.args ?? []) walk(arg.content ?? []);
+      if ("content" in node) walk(node.content);
+    }
+  };
+  walk(tree.content);
+  return suspects;
+}
+
+/** The commands that define a macro, followed by its name, braced or not. */
+const DEFINES_MACRO =
+  /\\(?:[gex]?def|let|(?:new|renew|provide)command\*?|DeclareRobustCommand\*?|(?:New|Renew|Provide|Declare)(?:Expandable)?DocumentCommand)\s*\{?\s*\\([A-Za-z@]+)/g;
+
+/** The commands that define an environment, followed by its name in braces. */
+const DEFINES_ENVIRONMENT =
+  /\\(?:(?:new|renew)environment\*?|(?:New|Renew|Provide|Declare)DocumentEnvironment)\s*\{([A-Za-z@*]+)\}/g;
+
+/**
+ * The macros a class or style file defines, by the names its definitions outside comments give
+ * them: `\def`, `\let` and their kin, `\newcommand` and its kin, xparse's, and an environment's `\x`
+ * and `\endx`. The file's own text is read for names alone; what each macro is comes from the
+ * engine.
+ */
+export function definedNames(text: string): Set<string> {
+  const code = text.replace(/(^|[^\\])((?:\\\\)*)%.*$/gm, "$1$2");
+  const names = new Set<string>();
+  for (const match of code.matchAll(DEFINES_MACRO)) names.add(match[1] ?? "");
+  for (const match of code.matchAll(DEFINES_ENVIRONMENT))
+    for (const name of [match[1] ?? "", `end${match[1] ?? ""}`]) names.add(name);
+  names.delete("");
+  return names;
+}
+
+/**
+ * The name a template macro's record is kept under, as a shape hands its work on (`signatures.ts`):
+ * the robust command's `\x `, the optional argument's `\\x`, xparse's `\x code` and an
+ * environment's code, all read as `x`.
+ */
+export function baseName(name: string): string {
+  const environment = /^environment (.+?) (?:code|end|end aux|end code)$/.exec(name);
+  if (environment !== null) return environment[1] ?? name;
+  return name
+    .replace(/^\\/, "")
+    .replace(/ code$/, "")
+    .trimEnd();
+}
+
+/**
+ * The keys of the macros a file defines (`definedNames`), from a document's keys by name, with
+ * those the macros hand their work to: what two documents holding the file byte for byte should
+ * give the same keys.
+ */
+export function fileMacros(
+  keys: Readonly<Record<string, string>>,
+  names: ReadonlySet<string>,
+): Record<string, string> {
+  const macros: Record<string, string> = {};
+  for (const [name, key] of Object.entries(keys)) if (names.has(baseName(name))) macros[name] = key;
+  return macros;
 }
 
 /**

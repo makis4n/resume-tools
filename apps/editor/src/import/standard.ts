@@ -10,8 +10,12 @@
  * title or a list's item. Or a command with an effect that is not text, a space, a rule, a colour,
  * a size, a box, which stays raw, byte for byte: of those, the ones whose argument is text a page
  * shows, as a coloured word or a box's contents, name that argument (`content`), so that the
- * parser places what is inside it. An environment is a list, a block whose body the parser
- * places, such as `center`, or raw, such as `tabular`.
+ * parser places what is inside it, and the font declarations the model has no mark for, as
+ * `\scshape` or `\rm`, say how they change the marks of the text after them (`change`). What the
+ * generator cannot write back as it sets, a control space, a thin space, an accent over nothing
+ * or past Latin Extended-A, typewriter text, stays raw. An environment is a list, a block whose
+ * body the parser places, such as `center` or a declaration used as one, as `small` or
+ * `bfseries`, or raw, such as `tabular`.
  *
  * The argument specifications are xparse's, as unified-latex reads them. Those of LaTeX's kernel,
  * xcolor, hyperref, multicol and geometry come from unified-latex's CTAN table, but where it
@@ -23,6 +27,16 @@ import { environmentInfo, macroInfo } from "@unified-latex/unified-latex-ctan";
 /** Which of the model's marks a text command or a declaration sets. */
 export type Mark = "bold" | "italic" | "emph" | "none";
 
+/**
+ * How a font declaration changes the marks of the text after it in its group: the marks it clears
+ * first, all of them as `\normalfont` and the two-letter forms do, or the one its axis holds, as
+ * `\upshape` clears italic; then the mark it sets.
+ */
+export interface FontChange {
+  clear?: "all" | "bold" | "italic";
+  mark?: Mark;
+}
+
 /** What the parser makes of a standard command. */
 export type Role =
   /** Text with no argument: an escape, a symbol, a letter, `~`'s kin. */
@@ -31,8 +45,8 @@ export type Role =
   | { kind: "accent"; mark: string; alone: string }
   /** Its one argument as rich text with a mark: `\textbf`, `\textit`, `\emph`, `\textsc`. */
   | { kind: "mark"; mark: Mark }
-  /** The rest of the group with a mark: `\bfseries`, `\bf`, `\itshape`, `\it`, `\em`. */
-  | { kind: "declaration"; mark: Mark }
+  /** The rest of the group with a mark: `\bfseries`, `\itshape`, `\em`, `\bf`, `\it`. */
+  | { kind: "declaration"; change: FontChange }
   /** `\href{url}{text}`: the text as a link. */
   | { kind: "link" }
   /** `\url{x}` and `\nolinkurl{x}`: the address as its own text, a link or not. */
@@ -47,8 +61,18 @@ export type Role =
   | { kind: "definition" }
   /** A primitive or a parameter that takes a TeX quantity, as `\vskip 2pt` or `\parindent=0pt`. */
   | { kind: "quantity" }
-  /** A command whose effect is not text; `content` names the arguments that hold text. */
-  | { kind: "raw"; content?: readonly number[] };
+  /**
+   * `\ttfamily` and `\tt`: typewriter to the end of the group, which the model has no mark for,
+   * and whose fonts make no ligatures of dashes and quotes, so that the rest is raw.
+   */
+  | { kind: "typewriter" }
+  /** `\iftrue` and `\iffalse`, a conditional whose branch TeX takes is known. */
+  | { kind: "conditional"; value: boolean }
+  /**
+   * A command whose effect is not text; `content` names the arguments that hold text, and
+   * `change` how a font declaration the model has no mark for changes the marks after it.
+   */
+  | { kind: "raw"; content?: readonly number[]; change?: FontChange };
 
 /** A standard command: its argument specification and its role. */
 export interface Standard {
@@ -62,6 +86,8 @@ export type EnvironmentRole = "list" | "block" | "raw";
 export interface StandardEnvironment {
   spec: string;
   role: EnvironmentRole;
+  /** For a font declaration used as an environment, how it changes the marks of its body. */
+  change?: FontChange;
 }
 
 /** The escapes, symbols and letters the parser decodes, by command. */
@@ -73,10 +99,6 @@ const SYMBOLS: Readonly<Record<string, string>> = {
   _: "_",
   "{": "{",
   "}": "}",
-  // A control space is the space between words.
-  " ": " ",
-  // A thin space, U+2009, for want of one the model sets exactly.
-  ",": " ",
   textbackslash: "\\",
   textbullet: "•",
   // The generator writes these for characters TeX reads as something else (decision 0007).
@@ -117,6 +139,9 @@ const SYMBOLS: Readonly<Record<string, string>> = {
 /**
  * LaTeX's accent commands: the combining mark each puts over, or under, its argument, and what it
  * sets over nothing, as `\^{}` sets a circumflex. `\t` ties two letters, and goes after the first.
+ * An accent is text only where the generator writes the letter back as one character that sets
+ * the same glyphs (`richtext.ts`): over nothing, over a letter it composes past Latin Extended-A,
+ * as `\d{a}`, or with a mark left over, as `\t{oo}`, it stays raw.
  */
 const ACCENTS: Readonly<Record<string, readonly [mark: string, alone: string]>> = {
   "`": ["̀", "`"],
@@ -144,13 +169,42 @@ const MARKS: Readonly<Record<string, Mark>> = {
   textsc: "none",
 };
 
-const DECLARATIONS: Readonly<Record<string, Mark>> = {
-  bfseries: "bold",
-  bf: "bold",
-  itshape: "italic",
-  it: "italic",
-  em: "emph",
+/**
+ * The declarations that are marks inside a group. `\bf` and `\it`, LaTeX 2.09's, are `\normalfont`
+ * and one attribute, so each clears the other mark first.
+ */
+const DECLARATIONS: Readonly<Record<string, FontChange>> = {
+  bfseries: { mark: "bold" },
+  itshape: { mark: "italic" },
+  em: { mark: "emph" },
+  bf: { clear: "all", mark: "bold" },
+  it: { clear: "all", mark: "italic" },
 };
+
+/**
+ * The font declarations the model has no mark for, which stay raw, and how each changes the marks
+ * after it in its group: `\normalfont` and the two-letter forms clear both; a shape clears italic,
+ * which it takes the place of; `\mdseries` clears bold; a family changes neither.
+ */
+const FONT_CHANGES: Readonly<Record<string, FontChange>> = {
+  normalfont: { clear: "all" },
+  rm: { clear: "all" },
+  sf: { clear: "all" },
+  sl: { clear: "all" },
+  sc: { clear: "all" },
+  upshape: { clear: "italic" },
+  slshape: { clear: "italic" },
+  scshape: { clear: "italic" },
+  mdseries: { clear: "bold" },
+  rmfamily: {},
+  sffamily: {},
+};
+
+/** The size declarations, which change no mark. */
+const SIZES: readonly string[] = [
+  ...["tiny", "scriptsize", "footnotesize", "small", "normalsize", "large", "Large", "LARGE"],
+  ...["huge", "Huge"],
+];
 
 const SECTIONS: Readonly<Record<string, number>> = {
   part: -1,
@@ -164,7 +218,10 @@ const SECTIONS: Readonly<Record<string, number>> = {
 
 /**
  * Commands with an effect that is not text and no argument: spacing, breaks, sizes, font
- * switches outside the declarations above, and TeX's own that take nothing.
+ * switches outside the declarations above, and TeX's own that take nothing. A control space and
+ * `\,` are among them: the generator writes a space as a space, which sets a word space where the
+ * one sets a space with no sentence's stretch and the other a thin one; so is `\@`, which sets
+ * what comes after it a sentence's end or not.
  */
 const BARE: readonly string[] = [
   ...["vfill", "hfill", "hfil", "vfil", "hss", "vss", "smallskip", "medskip", "bigskip"],
@@ -172,14 +229,12 @@ const BARE: readonly string[] = [
   ...["clearpage", "cleardoublepage", "centering", "raggedright", "raggedleft", "nobreak"],
   ...["break", "strut", "relax", "ignorespaces", "unskip", "leavevmode", "null", "protect"],
   ...["quad", "qquad", "enspace", "enskip", "thinspace", "negthinspace", "space", "hrule"],
-  ...["vrule", "hline", "@", "/", "LaTeX", "TeX", "LaTeXe", "today", "maketitle"],
+  ...["vrule", "hline", "@", "/", " ", ",", "LaTeX", "TeX", "LaTeXe", "today", "maketitle"],
   ...["tableofcontents", "appendix", "columnbreak", "sloppy", "fussy", "frenchspacing"],
-  ...["nonfrenchspacing", "normalfont", "rmfamily", "sffamily", "ttfamily", "mdseries"],
-  ...["upshape", "slshape", "scshape", "rm", "sf", "tt", "sl", "sc", "md", "up", "tiny"],
-  ...["scriptsize", "footnotesize", "small", "normalsize", "large", "Large", "LARGE", "huge"],
-  ...["Huge", "selectfont", "nopagecolor", "restoregeometry", "makeatletter", "makeatother"],
-  ...["egroup", "bgroup", "begingroup", "endgroup", "normalcolor", "baselinestretch"],
-  "arraystretch",
+  ...["nonfrenchspacing", "md", "up", "selectfont", "nopagecolor", "restoregeometry"],
+  ...["makeatletter", "makeatother", "egroup", "bgroup", "begingroup", "endgroup"],
+  ...["normalcolor", "baselinestretch", "arraystretch", "fi", "else"],
+  ...SIZES,
 ];
 
 /**
@@ -212,7 +267,8 @@ const RAW: Readonly<Record<string, Standard>> = {
   lowercase: raw("m", [0]),
   textrm: raw("m", [0]),
   textsf: raw("m", [0]),
-  texttt: raw("m", [0]),
+  // Typewriter text, which the model has no mark for and whose fonts make no ligatures, is raw.
+  texttt: raw("m"),
   textup: raw("m", [0]),
   textmd: raw("m", [0]),
   textsl: raw("m", [0]),
@@ -294,8 +350,14 @@ export const STANDARD: ReadonlyMap<string, Standard> = (() => {
     table.set(name, { spec: "m", role: { kind: "accent", mark, alone } });
   for (const [name, mark] of Object.entries(MARKS))
     table.set(name, { spec: "m", role: { kind: "mark", mark } });
-  for (const [name, mark] of Object.entries(DECLARATIONS))
-    table.set(name, { spec: "", role: { kind: "declaration", mark } });
+  for (const [name, change] of Object.entries(DECLARATIONS))
+    table.set(name, { spec: "", role: { kind: "declaration", change } });
+  for (const [name, change] of Object.entries(FONT_CHANGES))
+    table.set(name, { spec: "", role: { kind: "raw", change } });
+  for (const name of ["ttfamily", "tt"])
+    table.set(name, { spec: "", role: { kind: "typewriter" } });
+  table.set("iftrue", { spec: "", role: { kind: "conditional", value: true } });
+  table.set("iffalse", { spec: "", role: { kind: "conditional", value: false } });
   for (const [name, level] of Object.entries(SECTIONS))
     table.set(name, { spec: "s o m", role: { kind: "section", level } });
   for (const name of DEFINITIONS) table.set(name, { spec: "", role: { kind: "definition" } });
@@ -312,7 +374,9 @@ export const STANDARD: ReadonlyMap<string, Standard> = (() => {
 
 /**
  * Every standard environment, by name: lists, blocks whose body the parser places, and raw ones,
- * CTAN's table giving the arguments where it has them.
+ * CTAN's table giving the arguments where it has them. A declaration is an environment too,
+ * `\begin{small}` or `\begin{bfseries}`, a block whose body is marked as the declaration marks
+ * what follows it; but typewriter, whose body is raw.
  */
 export const STANDARD_ENVIRONMENTS: ReadonlyMap<string, StandardEnvironment> = (() => {
   const table = new Map<string, StandardEnvironment>();
@@ -325,8 +389,13 @@ export const STANDARD_ENVIRONMENTS: ReadonlyMap<string, StandardEnvironment> = (
   };
   for (const name of ["itemize", "enumerate", "description"])
     table.set(name, { spec: "o", role: "list" });
-  for (const name of ["center", "flushleft", "flushright", "quote", "quotation", "verse"])
+  for (const name of [
+    ...["center", "flushleft", "flushright", "quote", "quotation", "verse", "raggedright"],
+    ...["raggedleft", "centering", "samepage", "sloppypar", ...SIZES],
+  ])
     table.set(name, { spec: "", role: "block" });
+  for (const [name, change] of Object.entries({ ...DECLARATIONS, ...FONT_CHANGES }))
+    table.set(name, { spec: "", role: "block", change });
   table.set("minipage", { spec: spec("minipage"), role: "block" });
   table.set("multicols", { spec: spec("multicols"), role: "block" });
   table.set("multicols*", { spec: spec("multicols*"), role: "block" });
@@ -335,6 +404,7 @@ export const STANDARD_ENVIRONMENTS: ReadonlyMap<string, StandardEnvironment> = (
     ...["table*", "figure", "figure*", "tabbing", "picture", "tikzpicture", "thebibliography"],
     ...["filecontents", "filecontents*", "abstract", "titlepage", "wrapfigure", "list"],
     ...["trivlist", "math", "displaymath", "equation", "equation*", "align", "align*"],
+    ...["ttfamily", "tt"],
   ])
     table.set(name, { spec: spec(name), role: "raw" });
   return table;

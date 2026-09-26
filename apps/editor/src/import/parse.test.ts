@@ -1,6 +1,16 @@
-import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { strToU8, zipSync } from "fflate";
+import { beforeAll, describe, expect, test } from "vitest";
+import type { EngineManifest } from "../engine/manifest";
+import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
+import type { EngineSession } from "../engine/session";
+import { FontLibrary } from "../page/fonts";
+import { TexLiveIndex } from "../page/texlive";
 import { bound, fastest } from "../test/timing";
-import type { Intake } from "./intake";
+import { MAX_DELIMITED } from "./arguments";
+import { readTree } from "./fonts";
+import { encodeLike, type Intake, intake } from "./intake";
 import {
   type Body,
   bodyOf,
@@ -18,8 +28,10 @@ import {
   type Tree,
   usesOf,
 } from "./parse";
-import { print } from "./print";
+import { print, regenerate, spellingOf } from "./print";
+import { compileLikeReference, type Reference, reference, sameGlyphs } from "./reference";
 import { isRefusal } from "./refusal";
+import { signatures } from "./signatures";
 
 // Every body, class and signature here is invented for these tests: invented commands with
 // invented names that say so.
@@ -373,6 +385,187 @@ Another one.`);
   });
 });
 
+describe("conditionals whose branch is known", () => {
+  test("keeps what \\iffalse skips raw, to its \\fi, nesting counted", () => {
+    const text = String.raw`Before.
+\iffalse
+\cventry{Old}{Role}{City}{2019}
+An old invented paragraph. \ifx\a\b x\else y\fi
+\fi
+After.`;
+    const tree = treeOf(text);
+    expect(tree.content).toMatchObject([
+      { kind: "text" },
+      { kind: "raw", why: "skipped", name: "iffalse" },
+      { kind: "text", runs: [{ text: "After." }] },
+    ]);
+    expect(sourceOf(tree, tree.content[1] as Node)).toMatch(/^\\iffalse[\s\S]*\\fi$/);
+    expect(sourceOf(tree, tree.content[1] as Node).endsWith("y\\fi\n\\fi")).toBe(true);
+  });
+
+  test("places \\iffalse's \\else branch, and \\iftrue's own, keeping what either skips raw", () => {
+    const tree = treeOf(
+      String.raw`\iffalse Skipped \else Taken\fi{} and \iftrue Kept\else Gone\fi`,
+    );
+    expect(tree.content).toMatchObject([
+      { kind: "raw", why: "skipped", name: "iffalse" },
+      { kind: "text", runs: [{ text: "Taken" }] },
+      { kind: "raw", name: "fi" },
+      { kind: "text", runs: [{ text: "and" }] },
+      { kind: "raw", why: "command", name: "iftrue" },
+      { kind: "text", runs: [{ text: "Kept" }] },
+      { kind: "raw", why: "skipped", name: "else" },
+    ]);
+  });
+
+  test("counts a conditional \\newif makes, which the engine says is a primitive", () => {
+    const signatures: Signatures = {
+      commands: { ifcvdraft: { kind: "primitive" } },
+      environments: {},
+    };
+    const tree = treeOf(String.raw`\iffalse a \ifcvdraft b \fi c \fi d`, signatures);
+    expect(kinds(tree.content)).toEqual(["raw iffalse", "text"]);
+    expect(tree.content[1]).toMatchObject({ runs: [{ text: "d" }] });
+  });
+
+  test("leaves one whose \\fi is not among the nodes after it, and the others, as they are", () => {
+    expect(kinds(treeOf(String.raw`{\iffalse a} b\fi`).content)).toEqual([
+      "group",
+      "text",
+      "raw fi",
+    ]);
+    expect(kinds(treeOf(String.raw`\ifx\a\b yes\fi`, SIGNATURES).content)).toContain("text");
+  });
+});
+
+describe("alignments", () => {
+  test("keeps a template environment's body raw where its meaning opens an alignment", () => {
+    const signatures: Signatures = {
+      ...SIGNATURES,
+      environments: { ...SIGNATURES.environments, cvskills: { kind: "template", spec: "m" } },
+      macros: {
+        cvskills: { meaning: "\\long macro:#1->\\textbf {#1}\\begin {tabular}{ll}" },
+        endcvskills: { meaning: "\\long macro:->\\end {tabular}" },
+        cvbox: { meaning: "\\long macro:#1->\\par \\textbf {#1}\\par " },
+      },
+    };
+    const tree = treeOf(
+      String.raw`\begin{cvskills}{Invented}
+Languages & Quill, Wort \\
+\end{cvskills}
+\begin{cvbox}{Box}Inside\end{cvbox}`,
+      signatures,
+    );
+    expect(tree.content).toMatchObject([
+      {
+        kind: "environment",
+        name: "cvskills",
+        args: [{ content: [{ kind: "text" }] }],
+        content: [{ kind: "raw", why: "alignment" }],
+      },
+      { kind: "environment", name: "cvbox", content: [{ kind: "text" }] },
+    ]);
+  });
+
+  test("keeps a paragraph with an alignment's & raw, but not one with \\&", () => {
+    const tree = treeOf(String.raw`\cvopt{t} Languages & Quill \\ Tools & Wort
+
+Quill \& Wort`);
+    expect(tree.content).toMatchObject([
+      { kind: "call" },
+      { kind: "raw", why: "alignment" },
+      { kind: "text", runs: [{ text: "Quill & Wort" }] },
+    ]);
+  });
+});
+
+describe("declarations used as environments", () => {
+  test("places a size's, a shape's and a series' body, and marks bold and italic", () => {
+    const tree = treeOf(String.raw`\begin{footnotesize}
+\section{Invented}
+\cvopt{a}
+\end{footnotesize}
+\begin{bfseries}Bold \begin{em}and emphasised\end{em}\end{bfseries}
+\begin{itshape}Italic \begin{em}upright\end{em}\end{itshape}
+\begin{raggedright}Ragged\end{raggedright}\begin{samepage}Same\end{samepage}`);
+    expect(tree.content).toMatchObject([
+      { kind: "block", name: "footnotesize", content: [{ kind: "section" }, { kind: "call" }] },
+      {
+        kind: "block",
+        name: "bfseries",
+        content: [
+          { kind: "text", runs: [{ text: "Bold", bold: true }] },
+          { kind: "block", content: [{ kind: "text", runs: [{ bold: true, italic: true }] }] },
+        ],
+      },
+      {
+        kind: "block",
+        name: "itshape",
+        content: [
+          { kind: "text", runs: [{ text: "Italic", italic: true }] },
+          { kind: "block", content: [{ kind: "text", runs: [{ text: "upright" }] }] },
+        ],
+      },
+      { kind: "block", name: "raggedright" },
+      { kind: "block", name: "samepage" },
+    ]);
+  });
+
+  test("asks the engine about none of them", () => {
+    const read = readBody(
+      bodyOfText(String.raw`\begin{small}a\end{small}\begin{sloppypar}b\end{sloppypar}\iffalse\fi`),
+    );
+    if (isRefusal(read)) throw new Error(read.message);
+    expect(usesOf(read)).toEqual({ commands: [], environments: [] });
+  });
+});
+
+describe("calls a group after them belies", () => {
+  const signatures: Signatures = {
+    commands: {
+      cvding: { kind: "template", spec: "" },
+      cvopen: { kind: "template", spec: "m o" },
+      cvstarred: { kind: "template", spec: "s" },
+      cvfine: { kind: "template", spec: "o m" },
+    },
+    environments: {},
+  };
+
+  test("keeps a call raw, with the groups after it, where its signature takes no mandatory one", () => {
+    const tree = treeOf(
+      String.raw`\cvding{51} Skill. \cvstarred* {a}%
+{b} c`,
+      signatures,
+    );
+    expect(tree.content).toMatchObject([
+      { kind: "raw", why: "unresolved", name: "cvding", suspect: true, args: [{ present: true }] },
+      { kind: "text" },
+      {
+        kind: "raw",
+        name: "cvstarred",
+        suspect: true,
+        args: [{ kind: "star" }, { open: "{" }, { open: "{" }],
+      },
+      { kind: "text", runs: [{ text: "c" }] },
+    ]);
+    expect(sourceOf(tree, tree.content[0] as Node)).toBe(String.raw`\cvding{51}`);
+  });
+
+  test("keeps one raw whose signature ends in an optional argument a group follows", () => {
+    const tree = treeOf(String.raw`\cvopen{a}[b]{c} \cvopen{a} end`, signatures);
+    expect(tree.content).toMatchObject([
+      { kind: "raw", name: "cvopen", suspect: true },
+      { kind: "call", name: "cvopen" },
+      { kind: "text" },
+    ]);
+  });
+
+  test("keeps a call no group follows, or whose signature ends in a mandatory argument", () => {
+    const tree = treeOf(String.raw`\cvding Skill. \cvfine{a} {b}`, signatures);
+    expect(kinds(tree.content)).toEqual(["call", "text", "call", "text"]);
+  });
+});
+
 describe("dates", () => {
   test("reads a whole argument or a whole text run as dates, and nothing else", () => {
     const tree = treeOf(String.raw`\textbf{Invented Labs} \hfill Jan 2020 -- May 2021
@@ -464,12 +657,76 @@ describe("the body of a main file", () => {
     ]);
   });
 
-  test("honours \\endinput, reading the rest of its line, and inputs within inputs", () => {
+  test("honours \\endinput where it begins its line, and inputs within inputs", () => {
     const body = bodyFrom("\\begin{document}\\input{outer}\\end{document}", {
       "outer.tex": "Outer \\input{inner}after\n",
-      "inner.tex": "Inner \\endinput rest of line\nnever read\n",
+      "inner.tex": "Inner words\n  \\endinput rest of line\nnever read\n",
     });
-    expect(body.text).toBe("Outer Inner  rest of line\nafter\n");
+    expect(body.text).toBe("Outer Inner words\nafter\n");
+    // On a file's first line, it leaves nothing, and no newline is added.
+    expect(
+      bodyFrom("\\begin{document}A \\input{part}B\\end{document}", {
+        "part.tex": "\\endinput\nnever read\n",
+      }).text,
+    ).toBe("A B");
+  });
+
+  test("inlines a file whole where \\endinput follows something on its line, as a guard does", () => {
+    const part = "\\ifdefined\\partdone\\endinput\\fi\n\\def\\partdone{}\nCharlie.\n";
+    const body = bodyFrom("\\begin{document}\\input{part}Next\\end{document}", {
+      "part.tex": part,
+    });
+    expect(body.text).toBe(`${part}Next`);
+  });
+
+  test("keeps TeX's two spaces around a file whose input is the last thing on its line", () => {
+    // The file's last line's end and the input's line's end: an empty group keeps the two from
+    // making a blank line.
+    expect(
+      bodyFrom("\\begin{document}Opening\n\\input{part}\nclosing\\end{document}", {
+        "part.tex": "inputted\n",
+      }).text,
+    ).toBe("Opening\ninputted\n{}\nclosing");
+    expect(
+      bodyFrom("\\begin{document}Opening\n\\input{part}  \nclosing\\end{document}", {
+        "part.tex": "no newline",
+      }).text,
+    ).toBe("Opening\nno newline\n{}  \nclosing");
+    expect(
+      bodyFrom("\\begin{document}Opening\n\\input{outer}\nclosing\\end{document}", {
+        "outer.tex": "outer\n\\input{inner}\n",
+        "inner.tex": "inner\n",
+      }).text,
+    ).toBe("Opening\nouter\ninner\n{}\n{}\nclosing");
+    // A comment after the input takes its line's end, and a file `\endinput` ends on its first
+    // line leaves the input's line a space, not a blank line.
+    expect(
+      bodyFrom("\\begin{document}Opening\n\\input{part}% note\nclosing\\end{document}", {
+        "part.tex": "inputted\n",
+      }).text,
+    ).toBe("Opening\ninputted\n% note\nclosing");
+    expect(
+      bodyFrom("\\begin{document}Opening\n\\input{part}\nclosing\\end{document}", {
+        "part.tex": "\\endinput\n",
+      }).text,
+    ).toBe("Opening\n{}\nclosing");
+  });
+
+  test("reads an empty file as TeX does, one empty line, which ends a paragraph", () => {
+    const empty = (main: string) =>
+      bodyFrom(`\\begin{document}${main}\\end{document}`, { "part.tex": "" }).text;
+    expect(empty("Opening\n\\input{part}\nclosing")).toBe("Opening\n\n{}\nclosing");
+    expect(empty("Opening \\input{part} closing")).toBe("Opening \n\n closing");
+  });
+
+  test("takes a bare name's line end as TeX does, as the end of the name", () => {
+    const bare = (part: string) =>
+      bodyFrom("\\begin{document}Opening\n\\input part\nclosing\\end{document}", {
+        "part.tex": part,
+      }).text;
+    expect(bare("inputted\n")).toBe("Opening\ninputted\nclosing");
+    expect(bare("inputted")).toBe("Opening\ninputted\nclosing");
+    expect(bare("")).toBe("Opening\n\nclosing");
   });
 
   test("inlines \\include between two \\clearpage, or leaves the one \\includeonly leaves out", () => {
@@ -481,6 +738,20 @@ describe("the body of a main file", () => {
         "part.tex": "Part\n",
       }).text,
     ).toBe("\\clearpage\n");
+  });
+
+  test("records the empty group it adds as the parser's", () => {
+    const body = bodyFrom("\\begin{document}A\n\\input{part}\nB\\end{document}", {
+      "part.tex": "P\n",
+    });
+    expect(
+      body.sources.map((source) => [body.text.slice(source.start, source.end), source.file]),
+    ).toEqual([
+      ["A\n", "cv.tex"],
+      ["P\n", "part.tex"],
+      ["{}", undefined],
+      ["\nB", "cv.tex"],
+    ]);
   });
 
   test("leaves an input that inputs itself as it is", () => {
@@ -564,6 +835,47 @@ describe("caps", () => {
       expect(long).toBeLessThan(15_000);
     }
   }, 120_000);
+
+  test("looks for a closer a bounded way, so that openers that never close cost linear time", () => {
+    // `\\[` and `\item[` whose `]` never comes, the whole parse; `\url{` whose `}` never comes on
+    // a long line, and many `\verb` on one, the reading before unified-latex parses: each at a
+    // size the review timed, against a tenth of it.
+    const openers = (unit: string) => (bytes: number) =>
+      unit.repeat(Math.floor(bytes / unit.length));
+    const parse = (text: string) => () => {
+      const tree = parseBody(bodyOfText(text));
+      if (isRefusal(tree)) throw new Error(tree.message);
+    };
+    const mask = (text: string) => () => nestsPast(maskedForParse(text), PARSE_CAPS.levels);
+    const shapes: [(bytes: number) => string, number, (text: string) => () => void][] = [
+      [openers("\\\\["), 192_000, parse],
+      [openers("\\item[x "), 256_000, parse],
+      [openers("\\iftrue x "), 200_000, parse],
+      [openers("\\url{"), 400_000, mask],
+      [openers("\\verb!x! "), 1_400_000, mask],
+    ];
+    for (const [make, bytes, work] of shapes) {
+      const [short = 0, long = 0] = fastest([work(make(bytes / 10)), work(make(bytes))], 3);
+      expect(long, make(9)).toBeLessThan(bound(20, short));
+      expect(long, make(9)).toBeLessThan(15_000);
+    }
+  }, 120_000);
+
+  test("reads an opener that closes within its bound, and not one past it", () => {
+    const near = String.raw`\\[${"x".repeat(MAX_DELIMITED - 16)}] after`;
+    expect(treeOf(near).content).toMatchObject([
+      { kind: "raw", name: "\\", args: [{ present: false }, { present: true }] },
+      { kind: "text", runs: [{ text: "after" }] },
+    ]);
+    const far = String.raw`\cvopt[${"x ".repeat(MAX_DELIMITED)}]{y}`;
+    expect(treeOf(far).content[0]).toMatchObject({
+      kind: "call",
+      args: [{ present: false }, { open: "" }],
+    });
+    // An address that does not close within its bound marks no `%` in it.
+    expect(maskedForParse(`\\url{a%b${"c".repeat(MAX_DELIMITED)}}`)).not.toContain("\ue000");
+    expect(maskedForParse("\\url{a%b}")).toContain("\ue000");
+  });
 });
 
 describe("the text unified-latex reads", () => {
@@ -608,6 +920,39 @@ describe("the printer", () => {
     }
   });
 
+  test("regenerates every text and date as the generator writes what the model holds of it", () => {
+    const text = String.raw`\section{Invented \& Co}
+\cventry{Role}{\textbf{Labs} \href{https://quill.example}{site}}{City}{Jan 2020 -- Present}
+\cvopt{Sept 2019} \cvopt{2019 -- 2021} \cvopt{{\it Quill} wort}`;
+    expect(regenerate(treeOf(text), "pdftex")).toBe(
+      String.raw`\section{Invented \& Co}
+\cventry{Role}{\textbf{Labs} \href{https://quill.example}{site}}{City}{Jan 2020 – Present}
+\cvopt{Sept 2019} \cvopt{2019 – 2021} \cvopt{\textit{Quill} wort}`.replaceAll("\\u2013", "–"),
+    );
+  });
+
+  test("puts regenerated text where TeX reads it as it read the body", () => {
+    // A text that ended in a control word had the spaces after it skipped; one right after a
+    // control word would join its name, or have its space skipped.
+    const tree = treeOf(String.raw`Stra\ss \hfill{x}y and \hfill{ z}`);
+    expect(regenerate(tree, "pdftex")).toBe(String.raw`Straß\relax \hfill{}xy and \hfill{} z`);
+  });
+
+  test("keeps a letter composed for XeTeX and decomposes it for pdfTeX, as the generator does", () => {
+    const tree = treeOf("Nguyễn");
+    expect(regenerate(tree, "xetex")).toBe("Nguyễn");
+    expect(regenerate(tree, "pdftex")).toBe("Nguyễn");
+  });
+
+  test("finds the format a date is spelled in, of the generator's four", () => {
+    expect(spellingOf({ start: "2020-01", end: "present" }, "Jan 2020 – Present")).toBe("MMM yyyy");
+    expect(spellingOf({ start: "2020-01" }, "January 2020")).toBe("MMMM yyyy");
+    expect(spellingOf({ start: "2020-01" }, "01/2020")).toBe("MM/yyyy");
+    expect(spellingOf({ start: "2019", end: "2021" }, "2019 – 2021")).toBeDefined();
+    expect(spellingOf({ start: "2019-09" }, "Sept 2019")).toBeUndefined();
+    expect(spellingOf({ start: "2019", end: "2020" }, "2019-20")).toBeUndefined();
+  });
+
   test("builds one tree from a body read once", () => {
     const read = readBody(bodyOfText(String.raw`\cvopt{a}`));
     if (isRefusal(read)) throw new Error(read.message);
@@ -615,4 +960,206 @@ describe("the printer", () => {
     if (isRefusal(tree)) throw new Error(tree.message);
     expect(tree).toMatchObject({ nodes: 2, levels: 1 });
   });
+});
+
+describe.skipIf(!engineAvailable())("the round trips, on the engine", () => {
+  let session: EngineSession;
+  let fonts: FontLibrary;
+  let tree: ReturnType<typeof readTree>;
+  beforeAll(async () => {
+    session = await startNodeSession();
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    tree = readTree(manifest.files);
+    fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+      readFileSync(join(ENGINE_DIR, "files", path)),
+    );
+  }, 60_000);
+
+  /**
+   * An invented upload's tree, the engine's signatures read when `withSignatures`, and whether its
+   * body printed byte for byte, and regenerated, sets the reference's glyphs, as the corpus runner
+   * asks.
+   */
+  async function roundTrips(files: Record<string, string>, withSignatures: boolean) {
+    const zipped = Object.fromEntries(
+      Object.entries(files).map(([path, text]) => [path, strToU8(text)]),
+    );
+    const taken = intake({ name: "invented.zip", bytes: zipSync(zipped) }, { tree });
+    if (isRefusal(taken)) throw new Error(`refused at intake: ${taken.message}`);
+    const made = await reference(session, fonts, taken);
+    if (isRefusal(made)) throw new Error(`refused: ${made.message}`);
+    const split = bodyOf(taken);
+    if (isRefusal(split)) throw new Error(split.message);
+    const read = readBody(split);
+    if (isRefusal(read)) throw new Error(read.message);
+    const found = withSignatures
+      ? await signatures(session, taken, made, split, usesOf(read))
+      : undefined;
+    if (found !== undefined && isRefusal(found)) throw new Error("no signatures");
+    const built = buildTree(read, found);
+    if (isRefusal(built)) throw new Error(built.message);
+    const same = async (printed: string) => {
+      const main = encodeLike(taken.main.bytes, split.before + printed + split.after);
+      const again = await compileLikeReference(
+        session,
+        fonts,
+        taken,
+        made,
+        main ?? new Uint8Array(),
+      );
+      if (isRefusal(again)) throw new Error(`the round trip stopped: ${again.message}`);
+      return sameGlyphs(made as Reference, again.stream);
+    };
+    return {
+      built,
+      byte: await same(print(built)),
+      regenerated: await same(regenerate(built, made.engine)),
+    };
+  }
+
+  const main = (body: string, preamble = "") =>
+    `\\documentclass{article}\n${preamble}\\begin{document}\n${body}\n\\end{document}\n`;
+
+  test("inlines every shape of input as TeX reads it, spaces, paragraphs and \\endinput", async () => {
+    // A paragraph for each: an input last on its line, nested, and ended by `\endinput`; a bare
+    // name; an empty file, alone on its line and in one; a file with no final newline; and a
+    // guarded file, read whole.
+    const paragraph = (input: string) => `Invented words\n${input}\nclosing words.`;
+    const { byte } = await roundTrips(
+      {
+        "cv.tex": main(
+          [
+            paragraph("\\input{outer}"),
+            paragraph("\\input bare"),
+            paragraph("\\input{empty}"),
+            "Invented words \\input{empty} middle words.",
+            paragraph("\\input{plain}"),
+            "\\section{Alpha}\n\\input{guarded}\n\\section{Golf}",
+          ].join("\n\n"),
+        ),
+        "outer.tex": "outer inputted words\n\\input{inner}\n",
+        "inner.tex": "inner inputted words\n\\endinput\nnever read\n",
+        "bare.tex": "bare inputted words\n",
+        "empty.tex": "",
+        "plain.tex": "no final newline",
+        "guarded.tex": "\\ifdefined\\partdone\\endinput\\fi\n\\def\\partdone{}\nCharlie three.\n",
+      },
+      false,
+    );
+    expect(byte).toBe(true);
+  }, 60_000);
+
+  test("regenerates a declaration's body, and keeps what \\iffalse skips and an alignment raw", async () => {
+    const { built, byte, regenerated } = await roundTrips(
+      {
+        "cv.tex": main(
+          String.raw`\begin{small}
+\section{Experience}
+\job{Invented Role}{2020 -- 2021}
+Did invented things with \textbf{care}.
+\begin{itemize}
+\item One invented thing
+\end{itemize}
+\end{small}
+\begin{bfseries}Invented bold words\end{bfseries}
+\iffalse
+\job{Old Invented Role}{Old Invented Company}
+An old invented paragraph that TeX skips.
+\fi
+\iftrue Kept invented words.\else Skipped invented words.\fi
+\begin{skilltable}
+Languages & Invented, Made-up \\
+Tools & Pretend, Fictional \\
+\end{skilltable}
+\job{BSc Invented Studies}{2019-20}`,
+          String.raw`\newcommand{\job}[2]{\textbf{#1} \hfill #2\par}
+\newenvironment{skilltable}{\begin{tabular}{ll}}{\end{tabular}}
+`,
+        ),
+      },
+      true,
+    );
+    expect(built.content).toMatchObject([
+      { kind: "block", name: "small" },
+      { kind: "block", name: "bfseries", content: [{ kind: "text", runs: [{ bold: true }] }] },
+      { kind: "raw", why: "skipped" },
+      { kind: "raw", name: "iftrue" },
+      { kind: "text" },
+      { kind: "raw", why: "skipped" },
+      { kind: "environment", content: [{ kind: "raw", why: "alignment" }] },
+      { kind: "call", args: [{}, { content: [{ kind: "date" }] }] },
+    ]);
+    expect(byte).toBe(true);
+    expect(regenerated).toBe(true);
+  }, 60_000);
+
+  /** Every node of a tree, arguments' and contents' too. */
+  const nodesOf = (nodes: readonly Node[]): Node[] =>
+    nodes.flatMap((node) => [
+      node,
+      ...("args" in node ? (node.args ?? []).flatMap((arg) => nodesOf(arg.content ?? [])) : []),
+      ...("content" in node ? nodesOf(node.content) : []),
+    ]);
+
+  /** Letters the generator writes back as they are, whose accents are decoded. */
+  const LETTERS = String.raw`Caf\'e na\"\i ve Fran\c cois \v{S}koda \H{o} \r{u} \u{g} \.z \=a.`;
+
+  /**
+   * One invented document, a paragraph for each shape the parser keeps raw, which decoded as the
+   * generator's text set other glyphs or stopped the compile (decision 0020), and one of letters it
+   * decodes: each shape is raw by its command's name, the letters are text, and the body with every
+   * text regenerated sets the reference's glyphs.
+   */
+  async function expectKept(
+    shapes: readonly [body: string, name: string][],
+    preamble: string,
+    letters: string,
+  ) {
+    const { built, regenerated } = await roundTrips(
+      { "cv.tex": main([...shapes.map(([body]) => body), letters].join("\n\n"), preamble) },
+      false,
+    );
+    const nodes = nodesOf(built.content);
+    for (const [body, name] of shapes)
+      expect(
+        nodes.some((node) => node.kind === "raw" && node.name === name),
+        body,
+      ).toBe(true);
+    expect(nodes.filter((node) => node.kind === "text").at(-1)).toMatchObject({
+      runs: [{ text: expect.stringMatching(/^Caf\u00e9 na\u00efve Fran\u00e7ois/) }],
+    });
+    expect(regenerated).toBe(true);
+  }
+
+  test("keeps raw on OT1 what the generator cannot write back, and decodes the rest", async () => {
+    await expectKept(
+      [
+        [String.raw`Worked with Dr.\ Quill Invented on it.`, " "],
+        [String.raw`Served 10\,000 invented users.`, ","],
+        [String.raw`Invented NASA\@. Then more words.`, "@"],
+        [String.raw`An acute \'{} here.`, "'"],
+        [String.raw`Invented Nguy\d{a} here.`, "d"],
+        [String.raw`Invented \b{a} here.`, "b"],
+        [String.raw`Invented \t{oo} here.`, "t"],
+        [String.raw`Invented Nguy\~{\^e}n here.`, "~"],
+        [String.raw`Run \texttt{tool --verbose} daily.`, "texttt"],
+        [String.raw`Run {\ttfamily tool --verbose} daily.`, "ttfamily"],
+      ],
+      "",
+      String.raw`${LETTERS} \d{s} Zh\v{a}ng.`,
+    );
+  }, 60_000);
+
+  test("keeps an accent over nothing raw on T1, where the character sets another glyph", async () => {
+    await expectKept(
+      [
+        [String.raw`Page: www.quill.example/\~{}moss here.`, "~"],
+        [String.raw`A caret \^{} here.`, "^"],
+      ],
+      "\\usepackage[T1]{fontenc}\n",
+      String.raw`${LETTERS} \k{a}.`,
+    );
+  }, 60_000);
 });
