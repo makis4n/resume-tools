@@ -11,9 +11,9 @@ session, both on an M4 Pro; neither measured the editor as a whole, and nobody h
 slow laptop yet. The spike's page, which took 0003's browser numbers, is retired in the same
 item, so the editor has to measure itself.
 
-Main holds two curated packages today, Jake's Resume and AltaCV (item 20), both on pdfTeX, and
-fit to one page (item 18). Awesome-CV, on XeTeX (items 21 and 22), is on branches in review; its
-rows below are left empty, to be filled by running the same command again once it merges.
+Main holds the three curated packages, Jake's Resume and AltaCV (item 20) on pdfTeX and
+Awesome-CV (items 21 and 22) on XeTeX, and fit to one page (item 18). Awesome-CV's rows were
+filled by running the same command once it merged, as the first version of this record said.
 
 ## Decision
 
@@ -87,26 +87,26 @@ The edit's compile, 80 ms against the update's 68 ms, compiles a larger template
 spike's: Latin Modern in T1 where the spike set Computer Modern, geometry, xcolor and hyperref's
 dvipdfmx driver, and a body with a paragraph special beside every field.
 
-AltaCV now, and Awesome-CV to fill once items 21 and 22 merge, with the same rows:
+AltaCV and Awesome-CV, with the same rows:
 
 | | AltaCV, this machine | AltaCV, slow laptop | Awesome-CV, this machine | Awesome-CV, slow laptop |
 |---|---|---|---|---|
-| Node: dump, new document, first draw | 438 ms (a 7.06 MB format, from 145 files and 9.42 MB of TeX Live); 218 ms (109 + 109); 231 ms | | | |
-| Node: the first page, as the scheduler times it | 887 ms | | | |
-| Node: an edit, median of 10 | 115 ms: compile 109, draw 3.7; from 114 to 120 | | | |
-| Node: a keystroke's row layout, median of 100 | 0.11 ms, 139 characters on 4 lines | | | |
-| Node: fit to one page | 222 ms: 1 compile, to compact density, on the sample 9 bullets too long | | | |
-| Chrome (`?measure=altacv`, `?measure=awesome-cv`): the first page, an edit's page | Throttled only: 2.8 to 3.0 s, and 323 to 339 ms | | | |
-| First load, uncompressed | 44.44 MB: TeX Live 9.71, fonts 2.25, the rest as Jake's | | | |
+| Node: dump, new document, first draw | 438 ms (a 7.06 MB format, from 145 files and 9.42 MB of TeX Live); 218 ms (109 + 109); 231 ms | | 548 ms (a 9.37 MB format, from 133 files and 11.38 MB of TeX Live, the declared font files among them); 226 ms (123 + 103); 21 ms | |
+| Node: the first page, as the scheduler times it | 887 ms | | 796 ms | |
+| Node: an edit, median of 10 | 115 ms: compile 109, draw 3.7; from 114 to 120 | | 110 ms: compile 102, draw 6.4; from 108 to 122 | |
+| Node: a keystroke's row layout, median of 100 | 0.11 ms, 139 characters on 4 lines | | 0.11 ms, 238 characters on 2 lines | |
+| Node: fit to one page | 222 ms: 1 compile, to compact density, on the sample 9 bullets too long | | 200 ms: 1 compile, to compact density, on the sample 14 bullets too long | |
+| Chrome (`?measure=altacv`, `?measure=awesome-cv`): the first page, an edit's page | Throttled only: 2.8 to 3.0 s, and 323 to 339 ms | | Not measured here; the page is there to run | |
+| First load, uncompressed | 44.44 MB: TeX Live 9.71, fonts 2.25, the rest as Jake's | | 53.44 MB: TeX Live 14.08 (XeTeX reads the declared font files as TeX Live files), fonts 6.87 more for the page, the rest as Jake's | |
 
 Against plan section 4.3:
 
-| Target | Limit | Jake's Resume, this machine | AltaCV, this machine | Slow laptop |
-|---|---|---|---|---|
-| Keystroke in the overlay | under 16 ms | 0.07 ms in Node, 0.10 ms in Chrome: met | 0.11 ms in Node: met | |
-| True page updated after an edit, typical | 300 ms | 84 ms in Node, 79 ms in Chrome: met | 115 ms in Node: met | |
-| True page updated after an edit, slow laptop | under 500 ms | not judged here | not judged here | |
-| First load, cached afterwards | under 30 MB | 41.85 MB uncompressed: missed | 44.44 MB uncompressed: missed | |
+| Target | Limit | Jake's Resume, this machine | AltaCV, this machine | Awesome-CV, this machine | Slow laptop |
+|---|---|---|---|---|---|
+| Keystroke in the overlay | under 16 ms | 0.07 ms in Node, 0.10 ms in Chrome: met | 0.11 ms in Node: met | 0.11 ms in Node: met | |
+| True page updated after an edit, typical | 300 ms | 84 ms in Node, 79 ms in Chrome: met | 115 ms in Node: met | 110 ms in Node: met | |
+| True page updated after an edit, slow laptop | under 500 ms | not judged here | not judged here | not judged here | |
+| First load, cached afterwards | under 30 MB | 41.85 MB uncompressed: missed | 44.44 MB uncompressed: missed | 53.44 MB uncompressed: missed | |
 
 To fill the slow laptop's column: set the repository up on it as its README says, with
 `pnpm install` and `pnpm --filter @resume-tools/editor fetch-engine`; run
@@ -134,8 +134,10 @@ the page.
 - The keystroke's number is the row layout alone. The DOM work after it, redrawing the rows or
   ProseMirror's decorations, is not measured, so the target stays open to a browser trace on
   the slow laptop if the overlay ever feels slow there.
-- XeTeX's numbers come with Awesome-CV. Milestone 2's risk that it misses the slow-laptop target
-  is decided on them, not on the spike's.
+- XeTeX's numbers are Awesome-CV's: an edit's page in 110 ms in Node, about 1.3 times Jake's
+  and under Jake's spike-era figure, since item 21 hid every font folder from fontconfig; the
+  spike's 459 ms no longer stands. Milestone 2's risk that it misses the slow-laptop target is
+  decided on these, once the slow laptop runs the command.
 - Fit to one page is measured on a sample that just runs past a page, the case it is for. Its
   longest search, one that tries every step, is six trials on Jake's Resume and four on AltaCV,
   each a compile in the fit's own job; plan section 5.4 expects it to finish in a few seconds.

@@ -187,15 +187,15 @@ pull request that acts on it.
 ## Risks
 
 - **Measured on a fast machine only, so far** (item 23, decision 0016). On an M4 Pro, Jake's
-  Resume and AltaCV meet the keystroke target (0.07 and 0.11 ms against 16) and the typical edit
-  (84 and 115 ms against 300), and fit a sample that just runs past a page in one compile; both
-  miss the first load as the dev server serves it, 42 and 44 MB uncompressed against 30, which
-  milestone 5's CDN and engine build have to bring under. The slow laptop and Awesome-CV are
-  still to measure, with the same command and page.
+  Resume, AltaCV and Awesome-CV meet the keystroke target (0.07, 0.11 and 0.11 ms against 16)
+  and the typical edit (84, 115 and 110 ms against 300), and fit a sample that just runs past a
+  page in one compile; all three miss the first load as the dev server serves it, 42, 44 and
+  53 MB uncompressed against 30, which milestone 5's CDN and engine build have to bring under.
+  The slow laptop is still to measure, with the same command and page.
 - **Awesome-CV may not meet the slow-laptop target.** The loop measured 459 ms at best and
-  847 ms under load on an M4 Pro, against 500 ms on a 2019 laptop. The plan already accepts
-  that XeTeX templates feel slower. The milestone bar should say so explicitly for XeTeX, or
-  item 21 has to find more speed. Decide once item 23 has the numbers.
+  847 ms under load on an M4 Pro, against 500 ms on a 2019 laptop. Item 21 found the speed:
+  with no font folder scanned, Awesome-CV's edit takes 110 ms in Node on the same machine
+  (decision 0016), so the risk now rests on the slow laptop's run alone.
 - **ProseMirror and TeX's line breaks** (item 10). ProseMirror owns the editable DOM, so the
   breaks have to come in as decorations. If that fights the editor, rich fields fall back to the
   browser's breaks until the compile lands, which decision 0004 accepts only for hyphenation. That
