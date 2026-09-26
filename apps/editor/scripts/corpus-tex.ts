@@ -174,11 +174,14 @@ export function nonLatinShare(tex: string): number {
  * `\subfile`, `\InputIfFileExists`, `\import` or `\subimport`, or a bibliography through
  * `\bibliography` or `\addbibresource`. `\subimport` names its file from the folder of the file
  * that calls it, where the others name theirs from the main file's, as TeX's working folder is.
+ * One loaded in the second argument of `\IfFileExists`, the code it runs when the file it asks
+ * after is there, is `optional`: TeX loads it only then.
  */
 export interface Reference {
   kind: "class" | "package" | "input" | "bibliography";
   name: string;
   fromCaller?: boolean;
+  optional?: boolean;
 }
 
 const COMMANDS =
@@ -193,16 +196,25 @@ const COMMANDS =
 export function references(tex: string): Reference[] {
   const text = withoutComments(tex);
   const found: Reference[] = [];
+  const within = ifFileExists(text);
+  /** Whether the command being read is in `\IfFileExists`'s branch for a file that is there. */
+  let optional = false;
   const add = (kind: Reference["kind"], names: string[], fromCaller = false) => {
     for (const raw of names) {
       const name = raw.trim();
       if (name !== "" && !/[\\#]/.test(name))
-        found.push(fromCaller ? { kind, name, fromCaller } : { kind, name });
+        found.push({
+          kind,
+          name,
+          ...(fromCaller ? { fromCaller } : {}),
+          ...(optional ? { optional } : {}),
+        });
     }
   };
   for (const match of text.matchAll(COMMANDS)) {
     const command = match[1] ?? "";
     const at = match.index + match[0].length;
+    optional = within(match.index);
     switch (command) {
       case "documentclass":
       case "LoadClass":
@@ -245,6 +257,29 @@ export function references(tex: string): Reference[] {
     }
   }
   return found;
+}
+
+/**
+ * Whether an index of the text is in the second argument of an `\IfFileExists`, the code TeX runs
+ * only when the file named first is there, asked of indexes that do not go down: each argument is
+ * passed once, so that this takes time linear in the text's length however many there are.
+ */
+function ifFileExists(text: string): (at: number) => boolean {
+  const spans: [start: number, end: number][] = [];
+  for (const match of text.matchAll(/\\IfFileExists(?![A-Za-z@])/g)) {
+    const file = group(text, match.index + match[0].length);
+    const exists = file && group(text, file.end);
+    if (exists) spans.push([file.end, exists.end]);
+  }
+  spans.sort(([a], [b]) => a - b);
+  let next = 0;
+  /** The furthest end of the arguments that start at or before the last index asked. */
+  let reach = -1;
+  return (at) => {
+    for (let span = spans[next]; span && span[0] <= at; span = spans[++next])
+      reach = Math.max(reach, span[1]);
+    return at < reach;
+  };
 }
 
 /** TeX's primitive `\input` name: spaces, then everything up to a space, a brace or a comment. */

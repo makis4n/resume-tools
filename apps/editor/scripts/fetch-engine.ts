@@ -179,10 +179,10 @@ const DATABASE = {
  *
  * Then what the corpus's documents need that the tree lacks, as `corpus survey` counts them
  * (decision 0018): every package three documents or more need, the most needed first, within
- * 80 MB of containers: fontawesome, Font Awesome 4, for its package and its `FontAwesome.otf`;
- * biblatex, whose `depend` brings logreq; tex-gyre; ulem; simpleicons; academicons; soul; fira;
- * plex; and raleway. Their style files load nothing the tree lacks, and ask fontenc for T1, LY1
- * and OT1 only.
+ * 80 MB of containers, that makes at least one of them lack nothing once it is in:
+ * fontawesome, Font Awesome 4, for its package and its `FontAwesome.otf`; biblatex, whose
+ * `depend` brings logreq; tex-gyre; ulem; academicons; soul; and plex. Their style files load
+ * nothing the tree lacks, and ask fontenc for T1, LY1 and OT1 only.
  */
 const WANTED = [
   "pgf",
@@ -198,12 +198,9 @@ const WANTED = [
   "biblatex",
   "tex-gyre",
   "ulem",
-  "simpleicons",
   "academicons",
   "soul",
-  "fira",
   "plex",
-  "raleway",
 ];
 
 /** A package's container of run files in the archive: its revision, size and SHA-512. */
@@ -233,12 +230,6 @@ const PACKAGES: Record<string, Container> = {
     size: 254400,
     sha512:
       "e07cd6233021bbe2f3591f866c3b3eeae083574f705da9505f6bcbb7284c243ac7f24440253c4557f0a300e9995188bf5915a42643e63eb80ff9e0fa4ffaff1c",
-  },
-  fira: {
-    revision: 64422,
-    size: 15529824,
-    sha512:
-      "5faf4cdf1690f9d6c690cddbef813c8973517309144495016ef5d61ff5e5df9ce73f70b262d1c36ba72fa92f93c7a1d550b96acc4965d7ab88efce21ee20d682",
   },
   fontawesome: {
     revision: 48145,
@@ -294,23 +285,11 @@ const PACKAGES: Record<string, Container> = {
     sha512:
       "4180d4b5ff2d6843ac375a52bc3c63570638cc29f7d3bbda476dee962998293ce4b201817e056d5e87c20bd8280336b65bc689a8e1580ab8aa6f24164002732c",
   },
-  raleway: {
-    revision: 42629,
-    size: 2336284,
-    sha512:
-      "8ce708ec993b1405dc04ddd96b6d39da324799f404e2798448c12cd03749f11685f840ba4f986b1b0f7696f9141923f3b91f5318de634979720af5af5b07781c",
-  },
   roboto: {
     revision: 64350,
     size: 25354284,
     sha512:
       "d82d9ce9480bf0c9d7f6559e7bcbb5fe8f22179adc44113121f67fc0daadd66c938b9fcf9a41073843e1cc981162972a79f15fe6162f68ba7a01b74732b0f01a",
-  },
-  simpleicons: {
-    revision: 70519,
-    size: 3429140,
-    sha512:
-      "336d8cc4f3a20bb6b9f7f956dc09dcb3184a333b0e82f9b72ebfdc7f73c757fa53a48ce0bc31a1b397c42bda9826944e3004d881ee1d6dac4f3430919b4cb9cd",
   },
   soul: {
     revision: 67365,

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import type { EngineManifest } from "../src/engine/manifest";
 import { ENGINE_DIR, engineAvailable } from "../src/engine/node";
+import { bound, cpuMs, fastest } from "../src/test/timing";
 import { environmentToken } from "./corpus-github";
 import { type CorpusFile, firstCounters, type LiveDocument, Manifest } from "./corpus-manifest";
 import {
@@ -16,10 +17,12 @@ import {
   readSource,
   readTree,
   type SourceFile,
+  shownName,
   surveyCorpus,
   surveyDocument,
   surveyTable,
   TREE_FAMILIES,
+  UNPRINTABLE,
 } from "./corpus-survey";
 
 // Every document here is invented for these tests: invented classes, packages, fonts and filler
@@ -98,15 +101,17 @@ describe("the tree", () => {
     expect([...tree.fontPackages].sort()).toEqual(["lato", "roboto", "roboto-mono"]);
   });
 
+  /** A tree holding the file of every family of the table. */
+  const full = readTree(
+    Object.fromEntries(
+      Object.values(TREE_FAMILIES).map((file) => [
+        `/texlive/texmf-dist/fonts/opentype/x/${file}`,
+        1,
+      ]),
+    ),
+  );
+
   test("knows the tree's families by name, with style words and design sizes, and no other", () => {
-    const full = readTree(
-      Object.fromEntries(
-        Object.values(TREE_FAMILIES).map((file) => [
-          `/texlive/texmf-dist/fonts/opentype/x/${file}`,
-          1,
-        ]),
-      ),
-    );
     for (const name of [
       "Roboto",
       "roboto slab",
@@ -130,6 +135,23 @@ describe("the tree", () => {
   test("takes a family for the tree's only when the tree holds its file", () => {
     expect(familyInTree(tree, "Roboto Bold")).toBe(true);
     expect(familyInTree(tree, "Source Sans Pro")).toBe(false);
+  });
+
+  test("reads style words in one pass, however a hostile name runs them together", () => {
+    for (const name of ["Roboto Demibold Italic", "RobotoDemiboldDemibold", "Roboto Black 900"])
+      expect(familyInTree(full, name), name).toBe(true);
+    // A regular expression of the style words tried every way of splitting these before it
+    // failed: hours for the digits, days for the `Demibold`s. The last is past the cap.
+    for (const name of [
+      `Roboto${"1".repeat(40)}x`,
+      `Roboto ${"Demibold".repeat(15)}x`,
+      `Roboto${"Demibold".repeat(24)}x`,
+    ]) {
+      let found: boolean | undefined;
+      expect(cpuMs(() => (found = familyInTree(full, name)))).toBeLessThan(50);
+      expect(found, name).toBe(false);
+    }
+    expect(familyInTree(full, `Roboto${" ".repeat(130)}`)).toBe(false);
   });
 });
 
@@ -208,6 +230,91 @@ describe("reading a source as the engines take it", () => {
     expect(reading.xetex).toContain("{after}");
   });
 
+  test("reads an \\ifnum or \\ifcase whose numbers ask the engine as each engine does", () => {
+    const reading = readSource(
+      [
+        // pandoc's templates ask this way: 0, and 1 more on XeTeX or LuaTeX, is 0 on pdfTeX alone.
+        "\\ifnum 0\\ifxetex 1\\fi\\ifluatex 1\\fi=0 % if pdftex",
+        "  \\usepackage{onpdftex}",
+        "\\else",
+        "  \\usepackage{onxetex}",
+        "\\fi",
+        "\\unless\\ifnum 0\\ifxetex 1\\fi<1 \\usepackage{unlessxe}\\fi",
+        "\\ifcase\\ifxetex 1\\else\\ifluatex 2\\else 0\\fi\\fi",
+        "  \\usepackage{casepdf}\\or \\usepackage{casexe}\\or \\usepackage{caselua}\\fi",
+        "\\ifcase 2\\ifxetex 1\\fi \\usepackage{zero}\\or \\usepackage{one}\\else \\usepackage{past}\\fi",
+        "\\usepackage{after}",
+      ].join("\n"),
+    );
+    expect(reading.guarded).toBe(true);
+    const has = (view: string, name: string) => view.includes(`{${name}}`);
+    for (const name of ["onpdftex", "casepdf", "past", "after"]) {
+      expect(has(reading.pdftex, name), name).toBe(true);
+      expect(has(reading.xetex, name), name).toBe(name === "past" || name === "after");
+    }
+    for (const name of ["onxetex", "unlessxe", "casexe"]) {
+      expect(has(reading.pdftex, name), name).toBe(false);
+      expect(has(reading.xetex, name), name).toBe(true);
+    }
+    for (const name of ["caselua", "zero", "one"]) {
+      expect(has(reading.pdftex, name), name).toBe(false);
+      expect(has(reading.xetex, name), name).toBe(false);
+    }
+    // One whose numbers do not ask the engine is read both ways.
+    const plain = readSource(
+      "\\ifnum\\value{page}>1 \\usepackage{a}\\else\\usepackage{b}\\fi\\ifnum 1=1 \\usepackage{c}\\fi",
+    );
+    expect(plain.guarded).toBe(false);
+    for (const name of ["a", "b", "c"]) {
+      expect(has(plain.pdftex, name), name).toBe(true);
+      expect(has(plain.xetex, name), name).toBe(true);
+    }
+  });
+
+  test("takes no conditional passed as an argument for one", () => {
+    const reading = readSource(
+      [
+        "\\ifundef{\\iftutex}{\\newif\\iftutex}{}",
+        "\\ifdef{ \\ifxetex }{}{}",
+        "\\ifdefined\\ifluatex\\else\\newif\\ifluatex\\fi",
+        "\\ifx\\ifPDFTeX\\undefined \\usepackage{inifx}\\fi",
+        "\\expandafter\\ifx\\csname ifxetex\\endcsname\\relax \\usepackage{incsname}\\fi",
+        "\\csname\\ifxetex\\endcsname",
+        "\\iftutex \\usepackage{onxetex} \\else \\usepackage{onpdftex} \\fi",
+        "\\usepackage{after}",
+      ].join("\n"),
+    );
+    expect(reading.guarded).toBe(true);
+    const has = (view: string, name: string) => view.includes(`{${name}}`);
+    for (const name of ["inifx", "incsname", "after"]) {
+      expect(has(reading.pdftex, name), name).toBe(true);
+      expect(has(reading.xetex, name), name).toBe(true);
+    }
+    expect(has(reading.pdftex, "onpdftex")).toBe(true);
+    expect(has(reading.pdftex, "onxetex")).toBe(false);
+    expect(has(reading.xetex, "onxetex")).toBe(true);
+    expect(has(reading.xetex, "onpdftex")).toBe(false);
+    // One that starts a group but is not all of it is one, and TeX's own always are.
+    const body = readSource(
+      "\\newcommand{\\x}{\\ifxetex\\usepackage{inxe}\\else\\usepackage{inpdf}\\fi}{\\iffalse}\\fi\\usepackage{after}",
+    );
+    expect(has(body.pdftex, "inpdf") && has(body.pdftex, "after")).toBe(true);
+    expect(has(body.pdftex, "inxe")).toBe(false);
+    expect(has(body.xetex, "inxe") && has(body.xetex, "after")).toBe(true);
+  });
+
+  test("reads a source in time linear in its length, however deep its conditionals nest", () => {
+    // Guards left open, each asking whether the walk was in dead code of all those under it, made
+    // reading them take time that grew as the square of their number.
+    const hostile = (bytes: number) =>
+      "\\ifxetex ".repeat(bytes / 18) + "\\ifnum 0\\ifxetex 1\\fi=0 ".repeat(bytes / 50);
+    const small = hostile(20_000);
+    const large = hostile(200_000);
+    const [short = 0, long = 0] = fastest([() => readSource(small), () => readSource(large)], 3);
+    expect(long).toBeLessThan(bound(20, short));
+    expect(long).toBeLessThan(2_000);
+  }, 60_000);
+
   test("does not take a guard in code TeX never reads for guarding", () => {
     expect(readSource("\\iffalse \\ifxetex \\usepackage{a} \\fi \\fi").guarded).toBe(false);
   });
@@ -271,6 +378,39 @@ describe("a class's options", () => {
   test("are a class's only, not a package's", () => {
     expect(optionValues([{ text: cls, isClass: false }], []).size).toBe(0);
   });
+
+  test("are read in time linear in the declarations, defaults and options", () => {
+    const letters = (i: number) => {
+      let name = "";
+      for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26))
+        name = String.fromCharCode(97 + ((n - 1) % 26)) + name;
+      return name;
+    };
+    // A class declaring each conditional and an option that sets it, and running every option
+    // ten times over in \ExecuteOptions: matching each against each took time that grew as the
+    // cube of their number.
+    const hostile = (declared: number) => {
+      const names = Array.from({ length: declared }, (_, i) => letters(i));
+      const list = Array.from({ length: declared * 10 }, (_, i) => `o${names[i % declared]}`);
+      return [
+        ...names.map((name) => `\\newif\\if@x${name}`),
+        ...names.map((name) => `\\DeclareOption{o${name}}{\\@x${name}true}`),
+        ...Array.from(
+          { length: list.length / 500 },
+          (_, i) => `\\ExecuteOptions{${list.slice(i * 500, (i + 1) * 500).join(",")}}`,
+        ),
+      ].join("\n");
+    };
+    const small = [{ text: hostile(150), isClass: true }];
+    const large = [{ text: hostile(1_500), isClass: true }];
+    expect([...optionValues(large, []).values()].filter(Boolean)).toHaveLength(1_500);
+    const [short = 0, long = 0] = fastest(
+      [() => optionValues(small, []), () => optionValues(large, [])],
+      3,
+    );
+    expect(long).toBeLessThan(bound(30, short));
+    expect(long).toBeLessThan(2_000);
+  }, 60_000);
 });
 
 describe("fonts fontspec loads", () => {
@@ -318,6 +458,26 @@ describe("fonts fontspec loads", () => {
         "InventedSans-Light.otf",
         "InventedSans-Semibold.otf",
       ],
+    });
+  });
+
+  test("drops a face whose name would pass the cap, and reads at most four option groups", () => {
+    // Each star is the font's name: 8,000 of them and a name of 8,000 letters made a face of
+    // 64,000,000 characters from 16 KB of source.
+    const name = "Invented".repeat(1_000);
+    const hostile = fontsOf(`\\setmainfont[BoldFont=${"*".repeat(8_000)}]{${name}}`);
+    expect(hostile).toEqual({ families: [name], files: [] });
+    expect(fontsOf("\\setmainfont[BoldFont=** Bold]{Invented}").families).toEqual([
+      "Invented",
+      "InventedInvented Bold",
+    ]);
+    expect(fontsOf("\\setmainfont[a=1][b=2][c=3][BoldFont=* Bold]{Invented}").families).toEqual([
+      "Invented",
+      "Invented Bold",
+    ]);
+    expect(fontsOf("\\setmainfont[a=1][b=2][c=3][d=4][BoldFont=* Bold]{Invented}")).toEqual({
+      families: [],
+      files: [],
     });
   });
 
@@ -389,6 +549,96 @@ describe("a document", () => {
     expect(row.fonts.families).toEqual([{ name: "Invented Serif", inTree: false }]);
     expect(row.needs.packages).toEqual(["inventedpdf"]);
     expect(row.needs.fonts).toEqual([]);
+  });
+
+  test("needs either engine when an \\ifnum asks which, as pandoc's templates do", () => {
+    const row = survey({
+      "cv.tex": whole([
+        "\\documentclass{article}",
+        "\\ifnum 0\\ifxetex 1\\fi\\ifluatex 1\\fi=0 % if pdftex",
+        "  \\usepackage{lato}",
+        "\\else % if luatex or xetex",
+        "  \\usepackage{fontspec}",
+        "  \\setsansfont{Invented Sans}",
+        "\\fi",
+      ]),
+    });
+    expect(row.engine).toBe("both");
+    expect(row.fonts.families).toEqual([{ name: "Invented Sans", inTree: false }]);
+    expect(row.needs.fonts).toEqual([]);
+  });
+
+  test("reads its class past a conditional the class passes as an argument", () => {
+    const row = survey({
+      "cv.tex": whole(["\\documentclass{inventedcv}"]),
+      "inventedcv.cls": [
+        "\\LoadClass{article}",
+        "\\ifundef{\\iftutex}{\\newif\\iftutex}{}",
+        "\\iftutex \\RequirePackage{fontspec} \\else \\RequirePackage{inventedpdf} \\fi",
+        "\\RequirePackage{inventedlater}",
+      ].join("\n"),
+    });
+    expect(row.engine).toBe("both");
+    expect(row.needs.packages).toEqual(["inventedlater", "inventedpdf"]);
+  });
+
+  test("counts a package loaded only if present apart from what it needs", () => {
+    const row = survey({
+      "cv.tex": whole([
+        "\\documentclass{article}",
+        "\\IfFileExists{inventedicons.sty}{\\usepackage{inventedicons}}{\\usepackage{inventedelse}}",
+        "\\IfFileExists{inventedboth.sty}{\\usepackage{inventedboth}}{}",
+        "\\usepackage{inventedboth}",
+        "\\IfFileExists{geometry.sty}{\\RequirePackage{geometry}}{}",
+        "\\ifdef{\\inventedicon}{}{\\usepackage{inventedfallback}}",
+      ]),
+    });
+    expect(row.needs.packages).toEqual(["inventedboth", "inventedelse", "inventedfallback"]);
+    expect(row.optional).toEqual([
+      { name: "geometry", held: "tree" },
+      { name: "inventedicons", held: "missing" },
+    ]);
+    expect(row.packages.map((each) => each.name)).toContain("inventedicons");
+    const table = surveyTable({ documents: [row], skipped: [] });
+    expect(table).toContain("| `inventedicons` | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |");
+    expect(table).toContain("| `inventedboth` | 0 | 0 | 0 | 0 | 0 | 1 | 1 | 0 |");
+    // One the tree has is loaded all the same, so it counts for the engine.
+    const engine = survey({
+      "cv.tex": whole([
+        "\\documentclass{article}",
+        "\\IfFileExists{fontspec.sty}{\\usepackage{fontspec}}{}",
+      ]),
+    }).engine;
+    expect(engine).toBe("xetex");
+  });
+
+  test("names a class, package or font only when it is plainly a name", () => {
+    for (const name of ["Source Sans Pro", "fonts/Roboto-Regular.otf", "x".repeat(64)])
+      expect(shownName(name)).toBe(name);
+    for (const name of ["", "a|b", "a`b", "line\nbreak", "x".repeat(65), "Invented & Co"])
+      expect(shownName(name)).toBe(UNPRINTABLE);
+    const row = survey({
+      "cv.tex": whole([
+        "\\documentclass{article}",
+        "\\usepackage{fontspec}",
+        "\\usepackage{!invented",
+        `[Invented link](https://example.invalid/${SECRET})}`,
+        "\\setmainfont{Invented",
+        `![Invented image](https://example.invalid/pixel.png) ${SECRET}`,
+        "===}",
+        `\\setsansfont{${"Invented".repeat(9)}}`,
+      ]),
+    });
+    expect(row.needs.packages).toEqual([UNPRINTABLE]);
+    expect(row.needs.fonts).toEqual([UNPRINTABLE]);
+    expect(row.fonts.families).toEqual([{ name: UNPRINTABLE, inTree: false }]);
+    const table = surveyTable({ documents: [row], skipped: [] });
+    const lines = table.trimEnd().split("\n");
+    expect(lines.every((line) => line.startsWith("|") && line.endsWith("|"))).toBe(true);
+    for (const text of [table, JSON.stringify(row)]) {
+      expect(text).not.toContain("example.invalid");
+      expect(text).not.toContain(SECRET);
+    }
   });
 
   test("reads its class's options before it reads the class", () => {
@@ -578,31 +828,43 @@ describe("the corpus", () => {
   test("prints one table of documents per family and in all, naming no document's text", () => {
     const table = surveyTable(result);
     const lines = table.trimEnd().split("\n");
-    expect(lines[0]).toBe("|  | jake | awesome-cv | altacv | moderncv | europecv | other | all |");
+    expect(lines[0]).toBe(
+      "|  | jake | awesome-cv | altacv | moderncv | europecv | other | all | loaded only if present |",
+    );
     expect(lines.every((line) => line.startsWith("|") && line.endsWith("|"))).toBe(true);
+    // Nine cells on every line, the heading and its rule among them.
+    expect(new Set(lines.map((line) => line.split("|").length))).toEqual(new Set([11]));
     const row = (label: string) => lines.find((line) => line.startsWith(`| ${label} |`));
-    expect(row("Documents surveyed")).toBe("| Documents surveyed | 2 | 0 | 0 | 0 | 0 | 1 | 3 |");
+    expect(row("Documents surveyed")).toBe("| Documents surveyed | 2 | 0 | 0 | 0 | 0 | 1 | 3 |  |");
     expect(row("Skipped: not fetched, or changed on disk")).toBe(
-      "| Skipped: not fetched, or changed on disk | 0 | 0 | 0 | 0 | 0 | 3 | 3 |",
+      "| Skipped: not fetched, or changed on disk | 0 | 0 | 0 | 0 | 0 | 3 | 3 |  |",
     );
-    expect(row("Engine: XeTeX")).toBe("| Engine: XeTeX | 1 | 0 | 0 | 0 | 0 | 0 | 1 |");
-    expect(row("`inventedmissing`")).toBe("| `inventedmissing` | 1 | 0 | 0 | 0 | 0 | 1 | 2 |");
+    expect(row("Engine: XeTeX")).toBe("| Engine: XeTeX | 1 | 0 | 0 | 0 | 0 | 0 | 1 |  |");
+    expect(row("`inventedmissing`")).toBe("| `inventedmissing` | 1 | 0 | 0 | 0 | 0 | 1 | 2 | 0 |");
     expect(row("Needs a class the tree lacks")).toBe(
-      "| Needs a class the tree lacks | 0 | 0 | 0 | 0 | 0 | 1 | 1 |",
+      "| Needs a class the tree lacks | 0 | 0 | 0 | 0 | 0 | 1 | 1 |  |",
     );
-    expect(row("`article`")).toBe("| `article` | 2 | 0 | 0 | 0 | 0 | 0 | 2 |");
+    expect(row("Lacks nothing: no class, package or font the tree lacks, nor LuaTeX")).toBe(
+      "| Lacks nothing: no class, package or font the tree lacks, nor LuaTeX | 1 | 0 | 0 | 0 | 0 | 0 | 1 |  |",
+    );
+    expect(row("`article`")).toBe("| `article` | 2 | 0 | 0 | 0 | 0 | 0 | 2 |  |");
     expect(table).not.toContain(SECRET);
     expect(JSON.stringify(result)).not.toContain(SECRET);
   });
 
-  test("shows a name that would break the table as code", () => {
+  test("shows a name that could break the table, or quote a document, as unprintable", () => {
     const first = result.documents[0];
     if (!first) throw new Error("the corpus has no document surveyed");
+    const odd = ["a|b`c", "invented\n[Invented link](https://example.invalid)", "x".repeat(65)];
     const table = surveyTable({
-      documents: [{ ...first, needs: { ...first.needs, packages: ["a|b`c"] } }],
+      documents: [{ ...first, needs: { ...first.needs, packages: odd, fonts: ["tab\there"] } }],
       skipped: [],
     });
-    expect(table).toContain("| `a\\|b'c` |");
+    const lines = table.trimEnd().split("\n");
+    expect(lines.every((line) => line.startsWith("|") && line.endsWith("|"))).toBe(true);
+    expect(table).toContain("| `(unprintable name)` | 1 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |");
+    for (const text of ["a|b", "example.invalid", "x".repeat(65), "there"])
+      expect(table).not.toContain(text);
   });
 });
 

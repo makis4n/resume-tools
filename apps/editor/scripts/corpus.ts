@@ -4,7 +4,7 @@
  *
  *   pnpm --filter @resume-tools/editor corpus collect
  *   pnpm --filter @resume-tools/editor corpus fetch [--only <id>]
- *   pnpm --filter @resume-tools/editor corpus survey [--json <file>]
+ *   pnpm --filter @resume-tools/editor corpus survey [--json <file>] [--tree <file>]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
  *                 upstream templates' forks give the candidates, public repositories only, and
@@ -28,6 +28,8 @@
  *                 (`scripts/corpus-survey.ts`, decision 0018). It needs `.engine/`, which
  *                 `fetch-engine` builds
  *   --json <file> write each document's row as JSON too, from where pnpm was run
+ *   --tree <file> check the documents against another engine manifest's file list, such as a
+ *                 checkout's of an older layout, from where pnpm was run, in place of `.engine/`'s
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -60,7 +62,7 @@ import {
 import { readTree, surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>]";
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
@@ -175,12 +177,12 @@ async function runFetch(only: string | undefined) {
   }
 }
 
-function runSurvey(json: string | undefined) {
-  if (!existsSync(ENGINE_MANIFEST))
+function runSurvey(json: string | undefined, tree: string | undefined) {
+  if (tree === undefined && !existsSync(ENGINE_MANIFEST))
     throw new Error(
       "survey checks documents against the tree's file list in .engine/manifest.json: run fetch-engine first",
     );
-  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const engine = JSON.parse(readFileSync(tree ?? ENGINE_MANIFEST, "utf8")) as EngineManifest;
   const manifest = readManifest();
   const report = existsSync(FETCH_REPORT_FILE)
     ? parseJson(FetchReport, readFileSync(FETCH_REPORT_FILE, "utf8"), FETCH_REPORT_FILE)
@@ -220,6 +222,7 @@ async function main() {
     options: {
       only: { type: "string" },
       json: { type: "string" },
+      tree: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
@@ -234,12 +237,13 @@ async function main() {
     throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
   if (values.only !== undefined && command !== "fetch") throw new Error("--only goes with fetch");
   if (values.json !== undefined && command !== "survey") throw new Error("--json goes with survey");
+  if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
   if (command === "fetch") return runFetch(values.only);
   if (command === "collect") return runCollect();
   // pnpm runs the script in the editor's folder; a path is the caller's, from where pnpm was run.
-  return runSurvey(
-    values.json === undefined ? undefined : resolve(process.env.INIT_CWD ?? ".", values.json),
-  );
+  const caller = (path: string | undefined) =>
+    path === undefined ? undefined : resolve(process.env.INIT_CWD ?? ".", path);
+  return runSurvey(caller(values.json), caller(values.tree));
 }
 
 main().catch((error: unknown) => {
