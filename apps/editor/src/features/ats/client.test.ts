@@ -116,21 +116,6 @@ describe("analyzeResume", () => {
     expect(result).toEqual({ ok: false, failure: { kind: "not-configured" } });
   });
 
-  it("refuses a PDF over the limit without sending it", async () => {
-    let sent = false;
-    const fetch: typeof globalThis.fetch = async () => {
-      sent = true;
-      return new Response("{}");
-    };
-    const result = await analyzeResume(new Blob([new Uint8Array(11)]), {
-      baseUrl: BASE_URL,
-      fetch,
-      maxUploadBytes: 10,
-    });
-    expect(result).toEqual({ ok: false, failure: { kind: "too-large", maxBytes: 10 } });
-    expect(sent).toBe(false);
-  });
-
   it("reports a service address that is not an absolute URL", async () => {
     const result = await analyzeResume(samplePdf(), { baseUrl: "localhost:8000" });
     expect(result).toEqual({ ok: false, failure: { kind: "not-configured" } });

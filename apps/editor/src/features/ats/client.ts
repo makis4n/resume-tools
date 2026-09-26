@@ -1,12 +1,6 @@
 import { type Analysis, isAnalysis, isServiceError, prepareValidators } from "./contract";
 
 /**
- * The largest PDF sent, matching the service's default ATS_MAX_UPLOAD_BYTES. Checked here as well
- * because a browser usually sees the service's early 413 as a reset connection, not a reply.
- */
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
-
-/**
  * Why an analysis did not arrive. `service` carries the service's own code and a message safe to
  * show; the other kinds carry nothing from the response, so no internal detail can reach the UI.
  */
@@ -14,7 +8,6 @@ export type AnalyzeFailure =
   | { kind: "not-configured" }
   | { kind: "cancelled" }
   | { kind: "network" }
-  | { kind: "too-large"; maxBytes: number }
   | { kind: "service"; status: number; code: string; message: string }
   | { kind: "unexpected"; status: number };
 
@@ -27,8 +20,6 @@ export interface AnalyzeOptions {
   baseUrl?: string;
   signal?: AbortSignal;
   fetch?: typeof fetch;
-  /** Defaults to MAX_UPLOAD_BYTES. */
-  maxUploadBytes?: number;
 }
 
 /** Send a PDF to `POST /v1/analyze` and return the validated analysis or why there is none. */
@@ -39,14 +30,13 @@ export async function analyzeResume(
   const url = endpoint(options.baseUrl ?? import.meta.env.VITE_ATS_SERVICE_URL, "v1/analyze");
   if (!url) return fail({ kind: "not-configured" });
 
-  const maxBytes = options.maxUploadBytes ?? MAX_UPLOAD_BYTES;
-  if (pdf.size > maxBytes) return fail({ kind: "too-large", maxBytes });
-
   // Compile the reply's validators before the resume leaves the browser: if the page's security
   // policy forbids the code Ajv generates, nothing is uploaded only to be unreadable.
   try {
     prepareValidators();
-  } catch {
+  } catch (error) {
+    // The user is told only that analysis is unavailable; the cause is for whoever debugs it.
+    console.error("ATS reply validators could not be compiled", error);
     return fail({ kind: "not-configured" });
   }
 

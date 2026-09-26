@@ -1,5 +1,6 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { analyzeResume } from "./client";
+import { latestOnly } from "./latest-only";
 import {
   failureMessage,
   groupFindings,
@@ -21,32 +22,29 @@ const SEVERITY_LABEL = { critical: "Critical", warning: "Warnings", info: "Notes
  */
 export function AtsPanel({ getPdf }: AtsPanelProps) {
   const [state, dispatch] = useReducer(panelReducer, initialPanelState);
-  const inFlight = useRef<AbortController | null>(null);
+  const [runs] = useState(latestOnly);
 
-  useEffect(() => () => inFlight.current?.abort(), []);
+  useEffect(() => () => runs.cancel(), [runs]);
 
-  async function run() {
-    // At most one request: a newer one cancels the older, whose result is then ignored.
-    inFlight.current?.abort();
-    const controller = new AbortController();
-    inFlight.current = controller;
-    const isCurrent = () => inFlight.current === controller;
+  async function analyse() {
+    const run = runs.start();
     dispatch({ type: "start" });
 
     let pdf: Blob;
     try {
       pdf = await getPdf();
     } catch {
-      if (isCurrent()) dispatch({ type: "fail", message: PREPARE_FAILED });
+      if (run.isCurrent()) dispatch({ type: "fail", message: PREPARE_FAILED });
       return;
     }
+    if (!run.isCurrent()) return;
 
     try {
-      const result = await analyzeResume(pdf, { signal: controller.signal });
-      if (isCurrent()) dispatch({ type: "settle", result, at: new Date() });
+      const result = await analyzeResume(pdf, { signal: run.signal });
+      if (run.isCurrent()) dispatch({ type: "settle", result, at: new Date() });
     } catch {
       const message = failureMessage({ kind: "unexpected", status: 0 });
-      if (isCurrent()) dispatch({ type: "fail", message });
+      if (run.isCurrent()) dispatch({ type: "fail", message });
     }
   }
 
@@ -54,7 +52,7 @@ export function AtsPanel({ getPdf }: AtsPanelProps) {
     <section aria-labelledby="ats-panel-title">
       <h2 id="ats-panel-title">Resume analysis</h2>
       <p>Analysing sends the PDF of your resume to our analysis service. Nothing is kept.</p>
-      <button type="button" onClick={run} disabled={state.status === "analysing"}>
+      <button type="button" onClick={analyse} disabled={state.status === "analysing"}>
         {state.status === "analysing" ? "Analysing…" : "Analyse resume"}
       </button>
 

@@ -35,12 +35,8 @@ let validators: {
   error: ValidateFunction<ServiceErrorBody>;
 } | null = null;
 
-/** Compile the validators now if they are not yet. Throws if they cannot be compiled. */
-export function prepareValidators(): void {
-  compiled();
-}
-
-function compiled() {
+/** The compiled validators, compiling them on the first call. Throws if they cannot be compiled. */
+export function prepareValidators() {
   if (!validators) {
     const ajv = new Ajv2020();
     validators = {
@@ -52,9 +48,9 @@ function compiled() {
 }
 
 export function isAnalysis(value: unknown): value is Analysis {
-  return compiled().analysis(value);
+  return prepareValidators().analysis(value);
 }
 
 export function isServiceError(value: unknown): value is ServiceErrorBody {
-  return compiled().error(value);
+  return prepareValidators().error(value);
 }
