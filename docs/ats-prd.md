@@ -21,9 +21,11 @@ decision 0018; the editor's side of the integration is decision 0019.
 
 ## 2. Current state
 
-- `apps/ats/src/ats/analyze.py` checks the PDF signature and returns an empty analysis.
-- The ATS has no HTTP server, PDF extractor, scoring engine or model integration.
-- `apps/editor/src/features/ats` contains only a README; there is no panel or API client.
+- Milestone 0 is built. `apps/ats/src/ats/service.py` serves `POST /v1/analyze` and
+  `GET /health` (`uv run ats-serve`); `apps/ats/src/ats/analyze.py` behind it checks the PDF
+  signature and returns an empty analysis. `apps/editor/src/features/ats` holds the client, which
+  validates replies against the contract, and a panel that nothing mounts yet.
+- The ATS has no PDF extractor, scoring engine or model integration.
 - The editor's milestone 2 has landed: three curated templates, the side panel, documents kept in
   the browser and PDF download. `Compiler.pdf()` in `apps/editor/src/editor/compiler.ts` returns the
   bytes the download button saves, which are the bytes the panel sends.
@@ -341,14 +343,15 @@ Editor -> job description -> POST /v1/job-requirements -> requirement list -> Ed
 Editor -> multipart PDF + requirement list -> POST /v1/analyze -> analysis JSON -> Editor
 ```
 
-Milestone 0 uses the existing `ats/v1` response unchanged.
+Milestone 0 uses the `ats/v1` response shape unchanged, and adds `error.schema.json` for every
+non-2xx reply.
 
 ### 10.2 v1 revision
 
-The contract is still a draft and no client consumes it yet. Decision 0018 proposes these changes
-within `ats/v1`:
+The contract is still a draft, and its only client is the editor's milestone 0 client. Decision
+0018 sets out these changes within `ats/v1`; the first has landed with milestone 0:
 
-- **Tolerate additions.** Remove `additionalProperties: false` from the response and from
+- **Tolerate additions (landed).** Remove `additionalProperties: false` from the response and from
   `finding`, and require clients to ignore unknown properties. Without this, deploying a new field
   to the service before the editor updates breaks every response, so "additive changes stay in v1"
   would not hold.
@@ -558,10 +561,10 @@ required notices. Dependencies added to this repository must be named in the pul
 
 ## 18. Immediate next actions
 
-1. Agree decision 0019 with the editor owner: panel tab, check page and PDF exposure.
-2. Accept decision 0018 and land the contract's tolerance change while the schema is a draft.
-3. Create the integration-skeleton issue and keep it separate from PDF analysis.
-4. Build the fixture-based editor-to-ATS request using the existing response contract.
-5. Benchmark pdfminer.six and pypdfium2 on the fixture corpus before designing the rubric around
+1. Agree decision 0019 with the editor owner: panel tab, check page and where the panel gets the
+   PDF.
+2. Accept decision 0018.
+3. Mount the panel with a `getPdf` that wraps `Compiler.pdf()`, and try it in a real browser.
+4. Benchmark pdfminer.six and pypdfium2 on the fixture corpus before designing the rubric around
    either library's behaviour.
-6. Collect the hand-checked job-description set before choosing a model provider.
+5. Collect the hand-checked job-description set before choosing a model provider.
