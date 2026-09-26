@@ -4,6 +4,7 @@ Nothing here reads, logs or keeps the PDF's contents.
 """
 
 import logging
+import math
 import os
 from typing import Any
 
@@ -59,9 +60,12 @@ def error_response(status: int, code: str, message: str) -> JSONResponse:
 
 
 def readable_size(size: int) -> str:
-    """4194304 -> "4 MB", 1572864 -> "1.5 MB", 4096 -> "4 KB"."""
+    """4194304 -> "4 MB", 1572864 -> "1.5 MB", 4096 -> "4 KB".
+
+    Rounds down, so the size stated as a limit is never more than the real one.
+    """
     value, unit = (size / 1024**2, "MB") if size >= 1024**2 else (size / 1024, "KB")
-    return f"{value:.1f}".removesuffix(".0") + f" {unit}"
+    return f"{math.floor(value * 10) / 10:.1f}".removesuffix(".0") + f" {unit}"
 
 
 def too_large(max_upload_bytes: int) -> ServiceError:
@@ -160,9 +164,13 @@ def create_app(
     @app.exception_handler(StarletteHTTPException)
     async def http_error(_: Request, error: StarletteHTTPException) -> JSONResponse:
         if isinstance(error, ServiceError):
-            return error_response(error.status_code, error.code, error.message)
-        code = HTTP_ERROR_CODES.get(error.status_code, "http-error")
-        return error_response(error.status_code, code, HTTP_ERROR_MESSAGE)
+            reply = error_response(error.status_code, error.code, error.message)
+        else:
+            code = HTTP_ERROR_CODES.get(error.status_code, "http-error")
+            reply = error_response(error.status_code, code, HTTP_ERROR_MESSAGE)
+        # Keep headers the error carries, such as Allow on a 405.
+        reply.headers.update(error.headers or {})
+        return reply
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(_: Request, __: RequestValidationError) -> JSONResponse:
@@ -185,7 +193,8 @@ def create_app(
 
     @app.post("/v1/analyze")
     async def analyze_resume(file: UploadFile) -> dict[str, Any]:
-        if file.content_type not in PDF_CONTENT_TYPES:
+        media_type = (file.content_type or "").split(";")[0].strip().lower()
+        if media_type not in PDF_CONTENT_TYPES:
             raise ServiceError(415, "not-a-pdf", NOT_A_PDF)
         pdf = await file.read(max_upload_bytes + 1)
         if len(pdf) > max_upload_bytes:

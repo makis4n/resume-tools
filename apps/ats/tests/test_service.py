@@ -76,10 +76,13 @@ def test_health(client: TestClient) -> None:
 
 
 def test_sizes_read_naturally() -> None:
-    assert [readable_size(size) for size in (5 * 1024**2, 1572864, 4096)] == [
+    sizes = (5 * 1024**2, 1572864, 4096, 5 * 1024**2 - 1, 1024**2 - 1)
+    assert [readable_size(size) for size in sizes] == [
         "5 MB",
         "1.5 MB",
         "4 KB",
+        "4.9 MB",
+        "1023.9 KB",
     ]
 
 
@@ -93,6 +96,13 @@ def test_accepts_a_pdf_declared_with_a_generic_type(client: TestClient) -> None:
     response = upload(client, minimal_pdf(), "application/octet-stream")
     assert response.status_code == 200
     ANALYSIS.validate(response.json())
+
+
+@pytest.mark.parametrize("content_type", ["application/pdf; charset=binary", "Application/PDF"])
+def test_accepts_a_pdf_type_with_parameters_or_capitals(
+    client: TestClient, content_type: str
+) -> None:
+    assert upload(client, minimal_pdf(), content_type).status_code == 200
 
 
 def test_the_contract_tolerates_properties_it_does_not_know() -> None:
@@ -158,7 +168,9 @@ def test_rejects_a_request_without_a_file(client: TestClient) -> None:
 
 def test_unknown_paths_and_methods_follow_the_error_contract(client: TestClient) -> None:
     assert_error(client.get("/v1/nothing"), 404, "not-found")
-    assert_error(client.get("/v1/analyze"), 405, "method-not-allowed")
+    response = client.get("/v1/analyze")
+    assert_error(response, 405, "method-not-allowed")
+    assert response.headers["allow"] == "POST"
 
 
 def test_an_unexpected_error_follows_the_contract_without_leaking(
