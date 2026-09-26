@@ -55,7 +55,7 @@ export function documentClass(tex: string): string | undefined {
   const text = withoutComments(tex);
   const match = /\\documentclass(?![A-Za-z@])/.exec(text);
   if (!match) return undefined;
-  return group(text, skipOptional(text, match.index + match[0].length))?.value.trim();
+  return argument(text, match.index + match[0].length)?.trim();
 }
 
 /** A macro's name right after one of these is being defined, not called. */
@@ -186,7 +186,9 @@ const COMMANDS =
 
 /**
  * The files a source loads, in the order it names them. A name built by a macro, holding a
- * backslash or a `#`, cannot be read without running TeX and is left out.
+ * backslash or a `#`, cannot be read without running TeX and is left out, and so is one whose
+ * brackets do not close within WINDOW characters, which keeps the time this takes linear in the
+ * source's length however its brackets are laid out.
  */
 export function references(tex: string): Reference[] {
   const text = withoutComments(tex);
@@ -205,18 +207,18 @@ export function references(tex: string): Reference[] {
       case "documentclass":
       case "LoadClass":
       case "LoadClassWithOptions":
-        add("class", [group(text, skipOptional(text, at))?.value ?? ""]);
+        add("class", [argument(text, at) ?? ""]);
         break;
       case "usepackage":
       case "RequirePackage":
       case "RequirePackageWithOptions":
-        add("package", (group(text, skipOptional(text, at))?.value ?? "").split(","));
+        add("package", (argument(text, at) ?? "").split(","));
         break;
       case "input": {
         // LaTeX's \input takes a group; TeX's primitive takes a name that ends at a space.
         const braced = group(text, at);
-        const bare = /^\s+([^\s{}\\%]+)/.exec(text.slice(at));
-        add("input", [braced?.value ?? bare?.[1] ?? ""]);
+        BARE_NAME.lastIndex = at;
+        add("input", [braced?.value ?? BARE_NAME.exec(text)?.[1] ?? ""]);
         break;
       }
       case "include":
@@ -238,49 +240,75 @@ export function references(tex: string): Reference[] {
         add("bibliography", (group(text, at)?.value ?? "").split(","));
         break;
       case "addbibresource":
-        add("bibliography", [group(text, skipOptional(text, at))?.value ?? ""]);
+        add("bibliography", [argument(text, at) ?? ""]);
         break;
     }
   }
   return found;
 }
 
-/** The index after any spaces at `at`. */
-function skipSpace(text: string, at: number): number {
-  while (at < text.length && /\s/.test(text[at] ?? "")) at++;
+/** TeX's primitive `\input` name: spaces, then everything up to a space, a brace or a comment. */
+const BARE_NAME = /\s+([^\s{}\\%]+)/y;
+
+/**
+ * How many characters past where it starts an argument is looked for: a bracket that has not
+ * closed by then is taken never to, so that reading one command's arguments costs at most this
+ * much, and reading a source costs at most this much for each command in it.
+ */
+export const WINDOW = 8_192;
+
+/** The index after any spaces at `at`, looking no further than `stop`. */
+function skipSpace(text: string, at: number, stop: number): number {
+  while (at < stop && /\s/.test(text[at] ?? "")) at++;
   return at;
 }
 
-/** The index after any `[...]` optional arguments at `at`, and the spaces around them. */
-function skipOptional(text: string, at: number): number {
+/**
+ * The index after any `[...]` optional arguments at `at` and the spaces around them, or undefined
+ * when they do not end within WINDOW characters of `at`.
+ */
+function skipOptional(text: string, at: number): number | undefined {
+  const stop = Math.min(text.length, at + WINDOW);
   for (;;) {
-    at = skipSpace(text, at);
+    at = skipSpace(text, at, stop);
+    if (at >= stop) return stop === text.length ? at : undefined;
     if (text[at] !== "[") return at;
     let depth = 0;
     let i = at + 1;
-    for (; i < text.length; i++) {
+    for (; i < stop; i++) {
       const char = text[i];
       if (char === "\\") i++;
       else if (char === "{") depth++;
       else if (char === "}") depth--;
       else if (char === "]" && depth <= 0) break;
     }
+    if (i >= stop) return undefined;
     at = i + 1;
   }
 }
 
-/** The braced group at `at`, after any spaces, and the index after it; undefined if none. */
+/**
+ * The braced group at `at`, after any spaces, and the index after it; undefined if there is none,
+ * or it does not close within WINDOW characters of `at`.
+ */
 function group(text: string, at: number): { value: string; end: number } | undefined {
-  const start = skipSpace(text, at);
-  if (text[start] !== "{") return undefined;
+  const stop = Math.min(text.length, at + WINDOW);
+  const start = skipSpace(text, at, stop);
+  if (start >= stop || text[start] !== "{") return undefined;
   let depth = 0;
-  for (let i = start; i < text.length; i++) {
+  for (let i = start; i < stop; i++) {
     const char = text[i];
     if (char === "\\") i++;
     else if (char === "{") depth++;
     else if (char === "}" && --depth === 0) return { value: text.slice(start + 1, i), end: i + 1 };
   }
   return undefined;
+}
+
+/** A command's mandatory argument at `at`, after its optional ones; undefined if unreadable. */
+function argument(text: string, at: number): string | undefined {
+  const after = skipOptional(text, at);
+  return after === undefined ? undefined : group(text, after)?.value;
 }
 
 /**

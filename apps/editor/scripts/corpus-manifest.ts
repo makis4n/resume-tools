@@ -3,15 +3,21 @@
  *
  * The corpus is a few hundred public LaTeX resumes: real people's documents, public by their
  * owners' choice and mostly under no licence, so the repository keeps their sources and never
- * their content. For each document the manifest names a GitHub repository, the commit its default
- * branch was at when the document was collected, and each file to fetch with its size and SHA-256,
- * so that `corpus.ts fetch` gets the same bytes on every machine or refuses them. What `fetch`
- * writes goes under `.corpus/`, which git ignores.
+ * their content. For each document the manifest names a public GitHub repository, by name and by
+ * GitHub's number for it, the commit its default branch was at when the document was collected,
+ * and each file to fetch with its size and SHA-256, so that `corpus.ts fetch` gets the same bytes
+ * on every machine or refuses them. It names the fonts beside the document and only counts the
+ * images, whose names can say whose they are. A document whose repository went away is withdrawn:
+ * its entry keeps its id and family and nothing else, so that the id is never given again. What
+ * `fetch` writes goes under `.corpus/`, which git ignores.
  *
  * Every path is a path in the repository, relative, with `/` between its parts; the schema refuses
- * any other, and `fetch` checks each again before it writes, since a path becomes a file on disk.
+ * any other, and a document two of whose paths would be one file on a disk that ignores case or
+ * Unicode normalisation. `fetch` checks each path again before it writes, since a path becomes a
+ * file on disk.
  */
 
+import { randomBytes } from "node:crypto";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,11 +53,11 @@ export const FILE_EXTENSIONS: readonly string[] = [
   ".bib",
 ];
 
-/** What an asset may be: a font file or an image. Assets are named, never fetched. */
-export const ASSET_EXTENSIONS: readonly string[] = [
-  ".otf",
-  ".ttf",
-  ".pfb",
+/** The fonts a document's folder holds, which the manifest names and never fetches. */
+export const FONT_EXTENSIONS: readonly string[] = [".otf", ".ttf", ".pfb"];
+
+/** The images it holds, which the manifest counts and never names: a name can say whose they are. */
+export const IMAGE_EXTENSIONS: readonly string[] = [
   ".png",
   ".jpg",
   ".jpeg",
@@ -64,7 +70,7 @@ export const ASSET_EXTENSIONS: readonly string[] = [
 export const MAX_FILES = 40;
 /** And at most this many bytes together. */
 export const MAX_DOCUMENT_BYTES = 2_000_000;
-/** A document names at most this many assets. */
+/** A document names at most this many fonts. */
 export const MAX_ASSETS = 200;
 
 /**
@@ -85,6 +91,34 @@ export function extensionOf(path: string): string {
   return dot > 0 ? name.slice(dot).toLowerCase() : "";
 }
 
+/**
+ * A path as a disk that ignores case and Unicode normalisation sees it, as macOS's and Windows'
+ * do unless told otherwise: two paths with the same key are one file there.
+ */
+export const diskKey = (path: string) => path.normalize("NFC").toLowerCase();
+
+/** The first of the paths that is one file with a path before it on such a disk, if any. */
+export function collision(paths: readonly string[]): string | undefined {
+  const seen = new Set<string>();
+  for (const path of paths) {
+    const key = diskKey(path);
+    if (seen.has(key)) return path;
+    seen.add(key);
+  }
+  return undefined;
+}
+
+/**
+ * Text as the terminal may be given it: every control character written as its code point, so
+ * that a hostile file name cannot move the cursor, set the window's title or start any other
+ * escape, and a line stays one line. Everything the corpus's scripts print goes through it.
+ */
+export const printable = (text: string) =>
+  text.replace(
+    /\p{Cc}/gu,
+    (char) => `\\u${(char.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`,
+  );
+
 const Path = z
   .string()
   .refine(
@@ -99,11 +133,15 @@ const CorpusFile = z.strictObject({
 });
 export type CorpusFile = z.infer<typeof CorpusFile>;
 
-const CorpusDocument = z
+/** A document taken and still there when it was last looked for. */
+const LiveDocument = z
   .strictObject({
     id: z.string(),
     family: z.enum(FAMILIES),
+    withdrawn: z.undefined().optional(),
     repo: z.string().regex(/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/, "a repository is owner/name"),
+    /** GitHub's number for the repository, which stays when the repository is renamed. */
+    repoId: z.number().int().positive(),
     commit: z.string().regex(/^[0-9a-f]{40}$/, "a commit is 40 lower-case hex digits"),
     /** The SPDX id GitHub reports for the repository; null when it reports none or NOASSERTION. */
     license: z
@@ -113,69 +151,135 @@ const CorpusDocument = z
       .nullable(),
     main: Path,
     files: z.array(CorpusFile).min(1).max(MAX_FILES),
+    /** The fonts in the main file's folder and the folders under it, by path. */
     assets: z.array(Path).max(MAX_ASSETS),
+    /** How many images are there, never which. */
+    images: z.number().int().nonnegative(),
   })
   .superRefine((doc, ctx) => {
     const issue = (message: string) => ctx.addIssue({ code: "custom", message });
-    if (!new RegExp(`^${doc.family}-\\d{4}$`).test(doc.id))
-      issue(`${doc.id}: an id is its family, a dash and four digits`);
     if (doc.files[0]?.path !== doc.main) issue(`${doc.id}: the main file comes first`);
     const paths = doc.files.map((file) => file.path);
     if (new Set(paths).size !== paths.length) issue(`${doc.id}: a file is listed twice`);
+    else {
+      const same = collision(paths);
+      if (same !== undefined)
+        issue(`${doc.id}: ${same} is another of its files on a disk that ignores case`);
+    }
     for (const path of paths)
       if (!FILE_EXTENSIONS.includes(extensionOf(path)))
         issue(`${doc.id}: ${path} is not a file the corpus fetches`);
     for (const path of doc.assets)
-      if (!ASSET_EXTENSIONS.includes(extensionOf(path)))
-        issue(`${doc.id}: ${path} is not a font or an image`);
+      if (!FONT_EXTENSIONS.includes(extensionOf(path))) issue(`${doc.id}: ${path} is not a font`);
     const bytes = doc.files.reduce((sum, file) => sum + file.bytes, 0);
     if (bytes > MAX_DOCUMENT_BYTES)
       issue(`${doc.id}: ${bytes} bytes of files, over ${MAX_DOCUMENT_BYTES}`);
   });
+export type LiveDocument = z.infer<typeof LiveDocument>;
+
+/**
+ * A document withdrawn because its repository was gone, private or blocked when last fetched: its
+ * id and family, which are never given to another, and nothing that says whose it was.
+ */
+const WithdrawnDocument = z.strictObject({
+  id: z.string(),
+  family: z.enum(FAMILIES),
+  withdrawn: z.literal(true),
+});
+export type WithdrawnDocument = z.infer<typeof WithdrawnDocument>;
+
+const CorpusDocument = z.discriminatedUnion("withdrawn", [LiveDocument, WithdrawnDocument]);
 export type CorpusDocument = z.infer<typeof CorpusDocument>;
+
+export const isLive = (doc: CorpusDocument): doc is LiveDocument => doc.withdrawn !== true;
+
+/** The number an id counts to: `jake-0007` is 7. */
+export const idNumber = (id: string) => Number(id.slice(id.lastIndexOf("-") + 1));
+
+/** An id as `collect` gives it: the family, a dash and the counter in four digits. */
+export const idOf = (family: Family, number: number) =>
+  `${family}-${String(number).padStart(4, "0")}`;
 
 export const Manifest = z
   .strictObject({
     version: z.literal(1),
-    /** The day of the last collection that added documents. */
+    /** The day of the last collection that added or withdrew documents. */
     collected: z.iso.date(),
+    /** Each family's next id number: an id is given once, and never again, withdrawn or not. */
+    counters: z.record(z.enum(FAMILIES), z.number().int().positive()),
     /** In the order they were collected, which later collections append to. */
     documents: z.array(CorpusDocument),
   })
   .superRefine((manifest, ctx) => {
+    const issue = (message: string) => ctx.addIssue({ code: "custom", message });
     const ids = new Set<string>();
     const repos = new Set<string>();
-    for (const { id, repo } of manifest.documents) {
-      if (ids.has(id)) ctx.addIssue({ code: "custom", message: `${id} is used twice` });
-      // One document per repository, and GitHub's names ignore case.
-      if (repos.has(repo.toLowerCase()))
-        ctx.addIssue({ code: "custom", message: `${repo} has two documents` });
+    const repoIds = new Set<number>();
+    for (const doc of manifest.documents) {
+      const { id, family } = doc;
+      if (!new RegExp(`^${family}-\\d{4}$`).test(id))
+        issue(`${id}: an id is its family, a dash and four digits`);
+      else if (idNumber(id) >= manifest.counters[family])
+        issue(`${id}: the counter of ${family} is ${manifest.counters[family]}, not past it`);
+      if (ids.has(id)) issue(`${id} is used twice`);
       ids.add(id);
-      repos.add(repo.toLowerCase());
+      if (!isLive(doc)) continue;
+      // One document per repository: GitHub's names ignore case, and a renamed one keeps its number.
+      if (repos.has(doc.repo.toLowerCase())) issue(`${doc.repo} has two documents`);
+      if (repoIds.has(doc.repoId)) issue(`repository ${doc.repoId} has two documents`);
+      repos.add(doc.repo.toLowerCase());
+      repoIds.add(doc.repoId);
     }
   });
 export type Manifest = z.infer<typeof Manifest>;
 
+/** The counters of a manifest that has no documents yet: every family starts at 1. */
+export const firstCounters = () =>
+  Object.fromEntries(FAMILIES.map((family) => [family, 1])) as Record<Family, number>;
+
 /**
  * What the last fetch found for each document: `fetched`, every file present and verified;
- * `unavailable`, a file or the repository is gone; `mismatch`, a file differs from its hash;
- * `failed`, a file could not be downloaded; `pending`, not fetched yet. `paths` names the files
- * that made a document other than fetched.
+ * `unavailable`, the repository is gone, private, blocked or another one now, or a file is gone;
+ * `mismatch`, a file differs from its hash; `failed`, a request failed; `pending`, not fetched yet.
+ * Each entry names the repository and commit it is about, so that it is not taken for a document
+ * a later manifest gives the same id; `paths` names the files that made a document other than
+ * fetched. A withdrawn document is not fetched and has no entry.
  */
 export const FETCH_STATES = ["fetched", "unavailable", "mismatch", "failed", "pending"] as const;
 export type FetchState = (typeof FETCH_STATES)[number];
 
+const ReportEntry = z.strictObject({
+  id: z.string(),
+  repo: z.string(),
+  commit: z.string(),
+  state: z.enum(FETCH_STATES),
+  paths: z.array(z.string()).optional(),
+});
+export type ReportEntry = z.infer<typeof ReportEntry>;
+
 export const FetchReport = z.strictObject({
   version: z.literal(1),
-  documents: z.array(
-    z.strictObject({
-      id: z.string(),
-      state: z.enum(FETCH_STATES),
-      paths: z.array(z.string()).optional(),
-    }),
-  ),
+  documents: z.array(ReportEntry),
 });
 export type FetchReport = z.infer<typeof FetchReport>;
+
+/**
+ * The report's entries that are about the manifest's documents as it has them now, by id: an entry
+ * whose repository or commit differs from its document's is about another document, and is left
+ * out, and so is one for an id the manifest does not have or has withdrawn.
+ */
+export function matchingEntries(
+  manifest: Manifest,
+  report: FetchReport | undefined,
+): Map<string, ReportEntry> {
+  const live = new Map(manifest.documents.filter(isLive).map((doc) => [doc.id, doc]));
+  const entries = new Map<string, ReportEntry>();
+  for (const entry of report?.documents ?? []) {
+    const doc = live.get(entry.id);
+    if (doc && doc.repo === entry.repo && doc.commit === entry.commit) entries.set(entry.id, entry);
+  }
+  return entries;
+}
 
 /** Parse a manifest or a report from its text, naming the file in what it refuses. */
 export function parseJson<T>(schema: z.ZodType<T>, text: string, file: string): T {
@@ -188,6 +292,18 @@ export function parseJson<T>(schema: z.ZodType<T>, text: string, file: string): 
   const result = schema.safeParse(value);
   if (!result.success) throw new Error(`${file} is refused:\n${z.prettifyError(result.error)}`);
   return result.data;
+}
+
+/** What a schema refuses in a value, on one line; empty when it takes it. */
+export function refusal<T>(schema: z.ZodType<T>, value: unknown): string {
+  const result = schema.safeParse(value);
+  return result.success
+    ? ""
+    : result.error.issues
+        .map((issue) =>
+          issue.path.length > 0 ? `${issue.message} at ${issue.path.join(".")}` : issue.message,
+        )
+        .join("; ");
 }
 
 /**
@@ -228,12 +344,18 @@ export function formatJson(value: unknown): string {
 }
 
 /**
+ * The name a file is written under before it is renamed into place: its own, beside it, so that
+ * two writes, of one process or of two, never share one.
+ */
+export const temporaryName = (file: string) => `${file}.${randomBytes(6).toString("hex")}.partial`;
+
+/**
  * Write a file under another name and rename it into place, so that a run stopped while writing
  * leaves the old file or the new one, never part of one. Its folder is made if need be.
  */
 export function writeAtomically(file: string, data: string | Uint8Array) {
   mkdirSync(dirname(file), { recursive: true });
-  const partial = `${file}.partial-${process.pid}`;
+  const partial = temporaryName(file);
   writeFileSync(partial, data);
   renameSync(partial, file);
 }
