@@ -12,14 +12,17 @@ the probe finds per macro and argument is what item 6 describes to the naming st
 assembles a package from. The code is `apps/editor/src/import/candidates.ts` and `probe.ts`,
 browser-safe; `corpus probe` runs it over the corpus and `corpus oracle` over the three launch
 templates' upstream samples, whose expected verdicts are `apps/editor/corpus/oracle.json`. The
-aligner's case folding, the other half of item 5, is its own pull request; until it lands, a field
-whose glyphs differ from its text in case alone is recorded `case`.
+aligner's case folding, the other half of item 5, is decision 0021, which landed first, so a field
+set through `\MakeUppercase` is editable; a field is recorded `case` only where the aligner's fold,
+once for each glyph and only where it changes a character the glyph spells, cannot match it and
+folding the whole field, glyphs and text, to small letters can.
 
 An adversarial review of the first version found that its compiles never took the pass that
 reads what the first wrote, that it never compiled the editable candidates together, that it
 settled a field a move had split or doubled without trying it again, that it set down what no
 field covers by a guess at its neighbours, and a few smaller faults. What follows is the probe
-with its fixes, and the tables are its runs with item 4's parser merged.
+with its fixes, and the tables are its runs with item 4's parser and decision 0021's folding
+merged.
 
 ## Decision
 
@@ -117,7 +120,7 @@ and the output sets the reference's glyph stream. Otherwise, in this order:
 | `twice` | Its begin marker came twice (`page`), as a running head or a footer sets it, or once and its marker's text reached another special too (`special`), as a link's address built from the argument the macro also sets |
 | `split` | It began on one page and ended on another, or never ended (`no end`), or ended before it began |
 | `misaligned` | Its glyphs do not spell its text: a macro transforms it, sets text of its own inside it, or took its markers apart (`torn`: markers of ids no candidate has came instead) |
-| `case` | Its glyphs spell its text in another case alone, as `\MakeUppercase` sets it; the aligner's folding makes it editable |
+| `case` | Its glyphs spell its text only once both are folded whole to small letters, which the aligner's own fold, once for each glyph and only where it changes a character the glyph spells (decision 0021), does not reach: a case mapping other than Unicode's default ones, as German's `de-x-eszett` capitals set ß as ẞ, where the aligner takes ß's capitals for SS. A field set through `\MakeUppercase` is editable since decision 0021 |
 | `moved` | Its markers and glyphs passed, but the output's glyphs moved (the first difference's kind as detail), or it is set inside a transform the PDF applies and the page does not (`transform`, the harness's special check) |
 | `untested` | The budget ran out before it was settled |
 
@@ -234,9 +237,9 @@ the dump aside; what is left then is `untested`.
 
 ## The oracle
 
-`corpus oracle` on 27 September 2026, after the review's fixes and with item 4's parser merged, the
-tree of layout 6, the M4 Pro: Jake's sample took 1 compile from its format, every candidate at
-once, AltaCV's 61, and Awesome-CV's 30 whole ones, 43 s.
+`corpus oracle` on 27 September 2026, after the review's fixes, with item 4's parser and decision
+0021's folding merged, the tree of layout 6, the M4 Pro: Jake's sample took 1 compile from its
+format, every candidate at once, AltaCV's 61, and Awesome-CV's 30 whole ones, 43 s.
 
 | Template | Argument | Port | Expected | Found | |
 |---|---|---|---|---|---|
@@ -250,7 +253,7 @@ once, AltaCV's 61, and Awesome-CV's 30 whole ones, 43 s.
 | jake | `section (standard)` | marks | editable | editable (4 of 4 editable) | agrees |
 | jake | `item (standard)` | marks | editable | editable (1 of 1 editable) | agrees |
 | jake | `paragraph (standard)` | marks | editable | editable (5 of 5 editable) | agrees |
-| altacv | `\name #1` | marks | case | case (1 of 1) | agrees |
+| altacv | `\name #1` | marks | editable | editable (1 of 1) | agrees |
 | altacv | `\tagline #1` | marks | editable | editable (1 of 1) | agrees |
 | altacv | `\photoR #1` | omits | breaks | breaks (1 of 1) | agrees |
 | altacv | `\photoR #2` | omits | breaks | breaks (1 of 1) | agrees |
@@ -268,7 +271,7 @@ once, AltaCV's 61, and Awesome-CV's 30 whole ones, 43 s.
 | altacv | `\NewInfoField #3` | omits | locked | misaligned (2 of 2) | agrees |
 | altacv | `\NewInfoField #4` | omits | locked | vanished (1 of 1) | agrees |
 | altacv | `\columnratio #1` | omits | breaks | breaks (1 of 1) | agrees |
-| altacv | `\cvsection #2` | marks | case | case (10 of 10) | agrees |
+| altacv | `\cvsection #2` | marks | editable | editable (10 of 10) | agrees |
 | altacv | `\cvevent #1` | marks | editable | editable (4 of 7; 3 raw); parts 6 of 6 editable | agrees |
 | altacv | `\cvevent #2` | marks | editable | editable (7 of 7) | agrees |
 | altacv | `\cvevent #3` | marks | editable | editable (6 of 7; 1 moved); empty: moved | agrees |
@@ -341,18 +344,20 @@ adds the correction itself (decision 0007's update). Awesome-CV's `\cvhonor #1` 
 parser kept raw as a table's cells, are placed calls since item 4's fix, and all four are editable
 in the 21 awards.
 
-Of the port's other slots, the probe finds editable Jake's entries and bullets, AltaCV's events,
+Of the port's other slots, the probe finds editable Jake's entries and bullets, AltaCV's name and
+section titles, which the class sets in capitals and the aligner folds (decision 0021), its events,
 headline, location and mail address, and Awesome-CV's name, entries' organisation, place and
-dates, honours, and bullets; and locked as the ports' decisions say, AltaCV's name and section
-titles in capitals (`case`), its contacts, whose links repeat their text (`twice`), and its tags,
-which a PDF-only transform places (`moved`, `transform`), and Awesome-CV's positions in small
-capitals and its contacts. What the ports leave out comes out locked where the class takes it as
-a length, a key or an address, and editable where it is plain text.
+dates, honours, and bullets; and locked as the ports' decisions say, AltaCV's contacts, whose
+links repeat their text (`twice`), and its tags, which a PDF-only transform places (`moved`,
+`transform`), and Awesome-CV's positions in small capitals and its contacts. What the ports leave
+out comes out locked where the class takes it as a length, a key or an address, and editable
+where it is plain text.
 
 ## The corpus
 
-`corpus probe` on 27 September 2026, after the review's fixes and with item 4's parser merged, the
-tree of layout 6, the M4 Pro, four children, on a machine shared with other work: 9.9 minutes.
+`corpus probe` on 27 September 2026, after the review's fixes, with item 4's parser and decision
+0021's folding merged, the tree of layout 6, the M4 Pro, four children, on a machine shared with
+other work: 9.6 minutes.
 
 |  | jake | awesome-cv | altacv | moderncv | europecv | other | all |
 |---|--:|--:|--:|--:|--:|--:|--:|
@@ -364,54 +369,54 @@ tree of layout 6, the M4 Pro, four children, on a machine shared with other work
 | Path: whole compiles, XeTeX | 0 | 18 | 1 | 0 | 0 | 7 | 26 |
 | Path: whole compiles, the preamble did not dump | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Path: whole compiles, the format did not set the reference's glyphs | 1 | 0 | 2 | 0 | 1 | 5 | 9 |
-| Compiles per document, median | 2 | 26 | 46 | 38 | 19 | 14 | 16 |
+| Compiles per document, median | 2 | 26 | 47 | 38 | 19 | 14 | 16 |
 | Compiles per document, most | 39 | 64 | 64 | 64 | 32 | 64 | 64 |
-| Compiles that took a second pass | 60% | 16% | 35% | 36% | 64% | 25% | 31% |
+| Compiles that took a second pass | 59% | 16% | 34% | 36% | 64% | 26% | 31% |
 | The budget ran out | 0 | 1 | 1 | 3 | 0 | 2 | 7 |
 | **Candidates** |  |  |  |  |  |  |  |
 | In all | 2681 | 2014 | 1777 | 1380 | 796 | 4088 | 12736 |
-| Editable | 2358 | 1363 | 669 | 822 | 556 | 2098 | 7866 |
+| Editable | 2363 | 1363 | 740 | 822 | 556 | 2148 | 7992 |
 | `container` | 15 | 146 | 12 | 30 | 21 | 174 | 398 |
 | `raw` | 153 | 51 | 60 | 57 | 105 | 304 | 730 |
 | `breaks` | 11 | 7 | 114 | 2 | 50 | 317 | 501 |
-| `vanished` | 20 | 19 | 481 | 23 | 17 | 35 | 595 |
+| `vanished` | 20 | 19 | 481 | 23 | 17 | 34 | 594 |
 | `twice` | 0 | 82 | 54 | 15 | 10 | 22 | 183 |
-| `moved` | 21 | 34 | 237 | 123 | 12 | 138 | 565 |
+| `moved` | 22 | 34 | 237 | 123 | 12 | 138 | 566 |
 | `misaligned` | 97 | 224 | 63 | 1 | 25 | 464 | 874 |
-| `case` | 6 | 0 | 71 | 0 | 0 | 50 | 127 |
+| `case` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `split` | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
-| `untested` | 0 | 88 | 16 | 307 | 0 | 485 | 896 |
+| `untested` | 0 | 88 | 16 | 307 | 0 | 486 | 897 |
 | **Macros' and environments' arguments, per document** |  |  |  |  |  |  |  |
 | In all | 277 | 385 | 196 | 175 | 106 | 220 | 1359 |
-| Editable | 232 | 167 | 72 | 110 | 55 | 134 | 770 |
+| Editable | 232 | 167 | 86 | 110 | 55 | 139 | 789 |
 | `container` | 0 | 25 | 10 | 6 | 5 | 9 | 55 |
 | `raw` | 17 | 32 | 4 | 4 | 6 | 7 | 70 |
 | `breaks` | 0 | 0 | 20 | 0 | 16 | 9 | 45 |
-| `vanished` | 1 | 10 | 10 | 3 | 7 | 6 | 37 |
+| `vanished` | 1 | 10 | 11 | 3 | 7 | 6 | 38 |
 | `twice` | 0 | 82 | 41 | 15 | 6 | 13 | 157 |
 | `moved` | 8 | 2 | 12 | 5 | 4 | 15 | 46 |
 | `misaligned` | 19 | 48 | 11 | 1 | 7 | 20 | 106 |
-| `case` | 0 | 0 | 15 | 0 | 0 | 5 | 20 |
+| `case` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `split` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `untested` | 0 | 19 | 1 | 31 | 0 | 2 | 53 |
 | Editable, but not when empty | 1 | 9 | 10 | 9 | 4 | 4 | 37 |
-| Macros and environments every argument of which is editable | 67 of 106 | 59 of 213 | 35 of 142 | 43 of 85 | 29 of 69 | 40 of 105 | 273 of 720 |
+| Macros and environments every argument of which is editable | 67 of 106 | 59 of 213 | 49 of 142 | 43 of 85 | 29 of 69 | 45 of 105 | 292 of 720 |
 | **Standard nodes, editable** |  |  |  |  |  |  |  |
-| Section titles | 153 of 169 | 0 | 0 | 69 of 77 | 0 of 15 | 153 of 302 | 375 of 563 |
+| Section titles | 158 of 169 | 0 | 0 | 69 of 77 | 0 of 15 | 181 of 302 | 408 of 563 |
 | List items' text | 127 of 155 | 465 of 489 | 214 of 333 | 68 of 96 | 9 of 11 | 419 of 923 | 1302 of 2007 |
 | List items' labels | 0 | 0 | 0 | 0 | 0 | 72 of 77 | 72 of 77 |
 | Paragraphs | 257 of 270 | 25 of 45 | 61 of 130 | 20 of 21 | 20 of 25 | 583 of 1156 | 966 of 1647 |
 | **The reference's glyphs** |  |  |  |  |  |  |  |
 | In all | 138202 | 78881 | 41818 | 43796 | 20643 | 215767 | 539107 |
-| Covered by editable fields | 93% | 87% | 86% | 65% | 82% | 51% | 72% |
-| Set by a locked candidate | 5% | 2% | 12% | 25% | 3% | 23% | 14% |
+| Covered by editable fields | 93% | 87% | 88% | 65% | 82% | 51% | 72% |
+| Set by a locked candidate | 5% | 2% | 10% | 25% | 3% | 22% | 13% |
 | Set by a raw chunk | 1% | 0% | 0% | 1% | 5% | 18% | 8% |
 | Set by the template alone | 1% | 11% | 2% | 9% | 11% | 9% | 7% |
 | **Time** |  |  |  |  |  |  |  |
-| The dump, median | 278 ms |  | 668 ms | 353 ms | 303 ms | 264 ms | 291 ms |
-| The dump, slowest | 2311 ms |  | 2464 ms | 2500 ms | 401 ms | 474 ms | 2500 ms |
-| The probe, median | 1082 ms | 41808 ms | 23040 ms | 12270 ms | 2724 ms | 2887 ms | 3441 ms |
-| The probe, slowest | 9269 ms | 219394 ms | 180356 ms | 55946 ms | 17660 ms | 36145 ms | 219394 ms |
+| The dump, median | 281 ms |  | 485 ms | 347 ms | 303 ms | 274 ms | 295 ms |
+| The dump, slowest | 745 ms |  | 2188 ms | 372 ms | 404 ms | 472 ms | 2188 ms |
+| The probe, median | 798 ms | 44640 ms | 18167 ms | 11041 ms | 2731 ms | 2906 ms | 2895 ms |
+| The probe, slowest | 5489 ms | 149384 ms | 125122 ms | 20550 ms | 17786 ms | 121701 ms | 149384 ms |
 | **Locked arguments, by the argument and its verdict: documents** |  |  |  |  |  |  |  |
 | `\email #1: twice` | 0 | 17 | 9 | 9 | 0 | 2 | 37 |
 | `\linkedin #1: twice` | 0 | 15 | 9 | 0 | 0 | 1 | 25 |
@@ -426,17 +431,17 @@ tree of layout 6, the M4 Pro, four children, on a machine shared with other work
 | `\columnratio #1: breaks` | 0 | 0 | 9 | 0 | 0 | 0 | 9 |
 | `\makecvfooter #2: twice` | 0 | 8 | 0 | 0 | 0 | 1 | 9 |
 | `\makecvheader #1: vanished` | 0 | 9 | 0 | 0 | 0 | 0 | 9 |
-| `\name #1: case` | 0 | 0 | 7 | 0 | 0 | 2 | 9 |
 | `\position #1: raw` | 0 | 8 | 0 | 0 | 0 | 1 | 9 |
+| `\resumeItem #1: moved` | 7 | 0 | 0 | 0 | 0 | 0 | 7 |
 | **Editable arguments, by the argument: documents** |  |  |  |  |  |  |  |
 | `\resumeSubheading #2` | 34 | 0 | 0 | 0 | 0 | 0 | 34 |
 | `\resumeSubheading #4` | 34 | 0 | 0 | 0 | 0 | 0 | 34 |
 | `\resumeSubheading #1` | 33 | 0 | 0 | 0 | 0 | 0 | 33 |
+| `\name #1` | 0 | 15 | 8 | 6 | 0 | 3 | 32 |
 | `\resumeSubheading #3` | 31 | 0 | 0 | 0 | 0 | 0 | 31 |
 | `\cventry #2` | 0 | 16 | 0 | 8 | 0 | 1 | 25 |
 | `\cventry #4` | 0 | 16 | 0 | 8 | 0 | 1 | 25 |
 | `\cventry #3` | 0 | 15 | 0 | 8 | 0 | 1 | 24 |
-| `\name #1` | 0 | 15 | 1 | 6 | 0 | 1 | 23 |
 | `\name #2` | 0 | 16 | 0 | 6 | 0 | 1 | 23 |
 | `\resumeItem #1` | 18 | 0 | 0 | 0 | 0 | 0 | 18 |
 | `\cvskill #1` | 0 | 12 | 1 | 0 | 0 | 2 | 15 |
@@ -453,9 +458,9 @@ could not probe would count nowhere; none was.
 ### What the table says
 
 - **Seven tenths of what the references set is editable before naming**: 72% of the corpus's
-  glyphs lie in editable fields, 93% of Jake's forks', 87% of Awesome-CV's, 86% of AltaCV's, 82%
-  of europecv's, 65% of moderncv's and 51% of the hand-rolled ones'. By candidate, 7,866 of 12,736
-  are editable; by argument, 770 of 1,359 across the documents, and 273 of 720 macros are editable
+  glyphs lie in editable fields, 93% of Jake's forks', 88% of AltaCV's, 87% of Awesome-CV's, 82%
+  of europecv's, 65% of moderncv's and 51% of the hand-rolled ones'. By candidate, 7,992 of 12,736
+  are editable; by argument, 789 of 1,359 across the documents, and 292 of 720 macros are editable
   in every argument. europecv's body, one raw table to the parser before item 4's fix, is its
   calls now, 796 candidates where there were 56, and Awesome-CV's honours and skills are calls
   too, 2,014 candidates where there were 1,663.
@@ -464,17 +469,21 @@ could not probe would count nowhere; none was.
   Awesome-CV's and moderncv's alike; `misaligned` (106), Awesome-CV's section titles taken apart
   (17 documents) and its entries' positions in small capitals (16); `breaks` (45), AltaCV's
   lengths and keys, as `\columnratio` and `\photoR` take (20), and europecv's `\ecvitem`, language
-  and personal-information arguments (16); `case` (20), AltaCV's names and titles; and
-  `moved` (46, 88 in the first run), since Jake's `\resumeSubheading #4`, which the italic
-  correction the end marker hid moved in 27 of 35 forks, is editable in 34. Item 6's seeded
-  redefinitions, Awesome-CV's contacts and section colour and AltaCV's contact text and tags, lift
-  the largest of these; the aligner's folding the capitals; and item 8's small capitals and
-  figures Awesome-CV's positions and addresses.
+  and personal-information arguments (16); and `moved` (46, 88 in the first run), since Jake's
+  `\resumeSubheading #4`, which the italic correction the end marker hid moved in 27 of 35 forks,
+  is editable in 34. `case` locks none: the aligner folds case (decision 0021), and no field of the
+  corpus needs a fold it does not make. Of the 20 arguments it locked before, AltaCV's names and
+  section titles and five names and titles of three hand-rolled documents, 19 are editable, and
+  one AltaCV fork's titles are `vanished`, the first of their calls to fail now being one a
+  conditional hides; of its 127 candidates, 126 are editable, and a Jake fork's first paragraph,
+  aligned now, moves the page alone (`moved`). Item 6's seeded redefinitions, Awesome-CV's
+  contacts and section colour and AltaCV's contact text and tags, lift the largest of these; and
+  item 8's small capitals and figures Awesome-CV's positions and addresses.
 - **By candidate, a few documents weigh most**: 506 of the 874 misaligned are seven documents set
   in LaTeX's T1 Computer Modern, the EC fonts, which the tree has metrics for and no outlines
-  (decision 0009), so the page names none of their glyphs; 479 of the 595 vanished are one AltaCV
+  (decision 0009), so the page names none of their glyphs; 479 of the 594 vanished are one AltaCV
   fork's parts inside a conditional the parser cannot decide, which the page does not show either;
-  273 of the 501 that break are one document's `\code` arguments. `untested` (896) is seven
+  273 of the 501 that break are one document's `\code` arguments. `untested` (897) is seven
   documents whose budget ran out, three of them moderncv's, and 475 of it is one document's.
 - **microtype moves a field that starts a line.** pdfTeX protrudes a line's first character into
   the margin and stops looking at a whatsit, so a field whose begin marker starts a line with a
@@ -486,10 +495,10 @@ could not probe would count nowhere; none was.
   candidates compiled together after the bisection, locked none. It costs a compile in a document
   where no set the bisection compiled was just its editable candidates, and none where the first
   compile of all of them passed, as in Jake's sample.
-- **A second pass where the first changed a file**: 31% of the probe's compiles took one, 60% of
+- **A second pass where the first changed a file**: 31% of the probe's compiles took one, 59% of
   Jake's forks', whose `\section` writes its title to the `.aux` whether or not a table of contents
   reads it back, 64% of europecv's, and 16% of Awesome-CV's.
-- **What sets what no editable field covers is found by its source**: 14% of the references'
+- **What sets what no editable field covers is found by its source**: 13% of the references'
   glyphs are set by a locked candidate, 8% by a raw chunk, and 7% by the template alone. A locked
   candidate's glyphs a compile placed in the reference's order count as its own, and each stretch
   of the rest is read against the text its source sets, which puts the classes' own labels with
@@ -498,7 +507,7 @@ could not probe would count nowhere; none was.
   83% of those that went to a raw chunk lie in the chunk's own text; the rest are what a chunk's
   own command sets between its pieces.
 - **The format path holds for pdfTeX**: 82 of 91 pdfTeX documents compiled from their own format,
-  and none failed to dump; a dump took 291 ms at the median. Of the twelve that fell back to whole
+  and none failed to dump; a dump took 295 ms at the median. Of the twelve that fell back to whole
   compiles in the first run, three did so for the comparison's own artefact, xcolor's first black
   pushed in RGB, which the comparison now leaves out in any colour model. The nine left are real
   differences between a format and a whole compile, which item 7's first check, the assembled
@@ -511,10 +520,10 @@ could not probe would count nowhere; none was.
   the dump drops, in the fourth document with an RGB black; and glyphs that move, the first line
   of the first page, in EC small capitals, 0.9 pt higher in two documents, and 57 glyphs of a last
   page 4.6 pt higher. Each probes whole instead.
-- **Time is XeTeX's**: a probe took 3.4 s at the median, 1.1 s for a Jake fork, 12 s for moderncv,
-  23 s for AltaCV and 42 s for an Awesome-CV fork, whose compiles are whole, 219 s at most; item
+- **Time is XeTeX's**: a probe took 2.9 s at the median, 0.8 s for a Jake fork, 11 s for moderncv,
+  18 s for AltaCV and 45 s for an Awesome-CV fork, whose compiles are whole, 149 s at most; item
   8's rewrite puts XeTeX on the format path. A document took 16 compiles at the median, 2 for a
-  Jake fork, and the budget ran out in 7. The slowest dumps, 2.5 s against 0.3 s at the median,
+  Jake fork, and the budget ran out in 7. The slowest dumps, 2.2 s against 0.3 s at the median,
   are the shared machine's.
 - **Empty arguments**: 37 arguments are editable but moved the page when empty, as AltaCV's
   `\cvevent` and moderncv's `\cventry` test their arguments for being empty; the generator writes

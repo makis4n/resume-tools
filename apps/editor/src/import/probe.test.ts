@@ -766,6 +766,7 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
 \newcommand{\cvlink}[1]{\href{#1}{Invented link}\par}
 \newcommand{\cvtwice}[1]{#1, and again #1\par}
 \newcommand{\cvshout}[1]{\MakeUppercase{#1}\par}
+\newcommand{\cvlocale}[1]{\MakeUppercase[lang=de-x-eszett]{#1}\par}
 \newcommand{\cvgap}[1]{\hspace{#1}Invented gap\par}
 \newcommand{\cvhead}[1]{\markright{#1}#1\par}
 \newcommand{\cvmaybe}[1]{\ifx&#1&\else(#1)\fi\par}
@@ -801,7 +802,8 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
     expect(verdict(found, "cvmail")?.verdict).toBe("twice");
     expect(verdict(found, "cvlink")?.verdict).toBe("vanished");
     expect(verdict(found, "cvtwice")?.verdict).toBe("twice");
-    expect(verdict(found, "cvshout")?.verdict).toBe("case");
+    // Set through `\MakeUppercase`, whose capitals the aligner folds (decision 0021).
+    expect(verdict(found, "cvshout")?.verdict).toBe("editable");
     expect(verdict(found, "cvgap")?.verdict).toBe("breaks");
     expect(["twice", "moved"]).toContain(verdict(found, "cvhead")?.verdict);
     // An empty argument the macro tests moves the page; the others of it are editable.
@@ -813,9 +815,10 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
     expect(found.glyphs.covered).toBeLessThan(found.glyphs.reference);
   }, 60_000);
 
-  test("finds the same on an invented XeTeX document, compiled whole", async () => {
+  test("finds the same on an invented XeTeX document, compiled whole, and a case the aligner does not fold", async () => {
+    // Source Sans Pro has the capital ẞ, which German's `de-x-eszett` capitals set for ß.
     const found = await probed({
-      "cv.tex": `\\documentclass{inventedprobe}\n\\usepackage{fontspec}\n\\cvname{Quill Invented}\n\\begin{document}\n\\cvheader\n\\cvplain{Invented plain words}\n\\cvmail{quill@example.invalid}\n\\cvshout{Invented loud}\n\\cvgap{2em}\n\\end{document}\n`,
+      "cv.tex": `\\documentclass{inventedprobe}\n\\usepackage{fontspec}\n\\setmainfont{Source Sans Pro}\n\\cvname{Quill Invented}\n\\begin{document}\n\\cvheader\n\\cvplain{Invented plain words}\n\\cvmail{quill@example.invalid}\n\\cvshout{Invented loud}\n\\cvlocale{Invented große words}\n\\cvgap{2em}\n\\end{document}\n`,
       "inventedprobe.cls": CLASS,
     });
     expect(found.engine).toBe("xetex");
@@ -824,7 +827,10 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
     expect(verdict(found, "cvname")?.verdict).toBe("editable");
     expect(verdict(found, "cvplain")?.verdict).toBe("editable");
     expect(verdict(found, "cvmail")?.verdict).toBe("twice");
-    expect(verdict(found, "cvshout")?.verdict).toBe("case");
+    expect(verdict(found, "cvshout")?.verdict).toBe("editable");
+    // The aligner takes ß's capitals for SS, so ẞ matches only once glyphs and text are both
+    // folded whole to small letters, where it is ß.
+    expect(verdict(found, "cvlocale")?.verdict).toBe("case");
     expect(verdict(found, "cvgap")?.verdict).toBe("breaks");
   }, 60_000);
 

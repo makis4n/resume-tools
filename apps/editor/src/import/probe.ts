@@ -98,9 +98,15 @@ export const PROBE_PASSES = 2;
  * special as well, as a link's address or a running head has it (`twice`); they came, and its
  * glyphs spelt its text, but glyphs moved, or the page cannot place its own (`moved`); its glyphs
  * do not spell its text, as when a macro transforms it or takes its markers apart (`misaligned`),
- * or do only in another case, as `\MakeUppercase` sets it, which the aligner does not fold yet
- * (`case`); it begins on one page and ends on another, or never ends (`split`); or the budget ran
- * out before it was settled (`untested`).
+ * or do only once the glyphs and the text are both folded whole to small letters (`case`); it
+ * begins on one page and ends on another, or never ends (`split`); or the budget ran out before it
+ * was settled (`untested`).
+ *
+ * The aligner folds a text's case itself, once for each glyph and only where the fold changes a
+ * character the glyph spells (decision 0021), so a field set through `\MakeUppercase` is editable.
+ * `case` is a field that fold cannot match and folding the whole field to small letters can: a
+ * mapping other than Unicode's default ones, as German's `de-x-eszett` capitals set ß as ẞ, which
+ * is ß in small letters, where the aligner takes ß's capitals for SS.
  */
 export const REASONS = [
   "raw",
