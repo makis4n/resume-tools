@@ -10,7 +10,8 @@
  * since a tree that is wrong prints back its bytes all the same. It prints one table of what
  * became of them, per family and in all: with the calls it kept raw because a group after them
  * belies their signature, and, for each two documents that hold the same class or style file byte
- * for byte, whether that file's macros get the same keys in both, as item 6's cache needs.
+ * for byte and give it the same options, whether the file's macros both call get the same keys
+ * (`keysOf`) in both, as item 6's cache needs.
  *
  * The documents go to the reference runner's pool of child processes (`runPool`), one at a time
  * each, with LIMIT_MS each; the child is `corpus-parse-child.ts`.
@@ -62,12 +63,17 @@ export interface Characters {
 }
 
 /**
- * A class or style file the document's job holds: the SHA-256 of its bytes, and the keys of the
- * template macros it defines that the signatures found, by name.
+ * A class or style file the document's job holds, or the class it loads from the tree: the SHA-256
+ * of its bytes; the SHA-256 of what the document gives it that changes what its macros become
+ * (`settingOf`); the keys of the macros it defines that the body calls and the preamble does not
+ * define again (`fileMacros`), by name; and those of them whose closure holds a macro the preamble
+ * defines, whose key the preamble moves (`movedByPreamble`).
  */
 export interface HeldFile {
   hash: string;
+  setting: string;
   macros: Record<string, string>;
+  moved?: string[];
 }
 
 /** One document's row: names of macros and numbers only, never its text. */
@@ -90,16 +96,24 @@ export interface ParseRow {
   regeneratedDifference?: DifferenceKind;
   /** Calls kept raw because a group after them belies their signature (`RawNode.suspect`). */
   suspects?: number;
-  /** The class and style files the job holds, by hash, with their macros' keys. */
+  /** The class and style files the job holds, and its class from the tree, by hash, with keys. */
   files?: HeldFile[];
   /** The template macros the body calls, by how their arguments were read. */
   templates?: Record<Resolution, number>;
   /** The template macros the body calls whose arguments could not be read, and why. */
   unresolved?: { name: string; why: string }[];
+  /** The template macros the body calls whose tail could not be read (`tail`), by name. */
+  tails?: string[];
+  /** The template macros the body calls whose arguments a package's table gave (`packages.ts`). */
+  packages?: number;
   /** The template environments the body opens. */
   environments?: number;
   /** Every template macro the compile printed, closures included. */
   macros?: number;
+  /** Of them, those that hold data, whose text the signatures never keep. */
+  data?: number;
+  /** The placeholders that mask an email, a link or a phone number in the definitions. */
+  placeholders?: number;
   /** Names the body uses that are undefined when its preamble ends. */
   undefined?: number;
   /** Those names, as they are. */
@@ -113,6 +127,8 @@ export interface ParseRow {
   /** Milliseconds: parsing (reading and building the tree), and the signatures' two compiles. */
   parseMs?: number;
   signaturesMs?: number;
+  /** Of the signatures' time, the two compiles' passes alone; the rest reads what they print. */
+  signaturesPassesMs?: number;
   /** Milliseconds from the document's being sent to its child to its row coming back. */
   wall: number;
 }
@@ -176,58 +192,82 @@ function undefinedTally(rows: readonly ParseRow[]): [string, number][] {
   return [...tally].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0));
 }
 
+/** Every template macro the documents call whose tail could not be read, with how many do. */
+function tailTally(rows: readonly ParseRow[]): [string, number][] {
+  const tally = new Map<string, number>();
+  for (const row of rows)
+    for (const name of new Set(row.tails ?? [])) {
+      const shown = shownMacro(name);
+      if (shown !== undefined) tally.set(shown, (tally.get(shown) ?? 0) + 1);
+    }
+  return [...tally].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0));
+}
+
 /**
- * Every unresolved macro's name with how many documents call it (`unresolvedTally`), and every
- * name undefined when the preamble ends with how many use it, for the JSON.
+ * Every unresolved macro's name with how many documents call it (`unresolvedTally`), every macro
+ * whose tail could not be read with how many call it, and every name undefined when the preamble
+ * ends with how many use it, for the JSON.
  */
 export function parseNames(rows: readonly ParseRow[]): {
   unresolved: Record<string, number>;
+  tails: Record<string, number>;
   undefined: Record<string, number>;
 } {
   return {
     unresolved: Object.fromEntries(unresolvedTally(rows)),
+    tails: Object.fromEntries(tailTally(rows)),
     undefined: Object.fromEntries(undefinedTally(rows)),
   };
 }
 
 /**
- * Two documents that hold one class or style file byte for byte: their families, how many of the
- * file's macros both documents' signatures found, and those whose keys differ between the two.
+ * Two documents that hold one class or style file byte for byte, and give it the same setting:
+ * their families, how many of the file's macros both bodies call, those whose keys differ between
+ * the two, and of those, the ones neither preamble moves (`HeldFile.moved`), which the key
+ * invariant says there are none of.
  */
 export interface FilePair {
   families: [Family, Family];
   common: number;
   differing: string[];
+  unexplained: string[];
 }
 
 /**
- * Every two documents that hold a class or style file byte for byte, a pair for each file they
- * share, and how the keys of the file's macros compare: item 6's cache holds only where a file
- * byte for byte the same gives its macros the same keys in every document that holds it.
+ * Every two documents that hold a class or style file byte for byte and give it the same setting
+ * (`settingOf`), a pair for each such file they share, and how the keys of the file's macros both
+ * bodies call compare: item 6's cache holds only where a file byte for byte the same, given the
+ * same options, gives its macros the same keys in every document that holds it.
  */
 export function filePairs(rows: readonly ParseRow[]): FilePair[] {
-  const holders = new Map<string, { family: Family; macros: Record<string, string> }[]>();
+  const holders = new Map<string, { family: Family; file: HeldFile }[]>();
   for (const row of rows) {
     const seen = new Set<string>();
     for (const file of row.files ?? []) {
-      if (seen.has(file.hash)) continue;
-      seen.add(file.hash);
-      const list = holders.get(file.hash) ?? [];
-      list.push({ family: row.family, macros: file.macros });
-      holders.set(file.hash, list);
+      const held = `${file.hash} ${file.setting}`;
+      if (seen.has(held)) continue;
+      seen.add(held);
+      const list = holders.get(held) ?? [];
+      list.push({ family: row.family, file });
+      holders.set(held, list);
     }
   }
   const pairs: FilePair[] = [];
   for (const list of holders.values())
     for (const [a, first] of list.entries())
       for (const second of list.slice(a + 1)) {
-        const names = Object.keys(first.macros).filter((name) =>
-          Object.hasOwn(second.macros, name),
+        const names = Object.keys(first.file.macros).filter((name) =>
+          Object.hasOwn(second.file.macros, name),
         );
+        const differing = names
+          .filter((name) => first.file.macros[name] !== second.file.macros[name])
+          .sort();
+        const moved = new Set([...(first.file.moved ?? []), ...(second.file.moved ?? [])]);
         pairs.push({
           families: [first.family, second.family],
           common: names.length,
-          differing: names.filter((name) => first.macros[name] !== second.macros[name]).sort(),
+          differing,
+          unexplained: differing.filter((name) => !moved.has(name)),
         });
       }
   return pairs;
@@ -251,13 +291,16 @@ function differingTally(pairs: readonly FilePair[]): [string, number][] {
  * that reached the parser, how many it parsed, refused or could not get signatures for, how many
  * printed back byte for byte; how many round trips set the reference's glyphs or differ, and how
  * first, printed byte for byte and regenerated; the template macros the bodies call, by how their
- * arguments were read, per document and in all, and the calls kept raw because a group after
- * them belies their signature; the environments, the macros found with their closures, the names
- * undefined when the preamble ends; for each two documents that share a class or style file byte
- * for byte, whether its macros' keys are the same; the share of the bodies' characters in rich
- * text, in template calls' arguments and in raw chunks; the dates read; and the parse's median and
- * slowest time. Under it, why the unresolved macros are, the names most documents call
- * unresolved, and the macros whose keys differ in a shared file.
+ * arguments were read, per document and in all, those a package's table gave or whose tail could
+ * not be read, and the calls kept raw because a group after them belies their signature; the
+ * environments, the macros found with their closures, those that hold data and the placeholders
+ * in the definitions, the names undefined when the preamble ends; for each two documents that
+ * share a class or style file byte for byte, and give it the same setting, whether the keys of its
+ * macros both call are the same; the share of the bodies' characters in rich text, in template
+ * calls' arguments and in raw chunks; the dates read; and the median and slowest time of the
+ * parse and of the signatures' two compiles. Under it, why the unresolved macros are, the names
+ * most documents call unresolved or with a tail it could not read, the names undefined when the
+ * preamble ends, and the macros whose keys differ in a shared file.
  */
 export function parseTable(rows: readonly ParseRow[]): string {
   const of = (column: (typeof COLUMNS)[number]) =>
@@ -280,6 +323,14 @@ export function parseTable(rows: readonly ParseRow[]): string {
       COLUMNS.map((column) => {
         const value = median(of(column).flatMap((row) => pick(row) ?? []));
         return value === undefined ? "" : `${Math.round(value)}${unit}`;
+      }),
+    );
+  const slowest = (label: string, pick: (row: ParseRow) => number | undefined) =>
+    line(
+      label,
+      COLUMNS.map((column) => {
+        const times = of(column).flatMap((row) => pick(row) ?? []);
+        return times.length === 0 ? "" : `${Math.round(Math.max(...times))} ms`;
       }),
     );
   const share = (label: string, pick: (chars: Characters) => number) =>
@@ -337,6 +388,7 @@ export function parseTable(rows: readonly ParseRow[]): string {
     ...new Set(rows.flatMap((row) => (row.unresolved ?? []).map((each) => each.why))),
   ].sort();
   const top = unresolvedTally(rows).slice(0, TOP_UNRESOLVED);
+  const tailTop = tailTally(rows).slice(0, TOP_UNRESOLVED);
   const undefinedTop = undefinedTally(rows).slice(0, TOP_UNRESOLVED);
   const differingTop = differingTally(pairs).slice(0, TOP_UNRESOLVED);
   const lines = [
@@ -367,35 +419,39 @@ export function parseTable(rows: readonly ParseRow[]): string {
     ...RESOLUTIONS.map((how) =>
       sum(`Arguments read ${LABELS[how]}`, (row) => row.templates?.[how] ?? 0),
     ),
+    sum("Arguments a package's table gave", (row) => row.packages ?? 0),
+    sum("A tail whose arguments could not be read", (row) => row.tails?.length ?? 0),
     sum("Calls kept raw: a group after them belies their signature", (row) => row.suspects ?? 0),
     sum("Template environments the body opens", (row) => row.environments ?? 0),
     middle("Template macros with their closures, per document, median", (row) =>
       parsed(row) ? row.macros : undefined,
     ),
+    sum("Template macros with their closures, in all", (row) => row.macros ?? 0),
+    sum("Of them, holding data", (row) => row.data ?? 0),
+    sum("Placeholders for an email, a link or a phone number", (row) => row.placeholders ?? 0),
     count("Signatures stopped at the cap of names", (row) => row.truncated === true),
     sum("Names undefined when the preamble ends", (row) => row.undefined ?? 0),
-    section("Two documents sharing a class or style file byte for byte"),
-    pairCount("Pairs of documents, a pair for each file they share", () => true),
+    section("Two documents sharing a class or style file byte for byte, and its setting"),
+    pairCount("Pairs of documents, a pair for each such file", () => true),
     pairCount(
-      "Its macros found in both have the same keys",
+      "The file's macros both call have the same keys",
       (pair) => pair.common > 0 && pair.differing.length === 0,
     ),
-    pairCount("Some of its macros have other keys", (pair) => pair.differing.length > 0),
-    pairCount("None of its macros found in both", (pair) => pair.common === 0),
+    pairCount(
+      "Other keys, each where a preamble defines a macro it hands its work to",
+      (pair) => pair.differing.length > 0 && pair.unexplained.length === 0,
+    ),
+    pairCount("Other keys otherwise", (pair) => pair.unexplained.length > 0),
+    pairCount("They call none of the file's macros in common", (pair) => pair.common === 0),
     section("The body's characters"),
     share("In rich text and dates", (chars) => chars.text),
     share("In template calls' arguments", (chars) => chars.calls),
     share("In raw chunks", (chars) => chars.raw),
     sum("Dates read", (row) => row.dates ?? 0),
     middle("Parse time, median", (row) => row.parseMs, " ms"),
-    line(
-      "Parse time, slowest",
-      COLUMNS.map((column) => {
-        const times = of(column).flatMap((row) => row.parseMs ?? []);
-        return times.length === 0 ? "" : `${Math.round(Math.max(...times))} ms`;
-      }),
-    ),
+    slowest("Parse time, slowest", (row) => row.parseMs),
     middle("Signatures' two compiles, median", (row) => row.signaturesMs, " ms"),
+    slowest("Signatures' two compiles, slowest", (row) => row.signaturesMs),
     ...(whys.length === 0
       ? []
       : [
@@ -411,6 +467,16 @@ export function parseTable(rows: readonly ParseRow[]): string {
           ...top.map(([name]) =>
             count(`\`${name}\``, (row) =>
               (row.unresolved ?? []).some((each) => shownMacro(each.name) === name),
+            ),
+          ),
+        ]),
+    ...(tailTop.length === 0
+      ? []
+      : [
+          section("A tail whose arguments could not be read, by the macro"),
+          ...tailTop.map(([name]) =>
+            count(`\`${name}\``, (row) =>
+              (row.tails ?? []).some((each) => shownMacro(each) === name),
             ),
           ),
         ]),
@@ -523,14 +589,17 @@ const DEFINES_MACRO =
 const DEFINES_ENVIRONMENT =
   /\\(?:(?:new|renew)environment\*?|(?:New|Renew|Provide|Declare)DocumentEnvironment)\s*\{([A-Za-z@*]+)\}/g;
 
+/** A source's text with its comments taken out, line by line. */
+const uncommented = (text: string) => text.replace(/(^|[^\\])((?:\\\\)*)%.*$/gm, "$1$2");
+
 /**
- * The macros a class or style file defines, by the names its definitions outside comments give
- * them: `\def`, `\let` and their kin, `\newcommand` and its kin, xparse's, and an environment's `\x`
- * and `\endx`. The file's own text is read for names alone; what each macro is comes from the
- * engine.
+ * The macros a class or style file, or a preamble, defines, by the names its definitions outside
+ * comments give them: `\def`, `\let` and their kin, `\newcommand` and its kin, xparse's, and an
+ * environment's `\x` and `\endx`. The text is read for names alone; what each macro is comes from
+ * the engine.
  */
 export function definedNames(text: string): Set<string> {
-  const code = text.replace(/(^|[^\\])((?:\\\\)*)%.*$/gm, "$1$2");
+  const code = uncommented(text);
   const names = new Set<string>();
   for (const match of code.matchAll(DEFINES_MACRO)) names.add(match[1] ?? "");
   for (const match of code.matchAll(DEFINES_ENVIRONMENT))
@@ -554,23 +623,114 @@ export function baseName(name: string): string {
 }
 
 /**
- * The keys of the macros a file defines (`definedNames`), from a document's keys by name, with
- * those the macros hand their work to: what two documents holding the file byte for byte should
- * give the same keys.
+ * The template macros a body calls, by the names the signatures keep them under: each template
+ * command it calls, and each template environment it opens, `\x` and `\endx`.
+ */
+export function calledNames(signatures: Pick<EngineSignatures, "commands" | "environments">) {
+  const called = new Set<string>();
+  for (const [name, signature] of Object.entries(signatures.commands))
+    if (signature.kind === "template") called.add(name);
+  for (const [name, signature] of Object.entries(signatures.environments))
+    if (signature.kind === "template") for (const each of [name, `end${name}`]) called.add(each);
+  return called;
+}
+
+/**
+ * The keys (`keysOf`) of the macros a file defines (`definedNames`) that the body calls
+ * (`calledNames`), but for those its preamble defines again, which are the preamble's: what two
+ * documents holding the file byte for byte, and giving it the same setting, should give the same
+ * keys. A key is its closure's, so a macro a called one hands its work to counts in it.
  */
 export function fileMacros(
   keys: Readonly<Record<string, string>>,
-  names: ReadonlySet<string>,
+  defined: ReadonlySet<string>,
+  called: ReadonlySet<string>,
+  redefined: ReadonlySet<string> = new Set(),
 ): Record<string, string> {
   const macros: Record<string, string> = {};
-  for (const [name, key] of Object.entries(keys)) if (names.has(baseName(name))) macros[name] = key;
+  for (const name of called) {
+    const base = baseName(name);
+    const key = Object.hasOwn(keys, name) ? keys[name] : undefined;
+    if (key !== undefined && defined.has(base) && !redefined.has(base)) macros[name] = key;
+  }
   return macros;
 }
 
 /**
+ * Of a file's macros the body calls (`fileMacros`), those whose closure holds a definition the
+ * preamble defines, as a preamble's `\renewcommand{\cvsectionfont}` moves the key of the
+ * `\cvsection` that hands its work to it: the preamble's doing, not the file's. A macro that holds
+ * data takes no part in a key, so it moves none.
+ */
+export function movedByPreamble(
+  signatures: Pick<EngineSignatures, "macros">,
+  names: Iterable<string>,
+  redefined: ReadonlySet<string>,
+): string[] {
+  const of = (name: string) =>
+    Object.hasOwn(signatures.macros, name) ? signatures.macros[name] : undefined;
+  return [...names].filter((name) => {
+    const macro = of(name);
+    return (
+      macro !== undefined &&
+      macro.kind !== "data" &&
+      macro.dependencies.some(
+        (dependency) => of(dependency)?.kind !== "data" && redefined.has(baseName(dependency)),
+      )
+    );
+  });
+}
+
+/** A `\documentclass` or `\usepackage` option list, in order, its spaces and empty ones dropped. */
+const optionsOf = (list: string | undefined) =>
+  (list ?? "")
+    .split(",")
+    .map((option) => option.replace(/\s+/g, ""))
+    .filter((option) => option !== "");
+
+/** The class a preamble loads, by its name, when it names one. */
+export function documentClassOf(preamble: string): string | undefined {
+  const found = /\\documentclass\s*(?:\[[^\]]*\]\s*)?\{([^}]*)\}/.exec(uncommented(preamble));
+  const name = found?.[1]?.trim();
+  return name === undefined || name === "" ? undefined : name;
+}
+
+/**
+ * What a document gives a class or style file that changes what the file's macros become, as a
+ * text the runner hashes: the class's options, which every package sees too; the options the
+ * preamble loads the file itself with, by `\usepackage` or `\RequirePackage`; moderncv's style and
+ * colour (`\moderncvstyle`, `\moderncvcolor`, or `\moderncvtheme`); and the engine, since a class
+ * may define a macro one way for pdfTeX and another for XeTeX.
+ */
+export function settingOf(preamble: string, file: string, engine: string): string {
+  const code = uncommented(preamble);
+  const name = file.replace(/^.*\//, "").replace(/\.(?:cls|sty)$/i, "");
+  const documentClass = /\\documentclass\s*(?:\[([^\]]*)\]\s*)?\{([^}]*)\}/.exec(code);
+  const own = [
+    ...code.matchAll(/\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\]\s*)?\{([^}]*)\}/g),
+  ]
+    .filter((found) => (found[2] ?? "").split(",").some((each) => each.trim() === name))
+    .map((found) => optionsOf(found[1]));
+  const style = [...code.matchAll(/\\moderncv(style|theme)\s*(?:\[([^\]]*)\]\s*)?\{([^}]*)\}/g)];
+  const colour = [...code.matchAll(/\\moderncvcolou?r\s*\{([^}]*)\}/g)];
+  return JSON.stringify({
+    options: optionsOf(documentClass?.[1]),
+    own,
+    style: style.map((found) => [found[1], optionsOf(found[2]), found[3]?.trim()]),
+    colour: colour.map((found) => found[1]?.trim()),
+    engine,
+  });
+}
+
+/** A placeholder that masks what item 11's patterns find in a definition (`signatures.ts`). */
+const PLACEHOLDER = /<(?:email|link|phone)_*>/g;
+
+/**
  * The part of a row that the signatures give: the template macros the body calls by how their
- * arguments were read, those unresolved by name and why, the template environments, the template
- * macros found with their closures, and the names undefined when the preamble ends.
+ * arguments were read, those unresolved by name and why, those whose tail could not be read by
+ * name, and how many a package's table gave; the template environments; the template macros found
+ * with their closures, those that hold data, and the placeholders in the definitions; and the
+ * names undefined when the preamble ends.
  */
 export function signatureCounts(
   signatures: EngineSignatures,
@@ -578,8 +738,12 @@ export function signatureCounts(
   ParseChildRow,
   | "templates"
   | "unresolved"
+  | "tails"
+  | "packages"
   | "environments"
   | "macros"
+  | "data"
+  | "placeholders"
   | "undefined"
   | "undefinedNames"
   | "truncated"
@@ -589,19 +753,33 @@ export function signatureCounts(
     number
   >;
   const unresolved: { name: string; why: string }[] = [];
+  const tails: string[] = [];
+  let packages = 0;
   const undefinedNames: string[] = [];
   for (const [name, signature] of Object.entries(signatures.commands)) {
     if (signature.kind === "undefined") undefinedNames.push(name);
     if (signature.kind !== "template") continue;
     templates[signature.how]++;
     if (signature.how === "unresolved") unresolved.push({ name, why: signature.why ?? "" });
+    if (signature.tail === "unresolved") tails.push(name);
+    if (signature.package !== undefined) packages++;
+  }
+  let data = 0;
+  let placeholders = 0;
+  for (const macro of Object.values(signatures.macros)) {
+    if (macro.kind === "data") data++;
+    else placeholders += macro.meaning.match(PLACEHOLDER)?.length ?? 0;
   }
   return {
     templates,
     unresolved,
+    tails,
+    packages,
     environments: Object.values(signatures.environments).filter((each) => each.kind === "template")
       .length,
     macros: Object.keys(signatures.macros).length,
+    data,
+    placeholders,
     undefined: undefinedNames.length,
     undefinedNames,
     truncated: signatures.truncated,

@@ -6,7 +6,7 @@ import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls } from "../templates/package";
-import { fastest } from "../test/timing";
+import { bound, fastest } from "../test/timing";
 import { parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { hasToUnicode, mediaBoxes, shownStrings } from "../validate/pdf";
@@ -400,8 +400,11 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       console.log(
         `fontconfig's scan: ${Math.round(scanned - plain)} ms of CPU time a pass (${Math.round(plain)} ms without it, ${Math.round(scanned)} ms with it)`,
       );
-      // Generous, so that a slow runner passes and a scan of every font the tree has fails.
-      expect(scanned - plain).toBeLessThan(250);
+      // Against the pass without it, which load slows alike: the scan costs a fifth of one here
+      // (34 ms of 170) and must cost less than one and a half, as the 250 ms this bound was came
+      // to at rest; a loaded runner could go past 250 ms, and a scan of every font the tree has
+      // costs more.
+      expect(scanned - plain).toBeLessThan(bound(1.5, plain));
     }, 120_000);
   });
 

@@ -4,14 +4,18 @@ import { isRefusal } from "../src/import/refusal";
 import type { EngineSignatures } from "../src/import/signatures";
 import {
   baseName,
+  calledNames,
   charactersOf,
   datesOf,
   definedNames,
+  documentClassOf,
   fileMacros,
   filePairs,
+  movedByPreamble,
   type ParseRow,
   parseNames,
   parseTable,
+  settingOf,
   shownMacro,
   signatureCounts,
   suspectsOf,
@@ -39,7 +43,11 @@ const templates = (meaning: number, unresolved = 0) => ({
 });
 
 describe("the table", () => {
-  const cls = (macros: Record<string, string>) => ({ hash: "a".repeat(64), macros });
+  const cls = (macros: Record<string, string>) => ({
+    hash: "a".repeat(64),
+    setting: "s".repeat(64),
+    macros,
+  });
   const rows: ParseRow[] = [
     row("jake-0001", "jake", {
       engine: "pdftex",
@@ -48,14 +56,21 @@ describe("the table", () => {
       regenerated: "differs",
       regeneratedDifference: "glyph",
       templates: templates(4),
+      tails: ["cvtail", `evil\n${SECRET}`],
+      packages: 1,
       suspects: 2,
       environments: 0,
       macros: 9,
+      data: 2,
+      placeholders: 1,
       chars: { body: 1000, text: 200, calls: 600, raw: 100 },
       dates: 3,
       parseMs: 20,
       signaturesMs: 150,
-      files: [cls({ cventry: "k1", "\\cvopt": "k2" }), { hash: "b".repeat(64), macros: {} }],
+      files: [
+        cls({ cventry: "k1", "\\cvopt": "k2" }),
+        { hash: "b".repeat(64), setting: "s".repeat(64), macros: {} },
+      ],
     }),
     row("jake-0002", "jake", {
       engine: "pdftex",
@@ -65,7 +80,9 @@ describe("the table", () => {
       regenerated: "stopped",
       templates: templates(2, 1),
       unresolved: [{ name: "cvinvented", why: "delimited" }],
+      tails: ["cvtail"],
       macros: 5,
+      data: 1,
       chars: { body: 1000, text: 400, calls: 400, raw: 100 },
       dates: 1,
       parseMs: 40,
@@ -152,7 +169,7 @@ describe("the table", () => {
 
   test("says, for two documents sharing a class byte for byte, whether its macros' keys agree", () => {
     // jake-0001 and jake-0002 share it, and differ in one macro; each and awesome-cv-0001 agree.
-    expect(cells("Pairs of documents, a pair for each file they share")).toEqual([
+    expect(cells("Pairs of documents, a pair for each such file")).toEqual([
       "1",
       "0",
       "0",
@@ -161,17 +178,13 @@ describe("the table", () => {
       "0",
       "3",
     ]);
-    expect(cells("Its macros found in both have the same keys")?.at(-1)).toBe("2");
-    expect(cells("Some of its macros have other keys")).toEqual([
-      "1",
-      "0",
-      "0",
-      "0",
-      "0",
-      "0",
-      "1",
-    ]);
-    expect(cells("None of its macros found in both")?.at(-1)).toBe("0");
+    expect(cells("The file's macros both call have the same keys")?.at(-1)).toBe("2");
+    // Neither preamble moves `\\cvopt`'s key: the key invariant fails, where it should hold.
+    expect(
+      cells("Other keys, each where a preamble defines a macro it hands its work to")?.at(-1),
+    ).toBe("0");
+    expect(cells("Other keys otherwise")).toEqual(["1", "0", "0", "0", "0", "0", "1"]);
+    expect(cells("They call none of the file's macros in common")?.at(-1)).toBe("0");
     // The macro whose optional form's second macro, `\\cvopt`, has other keys, by its name.
     expect(cells("`\\cvopt`")).toEqual(["1", "0", "0", "0", "0", "0", "1"]);
     expect(table).not.toContain("bad");
@@ -181,6 +194,21 @@ describe("the table", () => {
     expect(cells("In all")).toEqual(["9", "9", "0", "0", "0", "0", "18"]);
     expect(cells("Arguments read from its meaning")?.at(-1)).toBe("12");
     expect(cells("Arguments read unresolved")?.at(-1)).toBe("3");
+    expect(cells("Arguments a package's table gave")?.at(-1)).toBe("1");
+    expect(cells("A tail whose arguments could not be read")).toEqual([
+      "3",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "3",
+    ]);
+    // Named by the documents that call it, and only a name that is plainly one.
+    expect(cells("`\\cvtail`")?.at(-1)).toBe("2");
+    expect(cells("Template macros with their closures, in all")?.at(-1)).toBe("14");
+    expect(cells("Of them, holding data")?.at(-1)).toBe("3");
+    expect(cells("Placeholders for an email, a link or a phone number")?.at(-1)).toBe("1");
     expect(cells("Per document, median")).toEqual(["5", "9", "", "", "", "0", "5"]);
     expect(cells("Template environments the body opens")?.at(-1)).toBe("2");
     expect(cells("Names undefined when the preamble ends")?.at(-1)).toBe("1");
@@ -193,6 +221,16 @@ describe("the table", () => {
     expect(cells("Dates read")?.at(-1)).toBe("4");
     expect(cells("Parse time, median")?.at(-1)).toBe("40 ms");
     expect(cells("Parse time, slowest")?.at(-1)).toBe("100 ms");
+    expect(cells("Signatures' two compiles, median")).toEqual([
+      "200 ms",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "200 ms",
+    ]);
+    expect(cells("Signatures' two compiles, slowest")?.at(-1)).toBe("250 ms");
   });
 
   test("names the unresolved macros that are plainly names, and nothing else", () => {
@@ -202,6 +240,7 @@ describe("the table", () => {
     expect(table).not.toContain(SECRET);
     expect(parseNames(rows)).toEqual({
       unresolved: { "\\cvinvented": 2 },
+      tails: { "\\cvtail": 2 },
       undefined: { "\\cvbodydefined": 1 },
     });
     expect(cells("`\\cvbodydefined`")?.at(-1)).toBe("1");
@@ -237,21 +276,34 @@ describe("a document's row", () => {
       commands: {
         cvone: { kind: "template", how: "meaning", spec: "m" },
         cvtwo: { kind: "template", how: "unresolved", why: "delimited" },
+        cvtail: { kind: "template", how: "optional", spec: "s o m m", tail: "unresolved" },
+        cvding: { kind: "template", how: "meaning", spec: "m", package: "pifont" },
         cvgone: { kind: "undefined", how: "unresolved", why: "undefined" },
         today: { kind: "standard", how: "meaning", spec: "" },
       },
       environments: { cvbox: { kind: "template", how: "meaning", spec: "m" } },
       macros: {
         cvone: { meaning: "macro:#1->#1", hash: "0", dependencies: [], capped: false },
+        cvmail: {
+          meaning: "macro:->\\href {mailto:<email______>}{<email______>}",
+          hash: "1",
+          dependencies: ["@email"],
+          capped: false,
+        },
+        "@email": { kind: "data", length: 12 },
       },
       truncated: false,
       ms: 100,
     };
     expect(signatureCounts(signatures)).toEqual({
-      templates: { meaning: 1, optional: 0, robust: 0, xparse: 0, unresolved: 1 },
+      templates: { meaning: 2, optional: 1, robust: 0, xparse: 0, unresolved: 1 },
       unresolved: [{ name: "cvtwo", why: "delimited" }],
+      tails: ["cvtail"],
+      packages: 1,
       environments: 1,
-      macros: 1,
+      macros: 3,
+      data: 1,
+      placeholders: 2,
       undefined: 1,
       undefinedNames: ["cvgone"],
       truncated: false,
@@ -302,29 +354,136 @@ describe("what a document's row adds", () => {
     );
   });
 
-  test("takes a file's macros' keys, and those they hand their work to, by their names", () => {
+  test("takes the keys of a file's macros the body calls and the preamble leaves alone", () => {
     expect(baseName("\\cvopt")).toBe("cvopt");
     expect(baseName("cvrobust ")).toBe("cvrobust");
     expect(baseName("cvxp code")).toBe("cvxp");
     expect(baseName("environment cvbox end code")).toBe("cvbox");
+    const keys = {
+      cvopt: "k1",
+      "\\cvopt": "k2",
+      cvxp: "k3",
+      cvbox: "k4",
+      endcvbox: "k5",
+      cvmine: "k6",
+      cvunused: "k7",
+    };
+    const defined = new Set(["cvopt", "cvxp", "cvbox", "endcvbox", "cvmine", "cvunused"]);
+    // `\\cvopt` is not called: `cvopt`'s key is its closure's, which holds it. `cvmine` the
+    // preamble defines again, and `cvother` the file does not define.
     expect(
       fileMacros(
-        { cvopt: "k1", "\\cvopt": "k2", "cvxp code": "k3", cvother: "k4" },
-        new Set(["cvopt", "cvxp"]),
+        keys,
+        defined,
+        new Set(["cvopt", "cvxp", "cvbox", "endcvbox", "cvmine", "cvother"]),
+        new Set(["cvmine"]),
       ),
-    ).toEqual({ cvopt: "k1", "\\cvopt": "k2", "cvxp code": "k3" });
+    ).toEqual({ cvopt: "k1", cvxp: "k3", cvbox: "k4", endcvbox: "k5" });
   });
 
-  test("pairs the documents that hold a file byte for byte, each once", () => {
-    const held = (id: string, macros: Record<string, string>): ParseRow =>
+  test("counts as called each template command and template environment's begin and end", () => {
+    expect(
+      calledNames({
+        commands: {
+          cvone: { kind: "template", how: "meaning", spec: "m" },
+          cvtwo: { kind: "template", how: "unresolved", why: "delimited" },
+          textbf: { kind: "standard", how: "meaning", spec: "m" },
+          cvgone: { kind: "undefined", how: "unresolved", why: "undefined" },
+        },
+        environments: {
+          cvbox: { kind: "template", how: "meaning", spec: "" },
+          center: { kind: "standard", how: "meaning", spec: "" },
+        },
+      }),
+    ).toEqual(new Set(["cvone", "cvtwo", "cvbox", "endcvbox"]));
+  });
+
+  test("gives a file's setting from its options, moderncv's style and the engine", () => {
+    const preamble = String.raw`\documentclass[11pt, a4paper]{moderncv} % [10pt]{moderncv}
+\usepackage[scaled=0.9]{inventedfont}
+\usepackage{other,inventedstyle}
+\moderncvstyle{classic}
+\moderncvcolor{blue}`;
+    expect(documentClassOf(preamble)).toBe("moderncv");
+    expect(documentClassOf("% \\documentclass{article}")).toBeUndefined();
+    const setting = settingOf(preamble, "texmf/tex/latex/moderncv/moderncv.cls", "pdftex");
+    expect(JSON.parse(setting)).toEqual({
+      options: ["11pt", "a4paper"],
+      own: [],
+      style: [["style", [], "classic"]],
+      colour: ["blue"],
+      engine: "pdftex",
+    });
+    expect(JSON.parse(settingOf(preamble, "inventedfont.sty", "pdftex")).own).toEqual([
+      ["scaled=0.9"],
+    ]);
+    expect(JSON.parse(settingOf(preamble, "inventedstyle.sty", "pdftex")).own).toEqual([[]]);
+    // Another style, colour, option or engine is another setting; spaces between are not.
+    const moved = (from: string, to: string) =>
+      settingOf(preamble.replace(from, to), "moderncv.cls", "pdftex");
+    const same = settingOf(preamble, "moderncv.cls", "pdftex");
+    expect(moved("{classic}", "{casual}")).not.toBe(same);
+    expect(moved("{blue}", "{green}")).not.toBe(same);
+    expect(moved("11pt", "10pt")).not.toBe(same);
+    expect(settingOf(preamble, "moderncv.cls", "xetex")).not.toBe(same);
+    expect(moved("11pt, a4paper", "11pt,a4paper")).toBe(same);
+  });
+
+  test("pairs the documents that hold a file byte for byte with one setting, each once", () => {
+    const held = (id: string, macros: Record<string, string>, setting = "s"): ParseRow =>
       row(id, "moderncv", {
         files: [
-          { hash: "c".repeat(64), macros },
-          { hash: "c".repeat(64), macros },
+          { hash: "c".repeat(64), setting, macros },
+          { hash: "c".repeat(64), setting, macros },
         ],
       });
     expect(
-      filePairs([held("moderncv-0001", { a: "1" }), held("moderncv-0002", { a: "1", b: "2" })]),
-    ).toEqual([{ families: ["moderncv", "moderncv"], common: 1, differing: [] }]);
+      filePairs([
+        held("moderncv-0001", { a: "1" }),
+        held("moderncv-0002", { a: "1", b: "2" }),
+        // The same file in another style: no pair with either.
+        held("moderncv-0003", { a: "9" }, "t"),
+      ]),
+    ).toEqual([{ families: ["moderncv", "moderncv"], common: 1, differing: [], unexplained: [] }]);
+  });
+
+  test("tells keys a preamble moves from keys that differ otherwise", () => {
+    const held = (id: string, macros: Record<string, string>, moved?: string[]): ParseRow =>
+      row(id, "altacv", {
+        files: [{ hash: "d".repeat(64), setting: "s", macros, ...(moved ? { moved } : {}) }],
+      });
+    expect(
+      filePairs([
+        held("altacv-0001", { cvsection: "1", cvtag: "2", cvevent: "3" }, ["cvsection"]),
+        held("altacv-0002", { cvsection: "4", cvtag: "5", cvevent: "3" }),
+      ]),
+    ).toEqual([
+      {
+        families: ["altacv", "altacv"],
+        common: 3,
+        differing: ["cvsection", "cvtag"],
+        unexplained: ["cvtag"],
+      },
+    ]);
+    // What a preamble moves: a called macro whose closure holds a definition it defines, but not
+    // one that holds data, which takes no part in a key.
+    const signatures: Pick<EngineSignatures, "macros"> = {
+      macros: {
+        cvsection: { meaning: "m", hash: "1", dependencies: ["cvsectionfont"], capped: false },
+        cvtag: { meaning: "m", hash: "2", dependencies: ["@name"], capped: false },
+        cvopt: { meaning: "m", hash: "3", dependencies: ["\\cvopt"], capped: false },
+        "\\cvopt": { meaning: "m", hash: "4", dependencies: [], capped: false },
+        cvsectionfont: { meaning: "m", hash: "5", dependencies: [], capped: false },
+        "@name": { kind: "data", length: 5 },
+      },
+    };
+    expect(
+      movedByPreamble(
+        signatures,
+        ["cvsection", "cvtag", "cvopt"],
+        new Set(["cvsectionfont", "@name"]),
+      ),
+    ).toEqual(["cvsection"]);
+    expect(movedByPreamble(signatures, ["cvopt"], new Set(["cvopt"]))).toEqual(["cvopt"]);
   });
 });

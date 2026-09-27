@@ -25,12 +25,16 @@ import type { Intake } from "../src/import/intake.ts";
 import type { Refusal } from "../src/import/refusal.ts";
 import type { EngineSignatures } from "../src/import/signatures.ts";
 import {
+  calledNames,
   charactersOf,
   datesOf,
   definedNames,
+  documentClassOf,
   fileMacros,
   type HeldFile,
+  movedByPreamble,
   type ParseChildRow,
+  settingOf,
   signatureCounts,
   suspectsOf,
 } from "./corpus-parse.ts";
@@ -54,25 +58,51 @@ interface Task {
   message: { name: string; bytes: Uint8Array };
 }
 
-/**
- * Each template macro's key, by name, as item 6's cache would take it.
- * TODO(merge): part A adds `keysOf(signatures)` to `signatures.ts`; take it from the module
- * runner's import there, in place of this, which keys each macro by its own meaning's hash.
- */
-const keysOf = (found: EngineSignatures): Record<string, string> =>
-  Object.fromEntries(Object.entries(found.macros).map(([name, macro]) => [name, macro.hash]));
+const sha256 = (data: Uint8Array | string) => createHash("sha256").update(data).digest("hex");
 
 /**
- * The class and style files a job holds, each by the SHA-256 of its bytes, with the keys of the
- * macros it defines that the signatures found.
+ * The class and style files a document's job holds, and the class it loads from the tree when the
+ * job holds none of that name (`treeClass`), each by the SHA-256 of its bytes and of the setting
+ * the document gives it (`settingOf`), with the keys of the macros it defines that the body calls
+ * and the preamble does not define again (`fileMacros`), and those of them whose key the preamble
+ * moves (`movedByPreamble`); a file none of whose macros the body calls is left out, since it can
+ * say nothing of the keys.
  */
-function heldFiles(taken: Intake, keys: Readonly<Record<string, string>>): HeldFile[] {
-  return Object.entries(taken.files)
-    .filter(([path]) => /\.(?:cls|sty)$/i.test(path))
-    .map(([, bytes]) => ({
-      hash: createHash("sha256").update(bytes).digest("hex"),
-      macros: fileMacros(keys, definedNames(new TextDecoder().decode(bytes))),
-    }));
+function heldFiles(
+  taken: Intake,
+  preamble: string,
+  engine: string,
+  found: EngineSignatures,
+  keys: Readonly<Record<string, string>>,
+  treeClass: (name: string) => [path: string, bytes: Uint8Array] | undefined,
+): HeldFile[] {
+  const files = Object.entries(taken.files).filter(([path]) => /\.(?:cls|sty)$/i.test(path));
+  const loaded = documentClassOf(preamble);
+  const fileName = (path: string) => path.replace(/^.*\//, "");
+  if (loaded !== undefined && !files.some(([path]) => fileName(path) === `${loaded}.cls`)) {
+    const fromTree = treeClass(`${loaded}.cls`);
+    if (fromTree !== undefined) files.push(fromTree);
+  }
+  const called = calledNames(found);
+  const redefined = definedNames(preamble);
+  return files.flatMap(([path, bytes]) => {
+    const macros = fileMacros(
+      keys,
+      definedNames(new TextDecoder().decode(bytes)),
+      called,
+      redefined,
+    );
+    if (Object.keys(macros).length === 0) return [];
+    const moved = movedByPreamble(found, Object.keys(macros), redefined);
+    return [
+      {
+        hash: sha256(bytes),
+        setting: sha256(settingOf(preamble, path, engine)),
+        macros,
+        ...(moved.length === 0 ? {} : { moved }),
+      },
+    ];
+  });
 }
 
 async function main() {
@@ -96,12 +126,24 @@ async function main() {
   const { bodyOf, buildTree, PARSE_REFUSALS, readBody, usesOf } =
     await runner.import<ParseModule>("/src/import/parse.ts");
   const { print, regenerate } = await runner.import<PrintModule>("/src/import/print.ts");
-  const { signatures } = await runner.import<SignaturesModule>("/src/import/signatures.ts");
+  const { keysOf, signatures } = await runner.import<SignaturesModule>("/src/import/signatures.ts");
 
   const manifest = JSON.parse(
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
   ) as EngineManifest;
   const tree = readTree(manifest.files);
+  /** The tree's classes by their file's name, the first of a name, as `readTree` finds them. */
+  const treeClasses = new Map<string, string>();
+  for (const path of Object.keys(manifest.files)) {
+    const found = /\/tex\/[^/]+\/[^/]+\/(?:.*\/)?([^/]+\.cls)$/.exec(path);
+    if (found?.[1] !== undefined && !treeClasses.has(found[1])) treeClasses.set(found[1], path);
+  }
+  const treeClass = (name: string): [string, Uint8Array] | undefined => {
+    const path = treeClasses.get(name);
+    return path === undefined
+      ? undefined
+      : [path, new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path)))];
+  };
   const treeImage = treeImages(
     manifest.files,
     (path) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path))),
@@ -169,7 +211,7 @@ async function main() {
         ? {}
         : { regeneratedDifference: regenerated.differs.kind }),
       suspects: suspectsOf(built),
-      files: heldFiles(taken, keysOf(found)),
+      files: heldFiles(taken, body.preamble, engine, found, await keysOf(found), treeClass),
       ...counts,
       chars: charactersOf(built),
       dates: datesOf(built),
@@ -177,6 +219,7 @@ async function main() {
       levels: built.levels,
       parseMs: Math.round(parseMs),
       signaturesMs,
+      signaturesPassesMs: Math.round(found.ms),
     };
     const kept =
       byte.trip !== "same" ? byte : regenerated.trip !== "same" ? regenerated : undefined;

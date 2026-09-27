@@ -81,7 +81,7 @@ back. `corpus parse` runs it over the corpus.
   template macros the corpus's bodies call, 24 are marked: paracol's `\columnratio`, which looks
   ahead for its second ratio, in nine documents; europecv's `\ecvitem`, which ends with
   `\tabularnewline`, `\relax` when the preamble ends and a look ahead for `[` inside the table, in
-  six; four text symbols LaTeX dispatches by the font encoding; and five others.
+  six; four text symbols LaTeX dispatches by the font encoding, in five; and four others.
 - A `\newcommand` with an optional first argument is `\@protected@testopt \x \\x {default}`; its
   second macro, `\\x`, has the parameters, `[#1]#2`: `o m`, and what its tail takes. twoopt's
   `\newcommandtwoopt{\x}[n][a][b]` makes this form, whose second macro scans for a second
@@ -96,7 +96,7 @@ back. `corpus parse` runs it over the corpus.
   branches. A branch with no such command, or a star's two branches that differ, leave the
   command unresolved: it is never read as a star alone. europecv's `\ecvitem`,
   `\@ifstar{\@ecvitemstartrue\@ecvitem}{\@ecvitemstarfalse\@ecvitem}` over `\@ecvitem`'s
-  `[#1]#2#3`, reads `s o m m`, where the first version read `s` and left the arguments of its 213
+  `[#1]#2#3`, reads `s o m m`, where the first version read `s` and left the arguments of its 247
   calls outside them; bibentry's `\nobibliography`, whose star branch gives its argument and plain
   branch takes it, is unresolved in three documents. The table counts these with the
   optional-argument form.
@@ -132,14 +132,14 @@ back. `corpus parse` runs it over the corpus.
   alone, left a name with an accent (`Jos\'e`), Awesome-CV's positions and AltaCV's contacts as
   definitions holding the person's text. The result keeps a data macro's kind and the length of
   its text, never the text; a closure names it, follows it no further and counts it against
-  neither cap, and it takes no part in any hash or key. 6,436 of the corpus's 42,833 template
+  neither cap, and it takes no part in any hash or key. 6,402 of the corpus's 42,534 template
   macros are data.
 - Every other template macro is a definition, and its meaning is kept with what item 11's
   patterns find masked, before it is hashed or stored: links (a scheme and an address, `www.` and
   one, or a domain and a path), email addresses, and runs of seven digits or more with
   separators, which phone numbers are, each by a placeholder of its own length,
   `<email______________>`. A definition then hashes the same whoever's address it holds; the
-  corpus's definitions hold 1,114 placeholders.
+  corpus's definitions hold 1,112 placeholders.
 - Scratch macros are neither, and take no part in any closure or hash: LaTeX's `\@temp...`,
   `\reserved@...`, `\...@tempa` to `\...@tempf`, `\@gtemp...`, `\@curr...`, `\@x...`
   (`\@ifnextchar`'s helpers) and `\CurrentOption`, xkeyval's `\XKV@...` and ltxcmds'
@@ -153,10 +153,14 @@ back. `corpus parse` runs it over the corpus.
   hashes in order: item 6's cache key but for the naming version. Two documents whose class or
   style is the same file give each macro the file defines, and the preamble leaves alone, the
   same key, whatever the person's name, contacts and settings (`signatures.test.ts`). In the
-  corpus, three moderncv documents in the classic style, three in the casual, three Awesome-CV
-  forks sharing a class file and two europecv documents give every class macro that both of a
-  pair call one key; where keys differ, the preamble defines or redefines the macro, as Jake's
-  Resume forks do their `\resumeSubheading`. The same macro hashes the same on pdfTeX and XeTeX.
+  corpus nine pairs of documents share a class and give it the same setting (the runner's table
+  below): three moderncv documents in the classic style and blue, two in the casual and blue,
+  three Awesome-CV forks sharing a class file, two europecv documents and two AltaCV forks. Eight
+  give every macro of the class that both bodies call one key. The AltaCV pair's `\cvsection` and
+  `\makecvheader` differ, because both preambles define `\cvsectionfont` and `\personalinfofont`,
+  which the two hand their work to, each its own way; no key differs otherwise. A macro the
+  preamble defines itself, as Jake's Resume forks do their `\resumeSubheading`, is the preamble's.
+  The same macro hashes the same on pdfTeX and XeTeX.
 - What still holds a person's text is a definition a preamble builds of the person's details and
   code, as two europecv documents' `\SignatureAndDate` holds the place they sign in, or a class a
   fork edited to hold them. Item 11 masks those by the document's own header values before
@@ -266,14 +270,14 @@ back. `corpus parse` runs it over the corpus.
 - **Template calls** and **template environments**: a command or an environment the engine says
   the template defines, its arguments read by its signature, each a subtree, the optional ones
   marked and the star kept. A call a mandatory argument of which is missing stays raw. So does a
-  call whose signature takes no mandatory argument, or ends in an optional one, and which a group
-  follows, spaces and comments between: the signature of a macro that hands its arguments on to
-  another, `\ding` to `\Pisymbol{pzd}`, or looks ahead for them, reads so from its meaning, and the
-  group would otherwise read as text the call in fact takes. The call and the groups after it are
-  one raw chunk, unresolved and marked `suspect`, and the runner counts them per family. A template
-  environment whose own macros' meanings open an alignment, `tabular`, `tabular*`, `tabularx`,
-  `tabulary`, `array`, `longtable` or `\halign`, keeps its arguments placed and its body one raw
-  chunk, since the body is cells.
+  call whose signature takes no mandatory argument, ends in an optional one, or is marked `tail`
+  whatever it takes, and which a group follows, spaces and comments between: the signature of a
+  macro that hands its arguments on to another, `\ding` to `\Pisymbol{pzd}`, or looks ahead for
+  them, reads so from its meaning, and the group would otherwise read as text the call in fact
+  takes. The call and the groups after it are one raw chunk, unresolved and marked `suspect`, and
+  the runner counts them per family. A template environment whose own macros' meanings open an
+  alignment, `tabular`, `tabular*`, `tabularx`, `tabulary`, `array`, `longtable` or `\halign`,
+  keeps its arguments placed and its body one raw chunk, since the body is cells.
 - **Groups** and **blocks**: a braced group that is not text, and `center`, `flushleft`,
   `flushright`, `quote`, `quotation`, `verse`, `raggedright`, `raggedleft`, `centering`,
   `samepage`, `sloppypar`, `minipage` and `multicols`, whose content the parser places; and a
@@ -322,8 +326,8 @@ back. `corpus parse` runs it over the corpus.
 - A tree of at most 200,000 nodes. Past any cap the parse is refused with a plain message, which
   names no source, under a new refusal reason, `parse`.
 - The parser's work grows linearly: `parse.test.ts` bounds a megabyte of groups nested 50 deep and
-  a megabyte of short calls against a tenth of each, in CPU time. unified-latex's parse takes about
-  1.5 s a megabyte of it.
+  a megabyte of short calls against a tenth of each, in CPU time. A megabyte of either takes 0.7
+  to 0.8 s to parse, unified-latex's parse 0.6 to 0.7 s of it.
 - Every look ahead is bounded, where the first version's were not and the review timed openers that
   never close growing with the square of the body: a delimited argument's closer is looked for up
   to the paragraph's end or 2,048 characters on, whichever comes first (`MAX_DELIMITED`); an
@@ -331,8 +335,13 @@ back. `corpus parse` runs it over the corpus.
   each line's end found once; and conditionals are matched to their `\else` and `\fi` in one pass a
   sequence. `parse.test.ts` bounds `\\[` repeated to 192 KB, `\item[x ` outside a list to 256 KB and
   `\iftrue` to 200 KB, parsed, and `\url{` to 400 KB on one line and `\verb!x!` to 1.4 MB, read
-  before unified-latex parses, each against a tenth of it. 96 KB of `\\[` took 4 s to build a tree
-  of; 192 KB now takes 0.7 s, and 400 KB of `\url{` 0.25 s to read, where 24 s.
+  before unified-latex parses, each against a tenth of it. 192 KB of `\\[` took 25 s to build a
+  tree of, and takes 0.75 s now; 400 KB of `\url{` took 24 s to read, and takes 0.18 s.
+- Each of those bounds is a ratio alone, the fastest of five runs of each size: a tenth costs a
+  tenth, 10 to 12 times at rest, and up to 20 times while the whole suite runs beside it, the
+  megabyte's larger heap slowed the most; the first version's openers cost 88 to 141 times. So
+  each is bound by 50 times, as the snippet parse is, with no ceiling in milliseconds, which load
+  can push a run past: the first bounds, 20 times and 15 s, failed under load.
 
 ### Dependencies
 
@@ -355,11 +364,16 @@ unified-latex's. `-util-macros`, which expands macros, is not needed either.
 - **Calls a group after them belies**, kept raw (`suspect`), counted per family: how many calls the
   engine's signatures still read short once the package-known ones are in.
 - **Keys of a shared file.** For each two documents that hold a class or style file byte for byte,
-  a pair for each file, whether the keys of the file's macros (the names its definitions give,
-  read from the file, and those they hand their work to) found in both are the same: item 6's cache
-  holds only if they are. The file is named by its SHA-256, and a macro by its name only when it is
-  plainly one. A macro's key is `keysOf`'s (TODO(merge): until part A's `keysOf` is merged, the
-  runner keys a macro by its meaning's hash).
+  or load the same class from the tree, and give it the same setting, a pair for each such file:
+  whether the keys (`keysOf`) of the file's macros both bodies call are the same, which item 6's
+  cache needs. The setting is what changes what the file's macros become: the class's options,
+  which every package sees, the options the preamble loads the file itself with, moderncv's style
+  and colour, and the engine. The file's macros are the names its definitions give, read from the
+  file, that a body calls or opens as an environment, but for those either preamble defines again,
+  which are the preamble's. A key is its closure's, so a macro a preamble defines among those a
+  called one hands its work to moves its key; the table counts those pairs apart, and the
+  invariant is that no key differs otherwise. The file and the setting are named by their SHA-256,
+  and a macro by its name only when it is plainly one.
 - **Its first documents.** On `jake-0001`, `altacv-0001` and `awesome-cv-0003`, the last on XeTeX,
   both round trips set the reference's glyphs. `other-0009` and `other-0010`, whose bodies are set in
   `footnotesize` and were raw, now parse through, and set the reference's glyphs byte for byte;
@@ -371,10 +385,10 @@ unified-latex's. `-util-macros`, which expands macros, is not needed either.
   generator writes as `\textit{...}` and so adds an italic correction; and the second of TeX's two
   spaces around a mid-paragraph input. Item 7 decides what to make of each.
 
-The table below is the first run's, before the review's fixes, whose round trip is the byte-for-byte
-one alone; the run after them replaces it.
+The table is the run after the review's fixes. The first run, before them, had the byte-for-byte
+round trip alone, which set the reference's glyphs on all 117 documents then too.
 
-`corpus parse` on 26 September 2026, the tree of layout 6, the M4 Pro, four children: 1.4 minutes.
+`corpus parse` on 27 September 2026, the tree of layout 6, the M4 Pro, four children: 1.8 minutes.
 
 |  | jake | awesome-cv | altacv | moderncv | europecv | other | all |
 |---|--:|--:|--:|--:|--:|--:|--:|
@@ -382,74 +396,138 @@ one alone; the run after them replaces it.
 | Parsed | 35 | 18 | 10 | 14 | 6 | 34 | 117 |
 | Refused by the parser | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | No signatures: the compile that prints them stopped | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Timed out or died | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Printed back byte for byte | 35 | 18 | 10 | 14 | 6 | 34 | 117 |
-| Round trip sets the reference's glyphs | 35 | 18 | 10 | 14 | 6 | 34 | 117 |
-| Round trip differs | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| Round trip did not compile | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Round trip byte for byte sets the reference's glyphs | 35 | 18 | 10 | 14 | 6 | 34 | 117 |
+| Round trip byte for byte differs | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Round trip byte for byte differs first in a glyph | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Round trip byte for byte differs first in a position | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Round trip byte for byte differs first in a special | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Round trip byte for byte differs first otherwise: pages, size, count, rule | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Round trip byte for byte did not compile | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Round trip regenerated sets the reference's glyphs | 13 | 13 | 5 | 10 | 6 | 6 | 53 |
+| Round trip regenerated differs | 22 | 4 | 4 | 4 | 0 | 25 | 59 |
+| Round trip regenerated differs first in a glyph | 5 | 0 | 0 | 1 | 0 | 0 | 6 |
+| Round trip regenerated differs first in a position | 13 | 4 | 3 | 3 | 0 | 22 | 45 |
+| Round trip regenerated differs first in a special | 4 | 0 | 1 | 0 | 0 | 0 | 5 |
+| Round trip regenerated differs first otherwise: pages, size, count, rule | 0 | 0 | 0 | 0 | 0 | 3 | 3 |
+| Round trip regenerated did not compile | 0 | 1 | 1 | 0 | 0 | 3 | 5 |
 | **Template macros the body calls** |  |  |  |  |  |  |  |
 | In all | 270 | 107 | 162 | 54 | 62 | 145 | 800 |
 | Per document, median | 7 | 6 | 15 | 4 | 8 | 2 | 6 |
 | Arguments read from its meaning | 270 | 88 | 147 | 30 | 32 | 135 | 702 |
-| Arguments read from the optional-argument form | 0 | 18 | 11 | 24 | 29 | 8 | 90 |
+| Arguments read from the optional-argument form | 0 | 18 | 11 | 24 | 27 | 7 | 87 |
 | Arguments read from the robust form | 0 | 0 | 1 | 0 | 0 | 1 | 2 |
 | Arguments read from xparse | 0 | 0 | 2 | 0 | 0 | 1 | 3 |
-| Arguments read unresolved | 0 | 1 | 1 | 0 | 1 | 0 | 3 |
+| Arguments read unresolved | 0 | 1 | 1 | 0 | 3 | 1 | 6 |
+| Arguments a package's table gave | 1 | 0 | 0 | 0 | 2 | 2 | 5 |
+| A tail whose arguments could not be read | 1 | 0 | 9 | 0 | 7 | 7 | 24 |
+| Calls kept raw: a group after them belies their signature | 0 | 1 | 0 | 0 | 0 | 11 | 12 |
 | Template environments the body opens | 0 | 69 | 10 | 0 | 6 | 20 | 105 |
-| Template macros with their closures, per document, median | 7 | 320 | 1734 | 1756 | 89 | 10 | 31 |
+| Template macros with their closures, per document, median | 7 | 317 | 1657 | 1750 | 89 | 9 | 31 |
+| Template macros with their closures, in all | 312 | 5889 | 12558 | 19410 | 619 | 3746 | 42534 |
+| Of them, holding data | 4 | 1191 | 1653 | 2698 | 287 | 569 | 6402 |
+| Placeholders for an email, a link or a phone number | 0 | 230 | 247 | 561 | 0 | 74 | 1112 |
 | Signatures stopped at the cap of names | 0 | 0 | 6 | 3 | 0 | 0 | 9 |
 | Names undefined when the preamble ends | 6 | 2 | 9 | 0 | 0 | 31 | 48 |
+| **Two documents sharing a class or style file byte for byte, and its setting** |  |  |  |  |  |  |  |
+| Pairs of documents, a pair for each such file | 0 | 3 | 1 | 4 | 1 | 0 | 9 |
+| The file's macros both call have the same keys | 0 | 3 | 0 | 4 | 1 | 0 | 8 |
+| Other keys, each where a preamble defines a macro it hands its work to | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
+| Other keys otherwise | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| They call none of the file's macros in common | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | **The body's characters** |  |  |  |  |  |  |  |
-| In rich text and dates | 13% | 3% | 41% | 8% | 69% | 40% | 25% |
-| In template calls' arguments | 50% | 53% | 19% | 66% | 4% | 13% | 33% |
-| In raw chunks | 5% | 0% | 2% | 2% | 9% | 24% | 10% |
-| Dates read | 203 | 185 | 111 | 143 | 8 | 205 | 855 |
-| Parse time, median | 7 ms | 11 ms | 6 ms | 6 ms | 3 ms | 8 ms | 7 ms |
-| Parse time, slowest | 18 ms | 25 ms | 101 ms | 16 ms | 12 ms | 59 ms | 101 ms |
-| Signatures' two compiles, median | 232 ms | 1526 ms | 978 ms | 904 ms | 293 ms | 251 ms | 316 ms |
+| In rich text and dates | 13% | 3% | 41% | 8% | 0% | 39% | 23% |
+| In template calls' arguments | 50% | 49% | 19% | 66% | 0% | 13% | 33% |
+| In raw chunks | 5% | 9% | 2% | 2% | 98% | 24% | 14% |
+| Dates read | 203 | 137 | 111 | 143 | 0 | 205 | 799 |
+| Parse time, median | 7 ms | 9 ms | 6 ms | 7 ms | 3 ms | 9 ms | 8 ms |
+| Parse time, slowest | 17 ms | 25 ms | 65 ms | 15 ms | 11 ms | 67 ms | 67 ms |
+| Signatures' two compiles, median | 228 ms | 1523 ms | 1153 ms | 1064 ms | 295 ms | 253 ms | 304 ms |
+| Signatures' two compiles, slowest | 327 ms | 1969 ms | 1388 ms | 1088 ms | 365 ms | 1566 ms | 1969 ms |
 | **Unresolved, by why** |  |  |  |  |  |  |  |
 | delimited | 0 | 1 | 1 | 0 | 1 | 0 | 3 |
+| looks ahead | 0 | 0 | 0 | 0 | 2 | 1 | 3 |
 
-"Template macros the body calls" counts each macro once a document. The first run of this item
-refused six documents whose bodies use nothing the table does not know, wrongly, and stopped a
-seventh's walk early on a meaning holding a control character, which reading it back took for an
-invalid character; its round trips were the same as these. The three unresolved macros are
-biblatex's `\nocite`, whose parameters are delimited, in two documents, and textpos's `\atxy(x,y)`.
-Of the 48 names undefined when the preamble ends, 9 are paracol's `\switchcolumn` and 3 TikZ's
-`\node` and `\draw`, which exist only inside their environments, 7 are `\height`, which exists
-only in a box's dimensions, and 29 are five documents' own, which the signatures, read at
-`\begin{document}`, do not see: 11 in one document, 11 in another, and 7 in three more.
+"Template macros the body calls" counts each macro once a document, by how its arguments were
+read; the rows for a package's table and for a tail whose arguments could not be read count some
+of the same macros again. The six unresolved macros are biblatex's `\nocite`, whose parameters are
+delimited, in two documents, textpos's `\atxy(x,y)`, and bibentry's `\nobibliography`, whose
+star's two branches differ, in three. Of the 48 names undefined when the preamble ends, 9 are
+paracol's `\switchcolumn` and 3 TikZ's `\node` and `\draw`, which exist only inside their
+environments, 7 are `\height`, which exists only in a box's dimensions, and 29 are five documents'
+own, which the signatures, read at `\begin{document}`, do not see: 11 in one document, 11 in
+another, and 7 in three more.
+
+The 64 regenerated round trips that did not set the reference's glyphs, each bisected to the first
+text or date whose regeneration makes it differ:
+
+- 35 differ in a paragraph with `\\` in it, a line's break the model reads as a space: 30 first in a
+  position, 3 in the count of pages, and in 2 the compile stops.
+- 12 in a link: 5 in the special that holds its address, which the generator writes otherwise, and
+  7 in a position.
+- 11 in plain text: five Jake's Resume forks with no `fontenc`, whose OT1 fonts set `|` as an em
+  dash and `<` as an inverted exclamation mark, where the generator writes `\textbar{}` and
+  `\textless{}`; a T1 document whose ``` `` ``` and `''` the model holds as curly quotes, which the
+  generator writes as characters its setup does not take, so that the compile stops; a XeTeX
+  document whose text holds brackets, which the generator braces, and whose compile stops; and
+  four in a position.
+- 1 in `\textsc`'s small capitals, 1 in a date, 1 in a group holding a space and comments alone, 2
+  in bold and italic runs, and 1 in `\em` beside `\&`, whose compile stops.
+
+These are the decodings "Its first documents" names, `\\` above all, and two it does not: the
+characters an OT1 font sets as others, and quotes a document's setup cannot set as characters.
+Item 7 decides what to make of each.
 
 ### What the table says for items 5 and 6
 
-- **The round trip holds on every document**: the tree prints back the inlined body byte for byte,
-  and that body, with the preamble, sets the reference's glyphs, on all 117, pdfTeX and XeTeX. What
-  item 5 wraps and item 7 splices starts from a body that compiles as the original did. That round
-  trip cannot fail on what the tree reads wrong, which the regenerated one, added after the review,
-  measures.
-- **A third of a resume's characters are in template calls' arguments**, and a quarter in rich
-  text, the rest the commands' own names, delimiters, spaces and raw chunks. Jake's Resume forks
-  (50%), Awesome-CV's (53%) and moderncv's (66%) are mostly calls: item 5's probe has most of their
-  text to wrap. Hand-rolled documents are mostly rich text (40%) and raw chunks (24%), and AltaCV's
-  and europecv's too (41% and 69% text): for them the model's paragraphs and lists matter more than
-  the naming step.
+- **The byte-for-byte round trip holds on every document**: the tree prints back the inlined body
+  byte for byte, and that body, with the preamble, sets the reference's glyphs, on all 117, pdfTeX
+  and XeTeX. What item 5 wraps and item 7 splices starts from a body that compiles as the original
+  did.
+- **The regenerated round trip holds on 53 of the 117**, differs on 59, and stops on 5. More than
+  half of what does not hold is `\\` inside a paragraph, which a field of the model, one paragraph,
+  cannot hold; the rest is links, characters an OT1 font sets as others, and a few marks. What item
+  7 regenerates sets the page as the source did for under half the corpus until it decides what to
+  make of those.
+- **A third of a resume's characters are in template calls' arguments**, and 23% in rich text, the
+  rest the commands' own names, delimiters, spaces and raw chunks (14%). Jake's Resume forks (50%),
+  Awesome-CV's (49%) and moderncv's (66%) are mostly calls: item 5's probe has most of their text to
+  wrap. Hand-rolled documents are mostly rich text (39%) and raw chunks (24%), and AltaCV's too (41%
+  text): for them the model's paragraphs and lists matter more than the naming step.
+- **An alignment's body is raw, and the calls in it with it.** A template environment whose own
+  macros open a `tabular`, a `longtable` or their kin keeps its body one raw chunk, since its cells
+  are not text. That takes in europecv's whole body, whose `europecv` environment is a `longtable`:
+  98% of the family's characters are raw, where the first version read 69% as rich text, with
+  `\ecvitem`'s arguments outside its calls, and its 247 calls to it are no calls now. It takes in
+  Awesome-CV's `cvskills` and `cvhonors` too, `tabular*`s: 9% of that family's characters, in 13
+  documents, and 48 of its dates. Those bodies hold template calls and no `&` of their own; whether
+  such a body places its calls, as any other template environment's does, is for item 5 or 7 to
+  decide.
 - **A document calls few template macros**: 6 at the median, 15 for AltaCV's, 2 for a hand-rolled
   one; 800 in the corpus, 105 environments besides. Item 6 names few macros a document, and forks
   share them, which is what its per-macro cache is for.
 - **The engine resolves all but 6 of the 800**: 702 from their meaning, and their tail's where
   they hand on, 87 from the optional-argument form, 2 from the robust form and 3 from xparse, 5 of
-  them by a package's table; 24 have a tail it could not read. What item 6 describes for a call
-  has its arguments right.
+  them by a package's table; 24 have a tail it could not read. 12 calls, 11 of them in hand-rolled
+  documents, are kept raw because a group after them belies their signature. What item 6 describes
+  for a call has its arguments right.
 - **Closures are large where TikZ or paracol is loaded**: a median of 31 template macros a
-  document, but 1,734 for AltaCV's and 1,756 for moderncv's, most of them pgf's, microtype's and
-  paracol's. By this record's rule they are the template's; item 6 sends a macro's closure capped at
-  64 definitions and 64 KB, the data it names by name alone, and a closure that reaches TikZ is
-  mostly TikZ. Item 6 may want to send the preamble's and the class's macros before a package's,
-  which only a source's own text can tell.
-- **Time**: parsing takes 7 ms at the median and 101 ms at most. The signatures' two compiles take
-  232 ms at the median for a Jake's Resume fork and 1.5 s for an Awesome-CV fork, and 2.4 s for
+  document, but 1,657 for AltaCV's and 1,750 for moderncv's, most of them pgf's, microtype's and
+  paracol's; 6,402 of the corpus's 42,534 hold data. By this record's rule they are the template's;
+  item 6 sends a macro's closure capped at 64 definitions and 64 KB, the data it names by name
+  alone, and a closure that reaches TikZ is mostly TikZ. Item 6 may want to send the preamble's and
+  the class's macros before a package's, which only a source's own text can tell.
+- **A shared file gives its macros the same keys**: of the nine pairs of documents that share a
+  class and its setting, eight give every macro of it that both call one key, and the ninth's
+  differ only where both preambles define a macro those hand their work to, as item 6's cache
+  needs.
+- **Time**: parsing takes 8 ms at the median and 67 ms at most. The signatures' two compiles take
+  228 ms at the median for a Jake's Resume fork and 1.5 s for an Awesome-CV fork, and 2.0 s for
   the slowest document, the preamble's compile from the stock format, fontspec's scan included,
   most of it: an import pays them once. Reading the meanings, their tails and their data, and
-  hashing, add at most 120 ms, for a document that loads TikZ.
+  hashing, add 4 ms at the median and at most 143 ms, for an AltaCV or moderncv document whose
+  closures reach a package's machinery.
 
 ## Consequences
 
@@ -473,6 +551,9 @@ only in a box's dimensions, and 29 are five documents' own, which the signatures
 - A signature marked `tail` may take more arguments than it says: the parser keeps a call to it
   raw where a brace group follows its arguments, as it does a call that takes no mandatory
   argument.
+- A template environment whose own macros open an alignment keeps its body raw, the calls in it
+  too: a europecv document's whole body, and Awesome-CV's skills and honours, are raw chunks to
+  items 5 and 7 until one of them decides to place such a body's calls.
 - The session reads a file a compile wrote in its job, by a path inside its folder; the reference
   compile gives back its files (`referenceFiles`) and compiles a document as it did
   (`compileLikeReference`); and `difference` says how two glyph streams first differ, which the

@@ -662,9 +662,10 @@ export interface RawNode extends Span {
   name?: string;
   args?: Argument[];
   /**
-   * A call to a template macro whose signature takes no mandatory argument, or ends in an optional
-   * one, and which a group follows: a signature the group belies, as a macro that hands its
-   * arguments on to another has, so the call and the groups after it are kept raw, unresolved.
+   * A call to a template macro whose signature takes no mandatory argument, ends in an optional
+   * one, or has a tail that could not be read (`Known.tail`), and which a group follows: a
+   * signature the group belies, as a macro that hands its arguments on to another has, so the call
+   * and the groups after it are kept raw, unresolved.
    */
   suspect?: true;
 }
@@ -697,7 +698,19 @@ export interface Known {
   kind: "template" | "standard" | "undefined" | "primitive" | "char" | "register" | "other";
   /** Its arguments, in xparse's syntax, when they could be read. */
   spec?: string;
+  /**
+   * `unresolved` when its replacement text ends by handing on to a command whose arguments could
+   * not be read: it may take more than `spec` says, so a call to it that a group follows is
+   * suspect.
+   */
+  tail?: "unresolved";
 }
+
+/**
+ * A template macro as the parser reads it: a definition, with its meaning, or a macro that holds
+ * data, whose text the signatures never keep.
+ */
+export type MacroMeaning = { kind?: "definition"; meaning: string } | { kind: "data" };
 
 /**
  * What the engine said of the names a body uses (`signatures.ts`), as far as the parser needs it:
@@ -706,9 +719,7 @@ export interface Known {
 export interface Signatures {
   commands: Readonly<Record<string, Known>>;
   environments: Readonly<Record<string, Known>>;
-  // TODO(merge): part A keeps a data macro's text out of its record; the parser reads meanings
-  // only of an environment's own macros, which are never data, so a record without one is fine.
-  macros?: Readonly<Record<string, { meaning?: string }>>;
+  macros?: Readonly<Record<string, MacroMeaning>>;
 }
 
 /**
@@ -1197,7 +1208,7 @@ function placeMacro(
       ],
       next: read.next,
     };
-  const belied = openEnded(said.spec) ? groupsAfter(nodes, read.next) : undefined;
+  const belied = openEnded(said.spec, said.tail) ? groupsAfter(nodes, read.next) : undefined;
   const last = belied?.args.at(-1);
   if (belied !== undefined && last !== undefined)
     return {
@@ -1232,12 +1243,11 @@ function placeMacro(
 /**
  * Whether a signature leaves a call open to a group after it: it takes no mandatory argument, or
  * ends in an optional one, as the signature of a macro that hands its arguments on to another,
- * `\ding` to `\Pisymbol{pzd}`, or looks ahead for them, reads from its meaning.
+ * `\ding` to `\Pisymbol{pzd}`, or looks ahead for them, reads from its meaning; or, whatever it
+ * takes, its tail could not be read (`tail`), so that it may take more.
  */
-function openEnded(spec: string): boolean {
-  // TODO(merge): part A marks a signature whose delegated tail did not resolve `tail:
-  // unresolved`; the call to one a group follows is as suspect whatever its spec, and `Known`
-  // should carry the mark for `placeMacro` to test here.
+function openEnded(spec: string, tail: Known["tail"]): boolean {
+  if (tail === "unresolved") return true;
   const parts = readSpec(spec) ?? [];
   return !parts.some((part) => part.type === "mandatory") || parts.at(-1)?.type === "optional";
 }
@@ -1509,8 +1519,9 @@ function isAlignment(name: string, context: Context): boolean {
     ...own,
     ...["code", "end", "end aux", "end code"].map((part) => `environment ${name} ${part}`),
   ].some((each) => {
-    const meaning = Object.hasOwn(macros, each) ? macros[each]?.meaning : undefined;
-    return meaning !== undefined && ALIGNMENT.test(meaning);
+    // A macro that holds data has no meaning kept, and opens nothing.
+    const macro = Object.hasOwn(macros, each) ? macros[each] : undefined;
+    return macro !== undefined && macro.kind !== "data" && ALIGNMENT.test(macro.meaning);
   });
 }
 

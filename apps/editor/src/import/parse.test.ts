@@ -527,6 +527,7 @@ describe("calls a group after them belies", () => {
       cvopen: { kind: "template", spec: "m o" },
       cvstarred: { kind: "template", spec: "s" },
       cvfine: { kind: "template", spec: "o m" },
+      cvtail: { kind: "template", spec: "s o m m", tail: "unresolved" },
     },
     environments: {},
   };
@@ -563,6 +564,24 @@ describe("calls a group after them belies", () => {
   test("keeps a call no group follows, or whose signature ends in a mandatory argument", () => {
     const tree = treeOf(String.raw`\cvding Skill. \cvfine{a} {b}`, signatures);
     expect(kinds(tree.content)).toEqual(["call", "text", "call", "text"]);
+  });
+
+  test("keeps raw a call a group follows whose tail could not be read, whatever it takes", () => {
+    // As europecv's `\ecvitem`, `s o m m` and a look ahead at its end: a third group is suspect.
+    const tree = treeOf(String.raw`\cvtail{a}{b} {c} then \cvtail[x]{a}{b} end`, signatures);
+    expect(tree.content).toMatchObject([
+      {
+        kind: "raw",
+        why: "unresolved",
+        name: "cvtail",
+        suspect: true,
+        args: [{ kind: "star" }, { kind: "optional" }, {}, {}, { open: "{" }],
+      },
+      { kind: "text" },
+      { kind: "call", name: "cvtail" },
+      { kind: "text" },
+    ]);
+    expect(sourceOf(tree, tree.content[0] as Node)).toBe(String.raw`\cvtail{a}{b} {c}`);
   });
 });
 
@@ -816,6 +835,13 @@ describe("caps", () => {
     });
   }, 60_000);
 
+  // The bounds on how the parse grows are ratios alone, the fastest of five runs of each size, in
+  // CPU time (`src/test/timing.ts`): a tenth costs a tenth, 10 to 12 times at rest, and up to 20
+  // times while the whole suite runs beside it, the megabyte's larger heap slowed the most; the
+  // openers below cost 88 to 141 times before their look ahead was bounded. A bound of 50 times
+  // holds under that load and fails the square, as the snippet parse's does; no ceiling in
+  // milliseconds, which a loaded machine could pass.
+
   test("parses in time that grows linearly with the body, nested groups and short calls", () => {
     // Groups nested 50 deep, around invented words, and short calls to an invented macro, each
     // body a megabyte, against a tenth of it.
@@ -830,16 +856,17 @@ describe("caps", () => {
         const tree = parseBody(bodyOfText(text), SIGNATURES);
         if (isRefusal(tree)) throw new Error(tree.message);
       };
-      const [short = 0, long = 0] = fastest([parse(small), parse(large)], 3);
-      expect(long).toBeLessThan(bound(20, short));
-      expect(long).toBeLessThan(15_000);
+      const [short = 0, long = 0] = fastest([parse(small), parse(large)], 5);
+      expect(long).toBeLessThan(bound(50, short));
     }
-  }, 120_000);
+  }, 180_000);
 
   test("looks for a closer a bounded way, so that openers that never close cost linear time", () => {
     // `\\[` and `\item[` whose `]` never comes, the whole parse; `\url{` whose `}` never comes on
     // a long line, and many `\verb` on one, the reading before unified-latex parses: each at a
-    // size the review timed, against a tenth of it.
+    // size the review timed, against a tenth of it. Each cost the square of its size before its
+    // look ahead was bounded: 192 KB of `\\[` 25 s, 256 KB of `\item[x ` 15 s, 400 KB of `\url{`
+    // 24 s.
     const openers = (unit: string) => (bytes: number) =>
       unit.repeat(Math.floor(bytes / unit.length));
     const parse = (text: string) => () => {
@@ -855,11 +882,10 @@ describe("caps", () => {
       [openers("\\verb!x! "), 1_400_000, mask],
     ];
     for (const [make, bytes, work] of shapes) {
-      const [short = 0, long = 0] = fastest([work(make(bytes / 10)), work(make(bytes))], 3);
-      expect(long, make(9)).toBeLessThan(bound(20, short));
-      expect(long, make(9)).toBeLessThan(15_000);
+      const [short = 0, long = 0] = fastest([work(make(bytes / 10)), work(make(bytes))], 5);
+      expect(long, make(9)).toBeLessThan(bound(50, short));
     }
-  }, 120_000);
+  }, 180_000);
 
   test("reads an opener that closes within its bound, and not one past it", () => {
     const near = String.raw`\\[${"x".repeat(MAX_DELIMITED - 16)}] after`;

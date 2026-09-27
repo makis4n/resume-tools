@@ -68,17 +68,15 @@ export const RESOLUTIONS: readonly Resolution[] = [
   "unresolved",
 ];
 
-/** What the engine said of a command or an environment the body uses. */
+/**
+ * What the engine said of a command or an environment the body uses: `Known`'s kind, arguments and
+ * `tail`, which marks one whose tail could not be read, and how they were read.
+ */
 export interface Signature extends Known {
   /** How its arguments were read; `unresolved` for anything that is not a macro. */
   how: Resolution;
   /** Why they could not be, for one unresolved: its kind, or what its meaning shows. */
   why?: string;
-  /**
-   * `unresolved` when its replacement text ends by handing on to a command whose arguments could
-   * not be read: it may take more than `spec` says, and the parser keeps its calls cautious.
-   */
-  tail?: "unresolved";
   /** The package whose table gave its arguments, which its meaning does not show (`packages.ts`). */
   package?: string;
 }
