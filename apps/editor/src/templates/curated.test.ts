@@ -18,12 +18,13 @@ import { bound, fastest } from "../test/timing";
 import { type PageItem, parseDvi } from "../tex/dvi";
 import { checkSpecial, validatePackage } from "../validate/harness";
 import { mediaBoxes, shownTexts, strokedPaths } from "../validate/pdf";
-import { CURATED, curated } from "./curated";
+import { CURATED, checkCuratedId, curated } from "./curated";
 import { generateBody, generateFormat } from "./generate";
 import {
   type ByRole,
   defaultControls,
   fontFiles,
+  IMPORTED_PREFIX,
   parsePackage,
   shapeFile,
   type TemplatePackage,
@@ -221,6 +222,17 @@ describe("CURATED", () => {
 
   it("refuses an id no curated package has", () => {
     expect(() => curated("nope")).toThrow("no curated template has the id nope");
+  });
+
+  it("takes no id under the prefix of an imported package's, nor one its folder does not name", () => {
+    for (const id of CURATED.keys()) expect(id.startsWith(IMPORTED_PREFIX)).toBe(false);
+    expect(() => checkCuratedId("jake", "jake")).not.toThrow();
+    expect(() => checkCuratedId("jake", "altacv")).toThrow(
+      "the curated package in jake/ has the id altacv",
+    );
+    expect(() => checkCuratedId("import-0123456789ab", "import-0123456789ab")).toThrow(
+      "under the prefix of an imported package's",
+    );
   });
 });
 

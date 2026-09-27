@@ -347,6 +347,13 @@ export function shapeFeatures(family: FontFamily, shape: FontShape): string | un
   return parts.length === 0 ? undefined : parts.join(";");
 }
 
+/**
+ * What an imported package's id starts with, before twelve hex digits of its content's hash
+ * (decision 0026), so that no curated package's id and no imported one's can be the other's: the
+ * curated loader refuses an id under it, and the store's loader an imported one outside it.
+ */
+export const IMPORTED_PREFIX = "import-";
+
 /** A package id is a model id that the engine also takes as a format name. */
 const PackageId = z
   .string()

@@ -110,7 +110,7 @@ const SETS_NOTHING: ReadonlySet<string> = new Set([
 ]);
 
 /** Whether a raw chunk may set glyphs of its own, and so explain some no field covers. */
-function maySetText(node: { why: RawWhy; name?: string }): boolean {
+export function maySetText(node: { why: RawWhy; name?: string }): boolean {
   if (node.why === "definition" || node.why === "skipped") return false;
   return node.why !== "command" || !SETS_NOTHING.has(node.name ?? "");
 }

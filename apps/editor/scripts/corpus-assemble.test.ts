@@ -1,0 +1,232 @@
+import { describe, expect, test } from "vitest";
+import type { AssemblyChecks } from "../src/import/assemble";
+import {
+  type AssembleRow,
+  answersFor,
+  assembleRow,
+  assembleTable,
+  comparePlaces,
+  fieldsFound,
+  placesTable,
+  portPlaces,
+} from "./corpus-assemble";
+
+// Every row, answer and resume here is invented for these tests; SECRET stands for a document's
+// text, which nothing the runner prints may show.
+
+const SECRET = "Quillwort";
+
+const row = (id: string, family: AssembleRow["family"], changes: Partial<AssembleRow>) =>
+  ({ id, family, outcome: "assembled", wall: 1000, ...changes }) as AssembleRow;
+
+describe("the table", () => {
+  const rows: AssembleRow[] = [
+    row("jake-0001", "jake", {
+      engine: "pdftex",
+      answered: 6,
+      unanswered: 2,
+      fields: { editable: 10, raw: 0, required: 1, locked: { date: 2, unmapped: 3 } },
+      words: { editable: 60, locked: { date: 4, unmapped: 36 } },
+      sections: { mapped: 3, locked: 2 },
+      controls: { proven: ["pageSize", "fontSize"], dropped: ["margins"] },
+      redefinitions: { applied: [], dropped: ["cvevent", `evil\n${SECRET}`] },
+      findings: { pages: 1 },
+      unrepeatable: [],
+      compiles: 20,
+      probeMs: 1000,
+      validateMs: 5000,
+    }),
+    row("awesome-cv-0001", "awesome-cv", {
+      outcome: "partial",
+      engine: "xetex",
+      difference: "position",
+      fields: { editable: 4, raw: 2, required: 0, locked: { misaligned: 1 } },
+      words: { editable: 20, locked: { misaligned: 20 } },
+      findings: { dump: 1 },
+      unrepeatable: ["link"],
+      compiles: 30,
+      validateMs: 50_000,
+    }),
+    row("jake-0002", "jake", { outcome: "refused", refused: "font", font: "tcrm1000" }),
+    row("jake-0003", "jake", { outcome: "refused", refused: "font", font: `${SECRET} font` }),
+    row("other-0001", "other", { outcome: "no answer", answered: 0, unanswered: 9 }),
+    row("other-0002", "other", { outcome: "no reference" }),
+    row("altacv-0001", "altacv", { outcome: "timeout" }),
+  ];
+  const table = assembleTable(rows);
+  const cells = (label: string) =>
+    table
+      .split("\n")
+      .find((line) => line.startsWith(`| ${label} |`))
+      ?.split("|")
+      .slice(2, -1)
+      .map((cell) => cell.trim());
+
+  test("counts documents per family and in all, and why the others went no further", () => {
+    // Columns: jake, awesome-cv, altacv, moderncv, europecv, other, all.
+    expect(cells("Documents whose body parsed")).toEqual(["3", "1", "1", "0", "0", "1", "6"]);
+    expect(cells("Assembled and checked")).toEqual(["1", "1", "0", "0", "0", "0", "2"]);
+    expect(cells("Partial: the first check differs")).toEqual(["0", "1", "0", "0", "0", "0", "1"]);
+    expect(cells("Partial, the first difference: `position`")?.at(-1)).toBe("1");
+    expect(cells("Refused: font")?.at(-1)).toBe("2");
+    expect(cells("Refused: font `tcrm1000`")?.at(-1)).toBe("1");
+    expect(cells("No answer for any macro the body calls")?.at(-1)).toBe("1");
+    expect(cells("Timed out or died")?.at(-1)).toBe("1");
+  });
+
+  test("sums fields, words and controls, and names the checks' findings by check", () => {
+    expect(cells("Editable")?.at(-1)).toBe("14");
+    expect(cells("Raw: set, and edited in the panel alone")?.at(-1)).toBe("2");
+    expect(cells("Parts locked: `unmapped`")?.at(-1)).toBe("3");
+    expect(cells("Words in editable fields")?.at(-1)).toBe("57%");
+    expect(cells("`margins` dropped")?.at(-1)).toBe("1");
+    expect(cells("`\\cvevent`")?.at(-1)).toBe("1");
+    expect(cells("`dump`")?.at(-1)).toBe("1");
+    expect(cells("A repeatable unit stops the compile")?.at(-1)).toBe("1");
+    expect(cells("Assembly and checks, slowest")?.at(-1)).toBe("50000 ms");
+  });
+
+  test("shows no text of a document, a name that is not plainly one left out", () => {
+    expect(table).not.toContain(SECRET);
+    expect(table.split("\n").every((line) => !/\p{Cc}/u.test(line))).toBe(true);
+  });
+});
+
+describe("the answers", () => {
+  test("are found by key, and the body's macros counted with an answer and without", () => {
+    const store: Record<string, string> = { a: "one", b: "not an answer" };
+    const found = answersFor(
+      [
+        { key: "a", calls: 2 },
+        { key: "b", calls: 1 },
+        { key: "c", calls: 3 },
+        { calls: 1 },
+        { key: "d", calls: 0 },
+      ],
+      (key) => store[key],
+      (text) => (text === "one" ? { of: "command" as const, name: "inventedentry" } : undefined),
+    );
+    expect(found.found).toEqual([{ of: "command", name: "inventedentry" }]);
+    expect(found).toMatchObject({ answered: 1, unanswered: 2 });
+  });
+});
+
+describe("the oracle's places", () => {
+  const resume = {
+    header: { links: [{ id: "lnk-1" }] },
+    sections: [
+      {
+        kind: "entries" as const,
+        id: "sec-1",
+        entries: [{ id: "ent-1", bullets: [{ id: "bul-1" }] }],
+      },
+      { kind: "paragraph" as const, id: "sec-2" },
+      { kind: "locked" as const, id: "lock-1" },
+    ],
+  };
+  const all = [
+    { field: "header.first", mode: "typeset" as const },
+    { field: "lnk-1.label", mode: "raw" as const },
+    { field: "sec-1.title", mode: "typeset" as const },
+    { field: "ent-1.dates", mode: "locked" as const, reason: "date" as const },
+    { field: "bul-1.text", mode: "typeset" as const },
+    { field: "sec-2.title", mode: "typeset" as const },
+    { field: "sec-2.text", mode: "locked" as const, reason: "differs" as const },
+  ];
+
+  test("count each field by the model's place it fills", () => {
+    expect(fieldsFound(resume, all)).toEqual({
+      "header.first": { editable: 1, raw: 0, locked: {} },
+      "link.label": { editable: 0, raw: 1, locked: {} },
+      "section.title": { editable: 2, raw: 0, locked: {} },
+      "entry.dates": { editable: 0, raw: 0, locked: { date: 1 } },
+      "bullet.text": { editable: 1, raw: 0, locked: {} },
+      "paragraph.text": { editable: 0, raw: 0, locked: { differs: 1 } },
+    });
+  });
+
+  test("set against the places a port's typeset slots mark", () => {
+    const port = portPlaces({
+      snippets: {
+        header: "\\invented{{{first}} {{last}}}{{contacts}}",
+        contact: { email: "\\mail{{{text}}}", phone: "\\phone{{{&text}}}" },
+        link: { other: "\\href{{{&href}}}{{{label}}}" },
+        section: { entries: "\\section{{{title}}}{{entries}}", paragraph: "{{text}}" },
+        entry: "\\entry{{{title}}}{{{dates}}}",
+        bullet: "\\item {{text}}",
+        item: "\\item {{text}}",
+        labelledItem: "\\item[{{label}}] {{text}}",
+      },
+    });
+    expect([...port].sort()).toEqual([
+      "bullet.text",
+      "entry.dates",
+      "entry.title",
+      "header.email",
+      "header.first",
+      "header.last",
+      "item.text",
+      "labelledItem.label",
+      "labelledItem.text",
+      "link.label",
+      "paragraph.text",
+      "section.title",
+    ]);
+    const lines = comparePlaces("invented", port, fieldsFound(resume, all));
+    expect(lines.find((line) => line.place === "header.last")?.found).toBe("absent");
+    expect(lines.find((line) => line.place === "entry.dates")?.found).toBe("1 locked (date)");
+    const table = placesTable([
+      {
+        template: "invented",
+        row: row("invented-0000", "other", { findings: { pages: 1 }, compiles: 9 }),
+        lines,
+      },
+    ]);
+    expect(table).toContain(
+      "| invented | **outcome** | | assembled; harness: pages 1; 9 compiles |",
+    );
+    expect(table).toContain("| invented | `link.label` | marks | 1 raw |");
+  });
+});
+
+describe("a validation's row", () => {
+  test("holds its counts and names, the harness's findings by check, and never a field's text", () => {
+    const checks: AssemblyChecks = {
+      outcome: "partial",
+      difference: { kind: "position", text: "page 1, item 3" },
+      fields: { editable: 2, raw: 0, required: 1, locked: { text: 1 } },
+      words: { editable: 5, locked: { text: 2 } },
+      sections: { mapped: 1, locked: 0 },
+      required: ["command|inventedentry|1"],
+      controls: {
+        offered: ["pageSize"],
+        proven: ["pageSize"],
+        dropped: [{ control: "margins", why: "sets the same page at every value" }],
+      },
+      redefinitions: { applied: [], dropped: [] },
+      repeatable: [
+        { kind: "entry", added: true, removed: true },
+        { kind: "link", added: false, removed: true },
+      ],
+      findings: [
+        { check: "pages", message: "the resume sets 2 pages, not one" },
+        { check: "pages", message: `${SECRET} runs past the page's edge`, field: "sec-1.title" },
+      ],
+      compiles: 12,
+      ms: 1234.5,
+      decisions: {},
+      all: [],
+    };
+    const made = assembleRow(checks, "pdftex", { answered: 3, unanswered: 1 });
+    expect(made).toMatchObject({
+      outcome: "partial",
+      difference: "position",
+      controls: { proven: ["pageSize"], dropped: ["margins"] },
+      findings: { pages: 2 },
+      unrepeatable: ["link"],
+      compiles: 12,
+      validateMs: 1235,
+    });
+    expect(JSON.stringify(made)).not.toContain(SECRET);
+  });
+});

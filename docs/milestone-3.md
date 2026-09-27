@@ -191,7 +191,7 @@ of each launch template must find editable what the hand-written port marks.
    the fixtures the pipeline's tests run on with no model, and the first cache entries, so that
    forks of the three hit the cache from day one, as plan section 7 wants. Done when the pipeline
    assembles a package for each upstream sample from the seed alone.
-7. [ ] **Validate and assemble.** Plan section 6's four checks, each a compile from the format,
+7. [x] **Validate and assemble.** Plan section 6's four checks, each a compile from the format,
    bisected as the probe is: the body generated from the model and the assembled snippets sets
    the reference's glyph stream with the markers stripped, a new harness check; every field
    mutated with long, empty and special-character text still compiles, the `edits` check grown

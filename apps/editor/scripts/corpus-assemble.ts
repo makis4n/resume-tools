@@ -1,0 +1,510 @@
+/**
+ * Assembly over the corpus (milestone 3 item 7, decision 0026): `corpus assemble` takes each
+ * fetched document in as the probe runner does (`corpus-probe.ts`), and for each whose body parses
+ * and whose macros have an answer in `corpus/answers/` (the seed, until item 9's model answers the
+ * rest), probes it, assembles its package and document from the answer (`src/import/assemble.ts`)
+ * and validates them with the four checks and the harness (`src/import/validate.ts`); and prints one
+ * table, per family and in all: the documents assembled, partial and refused, the fields editable,
+ * required and locked by reason, the controls proven and dropped, the harness's findings by check,
+ * and the compiles and times.
+ *
+ * The documents go to the reference runner's pool of child processes (`runPool`), with a longer
+ * time than the probe's, since a document's probe and its checks both compile it, whole on XeTeX
+ * until item 8. The child is `corpus-assemble-child.ts`, which `corpus oracle` uses too.
+ *
+ * What is printed and written names macros, reasons and counts, never a document's text; each
+ * document's assembled package and document, which hold its text, stay under `.corpus/` alone.
+ */
+
+// Node runs this file by stripping its types, so it imports values only from files that import
+// nothing Node lacks, and the editor's modules as types alone, with their real extensions.
+import type { AssemblyChecks, LockReason } from "../src/import/assemble.ts";
+import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
+
+/** How long one document may take: its pipeline, its probe, its assembly and its checks. */
+export const ASSEMBLE_LIMIT_MS = 900_000;
+
+/** The reasons a field or a part is locked, in the order the table counts them. */
+export const LOCK_REASONS: readonly LockReason[] = [
+  "raw",
+  "breaks",
+  "vanished",
+  "twice",
+  "moved",
+  "misaligned",
+  "case",
+  "split",
+  "untested",
+  "date",
+  "shape",
+  "unmapped",
+  "differs",
+  "text",
+  "fields",
+  "alignment",
+];
+
+/** The harness's checks, in the order the table counts their findings. */
+const CHECKS = [
+  "dump",
+  "compile",
+  "converges",
+  "controls",
+  "edits",
+  "pages",
+  "fields",
+  "alignment",
+  "fonts",
+  "special",
+  "pdf",
+] as const;
+
+/** The style controls, in the order the table counts them. */
+const CONTROLS = ["pageSize", "margins", "fontSize", "font", "accent", "density"] as const;
+
+/** What became of a document: assembled, partial, refused, or why it never got so far. */
+export type AssembleOutcome =
+  | "assembled"
+  | "partial"
+  | "refused"
+  | "no answer"
+  | "no reference"
+  | "not parsed"
+  | "baseline"
+  | "timeout"
+  | "crashed";
+
+/** One document's row: names of reasons, checks and controls, and numbers, never its text. */
+export interface AssembleRow {
+  id: string;
+  family: Family;
+  outcome: AssembleOutcome;
+  engine?: "pdftex" | "xetex";
+  /** Why the assembly or the checks refused it. */
+  refused?: string;
+  /** For one refused for a font the page cannot draw, the font: a name from the tree, no text. */
+  font?: string;
+  /** For a partial one, the kind of the first check's first difference. */
+  difference?: string;
+  /** The body's template macros with an answer, and without. */
+  answered?: number;
+  unanswered?: number;
+  fields?: {
+    editable: number;
+    raw: number;
+    required: number;
+    locked: Partial<Record<LockReason, number>>;
+  };
+  words?: { editable: number; locked: Partial<Record<LockReason, number>> };
+  sections?: { mapped: number; locked: number };
+  controls?: { proven: string[]; dropped: string[] };
+  redefinitions?: { applied: string[]; dropped: string[] };
+  /** The harness's findings, by check. */
+  findings?: Partial<Record<string, number>>;
+  /** The repeatable kinds whose unit added or removed stopped the compile. */
+  unrepeatable?: string[];
+  compiles?: number;
+  /** Milliseconds: the probe, and the assembly with its checks. */
+  probeMs?: number;
+  validateMs?: number;
+  /** Milliseconds from the document's being sent to its child to its row coming back. */
+  wall: number;
+}
+
+/** A row as a child sends it, before the parent adds the document's id, family and time. */
+export type AssembleChildRow = Omit<AssembleRow, "id" | "family" | "wall">;
+
+/** A validation's row: its counts and names, never a field's text. */
+export function assembleRow(
+  checks: AssemblyChecks,
+  engine: "pdftex" | "xetex",
+  answered: { answered: number; unanswered: number },
+): AssembleChildRow {
+  const findings: Partial<Record<string, number>> = {};
+  for (const finding of checks.findings)
+    findings[finding.check] = (findings[finding.check] ?? 0) + 1;
+  return {
+    outcome: checks.outcome,
+    engine,
+    ...(checks.difference === undefined ? {} : { difference: checks.difference.kind }),
+    ...answered,
+    fields: checks.fields,
+    words: checks.words,
+    sections: checks.sections,
+    controls: {
+      proven: checks.controls.proven,
+      dropped: checks.controls.dropped.map((each) => each.control),
+    },
+    redefinitions: checks.redefinitions,
+    findings,
+    unrepeatable: checks.repeatable
+      .filter((each) => !each.added || !each.removed)
+      .map((each) => each.kind),
+    compiles: checks.compiles,
+    validateMs: Math.round(checks.ms),
+  };
+}
+
+const COLUMNS = [...FAMILIES, "all"] as const;
+
+/** The median of numbers, or undefined for none. */
+function median(values: readonly number[]): number | undefined {
+  if (values.length === 0) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[middle]
+    : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
+}
+
+/** A font's name as the table shows it: a TFM's name from the tree, letters, digits and dashes. */
+const FONT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+
+/** A redefinition's or a macro's name as the table shows it, when it is plainly one. */
+const shownName = (name: string) => (/^[A-Za-z@*]{1,63}$/.test(name) ? `\\${name}` : undefined);
+
+/**
+ * What assembling the corpus came to, as one Markdown table, per family and in all: the documents
+ * that reached the assembly and why others did not, those assembled, partial with the kind of the
+ * first difference, and refused; the fields editable, raw where the page cannot mark them, required
+ * and locked by reason, and their words; the sections mapped and locked; the controls proven and
+ * dropped; the redefinitions dropped; the harness's findings by check; and the compiles and times.
+ */
+export function assembleTable(rows: readonly AssembleRow[]): string {
+  const of = (column: (typeof COLUMNS)[number]) =>
+    rows.filter((row) => column === "all" || row.family === column);
+  const line = (label: string, values: readonly (number | string)[]) =>
+    `| ${label} | ${values.join(" | ")} |`;
+  const count = (label: string, test: (row: AssembleRow) => boolean) =>
+    line(
+      label,
+      COLUMNS.map((column) => of(column).filter(test).length),
+    );
+  const sum = (label: string, pick: (row: AssembleRow) => number) =>
+    line(
+      label,
+      COLUMNS.map((column) => of(column).reduce((total, row) => total + pick(row), 0)),
+    );
+  const middle = (label: string, pick: (row: AssembleRow) => number | undefined, unit = "") =>
+    line(
+      label,
+      COLUMNS.map((column) => {
+        const value = median(of(column).flatMap((row) => pick(row) ?? []));
+        return value === undefined ? "" : `${Math.round(value)}${unit}`;
+      }),
+    );
+  const most = (label: string, pick: (row: AssembleRow) => number | undefined, unit = "") =>
+    line(
+      label,
+      COLUMNS.map((column) => {
+        const values = of(column).flatMap((row) => pick(row) ?? []);
+        return values.length === 0 ? "" : `${Math.round(Math.max(...values))}${unit}`;
+      }),
+    );
+  const share = (
+    label: string,
+    part: (row: AssembleRow) => number,
+    whole: (row: AssembleRow) => number,
+  ) =>
+    line(
+      label,
+      COLUMNS.map((column) => {
+        const total = of(column).reduce((sum, row) => sum + whole(row), 0);
+        const some = of(column).reduce((sum, row) => sum + part(row), 0);
+        return total === 0 ? "" : `${Math.round((100 * some) / total)}%`;
+      }),
+    );
+  const section = (label: string) =>
+    line(
+      `**${label}**`,
+      COLUMNS.map(() => ""),
+    );
+  const done = (row: AssembleRow) => row.outcome === "assembled" || row.outcome === "partial";
+  const lockedWords = (row: AssembleRow) =>
+    Object.values(row.words?.locked ?? {}).reduce((sum, n) => sum + (n ?? 0), 0);
+  const refusals = [...new Set(rows.flatMap((row) => row.refused ?? []))].sort();
+  const fonts = [
+    ...new Set(
+      rows.flatMap((row) => (row.font !== undefined && FONT_NAME.test(row.font) ? [row.font] : [])),
+    ),
+  ].sort();
+  const differences = [...new Set(rows.flatMap((row) => row.difference ?? []))].sort();
+  const redefinitions = [
+    ...new Set(
+      rows.flatMap((row) =>
+        (row.redefinitions?.dropped ?? []).flatMap((name) => shownName(name) ?? []),
+      ),
+    ),
+  ].sort();
+  const lines = [
+    line("", COLUMNS),
+    `|---|${COLUMNS.map(() => "--:").join("|")}|`,
+    count(
+      "Documents whose body parsed",
+      (row) => row.outcome !== "no reference" && row.outcome !== "not parsed",
+    ),
+    count(
+      "Not probed: the body unmarked did not set the reference's glyphs",
+      (row) => row.outcome === "baseline",
+    ),
+    count("No answer for any macro the body calls", (row) => row.outcome === "no answer"),
+    count("Assembled and checked", done),
+    count("Assembled: the first check holds", (row) => row.outcome === "assembled"),
+    count("Partial: the first check differs", (row) => row.outcome === "partial"),
+    ...differences.map((kind) =>
+      count(`Partial, the first difference: \`${kind}\``, (row) => row.difference === kind),
+    ),
+    count("Refused", (row) => row.outcome === "refused"),
+    ...refusals.flatMap((reason) => [
+      count(`Refused: ${reason}`, (row) => row.refused === reason),
+      ...(reason === "font"
+        ? fonts.map((font) => count(`Refused: font \`${font}\``, (row) => row.font === font))
+        : []),
+    ]),
+    count("Timed out or died", (row) => row.outcome === "timeout" || row.outcome === "crashed"),
+    sum("Template macros with an answer", (row) => row.answered ?? 0),
+    sum("Template macros with none", (row) => row.unanswered ?? 0),
+    section("Fields"),
+    sum("Editable", (row) => row.fields?.editable ?? 0),
+    sum("Raw: set, and edited in the panel alone", (row) => row.fields?.raw ?? 0),
+    sum("Required", (row) => row.fields?.required ?? 0),
+    ...LOCK_REASONS.map((reason) =>
+      sum(`Parts locked: \`${reason}\``, (row) => row.fields?.locked[reason] ?? 0),
+    ),
+    share(
+      "Words in editable fields",
+      (row) => row.words?.editable ?? 0,
+      (row) => (row.words?.editable ?? 0) + lockedWords(row),
+    ),
+    section("Sections"),
+    sum("Mapped onto the model", (row) => row.sections?.mapped ?? 0),
+    sum("Locked", (row) => row.sections?.locked ?? 0),
+    section("Controls, documents"),
+    ...CONTROLS.map((name) =>
+      count(`\`${name}\` proven`, (row) => (row.controls?.proven ?? []).includes(name)),
+    ),
+    ...CONTROLS.map((name) =>
+      count(`\`${name}\` dropped`, (row) => (row.controls?.dropped ?? []).includes(name)),
+    ),
+    ...(redefinitions.length === 0
+      ? []
+      : [
+          section("Redefinitions dropped, documents"),
+          ...redefinitions.map((name) =>
+            count(`\`${name}\``, (row) =>
+              (row.redefinitions?.dropped ?? []).some((each) => shownName(each) === name),
+            ),
+          ),
+        ]),
+    section("The harness's findings, documents"),
+    ...CHECKS.map((check) => count(`\`${check}\``, (row) => (row.findings?.[check] ?? 0) > 0)),
+    count("No finding", (row) => done(row) && Object.keys(row.findings ?? {}).length === 0),
+    count("A repeatable unit stops the compile", (row) => (row.unrepeatable ?? []).length > 0),
+    section("Compiles and time"),
+    middle("Compiles, median", (row) => (done(row) ? row.compiles : undefined)),
+    most("Compiles, most", (row) => (done(row) ? row.compiles : undefined)),
+    middle("The probe, median", (row) => row.probeMs, " ms"),
+    middle("Assembly and checks, median", (row) => row.validateMs, " ms"),
+    most("Assembly and checks, slowest", (row) => row.validateMs, " ms"),
+  ];
+  return `${lines.map(printable).join("\n")}\n`;
+}
+
+// The answers.
+
+/** A stored answer's fields the runner reads: which macro it answers. */
+interface Stored {
+  of: "command" | "environment";
+  name: string;
+}
+
+/**
+ * The answers the committed folder holds for a request's macros, by key; and how many of the
+ * body's macros have one and how many have none. `read` gives a key's file's text.
+ */
+export function answersFor<T extends Stored>(
+  macros: readonly { key?: string; calls: number }[],
+  read: (key: string) => string | undefined,
+  parse: (text: string) => T | undefined,
+): { found: T[]; answered: number; unanswered: number } {
+  const found: T[] = [];
+  let answered = 0;
+  let unanswered = 0;
+  for (const macro of macros) {
+    const text = macro.key === undefined ? undefined : read(macro.key);
+    const stored = text === undefined ? undefined : parse(text);
+    if (stored !== undefined) found.push(stored);
+    if (macro.key === undefined || macro.calls === 0) continue;
+    if (stored === undefined) unanswered++;
+    else answered++;
+  }
+  return { found, answered, unanswered };
+}
+
+// The model's places, for the oracle's comparison with the ports.
+
+/** How the fields of one of the model's places came out: editable, raw, or locked by reason. */
+export interface PlaceCount {
+  editable: number;
+  raw: number;
+  locked: Partial<Record<LockReason, number>>;
+}
+
+/** An imported resume's nodes as the places are read from them: ids and kinds alone. */
+interface Nodes {
+  header: { links: readonly { id: string }[] };
+  sections: readonly (
+    | { kind: "locked"; id: string }
+    | {
+        kind: "entries";
+        id: string;
+        entries: readonly { id: string; bullets: readonly { id: string }[] }[];
+      }
+    | { kind: "list" | "labelled"; id: string; items: readonly { id: string }[] }
+    | { kind: "paragraph"; id: string }
+  )[];
+}
+
+/**
+ * The fields of an imported resume by the model's place they fill, `header.first`, `section.title`,
+ * `entry.dates`, `bullet.text`, `item.text`, `labelledItem.label` and the like, and how each came
+ * out; from the checks' fields and the resume's ids, never a field's text.
+ */
+export function fieldsFound(
+  resume: Nodes,
+  all: readonly { field: string; mode: "typeset" | "raw" | "locked"; reason?: LockReason }[],
+): Record<string, PlaceCount> {
+  const kinds = new Map<string, string>();
+  for (const link of resume.header.links) kinds.set(link.id, "link");
+  for (const section of resume.sections) {
+    kinds.set(section.id, section.kind === "paragraph" ? "paragraph" : "section");
+    if (section.kind === "entries")
+      for (const entry of section.entries) {
+        kinds.set(entry.id, "entry");
+        for (const bullet of entry.bullets) kinds.set(bullet.id, "bullet");
+      }
+    else if (section.kind === "list" || section.kind === "labelled")
+      for (const item of section.items)
+        kinds.set(item.id, section.kind === "list" ? "item" : "labelledItem");
+  }
+  const found: Record<string, PlaceCount> = {};
+  for (const field of all) {
+    const dot = field.field.lastIndexOf(".");
+    const node = field.field.slice(0, dot);
+    const slot = field.field.slice(dot + 1);
+    const kind = node === "header" ? "header" : (kinds.get(node) ?? "entry");
+    const place = kind === "paragraph" && slot === "title" ? "section.title" : `${kind}.${slot}`;
+    const count = (found[place] ??= { editable: 0, raw: 0, locked: {} });
+    if (field.mode === "typeset") count.editable++;
+    else if (field.mode === "raw") count.raw++;
+    else if (field.reason !== undefined)
+      count.locked[field.reason] = (count.locked[field.reason] ?? 0) + 1;
+  }
+  return found;
+}
+
+/** A curated package's snippets as the port comparison reads them, from its `template.json`. */
+interface PortSnippets {
+  snippets: {
+    header: string;
+    contact?: Partial<Record<string, string>>;
+    link: Partial<Record<string, string>>;
+    section: Record<string, string | Record<string, string>>;
+    entry: string | Record<string, string>;
+    bullet: string | Record<string, string>;
+    item: string | Record<string, string>;
+    labelledItem: string | Record<string, string>;
+  };
+}
+
+/**
+ * The places a port marks: every typeset slot of its snippets, by the model's place it fills; a
+ * contact's text through `{{contacts}}` as the header's field it is.
+ */
+export function portPlaces(port: PortSnippets): Set<string> {
+  const places = new Set<string>();
+  const typeset = (snippet: string | Record<string, string> | undefined) => {
+    const texts =
+      snippet === undefined ? [] : typeof snippet === "string" ? [snippet] : Object.values(snippet);
+    const slots = new Set<string>();
+    for (const text of texts)
+      for (const found of text.matchAll(/\{\{\s*([A-Za-z]+)\s*\}\}/g)) slots.add(found[1] ?? "");
+    return slots;
+  };
+  const { snippets } = port;
+  for (const slot of typeset(snippets.header))
+    if (["first", "last", "headline", "email", "phone", "location"].includes(slot))
+      places.add(`header.${slot}`);
+  const listed = typeset(snippets.header);
+  if (listed.has("contacts"))
+    for (const [field, snippet] of Object.entries(snippets.contact ?? {}))
+      if (snippet !== undefined && typeset(snippet).has("text")) places.add(`header.${field}`);
+  if (listed.has("links") || listed.has("contacts"))
+    for (const snippet of Object.values(snippets.link))
+      if (snippet !== undefined && typeset(snippet).has("label")) places.add("link.label");
+  for (const [kind, snippet] of Object.entries(snippets.section)) {
+    const slots = typeset(snippet);
+    if (slots.has("title")) places.add("section.title");
+    if (kind === "paragraph" && slots.has("text")) places.add("paragraph.text");
+  }
+  for (const slot of typeset(snippets.entry))
+    if (["title", "subtitle", "place", "dates"].includes(slot)) places.add(`entry.${slot}`);
+  if (typeset(snippets.bullet).has("text")) places.add("bullet.text");
+  if (typeset(snippets.item).has("text")) places.add("item.text");
+  for (const slot of typeset(snippets.labelledItem))
+    if (slot === "label" || slot === "text") places.add(`labelledItem.${slot}`);
+  return places;
+}
+
+/** One line of the oracle's comparison of the fields found with the port's slots. */
+export interface PlaceLine {
+  template: string;
+  place: string;
+  port: "marks" | "omits";
+  found: string;
+}
+
+/** A place's count as the comparison shows it: editable, raw and locked by reason. */
+function shownCount(count: PlaceCount | undefined): string {
+  if (count === undefined) return "absent";
+  const parts = [
+    ...(count.editable > 0 ? [`${count.editable} editable`] : []),
+    ...(count.raw > 0 ? [`${count.raw} raw`] : []),
+    ...Object.entries(count.locked).map(([reason, n]) => `${n} locked (${reason})`),
+  ];
+  return parts.length === 0 ? "none" : parts.join(", ");
+}
+
+/** The fields an oracle sample's assembly found, against the places its port marks, a line each. */
+export function comparePlaces(
+  template: string,
+  port: ReadonlySet<string>,
+  found: Readonly<Record<string, PlaceCount>> | undefined,
+): PlaceLine[] {
+  const places = [...new Set([...port, ...Object.keys(found ?? {})])].sort();
+  return places.map((place) => ({
+    template,
+    place,
+    port: port.has(place) ? "marks" : "omits",
+    found: shownCount(found?.[place]),
+  }));
+}
+
+/** The oracle's assemblies as a Markdown table: each sample's outcome, and its fields by place. */
+export function placesTable(
+  samples: readonly { template: string; row?: AssembleRow; lines: readonly PlaceLine[] }[],
+): string {
+  const rows = ["| Template | Place | Port | Found |", "|---|---|---|---|"];
+  for (const sample of samples) {
+    const row = sample.row;
+    const findings = Object.entries(row?.findings ?? {})
+      .map(([check, n]) => `${check} ${n}`)
+      .join(", ");
+    rows.push(
+      `| ${sample.template} | **outcome** | | ${row?.outcome ?? "none"}${row?.difference === undefined ? "" : `, the first difference: ${row.difference}`}${row?.refused === undefined ? "" : ` (${row.refused})`}; harness: ${findings === "" ? "no finding" : findings}; ${row?.compiles ?? 0} compiles |`,
+    );
+    for (const line of sample.lines)
+      rows.push(`| ${line.template} | \`${line.place}\` | ${line.port} | ${line.found} |`);
+  }
+  return `${rows.map(printable).join("\n")}\n`;
+}
