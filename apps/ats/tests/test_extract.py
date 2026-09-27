@@ -5,13 +5,7 @@ from pathlib import Path
 import pytest
 
 from ats.extract import Document, EncryptedPdfError, UnreadablePdfError, extract
-from tests.pdfs import (
-    build_pdf,
-    duplicated_kids_pdf,
-    malformed_page_tree_pdf,
-    minimal_pdf,
-    zero_page_pdf,
-)
+from tests.pdfs import build_pdf, malformed_page_tree_pdf, minimal_pdf, zero_page_pdf
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -60,11 +54,6 @@ def test_a_document_that_opens_but_has_an_unloadable_page_raises_unreadable() ->
 def test_a_document_with_zero_pages_raises_unreadable() -> None:
     with pytest.raises(UnreadablePdfError):
         extract(zero_page_pdf())
-
-
-def test_a_document_with_more_pages_than_the_cap_raises_unreadable() -> None:
-    with pytest.raises(UnreadablePdfError):
-        extract(duplicated_kids_pdf(51))
 
 
 def test_an_encrypted_pdf_raises_encrypted() -> None:

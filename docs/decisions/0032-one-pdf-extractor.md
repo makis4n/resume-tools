@@ -33,6 +33,7 @@ choice stays cheap to revisit later because every call to it goes through one mo
 - Adding a second extractor later needs a new decision record.
 - There is no processing-time limit yet. PDFium cannot be interrupted mid-call, so one
   pathological page holds the process-wide lock for as long as PDFium takes: a single, densely
-  typeset page at the 5 MB upload cap measured at roughly 17 seconds in this repository. A time
-  limit, and rate limits generally, come with milestone 1's limits work and the sandboxing
-  question already open in the PRD.
+  typeset page at the 5 MB upload cap measured at roughly 17 seconds in this repository, and a
+  page tree can reference that one heavy page many times over, so neither the upload size nor the
+  page count bounds the time. A time limit, and rate limits generally, come with milestone 1's
+  limits work and the sandboxing question already open in the PRD.

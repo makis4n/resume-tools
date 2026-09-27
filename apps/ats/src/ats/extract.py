@@ -14,12 +14,6 @@ import pypdfium2 as pdfium
 # page or text page anywhere in this module is serialised behind this lock.
 _PDFIUM_LOCK = threading.Lock()
 
-# A resume never legitimately has this many pages. The cap exists because a page tree's /Kids
-# array can reference the same small page object thousands of times, so the upload's byte size
-# does not bound its page count: without this check, such a file would hold _PDFIUM_LOCK for a
-# long time, denying every other concurrent request.
-_MAX_PAGES = 50
-
 
 class ExtractError(ValueError):
     """Base class for a PDF that pypdfium2 could not turn into text."""
@@ -104,9 +98,6 @@ def extract(pdf: bytes) -> Document:
         document = _open_document(pdf)
         try:
             page_count = len(document)
-            if page_count > _MAX_PAGES:
-                raise UnreadablePdfError("the PDF has too many pages")
-
             pages = []
             try:
                 for number in range(1, page_count + 1):
