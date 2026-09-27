@@ -6,7 +6,7 @@ import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls } from "../templates/package";
-import { fastest } from "../test/timing";
+import { bound, fastest } from "../test/timing";
 import { parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { hasToUnicode, mediaBoxes, shownStrings } from "../validate/pdf";
@@ -400,8 +400,11 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       console.log(
         `fontconfig's scan: ${Math.round(scanned - plain)} ms of CPU time a pass (${Math.round(plain)} ms without it, ${Math.round(scanned)} ms with it)`,
       );
-      // Generous, so that a slow runner passes and a scan of every font the tree has fails.
-      expect(scanned - plain).toBeLessThan(250);
+      // Against the pass without it, which load slows alike: the scan costs a fifth of one here
+      // (34 ms of 170) and must cost less than one and a half, as the 250 ms this bound was came
+      // to at rest; a loaded runner could go past 250 ms, and a scan of every font the tree has
+      // costs more.
+      expect(scanned - plain).toBeLessThan(bound(1.5, plain));
     }, 120_000);
   });
 
@@ -452,6 +455,19 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(result(absolute.log)).toBe("unread");
       const input = session.compile("pdftex", "stock", doc("\\input{planted}"), { job: "reader" });
       expect(input.error).toBe("LaTeX Error: File `planted.tex' not found.");
+    }, 60_000);
+
+    it("gives back a file a job's compile wrote, and nothing outside the job's folder", () => {
+      const write = String.raw`\newwrite\w\immediate\openout\w=\jobname.rtm\immediate\write\w{written line}\immediate\closeout\w x`;
+      expect(session.compile("pdftex", "stock", doc(write), { job: "writer" }).ok).toBe(true);
+      expect(new TextDecoder().decode(session.written("writer", "writer.rtm"))).toBe(
+        "written line\n",
+      );
+      expect(session.written("writer", "missing.txt")).toBeUndefined();
+      expect(session.written("reader", "writer.rtm")).toBeUndefined();
+      expect(() => session.written("writer", "../planter/planted.tex")).toThrow();
+      expect(() => session.written("writer", ".fonts.conf")).toThrow();
+      expect(() => session.written("../writer", "writer.rtm")).toThrow();
     }, 60_000);
 
     it("stops a job writing outside its folder", () => {

@@ -302,6 +302,7 @@ const REASON_LABELS: Readonly<Record<RefusalReason, string>> = {
   image: "Refused: shows an image in a format with no stand-in",
   stopped: "Refused: stopped for another reason",
   passes: "Refused: did not settle in three passes",
+  parse: "Refused: the parser could not read its body",
   timeout: `Refused: timed out, past ${LIMIT_MS / 1000} s`,
   intake: "Refused at intake",
 };
@@ -426,7 +427,8 @@ export function referenceTable(rows: readonly ReferenceRow[]): string {
     `|---|${COLUMNS.map(() => "--:").join("|")}|`,
     count("Documents", () => true),
     count("Compiled to a reference", reference),
-    ...REFUSAL_REASONS.map((reason) =>
+    // The parser's refusals come after the reference, which never gives one.
+    ...REFUSAL_REASONS.filter((reason) => reason !== "parse").map((reason) =>
       count(REASON_LABELS[reason], (row) => row.outcome === reason),
     ),
     count("Reference of one page", (row) => reference(row) && row.pages === 1),

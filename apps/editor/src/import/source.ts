@@ -1003,7 +1003,7 @@ export function graphicsNames(tex: string): string[] {
 }
 
 /** A source with each comment's characters made spaces, so that every index is the source's. */
-const maskComments = (tex: string) =>
+export const maskComments = (tex: string) =>
   tex.replace(
     /(^|[^\\])((?:\\\\)*)(%.*)$/gm,
     (_, before: string, escapes: string, comment: string) =>
