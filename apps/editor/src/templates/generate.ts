@@ -13,7 +13,10 @@
  *
  * The one exception is what an import kept of the user's own upload, which no user types: a locked
  * section's LaTeX and a node's extras, which the generator writes as they are, the first between
- * lock markers (`\rtlocked`), the second through an extras slot (decision 0025).
+ * lock markers (`\rtlocked`), the second through an extras slot (decision 0025). A slot a node
+ * keeps (`kept`) is set through its extra alone: the model's value for it sets nothing, markers
+ * included; and where an entry or a section has no extra under an extras slot's key, as a unit the
+ * user adds has none, the slot writes its package's default for the key (decision 0026).
  */
 
 import type {
@@ -42,6 +45,7 @@ import {
   type ENTRY_SLOTS,
   type FontAdjust,
   type FontFamily,
+  forRole,
   type HEADER_SLOTS,
   type ITEM_SLOTS,
   type LABELLED_ITEM_SLOTS,
@@ -141,12 +145,14 @@ type ScopeOf<S extends Readonly<Record<string, SlotType>>> = {
  * A snippet and the slots it renders with: the whole document, or one item of a list. `extras`
  * are its node's, which its extras slots write: the header's, a section's or an entry's, an empty
  * record where the node keeps none. Any other part has none, and the schema lets no extras slot
- * into its snippet.
+ * into its snippet. `defaults` are what its extras slots write for a key its node has no extra
+ * under, the package's for an entry's or a section's role (decision 0026).
  */
 interface Part {
   nodes: readonly SnippetNode[];
   scope: Scope;
   extras?: Extras;
+  defaults?: Readonly<Record<string, string>>;
 }
 
 /** The name of the format for a package and a document's values, which `generateFormat` gives. */
@@ -482,14 +488,30 @@ function documentPart(build: Build, resume: Resume): Part {
   return { nodes: build.tree(snippets.document), scope };
 }
 
+/**
+ * A node's value for a slot as the generator sets it: none where the node keeps the slot, whose
+ * extra alone its snippet writes (decision 0026), so that the model's value, which the editor never
+ * opens, sets nothing, markers included.
+ */
+function unlessKept<T>(
+  keeps: readonly string[] | undefined,
+  slot: string,
+  value: T,
+): T | undefined {
+  return keeps?.includes(slot) ? undefined : value;
+}
+
 function headerPart(build: Build, header: Header): Part {
   const { snippets } = build.pkg;
+  const keeps = header.kept;
   const fields = {
-    phone: textSlot("header.phone", header.phone),
-    email: textSlot("header.email", header.email),
-    location: textSlot("header.location", header.location),
+    phone: textSlot("header.phone", unlessKept(keeps, "phone", header.phone)),
+    email: textSlot("header.email", unlessKept(keeps, "email", header.email)),
+    location: textSlot("header.location", unlessKept(keeps, "location", header.location)),
   };
-  const links = header.links.flatMap((link) => linkPart(build, link) ?? []);
+  const links = (unlessKept(keeps, "links", header.links) ?? []).flatMap(
+    (link) => linkPart(build, link) ?? [],
+  );
   // A contact field is left out when the package has no snippet for it, and when it is empty,
   // so that the separator falls only between the contacts that are there.
   const contacts: Part[] = [];
@@ -504,9 +526,9 @@ function headerPart(build: Build, header: Header): Part {
     contacts.push({ nodes: build.tree(source), scope });
   }
   const scope: ScopeOf<typeof HEADER_SLOTS> = {
-    first: textSlot("header.first", header.name.first),
-    last: textSlot("header.last", header.name.last),
-    headline: textSlot("header.headline", header.headline),
+    first: textSlot("header.first", unlessKept(keeps, "first", header.name.first)),
+    last: textSlot("header.last", unlessKept(keeps, "last", header.name.last)),
+    headline: textSlot("header.headline", unlessKept(keeps, "headline", header.headline)),
     email: fields.email,
     phone: fields.phone,
     location: fields.location,
@@ -539,22 +561,26 @@ function linkPart(build: Build, link: Link): Part | undefined {
 function sectionPart(build: Build, section: Section): Part {
   if (section.kind === "locked") return lockedPart(section);
   const { snippets } = build.pkg;
-  const { role } = section;
+  const { role, kept: keeps } = section;
   const nodes = build.tree(byRole(snippets.section[section.kind], role));
-  const title = textSlot(`${section.id}.title`, section.title);
+  const title = textSlot(`${section.id}.title`, unlessKept(keeps, "title", section.title));
   const extras = section.extras ?? {};
+  const defaults = snippets.defaults?.section && forRole(snippets.defaults.section, role);
+  const part = { nodes, extras, ...(defaults === undefined ? {} : { defaults }) };
   switch (section.kind) {
     case "entries": {
-      const entries = section.entries.map((entry) => entryPart(build, entry, role));
+      const entries = (unlessKept(keeps, "entries", section.entries) ?? []).map((entry) =>
+        entryPart(build, entry, role),
+      );
       const scope: ScopeOf<(typeof SECTION_SLOTS)["entries"]> = {
         title,
         entries: listSlot(entries, byRole(snippets.separators.entries, role)),
       };
-      return { nodes, scope, extras };
+      return { ...part, scope };
     }
     case "list": {
       const item = build.tree(byRole(snippets.item, role));
-      const items = section.items.map((it): Part => {
+      const items = (unlessKept(keeps, "items", section.items) ?? []).map((it): Part => {
         const scope: ScopeOf<typeof ITEM_SLOTS> = { text: richSlot(`${it.id}.text`, it.text) };
         return { nodes: item, scope };
       });
@@ -562,11 +588,11 @@ function sectionPart(build: Build, section: Section): Part {
         title,
         items: listSlot(items, byRole(snippets.separators.items, role)),
       };
-      return { nodes, scope, extras };
+      return { ...part, scope };
     }
     case "labelled": {
       const item = build.tree(byRole(snippets.labelledItem, role));
-      const items = section.items.map((it): Part => {
+      const items = (unlessKept(keeps, "items", section.items) ?? []).map((it): Part => {
         const scope: ScopeOf<typeof LABELLED_ITEM_SLOTS> = {
           label: textSlot(`${it.id}.label`, it.label),
           text: richSlot(`${it.id}.text`, it.text),
@@ -577,14 +603,14 @@ function sectionPart(build: Build, section: Section): Part {
         title,
         items: listSlot(items, byRole(snippets.separators.items, role)),
       };
-      return { nodes, scope, extras };
+      return { ...part, scope };
     }
     case "paragraph": {
       const scope: ScopeOf<(typeof SECTION_SLOTS)["paragraph"]> = {
         title,
-        text: richSlot(`${section.id}.text`, section.text),
+        text: richSlot(`${section.id}.text`, unlessKept(keeps, "text", section.text) ?? []),
       };
-      return { nodes, scope, extras };
+      return { ...part, scope };
     }
   }
 }
@@ -602,19 +628,27 @@ function lockedPart(section: LockedSection): Part {
 
 function entryPart(build: Build, entry: Entry, role: SectionRole): Part {
   const { snippets } = build.pkg;
+  const keeps = entry.kept;
   const bullet = build.tree(byRole(snippets.bullet, role));
-  const bullets = entry.bullets.map((it): Part => {
+  const bullets = (unlessKept(keeps, "bullets", entry.bullets) ?? []).map((it): Part => {
     const scope: ScopeOf<typeof BULLET_SLOTS> = { text: richSlot(`${it.id}.text`, it.text) };
     return { nodes: bullet, scope };
   });
+  const dates = unlessKept(keeps, "dates", entry.dates);
   const scope: ScopeOf<typeof ENTRY_SLOTS> = {
-    title: textSlot(`${entry.id}.title`, entry.title),
-    subtitle: textSlot(`${entry.id}.subtitle`, entry.subtitle),
-    place: textSlot(`${entry.id}.place`, entry.place),
-    dates: dateSlot(`${entry.id}.dates`, entry.dates && formatDates(entry.dates, build.dateFormat)),
+    title: textSlot(`${entry.id}.title`, unlessKept(keeps, "title", entry.title)),
+    subtitle: textSlot(`${entry.id}.subtitle`, unlessKept(keeps, "subtitle", entry.subtitle)),
+    place: textSlot(`${entry.id}.place`, unlessKept(keeps, "place", entry.place)),
+    dates: dateSlot(`${entry.id}.dates`, dates && formatDates(dates, build.dateFormat)),
     bullets: listSlot(bullets, byRole(snippets.separators.bullets, role)),
   };
-  return { nodes: build.tree(byRole(snippets.entry, role)), scope, extras: entry.extras ?? {} };
+  const defaults = snippets.defaults?.entry && forRole(snippets.defaults.entry, role);
+  return {
+    nodes: build.tree(byRole(snippets.entry, role)),
+    scope,
+    extras: entry.extras ?? {},
+    ...(defaults === undefined ? {} : { defaults }),
+  };
 }
 
 /** A snippet or separator for a section's role: the role's own variant, or the default. */
@@ -653,7 +687,14 @@ function valueSlot(text: string): Extract<Value, { type: "value" }> {
 
 /** A walk's place in a snippet, or in a list whose items it is rendering one by one. */
 type Frame =
-  | { kind: "nodes"; nodes: readonly SnippetNode[]; next: number; scope: Scope; extras?: Extras }
+  | {
+      kind: "nodes";
+      nodes: readonly SnippetNode[];
+      next: number;
+      scope: Scope;
+      extras?: Extras;
+      defaults?: Readonly<Record<string, string>>;
+    }
   | { kind: "list"; list: ValueOf<"list">; next: number };
 
 /**
@@ -662,7 +703,8 @@ type Frame =
  * join the stack one at a time, so every step is small and each is counted against MAX_BODY. A
  * block reads the presence its slot's value was built with, and a block over a list never
  * iterates: a list renders only through its slot. `shown` holds the slot nodes a snippet shows in
- * `\href`'s text (`markShown`). An extras slot writes the part's node's extra as it is (`kept`).
+ * `\href`'s text (`markShown`). An extras slot writes the part's node's extra as it is (`kept`),
+ * or where the node has none under its key, the part's default for the key, or nothing.
  */
 function render(
   part: Part,
@@ -671,9 +713,7 @@ function render(
   escape: Escape,
   shown: WeakSet<SnippetNode>,
 ) {
-  const stack: Frame[] = [
-    { kind: "nodes", nodes: part.nodes, next: 0, scope: part.scope, extras: part.extras },
-  ];
+  const stack: Frame[] = [frameOf(part)];
   for (let frame = stack.at(-1); frame !== undefined; frame = stack.at(-1)) {
     out.step();
     if (frame.kind === "list") {
@@ -684,13 +724,7 @@ function render(
       }
       if (frame.next > 0) out.add(frame.list.separator);
       frame.next++;
-      stack.push({
-        kind: "nodes",
-        nodes: item.nodes,
-        next: 0,
-        scope: item.scope,
-        extras: item.extras,
-      });
+      stack.push(frameOf(item));
       continue;
     }
     const node = frame.nodes[frame.next++];
@@ -706,7 +740,11 @@ function render(
     } else if (key !== undefined) {
       // The schema refuses a typeset extra, since what it holds is LaTeX no escape has seen.
       if (!node.raw) throw new Error(`${node.name} is an extra, which only ever goes in raw`);
-      const latex = extra(frame, key) ?? "";
+      const { defaults } = frame;
+      const latex =
+        extra(frame, key) ??
+        (defaults !== undefined && Object.hasOwn(defaults, key) ? defaults[key] : undefined) ??
+        "";
       out.charge(latex.length);
       out.add(kept(latex));
     } else {
@@ -717,6 +755,18 @@ function render(
       else stack.push({ kind: "list", list: value, next: 0 });
     }
   }
+}
+
+/** The walk's frame for a part, from its first node. */
+function frameOf(part: Part): Frame {
+  return {
+    kind: "nodes",
+    nodes: part.nodes,
+    next: 0,
+    scope: part.scope,
+    extras: part.extras,
+    ...(part.defaults === undefined ? {} : { defaults: part.defaults }),
+  };
 }
 
 /** A slot's value. The schema lets a snippet use only its place's slots, so a miss is a bug. */

@@ -32,12 +32,13 @@ generator's writing of both, which every compile of the checks and the harness g
 
 - **Its id** is `import-` and 12 hex digits of the SHA-256 of the rest of the package as JSON, so
   that two uploads of one template whose preambles agree share a package and its formats: the body's
-  text never reaches a snippet, and the preamble keeps only what the answer does not name as the
-  header's. **Its name** is the family's (`Jake's Resume`, `Awesome-CV`, `AltaCV`, `moderncv`,
-  `europecv`) or the class's; **its source** the upload's main file's name, with no licence; **its
-  files** the upload's classes, styles and their kin (`.cls .sty .clo .def .fd .cfg`) and the `.tex`
-  files the preamble inputs, as text, and the configurations the reference compile gave pdfTeX's DVI
-  (decision 0019).
+  text never reaches a snippet (below), and the preamble keeps only what the answer does not name as
+  the header's. **Its name** is the family's (`Jake's Resume`, `Awesome-CV`, `AltaCV`, `moderncv`,
+  `europecv`) or the class's; **its source** `main.tex`, with no licence, whatever the upload's main
+  file is called, since that name is the person's as often as the template's, and belongs to item
+  12's record of the upload, not to the package (`MAIN_FILE`); **its files** the upload's classes,
+  styles and their kin (`.cls .sty .clo .def .fd .cfg`) and the `.tex` files the preamble inputs, as
+  text, and the configurations the reference compile gave pdfTeX's DVI (decision 0019).
 - **Its preamble is the document's, rewritten only as far as the loop needs.** Before
   `\documentclass`, `\PassOptionsToPackage{dvipdfmx,bookmarks=false}{hyperref}` on pdfTeX, and
   `bookmarks=false` on XeTeX (decision 0008). After the preamble, hyperref with `hidelinks` where
@@ -68,26 +69,72 @@ generator's writing of both, which every compile of the checks and the harness g
   value as its default, so that the first compile is the original: `pageSize` where the class or
   geometry names the paper, or the reference's size is Letter or A4 (geometry loaded by the other
   value's snippet where the document has none); `margins` where geometry sets one margin, from 0.4
-  to 1 inch in tenths; `fontSize` over the class's size option, from 9 to 12 points, a format
-  control (decision 0012); `dateFormat` where a date with a month is set from the model, since
-  years alone read the same in every format. The answer's preamble
-  parameters give `accent` (a colour `\definecolor` defines), `density` (`\linespread`) and, on
-  pdfTeX, `font` (the document's own and three of the tree's families); the seed has none, so the
-  corpus shows none yet. Each is kept only if the fourth check proves it.
+  to 1 inch in tenths; `fontSize` over the class's size option, a format control (decision 0012),
+  offering only the sizes from 9 to 12 points in half points the class declares, the document's own
+  among them (`sizes`): the signatures step is asked of `\ds@8pt` to `\ds@14pt` in half points
+  besides the body's names (`SIZE_OPTIONS`), and a size is declared where the engine finds its
+  option's code defined, as `article`'s 10, 11 and 12 points are, where any other it ignores with a
+  warning and sets 10 points, so that the slider and the page disagreed; a class that declares none,
+  or not the document's size, and a caller that did not ask, offer no control; `dateFormat` where
+  a date with a month is set from the model, since years alone read the same in every format. The
+  answer's preamble parameters give `accent` (a colour `\definecolor` defines), `density`
+  (`\linespread`) and, on pdfTeX, `font` (the document's own and three of the tree's families); the
+  seed has none, so the corpus shows none yet. Each is kept only if the fourth check proves it.
 - **Its snippets are the template's code, read from the body where the answer places the model.**
   A section's head, a list's opener and closer, an entry's call and its bullets' list, a list's
   items, a labelled item's call, the header's calls, and the document's code around the header and
   the sections, each copied from the source with its comments out (`templateText`) and a `{{` that
   would begin a tag broken. In a call, each argument whose answer gives it a slot of the place is
   a typeset slot, beside an extras slot that holds an instance's original bytes when the checks
-  lock it (`{{title}}{{&x.title}}`); an address is `{{&href}}`; a date a date slot; an argument
-  with no slot the same bytes in every call (a key, a length, an icon) or an extras slot of its own.
-  Every unit of a list must read as the first does (`comparable`, TeX's reading of spaces and line
-  ends), and every gap between two units alike, or the list is kept as the upload wrote it
-  (below). A snippet may differ by section role (`ByRole`), as Jake's education entries swap their
-  dates and place. A name in one argument is `{{first}}{{#last}} {{last}}{{/last}}`, the document's
-  split at its last space, whether its answer maps it to the first name alone or, as the seed's
-  AltaCV `\name` does, to the first name and the last a space apart (`parts`).
+  lock it (`{{title}}{{&x.title}}`); an address is `{{&href}}`; a date a date slot. Every unit of a
+  list must read as the first does (`comparable`, TeX's reading of spaces and line ends), and every
+  gap between two units alike, or the list is kept as the upload wrote it (below). A snippet may
+  differ by section role (`ByRole`), as Jake's education entries swap their dates and place. A name
+  in one argument is `{{first}}{{#last}} {{last}}{{/last}}`, the document's split at its last
+  space, whether its answer maps it to the first name alone or, as the seed's AltaCV `\name` does,
+  to the first name and the last a space apart (`parts`).
+- **The body's text never reaches a snippet**, whatever the answer says (the item's review round).
+  An argument the answer gives no slot is the template's own text only where every call gives it
+  alike and it is code: its meaning a key, a length, an icon or a colour, as the header's calls
+  judged it already; its call one the answer calls layout, showing no word of three letters or
+  more; or holding no letter or digit at all, as a star, an empty group or an argument no call
+  gives, the seed's `\cvhonor` #5 and #6 among them. Anything else each unit keeps in an extras
+  slot of its own, `{{&x.a<n>}}`, with a locked part (`unmapped`) that counts its words, however
+  many calls agree, so that an entry's note called once, which an answer gives no slot, is neither
+  copied into the package and its id nor into every entry the user adds; a node that keeps no
+  extras, a bullet's, an item's or a link's, cannot keep one, and its list is kept whole. A call the
+  answer calls layout that shows a word, or the header's call with no field of the header's that
+  does, is no code: a locked section where it stands, or the header's extra.
+- **What a unit the user adds writes** where each unit of the upload keeps an argument in its
+  extras: an argument with no slot, as a length each call gives its own, and a field's slot locked in
+  every instance, which the entry's snippet sets through its extra alone. The package's
+  `snippets.defaults` gives it, by the entry's or the section's role, always as a default and a
+  variant for each role whose own differ, from the answer's blank rule (decision 0024): `kept`,
+  the first call's bytes; `empty`, the argument's delimiters with nothing inside, or nothing inside
+  the ones the snippet writes itself; `absent`, nothing. Where the answer says nothing, a code-like
+  argument is kept, an optional one or a star is left out, and anything else is empty, so that no
+  text of the person's, a date among them, reaches a new unit or the package: an entry of a class
+  that cannot take an empty date is one the third check finds cannot be added. Every unit of the
+  upload has the key, empty or not, so that its own writes itself. On the engine, an entry the editor
+  adds to the reviewers' shape of a length each call gives its own, and to the shape of a class that
+  reads its date's two ends apart whose answer says kept, compiles.
+- **Every entry's snippet sets the bullets a user adds** (the item's review round). A role whose
+  upload's entries set no bullets takes the list another role's entries of the same macro set
+  theirs in, with that role's bullet and separator where it has none of its own; else the list the
+  answer pairs, a bullets' opener and its closer or an environment, that take no argument; else it
+  sets none, and the package says so, `snippets.entryBullets` false for the role (`ByRole`), which
+  the editor reads to refuse a bullet there. Education before experience, as Jake's upstream
+  sample has it, gave education's entries, and every role's that took the default, a snippet that
+  set no bullet a user added.
+- **Its required slots.** The slots the second check finds stop the compile only when empty are the
+  package's `required`, by the snippet that sets them and their slots there, `header`, `link`,
+  `section`, `entry`, `bullet`, `item` and `labelledItem`, which the editor refuses to empty (decision
+  0006's package gains it, additively; no curated package has one). They are part of its id.
+- **Everything kept is kept LaTeX.** Every extra, locked section and default the assembly copies
+  from the upload, a list kept whole, the section's growing `after`, an argument's bytes, is held to
+  the model's `KeptLatex`, a locked section's to `LockedLatex` (decision 0025): one past the cap, as
+  a list of 74 KB kept whole, refuses the import as a part it cannot keep (`keep`), where the store
+  would have refused the document at its end.
 
 ### The document
 
@@ -114,15 +161,26 @@ generator's writing of both, which every compile of the checks and the harness g
   same resume gives the same ids, and a second assembly with the checks' decisions matches the
   first node for node.
 - **What a snippet cannot hold is kept, in place.** An instance a verdict or a check locks keeps its
-  bytes in its node's extras, under its slot's key, and its field is left out of the model; a bullet
-  or an item keeps no extras, so its list is kept whole in its entry's or section's (`x.bullets`,
-  `x.items`), as are the links in the header's (`h.links`); the gap before each section is its
-  extras' `lead`, so that the sections' separator is nothing and every gap stays as TeX read it. A
-  part of the body no snippet can express, a raw chunk or a call no answer places, is a locked
-  section where it stands, written as `\rtlocked{<id>}{<latex>\n}` (decision 0025); a part
-  `\rtlocked` cannot take as an argument, `\verb`, a catcode change, a verbatim environment, is kept
-  in the extras of the section before it (`after`), outside any argument, and one before any section
-  refuses the import (`keep`).
+  bytes in its node's extras, under its slot's key, and its field is left out of the model, its node
+  naming the slot kept (`kept`, decision 0025), so that it is no field: the editor opens nothing on
+  it, and the generator writes the extra alone whatever the model holds there, where a date typed
+  into a locked one set both; a bullet or an item keeps no extras, so its list is kept whole in its
+  entry's or section's (`x.bullets`, `x.items`), as are the links in the header's (`h.links`), each
+  named kept too; the gap before each section is its extras' `lead`, so that the sections'
+  separator is nothing and every gap stays as TeX read it. A part of the body no snippet can
+  express, a raw chunk or a call no answer places, is a locked section where it stands, written as
+  `\rtlocked{<id>}{<latex>\n}` (decision 0025); a part `\rtlocked` cannot take as an argument,
+  `\verb`, a catcode change, a verbatim environment, a `%` in an address the escape does not reach,
+  is kept in the extras of the section before it (`after`), outside any argument, and one before any
+  section refuses the import (`keep`).
+- **What is kept is counted, and nothing else.** A part a snippet cannot hold is a locked part with
+  its words wherever the assembly keeps it: a header call's argument with no header slot, as
+  Awesome-CV's quote; a second value for a header slot another call filled; an entry's bullets that
+  are not a clean list; a link after the header's run. A path that keeps a list whole takes its
+  fields out of the checks' list, as the items', bullets' and entries' did and the header's and the
+  preamble's link runs now do, so that no field is counted of a node the document does not hold, and
+  it is locked for the reason the checks decided, or its first locked field's, else its `shape`; the
+  oracle's comparison files a field of a node it cannot place under its id's own kind.
 - **The probe's verdicts** lock an argument in every call where whatever it holds fails the same way
   (`breaks`, `vanished`, `twice`, `misaligned`, `split`); an instance that moved the page or was
   never settled is locked alone. `case` is editable, since the aligner folds case (decision 0021).
@@ -388,16 +446,20 @@ other work: 15.4 minutes.
   controls dropped with why, the redefinitions dropped, the units that cannot be added or removed
   and the harness's findings; its rate is the reference's glyphs', which the words here, counted
   in the source, stand in for until then. Item 14 grows the controls from the ones proven here:
-  margins where geometry is absent or uneven, the sizes a class accepts, and the answer's accent,
-  font and density once item 9 answers the preamble; `checks.required` names the slots the
-  editor refuses to empty, which the model and decision 0006 have no place for yet. Item 15 draws
+  margins where geometry is absent or uneven, and the answer's accent, font and density once item 9
+  answers the preamble; the sizes a class declares it offers already. `checks.required` names the
+  slots the package marks required (`required`), which the editor refuses to empty. Item 15 draws
   the locked sections and the extras with decision 0025's lock markers; `extras` lists each locked
-  part with where it stands, its node, its key, why and how many words.
+  part with where it stands, its node, its key, why and how many words. Item 12's pipeline asks the
+  signatures step of `SIZE_OPTIONS` besides the body's names, as `corpus assemble` does, or its
+  imports offer no font size.
 - **The model takes what the assembly makes.** Every package and document the assembly's tests
   make parse under the package's and the model's schemas, extras slots only where their nodes keep
   extras, and every locked section and extra kept LaTeX (decision 0025), as the store will parse
   them, and so do the 42 the corpus run assembled; `isKept`, which decides what a locked section
-  can hold, is the model's `KeptLatex`.
+  can hold, is the model's `KeptLatex`, and a locked section's LaTeX is `LockedLatex` besides. The
+  assembly refuses what the model would refuse (`keep`) rather than hand the store a document it
+  cannot read.
 - **The lock markers break nothing.** The checks compile the generator's bodies, whose locked
   sections decision 0025's markers stand around, and a marker made the glue after it a page's or
   a column's breakpoint where it was none: the AltaCV sample, with every field locked, broke its

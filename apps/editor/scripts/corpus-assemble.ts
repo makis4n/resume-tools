@@ -401,6 +401,22 @@ interface Nodes {
   )[];
 }
 
+/** The kinds of node the assembly mints ids for, by their prefixes. */
+const ID_KINDS: Readonly<Record<string, string>> = {
+  lnk: "link",
+  sec: "section",
+  ent: "entry",
+  bul: "bullet",
+  itm: "item",
+  lock: "locked",
+};
+
+/** A node's kind from its id's prefix, `lnk-` a link's, or the prefix where it names none. */
+const kindOfId = (id: string) => {
+  const prefix = id.slice(0, Math.max(0, id.indexOf("-")));
+  return (Object.hasOwn(ID_KINDS, prefix) ? ID_KINDS[prefix] : undefined) ?? (prefix || id);
+};
+
 /**
  * The fields of an imported resume by the model's place they fill, `header.first`, `section.title`,
  * `entry.dates`, `bullet.text`, `item.text`, `labelledItem.label` and the like, and how each came
@@ -428,7 +444,9 @@ export function fieldsFound(
     const dot = field.field.lastIndexOf(".");
     const node = field.field.slice(0, dot);
     const slot = field.field.slice(dot + 1);
-    const kind = node === "header" ? "header" : (kinds.get(node) ?? "entry");
+    // A node the resume does not hold is filed under the kind its id's prefix names, never under
+    // another place's (decision 0026).
+    const kind = node === "header" ? "header" : (kinds.get(node) ?? kindOfId(node));
     const place = kind === "paragraph" && slot === "title" ? "section.title" : `${kind}.${slot}`;
     const count = (found[place] ??= { editable: 0, raw: 0, locked: {} });
     if (field.mode === "typeset") count.editable++;

@@ -330,10 +330,21 @@ export const ANSWERS: readonly AnswerRow[] = [
   ],
 ];
 
+/**
+ * What the engine says of the sizes `article` declares, which the invented class loads with the
+ * document's options: `\ds@10pt`, `\ds@11pt` and `\ds@12pt` defined, as the signatures step reads
+ * them when asked (`SIZE_OPTIONS`, decision 0026), and no other size.
+ */
+export const ARTICLE_SIZES: Readonly<Record<string, string>> = {
+  "ds@10pt": "",
+  "ds@11pt": "",
+  "ds@12pt": "",
+};
+
 /** The template shaped like Jake's Resume, whole. */
 export const JAKE_LIKE: Invented = {
   source: `${PREAMBLE}${BODY}`,
-  commands: COMMANDS,
+  commands: { ...COMMANDS, ...ARTICLE_SIZES },
   meanings: MEANINGS,
   answers: ANSWERS,
 };

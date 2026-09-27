@@ -2,7 +2,8 @@
  * One child of `corpus assemble`'s pool (`corpus-assemble.ts`, decision 0026), which `corpus
  * oracle` runs too: an engine session and fonts of its own, which take one document at a time, as a
  * zip, through the intake, the reference compile, the signatures' two compiles, asked of the body's
- * commands and the preamble's, the parse, the probe and the naming request, built as items 7 and 11
+ * commands, the preamble's and the sizes the class may declare (`SIZE_OPTIONS`, decision 0026),
+ * the parse, the probe and the naming request, built as items 7 and 11
  * build it, with the upload's sources and the header's values (decision 0024); find the answers the
  * committed folder holds for its macros' keys, each as the document's macro (`answerFor`); and,
  * where it holds any, rewrite a XeTeX document's fonts by file and check the rewrite (decision
@@ -42,6 +43,7 @@ type NamingModule = typeof import("../src/import/naming.ts");
 type XetexModule = typeof import("../src/import/xetex.ts");
 type CheckModule = typeof import("../src/import/xetex-check.ts");
 type ValidateModule = typeof import("../src/import/validate.ts");
+type AssembleModule = typeof import("../src/import/assemble.ts");
 type Refused = import("../src/import/refusal.ts").Refusal;
 
 /** The format item 8's check of a XeTeX rewrite dumps, which the child drops after it. */
@@ -79,6 +81,7 @@ async function main() {
   const { rewriteForXetex } = await runner.import<XetexModule>("/src/import/xetex.ts");
   const { checkRewrite } = await runner.import<CheckModule>("/src/import/xetex-check.ts");
   const { validate } = await runner.import<ValidateModule>("/src/import/validate.ts");
+  const { SIZE_OPTIONS } = await runner.import<AssembleModule>("/src/import/assemble.ts");
 
   const manifest = JSON.parse(
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
@@ -121,7 +124,16 @@ async function main() {
     if ("refused" in read) return done({ outcome: "not parsed", engine });
     const preamble = readBody(bodyOfText(body.preamble));
     const uses = probeUses(read, "refused" in preamble ? undefined : preamble);
-    const found = await signatures(session, taken, made, body, uses, { treeImage });
+    // Asked of the sizes the class may declare too, which the font size control offers alone
+    // (decision 0026).
+    const found = await signatures(
+      session,
+      taken,
+      made,
+      body,
+      { ...uses, commands: [...uses.commands, ...SIZE_OPTIONS] },
+      { treeImage },
+    );
     if ("refused" in found) return done({ outcome: "not parsed", engine });
     const built = buildTree(read, found);
     if ("refused" in built) return done({ outcome: "not parsed", engine });

@@ -1,11 +1,14 @@
 import {
   Bullet,
+  ENTRY_KEPT,
   Entry,
+  HEADER_KEPT,
   Header,
   Item,
   LabelledItem,
   Link,
   LockedSection,
+  SECTION_KEPT,
   SECTION_KINDS,
   Section,
 } from "@resume-tools/resume-model";
@@ -19,12 +22,15 @@ import {
   type FontAdjust,
   fontFeatures,
   fontFiles,
+  fontSizes,
+  forRole,
   HEADER_SLOTS,
   ITEM_SLOTS,
   LABELLED_ITEM_SLOTS,
   LINK_SLOTS,
   pageSizeFor,
   parsePackage,
+  requiredSlots,
   SECTION_SLOTS,
   shapeAdjust,
   shapeFeatures,
@@ -319,13 +325,13 @@ describe("slot vocabularies", () => {
         .filter((key) => !without.includes(key))
         .sort();
     const slots = (vocabulary: object) => Object.keys(vocabulary).sort();
-    expect(slots(ENTRY_SLOTS)).toEqual(fields(Entry, "id", "extras"));
+    expect(slots(ENTRY_SLOTS)).toEqual(fields(Entry, "id", "extras", "kept"));
     expect(slots(BULLET_SLOTS)).toEqual(fields(Bullet, "id"));
     expect(slots(ITEM_SLOTS)).toEqual(fields(Item, "id"));
     expect(slots(LABELLED_ITEM_SLOTS)).toEqual(fields(LabelledItem, "id"));
     expect(slots(LINK_SLOTS)).toEqual(fields(Link, "id", "kind"));
     expect(slots(HEADER_SLOTS)).toEqual(
-      [...fields(Header, "name", "extras"), "first", "last", "contacts"].sort(),
+      [...fields(Header, "name", "extras", "kept"), "first", "last", "contacts"].sort(),
     );
     // A locked section is set by no snippet, so it has no slots: every other kind has a snippet
     // whose slots are its fields (decision 0025).
@@ -334,8 +340,115 @@ describe("slot vocabularies", () => {
     for (const option of Section.options) {
       const kind = option.shape.kind.value;
       if (kind === "locked") continue;
-      expect(slots(SECTION_SLOTS[kind])).toEqual(fields(option, "id", "kind", "role", "extras"));
+      expect(slots(SECTION_SLOTS[kind])).toEqual(
+        fields(option, "id", "kind", "role", "extras", "kept"),
+      );
     }
+  });
+
+  it("name the slots a node may keep, each a slot of its snippet (decision 0026)", () => {
+    const own = (vocabulary: object) => new Set(Object.keys(vocabulary));
+    for (const slot of ENTRY_KEPT) expect(own(ENTRY_SLOTS).has(slot), slot).toBe(true);
+    for (const slot of HEADER_KEPT) expect(own(HEADER_SLOTS).has(slot), slot).toBe(true);
+    for (const kind of SECTION_KINDS)
+      for (const slot of SECTION_KEPT[kind])
+        expect(own(SECTION_SLOTS[kind]).has(slot), `${kind} ${slot}`).toBe(true);
+  });
+});
+
+describe("what an import's checks found (decision 0026)", () => {
+  it("offers only the sizes a class declares, the default among them, each once", () => {
+    const sized = (fontSize: object) =>
+      plainWith((pkg) => {
+        pkg.controls.fontSize = { apply: "", format: true, ...fontSize } as never;
+      });
+    expect(issues(sized({ default: 11, sizes: [10, 11, 12] }))).toEqual([]);
+    expect(issues(sized({ default: 10.5, sizes: [10, 11, 12] }))).toEqual([
+      {
+        path: "controls.fontSize.default",
+        message: "the default size 10.5 is not one of the sizes offered",
+      },
+    ]);
+    expect(issues(sized({ default: 11, sizes: [11, 11] }))).toEqual([
+      { path: "controls.fontSize.sizes", message: "a size is offered twice" },
+    ]);
+    expect(issues(sized({ default: 11, sizes: [] })).map((issue) => issue.path)).toContain(
+      "controls.fontSize.sizes",
+    );
+    expect(issues(sized({ default: 11, sizes: [11, 13] })).map((issue) => issue.path)).toEqual([
+      "controls.fontSize.sizes.1",
+    ]);
+    const pkg = parsePackage(sized({ default: 11, sizes: [12, 10, 11] }));
+    expect(fontSizes(pkg)).toEqual([10, 11, 12]);
+    // A curated package, which names none, offers every half point.
+    expect(fontSizes(parsePackage(sized({ default: 11 })))).toEqual([
+      9, 9.5, 10, 10.5, 11, 11.5, 12,
+    ]);
+    const values = controlValuesFor(pkg);
+    expect(values.safeParse({ fontSize: 12 }).success).toBe(true);
+    expect(values.safeParse({ fontSize: 10.5 }).error?.issues).toMatchObject([
+      { path: ["fontSize"], message: "10.5 points is not one of the template's sizes" },
+    ]);
+  });
+
+  it("marks the slots a document may not empty, by the snippet that sets them", () => {
+    const requiring = (required: object) =>
+      plainWith((pkg) => {
+        (pkg as { required?: object }).required = required;
+      });
+    const pkg = parsePackage(
+      requiring({ header: ["first", "location"], section: ["title"], entry: ["dates"] }),
+    );
+    expect([...requiredSlots(pkg, "header")]).toEqual(["first", "location"]);
+    expect([...requiredSlots(pkg, "bullet")]).toEqual([]);
+    expect([...requiredSlots(parsePackage(plain), "header")]).toEqual([]);
+    expect(issues(requiring({ header: ["links"] })).map((issue) => issue.path)).toEqual([
+      "required.header.0",
+    ]);
+    expect(issues(requiring({ entry: ["bullets"] })).map((issue) => issue.path)).toEqual([
+      "required.entry.0",
+    ]);
+    expect(issues(requiring({ contact: ["text"] })).map((issue) => issue.message)).toEqual([
+      'Unrecognized key: "contact"',
+    ]);
+  });
+
+  it("takes defaults for an entry's and a section's extras slots as kept LaTeX, by role", () => {
+    const defaulting = (defaults: object) =>
+      plainWith((pkg) => {
+        (pkg.snippets as { defaults?: object }).defaults = defaults;
+      });
+    expect(
+      issues(
+        defaulting({
+          entry: { default: { a2: "{2pt}", dates: "" }, projects: { a2: "{4pt}" } },
+          section: { default: { icon: "\\faStar" } },
+        }),
+      ),
+    ).toEqual([]);
+    // Always a default and variants, so that a key named like a role is never read as one.
+    expect(issues(defaulting({ entry: { a2: "{2pt}" } })).length).toBeGreaterThan(0);
+    expect(issues(defaulting({ entry: { default: { a2: "{2pt" } } })).length).toBeGreaterThan(0);
+    expect(issues(defaulting({ entry: { default: { A2: "x" } } })).length).toBeGreaterThan(0);
+    expect(
+      issues(defaulting({ entry: { default: { a2: "\\rtfield{x}{y}" } } })).length,
+    ).toBeGreaterThan(0);
+    expect(issues(defaulting({ bullet: { default: { a2: "x" } } })).map((i) => i.message)).toEqual([
+      'Unrecognized key: "bullet"',
+    ]);
+  });
+
+  it("says by role whether an entry sets the bullets a user adds", () => {
+    const bulleted = (entryBullets: unknown) =>
+      plainWith((pkg) => {
+        (pkg.snippets as { entryBullets?: unknown }).entryBullets = entryBullets;
+      });
+    expect(issues(bulleted(false))).toEqual([]);
+    const pkg = parsePackage(bulleted({ default: true, education: false }));
+    const takes = pkg.snippets.entryBullets ?? true;
+    expect(forRole(takes, "education")).toBe(false);
+    expect(forRole(takes, "experience")).toBe(true);
+    expect(issues(bulleted("no")).length).toBeGreaterThan(0);
   });
 });
 
