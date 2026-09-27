@@ -46,6 +46,18 @@ def test_a_repeated_id_across_pages_deducts_once() -> None:
     assert score(findings) == 90
 
 
+def test_a_repeated_id_with_mixed_severities_deducts_at_its_worst_severity() -> None:
+    # Same id at WARNING first, then INFO: the critical cap cannot mask a wrong answer here (there
+    # is no critical finding at all), so this only passes if the worst severity seen for the id
+    # (WARNING, -10) wins, rather than whichever occurrence a naive last-write-wins
+    # implementation would keep (the later INFO, -0, which would wrongly score 100).
+    findings = [
+        _finding("page-count", Severity.WARNING, page=1),
+        _finding("page-count", Severity.INFO, page=None),
+    ]
+    assert score(findings) == 90
+
+
 def test_distinct_ids_each_deduct() -> None:
     findings = [
         _finding("blank-page", Severity.WARNING, page=1),

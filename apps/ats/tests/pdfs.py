@@ -137,6 +137,30 @@ def zero_page_pdf() -> bytes:
     return _assemble(objects)
 
 
+def malformed_producer_metadata_pdf() -> bytes:
+    """An otherwise perfectly readable one-page PDF whose `/Producer` metadata string is not
+    valid UTF-16: a byte-order mark followed by a lone UTF-16 high surrogate with no matching low
+    surrogate.
+
+    Verified experimentally against pypdfium2 5.13.0: reading this value with
+    `PdfDocument.get_metadata_value` raises `UnicodeDecodeError`, which
+    `ats.extract._metadata_value` must not let escape and fail the analysis of a page that reads
+    just fine otherwise.
+    """
+    content = b"BT /F1 12 Tf 72 700 Td (Invented Text) Tj ET"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+    ]
+    bad_bytes = b"\xfe\xff" + bytes([0xD8, 0x00, 0x00, 0x41])
+    info = b"<< /Producer (" + _escape_bytes(bad_bytes) + b") >>"
+    return _assemble(objects, info=info)
+
+
 def image_only_pdf(*, width: float = 612, height: float = 792) -> bytes:
     """A one-page PDF with a single small image and no text at all, e.g. a scanned resume.
 

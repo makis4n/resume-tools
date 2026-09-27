@@ -10,6 +10,7 @@ from tests.pdfs import (
     glyph_case_pdf,
     image_only_pdf,
     malformed_page_tree_pdf,
+    malformed_producer_metadata_pdf,
     minimal_pdf,
     text_as_outlines_pdf,
     zero_page_pdf,
@@ -226,6 +227,13 @@ def test_document_metadata_is_none_when_absent() -> None:
     document = extract(minimal_pdf())
     assert document.producer is None
     assert document.creator is None
+
+
+def test_malformed_metadata_reads_as_none_rather_than_failing_the_whole_page() -> None:
+    # The page's own text is perfectly fine; only the untrusted /Producer metadata is broken.
+    document = extract(malformed_producer_metadata_pdf())
+    assert document.producer is None
+    assert document.pages[0].text == "Invented Text"
 
 
 def test_ligature_count_classifies_a_raw_ligature_codepoint(

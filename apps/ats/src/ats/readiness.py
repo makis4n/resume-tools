@@ -63,6 +63,9 @@ _ID_ORDER = (
     "icon-font-glyphs",
     "ligature-characters",
 )
+# A lookup, not `_ID_ORDER.index(...)` at sort time: an id a future check forgets to add here
+# then sorts after every listed one instead of crashing `check()` outright.
+_ID_ORDER_INDEX = {finding_id: index for index, finding_id in enumerate(_ID_ORDER)}
 
 
 def _no_text_layer_finding(document: Document, producer: Producer) -> Finding:
@@ -206,4 +209,7 @@ def check(document: Document, producer: Producer) -> list[Finding]:
     findings.extend(_page_count_findings(document))
     findings.extend(_blank_page_findings(document, has_text))
 
-    return sorted(findings, key=lambda finding: (finding.page or 0, _ID_ORDER.index(finding.id)))
+    return sorted(
+        findings,
+        key=lambda finding: (finding.page or 0, _ID_ORDER_INDEX.get(finding.id, len(_ID_ORDER))),
+    )

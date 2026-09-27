@@ -132,8 +132,20 @@ def _open_document(pdf: bytes) -> pdfium.PdfDocument:
 
 
 def _metadata_value(document: pdfium.PdfDocument, key: str) -> str | None:
-    """`document`'s metadata value for `key`, or `None` when it is absent or empty."""
-    value = document.get_metadata_value(key)
+    """`document`'s metadata value for `key`, or `None` when it is absent, empty, or too broken
+    to decode.
+
+    Metadata is untrusted input like the rest of the PDF: pypdfium2's `get_metadata_value` decodes
+    it as strict UTF-16LE and raises `UnicodeDecodeError` on a malformed value (checked
+    experimentally against pypdfium2 5.13.0, with a `/Producer` string containing an unpaired
+    UTF-16 surrogate). Producer/creator detection is best-effort, so a value that cannot be
+    decoded is treated the same as a missing one, rather than failing the whole analysis of an
+    otherwise perfectly readable PDF.
+    """
+    try:
+        value = document.get_metadata_value(key)
+    except UnicodeError:
+        return None
     return value or None
 
 
@@ -180,6 +192,12 @@ def _count_objects(pdf_page: pdfium.PdfPage) -> tuple[int, int, int]:
     count = pdfium.raw.FPDFPage_CountObjects(pdf_page)
     for index in range(count):
         raw_obj = pdfium.raw.FPDFPage_GetObject(pdf_page, index)
+        if not raw_obj:
+            # A malformed content stream in an untrusted upload could in principle make an
+            # in-range index fail to resolve; pypdfium2's own `get_objects()` helper guards the
+            # same call the same way. Skipping rather than passing a null pointer on to
+            # `FPDFPageObj_GetType` avoids handing PDFium's C API something it never expects.
+            continue
         obj_type = pdfium.raw.FPDFPageObj_GetType(raw_obj)
         if obj_type == pdfium.raw.FPDF_PAGEOBJ_TEXT:
             text_objects += 1

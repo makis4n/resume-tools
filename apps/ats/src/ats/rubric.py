@@ -25,15 +25,18 @@ def score(findings: list[Finding]) -> int:
 
     Starts at 100 and subtracts each finding's deduction once per distinct `id`, not once per
     occurrence: a finding id repeated on every page of a resume (e.g. one layout problem on ten
-    pages) is still one problem, and should not multiply a deduction by page count. The result is
-    floored at 0 and is always an int.
+    pages) is still one problem, and should not multiply a deduction by page count. If the same id
+    recurs at different severities (e.g. a warning-level glyph problem on one page and a
+    critical-level one on another), the id deducts at its worst severity, not whichever occurrence
+    the loop happened to see last. The result is floored at 0 and is always an int.
     """
     deduction_by_id: dict[str, int] = {}
     has_critical = False
     for finding in findings:
         if finding.severity is Severity.CRITICAL:
             has_critical = True
-        deduction_by_id[finding.id] = _DEDUCTION_BY_SEVERITY[finding.severity]
+        deduction = _DEDUCTION_BY_SEVERITY[finding.severity]
+        deduction_by_id[finding.id] = max(deduction_by_id.get(finding.id, 0), deduction)
 
     total = 100 - sum(deduction_by_id.values())
     if has_critical:

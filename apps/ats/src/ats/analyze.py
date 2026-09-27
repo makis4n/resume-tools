@@ -11,6 +11,10 @@ from ats.rubric import score as score_findings
 
 CONTRACT = "ats/v1"
 
+# Read once at import: the installed package's own version cannot change during the process's
+# lifetime, so there is no reason for every request to repeat the package-metadata lookup.
+_ANALYSER_VERSION = version("ats")
+
 
 class NotAPdfError(ValueError):
     """The bytes do not start with a PDF signature."""
@@ -35,5 +39,5 @@ def analyze(pdf: bytes) -> dict[str, Any]:
         "findings": [finding.to_json() for finding in findings],
         "producer": producer.value,
         "rubric_version": RUBRIC_VERSION,
-        "analyser_version": version("ats"),
+        "analyser_version": _ANALYSER_VERSION,
     }
