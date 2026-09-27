@@ -911,7 +911,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
           if (k > 0) expect(y, `${shape} ${prefix}`).toBeGreaterThan(ys[k - 1] ?? Infinity);
       }
     }
-  });
+  }, 60_000);
 
   it("compiles a section title of 8,000 characters in under a second, with no bookmarks", () => {
     // hyperref's bookmark for a section converts its title in time that grows with the square

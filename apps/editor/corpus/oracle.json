@@ -1,0 +1,630 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "jake-0000",
+      "family": "jake",
+      "repo": "jakegut/resume",
+      "repoId": 291154544,
+      "commit": "3e64a933141a7cda3a328f0743f73a201628a4ba",
+      "license": "MIT",
+      "main": "resume.tex",
+      "files": [
+        {
+          "path": "resume.tex",
+          "sha256": "2f49261da9e27718145dcb876bdd729ce6aa9a8130b3e7eddef645698c142da1",
+          "bytes": 7868
+        }
+      ],
+      "images": 1,
+      "expected": [
+        {
+          "macro": "resumeSubheading",
+          "argument": 1,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The entry's title, or the school's name in the education variant."
+        },
+        {
+          "macro": "resumeSubheading",
+          "argument": 2,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The entry's dates, or the place in the education variant."
+        },
+        {
+          "macro": "resumeSubheading",
+          "argument": 3,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The entry's subtitle, set in \\textit."
+        },
+        {
+          "macro": "resumeSubheading",
+          "argument": 4,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The entry's place, or its dates in the education variant, set in \\textit in the table's right column."
+        },
+        {
+          "macro": "resumeItem",
+          "argument": 1,
+          "port": "marks",
+          "expected": "editable",
+          "why": "A bullet's text."
+        },
+        {
+          "macro": "resumeProjectHeading",
+          "argument": 1,
+          "port": "marks",
+          "expected": "raw",
+          "why": "The port marks the title and the subtitle inside it; upstream's argument holds the $|$ between them, a raw chunk, so the argument is raw and its two paragraphs are candidates of their own."
+        },
+        {
+          "macro": "resumeProjectHeading",
+          "argument": 2,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The project's dates."
+        },
+        {
+          "standard": "section",
+          "port": "marks",
+          "expected": "editable",
+          "why": "Section titles, which titlesec sets in small capitals of Computer Modern, whose glyphs read as their letters."
+        },
+        {
+          "standard": "item",
+          "port": "marks",
+          "expected": "editable",
+          "why": "The skills block, one item whose text the port sets as labelled items."
+        },
+        {
+          "standard": "paragraph",
+          "port": "marks",
+          "expected": "editable",
+          "why": "The header's name and contacts, and the projects headings' parts."
+        }
+      ]
+    },
+    {
+      "id": "altacv-0000",
+      "family": "altacv",
+      "repo": "liantze/AltaCV",
+      "repoId": 66150908,
+      "commit": "91373530c55843533a4de12a29d28896f9b14c0d",
+      "license": null,
+      "main": "sample.tex",
+      "files": [
+        {
+          "path": "sample.tex",
+          "sha256": "976e97be74b0e626c1ade9e9de74fa59fa3bfc022c4e1577f742252dc1e2f6be",
+          "bytes": 9310
+        },
+        {
+          "path": "altacv.cls",
+          "sha256": "c4f48600f7d43ade460b25beef843715a200221b5f1ab3a30732a5b8d4fe36fe",
+          "bytes": 17713
+        },
+        {
+          "path": "pubs-num.cfg",
+          "sha256": "7097a3420ec61c52ad389f51154a8663e48fb8b15922198de6141625eb1fd35c",
+          "bytes": 430
+        },
+        {
+          "path": "sample.bib",
+          "sha256": "acb629083a260e2fb204f77e066274e73a9195c3e8a61d9ee572255158e74c1e",
+          "bytes": 775
+        }
+      ],
+      "images": 11,
+      "expected": [
+        {
+          "macro": "name",
+          "argument": 1,
+          "port": "marks",
+          "expected": "case",
+          "why": "Decision 0013: the class sets the name through \\MakeUppercase, which the port patched out; editable once the aligner folds case (item 5's other branch)."
+        },
+        {
+          "macro": "tagline",
+          "argument": 1,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The headline."
+        },
+        {
+          "macro": "photoR",
+          "argument": 1,
+          "port": "omits",
+          "expected": "breaks",
+          "why": "Decision 0013: photos have no place in the model; the first argument is a length."
+        },
+        {
+          "macro": "photoR",
+          "argument": 2,
+          "port": "omits",
+          "expected": "breaks",
+          "why": "The photo's file, which graphicx looks for by name."
+        },
+        {
+          "macro": "personalinfo",
+          "argument": 1,
+          "port": "marks",
+          "expected": "container",
+          "why": "It holds the contacts' calls, which the port sets through {{contacts}}."
+        },
+        {
+          "macro": "email",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "why": "The class builds the link's address from the argument it also sets; the port has the generator build it."
+        },
+        {
+          "macro": "phone",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "why": "The class builds a tel: link from the argument it also sets."
+        },
+        {
+          "macro": "mailaddress",
+          "argument": 1,
+          "port": "marks",
+          "expected": "editable",
+          "why": "A contact the class sets with no link."
+        },
+        {
+          "macro": "location",
+          "argument": 1,
+          "port": "marks",
+          "expected": "editable",
+          "why": "A contact the class sets with no link."
+        },
+        {
+          "macro": "homepage",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "why": "The class builds the link from the argument it also sets."
+        },
+        {
+          "macro": "xtwitter",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "why": "The class builds the link from the argument it also sets."
+        },
+        {
+          "macro": "linkedin",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "why": "The class builds the link from the argument it also sets."
+        },
+        {
+          "macro": "github",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "why": "The class builds the link from the argument it also sets."
+        },
+        {
+          "macro": "orcid",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "why": "The class builds the link from the argument it also sets."
+        },
+        {
+          "macro": "NewInfoField",
+          "argument": 2,
+          "port": "omits",
+          "expected": "locked",
+          "why": "The name of a contact the sample defines for itself, which becomes a command's name."
+        },
+        {
+          "macro": "NewInfoField",
+          "argument": 3,
+          "port": "omits",
+          "expected": "locked",
+          "why": "That contact's icon."
+        },
+        {
+          "macro": "NewInfoField",
+          "argument": 4,
+          "port": "omits",
+          "expected": "locked",
+          "why": "That contact's address prefix."
+        },
+        {
+          "macro": "columnratio",
+          "argument": 1,
+          "port": "omits",
+          "expected": "breaks",
+          "why": "A number, which the port sets in its document snippet."
+        },
+        {
+          "macro": "cvsection",
+          "argument": 2,
+          "port": "marks",
+          "expected": "case",
+          "why": "Decision 0013: the class sets section titles through \\MakeUppercase; editable once the aligner folds case."
+        },
+        {
+          "macro": "cvevent",
+          "argument": 1,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The entry's title."
+        },
+        {
+          "macro": "cvevent",
+          "argument": 2,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The entry's subtitle."
+        },
+        {
+          "macro": "cvevent",
+          "argument": 3,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The entry's dates, in a box half the column wide, which the port lets wrap."
+        },
+        {
+          "macro": "cvevent",
+          "argument": 4,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The entry's place, as the dates."
+        },
+        {
+          "macro": "wheelchart",
+          "argument": 2,
+          "port": "omits",
+          "expected": "breaks",
+          "why": "Decision 0013: the wheel chart has no place in the model; a radius."
+        },
+        {
+          "macro": "wheelchart",
+          "argument": 3,
+          "port": "omits",
+          "expected": "breaks",
+          "why": "The other radius."
+        },
+        {
+          "macro": "wheelchart",
+          "argument": 4,
+          "port": "omits",
+          "expected": "breaks",
+          "why": "The chart's data, which TikZ reads."
+        },
+        {
+          "macro": "mynames",
+          "argument": 1,
+          "port": "omits",
+          "expected": "vanished",
+          "why": "Names the bibliography highlights, which the class never sets."
+        },
+        {
+          "macro": "cvachievement",
+          "argument": 1,
+          "port": "omits",
+          "expected": "locked",
+          "why": "Decision 0013: achievements with an icon have no place in the model; the icon."
+        },
+        {
+          "macro": "cvachievement",
+          "argument": 2,
+          "port": "omits",
+          "expected": "editable",
+          "why": "Its title, plain text, which item 7 keeps as an extra."
+        },
+        {
+          "macro": "cvachievement",
+          "argument": 3,
+          "port": "omits",
+          "expected": "editable",
+          "why": "Its description, plain text, which item 7 keeps as an extra."
+        },
+        {
+          "macro": "cvtag",
+          "argument": 1,
+          "port": "marks",
+          "expected": "moved",
+          "why": "Decision 0013: the class sets a tag's text in a TikZ node, through a transform the PDF applies and the page does not, which the port redrew; editable with item 6's redefinition."
+        },
+        {
+          "macro": "cvskill",
+          "argument": 1,
+          "port": "omits",
+          "expected": "editable",
+          "why": "Decision 0013: skill ratings have no place in the model; the skill's name is plain text."
+        },
+        {
+          "macro": "cvskill",
+          "argument": 2,
+          "port": "omits",
+          "expected": "locked",
+          "why": "The rating, a number the class compares."
+        },
+        {
+          "macro": "cvref",
+          "argument": 1,
+          "port": "omits",
+          "expected": "raw",
+          "why": "Decision 0013: referees have no place in the model; the sample's names hold a control space after a title, which the parser keeps raw."
+        },
+        {
+          "macro": "cvref",
+          "argument": 2,
+          "port": "omits",
+          "expected": "editable",
+          "why": "A referee's contact, set with no link."
+        },
+        {
+          "macro": "cvref",
+          "argument": 3,
+          "port": "omits",
+          "expected": "editable",
+          "why": "A referee's address, set with no link."
+        },
+        {
+          "standard": "item",
+          "port": "marks",
+          "expected": "editable",
+          "why": "The entries' bullets."
+        },
+        {
+          "standard": "paragraph",
+          "port": "marks",
+          "expected": "editable",
+          "why": "The sample's paragraphs of text."
+        }
+      ]
+    },
+    {
+      "id": "awesome-cv-0000",
+      "family": "awesome-cv",
+      "repo": "posquit0/Awesome-CV",
+      "repoId": 29420377,
+      "commit": "964f99d3f12a83f403fbc48f8dc4f084b6584eb6",
+      "license": "LPPL-1.3c",
+      "main": "examples/resume.tex",
+      "files": [
+        {
+          "path": "examples/resume.tex",
+          "sha256": "678d3325aa92c4a10b8ee9fe44da54141f5ed00c5ec363f30fc758d6d7f1c8fb",
+          "bytes": 3797
+        },
+        {
+          "path": "awesome-cv.cls",
+          "sha256": "120252c06a66e2ba09a0c6fb7f4f4aad9e110612405cd6ba9015e12d948bdd29",
+          "bytes": 29963
+        },
+        {
+          "path": "examples/resume/summary.tex",
+          "sha256": "de00e128be9f34321317992d8e82a27b4c796eff7c821bd0bfddd3a7e08a875f",
+          "bytes": 1255
+        },
+        {
+          "path": "examples/resume/experience.tex",
+          "sha256": "a437f8f396207225830d02d2d5ce674a1a11224db31aa594c0a5f8bafefba43d",
+          "bytes": 8565
+        },
+        {
+          "path": "examples/resume/honors.tex",
+          "sha256": "fb32d91eaf4b42f3a848054d07a09741637096a876373392d73f3d235c397709",
+          "bytes": 4433
+        },
+        {
+          "path": "examples/resume/certificates.tex",
+          "sha256": "f9f2027ea39b08c3826ce915b20097de49dda42b0f74ceeb0d668aac2e239899",
+          "bytes": 1937
+        },
+        {
+          "path": "examples/resume/education.tex",
+          "sha256": "a516cf4afe62702e62138b8d6becc99421ab86ae4ac255de55dd7f996636787c",
+          "bytes": 921
+        }
+      ],
+      "images": 8,
+      "expected": [
+        {
+          "macro": "name",
+          "argument": 1,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The first name, which the preamble stores and \\makecvheader sets."
+        },
+        {
+          "macro": "name",
+          "argument": 2,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The last name."
+        },
+        {
+          "macro": "position",
+          "argument": 1,
+          "port": "marks",
+          "expected": "misaligned",
+          "why": "Decision 0015: the class sets the headline in \\scshape, whose glyphs +smcp substitutes and the page cannot read; editable once item 8 reads small capitals."
+        },
+        {
+          "macro": "address",
+          "argument": 1,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The location."
+        },
+        {
+          "macro": "mobile",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "or": ["vanished"],
+          "why": "Decision 0015: the class builds a tel: link from the number it also sets; the port sets the contacts through \\extrainfo."
+        },
+        {
+          "macro": "email",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "or": ["vanished"],
+          "why": "Decision 0015: the class builds the link from the address it also sets."
+        },
+        {
+          "macro": "homepage",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "or": ["vanished"],
+          "why": "Decision 0015: as the email."
+        },
+        {
+          "macro": "github",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "or": ["vanished"],
+          "why": "Decision 0015: as the email."
+        },
+        {
+          "macro": "linkedin",
+          "argument": 1,
+          "port": "marks",
+          "expected": "twice",
+          "or": ["vanished"],
+          "why": "Decision 0015: as the email."
+        },
+        {
+          "macro": "quote",
+          "argument": 1,
+          "port": "omits",
+          "expected": "editable",
+          "why": "Decision 0015: the quote has no place in the model; plain text, which item 7 keeps as an extra."
+        },
+        {
+          "macro": "makecvheader",
+          "argument": 1,
+          "port": "omits",
+          "expected": "vanished",
+          "why": "The header's alignment, a key, which the port sets in its header snippet."
+        },
+        {
+          "macro": "makecvfooter",
+          "argument": 1,
+          "port": "omits",
+          "expected": "raw",
+          "why": "Decision 0015: the footer has no place in the model; \\today."
+        },
+        {
+          "macro": "makecvfooter",
+          "argument": 2,
+          "port": "omits",
+          "expected": "twice",
+          "why": "The footer's text, which fancyhdr sets on every page."
+        },
+        {
+          "macro": "makecvfooter",
+          "argument": 3,
+          "port": "omits",
+          "expected": "raw",
+          "why": "\\thepage."
+        },
+        {
+          "macro": "cvsection",
+          "argument": 1,
+          "port": "marks",
+          "expected": "breaks",
+          "why": "Decision 0015: upstream's \\@sectioncolor takes the title's first three tokens, which are the marker macro and its two arguments; editable with item 6's redefinition."
+        },
+        {
+          "macro": "cventry",
+          "argument": 1,
+          "port": "marks",
+          "expected": "misaligned",
+          "why": "Decision 0015: the class sets every entry's position in \\scshape, as the headline; editable once item 8 reads small capitals."
+        },
+        {
+          "macro": "cventry",
+          "argument": 2,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The organisation."
+        },
+        {
+          "macro": "cventry",
+          "argument": 3,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The place."
+        },
+        {
+          "macro": "cventry",
+          "argument": 4,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The dates."
+        },
+        {
+          "macro": "cventry",
+          "argument": 5,
+          "port": "marks",
+          "expected": "container",
+          "why": "It holds the bullets' cvitems, whose items the port marks."
+        },
+        {
+          "macro": "cvsubsection",
+          "argument": 1,
+          "port": "omits",
+          "expected": "misaligned",
+          "why": "Decision 0015: subsections have no place in the model; set in \\scshape."
+        },
+        {
+          "macro": "cvhonor",
+          "argument": 1,
+          "port": "marks",
+          "expected": "editable",
+          "why": "An award's title, in cvhonors, whose body the parser kept raw as a table's cells until item 4's fix."
+        },
+        {
+          "macro": "cvhonor",
+          "argument": 2,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The award's event."
+        },
+        {
+          "macro": "cvhonor",
+          "argument": 3,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The award's place."
+        },
+        {
+          "macro": "cvhonor",
+          "argument": 4,
+          "port": "marks",
+          "expected": "editable",
+          "why": "The award's date."
+        },
+        {
+          "standard": "item",
+          "port": "marks",
+          "expected": "editable",
+          "why": "The entries' bullets, in cvitems."
+        },
+        {
+          "standard": "paragraph",
+          "port": "marks",
+          "expected": "editable",
+          "why": "The summary's paragraph, in cvparagraph."
+        }
+      ]
+    }
+  ]
+}

@@ -128,7 +128,7 @@ const Path = z
     "a path is relative and uses /, with no empty, . or .. part, no backslash and no control character",
   );
 
-const CorpusFile = z.strictObject({
+export const CorpusFile = z.strictObject({
   path: Path,
   sha256: z.string().regex(/^[0-9a-f]{64}$/, "a SHA-256 is 64 lower-case hex digits"),
   bytes: z.number().int().nonnegative(),
