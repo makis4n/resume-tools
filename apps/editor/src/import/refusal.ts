@@ -12,10 +12,11 @@
  * or by the reference compile, for a template, package, font or file the editor or the upload
  * lacks, an image it shows in a format with no stand-in (`image`), another error (`stopped`), or
  * output that changed on every pass (`passes`); by the parser, for a body it cannot find or that
- * is past its caps (`parse`); by the corpus runner, for a compile past its time (`timeout`); or by
+ * is past its caps (`parse`); by the corpus runner, for a compile past its time (`timeout`); by
  * the XeTeX rewrite of its fonts (decision 0023), for a fontspec feature or package the rewrite
  * cannot reproduce (`feature`), or fonts that come out otherwise than the reference's
- * (`difference`).
+ * (`difference`); or by the naming request's builder, for a page set in fonts whose glyphs the
+ * page names nothing for, which leaves the leak detector blind (`unreadable`, decision 0029).
  */
 export const REFUSAL_REASONS = [
   "intake",
@@ -31,6 +32,7 @@ export const REFUSAL_REASONS = [
   "timeout",
   "feature",
   "difference",
+  "unreadable",
 ] as const;
 export type RefusalReason = (typeof REFUSAL_REASONS)[number];
 
@@ -162,6 +164,8 @@ export function refusal(reason: RefusalReason, name?: string, log?: string): Ref
     parse: "This resume could not be read by this editor.",
     timeout: "This resume took too long to compile.",
     difference: `This editor sets this resume's font ${shown} otherwise than the resume does, so it cannot take it.`,
+    unreadable:
+      "This resume's text is set in fonts this editor cannot read yet, so it cannot tell your words from the template's, and sends nothing.",
   };
   return {
     refused: true,

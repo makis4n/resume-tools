@@ -107,10 +107,12 @@
  *                 its naming request as the import will, with its sources, its page's strings,
  *                 the texts its preamble stores and the header's values the seed's answers find,
  *                 and check it with the leak detector fed all of those, in the same pool; print
- *                 how many were checked, passed and failed, and for each failure the macro and
- *                 what kind of text is where, never the text (`scripts/corpus-leak.ts`, decision
- *                 0029). It exits 1 when a request holds its document's text, and takes about a
- *                 minute for the corpus
+ *                 how many were checked, passed and failed, and refused for a page the detector
+ *                 cannot read, and for each failure the macro and what kind of text is where,
+ *                 never the text (`scripts/corpus-leak.ts`, decision 0029). It exits 1 when a
+ *                 request holds its document's text, the builder made one its contract refuses, a
+ *                 document crashed or timed out, or fewer documents were checked or refused than
+ *                 have a reference, and takes about a minute for the corpus
  *   --only <id>   that document only
  *   --json <file> write each document's row as JSON too, names and numbers only
  *
@@ -133,7 +135,7 @@ import { collect, REASONS, type Reason } from "./corpus-collect.ts";
 import { fetchCorpus } from "./corpus-fetch.ts";
 import { type FontsChildRow, type FontsRow, fontsTable } from "./corpus-fonts.ts";
 import { environmentToken, GitHub } from "./corpus-github.ts";
-import { checkCorpus, failed, leakLine, leakTable } from "./corpus-leak.ts";
+import { checkCorpus, leakFailures, leakLine, leakTable } from "./corpus-leak.ts";
 import {
   CORPUS_DIR,
   FAMILIES,
@@ -947,10 +949,9 @@ async function runLeak(only: string | undefined, json: string | undefined) {
         documents: rows,
       }),
     );
-  if (rows.some(failed)) {
-    console.error(
-      "A naming request holds its document's text, as the lines above name: fix the masking",
-    );
+  const failures = leakFailures(rows);
+  if (failures.length > 0) {
+    console.error(failures.join("\n"));
     process.exitCode = 1;
   }
 }

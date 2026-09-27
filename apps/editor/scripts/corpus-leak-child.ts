@@ -3,11 +3,13 @@
  * of its own, which take one document at a time, as a zip, through the intake, the reference
  * compile, the signatures' two compiles, asked of the body's commands and the preamble's, the parse
  * and the candidates the probe would find, and build its naming request as the import will: with
- * the upload's sources, the page's strings its reference sets, the texts its preamble stores and
- * the header's values the finder gives by the seed's answers (`headerOf`). It checks the request
- * with the detector, fed all of those (`findLeaks`), and answers with the document's row: counts,
- * and for each leak the kind of place, the macro's name when it is plainly one, and the kind of
- * text, never the text.
+ * the upload's sources, the page's strings its reference sets, read with the upload's fonts, the
+ * texts its preamble stores and the header's values the finder gives by the seed's answers
+ * (`headerOf`). It checks the request with the detector, fed all of those (`findLeaks`), and
+ * answers with the document's row: counts, and for each leak the kind of place, the macro's name
+ * when it is plainly one, and the kind of text, never the text. A page the detector cannot read
+ * refuses the request, as the import refuses it, and a request the builder made that its contract
+ * refuses is invalid, each counted so.
  *
  * The probe's compiles are left out, as the seed's check of its samples leaves them: what the probe
  * decides of an argument goes in the request as a verdict from a closed list, and the texts the
@@ -25,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
+import type { PageStrings } from "../src/import/naming.ts";
 import type { ProbeCandidate } from "../src/import/probe.ts";
 import { type LeakChildRow, leakCounts, leakFindings } from "./corpus-leak.ts";
 import { answersFolder, commandAnswers, headerOf } from "./corpus-seed.ts";
@@ -43,11 +46,14 @@ type NamingModule = typeof import("../src/import/naming.ts");
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
 
-/** A document, as the parent sends it: its zip and the zip's name. */
+/**
+ * A document, as the parent sends it: its zip and the zip's name, and whether to send its page's
+ * strings back beside its row, which a test of the parent's keeps in memory alone.
+ */
 interface Task {
   type: "task";
   id: string;
-  message: { name: string; bytes: Uint8Array };
+  message: { name: string; bytes: Uint8Array; pages?: boolean };
 }
 
 async function main() {
@@ -72,8 +78,16 @@ async function main() {
   const { candidatesOf, isSetter } = await runner.import<CandidatesModule>(
     "/src/import/candidates.ts",
   );
-  const { buildRequest, findLeaks, isOwn, ownNames, pageStrings, sourcesOf } =
-    await runner.import<NamingModule>("/src/import/naming.ts");
+  const {
+    buildRequest,
+    findLeaks,
+    InvalidRequest,
+    isOwn,
+    ownNames,
+    pageStrings,
+    realName,
+    sourcesOf,
+  } = await runner.import<NamingModule>("/src/import/naming.ts");
 
   const manifest = JSON.parse(
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
@@ -91,7 +105,14 @@ async function main() {
 
   process.on("message", async (task: Task) => {
     if (task.type !== "task") return;
-    const done = (row: LeakChildRow) => send({ type: "done", id: task.id, row });
+    let page: PageStrings | undefined;
+    const done = (row: LeakChildRow) =>
+      send({
+        type: "done",
+        id: task.id,
+        row,
+        ...(task.message.pages === true && page !== undefined ? { page } : {}),
+      });
     const taken = intake(
       { name: task.message.name, bytes: new Uint8Array(task.message.bytes) },
       { tree, treeImage },
@@ -130,22 +151,46 @@ async function main() {
         ),
       };
       const sources = sourcesOf(taken);
-      const page = await pageStrings(made, fonts);
+      // The page, read with the upload's fonts first, as the reference read it.
+      page = await pageStrings(made, fonts, taken.files);
+      const pageCounts = {
+        words: page.words.length,
+        pairs: page.pairs.length,
+        identifiers: page.identifiers.length,
+        numbers: page.numbers.length,
+        runs: page.runs.length,
+        glyphs: page.glyphs,
+        readable: page.readable,
+      };
       // The header's values, found by the answers the request without them finds, and the request
       // again with them, as the import builds it; and once without the page, to count what the
       // page masked.
       const plain = await buildRequest(built, found, probed, body.preamble, { sources, page });
-      const header = headerOf(candidates, commandAnswers(plain, answers));
+      if ("refused" in plain) return done({ outcome: "refused", engine, page: pageCounts });
+      const header = headerOf(
+        candidates,
+        commandAnswers(plain.request, answers, (name) => realName(plain.names, name)),
+      );
       const options = { sources, header };
-      const request = await buildRequest(built, found, probed, body.preamble, {
+      const requested = await buildRequest(built, found, probed, body.preamble, {
         ...options,
         page,
       });
       const unpaged = await buildRequest(built, found, probed, body.preamble, options);
+      if ("refused" in requested || "refused" in unpaged)
+        return done({ outcome: "refused", engine, page: pageCounts });
+      const request = requested.request;
       const stored = candidates
         .filter((each) => each.where === "preamble")
         .map((each) => each.text);
-      const leaks = findLeaks(request, { tree: built, header, stored, sources, page });
+      const leaks = findLeaks(request, {
+        tree: built,
+        header,
+        stored,
+        sources,
+        page,
+        names: requested.names,
+      });
       const owned = ownNames(sources);
       const meaning = (name: string) => {
         const macro = Object.hasOwn(found.macros, name) ? found.macros[name] : undefined;
@@ -154,15 +199,25 @@ async function main() {
       done({
         outcome: "checked",
         engine,
-        counts: leakCounts(request, unpaged, meaning, (name) => isOwn(name, owned), header),
-        page: {
-          words: page.words.length,
-          pairs: page.pairs.length,
-          identifiers: page.identifiers.length,
-        },
+        counts: leakCounts(
+          request,
+          unpaged.request,
+          meaning,
+          (name) => isOwn(name, owned),
+          header,
+          {
+            request: (name) => realName(requested.names, name),
+            unpaged: (name) => realName(unpaged.names, name),
+          },
+        ),
+        page: pageCounts,
+        names: requested.names.size,
         findings: leakFindings(leaks),
       });
-    } catch {
+    } catch (error) {
+      // A request the contract refuses is named by where it breaks it, never what it holds.
+      if (error instanceof InvalidRequest)
+        return done({ outcome: "invalid", engine, problems: [...error.problems] });
       // What went wrong may quote the document, so it goes unsaid.
       session.forget("import");
       done({ outcome: "crashed", engine });

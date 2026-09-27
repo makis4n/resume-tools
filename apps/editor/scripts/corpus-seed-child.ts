@@ -84,7 +84,7 @@ async function main() {
   const signaturesModule = await runner.import<SignaturesModule>("/src/import/signatures.ts");
   const { signatures } = signaturesModule;
   const { probe, probeUses } = await runner.import<ProbeModule>("/src/import/probe.ts");
-  const { buildRequest, pageStrings, sourcesOf, withRedefinitions } =
+  const { buildRequest, pageStrings, realName, sourcesOf, withRedefinitions } =
     await runner.import<NamingModule>("/src/import/naming.ts");
   const { regenerate } = await runner.import<PrintModule>("/src/import/print.ts");
 
@@ -134,21 +134,28 @@ async function main() {
       // are whole, as the reference's, so it goes now, as the probe runner's child drops it.
       if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
       // The upload's sources say which definitions are the sample's own, the class it ships among
-      // them, which alone the document's values mask; and the page's strings mask them too.
+      // them, which alone the document's values mask; and the page's strings, read with the
+      // upload's fonts, mask them too.
       const options = {
         ...(extras === undefined ? {} : { also: extras }),
         sources: sourcesOf(taken),
-        page: await pageStrings(made, fonts),
+        page: await pageStrings(made, fonts, taken.files),
       };
       const answers = answersFolder().read;
       // The header's values, found by the answers the request without them finds, and the request
       // again with them, as items 7 and 11 build it.
       const plain = await buildRequest(built, found, probed, body.preamble, options);
-      const header = headerOf(probed.candidates, commandAnswers(plain, answers));
-      const request = await buildRequest(built, found, probed, body.preamble, {
+      if ("refused" in plain) throw new Error(plain.message);
+      const header = headerOf(
+        probed.candidates,
+        commandAnswers(plain.request, answers, (name) => realName(plain.names, name)),
+      );
+      const requested = await buildRequest(built, found, probed, body.preamble, {
         ...options,
         header,
       });
+      if ("refused" in requested) throw new Error(requested.message);
+      const request = requested.request;
       const { redefinitions, serving } = redefinitionsOf(request.macros, answers);
       let redefined: SeedRedefinitions | undefined;
       if (redefinitions.length > 0) {

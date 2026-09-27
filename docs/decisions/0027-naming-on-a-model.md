@@ -187,17 +187,16 @@ own definitions from the tree's (decision 0024). The gate is stricter than the m
 a single word of the document's text in an own definition, which the builder leaves unless it is a
 word of the header's name, is refused, so the invented document's `\cvgap`, which its uploaded
 class defines to hold the surname its preamble stores, is refused as the child builds the request
-now, and passes once item 7 gives the name. The gate does not catch a text that only a definition
-holds, which no string of the document's names: a name a preamble's own macro spells out,
-`\newcommand{\cvcontact}{{\Large Quill Invented}\par}`, goes to the model with the gate passing, as
-0024's known limits say. Item 11 adds the reference page's own text as the detector's source, and
-the corpus-wide test. The runner's child passes the page's words now, `page` in the `document` it
-gives the gate, read from the reference's glyph stream as words of three letters or more and each
-two words of a line; `assertNoText` ignores what it does not read, and does not read them yet, so
-the limit stands until item 11 makes them its needles for the document's own definitions. Names are
-outside the gate too, the macros', the definitions' and the dependencies', which are the template's
-control sequences. `checkRequest` refuses a request when a definition's hash or a macro's key does
-not hold, so that no answer is filed under another template's key.
+now, and passes once item 7 gives the name. Before item 11 the gate did not catch a text that only
+a definition holds, which no string of the document's names: a name a preamble's own macro spells
+out, `\newcommand{\cvcontact}{{\Large Quill Invented}\par}`, went to the model with the gate
+passing. Item 11 (decision 0029) makes the reference's page, read with the upload's fonts, a source
+of the builder's and the gate's, and the child builds the request and its gate as `corpus leak`
+does (`gatedRequest`): such a name is masked where the page shows it as a pair, the gate refuses a
+request whose own definition still holds a word only the page shows, it reads the request's names
+too, and a page it cannot read refuses the request. `checkRequest` refuses a request when a
+definition's hash or a macro's key does not hold, so that no answer is filed under another
+template's key.
 
 Only then is `name` called, and only with `--model` and a key: until item 11's corpus-wide leak
 test lands, a real call happens only behind the flag, never in CI, which has no key, and never for

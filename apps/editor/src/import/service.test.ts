@@ -1,7 +1,14 @@
 import { storedAnswersOf } from "@resume-tools/naming";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { inventedNaming, inventedRequest } from "../service/invented";
-import { type FetchLike, NAMING_ROUTE, NamingServiceError, nameOnService } from "./service";
+import { NamingReply } from "../service/reply";
+import {
+  type FetchLike,
+  NAMING_ROUTE,
+  NamingServiceError,
+  nameOnService,
+  withRealNames,
+} from "./service";
 
 // The request and the answers are invented, and nothing here reaches a network: `fetch` is a fake
 // that records what it is asked and answers what each test gives it.
@@ -43,6 +50,33 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
     status,
     headers: { "Content-Type": "application/json", ...headers },
   });
+
+describe("the naming service's client, reading masked names back", () => {
+  test("gives back each name the request masked as the document's, through a map it never sends", async () => {
+    const { request, reply } = await inventedReply();
+    // As the service answers a request whose `\cventry` the builder wrote as `rtxa`, a word of the
+    // person's, and whose `\cvwren` it could not answer.
+    const masked = {
+      ...reply,
+      macros: reply.macros.map((each) =>
+        each.name === "cventry" ? { ...each, name: "rtxa" } : each,
+      ),
+      missing: [{ of: "command" as const, name: "rtxb", key: "c".repeat(64) }],
+    };
+    const names = new Map([
+      ["rtxa", "cventry"],
+      ["rtxb", "cvwren"],
+    ]);
+    const { calls, fetchLike } = fakeFetch(() => json(masked));
+    const back = await nameOnService(request, fetchLike, undefined, names);
+    expect(back.macros.map((each) => each.name)).toEqual(reply.macros.map((each) => each.name));
+    expect(back.missing).toEqual([{ of: "command", name: "cvwren", key: "c".repeat(64) }]);
+    expect(String(calls[0]?.init.body)).not.toContain("cvwren");
+    // With an empty map, the reply is as the service gave it.
+    const given = NamingReply.parse(masked);
+    expect(withRealNames(given, new Map())).toBe(given);
+  });
+});
 
 describe("the naming service's client", () => {
   test("posts the request as JSON to the route on the page's own origin, and gives back the reply", async () => {

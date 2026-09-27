@@ -22,10 +22,11 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/nod
 import type { EngineSession } from "../src/engine/session";
 import { readTree } from "../src/import/fonts";
 import { type Intake, intake } from "../src/import/intake";
-import { assertNoText, buildRequest, type HeaderValues, sourcesOf } from "../src/import/naming";
+import type { HeaderValues } from "../src/import/naming";
+import * as naming from "../src/import/naming";
 import { bodyOf, bodyOfText, buildTree, readBody } from "../src/import/parse";
 import { probe, probeUses } from "../src/import/probe";
-import { type ReferenceGlyph, reference } from "../src/import/reference";
+import { reference } from "../src/import/reference";
 import { isRefusal } from "../src/import/refusal";
 import { keysOf, signatures } from "../src/import/signatures";
 import { FontLibrary } from "../src/page/fonts";
@@ -34,13 +35,13 @@ import { FileAnswerCache, modelCacheDir } from "./answer-cache";
 import {
   answerDocument,
   costOf,
+  gatedRequest,
   LIST_PRICES,
   missingNames,
   type NameRow,
   nameLine,
   nameTable,
   namingConfig,
-  pageWords,
 } from "./corpus-name";
 
 // Every template, document, request, answer and key here is invented, and no test calls a
@@ -719,66 +720,6 @@ describe("a request asked in parts", () => {
   });
 });
 
-describe("the reference page's words", () => {
-  /** Computer Modern's advances, as shares of the size, for the letters these lines set. */
-  const ADVANCE: Record<string, number> = {
-    Q: 0.78,
-    u: 0.56,
-    i: 0.28,
-    l: 0.28,
-    I: 0.36,
-    n: 0.56,
-    v: 0.53,
-    e: 0.44,
-    t: 0.39,
-    d: 0.56,
-    H: 0.75,
-    a: 0.5,
-    r: 0.39,
-    b: 0.56,
-    o: 0.5,
-    C: 0.72,
-    y: 0.53,
-    " ": 0.33,
-  };
-  const SIZE = 655_360;
-
-  /** A line of glyphs, set as TeX sets a line of ten-point Computer Modern, from the left. */
-  function line(text: string, v: number): ReferenceGlyph[] {
-    const glyphs: ReferenceGlyph[] = [];
-    let h = 0;
-    for (const char of text) {
-      if (char !== " ")
-        glyphs.push({ kind: "glyph", font: "cmr10", size: SIZE, code: 0, text: char, h, v });
-      h += (ADVANCE[char] ?? 0.5) * SIZE;
-    }
-    return glyphs;
-  }
-
-  test("are its words of three letters or more, and each two of a line's words together", () => {
-    const words = pageWords({
-      pages: [
-        {
-          items: [
-            ...line("Quill Invented at Harbour", 0),
-            { kind: "rule", h: 0, v: SIZE, width: SIZE, height: 26_214 },
-            ...line("City", 2 * SIZE),
-          ],
-        },
-      ],
-    });
-    expect(words).toEqual([
-      "Quill",
-      "Quill Invented",
-      "Invented",
-      "Invented at",
-      "at Harbour",
-      "Harbour",
-      "City",
-    ]);
-  });
-});
-
 describe("the runner's configuration and prices", () => {
   test("takes the key under either name and the model's id from NAMING_MODEL", () => {
     expect(namingConfig({})).toEqual({ id: DEFAULT_MODEL });
@@ -944,6 +885,16 @@ describe("the runner's table", () => {
       "pdftex, 5 macros, 3 from the cache; refused: The naming request holds the document's text (text) in setting 3.; 2 missing: \\cvevent, \\cvtag",
     );
     expect(nameLine(rows[5] as NameRow)).toBe("timeout");
+    // A document whose page the detector cannot read is refused before its request is built.
+    expect(
+      nameLine({
+        id: "other-0003",
+        family: "other",
+        outcome: "refused",
+        engine: "pdftex",
+        refused: "This resume's text is set in fonts this editor cannot read yet.",
+      }),
+    ).toBe("pdftex, refused: This resume's text is set in fonts this editor cannot read yet.");
   });
 });
 
@@ -1010,6 +961,8 @@ describe.skipIf(!engineAvailable())("corpus name, on the invented pdfTeX documen
 \newcommand{\cvgap}[1]{\hspace{#1}Invented gap\par}
 \newcommand{\cventry}[3]{\textbf{#1}\hfill\textit{#3}\par #2\par}
 \newenvironment{cvitems}{\begin{itemize}}{\end{itemize}}
+\newcommand{\cvcontact}{{\Large Wren Larkfield}\par}
+\newcommand{\cvsign}[1]{\par\textit{Wrenfield}#1\par}
 `;
 
   const BODY = String.raw`\begin{document}
@@ -1100,11 +1053,12 @@ describe.skipIf(!engineAvailable())("corpus name, on the invented pdfTeX documen
   };
 
   /**
-   * The invented upload through the pipeline to its request, as the runner's child takes it, with
-   * the upload's sources; and with the header's values, when given, as item 7 will find them.
+   * The invented upload through the pipeline to its request and its gate, as the runner's child
+   * takes it (`gatedRequest`), with the upload's sources and the page's strings; and with the
+   * header's values, when given, as item 7 will find them. `lines` go before the body's end.
    */
-  async function requested(header?: HeaderValues) {
-    const main = `\\documentclass{inventedprobe}\n\\cvname{Quill}{Invented}\n${BODY}`;
+  async function requested(header?: HeaderValues, lines = "") {
+    const main = `\\documentclass{inventedprobe}\n\\cvname{Quill}{Invented}\n${BODY.replace("\\end{document}", `${lines}\\end{document}`)}`;
     const zipped = { "cv.tex": strToU8(main), "inventedprobe.cls": strToU8(CLASS) };
     const taken = intake({ name: "invented.zip", bytes: zipSync(zipped) }, { tree });
     if (isRefusal(taken)) throw new Error(`refused at intake: ${taken.message}`);
@@ -1127,31 +1081,58 @@ describe.skipIf(!engineAvailable())("corpus name, on the invented pdfTeX documen
     if (isRefusal(built)) throw new Error(built.message);
     const probed = await probe(session, fonts, taken, made, built, found);
     if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
-    const sources = sourcesOf(taken);
-    const given = header === undefined ? {} : { header };
-    const request = await buildRequest(built, found, probed, body.preamble, { sources, ...given });
-    const stored = probed.candidates
-      .filter((each) => each.where === "preamble")
-      .map((each) => each.text);
-    return { request, found, document: { tree: built, stored, sources, ...given } };
+    const inputs = { tree: built, found, probed, preamble: body.preamble, taken, made, fonts };
+    const gated = await gatedRequest(naming, {
+      ...inputs,
+      ...(header === undefined ? {} : { header }),
+    });
+    if ("refused" in gated) throw new Error(gated.refused);
+    return { ...gated, found, inputs };
   }
 
-  test("asks nothing of the request as the child builds it, whose own definition holds a stored word", async () => {
-    // The builder masks the document's own definitions by its phrases, and the gate, stricter on
-    // purpose, finds the surname the preamble stores, one word, in `\cvgap`'s (decision 0024).
-    const { request, document } = await requested();
+  test("builds the request and gates it with the page, as the child does", async () => {
+    // Item 9's review: the class hard-codes a name and a word of the person's in macros the body
+    // calls, which neither the body's text nor a stored text names. The page shows them: the
+    // name's pair masks `\cvcontact`, and the gate, stricter on purpose, finds the word alone in
+    // `\cvsign`, which the builder does not mask by a single word of the page's (decision 0029).
+    const { request, gate, inputs } = await requested(undefined, "\\cvcontact\n\\cvsign{}\n");
+    const contact = request.definitions.find((each) => each.name === "cvcontact");
+    expect(contact?.kind === "definition" && contact.text).toBe(
+      "\\long macro:->{\\Large Xxxx Xxxxxxxxx}\\par ",
+    );
     const answered = await answerDocument(request, {
       cache: freshCache(),
-      gate: () => assertNoText(request, document),
+      gate,
       model: { model: idle(), id: "invented-model" },
     });
-    expect(answered).toMatchObject({ macros: 7, asked: 0, stored: 0, calls: 0 });
-    expect(answered.refused).toMatch(/\(stored\) in the definition of cvgap\.$/);
+    expect(answered).toMatchObject({ macros: 9, asked: 0, stored: 0, calls: 0 });
+    expect(answered.refused).toMatch(/\(page\) in the definition of cvsign\.$/);
+    // Without the page, as the child built it before, the name went out, and the gate saw neither
+    // macro: only the surname the preamble stores, in `\cvgap`, which the page now masks.
+    const sources = naming.sourcesOf(inputs.taken);
+    const unpaged = await naming.buildRequest(
+      inputs.tree,
+      inputs.found,
+      inputs.probed,
+      inputs.preamble,
+      { sources },
+    );
+    if ("refused" in unpaged) throw new Error(unpaged.message);
+    const bare = unpaged.request.definitions.find((each) => each.name === "cvcontact");
+    expect(bare?.kind === "definition" && bare.text).toBe(
+      "\\long macro:->{\\Large Wren Larkfield}\\par ",
+    );
+    const stored = inputs.probed.candidates
+      .filter((each) => each.where === "preamble")
+      .map((each) => each.text);
+    const leaks = naming.findLeaks(unpaged.request, { tree: inputs.tree, sources, stored });
+    expect(leaks.map((leak) => `${leak.macro} ${leak.origin}`)).toEqual(["cvgap stored"]);
   }, 60_000);
 
   test("stores a fixed model answer under the keys item 4 gives, and hits it the next time", async () => {
-    // With the name, as item 7 will find it, the builder masks the surname `\cvgap` holds.
-    const { request, found, document } = await requested({ first: "Quill", last: "Invented" });
+    // With the name, as item 7 will find it, and the page, the builder masks the surname `\cvgap`
+    // holds, which the page shows beside the class's word.
+    const { request, found, gate } = await requested({ first: "Quill", last: "Invented" });
     expect(request.macros.map((macro) => `${macro.of} ${macro.name}`)).toEqual(
       FIXED.macros.map((macro) => `${macro.of} ${macro.name}`),
     );
@@ -1159,7 +1140,7 @@ describe.skipIf(!engineAvailable())("corpus name, on the invented pdfTeX documen
     const model = answering(FIXED);
     const answered = await answerDocument(request, {
       cache,
-      gate: () => assertNoText(request, document),
+      gate,
       model: { model, id: "invented-model" },
     });
     expect(answered).toMatchObject({ macros: 7, asked: 7, stored: 7, missing: [], calls: 1 });
@@ -1186,7 +1167,7 @@ describe.skipIf(!engineAvailable())("corpus name, on the invented pdfTeX documen
     expect(filed.sort()).toEqual(expected.sort());
     const again = await answerDocument(request, {
       cache,
-      gate: () => assertNoText(request, document),
+      gate,
       model: { model: idle(), id: "invented-model" },
     });
     expect(again).toMatchObject({ hits: { reviewed: 0, model: 7 }, asked: 0, calls: 0 });

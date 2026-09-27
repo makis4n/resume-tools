@@ -55,7 +55,8 @@ jobs:
           path: survey.json
       # Every document's naming request, built as the import builds it and checked for the
       # document's text by the leak detector: the lines name documents, macros, kinds of text and
-      # counts, never a document's text, and the step fails when a request holds any of it.
+      # counts, never a document's text, and the step fails when a request holds text the builder
+      # should have masked, or the check covers fewer documents than it should (decision 0029).
       - id: leak
         run: pnpm --filter @resume-tools/editor corpus leak --json leak.json > leak.md
       - if: always() && steps.leak.outcome != 'skipped'

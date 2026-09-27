@@ -40,7 +40,7 @@
  */
 
 import type { Argument, Node, RawWhy, Span, Tree } from "./parse";
-import { readMeaning, type TemplateMacro, tokensOf } from "./signatures";
+import { storedTargets, type TemplateMacro } from "./signatures";
 
 /** What a candidate is. */
 export type CandidateKind = "argument" | "section" | "item" | "label" | "paragraph";
@@ -247,41 +247,8 @@ export function storedIn(macro: TemplateMacro | { kind: "data" } | undefined): s
 
 /** The macros a setter stores its arguments in, in order; undefined for a macro that is not one. */
 function storesOf(macro: TemplateMacro | { kind: "data" } | undefined): string[] | undefined {
-  if (macro === undefined || macro.kind === "data") return undefined;
-  const meaning = readMeaning(macro.meaning);
-  if (meaning.kind !== "macro" || !/^(?:#\d)+$/.test(meaning.parameters)) return undefined;
-  const parameters = meaning.parameters.length / 2;
-  const tokens = tokensOf(meaning.replacement).filter(
-    (token) => !(token.kind === "char" && token.text === " "),
-  );
-  const stored = new Set<string>();
-  const targets: string[] = [];
-  let at = 0;
-  for (;;) {
-    let next = at;
-    while (tokens[next]?.kind === "cs" && /^(?:global|long)$/.test(nameOf(tokens[next]))) next++;
-    const [def, target, open, parameter, close] = tokens.slice(next, next + 5);
-    const assigns =
-      def?.kind === "cs" &&
-      /^g?def$/.test(def.name) &&
-      target?.kind === "cs" &&
-      open?.kind === "open" &&
-      parameter?.kind === "parameter" &&
-      parameter.text !== "##" &&
-      !stored.has(parameter.text) &&
-      close?.kind === "close";
-    if (!assigns) break;
-    stored.add(parameter.text);
-    targets.push(nameOf(target));
-    at = next + 5;
-  }
-  if (stored.size !== parameters) return undefined;
-  return tokens.slice(at).every((token) => token.kind !== "parameter" || token.text === "##")
-    ? targets
-    : undefined;
+  return macro === undefined || macro.kind === "data" ? undefined : storedTargets(macro.meaning);
 }
-
-const nameOf = (token: { kind: string; name?: string } | undefined) => token?.name ?? "";
 
 /** Options for finding candidates. */
 export interface CandidateOptions {

@@ -2,12 +2,13 @@
  * One child of `corpus name`'s pool (`corpus-name.ts`, decision 0027): an engine session and fonts
  * of its own, which take one document at a time, as a zip, through the intake, the reference
  * compile, the signatures' two compiles, asked of the body's commands and the preamble's, the parse,
- * the probe and the naming request, with the upload's sources, as `corpus seed`'s child does, but
- * without the header's values, which item 7 finds; then answer the request macro by macro from the
- * cache over `corpus/answers/` and the model's own folder of `.corpus/cache/`, and, when the parent
- * asks with a model's id, from that model, behind the privacy gate (`answerDocument`), each part of
- * the request within a limit of its own. It answers with the document's row, names of macros and
- * numbers only.
+ * the probe and the naming request, with the upload's sources and the page's strings, read with the
+ * upload's fonts, as `corpus leak`'s child builds it, but without the header's values, which item 7
+ * finds (`gatedRequest`); then answer the request macro by macro from the cache over
+ * `corpus/answers/` and the model's own folder of `.corpus/cache/`, and, when the parent asks with
+ * a model's id, from that model, behind the privacy gate fed the same (`answerDocument`), each part
+ * of the request within a limit of its own. A page the detector cannot read refuses the request
+ * before it is built. It answers with the document's row, names of macros and numbers only.
  *
  * The key and the model's id come from this process's environment, which the parent's is; the
  * parent checked them before it asked. The editor's modules are written for Vite, so this file,
@@ -23,15 +24,14 @@ import { googleModel } from "@resume-tools/naming/providers";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
-import type { DocumentText } from "../src/import/naming.ts";
 import { FileAnswerCache } from "./answer-cache.ts";
 import {
   answerDocument,
+  gatedRequest,
   MODEL_LIMIT_MS,
   MODEL_RETRIES,
   type NameChildRow,
   namingConfig,
-  pageWords,
 } from "./corpus-name.ts";
 
 type NodeEngine = typeof import("../src/engine/node.ts");
@@ -73,8 +73,7 @@ async function main() {
     await runner.import<ParseModule>("/src/import/parse.ts");
   const { signatures } = await runner.import<SignaturesModule>("/src/import/signatures.ts");
   const { probe, probeUses } = await runner.import<ProbeModule>("/src/import/probe.ts");
-  const { assertNoText, buildRequest, sourcesOf } =
-    await runner.import<NamingModule>("/src/import/naming.ts");
+  const naming = await runner.import<NamingModule>("/src/import/naming.ts");
 
   const manifest = JSON.parse(
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
@@ -117,29 +116,27 @@ async function main() {
       // The probe leaves a pdfTeX document's format in the session for item 7, whose checks hook
       // in below; until they do, it goes now, as the probe runner's child drops it.
       if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
-      // The upload's sources say which definitions are the document's own, which alone its text
-      // masks, as the seed's child builds a sample's request (decision 0024).
-      const sources = sourcesOf(taken);
-      const request = await buildRequest(built, found, probed, body.preamble, { sources });
-      // The document's text as the request was masked by: the body's tree, the texts the preamble
-      // stores, and the sources; item 7 finds the header's values, which join it when it lands.
-      // The gate is stricter than the masking, so it refuses a request whose own definition holds
-      // a word of the document's that the builder leaves, and passes a text that only a definition
-      // holds, as a name a preamble's own macro spells out (decision 0027). `page` is the
-      // reference page's words, the text the person sees, which `assertNoText` does not read yet:
-      // item 11 makes them its needles for the document's own definitions.
-      const document: DocumentText & { page: readonly string[] } = {
+      // The request as `corpus leak` builds it, the upload's sources and the page's strings among
+      // what masks it, and the gate, stricter than the masking, fed the same: a name a preamble's
+      // own macro spells out is masked where the page shows it, and the gate refuses the request
+      // where the builder could not mask it (decision 0029). Item 7 finds the header's values,
+      // which join them when it lands.
+      const requested = await gatedRequest(naming, {
         tree: built,
-        stored: probed.candidates
-          .filter((each) => each.where === "preamble")
-          .map((each) => each.text),
-        sources,
-        page: pageWords(made),
-      };
+        found,
+        probed,
+        preamble: body.preamble,
+        taken,
+        made,
+        fonts,
+      });
+      if ("refused" in requested)
+        return done({ outcome: "refused", engine, refused: requested.refused });
+      const { request, gate } = requested;
       const id = task.message.model;
       const answered = await answerDocument(request, {
         cache,
-        gate: () => assertNoText(request, document),
+        gate,
         ...(id === undefined || key === undefined
           ? {}
           : { model: { model: googleModel(key, id), id } }),

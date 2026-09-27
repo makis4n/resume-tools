@@ -10,11 +10,13 @@ import {
   failed,
   type LeakRow,
   leakCounts,
+  leakFailures,
   leakFindings,
   leakHeadline,
   leakLine,
   leakTable,
   passed,
+  withheld,
 } from "./corpus-leak";
 import {
   CORPUS_DIR,
@@ -71,6 +73,7 @@ describe("the leak runner's counts and findings", () => {
       { origin: "stored", kind: "tree definition", macro: "ecv@rfoot", where: "the definition" },
       { origin: "raw", kind: "call site", macro: "not a name!", where: "call site 1" },
       { origin: "header", kind: "setting", where: "setting 2" },
+      { origin: "page", kind: "name", where: "a name the request holds" },
     ];
     const findings = leakFindings(leaks);
     expect(findings).toEqual([
@@ -78,11 +81,36 @@ describe("the leak runner's counts and findings", () => {
       { kind: "tree definition", macro: "\\ecv@rfoot", origin: "stored" },
       { kind: "call site", origin: "raw" },
       { kind: "setting", origin: "header" },
+      { kind: "name", origin: "page" },
     ]);
     const row: LeakRow = { id: "other-0001", family: "other", outcome: "checked", findings };
     expect(leakLine({ ...row, engine: "pdftex" })).toBe(
-      "pdftex, FAILS: the page's text in the own definition of `\\cvcontact`; a stored text in the tree's definition of `\\ecv@rfoot`; a raw chunk's text in a call site of a macro whose name is not plain; a header value in a setting",
+      "pdftex, FAILS: the page's text in the own definition of `\\cvcontact`; a stored text in the tree's definition of `\\ecv@rfoot`; a raw chunk's text in a call site of a macro whose name is not plain; a header value in a setting; the page's text in a macro's name, which is not shown",
     );
+  });
+
+  test("withholds a request that holds only a single word the builder leaves, and fails any other", () => {
+    const alone: Leak = {
+      origin: "page",
+      kind: "own definition",
+      macro: "cvsig",
+      where: "the definition of cvsig",
+      alone: true,
+    };
+    const row = (leaks: Leak[]): LeakRow => ({
+      id: "other-0001",
+      family: "other",
+      outcome: "checked",
+      engine: "pdftex",
+      findings: leakFindings(leaks),
+    });
+    const single = row([alone]);
+    expect([passed(single), withheld(single), failed(single)]).toEqual([false, true, false]);
+    expect(leakLine(single)).toBe(
+      "pdftex, withheld by the gate: a single word of the page's text in the own definition of `\\cvsig`",
+    );
+    const both = row([alone, { ...alone, macro: "cvcontact", alone: undefined }]);
+    expect([withheld(both), failed(both)]).toEqual([false, true]);
   });
 });
 
@@ -100,23 +128,78 @@ describe("the leak runner's table", () => {
     },
     { id: "other-0001", family: "other", outcome: "no reference" },
     { id: "other-0002", family: "other", outcome: "timeout" },
+    { id: "other-0003", family: "other", outcome: "refused", engine: "pdftex" },
+    {
+      id: "other-0004",
+      family: "other",
+      outcome: "checked",
+      engine: "xetex",
+      counts,
+      findings: [{ kind: "own definition", macro: "\\cvsig", origin: "page", alone: true }],
+    },
+    {
+      id: "other-0005",
+      family: "other",
+      outcome: "invalid",
+      engine: "pdftex",
+      problems: [{ kind: "call site", macro: "cvrole" }],
+    },
   ];
 
   test("counts what became of the documents, and names each failure's leaks, never the text", () => {
     expect(rows.filter(passed).map((row) => row.id)).toEqual(["jake-0001"]);
     expect(rows.filter(failed).map((row) => row.id)).toEqual(["europecv-0001"]);
-    expect(leakHeadline(rows)).toBe("2 documents checked: 1 passed, 1 failed.");
+    expect(rows.filter(withheld).map((row) => row.id)).toEqual(["other-0004"]);
+    const headline =
+      "6 documents with a reference: 3 checked, 1 passed, 1 failed, 1 withheld by the gate for a single word the builder leaves, 1 refused for pages the detector cannot read, 1 invalid, 0 not parsed, 1 crashed or timed out.";
+    expect(leakHeadline(rows)).toBe(headline);
     const table = leakTable(rows);
-    expect(table).toContain("| Checked | 1 | 0 | 0 | 0 | 1 | 0 | 2 |");
+    expect(table).toContain("| Checked | 1 | 0 | 0 | 0 | 1 | 1 | 3 |");
     expect(table).toContain("| **Failed** | 0 | 0 | 0 | 0 | 1 | 0 | 1 |");
+    expect(table).toContain(
+      "| Withheld by the gate: a single word the builder leaves | 0 | 0 | 0 | 0 | 0 | 1 | 1 |",
+    );
+    expect(table).toContain(
+      "| Refused: a page the detector cannot read | 0 | 0 | 0 | 0 | 0 | 1 | 1 |",
+    );
+    expect(table).toContain(
+      "| **Invalid**: a request its contract refuses | 0 | 0 | 0 | 0 | 0 | 1 | 1 |",
+    );
     expect(table).toContain("| Crashed or timed out | 0 | 0 | 0 | 0 | 0 | 1 | 1 |");
-    expect(table).toContain("| Masked further by the page | 1 | 0 | 0 | 0 | 1 | 0 | 2 |");
+    expect(table).toContain("| Masked further by the page | 1 | 0 | 0 | 0 | 1 | 1 | 3 |");
     expect(table).toContain("| With the header's values found | 0 | 0 | 0 | 0 | 1 | 0 | 1 |");
     expect(table).toContain(
       "europecv-0001: a stored text in the tree's definition of `\\ecv@rfoot`.",
     );
-    expect(table.trimEnd().endsWith("2 documents checked: 1 passed, 1 failed.")).toBe(true);
+    expect(table).toContain(
+      "other-0005: the request breaks its contract in a call site of `\\cvrole`.",
+    );
+    expect(table).toContain(
+      "Refused, their pages set in fonts the detector cannot read: other-0003.",
+    );
+    expect(table.trimEnd().endsWith(headline)).toBe(true);
     expect(leakLine(rows[2] as LeakRow)).toBe("no reference");
+  });
+
+  test("fails when a request holds text the builder should have masked, or the proof shrinks", () => {
+    expect(leakFailures(rows)).toEqual([
+      "A naming request holds its document's text, as the lines above name.",
+      "The builder made a naming request its contract refuses, as the lines above name.",
+      "A document crashed or timed out, so its request went unchecked.",
+      "Of 6 documents with a reference, 4 were checked or refused: the check covers fewer than it should.",
+    ]);
+    // A request withheld by the gate for a single word, and a page refused, are no failure.
+    const kept = rows.filter((row) => ["jake-0001", "other-0003", "other-0004"].includes(row.id));
+    expect(leakFailures(kept)).toEqual([]);
+    // A document that does not parse shrinks the proof; and a run that checks none proves nothing.
+    expect(
+      leakFailures([...kept, { id: "other-0009", family: "other", outcome: "not parsed" }]),
+    ).toEqual([
+      "Of 4 documents with a reference, 3 were checked or refused: the check covers fewer than it should.",
+    ]);
+    expect(leakFailures([{ id: "other-0001", family: "other", outcome: "no reference" }])).toEqual([
+      "No document was checked, which proves nothing.",
+    ]);
   });
 });
 
@@ -159,7 +242,19 @@ describe.skipIf(!fetched || !engineAvailable())("the corpus's naming requests", 
         );
       },
     });
-    expect(rows.some((row) => row.outcome === "checked")).toBe(true);
+    // Every document with a reference is checked, or refused for a page the detector cannot read,
+    // and none crashed; none holds text the builder should have masked. A request the gate
+    // withholds for a single word the builder leaves is no failure: nothing of it leaves.
+    const references = rows.filter((row) => row.outcome !== "no reference").length;
+    const accounted = rows.filter((row) => row.outcome === "checked" || row.outcome === "refused");
+    expect(accounted.length).toBeGreaterThanOrEqual(references);
+    expect(rows.filter((row) => row.outcome === "checked").length).toBeGreaterThan(100);
+    expect(
+      rows
+        .filter((row) => ["crashed", "timeout", "invalid"].includes(row.outcome))
+        .map((row) => row.id),
+    ).toEqual([]);
     expect(rows.filter(failed).map((row) => `${row.id}: ${leakLine(row)}`)).toEqual([]);
+    expect(leakFailures(rows)).toEqual([]);
   }, 1_800_000);
 });
