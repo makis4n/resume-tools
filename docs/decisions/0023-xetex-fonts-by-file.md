@@ -152,9 +152,11 @@ the stock format with no font found by name, and must set the reference's glyph 
 `generateFormat` dumps a package's, and the body compiled from that format must set the same
 glyphs again. Each compile gets the upload's bibliography under its own job's name, as the
 reference compile does; the dump gets the job's text files, of every kind the intake keeps as
-text, at the job's top, which is all a dump, like a package's `files`, can take: a preamble that
-reads a file in a folder does not dump. A compile or a dump that stops is refused as `stopped`,
-with its log; a definition's `\PackageError` is refused as the rewrite put it off.
+text, each at its path, since the session's `dump` takes a job's tree as a compile does, folders
+and all (`isJobPath`), so that a preamble that inputs a file in a folder dumps; a package's
+`files` stay at the top, by plain file name (decision 0006). A compile or a dump that stops is
+refused as `stopped`, with its log; a definition's `\PackageError` is refused as the rewrite put
+it off.
 
 A difference refuses the import, naming the first font whose glyphs differ, or `layout` for a
 difference of pages, rules or specials. Where the rewrite took unicode-math out, a difference is a
@@ -180,7 +182,8 @@ took it still takes, exactly.
 Two changes to what the comparison sees. A colour special is compared by its text, not its
 place, since unicode-math's axis moves the colour specials of a centred table by a few scaled
 points where none of its glyphs moves. And a whole compile's first shipout, which a body compiled
-from a format lacks, holds two more things `sameGlyphs` leaves out: xcolor's black in RGB and
+from a format lacked until each job of a format came to put back what the preamble wrote onto the
+page (Consequences), holds two more things `sameGlyphs` leaves out: xcolor's black in RGB and
 CMYK, as a document whose colour model is one of those writes it, beside gray; and the white page
 background `\pagecolor{white}` writes, as AltaCV's class has it (decision 0019).
 
@@ -225,36 +228,42 @@ engine and loads a font package, compiled to a reference on XeTeX for this.
 |---|--:|--:|--:|--:|--:|--:|--:|
 | XeTeX, with a reference | 0 | 18 | 1 | 0 | 0 | 7 | 26 |
 | pdfTeX guarded on the engine, with font packages | 1 | 0 | 14 | 1 | 0 | 1 | 17 |
-| Rewritten, dumped, and matched the reference twice | 0 | 18 | 9 | 0 | 0 | 5 | 32 |
-| ... with mathematics alone set otherwise | 0 | 4 | 0 | 0 | 0 | 1 | 5 |
+| Rewritten, dumped, and matched the reference twice | 0 | 14 | 10 | 0 | 0 | 4 | 28 |
+| ... with mathematics alone set otherwise | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Refused: a font the tree lacks | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Refused: a feature or package | 0 | 0 | 0 | 0 | 0 | 2 | 2 |
-| Refused: glyphs that come out otherwise | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
+| Refused: glyphs that come out otherwise | 0 | 4 | 0 | 0 | 0 | 1 | 5 |
+| Refused: a compile or a dump that stopped | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | No reference on XeTeX | 1 | 0 | 5 | 1 | 0 | 1 | 8 |
-| Dump, median (slowest) | | 557 ms (944) | 601 ms (949) | | | 398 ms (568) | 558 ms (949) |
-| Format, median size | | 9.45 MB | 9.47 MB | | | 9.01 MB | 9.45 MB |
-| Body from the format, median | | 243 ms | 420 ms | | | 231 ms | 253 ms |
-| Whole document from the stock format, median | | 718 ms | 1161 ms | | | 588 ms | 729 ms |
-| Reference compile, median | | 2776 ms | 2530 ms | | | 866 ms | 2756 ms |
-| Families declared | 0 | 78 | 16 | 0 | 0 | 9 | 103 |
-| Shapes declared | 0 | 850 | 146 | 0 | 0 | 105 | 1101 |
+| Dump, median (slowest) | | 557 ms (907) | 572 ms (921) | | | 386 ms (407) | 558 ms (921) |
+| Format, median size | | 9.48 MB | 9.46 MB | | | 9.00 MB | 9.47 MB |
+| Body from the format, median | | 235 ms | 419 ms | | | 285 ms | 251 ms |
+| Whole document from the stock format, median | | 729 ms | 1090 ms | | | 476 ms | 734 ms |
+| Reference compile, median | | 2677 ms | 2278 ms | | | 742 ms | 2637 ms |
+| Families declared | 0 | 62 | 18 | 0 | 0 | 5 | 85 |
+| Shapes declared | 0 | 652 | 167 | 0 | 0 | 61 | 880 |
 
-The families carry `mapping` 87 times, `smcp` 85, `pnum` 29 and `lnum` 29. The refusals are
-`\addfontfeatures` once, `xltxtra` once, and one AltaCV fork whose body from the format sets its
-first page lower than the whole document does, on two pages against one.
+The families carry `mapping` 73 times, `smcp` 67, `pnum` 22 and `lnum` 22. The refusals are
+`\addfontfeatures` once, `xltxtra` once, and the five documents the first check let pass as
+mathematics alone (above), each named by the font at its first difference, Roboto in
+awesome-cv-0009, Source Sans Pro in awesome-cv-0035 and its Light in other-0031, or as `layout`
+for the rules of awesome-cv-0015 and awesome-cv-0027. The AltaCV fork whose body from the format
+set its first page lower than the whole document did, on two pages against one, rewrites and
+matches since each job of a format starts as the whole document does (Consequences). No other
+document's outcome, families or features moved from the first check's run.
 
-Of the 26 XeTeX documents with a reference, 24 rewrite and match, 5 of them with mathematics alone
-set otherwise, and 2 are refused, for `\addfontfeatures` and `xltxtra`; every one of the 18
-Awesome-CV forks rewrites and matches, 4 with mathematics alone set otherwise, the rest exactly. Of
-the 17 pdfTeX documents taken on XeTeX, 8 have no reference there, 8 rewrite and match, and one is
-the layout difference. The survey counts 65 XeTeX documents, of which 41 name no font the tree
-lacks; the rest were refused before the rewrite, as decision 0019's table says.
+Of the 26 XeTeX documents with a reference, 19 rewrite and match, every one exactly, 5 are refused
+for glyphs that come out otherwise, and 2 for `\addfontfeatures` and `xltxtra`; 14 of the 18
+Awesome-CV forks rewrite and match, and the other 4 are among the 5. Of the 17 pdfTeX documents
+taken on XeTeX, 8 have no reference there and 9 rewrite and match. The survey counts 65 XeTeX
+documents, of which 41 name no font the tree lacks; the rest were refused before the rewrite, as
+decision 0019's table says.
 
-Against item 19's bar, 5 s from file to page for a pdfTeX import, the 24 XeTeX documents that
-rewrite and match: a XeTeX import compiles the reference, a median of 2.8 s here, then the check,
-the whole document, the dump and the body from the format, a median of 1.5 s more, 4.4 s in all at
-four documents at a time; the slowest, 9.3 s. The pdfTeX documents taken on XeTeX are left out of
-these, since their import compiles on pdfTeX; the slowest of them took 13.0 s. The body from the
+Against item 19's bar, 5 s from file to page for a pdfTeX import, the 19 XeTeX documents that
+rewrite and match: a XeTeX import compiles the reference, a median of 2.6 s here, then the check,
+the whole document, the dump and the body from the format, a median of 1.5 s more, 4.2 s in all at
+four documents at a time; the slowest, 9.1 s. The pdfTeX documents taken on XeTeX are left out of
+these, since their import compiles on pdfTeX; the slowest of them took 12.4 s. The body from the
 format takes a third of the whole compile's time, which is what every edit after the import costs.
 
 ## Consequences
@@ -283,18 +292,18 @@ format takes a third of the whole compile's time, which is what every edit after
   subtables, 262,140 entries of their coverage and 65,535 substitutions. An invented font of 400
   subtables whose ranges run to 65,535 reads in 0.16 ms of CPU time and keeps 0.45 MB, as one whose
   ranges end at its last glyph does; read a glyph at a time, it took 1.9 s.
-- The corpus's one layout difference, the AltaCV fork of the table, came of the format. `\dump`
-  flushes the page as `\end` does, and LaTeX put it into `\@holdpg`: a `\topskip`-high box, and
-  what the preamble wrote onto the page as it ran, hyperref's PDF version and dvipdfmx's flags,
-  xcolor's first black and, in the fork, a page colour. The format kept it, the fork's paracol,
-  opening at the top of its page, set it above its columns, and a body from any format lost what
-  the preamble wrote, as decision 0014 found. Each job of a format now starts as the whole document
-  does (`DUMP_END` in `src/engine/session.ts`): what the preamble wrote back on the page, less what
-  `\dump` added, `\@holdpg` void, and the output penalty, the dead cycles and `\prevdepth` as the
-  preamble left them. Run again, the fork rewrites and matches, and so do 33 documents, none
-  refused for its glyphs; the invented XeTeX template's body sets the whole document's specials and
-  PDF; AltaCV's port, which opens paracol below its header, and the other curated templates set
-  every glyph where they did.
+- The AltaCV fork whose body from the format set its first page lower than the whole document did
+  (Numbers) came of the format. `\dump` flushes the page as `\end` does, and LaTeX put it into
+  `\@holdpg`: a `\topskip`-high box, and what the preamble wrote onto the page as it ran,
+  hyperref's PDF version and dvipdfmx's flags, xcolor's first black and, in the fork, a page
+  colour. The format kept it, the fork's paracol, opening at the top of its page, set it above its
+  columns, and a body from any format lost what the preamble wrote, as decision 0014 found. Each
+  job of a format now starts as the whole document does (`DUMP_END` in `src/engine/session.ts`):
+  what the preamble wrote back on the page, less what `\dump` added, `\@holdpg` void, and the
+  output penalty, the dead cycles and `\prevdepth` as the preamble left them. Run again, the fork
+  rewrites and matches, and no document is refused for a layout of the format's; the invented
+  XeTeX template's body sets the whole document's specials and PDF; AltaCV's port, which opens
+  paracol below its header, and the other curated templates set every glyph where they did.
 - The manifest is larger by 0.14 MB, which a first load fetches once. Layout 7 moves the tag the
   engine and the tree are served under (`engineTag`), so a returning browser fetches the engine
   and every file of the tree it reads again, and drops every format it kept. The table alone did

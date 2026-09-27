@@ -183,17 +183,17 @@ export function withBibliography(
 }
 
 /**
- * The files a dump takes beside the preamble, as the whole compile has them: the job's text files,
+ * The files a dump takes with the preamble, as the whole compile has them: the job's text files,
  * of the kinds the intake keeps as text, the bibliography's among them, and the rewrite's and the
- * compatibility's style files, at their paths. The session's `dump`, as a package's `files`, takes
- * plain file names alone, so a file in a folder cannot go with it: a preamble that reads one stops
- * the dump, which refuses the import as stopped.
+ * compatibility's style files, each at its path in the job's folder, in a folder of it or at its
+ * top, as the session's `dump` takes a job's tree, so that a preamble that reads a file in a folder
+ * dumps as it compiles.
  */
 export function dumpFiles(files: Readonly<Record<string, Uint8Array>>): Record<string, Uint8Array> {
   const text = new Set([...TEXT_EXTENSIONS, ".bbl"]);
   const out: Record<string, Uint8Array> = {};
   for (const [path, bytes] of Object.entries(files))
-    if (!path.includes("/") && text.has(extensionOf(path))) out[path] = bytes;
+    if (text.has(extensionOf(path))) out[path] = bytes;
   return out;
 }
 

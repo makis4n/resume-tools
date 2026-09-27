@@ -221,7 +221,7 @@ describe("the check's files", () => {
     expect(Object.keys(withBibliography({}, intake, "fonts"))).toEqual([]);
   });
 
-  it("gives the dump every text file at the job's top, a class, a bibliography's, the rewrite's", () => {
+  it("gives the dump every text file of the job, in its folders too, and no image", () => {
     const files = Object.fromEntries(
       [
         "invented.cls",
@@ -233,12 +233,16 @@ describe("the check's files", () => {
         "fonts.cfg",
         "photo.png",
         "parts/settings.tex",
+        "parts/deeper/invented.sty",
+        "parts/photo.jpg",
       ].map((path) => [path, bytes("% invented")]),
     );
     expect(Object.keys(dumpFiles(files)).sort()).toEqual([
       "cv.bbl",
       "fonts.cfg",
       "invented.cls",
+      "parts/deeper/invented.sty",
+      "parts/settings.tex",
       "plain2.bst",
       "refs.bib",
       "rt-preamble.sty",

@@ -349,6 +349,25 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       ).toThrow("not a path inside the job's folder");
   }, 30_000);
 
+  it("puts a dump's files at their paths in its folder, as a job's, and no path outside it", () => {
+    const files = {
+      "parts/settings.tex": "\\input{parts/deeper/name}",
+      "parts/deeper/name.tex": "\\newcommand\\inventedname{An invented name}",
+    };
+    const preamble = `${PREAMBLE}\n\\input{parts/settings}`;
+    expect(session.dump("pdftex", "folders", preamble, files).error).toBeUndefined();
+    const body = "\\begin{document}\\inventedname\\end{document}";
+    expect(session.compile("pdftex", "folders", body, { job: "folders" }).error).toBeUndefined();
+    // A path that would leave the folder is refused before anything is written, and the format
+    // made before stays.
+    for (const path of ["a//b.tex", ".fonts.conf", "parts/../../x.tex", "a/.git/config"])
+      expect(
+        () => session.dump("pdftex", "folders", preamble, { ...files, [path]: "x" }),
+        path,
+      ).toThrow("not a path inside the job's folder");
+    expect(session.compile("pdftex", "folders", body, { job: "folders" }).error).toBeUndefined();
+  }, 30_000);
+
   describe("lets XeTeX find a font by name for one compile", () => {
     const byName = (font: string) =>
       `\\documentclass{article}\\usepackage{fontspec}\\setmainfont{${font}}\\begin{document}Invented.\\end{document}`;

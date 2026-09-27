@@ -720,11 +720,13 @@ export const TOLERANCE = 1;
 const EDITOR_MARKER = /^rt:[bepl]:/i;
 
 /**
- * The specials LaTeX writes at the first shipout of a whole compile, which a body compiled from a
- * dumped format lacks, and which set nothing on the page (decisions 0003 and 0014): hyperref's PDF
- * version and dvipdfmx's configuration, and a white page's background, which xcolor's
- * `\pagecolor{white}` writes there, as AltaCV's class has it (decision 0023), the colour a page has
- * anyway. xcolor's black, the fifth, is found by where it is (`firstBlack`).
+ * The specials LaTeX writes at the first shipout of a whole compile, which set nothing on the page
+ * (decisions 0003 and 0014): hyperref's PDF version and dvipdfmx's configuration, and a white
+ * page's background, which xcolor's `\pagecolor{white}` writes there, as AltaCV's class has it
+ * (decision 0023), the colour a page has anyway. xcolor's black, the fifth, is found by where it is
+ * (`firstBlack`). A body compiled from a dumped format writes them too, since each job of a format
+ * puts back what the preamble wrote onto the page (`DUMP_END` in `src/engine/session.ts`, decision
+ * 0023); one from a format dumped before that lacked them. Both streams leave them out.
  */
 const FIRST_SHIPOUT =
   /^(?:pdf:\s*(?:majorversion|minorversion)|dvipdfmx:\s*config)(?![A-Za-z])|^background\s+(?:gray\s+1(?:\.0*)?|rgb(?:\s+1(?:\.0*)?){3}|cmyk(?:\s+0(?:\.0*)?){4})$/i;
@@ -735,10 +737,12 @@ const BLACK =
 
 /**
  * xcolor's black of a whole compile's first shipout, `color push gray 0`, or `rgb 0 0 0` or
- * `cmyk 0 0 0 1` in a document whose colour model is RGB or CMYK, as AltaCV's is, which no `color pop`
- * ever takes off: at the end of the output, the bottom of the colour stack, with any other black
- * nothing takes off above it, the black the PDF starts in. A body compiled from a dumped format
- * has not the first, so both streams leave all of them out.
+ * `cmyk 0 0 0 1` in a document whose colour model is RGB or CMYK, as AltaCV's is, which no
+ * `color pop` ever takes off: at the end of the output, the bottom of the colour stack, with any
+ * other black nothing takes off above it, the black the PDF starts in. A body compiled from a
+ * dumped format has the first too, as it has the rest of the first shipout's specials
+ * (`FIRST_SHIPOUT`), and one from a format dumped before decision 0023 had not; both streams leave
+ * all of them out.
  */
 function firstBlack(stream: GlyphStream): Set<ReferenceItem> {
   const stack: ReferenceItem[] = [];
@@ -763,7 +767,8 @@ function firstBlack(stream: GlyphStream): Set<ReferenceItem> {
  * rules; and the same specials, colour, links and images among them, each of the same text; all in
  * the same order, each within TOLERANCE of the other's place and size. The specials left out are
  * the editor's markers, which a marked body adds, and those of a whole compile's first shipout,
- * which a body compiled from a dumped format lacks and which set nothing on the page.
+ * which set nothing on the page, and which a body compiled from a format dumped before decision
+ * 0023 lacked (`FIRST_SHIPOUT`).
  */
 export function sameGlyphs(a: GlyphStream, b: GlyphStream): boolean {
   return difference(a, b) === undefined;

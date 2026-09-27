@@ -228,8 +228,9 @@ export interface SessionOptions {
 }
 
 /**
- * Files a template supplies, such as a class file, by plain file name; or, for a compile, the
- * files of an upload, by their paths in the job's folder (`isJobPath`).
+ * Files a dump or a compile takes, by their paths in the folder it runs in (`isJobPath`): a
+ * template's class and style files, which a package names by plain file name, or an upload's
+ * files, in their folders as the upload has them.
  */
 export type JobFiles = Record<string, string | Uint8Array>;
 
@@ -333,9 +334,6 @@ export interface CompileOptions {
 
 const checkName = (kind: string, name: string) => {
   if (!NAME.test(name)) throw new Error(`${kind} name must be letters, digits, - and _: ${name}`);
-};
-const checkFileName = (name: string) => {
-  if (!isFileName(name)) throw new Error(`not a plain file name: ${name}`);
 };
 /**
  * A file's path in a job's folder: plain file names joined by `/`, so no part is empty, `.`, `..`
@@ -643,14 +641,16 @@ export class EngineSession {
 
   /**
    * Dump a preamble into a format named `name`, which later compiles with the same engine can
-   * load. It runs in a folder of its own, with `files` beside it, and leaves only the format. A
-   * dump that fails leaves any earlier format of that name in place. One that succeeds replaces
-   * it, and the jobs compiled with it start again as new documents, keeping their files; a name
-   * stands for one template, so another template needs another name.
+   * load. It runs in a folder of its own, with `files` at their paths in it, as a compile has a
+   * job's in the job's folder (`isJobPath`), and leaves only the format. A dump that fails leaves
+   * any earlier format of that name in place. One that succeeds replaces it, and the jobs compiled
+   * with it start again as new documents, keeping their files; a name stands for one template, so
+   * another template needs another name.
    */
   dump(engine: Engine, name: string, preamble: string, files: JobFiles = {}): DumpResult {
     checkEngine(engine);
     checkFormatName(name);
+    for (const path of Object.keys(files)) checkJobPath(path);
     const spec = ENGINES[engine];
     const folder = `${BUILDS}/${name}`;
     this.tally.take();
@@ -905,7 +905,7 @@ export class EngineSession {
     const folder = `${JOBS}/${job}`;
     const at = (extension: string) => `${folder}/${job}.${extension}`;
     this.engine.FS.mkdirTree(folder);
-    this.writeFiles(folder, this.filesOf.get(job) ?? {}, checkJobPath);
+    this.writeFiles(folder, this.filesOf.get(job) ?? {});
     this.engine.FS.writeFile(at("tex"), body);
     if (fonts !== undefined) this.engine.FS.writeFile(`${folder}/${FONTCONFIG_FILE}`, fonts);
     const fresh = !this.engine.FS.analyzePath(at("aux")).exists;
@@ -956,12 +956,12 @@ export class EngineSession {
   }
 
   /**
-   * Write files into a folder, each after `check` takes its name: a plain file name for a dump's,
-   * a path in the job's folder for a compile's, whose folders are made first.
+   * Write a dump's or a compile's files into the folder it runs in, each at its path there
+   * (`isJobPath`), its folders made first.
    */
-  private writeFiles(folder: string, files: JobFiles, check = checkFileName) {
+  private writeFiles(folder: string, files: JobFiles) {
     for (const [name, data] of Object.entries(files)) {
-      check(name);
+      checkJobPath(name);
       const slash = name.lastIndexOf("/");
       if (slash > 0) this.engine.FS.mkdirTree(`${folder}/${name.slice(0, slash)}`);
       this.engine.FS.writeFile(`${folder}/${name}`, data);

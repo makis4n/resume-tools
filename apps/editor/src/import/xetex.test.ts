@@ -812,18 +812,35 @@ ${BODY}`;
     ]);
   }, 60_000);
 
-  it("refuses as stopped a preamble that cannot be kept, and by its key a feature a body uses", async () => {
-    // A file in a folder cannot go with a dump, so a preamble that reads one does not dump.
-    const folder = await check(
-      short("\\usepackage{fontspec}", "\\input{parts/settings}", "\\setmainfont{Roboto}"),
-      { "parts/settings.tex": "\\newcommand{\\inventedname}{an invented name}\n" },
+  it("dumps a preamble that reads a file in a folder, which goes with the dump at its path", async () => {
+    await matches(
+      short("\\usepackage{fontspec}", "\\input{parts/settings}", "\\setmainfont{Roboto}").replace(
+        "More invented text",
+        "\\inventedname{} and more invented text",
+      ),
+      {
+        "parts/settings.tex": "\\input{parts/deeper/name}\n",
+        "parts/deeper/name.tex": "\\newcommand{\\inventedname}{An invented name}\n",
+      },
     );
-    if (!isRefusal(folder.checked)) throw new Error("taken");
-    expect([folder.checked.reason, folder.checked.name]).toEqual(["stopped", undefined]);
-    expect(folder.checked.message).toBe(
+  }, 60_000);
+
+  it("refuses as stopped a preamble that cannot be kept, and by its key a feature a body uses", async () => {
+    // A native font the preamble loads itself, which no format can hold: the whole document
+    // compiles, and the dump stops.
+    const native = await check(
+      short(
+        "\\usepackage{fontspec}",
+        "\\setmainfont{Roboto}",
+        '\\font\\inventedfont="[Roboto-Bold.otf]"',
+      ),
+    );
+    if (!isRefusal(native.checked)) throw new Error("taken");
+    expect([native.checked.reason, native.checked.name]).toEqual(["stopped", undefined]);
+    expect(native.checked.message).toBe(
       "This resume's preamble could not be kept with its fonts declared by file.",
     );
-    expect(folder.checked.log).toContain("parts/settings");
+    expect(native.checked.log).toContain("native fonts");
     // An option a definition asks for, which the rewrite put off: the body uses it.
     const deferred = await check(
       short(
