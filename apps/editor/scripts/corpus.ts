@@ -68,6 +68,19 @@
  *                 each that validates and whose hash is the macro's (`scripts/corpus-seed.ts`,
  *                 decision 0024). It exits 1 when one has none, or the samples cannot be fetched
  *   --json <file> write each sample's macros as JSON too: names, hashes, keys and verdicts
+ *   name          take every document whose body parses, build its naming request as `seed` builds a
+ *                 sample's, in the same pool, and answer it macro by macro from the cache: the
+ *                 committed answers under `corpus/answers/` first, then the model's under
+ *                 `.corpus/cache/`; print what each document's macros came to and one table of
+ *                 them all, names of macros and counts only (`scripts/corpus-name.ts`, decision
+ *                 0026). Without `--model` the macros the cache does not answer are counted missing
+ *   --only <id>   that document only
+ *   --json <file> write each document's row as JSON too, macros' names and numbers only
+ *   --model       ask the model for them, once a request passes the privacy gate: the document's
+ *                 text is nowhere in it (`assertNoText`) and its keys hold (`checkRequest`); and
+ *                 store its answers under `.corpus/cache/`. It needs a Gemini key in the
+ *                 environment, `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`, and takes the
+ *                 model's id from `NAMING_MODEL`, gemini-3.8-flash when unset. Never in CI
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -79,6 +92,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { AnswerSource } from "@resume-tools/naming";
 // Node runs this file by stripping its types, so the type import needs its real extension.
 import type { EngineManifest } from "../src/engine/manifest.ts";
 import { fileKey, readTree } from "../src/import/fonts.ts";
@@ -99,6 +113,15 @@ import {
   printable,
   writeAtomically,
 } from "./corpus-manifest.ts";
+import {
+  NAME_LIMIT_MS,
+  type NameChildRow,
+  type NameRow,
+  nameLine,
+  nameTable,
+  namingConfig,
+  PROVIDER_FAILURES,
+} from "./corpus-name.ts";
 import type { OracleDocument } from "./corpus-oracle.ts";
 import {
   compare,
@@ -132,7 +155,7 @@ import { answersFolder, type SeedChildRow, type SeedRow, seedTable } from "./cor
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | seed [--json <file>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | seed [--json <file>] | name [--only <id>] [--json <file>] [--model]";
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
@@ -157,6 +180,9 @@ const PARSE_KEPT = join(CORPUS_DIR, "parse");
 
 /** The probe runner's child, which Node runs in each process of its pool, and the oracle's. */
 const PROBE_CHILD = fileURLToPath(new URL("./corpus-probe-child.ts", import.meta.url));
+
+/** The naming runner's child, which Node runs in each process of its pool. */
+const NAME_CHILD = fileURLToPath(new URL("./corpus-name-child.ts", import.meta.url));
 
 /** The seed's child, which Node runs in each process of its pool. */
 const SEED_CHILD = fileURLToPath(new URL("./corpus-seed-child.ts", import.meta.url));
@@ -683,6 +709,86 @@ async function runSeed(json: string | undefined) {
   }
 }
 
+async function runName(only: string | undefined, json: string | undefined, model: boolean) {
+  const config = namingConfig(process.env);
+  if (model && config.key === undefined)
+    throw new Error(
+      "name --model asks Gemini, which needs a key: set GEMINI_API_KEY, or GOOGLE_GENERATIVE_AI_API_KEY, in the environment",
+    );
+  if (model && !AnswerSource.safeParse(`model:${config.id}`).success)
+    throw new Error("NAMING_MODEL is not a model's id: letters, digits and ._:/@- only");
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("name builds each request on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const documents = fetchedDocuments(only);
+  const treeFont = treeFonts(engine.files);
+  // The parent stops asking once the provider has failed documents in a row: a spent quota fails
+  // every call after it. Each task's message is made as it is sent, so it asks or not by then.
+  let asking = model;
+  let failures = 0;
+  const tasks = documents.map((doc) => ({
+    id: doc.id,
+    message: () => ({
+      name: `${doc.id}.zip`,
+      bytes: uploadOf(
+        doc,
+        (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
+        treeFont,
+      ),
+      ...(asking ? { model: config.id } : {}),
+    }),
+  }));
+  const families = new Map(documents.map((doc) => [doc.id, doc.family]));
+  const rows: NameRow[] = [];
+  const started = performance.now();
+  print([
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${NAME_LIMIT_MS / 1000} s each at most; ${model ? `asking ${config.id} for what the cache does not answer` : "the cache alone, no model asked"}`,
+  ]);
+  await runPool({
+    script: NAME_CHILD,
+    tasks,
+    limitMs: NAME_LIMIT_MS,
+    onResult: (task, result) => {
+      const reply = result.reply as { row: NameChildRow } | undefined;
+      const row: NameRow = {
+        id: task.id,
+        family: families.get(task.id) ?? "other",
+        ...(reply?.row ?? { outcome: result.timedOut ? "timeout" : "crashed" }),
+      };
+      rows.push(row);
+      print([`${rows.length}/${documents.length} ${task.id}: ${nameLine(row)}`]);
+      if (row.failed?.reason === "provider") failures++;
+      else if ((row.calls ?? 0) > 0) failures = 0;
+      if (asking && failures >= PROVIDER_FAILURES) {
+        asking = false;
+        print([
+          `The provider failed ${PROVIDER_FAILURES} documents in a row: the documents not yet sent are not asked`,
+        ]);
+      }
+    },
+  });
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const minutes = (performance.now() - started) / 60_000;
+  print([
+    "",
+    ...nameTable(rows, model ? config.id : undefined)
+      .trimEnd()
+      .split("\n"),
+  ]);
+  print(["", `Took ${minutes.toFixed(1)} min.`]);
+  if (json !== undefined)
+    writeAtomically(
+      json,
+      formatJson({
+        version: 1,
+        tree: { layout: engine.layout, files: Object.keys(engine.files).length },
+        limitMs: NAME_LIMIT_MS,
+        model: model ? config.id : null,
+        documents: rows,
+      }),
+    );
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -690,6 +796,7 @@ async function main() {
       only: { type: "string" },
       json: { type: "string" },
       tree: { type: "string" },
+      model: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
@@ -708,7 +815,8 @@ async function main() {
     command !== "parse" &&
     command !== "probe" &&
     command !== "oracle" &&
-    command !== "seed"
+    command !== "seed" &&
+    command !== "name"
   )
     throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
   if (
@@ -716,18 +824,21 @@ async function main() {
     command !== "fetch" &&
     command !== "reference" &&
     command !== "parse" &&
-    command !== "probe"
+    command !== "probe" &&
+    command !== "name"
   )
-    throw new Error("--only goes with fetch, reference, parse or probe");
+    throw new Error("--only goes with fetch, reference, parse, probe or name");
   if (
     values.json !== undefined &&
     command !== "survey" &&
     command !== "reference" &&
     command !== "parse" &&
     command !== "probe" &&
-    command !== "seed"
+    command !== "seed" &&
+    command !== "name"
   )
-    throw new Error("--json goes with survey, reference, parse, probe or seed");
+    throw new Error("--json goes with survey, reference, parse, probe, seed or name");
+  if (values.model !== undefined && command !== "name") throw new Error("--model goes with name");
   if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
   if (command === "fetch") return runFetch(values.only);
   if (command === "collect") return runCollect();
@@ -739,6 +850,7 @@ async function main() {
   if (command === "probe") return runProbe(values.only, caller(values.json));
   if (command === "oracle") return runOracle();
   if (command === "seed") return runSeed(caller(values.json));
+  if (command === "name") return runName(values.only, caller(values.json), values.model === true);
   return runSurvey(caller(values.json), caller(values.tree));
 }
 

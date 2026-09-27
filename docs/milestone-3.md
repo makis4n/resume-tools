@@ -232,7 +232,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 5. The model, the service and privacy
 
-9. [ ] **The naming module on a model.** `name(request)` in `packages/naming`: the AI SDK (`ai`,
+9. [x] **The naming module on a model.** `name(request)` in `packages/naming`: the AI SDK (`ai`,
    `generateText` with `Output.object` against the answer's schema, since `generateObject` is
    deprecated in the current major) on `@ai-sdk/google` first, Gemini's free tier, as plan
    section 6.4 expects, with the model id from configuration so that a candidate swaps with a
