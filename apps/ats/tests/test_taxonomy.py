@@ -2,6 +2,7 @@
 normalisation, lookup and mention-finding.
 """
 
+import hashlib
 import importlib.resources
 import json
 import time
@@ -10,13 +11,34 @@ from pathlib import Path
 
 import pytest
 
-from ats.taxonomy import Mention, Skill, SkillKind, Taxonomy, load, normalise
+from ats.taxonomy import (
+    Mention,
+    Skill,
+    SkillKind,
+    Taxonomy,
+    TaxonomyError,
+    load,
+    load_from_bytes,
+    load_from_path,
+    normalise,
+    version_for,
+)
 
 DATA_PATH = Path(__file__).parent.parent / "src" / "ats" / "data" / "skills.json"
 
 
 def _raw_entries() -> list[dict]:
     return json.loads(DATA_PATH.read_text())["entries"]
+
+
+def _minimal_entry(**overrides: object) -> dict:
+    entry = {"id": "widget-making", "name": "Widget making", "kind": "skill", "aliases": []}
+    entry.update(overrides)
+    return entry
+
+
+def _bytes_for(entries: list[dict]) -> bytes:
+    return json.dumps({"entries": entries}).encode()
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +102,19 @@ def test_case_sensitive_entries_are_names_or_aliases() -> None:
         allowed = {entry["name"], *entry.get("aliases", [])}
         for exact in entry.get("case_sensitive", []):
             assert exact in allowed, entry["id"]
+
+
+def test_not_followed_by_only_appears_alongside_case_sensitive() -> None:
+    for entry in _raw_entries():
+        if entry.get("not_followed_by"):
+            assert entry.get("case_sensitive"), entry["id"]
+
+
+def test_html_css_and_linux_are_present() -> None:
+    ids = {e["id"] for e in _raw_entries()}
+    assert "html" in ids
+    assert "css" in ids
+    assert "linux-operating-system" in ids
 
 
 # ---------------------------------------------------------------------------
@@ -192,9 +227,10 @@ def test_lookup_unknown_term_returns_none(taxonomy: Taxonomy) -> None:
     assert taxonomy.lookup("") is None
 
 
-def test_lookup_honours_case_sensitive_go_lowercase_does_not_match(taxonomy: Taxonomy) -> None:
-    assert taxonomy.lookup("Spark") is not None
-    assert taxonomy.lookup("Spark").id == "apache-spark"
+def test_lookup_honours_case_sensitive_spark_lowercase_does_not_match(taxonomy: Taxonomy) -> None:
+    spark = taxonomy.lookup("Spark")
+    assert spark is not None
+    assert spark.id == "apache-spark"
     assert taxonomy.lookup("spark") is None
     assert taxonomy.lookup("SPARK") is None
 
@@ -232,15 +268,6 @@ def test_mentions_finds_symbol_bearing_terms(taxonomy: Taxonomy) -> None:
     assert {"c-plus-plus", "c-sharp", "dot-net", "nodejs", "ci-cd"} <= ids
 
 
-def test_mentions_c_plus_plus_matches_as_a_word_but_not_inside_a_version_token(
-    taxonomy: Taxonomy,
-) -> None:
-    assert any(m.skill.id == "c-plus-plus" for m in taxonomy.mentions("C++ developer wanted."))
-    assert not any(
-        m.skill.id == "c-plus-plus" for m in taxonomy.mentions("Targets C++11 and C++17.")
-    )
-
-
 def test_mentions_java_does_not_match_inside_javascript(taxonomy: Taxonomy) -> None:
     mentions = taxonomy.mentions("Strong JavaScript skills required.")
     ids = [m.skill.id for m in mentions]
@@ -268,8 +295,9 @@ def test_mentions_no_bare_r_go_or_c_false_positives(taxonomy: Taxonomy) -> None:
 def test_mentions_no_false_positive_on_ambiguous_capitalised_words_we_dropped(
     taxonomy: Taxonomy,
 ) -> None:
-    # "Excel", "Word" and "Access" bare were dropped as too noisy (decision 0034); only the
-    # "Microsoft ..." / "MS ..." aliases are in the taxonomy.
+    # "Word" and "Access" bare were dropped as too noisy (decision 0034); only the "Microsoft
+    # ..." / "MS ..." aliases are in the taxonomy. "Excel" is back (see the not_followed_by tests
+    # below), guarded against exactly this idiom instead of dropped.
     text = "Excel in a fast-paced environment. Word of mouth matters. Access to the office is easy."
     ids = {m.skill.id for m in taxonomy.mentions(text)}
     assert "excel-spreadsheets" not in ids
@@ -337,6 +365,33 @@ def test_mentions_finds_nothing_silly_in_invented_plain_prose(taxonomy: Taxonomy
         assert taxonomy.mentions(paragraph) == [], paragraph
 
 
+def test_mentions_finds_nothing_in_the_reviewed_ambiguous_word_paragraph(
+    taxonomy: Taxonomy,
+) -> None:
+    """The exact paragraph the review flagged: every capitalised word in it is either an
+    ambiguous alias we dropped, or an ambiguous one we kept case-sensitive but that appears here
+    in a form (lower case, or -- for "React" -- followed by an ordinary-verb continuation) that
+    must not match."""
+    text = (
+        "Our organization is growing; express interest by Spring. Keep a positive outlook. "
+        "React quickly."
+    )
+    assert taxonomy.mentions(text) == []
+
+
+def test_mentions_no_false_positive_on_pr_ts_or_lower_case_ml(taxonomy: Taxonomy) -> None:
+    text = "PR review needed. TS types. 500 ml saline."
+    ids = {m.skill.id for m in taxonomy.mentions(text)}
+    assert "public-relations" not in ids
+    assert "typescript" not in ids
+    assert "machine-learning" not in ids
+
+
+def test_mentions_finds_ml_only_in_upper_case(taxonomy: Taxonomy) -> None:
+    assert any(m.skill.id == "machine-learning" for m in taxonomy.mentions("Strong ML skills."))
+    assert not any(m.skill.id == "machine-learning" for m in taxonomy.mentions("500 ml saline."))
+
+
 def test_mentions_performance_on_a_50kb_document(taxonomy: Taxonomy) -> None:
     sentence = (
         "The candidate should have experience with Python, JavaScript, React, Node.js, SQL, "
@@ -354,20 +409,237 @@ def test_mentions_performance_on_a_50kb_document(taxonomy: Taxonomy) -> None:
     assert elapsed < 1.0, f"mentions() took {elapsed:.3f}s on ~50KB of text"
 
 
-def test_version_is_first_12_hex_characters_of_the_file_sha256(taxonomy: Taxonomy) -> None:
-    import hashlib
+# ---------------------------------------------------------------------------
+# The İ/ı crash (review item 1)
+# ---------------------------------------------------------------------------
 
+
+def test_mentions_does_not_crash_on_turkish_dotted_and_dotless_i(taxonomy: Taxonomy) -> None:
+    """`re.IGNORECASE` matches the pattern "i" against U+0130 (İ) and U+0131 (ı), but
+    `str.casefold()` does not fold either of them to plain "i" -- so resolving a match by
+    re-normalising the matched text and looking that up used to raise `KeyError`. `mentions()`
+    must not crash, and must return the same, deterministic result every time."""
+    for text in ("JAVASCRİPT", "JAVAScrİpt", "javascrıpt", "Lınux", "LİNUX"):
+        first = taxonomy.mentions(text)
+        second = taxonomy.mentions(text)
+        assert first == second  # deterministic, whether it matched or not
+        # This is what CPython's re engine actually does with these code points as of this
+        # pull request: both fold to plain "i"/"I" for `re.IGNORECASE` purposes, so the whole
+        # token matches its ASCII-spelled skill.
+        assert len(first) == 1, (text, first)
+        assert first[0].start == 0
+        assert first[0].end == len(text)
+
+
+def test_mentions_turkish_i_variants_resolve_to_the_expected_skill(taxonomy: Taxonomy) -> None:
+    (mention,) = taxonomy.mentions("JAVASCRİPT")
+    assert mention.skill.id == "javascript"
+    (mention,) = taxonomy.mentions("Lınux")
+    assert mention.skill.id == "linux-operating-system"
+
+
+# ---------------------------------------------------------------------------
+# Whitespace flexibility (review item 2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "machine\nlearning",
+        "machine  learning",
+        "machine \n learning",
+        "Microsoft\nExcel",
+        "Microsoft   Excel",
+    ],
+)
+def test_mentions_tolerates_line_breaks_and_repeated_whitespace_inside_a_term(
+    taxonomy: Taxonomy, text: str
+) -> None:
+    mentions = taxonomy.mentions(text)
+    assert mentions, text
+    assert text[mentions[0].start : mentions[0].end] == text  # the whole (short) string matched
+
+
+def test_mentions_offsets_still_index_the_raw_text_when_whitespace_varies(
+    taxonomy: Taxonomy,
+) -> None:
+    text = "Skills: machine\nlearning and teamwork."
+    (mention,) = [m for m in taxonomy.mentions(text) if m.skill.id == "machine-learning"]
+    assert text[mention.start : mention.end] == "machine\nlearning"
+
+
+# ---------------------------------------------------------------------------
+# Version suffixes (review item 4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "skill_id", "matched"),
+    [
+        ("HTML5", "html", "HTML5"),  # HTML5 is itself a longer, explicit alias
+        ("Python3", "python-programming-language", "Python"),
+        ("C++17", "c-plus-plus", "C++"),
+        ("C++11", "c-plus-plus", "C++"),
+        ("Java8", "java", "Java"),
+        ("Angular2+", "angular", "Angular"),
+        ("Vue3", "vue-js", "Vue"),
+    ],
+)
+def test_mentions_matches_through_a_version_suffix(
+    taxonomy: Taxonomy, text: str, skill_id: str, matched: str
+) -> None:
+    (mention,) = [m for m in taxonomy.mentions(text) if m.skill.id == skill_id]
+    assert text[mention.start : mention.end] == matched
+
+
+def test_mentions_still_forbids_a_following_letter(taxonomy: Taxonomy) -> None:
+    # The boundary relaxation is "no letter", not "nothing at all": a version number or a "+" is
+    # fine right after a term (see the version-suffix tests above), but the term must not be a
+    # prefix of a longer word made of letters.
+    assert not any(m.skill.id == "java" for m in taxonomy.mentions("Javaa"))
+    assert not any(m.skill.id == "java" for m in taxonomy.mentions("Javanese food"))
+    # A digit suffix, by contrast, is deliberately still a match -- this is the same rule.
+    assert any(m.skill.id == "javascript" for m in taxonomy.mentions("JavaScript2 rules"))
+
+
+# ---------------------------------------------------------------------------
+# Excel: back as case-sensitive, guarded by not_followed_by (review item 6)
+# ---------------------------------------------------------------------------
+
+
+def test_mentions_finds_excel_as_a_requirement(taxonomy: Taxonomy) -> None:
+    (mention,) = [
+        m
+        for m in taxonomy.mentions("Proficient in Excel (pivot tables).")
+        if m.skill.id == "excel-spreadsheets"
+    ]
+    assert mention is not None
+
+
+def test_mentions_does_not_find_excel_in_the_fast_paced_idiom(taxonomy: Taxonomy) -> None:
+    assert not any(
+        m.skill.id == "excel-spreadsheets"
+        for m in taxonomy.mentions("Excel in a fast-paced environment.")
+    )
+    assert not any(
+        m.skill.id == "excel-spreadsheets"
+        for m in taxonomy.mentions("Ready to excel at any challenge.")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Taxonomy.version
+# ---------------------------------------------------------------------------
+
+
+def test_version_is_first_12_hex_characters_of_the_file_sha256(taxonomy: Taxonomy) -> None:
     digest = hashlib.sha256(DATA_PATH.read_bytes()).hexdigest()[:12]
     assert taxonomy.version == digest
     assert len(taxonomy.version) == 12
     int(taxonomy.version, 16)  # raises if not hex
 
 
-def test_version_changes_if_the_file_changes() -> None:
-    from ats.taxonomy import version_for
-
+def test_version_for_changes_if_the_bytes_change() -> None:
     original = DATA_PATH.read_bytes()
     changed = original + b" "  # one trailing byte is enough to change every content hash
     assert version_for(original) != version_for(changed)
-    # And is stable for the same bytes.
     assert version_for(original) == version_for(original)
+
+
+def test_version_changes_if_the_file_changes_through_the_real_loader() -> None:
+    """Exercises the actual loading path -- `load_from_bytes()`, not just the hash formula --
+    against two different, valid, minimal taxonomies."""
+    small = _bytes_for([_minimal_entry()])
+    bigger = _bytes_for(
+        [_minimal_entry(), _minimal_entry(id="widget-repair", name="Widget repair")]
+    )
+    small_taxonomy = load_from_bytes(small)
+    bigger_taxonomy = load_from_bytes(bigger)
+    assert small_taxonomy.version != bigger_taxonomy.version
+    assert len(small_taxonomy.skills) == 1
+    assert len(bigger_taxonomy.skills) == 2
+    # Loading the same bytes again gives the same version (not cached -- `load_from_bytes` isn't
+    # -- but deterministic).
+    assert load_from_bytes(small).version == small_taxonomy.version
+
+
+# ---------------------------------------------------------------------------
+# Validation (review item 7), via load_from_bytes()/load_from_path() -- never the real data file
+# ---------------------------------------------------------------------------
+
+
+def test_load_from_bytes_accepts_a_minimal_valid_file() -> None:
+    taxonomy = load_from_bytes(_bytes_for([_minimal_entry()]))
+    assert taxonomy.lookup("Widget making") is not None
+
+
+def test_load_from_path_reads_a_real_file(tmp_path: Path) -> None:
+    path = tmp_path / "skills.json"
+    path.write_bytes(_bytes_for([_minimal_entry()]))
+    taxonomy = load_from_path(path)
+    assert taxonomy.lookup("Widget making") is not None
+
+
+def test_load_from_path_wraps_a_missing_file_in_taxonomy_error(tmp_path: Path) -> None:
+    with pytest.raises(TaxonomyError):
+        load_from_path(tmp_path / "does-not-exist.json")
+
+
+def test_load_from_path_wraps_a_directory_in_taxonomy_error(tmp_path: Path) -> None:
+    # Reading a directory as a file raises OSError (IsADirectoryError on POSIX); this must come
+    # back as TaxonomyError, not the raw OSError.
+    with pytest.raises(TaxonomyError):
+        load_from_path(tmp_path)
+
+
+def test_load_from_bytes_wraps_invalid_json_in_taxonomy_error() -> None:
+    with pytest.raises(TaxonomyError):
+        load_from_bytes(b"not json at all")
+
+
+def test_load_from_bytes_wraps_a_unicode_decode_error_in_taxonomy_error() -> None:
+    # This is not valid UTF-8 (or UTF-16/32): json.loads() raises UnicodeDecodeError trying to
+    # decode it, which must be wrapped rather than escaping as-is.
+    with pytest.raises(TaxonomyError):
+        load_from_bytes(b"\x80\x80\x80")
+
+
+def test_load_from_bytes_rejects_an_alias_that_normalises_to_empty() -> None:
+    entry = _minimal_entry(aliases=["   ", "-", "..."])
+    with pytest.raises(TaxonomyError):
+        load_from_bytes(_bytes_for([entry]))
+
+
+def test_load_from_bytes_rejects_a_non_string_kind_with_taxonomy_error_not_type_error() -> None:
+    entry = _minimal_entry(kind=123)
+    with pytest.raises(TaxonomyError):
+        load_from_bytes(_bytes_for([entry]))
+
+
+def test_load_from_bytes_rejects_a_non_kebab_case_id() -> None:
+    for bad_id in ("Widget_Making", "widget making", "Widget-Making", "-widget", "widget-", ""):
+        with pytest.raises(TaxonomyError):
+            load_from_bytes(_bytes_for([_minimal_entry(id=bad_id)]))
+
+
+def test_load_from_bytes_rejects_an_invalid_not_followed_by() -> None:
+    # Not a list of plain words.
+    entry = _minimal_entry(
+        name="Widget", case_sensitive=["Widget"], not_followed_by=["in", "at 5pm"]
+    )
+    with pytest.raises(TaxonomyError):
+        load_from_bytes(_bytes_for([entry]))
+
+
+def test_load_from_bytes_rejects_not_followed_by_without_case_sensitive() -> None:
+    entry = _minimal_entry(name="Widget", not_followed_by=["in", "at"])
+    with pytest.raises(TaxonomyError):
+        load_from_bytes(_bytes_for([entry]))
+
+
+def test_load_from_bytes_accepts_a_valid_not_followed_by() -> None:
+    entry = _minimal_entry(name="Widget", case_sensitive=["Widget"], not_followed_by=["in", "at"])
+    taxonomy = load_from_bytes(_bytes_for([entry]))
+    assert not any(m.skill.id == "widget-making" for m in taxonomy.mentions("Widget in a box."))
+    assert any(m.skill.id == "widget-making" for m in taxonomy.mentions("A fine Widget."))

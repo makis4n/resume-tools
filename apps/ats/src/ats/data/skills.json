@@ -99,8 +99,7 @@
       "name": "Adobe Premiere Pro",
       "kind": "tool",
       "aliases": [
-        "premiere pro",
-        "premiere"
+        "premiere pro"
       ]
     },
     {
@@ -157,6 +156,9 @@
       "aliases": [
         "angularjs",
         "angular js"
+      ],
+      "case_sensitive": [
+        "Angular"
       ]
     },
     {
@@ -591,7 +593,10 @@
       "id": "confluence",
       "name": "Confluence",
       "kind": "tool",
-      "aliases": []
+      "aliases": [],
+      "case_sensitive": [
+        "Confluence"
+      ]
     },
     {
       "id": "content-marketing",
@@ -649,6 +654,15 @@
       "kind": "skill",
       "aliases": [
         "customer relationship management software"
+      ]
+    },
+    {
+      "id": "css",
+      "name": "CSS",
+      "kind": "tool",
+      "aliases": [
+        "CSS3",
+        "cascading style sheets"
       ]
     },
     {
@@ -917,7 +931,15 @@
       "kind": "tool",
       "aliases": [
         "ms excel",
-        "excel spreadsheets"
+        "excel spreadsheets",
+        "Excel"
+      ],
+      "case_sensitive": [
+        "Excel"
+      ],
+      "not_followed_by": [
+        "in",
+        "at"
       ]
     },
     {
@@ -926,7 +948,10 @@
       "kind": "tool",
       "aliases": [
         "expressjs",
-        "express"
+        "Express"
+      ],
+      "case_sensitive": [
+        "Express"
       ]
     },
     {
@@ -1184,6 +1209,18 @@
       "kind": "tool",
       "aliases": [
         "workday hcm"
+      ],
+      "case_sensitive": [
+        "Workday"
+      ]
+    },
+    {
+      "id": "html",
+      "name": "HTML",
+      "kind": "tool",
+      "aliases": [
+        "HTML5",
+        "hypertext markup language"
       ]
     },
     {
@@ -1214,6 +1251,9 @@
       "kind": "skill",
       "aliases": [
         "digital illustration"
+      ],
+      "case_sensitive": [
+        "Illustration"
       ]
     },
     {
@@ -1367,6 +1407,14 @@
       ]
     },
     {
+      "id": "linux-operating-system",
+      "name": "Linux",
+      "kind": "tool",
+      "aliases": [
+        "GNU/Linux"
+      ]
+    },
+    {
       "id": "linux-professional-institute-certification",
       "name": "LPIC certification",
       "kind": "qualification",
@@ -1400,8 +1448,11 @@
       "name": "Machine learning",
       "kind": "skill",
       "aliases": [
-        "ml",
+        "ML",
         "machine-learning"
+      ],
+      "case_sensitive": [
+        "ML"
       ]
     },
     {
@@ -1510,7 +1561,10 @@
       "name": "Microsoft Outlook",
       "kind": "tool",
       "aliases": [
-        "outlook"
+        "Outlook"
+      ],
+      "case_sensitive": [
+        "Outlook"
       ]
     },
     {
@@ -1630,7 +1684,10 @@
       "id": "notion",
       "name": "Notion",
       "kind": "tool",
-      "aliases": []
+      "aliases": [],
+      "case_sensitive": [
+        "Notion"
+      ]
     },
     {
       "id": "nursing-care",
@@ -1670,9 +1727,7 @@
       "name": "Organisational skills",
       "kind": "skill",
       "aliases": [
-        "organizational skills",
-        "organisation",
-        "organization"
+        "organizational skills"
       ]
     },
     {
@@ -1686,11 +1741,9 @@
     },
     {
       "id": "outreach-io",
-      "name": "Outreach",
+      "name": "Outreach.io",
       "kind": "tool",
-      "aliases": [
-        "outreach.io"
-      ]
+      "aliases": []
     },
     {
       "id": "pandas",
@@ -1883,9 +1936,7 @@
       "id": "public-relations",
       "name": "Public relations",
       "kind": "skill",
-      "aliases": [
-        "pr"
-      ]
+      "aliases": []
     },
     {
       "id": "puppet",
@@ -1893,6 +1944,9 @@
       "kind": "tool",
       "aliases": [
         "puppet labs"
+      ],
+      "case_sensitive": [
+        "Puppet"
       ]
     },
     {
@@ -1977,6 +2031,13 @@
       "aliases": [
         "reactjs",
         "react.js"
+      ],
+      "case_sensitive": [
+        "React"
+      ],
+      "not_followed_by": [
+        "quickly",
+        "to"
       ]
     },
     {
@@ -2046,9 +2107,7 @@
       "id": "ruby-on-rails",
       "name": "Ruby on Rails",
       "kind": "tool",
-      "aliases": [
-        "rails"
-      ]
+      "aliases": []
     },
     {
       "id": "ruby-programming-language",
@@ -2078,6 +2137,9 @@
       "aliases": [
         "salesforce crm",
         "sfdc"
+      ],
+      "case_sensitive": [
+        "Salesforce"
       ]
     },
     {
@@ -2182,13 +2244,19 @@
       "kind": "tool",
       "aliases": [
         "sketch app"
+      ],
+      "case_sensitive": [
+        "Sketch"
       ]
     },
     {
       "id": "slack",
       "name": "Slack",
       "kind": "tool",
-      "aliases": []
+      "aliases": [],
+      "case_sensitive": [
+        "Slack"
+      ]
     },
     {
       "id": "social-media-management",
@@ -2228,8 +2296,7 @@
       "name": "Spring Framework",
       "kind": "tool",
       "aliases": [
-        "spring boot",
-        "spring"
+        "spring boot"
       ]
     },
     {
@@ -2390,9 +2457,7 @@
       "id": "typescript",
       "name": "TypeScript",
       "kind": "tool",
-      "aliases": [
-        "ts"
-      ]
+      "aliases": []
     },
     {
       "id": "typing-speed",
@@ -2536,6 +2601,9 @@
       "kind": "tool",
       "aliases": [
         "zoom video conferencing"
+      ],
+      "case_sensitive": [
+        "Zoom"
       ]
     }
   ]
