@@ -212,7 +212,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 4. XeTeX imports
 
-8. [ ] **Fonts by file.** fontspec's `\setmainfont`, `\setsansfont`, `\setmonofont` and
+8. [x] **Fonts by file.** fontspec's `\setmainfont`, `\setsansfont`, `\setmonofont` and
    `\newfontfamily`, and the font packages that load it, roboto, sourcesanspro, lato and
    fontawesome5 among them, are translated at intake into the package's `fonts` (decision 0014)
    through a table from font names to the tree's files and shapes, with `Ligatures=TeX` becoming

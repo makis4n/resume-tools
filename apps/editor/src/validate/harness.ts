@@ -34,6 +34,7 @@ import {
   ControlValues,
   defaultControls,
   fontFiles,
+  shapeFile,
   type TemplatePackage,
 } from "../templates/package";
 import { PARAGRAPH_MARKER } from "../templates/prelude";
@@ -360,7 +361,8 @@ function checkDump(dumped: DumpResult): Finding[] {
 function checkFontFiles(pkg: TemplatePackage, fonts: FontLibrary): Finding[] {
   const shapesOf = new Map<string, string[]>();
   for (const { family, shapes } of pkg.fonts ?? [])
-    for (const [shape, file] of Object.entries(shapes)) {
+    for (const [shape, font] of Object.entries(shapes)) {
+      const file = shapeFile(font);
       const named = shapesOf.get(file) ?? [];
       named.push(`${family} ${shape}`);
       shapesOf.set(file, named);

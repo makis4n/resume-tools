@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Font, Glyph, Path, parse } from "opentype.js";
 import { describe, expect, test } from "vitest";
 import type { EngineManifest } from "../src/engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/node";
@@ -13,6 +14,7 @@ import { INVENTED_XETEX } from "../src/templates/invented";
 import { defaultControls } from "../src/templates/package";
 import { parseDvi } from "../src/tex/dvi";
 import { withoutFontFolders } from "./fontconfig";
+import { isTreeFontPath, type ParseFont, treeFontOf, treeFonts } from "./fonttable";
 
 const SCRIPT = new URL("./fetch-engine.ts", import.meta.url);
 /** The pinned release and layout, so a manifest can match them and be read further. */
@@ -25,6 +27,7 @@ const SOURCES = [
   "scripts/containers.ts",
   "scripts/fontconfig.ts",
   "scripts/fontmaps.ts",
+  "scripts/fonttable.ts",
   "scripts/tlpdb.ts",
   "src/page/fontmap.ts",
 ];
@@ -64,6 +67,79 @@ describe("fetch-engine", () => {
     expect(stdout).toContain("Copying the release from");
     expect(stderr).toContain("busytex.js");
     expect(status).toBe(1);
+  });
+});
+
+/**
+ * An invented OpenType font, written by opentype.js: a bold italic whose `liga` feature joins an f
+ * and an i and whose `smcp` feature makes a small capital a, in the default script.
+ */
+function inventedFont(): Uint8Array {
+  const glyph = (name: string, unicodes: number[] = []) =>
+    new Glyph({ name, unicodes, advanceWidth: 500, path: new Path() });
+  const font = new Font({
+    familyName: "Invented Sans",
+    styleName: "Bold Italic",
+    unitsPerEm: 1000,
+    ascender: 800,
+    descender: -200,
+    weightClass: 700,
+    widthClass: 4,
+    italicAngle: -12,
+    glyphs: [
+      glyph(".notdef"),
+      glyph("f", [0x66]),
+      glyph("i", [0x69]),
+      glyph("f_i"),
+      glyph("a", [0x61]),
+      glyph("a.sc"),
+    ],
+  });
+  // Features go in in alphabetical order, as opentype.js writes them.
+  font.substitution.add("liga", { sub: [1, 2], by: 3 });
+  font.substitution.addSingle("smcp", { sub: 4, by: 5 });
+  return new Uint8Array(font.toArrayBuffer());
+}
+
+describe("the font table", () => {
+  const read = parse as unknown as ParseFont;
+
+  test("records what a font's tables say of it: its names, weight, width, slant and features", () => {
+    expect(treeFontOf(inventedFont(), read)).toEqual({
+      family: "Invented Sans",
+      style: "Bold Italic",
+      fontFamily: "Invented Sans",
+      fontSubfamily: "Bold Italic",
+      fullName: "Invented Sans Bold Italic",
+      postScriptName: "InventedSansBoldItalic",
+      weight: 700,
+      width: 4,
+      italic: true,
+      bold: true,
+      // A thousand times the tangent of its 12 degrees, as XeTeX's font manager reckons it.
+      slant: 212,
+      scripts: ["DFLT"],
+      features: ["liga", "smcp"],
+    });
+  });
+
+  test("records the tree's OpenType and TrueType files alone, and names one it cannot read", () => {
+    const fonts = "/texlive/texmf-dist/fonts";
+    const files = {
+      [`${fonts}/opentype/invented/InventedSans-BoldItalic.otf`]: 1,
+      [`${fonts}/truetype/invented/Broken.ttf`]: 1,
+      [`${fonts}/type1/invented/InventedSans.pfb`]: 1,
+      "/texlive/texmf-dist/tex/latex/invented/invented.sty": 1,
+    };
+    const bytes = inventedFont();
+    const { fonts: table, skipped } = treeFonts(
+      files,
+      (path) => (path.endsWith(".otf") ? bytes : new Uint8Array([0, 1, 0, 0, 0])),
+      read,
+    );
+    expect(Object.keys(table)).toEqual([`${fonts}/opentype/invented/InventedSans-BoldItalic.otf`]);
+    expect(skipped).toEqual([`${fonts}/truetype/invented/Broken.ttf`]);
+    expect(Object.keys(files).map(isTreeFontPath)).toEqual([true, true, false, false]);
   });
 });
 

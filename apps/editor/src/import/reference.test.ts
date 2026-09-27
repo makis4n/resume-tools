@@ -109,6 +109,22 @@ describe("comparing glyph streams", () => {
       { kind: "special", h: 700_000, v: 3_000_000, text: "color pop" },
     ];
     expect(sameGlyphs(stream(body), stream(popped))).toBe(false);
+    // A white page's background, which \pagecolor{white} writes at the first shipout, counts
+    // for nothing; another colour's does.
+    const white = { kind: "special" as const, h: 0, v: 0, text: "background rgb 1 1 1" };
+    expect(sameGlyphs(stream([white, ...whole]), stream(body))).toBe(true);
+    expect(
+      sameGlyphs(stream([{ ...white, text: "background rgb 1 0 0" }, ...whole]), stream(body)),
+    ).toBe(false);
+    // xcolor's black is RGB's or CMYK's in a document of that colour model, as AltaCV's is.
+    for (const black of ["color push rgb 0 0 0", "color push cmyk 0 0 0 1"]) {
+      const model = whole.map((item) =>
+        item.kind === "special" && item.text === "color push gray 0"
+          ? { ...item, text: black }
+          : item,
+      );
+      expect(sameGlyphs(stream(model), stream(body)), black).toBe(true);
+    }
   });
 
   test("tells a colour, an image or a link apart, naming only its command", () => {
@@ -191,7 +207,7 @@ describe.skipIf(!engineAvailable())("the reference compile", () => {
     const manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
-    tree = readTree(manifest.files);
+    tree = readTree(manifest.files, manifest.fonts);
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );

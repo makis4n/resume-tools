@@ -14,7 +14,10 @@
  * d and U+0323, which it sets where it has no ḍ: composed, as the generator keeps a text. So does
  * a ligature the character map reaches only through a character that stands for those letters, as
  * Roboto's `fi` is also U+FB01 ﬁ, which a resume's text never holds where the page shows the
- * ligature. A glyph reached neither way, such as a small capital, has no text.
+ * ligature. A glyph that a single substitution of one of `SINGLE_FEATURES` makes, as `+smcp` makes a
+ * small capital and `+pnum` a proportional figure, reads as the glyph it was substituted from, a chain
+ * of them as its start (decision 0023), so that a position set in small capitals aligns with the
+ * lower-case text a resume holds. A glyph reached none of these ways has no text.
  *
  * A file is read whole, so it is bounded as decision 0009 bounds a virtual font: a file of more
  * than 32 MB, or with more than 65,535 glyphs, is refused. Every file comes from the TeX Live tree,
@@ -60,6 +63,16 @@ export interface NativeFontFile extends NativeOutlines {
   /** The glyph the character map gives a character, or undefined when it gives none. */
   glyphFor: (char: string) => number | undefined;
   /**
+   * The features of `SINGLE_FEATURES` whose single substitutions make the glyph, in their order; empty
+   * for a glyph none makes, which the overlay asks its browser for (decision 0023).
+   */
+  madeBy: (glyph: number) => readonly string[];
+  /**
+   * The glyph the single substitutions of `features` among `SINGLE_FEATURES` make of a glyph, in the
+   * order of the font's lookups, as XeTeX's shaping applies them: the glyph itself when none does.
+   */
+  substitute: (glyph: number, features: readonly string[]) => number;
+  /**
    * Whether XeTeX can set a character in the font rather than its `.notdef`, as HarfBuzz's
    * normalisation sets it: the character map gives it a glyph, or it decomposes to a character the
    * font covers and a mark the map gives a glyph, which HarfBuzz sets in its place, as Roboto sets
@@ -102,15 +115,138 @@ interface LigatureSubtable {
   ligatureSets: { ligGlyph: number; components: number[] }[][];
 }
 
-/** The parts of a GSUB table as opentype.js parses one that the ligatures are read from. */
+/** A language system of a GSUB table's script, as opentype.js parses one: the features it takes. */
+interface LangSys {
+  reqFeatureIndex?: number;
+  featureIndexes?: number[];
+}
+
+/** The parts of a GSUB table as opentype.js parses one that the substitutions are read from. */
 interface Gsub {
+  scripts?: { tag: string; script?: { defaultLangSys?: LangSys } }[];
   features: { tag: string; feature: { lookupListIndexes: number[] } }[];
   lookups: { lookupType: number; subtables: unknown[] }[];
 }
 
-/** The lookup type of a ligature substitution, and of an extension lookup that wraps another. */
+/**
+ * The features XeTeX's shaping takes from a GSUB table, by their index in its feature list: those
+ * of the default language system of the Latin script, which fontspec asks for where a font has it,
+ * or else of the default script; undefined for a table with neither, whose every feature is taken.
+ */
+function shapedFeatures(gsub: Gsub): Set<number> | undefined {
+  const scripts = Array.isArray(gsub.scripts) ? gsub.scripts : [];
+  const system = (tag: string) => scripts.find((each) => each?.tag === tag)?.script?.defaultLangSys;
+  const chosen = system("latn") ?? system("DFLT");
+  if (!isObject(chosen)) return undefined;
+  const indexes = new Set(Array.isArray(chosen.featureIndexes) ? chosen.featureIndexes : []);
+  if (typeof chosen.reqFeatureIndex === "number" && chosen.reqFeatureIndex !== 0xffff)
+    indexes.add(chosen.reqFeatureIndex);
+  return indexes;
+}
+
+/** The lookup types of a single and a ligature substitution, and of an extension that wraps one. */
+const SINGLE = 1;
 const LIGATURE = 4;
 const EXTENSION = 7;
+
+/** A single substitution subtable, lookup type 1, as opentype.js parses one. */
+interface SingleSubtable {
+  substFormat?: number;
+  coverage: Coverage;
+  deltaGlyphId?: number;
+  substitute?: number[];
+}
+
+/**
+ * The features whose single substitutions a glyph reads through as the glyph it replaces (decision
+ * 0023): small capitals of lower case and of capitals, the figures' widths and styles, capitals'
+ * forms of punctuation, superiors and inferiors, and fractions' figures.
+ */
+export const SINGLE_FEATURES = [
+  "smcp",
+  "c2sc",
+  "pnum",
+  "lnum",
+  "onum",
+  "tnum",
+  "case",
+  "sups",
+  "subs",
+  "frac",
+] as const;
+
+/**
+ * The features of `SINGLE_FEATURES` a XeTeX features string turns on, in that order: `+smcp`, or
+ * `smcp` as HarfBuzz reads a bare tag, turns one on, `-smcp` or `+smcp=0` off, and the last of a
+ * feature's wins, as a shape's features come after its family's (`shapeFeatures`).
+ */
+export function singleFeaturesOn(features: string | undefined): string[] {
+  const on = new Map<string, boolean>();
+  for (const part of (features ?? "").split(";")) {
+    const found = /^([+-])([A-Za-z0-9]{4})(?:=(\d+))?$/.exec(part.trim());
+    if (found) on.set(found[2] ?? "", found[1] !== "-" && Number(found[3] ?? "1") !== 0);
+  }
+  return SINGLE_FEATURES.filter((tag) => on.get(tag) === true);
+}
+
+/**
+ * One single substitution: the feature and lookup it is of, the glyph it makes of another, and
+ * whether XeTeX's shaping applies it (`shapedFeatures`), which a language's lookup it does not.
+ */
+interface Single {
+  feature: string;
+  lookup: number;
+  from: number;
+  to: number;
+  shaped: boolean;
+}
+
+/**
+ * The single substitutions of `SINGLE_FEATURES`, in every script, lookup type 1 and extension lookups
+ * wrapping it, each glyph of each subtable's coverage with the glyph it becomes, in the features'
+ * order and then the lookups'. A table opentype.js did not parse as expected gives none rather than
+ * an error, so that the glyphs keep the text the character map gives them.
+ */
+function singlesOf(font: Font): Single[] {
+  const singles: Single[] = [];
+  try {
+    const gsub = font.tables.gsub as unknown as Gsub | undefined;
+    if (!isObject(gsub) || !Array.isArray(gsub.features) || !Array.isArray(gsub.lookups)) return [];
+    const shapedIndexes = shapedFeatures(gsub);
+    for (const tag of SINGLE_FEATURES) {
+      const indexes = new Set<number>();
+      const shaped = new Set<number>();
+      gsub.features.forEach(({ tag: each, feature }, i) => {
+        if (each !== tag) return;
+        for (const index of feature.lookupListIndexes) {
+          indexes.add(index);
+          if (shapedIndexes === undefined || shapedIndexes.has(i)) shaped.add(index);
+        }
+      });
+      for (const index of [...indexes].sort((a, b) => a - b)) {
+        const lookup = gsub.lookups[index];
+        for (const subtable of lookup?.subtables ?? []) {
+          if (!isObject(subtable)) continue;
+          const extended = lookup?.lookupType === EXTENSION;
+          const type = extended ? subtable.lookupType : lookup?.lookupType;
+          const table = (extended ? subtable.extension : subtable) as SingleSubtable | undefined;
+          if (type !== SINGLE || !isObject(table) || !isObject(table.coverage)) continue;
+          coverageGlyphs(table.coverage).forEach((from, i) => {
+            const to =
+              table.substFormat === 1
+                ? (from + (table.deltaGlyphId ?? 0)) & 0xffff
+                : table.substitute?.[i];
+            if (typeof to === "number" && to !== from)
+              singles.push({ feature: tag, lookup: index, from, to, shaped: shaped.has(index) });
+          });
+        }
+      }
+    }
+  } catch {
+    return [];
+  }
+  return singles;
+}
 
 /** The most ligatures deep a ligature's components may be made, such as ffi from ff and i. */
 const LIGATURE_DEPTH = 4;
@@ -201,7 +337,11 @@ function likelihood(point: number): number {
  * the character map reaches it only through a character that decomposes to that text, as U+FB01
  * ﬁ decomposes to fi and Roboto's À, which its `ccmp` makes of A and U+0300, to them.
  */
-function glyphTexts(font: Font, cmap: Readonly<Record<number, number>>): Map<number, string[]> {
+function glyphTexts(
+  font: Font,
+  cmap: Readonly<Record<number, number>>,
+  singles: readonly Single[],
+): Map<number, string[]> {
   const points = new Map<number, number[]>();
   for (const [code, glyph] of Object.entries(cmap)) {
     if (!(glyph > 0)) continue;
@@ -234,6 +374,27 @@ function glyphTexts(font: Font, cmap: Readonly<Record<number, number>>): Map<num
       }
     }
     if (!changed) break;
+  }
+  // A glyph a single substitution makes reads as the glyph it replaces, ahead of what the character
+  // map gives it: a chain of substitutions as its start, where the glyph a step replaces has no
+  // text of its own.
+  const sources = new Map<number, number[]>();
+  for (const { from, to } of singles) {
+    const had = sources.get(to);
+    if (had === undefined) sources.set(to, [from]);
+    else if (!had.includes(from)) had.push(from);
+  }
+  const own = new Map(texts);
+  const through = (glyph: number, depth: number, seen: Set<number>): string[] => {
+    const mine = own.get(glyph) ?? [];
+    if (mine.length > 0 || depth >= LIGATURE_DEPTH || seen.has(glyph)) return mine;
+    seen.add(glyph);
+    return (sources.get(glyph) ?? []).flatMap((from) => through(from, depth + 1, seen));
+  };
+  for (const [glyph, froms] of sources) {
+    const read = froms.flatMap((from) => through(from, 1, new Set([glyph])));
+    if (read.length === 0) continue;
+    texts.set(glyph, [...new Set([...read, ...(own.get(glyph) ?? [])])]);
   }
   return texts;
 }
@@ -292,10 +453,51 @@ export function parseNativeFont(bytes: Uint8Array): NativeFontFile {
     }
     return outlines.get(glyph);
   };
+  let singles: Single[] | undefined;
+  const singlesRead = () => {
+    singles ??= singlesOf(font);
+    return singles;
+  };
   let texts: Map<number, string[]> | undefined;
   const textsOf = (glyph: number): readonly string[] => {
-    texts ??= glyphTexts(font, map);
+    texts ??= glyphTexts(font, map, singlesRead());
     return texts.get(glyph) ?? [];
+  };
+  let makers: Map<number, string[]> | undefined;
+  const madeBy = (glyph: number): readonly string[] => {
+    if (makers === undefined) {
+      makers = new Map();
+      for (const { feature, to } of singlesRead()) {
+        const had = makers.get(to);
+        if (had === undefined) makers.set(to, [feature]);
+        else if (!had.includes(feature)) had.push(feature);
+      }
+    }
+    return makers.get(glyph) ?? [];
+  };
+  // The lookups XeTeX's shaping applies, in their order, each with the features that apply it and
+  // the glyph it makes of each it covers: its first subtable's that covers the glyph.
+  let lookups: { features: Set<string>; made: Map<number, number> }[] | undefined;
+  const substitute = (glyph: number, features: readonly string[]): number => {
+    if (lookups === undefined) {
+      const byIndex = new Map<number, { features: Set<string>; made: Map<number, number> }>();
+      for (const { feature, lookup, from, to, shaped } of singlesRead()) {
+        if (!shaped) continue;
+        let entry = byIndex.get(lookup);
+        if (entry === undefined) {
+          entry = { features: new Set(), made: new Map() };
+          byIndex.set(lookup, entry);
+        }
+        entry.features.add(feature);
+        if (!entry.made.has(from)) entry.made.set(from, to);
+      }
+      lookups = [...byIndex].sort(([a], [b]) => a - b).map(([, entry]) => entry);
+    }
+    let out = glyph;
+    // Each lookup replaces the glyph once, and the next sees what it made.
+    for (const { features: of, made } of lookups)
+      if (features.some((feature) => of.has(feature))) out = made.get(out) ?? out;
+    return out;
   };
   const privateUse = (point: number) => (point >= 0xe000 && point <= 0xf8ff) || point >= 0xf0000;
   const setsText = Object.keys(map).some(
@@ -324,6 +526,8 @@ export function parseNativeFont(bytes: Uint8Array): NativeFontFile {
     textsOf,
     advanceOf,
     glyphFor,
+    madeBy,
+    substitute,
     covers,
     setsText,
     spaceAdvance: (space === undefined ? undefined : advanceOf(space)) ?? 0,

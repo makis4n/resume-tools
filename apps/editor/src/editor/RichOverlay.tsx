@@ -64,14 +64,20 @@ export interface RichFrame {
    */
   indents: number[];
   widths: number[];
+  /** The letter font's `font-feature-settings`, for a variant with no look of its own. */
+  features?: string;
   /** All of the above as one string, which is the same when a new page leaves the field as it was. */
   key: string;
 }
 
-/** How a variant of the field is drawn: its CSS font family, and its size against the field's. */
+/**
+ * How a variant of the field is drawn: its CSS font family, its size against the field's, and the
+ * `font-feature-settings` its font's glyphs are substituted with (decision 0023).
+ */
 export interface Look {
   family: string;
   scale: number;
+  features?: string;
 }
 
 export interface RichOverlayProps {
@@ -261,7 +267,8 @@ function styleFor(
     const look = looks.get(variant);
     const size =
       frame && look && look.scale !== 1 ? ` font-size: ${frame.fontPx * look.scale}px;` : "";
-    return `font-family: ${look?.family ?? family};${size}`;
+    const features = look?.features ?? frame?.features ?? "normal";
+    return `font-family: ${look?.family ?? family};${size} font-feature-settings: ${features};`;
   };
   const indent = frame ? indentOf(frame, 0) : 0;
   return [

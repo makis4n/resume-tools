@@ -726,6 +726,53 @@ export function readSource(tex: string, known: ReadonlyMap<string, boolean> = ne
     /\\begin\s*\{comment\}[\s\S]*?(?:\\end\s*\{comment\}|$)/g,
     (block) => " ".repeat(block.length),
   );
+  const { dead, cut, guarded } = walkSource(text, known);
+  return {
+    live: without(text, dead),
+    pdftex: without(text, [...dead, ...cut.pdftex]),
+    xetex: without(text, [...dead, ...cut.xetex]),
+    guarded,
+  };
+}
+
+/**
+ * The source with its comments and `comment` environments blanked, each character a space but a
+ * line break, which stays: the source as `readSource` reads it, every character in its place.
+ */
+export function blankComments(tex: string): string {
+  return tex
+    .replace(
+      /(^|[^\\])((?:\\\\)*)(%.*)$/gm,
+      (_, before: string, escapes: string, comment: string) =>
+        `${before}${escapes}${" ".repeat(comment.length)}`,
+    )
+    .replace(/\\begin\s*\{comment\}[\s\S]*?(?:\\end\s*\{comment\}|$)/g, (block) =>
+      block.replace(/[^\n]/g, " "),
+    );
+}
+
+/**
+ * The parts of a source XeTeX does not read, as `readSource`'s XeTeX view leaves them out, each
+ * from its start to before its end, in the source's own places: of a source whose comments are
+ * blanked in place (`blankComments`), so that the rewrite of a XeTeX import edits only what XeTeX
+ * runs (decision 0023).
+ */
+export function xetexSkipped(
+  blanked: string,
+  known: ReadonlyMap<string, boolean> = new Map(),
+): [start: number, end: number][] {
+  const { dead, cut } = walkSource(blanked, known);
+  return [...dead, ...cut.xetex].sort(([a], [b]) => a - b);
+}
+
+/**
+ * The walk `readSource` makes of a source whose comments are out: the spans no engine reads, and
+ * those each engine's guards leave out.
+ */
+function walkSource(
+  text: string,
+  known: ReadonlyMap<string, boolean>,
+): { dead: Span[]; cut: Record<View, Span[]>; guarded: boolean } {
   const declared = new Set<string>();
   const macros = new Set<string>();
   const words = [...text.matchAll(/\\([A-Za-z@]+)/g)];
@@ -818,12 +865,7 @@ export function readSource(tex: string, known: ReadonlyMap<string, boolean> = ne
     unless = false;
   }
   for (let frame = stack.pop(); frame; frame = stack.pop()) close(frame, text.length, text.length);
-  return {
-    live: without(text, dead),
-    pdftex: without(text, [...dead, ...cut.pdftex]),
-    xetex: without(text, [...dead, ...cut.xetex]),
-    guarded,
-  };
+  return { dead, cut, guarded };
 }
 
 /** A conditional set by name: `\@academiconstrue` sets `\if@academicons`. */

@@ -1,21 +1,22 @@
 /**
  * The fonts a LaTeX source loads, and the tree's font families by name: what the corpus's survey
  * reads of every document (decision 0018), what the import pipeline's intake reads of an upload
- * (decision 0019), and what item 8 of milestone 3 will translate into a package's `fonts` through
- * this table. fontspec asks fontconfig for a family by its name; the tree's families are those its
- * OpenType and TrueType files make (`TREE_FAMILIES`), and a font the source loads by file is the
- * tree's when the tree holds a file of its name (`fileInTree`).
+ * (decision 0019), and what the XeTeX rewrite matches a font's name to (`xetex.ts`, decision 0023).
+ * fontspec asks fontconfig for a family by its name; the tree's families are those its OpenType and
+ * TrueType files name, as the engine's manifest records each file's tables (`TreeFont`), and a font
+ * the source loads by file is the tree's when the tree holds a file of its name (`fileInTree`).
  *
- * The tree is its file list alone, the engine's manifest (`readTree`): a class or package is there
- * when a `.cls` or `.sty` of its name is, a font file when an OpenType or TrueType file of its name
- * is, and a family when `TREE_FAMILIES` names it and the tree holds the file it names for it.
+ * The tree is the engine's manifest (`readTree`): a class or package is there when a `.cls` or
+ * `.sty` of its name is, a font file when an OpenType or TrueType file of its name is, and a family
+ * when one of those files names it, as its family, its full name or its PostScript name.
  *
- * They are pure functions over text and the tree's file list, as `source.ts`'s are, and what they
+ * They are pure functions over text and the tree's manifest, as `source.ts`'s are, and what they
  * return names fonts, never a document's text. Each takes time linear in what it reads, however a
  * hostile document is laid out. Node's scripts load this file as it is, by stripping its types, so
- * its one import names its file's extension.
+ * its imports name their files' extensions.
  */
 
+import type { TreeFont } from "../engine/manifest.ts";
 import { bracketed, group } from "./source.ts";
 
 // The tree.
@@ -28,10 +29,28 @@ export interface Tree {
   fontFiles: ReadonlySet<string>;
   /** Its packages whose folder under `tex/` has a namesake holding OpenType or TrueType files. */
   fontPackages: ReadonlySet<string>;
+  /**
+   * Its OpenType and TrueType files as the manifest's table describes them (`TreeFont`), each with
+   * its path and its file's name, in path order; none for a manifest without the table.
+   */
+  fonts: readonly TreeFontFile[];
 }
 
-/** Index the tree's files, by path in the engine's file system, once. */
-export function readTree(files: Readonly<Record<string, number>>): Tree {
+/** A font file of the tree: what its tables say of it, where it is, and its file's name. */
+export interface TreeFontFile extends TreeFont {
+  path: string;
+  file: string;
+}
+
+/**
+ * Index the tree's files, by path in the engine's file system, once, with the manifest's table of
+ * its fonts: only a font among `files` is taken, so that the table of one manifest can describe
+ * the files of another, as the survey's `--tree` checks an older layout's list with it.
+ */
+export function readTree(
+  files: Readonly<Record<string, number>>,
+  table: Readonly<Record<string, TreeFont>> = {},
+): Tree {
   const styles = new Set<string>();
   const fontFiles = new Set<string>();
   const fontFolders = new Set<string>();
@@ -54,79 +73,40 @@ export function readTree(files: Readonly<Record<string, number>>): Tree {
   const fontPackages = new Set(
     stylesByFolder.filter(([folder]) => fontFolders.has(folder)).map(([, name]) => name),
   );
-  return { styles, fontFiles, fontPackages };
+  const fonts = Object.entries(table)
+    .filter(([path]) => Object.hasOwn(files, path))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([path, font]) => ({ ...font, path, file: path.slice(path.lastIndexOf("/") + 1) }));
+  return { styles, fontFiles, fontPackages, fonts };
 }
 
+/** A font's name as fontconfig compares it: in lower case, without spaces, hyphens or underscores. */
+export const fontKey = (name: string) => name.toLowerCase().replace(/[\s_-]+/g, "");
+
 /**
- * The font families the tree's OpenType and TrueType files make, by the typographic family their
- * name tables give, as fontspec asks fontconfig for them by name, each with the file of its
- * upright face, which the tree must hold for the family to count as the tree's
- * (`familyInTree`), so that one table serves a tree of any layout. The tree of layout 4 had
- * Roboto, Roboto Condensed, Roboto Mono, Roboto Serif, Roboto Serif Condensed and Roboto Slab;
- * Lato; Source Sans Pro; Font Awesome 5 Free and Brands; Latin Modern's sixteen, and the names of
- * its design sizes, "LM Roman 10" and so on; Philokalia; and Sparks. Layout 5 adds Font Awesome 4
- * and Academicons; IBM Plex Sans, Sans Condensed, Serif and Mono; and TeX Gyre's nine (decision
- * 0018). Layout 6 adds Latin Modern Math, unicode-math's default (decision 0019). A name matches a family when it is the family's name, or that name followed by style
- * words or a design size ("Roboto Light", "SourceSansPro-Bold", "LM Roman 12"), whatever its case,
- * spaces, hyphens and underscores, as fontconfig ignores case and spaces in a family's name.
+ * The names the tree's fonts go by, as fontconfig compares them (`fontKey`): each file's family,
+ * typographic and four-style, its full name and its PostScript name, on every platform its name
+ * table gives them for, once each, for each tree.
  */
-export const TREE_FAMILIES: Readonly<Record<string, string>> = {
-  Roboto: "Roboto-Regular.otf",
-  "Roboto Condensed": "RobotoCondensed-Regular.otf",
-  "Roboto Mono": "RobotoMono-Regular.otf",
-  "Roboto Serif": "RobotoSerif-Regular.otf",
-  "Roboto Serif Condensed": "RobotoSerif_Condensed-Regular.otf",
-  "Roboto Slab": "RobotoSlab-Regular.otf",
-  Lato: "Lato-Regular.ttf",
-  "Source Sans Pro": "SourceSansPro-Regular.otf",
-  "Font Awesome 5 Free": "FontAwesome5Free-Solid-900.otf",
-  "Font Awesome 5 Brands": "FontAwesome5Brands-Regular-400.otf",
-  "Latin Modern Roman": "lmroman10-regular.otf",
-  "Latin Modern Roman Caps": "lmromancaps10-regular.otf",
-  "Latin Modern Roman Demi": "lmromandemi10-regular.otf",
-  "Latin Modern Roman Dunhill": "lmromandunh10-regular.otf",
-  "Latin Modern Roman Slanted": "lmromanslant10-regular.otf",
-  "Latin Modern Roman Unslanted": "lmromanunsl10-regular.otf",
-  "Latin Modern Sans": "lmsans10-regular.otf",
-  "Latin Modern Sans Demi Cond": "lmsansdemicond10-regular.otf",
-  "Latin Modern Sans Quotation": "lmsansquot8-regular.otf",
-  "Latin Modern Mono": "lmmono10-regular.otf",
-  "Latin Modern Mono Caps": "lmmonocaps10-regular.otf",
-  "Latin Modern Mono Light": "lmmonolt10-regular.otf",
-  "Latin Modern Mono Light Cond": "lmmonoltcond10-regular.otf",
-  "Latin Modern Mono Prop": "lmmonoprop10-regular.otf",
-  "Latin Modern Mono Prop Light": "lmmonoproplt10-regular.otf",
-  "Latin Modern Mono Slanted": "lmmonoslant10-regular.otf",
-  "LM Roman": "lmroman10-regular.otf",
-  "LM Sans": "lmsans10-regular.otf",
-  "LM Mono": "lmmono10-regular.otf",
-  Philokalia: "Philokalia-Regular.otf",
-  Sparks: "Sparks-Bar-Medium.otf",
-  FontAwesome: "FontAwesome.otf",
-  Academicons: "academicons.ttf",
-  "IBM Plex Sans": "IBMPlexSans-Regular.otf",
-  "IBM Plex Sans Condensed": "IBMPlexSansCondensed-Regular.otf",
-  "IBM Plex Serif": "IBMPlexSerif-Regular.otf",
-  "IBM Plex Mono": "IBMPlexMono-Regular.otf",
-  "TeX Gyre Adventor": "texgyreadventor-regular.otf",
-  "TeX Gyre Bonum": "texgyrebonum-regular.otf",
-  "TeX Gyre Chorus": "texgyrechorus-mediumitalic.otf",
-  "TeX Gyre Cursor": "texgyrecursor-regular.otf",
-  "TeX Gyre Heros": "texgyreheros-regular.otf",
-  "TeX Gyre Heros Cn": "texgyreheroscn-regular.otf",
-  "TeX Gyre Pagella": "texgyrepagella-regular.otf",
-  "TeX Gyre Schola": "texgyreschola-regular.otf",
-  "TeX Gyre Termes": "texgyretermes-regular.otf",
-  "Latin Modern Math": "latinmodern-math.otf",
-};
+const familyKeys = new WeakMap<Tree, string[]>();
 
-/** A font's name as fontconfig compares it, and as the family table is keyed. */
-const fontKey = (name: string) => name.toLowerCase().replace(/[\s_-]+/g, "");
-
-/** The table's families as fontconfig compares their names, each with its file. */
-const FAMILY_KEYS = Object.entries(TREE_FAMILIES).map(
-  ([family, file]): [key: string, file: string] => [fontKey(family), file],
-);
+function familyKeysOf(tree: Tree): string[] {
+  let keys = familyKeys.get(tree);
+  if (keys === undefined) {
+    const names = tree.fonts.flatMap((font) => [
+      font.family,
+      font.fontFamily,
+      font.fullName,
+      font.postScriptName,
+      ...(font.more?.family ?? []),
+      ...(font.more?.fontFamily ?? []),
+      ...(font.more?.fullName ?? []),
+    ]);
+    keys = [...new Set(names.map(fontKey).filter((key) => key !== ""))];
+    familyKeys.set(tree, keys);
+  }
+  return keys;
+}
 
 /**
  * The words that may follow a family's name in a name that means one of its faces, as runs of
@@ -162,16 +142,17 @@ function styleWords(key: string): boolean {
 }
 
 /**
- * Whether a name fontspec asks for by name is a family of the tree, or one of its faces: a family
- * of `TREE_FAMILIES` whose file the tree holds. A name longer than MAX_FAMILY_NAME is none.
+ * Whether a name fontspec asks for by name is a family of the tree, or one of its faces: a name a
+ * font of the tree's table goes by (`familyKeysOf`), or one followed by style words or a design
+ * size, as "Roboto Light", "SourceSansPro-Bold" and "LM Roman 12" are, whatever its case, spaces,
+ * hyphens and underscores, as fontconfig ignores case and spaces in a family's name. A name longer
+ * than MAX_FAMILY_NAME is none.
  */
 export function familyInTree(tree: Tree, name: string): boolean {
   if (name.length > MAX_FAMILY_NAME) return false;
   const key = fontKey(name);
-  return FAMILY_KEYS.some(
-    ([family, file]) =>
-      fileInTree(tree, file) &&
-      (key === family || (key.startsWith(family) && styleWords(key.slice(family.length)))),
+  return familyKeysOf(tree).some(
+    (family) => key === family || (key.startsWith(family) && styleWords(key.slice(family.length))),
   );
 }
 

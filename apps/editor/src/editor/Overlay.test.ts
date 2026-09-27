@@ -16,7 +16,7 @@ import { TexLiveIndex } from "../page/texlive";
 import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
-import { defaultControls, parsePackage } from "../templates/package";
+import { defaultControls, fontFeatures, parsePackage } from "../templates/package";
 import { PRELUDE } from "../templates/prelude";
 import { bound, fastest, median } from "../test/timing";
 import { glyphOf, glyphText, textToCode } from "../tex/glyphs";
@@ -40,6 +40,7 @@ import {
   deleteAt,
   deleteRange,
   faceFor,
+  featureSettings,
   layoutRows,
   lineStartOf,
   namedVariants,
@@ -460,6 +461,61 @@ describe("faceFor", () => {
       shrink: Math.trunc(glue / 3),
       extraSpace: Math.trunc(glue / 3),
     });
+  });
+
+  /**
+   * An invented native font with small capitals and a capitals' hyphen, which its `smcp` and `case`
+   * features make of the a and the hyphen, in a 2000-unit em.
+   */
+  function capsFont(): NativePageFont {
+    const glyph = (glyphName: string, unicodes: number[], advanceWidth: number) =>
+      new Glyph({ name: glyphName, unicodes, advanceWidth, path: new Path() });
+    const font = new Font({
+      familyName: "Invented Caps",
+      styleName: "Regular",
+      unitsPerEm: 2000,
+      ascender: 1800,
+      descender: -400,
+      glyphs: [
+        glyph(".notdef", [], 1000),
+        glyph("space", [0x20], 500),
+        glyph("a", [0x61], 900),
+        glyph("a.sc", [], 1040),
+        glyph("hyphen", [0x2d], 660),
+        glyph("hyphen.case", [], 700),
+      ],
+    });
+    // Features go in in alphabetical order, as opentype.js writes them.
+    font.substitution.addSingle("case", { sub: 4, by: 5 });
+    font.substitution.addSingle("smcp", { sub: 2, by: 3 });
+    const file = parseNativeFont(new Uint8Array(font.toArrayBuffer()));
+    return { kind: "native", name: "Invented-Caps.otf", file };
+  }
+
+  it("measures a native font loaded with features as the glyphs they make, as XeTeX sets them", () => {
+    const font = capsFont();
+    const width = (units: number) => Math.round((units * 10 * PT) / 2000);
+    const plain = faceFor({ font, size: 10 });
+    expect(plain.widthOf(plain.codeFor("a") ?? -1)).toBe(width(900));
+    // With smcp, an a is its small capital, and its hyphen is as it was.
+    const small = faceFor({ font, size: 10, features: ["smcp"] });
+    expect(small.codeFor("a")).toBe(3);
+    expect(small.widthOf(small.codeFor("a") ?? -1)).toBe(width(1040));
+    expect(small.hyphenChar).toBe(4);
+    // With case too, TeX's hyphen is the capitals' one, which it breaks a line with.
+    const cased = faceFor({ font, size: 10, features: ["smcp", "case"] });
+    expect(cased.hyphenChar).toBe(5);
+    const boxes = paragraphNodes("a a", small).filter((node) => node.kind === "box");
+    expect(boxes.map((node) => node.kind === "box" && node.width)).toEqual([
+      width(1040),
+      width(1040),
+    ]);
+  });
+
+  it("sets the rows with the features XeTeX set the glyphs with, where the browser sets none", () => {
+    expect(featureSettings(["smcp", "pnum"])).toBe('"smcp" 1, "pnum" 1');
+    expect(featureSettings([])).toBe("normal");
+    expect(featureSettings(undefined)).toBe("normal");
   });
 
   it("measures what a native font lacks in another native font of the field", () => {
@@ -1346,11 +1402,7 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
         });
         if (!result.output) throw new Error(result.error);
         // Each file with the features its family loads it with, which the XDV does not record.
-        const features = new Map(
-          (variant.fonts ?? []).flatMap(({ shapes, features: loaded }) =>
-            Object.values(shapes).map((file): [string, string] => [file, loaded ?? ""]),
-          ),
-        );
+        const features = fontFeatures(variant);
         const page = await drawPage(result.output, fonts, body.texts, 0, { features });
         expect(page.missingFonts, more).toEqual(new Map());
         // "Moved " on the page, from the M to the t after the space.
@@ -1378,6 +1430,74 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
         const { rows, page: lines } = compare(page, "spaced-0.text", text);
         expect(rows, more).toEqual(lines);
       }
+    }, 60_000);
+
+    it("measures a field XeTeX sets in small capitals as the page sets it, told apart by its glyphs", async () => {
+      // Roboto's upright file loaded two ways, as the family's upright and with +smcp as its small
+      // capitals: the XDV names the file alone, and the page tells the two apart by the glyphs each
+      // sets (decision 0023). No two of the place's small capitals are a pair Roboto kerns.
+      const { entry } = pkg.snippets;
+      if (typeof entry !== "string") throw new Error("the invented template's entry is by role");
+      const variant = parsePackage({
+        ...pkg,
+        id: "invented-xetex-caps",
+        fonts: pkg.fonts?.map((font) =>
+          font.family === "Roboto"
+            ? {
+                ...font,
+                shapes: {
+                  ...font.shapes,
+                  "m/sc": { file: "Roboto-Regular.otf", features: "+smcp" },
+                },
+              }
+            : font,
+        ),
+        snippets: {
+          ...pkg.snippets,
+          entry: entry.replace(
+            "{{#place}}, {{place}}{{/place}}",
+            "{{#place}}, {\\scshape {{place}}}{{/place}}",
+          ),
+        },
+      });
+      expect(variant.snippets.entry).toContain("\\scshape");
+      const chosen = defaultControls(variant);
+      const made = generateFormat(variant, chosen);
+      const dumped = session.dump(variant.engine, made.name, made.preamble, made.files);
+      if (!dumped.ok) throw new Error(dumped.error);
+      const body = generateBody(variant, sample, chosen);
+      const result = session.compile(variant.engine, made.name, body.latex, {
+        job: "overlay-caps",
+        maxPasses: 3,
+      });
+      if (!result.output) throw new Error(result.error);
+      const page = await drawPage(result.output, fonts, body.texts, 0, {
+        features: fontFeatures(variant),
+      });
+      expect(page.missingFonts).toEqual(new Map());
+      // Every glyph reads as its field's text, a small capital as the lower case it is made of.
+      expect(page.unmatched).toBe(0);
+      const layout = page.fields.get("gull.place")?.layout;
+      if (!layout) throw new Error("the place has no layout");
+      expect(layout.font.name).toBe("Roboto-Regular.otf");
+      expect(layout.features).toEqual(["smcp"]);
+      // The same file, as the family's upright, sets a bullet without.
+      const bullet = page.fields.get("gull-1.text")?.layout;
+      expect(bullet?.font.name).toBe("Roboto-Regular.otf");
+      expect(bullet?.features).toBeUndefined();
+      // The overlay measures the small capitals where the page sets them, and would not the lower
+      // case they are made of.
+      const text = body.texts.get("gull.place") ?? "";
+      const { setting } = compare(page, "gull.place", text);
+      const glyphs = page.glyphs.filter((glyph) => glyph.field === "gull.place");
+      const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+      const [row] = overlayEnds(text, setting);
+      if (!row) throw new Error("the place has no row");
+      expect(row.last).toBe(text.length - 1);
+      expect(Math.abs(row.x - (at(row.last) - at(row.first)))).toBeLessThan(0.01);
+      const lower = settingFor("gull.place", { ...layout, features: undefined }, page.size.width);
+      const [unfeatured] = overlayEnds(text, lower);
+      expect(Math.abs((unfeatured?.x ?? 0) - row.x)).toBeGreaterThan(0.5);
     }, 60_000);
 
     it("gives a native font the interword glue XeTeX gives it", async () => {

@@ -4,7 +4,13 @@ import { Font, Glyph, Path } from "opentype.js";
 import { describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable } from "../engine/node";
-import { MAX_FONT_BYTES, nativeCoverage, nativeFileName, parseNativeFont } from "./native";
+import {
+  MAX_FONT_BYTES,
+  nativeCoverage,
+  nativeFileName,
+  parseNativeFont,
+  singleFeaturesOn,
+} from "./native";
 
 /** A glyph's outline: a box 700 units tall, 50 units in from each side of its advance. */
 function box(width: number): Path {
@@ -156,6 +162,146 @@ describe("parseNativeFont on an invented font", () => {
   });
 });
 
+/** A single substitution lookup as opentype.js writes one: its subtables, in order. */
+const single = (...subtables: object[]) => ({ lookupType: 1, lookupFlag: 0, subtables });
+
+/** A language system that takes the features at `indexes` of the feature list. */
+const system = (indexes: number[]) => ({
+  reserved: 0,
+  reqFeatureIndex: 0xffff,
+  featureIndexes: indexes,
+});
+
+/**
+ * An invented OpenType font whose GSUB table holds single substitutions, written by hand, since
+ * opentype.js adds none of these features itself. `c2sc` makes the small capital a of the A and
+ * the small capital i of the I, in one lookup of two subtables that add to the glyph's index
+ * (format 1), the second taking from it; `smcp` makes them of the a and the i, listing each
+ * (format 2); `onum` makes an old-style one of the one, and `pnum` a proportional one of that, a
+ * chain the one reaches only through both; the Turkish language system's `smcp` makes a dotted
+ * small capital of the i first, which XeTeX, shaping the default language, never applies; and
+ * `salt`, a feature the page does not read through, makes an alternate a.
+ */
+function substitutingFont(): Uint8Array {
+  const glyph = (name: string, advanceWidth: number, unicodes: number[] = []) =>
+    new Glyph({ name, unicodes, advanceWidth, path: box(advanceWidth) });
+  const font = new Font({
+    familyName: "Invented Caps",
+    styleName: "Regular",
+    unitsPerEm: 1000,
+    ascender: 900,
+    descender: -300,
+    glyphs: [
+      new Glyph({ name: ".notdef", advanceWidth: 500, path: new Path() }),
+      new Glyph({ name: "space", unicodes: [0x20], advanceWidth: 250, path: new Path() }),
+      glyph("A", 600, [0x41]),
+      glyph("a.sc", 520),
+      glyph("a", 480, [0x61]),
+      glyph("i.sc", 260),
+      glyph("i", 230, [0x69]),
+      glyph("I", 280, [0x49]),
+      glyph("idotaccent.sc", 270),
+      glyph("one", 550, [0x31]),
+      glyph("one.osf", 540),
+      glyph("one.posf", 400),
+      glyph("a.alt", 490),
+    ],
+  });
+  const list = (glyphs: number[]) => ({ format: 1, glyphs });
+  font.tables.gsub = {
+    version: 1,
+    scripts: [
+      { tag: "DFLT", script: { defaultLangSys: system([0, 1, 2, 3, 4]), langSysRecords: [] } },
+      {
+        tag: "latn",
+        script: {
+          defaultLangSys: system([0, 1, 2, 3, 4]),
+          langSysRecords: [{ tag: "TRK ", langSys: system([0, 1, 2, 3, 5]) }],
+        },
+      },
+    ],
+    features: [
+      { tag: "c2sc", feature: { featureParams: 0, lookupListIndexes: [0] } },
+      { tag: "onum", feature: { featureParams: 0, lookupListIndexes: [3] } },
+      { tag: "pnum", feature: { featureParams: 0, lookupListIndexes: [4] } },
+      { tag: "salt", feature: { featureParams: 0, lookupListIndexes: [5] } },
+      { tag: "smcp", feature: { featureParams: 0, lookupListIndexes: [2] } },
+      { tag: "smcp", feature: { featureParams: 0, lookupListIndexes: [1, 2] } },
+    ],
+    lookups: [
+      single(
+        { substFormat: 1, coverage: list([2]), deltaGlyphId: 1 },
+        { substFormat: 1, coverage: list([7]), deltaGlyphId: -2 },
+      ),
+      single({ substFormat: 2, coverage: list([6]), substitute: [8] }),
+      single({ substFormat: 2, coverage: list([4, 6]), substitute: [3, 5] }),
+      single({ substFormat: 2, coverage: list([9]), substitute: [10] }),
+      single({ substFormat: 2, coverage: list([10]), substitute: [11] }),
+      single({ substFormat: 2, coverage: list([4]), substitute: [12] }),
+    ],
+  };
+  return new Uint8Array(font.toArrayBuffer());
+}
+
+describe("parseNativeFont's reading of single substitutions", () => {
+  const file = parseNativeFont(substitutingFont());
+
+  it("reads a glyph a single substitution makes as each glyph it is made of", () => {
+    // Made by smcp of the a, and by c2sc of the A, whose subtable adds 1 to its index.
+    expect(file.textsOf(3)).toEqual(["a", "A"]);
+    // And of the I by a subtable that takes 2 from its index.
+    expect(file.textsOf(5)).toEqual(["i", "I"]);
+    // A language's lookup is read through too: the glyph can come from nowhere else.
+    expect(file.textsOf(8)).toEqual(["i"]);
+    expect(file.madeBy(3)).toEqual(["smcp", "c2sc"]);
+    expect(file.madeBy(4)).toEqual([]);
+  });
+
+  it("reads a chain of substitutions as its start, and leaves a feature it does not read alone", () => {
+    expect(file.textsOf(10)).toEqual(["1"]);
+    expect(file.textsOf(11)).toEqual(["1"]);
+    expect(file.madeBy(11)).toEqual(["pnum"]);
+    // salt's alternate a has no text: the page reads no feature but those it names.
+    expect(file.textsOf(12)).toEqual([]);
+    expect(file.madeBy(12)).toEqual([]);
+  });
+
+  it("substitutes a glyph as XeTeX's shaping does, lookup by lookup in the default language", () => {
+    expect(file.substitute(4, ["smcp"])).toBe(3);
+    expect(file.substitute(2, ["c2sc"])).toBe(3);
+    expect(file.substitute(7, ["c2sc"])).toBe(5);
+    // The Turkish lookup comes first in the lookup list, but the default language has it not.
+    expect(file.substitute(6, ["smcp"])).toBe(5);
+    // smcp leaves a capital as it is, and no feature leaves every glyph so.
+    expect(file.substitute(2, ["smcp"])).toBe(2);
+    expect(file.substitute(4, [])).toBe(4);
+    // pnum makes the proportional one of the old-style one only, so it takes both.
+    expect(file.substitute(9, ["onum"])).toBe(10);
+    expect(file.substitute(9, ["pnum"])).toBe(9);
+    expect(file.substitute(9, ["pnum", "onum"])).toBe(11);
+    // A feature the page does not read through is not applied either.
+    expect(file.substitute(4, ["salt"])).toBe(4);
+  });
+});
+
+describe("singleFeaturesOn", () => {
+  it("gives the features of a XeTeX feature string that substitute glyphs, as its last say", () => {
+    expect(singleFeaturesOn("script=latn;language=dflt;+pnum;+lnum;mapping=tex-text")).toEqual([
+      "pnum",
+      "lnum",
+    ]);
+    // Off, and on with 0, turn one off; a bare tag is no feature to XeTeX.
+    expect(singleFeaturesOn("+smcp;+onum;-onum;+tnum=0;+case=1;+liga;sups")).toEqual([
+      "smcp",
+      "case",
+    ]);
+    // A shape's features come after its family's, and the last say wins.
+    expect(singleFeaturesOn("+smcp;-smcp;+smcp")).toEqual(["smcp"]);
+    expect(singleFeaturesOn("letterspace=6.0;embolden=1.5;+ss01")).toEqual([]);
+    expect(singleFeaturesOn(undefined)).toEqual([]);
+  });
+});
+
 /** A font of a box for each character a list gives, written by opentype.js. */
 function fontOf(family: string, characters: number[]): Uint8Array {
   const glyphs = [
@@ -260,6 +406,51 @@ describe.skipIf(!engineAvailable())("parseNativeFont over TeX Live's fonts", () 
       (glyph) => sans.textOf(glyph) === "ff" && glyph !== f,
     );
     expect(ligatures.length).toBeGreaterThan(0);
+  });
+
+  it("reads Source Sans's small capitals as the letters they are made of, as +smcp sets them", () => {
+    const sans = read("SourceSansPro-Regular.otf");
+    const a = sans.glyphFor("a") ?? -1;
+    const small = sans.substitute(a, ["smcp"]);
+    expect(small).not.toBe(a);
+    expect(sans.textsOf(small)).toEqual(["a", "A"]);
+    expect(sans.madeBy(small)).toEqual(["smcp", "c2sc"]);
+    // A small capital is its own glyph, of its own width.
+    expect(sans.advanceOf(small)).not.toBe(sans.advanceOf(a));
+    expect(sans.substitute(sans.glyphFor("A") ?? -1, ["c2sc"])).toBe(small);
+    for (const char of "resume") {
+      const glyph = sans.substitute(sans.glyphFor(char) ?? -1, ["smcp"]);
+      expect(sans.textOf(glyph), char).toBe(char);
+    }
+  });
+
+  it("reads Roboto's proportional and old-style figures as their digits", () => {
+    const roboto = read("Roboto-Regular.otf");
+    for (const features of [["pnum"], ["onum"], ["onum", "pnum"]]) {
+      let substituted = 0;
+      for (const digit of "0123456789") {
+        const lining = roboto.glyphFor(digit) ?? -1;
+        const glyph = roboto.substitute(lining, features);
+        if (glyph !== lining) substituted++;
+        expect(roboto.textOf(glyph), `${digit} ${features}`).toBe(digit);
+      }
+      // Its proportional 6 is its tabular one, which no lookup replaces.
+      expect(substituted, `${features}`).toBeGreaterThan(5);
+    }
+    // Roboto's figures are tabular: a proportional one is narrower.
+    const one = roboto.glyphFor("1") ?? -1;
+    expect(roboto.advanceOf(roboto.substitute(one, ["pnum"]))).toBeLessThan(
+      roboto.advanceOf(one) ?? 0,
+    );
+  });
+
+  it("reads Lato's figures, whose substitutions are extension lookups, as their digits", () => {
+    const lato = read("Lato-Regular.ttf");
+    const zero = lato.glyphFor("0") ?? -1;
+    const oldStyle = lato.substitute(zero, ["onum", "pnum"]);
+    expect(oldStyle).not.toBe(zero);
+    expect(lato.textOf(oldStyle)).toBe("0");
+    expect(lato.madeBy(oldStyle)).toContain("pnum");
   });
 
   it("reads a Font Awesome icon as the private-use character the header sets it with", () => {

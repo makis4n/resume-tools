@@ -215,7 +215,7 @@ within their rows, which is Roboto's kerning and ligatures, left to the page.
   capitals does not align. Awesome-CV sets its position line in Source Sans Pro's small capitals,
   so item 22 needs a family whose `sc` shape loads with `+smcp` while its other shapes do not, which
   one `features` string per family cannot say, and texts for the substituted glyphs: both are
-  additions to this record.
+  additions to this record. Decision 0023 makes both.
 - The fonts a package declares must be the tree's: XeTeX finds them through kpathsea, the page
   through the manifest, and a template cannot ship one, since a package's files are text.
 - A package is refused for fonts only where the schema can tell. A file the tree does not have

@@ -30,7 +30,7 @@ jobs:
           path: |
             apps/editor/.engine
             !apps/editor/.engine/downloads
-          key: engine-${{ hashFiles('apps/editor/scripts/fetch-engine.ts', 'apps/editor/scripts/containers.ts', 'apps/editor/scripts/fontconfig.ts', 'apps/editor/scripts/tlpdb.ts', 'apps/editor/scripts/fontmaps.ts', 'apps/editor/src/page/fontmap.ts') }}
+          key: engine-${{ hashFiles('apps/editor/scripts/fetch-engine.ts', 'apps/editor/scripts/containers.ts', 'apps/editor/scripts/fontconfig.ts', 'apps/editor/scripts/tlpdb.ts', 'apps/editor/scripts/fontmaps.ts', 'apps/editor/src/page/fontmap.ts', 'apps/editor/scripts/fonttable.ts') }}
       - run: pnpm --filter @resume-tools/editor fetch-engine
       # GitHub allows 60 requests an hour without a token, and the fetch asks once per document.
       - run: pnpm --filter @resume-tools/editor corpus fetch

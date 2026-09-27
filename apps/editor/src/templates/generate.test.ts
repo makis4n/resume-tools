@@ -23,6 +23,7 @@ import {
   generateFormat,
   linkAddress,
   MAX_BODY,
+  texDecimal,
 } from "./generate";
 import { INVENTED_XETEX } from "./invented";
 import { type ControlValues, defaultControls, parsePackage, type TemplatePackage } from "./package";
@@ -1033,6 +1034,60 @@ describe("generateFormat", () => {
       fonts: [{ family: "Roboto", shapes: { "m/n": "Roboto-Light.otf" } }],
     });
     expect(formatName(other, {})).not.toBe(formatName(xetex, {}));
+  });
+
+  it("declares a shape's own features after its family's, and an import's scale and adjustments", () => {
+    const fonts = parsePackage({
+      ...input,
+      engine: "xetex",
+      preamble: "\\RequirePackage[OT1]{fontenc}\n\\documentclass{article}",
+      fonts: [
+        {
+          family: "Roboto-Numbers",
+          shapes: {
+            "m/n": "Roboto-Regular.otf",
+            "m/sc": { file: "Roboto-Regular.otf", features: "+smcp" },
+            "l/n": { file: "Roboto-Light.otf" },
+          },
+          features: "script=latn;language=dflt;+pnum;mapping=tex-text",
+          scale: 0.95,
+          adjust: {
+            wordSpace: [1.2, 0.5, 0.333333],
+            punctuationSpace: { factor: 0, of: "space" },
+            hyphenChar: -1,
+          },
+        },
+        { family: "Caps", shapes: { "m/sc": { file: "Lato-Regular.ttf", features: "+c2sc" } } },
+      ],
+    }).fonts;
+    const adjust =
+      "\\fontdimen2\\font=1.2\\fontdimen2\\font\\fontdimen3\\font=0.5\\fontdimen3\\font" +
+      "\\fontdimen4\\font=0.33333\\fontdimen4\\font\\fontdimen7\\font=0\\fontdimen2\\font" +
+      "\\hyphenchar\\font=-1\\relax";
+    const numbers = "script=latn;language=dflt;+pnum;mapping=tex-text";
+    expect(fontDeclarations(fonts ?? []).split("\n")).toEqual([
+      "\\DeclareFontFamily{TU}{Roboto-Numbers}{}",
+      `\\DeclareFontShape{TU}{Roboto-Numbers}{m}{n}{<->s*[0.95]"[Roboto-Regular.otf]:${numbers}"}{${adjust}}`,
+      `\\DeclareFontShape{TU}{Roboto-Numbers}{m}{sc}{<->s*[0.95]"[Roboto-Regular.otf]:${numbers};+smcp"}{${adjust}}`,
+      `\\DeclareFontShape{TU}{Roboto-Numbers}{l}{n}{<->s*[0.95]"[Roboto-Light.otf]:${numbers}"}{${adjust}}`,
+      "\\DeclareFontFamily{TU}{Caps}{}",
+      '\\DeclareFontShape{TU}{Caps}{m}{sc}{<->"[Lato-Regular.ttf]:+c2sc"}{}',
+    ]);
+  });
+});
+
+describe("texDecimal", () => {
+  it("writes a number as TeX reads a decimal, to five places and never with an exponent", () => {
+    expect([1, 0.95, 0.333333, 1e-7, -0.5, -1e-7, 12.5, 2 / 3].map(texDecimal)).toEqual([
+      "1",
+      "0.95",
+      "0.33333",
+      "0",
+      "-0.5",
+      "0",
+      "12.5",
+      "0.66667",
+    ]);
   });
 });
 

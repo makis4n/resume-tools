@@ -15,7 +15,9 @@
  *
  * A XeTeX package names its fonts by file (decision 0014): each family's shapes as OpenType or
  * TrueType files of the TeX Live tree, which the generator declares to NFSS in the format, and
- * which XeTeX loads only when a shape is selected, so that the format holds no native font.
+ * which XeTeX loads only when a shape is selected, so that the format holds no native font. A
+ * shape may carry XeTeX features of its own besides its family's, as an import's small capitals
+ * load with `+smcp` while the family's other shapes do not (decision 0023).
  */
 
 import {
@@ -209,9 +211,9 @@ const Snippets = z.strictObject({
 });
 
 /**
- * A shape of a font family, as `<series>/<shape>` of the NFSS values a resume needs: the series
- * medium, bold and bold extended, which LaTeX's `\bfseries` asks for, and the shapes upright,
- * italic, slanted and small capitals.
+ * The shapes of a font family a resume needs most, as `<series>/<shape>` of NFSS's values: the
+ * series medium, bold and bold extended, which LaTeX's `\bfseries` asks for, and the shapes
+ * upright, italic, slanted and small capitals. A family may declare any other `ShapeKey` too.
  */
 export const FontShapeKey = z.enum([
   "m/n",
@@ -230,6 +232,19 @@ export const FontShapeKey = z.enum([
 export type FontShapeKey = z.infer<typeof FontShapeKey>;
 
 /**
+ * A shape of a font family as `<series>/<shape>`, each one to eight lower-case letters, as NFSS
+ * names them: `FontShapeKey`'s, and the others fontspec declares for an import (decision 0023),
+ * such as the italic small capitals `m/scit` and a light series `l/n`. Letters alone, so that
+ * neither can hold anything TeX would read as syntax.
+ */
+const ShapeKey = z
+  .string()
+  .regex(
+    /^[a-z]{1,8}\/[a-z]{1,8}$/,
+    "a font shape is <series>/<shape>, each of lower-case letters",
+  );
+
+/**
  * A font file of the tree, by its plain name, as XeTeX's `[<file>]` syntax takes it inside a
  * declaration's quotes: letters, digits, `.`, `_`, `+` and `-`, not starting with a dot, and an
  * OpenType or TrueType extension. Every font file of the tree's `fonts/opentype` and
@@ -243,26 +258,83 @@ const FontFile = z
   );
 
 /**
- * One family of a XeTeX package's fonts (decision 0014): its NFSS name, the file each shape is
- * set from, and the XeTeX features every shape loads with, such as `mapping=tex-text`, which
- * sets `--` as an en dash and quotes as curly ones as TeX's own fonts do. The features go inside
- * the declaration's quotes after a colon, so they hold none of `[`, `]`, `"` or `:`, and nothing
- * else TeX would read as syntax either: letters, digits, `=`, `;`, `+`, `-`, `.` and `_`.
+ * XeTeX features, as a font's declaration loads it with them, such as `mapping=tex-text`, which
+ * sets `--` as an en dash and quotes as curly ones as TeX's own fonts do, or `+smcp`. They go
+ * inside the declaration's quotes after a colon, so they hold none of `[`, `]`, `"` or `:`, and
+ * nothing else TeX would read as syntax either: letters, digits, `=`, `;`, `+`, `-`, `.` and `_`.
+ */
+const FontFeatures = z
+  .string()
+  .regex(
+    /^[A-Za-z0-9=;+._-]+$/,
+    "font features are letters, digits, =, ;, +, -, . and _, as XeTeX's feature syntax has them",
+  );
+
+/**
+ * A shape's font: a file of the tree, or a file and the XeTeX features this shape alone loads it
+ * with, after its family's (decision 0023), as a family's small capitals load its upright file
+ * with `+smcp`.
+ */
+const FontShape = z.union([
+  FontFile,
+  z.strictObject({ file: FontFile, features: FontFeatures.optional() }),
+]);
+export type FontShape = z.infer<typeof FontShape>;
+
+/** A decimal factor, as fontspec's `Scale` and `WordSpace` take one. */
+const Factor = z.number().min(-100).max(100);
+
+/**
+ * What fontspec does to a font as it loads it besides its features (decision 0023): `WordSpace`,
+ * which scales the space, its stretch and its shrink, `\fontdimen` 2, 3 and 4; `PunctuationSpace`,
+ * which sets the space after a sentence, `\fontdimen7`, as a factor of the space's or its own; and
+ * `HyphenChar`, the character TeX hyphenates with, -1 for none. Numbers only, which the generator
+ * writes as the code `\DeclareFontShape` runs after it loads the font.
+ */
+const FontAdjust = z.strictObject({
+  wordSpace: z.tuple([Factor, Factor, Factor]).optional(),
+  punctuationSpace: z
+    .strictObject({ factor: Factor, of: z.enum(["space", "punctuation"]) })
+    .optional(),
+  hyphenChar: z.number().int().min(-1).max(0x10ffff).optional(),
+});
+export type FontAdjust = z.infer<typeof FontAdjust>;
+
+/**
+ * One family of a XeTeX package's fonts (decision 0014): its NFSS name, which may hold a hyphen as
+ * fontspec's `NFSSFamily` names may (decision 0023), the file each shape is
+ * set from, and the XeTeX features every shape loads with (`FontFeatures`); for an import, as
+ * fontspec loaded them (decision 0023), the features a shape loads with besides (`FontShape`), the
+ * scale every shape is loaded at, and what fontspec does to each as it loads it (`FontAdjust`).
  */
 const FontFamily = z.strictObject({
-  family: z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/, "a font family is letters and digits"),
-  shapes: z
-    .partialRecord(FontShapeKey, FontFile)
-    .refine((shapes) => Object.keys(shapes).length > 0, "a font family has at least one shape"),
-  features: z
+  family: z
     .string()
-    .regex(
-      /^[A-Za-z0-9=;+._-]+$/,
-      "font features are letters, digits, =, ;, +, -, . and _, as XeTeX's feature syntax has them",
-    )
-    .optional(),
+    .regex(/^[A-Za-z][A-Za-z0-9-]*$/, "a font family is letters, digits and -, from a letter"),
+  shapes: z
+    .record(ShapeKey, FontShape)
+    .refine((shapes) => Object.keys(shapes).length > 0, "a font family has at least one shape"),
+  features: FontFeatures.optional(),
+  scale: z.number().positive().max(10).optional(),
+  adjust: FontAdjust.optional(),
 });
 export type FontFamily = z.infer<typeof FontFamily>;
+
+/** A shape's file. */
+export const shapeFile = (shape: FontShape): string =>
+  typeof shape === "string" ? shape : shape.file;
+
+/**
+ * The XeTeX features a shape of a family loads its file with: the family's, then the shape's own,
+ * joined by `;`; undefined when neither has any, so that a package that declares none is as it was.
+ */
+export function shapeFeatures(family: FontFamily, shape: FontShape): string | undefined {
+  const own = typeof shape === "string" ? undefined : shape.features;
+  const parts = [family.features, own].flatMap((each) =>
+    each === undefined ? [] : [each.replace(/;+$/, "")],
+  );
+  return parts.length === 0 ? undefined : parts.join(";");
+}
 
 /** A package id is a model id that the engine also takes as a format name. */
 const PackageId = z
@@ -403,18 +475,27 @@ export const parsePackage = (value: unknown): TemplatePackage => TemplatePackage
  * and their shapes name them; none for a package without the section.
  */
 export function fontFiles(pkg: TemplatePackage): string[] {
-  return [...new Set((pkg.fonts ?? []).flatMap(({ shapes }) => Object.values(shapes)))];
+  return [
+    ...new Set((pkg.fonts ?? []).flatMap(({ shapes }) => Object.values(shapes).map(shapeFile))),
+  ];
 }
 
 /**
  * The XeTeX features each font file of a package's `fonts` section is loaded with, by the file's
- * name: its family's, or none, the first family's where two name one file.
+ * name: every way its shapes load it, its family's features and its shape's (`shapeFeatures`), or
+ * none, once each, in the order of the families and their shapes. A family's upright and its small
+ * capitals load one file two ways, as `` and `+smcp`, which the page tells apart by the glyphs a
+ * font sets (`DrawOptions.features`, decision 0023).
  */
-export function fontFeatures(pkg: TemplatePackage): Map<string, string> {
-  const features = new Map<string, string>();
-  for (const { shapes, features: loaded } of pkg.fonts ?? [])
-    for (const file of Object.values(shapes))
-      if (!features.has(file)) features.set(file, loaded ?? "");
+export function fontFeatures(pkg: TemplatePackage): Map<string, string[]> {
+  const features = new Map<string, string[]>();
+  for (const family of pkg.fonts ?? [])
+    for (const shape of Object.values(family.shapes)) {
+      const ways = features.get(shapeFile(shape)) ?? [];
+      const way = shapeFeatures(family, shape) ?? "";
+      if (!ways.includes(way)) ways.push(way);
+      features.set(shapeFile(shape), ways);
+    }
   return features;
 }
 

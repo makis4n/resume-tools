@@ -198,7 +198,8 @@ the survey and the intake both call.
   compiled from a dumped format lacks (decisions 0003 and 0014): `pdf:majorversion`,
   `pdf:minorversion`, `dvipdfmx:config`, and xcolor's black, found by where it is, the
   `color push gray 0` at the bottom of the colour stack that no `color pop` takes off, with any
-  black nothing takes off above it. The first version left every special out, and kept only a
+  black nothing takes off above it (decision 0023 adds black in RGB and CMYK, and a white
+  `\pagecolor`'s background). The first version left every special out, and kept only a
   native font's file, so that a lost colour, photo, fake bold, slant or colour passed. On the
   engine: an article with xcolor and hyperref compiled whole on pdfTeX has that one black more
   than its body, marked and compiled from a format of its preamble, and the two are the same; a

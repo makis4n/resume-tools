@@ -650,13 +650,20 @@ const EDITOR_MARKER = /^rt:[bepl]:/i;
 /**
  * The specials LaTeX writes at the first shipout of a whole compile, which a body compiled from a
  * dumped format lacks, and which set nothing on the page (decisions 0003 and 0014): hyperref's PDF
- * version and dvipdfmx's configuration. xcolor's black, the fourth, is found by where it is
- * (`firstBlack`).
+ * version and dvipdfmx's configuration, and a white page's background, which xcolor's
+ * `\pagecolor{white}` writes there, as AltaCV's class has it (decision 0023), the colour a page has
+ * anyway. xcolor's black, the fifth, is found by where it is (`firstBlack`).
  */
-const FIRST_SHIPOUT = /^(?:pdf:\s*(?:majorversion|minorversion)|dvipdfmx:\s*config)(?![A-Za-z])/i;
+const FIRST_SHIPOUT =
+  /^(?:pdf:\s*(?:majorversion|minorversion)|dvipdfmx:\s*config)(?![A-Za-z])|^background\s+(?:gray\s+1(?:\.0*)?|rgb(?:\s+1(?:\.0*)?){3}|cmyk(?:\s+0(?:\.0*)?){4})$/i;
+
+/** Black in any of xcolor's models: `gray 0`, `rgb 0 0 0` or `cmyk 0 0 0 1`, as a push. */
+const BLACK =
+  /^color\s+push\s+(?:gray\s+0(?:\.0*)?|rgb(?:\s+0(?:\.0*)?){3}|cmyk(?:\s+0(?:\.0*)?){3}\s+1(?:\.0*)?)$/i;
 
 /**
- * xcolor's black of a whole compile's first shipout, `color push gray 0`, which no `color pop`
+ * xcolor's black of a whole compile's first shipout, `color push gray 0`, or `rgb 0 0 0` or
+ * `cmyk 0 0 0 1` in a document whose colour model is RGB or CMYK, as AltaCV's is, which no `color pop`
  * ever takes off: at the end of the output, the bottom of the colour stack, with any other black
  * nothing takes off above it, the black the PDF starts in. A body compiled from a dumped format
  * has not the first, so both streams leave all of them out.
@@ -671,8 +678,7 @@ function firstBlack(stream: GlyphStream): Set<ReferenceItem> {
     }
   const black = new Set<ReferenceItem>();
   for (const item of stack) {
-    if (item.kind !== "special" || !/^color\s+push\s+gray\s+0(?:\.0*)?$/i.test(item.text.trim()))
-      break;
+    if (item.kind !== "special" || !BLACK.test(item.text.trim())) break;
     black.add(item);
   }
   return black;

@@ -314,7 +314,7 @@ export function rowOf(rows: readonly Row[], offset: number): { row: number; colu
 
 /**
  * A font at the size a page uses it, in TeX points, and for a native font how XeTeX stretched,
- * slanted and letterspaced it (`FieldFont`).
+ * slanted and letterspaced it, and the features that substitute its glyphs (`FieldFont`).
  */
 export interface SizedFont {
   font: LayoutFont;
@@ -322,6 +322,18 @@ export interface SizedFont {
   extend?: number;
   slant?: number;
   letterSpace?: number;
+  features?: readonly string[];
+}
+
+/**
+ * The CSS `font-feature-settings` that set a native font's rows with the features XeTeX set its
+ * glyphs with (`FieldFont.features`), each an OpenType tag CSS takes as it is, as `"smcp" 1`:
+ * a browser applies no such feature unasked (decision 0023). `normal` for none.
+ */
+export function featureSettings(features: readonly string[] | undefined): string {
+  return features === undefined || features.length === 0
+    ? "normal"
+    : features.map((tag) => `${cssString(tag)} 1`).join(", ");
 }
 
 /** The characters a page font's web font maps, with their codes; none when it has no outlines. */
@@ -355,6 +367,10 @@ function texFace(font: PageFont, size: number): Face {
  * character, so the letterspacing goes after every glyph and is taken out of the space's width,
  * which sets a word and the space after it as wide as XeTeX does, the last word of a line a
  * letterspace wider. XeTeX's `slant` moves no glyph and adds to `\fontdimen1`.
+ *
+ * A font loaded with features that substitute glyphs (`FieldFont.features`), as small capitals are
+ * set with `smcp`, measures a character as the glyph they make of the one its character map gives
+ * it (`NativeFontFile.substitute`), as XeTeX's shaping sets it, and so its hyphen (decision 0023).
  */
 function nativeFace(
   font: NativePageFont,
@@ -362,8 +378,13 @@ function nativeFace(
   extend = 1,
   letterSpace = 0,
   slanted = 0,
+  features: readonly string[] = [],
 ): Face {
   const { file } = font;
+  const codeFor = (char: string) => {
+    const glyph = file?.glyphFor(char);
+    return glyph === undefined || features.length === 0 ? glyph : file?.substitute(glyph, features);
+  };
   const scale = file === undefined ? 0 : (size * extend) / file.unitsPerEm;
   const space = Math.round((file?.spaceAdvance ?? 0) * scale) + letterSpace;
   const glue = {
@@ -373,7 +394,7 @@ function nativeFace(
     extraSpace: Math.trunc(space / 3),
   };
   return {
-    codeFor: (char) => file?.glyphFor(char),
+    codeFor,
     widthOf: (glyph) => Math.round((file?.advanceOf(glyph) ?? 0) * scale) + letterSpace,
     italicOf: (glyph) => {
       const past = (file?.boxOf(glyph)?.[2] ?? 0) - (file?.advanceOf(glyph) ?? 0);
@@ -381,15 +402,15 @@ function nativeFace(
     },
     slant: (file?.slant ?? 0) * extend + slanted,
     spaceGlue: () => glue,
-    hyphenChar: file?.glyphFor("-") ?? -1,
+    hyphenChar: codeFor("-") ?? -1,
   };
 }
 
 /** A font's face at the size the page uses it, by its kind. */
-function faceOf({ font, size, extend, slant, letterSpace }: SizedFont): Face {
+function faceOf({ font, size, extend, slant, letterSpace, features }: SizedFont): Face {
   const scaled = Math.round(size * PT);
   return font.kind === "native"
-    ? nativeFace(font, scaled, extend, Math.round((letterSpace ?? 0) * PT), slant)
+    ? nativeFace(font, scaled, extend, Math.round((letterSpace ?? 0) * PT), slant, features)
     : texFace(font, scaled);
 }
 
@@ -756,6 +777,8 @@ const cssString = (text: string) => `"${text.replace(/["\\]/g, "\\$&")}"`;
 interface Frame {
   setting: Setting;
   family: string;
+  /** The rows' `font-feature-settings` (`featureSettings`). */
+  features: string;
   /** The first row's top left, in CSS pixels in the page's container. */
   left: number;
   top: number;
@@ -811,6 +834,7 @@ function frameOf(
   const frame = {
     setting,
     family: ready.family,
+    features: featureSettings(layout.features),
     left: at.x - box.left - container.clientLeft + container.scrollLeft,
     top: at.y - baseline - box.top - container.clientTop + container.scrollTop,
     fontPx,
@@ -860,6 +884,7 @@ class FieldRows {
       top: `${frame.top}px`,
       width: width === undefined ? "max-content" : `${width}px`,
       fontFamily: frame.family,
+      fontFeatureSettings: frame.features,
       fontSize: `${frame.fontPx}px`,
       lineHeight: `${frame.lineHeightPx}px`,
     });
@@ -1189,7 +1214,11 @@ function RichField(props: OpenProps) {
     for (const [variant, font] of all) {
       const own = families.get(font.font.name);
       if (own !== undefined || variants.has(variant))
-        looks.set(variant, { family: own ?? family ?? "serif", scale: font.size / layout.size });
+        looks.set(variant, {
+          family: own ?? family ?? "serif",
+          scale: font.size / layout.size,
+          features: featureSettings(font.features),
+        });
     }
     return looks;
   }, [all, variants, families, family, layout]);

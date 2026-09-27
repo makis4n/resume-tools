@@ -23,10 +23,10 @@
  * a file that is there is loaded only if present, and no need (`references`). That reading is the
  * import pipeline's intake's too, and lives with it, in `src/import/source.ts`.
  *
- * The tree is its file list alone, the engine's manifest (`readTree`): a class or package is there
- * when a `.cls` or `.sty` of its name is, a font file when an OpenType or TrueType file of its name
- * is, and a family when `TREE_FAMILIES` names it and the tree holds the file it names for it
- * (`src/import/fonts.ts`).
+ * The tree is the engine's manifest (`readTree`): a class or package is there when a `.cls` or
+ * `.sty` of its name is, a font file when an OpenType or TrueType file of its name is, and a family
+ * when one of the tree's font files names it, as the manifest's table of their tables records
+ * (`src/import/fonts.ts`, decision 0023).
  *
  * They are pure functions over text and the tree's file list, so that they can be tested on
  * invented documents; what they return names classes, packages, fonts and commands, and counts,

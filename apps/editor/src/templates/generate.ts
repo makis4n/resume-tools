@@ -34,12 +34,15 @@ import {
   type DOCUMENT_SLOTS,
   defaultControls,
   type ENTRY_SLOTS,
+  type FontAdjust,
   type FontFamily,
   type HEADER_SLOTS,
   type ITEM_SLOTS,
   type LABELLED_ITEM_SLOTS,
   type LINK_SLOTS,
   type SECTION_SLOTS,
+  shapeFeatures,
+  shapeFile,
   type TemplatePackage,
 } from "./package";
 import { PRELUDE } from "./prelude";
@@ -171,23 +174,64 @@ export function generateFormat(pkg: TemplatePackage, values: ControlValues): Gen
  * A XeTeX package's fonts as NFSS declarations, decision 0003's loop: each family in the TU
  * encoding, with `\DeclareFontFamily{TU}{<family>}{}`, and each shape as its file at every size,
  * with `\DeclareFontShape{TU}{<family>}{<series>}{<shape>}{<->"[<file>]:<features>"}{}`, or
- * `[<file>]` alone for a family without features. XeTeX finds the file by its name through
- * kpathsea, and loads nothing until a shape is selected, so the format they are dumped in holds no
- * native font and dumps; a template selects them in the body, as its preamble's
+ * `[<file>]` alone for a shape without features. A shape's features are its family's and its own
+ * (`shapeFeatures`, decision 0023); a family's scale goes before the name, `<->s*[<scale>]`, and
+ * what fontspec did to a font as it loaded it (`FontAdjust`) in the declaration's last argument,
+ * which NFSS runs once the font is loaded. XeTeX finds the file by its name through kpathsea, and
+ * loads nothing until a shape is selected, so the format they are dumped in holds no native font
+ * and dumps; a template selects them in the body, as its preamble's
  * `\renewcommand{\rmdefault}{<family>}` does at `\begin{document}`. In the families' and shapes'
  * order, a line each (decision 0014).
  */
 export function fontDeclarations(fonts: readonly FontFamily[]): string {
   const lines: string[] = [];
-  for (const { family, shapes, features } of fonts) {
-    lines.push(`\\DeclareFontFamily{TU}{${family}}{}`);
-    for (const [key, file] of Object.entries(shapes)) {
-      const [series, shape] = key.split("/");
+  for (const family of fonts) {
+    lines.push(`\\DeclareFontFamily{TU}{${family.family}}{}`);
+    const size = family.scale === undefined ? "<->" : `<->s*[${texDecimal(family.scale)}]`;
+    const adjust = adjustCode(family.adjust);
+    for (const [key, shape] of Object.entries(family.shapes)) {
+      const [series, shapeName] = key.split("/");
+      const features = shapeFeatures(family, shape);
+      const file = shapeFile(shape);
       const name = features === undefined ? `[${file}]` : `[${file}]:${features}`;
-      lines.push(`\\DeclareFontShape{TU}{${family}}{${series}}{${shape}}{<->"${name}"}{}`);
+      lines.push(
+        `\\DeclareFontShape{TU}{${family.family}}{${series}}{${shapeName}}{${size}"${name}"}{${adjust}}`,
+      );
     }
   }
   return lines.join("\n");
+}
+
+/**
+ * A number as TeX reads a decimal: its digits, and at most five places, which is past the 2^-16
+ * TeX keeps of a factor; never an exponent, which TeX cannot read.
+ */
+export function texDecimal(value: number): string {
+  if (Number.isInteger(value)) return String(value);
+  const fixed = value.toFixed(5).replace(/0+$/, "").replace(/\.$/, "");
+  return fixed === "-0" ? "0" : fixed;
+}
+
+/**
+ * What fontspec did to a font as it loaded it (`FontAdjust`), as the code `\DeclareFontShape` runs
+ * after loading it, in fontspec's order: the space, its stretch and its shrink scaled, the space
+ * after a sentence set, and the hyphenation character. Empty for none.
+ */
+function adjustCode(adjust: FontAdjust | undefined): string {
+  if (adjust === undefined) return "";
+  let code = "";
+  if (adjust.wordSpace !== undefined) {
+    const [space, stretch, shrink] = adjust.wordSpace.map(texDecimal);
+    code += `\\fontdimen2\\font=${space}\\fontdimen2\\font`;
+    code += `\\fontdimen3\\font=${stretch}\\fontdimen3\\font`;
+    code += `\\fontdimen4\\font=${shrink}\\fontdimen4\\font`;
+  }
+  if (adjust.punctuationSpace !== undefined) {
+    const { factor, of } = adjust.punctuationSpace;
+    code += `\\fontdimen7\\font=${texDecimal(factor)}\\fontdimen${of === "space" ? 2 : 7}\\font`;
+  }
+  if (adjust.hyphenChar !== undefined) code += `\\hyphenchar\\font=${adjust.hyphenChar}\\relax`;
+  return code;
 }
 
 /**

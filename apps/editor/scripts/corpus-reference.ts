@@ -304,7 +304,14 @@ const REASON_LABELS: Readonly<Record<RefusalReason, string>> = {
   passes: "Refused: did not settle in three passes",
   timeout: `Refused: timed out, past ${LIMIT_MS / 1000} s`,
   intake: "Refused at intake",
+  feature: "Refused: a font feature this editor cannot reproduce",
+  difference: "Refused: fonts that come out otherwise",
 };
+
+/** The reasons a reference compile can give, which the table has a row each for. */
+const REFERENCE_REASONS = REFUSAL_REASONS.filter(
+  (reason) => reason !== "feature" && reason !== "difference",
+);
 
 /** The median of numbers, or undefined for none. */
 function median(values: readonly number[]): number | undefined {
@@ -426,7 +433,7 @@ export function referenceTable(rows: readonly ReferenceRow[]): string {
     `|---|${COLUMNS.map(() => "--:").join("|")}|`,
     count("Documents", () => true),
     count("Compiled to a reference", reference),
-    ...REFUSAL_REASONS.map((reason) =>
+    ...REFERENCE_REASONS.map((reason) =>
       count(REASON_LABELS[reason], (row) => row.outcome === reason),
     ),
     count("Reference of one page", (row) => reference(row) && row.pages === 1),

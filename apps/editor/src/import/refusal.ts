@@ -11,8 +11,10 @@
  * Why a resume was refused: at intake, for its size, its files or its engine (`intake`, `luatex`);
  * or by the reference compile, for a template, package, font or file the editor or the upload
  * lacks, an image it shows in a format with no stand-in (`image`), another error (`stopped`), or
- * output that changed on every pass (`passes`); or by the corpus runner, for a compile past its
- * time (`timeout`).
+ * output that changed on every pass (`passes`); by the corpus runner, for a compile past its
+ * time (`timeout`); or by the XeTeX rewrite of its fonts (decision 0023), for a fontspec feature or
+ * package the rewrite cannot reproduce (`feature`), or fonts that come out otherwise than the
+ * reference's (`difference`).
  */
 export const REFUSAL_REASONS = [
   "intake",
@@ -25,6 +27,8 @@ export const REFUSAL_REASONS = [
   "stopped",
   "passes",
   "timeout",
+  "feature",
+  "difference",
 ] as const;
 export type RefusalReason = (typeof REFUSAL_REASONS)[number];
 
@@ -86,6 +90,8 @@ export function refusal(reason: RefusalReason, name?: string, log?: string): Ref
     passes:
       "This resume came out differently every time it was compiled, so this editor cannot take it.",
     timeout: "This resume took too long to compile.",
+    feature: `This resume sets its fonts with ${shown}, which this editor cannot reproduce.`,
+    difference: `This editor sets this resume's font ${shown} otherwise than the resume does, so it cannot take it.`,
   };
   return {
     refused: true,
