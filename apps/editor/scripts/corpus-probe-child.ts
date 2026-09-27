@@ -4,7 +4,9 @@
  * through the intake, the reference compile, the signatures' two compiles, asked of the body's
  * commands and the preamble's, the parse, and the probe; and answer with the document's row, names
  * of macros and numbers only, and the whole probe, whose candidates hold the document's text,
- * which the parent keeps under `.corpus/` alone.
+ * which the parent keeps under `.corpus/` alone. The probe leaves a pdfTeX document's format in
+ * the session for item 7; the child drops it once the row is made, so that a child's formats do
+ * not pile up, 6 to 9 MB each, over the documents it takes.
  *
  * The editor's modules are written for Vite, so this file, which Node runs as it is, loads them
  * through Vite's module runner with the app's own config, as `corpus-parse-child.ts` does, and
@@ -62,7 +64,7 @@ async function main() {
   const manifest = JSON.parse(
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
   ) as EngineManifest;
-  const tree = readTree(manifest.files);
+  const tree = readTree(manifest.files, manifest.fonts);
   const treeImage = treeImages(
     manifest.files,
     (path) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path))),
@@ -96,6 +98,7 @@ async function main() {
     if ("refused" in built) return done({ outcome: "not parsed", engine });
     try {
       const result = await probe(session, fonts, taken, made, built, found, { treeImage });
+      if (result.format !== undefined) session.dropFormat("pdftex", result.format);
       done(probeRow(result), result);
     } catch {
       // What went wrong may quote the document, so it goes unsaid.

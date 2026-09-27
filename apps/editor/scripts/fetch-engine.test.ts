@@ -1,7 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Font, Glyph, Path, parse } from "opentype.js";
 import { describe, expect, test } from "vitest";
 import type { EngineManifest } from "../src/engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/node";
@@ -13,6 +25,7 @@ import { INVENTED_XETEX } from "../src/templates/invented";
 import { defaultControls } from "../src/templates/package";
 import { parseDvi } from "../src/tex/dvi";
 import { withoutFontFolders } from "./fontconfig";
+import { isTreeFontPath, type ParseFont, treeFontOf, treeFonts } from "./fonttable";
 
 const SCRIPT = new URL("./fetch-engine.ts", import.meta.url);
 /** The pinned release and layout, so a manifest can match them and be read further. */
@@ -25,15 +38,26 @@ const SOURCES = [
   "scripts/containers.ts",
   "scripts/fontconfig.ts",
   "scripts/fontmaps.ts",
+  "scripts/fonttable.ts",
   "scripts/tlpdb.ts",
   "src/page/fontmap.ts",
 ];
 
+/** The files a finished build holds besides the manifest, which the script names `REQUIRED`. */
+const REQUIRED = [
+  ...(/const REQUIRED = \[([^\]]*)\]/.exec(readFileSync(SCRIPT, "utf8"))?.[1] ?? "").matchAll(
+    /"([^"]+)"/g,
+  ),
+].map((match) => match[1] ?? "");
+
 /**
  * Run a copy of the script from a folder of its own, where `.engine/` holds only `manifest`, and
  * with an empty release folder, so a run that goes on to build stops at the first release file.
+ * `finished` puts the engine's loaders and the files a build requires there too, empty, and the
+ * editor's packages beside the script, as a finished build and a checkout have them, so that only
+ * the manifest can tell the script to build.
  */
-function run(manifest: string) {
+function run(manifest: string, finished = false) {
   const dir = mkdtempSync(join(tmpdir(), "fetch-engine-"));
   try {
     for (const folder of ["scripts", "src/page", ".engine", "release"])
@@ -42,6 +66,19 @@ function run(manifest: string) {
     for (const source of SOURCES)
       copyFileSync(new URL(`../${source}`, import.meta.url), join(dir, source));
     writeFileSync(join(dir, ".engine/manifest.json"), manifest);
+    if (finished) {
+      symlinkSync(
+        fileURLToPath(new URL("../node_modules", import.meta.url)),
+        join(dir, "node_modules"),
+      );
+      for (const name of ["busytex.js", "busytex.mjs", "busytex.wasm"])
+        writeFileSync(join(dir, ".engine", name), "");
+      for (const path of REQUIRED) {
+        const at = join(dir, ".engine/files", path);
+        mkdirSync(dirname(at), { recursive: true });
+        writeFileSync(at, "");
+      }
+    }
     return spawnSync(
       process.execPath,
       [join(dir, "scripts/fetch-engine.ts"), "--from", join(dir, "release")],
@@ -64,6 +101,112 @@ describe("fetch-engine", () => {
     expect(stdout).toContain("Copying the release from");
     expect(stderr).toContain("busytex.js");
     expect(status).toBe(1);
+  });
+
+  // What read the font table, which the layout need not move for: a change to either rebuilds it.
+  describe.skipIf(!engineAvailable())("over a finished build", () => {
+    const built = engineAvailable()
+      ? (JSON.parse(readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8")) as EngineManifest)
+      : undefined;
+    const reader = {
+      opentype: (createRequire(import.meta.url)("opentype.js/package.json") as { version: string })
+        .version,
+      table: createHash("sha256")
+        .update(readFileSync(new URL("./fonttable.ts", import.meta.url)))
+        .digest("hex"),
+    };
+    /** The build's manifest, its files and fonts left out, with `fontReader` as given. */
+    const manifest = (fontReader: unknown) =>
+      JSON.stringify({ ...built, files: {}, fonts: {}, fontReader });
+
+    test("takes it as up to date when this reader read its font table", () => {
+      const { status, stdout } = run(manifest(reader), true);
+      expect(stdout).toContain(".engine/ is up to date");
+      expect(status).toBe(0);
+    });
+
+    test.each([
+      ["another version of opentype.js", { ...reader, opentype: "1.3.4" }],
+      ["another fonttable.ts", { ...reader, table: "0".repeat(64) }],
+      ["a reader it does not record", undefined],
+    ])("builds again when %s read its font table", (_, fontReader) => {
+      const { status, stdout } = run(manifest(fontReader), true);
+      expect(stdout).toContain("Copying the release from");
+      expect(status).toBe(1);
+    });
+  });
+});
+
+/**
+ * An invented OpenType font, written by opentype.js: a bold italic whose `liga` feature joins an f
+ * and an i and whose `smcp` feature makes a small capital a, in the default script.
+ */
+function inventedFont(): Uint8Array {
+  const glyph = (name: string, unicodes: number[] = []) =>
+    new Glyph({ name, unicodes, advanceWidth: 500, path: new Path() });
+  const font = new Font({
+    familyName: "Invented Sans",
+    styleName: "Bold Italic",
+    unitsPerEm: 1000,
+    ascender: 800,
+    descender: -200,
+    weightClass: 700,
+    widthClass: 4,
+    italicAngle: -12,
+    glyphs: [
+      glyph(".notdef"),
+      glyph("f", [0x66]),
+      glyph("i", [0x69]),
+      glyph("f_i"),
+      glyph("a", [0x61]),
+      glyph("a.sc"),
+    ],
+  });
+  // Features go in in alphabetical order, as opentype.js writes them.
+  font.substitution.add("liga", { sub: [1, 2], by: 3 });
+  font.substitution.addSingle("smcp", { sub: 4, by: 5 });
+  return new Uint8Array(font.toArrayBuffer());
+}
+
+describe("the font table", () => {
+  const read = parse as unknown as ParseFont;
+
+  test("records what a font's tables say of it: its names, weight, width, slant and features", () => {
+    expect(treeFontOf(inventedFont(), read)).toEqual({
+      family: "Invented Sans",
+      style: "Bold Italic",
+      fontFamily: "Invented Sans",
+      fontSubfamily: "Bold Italic",
+      fullName: "Invented Sans Bold Italic",
+      postScriptName: "InventedSansBoldItalic",
+      weight: 700,
+      width: 4,
+      italic: true,
+      bold: true,
+      // A thousand times the tangent of its 12 degrees, as XeTeX's font manager reckons it.
+      slant: 212,
+      scripts: ["DFLT"],
+      features: ["liga", "smcp"],
+    });
+  });
+
+  test("records the tree's OpenType and TrueType files alone, and names one it cannot read", () => {
+    const fonts = "/texlive/texmf-dist/fonts";
+    const files = {
+      [`${fonts}/opentype/invented/InventedSans-BoldItalic.otf`]: 1,
+      [`${fonts}/truetype/invented/Broken.ttf`]: 1,
+      [`${fonts}/type1/invented/InventedSans.pfb`]: 1,
+      "/texlive/texmf-dist/tex/latex/invented/invented.sty": 1,
+    };
+    const bytes = inventedFont();
+    const { fonts: table, skipped } = treeFonts(
+      files,
+      (path) => (path.endsWith(".otf") ? bytes : new Uint8Array([0, 1, 0, 0, 0])),
+      read,
+    );
+    expect(Object.keys(table)).toEqual([`${fonts}/opentype/invented/InventedSans-BoldItalic.otf`]);
+    expect(skipped).toEqual([`${fonts}/truetype/invented/Broken.ttf`]);
+    expect(Object.keys(files).map(isTreeFontPath)).toEqual([true, true, false, false]);
   });
 });
 

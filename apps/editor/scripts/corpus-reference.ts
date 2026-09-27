@@ -305,7 +305,17 @@ const REASON_LABELS: Readonly<Record<RefusalReason, string>> = {
   parse: "Refused: the parser could not read its body",
   timeout: `Refused: timed out, past ${LIMIT_MS / 1000} s`,
   intake: "Refused at intake",
+  feature: "Refused: a font feature this editor cannot reproduce",
+  difference: "Refused: fonts that come out otherwise",
 };
+
+/**
+ * The reasons a reference compile can give, which the table has a row each for: not the parser's,
+ * which come after the reference, nor the font rewrite's (decision 0023).
+ */
+const REFERENCE_REASONS = REFUSAL_REASONS.filter(
+  (reason) => reason !== "parse" && reason !== "feature" && reason !== "difference",
+);
 
 /** The median of numbers, or undefined for none. */
 function median(values: readonly number[]): number | undefined {
@@ -427,8 +437,7 @@ export function referenceTable(rows: readonly ReferenceRow[]): string {
     `|---|${COLUMNS.map(() => "--:").join("|")}|`,
     count("Documents", () => true),
     count("Compiled to a reference", reference),
-    // The parser's refusals come after the reference, which never gives one.
-    ...REFUSAL_REASONS.filter((reason) => reason !== "parse").map((reason) =>
+    ...REFERENCE_REASONS.map((reason) =>
       count(REASON_LABELS[reason], (row) => row.outcome === reason),
     ),
     count("Reference of one page", (row) => reference(row) && row.pages === 1),

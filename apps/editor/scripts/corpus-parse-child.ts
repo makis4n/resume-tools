@@ -131,7 +131,7 @@ async function main() {
   const manifest = JSON.parse(
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
   ) as EngineManifest;
-  const tree = readTree(manifest.files);
+  const tree = readTree(manifest.files, manifest.fonts);
   /** The tree's classes by their file's name, the first of a name, as `readTree` finds them. */
   const treeClasses = new Map<string, string>();
   for (const path of Object.keys(manifest.files)) {

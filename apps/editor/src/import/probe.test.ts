@@ -11,7 +11,15 @@ import { bound, fastestAsync } from "../test/timing";
 import { type Candidate, candidatesOf, marked } from "./candidates";
 import { readTree } from "./fonts";
 import { type Intake, intake } from "./intake";
-import { bodyOf, bodyOfText, buildTree, parseBody, readBody, type Signatures } from "./parse";
+import {
+  bodyOf,
+  bodyOfText,
+  buildTree,
+  parseBody,
+  readBody,
+  type Signatures,
+  usesOf,
+} from "./parse";
 import {
   type Aggregate,
   aggregate,
@@ -26,12 +34,13 @@ import {
   probeUses,
   settle,
   suspectsIn,
+  type UncoveredRun,
   uncoveredRuns,
 } from "./probe";
 import type { GlyphStream, ReferenceItem } from "./reference";
 import { reference } from "./reference";
 import { isRefusal } from "./refusal";
-import { signatures } from "./signatures";
+import { type EngineSignatures, signatures } from "./signatures";
 
 // Every document, class, tree and log here is invented for these tests: invented commands with
 // invented names that say so, and invented words. Nothing is taken from a real resume.
@@ -130,7 +139,8 @@ describe("settling the candidates", () => {
       "c6-1": "vanished",
     });
     const found = await settle(set, compile, 64);
-    expect(compiled).toHaveLength(1);
+    // The set, and the one editable candidate alone, as item 7 would mark it.
+    expect(compiled).toEqual([set.map((each) => each.id), ["c1-1"]]);
     expect(verdictsOf(found)).toEqual({
       "c1-1": "editable together",
       "c2-1": "twice together",
@@ -149,8 +159,9 @@ describe("settling the candidates", () => {
     expect([...found.verdicts.values()].filter((each) => each.verdict === "editable")).toHaveLength(
       15,
     );
-    // Halving finds one of sixteen in two compiles a level.
-    expect(found.compiles).toBeLessThanOrEqual(1 + 2 * Math.log2(16));
+    // Halving finds one of sixteen in two compiles a level, and the fifteen left take one more
+    // together, since no half held just them.
+    expect(found.compiles).toBeLessThanOrEqual(1 + 2 * Math.log2(16) + 1);
     const named = engine({ "c11-1": "breaks" }, true);
     const quick = await settle(set, named.compile, 64);
     const only = (settlement: typeof found) =>
@@ -184,7 +195,102 @@ describe("settling the candidates", () => {
       settled: "alone",
     });
     expect(found.verdicts.get("c2-1")?.verdict).toBe("editable");
-    expect(compiled).toEqual([["c1-1", "c2-1"], ["c1-1"]]);
+    expect(compiled).toEqual([["c1-1", "c2-1"], ["c1-1"], ["c2-1"]]);
+  });
+
+  test("tries again without the mover a field a move split across pages or set twice", async () => {
+    // `a` moves the page and its paragraph gains a line: with `a` wrapped, `b`'s field straddles
+    // the page's end, and a running head brings `c`'s onto the page. Without `a`, both are fine.
+    const set = ["a", "b", "c"].map((id) => candidate(id, `invented${id}`));
+    const compiled: string[][] = [];
+    const compile: CompileSet = async (given) => {
+      const ids = given.map((each) => each.id);
+      compiled.push(ids);
+      const moved = ids.includes("a");
+      const own = new Map<string, Own>(
+        given.map((each): [string, Own] => {
+          if (moved && each.id === "b") return [each.id, { ok: false, reason: "split" }];
+          if (moved && each.id === "c")
+            return [each.id, { ok: false, reason: "twice", detail: "page", glyphs: [] }];
+          return [each.id, { ok: true, glyphs: [] }];
+        }),
+      );
+      return {
+        broke: false,
+        same: !moved,
+        ...(moved ? { difference: "pages" as const, suspects: ["a"] } : {}),
+        torn: false,
+        own,
+      };
+    };
+    const found = await settle(set, compile, 64);
+    expect(verdictsOf(found)).toEqual({
+      a: "moved alone",
+      b: "editable together",
+      c: "editable together",
+    });
+    expect(compiled).toEqual([["a", "b", "c"], ["a"], ["b", "c"]]);
+    // In an output that sets the reference's glyphs, a field on two pages is its own doing.
+    const still: CompileSet = async (given) => ({
+      broke: false,
+      same: true,
+      torn: false,
+      own: new Map(
+        given.map((each): [string, Own] => [
+          each.id,
+          each.id === "b" ? { ok: false, reason: "split" } : { ok: true, glyphs: [] },
+        ]),
+      ),
+    });
+    expect((await settle(set, still, 64)).verdicts.get("b")).toEqual({
+      verdict: "split",
+      settled: "together",
+    });
+  });
+
+  test("compiles every editable candidate together, and locks the one that fails beside the others", async () => {
+    // `a` and `c` move nothing alone, and the page together, as two fields whose markers each take
+    // a little from one line would.
+    const set = ["a", "b", "c", "d"].map((id) => candidate(id, `invented${id}`));
+    const clash = (ids: readonly string[]) => ids.includes("a") && ids.includes("c");
+    const engineOf = () => {
+      const compiled: string[][] = [];
+      const compile: CompileSet = async (given) => {
+        const ids = given.map((each) => each.id);
+        compiled.push(ids);
+        return {
+          broke: false,
+          same: !clash(ids),
+          ...(clash(ids) ? { difference: "position" as const, suspects: ["c"] } : {}),
+          torn: false,
+          own: new Map(given.map((each): [string, Own] => [each.id, { ok: true, glyphs: [] }])),
+        };
+      };
+      return { compile, compiled };
+    };
+    const { compile, compiled } = engineOf();
+    const found = await settle(set, compile, 64);
+    expect(verdictsOf(found)).toEqual({
+      a: "editable together",
+      b: "editable together",
+      c: "moved union",
+      d: "editable together",
+    });
+    expect(found.verdicts.get("c")?.detail).toBe("position");
+    // What item 7 marks, every editable candidate together, is a set a compile passed.
+    const editable = set.filter((each) => found.verdicts.get(each.id)?.verdict === "editable");
+    expect(compiled).toContainEqual(editable.map((each) => each.id));
+    expect(clash(editable.map((each) => each.id))).toBe(false);
+    // With too little budget to find which, the largest set known to pass stays editable.
+    const short = engineOf();
+    const left = await settle(set, short.compile, 4);
+    expect(short.compiled).toHaveLength(4);
+    expect(verdictsOf(left)).toEqual({
+      a: "editable together",
+      b: "editable together",
+      c: "untested budget",
+      d: "editable together",
+    });
   });
 
   test("tries the others of a kind one of which stopped a compile alone among themselves", async () => {
@@ -329,89 +435,189 @@ describe("gathering the verdicts", () => {
 });
 
 describe("the glyphs no editable field covers", () => {
-  const glyph = (h: number): ReferenceItem => ({
-    kind: "glyph",
-    font: "cmr10",
-    size: 655360,
-    code: 65,
-    h,
-    v: 100,
-  });
-  const stream: GlyphStream = {
-    pages: [{ items: Array.from({ length: 10 }, (_, i) => glyph(i * 1000)) }],
+  /** An invented page: a glyph for each character of `texts`, named by it unless `unnamed`. */
+  const page = (texts: readonly string[], unnamed = false): GlyphStream => ({
+    pages: [
+      {
+        items: [...texts.join("")].map(
+          (text, i): ReferenceItem => ({
+            kind: "glyph",
+            font: "cmr10",
+            size: 655360,
+            code: text.charCodeAt(0) % 128,
+            ...(unnamed ? {} : { text }),
+            h: i * 1000,
+            v: 100,
+          }),
+        ),
+      },
+    ],
     size: { width: 612, height: 792 },
     fonts: { tex: ["cmr10"], native: [], shipped: [] },
     specials: [],
+  });
+  /** Where `text` is in `source`. */
+  const spanOf = (source: string, text: string) => {
+    const start = source.indexOf(text);
+    if (start < 0) throw new Error(`no ${text} in the source`);
+    return { start, end: start + text.length };
   };
+  /** The first page's glyphs from `from` to before `to`. */
+  const places = (from: number, to: number): GlyphPlace[] =>
+    Array.from({ length: to - from }, (_, i): GlyphPlace => [0, from + i]);
+  const shown = (runs: readonly UncoveredRun[]) =>
+    runs.map(({ from, to, by, candidate: id, raw }) => ({
+      from,
+      to,
+      by,
+      ...(id === undefined ? {} : { id }),
+      ...(raw === undefined ? {} : { raw: raw.why }),
+    }));
 
-  test("are set down to a locked candidate, a raw chunk between the fields around them, or the template", () => {
-    const candidates = [
-      decided("c1-1", "editable", { start: 0, end: 10 }),
-      decided("c2-1", "misaligned", { start: 20, end: 30 }),
-      decided("c3-1", "editable", { start: 40, end: 50 }),
-    ];
-    const evidence = new Map<string, GlyphPlace[]>([
-      [
-        "c1-1",
-        [
-          [0, 0],
-          [0, 1],
-          [0, 2],
-        ],
-      ],
-      [
-        "c2-1",
-        [
-          [0, 5],
-          [0, 6],
-        ],
-      ],
-      [
-        "c3-1",
-        [
-          [0, 8],
-          [0, 9],
-        ],
-      ],
-    ]);
+  test("are set down to what sets them by the text their source sets, and the rest to the template", () => {
+    // `\inventedslant` sets `Label:` before its argument and a period after it, which the source
+    // does not hold; its argument stopped TeX, so no compile placed its glyphs.
+    const source = String.raw`\inventedentry{Alpha}\texttt{Typed}\inventedslant{Beta}\inventedentry{Omega}`;
     const { runs, covered } = uncoveredRuns(
-      stream,
-      candidates,
-      evidence,
-      [{ start: 12, end: 15, why: "math" }],
-      60,
+      page(["Alpha", "Typed", "Label:", "Beta", ".", "Omega"]),
+      [
+        decided("c1-1", "editable", spanOf(source, "Alpha")),
+        decided("c2-1", "breaks", { ...spanOf(source, "Beta"), name: "inventedslant" }),
+        decided("c3-1", "editable", spanOf(source, "Omega")),
+      ],
+      new Map([
+        ["c1-1", places(0, 5)],
+        ["c3-1", places(21, 26)],
+      ]),
+      [{ ...spanOf(source, String.raw`\texttt{Typed}`), why: "typewriter" }],
+      { body: source, preamble: "" },
     );
-    expect(covered).toBe(5);
-    expect(
-      runs.map(({ from, to, by, candidate: id, raw }) => ({ from, to, by, id, raw: raw?.why })),
-    ).toEqual([
-      { from: 3, to: 5, by: "raw", id: undefined, raw: "math" },
-      { from: 5, to: 7, by: "candidate", id: "c2-1", raw: undefined },
-      { from: 7, to: 8, by: "chrome", id: undefined, raw: undefined },
+    expect(covered).toBe(10);
+    expect(shown(runs)).toEqual([
+      { from: 5, to: 10, by: "raw", raw: "typewriter" },
+      { from: 10, to: 16, by: "chrome" },
+      { from: 16, to: 20, by: "candidate", id: "c2-1" },
+      { from: 20, to: 21, by: "chrome" },
     ]);
-    expect(runs[0]?.first).toEqual({ h: 3000, v: 100 });
-    expect(runs[0]?.last).toEqual({ h: 4000, v: 100 });
+    expect(runs[0]?.first).toEqual({ h: 5000, v: 100 });
+    expect(runs[0]?.last).toEqual({ h: 9000, v: 100 });
   });
 
-  test("are set down to a locked candidate that set no evidence, before a raw chunk", () => {
-    const candidates = [
-      decided("c1-1", "editable", { start: 0, end: 10 }),
-      decided("c2-1", "moved", { start: 20, end: 30 }),
-      decided("c3-1", "editable", { start: 40, end: 50 }),
-    ];
-    const evidence = new Map<string, GlyphPlace[]>([
-      ["c1-1", [[0, 0]]],
-      ["c3-1", [[0, 9]]],
-    ]);
-    const { runs } = uncoveredRuns(
-      stream,
-      candidates,
-      evidence,
-      [{ start: 32, end: 35, why: "math" }],
-      60,
+  test("are a raw chunk's or a locked candidate's whole when their source lies in it", () => {
+    // A raw chunk with two parts, and a locked argument with two, a separator between each two.
+    const source = String.raw`\inventedraw{One $|$ Two}\inventedpair{Three $|$ Four}`;
+    const pair = spanOf(source, "Three $|$ Four");
+    const parts = ["One", "Two", "Three", "Four"].map((text, i) =>
+      decided(`t${i + 1}`, "editable", {
+        ...spanOf(source, text),
+        kind: "paragraph",
+        name: "",
+        index: undefined,
+        of: undefined,
+        ...(i >= 2 ? { within: "c1-1" } : {}),
+      }),
     );
-    expect(runs).toEqual([
-      expect.objectContaining({ from: 1, to: 9, by: "candidate", candidate: "c2-1" }),
+    const { runs } = uncoveredRuns(
+      page(["One", "|", "Two", "Three", "|", "Four"]),
+      [decided("c1-1", "raw", { ...pair, name: "inventedpair", unprobed: "raw" }), ...parts],
+      new Map([
+        ["t1", places(0, 3)],
+        ["t2", places(4, 7)],
+        ["t3", places(7, 12)],
+        ["t4", places(13, 17)],
+      ]),
+      [
+        { ...spanOf(source, String.raw`\inventedraw{One $|$ Two}`), why: "unknown" },
+        { start: pair.start + 6, end: pair.start + 9, why: "math" },
+      ],
+      { body: source, preamble: "" },
+    );
+    expect(shown(runs)).toEqual([
+      { from: 3, to: 4, by: "raw", raw: "unknown" },
+      { from: 12, to: 13, by: "candidate", id: "c1-1" },
+    ]);
+  });
+
+  test("are set down to a locked header field between the header's, and beside the body's to the header", () => {
+    const preamble = String.raw`\inventedname{Quill}\inventedtitle{Invented Title}\inventedplace{Nowhere}`;
+    const body = String.raw`\inventedentry{Alpha}`;
+    const header = (id: string, verdict: ProbeCandidate["verdict"], text: string) =>
+      decided(id, verdict, { ...spanOf(preamble, text), where: "preamble" });
+    // The header: the name, a separator, the title, the place, and a caption the class sets.
+    const { runs } = uncoveredRuns(
+      page(["Quill", "·", "InventedTitle", "Nowhere", "Contents", "Alpha"]),
+      [
+        header("h1-1", "editable", "Quill"),
+        header("h2-1", "moved", "Invented Title"),
+        header("h3-1", "editable", "Nowhere"),
+        decided("c1-1", "editable", spanOf(body, "Alpha")),
+      ],
+      new Map([
+        ["h1-1", places(0, 5)],
+        ["h3-1", places(19, 26)],
+        ["c1-1", places(34, 39)],
+      ]),
+      [],
+      { body, preamble },
+    );
+    expect(shown(runs)).toEqual([
+      { from: 5, to: 6, by: "chrome" },
+      { from: 6, to: 19, by: "candidate", id: "h2-1" },
+      { from: 26, to: 34, by: "chrome" },
+    ]);
+  });
+
+  test("are found among the other arguments of a call that sets them in another order", () => {
+    // `\inventedrow` sets its third argument between its first and its second, as a date at a
+    // row's end; its third stopped TeX, and its fourth, `Beta words`, holds its second's text.
+    const source = String.raw`\inventedrow{Alpha}{Beta}{Gamma}{Beta words}\inventedentry{Omega}`;
+    const { runs } = uncoveredRuns(
+      page(["Alpha", "Gamma", "Beta", "Betawords", "Omega"]),
+      [
+        decided("c1-1", "editable", { ...spanOf(source, "Alpha"), name: "inventedrow" }),
+        decided("c1-2", "editable", { ...spanOf(source, "{Beta}"), name: "inventedrow", index: 2 }),
+        decided("c1-3", "breaks", { ...spanOf(source, "Gamma"), name: "inventedrow", index: 3 }),
+        decided("c1-4", "breaks", {
+          ...spanOf(source, "Beta words"),
+          name: "inventedrow",
+          index: 4,
+        }),
+        decided("c2-1", "editable", { ...spanOf(source, "Omega"), name: "inventedentry" }),
+      ],
+      new Map([
+        ["c1-1", places(0, 5)],
+        ["c1-2", places(10, 14)],
+        ["c2-1", places(23, 28)],
+      ]),
+      [],
+      { body: source, preamble: "" },
+    );
+    expect(shown(runs)).toEqual([
+      { from: 5, to: 10, by: "candidate", id: "c1-3" },
+      { from: 14, to: 23, by: "candidate", id: "c1-4" },
+    ]);
+  });
+
+  test("are shared in proportion to their source when the page names none of their glyphs", () => {
+    const source = String.raw`\inventedentry{Alpha}\inventedgap{Beta}\texttt{Gamma}\inventedentry{Omega}`;
+    const { runs } = uncoveredRuns(
+      page(["Alpha", "12345678", "Omega"], true),
+      [
+        decided("c1-1", "editable", spanOf(source, "Alpha")),
+        decided("c2-1", "breaks", { ...spanOf(source, "Beta"), name: "inventedgap" }),
+        decided("c3-1", "editable", spanOf(source, "Omega")),
+      ],
+      new Map([
+        ["c1-1", places(0, 5)],
+        ["c3-1", places(13, 18)],
+      ]),
+      [{ ...spanOf(source, String.raw`\texttt{Gamma}`), why: "typewriter" }],
+      { body: source, preamble: "" },
+    );
+    // Four characters of source and fourteen: two glyphs of the eight and six.
+    expect(shown(runs)).toEqual([
+      { from: 5, to: 7, by: "candidate", id: "c2-1" },
+      { from: 7, to: 13, by: "raw", raw: "typewriter" },
     ]);
   });
 });
@@ -481,7 +687,7 @@ describe("the probe's work outside TeX", () => {
           results,
           settled.evidence,
           raw,
-          tree.source.length,
+          { body: tree.source, preamble: "" },
         );
       };
     };
@@ -502,14 +708,22 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
     const manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
-    tree = readTree(manifest.files);
+    tree = readTree(manifest.files, manifest.fonts);
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );
   }, 60_000);
 
-  /** An invented upload through the intake, the reference, the signatures, the parse and the probe. */
-  async function probed(files: Record<string, string>, budget?: number): Promise<Probe> {
+  /**
+   * An invented upload through the intake, the reference, the signatures, the parse and the probe,
+   * the engine asked of the preamble's commands with the body's, or, with `bodyOnly`, of the
+   * body's alone, as a caller that leaves the preamble's to the probe does; and the signatures the
+   * probe was given.
+   */
+  async function pipeline(
+    files: Record<string, string>,
+    options: { budget?: number; bodyOnly?: boolean } = {},
+  ): Promise<{ found: Probe; given: EngineSignatures }> {
     const zipped = Object.fromEntries(
       Object.entries(files).map(([path, text]) => [path, strToU8(text)]),
     );
@@ -522,18 +736,19 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
     const read = readBody(body);
     if (isRefusal(read)) throw new Error(read.message);
     const preamble = readBody(bodyOfText(body.preamble));
-    const found = await signatures(
-      session,
-      taken,
-      made,
-      body,
-      probeUses(read, isRefusal(preamble) ? undefined : preamble),
-    );
-    if (isRefusal(found)) throw new Error("no signatures");
-    const built = buildTree(read, found);
+    const uses =
+      options.bodyOnly === true
+        ? usesOf(read)
+        : probeUses(read, isRefusal(preamble) ? undefined : preamble);
+    const given = await signatures(session, taken, made, body, uses);
+    if (isRefusal(given)) throw new Error("no signatures");
+    const built = buildTree(read, given);
     if (isRefusal(built)) throw new Error(built.message);
-    return probe(session, fonts, taken, made, built, found, budget === undefined ? {} : { budget });
+    const budget = options.budget === undefined ? {} : { budget: options.budget };
+    return { found: await probe(session, fonts, taken, made, built, given, budget), given };
   }
+  const probed = async (files: Record<string, string>, budget?: number) =>
+    (await pipeline(files, budget === undefined ? {} : { budget })).found;
 
   const verdict = (found: Probe, name: string, index = 1) =>
     found.macros.find((each) => each.name === name && each.index === index);
@@ -551,6 +766,7 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
 \newcommand{\cvlink}[1]{\href{#1}{Invented link}\par}
 \newcommand{\cvtwice}[1]{#1, and again #1\par}
 \newcommand{\cvshout}[1]{\MakeUppercase{#1}\par}
+\newcommand{\cvlocale}[1]{\MakeUppercase[lang=de-x-eszett]{#1}\par}
 \newcommand{\cvgap}[1]{\hspace{#1}Invented gap\par}
 \newcommand{\cvhead}[1]{\markright{#1}#1\par}
 \newcommand{\cvmaybe}[1]{\ifx&#1&\else(#1)\fi\par}
@@ -586,7 +802,8 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
     expect(verdict(found, "cvmail")?.verdict).toBe("twice");
     expect(verdict(found, "cvlink")?.verdict).toBe("vanished");
     expect(verdict(found, "cvtwice")?.verdict).toBe("twice");
-    expect(verdict(found, "cvshout")?.verdict).toBe("case");
+    // Set through `\MakeUppercase`, whose capitals the aligner folds (decision 0021).
+    expect(verdict(found, "cvshout")?.verdict).toBe("editable");
     expect(verdict(found, "cvgap")?.verdict).toBe("breaks");
     expect(["twice", "moved"]).toContain(verdict(found, "cvhead")?.verdict);
     // An empty argument the macro tests moves the page; the others of it are editable.
@@ -598,9 +815,10 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
     expect(found.glyphs.covered).toBeLessThan(found.glyphs.reference);
   }, 60_000);
 
-  test("finds the same on an invented XeTeX document, compiled whole", async () => {
+  test("finds the same on an invented XeTeX document, compiled whole, and a case the aligner does not fold", async () => {
+    // Source Sans Pro has the capital ẞ, which German's `de-x-eszett` capitals set for ß.
     const found = await probed({
-      "cv.tex": `\\documentclass{inventedprobe}\n\\usepackage{fontspec}\n\\cvname{Quill Invented}\n\\begin{document}\n\\cvheader\n\\cvplain{Invented plain words}\n\\cvmail{quill@example.invalid}\n\\cvshout{Invented loud}\n\\cvgap{2em}\n\\end{document}\n`,
+      "cv.tex": `\\documentclass{inventedprobe}\n\\usepackage{fontspec}\n\\setmainfont{Source Sans Pro}\n\\cvname{Quill Invented}\n\\begin{document}\n\\cvheader\n\\cvplain{Invented plain words}\n\\cvmail{quill@example.invalid}\n\\cvshout{Invented loud}\n\\cvlocale{Invented große words}\n\\cvgap{2em}\n\\end{document}\n`,
       "inventedprobe.cls": CLASS,
     });
     expect(found.engine).toBe("xetex");
@@ -609,7 +827,10 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
     expect(verdict(found, "cvname")?.verdict).toBe("editable");
     expect(verdict(found, "cvplain")?.verdict).toBe("editable");
     expect(verdict(found, "cvmail")?.verdict).toBe("twice");
-    expect(verdict(found, "cvshout")?.verdict).toBe("case");
+    expect(verdict(found, "cvshout")?.verdict).toBe("editable");
+    // The aligner takes ß's capitals for SS, so ẞ matches only once glyphs and text are both
+    // folded whole to small letters, where it is ß.
+    expect(verdict(found, "cvlocale")?.verdict).toBe("case");
     expect(verdict(found, "cvgap")?.verdict).toBe("breaks");
   }, 60_000);
 
@@ -642,5 +863,109 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
     );
     expect(found.compiles).toBe(1);
     expect(found.candidates.every((each) => each.verdict === "untested")).toBe(true);
+  }, 60_000);
+
+  test("sets twice a title a table of contents repeats, from the pass that reads what the first wrote", async () => {
+    const found = await probed({
+      "cv.tex": String.raw`\documentclass{article}
+\begin{document}
+\tableofcontents
+\section{Invented Heading}
+Invented words for an invented page.
+\end{document}
+`,
+    });
+    expect(found.path).toBe("format");
+    expect(found.candidates.find((each) => each.kind === "section")).toMatchObject({
+      verdict: "twice",
+      detail: "page",
+    });
+    expect(found.candidates.find((each) => each.kind === "paragraph")?.verdict).toBe("editable");
+    // The compile that wrapped the title rewrote the contents, and took the pass that reads them;
+    // the one of the paragraph alone changed nothing, and took one.
+    expect(found.passes).toBe(found.compiles + 1);
+  }, 60_000);
+
+  test("keeps the italic correction a text command adds after a field, and adds none a declaration lacks", async () => {
+    const found = await probed({
+      "cv.tex": String.raw`\documentclass{article}
+\newcommand{\cvwhen}[1]{\textit{#1} and after\par}
+\newcommand{\cvdated}[1]{Invented {\slshape #1} and after\par}
+\newcommand{\cvslant}[1]{\textit{#1}. And after\par}
+\begin{document}
+\cvwhen{Invented half}
+\cvdated{Invented half}
+\cvslant{Invented half}
+\end{document}
+`,
+    });
+    expect(verdict(found, "cvwhen")?.verdict).toBe("editable");
+    // A declaration's slanted text gets no correction, from LaTeX or from the field.
+    expect(verdict(found, "cvdated")?.verdict).toBe("editable");
+    // LaTeX leaves the correction out before a period, and the field's own moves the period.
+    expect(verdict(found, "cvslant")).toMatchObject({ verdict: "moved" });
+  }, 60_000);
+
+  test("sets what no editable field covers down to the raw chunk, the locked argument or the template that sets it", async () => {
+    const found = await probed({
+      "cv.tex": String.raw`\documentclass{article}
+\newcommand{\cvplain}[1]{\textbf{#1}\par}
+\newcommand{\cvslant}[1]{Invented label: \textit{#1}. Done\par}
+\begin{document}
+\cvplain{Invented alpha}
+$x+y=z$ \par
+\cvslant{Invented half}
+\cvplain{Invented omega}
+\end{document}
+`,
+    });
+    const slant = found.candidates.find((each) => each.name === "cvslant");
+    expect(slant?.verdict).toBe("moved");
+    const glyphs = (by: UncoveredRun["by"], id?: string) =>
+      found.uncovered
+        .filter((run) => run.by === by && (id === undefined || run.candidate === id))
+        .reduce((sum, run) => sum + run.to - run.from, 0);
+    // The mathematics, a raw chunk: x, +, y, = and z.
+    expect(glyphs("raw")).toBe(5);
+    // The locked argument's twelve letters, which a compile placed though it moved the period.
+    expect(glyphs("candidate", slant?.id)).toBe(12);
+    // The label, the period and the word after, which only the macro sets, and the page's number.
+    expect(glyphs("chrome")).toBe(14 + 1 + 4 + 1);
+    expect(found.glyphs.covered).toBe(found.glyphs.reference - 5 - 12 - 20);
+  }, 60_000);
+
+  test("gives back the signatures of the header's macros a caller asked only of the body's", async () => {
+    const { found, given } = await pipeline(
+      {
+        "cv.tex": `\\documentclass{inventedprobe}\n\\cvname{Quill Invented}\n${BODY}`,
+        "inventedprobe.cls": CLASS,
+      },
+      { bodyOnly: true },
+    );
+    expect(given.commands.cvname).toBeUndefined();
+    expect(found.signaturesMs).toBeGreaterThan(0);
+    expect(found.signatures.commands.cvname?.kind).toBe("template");
+    const macro = found.signatures.macros.cvname;
+    expect(macro?.kind === "data" ? undefined : macro?.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(verdict(found, "cvname")?.verdict).toBe("editable");
+    // What the caller gave stays.
+    expect(found.signatures.commands.cvplain).toEqual(given.commands.cvplain);
+  }, 60_000);
+
+  test("leaves its format in the session for the assembled package's check, for its caller to drop", async () => {
+    const files = {
+      "cv.tex": `\\documentclass{inventedprobe}\n\\begin{document}\n\\cvplain{Invented plain words}\n\\end{document}\n`,
+      "inventedprobe.cls": CLASS,
+    };
+    const found = await probed(files);
+    const name = found.format ?? "";
+    expect(name).toMatch(/^import-[0-9a-f]{8}$/);
+    const body = "\\begin{document}\\cvplain{Invented}\\end{document}";
+    expect(session.compile("pdftex", name, body, { job: "kept" }).ok).toBe(true);
+    session.dropFormat("pdftex", name);
+    expect(() => session.compile("pdftex", name, body, { job: "kept" })).toThrow(
+      `no pdftex format named ${name}`,
+    );
+    session.forget("kept");
   }, 60_000);
 });

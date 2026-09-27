@@ -16,7 +16,7 @@ import { TexLiveIndex } from "../page/texlive";
 import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
-import { defaultControls, parsePackage } from "../templates/package";
+import { defaultControls, fontFeatures, parsePackage } from "../templates/package";
 import { PRELUDE } from "../templates/prelude";
 import { bound, fastest, median } from "../test/timing";
 import { glyphOf, glyphText, textToCode } from "../tex/glyphs";
@@ -40,6 +40,7 @@ import {
   deleteAt,
   deleteRange,
   faceFor,
+  featureSettings,
   layoutRows,
   lineStartOf,
   namedVariants,
@@ -52,6 +53,7 @@ import {
   type Setting,
   settingFor,
   shouldClose,
+  shownCase,
   slantOf,
   spaceWidths,
   variantFontsOf,
@@ -150,6 +152,22 @@ describe("layoutRows", () => {
     expect(shared[0]?.wordSpacingSp).toBeGreaterThan(0);
     const rigid = { ...raggedRight, spaceSkip: { ...ZERO_GLUE, width: face.spaceGlue().space } };
     for (const row of layoutRows(BULLET, face, rigid)) expect(row.wordSpacingSp).toBe(0);
+  });
+
+  it("measures a field the page folds to a case in that case, and keeps the text's offsets", () => {
+    // Each character in capitals, or small letters, where that is as long: ß, whose capitals are
+    // SS, and İ, whose small letter is i and a dot, are measured as they stand.
+    expect(shownCase("Stra\u{df}e \u{131}l\u{131}k", "upper")).toBe("STRA\u{df}E ILIK");
+    expect(shownCase("\u{130}PEK", "lower")).toBe("\u{130}pek");
+    expect(shownCase("As typed", undefined)).toBe("As typed");
+    // Glyphs of both cases, as a class that capitalises each word's first letter sets them, which
+    // no one case shows: as typed.
+    expect(shownCase("Machine learning", "mixed")).toBe("Machine learning");
+    expect(layoutRows(BULLET, face, params, "mixed")).toEqual(layoutRows(BULLET, face, params));
+    // The bullet in capitals is wider, so it takes more rows, which tile the text as it stands.
+    const rows = layoutRows(BULLET, face, params, "upper");
+    expect(rows.length).toBeGreaterThan(layoutRows(BULLET, face, params).length);
+    expect(texts(BULLET, rows).join("")).toBe(BULLET);
   });
 
   it("sets a field TeX never breaks on one row, and an empty field on one empty row", () => {
@@ -462,6 +480,61 @@ describe("faceFor", () => {
     });
   });
 
+  /**
+   * An invented native font with small capitals and a capitals' hyphen, which its `smcp` and `case`
+   * features make of the a and the hyphen, in a 2000-unit em.
+   */
+  function capsFont(): NativePageFont {
+    const glyph = (glyphName: string, unicodes: number[], advanceWidth: number) =>
+      new Glyph({ name: glyphName, unicodes, advanceWidth, path: new Path() });
+    const font = new Font({
+      familyName: "Invented Caps",
+      styleName: "Regular",
+      unitsPerEm: 2000,
+      ascender: 1800,
+      descender: -400,
+      glyphs: [
+        glyph(".notdef", [], 1000),
+        glyph("space", [0x20], 500),
+        glyph("a", [0x61], 900),
+        glyph("a.sc", [], 1040),
+        glyph("hyphen", [0x2d], 660),
+        glyph("hyphen.case", [], 700),
+      ],
+    });
+    // Features go in in alphabetical order, as opentype.js writes them.
+    font.substitution.addSingle("case", { sub: 4, by: 5 });
+    font.substitution.addSingle("smcp", { sub: 2, by: 3 });
+    const file = parseNativeFont(new Uint8Array(font.toArrayBuffer()));
+    return { kind: "native", name: "Invented-Caps.otf", file };
+  }
+
+  it("measures a native font loaded with features as the glyphs they make, as XeTeX sets them", () => {
+    const font = capsFont();
+    const width = (units: number) => Math.round((units * 10 * PT) / 2000);
+    const plain = faceFor({ font, size: 10 });
+    expect(plain.widthOf(plain.codeFor("a") ?? -1)).toBe(width(900));
+    // With smcp, an a is its small capital, and its hyphen is as it was.
+    const small = faceFor({ font, size: 10, features: ["smcp"] });
+    expect(small.codeFor("a")).toBe(3);
+    expect(small.widthOf(small.codeFor("a") ?? -1)).toBe(width(1040));
+    expect(small.hyphenChar).toBe(4);
+    // With case too, TeX's hyphen is the capitals' one, which it breaks a line with.
+    const cased = faceFor({ font, size: 10, features: ["smcp", "case"] });
+    expect(cased.hyphenChar).toBe(5);
+    const boxes = paragraphNodes("a a", small).filter((node) => node.kind === "box");
+    expect(boxes.map((node) => node.kind === "box" && node.width)).toEqual([
+      width(1040),
+      width(1040),
+    ]);
+  });
+
+  it("sets the rows with the features XeTeX set the glyphs with, where the browser sets none", () => {
+    expect(featureSettings(["smcp", "pnum"])).toBe('"smcp" 1, "pnum" 1');
+    expect(featureSettings([])).toBe("normal");
+    expect(featureSettings(undefined)).toBe("normal");
+  });
+
   it("measures what a native font lacks in another native font of the field", () => {
     const letters = { font: nativeFont("Invented-Regular.otf"), size: 10 };
     const symbols = { font: nativeFont("Invented-Symbols.otf", true), size: 12 };
@@ -699,19 +772,20 @@ function compare(page: DrawnPage, id: string, text: string) {
   const layout = page.fields.get(id)?.layout;
   if (!layout) throw new Error(`${id} has no layout`);
   const setting = settingFor(id, layout, page.size.width);
-  const rows = layoutRows(text, setting.face, setting.params);
+  const rows = layoutRows(text, setting.face, setting.params, setting.folded);
   return { rows: rowStarts(text, rows), page: pageLines(page, id), setting, layout };
 }
 
 /**
  * How far each row's last glyph sits from its first, in points, as the overlay sets the row: the
  * boxes and kerns, and each space as the browser sets it, the font's space and the row's word
- * spacing.
+ * spacing; in the case the page folds the field to (`shownCase`).
  */
 function overlayEnds(text: string, setting: Setting): { first: number; last: number; x: number }[] {
-  const { face, params } = setting;
-  const nodes = paragraphNodes(text, face, params);
-  return rowEnds(nodes, layoutRows(text, face, params), () => face.spaceGlue().space);
+  const { face, params, folded } = setting;
+  const nodes = paragraphNodes(shownCase(text, folded), face, params);
+  const rows = layoutRows(text, face, params, folded);
+  return rowEnds(nodes, rows, () => face.spaceGlue().space);
 }
 
 /** `overlayEnds` for rows of `nodes` whose spaces the browser sets at `space` before spacing. */
@@ -1346,11 +1420,7 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
         });
         if (!result.output) throw new Error(result.error);
         // Each file with the features its family loads it with, which the XDV does not record.
-        const features = new Map(
-          (variant.fonts ?? []).flatMap(({ shapes, features: loaded }) =>
-            Object.values(shapes).map((file): [string, string] => [file, loaded ?? ""]),
-          ),
-        );
+        const features = fontFeatures(variant);
         const page = await drawPage(result.output, fonts, body.texts, 0, { features });
         expect(page.missingFonts, more).toEqual(new Map());
         // "Moved " on the page, from the M to the t after the space.
@@ -1378,6 +1448,74 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
         const { rows, page: lines } = compare(page, "spaced-0.text", text);
         expect(rows, more).toEqual(lines);
       }
+    }, 60_000);
+
+    it("measures a field XeTeX sets in small capitals as the page sets it, told apart by its glyphs", async () => {
+      // Roboto's upright file loaded two ways, as the family's upright and with +smcp as its small
+      // capitals: the XDV names the file alone, and the page tells the two apart by the glyphs each
+      // sets (decision 0023). No two of the place's small capitals are a pair Roboto kerns.
+      const { entry } = pkg.snippets;
+      if (typeof entry !== "string") throw new Error("the invented template's entry is by role");
+      const variant = parsePackage({
+        ...pkg,
+        id: "invented-xetex-caps",
+        fonts: pkg.fonts?.map((font) =>
+          font.family === "Roboto"
+            ? {
+                ...font,
+                shapes: {
+                  ...font.shapes,
+                  "m/sc": { file: "Roboto-Regular.otf", features: "+smcp" },
+                },
+              }
+            : font,
+        ),
+        snippets: {
+          ...pkg.snippets,
+          entry: entry.replace(
+            "{{#place}}, {{place}}{{/place}}",
+            "{{#place}}, {\\scshape {{place}}}{{/place}}",
+          ),
+        },
+      });
+      expect(variant.snippets.entry).toContain("\\scshape");
+      const chosen = defaultControls(variant);
+      const made = generateFormat(variant, chosen);
+      const dumped = session.dump(variant.engine, made.name, made.preamble, made.files);
+      if (!dumped.ok) throw new Error(dumped.error);
+      const body = generateBody(variant, sample, chosen);
+      const result = session.compile(variant.engine, made.name, body.latex, {
+        job: "overlay-caps",
+        maxPasses: 3,
+      });
+      if (!result.output) throw new Error(result.error);
+      const page = await drawPage(result.output, fonts, body.texts, 0, {
+        features: fontFeatures(variant),
+      });
+      expect(page.missingFonts).toEqual(new Map());
+      // Every glyph reads as its field's text, a small capital as the lower case it is made of.
+      expect(page.unmatched).toBe(0);
+      const layout = page.fields.get("gull.place")?.layout;
+      if (!layout) throw new Error("the place has no layout");
+      expect(layout.font.name).toBe("Roboto-Regular.otf");
+      expect(layout.features).toEqual(["smcp"]);
+      // The same file, as the family's upright, sets a bullet without.
+      const bullet = page.fields.get("gull-1.text")?.layout;
+      expect(bullet?.font.name).toBe("Roboto-Regular.otf");
+      expect(bullet?.features).toBeUndefined();
+      // The overlay measures the small capitals where the page sets them, and would not the lower
+      // case they are made of.
+      const text = body.texts.get("gull.place") ?? "";
+      const { setting } = compare(page, "gull.place", text);
+      const glyphs = page.glyphs.filter((glyph) => glyph.field === "gull.place");
+      const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+      const [row] = overlayEnds(text, setting);
+      if (!row) throw new Error("the place has no row");
+      expect(row.last).toBe(text.length - 1);
+      expect(Math.abs(row.x - (at(row.last) - at(row.first)))).toBeLessThan(0.01);
+      const lower = settingFor("gull.place", { ...layout, features: undefined }, page.size.width);
+      const [unfeatured] = overlayEnds(text, lower);
+      expect(Math.abs((unfeatured?.x ?? 0) - row.x)).toBeGreaterThan(0.5);
     }, 60_000);
 
     it("gives a native font the interword glue XeTeX gives it", async () => {
@@ -1517,6 +1655,69 @@ x\end{document}`;
       }
     }, 60_000);
   });
+
+  it("breaks a field TeX sets in capitals where TeX did, measured in capitals", async () => {
+    // A field a class sets through \MakeUppercase, which the page folds (decision 0021): capitals
+    // are wider than small letters, and a period after one ends no sentence, so the rows measured
+    // in the text's own case break elsewhere than TeX's lines.
+    const text =
+      "Rebuilt the office's typesetting service. Cut a proof's turnaround from a day to forty minutes, and wrote the style guide the house rules come from.";
+    const texts = new Map([["caps.text", text]]);
+    const page = await article(
+      "overlay-capitals",
+      "\\hyphenpenalty=10000\\parindent=0pt",
+      `{\\MakeUppercase{\\rtfield{caps.text}{${text}}}\\par}`,
+      texts,
+    );
+    expect(page.unmatched).toBe(0);
+    const { rows, page: lines, setting, layout } = compare(page, "caps.text", text);
+    expect(layout.folded).toBe("upper");
+    expect(setting.folded).toBe("upper");
+    expect(lines.length).toBeGreaterThan(1);
+    expect(rows).toEqual(lines);
+    const own = rowStarts(text, layoutRows(text, setting.face, setting.params));
+    expect(own).not.toEqual(lines);
+    // Each row ends where TeX ends its line, the capitals measured as the page sets them.
+    const glyphs = page.glyphs.filter((glyph) => glyph.field === "caps.text");
+    const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+    for (const row of overlayEnds(text, setting)) {
+      const tex = at(row.last) - at(row.first);
+      expect(Math.abs(row.x - tex), `at ${row.last}`).toBeLessThan(0.01);
+    }
+  }, 60_000);
+
+  it("reads small capitals named after their capitals as small letters, and breaks them where TeX did", async () => {
+    // Roboto's small-caps encoding names the glyphs at the small letters' codes A.c2sc, and Source
+    // Sans's A.s. Read as the capitals they are named after, they made a \textsc field fold to
+    // capitals, which the overlay measured and drew wider than the page's small capitals. Read as
+    // the small letters they stand for, they match as typed, fold nothing, and the rows start where
+    // TeX's lines do. Latin Modern names its small capitals after the small letters, as before.
+    const text =
+      "Rebuilt the house typesetting service and cut a proof turnaround from a day to thirty minutes across each team we run, then wrote the style guide the house rules come from.";
+    for (const [name, family] of [
+      ["roboto", "\\usepackage[sfdefault]{roboto}"],
+      ["sourcesans", "\\usepackage[default]{sourcesanspro}"],
+      ["lmodern", ""],
+    ] as const) {
+      const texts = new Map([["sc.text", text]]);
+      const page = await article(
+        `overlay-small-capitals-${name}`,
+        `${family}\\hyphenpenalty=10000\\parindent=0pt`,
+        `{\\textsc{\\rtfield{sc.text}{${text}}}\\par}`,
+        texts,
+      );
+      expect(page.unmatched, name).toBe(0);
+      const { rows, page: lines, setting, layout } = compare(page, "sc.text", text);
+      expect(layout.font.name, name).toMatch(/sc|csc/);
+      expect(layout.folded, name).toBeUndefined();
+      expect(setting.folded, name).toBeUndefined();
+      expect(lines.length, name).toBeGreaterThan(2);
+      expect(rows, name).toEqual(lines);
+      // Measured in capitals, as the page folded them to, the rows break elsewhere.
+      const capitals = rowStarts(text, layoutRows(text, setting.face, setting.params, "upper"));
+      expect(capitals, name).not.toEqual(lines);
+    }
+  }, 60_000);
 
   it("breaks hanging, shaped, justified and ragged paragraphs where TeX did", async () => {
     const texts = new Map([

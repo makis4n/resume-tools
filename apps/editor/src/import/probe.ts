@@ -17,17 +17,21 @@
  * reference's glyphs, takes that path too. `Path` hides the difference, and the result says which
  * a document took. Either way the unmarked body compiles first, the baseline, which must set the
  * reference's glyphs, and whose auxiliary files every probe compile starts from, so that no compile
- * reads what another's markers wrote. A probe compile takes two passes at most; one that stops, or
- * whose log still asks for a pass after them, is a failure of the whole set.
+ * reads what another's markers wrote. A probe compile takes two passes at most, the second when
+ * its first changed a file it read, as a table of contents that sets a marked title does, which
+ * LaTeX's log never asks a pass for; one that stops, or whose log still asks for a pass after
+ * them, is a failure of the whole set.
  *
  * All the candidates are wrapped at once, first. What a candidate's own markers and glyphs show is
  * its own; a set whose compile stops, or whose output moves with no candidate's markers to say
- * why, is split until a single candidate fails alone (`settle`). A document has a budget of 64
- * compiles, after which what is left is `untested`. The verdicts are
+ * why, is split until a single candidate fails alone (`settle`); and every editable candidate is
+ * then compiled together, as item 7 marks them, and one that fails beside the others is locked. A
+ * document has a budget of 64 compiles, after which what is left is `untested`. The verdicts are
  * gathered per macro and argument, per environment and argument, and per kind of standard node
  * (`aggregate`), which is what item 6 describes and item 7 assembles from. The glyphs of the
- * reference no editable field covers are the uncovered runs, each set down to the locked candidate
- * or the raw chunk that sets it, where the probe can tell, or to the template's own text.
+ * reference no editable field covers are the uncovered runs, each set down, by where in the source
+ * it comes from, to the locked candidate or the raw chunk that sets it, or to the template's own
+ * text (`uncoveredRuns`).
  *
  * Nothing here reaches for Node or the browser: the caller brings the session and the fonts, as the
  * validation harness's caller does. What the probe finds names ids, macros and counts; a
@@ -94,9 +98,15 @@ export const PROBE_PASSES = 2;
  * special as well, as a link's address or a running head has it (`twice`); they came, and its
  * glyphs spelt its text, but glyphs moved, or the page cannot place its own (`moved`); its glyphs
  * do not spell its text, as when a macro transforms it or takes its markers apart (`misaligned`),
- * or do only in another case, as `\MakeUppercase` sets it, which the aligner does not fold yet
- * (`case`); it begins on one page and ends on another, or never ends (`split`); or the budget ran
- * out before it was settled (`untested`).
+ * or do only once the glyphs and the text are both folded whole to small letters (`case`); it
+ * begins on one page and ends on another, or never ends (`split`); or the budget ran out before it
+ * was settled (`untested`).
+ *
+ * The aligner folds a text's case itself, once for each glyph and only where the fold changes a
+ * character the glyph spells (decision 0021), so a field set through `\MakeUppercase` is editable.
+ * `case` is a field that fold cannot match and folding the whole field to small letters can: a
+ * mapping other than Unicode's default ones, as German's `de-x-eszett` capitals set ß as ẞ, which
+ * is ß in small letters, where the aligner takes ß's capitals for SS.
  */
 export const REASONS = [
   "raw",
@@ -123,10 +133,12 @@ type Failure = Exclude<Reason, "raw" | "untested">;
 /**
  * How a verdict was reached: in a set, by what the candidate's own markers showed or because the
  * set passed (`together`); alone (`alone`); as a candidate of its kind reached alone, in a set of
- * its kind that failed as that one did (`like`); without a compile, since the candidate holds a raw
- * chunk or structure (`unprobed`); or not, the budget spent (`budget`).
+ * its kind that failed as that one did (`like`); in the check of every editable candidate
+ * together, as the one whose markers, added to others that passed, failed the compile (`union`);
+ * without a compile, since the candidate holds a raw chunk or structure (`unprobed`); or not, the
+ * budget spent (`budget`).
  */
-export type Settled = "together" | "alone" | "like" | "unprobed" | "budget";
+export type Settled = "together" | "alone" | "like" | "union" | "unprobed" | "budget";
 
 /** A candidate and what the probe found. */
 export interface ProbeCandidate extends Candidate {
@@ -161,6 +173,12 @@ export interface SetResult {
   same: boolean;
   /** How it first differs from the reference, when it does. */
   difference?: DifferenceKind;
+  /**
+   * Its output sets the reference's glyphs, page by page, in the same order, wherever it places
+   * them, as when a move shifts them and nothing is added or left out: its candidates' glyphs are
+   * then at the places among the reference's that the output has them at (`uncoveredRuns`).
+   */
+  order?: boolean;
   /** Markers came whose ids are none of the set's: a macro took one apart. */
   torn: boolean;
   /** What each candidate of the set showed. */
@@ -179,7 +197,10 @@ export type CompileSet = (set: readonly Candidate[]) => Promise<SetResult>;
 /** What `settle` decided, and how many compiles it took. */
 export interface Settlement {
   verdicts: Map<string, { verdict: Verdict; detail?: string; settled: Settled }>;
-  /** The glyphs of each candidate that came in a compile whose output set the reference's. */
+  /**
+   * The glyphs of each candidate that came in a compile whose output set the reference's, or set
+   * them in the same order elsewhere (`SetResult.order`), as places among the reference's.
+   */
   evidence: Map<string, GlyphPlace[]>;
   compiles: number;
 }
@@ -223,14 +244,20 @@ export function kindOf(candidate: Candidate, owners: ReadonlyMap<string, Candida
  * (`SetResult.suspects`), each tried alone, and then the rest without them; otherwise in two, at
  * the edge between kinds nearest its middle when there is one near it. When the output sets the
  * reference's glyphs, every candidate whose markers passed is editable. When it does not, those
- * are tried again without the ones that failed, and so are the ones whose markers never came,
- * whose failure the move may have caused. Markers taken apart, whose ids the set does not hold,
- * leave a candidate whose markers never came to be tried alone, where a torn marker is its own
- * (`misaligned`). Once one of a kind has failed alone, the others of its kind are tried among
- * themselves, apart from the rest: a set of a kind one of which stopped a compile alone takes that
- * verdict whole when it stops one too (`like`), since an argument that stops TeX, a length or a key,
- * stops it whatever it holds; one that moved the page is split still, since what moves it may be
- * what one call holds and another does not. What the budget leaves is `untested`.
+ * are tried again without the ones that failed, and so are the ones whose markers the move may
+ * have cost them (`unclear`): markers that never came, came on two pages, or came twice on the
+ * page, as a field a move pushed across a page's end straddles it. Markers taken apart, whose ids
+ * the set does not hold, leave a candidate whose markers never came to be tried alone, where a
+ * torn marker is its own (`misaligned`). Once one of a kind has failed alone, the others of its
+ * kind are tried among themselves, apart from the rest: a set of a kind one of which stopped a
+ * compile alone takes that verdict whole when it stops one too (`like`), since an argument that
+ * stops TeX, a length or a key, stops it whatever it holds; one that moved the page is split
+ * still, since what moves it may be what one call holds and another does not.
+ *
+ * Then every editable candidate is compiled together, as item 7 marks them (`union`), which two
+ * of them may fail that passed apart; the bisection leaves the budget's last compile to it when
+ * there are editable candidates no compile has passed together. What the budget leaves is
+ * `untested`.
  */
 export async function settle(
   candidates: readonly Candidate[],
@@ -243,6 +270,13 @@ export async function settle(
   const failing = new Map<string, Failure>();
   const kinds = new Map(candidates.map((each) => [each.id, kindOf(each, owners)]));
   const kind = (candidate: Candidate) => kinds.get(candidate.id) ?? candidate.id;
+  /** The sets whose compile passed, each of its candidates' markers with it, by their ids. */
+  const passing = new Map<string, readonly Candidate[]>();
+  const keyOf = (set: readonly Candidate[]) =>
+    set
+      .map((each) => each.id)
+      .sort()
+      .join(" ");
   let compiles = 0;
 
   const open = (set: readonly Candidate[]) => set.filter((each) => !verdicts.has(each.id));
@@ -252,19 +286,49 @@ export async function settle(
     if (settled === "alone" && (verdict === "breaks" || verdict === "moved"))
       failing.set(kind(candidate), verdict);
   };
-  const run = async (set: readonly Candidate[]): Promise<SetResult | undefined> => {
-    if (compiles >= budget) {
-      for (const candidate of set) decide(candidate, "untested", "budget");
-      return undefined;
-    }
+  /** Whether a compile passed: it did not stop, it set the reference's glyphs, and every marker. */
+  const passes = (result: SetResult, set: readonly Candidate[]) =>
+    !result.broke && result.same && set.every((each) => result.own.get(each.id)?.ok === true);
+  /** The candidates decided editable so far, when no compile of just them has passed. */
+  const unchecked = () => {
+    const editable = candidates.filter((each) => verdicts.get(each.id)?.verdict === "editable");
+    return editable.length > 0 && !passing.has(keyOf(editable));
+  };
+  /**
+   * A compile of a set, which keeps the glyphs of each candidate in it as evidence when its output
+   * set the reference's glyphs, or set them in the same order, and notes a set that passed.
+   */
+  const compileOf = async (set: readonly Candidate[]): Promise<SetResult> => {
     compiles++;
     const result = await compile(set);
-    if (!result.broke && result.same)
+    if (!result.broke && (result.same || result.order === true))
       for (const candidate of set) {
         const glyphs = result.own.get(candidate.id)?.glyphs;
         if (glyphs !== undefined && !evidence.has(candidate.id)) evidence.set(candidate.id, glyphs);
       }
+    if (passes(result, set)) passing.set(keyOf(set), set);
     return result;
+  };
+  /** A compile of the bisection's, which leaves the budget's last to the union when it has work. */
+  const run = async (set: readonly Candidate[]): Promise<SetResult | undefined> => {
+    if (compiles >= budget || (compiles === budget - 1 && unchecked())) {
+      for (const candidate of set) decide(candidate, "untested", "budget");
+      return undefined;
+    }
+    return compileOf(set);
+  };
+  /**
+   * Whether what a candidate's own markers showed may be another's doing: markers that never came,
+   * beside markers torn apart or in an output that moved; or markers on two pages, or twice on the
+   * page, in an output that moved, which may have pushed its field across a page's end or brought
+   * a running head's copy of it onto the page.
+   */
+  const unclear = (result: SetResult, candidate: Candidate) => {
+    const own = result.own.get(candidate.id);
+    if (own === undefined || own.ok) return false;
+    if (own.reason === "vanished") return result.torn || !result.same;
+    const moved = own.reason === "split" || (own.reason === "twice" && own.detail === "page");
+    return moved && !result.same;
   };
   /** The two halves a set is split into: at the edge between kinds nearest its middle, if near. */
   const halves = (set: readonly Candidate[]): Candidate[][] => {
@@ -347,18 +411,12 @@ export async function settle(
       return;
     }
     const passed = set.filter((each) => result.own.get(each.id)?.ok === true);
-    // A candidate whose markers never came may have lost them to another's move, or to a torn
-    // marker the set cannot tell whose it is.
-    const unclear = (each: Candidate) => {
-      const own = result.own.get(each.id);
-      return own?.ok !== true && own?.reason === "vanished" && (result.torn || !result.same);
-    };
     for (const each of set) {
       const own = result.own.get(each.id);
-      if (own === undefined || own.ok || unclear(each)) continue;
+      if (own === undefined || own.ok || unclear(result, each)) continue;
       decide(each, own.reason ?? "vanished", "together", own.detail);
     }
-    const doubtful = set.filter(unclear);
+    const doubtful = set.filter((each) => unclear(result, each));
     if (result.same) {
       for (const each of passed) decide(each, "editable", "together");
       for (const each of doubtful) await test([each]);
@@ -388,7 +446,7 @@ export async function settle(
     }
     for (const each of set) {
       const own = result.own.get(each.id);
-      if (own !== undefined && !own.ok && !(own.reason === "vanished" && result.torn))
+      if (own !== undefined && !own.ok && !unclear(result, each))
         decide(each, own.reason ?? "vanished", "together", own.detail);
     }
     const passed = set.filter((each) => result.own.get(each.id)?.ok === true);
@@ -401,7 +459,71 @@ export async function settle(
     for (const each of doubtful) await test([each], false);
   };
 
+  /** Candidates as the budget leaves them: those of the largest set known to pass stay editable. */
+  const leave = (set: readonly Candidate[]) => {
+    const ids = new Set(set.map((each) => each.id));
+    let kept: readonly Candidate[] = [];
+    for (const known of passing.values())
+      if (known.length > kept.length && known.every((each) => ids.has(each.id))) kept = known;
+    for (const each of set)
+      if (!kept.includes(each)) verdicts.set(each.id, { verdict: "untested", settled: "budget" });
+  };
+  /** A compile of a set in the union's check, which may spend the whole budget. */
+  const check = (set: readonly Candidate[]) =>
+    compiles >= budget ? Promise.resolve(undefined) : compileOf(set);
+  /**
+   * Every editable candidate together, as item 7 marks them, in one compile, unless a set the
+   * bisection compiled was just them and passed. Two may fail together that passed apart, as two
+   * whose markers each take a little from one line. Then the shortest run of them, in their order,
+   * that fails is found by halving, knowing that none of them passes, and its last one is locked
+   * (`union`): its verdict alone in that compile, or `breaks` or `moved` when the compile shows no
+   * other; and so again, until those left pass together. When the budget runs out first, the
+   * largest set of them known to pass stays editable, and the rest are `untested`.
+   */
+  const union = async () => {
+    let set = candidates.filter((each) => verdicts.get(each.id)?.verdict === "editable");
+    // How many of `set`, from its start, are known to pass together.
+    let known = 0;
+    for (;;) {
+      if (set.length === 0 || passing.has(keyOf(set))) return;
+      const whole = await check(set);
+      if (whole === undefined) return leave(set);
+      if (passes(whole, set)) return;
+      let lo = known;
+      let hi = set.length;
+      let failed = whole;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        const prefix = set.slice(0, mid);
+        if (passing.has(keyOf(prefix))) {
+          lo = mid;
+          continue;
+        }
+        const result = await check(prefix);
+        if (result === undefined) return leave(set);
+        if (passes(result, prefix)) lo = mid;
+        else {
+          hi = mid;
+          failed = result;
+        }
+      }
+      const culprit = set[hi - 1] as Candidate;
+      const found = alone(failed, culprit);
+      const locked =
+        found.verdict === "editable"
+          ? {
+              verdict: "moved" as const,
+              ...(failed.difference ? { detail: failed.difference } : {}),
+            }
+          : found;
+      verdicts.set(culprit.id, { ...locked, settled: "union" });
+      set = set.filter((each) => each !== culprit);
+      known = hi - 1;
+    }
+  };
+
   await test(candidates);
+  await union();
   for (const candidate of candidates) decide(candidate, "untested", "budget");
   return { verdicts, evidence, compiles };
 }
@@ -446,6 +568,34 @@ function folded(field: Field): Field {
       offset: -1,
     })),
   };
+}
+
+/**
+ * Whether two glyph streams set the same glyphs, page by page, in the same order, wherever they
+ * place them: the same font, face, size and code, one for one.
+ */
+export function sameOrder(a: GlyphStream, b: GlyphStream): boolean {
+  if (a.pages.length !== b.pages.length) return false;
+  const glyphsOf = (page: GlyphStream["pages"][number] | undefined) =>
+    (page?.items ?? []).flatMap((item) => (item.kind === "glyph" ? [item] : []));
+  return a.pages.every((page, p) => {
+    const ours = glyphsOf(page);
+    const theirs = glyphsOf(b.pages[p]);
+    return (
+      ours.length === theirs.length &&
+      ours.every((x, i) => {
+        const y = theirs[i];
+        return (
+          y !== undefined &&
+          x.font === y.font &&
+          x.native === y.native &&
+          x.index === y.index &&
+          x.size === y.size &&
+          x.code === y.code
+        );
+      })
+    );
+  });
 }
 
 /**
@@ -586,6 +736,7 @@ export async function observe(
     broke: false,
     same: differs === undefined,
     ...(differs === undefined ? {} : { difference: differs.kind }),
+    order: differs === undefined || sameOrder(reference, stream),
     torn,
     own,
     ...(suspect === undefined ? {} : { suspects: [suspect] }),
@@ -650,11 +801,12 @@ const failed = (result: CompileResult, maxPasses: number) =>
 /**
  * The one function a probe compiles through, whatever the engine: the body, marked, and the
  * preamble's calls issued again, compiled from the document's format or whole from the stock
- * format.
+ * format, in `maxPasses` at most; with `settled`, a pass that changed a file of the job's folder
+ * is followed by another (`CompileOptions.rerunOnChange`), as a probe compile's are.
  */
 export interface Path {
   kind: "format" | "whole";
-  compile(body: string, setters: string, maxPasses: number): CompileResult;
+  compile(body: string, setters: string, maxPasses: number, settled?: boolean): CompileResult;
 }
 
 /** Everything a compile of the document needs, and what the probe measures of it. */
@@ -675,43 +827,42 @@ function encoded(intake: Intake, text: string, mark: boolean): Uint8Array {
 }
 
 /**
- * The format path: the preamble with the prelude dumped as `import-` and a hash of what is dumped,
- * and every compile a body compile from it, the preamble's calls issued again before
- * `\begin{document}`; or undefined, with how long the dump took, when the preamble does not dump.
+ * The document's format: the preamble with the prelude, dumped as `import-` and a hash of what is
+ * dumped and of the job's files, and how long the dump took; not `ok` when the preamble does not
+ * dump.
  */
-function formatPath(setup: Setup): { path?: Path; name: string; ms: number } {
-  const { session, intake, body, job, files } = setup;
+function dumpFormat(setup: Setup): { name: string; ms: number; ok: boolean } {
+  const { session, intake, body, files } = setup;
   const dumped = `${body.preamble}\n${PROBE_PRELUDE}`;
   const listed = Object.entries(files)
     .map(([path, bytes]) => `${path}:${bytes.length}`)
     .sort()
     .join("\n");
   const name = `import-${fnv1a(`${dumped}\n${listed}`)}`;
-  const begin = body.before.slice(body.preamble.length);
-  let result: ReturnType<EngineSession["dump"]>;
   try {
-    result = session.dump("pdftex", name, encoded(intake, dumped, true), files);
+    const result = session.dump("pdftex", name, encoded(intake, dumped, true), files);
+    return { name, ms: result.ms, ok: result.ok };
   } catch {
-    return { name, ms: 0 };
+    return { name, ms: 0, ok: false };
   }
-  if (!result.ok) return { name, ms: result.ms };
+}
+
+/**
+ * The format path: every compile a body compile from the document's format, `name`, the
+ * preamble's calls issued again before `\begin{document}`.
+ */
+function formatPath(setup: Setup, name: string): Path {
+  const { session, intake, body, job, files } = setup;
+  const begin = body.before.slice(body.preamble.length);
   return {
-    name,
-    ms: result.ms,
-    path: {
-      kind: "format",
-      compile: (text, setters, maxPasses) =>
-        session.compile(
-          "pdftex",
-          name,
-          encoded(intake, `${setters}${begin}${text}${body.after}`, false),
-          {
-            job,
-            maxPasses,
-            files,
-          },
-        ),
-    },
+    kind: "format",
+    compile: (text, setters, maxPasses, settled = false) =>
+      session.compile(
+        "pdftex",
+        name,
+        encoded(intake, `${setters}${begin}${text}${body.after}`, false),
+        { job, maxPasses, files, ...(settled ? { rerunOnChange: true } : {}) },
+      ),
   };
 }
 
@@ -725,7 +876,7 @@ function wholePath(setup: Setup): Path {
   const begin = body.before.slice(body.preamble.length);
   return {
     kind: "whole",
-    compile: (text, setters, maxPasses) =>
+    compile: (text, setters, maxPasses, settled = false) =>
       session.compile(
         engine,
         "stock",
@@ -734,7 +885,13 @@ function wholePath(setup: Setup): Path {
           `${body.preamble}\n${PROBE_PRELUDE}${setters}${begin}${text}${body.after}`,
           true,
         ),
-        { job, maxPasses, files, fontsByName: engine === "xetex" },
+        {
+          job,
+          maxPasses,
+          files,
+          fontsByName: engine === "xetex",
+          ...(settled ? { rerunOnChange: true } : {}),
+        },
       ),
   };
 }
@@ -776,9 +933,10 @@ export interface UncoveredRun {
   first: { h: number; v: number };
   last: { h: number; v: number };
   /**
-   * What sets it: a locked candidate, whose glyphs a compile showed there, or which lies between
-   * the fields either side of the run in the source; a raw chunk that lies there; or, with neither,
-   * the template's own text, such as a label, a rule's caption or an icon (`chrome`).
+   * What sets it, by where in the source it comes from (`uncoveredRuns`): a locked candidate,
+   * whose glyphs a compile showed there, in whose source the run's lies, or in whose source the
+   * run's is, the header's among them; a raw chunk likewise; or, with neither, the template's own
+   * text, such as a label, a separator or an icon (`chrome`).
    */
   by: "candidate" | "raw" | "chrome";
   candidate?: string;
@@ -797,7 +955,10 @@ export interface Probe {
    * stopped, for a document that took whole compiles for it.
    */
   formatDifference?: "stopped" | DifferenceKind;
-  /** The format's name, and how long its dump took, in milliseconds, when it dumped. */
+  /**
+   * The format's name, when it dumped, which the probe leaves in the session for item 7 and its
+   * caller drops (`EngineSession.dropFormat`); and how long the dump took, in milliseconds.
+   */
   format?: string;
   dumpMs?: number;
   /**
@@ -811,10 +972,21 @@ export interface Probe {
   compiles: number;
   budget: number;
   compileMs: number;
+  /**
+   * How many passes the candidates' compiles took in all: one each, and a second where the first
+   * changed an auxiliary file it read, as a table of contents that sets a marked title.
+   */
+  passes: number;
   /** The whole probe, from its start to its result, in milliseconds. */
   ms: number;
   /** The compiles that asked the engine what the preamble's calls are, when the caller had not. */
   signaturesMs?: number;
+  /**
+   * The engine's signatures the probe read the preamble with: the caller's, and what the engine
+   * said of the preamble's commands the caller did not ask of, so that every macro the probe
+   * reports, a header's among them, has its meaning and hash for item 6.
+   */
+  signatures: EngineSignatures;
   candidates: ProbeCandidate[];
   /** Per macro and argument, and per environment and argument. */
   macros: Aggregate[];
@@ -930,135 +1102,379 @@ export function aggregate(candidates: readonly ProbeCandidate[]): {
   }
   return { macros, standard };
 }
+/** The body's source and the preamble's, which candidates' and raw chunks' spans are in. */
+export interface Sources {
+  body: string;
+  preamble: string;
+}
+
+/** What sets glyphs no editable field covers (`UncoveredRun`). */
+type Setter =
+  | { by: "candidate"; candidate: string }
+  | { by: "raw"; raw: RawChunk }
+  | { by: "chrome" };
+
+/** What may set glyphs, and where it is in its source. */
+interface Placed {
+  where: Candidate["where"];
+  start: number;
+  end: number;
+  setter: Setter;
+}
+
+const CHROME: Setter = { by: "chrome" };
+
+/** How far past the last piece found a piece of a character or two may be found, in characters. */
+const NEAR = 3;
+
+/** Whether two setters are one. */
+const sameSetter = (a: Setter | undefined, b: Setter | undefined) =>
+  a !== undefined &&
+  b !== undefined &&
+  a.by === b.by &&
+  (a.by !== "candidate" || (b.by === "candidate" && a.candidate === b.candidate)) &&
+  (a.by !== "raw" || (b.by === "raw" && a.raw === b.raw));
+
+/** The one of `spans` that holds all of `lo` to `hi` and is the shortest, if any does. */
+function innermost<T extends { start: number; end: number }>(
+  spans: readonly T[],
+  lo: number,
+  hi: number,
+): T | undefined {
+  let best: T | undefined;
+  for (const each of spans)
+    if (
+      each.start <= lo &&
+      hi <= each.end &&
+      (best === undefined || each.end - each.start < best.end - best.start)
+    )
+      best = each;
+  return best;
+}
 
 /**
- * The runs of the reference's glyphs no editable field covers, each set down to what sets it: a
- * locked candidate whose glyphs a compile that set the reference's showed there; otherwise, by the
- * source's order, the first locked candidate that sets text, or else the first raw chunk that may,
- * between the fields either side of the run; otherwise the template's own text. The order of the
- * page and of the source mostly agree, and where they do not, as paracol sets its columns one
- * after the other, a run may be set down to a node near the one that sets it.
+ * A text as the uncovered runs compare a page's glyphs with the source: without accents, spaces,
+ * hyphens and dashes, in lower case, and every quote as one of two, since TeX sets `--` as one
+ * glyph, a line's end may add a hyphen, and a class may set a text in capitals.
+ */
+export function comparable(text: string): string {
+  return text
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[‘’‚‛′`]/g, "'")
+    .replace(/[“”„‟″]/g, '"')
+    .replace(/[^\p{L}\p{N}\p{P}\p{S}]|[-‐-―−]/gu, "");
+}
+
+/**
+ * What a span of LaTeX source may set, roughly, in pieces: the runs of its characters between its
+ * commands, its braces, the signs of mathematics and of alignments, and its comments, an escaped
+ * character as itself, and TeX's quotes as they set. A piece an argument sets nothing of, a
+ * length, a key or an address, is then one the page lacks, and leaves the others to be found.
+ */
+export function piecesOf(source: string, start: number, end: number): string[] {
+  const pieces: string[] = [];
+  let piece = "";
+  const cut = () => {
+    if (piece !== "") pieces.push(piece.replace(/``/g, "“").replace(/''/g, "”"));
+    piece = "";
+  };
+  for (let at = start; at < end; at++) {
+    const char = source[at] ?? "";
+    if (char === "%") {
+      cut();
+      const newline = source.indexOf("\n", at);
+      at = newline < 0 || newline >= end ? end : newline;
+    } else if (char === "\\") {
+      const next = source[at + 1] ?? "";
+      if (next !== "" && "%&$#_{}".includes(next)) piece += next;
+      else cut();
+      if (/[A-Za-z@]/.test(next))
+        while (at + 1 < end && /[A-Za-z@]/.test(source[at + 1] ?? "")) at++;
+      else at++;
+    } else if ("{}$&^_~".includes(char)) cut();
+    else piece += char;
+  }
+  cut();
+  return pieces;
+}
+
+/**
+ * The runs of the reference's glyphs no editable field covers, each set down to what sets it, by
+ * where in the source it comes from.
+ *
+ * A glyph a compile showed a candidate setting, in an output that set the reference's glyphs, or
+ * set them in the same order elsewhere (`evidence`), is that candidate's. The others come in
+ * stretches between such glyphs, and a stretch comes from the source between the candidates
+ * either side of it: from the end of the one before to the start of the one after, or the
+ * source's start or end where there is none, in the body's source, or in the preamble's, whose
+ * calls store the header's text; beside both, from each. A stretch whose source lies in a raw
+ * chunk is the chunk's, as a separator between two parts of one is; one whose source lies in a
+ * locked candidate, between two parts of it, is that candidate's. In any other, what overlaps its
+ * source and may set glyphs no compile placed, a locked candidate none placed, as one that stops
+ * TeX, and in the body a raw chunk, is found by the pieces of text its part of the source sets,
+ * among the stretch's glyphs' texts, in the order of the source (`comparable`, `piecesOf`), and
+ * holds what lies between the first and the last it finds; then, for what none of them set, the
+ * other arguments of the calls either side, since a macro may set its arguments in another order
+ * than it takes them. What none of these sets is the template's own text, as a label, a
+ * separator or an icon (`chrome`). A stretch
+ * whose glyphs the page names none of, as a font with no outlines has them, is shared among what
+ * overlaps its source in proportion to how much of the source each is. A run ends where what sets
+ * it changes, and at a page's end.
  */
 export function uncoveredRuns(
   reference: GlyphStream,
   candidates: readonly ProbeCandidate[],
   evidence: ReadonlyMap<string, readonly GlyphPlace[]>,
   raw: readonly RawChunk[],
-  length: number,
+  sources: Sources,
 ): { runs: UncoveredRun[]; covered: number } {
   const byId = new Map(candidates.map((each) => [each.id, each]));
-  const glyphs = reference.pages.map((page) => page.items.filter((item) => item.kind === "glyph"));
+  const glyphs = reference.pages.map((page) =>
+    page.items.flatMap((item) => (item.kind === "glyph" ? [item] : [])),
+  );
   const owner = glyphs.map((page) => new Array<string | undefined>(page.length).fill(undefined));
   for (const [id, places] of evidence)
     for (const [page, at] of places) {
       const row = owner[page];
       if (row !== undefined && at < row.length && row[at] === undefined) row[at] = id;
     }
-  const editable = (id: string | undefined) =>
-    id !== undefined && byId.get(id)?.verdict === "editable";
+  const editable = (candidate: ProbeCandidate | undefined) => candidate?.verdict === "editable";
   let covered = 0;
-  // Every glyph in turn, across the pages, with the nearest body field before and after it.
-  const flat: { page: number; at: number; owner?: string }[] = [];
+  // Every glyph in turn, across the pages, with the candidate a compile showed setting it.
+  const flat: { page: number; at: number; text?: string; owner?: ProbeCandidate }[] = [];
   owner.forEach((row, page) => {
     row.forEach((id, at) => {
-      if (editable(id)) covered++;
-      flat.push({ page, at, ...(id === undefined ? {} : { owner: id }) });
+      const found = id === undefined ? undefined : byId.get(id);
+      if (editable(found)) covered++;
+      const text = glyphs[page]?.[at]?.text;
+      flat.push({
+        page,
+        at,
+        ...(text === undefined ? {} : { text }),
+        ...(found === undefined ? {} : { owner: found }),
+      });
     });
   });
-  const anchored = (id: string | undefined) => {
-    const candidate = id === undefined ? undefined : byId.get(id);
-    return candidate?.where === "body" ? candidate : undefined;
+
+  const locked = (candidate: ProbeCandidate) =>
+    candidate.verdict !== "editable" && candidate.verdict !== "container";
+  const ofCandidate = (each: ProbeCandidate): Placed => ({
+    where: each.where,
+    start: each.start,
+    end: each.end,
+    setter: { by: "candidate", candidate: each.id },
+  });
+  const bySource = (a: Placed, b: Placed) => a.start - b.start || b.end - a.end;
+  // What may set glyphs no compile placed: a locked candidate none did, but one whose markers
+  // never came, which sets nothing, and one that holds a raw chunk sets what the chunk inside it
+  // does; and the body's raw chunks.
+  const unplaced = (where: Candidate["where"]) =>
+    candidates
+      .filter(
+        (each) =>
+          each.where === where &&
+          locked(each) &&
+          each.verdict !== "vanished" &&
+          !evidence.has(each.id),
+      )
+      .map(ofCandidate);
+  const setters = {
+    body: [
+      ...unplaced("body"),
+      ...raw.map(
+        (chunk): Placed => ({
+          where: "body",
+          start: chunk.start,
+          end: chunk.end,
+          setter: { by: "raw", raw: chunk },
+        }),
+      ),
+    ].sort(bySource),
+    preamble: unplaced("preamble").sort(bySource),
   };
-  const before: (ProbeCandidate | undefined)[] = [];
-  let last: ProbeCandidate | undefined;
-  for (const [i, glyph] of flat.entries()) {
-    before[i] = last;
-    last = anchored(glyph.owner) ?? last;
-  }
-  const after: (ProbeCandidate | undefined)[] = [];
-  let next: ProbeCandidate | undefined;
-  for (let i = flat.length - 1; i >= 0; i--) {
-    after[i] = next;
-    next = anchored(flat[i]?.owner) ?? next;
-  }
-  const sets = (candidate: ProbeCandidate) =>
-    candidate.where === "body" &&
-    candidate.verdict !== "editable" &&
-    candidate.verdict !== "container" &&
-    candidate.verdict !== "vanished" &&
-    candidate.verdict !== "raw" &&
-    !evidence.has(candidate.id);
-  const locked = candidates.filter(sets).sort((a, b) => a.start - b.start);
-  const chunks = [...raw].sort((a, b) => a.start - b.start);
-  /** The first of spans sorted by their start that lies within `from` and `to`. */
-  const within = <T extends { start: number; end: number }>(
-    list: readonly T[],
-    from: number,
-    to: number,
-  ) => {
-    let lo = 0;
-    let hi = list.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if ((list[mid] as T).start < from) lo = mid + 1;
-      else hi = mid;
+  const enclosing = {
+    body: candidates.filter((each) => each.where === "body" && locked(each)),
+    preamble: candidates.filter((each) => each.where === "preamble" && locked(each)),
+  };
+  /** What overlaps `lo` to `hi` of a source and may set glyphs, the outermost, with its part. */
+  const partsIn = (where: Candidate["where"], lo: number, hi: number) => {
+    const found: { placed: Placed; lo: number; hi: number }[] = [];
+    for (const placed of setters[where]) {
+      if (placed.end <= lo || placed.start >= hi) continue;
+      const last = found.at(-1)?.placed;
+      if (last !== undefined && placed.start >= last.start && placed.end <= last.end) continue;
+      found.push({ placed, lo: Math.max(lo, placed.start), hi: Math.min(hi, placed.end) });
     }
-    for (let at = lo; at < list.length && (list[at] as T).start <= to; at++)
-      if ((list[at] as T).end <= to) return list[at];
-    return undefined;
+    return found;
   };
-  const runs: UncoveredRun[] = [];
+  /** The call a candidate is an argument of, or a part of an argument of, by its id. */
+  const callOf = (candidate: ProbeCandidate | undefined): string | undefined => {
+    if (candidate === undefined) return undefined;
+    if (candidate.kind === "argument") return candidate.id.slice(0, candidate.id.lastIndexOf("-"));
+    return candidate.within === undefined ? undefined : callOf(byId.get(candidate.within));
+  };
+  /** Each call's arguments' source, from the first's start to the last's end. */
+  const calls = new Map<string, { start: number; end: number }>();
+  for (const each of candidates) {
+    const call = each.kind === "argument" ? callOf(each) : undefined;
+    if (call === undefined) continue;
+    const span = calls.get(call);
+    calls.set(call, {
+      start: Math.min(span?.start ?? each.start, each.start),
+      end: Math.max(span?.end ?? each.end, each.end),
+    });
+  }
+  /**
+   * What sets a stretch between the glyphs of `before` and of `after`: the whole of it, when its
+   * source lies in a raw chunk or a locked candidate; otherwise what overlaps its source, each
+   * with the part of it that does, in the source's order; and, for what none of them sets, the
+   * other arguments of the calls whose arguments `before` and `after` are, since a macro may set
+   * its arguments in another order than it takes them (`more`).
+   */
+  const settersOf = (
+    before: ProbeCandidate | undefined,
+    after: ProbeCandidate | undefined,
+  ): { whole?: Setter; parts: ReturnType<typeof partsIn>; more: ReturnType<typeof partsIn> } => {
+    if (before !== undefined && after !== undefined && before.where !== after.where)
+      return {
+        parts: [
+          ...partsIn(before.where, before.end, sources[before.where].length),
+          ...partsIn(after.where, 0, after.start),
+        ],
+        more: [],
+      };
+    const where = before?.where ?? after?.where ?? "body";
+    const from = before?.end ?? 0;
+    const to = after?.start ?? sources[where].length;
+    const [lo, hi] = from <= to ? [from, to] : [to, from];
+    const chunk = where === "body" ? innermost(raw, lo, hi) : undefined;
+    if (chunk !== undefined) return { whole: { by: "raw", raw: chunk }, parts: [], more: [] };
+    const candidate = innermost(enclosing[where], lo, hi);
+    if (candidate !== undefined)
+      return { whole: { by: "candidate", candidate: candidate.id }, parts: [], more: [] };
+    const parts = partsIn(where, lo, hi);
+    const around = [before, after].flatMap((each) => {
+      const span = calls.get(callOf(each) ?? "");
+      return span === undefined ? [] : [span];
+    });
+    const more = partsIn(
+      where,
+      Math.min(lo, ...around.map((span) => span.start)),
+      Math.max(hi, ...around.map((span) => span.end)),
+    ).filter((part) => !parts.some((each) => each.placed === part.placed));
+    return { parts, more };
+  };
+
+  // What sets each glyph: its owner, or what sets its part of the stretch it is in.
+  const setterAt: Setter[] = [];
   let i = 0;
   while (i < flat.length) {
-    const start = flat[i];
-    if (start === undefined || editable(start.owner)) {
+    const known = flat[i]?.owner;
+    if (known !== undefined) {
+      setterAt[i] = { by: "candidate", candidate: known.id };
       i++;
       continue;
     }
     let j = i + 1;
-    while (j < flat.length) {
-      const each = flat[j];
+    while (j < flat.length && flat[j]?.owner === undefined) j++;
+    const { whole, parts, more } = settersOf(flat[i - 1]?.owner, flat[j]?.owner);
+    for (let k = i; k < j; k++) setterAt[k] = whole ?? CHROME;
+    // The stretch's glyphs' texts, one after the other, each character with its glyph.
+    const glyphOf: number[] = [];
+    let text = "";
+    for (let k = i; k < j; k++) {
+      const each = comparable(flat[k]?.text ?? "");
+      text += each;
+      for (let c = 0; c < each.length; c++) glyphOf.push(k);
+    }
+    if (text === "" && parts.length > 0) {
+      // The page names none of them: shared in proportion to how much of the source each is.
+      const total = parts.reduce((sum, part) => sum + part.hi - part.lo, 0);
+      let reach = 0;
+      let k = i;
+      for (const part of parts) {
+        reach += part.hi - part.lo;
+        for (const until = i + Math.round((reach / Math.max(total, 1)) * (j - i)); k < until; k++)
+          setterAt[k] = part.placed.setter;
+      }
+    } else {
+      // Each piece of each's source, in the source's order, where the stretch's text next has it
+      // and no other's claimed it; a piece of a character or two only close by, where it is not a
+      // letter met by chance. What a setter's first and last pieces found hold is its, as a label
+      // its own command sets between them. One the page sets before those the source has before
+      // it is looked for from the stretch's start.
+      const claimed = new Set<number>();
+      const free = (at: number, length: number) =>
+        glyphOf.slice(at, at + length).every((k) => !claimed.has(k));
+      const find = (part: (typeof parts)[number], start: number) => {
+        let first: number | undefined;
+        let last: number | undefined;
+        let at = start;
+        for (const piece of piecesOf(sources[part.placed.where], part.lo, part.hi)) {
+          const wanted = comparable(piece);
+          if (wanted === "") continue;
+          let found = text.indexOf(wanted, at);
+          while (found >= 0 && !free(found, wanted.length)) found = text.indexOf(wanted, found + 1);
+          if (found < 0 || (wanted.length <= 2 && found - at > NEAR)) continue;
+          first ??= glyphOf[found];
+          last = glyphOf[found + wanted.length - 1];
+          at = found + wanted.length;
+        }
+        return first === undefined || last === undefined ? undefined : { first, last, at };
+      };
+      let from = 0;
+      const take = (part: (typeof parts)[number], found: ReturnType<typeof find>) => {
+        if (found === undefined) return;
+        for (let k = found.first; k <= found.last; k++)
+          if (!claimed.has(k)) {
+            setterAt[k] = part.placed.setter;
+            claimed.add(k);
+          }
+        from = Math.max(from, found.at);
+      };
+      for (const part of parts) take(part, find(part, from) ?? find(part, 0));
+      for (const part of more) take(part, find(part, 0));
+    }
+    i = j;
+  }
+
+  const placeOf = (glyph: { page: number; at: number }) => {
+    const item = glyphs[glyph.page]?.[glyph.at];
+    return { h: item?.h ?? 0, v: item?.v ?? 0 };
+  };
+  const runs: UncoveredRun[] = [];
+  let at = 0;
+  while (at < flat.length) {
+    const start = flat[at];
+    if (start === undefined || editable(start.owner)) {
+      at++;
+      continue;
+    }
+    const setter = setterAt[at] ?? CHROME;
+    let end = at + 1;
+    while (end < flat.length) {
+      const each = flat[end];
       if (
         each === undefined ||
         each.page !== start.page ||
         editable(each.owner) ||
-        each.owner !== start.owner
+        !sameSetter(setterAt[end], setter)
       )
         break;
-      j++;
+      end++;
     }
-    const end = flat[j - 1] ?? start;
-    const at = (place: { page: number; at: number }) => {
-      const item = glyphs[place.page]?.[place.at];
-      return { h: item?.h ?? 0, v: item?.v ?? 0 };
-    };
-    const run: UncoveredRun = {
+    const last = flat[end - 1] ?? start;
+    runs.push({
       page: start.page,
       from: start.at,
-      to: end.at + 1,
-      first: at(start),
-      last: at(end),
-      by: "chrome",
-    };
-    if (start.owner !== undefined) {
-      run.by = "candidate";
-      run.candidate = start.owner;
-    } else {
-      const lo = before[i]?.end ?? 0;
-      const hi = after[j - 1]?.start ?? length;
-      const [from, to] = lo <= hi ? [lo, hi] : [hi, lo];
-      const candidate = within(locked, from, to);
-      const chunk = candidate === undefined ? within(chunks, from, to) : undefined;
-      if (candidate !== undefined) {
-        run.by = "candidate";
-        run.candidate = candidate.id;
-      } else if (chunk !== undefined) {
-        run.by = "raw";
-        run.raw = chunk;
-      }
-    }
-    runs.push(run);
-    i = j;
+      to: last.at + 1,
+      first: placeOf(start),
+      last: placeOf(last),
+      ...setter,
+    });
+    at = end;
   }
   return { runs, covered };
 }
@@ -1086,9 +1502,9 @@ async function preambleOf(
   body: Body,
   found: EngineSignatures,
   options: ReferenceOptions,
-): Promise<{ tree?: Tree; setters: Set<string>; ms?: number }> {
+): Promise<{ tree?: Tree; setters: Set<string>; signatures: EngineSignatures; ms?: number }> {
   const read = readBody(bodyOfText(body.preamble));
-  if ("refused" in read) return { setters: new Set() };
+  if ("refused" in read) return { setters: new Set(), signatures: found };
   const asked = usesOf(read).commands.filter((name) => !Object.hasOwn(found.commands, name));
   let signatures = found;
   let ms: number | undefined;
@@ -1108,6 +1524,8 @@ async function preambleOf(
         ...found,
         commands: { ...found.commands, ...more.commands },
         macros: { ...more.macros, ...found.macros },
+        truncated: found.truncated || more.truncated,
+        ms: found.ms + more.ms,
       };
   }
   const setters = new Set(
@@ -1117,16 +1535,20 @@ async function preambleOf(
       )
       .map(([name]) => name),
   );
-  if (setters.size === 0) return { setters, ...(ms === undefined ? {} : { ms }) };
+  const timed = ms === undefined ? {} : { ms };
+  if (setters.size === 0) return { setters, signatures, ...timed };
   const tree = buildTree(read, signatures);
-  return { ...("refused" in tree ? {} : { tree }), setters, ...(ms === undefined ? {} : { ms }) };
+  return { ...("refused" in tree ? {} : { tree }), setters, signatures, ...timed };
 }
 
 /**
  * Probe a document: which of its body's candidates, and of its preamble's calls that store a
  * header's text, the editor may mark (`Probe`). `tree` is the tree of the intake's body, parsed
  * with `found`, the engine's signatures of it (`signatures`); the reference is the original's, and
- * the job, `import` by default, is forgotten before and after.
+ * the job, `import` by default, is forgotten before and after. A pdfTeX document's format stays
+ * in the session, since item 7 compiles the assembled package's first check from it; whoever
+ * asked for the probe drops it when done (`EngineSession.dropFormat`), and a probe that throws
+ * drops it itself.
  */
 export async function probe(
   session: EngineSession,
@@ -1177,108 +1599,118 @@ export async function probe(
     return difference(made, stream)?.kind;
   };
   if (made.engine === "pdftex") {
-    const dumped = formatPath(setup);
+    const dumped = dumpFormat(setup);
     format = { name: dumped.name, ms: dumped.ms };
-    if (dumped.path === undefined) fallback = "dump";
-    else {
-      const differs = await tryBaseline(dumped.path);
-      if (differs === undefined) path = dumped.path;
+    if (!dumped.ok) fallback = "dump";
+  }
+  try {
+    const dumped = format !== undefined && fallback === undefined ? format.name : undefined;
+    if (dumped !== undefined) {
+      const onFormat = formatPath(setup, dumped);
+      const differs = await tryBaseline(onFormat);
+      if (differs === undefined) path = onFormat;
       else {
         fallback = "baseline";
         formatDifference = differs;
       }
     }
-  }
-  if (path === undefined) {
-    const whole = wholePath(setup);
-    baseline = await tryBaseline(whole);
-    path = whole;
-  }
-  // Every probe compile starts from the auxiliary files the baseline wrote.
-  for (const extension of AUXILIARY) {
-    const name = `${job}.${extension}`;
-    const bytes = session.written(job, name);
-    if (bytes !== undefined) files[name] = bytes;
-  }
-
-  let compileMs = 0;
-  const route = path;
-  const compileSet: CompileSet = async (set) => {
-    const text = marked(
-      tree.source,
-      set.filter((each) => each.where === "body"),
-    );
-    const calls = reissued(body.preamble, setters, set);
-    let result: CompileResult;
-    try {
-      result = route.compile(text, calls, PROBE_PASSES);
-    } catch {
-      return { broke: true, same: false, torn: false, own: new Map() };
+    if (path === undefined) {
+      const whole = wholePath(setup);
+      baseline = await tryBaseline(whole);
+      path = whole;
     }
-    compileMs += result.passes.reduce((sum, pass) => sum + pass, 0);
-    if (failed(result, PROBE_PASSES) || result.output === undefined)
-      return {
-        broke: true,
-        same: false,
-        torn: false,
-        own: new Map(),
-        suspects: suspectsIn(result.log, new Set(set.map((each) => each.id))),
-      };
-    try {
-      return await observe(fonts, made, result.output, set, shipped);
-    } catch {
-      // Output the page cannot read is no output the editor can mark.
-      return { broke: true, same: false, torn: false, own: new Map() };
+    // Every probe compile starts from the auxiliary files the baseline wrote.
+    for (const extension of AUXILIARY) {
+      const name = `${job}.${extension}`;
+      const bytes = session.written(job, name);
+      if (bytes !== undefined) files[name] = bytes;
     }
-  };
 
-  const settlement =
-    baseline === undefined
-      ? await settle(probeOrder(probed, owners), compileSet, budget, owners)
-      : { verdicts: new Map(), evidence: new Map<string, GlyphPlace[]>(), compiles: 0 };
-  session.forget(job);
-
-  const results: ProbeCandidate[] = candidates.map((candidate) => {
-    if (candidate.unprobed !== undefined)
-      return { ...candidate, verdict: candidate.unprobed, settled: "unprobed" };
-    const decided = settlement.verdicts.get(candidate.id) ?? {
-      verdict: "untested" as const,
-      settled: "budget" as const,
+    let compileMs = 0;
+    let passes = 0;
+    const route = path;
+    const compileSet: CompileSet = async (set) => {
+      const text = marked(
+        tree.source,
+        set.filter((each) => each.where === "body"),
+      );
+      const calls = reissued(body.preamble, setters, set);
+      let result: CompileResult;
+      try {
+        result = route.compile(text, calls, PROBE_PASSES, true);
+      } catch {
+        return { broke: true, same: false, torn: false, own: new Map() };
+      }
+      compileMs += result.passes.reduce((sum, pass) => sum + pass, 0);
+      passes += result.passes.length;
+      if (failed(result, PROBE_PASSES) || result.output === undefined)
+        return {
+          broke: true,
+          same: false,
+          torn: false,
+          own: new Map(),
+          suspects: suspectsIn(result.log, new Set(set.map((each) => each.id))),
+        };
+      try {
+        return await observe(fonts, made, result.output, set, shipped);
+      } catch {
+        // Output the page cannot read is no output the editor can mark.
+        return { broke: true, same: false, torn: false, own: new Map() };
+      }
     };
-    return { ...candidate, ...decided };
-  });
-  const { macros, standard } = aggregate(results);
-  const { runs, covered } = uncoveredRuns(
-    made,
-    results,
-    settlement.evidence,
-    raw,
-    tree.source.length,
-  );
-  return {
-    engine: made.engine,
-    path: path.kind,
-    ...(fallback === undefined ? {} : { fallback }),
-    ...(formatDifference === undefined ? {} : { formatDifference }),
-    ...(format === undefined ? {} : { dumpMs: format.ms }),
-    ...(format === undefined || fallback === "dump" ? {} : { format: format.name }),
-    ...(baseline === undefined ? {} : { baseline }),
-    baselineMs,
-    compiles: settlement.compiles,
-    budget,
-    compileMs,
-    ms: performance.now() - started,
-    ...(preamble.ms === undefined ? {} : { signaturesMs: preamble.ms }),
-    candidates: results,
-    macros,
-    standard,
-    glyphs: {
-      reference: made.pages.reduce(
-        (sum, page) => sum + page.items.filter((item) => item.kind === "glyph").length,
-        0,
-      ),
-      covered,
-    },
-    uncovered: runs,
-  };
+
+    const settlement =
+      baseline === undefined
+        ? await settle(probeOrder(probed, owners), compileSet, budget, owners)
+        : { verdicts: new Map(), evidence: new Map<string, GlyphPlace[]>(), compiles: 0 };
+    session.forget(job);
+
+    const results: ProbeCandidate[] = candidates.map((candidate) => {
+      if (candidate.unprobed !== undefined)
+        return { ...candidate, verdict: candidate.unprobed, settled: "unprobed" };
+      const decided = settlement.verdicts.get(candidate.id) ?? {
+        verdict: "untested" as const,
+        settled: "budget" as const,
+      };
+      return { ...candidate, ...decided };
+    });
+    const { macros, standard } = aggregate(results);
+    const { runs, covered } = uncoveredRuns(made, results, settlement.evidence, raw, {
+      body: tree.source,
+      preamble: preamble.tree?.source ?? "",
+    });
+    return {
+      engine: made.engine,
+      path: path.kind,
+      ...(fallback === undefined ? {} : { fallback }),
+      ...(formatDifference === undefined ? {} : { formatDifference }),
+      ...(format === undefined ? {} : { dumpMs: format.ms }),
+      ...(format === undefined || fallback === "dump" ? {} : { format: format.name }),
+      ...(baseline === undefined ? {} : { baseline }),
+      baselineMs,
+      compiles: settlement.compiles,
+      budget,
+      compileMs,
+      passes,
+      ms: performance.now() - started,
+      ...(preamble.ms === undefined ? {} : { signaturesMs: preamble.ms }),
+      signatures: preamble.signatures,
+      candidates: results,
+      macros,
+      standard,
+      glyphs: {
+        reference: made.pages.reduce(
+          (sum, page) => sum + page.items.filter((item) => item.kind === "glyph").length,
+          0,
+        ),
+        covered,
+      },
+      uncovered: runs,
+    };
+  } catch (error) {
+    // A probe that did not finish leaves no format for item 7.
+    session.forget(job);
+    if (format !== undefined && fallback !== "dump") session.dropFormat("pdftex", format.name);
+    throw error;
+  }
 }

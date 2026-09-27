@@ -264,11 +264,52 @@ function nameText(name: string, agl: ReadonlyMap<string, string> | undefined): s
   );
 }
 
+/**
+ * The suffixes a font gives a small capital's glyph after the name of the capital it is drawn
+ * from: `A.sc`, Roboto's `A.c2sc`, Source Sans's `A.s`, `A.smcp` and `A.small`.
+ */
+const SMALL_CAPITAL_SUFFIXES: ReadonlySet<string> = new Set(["sc", "c2sc", "s", "smcp", "small"]);
+
+/**
+ * The name of the capital a small capital's glyph is named after, when its name says it is one: its
+ * base, before the first period, when its first suffix is a small capital's
+ * (`SMALL_CAPITAL_SUFFIXES`), `A` for `A.c2sc`; or when the base ends in `small`, as fontinst names
+ * Adobe's expert glyphs, `Asmall` and `Aacutesmall`, what comes before it.
+ */
+function smallCapitalBase(name: string): string | undefined {
+  const base = baseName(name);
+  if (base.length > "small".length && base.endsWith("small")) return base.slice(0, -"small".length);
+  const dot = name.indexOf(".");
+  if (dot <= 0) return undefined;
+  const next = name.indexOf(".", dot + 1);
+  const suffix = name.slice(dot + 1, next < 0 ? undefined : next);
+  return SMALL_CAPITAL_SUFFIXES.has(suffix) ? base : undefined;
+}
+
+/**
+ * The small letter a small capital stands for, when its name is a capital's with a small capital's
+ * suffix (`smallCapitalBase`) and that capital is one letter whose small letter is one character:
+ * `A.c2sc` and `Asmall` are `a`, and `Eacute.s` is `é`. A font's small-caps encoding sets them at
+ * the small letters' codes, and the page draws them there, as small letters the height of capitals.
+ */
+function smallLetterOf(
+  name: string,
+  agl: ReadonlyMap<string, string> | undefined,
+): string | undefined {
+  const base = smallCapitalBase(name);
+  const capital = base === undefined ? undefined : lookUpName(base, agl);
+  if (capital === undefined || [...capital].length !== 1) return undefined;
+  const small = capital.toLowerCase();
+  return small !== capital && [...small].length === 1 ? small : undefined;
+}
+
 /** Text for one name with no `+` in it, by the lookups `glyphText` lists. */
 function lookUpName(
   name: string,
   agl: ReadonlyMap<string, string> | undefined,
 ): string | undefined {
+  const small = smallLetterOf(name, agl);
+  if (small !== undefined) return small;
   const joined = joinedName(name);
   const variant = joined === undefined ? undefined : agl?.get(joined);
   if (variant !== undefined && !PRIVATE_USE.test(variant)) return variant;
@@ -284,22 +325,24 @@ function lookUpName(
 }
 
 /**
- * The text a glyph stands for, by its name, or undefined when the name says nothing. A name with a
- * suffix reads first as the Adobe Glyph List reads its suffix joined to its base, unless that is a
- * private-use character: Latin Modern names its superior figures `two.superior`, which is the
- * AGL's `twosuperior`, `²`, where dropping the suffix would read `2`; and the AGL puts
- * `dollaroldstyle` in the Private Use Area, so `dollar.oldstyle` stays `$`. Otherwise the suffix
- * from the first period on is dropped (`a.sc` reads as `a`), and then, in order: the table above,
- * which gives Computer Modern's quote and ligature names the spellings the aligner expects and
- * so wins (`quoteright` is `'`, `endash` is `--`); a single ASCII letter; the Adobe Glyph List,
- * which fonts beyond Computer Modern name their glyphs by (`Aacute` is `Á`, and a name for
- * several code points is their string); the `uniXXXX` and `uXXXX[XX]` forms; and a ligature's
- * parts joined by `_` (`f_f_i`). Whichever of these reads a name, a Latin ligature's code point,
- * U+FB00 to U+FB06, is spelled as its letters, as the table spells Computer Modern's ligatures:
- * `uniFB01` is `fi`, as `fi` is, and `uniFB05` is `ſt`. A name that joins parts with `+`, as a
- * virtual font's composed character is named (`fonts.ts`), is its parts' texts composed: a spacing
- * accent becomes its combining mark after the rest, and the whole is NFC, so `A+breve` is `Ă`,
- * with a dotless i or j under the accent taking its dot back (`accented`): `dotlessi+acute` is `í`.
+ * The text a glyph stands for, by its name, or undefined when the name says nothing. A small
+ * capital named after its capital with a small capital's suffix reads first as its small letter,
+ * `A.c2sc` as `a` (`smallLetterOf`, decision 0021). A name with a suffix reads next as the Adobe
+ * Glyph List reads its suffix joined to its base, unless that is a private-use character: Latin
+ * Modern names its superior figures `two.superior`, which is the AGL's `twosuperior`, `²`, where
+ * dropping the suffix would read `2`; and the AGL puts `dollaroldstyle` in the Private Use Area, so
+ * `dollar.oldstyle` stays `$`. Otherwise the suffix from the first period on is dropped (`a.sc`
+ * reads as `a`), and then, in order: the table above, which gives Computer Modern's quote and
+ * ligature names the spellings the aligner expects and so wins (`quoteright` is `'`, `endash` is
+ * `--`); a single ASCII letter; the Adobe Glyph List, which fonts beyond Computer Modern name their
+ * glyphs by (`Aacute` is `Á`, and a name for several code points is their string); the `uniXXXX`
+ * and `uXXXX[XX]` forms; and a ligature's parts joined by `_` (`f_f_i`). Whichever of these reads a
+ * name, a Latin ligature's code point, U+FB00 to U+FB06, is spelled as its letters, as the table
+ * spells Computer Modern's ligatures: `uniFB01` is `fi`, as `fi` is, and `uniFB05` is `ſt`. A name
+ * that joins parts with `+`, as a virtual font's composed character is named (`fonts.ts`), is its
+ * parts' texts composed: a spacing accent becomes its combining mark after the rest, and the whole
+ * is NFC, so `A+breve` is `Ă`, with a dotless i or j under the accent taking its dot back
+ * (`accented`): `dotlessi+acute` is `í`.
  */
 export function glyphText(name: string, agl?: ReadonlyMap<string, string>): string | undefined {
   if (!name.includes("+")) return nameText(name, agl);

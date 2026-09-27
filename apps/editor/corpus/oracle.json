@@ -123,8 +123,8 @@
           "macro": "name",
           "argument": 1,
           "port": "marks",
-          "expected": "case",
-          "why": "Decision 0013: the class sets the name through \\MakeUppercase, which the port patched out; editable once the aligner folds case (item 5's other branch)."
+          "expected": "editable",
+          "why": "Decision 0013: the class sets the name through \\MakeUppercase, which the port patched out; editable since the aligner folds case (decision 0021)."
         },
         {
           "macro": "tagline",
@@ -249,8 +249,8 @@
           "macro": "cvsection",
           "argument": 2,
           "port": "marks",
-          "expected": "case",
-          "why": "Decision 0013: the class sets section titles through \\MakeUppercase; editable once the aligner folds case."
+          "expected": "editable",
+          "why": "Decision 0013: the class sets section titles through \\MakeUppercase; editable since the aligner folds case (decision 0021)."
         },
         {
           "macro": "cvevent",
@@ -546,7 +546,7 @@
           "macro": "cventry",
           "argument": 1,
           "port": "marks",
-          "expected": "misaligned",
+          "expected": "editable",
           "why": "Decision 0015: the class sets every entry's position in \\scshape, as the headline; editable once item 8 reads small capitals."
         },
         {
@@ -581,7 +581,7 @@
           "macro": "cvsubsection",
           "argument": 1,
           "port": "omits",
-          "expected": "misaligned",
+          "expected": "editable",
           "why": "Decision 0015: subsections have no place in the model; set in \\scshape."
         },
         {

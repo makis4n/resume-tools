@@ -9,12 +9,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { DrawnPage, FieldLayout } from "../page/draw";
 import type { PageFont } from "../page/fonts";
 import { curated } from "../templates/curated";
+import type { Fold } from "../tex/fields";
 import { glyphOf, glyphText } from "../tex/glyphs";
 import { parseTfm } from "../tex/tfm";
 import { parseType1 } from "../tex/type1";
 import type { Shown } from "./compiler";
 import { apply, type Command, type Document, fieldsOf, newDocument } from "./document";
 import { Overlay } from "./Overlay";
+import { BREAKS } from "./RichOverlay";
 import { docToRuns } from "./rich";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,8 +46,11 @@ const SPECIAL =
   "hangindent=0.0pt;hangafter=1;parshape=1;inner=0;shape=34.93008pt,507.09492pt;" +
   "spaceskip=0.0pt;xspaceskip=0.0pt";
 
-/** A page that sets the field's text of `document` in `font`, every glyph of it. */
-function shownIn(font: PageFont, document: Document): Shown {
+/**
+ * A page that sets the field's text of `document` in `font`, every glyph of it, in the case the
+ * page folds it to when `folded` is given.
+ */
+function shownIn(font: PageFont, document: Document, folded?: Fold): Shown {
   const field = fieldsOf(document.resume).get(ID);
   const runs = field?.kind === "rich" ? field.get(document.resume) : [];
   const text = runs.map((run) => run.text).join("");
@@ -58,6 +63,7 @@ function shownIn(font: PageFont, document: Document): Shown {
     y: 100,
     secondLine: undefined,
     baseline: [72],
+    ...(folded === undefined ? {} : { folded }),
   };
   const page: DrawnPage = {
     svg: "",
@@ -174,6 +180,34 @@ describe("a rich field open in its editor", () => {
       field: ID,
       runs: [{ ...typed[0], text: `${typed[0]?.text}!` }],
     });
+    expect(closed).toBe(0);
+  });
+
+  it("shows a field the page sets in capitals in capitals, measured so, and keeps its runs' case", async () => {
+    show(document0, shownIn(roman, document0));
+    const { editor } = await mounted();
+    const style = () => host.querySelector("style")?.textContent ?? "";
+    const spacing = () => BREAKS.getState(editor.state)?.rows[0]?.wordSpacingSp;
+    expect(style()).toContain(".ProseMirror { text-transform: none; }");
+    expect(spacing()).toBe(0);
+    // A page that sets the field through \MakeUppercase, as the class's next compile may.
+    show(document0, shownIn(roman, document0, "upper"));
+    expect(style()).toContain(".ProseMirror { text-transform: uppercase; }");
+    // In capitals the bullet is wider, so TeX shrinks its line's spaces to fit it, as the rows do.
+    expect(BREAKS.getState(editor.state)?.rows).toHaveLength(1);
+    expect(spacing()).toBeLessThan(0);
+    // One whose glyphs are of both cases, as a class that capitalises each word's first letter sets
+    // them, is shown and measured as typed; and then the capitals again.
+    show(document0, shownIn(roman, document0, "mixed"));
+    expect(style()).toContain(".ProseMirror { text-transform: none; }");
+    expect(spacing()).toBe(0);
+    show(document0, shownIn(roman, document0, "upper"));
+    expect(spacing()).toBeLessThan(0);
+    // The runs keep their own case, and so does what the user types.
+    expect(docToRuns(editor.state.doc)).toEqual(runsIn(document0));
+    type(editor, " Twice.");
+    const sent = commands.at(-1);
+    expect(sent?.type === "rich" && sent.runs.at(-1)?.text.endsWith("pages. Twice.")).toBe(true);
     expect(closed).toBe(0);
   });
 

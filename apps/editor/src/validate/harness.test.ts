@@ -14,6 +14,7 @@ import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls, parsePackage, type TemplatePackage } from "../templates/package";
 import { bound } from "../test/timing";
 import type { DviDocument, PageItem } from "../tex/dvi";
+import type { Field } from "../tex/fields";
 import {
   CHECKS,
   type Check,
@@ -22,6 +23,7 @@ import {
   type Report,
   validateCurated,
   validatePackage,
+  wordAsSet,
 } from "./harness";
 
 type PackageInput = z.input<typeof TemplatePackage>;
@@ -456,6 +458,42 @@ describe("checkSpecial", () => {
   });
 });
 
+describe("wordAsSet", () => {
+  /** A field of a glyph for each entry: its text, its offset, and whether TeX inserted it. */
+  const fieldAt = (glyphs: [string, number, boolean?][]): Field => ({
+    id: "f",
+    glyphs: glyphs.map(([text, offset, inserted], item) => ({
+      item,
+      text,
+      offset,
+      ...(inserted ? { inserted } : {}),
+    })),
+  });
+  /** A glyph for each letter of `word`, from `start` on. */
+  const letters = (word: string, start = 0) =>
+    [...word].map((text, i): [string, number] => [text, start + i]);
+
+  it("spells a field's first word in the case the page sets each letter in", () => {
+    // As typed, in capitals, and in small letters, as the page sets it or folds it.
+    expect(wordAsSet(fieldAt(letters("Typesetter")), "Typesetter", 0)).toBe("Typesetter");
+    expect(wordAsSet(fieldAt(letters("TYPESETTER")), "Typesetter", 0)).toBe("TYPESETTER");
+    expect(wordAsSet(fieldAt(letters("proofs")), "PROOFS", 0)).toBe("proofs");
+    // Letter by letter, as a class that capitalises each word's first letter sets it.
+    expect(wordAsSet(fieldAt(letters("Machine")), "machine", 0)).toBe("Machine");
+    // Past the spaces the text starts with, a ligature's letters in its case; and a hyphen TeX
+    // inserted, which stands for no letter.
+    const field = fieldAt([
+      ["fi", 2],
+      ["e", 4],
+      ["l", 5],
+      ["d", 6],
+    ]);
+    expect(wordAsSet(field, "FIELD", 2)).toBe("field");
+    const broken = fieldAt([...letters("TYPE"), ["-", 3, true], ...letters("SET", 4)]);
+    expect(wordAsSet(broken, "typeset", 0)).toBe("TYPESET");
+  });
+});
+
 describe("validatePackage, with a session that ships output the page cannot read", () => {
   it("reports it as a compile finding, rather than throw", async () => {
     const fetched = { files: 0, bytes: 0, paths: [] };
@@ -514,17 +552,25 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
         });
 
       it("compiles in good time, a new document, an edit and a control alike, and says how long", () => {
-        const { format, passes, pages, fields } = report();
-        const timings = passes.map((ms) => `${Math.round(ms)} ms`).join(", ");
-        console.log(`${id}: format ${format}; passes ${timings}; pages ${pages}; fields ${fields}`);
+        const { format, passes, cpuPasses, pages, fields } = report();
+        const timings = (each: readonly number[] | undefined) =>
+          each === undefined ? "none" : each.map((ms) => `${Math.round(ms)} ms`).join(", ");
+        console.log(
+          `${id}: format ${format}; passes ${timings(passes)}; in CPU time ${timings(cpuPasses)}; pages ${pages}; fields ${fields}`,
+        );
         // The first pass is a new document's, and each after the same body's second compile is
         // the edit's or a control's, as every edit and every change of a control costs. Each is
         // bounded against the fastest pass of the same report, not against the clock: a
-        // pathological slowdown of one pass fails CI, while a loaded runner, which slows every
-        // pass alike, does not (the rule since #36 is a ratio, never a wall-clock number).
+        // pathological slowdown of one pass fails CI, while a loaded runner does not (the rule
+        // since #36 is a ratio, never a wall-clock number). The passes are bounded in the CPU time
+        // of the thread that ran them, where the session gives it (`src/test/timing.ts`): load
+        // that comes in bursts slows one pass and not the next in elapsed time, which counts what
+        // the thread waited for.
         expect(passes.length).toBeGreaterThanOrEqual(4);
-        const quickest = Math.min(...passes);
-        for (const ms of passes) expect(ms).toBeLessThan(bound(6, quickest));
+        const bounded = cpuPasses ?? passes;
+        expect(bounded).toHaveLength(passes.length);
+        const quickest = Math.min(...bounded);
+        for (const ms of bounded) expect(ms).toBeLessThan(bound(6, quickest));
       });
     });
   }
@@ -638,11 +684,12 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
     }, 60_000);
 
     it("reports a field that does not align, where a font cannot be drawn as well", async () => {
-      // The title in capitals matches none of its text but its first letter; the TS1 bullet
-      // stops the page drawing, which used to hide the misaligned field.
-      const both = plainWith("capitals-bulleted", {
+      // The title in a symbol font, whose glyphs at its lower-case letters' codes stand for other
+      // characters, matches none of its text but its first letter, which is a capital there; the
+      // TS1 bullet stops the page drawing, which used to hide the misaligned field.
+      const both = plainWith("symbols-bulleted", {
         entry: [
-          "\\MakeUppercase{{{title}}}\\par",
+          "{\\usefont{OMS}{cmsy}{m}{n}{{title}}}\\par",
           "{{#bullets}}",
           "\\begin{itemize}",
           "{{bullets}}",
@@ -661,6 +708,26 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
         { check: "fonts", message: expect.stringMatching(/^the page cannot draw tcrm1000: /) },
         { check: "pdf", message: expect.stringContaining('"tcrm1000"') },
       ]);
+    }, 60_000);
+
+    it("passes a name and titles a class sets in capitals, which the page aligns once folded", async () => {
+      // As AltaCV sets its name and section titles through \MakeUppercase (decision 0013): the page
+      // folds each to the resume's text (decision 0021), ß's capitals SS included, and the PDF
+      // shows each first word in capitals.
+      const capitals = plainWith("capitals", {
+        header: "{\\Large\\MakeUppercase{{{first}} {{last}}}}\\par",
+        section: {
+          entries: "\\section*{\\MakeUppercase{{{title}}}}\n{{entries}}",
+          list: "\\section*{\\MakeUppercase{{{title}}}}\n{{items}}",
+          labelled: "\\section*{\\MakeUppercase{{{title}}}}\n{{items}}",
+          paragraph: "\\section*{\\MakeUppercase{{{title}}}}\n{{text}}\\par",
+        },
+        entry: "\\MakeUppercase{{{title}}}\\par\n{{bullets}}",
+      });
+      const resume = resumeWith("Set the quarterly report", "Stra\u{df}enbahn planner");
+      const report = await validatePackage(session, fonts, capitals, resume);
+      expect(report.findings).toEqual([]);
+      expect(report.fields).toBe(5);
     }, 60_000);
 
     it("reports a field cut short, which loses its end marker and the rest of its text", async () => {
@@ -909,6 +976,68 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       ]);
     }, 60_000);
 
+    it("reports a first word the PDF lacks though it shows the word elsewhere in another case", async () => {
+      // PDFs made by hand, on US Letter with a font of every glyph 500 units wide, each line of text
+      // an operator of its own: every field shown but the section title, whose first word,
+      // Experience, the bullet shows in small letters. A word is looked for as the page sets it,
+      // never whatever its case, so the title is reported; and where a class sets the titles in
+      // capitals, it is found in capitals, and in small letters is still reported.
+      const handing = (lines: string[]) => {
+        const content = lines
+          .map((line, i) => `BT /F1 10 Tf 72 ${720 - 20 * i} Td ${line} ET`)
+          .join("\n");
+        const widths = Array.from({ length: 95 }, () => 500).join(" ");
+        const source = [
+          "%PDF-1.5",
+          `4 0 obj\n<</Length ${content.length}>>\nstream\n${content}\nendstream\nendobj`,
+          "3 0 obj\n<</Type/Page/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>/MediaBox[0 0 612 792]>>\nendobj",
+          `5 0 obj\n<</Type/Font/Subtype/Type1/FirstChar 32/LastChar 126/Widths[${widths}]/ToUnicode 6 0 R>>\nendobj`,
+          "%%EOF",
+        ].join("\n");
+        const pdf = Uint8Array.from(source, (char) => char.charCodeAt(0));
+        return {
+          dump: session.dump.bind(session),
+          compile: session.compile.bind(session),
+          pdf: (): PdfResult => ({ ok: true, pdf, ms: 1, output: "" }),
+        } as unknown as EngineSession;
+      };
+      const resume = resumeWith("Set the report from experience");
+      const bullet = "[(Set)-250(the)-250(report)-250(from)-250(experience)]TJ";
+      const lost = {
+        check: "pdf",
+        field: "work.title",
+        message:
+          "the PDF's text does not show work.title: no text operator shows its first word, Experience",
+      };
+      const plain = await validatePackage(
+        handing(["(Ines)Tj", "(Calloway)Tj", "(Typesetter)Tj", bullet]),
+        fonts,
+        plainWith("lost-title", {}),
+        resume,
+      );
+      expect(plain.findings).toEqual([lost]);
+      const capitals = plainWith("lost-capitals", {
+        header: "{\\Large\\MakeUppercase{{{first}} {{last}}}}\\par",
+        section: {
+          entries: "\\section*{\\MakeUppercase{{{title}}}}\n{{entries}}",
+          list: "\\section*{\\MakeUppercase{{{title}}}}\n{{items}}",
+          labelled: "\\section*{\\MakeUppercase{{{title}}}}\n{{items}}",
+          paragraph: "\\section*{\\MakeUppercase{{{title}}}}\n{{text}}\\par",
+        },
+        entry: "\\MakeUppercase{{{title}}}\\par\n{{bullets}}",
+      });
+      const shown = ["(INES)Tj", "(CALLOWAY)Tj", "(TYPESETTER)Tj", bullet];
+      const found = await validatePackage(
+        handing([...shown, "(EXPERIENCE)Tj"]),
+        fonts,
+        capitals,
+        resume,
+      );
+      expect(found.findings).toEqual([]);
+      const missing = await validatePackage(handing(shown), fonts, capitals, resume);
+      expect(missing.findings).toEqual([lost]);
+    }, 60_000);
+
     it("reports a PDF the session refuses because a template special would read a file", async () => {
       // A template can emit a \special; resume text cannot (decision 0007). xdvipdfmx would embed
       // the file it names, so the session refuses the PDF (decision 0008) and the harness reports
@@ -976,6 +1105,20 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       expect(report.passes).toHaveLength(6);
       for (const ms of report.passes) expect(ms).toBeLessThan(2_000);
     }, 120_000);
+
+    it("passes section titles its heading sets in capitals, which the page aligns once folded", async () => {
+      const capitals = parsePackage({
+        ...xetex,
+        id: "invented-xetex-capitals",
+        preamble: xetex.preamble.replace(
+          "\\color{rtaccent}#1}",
+          "\\color{rtaccent}\\MakeUppercase{#1}}",
+        ),
+      });
+      expect(capitals.preamble).toContain("\\MakeUppercase{#1}");
+      const report = await validatePackage(session, fonts, capitals, sample);
+      expect(report.findings).toEqual([]);
+    }, 60_000);
 
     it("leaves out a character no font of the package has, rather than set a box for it", async () => {
       // Roboto has no arrow and no emoji: XeTeX would set its .notdef for each.

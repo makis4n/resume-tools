@@ -183,10 +183,10 @@ export async function keystrokeWork(
     const shown = variantFontsOf(page, resume, field.id) ?? new Map<Variant, FieldFont>();
     const named = await namedVariants(shown, layout, (name) => fonts.load(name));
     const faces = richFaces(new Map<Variant, SizedFont>([...named, ...shown]), layout);
-    lay = () => richRows(text, faces, setting.params).length;
+    lay = () => richRows(text, faces, setting.params, setting.folded).length;
   } else if (found.kind === "text") {
     const text = found.get(resume) ?? "";
-    lay = () => layoutRows(text, setting.face, setting.params).length;
+    lay = () => layoutRows(text, setting.face, setting.params, setting.folded).length;
   } else throw new Error(`${field.id} is a ${found.kind} field, which the overlay does not set`);
   const times: number[] = [];
   let rows = 0;

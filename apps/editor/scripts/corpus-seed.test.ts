@@ -13,7 +13,12 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/nod
 import { type Candidate, candidatesOf, isSetter } from "../src/import/candidates";
 import { readTree } from "../src/import/fonts";
 import { type Intake, intake } from "../src/import/intake";
-import { buildRequest, type HeaderValues, withRedefinitions } from "../src/import/naming";
+import {
+  buildRequest,
+  type HeaderValues,
+  sourcesOf,
+  withRedefinitions,
+} from "../src/import/naming";
 import { bodyOf, bodyOfText, buildTree, readBody } from "../src/import/parse";
 import { PROBE_PRELUDE, type ProbeCandidate, probeUses } from "../src/import/probe";
 import {
@@ -578,7 +583,10 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
       (path) => new Uint8Array(readFileSync(join(ORACLE_DIR, doc.id, ...path.split("/")))),
       () => undefined,
     );
-    const taken = intake({ name: `${id}.zip`, bytes: zip }, { tree: readTree(manifest.files) });
+    const taken = intake(
+      { name: `${id}.zip`, bytes: zip },
+      { tree: readTree(manifest.files, manifest.fonts) },
+    );
     if (isRefusal(taken)) throw new Error(taken.message);
     const made = await reference(session, fonts, taken as Intake);
     if (isRefusal(made)) throw new Error(made.message);
@@ -611,7 +619,11 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
       verdict: "untested",
       settled: "budget",
     }));
-    const also = extras === undefined ? {} : { also: extras };
+    // The upload's sources, which say which definitions are the sample's own, its class among them.
+    const options = {
+      ...(extras === undefined ? {} : { also: extras }),
+      sources: sourcesOf(taken),
+    };
     /** The sample's request, with the header's values given, and more stored values. */
     const request = (header?: HeaderValues, stored: readonly string[] = []) =>
       buildRequest(
@@ -638,7 +650,7 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
           ],
         },
         body.preamble,
-        header === undefined ? also : { ...also, header },
+        header === undefined ? options : { ...options, header },
       );
     const filed = await filingOf(found, signaturesModule);
     return { doc, session, fonts, taken, made, candidates, extras, request, filed };
@@ -693,20 +705,19 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
     }, 60_000);
 
   // The upstream AltaCV sample's placeholder name holds, as a whole word, the colour the class
-  // passes to `\color` in `\makecvheader`'s closure, which the request builder masks by the
-  // header's words, moving the key off the seed's. Part A's masking reads `\color`'s argument as
-  // code: the integrator turns this on with it.
-  test.todo("keeps altacv-0000's keys with the header's values its own calls give", async () => {
+  // passes to `\color` in `\makecvheader`'s closure, which the request builder once masked by the
+  // header's words, moving the key off the seed's; it now reads `\color`'s argument as code.
+  test("keeps altacv-0000's keys with the header's values its own calls give", async () => {
     const { macros, header } = await seeded("altacv-0000");
     expect(header.first).toBeDefined();
     await checkSeeded(macros);
   }, 60_000);
 
   // Names and stored values that are words of the launch templates' code, as the reviewers found:
-  // each moved a seed key when the request builder masked a class's definitions by them. Part A's
-  // masking leaves the tree's definitions alone and reads code as code: the integrator turns this
-  // on with it.
-  test.todo("keeps every seed key whatever words the header's values and the stored text hold", async () => {
+  // each moved a seed key when the request builder masked a class's definitions by them. It now
+  // leaves the tree's definitions to the patterns and reads code as code, and masks a class the
+  // upload ships, as AltaCV's and Awesome-CV's samples do, only where its text is the person's.
+  test("keeps every seed key whatever words the header's values and the stored text hold", async () => {
     const names = [
       ["Quill", "Page"],
       ["Quill", "Link"],

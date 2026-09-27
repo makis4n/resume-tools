@@ -201,7 +201,8 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   no density sets a line over another in Roboto for that reason. Clicks on Lato's text resolve
   against boxes twice their size until the reader scales outlines by the matrix.
 - The capitals can come back when the aligner folds case, and then need a way around
-  `\MakeUppercase`'s cost, as the bookmarks did in decision 0008.
+  `\MakeUppercase`'s cost, as the bookmarks did in decision 0008. Decision 0021 later taught the
+  aligner to fold case; the cost is still to be got round, so the port keeps no capitals.
 - Each font sets the ligatures its T1 metrics form, as the sample does, and the page reads each as
   the letters it joins (decision 0009), Lato's and Roboto's `uniFB00` to `uniFB04` among them:
   ff, fi, fl, ffi and ffl in Lato and Latin Modern, ff, fi, fl and ft in Source Sans, and fi and fl
@@ -258,6 +259,9 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   removed, and the page comes back with the compile that edit starts.
 - The port's default page is the sample's but for the capitals, the margins, a pale rule in place
   of the gold, and what has no place in the model.
+- A format's `\dump` left a `\topskip`-high box in `\@holdpg`, which paracol sets above its columns
+  where it opens at the top of a page; decision 0023's session voids it, and the port, which opens
+  paracol below its header, sets its page where it did, every glyph in the same place.
 - xdvipdfmx warns once for each of the editor's marker specials, which it does not know, as it
   does for Jake's.
 - Plan section 7 lists AltaCV's licence as MIT; the class says LPPL 1.3c.

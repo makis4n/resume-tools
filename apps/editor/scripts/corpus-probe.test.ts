@@ -83,8 +83,9 @@ describe("the table", () => {
     table.split("\n").find((line) => line.startsWith(`| ${label} |`));
 
   test("counts what became of the documents, and the path each took", () => {
+    // A document whose child timed out may never have reached the parser.
     expect(lineOf("Documents whose body parsed")).toBe(
-      "| Documents whose body parsed | 1 | 1 | 0 | 0 | 0 | 2 | 4 |",
+      "| Documents whose body parsed | 1 | 1 | 0 | 0 | 0 | 1 | 3 |",
     );
     expect(lineOf("Probed")).toBe("| Probed | 1 | 1 | 0 | 0 | 0 | 0 | 2 |");
     expect(lineOf("Not probed: the body unmarked did not set the reference's glyphs")).toContain(
@@ -143,6 +144,72 @@ describe("the table", () => {
   });
 });
 
+describe("a document the probe could not probe", () => {
+  test("counts among those whose body parsed, and none of its verdicts counts", () => {
+    const two: ProbeRow[] = [
+      row("jake-0001", "jake", {
+        engine: "pdftex",
+        path: "format",
+        compiles: 4,
+        passes: 5,
+        candidates: { editable: 3, moved: 1 },
+        arguments: [argument("inventedentry", 1, "editable")],
+        standard: { section: { total: 1, editable: 1, verdict: "editable" } },
+        glyphs: { reference: 100, covered: 80, candidate: 10, raw: 5, chrome: 5 },
+        dumpMs: 300,
+        probeMs: 900,
+      }),
+      // As an earlier runner wrote the row of one whose baseline stopped: every candidate untested.
+      row("jake-0002", "jake", {
+        outcome: "baseline",
+        engine: "pdftex",
+        path: "whole",
+        baseline: "stopped",
+        compiles: 0,
+        candidates: { untested: 7 },
+        arguments: [argument("inventedentry", 1, "untested")],
+        standard: { section: { total: 2, editable: 0, verdict: "untested" } },
+        glyphs: { reference: 300, covered: 0, candidate: 0, raw: 0, chrome: 300 },
+        dumpMs: 280,
+        probeMs: 50,
+      }),
+    ];
+    const table = probeTable(two);
+    const lineIn = (label: string) =>
+      table.split("\n").filter((line) => line.startsWith(`| ${label} |`));
+    expect(lineIn("Documents whose body parsed")).toEqual([
+      "| Documents whose body parsed | 2 | 0 | 0 | 0 | 0 | 0 | 2 |",
+    ]);
+    expect(lineIn("Probed")).toEqual(["| Probed | 1 | 0 | 0 | 0 | 0 | 0 | 1 |"]);
+    expect(lineIn("Compiles per document, median")).toEqual([
+      "| Compiles per document, median | 4 |  |  |  |  |  | 4 |",
+    ]);
+    expect(lineIn("Compiles that took a second pass")).toEqual([
+      "| Compiles that took a second pass | 25% |  |  |  |  |  | 25% |",
+    ]);
+    // Its candidates, its arguments and its glyphs count nowhere.
+    expect(lineIn("In all")).toEqual([
+      "| In all | 4 | 0 | 0 | 0 | 0 | 0 | 4 |",
+      "| In all | 1 | 0 | 0 | 0 | 0 | 0 | 1 |",
+      "| In all | 100 | 0 | 0 | 0 | 0 | 0 | 100 |",
+    ]);
+    expect(lineIn("`untested`")).toEqual([
+      "| `untested` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |",
+      "| `untested` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |",
+    ]);
+    expect(lineIn("Section titles")).toEqual([
+      "| Section titles | 1 of 1 | 0 | 0 | 0 | 0 | 0 | 1 of 1 |",
+    ]);
+    expect(lineIn("Covered by editable fields")).toEqual([
+      "| Covered by editable fields | 80% |  |  |  |  |  | 80% |",
+    ]);
+    expect(lineIn("The probe, median")).toEqual([
+      "| The probe, median | 900 ms |  |  |  |  |  | 900 ms |",
+    ]);
+    expect(probeNames(two)).toEqual({ locked: {}, editable: { "\\inventedentry #1": 1 } });
+  });
+});
+
 describe("a probe's row", () => {
   const candidate = (
     id: string,
@@ -172,7 +239,16 @@ describe("a probe's row", () => {
     compiles: 3,
     budget: 64,
     compileMs: 250.2,
+    passes: 4,
     ms: 900.7,
+    signatures: {
+      engine: "pdftex",
+      commands: {},
+      environments: {},
+      macros: {},
+      truncated: false,
+      ms: 80,
+    },
     candidates: [
       candidate("c1-1", "editable"),
       candidate("c2-1", "moved"),
@@ -212,6 +288,7 @@ describe("a probe's row", () => {
       outcome: "probed",
       path: "format",
       compiles: 3,
+      passes: 4,
       candidates: { editable: 2, moved: 1 },
       standard: { paragraph: { total: 1, editable: 1, verdict: "editable" } },
       glyphs: { reference: 100, covered: 60, candidate: 30, raw: 0, chrome: 10 },
@@ -231,12 +308,10 @@ describe("a probe's row", () => {
     expect(JSON.stringify(made)).not.toContain(SECRET);
   });
 
-  test("says when the body unmarked did not set the reference's glyphs", () => {
-    expect(
-      probeRow({ ...found, path: "whole", fallback: "baseline", baseline: "position" }),
-    ).toMatchObject({
-      outcome: "baseline",
-      baseline: "position",
-    });
+  test("says when the body unmarked did not set the reference's glyphs, and counts no verdicts", () => {
+    const made = probeRow({ ...found, path: "whole", fallback: "baseline", baseline: "position" });
+    expect(made).toMatchObject({ outcome: "baseline", baseline: "position", probeMs: 901 });
+    for (const key of ["compiles", "passes", "candidates", "arguments", "standard", "glyphs"])
+      expect(made, key).not.toHaveProperty(key);
   });
 });

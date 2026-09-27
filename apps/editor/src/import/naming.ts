@@ -3,32 +3,39 @@
  * 0024): what an import sends the naming step about its template, from the body's tree
  * (`parse.ts`), the engine's signatures and definitions (`signatures.ts`), the probe's verdicts
  * (`probe.ts`) and the preamble. Nothing of the resume's text goes: the request holds the
- * template's definitions, masked; the probe's verdict on each argument; call sites whose every
- * letter is `x` or `X` and every digit `0`, outside the names of commands; and the preamble's
- * settings, masked but for numbers, units, colours and known keywords.
+ * template's definitions, masked; its signatures, each default written as its placeholder; the
+ * probe's verdict on each argument; call sites whose every letter is `x` or `X` and every digit
+ * `0`, outside the names of commands; and the preamble's settings, masked but for numbers, units,
+ * colours and known keywords.
  *
  * The request is built for each template macro and environment the body calls or opens, and each
  * the preamble calls to store the header's text (`isSetter`): its signature, its definition and
- * the definitions of its closure, data by name alone (decision 0020), its key (`keyOf`), what the
- * probe found of each argument, and up to three of its calls, the ones whose arguments differ most.
+ * the definitions of its closure, data by name alone (decision 0020), its key (`keyOf`, an
+ * environment's `environmentKeyOf`), what the probe found of each argument, and up to three of its
+ * calls, the ones whose arguments differ most.
  *
- * Definitions are masked by pattern, emails, links and phone numbers, before item 4 hashes them
- * (`maskDefinition`); what a pattern misses, the person's name wrapped in `\mbox`, a bare domain, a
- * phone written with `\,`, is masked here by the document's own values, in the simple form item
- * 11 finishes: every stretch of a definition that spells, spaces and commands aside, a text of the
- * body's, a date, a raw chunk's words, a header value or a text the preamble stores, and every word
- * of it that is a word of the person's header or stored text, is replaced by its placeholder. A
- * definition that masking changes is sent with the hash of what is sent, so that no hash of the
- * person's text leaves the browser; its key, and its dependents', are then the document's own.
+ * Every definition is masked by pattern, emails, links and phone numbers, before item 4 hashes it
+ * (`maskDefinition`). One from the engine's tree, a class or package of TeX Live's, is public and
+ * cannot hold the person's text: it goes as item 4 hashed it, so that its key is the same whoever
+ * the person is, and a masked word of it could not tell anyone who has the package which word the
+ * person's details hold. One the upload defines, in its main file or a class, package or file of
+ * its own (`ownNames`), can hold them, and is masked by the document's own values too
+ * (`ownHidden`): each of the document's phrases of two words or more, each identifier, an email, a
+ * link's host, address or handle, or a phone's digits, and each word of the header's name, wherever
+ * the definition holds it as whole words; and each pair of adjacent words of the definition's
+ * text that a phrase of the document holds, however much longer the phrase. A definition that
+ * masking changes is sent with the hash of what is sent, so that no hash of the person's text
+ * leaves the browser; its key, and its dependents', are then the document's own.
  *
- * `assertNoText` checks a request against a document by the same rules, and throws, naming where
- * but never what, when any of the document's text is in it.
+ * `assertNoText` checks a request against a document more strictly than the builder masks, and
+ * throws, naming where but never what, when any of the document's text is in it.
  */
 
 import {
   type CallSite,
   type Dependency,
   datePlaceholder,
+  environmentKeyOf,
   type FamilyHint,
   keyOf,
   maskDefinition,
@@ -43,6 +50,7 @@ import {
   sha256,
 } from "@resume-tools/naming";
 import { readSpec } from "./arguments";
+import { decodeText, type Intake } from "./intake";
 import {
   type Argument,
   bodyOfText,
@@ -52,8 +60,10 @@ import {
   readBody,
   type Tree,
 } from "./parse";
+import { extensionOf } from "./paths";
 import type { Probe } from "./probe";
 import type { EngineSignatures, Signature } from "./signatures";
+import { maskComments } from "./source";
 import { STANDARD } from "./standard";
 
 // The document's own values.
@@ -71,28 +81,114 @@ export interface HeaderValues {
 
 /**
  * A document's text, as the leak check and the masking read it: the body's tree, whose text runs,
- * link addresses, dates and raw chunks are the person's; the header's values, when found; and the
- * texts the preamble stores, as Awesome-CV's `\name{...}{...}` does, the probe's candidates there.
+ * link addresses, dates and raw chunks are the person's; the header's values, when found; the
+ * texts the preamble stores, as Awesome-CV's `\name{...}` does, the probe's candidates there; and
+ * the upload's sources, which say which definitions are the document's own.
  */
 export interface DocumentText {
   tree: Tree;
   header?: HeaderValues;
   stored?: readonly string[];
+  /**
+   * The upload's sources (`sourcesOf`): a definition whose name one of them defines is the
+   * document's own (`ownNames`). Without them every definition is the tree's, and none is masked by
+   * the document's values.
+   */
+  sources?: readonly string[];
 }
+
+// The document's own definitions.
+
+/** The files of an upload a definition of the document's own can be in, but for its main file. */
+const SOURCE_EXTENSIONS: readonly string[] = [".tex", ".cls", ".sty", ".def"];
+
+/**
+ * An upload's sources, as `buildRequest` and `assertNoText` take them: its main file's text, and
+ * the text of each `.tex`, `.cls`, `.sty` and `.def` file it holds.
+ */
+export function sourcesOf(taken: Pick<Intake, "main" | "files">): string[] {
+  const sources = [taken.main.text];
+  for (const [path, bytes] of Object.entries(taken.files))
+    if (SOURCE_EXTENSIONS.includes(extensionOf(path))) sources.push(decodeText(bytes));
+  return sources;
+}
+
+/**
+ * The forms that define a command, its name after them as a control word: `\def` and its kin,
+ * `\let`, `\newcommand` and its kin, xargs', etoolbox's and xparse's, and tcolorbox's `\newtcbox`.
+ */
+const DEFINES_COMMAND =
+  /\\(?:[gex]?def|let|(?:new|renew|provide)commandx?\*?|DeclareRobustCommand\*?|(?:new|renew|provide)robustcmd\*?|(?:New|Renew|Provide|Declare)(?:Expandable)?DocumentCommand|(?:re)?newtcbox(?:\s*\[[^\]]*\])?)\s*\{?\s*\\([A-Za-z@]+)/g;
+
+/** expl3's forms: `\cs_new:Npn` and `\cs_set:Npn`, protected, without `\par` or expanding. */
+const DEFINES_FUNCTION =
+  /\\cs_(?:new|g?set)(?:_protected)?(?:_nopar)?:(?:Npn|Npx|Nn|Nx)\s*\\([A-Za-z@_:]+)/g;
+
+/** The forms that define an environment, its name after them in braces: `\x` and `\endx`. */
+const DEFINES_ENVIRONMENT =
+  /\\(?:(?:new|renew)environment\*?|(?:New|Renew|Provide|Declare)DocumentEnvironment|(?:re)?newtcolorbox|(?:New|Renew|Provide|Declare)TColorBox)\s*(?:\[[^\]]*\]\s*)?\{([A-Za-z@*]+)\}/g;
+
+/** The forms that define a command by its name spelt out: `\@namedef{x}`, `\csdef{x}`, `\csname`. */
+const DEFINES_BY_NAME =
+  /\\(?:@namedef|cs[gex]?def|cslet)\s*\{([A-Za-z@]+)\}|\\expandafter\s*\\(?:[gex]?def|let|(?:new|renew|provide)command\*?)\s*\\csname\s*([A-Za-z@]+)\s*\\endcsname/g;
+
+/**
+ * The name a macro the engine printed is defined under in a source: a robust command's `\x `, the
+ * optional argument's `\\x`, xparse's `\x code` and an environment's code are all `x`'s.
+ */
+function baseName(name: string): string {
+  const environment = /^environment (.+?) (?:code|end|end aux|end code)$/.exec(name);
+  if (environment !== null) return environment[1] ?? name;
+  return name
+    .replace(/^\\/, "")
+    .replace(/ code$/, "")
+    .trimEnd();
+}
+
+/**
+ * The names an upload's sources define (`sourcesOf`), outside comments, by the forms above: the
+ * macros and environments that are the document's own, which its text can hold the person's
+ * details in. A macro a source defines through a `\csname` it builds from an argument, as AltaCV's
+ * `\NewInfoField` does, is not among them, and is read as the tree's.
+ */
+export function ownNames(sources: readonly string[]): Set<string> {
+  const names = new Set<string>();
+  for (const source of sources) {
+    const code = maskComments(source);
+    for (const found of code.matchAll(DEFINES_COMMAND)) names.add(found[1] ?? "");
+    for (const found of code.matchAll(DEFINES_FUNCTION)) names.add(found[1] ?? "");
+    for (const found of code.matchAll(DEFINES_BY_NAME)) names.add(found[1] ?? found[2] ?? "");
+    for (const found of code.matchAll(DEFINES_ENVIRONMENT))
+      for (const name of [found[1] ?? "", `end${found[1] ?? ""}`]) names.add(name);
+  }
+  names.delete("");
+  return names;
+}
+
+/** Whether a macro the engine printed is the document's own: the upload defines its name. */
+export const isOwn = (name: string, owned: ReadonlySet<string>) => owned.has(baseName(name));
+
+// The document's texts, as the matchers read them.
 
 /** What a text of the document's is, as a leak names it. */
 type Origin = "text" | "link" | "date" | "raw" | "header" | "stored";
 
-/** A text of the document's, as it is matched: its letters and digits, each folded. */
+/**
+ * A text of the document's, as it is matched: its letters and digits, each folded; where it came
+ * from; and its shape: an identifier, an email, a link's host, address or handle, or a phone's
+ * digits; a phrase of two words or more; or one word.
+ */
 interface Needle {
-  /** Its characters, each a code point folded (`fold`). */
   chars: string[];
   origin: Origin;
+  shape: "identifier" | "phrase" | "word";
 }
 
-/** The document's texts, folded, by their first MIN_NEEDLE characters. */
-interface Strings {
+/** The document's texts, folded, by their first MIN_NEEDLE characters, and their phrases' pairs. */
+interface Needles {
   byPrefix: Map<string, Needle[]>;
+  /** Each pair of adjacent words a phrase holds, each folded, a space between, and its origin. */
+  pairs: Map<string, Origin>;
 }
 
 /**
@@ -116,8 +212,11 @@ function folded(text: string): string {
   return out;
 }
 
-/** How many letters and digits a text holds. */
-const alphanumerics = (text: string) => (text.match(/[\p{L}\p{N}]/gu) ?? []).length;
+/** A word: a letter or a digit, and the letters, digits and marks after it. */
+const WORD = /[\p{L}\p{N}][\p{L}\p{N}\p{M}]*/gu;
+
+/** A text's words (`WORD`). */
+const wordsOf = (text: string) => text.match(WORD) ?? [];
 
 /**
  * Whether a folded text could be a placeholder: only `x` and `0`, so that looking for it would
@@ -129,24 +228,40 @@ const placeholderLike = (text: string) => /^[x0]*$/.test(text);
 const MIN_NEEDLE = 3;
 
 /**
- * The shortest text the matchers look for anywhere: one shorter, a first name of three letters
- * among them, is found only as whole words, so that `Tom` never masks `bottom` in a class's
- * definition, which would give the class's macro a key of the document's own.
+ * The shortest identifier a setting, or a text the check reads as source, is searched for anywhere,
+ * inside a word too, as a handle inside a colour's name; everything else is found as whole words
+ * alone, so that a first name `Tom` never masks `bottom`.
  */
 const ANYWHERE = 6;
+
+/** The fewest letters and digits a link's path segment holds to be a handle, `quillinv`. */
+const HANDLE = 5;
+
+/** The fewest digits a run of digits and a phone's separators holds to be a number of the person's. */
+const DIGITS = 7;
+
+/** The longest key before an `=` a matcher reads as a key, not as text. */
+const MAX_KEY = 64;
 
 /** A command at a place: an environment's `\begin` or `\end` with its name, a word or a symbol. */
 const COMMAND = /\\(?:begin|end)\s*\{[A-Za-z@*]*\}|\\[A-Za-z@]+|\\[\s\S]?/uy;
 
 /**
  * A raw chunk's stretches of text: what lies between its commands, braces, TeX's special
- * characters and comments, trimmed, which TeX may set as text.
+ * characters and comments, trimmed, which TeX may set as text; and whether each is inside an
+ * optional argument's brackets, as `\faFile*[regular]`'s style is, the nearest group open round it.
+ * What a command takes as code (`CODE`), `\color{accent}`'s colour or `\selectlanguage{english}`'s
+ * language, is no stretch of text, as a matcher reads the same in a definition.
  */
-function rawPieces(source: string): string[] {
-  const pieces: string[] = [];
+function rawPieces(source: string): { text: string; bracketed: boolean }[] {
+  const pieces: { text: string; bracketed: boolean }[] = [];
+  const open: { char: string; code: boolean }[] = [];
+  /** The code command just read: how many of its mandatory arguments are still to come. */
+  let taking: Takes | undefined;
   let current = "";
   const flush = () => {
-    if (current.trim() !== "") pieces.push(current.trim());
+    if (current.trim() !== "" && !open.some((each) => each.code))
+      pieces.push({ text: current.trim(), bracketed: open.at(-1)?.char === "[" });
     current = "";
   };
   for (let i = 0; i < source.length; ) {
@@ -160,14 +275,30 @@ function rawPieces(source: string): string[] {
     if (char === "\\") {
       flush();
       COMMAND.lastIndex = i;
-      i += Math.max(1, COMMAND.exec(source)?.[0].length ?? 1);
+      const command = COMMAND.exec(source)?.[0] ?? "\\";
+      const code = CODE.get(command.slice(1));
+      taking = code === undefined ? undefined : { ...code };
+      i += Math.max(1, command.length);
       continue;
     }
     if ("{}[]$&#^_".includes(char)) {
       flush();
+      if (char === "{" || char === "[") {
+        // A code command's optional arguments, and as many mandatory ones as it takes, are code.
+        const code = taking !== undefined && (char === "[" || taking.take > 0);
+        if (code && char === "{" && taking !== undefined) taking.take--;
+        if (taking !== undefined && taking.take === 0 && char === "{" && taking.after === undefined)
+          taking = undefined;
+        open.push({ char, code: code || open.some((each) => each.code) });
+      } else if (char === "}" || char === "]") {
+        const opener = char === "}" ? "{" : "[";
+        const at = open.map((each) => each.char).lastIndexOf(opener);
+        if (at >= 0) open.length = at;
+      } else taking = undefined;
       i++;
       continue;
     }
+    if (!/\s/.test(char) && open.every((each) => !each.code)) taking = undefined;
     current += char;
     i++;
   }
@@ -204,95 +335,181 @@ function* nodesOf(nodes: readonly Node[]): Generator<Node> {
   }
 }
 
+/** The characters that part a phone number's digits: spaces, brackets, dots, dashes, slashes. */
+const PHONE_SEPARATORS = new Set([..." ().-/+~", "\u00a0", "\u2009", "\u202f"]);
+
+/** The runs of digits a text holds, its phone's separators between them, of DIGITS or more. */
+function digitRuns(text: string): string[] {
+  const runs: string[] = [];
+  let digits = "";
+  for (const char of text) {
+    if (/^\p{Nd}$/u.test(char)) digits += char;
+    else if (!PHONE_SEPARATORS.has(char)) {
+      if (digits.length >= DIGITS) runs.push(digits);
+      digits = "";
+    }
+  }
+  if (digits.length >= DIGITS) runs.push(digits);
+  return runs;
+}
+
+/** An email address, whole. */
+const EMAIL = /^[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+$/u;
+
 /**
- * Whether a text of the body's is one the person wrote, which the matchers look for: three letters
- * or more, no `=`, and two words or more, or twelve letters and digits or more. A single word of the
- * body, as `itemize` in `\setlist[itemize]{...}` or a section's title, is as likely the template's
- * code or a word any resume has as the person's, and masking it where a class's definition holds
- * it would give that macro a key of the document's own, which no other document's cache entry
- * serves; the person's name and contacts are the header's, which count at any length.
+ * A link's identifiers: the address after `mailto:`, the digits after `tel:`; or, for an address on
+ * the web, its address without its scheme, its host, each without `www.`, and each segment of its
+ * path of HANDLE letters and digits or more, a handle. A link inside the document, `#section`,
+ * names none.
  */
-function isWritten(text: string): boolean {
-  if (text.includes("=") || (text.match(/\p{L}/gu) ?? []).length < MIN_NEEDLE) return false;
-  return (text.match(/[\p{L}\p{N}]+/gu) ?? []).length >= 2 || alphanumerics(text) >= 12;
+function linkIdentifiers(href: string): string[] {
+  const address = href.trim();
+  const mail = /^mailto:(.+)$/i.exec(address);
+  if (mail !== null) return [mail[1] ?? ""];
+  const phone = /^tel:(.+)$/i.exec(address);
+  if (phone !== null) return [(phone[1] ?? "").replace(/\D/g, "")];
+  const bare = address.replace(/^[A-Za-z][A-Za-z0-9+.-]*:(?:\/\/)?/, "");
+  const [place = "", ...path] = bare.split(/[/?#&=]+/);
+  const host = place.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
+  if (!/[^.]\.[^.]/.test(host)) return [];
+  const found = [bare, bare.replace(/^www\./i, ""), host, host.replace(/^www\./i, "")];
+  for (const segment of path) if (folded(segment).length >= HANDLE) found.push(segment);
+  return found;
 }
 
 /**
- * The document's texts the matchers look for, folded (`folded`): every text node's text and each
- * of its runs, every date as spelled and every raw chunk's pieces that the person wrote
- * (`isWritten`); every link's address, the header's values, the name whole and each word of it,
- * and the texts the preamble stores and each word of those of two words or fewer; each of
- * MIN_NEEDLE letters and digits or more, and none shaped as a placeholder.
+ * The identifiers a text holds: each email, each link written out with its scheme or `www.`, as
+ * `linkIdentifiers` reads it, and each run of DIGITS digits or more.
  */
-function stringsOf(document: DocumentText): Strings {
+function identifiersIn(text: string): string[] {
+  const found: string[] = [];
+  for (const token of text.split(/\s+/)) {
+    const bare = token.replace(/^[(<"'[]+|[)>"'.,;:\]]+$/g, "");
+    if (bare.includes("@") && EMAIL.test(bare.replace(/^mailto:/i, "")))
+      found.push(bare.replace(/^mailto:/i, ""));
+    else if (/^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|www\.)/i.test(bare))
+      found.push(...linkIdentifiers(bare));
+  }
+  found.push(...digitRuns(text));
+  return found;
+}
+
+/** Whether a word starts with a letter: a word of text, where `5cm` and `2020` are numbers. */
+const lettered = (word: string) => /^\p{L}/u.test(word);
+
+/**
+ * The document's texts the matchers look for (`Needles`), each of MIN_NEEDLE letters and digits
+ * or more, and none shaped as a placeholder. What the builder masks by: every phrase, two words or
+ * more that start with letters, of the body's text runs, dates and raw chunks' pieces, of the
+ * header's values, the name whole among them, and of the texts the preamble stores, each with its
+ * pairs of adjacent words that start with letters; every identifier any of them holds, and each
+ * link's, the header's and the body's alike; and each word of the header's name of MIN_NEEDLE
+ * letters or more. Never a link's label, which is the class's word as often as not (`GitHub`), nor
+ * a single word of the body's or a stored text's. What the check looks for (`check`) is that and
+ * every other text of the document's besides, the single words among them. A text of the body's
+ * that holds `=` is code, `leftmargin=*`, and so is a raw chunk's quantity, `0.5cm`, and a single
+ * word of its options' brackets, `\faFile*[regular]`: none is looked for.
+ */
+function needlesOf(document: DocumentText, check: boolean): Needles {
   const byPrefix = new Map<string, Needle[]>();
+  const pairs = new Map<string, Origin>();
   const seen = new Set<string>();
-  const add = (text: string | undefined, origin: Origin) => {
-    if (text === undefined) return;
-    if ((origin === "text" || origin === "date" || origin === "raw") && !isWritten(text)) return;
+  const add = (text: string, origin: Origin, shape: Needle["shape"]) => {
     const found = folded(text);
     const chars = [...found];
-    if (chars.length < MIN_NEEDLE || placeholderLike(found) || seen.has(found)) return;
-    seen.add(found);
+    if (chars.length < MIN_NEEDLE || placeholderLike(found)) return;
+    // The header's needles are kept apart, so that the check knows a word of the name as the
+    // header's wherever the body writes it too.
+    const id = `${shape} ${origin === "header" ? "header" : ""} ${found}`;
+    if (seen.has(id)) return;
+    seen.add(id);
     const prefix = chars.slice(0, MIN_NEEDLE).join("");
     const list = byPrefix.get(prefix) ?? [];
-    list.push({ chars, origin });
+    list.push({ chars, origin, shape });
     byPrefix.set(prefix, list);
   };
-  const addWords = (text: string | undefined, origin: Origin) => {
-    for (const word of text?.match(/[\p{L}\p{N}]+/gu) ?? []) add(word, origin);
+  const text = (value: string | undefined, origin: Origin, body = false, option = false) => {
+    if (value === undefined) return;
+    for (const each of identifiersIn(value)) add(each, origin, "identifier");
+    if (body && (value.includes("=") || QUANTITY.test(value.trim()))) return;
+    const words = wordsOf(value).map(folded);
+    const named = words.filter(lettered);
+    if (named.length < 2) {
+      if (!check || option) return;
+      add(value, origin, "word");
+      // A text of one word and numbers, a name set above a phone number, holds the word alone.
+      const [only] = named;
+      if (only !== undefined && words.length > 1 && origin !== "date") add(only, origin, "word");
+      return;
+    }
+    add(value, origin, "phrase");
+    for (let i = 0; i + 1 < words.length; i++) {
+      const [one = "", two = ""] = [words[i], words[i + 1]];
+      const pair = `${one} ${two}`;
+      if (lettered(one) && lettered(two) && `${one}${two}`.length >= MIN_NEEDLE && !pairs.has(pair))
+        pairs.set(pair, origin);
+    }
+  };
+  const link = (href: string | undefined, origin: Origin) => {
+    for (const each of href === undefined ? [] : linkIdentifiers(href))
+      add(each, origin, "identifier");
   };
   const source = document.tree.source;
   for (const node of nodesOf(document.tree.content)) {
     if (node.kind === "text") {
-      add(node.runs.map((run) => run.text).join(""), "text");
+      text(node.runs.map((run) => run.text).join(""), "text", true);
       for (const run of node.runs) {
-        add(run.text, "text");
-        add(run.href, "link");
+        text(run.text, "text", true);
+        link(run.href, "link");
       }
-    } else if (node.kind === "date") add(node.text, "date");
+    } else if (node.kind === "date") text(node.text, "date", true);
     else if (node.kind === "raw")
-      for (const piece of rawPieces(source.slice(node.start, node.end))) add(piece, "raw");
+      for (const piece of rawPieces(source.slice(node.start, node.end)))
+        text(piece.text, "raw", true, piece.bracketed);
   }
   const header = document.header ?? {};
-  for (const value of [header.first, header.last, header.headline, header.email])
-    add(value, "header");
-  for (const value of [header.phone, header.location]) add(value, "header");
+  for (const value of [header.first, header.last, header.headline, header.email, header.phone])
+    text(value, "header");
+  text(header.location, "header");
   if (header.first !== undefined || header.last !== undefined)
-    add(`${header.first ?? ""} ${header.last ?? ""}`, "header");
-  for (const link of header.links ?? []) {
-    add(link.label, "header");
-    add(link.href, "header");
-  }
-  addWords(header.first, "header");
-  addWords(header.last, "header");
-  for (const text of document.stored ?? []) {
-    add(text, "stored");
-    if ((text.match(/[\p{L}\p{N}]+/gu) ?? []).length <= 2) addWords(text, "stored");
-  }
-  return { byPrefix };
+    text(`${header.first ?? ""} ${header.last ?? ""}`.trim(), "header");
+  for (const each of header.links ?? []) link(each.href, "header");
+  for (const value of [header.first, header.last])
+    for (const word of wordsOf(value ?? ""))
+      if ((word.match(/\p{L}/gu) ?? []).length >= MIN_NEEDLE) add(word, "header", "word");
+  for (const value of document.stored ?? []) text(value, "stored");
+  return { byPrefix, pairs };
 }
 
 // What a matcher reads of a request's texts.
 
 /**
  * The letters and digits of a text a matcher reads, folded (`fold`): their places in the text, in
- * code units, and whether each starts a word, which it does when anything but a letter or a digit
- * of the same stretch comes before it.
+ * code units; whether each starts a word, which it does when anything but a letter, a digit or a
+ * mark comes before it; and whether each opens a literal, a stretch of text that no command,
+ * brace, parameter or code parts.
  */
 interface Visible {
   at: number[];
   text: string[];
   starts: boolean[];
+  opens: boolean[];
 }
 
-/** A visible text being read: `push` a character the reader met, `gap` anything between. */
+/**
+ * A visible text being read: `push` a character the reader met; `gap` anything between words;
+ * `boundary` anything that ends a literal; `drop` the characters read since a place, which were
+ * code after all, as a key is once its `=` comes.
+ */
 function reader() {
-  const visible: Visible = { at: [], text: [], starts: [] };
+  const visible: Visible = { at: [], text: [], starts: [], opens: [] };
   let gap = true;
+  let open = true;
   return {
     visible,
     push(at: number, char: string) {
+      // A mark is part of its letter's word, as a Devanagari vowel sign is.
+      if (/^\p{M}$/u.test(char)) return;
       const letter = fold(char);
       if (letter === "") {
         gap = true;
@@ -301,36 +518,68 @@ function reader() {
       visible.at.push(at);
       visible.text.push(letter);
       visible.starts.push(gap);
+      visible.opens.push(open);
       gap = false;
+      open = false;
     },
     gap() {
+      gap = true;
+    },
+    boundary() {
+      gap = true;
+      open = true;
+    },
+    drop(from: number) {
+      if (visible.opens.slice(from).includes(true)) open = true;
+      for (const list of [visible.at, visible.text, visible.starts, visible.opens])
+        list.length = Math.min(list.length, from);
       gap = true;
     },
   };
 }
 
 /**
+ * What a pattern masked (`maskDefinition`), `<link____>`: its kind's name is the contract's word,
+ * not the text's, and no matcher reads it.
+ */
+const PATTERN_PLACEHOLDER = /<(?:link|email|phone)_*>/y;
+
+/** The length of a pattern's placeholder at `at` of a text, or 0. */
+function placeholderAt(text: string, at: number): number {
+  PATTERN_PLACEHOLDER.lastIndex = at;
+  return PATTERN_PLACEHOLDER.exec(text)?.[0].length ?? 0;
+}
+
+/**
  * The letters and digits of source a matcher reads: not a command's name, `\begin` and `\end` with
- * the environment's, nor a control symbol's character; nor what a comment holds.
+ * the environment's, nor a control symbol's character; nor what a comment holds, nor a pattern's
+ * placeholder.
  */
 export function visibleOfSource(source: string): Visible {
   const read = reader();
   for (let i = 0; i < source.length; ) {
     const char = source[i] ?? "";
+    const masked = char === "<" ? placeholderAt(source, i) : 0;
+    if (masked > 0) {
+      read.boundary();
+      i += masked;
+      continue;
+    }
     if (char === "%") {
-      read.gap();
+      read.boundary();
       const newline = source.indexOf("\n", i);
       i = newline < 0 ? source.length : newline + 1;
       continue;
     }
     if (char === "\\") {
-      read.gap();
       let j = i + 1;
       while (j < source.length && /[A-Za-z]/.test(source[j] ?? "")) j++;
       if (j === i + 1) {
+        read.gap();
         i += 1 + ([...source.slice(i + 1, i + 3)][0]?.length ?? 1);
         continue;
       }
+      read.boundary();
       const name = source.slice(i + 1, j);
       if (name === "begin" || name === "end") {
         let k = j;
@@ -341,6 +590,11 @@ export function visibleOfSource(source: string): Visible {
       i = j;
       continue;
     }
+    if (char === "{" || char === "}") {
+      read.boundary();
+      i++;
+      continue;
+    }
     const code = source.codePointAt(i) ?? 0;
     const whole = String.fromCodePoint(code);
     read.push(i, whole);
@@ -349,44 +603,237 @@ export function visibleOfSource(source: string): Visible {
   return read.visible;
 }
 
+/** A name xparse gives a command's code, after the command's own name: `\cvxp code`. */
+const COMMAND_CODE = /^code /;
+
+/** And an environment's, after `\environment`: `\environment cvbox end code`. */
+const ENVIRONMENT_CODE = /^[^\s\\{}]+ (?:end aux|end code|end|code) /;
+
+/**
+ * A control sequence at `at` of a meaning, as the engine prints one there (`signatures.ts`), a
+ * space after each but the control space: its name, and where it ends, past that space. A name
+ * xparse gives a command's or an environment's code, which holds spaces, is read whole.
+ */
+function controlSequence(meaning: string, at: number, to: number): { name: string; end: number } {
+  if (meaning[at + 1] === " ") return { name: " ", end: at + 2 };
+  const space = meaning.indexOf(" ", at + 1);
+  const stop = space < 0 || space >= to ? to : space;
+  let name = meaning.slice(at + 1, stop);
+  let end = Math.min(to, stop + 1);
+  const code = (name === "environment" ? ENVIRONMENT_CODE : COMMAND_CODE).exec(
+    meaning.slice(end, Math.min(to, end + 256)),
+  );
+  if (code !== null) {
+    name = `${name} ${code[0].trimEnd()}`;
+    end += code[0].length;
+  }
+  return { name, end };
+}
+
+/** What a command whose arguments are code takes: its mandatory arguments, and optional ones after. */
+interface Takes {
+  take: number;
+  after?: true;
+}
+
+/** A list of commands that take `take` arguments of code, and optional ones after them when `after`. */
+const takes = (take: number, names: readonly string[], after?: true) =>
+  names.map((name): [string, Takes] => [name, after === undefined ? { take } : { take, after }]);
+
+/**
+ * Commands whose arguments are code, not text the page shows, as a matcher reads a meaning, and how
+ * many mandatory arguments each takes, braced or a single token, the optional ones before and
+ * between them with them: a colour's, a counter's, a length's or a boolean's name, a package's, a
+ * class's or a file's, a label or a link's target, a key list, a font's name and features, a
+ * language, a condition, pgf's mathematics, and a message's text, which the log shows and the page
+ * never does. `\csname` to `\endcsname` is code too, and so is each key of a key list, the text
+ * before an `=`, and in an option list's brackets each value, as tikz's `[draw=white]` has it.
+ */
+const CODE: ReadonlyMap<string, Takes> = new Map([
+  ...takes(1, ["color", "pagecolor", "textcolor", "colorbox", "rowcolor", "cellcolor"]),
+  ...takes(1, ["columncolor", "arrayrulecolor", "stepcounter", "refstepcounter", "value"]),
+  ...takes(1, ["usecounter", "newlength", "@nameuse", "@namedef", "begin", "end", "input"]),
+  ...takes(1, ["include", "label", "ref", "pageref", "hyperlink", "hypertarget", "hypersetup"]),
+  ...takes(1, ["pgfkeys", "tikzset", "pgfkeysvalueof", "pgfmathparse", "ifbool", "newbool"]),
+  ...takes(1, ["boolean", "ifthenelse", "@ifundefined", "@ifpackageloaded", "@ifclassloaded"]),
+  ...takes(1, ["IfFileExists", "fontfamily", "fontseries", "fontshape", "fontencoding"]),
+  ...takes(1, ["selectlanguage", "foreignlanguage", "typeout", "message", "wlog"]),
+  ...takes(1, ["@latex@warning", "@latex@warning@no@line", "@latex@info", "@latex@info@no@line"]),
+  ...takes(2, ["colorlet", "fcolorbox", "setcounter", "addtocounter", "setlength", "addtolength"]),
+  ...takes(2, ["setbool", "equal", "fontsize", "pgfmathsetmacro", "pgfmathtruncatemacro"]),
+  ...takes(2, ["pgfmathsetlengthmacro", "pgfmathsetlength", "pgfmathsetcount"]),
+  ...takes(2, ["PackageWarning", "PackageWarningNoLine", "PackageInfo", "ClassWarning"]),
+  ...takes(2, ["ClassWarningNoLine", "ClassInfo", "GenericWarning", "GenericInfo", "@latex@error"]),
+  ...takes(3, ["definecolor", "rowcolors", "PackageError", "ClassError"]),
+  ...takes(4, ["usefont", "GenericError"]),
+  ...takes(1, ["newcounter", "usepackage", "RequirePackage", "documentclass", "fontspec"], true),
+  ...takes(1, ["setmainfont", "setsansfont", "setmonofont"], true),
+  ...takes(2, ["newfontfamily"], true),
+]);
+
+/**
+ * Where a group of a meaning that opens at `at` with `open` ends, past its `close`, braces nested
+ * and control sequences passed over; or -1 when it does not close before `to`, or before the group
+ * it is in does.
+ */
+function groupEnd(meaning: string, at: number, to: number, open: string, close: string): number {
+  let depth = 0;
+  let braces = 0;
+  for (let i = at; i < to; i++) {
+    const char = meaning[i];
+    if (char === "\\") i++;
+    else if (open === "{") {
+      if (char === "{") depth++;
+      else if (char === "}" && --depth === 0) return i + 1;
+    } else if (char === "{") braces++;
+    else if (char === "}" && --braces < 0) return -1;
+    else if (braces === 0 && char === open) depth++;
+    else if (braces === 0 && char === close && --depth === 0) return i + 1;
+  }
+  return -1;
+}
+
+/** Where a code command's arguments (`CODE`) end, from `at`, just past the command. */
+function pastArguments(meaning: string, at: number, to: number, code: Takes): number {
+  let i = at;
+  const spaces = () => {
+    while (i < to && meaning[i] === " ") i++;
+  };
+  const bracketed = () => {
+    const end = meaning[i] === "[" ? groupEnd(meaning, i, to, "[", "]") : -1;
+    if (end > 0) i = end;
+    return end > 0;
+  };
+  for (let taken = 0; taken < code.take; ) {
+    spaces();
+    if (i >= to || meaning[i] === "}") return i;
+    if (bracketed()) continue;
+    if (meaning[i] === "{") {
+      const end = groupEnd(meaning, i, to, "{", "}");
+      if (end < 0) return i;
+      i = end;
+    } else if (meaning[i] === "\\") i = controlSequence(meaning, i, to).end;
+    else if (meaning[i] === "#" && /[1-9#]/.test(meaning[i + 1] ?? "")) i += 2;
+    else i += String.fromCodePoint(meaning.codePointAt(i) ?? 0).length;
+    taken++;
+  }
+  for (let before = i; code.after !== undefined; before = i) {
+    spaces();
+    if (!bracketed()) {
+      i = before;
+      break;
+    }
+  }
+  return i;
+}
+
+/** A key of a key list, the text before its `=`: letters, digits, spaces and a key's punctuation. */
+const KEY = /^[\s\p{L}\p{N}@*./-]+$/u;
+
 /**
  * The letters and digits of a `\meaning` a matcher reads, of its parameter text and its
  * replacement text: not a command's name, which TeX prints up to the space after it, an
- * environment's after `\begin` or `\end`, nor a parameter.
+ * environment's after `\begin` or `\end`, nor a parameter; nor any argument a command takes as code
+ * (`CODE`), what `\csname` names, a key of a key list, or a pattern's placeholder. A command, a
+ * brace, a parameter and code each end a literal; a control symbol, an accent or a thin space,
+ * parts words and not literals, but for `\\`, a line's end.
  */
 export function visibleOfMeaning(meaning: string): Visible {
   const read = reader();
   const head = /^((?:\\(?:protected|long|outer) ?)*)macro:/.exec(meaning);
   if (head === null) return read.visible;
   const arrow = meaning.indexOf("->", head[0].length);
+  /** Where an option's value that starts at `at` ends: at its list's next `,` or its `]`. */
+  const valueEnd = (at: number, to: number) => {
+    let j = at;
+    while (j < to && !",]}".includes(meaning[j] ?? "")) {
+      if (meaning[j] === "{") {
+        const end = groupEnd(meaning, j, to, "{", "}");
+        if (end < 0) return to;
+        j = end;
+      } else if (meaning[j] === "\\") j = controlSequence(meaning, j, to).end;
+      else j++;
+    }
+    return j;
+  };
   const scan = (from: number, to: number) => {
-    read.gap();
+    read.boundary();
+    let key = { at: 0, from };
+    const keyFrom = (at: number) => {
+      key = { at: read.visible.text.length, from: at };
+    };
+    keyFrom(from);
+    /** The groups open where the reader is: `{` and `[`, the innermost last. */
+    const groups: string[] = [];
+    const closeGroup = (opener: string) => {
+      const at = groups.lastIndexOf(opener);
+      if (at >= 0 && (opener === "{" || at > groups.lastIndexOf("{"))) groups.length = at;
+    };
     for (let i = from; i < to; ) {
       const char = meaning[i] ?? "";
       if (char === "\\") {
-        read.gap();
-        if (meaning[i + 1] === " ") {
-          i += 2;
-          continue;
+        const { name, end } = controlSequence(meaning, i, to);
+        i = end;
+        if ([...name].length === 1 && !/^[A-Za-z]$/.test(name)) {
+          if (name === "\\") read.boundary();
+          else read.gap();
+        } else {
+          read.boundary();
+          if (name === "csname" || name === "ifcsname") {
+            const close = meaning.indexOf("\\endcsname", i);
+            i = close < 0 || close >= to ? to : controlSequence(meaning, close, to).end;
+          } else {
+            const code = CODE.get(name);
+            if (code !== undefined) i = pastArguments(meaning, i, to, code);
+          }
         }
-        const space = meaning.indexOf(" ", i + 1);
-        const name = meaning.slice(i + 1, space < 0 ? to : space);
-        i = space < 0 || space >= to ? to : space + 1;
-        // An environment's name after `\begin` or `\end` is code, as a command's is.
-        if ((name === "begin" || name === "end") && meaning[i] === "{") {
-          const close = meaning.indexOf("}", i);
-          if (close > 0 && close < to && /^[A-Za-z@*]*$/.test(meaning.slice(i + 1, close)))
-            i = close + 1;
-        }
+        keyFrom(i);
         continue;
       }
       if (char === "#" && /[1-9#]/.test(meaning[i + 1] ?? "")) {
-        read.gap();
+        read.boundary();
         i += 2;
+        keyFrom(i);
         continue;
       }
-      const code = meaning.codePointAt(i) ?? 0;
-      const whole = String.fromCodePoint(code);
+      if (char === "{" || char === "}") {
+        if (char === "{") groups.push(char);
+        else closeGroup("{");
+        read.boundary();
+        i++;
+        keyFrom(i);
+        continue;
+      }
+      if (char === "=") {
+        const before = meaning.slice(key.from, i);
+        if (before.length <= MAX_KEY && KEY.test(before) && /\p{L}/u.test(before))
+          read.drop(key.at);
+        read.gap();
+        i++;
+        // In an option list's brackets, the value is code too: `draw=white`, `anchor=west`.
+        if (groups.at(-1) === "[") {
+          read.boundary();
+          i = valueEnd(i, to);
+        }
+        keyFrom(i);
+        continue;
+      }
+      if (",;[]()".includes(char)) {
+        if (char === "[") groups.push(char);
+        else if (char === "]") closeGroup("[");
+        read.gap();
+        i++;
+        keyFrom(i);
+        continue;
+      }
+      const masked = char === "<" ? placeholderAt(meaning, i) : 0;
+      if (masked > 0 && i + masked <= to) {
+        read.boundary();
+        i += masked;
+        keyFrom(i);
+        continue;
+      }
+      const whole = String.fromCodePoint(meaning.codePointAt(i) ?? 0);
       read.push(i, whole);
       i += whole.length;
     }
@@ -399,16 +846,18 @@ export function visibleOfMeaning(meaning: string): Visible {
   return read.visible;
 }
 
+/** How a matcher takes a text of the document's: as whole words, anywhere, or not at all. */
+type Take = "whole" | "anywhere" | undefined;
+
 /**
- * Which of a text's visible characters spell a text of the document's, and what the first was: a
- * needle of ANYWHERE characters or more wherever it falls, and a shorter one only where it starts
- * a word and ends one, but `anywhere`, as in a setting, whose masking moves no key, where a first
- * name inside a colour's name is masked too.
+ * Which of a text's visible characters spell a text of the document's, as `take` has each taken,
+ * and where the first came from: `whole`, only where it starts a word and ends one; `anywhere`,
+ * inside words too.
  */
 function found(
   visible: Visible,
-  strings: Strings,
-  anywhere = false,
+  needles: Needles,
+  take: (needle: Needle) => Take,
 ): { hide: Uint8Array; origin?: Origin } {
   const chars = visible.text;
   const size = chars.length;
@@ -417,18 +866,70 @@ function found(
   const startsAt = (i: number) => i >= size || visible.starts[i] === true;
   const at = (i: number, needle: Needle) => needle.chars.every((char, k) => chars[i + k] === char);
   for (let i = 0; i + MIN_NEEDLE <= size; i++) {
-    const candidates = strings.byPrefix.get(chars.slice(i, i + MIN_NEEDLE).join(""));
+    const candidates = needles.byPrefix.get(chars.slice(i, i + MIN_NEEDLE).join(""));
     if (candidates === undefined) continue;
     for (const needle of candidates) {
+      const how = take(needle);
       const length = needle.chars.length;
-      if (i + length > size || !at(i, needle)) continue;
-      if (!anywhere && length < ANYWHERE && !(startsAt(i) && startsAt(i + length))) continue;
+      if (how === undefined || i + length > size || !at(i, needle)) continue;
+      if (how === "whole" && !(startsAt(i) && startsAt(i + length))) continue;
       hide.fill(1, i, i + length);
       origin ??= needle.origin;
     }
   }
   return { hide, ...(origin === undefined ? {} : { origin }) };
 }
+
+/**
+ * The pairs of adjacent words of a text's literals that a phrase of the document holds (the
+ * literal rule, in the definition's direction), marked in `hide`, and where the first came from:
+ * `{\Large Quill Invented}` holds a pair of the paragraph `Quill Invented, typesetter at Larkspur
+ * Labs`, though not the paragraph.
+ */
+function pairsFound(visible: Visible, pairs: ReadonlyMap<string, Origin>, hide: Uint8Array) {
+  let origin: Origin | undefined;
+  const words: { from: number; to: number; literal: number; text: string }[] = [];
+  let literal = -1;
+  visible.text.forEach((char, i) => {
+    if (visible.opens[i] === true) literal++;
+    const last = words.at(-1);
+    if (visible.starts[i] === true || last === undefined)
+      words.push({ from: i, to: i + 1, literal, text: char });
+    else {
+      last.to = i + 1;
+      last.text += char;
+    }
+  });
+  for (let w = 0; w + 1 < words.length; w++) {
+    const first = words[w];
+    const second = words[w + 1];
+    if (first === undefined || second === undefined || first.literal !== second.literal) continue;
+    const hit = pairs.get(`${first.text} ${second.text}`);
+    if (hit === undefined) continue;
+    hide.fill(1, first.from, second.to);
+    origin ??= hit;
+  }
+  return origin;
+}
+
+/**
+ * What of an own definition's visible text is the document's (decision 0024): each of its texts
+ * the definition holds as whole words, and each pair of adjacent words of one of the definition's
+ * literals that a phrase of the document holds (`pairsFound`); and where the first came from.
+ */
+function ownHidden(visible: Visible, needles: Needles): { hide: Uint8Array; origin?: Origin } {
+  const { hide, origin } = found(visible, needles, () => "whole");
+  const paired = pairsFound(visible, needles.pairs, hide);
+  const first = origin ?? paired;
+  return { hide, ...(first === undefined ? {} : { origin: first }) };
+}
+
+/**
+ * How a setting takes the document's texts, and the check a text it reads as source: an
+ * identifier of ANYWHERE characters or more anywhere, and all else as whole words.
+ */
+const settingTake = (needle: Needle): Take =>
+  needle.shape === "identifier" && needle.chars.length >= ANYWHERE ? "anywhere" : "whole";
 
 /** A text with the characters `hide` marks among its visible ones written as their placeholders. */
 function hidden(text: string, visible: Visible, hide: Uint8Array): string {
@@ -565,6 +1066,58 @@ function chosen<T extends { args: readonly Argument[] }>(calls: readonly T[]): T
   return taken;
 }
 
+// Signatures.
+
+/**
+ * A signature as the request holds it: each default its arguments give, `O{...}`, `G{...}`,
+ * `D<>{...}`, `R<>{...}` and `E{...}{...}`'s, written by `mask`, and the rest, xparse's letters,
+ * delimiters and tokens, as it is.
+ */
+export function maskedSignature(spec: string, mask: (text: string) => string): string {
+  let out = "";
+  let i = 0;
+  const copy = (to: number) => {
+    out += spec.slice(i, to);
+    i = to;
+  };
+  /** Where a brace group that opens at `at` ends, or the end of the signature. */
+  const group = (at: number) => {
+    const end = groupEnd(spec, at, spec.length, "{", "}");
+    return end < 0 ? spec.length : end;
+  };
+  /** Where one token that starts at `at` ends: a command, a brace group or a character. */
+  const token = (at: number) => {
+    if (spec[at] === "\\")
+      return at + (/^\\(?:[A-Za-z@]+|[\s\S])/.exec(spec.slice(at))?.[0].length ?? 1);
+    if (spec[at] === "{") return group(at);
+    return at + String.fromCodePoint(spec.codePointAt(at) ?? 0).length;
+  };
+  const defaulted = () => {
+    if (spec[i] !== "{") return;
+    const end = group(i);
+    out += `{${mask(spec.slice(i + 1, Math.max(i + 1, end - 1)))}}`;
+    i = end;
+  };
+  while (i < spec.length) {
+    const char = spec[i];
+    if (char === "O" || char === "G") {
+      copy(i + 1);
+      defaulted();
+    } else if (char === "D" || char === "R") {
+      copy(token(token(i + 1)));
+      defaulted();
+    } else if (char === "E") {
+      copy(i + 1);
+      if (spec[i] === "{") copy(group(i));
+      defaulted();
+    } else if (char === "d" || char === "r") copy(token(token(i + 1)));
+    else if (char === "t") copy(token(i + 1));
+    else if ((char === "e" || char === "u") && spec[i + 1] === "{") copy(group(i + 1));
+    else copy(i + 1);
+  }
+  return out;
+}
+
 // The preamble's settings.
 
 /** Commands whose statements set the page, the base size, fonts, colours or spacing. */
@@ -664,8 +1217,8 @@ function withoutComments(text: string): string {
     .join("\n");
 }
 
-/** Where a group that opens at `at`, with `open` and `close`, ends, past its close; or -1. */
-function groupEnd(text: string, at: number, open: string, close: string): number {
+/** Where a group of a statement that opens at `at`, with `open` and `close`, ends, past its close; or -1. */
+function statementGroupEnd(text: string, at: number, open: string, close: string): number {
   let depth = 0;
   for (let i = at; i < text.length && i < at + REQUEST_CAPS.setting; i++) {
     const char = text[i];
@@ -697,7 +1250,7 @@ function statementEnd(text: string, from: number): number {
       continue;
     }
     if (char === "{" || char === "[") {
-      const end = groupEnd(text, next, char, char === "{" ? "}" : "]");
+      const end = statementGroupEnd(text, next, char, char === "{" ? "}" : "]");
       if (end < 0) break;
       at = end;
       continue;
@@ -773,15 +1326,19 @@ function maskedSetting(statement: string, colours: ReadonlySet<string>): string 
 /**
  * The preamble's candidate settings: the class and its options, and each statement of a setting
  * command, in order, its comments gone, each masked as a setting is (`maskedSetting`), then by the
- * document's own values, and cut at the request's cap.
+ * document's own values, its words and phrases as whole words and its identifiers of ANYWHERE
+ * characters or more anywhere (`settingTake`), and cut at the request's cap.
  */
-function preambleOf(preamble: string, strings: Strings): RequestPreamble {
+function preambleOf(preamble: string, needles: Needles): RequestPreamble {
   const text = withoutComments(preamble);
   const colours = coloursOf(text);
   const mask = (statement: string) => {
     const masked = maskedSetting(statement.replace(/\s+/g, " ").trim(), colours);
     const visible = visibleOfSource(masked);
-    return cut(hidden(masked, visible, found(visible, strings, true).hide), REQUEST_CAPS.setting);
+    return cut(
+      hidden(masked, visible, found(visible, needles, settingTake).hide),
+      REQUEST_CAPS.setting,
+    );
   };
   const settings: string[] = [];
   for (const command of text.matchAll(/\\([A-Za-z@]+)/g)) {
@@ -818,6 +1375,12 @@ export interface RequestOptions {
    * seed describes a class's macros its sample leaves out: each is asked of the engine too.
    */
   also?: { commands?: readonly string[]; environments?: readonly string[] };
+  /**
+   * The upload's sources (`sourcesOf`), which say which definitions are the document's own and are
+   * masked by its values; without them every definition is the tree's, and goes as item 4 hashed
+   * it.
+   */
+  sources?: readonly string[];
 }
 
 /** A call, or an environment opened, in the body or the preamble: its node, whatever holds it. */
@@ -903,11 +1466,15 @@ export async function buildRequest(
   options: RequestOptions = {},
 ): Promise<NamingRequest> {
   const ofPreamble = probe.candidates.filter((each) => each.where === "preamble");
-  const strings = stringsOf({
-    tree,
-    ...(options.header === undefined ? {} : { header: options.header }),
-    stored: ofPreamble.map((each) => each.text),
-  });
+  const needles = needlesOf(
+    {
+      tree,
+      ...(options.header === undefined ? {} : { header: options.header }),
+      stored: ofPreamble.map((each) => each.text),
+    },
+    false,
+  );
+  const owned = ownNames(options.sources ?? []);
   const commandOf = (name: string): Signature | undefined =>
     Object.hasOwn(signatures.commands, name) ? signatures.commands[name] : undefined;
   const environmentOf = (name: string): Signature | undefined =>
@@ -924,6 +1491,11 @@ export async function buildRequest(
     [...nodesOf(nodes)]
       .filter((node): node is DateNode => node.kind === "date")
       .sort((a, b) => a.start - b.start);
+  /**
+   * A signature's default as the request holds it: masked by pattern, then every letter and digit
+   * written as its placeholder, a command's name among them, which the schema reads as code.
+   */
+  const defaultOf = (text: string) => placeholder(maskDefinition(text));
 
   // The uses, in the source's order: the preamble's storing calls first, then the body's.
   const setters = new Set(
@@ -972,7 +1544,7 @@ export async function buildRequest(
     byMacro.set(id, list);
   }
 
-  // The definitions: every macro's own and its closure's, masked by the document's values.
+  // The definitions: every macro's own and its closure's; the document's own masked by its values.
   const definitions = new Map<string, RequestDefinition>();
   const define = async (name: string) => {
     if (definitions.has(name)) return;
@@ -982,8 +1554,11 @@ export async function buildRequest(
       definitions.set(name, { kind: "data", name });
       return;
     }
-    const visible = visibleOfMeaning(macro.meaning);
-    const text = hidden(macro.meaning, visible, found(visible, strings).hide);
+    let text = macro.meaning;
+    if (isOwn(name, owned)) {
+      const visible = visibleOfMeaning(macro.meaning);
+      text = hidden(macro.meaning, visible, ownHidden(visible, needles).hide);
+    }
     const hash = text === macro.meaning ? macro.hash : await sha256(text);
     definitions.set(name, { kind: "definition", name, hash, text });
   };
@@ -1043,23 +1618,33 @@ export async function buildRequest(
       return site;
     });
     const ownDefinition = definitions.get(name);
+    const endDefinition = end === undefined ? undefined : definitions.get(endName);
+    const hashed = (names: readonly string[]) =>
+      names.flatMap((dependency): Dependency[] => {
+        const found = definitions.get(dependency);
+        return found?.kind === "definition" ? [[dependency, found.hash]] : [];
+      });
+    // An environment's key is its `\begin` code's, its `\end` code the first of its closure
+    // (`environmentKeyOf`), as item 4's keys have it; one whose `\end` code holds data, or that
+    // the engine did not print, keys as a command does, data left out.
     const key =
-      ownDefinition?.kind === "definition"
-        ? await keyOf(
-            NAMING_VERSION,
-            ownDefinition.hash,
-            dependencies.flatMap((dependency): Dependency[] => {
-              const found = definitions.get(dependency);
-              return found?.kind === "definition" ? [[dependency, found.hash]] : [];
-            }),
-          )
-        : undefined;
+      ownDefinition?.kind !== "definition"
+        ? undefined
+        : of === "environment" && endDefinition?.kind === "definition"
+          ? await environmentKeyOf(
+              NAMING_VERSION,
+              ownDefinition.hash,
+              endName,
+              endDefinition.hash,
+              hashed(dependencies.filter((each) => each !== endName)),
+            )
+          : await keyOf(NAMING_VERSION, ownDefinition.hash, hashed(dependencies));
     const capped = (macro: typeof own | undefined) =>
       macro !== undefined && macro.kind !== "data" && macro.capped;
     macros.push({
       of,
       name,
-      ...(signature === undefined ? {} : { signature }),
+      ...(signature === undefined ? {} : { signature: maskedSignature(signature, defaultOf) }),
       ...(key === undefined ? {} : { key }),
       dependencies,
       capped: capped(own) || capped(end),
@@ -1077,7 +1662,7 @@ export async function buildRequest(
     version: NAMING_VERSION,
     engine: signatures.engine,
     ...(family === undefined ? {} : { family }),
-    preamble: preambleOf(preamble, strings),
+    preamble: preambleOf(preamble, needles),
     macros,
     definitions: [...definitions.values()],
   });
@@ -1097,6 +1682,17 @@ function closing(text: string, at: number, open: string, close: string): number 
   return -1;
 }
 
+/** Where a line's comment starts, a `%` after an even run of backslashes, or the line's end. */
+function commentAt(line: string): number {
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] !== "%") continue;
+    let backslashes = 0;
+    for (let j = i - 1; j >= 0 && line[j] === "\\"; j--) backslashes++;
+    if (backslashes % 2 === 0) return i;
+  }
+  return line.length;
+}
+
 /**
  * Where a main file's `\documentclass` statement ends, its options and its class's name read: the
  * first outside a comment; or -1 when it has none.
@@ -1104,17 +1700,7 @@ function closing(text: string, at: number, open: string, close: string): number 
 export function classEnd(text: string): number {
   let offset = 0;
   for (const line of text.split("\n")) {
-    let comment = line.length;
-    for (let i = 0; i < line.length; i++) {
-      if (line[i] !== "%") continue;
-      let backslashes = 0;
-      for (let j = i - 1; j >= 0 && line[j] === "\\"; j--) backslashes++;
-      if (backslashes % 2 === 0) {
-        comment = i;
-        break;
-      }
-    }
-    const found = /\\documentclass(?![A-Za-z@])/.exec(line.slice(0, comment));
+    const found = /\\documentclass(?![A-Za-z@])/.exec(line.slice(0, commentAt(line)));
     if (found !== null) {
       let at = offset + found.index + found[0].length;
       const skip = () => {
@@ -1134,17 +1720,42 @@ export function classEnd(text: string): number {
   return -1;
 }
 
+/** Where a main file's `\begin{document}` starts, the first outside a comment; or -1. */
+export function documentStart(text: string): number {
+  let offset = 0;
+  for (const line of text.split("\n")) {
+    const found = /\\begin\s*\{document\}/.exec(line.slice(0, commentAt(line)));
+    if (found !== null) return offset + found.index;
+    offset += line.length + 1;
+  }
+  return -1;
+}
+
+/** Options for putting an answer's redefinitions in a main file. */
+export interface RedefinitionOptions {
+  /**
+   * Where they go: right after `\documentclass` (`class`, the default), where a macro the class
+   * defines can be redefined and nothing the preamble does has read it yet; or right before
+   * `\begin{document}` (`preamble`), where a macro a package or the preamble defines can be,
+   * which after the class is not defined yet.
+   */
+  placement?: "class" | "preamble";
+}
+
 /**
- * A main file's text with an answer's redefinitions after its document class, each once by its
- * name, the first given of a name taken, in order, a line each: what item 7 does with the
- * redefinitions of the answers it assembles from (decision 0024). Undefined when the text has no
- * `\documentclass` to put them after.
+ * A main file's text with an answer's redefinitions after its document class, or before its
+ * document with `placement: "preamble"`, each once by its name, the first given of a name taken, in
+ * order, a line each: what item 7 does with the redefinitions of the answers it assembles from
+ * (decision 0024), trying `class` and then `preamble` when a compile stops. Undefined when the text
+ * has no `\documentclass`, or no `\begin{document}`, to put them by.
  */
 export function withRedefinitions(
   text: string,
   redefinitions: readonly { name: string; latex: string }[],
+  options: RedefinitionOptions = {},
 ): string | undefined {
-  const at = classEnd(text);
+  const preamble = options.placement === "preamble";
+  const at = preamble ? documentStart(text) : classEnd(text);
   if (at < 0) return undefined;
   const seen = new Set<string>();
   const lines: string[] = [];
@@ -1154,64 +1765,106 @@ export function withRedefinitions(
     lines.push(each.latex);
   }
   if (lines.length === 0) return text;
-  return `${text.slice(0, at)}\n${lines.join("\n")}\n${text.slice(at)}`;
+  if (!preamble) return `${text.slice(0, at)}\n${lines.join("\n")}\n${text.slice(at)}`;
+  const before = at === 0 || text[at - 1] === "\n" ? "" : "\n";
+  return `${text.slice(0, at)}${before}${lines.join("\n")}\n${text.slice(at)}`;
 }
 
 // The leak check.
 
-/** Where a request holds a text, for a leak's message: never the text itself. */
-function textsOf(request: NamingRequest): { where: string; text: string; meaning: boolean }[] {
-  const texts: { where: string; text: string; meaning: boolean }[] = [];
+/**
+ * How the check reads a text of a request: a definition, the document's own or the tree's; a
+ * setting or the class, source whose keywords are kept; or other source.
+ */
+type Reads = "own" | "tree" | "setting" | "source";
+
+/** Where a request holds a text, for a leak's message, and how it is read: never the text itself. */
+function textsOf(
+  request: NamingRequest,
+  owned: ReadonlySet<string>,
+): { where: string; text: string; reads: Reads }[] {
+  const texts: { where: string; text: string; reads: Reads }[] = [];
   for (const definition of request.definitions)
     if (definition.kind === "definition")
       texts.push({
         where: `the definition of ${definition.name}`,
         text: definition.text,
-        meaning: true,
+        reads: isOwn(definition.name, owned) ? "own" : "tree",
       });
-  for (const macro of request.macros)
+  for (const macro of request.macros) {
+    if (macro.signature !== undefined)
+      texts.push({
+        where: `the signature of ${macro.name}`,
+        text: macro.signature,
+        reads: "source",
+      });
     macro.sites.forEach((site, s) => {
       site.arguments.forEach((argument, a) => {
         if (argument !== null)
           texts.push({
             where: `call site ${s + 1} of ${macro.name}, argument ${a + 1}`,
             text: argument,
-            meaning: false,
+            reads: "source",
           });
       });
       if (site.body !== undefined)
         texts.push({
           where: `call site ${s + 1} of ${macro.name}, its body`,
           text: site.body,
-          meaning: false,
+          reads: "source",
         });
     });
+  }
   request.preamble.settings.forEach((setting, i) =>
-    texts.push({ where: `setting ${i + 1}`, text: setting, meaning: false }),
+    texts.push({ where: `setting ${i + 1}`, text: setting, reads: "setting" }),
   );
   const documentClass = request.preamble.class;
   if (documentClass !== undefined) {
-    texts.push({ where: "the class's name", text: documentClass.name, meaning: false });
+    texts.push({ where: "the class's name", text: documentClass.name, reads: "setting" });
     documentClass.options.forEach((option, i) =>
-      texts.push({ where: `the class's option ${i + 1}`, text: option, meaning: false }),
+      texts.push({ where: `the class's option ${i + 1}`, text: option, reads: "setting" }),
     );
   }
   return texts;
 }
 
 /**
- * Throw when a request holds any of a document's text: a text of the body's, a date or a raw
- * chunk's words that the person wrote (`isWritten`), a link's address, a header value or a word of
- * the name, or a text the preamble stores, spelt out in a definition, a call site, a setting or the
- * class, spaces, commands and punctuation aside (`found`). The message says what kind of text is
- * where, never the text. The builder masks by the same rules, so its requests pass; the check is
- * what item 11's corpus-wide test runs, and what a change to the builder must still pass.
+ * Throw when a request holds any of a document's text, more strictly than the builder masks, on
+ * purpose: any text of the body's, a run, a date as it is spelt or a raw chunk's piece, any header
+ * value or word of the name, any text the preamble stores, and any identifier any of them holds, of
+ * MIN_NEEDLE letters and digits or more, single words among them, spelt out as whole words in a
+ * call site, a signature, a setting, the class or a definition of the document's own (and in one of
+ * those, any pair of adjacent words a phrase of the document holds); and in a definition of the
+ * tree's, a phrase of two words or more or an identifier, since a single word of public code is
+ * no leak; nor, in a setting or the class, is a single word of the body's or a stored text's that
+ * a setting keeps as it is, one of its keywords (`KEYWORDS`), `english` for a language section's
+ * word, or the name of a colour the settings define, which the class's code names too; a word of
+ * the header's is, since the builder masks it there. A text of one word and numbers, a name set
+ * above a phone number that the parser reads as one run, is looked for as that word alone too.
+ * The message says what kind of text is where,
+ * never the text. What it reads of a definition is what the builder reads (`visibleOfMeaning`): a
+ * text written into code, a colour's name or a message, it does not see.
  */
 export function assertNoText(request: NamingRequest, document: DocumentText): void {
-  const strings = stringsOf(document);
-  for (const { where, text, meaning } of textsOf(request)) {
-    const visible = meaning ? visibleOfMeaning(text) : visibleOfSource(text);
-    const { origin } = found(visible, strings, !meaning);
+  const needles = needlesOf(document, true);
+  const owned = ownNames(document.sources ?? []);
+  const kept = new Set(
+    [...KEYWORDS, ...coloursOf(request.preamble.settings.join("\n"))].map(folded),
+  );
+  const settingWord = (needle: Needle): Take =>
+    needle.shape === "word" && needle.origin !== "header" && kept.has(needle.chars.join(""))
+      ? undefined
+      : settingTake(needle);
+  for (const { where, text, reads } of textsOf(request, owned)) {
+    let origin: Origin | undefined;
+    if (reads === "source") origin = found(visibleOfSource(text), needles, settingTake).origin;
+    else if (reads === "setting")
+      origin = found(visibleOfSource(text), needles, settingWord).origin;
+    else if (reads === "own") origin = ownHidden(visibleOfMeaning(text), needles).origin;
+    else
+      origin = found(visibleOfMeaning(text), needles, (needle) =>
+        needle.shape === "word" ? undefined : "whole",
+      ).origin;
     if (origin !== undefined)
       throw new Error(`The naming request holds the document's text (${origin}) in ${where}.`);
   }

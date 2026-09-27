@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type * as Ast from "@unified-latex/unified-latex-types";
 import { strToU8, zipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
@@ -904,38 +905,101 @@ describe("caps", () => {
     });
   });
 
+  /** unified-latex's nodes for a body, as `readBody` gives them. */
+  const readNodes = (text: string): Ast.Node[] => {
+    const read = readBody(bodyOfText(text));
+    if (isRefusal(read)) throw new Error(read.message);
+    return read.root.content;
+  };
+
+  /**
+   * The nodes unified-latex gives `unit` repeated `count` times, in a group when `grouped`: for
+   * each time, a copy of its nodes for the unit alone, moved to where that time starts. They are
+   * the nodes it gives the unit three times, but for their lines and columns, which nothing reads.
+   * Its parse keeps about 2 KB of heap for each byte of the body while it runs, since its grammar
+   * keeps what each of its rules read at each place: 150,000 paragraphs parsed whole took more
+   * than 3 GB.
+   */
+  const repeated = (unit: string, count: number, grouped = false): Ast.Node[] => {
+    const one = readNodes(unit);
+    const made = (times: number): Ast.Node[] => {
+      const nodes: Ast.Node[] = [];
+      for (let i = 0; i < times; i++) {
+        const by = (grouped ? 1 : 0) + i * unit.length;
+        for (const node of one)
+          nodes.push(
+            JSON.parse(JSON.stringify(node), (key, value) =>
+              key === "offset" ? value + by : value,
+            ),
+          );
+      }
+      if (!grouped) return nodes;
+      const end = times * unit.length + 2;
+      const position = {
+        start: { offset: 0, line: 1, column: 1 },
+        end: { offset: end, line: 1, column: end + 1 },
+      };
+      return [{ type: "group", content: nodes, position }];
+    };
+    const offsets = (nodes: Ast.Node[]) =>
+      JSON.stringify(nodes, (key, value) =>
+        key === "line" || key === "column" ? undefined : value,
+      );
+    const three = unit.repeat(3);
+    expect(offsets(made(3))).toBe(offsets(readNodes(grouped ? `{${three}}` : three)));
+    return made(count);
+  };
+
+  /** The tree built from unified-latex's nodes for a body, which must print back to the body. */
+  const treeOfNodes = (text: string, content: Ast.Node[]): Tree => {
+    const tree = buildTree({ body: bodyOfText(text), root: { type: "root", content } });
+    if (isRefusal(tree)) throw new Error(tree.message);
+    expect(print(tree)).toBe(text);
+    return tree;
+  };
+
   test("reads a group of a great many pieces, and a great many paragraphs", () => {
+    // 150,000 of each, more than a spread passes as arguments, about 125,000: each tree is built
+    // from the nodes unified-latex gives the body (`repeated`), which parsed whole took gigabytes.
     const group = `{${"quill ".repeat(150_000)}}`;
-    expect(treeOf(group, undefined).content).toMatchObject([{ kind: "text" }]);
+    expect(treeOfNodes(group, repeated("quill ", 150_000, true)).content).toMatchObject([
+      { kind: "text" },
+    ]);
     const paragraphs = "Invented.\n\n".repeat(150_000);
-    expect(treeOf(paragraphs, undefined).content).toHaveLength(150_000);
+    expect(treeOfNodes(paragraphs, repeated("Invented.\n\n", 150_000)).content).toHaveLength(
+      150_000,
+    );
   }, 60_000);
 
   test("refuses a tree of more nodes than its cap", () => {
-    const many = "\\cvopt{a}\n".repeat(PARSE_CAPS.nodes / 2 + 1);
-    expect(parseBody(bodyOfText(many), SIGNATURES)).toMatchObject({
-      refused: true,
-      message: PARSE_REFUSALS.many,
-    });
-  }, 60_000);
+    // Tried at a cap of a hundred nodes, given in the place of PARSE_CAPS.nodes: a body of 200,000
+    // takes gigabytes of heap to parse. Each call is two nodes, itself and its argument's text.
+    expect(PARSE_CAPS.nodes).toBe(200_000);
+    const calls = (count: number) =>
+      parseBody(bodyOfText("\\cvopt{a}\n".repeat(count)), SIGNATURES, 100);
+    expect(calls(50)).toMatchObject({ kind: "body", nodes: 100 });
+    expect(calls(51)).toMatchObject({ refused: true, message: PARSE_REFUSALS.many });
+  });
 
   // The bounds on how the parse grows are ratios alone, the fastest of five runs of each size, in
-  // CPU time (`src/test/timing.ts`): a tenth costs a tenth, 10 to 12 times at rest, and up to 20
-  // times while the whole suite runs beside it, the megabyte's larger heap slowed the most; the
-  // openers below cost 88 to 141 times before their look ahead was bounded. A bound of 50 times
-  // holds under that load and fails the square, as the snippet parse's does; no ceiling in
-  // milliseconds, which a loaded machine could pass.
+  // CPU time (`src/test/timing.ts`): a tenth costs a tenth, 9 to 14 times at rest, and up to 16
+  // times while the whole suite runs beside it; the openers below cost 88 to 141 times before
+  // their look ahead was bounded. A bound of 50 times holds under that load and fails the square,
+  // as the snippet parse's does; no ceiling in milliseconds, which a loaded machine could pass.
+  // Every body parsed here is 128 KB or less: unified-latex's parse keeps about 2 KB of heap for
+  // each byte of the body while it runs, and bodies of a megabyte and more ran a CI runner's
+  // worker out of heap.
 
   test("parses in time that grows linearly with the body, nested groups and short calls", () => {
     // Groups nested 50 deep, around invented words, and short calls to an invented macro, each
-    // body a megabyte, against a tenth of it.
+    // body 100 KB, against a tenth of it.
     const groups = (bytes: number) =>
       `${"{".repeat(50)}Quill wort ${"}".repeat(50)}\n`.repeat(Math.floor(bytes / 112));
     const calls = (bytes: number) =>
       "\\cventry{Invented}{Labs}{City}{Jan 2020 -- Present}\n".repeat(Math.floor(bytes / 52));
     for (const make of [groups, calls]) {
-      const small = make(100_000);
-      const large = make(1_000_000);
+      const small = make(10_000);
+      const large = make(100_000);
       const parse = (text: string) => () => {
         const tree = parseBody(bodyOfText(text), SIGNATURES);
         if (isRefusal(tree)) throw new Error(tree.message);
@@ -947,10 +1011,12 @@ describe("caps", () => {
 
   test("looks for a closer a bounded way, so that openers that never close cost linear time", () => {
     // `\\[` and `\item[` whose `]` never comes, the whole parse; `\url{` whose `}` never comes on
-    // a long line, and many `\verb` on one, the reading before unified-latex parses: each at a
-    // size the review timed, against a tenth of it. Each cost the square of its size before its
-    // look ahead was bounded: 192 KB of `\\[` 25 s, 256 KB of `\item[x ` 15 s, 400 KB of `\url{`
-    // 24 s.
+    // a long line, and many `\verb` on one, the reading before unified-latex parses: each against
+    // a tenth of it, those parsed at half the size the review timed. Each cost the square of its
+    // size before its look ahead was bounded: 192 KB of `\\[` 25 s, 256 KB of `\item[x ` 15 s,
+    // 400 KB of `\url{` 24 s. Unbounded again, 96 KB of `\\[` costs 87 times a tenth of it and
+    // 128 KB of `\item[x ` 76 times; 100 KB of `\iftrue`, its conditionals matched one at a time,
+    // 118 times.
     const openers = (unit: string) => (bytes: number) =>
       unit.repeat(Math.floor(bytes / unit.length));
     const parse = (text: string) => () => {
@@ -959,9 +1025,9 @@ describe("caps", () => {
     };
     const mask = (text: string) => () => nestsPast(maskedForParse(text), PARSE_CAPS.levels);
     const shapes: [(bytes: number) => string, number, (text: string) => () => void][] = [
-      [openers("\\\\["), 192_000, parse],
-      [openers("\\item[x "), 256_000, parse],
-      [openers("\\iftrue x "), 200_000, parse],
+      [openers("\\\\["), 96_000, parse],
+      [openers("\\item[x "), 128_000, parse],
+      [openers("\\iftrue x "), 100_000, parse],
       [openers("\\url{"), 400_000, mask],
       [openers("\\verb!x! "), 1_400_000, mask],
     ];
@@ -1081,7 +1147,7 @@ describe.skipIf(!engineAvailable())("the round trips, on the engine", () => {
     const manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
-    tree = readTree(manifest.files);
+    tree = readTree(manifest.files, manifest.fonts);
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );

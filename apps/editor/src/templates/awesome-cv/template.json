@@ -23,7 +23,7 @@
         "bx/it": "Roboto-BoldItalic.otf",
         "bx/sl": "Roboto-BoldItalic.otf"
       },
-      "features": "mapping=tex-text"
+      "features": "mapping=tex-text;+pnum;+lnum"
     },
     {
       "family": "RobotoLight",
@@ -39,7 +39,7 @@
         "bx/it": "Roboto-MediumItalic.otf",
         "bx/sl": "Roboto-MediumItalic.otf"
       },
-      "features": "mapping=tex-text"
+      "features": "mapping=tex-text;+pnum;+lnum"
     },
     {
       "family": "SourceSans",
