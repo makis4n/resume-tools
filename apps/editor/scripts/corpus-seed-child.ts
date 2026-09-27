@@ -2,16 +2,16 @@
  * One child of `corpus seed`'s pool (`corpus-seed.ts`, decision 0024): an engine session and fonts
  * of its own, which take one oracle sample at a time, as a zip, through the intake, the reference
  * compile, the signatures' two compiles, asked of the body's commands, the preamble's and the
- * seed's extras for its family, the parse, the probe and the naming request, built again with the
- * header's values the sample's own calls give by their answers (`headerOf`), as items 7 and 11
- * build it; and answer with the request's macros, their hashes, keys and verdicts, and what each
- * answer is filed under (`filingOf`), names and numbers only. Where the answers under
- * `corpus/answers/` for its macros carry redefinitions, it compiles the body, with the calls to
- * the macros they serve regenerated as item 7 writes them, with them and without them, and the
- * sample as it is with them, and says whether each sets the glyphs of the other, and gives back
- * the log of each of those compiles that stopped, which quotes the sample, for the parent to keep
- * under `.corpus/`. Redefinitions go after `\documentclass`, and where a compile stops there,
- * before `\begin{document}`.
+ * seed's extras for its family, the parse, the probe and the naming request, with the upload's
+ * sources, built again with the header's values the sample's own calls give by their answers
+ * (`headerOf`), as items 7 and 11 build it; and answer with the request's macros, their hashes,
+ * keys and verdicts, and what each answer is filed under (`filingOf`), names and numbers only.
+ * Where the answers under `corpus/answers/` for its macros carry redefinitions, it compiles the
+ * body, with the calls to the macros they serve regenerated as item 7 writes them, with them and
+ * without them, and the sample as it is with them, and says whether each sets the glyphs of the
+ * other, and gives back the log of each of those compiles that stopped, which quotes the sample,
+ * for the parent to keep under `.corpus/`. Redefinitions go after `\documentclass`, and where a
+ * compile stops there, before `\begin{document}`.
  *
  * The editor's modules are written for Vite, so this file, which Node runs as it is, loads them
  * through Vite's module runner with the app's own config, as `corpus-probe-child.ts` does, and
@@ -83,14 +83,14 @@ async function main() {
   const signaturesModule = await runner.import<SignaturesModule>("/src/import/signatures.ts");
   const { signatures } = signaturesModule;
   const { probe, probeUses } = await runner.import<ProbeModule>("/src/import/probe.ts");
-  const { buildRequest, withRedefinitions } =
+  const { buildRequest, sourcesOf, withRedefinitions } =
     await runner.import<NamingModule>("/src/import/naming.ts");
   const { regenerate } = await runner.import<PrintModule>("/src/import/print.ts");
 
   const manifest = JSON.parse(
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
   ) as EngineManifest;
-  const tree = readTree(manifest.files);
+  const tree = readTree(manifest.files, manifest.fonts);
   const treeImage = treeImages(
     manifest.files,
     (path) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path))),
@@ -129,13 +129,24 @@ async function main() {
     if ("refused" in built) return done({ outcome: "not parsed", engine });
     try {
       const probed = await probe(session, fonts, taken, made, built, found, { treeImage });
-      const also = extras === undefined ? {} : { also: extras };
+      // The probe leaves a pdfTeX sample's format in the session for item 7; the seed's compiles
+      // are whole, as the reference's, so it goes now, as the probe runner's child drops it.
+      if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
+      // The upload's sources say which definitions are the sample's own, the class it ships among
+      // them, which alone the document's values mask.
+      const options = {
+        ...(extras === undefined ? {} : { also: extras }),
+        sources: sourcesOf(taken),
+      };
       const answers = answersFolder().read;
       // The header's values, found by the answers the request without them finds, and the request
       // again with them, as items 7 and 11 build it.
-      const plain = await buildRequest(built, found, probed, body.preamble, also);
+      const plain = await buildRequest(built, found, probed, body.preamble, options);
       const header = headerOf(probed.candidates, commandAnswers(plain, answers));
-      const request = await buildRequest(built, found, probed, body.preamble, { ...also, header });
+      const request = await buildRequest(built, found, probed, body.preamble, {
+        ...options,
+        header,
+      });
       const { redefinitions, serving } = redefinitionsOf(request.macros, answers);
       let redefined: SeedRedefinitions | undefined;
       if (redefinitions.length > 0) {
@@ -150,12 +161,8 @@ async function main() {
           return undefined;
         };
         type Some = typeof redefinitions;
-        // integrator: placement. Part A's withRedefinitions takes `{ placement }`, "class" after
-        // `\documentclass` and "preamble" before `\begin{document}`: switch this to
-        // `withRedefinitions(text, some, { placement })` for both. Until then every placement is
-        // after the class, and there is no second one to try.
         const placed = (text: string, some: Some, placement: "class" | "preamble") =>
-          placement === "class" ? withRedefinitions(text, some) : undefined;
+          withRedefinitions(text, some, { placement });
         /**
          * A compile with redefinitions after the class, and, when that stops, before the body, as a
          * redefinition of a macro a package or the preamble defines needs.

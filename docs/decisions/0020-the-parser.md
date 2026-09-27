@@ -150,7 +150,8 @@ back. `corpus parse` runs it over the corpus.
   to, then theirs, the first reached first, to 64 definitions and 64 KB of meanings together; the
   closure says when it stopped at its cap. Each definition keeps the SHA-256 of its masked meaning
   in UTF-8, and `keysOf` gives its key, the SHA-256 of its hash and its definition dependencies'
-  hashes in order: item 6's cache key but for the naming version. Two documents whose class or
+  hashes in order, and, since item 6, of the naming version: item 6's cache key (`keyOf`, and an
+  environment's over its `\begin` and `\end` codes, decision 0024). Two documents whose class or
   style is the same file give each macro the file defines, and the preamble leaves alone, the
   same key, whatever the person's name, contacts and settings (`signatures.test.ts`). In the
   corpus nine pairs of documents share a class and give it the same setting (the runner's table

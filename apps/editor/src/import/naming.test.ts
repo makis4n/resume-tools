@@ -1139,7 +1139,7 @@ describe.skipIf(!engineAvailable())("the request builder, on the engine", () => 
     const manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
-    tree = readTree(manifest.files);
+    tree = readTree(manifest.files, manifest.fonts);
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );
@@ -1204,6 +1204,7 @@ describe.skipIf(!engineAvailable())("the request builder, on the engine", () => 
     const built: Tree | ReturnType<typeof buildTree> = buildTree(read, found);
     if (isRefusal(built)) throw new Error(built.message);
     const probed = await probe(session, fonts, taken, made, built, found);
+    if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
     const header = { first: "Quill", last: "Invented", email: "quill@example.invalid" };
     const sources = sourcesOf(taken);
     const request = await buildRequest(built, found, probed, body.preamble, { header, sources });

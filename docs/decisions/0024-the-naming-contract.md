@@ -190,11 +190,13 @@ since Jake's projects heading and Awesome-CV's awards table say theirs by what t
 - **The model never writes LaTeX.** An answer the model gives refuses `redefinitions` and
   `reviewed`. A person's answer, `ReviewedAnswer`, is the same fields, `reviewed: true`, notes, and
   redefinitions: each a name and LaTeX a person wrote that redefines the template's macro of that
-  name, or adds one it needs, applied after `\documentclass`, once by name (`withRedefinitions`),
-  so that a macro that defeats the editor's markers gets the fix its port has. A redefinition must
-  keep upstream's output, which item 7's reference check proves document by document; one that
-  changes the page on purpose, as AltaCV's port took its capitals out, does not qualify. Code the
-  model wrote would run in every document whose macro has its key; code a person reviewed may.
+  name, or adds one it needs, applied after `\documentclass`, or before `\begin{document}` where a
+  compile stops there, as it does for a macro a package or the preamble defines, once by name
+  (`withRedefinitions`, whose `placement` is `class` or `preamble`), so that a macro that defeats
+  the editor's markers gets the fix its port has. A redefinition must keep upstream's output, which
+  item 7's reference check proves document by document; one that changes the page on purpose, as
+  AltaCV's port took its capitals out, does not qualify. Code the model wrote would run in every
+  document whose macro has its key; code a person reviewed may.
 - **A stored answer** is `{ version, key, hash, of, name, family?, answer, reviewed, source,
   dependencies?, partnerKeys? }`, by the macro's key, `source` `seed` or `model:<id>`, reviewed
   exactly when the answer is a person's, and the seed's always. `of` tells a command from an
@@ -207,8 +209,9 @@ since Jake's projects heading and Awesome-CV's awards table say theirs by what t
   they give that key: what a cache holds is not trusted. Asked for a document's macro,
   `answerFor(cache, key, { name, of, partners })` also fits the answer to it (below, the key).
 - **The preamble's answer** names the style parameters found, `pageSize`, `margins`, `fontSize`,
-  `font`, `accent` and `density`, each by the request's setting that sets it, or the class's options,
-  its command and the key or name inside it, so that item 7 writes the control's snippet itself.
+  `font`, `accent` and `density`, each by the request's setting that sets it, or the class's
+  options, its command and the key or name inside it, so that item 7 writes the control's snippet
+  itself.
 - `ModelNaming` is what item 9 asks the model for as structured output, one answer for each macro
   by its name and `of`, a command that opens a list naming its closer, and the preamble's, each
   style parameter by the index of a setting the request has; `NamingAnswer` is what item 7
@@ -279,32 +282,33 @@ a preamble defines that the samples leave out (`SEED_EXTRAS`): Jake's `\resumeSu
 The engine is asked of those with the samples' own names, and their keys come from the same class.
 
 Every answer is filed under item 4's key (`keysOf`, an environment's by `environmentKeysOf`), which
-no value of a document's masks. The check builds each sample's request as items 7 and 11 will, with
-the header's values the sample's own calls give (`headerOf`: each argument of a call whose answer
-is the header's, a contact or a link, by the slot its answer says it fills), and requires every
-command's and environment's key in it to be item 4's, and its answer to be served for it by
-`answerFor`, its partners found by key. Without the header's values, as the seed was first
-checked, all 65 keys are item 4's; with them, Jake's and Awesome-CV's are, and AltaCV's
-`\makecvheader`'s is once the builder leaves the tree's definitions to the patterns and reads a
-colour's name as code (the masking above): the sample's placeholder name holds, as a word, the
-name of the colour `\makecvheader`'s closure passes to `\color`, which masking by the document's
-words moved. A second test builds the three samples' requests with the names and values the
-reviewers found moving keys, `Page`, `Link`, `Box`, `White`, `West`, `East`, `Line` and `Xing` as
-names, `Mobile Developer`, `Harbour Square` and `Full Stack` as a headline, a location and stored
-text, and a link labelled `GitHub`, and requires every seed key to hold with each.
+no value of a document's masks. The check builds each sample's request as items 7 and 11 will:
+with the upload's sources (`sourcesOf`), so that the macros a sample defines, Jake's in its main
+file and AltaCV's and Awesome-CV's in the classes the samples ship, are its own, which its values
+mask where they hold them as text; and with the header's values the sample's own calls give
+(`headerOf`: each argument of a call whose answer is the header's, a contact or a link, by the
+slot its answer says it fills). It requires every command's and environment's key in the request
+to be item 4's, and its answer to be served for it by `answerFor`, its partners found by key,
+which holds for all 65. Before the builder read a colour's name as code (the masking above),
+AltaCV's `\makecvheader` moved: the sample's placeholder name holds, as a word, the name of the
+colour its closure passes to `\color`. A second test builds the three samples' requests, with
+their sources, with the names and values the reviewers found moving keys, `Page`, `Link`, `Box`,
+`White`, `West`, `East`, `Line` and `Xing` as names, `Mobile Developer`, `Harbour Square` and
+`Full Stack` as a headline, a location and stored text, and a link labelled `GitHub`, and requires
+every seed key to hold with each.
 
 `corpus seed [--json <file>] [--write]` fetches the oracle's samples as `corpus oracle` does, runs
 each through the reference, the signatures, the parse, the probe and the request, built with the
-header's values, and prints each macro's hash, key and verdicts, item 4's key where the request's
-differs, and whether its answer validates, is filed under its key, holds its hash and is served for
-the macro; it exits 1 when one is not, a key moved, a file is not as `--write` writes it, or a
-redefinition stops a compile the sample takes without it. It then compiles each sample with its
-answers' redefinitions after `\documentclass`, or before `\begin{document}` where a compile after
-the class stops, as a redefinition of a macro a package or the preamble defines needs: the body
-with the calls they serve regenerated as item 7 writes them, against the same body without them,
-and the sample as it is against its reference; where they move a page, each alone. The logs of
-compiles that stop are kept under `.corpus/oracle/seed/`. The run takes about a minute on the M4
-Pro.
+upload's sources and the header's values, and prints each macro's hash, key and verdicts, item
+4's key where the request's differs, and whether its answer validates, is filed under its key,
+holds its hash and is served for the macro; it exits 1 when one is not, a key moved, a file is
+not as `--write` writes it, or a redefinition stops a compile the sample takes without it. It then
+compiles each sample with its answers' redefinitions after `\documentclass`, or before
+`\begin{document}` where a compile after the class stops, as a redefinition of a macro a package
+or the preamble defines needs: the body with the calls they serve regenerated as item 7 writes
+them, against the same body without them, and the sample as it is against its reference; where
+they move a page, each alone. The logs of compiles that stop are kept under
+`.corpus/oracle/seed/`. The run takes about a minute on the M4 Pro.
 
 | Template | Macro | Kind | Slots | Key | Redefinitions |
 |---|---|---|---|---|---|
@@ -392,10 +396,16 @@ port's classes', modified versions under the LPPL 1.3c, and each answer says so.
 | AltaCV | `\cvevent` lets the dates and the place wrap | `\cvevent` | moves one line: an event whose date or place does not fit half the column, which upstream's box lets run over, and which the redefinition wraps | its arguments are editable without it |
 | AltaCV | `\cvtag` sets the text as a box and draws the frame | `\cvtag` | moves every tag: upstream sets a tag's text inside a transform the PDF applies, the reference reads the DVI's glyphs where the transform leaves them, and the redefinition sets the text where the PDF shows it | `moved` to `editable` against its own page |
 | Awesome-CV | `\@sectioncolor` takes the title whole (decision 0015) | `\@sectioncolor`, which reads upstream's three arguments and, where the first is the editor's marker, the title's first three tokens inside the field | keeps it | `\cvsection #1` from `misaligned` to `editable` |
-| Awesome-CV | `\makecvheader` starts its lines with `\leavevmode` | `\makecvheader`, patched by name with etoolbox's `\patchcmd`, which also builds each contact's address with the markers taken out | keeps it | the contacts from `twice` to `misaligned`: each of the sample's holds a digit, set in Roboto's proportional figures (decision 0022); with letters for the digits, `editable` |
-| Awesome-CV | the contacts through `\extrainfo` | `\mobile`, which makes its `tel:` address from the number it stores with the markers taken out | keeps it | `\mobile #1` from `twice` to `misaligned`, its digits Roboto's |
+| Awesome-CV | `\makecvheader` starts its lines with `\leavevmode` | `\makecvheader`, patched by name with etoolbox's `\patchcmd`, which also builds each contact's address with the markers taken out | keeps it | the contacts from `twice` to `editable`, each of the sample's holding a digit set in Roboto's proportional figures, which item 8 reads (decision 0023) |
+| Awesome-CV | the contacts through `\extrainfo` | `\mobile`, which makes its `tel:` address from the number it stores with the markers taken out | keeps it | `\mobile #1` from `twice` to `editable` |
 | Awesome-CV | `cvhonors`' date column | `cvhonors` | keeps it | the same verdicts |
 | Awesome-CV | `cvskills`' label column | `cvskills` | the sample does not open it | none |
+
+Measured again with the probe and the fonts of items 5 and 8, each sample against its own
+reference: the Awesome-CV contacts, whose digits item 8 reads, go to `editable`, where they went
+to `misaligned`; and with the redefinitions, the AltaCV sample's three contacts that break spend
+the probe's 64 compiles before `\cvtag`, `\cvachievement`, `\cvskill` and `\cvref` settle, which it
+leaves `untested`: given the compiles, `\cvtag` is `editable` and the rest keep their verdicts.
 
 The port's `\@sectioncolor` takes the title whole, as its own `\sectionstyle` and
 `\lettersectionstyle` pass it, and keeps a space among its first three characters, which upstream's
@@ -456,24 +466,25 @@ document.
   raw `_` breaks it. And it reads a document's tree from its original's signatures: an environment
   a redefinition gives xparse's `+b`, as `cvhonors` and `cvskills` are, reads to the engine as
   taking its body as an argument, which the parser keeps raw, so the awards' calls would go.
-- Awesome-CV's contacts and address wait for item 8's reading of Roboto's proportional figures;
-  with it, the seed's redefinitions make every sample contact editable.
-- What a model answered is stored unreviewed (`reviewed: false`), with the dependencies its key is
-  computed from and its list's partners' keys, the request's (`requestKey`), and never over a
-  reviewed answer. Item 9's `name` checks that each partner a list names is a macro of the
-  request, which the schema cannot. `checkRequest` cannot prove that a request's definitions are
-  its document's, so item 7's reference check of every answer, and the service's caps and rate
-  limits, are what keep a hostile request's answers from harming another document.
 - Item 7 asks the cache for each of a document's macros with `answerFor(cache, key, macro)`, so
   that an answer comes under the document's names, and a list's partners are the document's by
   key, or it asks the model again. A closer is of its opener's kind, and a command that opens a
   list names its closer.
+- Item 8's reading of Roboto's proportional figures (decision 0023) makes the Awesome-CV sample's
+  address editable as it is, and every one of its contacts with the seed's redefinitions.
+- Items 9 and 10 answer `ModelNaming` and store `StoredAnswer`s by key, after `checkRequest`; the
+  prompt's meaning is part of `NAMING_VERSION`. What a model answered is stored unreviewed
+  (`reviewed: false`), with the dependencies its key is computed from and its list's partners'
+  keys, the request's (`requestKey`), and never over a reviewed answer. Item 9's `name` checks
+  that each partner a list names is a macro of the request, which the schema cannot.
+  `checkRequest` cannot prove that a request's definitions are its document's, so item 7's
+  reference check of every answer, and the service's caps and rate limits, are what keep a hostile
+  request's answers from harming another document.
 - After an upgrade of the pinned tree, whose packages' definitions are in most closures, pgf and
   TikZ, paracol, biblatex and fontawesome5 among them, or a bump of `NAMING_VERSION`, run
   `corpus oracle` and `corpus seed --write`, and review what moved: a key moves with any
-  definition in its closure, and `--write` files each answer again under its new key.
-- Items 9 and 10 answer `ModelNaming` and store `StoredAnswer`s by key, after `checkRequest`; the
-  prompt's meaning is part of `NAMING_VERSION`.
+  definition in its closure, and `--write` files each answer again under its new key. Items 5 and
+  8, which changed the probe and the tree's fonts, moved none.
 - Item 11 finishes the masking. What the builder does not mask: a person's text that only a
   definition holds, which no document string names, as a preamble's own macro holding a summary; a
   single word of the body's or of a stored text's in an own definition, which the check finds, as
@@ -493,7 +504,7 @@ document.
   with a version.
 - The milestone's line for this item, that the pipeline assembles a package for each upstream
   sample from the seed alone, is item 7's to meet; the seed's check is that each sample's every
-  macro has an answer that validates under its key, asked with the header's values the sample
-  gives, which holds for all 65 with the masking above.
+  macro has an answer that validates under its key, asked with the sample's sources and the
+  header's values it gives, which holds for all 65 with the masking above.
 - The oracle now finds Awesome-CV's `\cvhonor` calls, since item 4's fix placed `cvhonors`' body:
   the four arguments are editable, as the port marks them.

@@ -10,6 +10,7 @@
  *   pnpm --filter @resume-tools/editor corpus probe [--only <id>] [--json <file>]
  *   pnpm --filter @resume-tools/editor corpus oracle
  *   pnpm --filter @resume-tools/editor corpus fonts [--only <id>] [--json <file>]
+ *   pnpm --filter @resume-tools/editor corpus seed [--json <file>] [--write]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
  *                 upstream templates' forks give the candidates, public repositories only, and
