@@ -241,7 +241,7 @@ of each launch template must find editable what the hand-written port marks.
    in Node: the committed `corpus/answers/` and the ignored `.corpus/cache/`. Done when the
    corpus runner, with a key in the environment, names every macro of a document outside the
    seed, and its import validates.
-10. [ ] **The naming service.** `POST /v1/name`, inside the editor's own project: it takes a
+10. [x] **The naming service.** `POST /v1/name`, inside the editor's own project: it takes a
     request, checks the cache by key, calls the module on a miss and stores the answer, with a cap
     on the request's size and a rate limit per address. One handler, written against the fetch
     API, serves it in every setting: in development a middleware of the dev server, so that no
