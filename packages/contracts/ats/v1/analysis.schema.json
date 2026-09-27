@@ -2,10 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/makis4n/resume-tools/packages/contracts/ats/v1/analysis.schema.json",
   "title": "ATS analysis, v1 (draft)",
-  "description": "Response of POST /v1/analyze. The request is multipart/form-data with one field, `file`, containing a PDF. Draft: expect changes until both owners mark it stable.",
+  "description": "Response of POST /v1/analyze. The request is multipart/form-data with one field, `file`, containing a PDF. Clients ignore properties they do not know, so new ones can be added within v1. Draft: expect changes until both owners mark it stable.",
   "type": "object",
   "required": ["contract", "score", "findings"],
-  "additionalProperties": false,
   "properties": {
     "contract": {
       "const": "ats/v1"
@@ -27,7 +26,6 @@
     "finding": {
       "type": "object",
       "required": ["id", "severity", "message"],
-      "additionalProperties": false,
       "properties": {
         "id": {
           "type": "string",

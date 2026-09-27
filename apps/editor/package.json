@@ -10,7 +10,7 @@
     "corpus": "node scripts/corpus.ts",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p functions",
     "test": "vitest run"
   },
   "dependencies": {
@@ -39,10 +39,12 @@
     "zod": "^4.6.2"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260926.1",
     "@types/node": "^24.13.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
+    "ai": "^7.0.116",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.1.1",
     "vite": "^8.3.0"
