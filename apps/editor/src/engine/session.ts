@@ -67,6 +67,20 @@ const BUILDS = `${HOME}/builds`;
 const FORMATS = `${HOME}/formats`;
 
 /**
+ * The name fontconfig reads its configuration under, from the folder a run is in first and then
+ * from FONTCONFIG_HOME. A dot file, which TeX may neither write nor read (`openin_any` and
+ * `openout_any` below) and no caller may supply (`isJobPath`), so that only the session writes one.
+ */
+const FONTCONFIG_FILE = ".fonts.conf";
+/**
+ * Where fontconfig finds its configuration when the run's folder has none: a link to the tree's
+ * own, `/etc/fonts/fonts.conf`, which lists no font folder (decision 0011).
+ */
+const FONTCONFIG_HOME = `${HOME}/fontconfig`;
+/** The tree's own fontconfig configuration. */
+const TREE_FONTCONFIG = "/etc/fonts/fonts.conf";
+
+/**
  * The TeX Live trees kpathsea searches, in order: TeX Live's own configuration, generated files
  * and distribution, then the Ubuntu bundles' packages (see `scripts/fetch-engine.ts`). kpathsea
  * finds files in each through a filename database the session builds from the manifest, and never
@@ -87,7 +101,12 @@ const ENV: Record<string, string> = {
   TEXMFDIST: "/texlive/texmf-dist:/texmf/texmf-dist",
   TEXMFVAR: "/texlive/texmf-dist/texmf-var",
   TEXMFCNF: "/texlive/texmf-dist/web2c",
-  FONTCONFIG_PATH: "/texlive",
+  // The engine reads its environment once, when it starts, so a compile cannot change it. These
+  // point fontconfig at a file a compile can: `.fonts.conf` in the folder the run is in, which the
+  // session writes for a compile that asks for fonts by name (`CompileOptions.fontsByName`), and
+  // otherwise the tree's own, through FONTCONFIG_HOME.
+  FONTCONFIG_FILE,
+  FONTCONFIG_PATH: `.:${FONTCONFIG_HOME}`,
   // TeX may open only files below the folder it runs in: no absolute paths, no "..", no dot
   // files. Files kpathsea finds in the trees are not affected.
   openin_any: "p",
@@ -100,6 +119,41 @@ const ENV: Record<string, string> = {
 
 /** The start of the heap restored after every run; all of the engine's state fits in it. */
 const HEADER_BYTES = 2 ** 26;
+
+/**
+ * What a dump runs after the preamble: a line for `\everyjob`, which TeX runs as a job loads the
+ * format and before it reads the body, then `\dump`.
+ *
+ * TeX dumps only an empty page with no dead cycles, and LaTeX's preamble leaves neither: the class's
+ * `\onecolumn` clears a page as it loads, a dead cycle, and what a package writes onto the page as
+ * the preamble runs stays there, as hyperref's PDF version and dvipdfmx's flags, and xcolor's
+ * first colour and a page colour, which a whole compile ships with its first page. So `\dump`, as
+ * `\end` does, first appends `\hbox to\hsize{}\vfill\penalty-'10000000000` and runs the output
+ * routine, which LaTeX's `\@specialoutput` answers by putting the page into `\@holdpg`: what the
+ * preamble wrote, the `\topskip` glue, the box and the `\vfill`. The format kept all that and the
+ * output penalty that fired it, and a body compiled from it started with them: what the preamble
+ * wrote never reached the page (decision 0014), and a page whose first output finds an empty page,
+ * as paracol's does at the top of one, set its text below the box (decision 0023). So each job of
+ * the format starts as the whole document does: what the preamble wrote back on the page, less
+ * what `\dump` added, the glue only when no box stood on the page before it, `\@holdpg` void, and
+ * the output penalty, the dead cycles and the main list's `\prevdepth` as the preamble left them,
+ * which the line reads before `\dump`.
+ */
+const DUMP_END = String.raw`\begingroup\catcode64=11\relax
+\edef\x{\endgroup\everyjob{\the\everyjob
+  \begingroup
+    \setbox0=\vbox{\unvbox\@holdpg
+      \noexpand\ifnum\lastnodetype=11 \unskip\noexpand\fi
+      \noexpand\ifnum\lastnodetype=1 \setbox0=\lastbox\noexpand\fi
+      \ifdim\pagegoal=\maxdimen\noexpand\ifnum\lastnodetype=11 \unskip\noexpand\fi\fi}%
+    \unvbox0
+  \endgroup
+  \global\setbox\@holdpg=\box\voidb@x
+  \global\outputpenalty=\the\outputpenalty\relax
+  \deadcycles=\the\deadcycles\relax
+  \prevdepth=\the\prevdepth\relax}}\x
+\dump
+`;
 
 /** A file in Emscripten's in-memory file system. */
 interface MemfsNode {
@@ -116,6 +170,7 @@ interface EmscriptenStream {
 export interface EmscriptenFs {
   mkdirTree(path: string): void;
   create(path: string, mode: number): MemfsNode;
+  symlink(target: string, path: string): void;
   writeFile(path: string, data: string | Uint8Array): void;
   readFile(path: string): Uint8Array;
   readFile(path: string, options: { encoding: "utf8" }): string;
@@ -172,7 +227,11 @@ export interface SessionOptions {
   verifyHeap?: boolean;
 }
 
-/** Files a template supplies, such as a class file, by plain file name. */
+/**
+ * Files a dump or a compile takes, by their paths in the folder it runs in (`isJobPath`): a
+ * template's class and style files, which a package names by plain file name, or an upload's
+ * files, in their folders as the upload has them.
+ */
 export type JobFiles = Record<string, string | Uint8Array>;
 
 /** TeX Live files read since the last result: how many, how many bytes, and which. */
@@ -193,6 +252,13 @@ export interface StartResult {
 export interface RunResult {
   code: number;
   ms: number;
+  /**
+   * The CPU time of the thread that ran the program, in milliseconds, over its run alone: not
+   * what the thread waited for while other work ran, nor the heap's reset after the run, which
+   * `ms` counts. Node gives it (`threadCpuMs`); the browser's worker, which has no `process`,
+   * does not.
+   */
+  cpuMs?: number;
   /** What the program printed to the terminal. */
   output: string;
 }
@@ -214,6 +280,12 @@ export interface CompileResult {
   pages: number;
   /** How long each pass took, in milliseconds, including a retry as a new document. */
   passes: number[];
+  /**
+   * Each of `passes` in the CPU time of the thread that ran it (`RunResult.cpuMs`), when every
+   * pass has it, as in Node, and not in the browser's worker. What a timing test bounds, since
+   * load that comes in bursts slows one pass and not the next in elapsed time.
+   */
+  cpuPasses?: number[];
   log: string;
   error?: string;
   errorLine?: number;
@@ -223,6 +295,15 @@ export interface CompileResult {
 export interface PdfOptions {
   /** Deflate level 0 to 9; xdvipdfmx's default when left out. Tests read a level 0 PDF. */
   compress?: number;
+  /**
+   * The images the PDF may show: paths of files in the job's folder that the caller gave the job
+   * as blank stand-ins for an upload's images (decision 0019). A `pdf:image`, `pdf:img` or
+   * `pdf:epdf` special whose file, resolved inside the job's folder, is one of them, and still
+   * holds the bytes the caller gave, is taken; every other is refused, as without the list. Only a
+   * path of letters, digits, `.`, `_`, `-` and `/` can be listed, with no part that starts with a
+   * dot (`isShowableImage`): any other in the list counts for nothing.
+   */
+  images?: readonly string[];
 }
 
 export interface PdfResult {
@@ -246,20 +327,44 @@ export interface CompileOptions {
    */
   maxPasses?: number;
   /**
-   * Files to put in the job's folder, such as a template's own files. They stay with the job, so
-   * they need passing only once, until it is forgotten or compiled with another format (another
-   * engine or another name). A format name stands for one template: dumping or putting it again
-   * keeps a job's files, so give another template another name, or forget the job before moving
-   * it over.
+   * Files to put in the job's folder, such as a template's own files, or an upload's by their
+   * paths in it (`isJobPath`). They stay with the job, so they need passing only once, until it is
+   * forgotten or compiled with another format (another engine or another name). A format name
+   * stands for one template: dumping or putting it again keeps a job's files, so give another
+   * template another name, or forget the job before moving it over.
    */
   files?: JobFiles;
+  /**
+   * Let XeTeX find fonts by name for this compile's passes, as fontspec asks fontconfig for them:
+   * the session writes a fontconfig configuration into the job's folder that lists the tree's
+   * `fonts/opentype` and `fonts/truetype` folders and the job's own, for fonts an upload ships, and
+   * takes it out after, so that fontconfig scans no folder again (decision 0011). Only the import
+   * pipeline's reference compile asks for it (decision 0019); the scan costs every XeTeX pass that
+   * reads it, and pdfTeX never uses fontconfig.
+   */
+  fontsByName?: boolean;
+  /**
+   * Pass again, within `maxPasses`, whenever a pass changed a file of the job's folder, its log
+   * and its output aside, though its log asks for nothing: LaTeX never says that a table of
+   * contents it rewrote differs from the one it read, which only the next pass sets. A pass that
+   * changed nothing it could read would be the same again, so none follows it. The import
+   * pipeline's probe asks for it (decision 0022), since its compiles start from the auxiliary
+   * files its baseline wrote rather than as new documents; the editor's own compiles take the
+   * log's word, as a LaTeX user does.
+   */
+  rerunOnChange?: boolean;
 }
 
 const checkName = (kind: string, name: string) => {
   if (!NAME.test(name)) throw new Error(`${kind} name must be letters, digits, - and _: ${name}`);
 };
-const checkFileName = (name: string) => {
-  if (!isFileName(name)) throw new Error(`not a plain file name: ${name}`);
+/**
+ * A file's path in a job's folder: plain file names joined by `/`, so no part is empty, `.`, `..`
+ * or a dot file, and the path stays inside the folder.
+ */
+export const isJobPath = (path: string) => path !== "" && path.split("/").every(isFileName);
+const checkJobPath = (path: string) => {
+  if (!isJobPath(path)) throw new Error(`not a path inside the job's folder: ${path}`);
 };
 /** A name for a format `dump` or `putFormat` makes; `stock` means the engine's own format. */
 const checkFormatName = (name: string) => {
@@ -385,15 +490,100 @@ export function refusedSpecial(text: string): string | undefined {
   return undefined;
 }
 
+/** The folders of each tree that hold OpenType or TrueType fonts, as the manifest lists them. */
+function fontFoldersOf(manifest: EngineManifest): string[] {
+  const folders = TREES.flatMap((tree) => [`${tree}/fonts/opentype`, `${tree}/fonts/truetype`]);
+  const paths = Object.keys(manifest.files);
+  return folders.filter((folder) => paths.some((path) => path.startsWith(`${folder}/`)));
+}
+
 /** What an error thrown says, for a result's `error`. */
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-/** The first `\special` of any page that would make xdvipdfmx read a file or reconfigure the run. */
-function refusedOutputSpecial(parsed: DviDocument): string | undefined {
+/**
+ * The CPU time the calling thread has spent, in milliseconds, where the platform says: Node's
+ * `process.threadCpuUsage`, as the tests' timing reads it (`src/test/timing.ts`). The browser's
+ * worker has no `process`, so none there; nothing of Node's is imported, so the worker's build
+ * stays free of it.
+ */
+function threadCpuMs(): number | undefined {
+  if (typeof process === "undefined" || typeof process.threadCpuUsage !== "function")
+    return undefined;
+  const { user, system } = process.threadCpuUsage();
+  return (user + system) / 1000;
+}
+
+/** The end of every file `dump` runs, which dumps the format: `DUMP_END`, on a line of its own. */
+const DUMP = `\n${DUMP_END}`;
+
+/** A preamble with `DUMP` after it: text as text, and bytes as bytes, as `dump` was given it. */
+function withDump(preamble: string | Uint8Array): string | Uint8Array {
+  if (typeof preamble === "string") return `${preamble}${DUMP}`;
+  const end = new TextEncoder().encode(DUMP);
+  const bytes = new Uint8Array(preamble.length + end.length);
+  bytes.set(preamble);
+  bytes.set(end, preamble.length);
+  return bytes;
+}
+
+/**
+ * A path an output names, as a path in the job's folder: a relative one, from the folder, as TeX
+ * and XeTeX write a file they found there, with `./` or without; or an absolute one inside it, as
+ * fontconfig gives a font it found there. Undefined for any other.
+ */
+export function insideJob(job: string, path: string): string | undefined {
+  const folder = `${JOBS}/${job}/`;
+  const relative = path.startsWith(folder)
+    ? path.slice(folder.length)
+    : path.startsWith("/")
+      ? undefined
+      : path;
+  const name = relative?.replace(/^(?:\.\/)+/, "");
+  return name !== undefined && isJobPath(name) ? name : undefined;
+}
+
+/** The specials that show an image, which may be a stand-in's (`PdfOptions.images`). */
+const SHOWS_AN_IMAGE = new Set(["pdf:image", "pdf:img", "pdf:epdf"]);
+
+/**
+ * The file an image special names, as a path inside the folder xdvipdfmx runs in, or undefined
+ * when it names none that can be told so: the first PDF string after the command, as
+ * `(photo.png)`, with no parenthesis or escape in it, and nothing before it but the words, numbers
+ * and `@name` the image specials take (`width 72pt`, `bbox 0 0 10 10`, `pagebox cropbox`), so that
+ * no comment or other object can hide the file xdvipdfmx would read from this reading. A leading
+ * `./`, which XeTeX writes, is dropped; a path that would leave the folder names none.
+ */
+export function imageFileOf(text: string): string | undefined {
+  const match = /^\s*pdf:\s*(?:image|img|epdf)\b[\sA-Za-z0-9.+\-@_]*\(([^()\\]*)\)/i.exec(text);
+  const name = match?.[1]?.replace(/^(?:\.\/)+/, "");
+  return name !== undefined && isJobPath(name) ? name : undefined;
+}
+
+/**
+ * Whether a path in a job's folder may be listed as an image the PDF shows (`PdfOptions.images`):
+ * letters, digits, `.`, `_`, `-` and `/` only, and no part empty or starting with a dot, so none is
+ * `..`. Nothing in such a name can mean anything to xdvipdfmx's reading of a special but the file.
+ */
+export const isShowableImage = (path: string) =>
+  /^[A-Za-z0-9._\-/]+$/.test(path) && isJobPath(path);
+
+/**
+ * The first `\special` of any page that would make xdvipdfmx read a file or reconfigure the run,
+ * but for one that shows an image whose file `allowed` takes. XeTeX writes a picture as such a
+ * special too, and the XDV opcode that once placed one from a file, `pic_file`, is TeX--XeT's
+ * end_reflect to this xdvipdfmx, which reads no file (`parseDvi`, decision 0008).
+ */
+function refusedOutputSpecial(
+  parsed: DviDocument,
+  allowed: (file: string) => boolean,
+): string | undefined {
   for (const page of parsed.pages)
     for (const item of page.items) {
-      const refused = item.kind === "special" ? refusedSpecial(item.text) : undefined;
-      if (refused !== undefined) return refused;
+      if (item.kind !== "special") continue;
+      const refused = refusedSpecial(item.text);
+      if (refused === undefined) continue;
+      const file = SHOWS_AN_IMAGE.has(refused) ? imageFileOf(item.text) : undefined;
+      if (file === undefined || !allowed(file)) return refused;
     }
   return undefined;
 }
@@ -405,8 +595,13 @@ export class EngineSession {
    * one whose format is made again starts again as a new document and keeps its files.
    */
   private readonly formatOf = new Map<string, { format: string; generation: number }>();
-  /** How many times each format has been put in place, by engine and name. */
+  /**
+   * How many times each format has been put in place, by engine and name, a count that a dropped
+   * format keeps, so that a job compiled with it before starts again when it is put back.
+   */
   private readonly generations = new Map<string, number>();
+  /** The formats in place, by engine and name, which compiles can load. */
+  private readonly installed = new Set<string>();
   /** The files each job was given, written back whenever the session clears its folder. */
   private readonly filesOf = new Map<string, JobFiles>();
   /**
@@ -422,6 +617,8 @@ export class EngineSession {
     private readonly printed: string[],
     private readonly tally: Tally,
     private readonly afterRun: (() => void) | undefined,
+    /** The tree's folders of OpenType and TrueType fonts, which `fontsByName` lists. */
+    private readonly fontFolders: readonly string[],
   ) {}
 
   static async start(
@@ -439,8 +636,9 @@ export class EngineSession {
           const { FS, ENV: env } = moduleOptions;
           if (!FS || !env) throw new Error("the engine did not provide FS and ENV before preRun");
           Object.assign(env, ENV);
-          for (const folder of [JOBS, BUILDS, FORMATS]) FS.mkdirTree(folder);
+          for (const folder of [JOBS, BUILDS, FORMATS, FONTCONFIG_HOME]) FS.mkdirTree(folder);
           mountOnDemand(FS, options, tally);
+          FS.symlink(TREE_FONTCONFIG, `${FONTCONFIG_HOME}/${FONTCONFIG_FILE}`);
         },
       ],
       print: (text) => printed.push(text),
@@ -460,6 +658,7 @@ export class EngineSession {
       printed,
       tally,
       options.afterRun,
+      fontFoldersOf(options.manifest),
     );
     const result: StartResult = {
       ms: performance.now() - started,
@@ -477,9 +676,13 @@ export class EngineSession {
     this.printed.length = 0;
     fs.chdir(cwd);
     const started = performance.now();
+    const cpuStarted = threadCpuMs();
     let code: number;
+    let cpuMs: number | undefined;
     try {
       code = this.engine.callMain([...args]); // callMain changes the array it is given
+      const cpuEnded = threadCpuMs();
+      if (cpuStarted !== undefined && cpuEnded !== undefined) cpuMs = cpuEnded - cpuStarted;
       this.engine._flush_streams();
     } finally {
       // Put the engine back as start-up left it, even when the run threw.
@@ -491,19 +694,33 @@ export class EngineSession {
       fs.chdir(HOME);
       this.afterRun?.();
     }
-    return { code, ms: performance.now() - started, output: this.printed.join("\n") };
+    return {
+      code,
+      ms: performance.now() - started,
+      ...(cpuMs === undefined ? {} : { cpuMs }),
+      output: this.printed.join("\n"),
+    };
   }
 
   /**
    * Dump a preamble into a format named `name`, which later compiles with the same engine can
-   * load. It runs in a folder of its own, with `files` beside it, and leaves only the format. A
-   * dump that fails leaves any earlier format of that name in place. One that succeeds replaces
-   * it, and the jobs compiled with it start again as new documents, keeping their files; a name
-   * stands for one template, so another template needs another name.
+   * load. It runs in a folder of its own, with `files` beside it at their paths in the folder, as
+   * a compile's are (`isJobPath`): a template's by plain file name, or an upload's, whose preamble
+   * may input a file of a folder of its own. It leaves only the format. The preamble is text,
+   * written as UTF-8, or bytes, written as they are, as an imported resume's preamble is in the
+   * encoding its file had. A dump that fails leaves any earlier format of that name in place. One
+   * that succeeds replaces it, and the jobs compiled with it start again as new documents, keeping
+   * their files; a name stands for one template, so another template needs another name.
    */
-  dump(engine: Engine, name: string, preamble: string, files: JobFiles = {}): DumpResult {
+  dump(
+    engine: Engine,
+    name: string,
+    preamble: string | Uint8Array,
+    files: JobFiles = {},
+  ): DumpResult {
     checkEngine(engine);
     checkFormatName(name);
+    for (const path of Object.keys(files)) checkJobPath(path);
     const spec = ENGINES[engine];
     const folder = `${BUILDS}/${name}`;
     this.tally.take();
@@ -514,7 +731,7 @@ export class EngineSession {
     let format: Uint8Array | undefined;
     try {
       this.writeFiles(folder, files);
-      this.engine.FS.writeFile(`${folder}/${name}.tex`, `${preamble}\n\\dump\n`);
+      this.engine.FS.writeFile(`${folder}/${name}.tex`, withDump(preamble));
       run = this.run(
         [spec.program, "-ini", `-jobname=${name}`, ...spec.args, `&${spec.program}`, `${name}.tex`],
         folder,
@@ -548,6 +765,22 @@ export class EngineSession {
   }
 
   /**
+   * Take a format out of the session, to free what it holds, 6 to 9 MB: `dump`'s or `putFormat`'s
+   * by its name. The import pipeline dumps a format for each resume it takes in (decision 0022),
+   * which the one who asked for it drops when done with it. A compile that names it then throws,
+   * as one that names a format never made does, until it is dumped or put again; the jobs
+   * compiled with it keep their files, and start again as new documents then, as after a dump that
+   * replaces a format. Dropping a name the session does not hold does nothing, and `stock`, the
+   * engine's own, cannot be dropped. Forgetting a job (`forget`) leaves every format in place.
+   */
+  dropFormat(engine: Engine, name: string) {
+    checkEngine(engine);
+    checkFormatName(name);
+    this.removeTree(this.formatPath(engine, name));
+    this.installed.delete(`${engine}:${name}`);
+  }
+
+  /**
    * Compile a body from a format: `stock` for the engine's own, or a name given to `dump` or
    * `putFormat`. The body is everything the format does not hold, usually from
    * `\begin{document}` on. A new document gets a second pass, since the first writes the
@@ -565,7 +798,7 @@ export class EngineSession {
   compile(
     engine: Engine,
     format: string,
-    body: string,
+    body: string | Uint8Array,
     options: CompileOptions = {},
   ): CompileResult {
     const job = options.job ?? "doc";
@@ -573,7 +806,7 @@ export class EngineSession {
     checkEngine(engine);
     checkName("job", job);
     checkPasses(maxPasses);
-    for (const name of Object.keys(options.files ?? {})) checkFileName(name);
+    for (const path of Object.keys(options.files ?? {})) checkJobPath(path);
     const spec = ENGINES[engine];
     const key = `${engine}:${format}`;
     let formatPath = spec.stockFormat;
@@ -581,7 +814,8 @@ export class EngineSession {
     if (format !== "stock") {
       checkName("format", format);
       const made = this.generations.get(key);
-      if (made === undefined) throw new Error(`no ${engine} format named ${format}`);
+      if (made === undefined || !this.installed.has(key))
+        throw new Error(`no ${engine} format named ${format}`);
       formatPath = this.formatPath(engine, format);
       generation = made;
     }
@@ -593,12 +827,24 @@ export class EngineSession {
     this.outputOf.delete(job);
 
     this.tally.take();
-    let attempt = this.passes(spec, formatPath, job, body, maxPasses);
-    const left = maxPasses - attempt.passes.length;
-    if (!attempt.ok && !attempt.fresh && left > 0) {
-      this.clearFolder(job);
-      const again = this.passes(spec, formatPath, job, body, left);
-      attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
+    const fonts = options.fontsByName && engine === "xetex" ? this.fontconfig(job) : undefined;
+    let attempt: ReturnType<EngineSession["passes"]>;
+    try {
+      const onChange = options.rerunOnChange === true;
+      attempt = this.passes(spec, formatPath, job, body, maxPasses, fonts, onChange);
+      const left = maxPasses - attempt.passes.length;
+      if (!attempt.ok && !attempt.fresh && left > 0) {
+        this.clearFolder(job);
+        const again = this.passes(spec, formatPath, job, body, left, fonts, onChange);
+        const cpu = attempt.cpuPasses;
+        attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
+        // In CPU time only when both attempts' passes are.
+        if (cpu === undefined || again.cpuPasses === undefined) delete attempt.cpuPasses;
+        else attempt.cpuPasses = [...cpu, ...again.cpuPasses];
+      }
+    } finally {
+      // The session's default again: the next compile of the job scans no folder.
+      if (fonts) this.removeTree(`${JOBS}/${job}/${FONTCONFIG_FILE}`);
     }
     const { fresh: _, ...result } = attempt;
     if (result.ok) this.outputOf.set(job, engine);
@@ -621,6 +867,9 @@ export class EngineSession {
    * xdvipdfmx does not honour `openin_any`, so before it runs, every special of the output is
    * scanned and the PDF refused when one would read a file or reconfigure the run (`refusedSpecial`):
    * a template's special could otherwise embed another job's or a TeX Live file (decision 0008).
+   * The one exception is an image the caller wrote into the job as a blank stand-in and lists in
+   * `images` (decision 0019): a special that shows it, by a path inside the job's folder of plain
+   * characters (`isShowableImage`), is taken while the file still holds the bytes the caller gave.
    *
    * Whatever becomes of the PDF, the result says so, and `pdf` throws only for arguments it
    * refuses, as every method does: an output it cannot read, whose specials it cannot scan, is not
@@ -650,7 +899,11 @@ export class EngineSession {
         error: `the output cannot be read: ${messageOf(error)}`,
       };
     }
-    const refused = refusedOutputSpecial(parsed);
+    const images = new Set((options.images ?? []).filter(isShowableImage));
+    const refused = refusedOutputSpecial(
+      parsed,
+      (file) => isShowableImage(file) && images.has(file) && this.holds(job, file),
+    );
     if (refused !== undefined)
       return {
         ok: false,
@@ -701,7 +954,24 @@ export class EngineSession {
     };
   }
 
-  /** Forget a job: its folder, its files and its format, so its next compile starts afresh. */
+  /**
+   * A file of a job's folder, by its path there (`isJobPath`): one the caller gave the job, or one
+   * TeX wrote in it, as the import pipeline reads what a compile of its own prints to a file
+   * (decision 0020); undefined when there is none. Only the job's own folder can be read.
+   */
+  written(job: string, path: string): Uint8Array | undefined {
+    checkName("job", job);
+    checkJobPath(path);
+    const at = `${JOBS}/${job}/${path}`;
+    const fs = this.engine.FS;
+    if (!fs.analyzePath(at).exists || fs.isDir(fs.stat(at).mode)) return undefined;
+    return this.read(at);
+  }
+
+  /**
+   * Forget a job: its folder, its files and which format it was compiled with, so its next
+   * compile starts afresh. The format itself stays in place for other jobs (`dropFormat`).
+   */
   forget(job: string) {
     checkName("job", job);
     this.clearFolder(job);
@@ -715,34 +985,51 @@ export class EngineSession {
     this.removeTree(`${JOBS}/${job}`);
   }
 
-  /** Compile a job's body once, and again while it is new or its log asks. */
+  /**
+   * Compile a job's body once, and again while it is new or its log asks, or, with `onChange`,
+   * while a pass changes a file of its folder, with `fonts`, when given, as fontconfig's
+   * configuration in the job's folder.
+   */
   private passes(
     spec: EngineSpec,
     formatPath: string,
     job: string,
-    body: string,
+    body: string | Uint8Array,
     maxPasses: number,
+    fonts?: string,
+    onChange = false,
   ): Omit<CompileResult, "fetched"> & { fresh: boolean } {
     const folder = `${JOBS}/${job}`;
     const at = (extension: string) => `${folder}/${job}.${extension}`;
     this.engine.FS.mkdirTree(folder);
     this.writeFiles(folder, this.filesOf.get(job) ?? {});
     this.engine.FS.writeFile(at("tex"), body);
+    if (fonts !== undefined) this.engine.FS.writeFile(`${folder}/${FONTCONFIG_FILE}`, fonts);
     const fresh = !this.engine.FS.analyzePath(at("aux")).exists;
     const passes: number[] = [];
+    // The passes in CPU time, while every pass has it.
+    let cpuPasses: number[] | undefined = [];
     let run: RunResult;
     let log: string;
     for (;;) {
       // What an earlier pass wrote must not pass for what this one did.
       this.removeTree(at(spec.output));
       this.removeTree(at("log"));
+      const before = onChange ? this.contentsOf(folder) : undefined;
       run = this.run([spec.program, ...spec.args, "--fmt", formatPath, `${job}.tex`], folder);
       passes.push(run.ms);
+      if (run.cpuMs === undefined) cpuPasses = undefined;
+      else cpuPasses?.push(run.cpuMs);
       log = this.read(at("log"), "utf8") ?? "";
       // Only a pass that shipped pages is worth another: one that failed, or that TeX finished
       // with nothing to ship, would do the same again.
       const shipped = run.code === 0 && this.engine.FS.analyzePath(at(spec.output)).exists;
-      const again = shipped && ((fresh && passes.length === 1) || summariseLog(log).rerun);
+      const changed =
+        before !== undefined &&
+        shipped &&
+        this.changedSince(folder, before, [at(spec.output), at("log")]);
+      const again =
+        shipped && ((fresh && passes.length === 1) || summariseLog(log).rerun || changed);
       if (!again || passes.length >= maxPasses) break;
     }
     const summary = summariseLog(log);
@@ -757,6 +1044,7 @@ export class EngineSession {
       output,
       pages: summary.pages,
       passes,
+      ...(cpuPasses === undefined ? {} : { cpuPasses }),
       log,
       error: ok ? undefined : failure,
       errorLine: ok ? undefined : summary.errorLine,
@@ -769,17 +1057,85 @@ export class EngineSession {
     this.engine.FS.writeFile(this.formatPath(engine, name), format);
     const key = `${engine}:${name}`;
     this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
+    this.installed.add(key);
+  }
+
+  /** Every file below a folder, by its path, with what it holds. */
+  private contentsOf(folder: string): Map<string, Uint8Array> {
+    const fs = this.engine.FS;
+    const found = new Map<string, Uint8Array>();
+    const walk = (path: string) => {
+      for (const name of fs.readdir(path)) {
+        if (name === "." || name === "..") continue;
+        const at = `${path}/${name}`;
+        if (fs.isDir(fs.stat(at).mode)) walk(at);
+        else found.set(at, fs.readFile(at));
+      }
+    };
+    if (fs.analyzePath(folder).exists) walk(folder);
+    return found;
+  }
+
+  /**
+   * Whether a file below a folder, but those at `aside`, is not as `before` had it: new, gone, or
+   * holding other bytes.
+   */
+  private changedSince(
+    folder: string,
+    before: ReadonlyMap<string, Uint8Array>,
+    aside: readonly string[],
+  ): boolean {
+    const after = this.contentsOf(folder);
+    for (const path of aside) after.delete(path);
+    for (const path of before.keys()) if (!aside.includes(path) && !after.has(path)) return true;
+    for (const [path, bytes] of after) {
+      const was = before.get(path);
+      if (was === undefined || was.length !== bytes.length) return true;
+      for (let i = 0; i < bytes.length; i++) if (was[i] !== bytes[i]) return true;
+    }
+    return false;
   }
 
   private formatPath(engine: Engine, name: string): string {
     return `${FORMATS}/${engine}-${name}.fmt`;
   }
 
+  /**
+   * Write a dump's or a compile's files into the folder it runs in, each at its path there
+   * (`isJobPath`), its folders made first.
+   */
   private writeFiles(folder: string, files: JobFiles) {
     for (const [name, data] of Object.entries(files)) {
-      checkFileName(name);
+      checkJobPath(name);
+      const slash = name.lastIndexOf("/");
+      if (slash > 0) this.engine.FS.mkdirTree(`${folder}/${name.slice(0, slash)}`);
       this.engine.FS.writeFile(`${folder}/${name}`, data);
     }
+  }
+
+  /**
+   * A fontconfig configuration that lists the tree's OpenType and TrueType folders and the job's
+   * own, so that XeTeX finds a font by name there (`CompileOptions.fontsByName`).
+   */
+  private fontconfig(job: string): string {
+    const folders = [...this.fontFolders, `${JOBS}/${job}`];
+    return [
+      '<?xml version="1.0"?>',
+      '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">',
+      "<fontconfig>",
+      ...folders.map((folder) => `  <dir>${folder}</dir>`),
+      "</fontconfig>",
+      "",
+    ].join("\n");
+  }
+
+  /** Whether a file of a job's folder holds what the caller gave the job under its path. */
+  private holds(job: string, path: string): boolean {
+    const given = this.filesOf.get(job)?.[path];
+    const held = this.read(`${JOBS}/${job}/${path}`);
+    if (given === undefined || held === undefined) return false;
+    const bytes = typeof given === "string" ? new TextEncoder().encode(given) : given;
+    return bytes.length === held.length && bytes.every((byte, i) => byte === held[i]);
   }
 
   private removeTree(path: string) {

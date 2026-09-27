@@ -1,7 +1,7 @@
 name: pr-title
 
 # The squash merge uses the pull request's title as the commit message on main, so the title is
-# what has to follow Conventional Commits with an area scope (AGENTS.md, decision 0020).
+# what has to follow Conventional Commits with an area scope (AGENTS.md, decision 0029).
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]

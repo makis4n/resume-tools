@@ -18,6 +18,13 @@ export const PARAGRAPH_MARKER = "rt:p:";
  *   field that starts a list item keeps the item's label, and `\texorpdfstring` so a bookmark
  *   holds the text and never the markers. Every special writes the id through `\detokenize`, so a
  *   character a template makes active, as underscore.sty does `_`, cannot expand inside a marker.
+ *   Before its end marker, in a slanted font, comes the italic correction LaTeX's text commands
+ *   add after their text (`\maybe@ic`'s test of `\fontdimen1`), since TeX's `\/` corrects only a
+ *   letter that ends the list, which the end marker would otherwise be: `\textit{...}` around a
+ *   field then sets the page as around its text alone. It comes only inside a text command,
+ *   whose group has set `\check@icr` to correct after it, so that a field set slanted by a
+ *   declaration, `{\slshape ...}`, which LaTeX never corrects, gets none either. An upright font
+ *   gets none, and nor does vertical mode, where `\/` is an error (decision 0007).
  * - `\rt@par{<id>}` writes the paragraph special right after the begin marker. It is measured by
  *   TeX rather than derived from the template (decision 0004), and item 9's overlay parses it to
  *   break the field's lines where TeX will. `\parshape` has as many lines as the template gave it,
@@ -47,6 +54,7 @@ export const PRELUDE = String.raw`\makeatletter
 \providecommand{\texorpdfstring}[2]{#1}
 \newcommand{\rtfield}[2]{%
   \texorpdfstring{\leavevmode\special{${MARKER_BEGIN}\detokenize{#1}}\rt@par{#1}#2%
+    \ifhmode\ifx\check@icr\@empty\else\ifdim\fontdimen\@ne\font>\z@\/\fi\fi\fi%
     \special{${MARKER_END}\detokenize{#1}}}{#2}}
 % The paragraph a field is set in, as TeX has it where the field begins, so that the editor's
 % overlay can break the field's lines where TeX will; item 9's overlay parses this special.

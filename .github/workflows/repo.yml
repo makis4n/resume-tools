@@ -1,6 +1,6 @@
 name: repo
 
-# Checks for the whole repository, so no path filters: every pull request runs them (decision 0020).
+# Checks for the whole repository, so no path filters: every pull request runs them (decision 0029).
 on:
   push:
     branches: [main]

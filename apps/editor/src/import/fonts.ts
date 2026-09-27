@@ -1,0 +1,324 @@
+/**
+ * The fonts a LaTeX source loads, and the tree's font families by name: what the corpus's survey
+ * reads of every document (decision 0018), what the import pipeline's intake reads of an upload
+ * (decision 0019), and what the XeTeX rewrite matches a font's name to (`xetex.ts`, decision 0023).
+ * fontspec asks fontconfig for a family by its name; the tree's families are those its OpenType and
+ * TrueType files name, as the engine's manifest records each file's tables (`TreeFont`), and a font
+ * the source loads by file is the tree's when the tree holds a file of its name (`fileInTree`).
+ *
+ * The tree is the engine's manifest (`readTree`): a class or package is there when a `.cls` or
+ * `.sty` of its name is, a font file when an OpenType or TrueType file of its name is, and a family
+ * when one of those files names it, as its family, its full name or its PostScript name.
+ *
+ * They are pure functions over text and the tree's manifest, as `source.ts`'s are, and what they
+ * return names fonts, never a document's text. Each takes time linear in what it reads, however a
+ * hostile document is laid out. Node's scripts load this file as it is, by stripping its types, so
+ * its imports name their files' extensions.
+ */
+
+import type { TreeFont } from "../engine/manifest.ts";
+import { bracketed, group } from "./source.ts";
+
+// The tree.
+
+/** The tree as a source's reader sees it, from the engine's file list. */
+export interface Tree {
+  /** The names of its classes and packages, `name.cls` and `name.sty`, under a `tex/` folder. */
+  styles: ReadonlySet<string>;
+  /** Its OpenType and TrueType files' names, without their extension, in lower case. */
+  fontFiles: ReadonlySet<string>;
+  /** Its packages whose folder under `tex/` has a namesake holding OpenType or TrueType files. */
+  fontPackages: ReadonlySet<string>;
+  /**
+   * Its OpenType and TrueType files as the manifest's table describes them (`TreeFont`), each with
+   * its path and its file's name, in path order.
+   */
+  fonts: readonly TreeFontFile[];
+}
+
+/** A font file of the tree: what its tables say of it, where it is, and its file's name. */
+export interface TreeFontFile extends TreeFont {
+  path: string;
+  file: string;
+}
+
+/**
+ * Index the tree's files, by path in the engine's file system, once, with the manifest's table of
+ * its fonts (`EngineManifest.fonts`), of which only a font among `files` is taken. The table must
+ * be given: a manifest written before layout 7 has none, and is refused with an error, since a
+ * tree whose fonts cannot be named would take every font a document asks for by name for one it
+ * lacks.
+ */
+export function readTree(
+  files: Readonly<Record<string, number>>,
+  table: Readonly<Record<string, TreeFont>> | undefined,
+): Tree {
+  if (typeof table !== "object" || table === null)
+    throw new Error(
+      "the engine's manifest has no table of the tree's fonts, which layout 7 added: run `pnpm --filter @resume-tools/editor fetch-engine`",
+    );
+  const styles = new Set<string>();
+  const fontFiles = new Set<string>();
+  const fontFolders = new Set<string>();
+  const stylesByFolder: [folder: string, name: string][] = [];
+  for (const path of Object.keys(files)) {
+    const font = /\/fonts\/(?:opentype|truetype)\/(?:.*\/)?([^/]+)\/([^/]+)\.(?:otf|ttf)$/i.exec(
+      path,
+    );
+    if (font?.[1] && font[2]) {
+      fontFolders.add(font[1]);
+      fontFiles.add(font[2].toLowerCase());
+      continue;
+    }
+    const style = /\/tex\/[^/]+\/([^/]+)\/(?:.*\/)?([^/]+\.(?:sty|cls))$/.exec(path);
+    if (style?.[1] && style[2]) {
+      styles.add(style[2]);
+      if (style[2].endsWith(".sty")) stylesByFolder.push([style[1], style[2].slice(0, -4)]);
+    }
+  }
+  const fontPackages = new Set(
+    stylesByFolder.filter(([folder]) => fontFolders.has(folder)).map(([, name]) => name),
+  );
+  const fonts = Object.entries(table)
+    .filter(([path]) => Object.hasOwn(files, path))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([path, font]) => ({ ...font, path, file: path.slice(path.lastIndexOf("/") + 1) }));
+  return { styles, fontFiles, fontPackages, fonts };
+}
+
+/** A font's name as fontconfig compares it: in lower case, without spaces, hyphens or underscores. */
+export const fontKey = (name: string) => name.toLowerCase().replace(/[\s_-]+/g, "");
+
+/**
+ * The names the tree's fonts go by, as fontconfig compares them (`fontKey`): each file's family,
+ * typographic and four-style, its full name and its PostScript name, on every platform its name
+ * table gives them for, once each, for each tree.
+ */
+const familyKeys = new WeakMap<Tree, string[]>();
+
+function familyKeysOf(tree: Tree): string[] {
+  let keys = familyKeys.get(tree);
+  if (keys === undefined) {
+    const names = tree.fonts.flatMap((font) => [
+      font.family,
+      font.fontFamily,
+      font.fullName,
+      font.postScriptName,
+      ...(font.more?.family ?? []),
+      ...(font.more?.fontFamily ?? []),
+      ...(font.more?.fullName ?? []),
+    ]);
+    keys = [...new Set(names.map(fontKey).filter((key) => key !== ""))];
+    familyKeys.set(tree, keys);
+  }
+  return keys;
+}
+
+/**
+ * The words that may follow a family's name in a name that means one of its faces, as runs of
+ * digits may; longest first, so that `demibold` is read whole before `demi`.
+ */
+const STYLE_WORDS = [
+  ...["regular", "bold", "italic", "it", "oblique", "light", "medium", "medm", "thin", "black"],
+  ...["heavy", "hairline", "semibold", "smbld", "demibold", "demi", "extrabold", "extralight"],
+  ...["extlt", "ultralight", "ultrabold", "book", "text", "solid", "normal", "upright", "roman"],
+].sort((a, b) => b.length - a.length);
+
+/** The longest name looked for among the tree's families; none of theirs comes near it. */
+const MAX_FAMILY_NAME = 128;
+
+/**
+ * Whether a key is nothing but style words and runs of digits, read from its start, each time the
+ * longest word that fits: one pass over it, where a regular expression of the alternatives
+ * backtracks over every way of splitting a run of digits or of `demibold`s before it fails. Only
+ * `it` and `demi` start other words, and neither choice can end where the longer one would not.
+ */
+function styleWords(key: string): boolean {
+  let at = 0;
+  while (at < key.length) {
+    if (/\d/.test(key[at] ?? "")) {
+      while (/\d/.test(key[at] ?? "")) at++;
+      continue;
+    }
+    const word = STYLE_WORDS.find((each) => key.startsWith(each, at));
+    if (word === undefined) return false;
+    at += word.length;
+  }
+  return true;
+}
+
+/**
+ * Whether a name fontspec asks for by name is a family of the tree, or one of its faces: a name a
+ * font of the tree's table goes by (`familyKeysOf`), or one followed by style words or a design
+ * size, as "Roboto Light", "SourceSansPro-Bold" and "LM Roman 12" are, whatever its case, spaces,
+ * hyphens and underscores, as fontconfig ignores case and spaces in a family's name. A name longer
+ * than MAX_FAMILY_NAME is none.
+ */
+export function familyInTree(tree: Tree, name: string): boolean {
+  if (name.length > MAX_FAMILY_NAME) return false;
+  const key = fontKey(name);
+  return familyKeysOf(tree).some(
+    (family) => key === family || (key.startsWith(family) && styleWords(key.slice(family.length))),
+  );
+}
+
+/** A font file's name without its folder or extension, in lower case, as the tree is indexed. */
+export const fileKey = (name: string) =>
+  (name.slice(name.lastIndexOf("/") + 1).replace(FONT_FILE, "") || name).toLowerCase();
+
+/** Whether the tree has a font file of the name, OpenType or TrueType, whatever its extension. */
+export const fileInTree = (tree: Tree, name: string) => tree.fontFiles.has(fileKey(name));
+
+/**
+ * Font packages whatever the tree holds: those the brief names, roboto, lato, sourcesanspro,
+ * fontawesome5, fontawesome, academicons, opensans, montserrat, raleway and fira's, and the
+ * common text fonts of TeX Live. A package the tree holds is a font package too when its folder
+ * has a namesake holding OpenType or TrueType files (`readTree`).
+ */
+export const FONT_PACKAGES: ReadonlySet<string> = new Set([
+  ...["roboto", "lato", "sourcesanspro", "fontawesome5", "fontawesome", "academicons"],
+  ...["opensans", "montserrat", "raleway", "FiraSans", "FiraMono", "sourceserifpro"],
+  ...["sourcecodepro", "sourcesans", "lmodern", "times", "mathptmx", "helvet", "courier"],
+  ...["palatino", "mathpazo", "avant", "bookman", "charter", "newcent", "utopia", "fourier"],
+  ...["kpfonts", "libertine", "libertinus", "ebgaramond", "garamondx", "cabin", "carlito"],
+  ...["crimson", "cochineal", "merriweather", "inconsolata", "noto", "noto-serif", "noto-sans"],
+  ...["plex-serif", "plex-sans", "plex-mono", "tgpagella", "tgtermes", "tgheros", "tgschola"],
+  ...["tgbonum", "tgadventor", "tgcursor", "tgchorus", "newtxtext", "newpxtext", "tempora"],
+  ...["XCharter", "DejaVuSans", "DejaVuSerif", "DejaVuSansMono", "dejavu", "bera", "beramono"],
+  ...["arev", "cmbright", "marvosym", "gillius", "josefin", "quattrocento", "heuristica"],
+  ...["droidsans", "droidserif", "droidsansmono", "inter", "nunito", "worksans", "mlmodern"],
+  "simpleicons",
+]);
+
+/**
+ * fontspec's commands that load a font, and xeCJK's. Each takes the font's name in braces, and
+ * options in brackets before it or after.
+ */
+const FONT_COMMANDS =
+  /\\(setmainfont|setsansfont|setmonofont|setromanfont|setmathfont|setboldmathfont|newfontfamily|renewfontfamily|setfontfamily|providefontfamily|newfontface|renewfontface|setfontface|providefontface|fontspec|setCJKmainfont|setCJKsansfont|setCJKmonofont|setCJKfamilyfont|newCJKfontfamily)(?![A-Za-z@])/g;
+
+/** Those that name the command they define first: `\newfontfamily\headerfont{Roboto}`. */
+const DEFINE_FONT_COMMANDS = new Set([
+  ...["newfontfamily", "renewfontfamily", "setfontfamily", "providefontfamily", "newfontface"],
+  ...["renewfontface", "setfontface", "providefontface", "newCJKfontfamily"],
+]);
+
+/** A font file's name ends in one of these. */
+export const FONT_FILE = /\.(?:otf|ttf|ttc|otc|pfb|pfa)$/i;
+
+/** A value with the braces around the whole of it, if any, taken off. */
+function unbraced(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{")) return trimmed;
+  const inner = group(trimmed, 0);
+  return inner && inner.end === trimmed.length ? inner.value.trim() : trimmed;
+}
+
+/** fontspec's options as keys and values, split at the commas outside braces. */
+function keyValues(options: string): [key: string, value: string][] {
+  const items: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < options.length; i++) {
+    const char = options[i];
+    if (char === "\\") i++;
+    else if (char === "{") depth++;
+    else if (char === "}") depth--;
+    else if (char === "," && depth === 0) {
+      items.push(options.slice(start, i));
+      start = i + 1;
+    }
+  }
+  items.push(options.slice(start));
+  return items.flatMap((item) => {
+    const equals = item.indexOf("=");
+    return equals < 0 ? [] : [[item.slice(0, equals).trim(), unbraced(item.slice(equals + 1))]];
+  });
+}
+
+/** A name read from the source that TeX would have to expand first, which the survey cannot. */
+const built = (name: string) => name === "" || /[\\#]/.test(name);
+
+/** The most bracketed option groups read for one font command, before its name and after. */
+const MAX_OPTION_GROUPS = 4;
+
+/** The longest face's name kept, once each `*` in it is the font's name: none is near it. */
+const MAX_FACE = 128;
+
+/**
+ * The fonts fontspec loads in a source: the families it asks for by name, and the files. A face's
+ * name with a `*` in it is the font's name put in its place, and a face whose name would pass
+ * MAX_FACE is dropped, so that a hostile document cannot make a name the square of its length.
+ */
+export function fontsOf(text: string): { families: string[]; files: string[] } {
+  const families: string[] = [];
+  const files: string[] = [];
+  // `\defaultfontfeatures{Path=...}` or `{Extension=...}` makes every font after it a file.
+  let defaults: { path?: string; extension?: string } = {};
+  for (const match of text.matchAll(/\\defaultfontfeatures\+?(?![A-Za-z@])/g)) {
+    const options = group(text, match.index + match[0].length)?.value ?? "";
+    for (const [key, value] of keyValues(options)) {
+      if (/^path$/i.test(key)) defaults = { ...defaults, path: value };
+      if (/^extension$/i.test(key)) defaults = { ...defaults, extension: value };
+    }
+  }
+  for (const match of text.matchAll(FONT_COMMANDS)) {
+    const command = match[1] ?? "";
+    let at = match.index + match[0].length;
+    const options: string[] = [];
+    if (command === "newCJKfontfamily") at = bracketed(text, at)?.end ?? at;
+    if (DEFINE_FONT_COMMANDS.has(command)) {
+      const defined = /\s*(?:\\[A-Za-z@]+|\{\s*\\[A-Za-z@]+\s*\})/y;
+      defined.lastIndex = at;
+      if (!defined.exec(text)) continue;
+      at = defined.lastIndex;
+    }
+    if (command === "setCJKfamilyfont") at = group(text, at)?.end ?? at;
+    for (
+      let option = bracketed(text, at);
+      option && options.length < MAX_OPTION_GROUPS;
+      option = bracketed(text, at)
+    ) {
+      options.push(option.value);
+      at = option.end;
+    }
+    const argument = group(text, at);
+    if (!argument) continue;
+    const after = options.length < MAX_OPTION_GROUPS && bracketed(text, argument.end);
+    if (after) options.push(after.value);
+    const name = argument.value.trim();
+    if (built(name)) continue;
+    const pairs = keyValues(options.join(","));
+    const value = (key: string) => pairs.find(([each]) => each.toLowerCase() === key)?.[1];
+    const path = value("path") ?? defaults.path;
+    const extension = value("extension") ?? defaults.extension;
+    // UprightFont=*-Regular, BoldFont=..., and Font=... inside FontFace={b}{n}{Font=...}.
+    const faces = pairs.flatMap(([key, each]) =>
+      /^[A-Za-z]+Font$/.test(key)
+        ? [each]
+        : [...each.matchAll(/(?:^|[,{\s])Font\s*=\s*([^,{}]+)/g)].map((found) => found[1] ?? ""),
+    );
+    const face = (each: string) =>
+      each.length + (each.split("*").length - 1) * (name.length - 1) > MAX_FACE
+        ? ""
+        : each.replaceAll("*", name).trim();
+    const named = faces.map(face).filter((each) => !built(each));
+    const byFile =
+      path !== undefined ||
+      extension !== undefined ||
+      [name, ...named].some((each) => FONT_FILE.test(each));
+    if (!byFile) {
+      families.push(name, ...named);
+      continue;
+    }
+    // A file's name is its face's, or the font's own when no UprightFont names the upright one.
+    const upright = pairs.some(([key]) => key.toLowerCase() === "uprightfont");
+    for (const each of upright ? named : [name, ...named])
+      files.push(
+        FONT_FILE.test(each) || extension === undefined || built(extension)
+          ? each
+          : `${each}${extension}`,
+      );
+  }
+  return { families, files };
+}

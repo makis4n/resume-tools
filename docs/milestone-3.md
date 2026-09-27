@@ -111,7 +111,7 @@ of each launch template must find editable what the hand-written port marks.
    them into the ignored `.corpus/`, checks every hash, and CI fetches the same way. Tests never
    quote a corpus document, and the runner's output holds counts and macro names, never text.
    Done when the fetch reproduces the manifest on a clean machine.
-2. [ ] **Survey the corpus, and grow the tree from it.** `corpus.ts survey` reads every
+2. [x] **Survey the corpus, and grow the tree from it.** `corpus.ts survey` reads every
    document's class, packages, engine, font loading (fontspec by name, by file, or font
    packages), custom macro count, and what it needs that the engine has not: a package or font
    the tree lacks, LuaTeX, biber or bibtex, shell escape, images. It prints one table, which goes
@@ -123,7 +123,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 2. Intake and the parse
 
-3. [ ] **Intake and the reference compile.** A `.tex` file or a zip (fflate, one new dependency).
+3. [x] **Intake and the reference compile.** A `.tex` file or a zip (fflate, one new dependency).
    The main file is the one with `\documentclass`; `\input` and `\include` are inlined from the
    zip; a zip past a size and file-count cap, or with a path that steps out of it, is refused as
    decision 0011 refuses containers. The engine is read from the class and packages: fontspec,
@@ -138,7 +138,7 @@ of each launch template must find editable what the hand-written port marks.
    editor does not have") and never a line of source. Done when every corpus document either
    compiles to a reference or is refused with a message that names why, and the runner counts
    both.
-4. [ ] **Parse the body.** unified-latex (`@unified-latex/unified-latex-util-parse`,
+4. [x] **Parse the body.** unified-latex (`@unified-latex/unified-latex-util-parse`,
    `-util-arguments`, `-util-argspec`, `-util-macros`, `-util-to-string`, `-util-visit` and
    `-ctan`) parses the main file. Signatures come from the engine, not from parsing class files:
    one compile prints `\meaning` (and xparse's argument specification) of every control
@@ -156,7 +156,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 3. Probe, name and validate, with no model
 
-5. [ ] **The probe.** Every argument of every template-macro call is wrapped in `\rtfield`, the
+5. [x] **The probe.** Every argument of every template-macro call is wrapped in `\rtfield`, the
    prelude's marker macro (decision 0007), the original's preamble is dumped as a format, and the
    marked body compiles; the harness's `fields` and `alignment` checks say which arguments come
    out intact around exactly their text. Failures are bisected, halving the set of wrapped
@@ -169,7 +169,7 @@ of each launch template must find editable what the hand-written port marks.
    overlay shows such a field in capitals; decisions 0007 and 0013 left this to a later item.
    Done when the probe, run on the three launch templates' upstream samples, finds editable
    every argument the ports' snippets mark, and locks what the ports leave out of the model.
-6. [ ] **The naming contract, and the seed answers.** `packages/naming` holds the request and the
+6. [x] **The naming contract, and the seed answers.** `packages/naming` holds the request and the
    answer as Zod schemas. The request: each template macro's normalised definition and its
    dependencies, a few call sites with each argument's text replaced by a placeholder of the same
    length, the environments, and the preamble's candidate settings. The answer, for each macro
@@ -212,7 +212,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 4. XeTeX imports
 
-8. [ ] **Fonts by file.** fontspec's `\setmainfont`, `\setsansfont`, `\setmonofont` and
+8. [x] **Fonts by file.** fontspec's `\setmainfont`, `\setsansfont`, `\setmonofont` and
    `\newfontfamily`, and the font packages that load it, roboto, sourcesanspro, lato and
    fontawesome5 among them, are translated at intake into the package's `fonts` (decision 0014)
    through a table from font names to the tree's files and shapes, with `Ligatures=TeX` becoming
@@ -232,7 +232,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 5. The model, the service and privacy
 
-9. [ ] **The naming module on a model.** `name(request)` in `packages/naming`: the AI SDK (`ai`,
+9. [x] **The naming module on a model.** `name(request)` in `packages/naming`: the AI SDK (`ai`,
    `generateText` with `Output.object` against the answer's schema, since `generateObject` is
    deprecated in the current major) on `@ai-sdk/google` first, Gemini's free tier, as plan
    section 6.4 expects, with the model id from configuration so that a candidate swaps with a
@@ -241,7 +241,7 @@ of each launch template must find editable what the hand-written port marks.
    in Node: the committed `corpus/answers/` and the ignored `.corpus/cache/`. Done when the
    corpus runner, with a key in the environment, names every macro of a document outside the
    seed, and its import validates.
-10. [ ] **The naming service.** `POST /v1/name`, inside the editor's own project: it takes a
+10. [x] **The naming service.** `POST /v1/name`, inside the editor's own project: it takes a
     request, checks the cache by key, calls the module on a miss and stores the answer, with a cap
     on the request's size and a rate limit per address. One handler, written against the fetch
     API, serves it in every setting: in development a middleware of the dev server, so that no

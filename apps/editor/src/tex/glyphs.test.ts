@@ -122,6 +122,41 @@ describe("glyphText", () => {
     expect(glyphText(".notdef", agl)).toBeUndefined();
   });
 
+  it("reads a small capital named after its capital as the small letter it stands for", () => {
+    // Small-caps encodings set these at the small letters' codes: Roboto's A.c2sc, Source Sans's
+    // A.s, the suffixes other fonts give them, and fontinst's Asmall, after Adobe's expert fonts.
+    for (const name of ["A.sc", "A.c2sc", "A.s", "A.smcp", "A.small", "Asmall", "A.c2sc.alt"])
+      expect(glyphText(name, AGL), name).toBe("a");
+    // A capital the glyph list names, or its code point does.
+    expect(glyphText("Aacute.c2sc", AGL)).toBe("\u{e1}");
+    expect(glyphText("Aacutesmall", AGL)).toBe("\u{e1}");
+    expect(glyphText("Dcroat.s", AGL)).toBe("\u{111}");
+    expect(glyphText("uni0162.c2sc", AGL)).toBe("\u{163}");
+    // Anything else reads as before: a small letter or a figure without its suffix; a capital
+    // whose small letter is two characters, as İ's is i and a dot; a suffix of another kind; and a
+    // name the glyph list has with small joined that no capital begins, as a small asterisk.
+    expect(glyphText("a.sc", AGL)).toBe("a");
+    expect(glyphText("zero.s", AGL)).toBe("0");
+    expect(glyphText("uni0130.c2sc", AGL)).toBe("\u{130}");
+    expect(glyphText("A.alt", AGL)).toBe("A");
+    expect(glyphText("A.swsh", AGL)).toBe("A");
+    const small = parseAgl(["asterisk;002A", "asterisksmall;FE61"].join("\n"));
+    expect(glyphText("asterisksmall", small)).toBe("\u{fe61}");
+    // A font's small letters are typed as their own codes, the small capitals, and its capitals as
+    // theirs, as the overlay's breaker and web font take them.
+    const encoding = Array.from({ length: 128 }, (_, code) =>
+      code >= 65 && code <= 90
+        ? String.fromCharCode(code)
+        : code >= 97 && code <= 122
+          ? `${String.fromCharCode(code - 32)}.c2sc`
+          : ".notdef",
+    );
+    const codes = textToCode(encoding);
+    expect([codes.get("a"), codes.get("A"), codes.get("z"), codes.get("Z")]).toEqual([
+      97, 65, 122, 90,
+    ]);
+  });
+
   it("composes a virtual font's parts, putting accents after the letter", () => {
     expect(glyphText("A+breve", AGL)).toBe("Ă");
     expect(glyphText("breve+A", AGL)).toBe("Ă");

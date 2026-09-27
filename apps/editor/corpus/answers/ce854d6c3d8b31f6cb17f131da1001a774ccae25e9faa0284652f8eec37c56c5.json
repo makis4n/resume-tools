@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "key": "ce854d6c3d8b31f6cb17f131da1001a774ccae25e9faa0284652f8eec37c56c5",
+  "hash": "e0fc3c4b884f6c838cfa334620eaadf8b3ebb98f14387b12c1d1b3dfaf8772a2",
+  "of": "command",
+  "name": "email",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "contact",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "contact": "email",
+    "repeatable": false,
+    "notes": "Stores the email, which \\makecvheader sets as a mailto: link to itself; its answer's redefinition builds the address with the editor's markers taken out.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": []
+}

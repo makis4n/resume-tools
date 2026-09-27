@@ -1,14 +1,25 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
+import { ONE_BY_ONE, standIn, xbb } from "../import/images";
+import { GRAPHICS_CFG } from "../import/reference";
 import { curated } from "../templates/curated";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls } from "../templates/package";
+import { bound, fastest } from "../test/timing";
 import { parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { hasToUnicode, mediaBoxes, shownStrings } from "../validate/pdf";
-import { engineAvailable, startNodeSession } from "./node";
-import { type Engine, type EngineSession, refusedSpecial } from "./session";
+import { ENGINE_DIR, engineAvailable, startNodeSession } from "./node";
+import {
+  type Engine,
+  type EngineSession,
+  imageFileOf,
+  insideJob,
+  isJobPath,
+  isShowableImage,
+  refusedSpecial,
+} from "./session";
 
 const PREAMBLE = String.raw`\documentclass{article}
 \usepackage[hidelinks]{hyperref}`;
@@ -68,6 +79,69 @@ describe("refusedSpecial", () => {
   });
 });
 
+describe("an image special's file", () => {
+  it("is the first PDF string after the command, as a path inside the job's folder", () => {
+    expect(imageFileOf("pdf:image bbox 0 0 1 1 clip 0 width 72.27pt (photo.png) ")).toBe(
+      "photo.png",
+    );
+    expect(imageFileOf("pdf:epdf pagebox cropbox bbox 0 0 10 10 clip 0 (logo.pdf)")).toBe(
+      "logo.pdf",
+    );
+    expect(
+      imageFileOf("pdf:image matrix 1.0 0.0 0.0 1.0 0.0 0.0 page 0 pagebox cropbox (./a/b.pdf)"),
+    ).toBe("a/b.pdf");
+    expect(imageFileOf("PDF:IMG @im1 width 10pt (img/photo.png) << /Interpolate true >>")).toBe(
+      "img/photo.png",
+    );
+  });
+
+  it("is none that a comment, an escape, a nested string or a path outside could hide", () => {
+    for (const text of [
+      "pdf:image % (photo.png)\n(secret.png)",
+      "pdf:image (photo\\).png)",
+      "pdf:image ((photo.png))",
+      "pdf:image <</F (x)>> (photo.png)",
+      "pdf:image (../victim/photo.png)",
+      "pdf:image (/texlive/texmf-dist/tex/latex/mwe/example-image.png)",
+      "pdf:image (.hidden.png)",
+      "pdf:fstream @x (photo.png)",
+    ])
+      expect(imageFileOf(text), text).toBeUndefined();
+  });
+
+  it("can be listed as a stand-in only when its path is of plain characters", () => {
+    for (const path of ["photo.png", "img/Invented_Photo-2.jpg", "a/b.c/d.pdf"])
+      expect(isShowableImage(path), path).toBe(true);
+    for (const path of [
+      "my photo.png",
+      "img/(photo).png",
+      "café.png",
+      "photo%.png",
+      "../photo.png",
+      "img/../photo.png",
+      ".photo.png",
+      "img/.hidden/photo.png",
+      "/photo.png",
+      "",
+    ])
+      expect(isShowableImage(path), path).toBe(false);
+  });
+
+  it("is a path in the job only when it stays inside the job's folder", () => {
+    expect(isJobPath("sections/part.tex")).toBe(true);
+    for (const path of ["", "../x.tex", "a//b.tex", "a/./b.tex", ".fonts.conf", "a/.b/c.tex", "/x"])
+      expect(isJobPath(path), path).toBe(false);
+    expect(insideJob("import", "/home/web_user/jobs/import/fonts/Invented.otf")).toBe(
+      "fonts/Invented.otf",
+    );
+    expect(insideJob("import", "./fonts/Invented.otf")).toBe("fonts/Invented.otf");
+    expect(insideJob("import", "/home/web_user/jobs/doc/fonts/Invented.otf")).toBeUndefined();
+    expect(
+      insideJob("import", "/texlive/texmf-dist/fonts/opentype/x/Invented.otf"),
+    ).toBeUndefined();
+  });
+});
+
 /** The spike's Jake's Resume, its preamble and its marked-up body, kept as fixtures. */
 const spike = (name: string) =>
   readFileSync(new URL(`../tex/fixtures/${name}`, import.meta.url), "utf8");
@@ -111,6 +185,64 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     const second = session.compile("pdftex", "labels", body("Second."), { job: "labels" });
     expect(second.ok).toBe(true);
     expect(second.passes.length).toBe(1);
+  }, 30_000);
+
+  it("times each pass in the CPU time of the thread that runs it, too, no more than it took", () => {
+    // Node gives the thread's CPU time over TeX's run, which leaves out what the thread waits
+    // for while other work runs, and the heap's reset after it, which the elapsed time counts.
+    session.dump("pdftex", "timed", PREAMBLE);
+    const timed = (body: string) => {
+      const compiled = session.compile("pdftex", "timed", body, { job: "timed" });
+      expect(compiled.cpuPasses).toHaveLength(compiled.passes.length);
+      compiled.cpuPasses?.forEach((cpu, i) => {
+        expect(cpu).toBeGreaterThanOrEqual(0);
+        expect(cpu).toBeLessThanOrEqual(compiled.passes[i] ?? 0);
+      });
+      return compiled.passes.length;
+    };
+    // A new document's two passes; then a failed edit's, and its retry as a new document.
+    expect(timed("\\begin{document}x\\end{document}")).toBe(2);
+    expect(timed("\\begin{document}\\nosuchmacro\\end{document}")).toBe(2);
+  }, 30_000);
+
+  it("passes again, when asked, while a pass changes a file of the job's folder", () => {
+    // A table of contents a pass rewrites is set by the next pass alone, and LaTeX's log never
+    // asks for it.
+    session.dump("pdftex", "contents", "\\documentclass{article}");
+    const body = (title: string) =>
+      String.raw`\begin{document}\tableofcontents\section{${title}}Invented words.\end{document}`;
+    const compile = (title: string, rerunOnChange?: boolean) =>
+      session.compile("pdftex", "contents", body(title), {
+        job: "contents",
+        ...(rerunOnChange === undefined ? {} : { rerunOnChange }),
+      }).passes.length;
+    expect(compile("Invented one")).toBe(2);
+    expect(compile("Invented two")).toBe(1);
+    expect(compile("Invented three", true)).toBe(2);
+    // A pass that changes nothing is the same again.
+    expect(compile("Invented three", true)).toBe(1);
+  }, 30_000);
+
+  it("drops a format, which a job compiled with it meets afresh when it is made again", () => {
+    session.dump("pdftex", "dropped", PREAMBLE);
+    const body = "\\begin{document}x\\end{document}";
+    const compile = () => session.compile("pdftex", "dropped", body, { job: "drops" });
+    expect(compile().passes).toHaveLength(2);
+    expect(compile().passes).toHaveLength(1);
+    session.dropFormat("pdftex", "dropped");
+    expect(compile).toThrow("no pdftex format named dropped");
+    const fs = (session as unknown as { engine: { FS: { readdir(path: string): string[] } } })
+      .engine.FS;
+    expect(fs.readdir("/home/web_user/formats")).not.toContain("pdftex-dropped.fmt");
+    // Made again, it is a new format to the job, which starts again as a new document.
+    session.dump("pdftex", "dropped", PREAMBLE);
+    expect(compile().passes).toHaveLength(2);
+    // Forgetting a job leaves its format in place.
+    session.forget("drops");
+    expect(compile().ok).toBe(true);
+    // A name never made is nothing to drop; the engine's own format is not the session's.
+    expect(() => session.dropFormat("pdftex", "never-made")).not.toThrow();
+    expect(() => session.dropFormat("pdftex", "stock")).toThrow("stock is the engine's own format");
   }, 30_000);
 
   it("fails a compile with TeX's first error and the line", () => {
@@ -260,6 +392,128 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     expect(result.error).toBeUndefined();
   }, 30_000);
 
+  it("dumps a preamble given as bytes, beside files at their paths, and no path outside it", () => {
+    // An imported resume's preamble inputs a file of a folder of its own, and is dumped in the
+    // encoding its file had: here Latin-1, whose é is one byte, which inputenc reads as such.
+    const files = { "setup/settings.tex": "\\newcommand\\invented{Invented}" };
+    const preamble = new Uint8Array([
+      ...new TextEncoder().encode(
+        "\\documentclass{article}\\usepackage[latin1]{inputenc}\\usepackage[T1]{fontenc}\\input{setup/settings}\\newcommand\\accented{caf",
+      ),
+      0xe9,
+      ...new TextEncoder().encode("}"),
+    ]);
+    const dumped = session.dump("pdftex", "bytes", preamble, files);
+    expect(dumped.error).toBeUndefined();
+    const result = session.compile(
+      "pdftex",
+      "bytes",
+      "\\begin{document}\\invented\\ \\accented\\end{document}",
+      { job: "bytes" },
+    );
+    expect(result.error).toBeUndefined();
+    const page = parseDvi(result.output as Uint8Array, () => undefined).pages[0];
+    // T1 sets é as the one glyph 233, which inputenc took from the byte.
+    expect(page?.items.some((item) => item.kind === "glyph" && item.code === 0xe9)).toBe(true);
+    for (const path of ["a//b.tex", ".fonts.conf", "setup/../../x.tex", "a/.git/config"])
+      expect(() => session.dump("pdftex", "bytes", preamble, { [path]: "x" }), path).toThrow(
+        "not a path inside the job's folder",
+      );
+  }, 30_000);
+
+  it("puts an upload's files at their paths in the job's folder, and no path outside it", () => {
+    const files = {
+      "sections/part.tex": "Invented part, \\input{sections/deeper/more}",
+      "sections/deeper/more.tex": "and more of it.",
+    };
+    const body = "\\documentclass{article}\\begin{document}\\input{sections/part}\\end{document}";
+    const result = session.compile("pdftex", "stock", body, { job: "paths", files });
+    expect(result.error).toBeUndefined();
+    for (const path of ["a//b.tex", ".fonts.conf", "sections/../../x.tex", "a/.git/config"])
+      expect(
+        () => session.compile("pdftex", "stock", body, { job: "paths", files: { [path]: "x" } }),
+        path,
+      ).toThrow("not a path inside the job's folder");
+  }, 30_000);
+
+  it("puts a dump's files at their paths in its folder, as a job's, and no path outside it", () => {
+    const files = {
+      "parts/settings.tex": "\\input{parts/deeper/name}",
+      "parts/deeper/name.tex": "\\newcommand\\inventedname{An invented name}",
+    };
+    const preamble = `${PREAMBLE}\n\\input{parts/settings}`;
+    expect(session.dump("pdftex", "folders", preamble, files).error).toBeUndefined();
+    const body = "\\begin{document}\\inventedname\\end{document}";
+    expect(session.compile("pdftex", "folders", body, { job: "folders" }).error).toBeUndefined();
+    // A path that would leave the folder is refused before anything is written, and the format
+    // made before stays.
+    for (const path of ["a//b.tex", ".fonts.conf", "parts/../../x.tex", "a/.git/config"])
+      expect(
+        () => session.dump("pdftex", "folders", preamble, { ...files, [path]: "x" }),
+        path,
+      ).toThrow("not a path inside the job's folder");
+    expect(session.compile("pdftex", "folders", body, { job: "folders" }).error).toBeUndefined();
+  }, 30_000);
+
+  describe("lets XeTeX find a font by name for one compile", () => {
+    const byName = (font: string) =>
+      `\\documentclass{article}\\usepackage{fontspec}\\setmainfont{${font}}\\begin{document}Invented.\\end{document}`;
+    const conf = () =>
+      (
+        session as unknown as { engine: { FS: { analyzePath(path: string): { exists: boolean } } } }
+      ).engine.FS.analyzePath("/home/web_user/jobs/byname/.fonts.conf").exists;
+
+    it("through fontconfig, which scans the tree's font folders for that compile alone", () => {
+      const without = session.compile("xetex", "stock", byName("Roboto"), { job: "byname" });
+      expect(without.error).toBe('Package fontspec Error: The font "Roboto" cannot be found.');
+      const withFonts = session.compile("xetex", "stock", byName("Roboto"), {
+        job: "byname",
+        fontsByName: true,
+      });
+      expect(withFonts.error).toBeUndefined();
+      expect(conf()).toBe(false);
+      // A font the job's own folder holds is found by name too, as one a zip ships.
+      session.forget("byname");
+      const roboto = readFileSync(
+        `${ENGINE_DIR}/files/texlive/texmf-dist/fonts/opentype/google/roboto/Roboto-Regular.otf`,
+      );
+      const shipped = session.compile("xetex", "stock", byName("Roboto"), {
+        job: "byname",
+        fontsByName: true,
+        files: { "fonts/Invented-Copy.otf": roboto },
+      });
+      expect(shipped.error).toBeUndefined();
+      // And the next compile of the job scans no folder again.
+      expect(session.compile("xetex", "stock", byName("Roboto"), { job: "byname" }).error).toBe(
+        'Package fontspec Error: The font "Roboto" cannot be found.',
+      );
+    }, 60_000);
+
+    it("at a cost to each pass that decision 0019 records", () => {
+      // The same document, its font by file, which needs no fontconfig: what the option adds is
+      // fontconfig's scan of the tree's OpenType and TrueType folders, which XeTeX starts on every
+      // pass. Decision 0019 measured about 30 ms a pass on an M4 Pro. Each is timed in the CPU
+      // time of this thread, where the engine runs, the fastest of five, so that other test files
+      // running beside it do not count (`src/test/timing.ts`).
+      const document = byName("Roboto-Regular.otf");
+      const pass = (fontsByName: boolean) => () => {
+        session.forget("cost");
+        session.compile("xetex", "stock", document, { job: "cost", maxPasses: 1, fontsByName });
+      };
+      // The first scan reads the tree's font files, which later ones find read.
+      pass(true)();
+      const [plain = 0, scanned = 0] = fastest([pass(false), pass(true)], 5);
+      console.log(
+        `fontconfig's scan: ${Math.round(scanned - plain)} ms of CPU time a pass (${Math.round(plain)} ms without it, ${Math.round(scanned)} ms with it)`,
+      );
+      // Against the pass without it, which load slows alike: the scan costs a fifth of one here
+      // (34 ms of 170) and must cost less than one and a half, as the 250 ms this bound was came
+      // to at rest; a loaded runner could go past 250 ms, and a scan of every font the tree has
+      // costs more.
+      expect(scanned - plain).toBeLessThan(bound(1.5, plain));
+    }, 120_000);
+  });
+
   it("keeps working after hundreds of runs", () => {
     // A run moves the engine's stack pointer, which lives outside the heap. Unless the session
     // puts it back, the 64 KB stack runs out after a few hundred runs.
@@ -309,6 +563,19 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(input.error).toBe("LaTeX Error: File `planted.tex' not found.");
     }, 60_000);
 
+    it("gives back a file a job's compile wrote, and nothing outside the job's folder", () => {
+      const write = String.raw`\newwrite\w\immediate\openout\w=\jobname.rtm\immediate\write\w{written line}\immediate\closeout\w x`;
+      expect(session.compile("pdftex", "stock", doc(write), { job: "writer" }).ok).toBe(true);
+      expect(new TextDecoder().decode(session.written("writer", "writer.rtm"))).toBe(
+        "written line\n",
+      );
+      expect(session.written("writer", "missing.txt")).toBeUndefined();
+      expect(session.written("reader", "writer.rtm")).toBeUndefined();
+      expect(() => session.written("writer", "../planter/planted.tex")).toThrow();
+      expect(() => session.written("writer", ".fonts.conf")).toThrow();
+      expect(() => session.written("../writer", "writer.rtm")).toThrow();
+    }, 60_000);
+
     it("stops a job writing outside its folder", () => {
       const escape = (path: string) =>
         String.raw`\newwrite\w\immediate\openout\w=${path}\immediate\write\w{x}\immediate\closeout\w x`;
@@ -341,6 +608,107 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     expect(after.error).toBeUndefined();
     expect(after.passes.length).toBe(2);
   }, 60_000);
+
+  describe("starts a body from a format as the whole document starts it", () => {
+    // OT1 before the class, so that XeTeX's preamble selects no native font, which it cannot dump.
+    const COLUMNS = String.raw`\RequirePackage[OT1]{fontenc}
+\documentclass{article}
+\usepackage{paracol}`;
+    /** Every glyph and rule of an output, page by page, with its font, code and place. */
+    const placed = (output: Uint8Array | undefined) => {
+      const doc = parseDvi(output ?? new Uint8Array(), () => undefined);
+      return doc.pages.map((page) =>
+        page.items.flatMap((item) =>
+          item.kind === "glyph"
+            ? [`${doc.fonts.get(item.font)?.name} ${item.code} ${item.h} ${item.v}`]
+            : item.kind === "rule"
+              ? [`rule ${item.h} ${item.v} ${item.width} ${item.height}`]
+              : [],
+        ),
+      );
+    };
+
+    for (const engine of ["pdftex", "xetex"] as const) {
+      it(`on ${engine}, whose body opens paracol at the top of its page`, () => {
+        // \dump flushed the page with the penalty \end uses, and LaTeX put a box as high as
+        // \topskip into \@holdpg, which the format kept: paracol, starting on an empty page, set
+        // its columns below it, 7 points lower than the whole document does.
+        const body = String.raw`\begin{document}
+\begin{paracol}{2}
+An invented left column, long enough to be set over two lines of its own column.
+\switchcolumn
+An invented right column.
+\end{paracol}
+And a line after the columns.
+\end{document}
+`;
+        const dumped = session.dump(engine, `columns-${engine}`, COLUMNS);
+        expect(dumped.error).toBeUndefined();
+        const fromFormat = session.compile(engine, `columns-${engine}`, body, {
+          job: `columns-${engine}`,
+        });
+        const whole = session.compile(engine, "stock", `${COLUMNS}\n${body}`, {
+          job: `columns-whole-${engine}`,
+        });
+        expect(fromFormat.error).toBeUndefined();
+        expect(whole.error).toBeUndefined();
+        expect(fromFormat.pages).toBe(1);
+        const [ours, theirs] = [fromFormat, whole].map((result) => placed(result.output));
+        expect(ours?.[0]?.length).toBeGreaterThan(50);
+        expect(ours).toEqual(theirs);
+      }, 60_000);
+
+      it(`on ${engine}, with what the preamble wrote onto its page`, () => {
+        // xcolor's page colour and a special the preamble writes as it runs stand on the page
+        // until the first shipout, which \dump flushed into \@holdpg and each job puts back.
+        const preamble = String.raw`${COLUMNS}
+\usepackage{xcolor}
+\pagecolor[rgb]{0.95,0.95,0.9}
+\special{invented:preamble}`;
+        const body = String.raw`\begin{document}\begin{paracol}{2}Left.\switchcolumn Right.\end{paracol}
+\end{document}`;
+        expect(session.dump(engine, `page-${engine}`, preamble).error).toBeUndefined();
+        const fromFormat = session.compile(engine, `page-${engine}`, body, {
+          job: `page-${engine}`,
+        });
+        const whole = session.compile(engine, "stock", `${preamble}\n${body}`, {
+          job: `page-whole-${engine}`,
+        });
+        const specials = (output: Uint8Array | undefined) =>
+          parseDvi(output ?? new Uint8Array(), () => undefined).pages.map((page) =>
+            page.items.flatMap((item) => (item.kind === "special" ? [item.text] : [])),
+          );
+        const [ours, theirs] = [fromFormat, whole].map((result) => specials(result.output));
+        expect(ours?.[0]).toEqual(expect.arrayContaining(["invented:preamble"]));
+        expect(ours?.[0]?.some((text) => /^background rgb 0\.95 0\.95 0\.9/.test(text))).toBe(true);
+        expect(ours).toEqual(theirs);
+        expect(placed(fromFormat.output)).toEqual(placed(whole.output));
+      }, 60_000);
+
+      it(`on ${engine}, with \\@holdpg void and the output routine's state the preamble left`, () => {
+        // Read in vertical mode, where \prevdepth can be, before \begin{document}.
+        const probe = String.raw`\makeatletter\edef\x{STATE \ifvoid\@holdpg void\else\the\ht\@holdpg\fi,
+\the\outputpenalty, \the\deadcycles, \the\prevdepth}\typeout{\x}\makeatother
+\begin{document}x\end{document}
+`;
+        const preamble = `${COLUMNS}\n\\usepackage[hidelinks]{hyperref}`;
+        expect(session.dump(engine, `state-${engine}`, preamble).error).toBeUndefined();
+        const fromFormat = session.compile(engine, `state-${engine}`, probe, {
+          job: `state-${engine}`,
+          maxPasses: 1,
+        });
+        const whole = session.compile(engine, "stock", `${preamble}\n${probe}`, {
+          job: `state-whole-${engine}`,
+          maxPasses: 1,
+        });
+        const state = (log: string) => log.split("\n").find((line) => line.startsWith("STATE "));
+        // The class's \onecolumn cleared a page as it loaded, which fired the output routine once
+        // with \clearpage's penalty and shipped nothing.
+        expect(state(whole.log)).toBe("STATE void, -10001, 1, 0.0pt");
+        expect(state(fromFormat.log)).toBe(state(whole.log));
+      }, 60_000);
+    }
+  });
 
   it("keeps a format when dumping it again fails", () => {
     expect(session.dump("pdftex", "keep", PREAMBLE).ok).toBe(true);
@@ -651,10 +1019,11 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(box?.height).toBeCloseTo(841.89, 1);
     }, 60_000);
 
-    it("from a XeTeX template's format as from a whole compile, but for what nothing links to", () => {
+    it("from a XeTeX template's format as from a whole compile", () => {
       // Decision 0003's loop: the format holds the preamble and the fonts' declarations, and the
-      // body alone is compiled. \dump drops what hyperref and xcolor write at the first shipout,
-      // which a whole compile from the stock format keeps (decision 0014).
+      // body alone is compiled. What hyperref and xcolor write onto the page as the preamble runs,
+      // which \dump flushes into \@holdpg, each job of the format puts back (decision 0023), where
+      // decision 0014 found it lost.
       const { package: pkg, sample } = INVENTED_XETEX;
       const values = defaultControls(pkg);
       const format = generateFormat(pkg, values);
@@ -672,26 +1041,21 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
         const specials = items.flatMap((item) => (item.kind === "special" ? [item.text] : []));
         return { specials, drawn: items.filter((item) => item.kind !== "special") };
       });
-      // The same glyphs, rules and runs, and the same specials but for these, which the whole
-      // compile writes first: the PDF's version, a compatibility flag that keeps named
+      // The same glyphs, rules and runs, and the same specials in the same order, those the
+      // preamble writes first among them: the PDF's version, a compatibility flag that keeps named
       // destinations nothing links to, and a black to start the colour stack with.
       expect(looped?.drawn).toEqual(wholly?.drawn);
-      const lost = [...(wholly?.specials ?? [])];
-      const gained: string[] = [];
-      for (const special of looped?.specials ?? []) {
-        const at = lost.indexOf(special);
-        if (at < 0) gained.push(special);
-        else lost.splice(at, 1);
-      }
-      expect(gained).toEqual([]);
-      expect(lost.sort()).toEqual([
-        "color push gray 0",
-        "dvipdfmx:config C 0x0010",
-        "pdf:majorversion 1",
-        "pdf:minorversion 5",
-      ]);
-      // So the PDFs are the same version, size, text, links and colours; the whole compile's
-      // only has the two named destinations hyperref makes, which nothing links to.
+      expect(looped?.specials).toEqual(wholly?.specials);
+      expect(looped?.specials).toEqual(
+        expect.arrayContaining([
+          "color push gray 0",
+          "dvipdfmx:config C 0x0010",
+          "pdf:majorversion 1",
+          "pdf:minorversion 5",
+        ]),
+      );
+      // So the PDFs are the same version, size, text, links and colours, and both have the two
+      // named destinations hyperref makes, which nothing links to.
       const fromLoop = session.pdf("xeloop", { compress: 0 }).pdf ?? new Uint8Array();
       const fromWhole = session.pdf("xewhole", { compress: 0 }).pdf ?? new Uint8Array();
       const read = (pdf: Uint8Array) => {
@@ -710,8 +1074,8 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(read(fromLoop).boxes).toEqual([{ width: 612, height: 792 }]);
       expect(read(fromLoop).shown.join(" ")).toContain(sample.header.name.last);
       expect(read(fromLoop).colours.length).toBeGreaterThan(0);
-      expect(text(fromWhole)).toMatch(/\/Names\s*\[\(Doc-Start\)\d+ 0 R\(page\.1\)\d+ 0 R\]/);
-      expect(text(fromLoop)).not.toMatch(/\(Doc-Start\)|\(page\.1\)/);
+      for (const pdf of [fromLoop, fromWhole])
+        expect(text(pdf)).toMatch(/\/Names\s*\[\(Doc-Start\)\d+ 0 R\(page\.1\)\d+ 0 R\]/);
     }, 60_000);
 
     it("honours a pdf:pagesize special in a pdfTeX DVI too", () => {
@@ -765,6 +1129,53 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
         expect(made.error).toContain(special.split(" ")[0]);
         expect(made.output).toBe("");
       }, 60_000);
+
+    it("shows a stand-in the caller lists, and only while it holds the bytes the caller gave", () => {
+      const files = {
+        "photos/portrait.png": standIn(ONE_BY_ONE),
+        "photos/portrait.xbb": xbb(ONE_BY_ONE),
+        "other.png": standIn(ONE_BY_ONE),
+        "other.xbb": xbb(ONE_BY_ONE),
+        "graphics.cfg": GRAPHICS_CFG,
+      };
+      const shows = (name: string, before = "") =>
+        `\\documentclass{article}\\usepackage{graphicx}\\begin{document}${before}Invented \\includegraphics[width=1cm]{${name}}\\end{document}`;
+      expect(
+        session.compile("pdftex", "stock", shows("photos/portrait.png"), { job: "standin", files })
+          .ok,
+      ).toBe(true);
+      expect(session.pdf("standin", { images: ["photos/portrait.png"] }).ok).toBe(true);
+      // Not listed, or another file listed: refused, as every image is without the list.
+      expect(session.pdf("standin").error).toContain("pdf:image");
+      expect(session.pdf("standin", { images: ["other.png"] }).ok).toBe(false);
+      // A document that writes over its stand-in, as TeX may write in its folder, is refused too.
+      const overwrite =
+        "\\newwrite\\w\\immediate\\openout\\w=photos/portrait.png\\immediate\\write\\w{Invented}\\immediate\\closeout\\w ";
+      const written = shows("photos/portrait.png", overwrite);
+      expect(session.compile("pdftex", "stock", written, { job: "standin", files }).ok).toBe(true);
+      expect(session.pdf("standin", { images: ["photos/portrait.png"] }).ok).toBe(false);
+    }, 60_000);
+
+    it("shows a XeTeX document's PDF image only as a stand-in the caller lists, by a plain path", () => {
+      // XeTeX writes every picture, a PDF's page among them, as a `pdf:image` special.
+      const logo = standIn({ kind: "pdf", box: [0, 0, 200, 100], rotate: 0 });
+      const shows = (name: string) =>
+        `\\documentclass{article}\\usepackage{fontspec}\\usepackage{graphicx}\\begin{document}Invented \\includegraphics[width=1cm]{${name}}\\end{document}`;
+      const files = { "logo.pdf": logo, "my logo.pdf": logo };
+      expect(
+        session.compile("xetex", "stock", shows("logo.pdf"), { job: "xepdf", files }).error,
+      ).toBeUndefined();
+      // A PDF the job holds that the caller does not list as a stand-in is refused.
+      expect(session.pdf("xepdf").error).toContain("pdf:image");
+      expect(session.pdf("xepdf", { images: ["my logo.pdf"] }).ok).toBe(false);
+      // Listed, it is made.
+      expect(session.pdf("xepdf", { images: ["logo.pdf"] }).ok).toBe(true);
+      // A stand-in whose path holds a space cannot be listed, so its PDF is refused.
+      expect(
+        session.compile("xetex", "stock", shows("my logo.pdf"), { job: "xepdf", files }).error,
+      ).toBeUndefined();
+      expect(session.pdf("xepdf", { images: ["my logo.pdf"] }).error).toContain("pdf:image");
+    }, 60_000);
 
     it("refuses a compression level that is not a whole number from 0 to 9", () => {
       for (const compress of [-1, 10, 1.5, Number.NaN])

@@ -1,0 +1,56 @@
+name: corpus
+
+# The corpus of public resumes, fetched from the sources its manifest names, and surveyed
+# (decisions 0017 and 0018). It runs nightly and on demand, never on a pull request, so that no
+# pull request downloads real resumes; milestone 3's item 17 adds the import runner to it.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  survey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The version of opentype.js installed, which reads the fonts' tables into the manifest.
+      - id: fontreader
+        run: echo "opentype=$(node -p "require('./apps/editor/node_modules/opentype.js/package.json').version")" >> "$GITHUB_OUTPUT"
+      # The engine and TeX Live tree under editor.yml's key, so that either workflow's build serves
+      # the other: the survey checks every document against the tree's file list.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            apps/editor/.engine
+            !apps/editor/.engine/downloads
+          key: engine-${{ hashFiles('apps/editor/scripts/fetch-engine.ts', 'apps/editor/scripts/containers.ts', 'apps/editor/scripts/fontconfig.ts', 'apps/editor/scripts/tlpdb.ts', 'apps/editor/scripts/fontmaps.ts', 'apps/editor/src/page/fontmap.ts', 'apps/editor/scripts/fonttable.ts') }}-opentype-${{ steps.fontreader.outputs.opentype }}
+      - run: pnpm --filter @resume-tools/editor fetch-engine
+      # GitHub allows 60 requests an hour without a token, and the fetch asks once per document.
+      - run: pnpm --filter @resume-tools/editor corpus fetch
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # The table names classes, packages, fonts and counts, and survey.json each document's row by
+      # its id: never a document's text.
+      - run: pnpm --filter @resume-tools/editor corpus survey --json survey.json > survey.md
+      - run: |
+          {
+            echo "## What the corpus needs"
+            echo
+            cat survey.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: survey
+          path: survey.json

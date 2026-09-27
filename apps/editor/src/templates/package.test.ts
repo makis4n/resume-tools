@@ -15,6 +15,7 @@ import {
   controlValuesFor,
   defaultControls,
   ENTRY_SLOTS,
+  type FontAdjust,
   fontFeatures,
   fontFiles,
   HEADER_SLOTS,
@@ -24,6 +25,9 @@ import {
   pageSizeFor,
   parsePackage,
   SECTION_SLOTS,
+  shapeAdjust,
+  shapeFeatures,
+  shapeFile,
   TemplatePackage,
 } from "./package";
 
@@ -321,19 +325,89 @@ describe("a XeTeX package's fonts", () => {
     expect(paths(xetexWith([roboto], "pdftex"))).toEqual(["fonts"]);
   });
 
-  it("holds a family to letters and digits, declared once, with a shape at least", () => {
-    for (const family of ["Roboto Mono", "2Roboto", "Rob}oto", ""])
+  it("holds a family to letters, digits and hyphens, declared once, with a shape at least", () => {
+    for (const family of ["Roboto Mono", "2Roboto", "-Roboto", "Rob}oto", "Rob_oto", ""])
       expect(paths(xetexWith([{ ...roboto, family }])), family).toEqual(["fonts.0.family"]);
+    // fontspec's NFSSFamily names a family so, as an import's may be (decision 0023).
+    expect(paths(xetexWith([{ ...roboto, family: "Roboto-Slab-2" }]))).toEqual([]);
     expect(paths(xetexWith([roboto, roboto]))).toEqual(["fonts.1.family"]);
     expect(paths(xetexWith([{ ...roboto, shapes: {} }]))).toEqual(["fonts.0.shapes"]);
   });
 
-  it("takes a resume's NFSS series and shapes, and nothing else", () => {
-    for (const key of ["l/n", "m/ui", "m", "sb/n", "b/n/x"]) {
+  it("takes NFSS series and shapes of lower-case letters, as fontspec declares them, and nothing else", () => {
+    for (const key of ["m/n", "l/n", "m/ui", "sb/n", "b/scit", "eb/sw"])
+      expect(
+        paths(xetexWith([{ ...roboto, shapes: { [key]: "Roboto-Regular.otf" } }])),
+        key,
+      ).toEqual([]);
+    for (const key of ["m", "b/n/x", "M/n", "m/n}", "/n", "m/", "m/n1", "abcdefghi/n"]) {
       const found = paths(xetexWith([{ ...roboto, shapes: { [key]: "Roboto-Regular.otf" } }]));
       expect(found.length, key).toBeGreaterThan(0);
       for (const path of found) expect(path, key).toMatch(/^fonts\.0\.shapes/);
     }
+  });
+
+  it("takes a shape as its file and the features it alone loads with, after its family's", () => {
+    const smallCaps = { file: "Roboto-Regular.otf", features: "+smcp" };
+    const pkg = parsePackage(
+      xetexWith([{ ...roboto, shapes: { "m/n": "Roboto-Regular.otf", "m/sc": smallCaps } }]),
+    );
+    const [family] = pkg.fonts ?? [];
+    if (!family) throw new Error("the package has no family");
+    expect(family.shapes["m/sc"]).toEqual(smallCaps);
+    expect(shapeFile(smallCaps)).toBe("Roboto-Regular.otf");
+    expect(shapeFeatures(family, smallCaps)).toBe("mapping=tex-text;+onum;+smcp");
+    expect(shapeFeatures(family, "Roboto-Regular.otf")).toBe("mapping=tex-text;+onum");
+    // A file alone, or one without features of its own, loads with the family's; none with none.
+    expect(shapeFeatures({ ...family, features: undefined }, { file: "Roboto-Regular.otf" })).toBe(
+      undefined,
+    );
+    expect(shapeFeatures({ ...family, features: "+pnum;" }, smallCaps)).toBe("+pnum;+smcp");
+    for (const [shape, path] of [
+      [{ file: "Roboto Regular.otf" }, "fonts.0.shapes.m/sc.file"],
+      [{ file: "Roboto-Regular.otf", features: 'x"y' }, "fonts.0.shapes.m/sc.features"],
+      [{ file: "Roboto-Regular.otf", colour: "red" }, "fonts.0.shapes.m/sc"],
+    ] as const)
+      expect(paths(xetexWith([{ ...roboto, shapes: { "m/sc": shape } }])), path).toEqual([path]);
+  });
+
+  it("takes a family's scale and what fontspec does to its fonts as it loads them, numbers only", () => {
+    const adjust = {
+      wordSpace: [1, 0, 0],
+      punctuationSpace: { factor: 0, of: "space" },
+      hyphenChar: -1,
+    };
+    const pkg = parsePackage(xetexWith([{ ...roboto, scale: 0.92, adjust }]));
+    expect(pkg.fonts?.[0]).toEqual({ ...roboto, scale: 0.92, adjust });
+    for (const scale of [0, -1, 11, "0.9"])
+      expect(paths(xetexWith([{ ...roboto, scale }])), `${scale}`).toEqual(["fonts.0.scale"]);
+    for (const [bad, path] of [
+      [{ wordSpace: [1, 0] }, "fonts.0.adjust.wordSpace"],
+      [{ wordSpace: [1, 0, 101] }, "fonts.0.adjust.wordSpace.2"],
+      [{ punctuationSpace: { factor: 1, of: "quad" } }, "fonts.0.adjust.punctuationSpace.of"],
+      [{ hyphenChar: -2 }, "fonts.0.adjust.hyphenChar"],
+      [{ hyphenChar: 1.5 }, "fonts.0.adjust.hyphenChar"],
+      [{ code: "\\relax" }, "fonts.0.adjust"],
+    ] as const)
+      expect(paths(xetexWith([{ ...roboto, adjust: bad }])), path).toEqual([path]);
+  });
+
+  it("takes what fontspec did to one shape alone, in place of its family's (decision 0023)", () => {
+    const adjust: FontAdjust = { wordSpace: [2, 2, 2] };
+    const bold = { file: "Roboto-Bold.otf", adjust };
+    const family = { ...roboto, shapes: { ...roboto.shapes, "b/n": bold } };
+    const pkg = parsePackage(xetexWith([family]));
+    expect(pkg.fonts?.[0]?.shapes["b/n"]).toEqual(bold);
+    const [parsed] = pkg.fonts ?? [];
+    if (parsed === undefined) throw new Error("no family");
+    expect(shapeAdjust(parsed, bold)).toEqual(adjust);
+    expect(shapeAdjust(parsed, "Roboto-Regular.otf")).toBeUndefined();
+    const withFamily = { ...parsed, adjust: { hyphenChar: -1 } };
+    expect(shapeAdjust(withFamily, "Roboto-Regular.otf")).toEqual({ hyphenChar: -1 });
+    expect(shapeAdjust(withFamily, bold)).toEqual(adjust);
+    expect(
+      paths(xetexWith([{ ...roboto, shapes: { "b/n": { ...bold, adjust: { wordSpace: [2] } } } }])),
+    ).toEqual(["fonts.0.shapes.b/n"]);
   });
 
   it("takes a plain OpenType or TrueType file name, which cannot break the declaration", () => {
@@ -356,7 +430,7 @@ describe("a XeTeX package's fonts", () => {
       expect(paths(xetexWith([{ ...roboto, features }])), features).toEqual(["fonts.0.features"]);
   });
 
-  it("lists each file once, with the features its first family loads it with", () => {
+  it("lists each file once, with every way its families and shapes load it", () => {
     const pkg = parsePackage(
       xetexWith([
         roboto,
@@ -370,12 +444,33 @@ describe("a XeTeX package's fonts", () => {
     ]);
     expect(fontFeatures(pkg)).toEqual(
       new Map([
-        ["Roboto-Regular.otf", "mapping=tex-text;+onum"],
-        ["Roboto-BoldItalic.otf", "mapping=tex-text;+onum"],
-        ["Lato-Black.ttf", ""],
+        ["Roboto-Regular.otf", ["mapping=tex-text;+onum", ""]],
+        ["Roboto-BoldItalic.otf", ["mapping=tex-text;+onum"]],
+        ["Lato-Black.ttf", [""]],
       ]),
     );
     expect(fontFiles(parsePackage(plain))).toEqual([]);
+    // A family's small capitals load its upright file another way, and its bold extended the same.
+    const caps = parsePackage(
+      xetexWith([
+        {
+          ...roboto,
+          shapes: {
+            "m/n": "Roboto-Regular.otf",
+            "m/sc": { file: "Roboto-Regular.otf", features: "+smcp" },
+            "b/n": "Roboto-Bold.otf",
+            "bx/n": { file: "Roboto-Bold.otf" },
+          },
+        },
+      ]),
+    );
+    expect(fontFiles(caps)).toEqual(["Roboto-Regular.otf", "Roboto-Bold.otf"]);
+    expect(fontFeatures(caps)).toEqual(
+      new Map([
+        ["Roboto-Regular.otf", ["mapping=tex-text;+onum", "mapping=tex-text;+onum;+smcp"]],
+        ["Roboto-Bold.otf", ["mapping=tex-text;+onum"]],
+      ]),
+    );
   });
 });
 

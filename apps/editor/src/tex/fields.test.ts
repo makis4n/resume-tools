@@ -607,11 +607,20 @@ describe("alignGlyphs", () => {
       ] as const;
     const dotted = (count: number) =>
       [fieldOf(Array.from({ length: 3 * count }, () => ".")), "\u{2026}".repeat(count)] as const;
+    // And ß, whose capitals are two glyphs S, which no glyph S followed by an X spells, however
+    // many times it is tried, folded, where the walk stands, first in the run and further on.
+    const sharp = (count: number) =>
+      [
+        fieldOf(Array.from({ length: 3 * count }, (_, i) => (i % 2 ? "X" : "S"))),
+        "\u{df}".repeat(count),
+      ] as const;
     expect(alignGlyphs(...accented(8_000))).toBe(8_000);
     expect(alignGlyphs(...dotted(6_000))).toBe(18_000);
+    expect(alignGlyphs(...sharp(6_000))).toBe(18_000);
     for (const [shape, count] of [
       [accented, 8_000],
       [dotted, 6_000],
+      [sharp, 6_000],
     ] as const) {
       const [short = 0, long = 0] = fastest(
         [count / 10, count].map((each) => {
@@ -624,4 +633,229 @@ describe("alignGlyphs", () => {
       expect(long).toBeLessThan(100);
     }
   }, 60_000);
+});
+
+describe("alignField, folding case", () => {
+  it("matches a glyph to its character's capital, or small letter, and says the page folds the field", () => {
+    // A title a class sets through \MakeUppercase, and one through \MakeLowercase.
+    const upper = fieldOf([..."TYPESETTER"]);
+    expect(alignField(upper, "Typesetter")).toEqual({ unmatched: 0, covered: 10, folded: "upper" });
+    expect(upper.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const lower = fieldOf([..."proofs"]);
+    expect(alignField(lower, "PROOFS")).toEqual({ unmatched: 0, covered: 6, folded: "lower" });
+    // Accented letters fold as their letters do, composed or not, and set without their accents.
+    const accented = fieldOf(["C", "A", "F", "\u{c9}", "\u{c6}", "R", "\u{d8}", "\u{c9}"]);
+    expect(alignField(accented, "caf\u{e9} \u{e6}r\u{f8}e\u{301}")).toEqual({
+      unmatched: 0,
+      covered: 10,
+      folded: "upper",
+    });
+    expect(accented.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 5, 6, 7, 8]);
+    expect(alignField(fieldOf([..."NAIVE"]), "na\u{ef}ve").folded).toBe("upper");
+  });
+
+  it("tries a glyph's text as it stands first, so a field the page sets as typed is not folded", () => {
+    expect(alignField(fieldOf([..."ACME"]), "ACME")).toEqual({ unmatched: 0, covered: 4 });
+    expect(alignField(fieldOf([..."ACME"]), "ACME").folded).toBeUndefined();
+    const typed = fieldOf(["S", "S"]);
+    expect(alignField(typed, "SS").folded).toBeUndefined();
+    expect(typed.glyphs.map((g) => g.offset)).toEqual([0, 1]);
+    // In a field the page folds, what matches as it stands is matched so.
+    const mixed = fieldOf([..."MCDONALD"]);
+    expect(alignField(mixed, "McDonald")).toEqual({ unmatched: 0, covered: 8, folded: "upper" });
+    expect(mixed.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("gives the glyphs of a letter whose capitals are two, as ß's are SS, the letter's offset", () => {
+    const street = fieldOf([..."STRASSE"]);
+    expect(alignField(street, "Stra\u{df}e")).toEqual({
+      unmatched: 0,
+      covered: 6,
+      folded: "upper",
+    });
+    expect(street.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 4, 4, 5]);
+    // The ligature ﬁ, as a text pasted from a PDF holds it, is FI in capitals.
+    const fine = fieldOf([..."FINE"]);
+    expect(alignField(fine, "\u{fb01}ne")).toEqual({ unmatched: 0, covered: 3, folded: "upper" });
+    expect(fine.glyphs.map((g) => g.offset)).toEqual([0, 0, 1, 2]);
+    // Both glyphs or neither: an S alone is not ß.
+    const alone = fieldOf(["S", "X"]);
+    expect(alignField(alone, "\u{df}x")).toEqual({ unmatched: 1, covered: 2, folded: "upper" });
+    expect(alone.glyphs.map((g) => g.offset)).toEqual([0, 1]);
+  });
+
+  it("folds ı and İ as Unicode does, and a letter whose folded form has an accent the page leaves out", () => {
+    // The dotless ı is I in capitals; İ is i and a combining dot in small letters, which pdfTeX
+    // sets as the dot accent over i, and XeTeX's fonts may leave as i.
+    expect(alignField(fieldOf([..."ILIK"]), "\u{131}l\u{131}k")).toEqual({
+      unmatched: 0,
+      covered: 4,
+      folded: "upper",
+    });
+    expect(alignField(fieldOf([..."ipek"]), "\u{130}PEK").folded).toBe("lower");
+    const dotted = fieldOf(["i\u{307}", ..."pek"]);
+    expect(alignField(dotted, "\u{130}PEK")).toEqual({ unmatched: 0, covered: 4, folded: "lower" });
+    // ǰ is J and a caron in capitals, which pdfTeX's LaTeX sets as J alone.
+    expect(alignField(fieldOf(["J", "A"]), "\u{1f0}a")).toEqual({
+      unmatched: 0,
+      covered: 2,
+      folded: "upper",
+    });
+    // Σ is ς at a word's end in small letters, as \MakeLowercase sets it.
+    expect(
+      alignField(
+        fieldOf([..."\u{3c3}\u{3bf}\u{3c6}\u{3bf}\u{3c2}"]),
+        "\u{3a3}\u{39f}\u{3a6}\u{39f}\u{3a3}",
+      ),
+    ).toEqual({
+      unmatched: 0,
+      covered: 5,
+      folded: "lower",
+    });
+    // A Turkish locale's capitals are not folded: without one, LaTeX and toUpperCase make i I.
+    expect(alignField(fieldOf(["\u{130}", ..."PEK"]), "ipek").unmatched).toBe(1);
+  });
+
+  it("records a mixed case when the glyphs are of both, as a class that capitalises first letters sets them", () => {
+    const first = fieldOf([..."MachineLearning"]);
+    expect(alignField(first, "machine learning")).toEqual({
+      unmatched: 0,
+      covered: 16,
+      folded: "mixed",
+    });
+    expect(first.glyphs.map((g) => g.offset).slice(6, 9)).toEqual([6, 8, 9]);
+    // ß has no capital of its own that is one letter, so a primitive \uppercase, which XeTeX may set
+    // a title through, leaves it among capitals, and the field is in capitals all the same.
+    const street = fieldOf([..."STRA\u{df}EUNDBR\u{dc}CKE"]);
+    expect(alignField(street, "Stra\u{df}e und Br\u{fc}cke")).toEqual({
+      unmatched: 0,
+      covered: 17,
+      folded: "upper",
+    });
+  });
+
+  it("resynchronises on a glyph folded, and finds one past characters that set no glyph", () => {
+    // OT1 sets an underscore as a rule, not a glyph.
+    const snake = fieldOf(["A", "B"]);
+    expect(alignField(snake, "a_b")).toEqual({ unmatched: 0, covered: 3, folded: "upper" });
+    expect(snake.glyphs.map((g) => g.offset)).toEqual([0, 2]);
+    // An emoji sets no glyph, and the first letter after it is a dotless ı in capitals.
+    const after = fieldOf(["I", "X"]);
+    expect(alignField(after, "\u{1f600}\u{131}x")).toEqual({
+      unmatched: 0,
+      covered: 4,
+      folded: "upper",
+    });
+    expect(after.glyphs.map((g) => g.offset)).toEqual([2, 3]);
+    // So is é set without its accent, which the walk used to look for only at the run's end.
+    const bare = fieldOf(["e", "e"]);
+    expect(alignField(bare, "\u{1f600}\u{e9}e")).toEqual({ unmatched: 0, covered: 4 });
+    expect(bare.glyphs.map((g) => g.offset)).toEqual([2, 3]);
+  });
+
+  it("ends a chain of glyphs with the one character whose folded form it spells", () => {
+    // A font may join two S in one glyph: SS takes the first ß whole, and each S alone, which would
+    // go on into the next ß's capitals, matches nothing, all or nothing.
+    const joined = fieldOf(["S", "SS", "S"]);
+    expect(alignField(joined, "\u{df}\u{df}")).toEqual({
+      unmatched: 2,
+      covered: 1,
+      folded: "upper",
+    });
+    expect(joined.glyphs.map((g) => g.offset)).toEqual([0, 0, 1]);
+    // Glyphs SS against s and ß: each takes a ß, never an s and half a ß.
+    const across = fieldOf(["SS", "SS", "S"]);
+    expect(alignField(across, "s\u{df}\u{df}")).toEqual({
+      unmatched: 1,
+      covered: 3,
+      folded: "upper",
+    });
+    expect(across.glyphs.map((g) => g.offset)).toEqual([1, 2, 3]);
+    // A glyph over whole characters ends inside another only before its accents: fi takes F and the
+    // i of İ in small letters, and the dot after it, which would go on with İ from inside it,
+    // matches nothing.
+    const dotted = fieldOf(["fi", "\u{307}", "x"]);
+    expect(alignField(dotted, "F\u{130}X")).toEqual({ unmatched: 1, covered: 3, folded: "lower" });
+    expect(dotted.glyphs.map((g) => g.offset)).toEqual([0, 2, 2]);
+  });
+
+  it("tries a bounded chain at each place, so folding costs what the walk does", () => {
+    // Glyph names a crafted font may give, as the reviews found. Glyphs SS against ß, each ending
+    // inside the next ß's capitals, which a chain went on with to the text's end, taking every glyph
+    // after it. ՒԵ against the Armenian ligature և, whose capitals are ԵՒ, which the chain from Ե
+    // went on with from each place of the run. And a glyph a font maps from S and a bullet, which
+    // walks the run of ß as a glyph spelled outside ASCII does, trying the chain from each place,
+    // while the glyphs SS after it match at once. A chain now ends with its character, so a place
+    // costs a bound: SS and the walking glyph cost ten times their tenths in CPU time (`fastest`),
+    // where they cost 74 and 312 times; and ՒԵ, each glyph of which walks the run and misses, as it
+    // did before folding, a hundred times. Each is bound by three times that, and by 100 ms.
+    const pairs = (count: number) =>
+      [
+        fieldOf([...Array.from({ length: count }, () => "SS"), "S"]),
+        `s${"\u{df}".repeat(count)}`,
+      ] as const;
+    const armenian = (count: number) =>
+      [
+        fieldOf(["\u{535}", ...Array.from({ length: count - 1 }, () => "\u{552}\u{535}")]),
+        "\u{587}".repeat(count),
+      ] as const;
+    const walking = (count: number) =>
+      [
+        aliasedFieldOf([
+          ["S", "\u{2022}"],
+          ...Array.from({ length: count - 1 }, () => ["SS"]),
+          ["X"],
+        ]),
+        "\u{df}".repeat(count),
+      ] as const;
+    const each = pairs(8_000);
+    expect(alignGlyphs(...each)).toBe(1);
+    expect(new Set(each[0].glyphs.map((g) => g.offset)).size).toBe(8_001);
+    expect(alignGlyphs(...armenian(400))).toBe(400);
+    expect(alignGlyphs(...walking(2_000))).toBe(2);
+    for (const [shape, count, growth] of [
+      [pairs, 8_000, 10],
+      [walking, 2_000, 10],
+      [armenian, 400, 100],
+    ] as const) {
+      const [short = 0, long = 0] = fastest(
+        [count / 10, count].map((size) => {
+          const [field, text] = shape(size);
+          return () => alignGlyphs(field, text);
+        }),
+        5,
+      );
+      expect(long).toBeLessThan(bound(3 * growth, short));
+      expect(long).toBeLessThan(100);
+    }
+  }, 60_000);
+
+  it("gives a hyphen TeX inserted between the capitals of one letter the letter's offset", () => {
+    // TeX may break MASSEINHEIT, Maßeinheit in capitals, between the two S of ß: the hyphen is one
+    // it inserted, and it and both S stand at ß's offset.
+    const broken = fieldOf([..."MAS", "-", ..."SEINHEIT"]);
+    expect(alignField(broken, "Ma\u{df}einheit")).toEqual({
+      unmatched: 0,
+      covered: 10,
+      folded: "upper",
+    });
+    expect(broken.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 2, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(broken.glyphs.flatMap((g, i) => (g.inserted ? [i] : []))).toEqual([3]);
+    // Only between two glyphs of the letter: an S and a hyphen do not spell ß.
+    const alone = fieldOf(["S", "-", "X"]);
+    expect(alignField(alone, "\u{df}x").unmatched).toBe(1);
+  });
+
+  it("matches a ligature in small letters whose first letter the text holds small already", () => {
+    // \MakeLowercase sets SelfLess as selfless and OfFICE as office, with the ligatures fl and ffi,
+    // whose first letters the text already holds small: the fold changes the letters after them.
+    const selfless = fieldOf(["s", "e", "l", "fl", "e", "s", "s"]);
+    expect(alignField(selfless, "SelfLess")).toEqual({ unmatched: 0, covered: 8, folded: "lower" });
+    expect(selfless.glyphs.map((g) => g.offset)).toEqual([0, 1, 2, 3, 5, 6, 7]);
+    const office = fieldOf(["o", "ffi", "c", "e"]);
+    expect(alignField(office, "OfFICE")).toEqual({ unmatched: 0, covered: 6, folded: "lower" });
+    expect(office.glyphs.map((g) => g.offset)).toEqual([0, 1, 4, 5]);
+    // A ligature the text spells as it stands folds nothing.
+    expect(alignField(fieldOf(["o", "ffi", "c", "e"]), "office").folded).toBeUndefined();
+  });
 });

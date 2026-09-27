@@ -1,4 +1,4 @@
-# 0020. What CI checks, and what it delivers before there is a host
+# 0029. What CI checks, and what it delivers before there is a host
 
 Date: 2026-09-26 · Status: accepted
 
@@ -8,7 +8,7 @@ Decision 0001 set up one CI workflow per area, each with path filters and each r
 checks. Nothing built the editor for production, nothing checked the pull request title that the
 squash merge turns into `main`'s history, and nothing checked the rules in AGENTS.md that a machine
 could check. The editor's production home needs the engine and TeX Live on R2 first (plan, section
-8.2). The ATS host is still open, and the ATS service (decision 0018) is not yet on `main`.
+8.2). The ATS host is still open, and the ATS service is not yet on `main`.
 
 ## Decision
 

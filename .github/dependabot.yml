@@ -1,4 +1,4 @@
-# Workflows pin every action to a commit (decision 0020); this keeps those pins current, in one
+# Workflows pin every action to a commit (decision 0029); this keeps those pins current, in one
 # grouped pull request a month whose title passes the pr-title check.
 version: 2
 updates:

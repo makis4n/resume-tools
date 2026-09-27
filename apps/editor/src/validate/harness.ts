@@ -34,6 +34,7 @@ import {
   ControlValues,
   defaultControls,
   fontFiles,
+  shapeFile,
   type TemplatePackage,
 } from "../templates/package";
 import { PARAGRAPH_MARKER } from "../templates/prelude";
@@ -90,6 +91,11 @@ export interface Report {
    * value names another format.
    */
   passes: number[];
+  /**
+   * The same passes in the CPU time of the thread that ran them (`CompileResult.cpuPasses`), when
+   * every pass has it, as a session in Node gives it and the browser's does not.
+   */
+  cpuPasses?: number[];
   /** The pages the resume sets. */
   pages: number;
   /** The fields the page finds. */
@@ -140,9 +146,10 @@ const PARAGRAPH_KEYS = [
  * What the page may leave out of a field's text without a glyph, and the aligner skips:
  * whitespace, the invisible characters, anything past ASCII, which pdfTeX drops where the font
  * has no glyph for it, and the underscore, which OT1 sets as a rule rather than a glyph. What is
- * left of a text without them is printable ASCII.
+ * left of a text without them is printable ASCII. The probe (item 5) reads a field's coverage
+ * with it too.
  */
-const SETS_NO_GLYPH = new RegExp(`\\s|${INVISIBLE.source}|[^\\u0000-\\u007f]|_`, "gu");
+export const SETS_NO_GLYPH = new RegExp(`\\s|${INVISIBLE.source}|[^\\u0000-\\u007f]|_`, "gu");
 
 /**
  * Check a package by compiling a resume through it as the editor does, with the document's
@@ -202,7 +209,7 @@ export async function validatePackage(
   if (body === undefined) return report;
   const first = attempt(findings, "compile", () => compile(body.latex));
   if (first === undefined) return report;
-  report.passes.push(...first.passes);
+  addPasses(report, first);
   findings.push(...checkCompile(first));
   const output = first.output;
   if (output === undefined) return report;
@@ -214,7 +221,7 @@ export async function validatePackage(
   const pdf = attempt(pdfFindings, "pdf", () => session.pdf(job, { compress: 0 }));
 
   const second = attempt(findings, "converges", () => compile(body.latex));
-  report.passes.push(...(second?.passes ?? []));
+  addPasses(report, second);
   findings.push(...checkConverges(first, output, second));
 
   const editedBody = attempt(findings, "edits", () =>
@@ -224,7 +231,7 @@ export async function validatePackage(
     editedBody === undefined
       ? undefined
       : attempt(findings, "edits", () => compile(editedBody.latex));
-  report.passes.push(...(edited?.passes ?? []));
+  addPasses(report, edited);
 
   // The controls' compiles come last, after the edit's, though `CHECKS` lists their check before
   // `edits`: each leaves the job as it compiled it, with another format where a value names one,
@@ -233,7 +240,7 @@ export async function validatePackage(
   // edit's compile wrote, so only a template whose page shows what they hold, which the edits
   // check reports, could pass a control that does nothing.
   const controls = checkControls(session, pkg, sample, chosen, format.name, output, job, covers);
-  report.passes.push(...controls.passes);
+  addPasses(report, controls.timing);
   findings.push(...controls.findings);
 
   const { fields, undrawable, natives, outside } = await readFields(fonts, output, doc);
@@ -360,7 +367,8 @@ function checkDump(dumped: DumpResult): Finding[] {
 function checkFontFiles(pkg: TemplatePackage, fonts: FontLibrary): Finding[] {
   const shapesOf = new Map<string, string[]>();
   for (const { family, shapes } of pkg.fonts ?? [])
-    for (const [shape, file] of Object.entries(shapes)) {
+    for (const [shape, font] of Object.entries(shapes)) {
+      const file = shapeFile(font);
       const named = shapesOf.get(file) ?? [];
       named.push(`${family} ${shape}`);
       shapesOf.set(file, named);
@@ -426,6 +434,22 @@ function checkConverges(
   return findings;
 }
 
+/** How long compiles took, pass by pass, as the session timed them (`CompileResult`). */
+type Timing = Pick<CompileResult, "passes" | "cpuPasses">;
+
+/**
+ * Add a compile's passes to those so far: elapsed, and in CPU time while every pass so far has
+ * it, as a session in Node gives it and the browser's does not.
+ */
+function addPasses(timing: Timing, result: Timing | undefined) {
+  if (result === undefined || result.passes.length === 0) return;
+  const every = timing.passes.length === 0 || timing.cpuPasses !== undefined;
+  timing.passes.push(...result.passes);
+  if (every && result.cpuPasses !== undefined)
+    timing.cpuPasses = [...(timing.cpuPasses ?? []), ...result.cpuPasses];
+  else delete timing.cpuPasses;
+}
+
 /**
  * `controls`: every style control the package offers takes effect, in an ordinary compile. The
  * editor applies a control's value in the body, before `\begin{document}` (decision 0006), so a
@@ -448,9 +472,9 @@ function checkControls(
   output: Uint8Array,
   job: string,
   covers: ((char: string) => boolean) | undefined,
-): { findings: Finding[]; passes: number[] } {
+): { findings: Finding[]; timing: Timing } {
   const findings: Finding[] = [];
-  const passes: number[] = [];
+  const timing: Timing = { passes: [] };
   const add = (message: string) => findings.push({ check: "controls", message });
   for (const { values, set, was } of probesOf(pkg, chosen)) {
     try {
@@ -464,7 +488,7 @@ function checkControls(
       }
       const body = generateBody(pkg, sample, values, { covers });
       const result = session.compile(pkg.engine, probe.name, body.latex, { job, maxPasses: 3 });
-      passes.push(...result.passes);
+      addPasses(timing, result);
       const error = compileError(result);
       if (error !== undefined || result.output === undefined)
         add(`with ${set}, the body does not compile: ${error ?? "no output"}`);
@@ -476,7 +500,7 @@ function checkControls(
       add(`with ${set}, ${messageOf(error)}`);
     }
   }
-  return { findings, passes };
+  return { findings, timing };
 }
 
 /** One value the controls check tries, and how a finding names it and the document's value. */
@@ -658,9 +682,11 @@ function checkFields(
  * `alignField` pairs them, and the glyphs account for the whole text: what follows the last glyph
  * matched is only what the page may leave out without a glyph (`SETS_NO_GLYPH`). A glyph that
  * matches none leaves the editor unable to say which character a click landed on: the template
- * sets the field otherwise than the resume has it, such as in capitals or with text of its own
- * inside the markers, or from a font whose glyphs the page cannot name, which the fonts check
- * names as well. Text after the last glyph is text the page does not show, as when a template
+ * sets the field otherwise than the resume has it, such as in a symbol font whose glyphs stand
+ * for other characters, or with text of its own inside the markers, or from a font whose glyphs
+ * the page cannot name, which the fonts check names as well. A field set in capitals, as a class
+ * sets a title through `\MakeUppercase`, or in small letters, aligns once folded, and passes
+ * (decision 0021). Text after the last glyph is text the page does not show, as when a template
  * cuts a field short. It is looked at only when every glyph matched, since a walk that misses
  * stops short of text the page does show, and only when the resume sets one page (`coverage`),
  * since a spill splits a field across pages and is the pages check's to report. A field is
@@ -966,11 +992,17 @@ const LIGATURE = /ff|fi|fl|--|''|,,/;
  * A field is looked for by its first word, its text up to the first space, among the strings the
  * PDF's text operators show, where the glyphs' codes stand for the characters, which holds only
  * for what `SHOWN_AS_ITSELF` allows, and not for a ligature; a field whose first word has a
- * character outside ASCII, or anything else those rule out, is skipped. A native font's text,
- * XeTeX's, is read through its ToUnicode map (`shownTexts`), where the quotes XeTeX's
- * `tex-text` mapping curls read as the straight ones the text holds, and a character its font's
- * map gives one glyph with others as the one the glyph reads as first (`unaliased`), since
- * xdvipdfmx shows such a glyph as the highest, as it shows Source Sans Pro's hyphen as U+2011.
+ * character outside ASCII, or anything else those rule out, is skipped. The word is looked for as
+ * the page sets it (`wordAsSet`): as typed, or in capitals or in small letters where the page folds
+ * the field to them, as a class sets a title through `\MakeUppercase` (decision 0021), each letter
+ * in its glyph's case where some are folded and some not; never whatever its case, so that a word
+ * the PDF lacks is not taken for the same word in another case elsewhere, as in a bullet. Whether
+ * it is set with a ligature is judged in that case, since small letters join where capitals do
+ * not. A native font's text, XeTeX's, is read through its ToUnicode map (`shownTexts`), where the
+ * quotes XeTeX's `tex-text` mapping curls read as the straight ones the text holds, and a
+ * character its font's map gives one glyph with others as the one the glyph reads as first
+ * (`unaliased`), since xdvipdfmx shows such a glyph as the highest, as it shows Source Sans Pro's
+ * hyphen as U+2011.
  * Operators that abut, each starting where the one before it ends, are read as one text
  * (`abuttingRuns`), as a reader of the PDF reads them, so that a word a template colours in part
  * is found whole. A first word TeX broke at a line end lands in two text operators, its halves
@@ -1020,9 +1052,13 @@ function checkPdf(
   // reads as one, its halves split by the hyphen TeX inserted at the break.
   const joined = operators.map((each) => read(each.text)).join("");
   for (const field of found.values()) {
-    const word = texts.get(field.id)?.trim().split(/\s/, 1)[0] ?? "";
-    if (reported.has(field.id) || !SHOWN_AS_ITSELF.test(word) || LIGATURE.test(word)) continue;
-    if (shown.some((text) => text.includes(word)) || brokenAcross(joined, word)) continue;
+    const text = texts.get(field.id) ?? "";
+    const word = text.trim().split(/\s/, 1)[0] ?? "";
+    if (reported.has(field.id) || !SHOWN_AS_ITSELF.test(word)) continue;
+    alignField(field, text);
+    const set = wordAsSet(field, word, text.length - text.trimStart().length);
+    if (LIGATURE.test(set)) continue;
+    if (shown.some((each) => each.includes(set)) || brokenAcross(joined, set)) continue;
     findings.push({
       check: "pdf",
       field: field.id,
@@ -1056,6 +1092,30 @@ function abuttingRuns(operators: readonly ShownText[]): string[] {
     else runs.push(each.text);
   });
   return runs;
+}
+
+/**
+ * A field's first word, `word`, as the page sets it: each letter in the case of the glyph that
+ * matched it (`alignField` has given each glyph its offset), where that is the same letter in the
+ * other case, so the word as typed where the page sets the field as it stands, in capitals or in
+ * small letters where the page folds the field to them, and letter by letter where the page folds
+ * some letters and not others, as a class that capitalises each word's first letter does (decision
+ * 0021). `start` is where the word starts in the field's text, and the word is ASCII
+ * (`SHOWN_AS_ITSELF`), a code unit a letter.
+ */
+export function wordAsSet(field: Field, word: string, start: number): string {
+  const letters = [...word];
+  for (const glyph of field.glyphs) {
+    const at = glyph.offset - start;
+    const shown = glyph.text;
+    if (shown === undefined || glyph.inserted || at < 0 || at >= word.length) continue;
+    const typed = word.slice(at, at + shown.length);
+    if (typed === shown || typed.toLowerCase() !== shown.toLowerCase()) continue;
+    [...shown].forEach((letter, k) => {
+      letters[at + k] = letter;
+    });
+  }
+  return letters.join("");
 }
 
 /** Whether `word` appears in `joined` with a single line-break hyphen inserted somewhere inside. */

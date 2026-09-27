@@ -22,6 +22,7 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { isSafePath as isSafeUploadPath } from "../src/import/paths.ts";
 
 /** The committed manifest. */
 export const MANIFEST_FILE = fileURLToPath(new URL("../corpus/manifest.json", import.meta.url));
@@ -79,15 +80,11 @@ export const PINNED = ".pinned";
 /**
  * Whether a path is one the manifest may hold: relative, parts joined by `/`, none of them empty,
  * `.`, `..` or the marker file's name, and no backslash or control character anywhere, so that it
- * names a file inside the folder it is joined to on every system and never the marker.
+ * names a file inside the folder it is joined to on every system and never the marker. It is the
+ * import pipeline's rule for a path in an upload (`src/import/paths.ts`), and the marker besides.
  */
-export function isSafePath(path: string): boolean {
-  if (path === "" || path.startsWith("/") || path.includes("\\") || /\p{Cc}/u.test(path))
-    return false;
-  return path
-    .split("/")
-    .every((part) => part !== "" && part !== "." && part !== ".." && part !== PINNED);
-}
+export const isSafePath = (path: string): boolean =>
+  isSafeUploadPath(path) && !path.split("/").includes(PINNED);
 
 /** A path's extension in lower case with its dot, or "" when its name has none. */
 export function extensionOf(path: string): string {
@@ -131,7 +128,7 @@ const Path = z
     "a path is relative and uses /, with no empty, . or .. part, no backslash and no control character",
   );
 
-const CorpusFile = z.strictObject({
+export const CorpusFile = z.strictObject({
   path: Path,
   sha256: z.string().regex(/^[0-9a-f]{64}$/, "a SHA-256 is 64 lower-case hex digits"),
   bytes: z.number().int().nonnegative(),

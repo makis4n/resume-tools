@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "key": "aa1a19a50bbc756d28d5957691e5e3da94005df8183f68c406ca86c7adda51ea",
+  "hash": "67540056e59cc0f40880d5f52812d6df54b209cf23cb053e1f4ffa4e5c811ec7",
+  "of": "environment",
+  "name": "cvparagraph",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "paragraph",
+    "arguments": [],
+    "repeatable": false,
+    "notes": "Holds a paragraph section's text.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": [
+    ["paragraphstyle", "94d6ccf4aeca56310c6eee5feb5b0b61f7c29d939ab76f61fb70e7afd3d383a0"],
+    ["bodyfontlight", "00451810b01a5e6404d44f747493139c26b7347a71a6ae62a9b51863f6181eae"],
+    ["sourcesansprolight", "ec03b4c7cb88b3a55ced0e986ed6435ec01245d2b0c4863131f3d732240ec307"],
+    ["sourcesansprolight ", "537b5aae51cc0bf6f15dc466e6f327b31b70b8747954362cd9c38394bfd72383"],
+    ["sourcesansprolight code", "492ff90067b31015440aa44049706c1f67a10e840463706683f953ff29cd1e01"]
+  ]
+}

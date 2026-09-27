@@ -7,13 +7,16 @@
  * every file out, one file per path, with a manifest of paths and sizes. The worker fetches files
  * from that tree one at a time, the first time TeX opens each.
  *
- * The bundles lack packages the templates need, pgf and Font Awesome 5 among them, so the script
- * then adds those from TeX Live 2023's final package archive (`PACKAGES`), each container checked
- * against the SHA-512 the archive's database records for it and unpacked with the system `tar`
- * (`scripts/containers.ts`, decision 0011). On the way out, the added packages' and the Ubuntu
- * bundles' font maps are merged into `pdftex.map` (`mergeMaps`), as `updmap` would merge them,
- * and fontconfig's configuration loses its font folders (`bareFontConf`), so that XeTeX scans no
- * fonts on any run.
+ * The bundles lack packages the templates need, pgf and Font Awesome 5 among them, and packages
+ * the corpus's documents need (decision 0018), so the script then adds those from TeX Live 2023's
+ * final package archive (`PACKAGES`), each container checked against the SHA-512 the archive's
+ * database records for it and unpacked with the system `tar` (`scripts/containers.ts`, decision
+ * 0011). On the way out, the added packages' and the Ubuntu bundles' font maps are merged into
+ * `pdftex.map` (`mergeMaps`), as `updmap` would merge them, and fontconfig's configuration loses
+ * its font folders (`bareFontConf`), so that XeTeX scans no fonts on any run. Last, every OpenType
+ * and TrueType file of the tree is read with opentype.js, and what its tables say of it, its
+ * names, weight, width, slant, scripts and features, goes into the manifest (`scripts/fonttable.ts`,
+ * decision 0023), which the import pipeline matches the fonts a resume asks for by name to.
  *
  *   node scripts/fetch-engine.ts [--from <dir>] [--force] [--resolve]
  *
@@ -34,8 +37,9 @@
  *   .engine/busytex.mjs      the same loader as an ES module, for the worker
  *   .engine/busytex.wasm     the engine: pdfTeX, XeTeX, LuaHBTeX and xdvipdfmx in one binary
  *   .engine/files/<path>     every TeX Live file, at the path the engine sees it under
- *   .engine/manifest.json    { release, layout, bundles, packages, files: { <path>: <size> } },
- *                            written last
+ *   .engine/manifest.json    { release, layout, bundles, packages, files: { <path>: <size> },
+ *                            fonts: { <path>: <what its tables say> }, fontReader }, written
+ *                            last
  *
  * One run at a time: a run holds `.engine/.lock` while it builds, and a second run stops. Each run
  * writes its downloads and its staging folder under names that carry its process id, so even
@@ -60,25 +64,33 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { fileURLToPath } from "node:url";
 // Node runs this file by stripping its types, so the type import needs its real extension.
-import type { EngineManifest } from "../src/engine/manifest.ts";
+import type { EngineManifest, FontReader, TreeFont } from "../src/engine/manifest.ts";
 import { unpackPackages } from "./containers.ts";
 import { withoutFontFolders } from "./fontconfig.ts";
 import { mergeFontMaps } from "./fontmaps.ts";
+import { type ParseFont, treeFonts } from "./fonttable.ts";
 import { containerName, packagesToFetch, parseDatabase } from "./tlpdb.ts";
 
 const RELEASE = "build_wasm_4499aa69fd3cf77ad86a47287d9a5193cf5ad993_7936974349_1";
 const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELEASE}/`;
 
 /**
- * The version of what this script writes. Bump it whenever the output changes (the files, the
- * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt. CI keys its
- * cached `.engine/` on the six files the output depends on, this script, `containers.ts` and
- * `tlpdb.ts`, which unpack the added packages and read their entries, `fontconfig.ts`, which
- * writes fontconfig's configuration, and `fontmaps.ts` and `src/page/fontmap.ts`, which merge the
- * font maps into `pdftex.map`, so a change to any of them rebuilds it there; a `.engine/` built on
- * a machine is rebuilt only by the bump or by a change to `PACKAGES`.
+ * The version of what this script writes. Bump it whenever the files or the loaders change, so a
+ * `.engine/` built by an older version is rebuilt. The layout is part of the tag the browser
+ * fetches the engine and the tree under (`engineTag`), so a bump costs a returning browser the
+ * engine and every file of the tree it fetches again, and every format it kept (decision 0023). A
+ * change to the manifest alone needs no bump, since the browser reads the manifest afresh on every
+ * load: the font table's reader is recorded in it (`fontReader`), and `upToDate` compares that.
+ * CI keys its cached `.engine/` on the seven files the output depends on, this script,
+ * `containers.ts` and `tlpdb.ts`, which unpack the added packages and read their entries,
+ * `fontconfig.ts`, which writes fontconfig's configuration, `fontmaps.ts` and
+ * `src/page/fontmap.ts`, which merge the font maps into `pdftex.map`, and `fonttable.ts`, which
+ * reads the fonts' tables, and on the version of opentype.js, which it reads them with, so a
+ * change to any of them rebuilds it there. A `.engine/` built on a machine is rebuilt by the bump,
+ * by a change to `PACKAGES`, and by a change to `fonttable.ts` or to opentype.js's version. Layout
+ * 7 adds the manifest's `fonts` (decision 0023); the files are layout 6's.
  */
-const LAYOUT = 4;
+const LAYOUT = 7;
 
 /** Release files with their SHA-256 and size, recorded from the copies the spike measured. */
 const ASSETS: Record<string, { sha256: string; size: number }> = {
@@ -176,6 +188,18 @@ const DATABASE = {
  * whose `tikzfill.image` the bundles' tcolorbox 6.0.1 loads for its skins library, which
  * Awesome-CV's class and AltaCV's load; tcolorbox's entry names no dependency, so only its files
  * say so.
+ *
+ * Then what the corpus's documents need that the tree lacks, as `corpus survey` counts them
+ * (decision 0018): every package three documents or more need, the most needed first, within
+ * 80 MB of containers, that makes at least one of them lack nothing once it is in:
+ * fontawesome, Font Awesome 4, for its package and its `FontAwesome.otf`; biblatex, whose
+ * `depend` brings logreq; tex-gyre; ulem; academicons; soul; and plex. Their style files load
+ * nothing the tree lacks, and ask fontenc for T1, LY1 and OT1 only.
+ *
+ * Then, by the same rule, what the reference compile's refusals over the corpus name (decision
+ * 0019), which reading source cannot see: lm-math, for `latinmodern-math.otf`, unicode-math's
+ * default math font, which Awesome-CV's class loads; babel's French and German; biblatex's IEEE
+ * style; and tipa, for its T3 encoding's `t3enc.def`.
  */
 const WANTED = [
   "pgf",
@@ -187,6 +211,18 @@ const WANTED = [
   "ly1",
   "pgfopts",
   "tikzfill",
+  "fontawesome",
+  "biblatex",
+  "tex-gyre",
+  "ulem",
+  "academicons",
+  "soul",
+  "plex",
+  "lm-math",
+  "babel-french",
+  "babel-german",
+  "biblatex-ieee",
+  "tipa",
 ];
 
 /** A package's container of run files in the archive: its revision, size and SHA-512. */
@@ -205,6 +241,42 @@ interface Container {
  * here, and bump `LAYOUT`.
  */
 const PACKAGES: Record<string, Container> = {
+  academicons: {
+    revision: 62622,
+    size: 35252,
+    sha512:
+      "10fed2cdb2533a7291626eee2f3d46e79fe972eadd83cf7177f22228dcd13422549819dc5e1cf0b03e8397e23badc02a965857aca886ba004a3279efeb49b288",
+  },
+  "babel-french": {
+    revision: 70261,
+    size: 15772,
+    sha512:
+      "5a0ad21862209980813cf8b6a89884ca977bbd2036b3e9c6217d2ae0f69f4c0e9567bf07afa4c9e75cdc6959b3169f270de38c9307c531a44b5ba07707c2e1e0",
+  },
+  "babel-german": {
+    revision: 69506,
+    size: 4208,
+    sha512:
+      "372ba15d67ae4a5299a8d193d4fbe1c01a89db686c4d152ce2fef05088be63e7d85a7cf4fb712629d1ec8b21517bf3881ad3de947e03e127af940714a6d059ec",
+  },
+  biblatex: {
+    revision: 66403,
+    size: 254400,
+    sha512:
+      "e07cd6233021bbe2f3591f866c3b3eeae083574f705da9505f6bcbb7284c243ac7f24440253c4557f0a300e9995188bf5915a42643e63eb80ff9e0fa4ffaff1c",
+  },
+  "biblatex-ieee": {
+    revision: 61243,
+    size: 5564,
+    sha512:
+      "2f4dd68ea556dc56fde888294bd9a3368efcf4099b95b0c90e60225c3b99181de52b406a7e40a09792b6b58410174d74d774a0aeb1feb4c8bef69fd513861303",
+  },
+  fontawesome: {
+    revision: 48145,
+    size: 276180,
+    sha512:
+      "e08643104006c9e14c40bb965b4401a8fe296f43e5f39b285cd19d5aa0ed33602cc0eb6ffcc996e1d6e5aaa57dd906903324626ee40facdcb3cedc5216a3deb6",
+  },
   fontawesome5: {
     revision: 63207,
     size: 866312,
@@ -216,6 +288,18 @@ const PACKAGES: Record<string, Container> = {
     size: 12721308,
     sha512:
       "2f8454888913ec6a024c53cf157509b8b769f948ac2c92d0683e80ff8e22865545a6a65864876be35569bf4a5d56ed871c8112b216561e3ce585136bd062c9ce",
+  },
+  "lm-math": {
+    revision: 67718,
+    size: 377796,
+    sha512:
+      "2fad475b347824d564525de51ed5bd1cc7ab2fc27fd826a00e86ebabd7d85afce2f7a4c85d9620c9b66d14ea0c813a269a13843a0b27eb7d0ca3e294114aad26",
+  },
+  logreq: {
+    revision: 53003,
+    size: 3212,
+    sha512:
+      "df61c0c6c0b8520f5ec38780d8eb69cfd5fccd21f5120e48eee71e02b004d3da4cc9cb9371a36766852e3ca09a3db86655f1a2639a49741f00134cff1246acd2",
   },
   ly1: {
     revision: 63565,
@@ -241,11 +325,23 @@ const PACKAGES: Record<string, Container> = {
     sha512:
       "7d672d626428c37fa749a810c57be43c6102e1325a6d3e16c57bc560b6d65a57bae94e619a73f3e0efb46ce7b4783d05a6e98c64b1e90c6e0f94f1dd9acd676f",
   },
+  plex: {
+    revision: 69154,
+    size: 11533644,
+    sha512:
+      "4180d4b5ff2d6843ac375a52bc3c63570638cc29f7d3bbda476dee962998293ce4b201817e056d5e87c20bd8280336b65bc689a8e1580ab8aa6f24164002732c",
+  },
   roboto: {
     revision: 64350,
     size: 25354284,
     sha512:
       "d82d9ce9480bf0c9d7f6559e7bcbb5fe8f22179adc44113121f67fc0daadd66c938b9fcf9a41073843e1cc981162972a79f15fe6162f68ba7a01b74732b0f01a",
+  },
+  soul: {
+    revision: 67365,
+    size: 8944,
+    sha512:
+      "233f1178521296d5cccc7db50c98425995b8708c97d750a5c24f698bd0de2e54ed5c57f9641f402bb8a42721e348355e6f7e9092b4056999b032d001c8203aba",
   },
   sourcesanspro: {
     revision: 54892,
@@ -253,11 +349,29 @@ const PACKAGES: Record<string, Container> = {
     sha512:
       "0511dcf736273d80f7143c9dad96dd9f631b016183b4078243ed061d35889fea62e50c5f48e9842ffae7b654fd2e08a21d1c46403e56349c0b515ff2eb62e164",
   },
+  "tex-gyre": {
+    revision: 68624,
+    size: 7748428,
+    sha512:
+      "5422f349d15233e6f49576fe3a65f8afb5cae6a3c51e5ad7cb56617d7d064e9cf574f233f789c029c04bbfc24e5948c115b2d33569e881373d68615ac709153f",
+  },
   tikzfill: {
     revision: 67847,
     size: 4652,
     sha512:
       "4864d0859490cd07e123e1160a35fb7817c3ffcc1f409a8c61285823f655357473e0dc7ab92434b5b552cbfca3e88d9181e57cf944d2422467b466cbdcd743a0",
+  },
+  tipa: {
+    revision: 29349,
+    size: 2876104,
+    sha512:
+      "7919b8f5a416cab24c02675ee0a24c60f64e9dfb3bbacb416eb74e29badf6b4dfd8a0528cc8b38dab6395b8c74ec5c808ad84d3a8d4ae5e8212691bed9066129",
+  },
+  ulem: {
+    revision: 53365,
+    size: 6512,
+    sha512:
+      "bb7fc8d93d38a847431f9f62f1447520890f3904654ef6f3cdffd14537600da35d54bd0839cd8fd8d26e1e3146463cd9ced79f706df54df075292eea8a40ed4c",
   },
   xcolor: {
     revision: 68864,
@@ -309,6 +423,8 @@ const OUTLINES = ["/texlive/texmf-dist/fonts/", "/texmf/texmf-dist/fonts/"].flat
 );
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".engine");
+/** The reader of the fonts' tables, which the manifest records a hash of (`fontReader`). */
+const FONT_TABLE_READER = fileURLToPath(new URL("./fonttable.ts", import.meta.url));
 const DOWNLOADS = join(ROOT, "downloads");
 const FILES = join(ROOT, "files");
 const MANIFEST = join(ROOT, "manifest.json");
@@ -536,11 +652,37 @@ function bareFontConf(dir: string, files: Record<string, number>) {
   files[FONTS_CONF] = Buffer.byteLength(conf);
 }
 
+/**
+ * opentype.js's reader, which the editor's own page reads native fonts with (`src/page/native.ts`).
+ * It is a CommonJS module, loaded only when a build reads the tree's fonts, so that a run that stops
+ * before then needs nothing but this folder's scripts.
+ */
+function fontParser(): ParseFont {
+  const { parse } = createRequire(import.meta.url)("opentype.js") as { parse: ParseFont };
+  return parse;
+}
+
 /** The revision of each package of `PACKAGES`, by name, as the manifest records them. */
 const revisions = (): Record<string, number> =>
   Object.fromEntries(Object.entries(PACKAGES).map(([name, { revision }]) => [name, revision]));
 
-/** True when `.engine/` holds a finished build of this release, layout, bundles and packages. */
+/**
+ * What reads the fonts' tables into the manifest: the version of opentype.js installed, and a
+ * SHA-256 of `fonttable.ts`. The manifest records it (`EngineManifest.fontReader`), so that a
+ * change to either rebuilds the table, which the layout need not move for.
+ */
+function fontReader(): FontReader {
+  const { version } = createRequire(import.meta.url)("opentype.js/package.json") as {
+    version: string;
+  };
+  const table = createHash("sha256").update(readFileSync(FONT_TABLE_READER)).digest("hex");
+  return { opentype: version, table };
+}
+
+/**
+ * True when `.engine/` holds a finished build of this release, layout, bundles and packages, whose
+ * font table the reader there is now read.
+ */
 async function upToDate(): Promise<boolean> {
   try {
     const manifest = JSON.parse(await readFile(MANIFEST, "utf8")) as EngineManifest;
@@ -549,6 +691,7 @@ async function upToDate(): Promise<boolean> {
       manifest.layout === LAYOUT &&
       manifest.bundles.join() === BUNDLES.join() &&
       JSON.stringify(manifest.packages) === JSON.stringify(revisions()) &&
+      JSON.stringify(manifest.fontReader) === JSON.stringify(fontReader()) &&
       ["busytex.js", "busytex.mjs", "busytex.wasm"].every((f) => existsSync(join(ROOT, f))) &&
       REQUIRED.every((path) => existsSync(join(FILES, path)))
     );
@@ -696,6 +839,8 @@ async function build(from: string | undefined) {
   const staging = `${FILES}.partial-${process.pid}`;
   const old = `${FILES}.old-${process.pid}`;
   let files: Record<string, number>;
+  let fonts: Record<string, TreeFont>;
+  let reader: FontReader;
   try {
     files = copyOut(await mount(), staging);
     const { maps } = unpackPackages(
@@ -712,6 +857,12 @@ async function build(from: string | undefined) {
     files = byPath(files);
     const missing = REQUIRED.filter((path) => files[path] === undefined);
     if (missing.length) throw new Error(`the TeX Live tree lacks ${missing.join(", ")}`);
+    reader = fontReader();
+    const read = treeFonts(files, (path) => readFileSync(join(staging, path)), fontParser());
+    fonts = read.fonts;
+    console.log(
+      `Read ${Object.keys(fonts).length} font files' tables${read.skipped.length > 0 ? `; left out, as opentype.js cannot read them: ${read.skipped.join(", ")}` : ""}`,
+    );
     // Swap the trees by renaming, so no run deletes files another run has put in place.
     await rename(FILES, old).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "ENOENT") throw error;
@@ -733,6 +884,8 @@ async function build(from: string | undefined) {
     bundles: BUNDLES,
     packages: revisions(),
     files,
+    fonts,
+    fontReader: reader,
   };
   // Written under another name and renamed, so a run stopped while writing it leaves no
   // manifest rather than part of one.

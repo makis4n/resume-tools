@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "key": "75d5bcbc9ee91dac1c3c30316ef4c2d9518cb46db1172549f4d17a614727c95d",
+  "hash": "ecc94fcbbe07bb71f63d08e894e1c35903750117a16f50b97dff1a0e5934f7fa",
+  "of": "command",
+  "name": "makecvfooter",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other"
+      },
+      {
+        "index": 2,
+        "meaning": "text"
+      },
+      {
+        "index": 3,
+        "meaning": "other"
+      }
+    ],
+    "repeatable": false,
+    "notes": "The footer, set on every page by fancyhdr, which the model has no place for (decision 0015).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": [
+    ["fancyfoot", "214d5584d263a21492c216802e99cb5c22d89ba076ce5d8fdbfb47ee514a3a51"],
+    ["footerstyle", "7c1896f8b7afc1a071f6458aa0a6851885d886463fe6236472388b6bb1e374a0"],
+    ["\\fancyfoot", "8f7ec01046c74ded65a385aeaffaca1e145d63f4699ef0ea8155d8355670dad1"],
+    ["footerfont", "19638a3b00f1fc99d2b8841b0c9e6b91fe2662c75012f17e53d858904f3fc913"],
+    ["f@nch@fancyhf", "4fd4342c06945102c9e24a27014710c4868fb57432aba1ed74a15108e61ac5a7"],
+    ["sourcesanspro", "0852f0b98d05b92c5a06546d8c77e6993004ba677df6f9d68aa499fbac1c00af"],
+    ["temp@c", "394756dfba1831e21fda0c9d90f9feb3f64546ce5617a3e4b1db6b5761715b71"],
+    ["f@nch@forc", "39bd401387fa2a28c72e769cd15b043e90ad671171f80b6d2508f9cbc3d84da3"],
+    ["f@nch@ifin", "0157d44d931fceb3f81d219617308718420ea987f08d87cabf18b8193886e3c0"],
+    ["f@nch@errmsg", "f2afa17abc6cf4007976f4e917bedaf39585de6fd1a3282c0e1c4d3e6e6a440d"],
+    ["f@nch@for", "3c68aa944de5322ab42b62b6ba1025fb3ee1fd31780fd434d6808f8b51b807fb"],
+    ["f@nch@default", "bc4c4c9628671c7dcea3e5b10479cb800b3f83de48438aabf05619b225306544"],
+    ["f@nch@fancyhf@Echeck", "afaec7010540906304f04fa213f0f80a348fa04efb05b3bcd3cf4b0c51f293ac"],
+    ["f@nch@def", "cbf48e7ad569dcb999d0e68c7ffe068676894cb42ffdab5465d27de778f12967"],
+    ["sourcesanspro ", "537b5aae51cc0bf6f15dc466e6f327b31b70b8747954362cd9c38394bfd72383"],
+    ["sourcesanspro code", "a7e47edd4f7d1965a037b6a1552e28c294b80ba6b83c1a10786318b20294034e"],
+    ["f@nchf@rc", "21789424e204743bf7a3c5d2493360dfb39c142b492a35e85ec9a48890d6d1b2"],
+    ["f@nch@ifundefined", "21b057637f6ad3851736ea2ae8a34e4351941ddff1d998b7999138160fadfd2f"],
+    ["f@nch@warning", "079169737488e7fd243ed57a689a848d2d9a3b902a5dd27792205893d490faf9"],
+    ["if@nch@mpty", "c29bc9ab9bfcdebf7cfb7e9454fb31817dd54df825924892e12dddd45e2b85fe"],
+    ["f@nch@rc", "39274c7b24f308f68dd9ac0a0fafbc1dc1229cee010d80e03227e2505927e423"]
+  ]
+}

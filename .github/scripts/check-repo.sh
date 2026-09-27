@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The rules in AGENTS.md that a machine can check from the list of tracked files (decision 0020).
+# The rules in AGENTS.md that a machine can check from the list of tracked files (decision 0029).
 # Usage: bash .github/scripts/check-repo.sh
 set -euo pipefail
 

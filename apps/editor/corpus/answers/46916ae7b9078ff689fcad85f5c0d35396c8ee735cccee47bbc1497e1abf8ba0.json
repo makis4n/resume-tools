@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "key": "46916ae7b9078ff689fcad85f5c0d35396c8ee735cccee47bbc1497e1abf8ba0",
+  "hash": "d7e1cad2ec7e1499f245d255198ef6610edb058d8a449c49412f8a827f2caa05",
+  "of": "command",
+  "name": "resumeSubHeadingListEnd",
+  "family": "jake",
+  "answer": {
+    "kind": "layout",
+    "arguments": [],
+    "repeatable": false,
+    "list": {
+      "does": "closes",
+      "openedBy": "resumeSubHeadingListStart"
+    },
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": [],
+  "partnerKeys": {
+    "openedBy": "f27b48af62419575181525851d5749c5e4fefc7df512c85408230cf225b46540"
+  }
+}

@@ -149,7 +149,7 @@ begin marker carrying the paragraph TeX sets the field in.
   guillemets and low quotes, set nothing or their base letter, with a warning in the log, and a
   field that holds one does not align with the model's text. T1 fonts (item 16) fix both.
 - A field set in `\MakeUppercase` is found, but its glyphs do not align with the model's text
-  until the aligner learns case folding (item 9).
+  until the aligner learns case folding (item 9). Decision 0021 later taught it to.
 - Two texts can share a body, since a soft hyphen or a zero-width space changes only `texts`:
   item 8 must treat a body and its `texts` as one unit when it drops a stale compile.
 - LaTeX 2023 sets `\$`, its itemize bullet and characters such as `•`, `°` and `€` from TS1, even
@@ -170,3 +170,37 @@ begin marker carrying the paragraph TeX sets the field in.
   at the start of every job, and its error for a text command the font encoding lacks,
   `\TextSymbolUnavailable`. A newer LaTeX may rename them; the round trip in `generate.test.ts`
   fails if such a character stops the compile again.
+
+## Update, 27 September 2026
+
+Milestone 3 item 5's probe (decision 0022) found that `\rtfield`'s end marker hid a field's last
+glyph from the italic correction LaTeX's text commands add after their text. `\textit`, `\textsl`
+and `\emph` correct after the group they set (`\check@icr`, then `\maybe@ic`), with TeX's `\/`,
+which corrects only a character or a ligature that ends the list, and the end marker, a whatsit,
+then ended it: the text after the field moved by the correction, 1.36 pt after the dates of Jake's
+Resume's upstream sample, where the port had never compared its page with one without markers.
+
+So `\rtfield` adds the correction itself, before its end marker: inside a text command, whose
+group has set `\check@icr` to correct after it, which a declaration never sets; in a slanted font,
+which is the test `\maybe@ic` makes (`\fontdimen1` above zero); and in horizontal mode, where `\/`
+is not an error:
+`...<content>\ifhmode\ifx\check@icr\@empty\else\ifdim\fontdimen\@ne\font>\z@\/\fi\fi\fi\special{rt:e:<id>}`.
+A field in `\textit{...}` then sets the page as its text alone does, and LaTeX's own correction
+after the group finds the marker last and adds nothing; a field set slanted by a declaration,
+`{\slshape ...}`, gets no correction, as LaTeX gives it none. An upright letter that has a
+correction, as Computer Modern's `f` has after `\textbf`, still loses it, as before. Where LaTeX
+leaves the correction out although a text command ends, before a period or a comma
+(`\nocorrlist`), or in a text command set in slanted text, and in a field that is not the last of
+its text command's argument, the field gains a correction upstream lacks and the page moves by it:
+the probe finds such a field `moved` and locks it, the safe side.
+
+The slant test alone, without `\check@icr`'s, gives a field set slanted by a declaration a
+correction upstream lacks. On the corpus it locked the dates of 11 of 18 Awesome-CV forks, which
+the class's `\entrydatestyle` sets slanted by a declaration, and the institution of 8 of 14
+moderncv documents, set in `{\slshape ...}`, and doubled Awesome-CV's compiles; the test of
+`\check@icr` keeps all of them as they were.
+
+The prelude is dumped into every format, so every format's name changes (the naming above): the
+scheduler finds none of the new name in the store, dumps it once and keeps it (decision 0010), and
+the old ones leave the store as the least recently used. The curated packages' round trips and the
+validation harness pass unchanged.

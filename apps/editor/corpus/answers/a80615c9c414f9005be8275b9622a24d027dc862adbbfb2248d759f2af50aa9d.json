@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "key": "a80615c9c414f9005be8275b9622a24d027dc862adbbfb2248d759f2af50aa9d",
+  "hash": "d3dc38108ddf7bd23033fc34c158c768d844a7919eb92656f149bf32c4ebd3ca",
+  "of": "command",
+  "name": "resumeItemListEnd",
+  "family": "jake",
+  "answer": {
+    "kind": "bulletList",
+    "arguments": [],
+    "repeatable": false,
+    "list": {
+      "does": "closes",
+      "openedBy": "resumeItemListStart"
+    },
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": [],
+  "partnerKeys": {
+    "openedBy": "714200b66d4ec9c7b4b43329c41411adcb9099ea16a779f2e472d8a7e99dfc86"
+  }
+}
