@@ -1930,7 +1930,9 @@ describe("the command", () => {
     const only = run("fetch", "--only", "jake-9999");
     expect(only.status).toBe(1);
     expect(only.stderr).toContain("the manifest has no document jake-9999");
-  });
+    // Seven spawns of the runner, each loading every command's modules: about a second each on
+    // a CI runner, so the test takes the timeout the engine tests take, not vitest's five seconds.
+  }, 60_000);
 
   test("the committed manifest is one the schema takes, of at least 200 documents", () => {
     const manifest = Manifest.parse(
