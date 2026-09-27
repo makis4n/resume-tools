@@ -22,7 +22,7 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/nod
 import type { EngineSession } from "../src/engine/session";
 import { readTree } from "../src/import/fonts";
 import { type Intake, intake } from "../src/import/intake";
-import { assertNoText, buildRequest } from "../src/import/naming";
+import { assertNoText, buildRequest, type HeaderValues, sourcesOf } from "../src/import/naming";
 import { bodyOf, bodyOfText, buildTree, readBody } from "../src/import/parse";
 import { probe, probeUses } from "../src/import/probe";
 import { type ReferenceGlyph, reference } from "../src/import/reference";
@@ -992,7 +992,7 @@ describe.skipIf(!engineAvailable())("corpus name, on the invented pdfTeX documen
     const manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
-    tree = readTree(manifest.files);
+    tree = readTree(manifest.files, manifest.fonts);
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );
@@ -1099,8 +1099,11 @@ describe.skipIf(!engineAvailable())("corpus name, on the invented pdfTeX documen
     preamble: { parameters: [] },
   };
 
-  /** The invented upload through the pipeline to its request, as the runner's child takes it. */
-  async function requested() {
+  /**
+   * The invented upload through the pipeline to its request, as the runner's child takes it, with
+   * the upload's sources; and with the header's values, when given, as item 7 will find them.
+   */
+  async function requested(header?: HeaderValues) {
     const main = `\\documentclass{inventedprobe}\n\\cvname{Quill}{Invented}\n${BODY}`;
     const zipped = { "cv.tex": strToU8(main), "inventedprobe.cls": strToU8(CLASS) };
     const taken = intake({ name: "invented.zip", bytes: zipSync(zipped) }, { tree });
@@ -1123,15 +1126,32 @@ describe.skipIf(!engineAvailable())("corpus name, on the invented pdfTeX documen
     const built = buildTree(read, found);
     if (isRefusal(built)) throw new Error(built.message);
     const probed = await probe(session, fonts, taken, made, built, found);
-    const request = await buildRequest(built, found, probed, body.preamble);
+    if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
+    const sources = sourcesOf(taken);
+    const given = header === undefined ? {} : { header };
+    const request = await buildRequest(built, found, probed, body.preamble, { sources, ...given });
     const stored = probed.candidates
       .filter((each) => each.where === "preamble")
       .map((each) => each.text);
-    return { request, found, document: { tree: built, stored } };
+    return { request, found, document: { tree: built, stored, sources, ...given } };
   }
 
+  test("asks nothing of the request as the child builds it, whose own definition holds a stored word", async () => {
+    // The builder masks the document's own definitions by its phrases, and the gate, stricter on
+    // purpose, finds the surname the preamble stores, one word, in `\cvgap`'s (decision 0024).
+    const { request, document } = await requested();
+    const answered = await answerDocument(request, {
+      cache: freshCache(),
+      gate: () => assertNoText(request, document),
+      model: { model: idle(), id: "invented-model" },
+    });
+    expect(answered).toMatchObject({ macros: 7, asked: 0, stored: 0, calls: 0 });
+    expect(answered.refused).toMatch(/\(stored\) in the definition of cvgap\.$/);
+  }, 60_000);
+
   test("stores a fixed model answer under the keys item 4 gives, and hits it the next time", async () => {
-    const { request, found, document } = await requested();
+    // With the name, as item 7 will find it, the builder masks the surname `\cvgap` holds.
+    const { request, found, document } = await requested({ first: "Quill", last: "Invented" });
     expect(request.macros.map((macro) => `${macro.of} ${macro.name}`)).toEqual(
       FIXED.macros.map((macro) => `${macro.of} ${macro.name}`),
     );

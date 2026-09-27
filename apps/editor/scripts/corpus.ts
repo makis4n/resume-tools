@@ -11,6 +11,7 @@
  *   pnpm --filter @resume-tools/editor corpus oracle
  *   pnpm --filter @resume-tools/editor corpus fonts [--only <id>] [--json <file>]
  *   pnpm --filter @resume-tools/editor corpus seed [--json <file>] [--write]
+ *   pnpm --filter @resume-tools/editor corpus name [--only <id>] [--json <file>] [--model]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
  *                 upstream templates' forks give the candidates, public repositories only, and
@@ -92,7 +93,7 @@
  *                 committed answers under `corpus/answers/` first, then the model's own under
  *                 `.corpus/cache/<model id>/`, the model `NAMING_MODEL` names, gemini-3.8-flash
  *                 when unset; print what each document's macros came to and one table of them all,
- *                 names of macros and counts only (`scripts/corpus-name.ts`, decision 0026).
+ *                 names of macros and counts only (`scripts/corpus-name.ts`, decision 0027).
  *                 Without `--model` the macros the cache does not answer are counted missing
  *   --only <id>   that document only
  *   --json <file> write each document's row as JSON too, macros' names and numbers only

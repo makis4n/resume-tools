@@ -22,7 +22,7 @@ export const NAMING_VERSION = 1;
  * (`prompt.ts`), as the prompt's test computes it: an edit to the prompt fails that test until this
  * is its hash again, and whoever updates it decides whether the edit changes what the prompt asks,
  * which bumps NAMING_VERSION, so that answers to the old question are no longer read (decision
- * 0026). An edit that changes only how the same question is put keeps the version.
+ * 0027). An edit that changes only how the same question is put keeps the version.
  */
 export const PROMPT_HASH = "baf9b9bf1eab753d3b42db130aa486437b5a829860fecb9d46c3e99bb7a7647f";
 

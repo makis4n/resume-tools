@@ -1,5 +1,5 @@
 /**
- * The naming step's cache on disk (milestone 3 item 9, decision 0026), the corpus runner's: an
+ * The naming step's cache on disk (milestone 3 item 9, decision 0027), the corpus runner's: an
  * `AnswerCache` over two folders, `<key>.json` a stored answer each. `corpus/answers/`, the
  * committed answers a person reviewed, the seed among them (decision 0024), is read and never
  * written; a folder of each model's own under `.corpus/cache/`, which git ignores, is where that

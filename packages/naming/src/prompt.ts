@@ -1,5 +1,5 @@
 /**
- * The naming step's prompt (milestone 3 item 9, decision 0026), all of it in this one file: what
+ * The naming step's prompt (milestone 3 item 9, decision 0027), all of it in this one file: what
  * the model is told of the contract (`INSTRUCTIONS`), in decision 0024's words, and how a request
  * is laid out for it (`layOut`): the template's commands by name, which a list's partner is one of,
  * the definitions the macros hand their work to, each once, then the macros one by one, each with

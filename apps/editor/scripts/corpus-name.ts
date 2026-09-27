@@ -1,5 +1,5 @@
 /**
- * The naming step over the corpus (milestone 3 item 9, decision 0026): `corpus name` builds each
+ * The naming step over the corpus (milestone 3 item 9, decision 0027): `corpus name` builds each
  * fetched document's naming request as `corpus seed` builds a sample's, in the same pool of child
  * processes (`corpus-name-child.ts`), and answers it macro by macro (`answerDocument`): from the
  * committed answers first, a person's, the seed's among them, then from the model's answers under
@@ -349,7 +349,7 @@ const WORD_GAP = 0.12;
 const letters = (text: string) => (text.match(/\p{L}/gu) ?? []).length;
 
 /**
- * The reference page's words, as the privacy gate's hook takes them (`page`, decision 0026): each
+ * The reference page's words, as the privacy gate's hook takes them (`page`, decision 0027): each
  * word of three letters or more, and each two words of a line together, in the order the page
  * sets them, each once. A glyph stream carries no widths, so a word ends where the next glyph
  * starts further on than the glyph's advance, as Computer Modern's roughly are, a space's worth

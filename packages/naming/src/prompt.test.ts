@@ -356,7 +356,7 @@ describe("the prompt's pin", () => {
     ]);
     // An edit to the prompt fails here until PROMPT_HASH, in key.ts, is this hash again; whoever
     // updates it decides whether the edit changes what the prompt asks, which bumps NAMING_VERSION
-    // (decision 0026).
+    // (decision 0027).
     expect(await sha256(text), "the prompt changed: see PROMPT_HASH in key.ts").toBe(PROMPT_HASH);
   });
 });

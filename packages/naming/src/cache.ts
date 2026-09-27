@@ -1,5 +1,5 @@
 /**
- * Reading and filing the naming step's cache (milestone 3 items 6 and 9, decisions 0024 and 0026),
+ * Reading and filing the naming step's cache (milestone 3 items 6 and 9, decisions 0024 and 0027),
  * and checking a request's keys. A cache is anything that gives back what was put under a key: the
  * committed answers under `corpus/answers/`, the runner's ignored folder, the service's KV (item
  * 10). What it gives back is not trusted: `answerFor` returns an answer only when it is a stored

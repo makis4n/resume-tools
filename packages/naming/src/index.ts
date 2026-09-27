@@ -6,7 +6,7 @@
  * own and reaches for nothing but the platform's `crypto.subtle`, so it runs in the browser, in
  * Node and in a Worker alike.
  *
- * The naming step on a model (item 9, decision 0026) has paths of its own, since it brings the AI
+ * The naming step on a model (item 9, decision 0027) has paths of its own, since it brings the AI
  * SDK, which the page never needs: `@resume-tools/naming/model`, which asks a model for a request's
  * answer (`name`), and `@resume-tools/naming/providers`, which makes Gemini's. The naming service
  * and the corpus runner import them; the page imports this path alone.

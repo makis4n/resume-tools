@@ -1,5 +1,5 @@
 /**
- * The naming step on a model (milestone 3 item 9, plan section 6 step 4, decision 0026): `name` asks
+ * The naming step on a model (milestone 3 item 9, plan section 6 step 4, decision 0027): `name` asks
  * a language model, through the AI SDK, for the answer to a naming request, as structured output
  * against `ModelNaming` (`generateText` with `Output.object`), and checks what comes back: the
  * schema, its refinements included; that it answers every macro the request asks, by its name and

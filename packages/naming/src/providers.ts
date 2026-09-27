@@ -1,5 +1,5 @@
 /**
- * The naming step's providers (milestone 3 item 9, decision 0026): the one place a model is made
+ * The naming step's providers (milestone 3 item 9, decision 0027): the one place a model is made
  * for `name`, which takes any AI SDK `LanguageModel`. Gemini first, as plan section 6.4 expects:
  * `googleModel` makes one of Google's models by its id, with the key the caller gives, never one
  * read from the environment, so that its caller, the naming service or the corpus runner,

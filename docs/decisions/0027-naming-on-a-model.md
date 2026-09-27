@@ -1,4 +1,4 @@
-# 0026. The naming step on a model
+# 0027. The naming step on a model
 
 Date: 2026-09-27 · Status: proposed
 
@@ -181,9 +181,14 @@ template's commands put the same question, so the version stays 1.
 
 Nothing is asked of a request until it passes two checks. `assertNoText(request, document)` refuses
 it when it holds any text the builder knows as the document's: the body's tree and the texts its
-preamble stores, and the header's values once items 7 and 11 pass them. That catches a fault of the
-masking, which masks by the same texts, and not a text that only a definition holds, which no string
-of the document's names: a name a preamble's own macro spells out,
+preamble stores, and the header's values once items 7 and 11 pass them. The child gives the gate
+the upload's sources as it gives the builder them (`sourcesOf`), so that both tell the document's
+own definitions from the tree's (decision 0024). The gate is stricter than the masking, on purpose:
+a single word of the document's text in an own definition, which the builder leaves unless it is a
+word of the header's name, is refused, so the invented document's `\cvgap`, which its uploaded
+class defines to hold the surname its preamble stores, is refused as the child builds the request
+now, and passes once item 7 gives the name. The gate does not catch a text that only a definition
+holds, which no string of the document's names: a name a preamble's own macro spells out,
 `\newcommand{\cvcontact}{{\Large Quill Invented}\par}`, goes to the model with the gate passing, as
 0024's known limits say. Item 11 adds the reference page's own text as the detector's source, and
 the corpus-wide test. The runner's child passes the page's words now, `page` in the `document` it
@@ -204,11 +209,13 @@ SDK's `MockLanguageModelV4`, and the editor's the runner's model step on the sam
 `corpus name [--only <id>] [--json <file>] [--model]` runs in `corpus seed`'s pool, four children
 at 900 s a document, the probe's 600 s and 300 s for the model step; a document of many parts that
 takes longer is stopped there, and keeps the parts it filed. Each child builds the document's
-request as the seed's does, looks each macro with a key up in the cache, and, for a request with
-misses, runs the gate; with `--model` it asks the model for the misses, a call a part, each part
-within 300 s of its own, a failed call tried four more times past a free tier's rate, and files
-each part's answers as it validates. The parent stops asking once the provider has failed three
-documents in a row, as a spent quota fails every call after it. The key comes from
+request as the seed's does, with the upload's sources, but without the header's values, which are
+item 7's to find; drops the format the probe leaves in the session, as the probe runner's child
+does, until item 7's checks hook in; looks each macro with a key up in the cache, and, for a
+request with misses, runs the gate; with `--model` it asks the model for the misses, a call a part,
+each part within 300 s of its own, a failed call tried four more times past a free tier's rate, and
+files each part's answers as it validates. The parent stops asking once the provider has failed
+three documents in a row, as a spent quota fails every call after it. The key comes from
 `GEMINI_API_KEY`, or the provider's own name for it, `GOOGLE_GENERATIVE_AI_API_KEY`, and the model
 from `NAMING_MODEL`, all three listed, commented, in `apps/editor/.env.example`, without the `VITE_`
 prefix that would put a key in the page. A key of more than one line or with a space in it, as a
@@ -226,8 +233,10 @@ model's list price, `LIST_PRICES`: Gemini 3.8 Flash's paid tier as its pricing p
 2026-09-27, $0.75 a million tokens in, $0.075 from the cache and $3.75 out, through 2026-12-31,
 doubled from 2027-01-01; then the macros most often missing. The JSON names the model asked, if
 any, and the model whose folder was read. Without a key nothing is asked, and each document's misses
-are counted and named: the corpus's `jake-0001` has 11 macros, 3 of them answered by the seed and 8
-missing.
+are counted and named: the corpus's `jake-0001` has 11 macros, 2 of them answered by the seed and 9
+missing, `\resumeSubHeadingListEnd` among them, which has the seed's key, but whose answer names an
+opener by a key the fork's `\resumeSubHeadingListStart` has not, so the cache refuses it. Over the
+corpus, 14 of the 117 requests built are named whole, and 447 of their 1,092 macros are answered.
 
 Whether each document's import validates is item 7's assembly: the child marks the place its
 checks hook in, once every macro has an answer, on the same engine session.
@@ -251,7 +260,8 @@ checks hook in, once every macro has an answer, on the same engine session.
   cannot tell two macros apart, which a later version of the key may have to.
 - A definition that the document's own text masks has the document's own key (decision 0024), so
   the model's answer for it serves that document alone: the runner's test on the invented document
-  shows it for `\cvgap`, whose definition holds the invented surname.
+  shows it for `\cvgap`, whose definition holds the invented surname, given the name as item 7
+  will give it.
 - `NAMING_VERSION` stays 1: the prompt asks what decision 0024's contract asks. A change to what it
   asks, or to what an answer means, bumps it, and `PROMPT_HASH`'s test makes every edit to the
   prompt a decision about it.
