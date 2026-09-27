@@ -11,14 +11,24 @@
       {
         "index": 1,
         "meaning": "title",
-        "slot": "first",
+        "parts": [
+          {
+            "meaning": "title",
+            "slot": "first"
+          },
+          {
+            "meaning": "title",
+            "slot": "last"
+          }
+        ],
         "blank": "empty"
       }
     ],
     "repeatable": false,
-    "notes": "The whole name in one argument, which the port writes as {{first}} {{last}}. The class sets it through \\MakeUppercase, which the port took out and which changes the page, so it is no redefinition: the aligner's case folding makes it editable (decision 0022, case).",
+    "notes": "The whole name in one argument, the first name and the last a space apart, as the port writes it, {{first}} {{last}}. The class sets it through \\MakeUppercase, which the port took out and which changes the page, so it is no redefinition: the aligner's case folding makes it editable (decision 0022, case).",
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": []
 }

@@ -7,12 +7,13 @@
  * and the preamble's candidate settings, masked the same way but for numbers, units, colours and
  * known keywords. A macro that holds the person's data, as `\name{...}` stores it, goes by its name
  * alone. The schema refuses a call site that holds any letter but `x` and `X`, or any digit but
- * `0`, outside the names of commands and environments, whoever built it.
+ * `0`, outside the names of commands and environments, and a signature whose defaults do, whoever
+ * built it.
  */
 
 import { z } from "zod";
 import { NAMING_VERSION } from "./key.ts";
-import { holdsText } from "./mask.ts";
+import { defaultHoldsText, holdsText, specDefaults } from "./mask.ts";
 
 /** The engines an import compiles on. */
 export const ENGINES = ["pdftex", "xetex"] as const;
@@ -123,6 +124,20 @@ export const CallSite = z.strictObject({
 export type CallSite = z.infer<typeof CallSite>;
 
 /**
+ * A signature in xparse's syntax, whose defaults, `O{...}`, `D<>{...}`, `R<>{...}`, `G{...}` and
+ * `E{...}{...}`'s, hold no letter but `x` and `X` and no digit but `0` outside the names of
+ * commands (`defaultHoldsText`): a default is the definition's text, which may be the person's, as
+ * `O{quill@example.invalid}` is, and the builder sends it as its placeholder.
+ */
+const Signature = z
+  .string()
+  .max(256)
+  .refine((spec) => specDefaults(spec)?.every((each) => !defaultHoldsText(each)) === true, {
+    message:
+      "a signature is xparse's, and its defaults hold no letter but x or X, or digit but 0, outside the names of commands",
+  });
+
+/**
  * A template macro or environment the body calls, or the preamble calls to store the header's
  * text: its name, its signature in xparse's syntax where the engine could read it, its key, which
  * a macro that holds data has none of, its dependencies by name, each in `definitions`, the
@@ -133,7 +148,7 @@ export type CallSite = z.infer<typeof CallSite>;
 export const RequestMacro = z.strictObject({
   of: z.enum(["command", "environment"]),
   name: MacroName,
-  signature: z.string().max(256).optional(),
+  signature: Signature.optional(),
   key: Hash.optional(),
   dependencies: z.array(MacroName).max(REQUEST_CAPS.definitions),
   /** Whether its closure stopped at its cap, 64 definitions or 64 KB (decision 0020). */

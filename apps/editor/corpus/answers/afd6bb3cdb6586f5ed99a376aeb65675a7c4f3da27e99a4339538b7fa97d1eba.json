@@ -26,5 +26,6 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": []
 }

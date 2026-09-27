@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { keyOf, NAMING_VERSION, sha256 } from "@resume-tools/naming";
 import { strToU8, zipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
@@ -9,15 +10,18 @@ import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { readTree } from "./fonts";
 import { encodeLike, type Intake, intake } from "./intake";
-import { bodyOf, buildTree, readBody, type Uses, usesOf } from "./parse";
+import { buildRequest } from "./naming";
+import { bodyOf, bodyOfText, buildTree, parseBody, readBody, type Uses, usesOf } from "./parse";
 import { print } from "./print";
 import { compileLikeReference, type Reference, reference, sameGlyphs } from "./reference";
 import { isRefusal } from "./refusal";
 import {
   closure,
   type EngineSignatures,
+  environmentKeysOf,
   isData,
   isScratch,
+  keyInputs,
   keysOf,
   linesOf,
   MAX_CLOSURE_MACROS,
@@ -555,6 +559,98 @@ describe("a definition's closure", () => {
     expect((await keysOf({ macros: unset })).cvhead).toBe(keys.cvhead);
     const changed = { ...macros, cvsep: { ...definition({ macros }, "cvsep"), hash: "h3" } };
     expect((await keysOf({ macros: changed })).cvhead).not.toBe(keys.cvhead);
+  });
+});
+
+describe("an environment's key", () => {
+  /**
+   * An invented template: an entry, a list whose `\begin` and `\end` codes both hand their work to
+   * one gap, and a note whose `\end` code is empty, which holds data as the engine reads it.
+   */
+  const MEANINGS: Record<string, string> = {
+    cventry: "macro:#1#2->\\textbf {#1}\\hfill {\\color {gray}#2}\\par ",
+    cvlist: "macro:->\\begin {itemize}\\cvlist@gap ",
+    endcvlist: "macro:->\\end {itemize}\\cvlist@gap \\cvlist@rule ",
+    "cvlist@gap": "macro:->\\vspace {-2pt}",
+    "cvlist@rule": "macro:->\\hrule ",
+    cvnote: "macro:->\\par \\small \\itshape ",
+  };
+
+  async function inventedSignatures(meanings = MEANINGS): Promise<EngineSignatures> {
+    const texts = new Map(Object.entries(meanings));
+    const macros: EngineSignatures["macros"] = {};
+    for (const [name, meaning] of texts)
+      macros[name] = { meaning, hash: await sha256(meaning), ...closure(name, texts) };
+    macros.endcvnote = { kind: "data", length: 0 };
+    const template = (spec: string) => ({
+      kind: "template" as const,
+      spec,
+      how: "meaning" as const,
+    });
+    return {
+      engine: "pdftex",
+      commands: { cventry: template("m m") },
+      environments: { cvlist: template(""), cvnote: template("") },
+      macros,
+      truncated: false,
+      ms: 0,
+    };
+  }
+
+  const BODY = String.raw`
+\begin{cvlist}
+\item Invented a thing for an invented client.
+\end{cvlist}
+\begin{cvnote}
+An invented note.
+\end{cvnote}
+\cventry{Invented Role}{Invented Labs}
+`;
+
+  test("is the one the request gives it, its end code first and both closures after", async () => {
+    const found = await inventedSignatures();
+    const tree = parseBody(bodyOfText(BODY), found);
+    if (isRefusal(tree)) throw new Error(tree.message);
+    const request = await buildRequest(tree, found, { macros: [], candidates: [] }, "");
+    const keys = await keysOf(found);
+    for (const [of, name] of [
+      ["environment", "cvlist"],
+      ["environment", "cvnote"],
+      ["command", "cventry"],
+    ] as const) {
+      const macro = request.macros.find((each) => each.of === of && each.name === name);
+      expect(macro?.key, name).toMatch(/^[0-9a-f]{64}$/);
+      expect(keys[name], name).toBe(macro?.key);
+    }
+    expect(await environmentKeysOf(found)).toEqual({ cvlist: keys.cvlist, cvnote: keys.cvnote });
+    // The list's key covers its end code and the rule only that hands its work to, the gap once.
+    const inputs = keyInputs(found, "environment", "cvlist");
+    expect(inputs?.dependencies.map(([name]) => name)).toEqual([
+      "endcvlist",
+      "cvlist@gap",
+      "cvlist@rule",
+    ]);
+    expect(await keyOf(NAMING_VERSION, inputs?.hash ?? "", inputs?.dependencies ?? [])).toBe(
+      keys.cvlist,
+    );
+    // An end code that holds data is left out, as every dependency that holds data is: the note's
+    // key is its begin code's alone.
+    expect(keyInputs(found, "environment", "cvnote")?.dependencies).toEqual([]);
+    expect(keys.cvnote).toBe((await keysOf({ macros: found.macros })).cvnote);
+    // Its begin code alone, as a command, is keyed without the end.
+    expect(keys.cvlist).not.toBe((await keysOf({ macros: found.macros })).cvlist);
+  });
+
+  test("moves when the end code does, which the begin code's own key never sees", async () => {
+    const found = await inventedSignatures();
+    const moved = await inventedSignatures({
+      ...MEANINGS,
+      endcvlist: "macro:->\\end {itemize}\\cvlist@gap \\bigskip ",
+    });
+    expect((await keysOf(moved)).cvlist).not.toBe((await keysOf(found)).cvlist);
+    expect((await keysOf({ macros: moved.macros })).cvlist).toBe(
+      (await keysOf({ macros: found.macros })).cvlist,
+    );
   });
 });
 
