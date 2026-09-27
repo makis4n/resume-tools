@@ -1,18 +1,24 @@
 /**
- * Reading the naming step's cache (milestone 3 item 6, decision 0024), and checking a request's
- * keys. A cache is anything that gives back what was put under a key: the committed answers under
- * `corpus/answers/`, the runner's ignored folder, the service's KV (items 9 and 10). What it gives
- * back is not trusted: `answerFor` returns an answer only when it is a stored answer this version
- * reads, given under the key asked for, and, asked for a document's macro, one that fits it.
+ * Reading and filing the naming step's cache (milestone 3 items 6 and 9, decisions 0024 and 0027),
+ * and checking a request's keys. A cache is anything that gives back what was put under a key: the
+ * committed answers under `corpus/answers/`, the runner's ignored folder, the service's KV (item
+ * 10). What it gives back is not trusted: `answerFor` returns an answer only when it is a stored
+ * answer this version reads, given under the key asked for, and, asked for a document's macro, one
+ * that fits it. What goes in is checked the same way (`storable`), and a model's answer becomes
+ * stored answers only through `storedAnswersOf`, by the keys the request's own definitions give.
  */
 
-import { type ListAnswer, StoredAnswer } from "./answer.ts";
+import { type ListAnswer, type ModelNaming, type PartnerKeys, StoredAnswer } from "./answer.ts";
 import { type Dependency, keyOf, NAMING_VERSION, sha256 } from "./key.ts";
 import type { NamingRequest, RequestMacro } from "./request.ts";
 
-/** What a cache gives back under a key: a stored answer, its JSON, or nothing. */
+/**
+ * A cache of stored answers by key: `get` gives back a stored answer, its JSON, or nothing; `put`
+ * files one under its key, and refuses anything that is not a stored answer under its own key.
+ */
 export interface AnswerCache {
   get(key: string): unknown | Promise<unknown>;
+  put(key: string, answer: StoredAnswer): void | Promise<void>;
 }
 
 /**
@@ -50,14 +56,17 @@ export interface RefusedAnswer {
  * and one whose closer is a bare `\end{itemize}` that another template's list ends with does not
  * take that list's pairing.
  */
-export function answerFor(cache: AnswerCache, key: string): Promise<StoredAnswer | undefined>;
 export function answerFor(
-  cache: AnswerCache,
+  cache: Pick<AnswerCache, "get">,
+  key: string,
+): Promise<StoredAnswer | undefined>;
+export function answerFor(
+  cache: Pick<AnswerCache, "get">,
   key: string,
   macro: AskingMacro,
 ): Promise<StoredAnswer | RefusedAnswer | undefined>;
 export async function answerFor(
-  cache: AnswerCache,
+  cache: Pick<AnswerCache, "get">,
   key: string,
   macro?: AskingMacro,
 ): Promise<StoredAnswer | RefusedAnswer | undefined> {
@@ -99,6 +108,149 @@ export async function answerFor(
 }
 
 /**
+ * What a cache's `put` files under `key`: the answer, when it is a stored answer this naming version
+ * reads and `key` is its own; otherwise it throws, saying what is wrong by the field, never by a
+ * value. Every cache checks with it, so that none holds what `answerFor` would not give back.
+ */
+export function storable(key: string, answer: unknown): StoredAnswer {
+  const parsed = StoredAnswer.safeParse(answer);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new Error(
+      `Not a stored answer: ${issue?.path.map(String).join(".") || "the answer"}: ${issue?.message ?? "does not validate"}`,
+    );
+  }
+  if (parsed.data.version !== NAMING_VERSION || parsed.data.key !== key)
+    throw new Error("A stored answer is filed under its own key, and of this naming version");
+  return parsed.data;
+}
+
+/** A macro of a request, as what cannot be filed names it: its name, and its kind. */
+export type FilingMacro = Pick<RequestMacro, "of" | "name">;
+
+/**
+ * What a model's answer to a request files: one stored answer a key, and what it leaves unfiled.
+ * A key leaves the name out, so two macros of one definition and closure share one, and one file
+ * serves both (decision 0024): their answers are filed once where they agree, and not at all where
+ * they do not, since whichever were filed would be served to the other.
+ */
+export interface Filing {
+  /** One stored answer for each key whose macros' answers agree, the first macro's by name. */
+  answers: StoredAnswer[];
+  /** The keys whose macros the model answered otherwise, each with its macros: none is filed. */
+  conflicts: { key: string; macros: FilingMacro[] }[];
+  /** The macros whose list names a partner no command of the request is: not filed. */
+  invalid: FilingMacro[];
+}
+
+/**
+ * A stored answer as answers under one key are compared: all of it but its name and the names its
+ * list gives its partners, which may differ where the partners are one definition, as the partners'
+ * keys, which are compared, say (`partnerKeys`); in an order of its own, so that the order its
+ * fields were written in does not count.
+ */
+function comparable(stored: StoredAnswer): string {
+  const { name: _name, answer, ...rest } = stored;
+  const list =
+    answer.list === undefined
+      ? undefined
+      : { ...answer.list, closedBy: undefined, openedBy: undefined };
+  return JSON.stringify({ ...rest, answer: { ...answer, list } }, (_key, value: unknown) =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : value,
+  );
+}
+
+/**
+ * The stored answers a model's answer to a request files (`Filing`): for each macro of the request
+ * that has a key and an answer, by its name and whether a command or an environment, a stored
+ * answer under the key its definitions give (`requestKey`), with its own definition's hash, the
+ * dependencies its key is computed from, its name, the request's family, the answer, the keys of
+ * the partners its list names, each a command of the request found by its name, `reviewed: false`,
+ * and the model's id as its source; then one a key, where the answers under it agree. What the
+ * model answered of anything else, and the preamble's answer, which no key files, are left out. It
+ * stores nothing: the caller files them, after `checkRequest` (decision 0024), and asks the model
+ * again for the macros it cannot.
+ */
+export async function storedAnswersOf(
+  request: NamingRequest,
+  naming: ModelNaming,
+  source: `model:${string}`,
+): Promise<Filing> {
+  const definitions = new Map(request.definitions.map((each) => [each.name, each]));
+  const answers = new Map(naming.macros.map((each) => [`${each.of}|${each.name}`, each.answer]));
+  // A list's partners are the request's commands, found by their keys (decision 0024).
+  const commands = new Map<string, string>();
+  for (const macro of request.macros) {
+    const key = macro.of === "command" ? await requestKey(request, macro) : undefined;
+    if (key !== undefined) commands.set(macro.name, key);
+  }
+  const byKey = new Map<string, { macros: FilingMacro[]; stored: StoredAnswer[] }>();
+  const invalid: FilingMacro[] = [];
+  for (const macro of request.macros) {
+    const answer = answers.get(`${macro.of}|${macro.name}`);
+    const own = definitions.get(macro.name);
+    const key = await requestKey(request, macro);
+    if (answer === undefined || own?.kind !== "definition" || key === undefined) continue;
+    const partnerKeys: PartnerKeys = {};
+    let partnerless = false;
+    for (const which of ["closedBy", "openedBy"] as const) {
+      const named = answer.list?.[which];
+      if (named === undefined) continue;
+      const partner = commands.get(named);
+      if (partner === undefined) partnerless = true;
+      else partnerKeys[which] = partner;
+    }
+    if (partnerless) {
+      invalid.push({ of: macro.of, name: macro.name });
+      continue;
+    }
+    const stored = StoredAnswer.parse({
+      version: request.version,
+      key,
+      hash: own.hash,
+      of: macro.of,
+      name: macro.name,
+      ...(request.family === undefined ? {} : { family: request.family }),
+      answer,
+      reviewed: false,
+      source,
+      dependencies: dependenciesOf(request, macro),
+      ...(Object.keys(partnerKeys).length === 0 ? {} : { partnerKeys }),
+    });
+    const group = byKey.get(key) ?? { macros: [], stored: [] };
+    group.macros.push({ of: macro.of, name: macro.name });
+    group.stored.push(stored);
+    byKey.set(key, group);
+  }
+  const filing: Filing = { answers: [], conflicts: [], invalid };
+  for (const [key, group] of byKey) {
+    const [first] = group.stored;
+    if (first === undefined) continue;
+    const agreed = comparable(first);
+    if (group.stored.every((each) => comparable(each) === agreed)) filing.answers.push(first);
+    else filing.conflicts.push({ key, macros: group.macros });
+  }
+  return filing;
+}
+
+/**
+ * The dependencies a request macro's key is computed from: its closure's definitions that are
+ * code, each by its name and hash, in the closure's order, data left out (`keyOf`).
+ */
+function dependenciesOf(
+  request: Pick<NamingRequest, "definitions">,
+  macro: Pick<RequestMacro, "dependencies">,
+): Dependency[] {
+  const definitions = new Map(request.definitions.map((each) => [each.name, each]));
+  return macro.dependencies.flatMap((name) => {
+    const found = definitions.get(name);
+    return found?.kind === "data" ? [] : [[name, found?.hash ?? null] as const];
+  });
+}
+
+/**
  * A request macro's key, from the request alone: its own definition's hash and its dependencies'
  * that are code, by name, in its closure's order, under the request's version. Undefined for a
  * macro whose own definition is data, which has no key.
@@ -107,14 +259,9 @@ export function requestKey(
   request: Pick<NamingRequest, "version" | "definitions">,
   macro: Pick<RequestMacro, "name" | "dependencies">,
 ): Promise<string> | undefined {
-  const definitions = new Map(request.definitions.map((each) => [each.name, each]));
-  const own = definitions.get(macro.name);
+  const own = request.definitions.find((each) => each.name === macro.name);
   if (own?.kind !== "definition") return undefined;
-  const dependencies: Dependency[] = macro.dependencies.flatMap((name) => {
-    const found = definitions.get(name);
-    return found?.kind === "data" ? [] : [[name, found?.hash ?? null] as const];
-  });
-  return keyOf(request.version, own.hash, dependencies);
+  return keyOf(request.version, own.hash, dependenciesOf(request, macro));
 }
 
 /** What `checkRequest` found wrong with a request: a definition's hash, or a macro's key. */

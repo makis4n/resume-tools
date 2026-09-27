@@ -18,6 +18,15 @@
 export const NAMING_VERSION = 1;
 
 /**
+ * The SHA-256 of the naming step's prompt, its instructions and how it lays a request out
+ * (`prompt.ts`), as the prompt's test computes it: an edit to the prompt fails that test until this
+ * is its hash again, and whoever updates it decides whether the edit changes what the prompt asks,
+ * which bumps NAMING_VERSION, so that answers to the old question are no longer read (decision
+ * 0027). An edit that changes only how the same question is put keeps the version.
+ */
+export const PROMPT_HASH = "baf9b9bf1eab753d3b42db130aa486437b5a829860fecb9d46c3e99bb7a7647f";
+
+/**
  * A dependency as a key takes it: its name, and the hash of its definition, or null when the
  * definition is missing, as the closure of a truncated printout can name one. A dependency that
  * holds data is left out of the key: which of a class's fields a preamble sets, and what it sets
