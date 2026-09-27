@@ -337,24 +337,38 @@ back. `corpus parse` runs it over the corpus.
 - Nesting of at most 64 groups and environments, read before unified-latex parses, since its parse
   recurses with them, and a tree of at most 64 levels, since a list and its items nest twice.
 - A tree of at most 200,000 nodes. Past any cap the parse is refused with a plain message, which
-  names no source, under a new refusal reason, `parse`.
-- The parser's work grows linearly: `parse.test.ts` bounds a megabyte of groups nested 50 deep and
-  a megabyte of short calls against a tenth of each, in CPU time. A megabyte of either takes 0.7
-  to 0.8 s to parse, unified-latex's parse 0.6 to 0.7 s of it.
+  names no source, under a new refusal reason, `parse`. `parse.test.ts` tries the node cap at a
+  hundred nodes, given to the tree's builder in the cap's place, since a body of 200,000 nodes takes
+  gigabytes of heap to parse (below).
+- The parser's work grows linearly: `parse.test.ts` bounds 100 KB of groups nested 50 deep and
+  100 KB of short calls against a tenth of each, in CPU time. A megabyte of either takes 0.7 to
+  0.8 s to parse, unified-latex's parse 0.6 to 0.7 s of it.
+- unified-latex's parse keeps about 2 KB of heap for each byte of the body while it runs, since its
+  grammar keeps what each of its rules read at each place: a megabyte takes about 2 GB, and 150,000
+  short paragraphs took more than 3 GB. Bodies of a megabyte and more ran a CI runner's worker out
+  of heap, so `parse.test.ts` parses none past 128 KB. Its trees of 150,000 paragraphs and of a
+  group of 150,000 words, more than a spread passes as arguments, are built from the nodes
+  unified-latex gives those bodies, made from its parse of one paragraph and of one word.
 - Every look ahead is bounded, where the first version's were not and the review timed openers that
   never close growing with the square of the body: a delimited argument's closer is looked for up
   to the paragraph's end or 2,048 characters on, whichever comes first (`MAX_DELIMITED`); an
   address, an `\href`'s options and a `\verb`'s text on their line and 2,048 characters at most,
   each line's end found once; and conditionals are matched to their `\else` and `\fi` in one pass a
-  sequence. `parse.test.ts` bounds `\\[` repeated to 192 KB, `\item[x ` outside a list to 256 KB and
-  `\iftrue` to 200 KB, parsed, and `\url{` to 400 KB on one line and `\verb!x!` to 1.4 MB, read
-  before unified-latex parses, each against a tenth of it. 192 KB of `\\[` took 25 s to build a
-  tree of, and takes 0.75 s now; 400 KB of `\url{` took 24 s to read, and takes 0.18 s.
+  sequence. `parse.test.ts` bounds `\\[` repeated to 96 KB, `\item[x ` outside a list to 128 KB and
+  `\iftrue` to 100 KB, parsed, half the sizes the review timed, and `\url{` to 400 KB on one line
+  and `\verb!x!` to 1.4 MB, read before unified-latex parses, each against a tenth of it. 192 KB of
+  `\\[` took 25 s to build a tree of, and takes 0.75 s now; 400 KB of `\url{` took 24 s to read,
+  and takes 0.18 s. With the look ahead unbounded again, 96 KB of `\\[` costs 87 times a tenth of
+  it and 128 KB of `\item[x ` 76 times, where 192 KB and 256 KB cost 96 and 90 times; with each
+  conditional matched on its own, 100 KB of `\iftrue` costs 118 times.
 - Each of those bounds is a ratio alone, the fastest of five runs of each size: a tenth costs a
-  tenth, 10 to 12 times at rest, and up to 20 times while the whole suite runs beside it, the
-  megabyte's larger heap slowed the most; the first version's openers cost 88 to 141 times. So
-  each is bound by 50 times, as the snippet parse is, with no ceiling in milliseconds, which load
-  can push a run past: the first bounds, 20 times and 15 s, failed under load.
+  tenth, 9 to 14 times at rest, and up to 16 times while the whole suite runs beside it; the first
+  version's openers cost 88 to 141 times. So each is bound by 50 times, as the snippet parse is,
+  with no ceiling in milliseconds, which load can push a run past: the first bounds, 20 times and
+  15 s, failed under load. A bound of 50 times fails only a square that outweighs the linear work
+  at a tenth of the size: taking each call's arguments out of the array and putting them back costs
+  29 times a tenth at a megabyte of short calls and 13 times at 100 KB, so it is `arguments.test.ts`
+  that checks the reader leaves the array as it is.
 
 ### Dependencies
 

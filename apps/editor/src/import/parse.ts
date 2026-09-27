@@ -729,6 +729,8 @@ class Capped extends Error {}
 interface Context {
   source: string;
   signatures: Signatures | undefined;
+  /** The most nodes the tree may have. */
+  maxNodes: number;
   count: { nodes: number; levels: number };
   level: number;
 }
@@ -736,12 +738,19 @@ interface Context {
 /**
  * A body's tree, its commands' arguments read by the table and by what the engine said of the
  * template's; or a refusal when the tree is past its caps. A body read once builds one tree, since
- * reading arguments takes them out of unified-latex's nodes.
+ * reading arguments takes them out of unified-latex's nodes. `maxNodes` caps its nodes:
+ * PARSE_CAPS.nodes, or a smaller cap where a test tries it, since a body with as many nodes as the
+ * cap takes gigabytes of heap to parse.
  */
-export function buildTree(read: ReadBody, signatures?: Signatures): Tree | Refusal {
+export function buildTree(
+  read: ReadBody,
+  signatures?: Signatures,
+  maxNodes: number = PARSE_CAPS.nodes,
+): Tree | Refusal {
   const context: Context = {
     source: read.body.text,
     signatures,
+    maxNodes,
     count: { nodes: 0, levels: 0 },
     level: 0,
   };
@@ -765,14 +774,18 @@ export function buildTree(read: ReadBody, signatures?: Signatures): Tree | Refus
 }
 
 /** A body's tree (`readBody`, then `buildTree`), or a refusal. */
-export function parseBody(body: Body, signatures?: Signatures): Tree | Refusal {
+export function parseBody(
+  body: Body,
+  signatures?: Signatures,
+  maxNodes: number = PARSE_CAPS.nodes,
+): Tree | Refusal {
   const read = readBody(body);
-  return "refused" in read ? read : buildTree(read, signatures);
+  return "refused" in read ? read : buildTree(read, signatures, maxNodes);
 }
 
 /** A node made, counted against the cap, at the context's level. */
 function made<T extends Node>(context: Context, node: T): T {
-  if (++context.count.nodes > PARSE_CAPS.nodes) throw new Capped(TOO_MANY);
+  if (++context.count.nodes > context.maxNodes) throw new Capped(TOO_MANY);
   if (context.level > context.count.levels) context.count.levels = context.level;
   return node;
 }
