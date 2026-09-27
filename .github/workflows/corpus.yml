@@ -23,6 +23,9 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The version of opentype.js installed, which reads the fonts' tables into the manifest.
+      - id: fontreader
+        run: echo "opentype=$(node -p "require('./apps/editor/node_modules/opentype.js/package.json').version")" >> "$GITHUB_OUTPUT"
       # The engine and TeX Live tree under editor.yml's key, so that either workflow's build serves
       # the other: the survey checks every document against the tree's file list.
       - uses: actions/cache@v4
@@ -30,7 +33,7 @@ jobs:
           path: |
             apps/editor/.engine
             !apps/editor/.engine/downloads
-          key: engine-${{ hashFiles('apps/editor/scripts/fetch-engine.ts', 'apps/editor/scripts/containers.ts', 'apps/editor/scripts/fontconfig.ts', 'apps/editor/scripts/tlpdb.ts', 'apps/editor/scripts/fontmaps.ts', 'apps/editor/src/page/fontmap.ts', 'apps/editor/scripts/fonttable.ts') }}
+          key: engine-${{ hashFiles('apps/editor/scripts/fetch-engine.ts', 'apps/editor/scripts/containers.ts', 'apps/editor/scripts/fontconfig.ts', 'apps/editor/scripts/tlpdb.ts', 'apps/editor/scripts/fontmaps.ts', 'apps/editor/src/page/fontmap.ts', 'apps/editor/scripts/fonttable.ts') }}-opentype-${{ steps.fontreader.outputs.opentype }}
       - run: pnpm --filter @resume-tools/editor fetch-engine
       # GitHub allows 60 requests an hour without a token, and the fetch asks once per document.
       - run: pnpm --filter @resume-tools/editor corpus fetch

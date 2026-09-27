@@ -15,10 +15,22 @@ export interface EngineManifest {
   files: Record<string, number>;
   /**
    * Every OpenType and TrueType file of the tree's `fonts/opentype` and `fonts/truetype` folders,
-   * by its path, as its own tables describe it (`TreeFont`, decision 0023). Manifests written
-   * before layout 7 have none.
+   * by its path, as its own tables describe it (`TreeFont`, decision 0023). A manifest written
+   * before layout 7 has none, and the import pipeline's reader of the tree refuses it (`readTree`).
    */
   fonts?: Record<string, TreeFont>;
+  /**
+   * What read `fonts`: the version of opentype.js and a SHA-256 of `scripts/fonttable.ts`, which
+   * `fetch-engine` compares to rebuild the table when either changes. A manifest written before
+   * the reader was recorded has none, and is rebuilt.
+   */
+  fontReader?: FontReader;
+}
+
+/** What read a manifest's `fonts` table (`EngineManifest.fontReader`). */
+export interface FontReader {
+  opentype: string;
+  table: string;
 }
 
 /**

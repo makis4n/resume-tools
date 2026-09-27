@@ -250,11 +250,12 @@ the 17 pdfTeX documents taken on XeTeX, 8 have no reference there, 8 rewrite and
 the layout difference. The survey counts 65 XeTeX documents, of which 41 name no font the tree
 lacks; the rest were refused before the rewrite, as decision 0019's table says.
 
-Against item 19's bar, 5 s from file to page for a pdfTeX import: a XeTeX import compiles the
-reference, a median of 2.8 s here, then the check, the whole document, the dump and the body from
-the format, a median of 1.5 s more, 4.3 s in all at four documents at a time; the slowest, 12.9 s.
-The body from the format takes a third of the whole compile's time, which is what every edit after
-the import costs.
+Against item 19's bar, 5 s from file to page for a pdfTeX import, the 24 XeTeX documents that
+rewrite and match: a XeTeX import compiles the reference, a median of 2.8 s here, then the check,
+the whole document, the dump and the body from the format, a median of 1.5 s more, 4.4 s in all at
+four documents at a time; the slowest, 9.3 s. The pdfTeX documents taken on XeTeX are left out of
+these, since their import compiles on pdfTeX; the slowest of them took 13.0 s. The body from the
+format takes a third of the whole compile's time, which is what every edit after the import costs.
 
 ## Consequences
 
@@ -270,8 +271,38 @@ the import costs.
 - The overlay's rows are set with the features the shape loads, from the package, so an
   imported package's fields are measured as XeTeX sets them. A font whose glyphs on the page do
   not tell two ways apart, as Roboto's small capitals where they set only digits, which `smcp`
-  leaves as they are, takes the first way,
-  which sets those glyphs alike but may measure a letter typed after them otherwise.
-- The corpus's one layout difference, a body from the format that sets a page lower than the
-  whole document does, is not explained; the check refuses it, which is safe.
-- The manifest is larger by 0.14 MB, which a first load fetches once.
+  leaves as they are, takes the first way, which sets those glyphs alike but may measure a letter
+  typed after them otherwise.
+- A glyph reads first as what the character map gives it, and as the glyph a substitution makes
+  it of only after, and only for the features some shape of the package loads its file with
+  (`fontFeatures`, `glyphTextOf`): Source Sans Pro's ² and its modifier letters, which its `sups`
+  makes of the 2 and of their letters, read as themselves, as Roboto's ², which its `frac` makes,
+  does. A reader with no package, as the reference's, takes every feature. The reading is bounded,
+  since the reference reads an upload's fonts too: a glyph the file has not is read as nothing, a
+  lookup's substitution of a glyph is its first subtable's, once, and a file gives at most 4,096
+  subtables, 262,140 entries of their coverage and 65,535 substitutions. An invented font of 400
+  subtables whose ranges run to 65,535 reads in 0.16 ms of CPU time and keeps 0.45 MB, as one whose
+  ranges end at its last glyph does; read a glyph at a time, it took 1.9 s.
+- The corpus's one layout difference, the AltaCV fork of the table, came of the format. `\dump`
+  flushes the page as `\end` does, and LaTeX put it into `\@holdpg`: a `\topskip`-high box, and
+  what the preamble wrote onto the page as it ran, hyperref's PDF version and dvipdfmx's flags,
+  xcolor's first black and, in the fork, a page colour. The format kept it, the fork's paracol,
+  opening at the top of its page, set it above its columns, and a body from any format lost what
+  the preamble wrote, as decision 0014 found. Each job of a format now starts as the whole document
+  does (`DUMP_END` in `src/engine/session.ts`): what the preamble wrote back on the page, less what
+  `\dump` added, `\@holdpg` void, and the output penalty, the dead cycles and `\prevdepth` as the
+  preamble left them. Run again, the fork rewrites and matches, and so do 33 documents, none
+  refused for its glyphs; the invented XeTeX template's body sets the whole document's specials and
+  PDF; AltaCV's port, which opens paracol below its header, and the other curated templates set
+  every glyph where they did.
+- The manifest is larger by 0.14 MB, which a first load fetches once. Layout 7 moves the tag the
+  engine and the tree are served under (`engineTag`), so a returning browser fetches the engine
+  and every file of the tree it reads again, and drops every format it kept. The table alone did
+  not need that: the browser reads the manifest afresh on every load. The formats had to go all
+  the same, since one dumped before this item's session keeps the leftover box and loses what the
+  preamble wrote; but a later change to the manifest alone should keep the layout, as a change to
+  the table's reader does: `fetch-engine` records the version of opentype.js and a hash of
+  `scripts/fonttable.ts` in the manifest (`fontReader`) and builds again when either changes, and
+  CI's cache key has both.
+- `readTree` takes the table always, and refuses a manifest without one; the survey's `--tree`
+  takes a manifest of layout 7 or later, where it borrowed `.engine/`'s table for an older one.

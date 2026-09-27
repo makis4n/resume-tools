@@ -7,7 +7,7 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
-import { defaultControls, fontFiles } from "../templates/package";
+import { defaultControls, fontFeatures, fontFiles } from "../templates/package";
 import { bound, fastestAsync } from "../test/timing";
 import { type DviDocument, type PageItem, parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
@@ -828,6 +828,44 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
       expect(glyphAtOffset("summary.title", "l\u{b7}l")?.text).toBe("l\u{b7}l");
       expect(glyphAtOffset("summary.text", "\u{1e5b}")?.text).toBe("\u{1e5b}");
       expect(glyphAtOffset("summary.text", "\u{1e0d}")?.text).toBe("\u{1e0d}");
+    }, 30_000);
+
+    it("reads a ² its fonts also make of the 2 as itself, and as 2 only under their features", async () => {
+      // Roboto's frac and Source Sans Pro's sups make the glyph the map gives U+00B2 of the two;
+      // the template loads neither file with either feature (fontFeatures).
+      const resume = structuredClone(sample);
+      const [summary] = resume.sections;
+      if (summary?.kind !== "paragraph") throw new Error("the sample starts with its summary");
+      summary.title = "Summary in m\u{b2}";
+      summary.text = [{ text: "Printed 40 m\u{b2} of posters." }];
+      const format = generateFormat(pkg, values);
+      const body = generateBody(pkg, resume, values);
+      const compiled = session.compile("xetex", format.name, body.latex, { job: "superior" });
+      if (!compiled.output) throw new Error(compiled.error);
+      const draw = (features?: ReadonlyMap<string, readonly string[]>) =>
+        drawPage(compiled.output as Uint8Array, fonts, body.texts, 0, { features });
+      const two = (page: DrawnPage, id: string) =>
+        page.fields.get(id)?.glyphs.find((g) => g.offset === body.texts.get(id)?.indexOf("\u{b2}"));
+      const loaded = await draw(fontFeatures(pkg));
+      const unknown = await draw();
+      for (const id of ["summary.title", "summary.text"]) {
+        expect(two(loaded, id)?.text, id).toBe("\u{b2}");
+        expect(two(loaded, id)?.alternatives, id).toBeUndefined();
+        // A page drawn without the package's features takes every feature's.
+        expect(two(unknown, id)?.text, id).toBe("\u{b2}");
+        expect(two(unknown, id)?.alternatives, id).toEqual(["2"]);
+      }
+      expect([loaded.unmatched, unknown.unmatched]).toEqual([0, 0]);
+      // Source Sans Pro loaded with sups: its ² stands for the 2 as well, and Roboto's does not.
+      const sups = new Map(
+        [...fontFeatures(pkg)].map(([file, ways]) => [
+          file,
+          file.startsWith("SourceSansPro") ? ways.map((way) => `${way};+sups`) : ways,
+        ]),
+      );
+      const heading = await draw(sups);
+      expect(two(heading, "summary.title")?.alternatives).toEqual(["2"]);
+      expect(two(heading, "summary.text")?.alternatives).toBeUndefined();
     }, 30_000);
 
     it("sets the base of an accented letter its fonts lack, where the letter is", async () => {

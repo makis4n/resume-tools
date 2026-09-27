@@ -120,6 +120,41 @@ const ENV: Record<string, string> = {
 /** The start of the heap restored after every run; all of the engine's state fits in it. */
 const HEADER_BYTES = 2 ** 26;
 
+/**
+ * What a dump runs after the preamble: a line for `\everyjob`, which TeX runs as a job loads the
+ * format and before it reads the body, then `\dump`.
+ *
+ * TeX dumps only an empty page with no dead cycles, and LaTeX's preamble leaves neither: the class's
+ * `\onecolumn` clears a page as it loads, a dead cycle, and what a package writes onto the page as
+ * the preamble runs stays there, as hyperref's PDF version and dvipdfmx's flags, and xcolor's
+ * first colour and a page colour, which a whole compile ships with its first page. So `\dump`, as
+ * `\end` does, first appends `\hbox to\hsize{}\vfill\penalty-'10000000000` and runs the output
+ * routine, which LaTeX's `\@specialoutput` answers by putting the page into `\@holdpg`: what the
+ * preamble wrote, the `\topskip` glue, the box and the `\vfill`. The format kept all that and the
+ * output penalty that fired it, and a body compiled from it started with them: what the preamble
+ * wrote never reached the page (decision 0014), and a page whose first output finds an empty page,
+ * as paracol's does at the top of one, set its text below the box (decision 0023). So each job of
+ * the format starts as the whole document does: what the preamble wrote back on the page, less
+ * what `\dump` added, the glue only when no box stood on the page before it, `\@holdpg` void, and
+ * the output penalty, the dead cycles and the main list's `\prevdepth` as the preamble left them,
+ * which the line reads before `\dump`.
+ */
+const DUMP_END = String.raw`\begingroup\catcode64=11\relax
+\edef\x{\endgroup\everyjob{\the\everyjob
+  \begingroup
+    \setbox0=\vbox{\unvbox\@holdpg
+      \noexpand\ifnum\lastnodetype=11 \unskip\noexpand\fi
+      \noexpand\ifnum\lastnodetype=1 \setbox0=\lastbox\noexpand\fi
+      \ifdim\pagegoal=\maxdimen\noexpand\ifnum\lastnodetype=11 \unskip\noexpand\fi\fi}%
+    \unvbox0
+  \endgroup
+  \global\setbox\@holdpg=\box\voidb@x
+  \global\outputpenalty=\the\outputpenalty\relax
+  \deadcycles=\the\deadcycles\relax
+  \prevdepth=\the\prevdepth\relax}}\x
+\dump
+`;
+
 /** A file in Emscripten's in-memory file system. */
 interface MemfsNode {
   usedBytes: number;
@@ -626,7 +661,7 @@ export class EngineSession {
     let format: Uint8Array | undefined;
     try {
       this.writeFiles(folder, files);
-      this.engine.FS.writeFile(`${folder}/${name}.tex`, `${preamble}\n\\dump\n`);
+      this.engine.FS.writeFile(`${folder}/${name}.tex`, `${preamble}\n${DUMP_END}`);
       run = this.run(
         [spec.program, "-ini", `-jobname=${name}`, ...spec.args, `&${spec.program}`, `${name}.tex`],
         folder,

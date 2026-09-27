@@ -1,7 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Font, Glyph, Path, parse } from "opentype.js";
 import { describe, expect, test } from "vitest";
 import type { EngineManifest } from "../src/engine/manifest";
@@ -32,11 +43,21 @@ const SOURCES = [
   "src/page/fontmap.ts",
 ];
 
+/** The files a finished build holds besides the manifest, which the script names `REQUIRED`. */
+const REQUIRED = [
+  ...(/const REQUIRED = \[([^\]]*)\]/.exec(readFileSync(SCRIPT, "utf8"))?.[1] ?? "").matchAll(
+    /"([^"]+)"/g,
+  ),
+].map((match) => match[1] ?? "");
+
 /**
  * Run a copy of the script from a folder of its own, where `.engine/` holds only `manifest`, and
  * with an empty release folder, so a run that goes on to build stops at the first release file.
+ * `finished` puts the engine's loaders and the files a build requires there too, empty, and the
+ * editor's packages beside the script, as a finished build and a checkout have them, so that only
+ * the manifest can tell the script to build.
  */
-function run(manifest: string) {
+function run(manifest: string, finished = false) {
   const dir = mkdtempSync(join(tmpdir(), "fetch-engine-"));
   try {
     for (const folder of ["scripts", "src/page", ".engine", "release"])
@@ -45,6 +66,19 @@ function run(manifest: string) {
     for (const source of SOURCES)
       copyFileSync(new URL(`../${source}`, import.meta.url), join(dir, source));
     writeFileSync(join(dir, ".engine/manifest.json"), manifest);
+    if (finished) {
+      symlinkSync(
+        fileURLToPath(new URL("../node_modules", import.meta.url)),
+        join(dir, "node_modules"),
+      );
+      for (const name of ["busytex.js", "busytex.mjs", "busytex.wasm"])
+        writeFileSync(join(dir, ".engine", name), "");
+      for (const path of REQUIRED) {
+        const at = join(dir, ".engine/files", path);
+        mkdirSync(dirname(at), { recursive: true });
+        writeFileSync(at, "");
+      }
+    }
     return spawnSync(
       process.execPath,
       [join(dir, "scripts/fetch-engine.ts"), "--from", join(dir, "release")],
@@ -67,6 +101,39 @@ describe("fetch-engine", () => {
     expect(stdout).toContain("Copying the release from");
     expect(stderr).toContain("busytex.js");
     expect(status).toBe(1);
+  });
+
+  // What read the font table, which the layout need not move for: a change to either rebuilds it.
+  describe.skipIf(!engineAvailable())("over a finished build", () => {
+    const built = engineAvailable()
+      ? (JSON.parse(readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8")) as EngineManifest)
+      : undefined;
+    const reader = {
+      opentype: (createRequire(import.meta.url)("opentype.js/package.json") as { version: string })
+        .version,
+      table: createHash("sha256")
+        .update(readFileSync(new URL("./fonttable.ts", import.meta.url)))
+        .digest("hex"),
+    };
+    /** The build's manifest, its files and fonts left out, with `fontReader` as given. */
+    const manifest = (fontReader: unknown) =>
+      JSON.stringify({ ...built, files: {}, fonts: {}, fontReader });
+
+    test("takes it as up to date when this reader read its font table", () => {
+      const { status, stdout } = run(manifest(reader), true);
+      expect(stdout).toContain(".engine/ is up to date");
+      expect(status).toBe(0);
+    });
+
+    test.each([
+      ["another version of opentype.js", { ...reader, opentype: "1.3.4" }],
+      ["another fonttable.ts", { ...reader, table: "0".repeat(64) }],
+      ["a reader it does not record", undefined],
+    ])("builds again when %s read its font table", (_, fontReader) => {
+      const { status, stdout } = run(manifest(fontReader), true);
+      expect(stdout).toContain("Copying the release from");
+      expect(status).toBe(1);
+    });
   });
 });
 

@@ -4,8 +4,10 @@ import { Font, Glyph, Path } from "opentype.js";
 import { describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable } from "../engine/node";
+import { bound, cpuMs, fastest } from "../test/timing";
 import {
   MAX_FONT_BYTES,
+  MAX_SUBTABLES,
   nativeCoverage,
   nativeFileName,
   parseNativeFont,
@@ -179,8 +181,10 @@ const system = (indexes: number[]) => ({
  * (format 1), the second taking from it; `smcp` makes them of the a and the i, listing each
  * (format 2); `onum` makes an old-style one of the one, and `pnum` a proportional one of that, a
  * chain the one reaches only through both; the Turkish language system's `smcp` makes a dotted
- * small capital of the i first, which XeTeX, shaping the default language, never applies; and
- * `salt`, a feature the page does not read through, makes an alternate a.
+ * small capital of the i first, which XeTeX, shaping the default language, never applies;
+ * `salt`, a feature the page does not read through, makes an alternate a; and `sups` makes the
+ * superior two, which the map gives U+00B2 ², of the two, and the modifier letter h, U+02B0 ʰ, of
+ * the h, as Source Sans Pro's does.
  */
 function substitutingFont(): Uint8Array {
   const glyph = (name: string, advanceWidth: number, unicodes: number[] = []) =>
@@ -205,18 +209,25 @@ function substitutingFont(): Uint8Array {
       glyph("one.osf", 540),
       glyph("one.posf", 400),
       glyph("a.alt", 490),
+      glyph("two", 550, [0x32]),
+      glyph("twosuperior", 330, [0xb2]),
+      glyph("h", 520, [0x68]),
+      glyph("hsuperior", 310, [0x2b0]),
     ],
   });
   const list = (glyphs: number[]) => ({ format: 1, glyphs });
   font.tables.gsub = {
     version: 1,
     scripts: [
-      { tag: "DFLT", script: { defaultLangSys: system([0, 1, 2, 3, 4]), langSysRecords: [] } },
+      {
+        tag: "DFLT",
+        script: { defaultLangSys: system([0, 1, 2, 3, 4, 6]), langSysRecords: [] },
+      },
       {
         tag: "latn",
         script: {
-          defaultLangSys: system([0, 1, 2, 3, 4]),
-          langSysRecords: [{ tag: "TRK ", langSys: system([0, 1, 2, 3, 5]) }],
+          defaultLangSys: system([0, 1, 2, 3, 4, 6]),
+          langSysRecords: [{ tag: "TRK ", langSys: system([0, 1, 2, 3, 5, 6]) }],
         },
       },
     ],
@@ -227,6 +238,7 @@ function substitutingFont(): Uint8Array {
       { tag: "salt", feature: { featureParams: 0, lookupListIndexes: [5] } },
       { tag: "smcp", feature: { featureParams: 0, lookupListIndexes: [2] } },
       { tag: "smcp", feature: { featureParams: 0, lookupListIndexes: [1, 2] } },
+      { tag: "sups", feature: { featureParams: 0, lookupListIndexes: [6] } },
     ],
     lookups: [
       single(
@@ -238,6 +250,7 @@ function substitutingFont(): Uint8Array {
       single({ substFormat: 2, coverage: list([9]), substitute: [10] }),
       single({ substFormat: 2, coverage: list([10]), substitute: [11] }),
       single({ substFormat: 2, coverage: list([4]), substitute: [12] }),
+      single({ substFormat: 2, coverage: list([13, 15]), substitute: [14, 16] }),
     ],
   };
   return new Uint8Array(font.toArrayBuffer());
@@ -266,6 +279,35 @@ describe("parseNativeFont's reading of single substitutions", () => {
     expect(file.madeBy(12)).toEqual([]);
   });
 
+  it("reads a glyph as its own character first, and as what it is made from after", () => {
+    // The map gives the superior two ², which sups makes of the two: a text holds the ² itself.
+    expect(file.textOf(14)).toBe("\u{b2}");
+    expect(file.textsOf(14)).toEqual(["\u{b2}", "2"]);
+    // A spacing modifier letter too, which a text holds more rarely than its letter.
+    expect(file.textOf(16)).toBe("\u{2b0}");
+    expect(file.textsOf(16)).toEqual(["\u{2b0}", "h"]);
+    expect(file.madeBy(14)).toEqual(["sups"]);
+  });
+
+  it("reads a glyph as what it is made from only for the features its file is loaded with", () => {
+    // sups loaded: the ² stands for the 2 as well, which a text set in superiors holds.
+    expect(file.textsOf(14, ["sups"])).toEqual(["\u{b2}", "2"]);
+    expect(file.textsOf(16, ["smcp", "sups"])).toEqual(["\u{2b0}", "h"]);
+    // Not loaded, the glyph can come only from the character the map gives it.
+    expect(file.textsOf(14, ["smcp", "pnum"])).toEqual(["\u{b2}"]);
+    expect(file.textOf(16, [])).toBe("\u{2b0}");
+    // A small capital reads as the letter of each feature loaded that makes it, and none else.
+    expect(file.textsOf(3, ["smcp"])).toEqual(["a"]);
+    expect(file.textsOf(3, ["c2sc"])).toEqual(["A"]);
+    expect(file.textsOf(3, ["pnum"])).toEqual([]);
+    expect(file.textOf(3, [])).toBeUndefined();
+    // A chain reads through only when every step's feature is loaded.
+    expect(file.textsOf(11, ["pnum"])).toEqual([]);
+    expect(file.textsOf(11, ["onum", "pnum"])).toEqual(["1"]);
+    // A tag outside SINGLE_FEATURES turns nothing on.
+    expect(file.textsOf(12, ["salt"])).toEqual([]);
+  });
+
   it("substitutes a glyph as XeTeX's shaping does, lookup by lookup in the default language", () => {
     expect(file.substitute(4, ["smcp"])).toBe(3);
     expect(file.substitute(2, ["c2sc"])).toBe(3);
@@ -281,6 +323,128 @@ describe("parseNativeFont's reading of single substitutions", () => {
     expect(file.substitute(9, ["pnum", "onum"])).toBe(11);
     // A feature the page does not read through is not applied either.
     expect(file.substitute(4, ["salt"])).toBe(4);
+  });
+});
+
+/**
+ * An invented OpenType font of `glyphs` glyphs, a space and an a among them, whose `smcp` lookup
+ * holds the subtables given, each as opentype.js writes one, its a the third glyph.
+ */
+function smcpFont(glyphs: number, subtables: object[]): Uint8Array {
+  const font = new Font({
+    familyName: "Invented Ranges",
+    styleName: "Regular",
+    unitsPerEm: 1000,
+    ascender: 900,
+    descender: -300,
+    glyphs: [
+      new Glyph({ name: ".notdef", advanceWidth: 500, path: new Path() }),
+      new Glyph({ name: "space", unicodes: [0x20], advanceWidth: 250, path: new Path() }),
+      new Glyph({ name: "a", unicodes: [0x61], advanceWidth: 480, path: box(480) }),
+      ...Array.from(
+        { length: glyphs - 3 },
+        (_, i) => new Glyph({ name: `g${i + 3}`, advanceWidth: 460, path: box(460) }),
+      ),
+    ],
+  });
+  font.tables.gsub = {
+    version: 1,
+    scripts: [{ tag: "DFLT", script: { defaultLangSys: system([0]), langSysRecords: [] } }],
+    features: [{ tag: "smcp", feature: { featureParams: 0, lookupListIndexes: [0] } }],
+    lookups: [single(...subtables)],
+  };
+  return new Uint8Array(font.toArrayBuffer());
+}
+
+/** A subtable that adds one to each glyph of one range, from the a to `end`. */
+const plusOne = (end: number) => ({
+  substFormat: 1,
+  coverage: { format: 2, ranges: [{ start: 2, end, index: 0 }] },
+  deltaGlyphId: 1,
+});
+
+describe("parseNativeFont's reading of a hostile font's substitutions", () => {
+  /** Read a file whole, its substitutions and its texts, as the page does. */
+  const readAll = (bytes: Uint8Array) => {
+    const file = parseNativeFont(bytes);
+    file.substitute(2, ["smcp"]);
+    file.textsOf(3);
+    return file;
+  };
+
+  it("walks a range only over the glyphs the font has, in CPU time and memory", () => {
+    // Hundreds of subtables, each running a range from the a to 65,535, as against the same
+    // subtables running to the font's last glyph. Read a glyph at a time to 65,535 in each, as
+    // 26 million substitutions of which the first subtable's alone count, the hostile font took
+    // 1,857 ms of CPU time here against 0.9 ms; walked over the font's own 62, 0.16 ms against
+    // 0.16 ms. The tree's fonts have 31 such subtables at most.
+    const hostile = smcpFont(
+      64,
+      Array.from({ length: 400 }, () => plusOne(65_535)),
+    );
+    const tame = smcpFont(
+      64,
+      Array.from({ length: 400 }, () => plusOne(63)),
+    );
+    const [far, near] = fastest([() => readAll(hostile), () => readAll(tame)], 3);
+    expect(far).toBeLessThan(bound(3, near ?? 0));
+    expect(cpuMs(() => readAll(hostile))).toBeLessThan(1_000);
+    // What reading it leaves on the heap, the parsed file and 61 substitutions: 0.45 MB here.
+    const before = process.memoryUsage().heapUsed;
+    const kept = readAll(hostile);
+    const grown = process.memoryUsage().heapUsed - before;
+    expect(grown).toBeLessThan(64 * 2 ** 20);
+    // The first subtable that covers a glyph makes its substitution: the a's small capital.
+    expect(kept.substitute(2, ["smcp"])).toBe(3);
+    expect(kept.textsOf(3)).toEqual(["a"]);
+    expect(kept.substitute(63, ["smcp"])).toBe(63);
+  });
+
+  it("reads no glyph the font has not, as covered or as made", () => {
+    const file = parseNativeFont(
+      smcpFont(8, [
+        // A glyph past the font's, and a range past them: read as nothing.
+        { substFormat: 2, coverage: { format: 1, glyphs: [60_000, 3] }, substitute: [2, 4] },
+        {
+          substFormat: 1,
+          coverage: { format: 2, ranges: [{ start: 9, end: 65_535, index: 0 }] },
+          deltaGlyphId: -7,
+        },
+        // The a made into a glyph past the font's: HarfBuzz takes no later subtable for it.
+        { substFormat: 2, coverage: { format: 1, glyphs: [2] }, substitute: [60_000] },
+        { substFormat: 2, coverage: { format: 1, glyphs: [2, 5] }, substitute: [6, 7] },
+      ]),
+    );
+    expect(file.substitute(3, ["smcp"])).toBe(4);
+    expect(file.substitute(2, ["smcp"])).toBe(2);
+    expect(file.madeBy(6)).toEqual([]);
+    expect(file.textsOf(6)).toEqual([]);
+    // The fifth glyph comes of the fourth subtable alone, its first that covers it.
+    expect(file.substitute(5, ["smcp"])).toBe(7);
+    expect(file.madeBy(7)).toEqual(["smcp"]);
+  });
+
+  it("reads a glyph's substitution from the first subtable that covers it, once", () => {
+    const file = parseNativeFont(
+      smcpFont(8, [
+        { substFormat: 2, coverage: { format: 1, glyphs: [2] }, substitute: [3] },
+        { substFormat: 2, coverage: { format: 1, glyphs: [2, 2, 4] }, substitute: [5, 6, 7] },
+      ]),
+    );
+    expect(file.substitute(2, ["smcp"])).toBe(3);
+    expect(file.madeBy(5)).toEqual([]);
+    expect(file.textsOf(3)).toEqual(["a"]);
+    expect(file.substitute(4, ["smcp"])).toBe(7);
+  });
+
+  it(`walks at most ${MAX_SUBTABLES} subtables of a font's lookups`, () => {
+    const empty = { substFormat: 2, coverage: { format: 1, glyphs: [] }, substitute: [] };
+    const cover = { substFormat: 2, coverage: { format: 1, glyphs: [2] }, substitute: [3] };
+    const within = parseNativeFont(smcpFont(8, [...Array(MAX_SUBTABLES - 1).fill(empty), cover]));
+    expect(within.substitute(2, ["smcp"])).toBe(3);
+    const past = parseNativeFont(smcpFont(8, [...Array(MAX_SUBTABLES).fill(empty), cover]));
+    expect(past.substitute(2, ["smcp"])).toBe(2);
+    expect(past.textsOf(3)).toEqual([]);
   });
 });
 
@@ -442,6 +606,43 @@ describe.skipIf(!engineAvailable())("parseNativeFont over TeX Live's fonts", () 
     expect(roboto.advanceOf(roboto.substitute(one, ["pnum"]))).toBeLessThan(
       roboto.advanceOf(one) ?? 0,
     );
+  });
+
+  it("reads Source Sans's and Roboto's ² as itself first, and as 2 only under their feature", () => {
+    // Source Sans Pro's sups and Roboto's frac make the glyph the map gives U+00B2 of the two.
+    for (const [name, feature] of [
+      ["SourceSansPro-Regular.otf", "sups"],
+      ["Roboto-Regular.otf", "frac"],
+    ] as const) {
+      const file = read(name);
+      const two = file.glyphFor("\u{b2}") ?? -1;
+      expect(file.madeBy(two), name).toEqual([feature]);
+      expect(file.textOf(two), name).toBe("\u{b2}");
+      expect(file.textsOf(two), name).toEqual(["\u{b2}", "2"]);
+      expect(file.textsOf(two, [feature]), name).toEqual(["\u{b2}", "2"]);
+      // As Awesome-CV's port loads Roboto, and as a family's upright loads a file.
+      expect(file.textsOf(two, ["pnum", "lnum"]), name).toEqual(["\u{b2}"]);
+      expect(file.textOf(two, []), name).toBe("\u{b2}");
+    }
+  });
+
+  it("reads the modifier letters as themselves first, Source Sans's as their letters under sups", () => {
+    const sans = read("SourceSansPro-Regular.otf");
+    for (const letter of "\u{2b0}\u{2b2}\u{2b3}\u{2b7}\u{2b8}\u{2e1}\u{2e2}\u{2e3}") {
+      const glyph = sans.glyphFor(letter) ?? -1;
+      const base = letter.normalize("NFKD");
+      expect(sans.madeBy(glyph), letter).toEqual(["sups"]);
+      expect(sans.textsOf(glyph), letter).toEqual([letter, base]);
+      expect(sans.textsOf(glyph, ["sups"]), letter).toEqual([letter, base]);
+      expect(sans.textsOf(glyph, ["smcp", "c2sc"]), letter).toEqual([letter]);
+    }
+    // Roboto's are made by no substitution, and read as themselves whatever it is loaded with.
+    const roboto = read("Roboto-Regular.otf");
+    for (const letter of "\u{2bc}\u{2c6}\u{2c7}\u{2dc}\u{2f3}") {
+      const glyph = roboto.glyphFor(letter) ?? -1;
+      expect(roboto.madeBy(glyph), letter).toEqual([]);
+      expect(roboto.textsOf(glyph), letter).toEqual([letter]);
+    }
   });
 
   it("reads Lato's figures, whose substitutions are extension lookups, as their digits", () => {

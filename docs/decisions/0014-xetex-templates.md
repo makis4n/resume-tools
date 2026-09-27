@@ -144,7 +144,8 @@ Sans Pro for the headings, one Font Awesome icon in the header) stands in for it
   `color push gray 0`, the black the PDF starts in anyway. The two PDFs are PDF 1.5 of the same
   size, text, links and colours; the whole compile's also has hyperref's `Doc-Start` and `page.1`
   destinations and one black more, which renders the same. As item 14 found for pdfTeX, the body
-  re-emits nothing.
+  re-emits nothing. (Decision 0023: the four stood on the page as the preamble ran, and `\dump`
+  swept them into `\@holdpg`; each job of a format now puts them back, and the outputs are the same.)
 - **The PDF's text.** xdvipdfmx embeds a native font as a composite font with two-byte glyph codes
   and a ToUnicode map made from the character map and the ligatures, so the harness's PDF check
   reads such a font's strings through the map (`shownStrings`), with the curled single quotes the
