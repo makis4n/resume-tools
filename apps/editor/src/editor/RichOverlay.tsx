@@ -78,7 +78,8 @@ export interface Look {
 /**
  * The CSS `text-transform` that shows a field's text in the case the page folds it to, capitals or
  * small letters (`FieldLayout.folded`, decision 0021), while the text itself, which the user edits
- * and the document holds, keeps its own case; `none` for a field the page sets as it stands.
+ * and the document holds, keeps its own case; `none` for a field the page sets as it stands, and
+ * for one whose glyphs are of both cases (`mixed`), which no one case shows, so its text as typed.
  */
 export function textTransform(folded: Fold | undefined): "uppercase" | "lowercase" | "none" {
   if (folded === "upper") return "uppercase";
@@ -102,8 +103,8 @@ export interface RichOverlayProps {
   looks: ReadonlyMap<Variant, Look>;
   /**
    * The case the page sets the field in when it is not the runs' own, as a title a class sets
-   * through `\MakeUppercase` (`FieldLayout.folded`): the text is shown in it, and the runs keep
-   * their own case.
+   * through `\MakeUppercase` (`FieldLayout.folded`): the text is shown in it, or as typed where the
+   * glyphs are of both cases (`textTransform`), and the runs keep their own case.
    */
   folded?: Fold;
   /** Where the field is set on the page as shown now; a new one comes with each page. */

@@ -203,9 +203,13 @@ export function markerId(text: string, marker: string): string | undefined {
 
 /**
  * The case a page sets a field in where it is not the text's own: capitals, as a class sets a title
- * through `\MakeUppercase`, or small letters, through `\MakeLowercase`.
+ * through `\MakeUppercase`; small letters, through `\MakeLowercase`; or both, as a class that
+ * capitalises each word's first letter sets it, which no one case shows (decision 0021).
  */
-export type Fold = "upper" | "lower";
+export type Fold = "upper" | "lower" | "mixed";
+
+/** A case the aligner folds a text to, a character at a time (`alignField`). */
+type Case = "upper" | "lower";
 
 /** What aligning a field's glyphs with its text found. */
 export interface Alignment {
@@ -220,23 +224,26 @@ export interface Alignment {
   covered: number;
   /**
    * The case the page sets the field in, when some of its glyphs matched their characters only
-   * once the text was folded to it (`alignField`) and every glyph with a case is in it, as
-   * `\MakeUppercase` leaves a title: the overlay shows the field in it (decision 0021). Undefined
-   * when every glyph matched as it stands, and when the glyphs are of both cases, as a class that
-   * capitalises only a word's first letter sets them, which no one case shows.
+   * once the text was folded (`alignField`): `upper` when no glyph has a small letter, as
+   * `\MakeUppercase` leaves a title, a letter with no capital of its own counting as none, as ß,
+   * whose capitals are SS and which a primitive `\uppercase` leaves among capitals; `lower` when
+   * none has a capital; and `mixed` when they have both, as a class that capitalises each word's
+   * first letter sets them. The overlay shows the field in the first two, and as typed in the
+   * third (decision 0021). Undefined when every glyph matched as it stands.
    */
   folded?: Fold;
 }
 
 /**
  * Where a glyph matches the text: from `at` to `end`, with the glyphs after it that the same
- * characters take (`glyphs`, one for most), and whether it matched only once the text was folded
- * to a case (`foldedAt`).
+ * character takes (`glyphs`, one for most, counting a hyphen TeX inserted among them, which
+ * `inserted` lists by index), and whether it matched only once the text was folded (`folded`).
  */
 interface Match {
   at: number;
   end: number;
   glyphs: number;
+  inserted?: readonly number[];
   folded?: boolean;
 }
 
@@ -251,12 +258,13 @@ interface Match {
  * of what else it stands for (`FieldGlyph.alternatives`), or an accented letter whose base
  * one is, set without its accents (`accentedAt`); and failing both, the text in capitals, or
  * then in small letters, as a template that sets a field through `\MakeUppercase` or
- * `\MakeLowercase` shows it (`foldedAt`, decision 0021): a glyph É matches é, and two glyphs S
- * the one ß whose capitals they are, each with ß's offset. A glyph that does not match
- * there is tried past each character that may set no glyph where it stands, such as an
- * emoji or a letter of a script the fonts lack; an unmatched hyphen is a break TeX
- * inserted, which is U+002D's glyph, the font's `\hyphenchar`, so a glyph that stands
- * for U+2010 or U+2011 and not for it is not one; and a glyph a few code units on
+ * `\MakeLowercase` shows it (`Folding`, decision 0021): a glyph É matches é, and two glyphs S
+ * the one ß whose capitals they are, each with ß's offset, as does a hyphen TeX inserted between
+ * them. A glyph tries folding at a place only once its spellings as they stand fail there, and
+ * at most once. A glyph that does not match there is tried past each character that may set no
+ * glyph where it stands, such as an emoji or a letter of a script the fonts lack; an unmatched
+ * hyphen is a break TeX inserted, which is U+002D's glyph, the font's `\hyphenchar`, so a glyph
+ * that stands for U+2010 or U+2011 and not for it is not one; and a glyph a few code units on
  * resynchronises the walk, as it stands or folded. A native font's `.notdef`
  * (`FieldGlyph.dropped`) stands where the walk is and matches nothing. Returns the number of
  * glyphs that could not be matched, how much of the text the glyphs account for, and the case
@@ -267,10 +275,14 @@ interface Match {
  * stands, so it can match only at the run's end, or at a letter whose base, capital or small
  * letter begins with printable ASCII, as é's base is e and ß's capitals are SS, and of those the
  * walk tries the first; only a glyph with a spelling outside ASCII, such as an en dash, walks
- * the run a character at a time.
+ * the run a character at a time. Folding adds no more than a bound to each place a glyph tries:
+ * each character's folded form is read once for the field, and the glyphs that spell one
+ * character's form between them stop with it, so a place costs at most as many glyphs as that form
+ * has code units, and the hyphens between them, whatever the glyphs after them.
  */
 export function alignField(field: Field, text: string): Alignment {
   const { glyphs } = field;
+  const folding = new Folding(text, glyphs);
   let pos = 0;
   let unmatched = 0;
   // Whether a glyph matched only once the text was folded to a case.
@@ -298,11 +310,11 @@ export function alignField(field: Field, text: string): Alignment {
       continue;
     }
     const candidates = spellingsOfGlyph(glyph);
-    const matchAt = (at: number) => {
+    const matchAt = (at: number): Match | undefined => {
       const exact =
         candidates.find((c) => text.startsWith(c, at)) ?? accentedAt(text, at, candidates);
       return exact === undefined
-        ? foldedMatch(text, at, glyphs, i, candidates)
+        ? folding.matchAt(i, at)
         : { at, end: at + exact.length, glyphs: 1 };
     };
     // The spellings are tried where the walk stands first, so "–" still matches the "--"
@@ -341,17 +353,17 @@ export function alignField(field: Field, text: string): Alignment {
       const at = pos + k;
       const found = own.find((each) => text.startsWith(each, at));
       match =
-        found === undefined
-          ? foldedMatch(text, at, glyphs, i, own)
-          : { at, end: at + found.length, glyphs: 1 };
+        found === undefined ? folding.matchAt(i, at) : { at, end: at + found.length, glyphs: 1 };
     }
     if (match === undefined) {
       glyph.offset = pos;
       unmatched++;
       continue;
     }
-    // A letter whose capitals are several takes as many glyphs, each at the letter's offset.
+    // A letter whose capitals are several takes as many glyphs, each at the letter's offset, and a
+    // hyphen TeX inserted among them is the letter's too.
     for (let k = 0; k < match.glyphs; k++) (glyphs[i + k] as FieldGlyph).offset = match.at;
+    for (const k of match.inserted ?? []) (glyphs[k] as FieldGlyph).inserted = true;
     folded ||= match.folded === true;
     pos = match.end;
     i += match.glyphs - 1;
@@ -367,107 +379,219 @@ function spellingsOfGlyph(glyph: FieldGlyph): readonly string[] {
   return [...new Set([g, ...glyph.alternatives].flatMap(spellingsOf))];
 }
 
-/**
- * Where the glyphs from `first` on match the text at `at` in capitals, or failing that in small
- * letters (`foldedAt`).
- */
-function foldedMatch(
-  text: string,
-  at: number,
-  glyphs: readonly FieldGlyph[],
-  first: number,
-  spellings: readonly string[],
-): Match | undefined {
-  return (
-    foldedAt(text, at, glyphs, first, spellings, "upper") ??
-    foldedAt(text, at, glyphs, first, spellings, "lower")
-  );
+/** A character of a field's text in a case, as `Folding` reads it. */
+interface Form {
+  /** The character in the case, as `toUpperCase` or `toLowerCase` folds it alone, decomposed. */
+  form: string;
+  /** Whether the case changes the character: it does not change one already in it, or with none. */
+  changed: boolean;
+  /** The character's length in the text, in code units: two for a surrogate pair, else one. */
+  length: number;
 }
 
 /**
- * Where the glyphs from `first` on match the text at `at` once the text is folded to `fold`, a
- * character at a time, as `toUpperCase` or `toLowerCase` folds it, and both are decomposed (NFD),
- * `spellings` being the first glyph's: a glyph for each character, as É for é; one for several,
- * as a ligature is; several for one, as a letter's capitals may be, where each glyph takes the
- * letter's folded form on from where the one before it stopped, as the two glyphs S take the SS
- * that is ß in capitals, or as ﬁ's are FI; and a letter set without the accents its folded form
- * has, as ǰ's capital is J and a caron, or İ's small letter i and a dot. In small letters a glyph
- * ς is taken for σ, since Σ is ς at a word's end, which a character alone does not say. Undefined
- * when the text is not folded there, since the character at `at` is already in that case or has
- * none, or when the glyphs do not spell it.
+ * A field's text folded to capitals and to small letters for `alignField` (decision 0021), a
+ * character at a time, as `toUpperCase` and `toLowerCase` fold it, both sides compared decomposed
+ * (NFD). What folding needs is read once for the field, however many glyphs try it: each
+ * character's form in each case (`Form`), and each glyph's spellings, decomposed, with ς taken for
+ * σ in small letters, since Σ is ς at a word's end, which a character alone does not say. It keeps,
+ * for each place in the text, the glyph that last tried folding there, so that no glyph tries a
+ * place twice: the walk may come back to one, as to a run's end that is where it stands, and
+ * folding failed there the first time.
  */
-function foldedAt(
-  text: string,
-  at: number,
-  glyphs: readonly FieldGlyph[],
-  first: number,
-  spellings: readonly string[],
-  fold: Fold,
-): Match | undefined {
-  if (at >= text.length) return undefined;
-  const head = charAt(text, at);
-  if (caseOf(head, fold) === head) return undefined;
-  // The text from `at`, folded and decomposed as far as the glyphs have needed it, and where each
-  // of its characters ends there and in the text.
-  let form = "";
-  let next = at;
-  const ends: { form: number; text: number }[] = [];
-  const grow = (length: number) => {
-    while (form.length < length && next < text.length) {
-      const char = charAt(text, next);
-      form += caseOf(char, fold).normalize("NFD");
-      next += char.length;
-      ends.push({ form: form.length, text: next });
-    }
+class Folding {
+  private readonly text: string;
+  private readonly glyphs: readonly FieldGlyph[];
+  private readonly forms: Record<Case, (Form | undefined)[] | undefined> = {
+    upper: undefined,
+    lower: undefined,
   };
-  // How much of `form` the glyphs have spelled, and where they may stop inside a character whose
-  // rest is accents they left out, should the next glyph not go on with it.
-  let used = 0;
-  let stop: Match | undefined;
-  for (let j = first; j < glyphs.length; j++) {
-    const glyph = glyphs[j] as FieldGlyph;
-    if (glyph.dropped) break;
-    let spelled: string | undefined;
-    for (const spelling of j === first ? spellings : spellingsOfGlyph(glyph)) {
-      // Σ's small letter is ς at a word's end, which a character at a time never gives.
-      const small = fold === "lower" ? spelling.replaceAll("\u{3c2}", "\u{3c3}") : spelling;
-      const decomposed = small.normalize("NFD");
-      if (decomposed === "") continue;
-      grow(used + decomposed.length);
-      if (form.startsWith(decomposed, used)) {
-        spelled = decomposed;
-        break;
-      }
-    }
-    if (spelled === undefined) break;
-    used += spelled.length;
-    const end = ends.find((each) => each.form >= used);
-    if (end === undefined) break;
-    const taken = { at, end: end.text, glyphs: j - first + 1, folded: true };
-    if (end.form === used) return taken;
-    stop = ACCENTS.test(form.slice(used, end.form)) ? taken : undefined;
+  /**
+   * The spellings `spelled` has read in each case: by a glyph's text, which most glyphs of a field
+   * share, and by its index for a glyph that stands for other characters as well, which is rare.
+   */
+  private readonly spellings: Record<Case, Map<string | number, readonly string[]>> = {
+    upper: new Map(),
+    lower: new Map(),
+  };
+  /** One more than the index of the glyph that last tried folding at each place of the text. */
+  private tried: Int32Array | undefined;
+
+  constructor(text: string, glyphs: readonly FieldGlyph[]) {
+    this.text = text;
+    this.glyphs = glyphs;
   }
-  return stop;
+
+  /**
+   * Where the glyphs from `first` on match the text at `at` in capitals, or failing that in small
+   * letters (`foldedAt`); undefined as well where glyph `first` tried folding before, since it
+   * failed there.
+   */
+  matchAt(first: number, at: number): Match | undefined {
+    if (at >= this.text.length) return undefined;
+    this.tried ??= new Int32Array(this.text.length);
+    if (this.tried[at] === first + 1) return undefined;
+    this.tried[at] = first + 1;
+    return this.foldedAt(first, at, "upper") ?? this.foldedAt(first, at, "lower");
+  }
+
+  /**
+   * Where the glyphs from `first` on match the text at `at` once it is folded to `fold`: a glyph
+   * for each character, as É for é; one for several, as a ligature is, `fl` for fL in small
+   * letters; a letter set without the accents its folded form has, as ǰ's capital is J and a
+   * caron, and İ's small letter i and a dot; or several glyphs for the one character at `at`, as a
+   * letter's capitals may be (`chain`). Only where the fold changes a character the glyph spells,
+   * since a text already in the case matched as it stands, or not at all; and a glyph that ends
+   * inside a character after the first ends there only before accents, since the glyphs after it
+   * would go on with that character from inside another's.
+   */
+  private foldedAt(first: number, at: number, fold: Case): Match | undefined {
+    const { text } = this;
+    for (const spelled of this.spelled(first, fold)) {
+      // The characters the spelling takes whole, from `at` to `next`, and the one it stops inside
+      // when it does, whose form it takes `into` code units of.
+      let next = at;
+      let used = 0;
+      let changed = false;
+      let inside: Form | undefined;
+      while (used < spelled.length && next < text.length) {
+        const char = this.formAt(next, fold);
+        changed ||= char.changed;
+        if (!spelled.startsWith(char.form, used)) {
+          if (char.form.startsWith(spelled.slice(used))) inside = char;
+          break;
+        }
+        used += char.form.length;
+        next += char.length;
+      }
+      if (!changed) continue;
+      if (inside === undefined) {
+        if (used === spelled.length) return { at, end: next, glyphs: 1, folded: true };
+        continue;
+      }
+      const into = spelled.length - used;
+      const chained =
+        next === at
+          ? this.chain(first, at, inside, into, fold)
+          : ACCENTS.test(inside.form.slice(into))
+            ? { at, end: next + inside.length, glyphs: 1, folded: true }
+            : undefined;
+      if (chained !== undefined) return chained;
+    }
+    return undefined;
+  }
+
+  /**
+   * The glyphs from `first` on spelling the one character at `at` between them, as two glyphs S
+   * spell ß's capitals SS, and F and I the ligature ﬁ's, glyph `first` having spelled `into` code
+   * units of its form (`inside`): each glyph after it takes the form up where the one before
+   * stopped, and a hyphen TeX inserted between two of them, as it breaks MASSE between the S, is
+   * skipped as inserted. The chain ends with the character: a glyph that would go past it, into the
+   * next character, does not go on with it, so no chain is longer than one character's form. It
+   * is all or nothing, but for accents of the form it leaves out at its end, as a letter set
+   * without its accent leaves them out; and every glyph of it takes the character's offset.
+   */
+  private chain(
+    first: number,
+    at: number,
+    inside: Form,
+    into: number,
+    fold: Case,
+  ): Match | undefined {
+    const { glyphs } = this;
+    const { form } = inside;
+    const end = at + inside.length;
+    const inserted: number[] = [];
+    let done = into;
+    let taken: Match = { at, end, glyphs: 1, folded: true };
+    let stop = ACCENTS.test(form.slice(done)) ? taken : undefined;
+    // The spelling of glyph `j` that goes on with the form from where the chain stands, if any.
+    const goesOn = (j: number) => this.spelled(j, fold).find((each) => form.startsWith(each, done));
+    while (done < form.length) {
+      let j = first + taken.glyphs;
+      let spelled = goesOn(j);
+      if (spelled === undefined && glyphs[j]?.text === "-") {
+        spelled = goesOn(j + 1);
+        if (spelled !== undefined) {
+          inserted.push(j);
+          j += 1;
+        }
+      }
+      if (spelled === undefined) break;
+      done += spelled.length;
+      taken = { at, end, glyphs: j - first + 1, folded: true };
+      if (inserted.length > 0) taken.inserted = [...inserted];
+      if (done === form.length) return taken;
+      stop = ACCENTS.test(form.slice(done)) ? taken : undefined;
+    }
+    return stop;
+  }
+
+  /** The character at `at` in `fold` (`Form`), read once for the field. */
+  private formAt(at: number, fold: Case): Form {
+    let forms = this.forms[fold];
+    if (forms === undefined) {
+      forms = new Array<Form | undefined>(this.text.length);
+      this.forms[fold] = forms;
+    }
+    let read = forms[at];
+    if (read === undefined) {
+      const char = charAt(this.text, at);
+      const cased = caseOf(char, fold);
+      read = { form: cased.normalize("NFD"), changed: cased !== char, length: char.length };
+      forms[at] = read;
+    }
+    return read;
+  }
+
+  /**
+   * Glyph `j`'s spellings in `fold` (`spellingsOfGlyph`), decomposed, with ς taken for σ in small
+   * letters, read once for the field for each text; none for a glyph left out or past the last.
+   */
+  private spelled(j: number, fold: Case): readonly string[] {
+    const glyph = this.glyphs[j];
+    if (glyph === undefined || glyph.dropped || glyph.text === undefined) return [];
+    const key = glyph.alternatives === undefined ? glyph.text : j;
+    const known = this.spellings[fold].get(key);
+    if (known !== undefined) return known;
+    const spellings = spellingsOfGlyph(glyph).map((spelling) =>
+      (fold === "lower" ? spelling.replaceAll("\u{3c2}", "\u{3c3}") : spelling).normalize("NFD"),
+    );
+    const read = [...new Set(spellings)].filter((spelling) => spelling !== "");
+    this.spellings[fold].set(key, read);
+    return read;
+  }
 }
 
-/** A character in capitals or small letters, as `alignField` folds a text, a character at a time. */
-const caseOf = (char: string, fold: Fold) =>
+/** A character in capitals or small letters, as `alignField` folds a text a character at a time. */
+const caseOf = (char: string, fold: Case) =>
   fold === "upper" ? char.toUpperCase() : char.toLowerCase();
 
 /**
  * The case of a field's glyphs, once some matched only folded: capitals when none of them has a
- * small letter, small letters when none has a capital, and neither when they have both.
+ * small letter, small letters when none has a capital, and mixed when they have both. A letter
+ * whose capital is not one character, as ß's is SS, counts as no small letter: a primitive
+ * `\uppercase`, as XeTeX may set a title through, leaves it among capitals.
  */
-function caseOfGlyphs(glyphs: readonly FieldGlyph[]): Fold | undefined {
+function caseOfGlyphs(glyphs: readonly FieldGlyph[]): Fold {
   let capital = false;
   let small = false;
   for (const { text } of glyphs) {
     if (text === undefined) continue;
     capital ||= text !== text.toLowerCase();
-    small ||= text !== text.toUpperCase();
+    small ||= hasSmallLetter(text);
   }
   if (!small) return "upper";
-  return capital ? undefined : "lower";
+  return capital ? "mixed" : "lower";
+}
+
+/** Whether a text holds a small letter whose capital is one character, as a's is and ß's is not. */
+function hasSmallLetter(text: string): boolean {
+  for (const char of text) {
+    const capital = char.toUpperCase();
+    if (capital !== char && [...capital].length === 1) return true;
+  }
+  return false;
 }
 
 /**

@@ -939,6 +939,35 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     ).toBe("EXPERIENCE");
   }, 60_000);
 
+  it("aligns a title TeX breaks between the capitals of ß, the hyphen at ß's offset", async () => {
+    // At a narrow measure TeX breaks MASSEINHEIT, Maßeinheit in capitals, between the two S of ß:
+    // the hyphen is one TeX inserted, and it and both S stand at ß's offset (decision 0021).
+    const text = "Die Ma\u{df}einheit";
+    const body = [
+      "\\documentclass{article}\\usepackage[T1]{fontenc}\\usepackage{lmodern}",
+      PRELUDE,
+      "\\begin{document}\\hsize=0.5in\\parindent=0pt",
+      `{\\MakeUppercase{\\rtfield{caps.text}{${text}}}\\par}`,
+      "\\end{document}",
+    ].join("\n");
+    const compiled = session.compile("pdftex", "stock", body, { job: "sharp-break", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const page = await drawPage(compiled.output, fonts, new Map([["caps.text", text]]));
+    expect(page.missingFonts).toEqual(new Map());
+    expect(page.unmatched).toBe(0);
+    const field = page.fields.get("caps.text");
+    expect(field?.glyphs.map((g) => g.text).join("")).toBe("DIEMAS-SEINHEIT");
+    expect(field?.layout?.folded).toBe("upper");
+    const sharp = text.indexOf("\u{df}");
+    expect(
+      field?.glyphs.filter((g) => g.offset === sharp).map((g) => [g.text, g.inserted === true]),
+    ).toEqual([
+      ["S", false],
+      ["-", true],
+      ["S", false],
+    ]);
+  }, 60_000);
+
   it("names a native font XeTeX emboldens, and draws its runs as boxes", async () => {
     const body = String.raw`\documentclass{article}\pagestyle{empty}\begin{document}
 \font\bolded="[Roboto-Regular.otf]:embolden=2" {\bolded Boxed} \font\plain="[Roboto-Regular.otf]" {\plain Drawn}

@@ -144,7 +144,8 @@ export interface FieldLayout {
    * The case the page sets the field in when it is not the text's own, as a class that sets a
    * title through `\MakeUppercase` sets it in capitals (`Alignment.folded`, decision 0021): the
    * overlay measures and shows the field's text in it, and keeps the text's own case for what the
-   * user types. Left out when the page sets the text as it stands.
+   * user types; `mixed` for glyphs of both cases, which the overlay shows as typed. Left out when
+   * the page sets the text as it stands.
    */
   folded?: Fold;
 }

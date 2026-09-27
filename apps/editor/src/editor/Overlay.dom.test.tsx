@@ -196,6 +196,13 @@ describe("a rich field open in its editor", () => {
     // In capitals the bullet is wider, so TeX shrinks its line's spaces to fit it, as the rows do.
     expect(BREAKS.getState(editor.state)?.rows).toHaveLength(1);
     expect(spacing()).toBeLessThan(0);
+    // One whose glyphs are of both cases, as a class that capitalises each word's first letter sets
+    // them, is shown and measured as typed; and then the capitals again.
+    show(document0, shownIn(roman, document0, "mixed"));
+    expect(style()).toContain(".ProseMirror { text-transform: none; }");
+    expect(spacing()).toBe(0);
+    show(document0, shownIn(roman, document0, "upper"));
+    expect(spacing()).toBeLessThan(0);
     // The runs keep their own case, and so does what the user types.
     expect(docToRuns(editor.state.doc)).toEqual(runsIn(document0));
     type(editor, " Twice.");

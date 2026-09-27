@@ -151,10 +151,11 @@ function rowsOf(
  * that is a character as long, so that every offset is still the text's; one whose folded form is
  * longer, as ß's capitals are SS, is measured as it stands. Capitals are wider than small letters,
  * and a period after a capital ends no sentence, since TeX's space factor after one is 999, so a
- * title the page sets in capitals breaks where it would not in the text's own case.
+ * title the page sets in capitals breaks where it would not in the text's own case. A field whose
+ * glyphs are of both cases (`mixed`), which no one case shows, is measured as typed.
  */
 export function shownCase(text: string, folded: Fold | undefined): string {
-  if (folded === undefined) return text;
+  if (folded === undefined || folded === "mixed") return text;
   let shown = "";
   for (const char of text) {
     const each = folded === "upper" ? char.toUpperCase() : char.toLowerCase();
@@ -230,7 +231,7 @@ export function richRows(
   if (params === undefined) return [{ from: 0, to: length, wordSpacingSp: 0 }];
   const faceOf = (variant: Variant) => faces.variants.get(variant) ?? faces.letter;
   const shown =
-    folded === undefined
+    folded === undefined || folded === "mixed"
       ? runs
       : runs.map((run) => ({ ...run, text: shownCase(run.text, folded) }));
   const set = breakRuns(shown, slantOf(faces)).map((run) => ({
