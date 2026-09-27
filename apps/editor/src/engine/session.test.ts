@@ -334,6 +334,35 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     expect(result.error).toBeUndefined();
   }, 30_000);
 
+  it("dumps a preamble given as bytes, beside files at their paths, and no path outside it", () => {
+    // An imported resume's preamble inputs a file of a folder of its own, and is dumped in the
+    // encoding its file had: here Latin-1, whose é is one byte, which inputenc reads as such.
+    const files = { "setup/settings.tex": "\\newcommand\\invented{Invented}" };
+    const preamble = new Uint8Array([
+      ...new TextEncoder().encode(
+        "\\documentclass{article}\\usepackage[latin1]{inputenc}\\usepackage[T1]{fontenc}\\input{setup/settings}\\newcommand\\accented{caf",
+      ),
+      0xe9,
+      ...new TextEncoder().encode("}"),
+    ]);
+    const dumped = session.dump("pdftex", "bytes", preamble, files);
+    expect(dumped.error).toBeUndefined();
+    const result = session.compile(
+      "pdftex",
+      "bytes",
+      "\\begin{document}\\invented\\ \\accented\\end{document}",
+      { job: "bytes" },
+    );
+    expect(result.error).toBeUndefined();
+    const page = parseDvi(result.output as Uint8Array, () => undefined).pages[0];
+    // T1 sets é as the one glyph 233, which inputenc took from the byte.
+    expect(page?.items.some((item) => item.kind === "glyph" && item.code === 0xe9)).toBe(true);
+    for (const path of ["a//b.tex", ".fonts.conf", "setup/../../x.tex", "a/.git/config"])
+      expect(() => session.dump("pdftex", "bytes", preamble, { [path]: "x" }), path).toThrow(
+        "not a path inside the job's folder",
+      );
+  }, 30_000);
+
   it("puts an upload's files at their paths in the job's folder, and no path outside it", () => {
     const files = {
       "sections/part.tex": "Invented part, \\input{sections/deeper/more}",

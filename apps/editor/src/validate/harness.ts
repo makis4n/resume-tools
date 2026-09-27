@@ -140,9 +140,10 @@ const PARAGRAPH_KEYS = [
  * What the page may leave out of a field's text without a glyph, and the aligner skips:
  * whitespace, the invisible characters, anything past ASCII, which pdfTeX drops where the font
  * has no glyph for it, and the underscore, which OT1 sets as a rule rather than a glyph. What is
- * left of a text without them is printable ASCII.
+ * left of a text without them is printable ASCII. The probe (item 5) reads a field's coverage
+ * with it too.
  */
-const SETS_NO_GLYPH = new RegExp(`\\s|${INVISIBLE.source}|[^\\u0000-\\u007f]|_`, "gu");
+export const SETS_NO_GLYPH = new RegExp(`\\s|${INVISIBLE.source}|[^\\u0000-\\u007f]|_`, "gu");
 
 /**
  * Check a package by compiling a resume through it as the editor does, with the document's

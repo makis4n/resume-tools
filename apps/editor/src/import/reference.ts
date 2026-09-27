@@ -28,6 +28,7 @@ import { glyphTextOf, paperSize, widthsOf } from "../page/draw";
 import type { FontLibrary, NativePageFont, PageFont } from "../page/fonts";
 import { nativeFileName, parseNativeFont } from "../page/native";
 import { type DviDocument, parseDvi, pointsPerUnit } from "../tex/dvi";
+import type { GlyphTextOf } from "../tex/fields";
 import { US_LETTER } from "../tex/svg";
 import { parseTfm } from "../tex/tfm";
 import { imageInfo, ONE_BY_ONE, ONE_POINT_PDF, standIn, tooLarge, xbb } from "./images";
@@ -555,7 +556,7 @@ function addStandIn(
  * The bytes of a font the output names, when they are the upload's: a native font whose path is
  * inside the job, or a TFM at the job's top, where TeX looks first.
  */
-function shippedFont(
+export function shippedFont(
   files: Readonly<Record<string, Uint8Array>>,
   job: string,
   path: string,
@@ -580,6 +581,20 @@ export async function glyphStream(
   output: Uint8Array,
   shipped: (path: string) => Uint8Array | undefined = () => undefined,
 ): Promise<GlyphStream> {
+  return (await readOutput(fonts, output, shipped)).stream;
+}
+
+/**
+ * An output read as `glyphStream` reads it, with what it read it through: the output parsed with
+ * the TeX fonts' widths, as the page parses it, and the text of each of its glyphs, as the page
+ * names them (`glyphTextOf`), which `collectFields` takes. The probe (item 5) reads a marked
+ * output's fields with them, and its glyph stream to compare with the reference's.
+ */
+export async function readOutput(
+  fonts: FontLibrary,
+  output: Uint8Array,
+  shipped: (path: string) => Uint8Array | undefined = () => undefined,
+): Promise<{ stream: GlyphStream; doc: DviDocument; textOf: GlyphTextOf }> {
   const doc = parseDvi(output, () => undefined);
   const fromUpload = new Set<string>();
   const loaded = new Map<string, PageFont>();
@@ -677,7 +692,7 @@ export async function glyphStream(
     }
     return { items };
   });
-  return {
+  const stream: GlyphStream = {
     pages,
     size: paperSize(placed.pages[0] ?? { items: [] }) ?? US_LETTER,
     fonts: {
@@ -689,6 +704,7 @@ export async function glyphStream(
     },
     specials: [...new Set(pages.flatMap((page) => page.items.flatMap(specialCommand)))].sort(),
   };
+  return { stream, doc: placed, textOf };
 }
 
 /** The TeX fonts an output names. */
@@ -784,6 +800,13 @@ export interface Difference {
   kind: DifferenceKind;
   /** The difference in words, naming pages, fonts, codes, specials' commands and places. */
   text: string;
+  /**
+   * Where the second stream parts from the first: its page, from 0, and its item there, or its
+   * page's last when it has fewer; none for a page more or fewer, or of another size. The probe
+   * reads the field whose markers come before it as the one that moved it.
+   */
+  page?: number;
+  item?: ReferenceItem;
 }
 
 /**
@@ -816,14 +839,21 @@ export function difference(a: GlyphStream, b: GlyphStream): Difference | undefin
     for (let i = 0; i < Math.max(ours.length, theirs.length); i++) {
       const x = ours[i];
       const y = theirs[i];
+      const at = y ?? theirs.at(-1);
+      const place = { page: index, ...(at === undefined ? {} : { item: at }) };
       if (x === undefined || y === undefined)
         return {
           kind: "count",
           text: `${where} sets ${ours.length} glyphs, rules and specials against ${theirs.length}`,
+          ...place,
         };
       const kind = differs(x, y, near);
       if (kind !== undefined)
-        return { kind, text: `${where}, item ${i + 1}: ${describe(x)} against ${describe(y)}` };
+        return {
+          kind,
+          text: `${where}, item ${i + 1}: ${describe(x)} against ${describe(y)}`,
+          ...place,
+        };
     }
   }
   return undefined;

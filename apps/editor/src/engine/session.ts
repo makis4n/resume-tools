@@ -193,8 +193,8 @@ export interface SessionOptions {
 }
 
 /**
- * Files a template supplies, such as a class file, by plain file name; or, for a compile, the
- * files of an upload, by their paths in the job's folder (`isJobPath`).
+ * Files a template supplies, such as a class file, by plain file name; or, for a compile or a dump,
+ * the files of an upload, by their paths in the job's or the dump's folder (`isJobPath`).
  */
 export type JobFiles = Record<string, string | Uint8Array>;
 
@@ -444,6 +444,19 @@ function fontFoldersOf(manifest: EngineManifest): string[] {
 /** What an error thrown says, for a result's `error`. */
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** The end of every file `dump` runs, which dumps the format. */
+const DUMP = "\n\\dump\n";
+
+/** A preamble with `\dump` after it: text as text, and bytes as bytes, as `dump` was given it. */
+function withDump(preamble: string | Uint8Array): string | Uint8Array {
+  if (typeof preamble === "string") return `${preamble}${DUMP}`;
+  const end = new TextEncoder().encode(DUMP);
+  const bytes = new Uint8Array(preamble.length + end.length);
+  bytes.set(preamble);
+  bytes.set(end, preamble.length);
+  return bytes;
+}
+
 /**
  * A path an output names, as a path in the job's folder: a relative one, from the folder, as TeX
  * and XeTeX write a file they found there, with `./` or without; or an absolute one inside it, as
@@ -608,12 +621,20 @@ export class EngineSession {
 
   /**
    * Dump a preamble into a format named `name`, which later compiles with the same engine can
-   * load. It runs in a folder of its own, with `files` beside it, and leaves only the format. A
-   * dump that fails leaves any earlier format of that name in place. One that succeeds replaces
-   * it, and the jobs compiled with it start again as new documents, keeping their files; a name
-   * stands for one template, so another template needs another name.
+   * load. It runs in a folder of its own, with `files` beside it at their paths in the folder, as
+   * a compile's are (`isJobPath`): a template's by plain file name, or an upload's, whose preamble
+   * may input a file of a folder of its own. It leaves only the format. The preamble is text,
+   * written as UTF-8, or bytes, written as they are, as an imported resume's preamble is in the
+   * encoding its file had. A dump that fails leaves any earlier format of that name in place. One
+   * that succeeds replaces it, and the jobs compiled with it start again as new documents, keeping
+   * their files; a name stands for one template, so another template needs another name.
    */
-  dump(engine: Engine, name: string, preamble: string, files: JobFiles = {}): DumpResult {
+  dump(
+    engine: Engine,
+    name: string,
+    preamble: string | Uint8Array,
+    files: JobFiles = {},
+  ): DumpResult {
     checkEngine(engine);
     checkFormatName(name);
     const spec = ENGINES[engine];
@@ -625,8 +646,8 @@ export class EngineSession {
     let log: string;
     let format: Uint8Array | undefined;
     try {
-      this.writeFiles(folder, files);
-      this.engine.FS.writeFile(`${folder}/${name}.tex`, `${preamble}\n\\dump\n`);
+      this.writeFiles(folder, files, checkJobPath);
+      this.engine.FS.writeFile(`${folder}/${name}.tex`, withDump(preamble));
       run = this.run(
         [spec.program, "-ini", `-jobname=${name}`, ...spec.args, `&${spec.program}`, `${name}.tex`],
         folder,
