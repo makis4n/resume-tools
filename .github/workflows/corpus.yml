@@ -2,12 +2,12 @@ name: corpus
 
 # The corpus of public resumes, fetched from the sources its manifest names, surveyed (decisions
 # 0017 and 0018), and each document's naming request checked for its text (decision 0029). It runs
-# nightly and on demand, never on a pull request, so that no pull request downloads real resumes;
+# weekly, on Monday nights, and on demand, never on a pull request, so that no pull request downloads real resumes;
 # milestone 3's item 17 adds the import runner to it.
 on:
   workflow_dispatch:
   schedule:
-    - cron: "23 3 * * *"
+    - cron: "23 3 * * 1"
 
 permissions:
   contents: read
