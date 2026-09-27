@@ -20,5 +20,8 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["resumeItem", "c06f8599e5f9d37d2cba65df0483c7d46fc7d2b9c1eb75bfc71074444c3e1786"]
+  ]
 }

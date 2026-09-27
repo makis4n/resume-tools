@@ -16,5 +16,9 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["endcvitems", "41f70290f2e143f456b2ed96f7e8d9942413cb8364272792685d7f90acc8f2be"],
+    ["bullet", "3040dccfe22fe8c97f9990812809be4e1e26b2933a793c62d903507e7608927e"]
+  ]
 }

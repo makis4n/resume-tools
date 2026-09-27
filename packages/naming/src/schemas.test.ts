@@ -9,7 +9,7 @@ import {
 } from "./answer";
 import { answerFor, checkRequest, requestKey } from "./cache";
 import { keyOf, NAMING_VERSION, sha256 } from "./key";
-import { NamingRequest } from "./request";
+import { NamingRequest, REQUEST_CAPS } from "./request";
 
 // Every template, macro, definition and call here is invented, and no text of anyone's is in it.
 
@@ -183,6 +183,38 @@ describe("the request", () => {
     }
   });
 
+  test("refuses a signature whose default holds text, or that is no signature", async () => {
+    const refused = [
+      "O{quill@example.invalid} m",
+      "D<>{+44 20 7946 0000} m",
+      "O{Quill Invented} m",
+      "R(){Wren} m",
+      "E{^_}{{Quill}{}} m",
+      "O{\\textbf{Quill}} m",
+      "Quill Invented",
+    ];
+    for (const signature of refused) {
+      const request = await example();
+      if (request.macros[0] !== undefined) request.macros[0].signature = signature;
+      const result = NamingRequest.safeParse(request);
+      expect(result.success, signature).toBe(false);
+      expect(result.error?.issues[0]?.path, signature).toEqual(["macros", 0, "signature"]);
+    }
+    // A default the builder sent as its placeholder, an empty one, and one that is code.
+    const taken = [
+      "O{Xxxxx Xxxxxxxx} m",
+      "D<>{0000} m",
+      "O{} m",
+      "O{\\@empty} m",
+      "s O{\\str_use:N \\l_fontawesome_style_str } m",
+    ];
+    for (const signature of taken) {
+      const request = await example();
+      if (request.macros[0] !== undefined) request.macros[0].signature = signature;
+      expect(NamingRequest.safeParse(request).success, signature).toBe(true);
+    }
+  });
+
   test("finds a definition whose hash is not its text's, and a key its definitions do not give", async () => {
     const request = NamingRequest.parse(await example());
     const [first] = request.definitions;
@@ -335,6 +367,48 @@ describe("the answer", () => {
     ).toBe(false);
   });
 
+  test("answers each macro once, and a command that opens a list names what closes it", () => {
+    const opens = { kind: "bulletList", arguments: [], repeatable: false };
+    const naming = (macros: unknown[]) => ({ macros, preamble: { parameters: [] } });
+    const entry = { of: "command", name: "cventry", answer: ENTRY_ANSWER };
+    // A command and an environment may share a name; a macro may not be answered twice.
+    expect(ModelNaming.safeParse(naming([entry, { ...entry, of: "environment" }])).success).toBe(
+      true,
+    );
+    const twice = ModelNaming.safeParse(naming([entry, entry]));
+    expect(twice.success).toBe(false);
+    expect(twice.error?.issues[0]?.path).toEqual(["macros", 1, "name"]);
+    // A command that opens a list names its closer; an environment's `\end` is its own.
+    const opener = (of: string, list: Record<string, unknown>) => ({
+      of,
+      name: "cvliststart",
+      answer: { ...opens, list },
+    });
+    const unclosed = ModelNaming.safeParse(
+      naming([opener("command", { does: "opens", holds: "bullet" })]),
+    );
+    expect(unclosed.success).toBe(false);
+    expect(unclosed.error?.issues[0]?.path).toEqual(["macros", 0, "answer", "list", "closedBy"]);
+    for (const [of, list] of [
+      ["command", { does: "opens", closedBy: "cvlistend", holds: "bullet" }],
+      ["environment", { does: "opens", holds: "bullet" }],
+      ["command", { does: "closes", openedBy: "cvliststart" }],
+    ] as const)
+      expect(ModelNaming.safeParse(naming([opener(of, list)])).success, `${of} ${list.does}`).toBe(
+        true,
+      );
+  });
+
+  test("names a setting by its index in the request, and no index past the last", () => {
+    const setting = (index: number) =>
+      PreambleAnswer.safeParse({
+        parameters: [{ parameter: "margins", setting: index, command: "geometry" }],
+      }).success;
+    expect(setting(REQUEST_CAPS.settings - 1)).toBe(true);
+    expect(setting(REQUEST_CAPS.settings)).toBe(false);
+    expect(setting(-1)).toBe(false);
+  });
+
   test("takes the preamble's style parameters, and what the model answers for a request", () => {
     const preamble = {
       parameters: [
@@ -402,6 +476,45 @@ describe("a stored answer", () => {
     ).toBeDefined();
   });
 
+  test("takes the dependencies its key was computed from, and its list's partners by key", () => {
+    const dependencies = [
+      ["cventry@style", "c".repeat(64)],
+      ["cvmissing", null],
+    ];
+    expect(StoredAnswer.parse(stored({ dependencies })).dependencies).toEqual(dependencies);
+    const closer = stored({
+      name: "cvlistend",
+      answer: {
+        kind: "bulletList",
+        arguments: [],
+        repeatable: false,
+        list: { does: "closes", openedBy: "cvliststart" },
+        reviewed: true,
+      },
+      partnerKeys: { openedBy: "d".repeat(64) },
+    });
+    expect(StoredAnswer.parse(closer).partnerKeys).toEqual({ openedBy: "d".repeat(64) });
+    const refused = [
+      stored({ dependencies: [["cventry@style", "C"]] }),
+      stored({ dependencies: [["cventry@style"]] }),
+      // A partner's key for a partner the answer does not name.
+      { ...closer, partnerKeys: { closedBy: "d".repeat(64) } },
+      stored({ partnerKeys: { openedBy: "d".repeat(64) } }),
+      // A command that opens a list names its closer.
+      stored({
+        answer: {
+          kind: "bulletList",
+          arguments: [],
+          repeatable: false,
+          list: { does: "opens", holds: "bullet" },
+          reviewed: true,
+        },
+      }),
+    ];
+    for (const [i, answer] of refused.entries())
+      expect(StoredAnswer.safeParse(answer).success, `stored ${i}`).toBe(false);
+  });
+
   test("refuses a seed answer no person reviewed, and a flag that says otherwise than the answer", () => {
     const refused = [
       stored({ answer: ENTRY_ANSWER, reviewed: false }),
@@ -445,5 +558,133 @@ describe("reading the cache", () => {
     expect(await answerFor(cacheOf({ [key]: stored({ reviewed: false }) }), key)).toBeUndefined();
     expect(await answerFor(cacheOf({ [key]: "{ not json" }), key)).toBeUndefined();
     expect(await answerFor(cacheOf({ [key]: null }), key)).toBeUndefined();
+  });
+
+  test("gives an answer whose dependencies give its key, and none whose dependencies do not", async () => {
+    const hash = await sha256(ENTRY);
+    const dependencies = [["cventry@style", await sha256(STYLE)]] as [string, string][];
+    const key = await keyOf(NAMING_VERSION, hash, dependencies);
+    const held = stored({ key, hash, dependencies });
+    expect(await answerFor(cacheOf({ [key]: held }), key)).toMatchObject({ key });
+    // The same answer filed under a key its closure does not give, as a hand-edited file may be.
+    const other = "e".repeat(64);
+    expect(await answerFor(cacheOf({ [other]: { ...held, key: other } }), other)).toBeUndefined();
+  });
+
+  /**
+   * A list's two macros as one template defines them, `\cvliststart` and `\cvlistend`, their
+   * answers filed under their keys with each other's key as their partner's.
+   */
+  async function listCache() {
+    const [start, end] = await Promise.all([START, END].map(sha256));
+    const keys = {
+      start: await keyOf(NAMING_VERSION, start ?? "", []),
+      end: await keyOf(NAMING_VERSION, end ?? "", []),
+    };
+    const answer = (list: Record<string, unknown>) => ({
+      kind: "bulletList",
+      arguments: [],
+      repeatable: false,
+      list,
+      reviewed: true,
+    });
+    const entries = {
+      [keys.start]: stored({
+        key: keys.start,
+        hash: start,
+        dependencies: [],
+        name: "cvliststart",
+        answer: answer({ does: "opens", closedBy: "cvlistend", holds: "bullet" }),
+        partnerKeys: { closedBy: keys.end },
+      }),
+      [keys.end]: stored({
+        key: keys.end,
+        hash: end,
+        dependencies: [],
+        name: "cvlistend",
+        answer: answer({ does: "closes", openedBy: "cvliststart" }),
+        partnerKeys: { openedBy: keys.start },
+      }),
+    };
+    return { keys, cache: cacheOf(entries) };
+  }
+
+  test("gives a document's macro the answer as its own, its list's partners found by key", async () => {
+    const { keys, cache } = await listCache();
+    // A fork that renames the two macros and keeps their bodies keeps their answers, named as it
+    // names them.
+    const partners = new Map([
+      ["itemsstart", keys.start],
+      ["itemsend", keys.end],
+    ]);
+    expect(
+      await answerFor(cache, keys.start, { name: "itemsstart", of: "command", partners }),
+    ).toMatchObject({
+      name: "itemsstart",
+      answer: { list: { does: "opens", closedBy: "itemsend", holds: "bullet" } },
+    });
+    expect(
+      await answerFor(cache, keys.end, { name: "itemsend", of: "command", partners }),
+    ).toMatchObject({
+      name: "itemsend",
+      answer: { list: { does: "closes", openedBy: "itemsstart" } },
+    });
+    // Two macros of one key are one definition: the answer's own name is taken where it is there.
+    const both = new Map([...partners, ["cvlistend", keys.end]]);
+    expect(
+      await answerFor(cache, keys.start, { name: "cvliststart", of: "command", partners: both }),
+    ).toMatchObject({ answer: { list: { closedBy: "cvlistend" } } });
+    // Asked with no macro, the answer is as it was filed.
+    expect(await answerFor(cache, keys.start)).toMatchObject({
+      name: "cvliststart",
+      answer: { list: { closedBy: "cvlistend" } },
+    });
+  });
+
+  test("refuses a partner no macro of the request is by key, and a kind that is not the macro's", async () => {
+    const { keys, cache } = await listCache();
+    // A bare `\end{itemize}` closes a list another template's opener opens: its closer's answer
+    // names that opener, which this document has not.
+    const opener = await keyOf(
+      NAMING_VERSION,
+      await sha256("macro:->\\begin {itemize}\\small "),
+      [],
+    );
+    const partners = new Map([
+      ["bulletsstart", opener],
+      ["bulletsend", keys.end],
+    ]);
+    expect(
+      await answerFor(cache, keys.end, { name: "bulletsend", of: "command", partners }),
+    ).toEqual({ answer: undefined, reason: "partner" });
+    expect(
+      await answerFor(cache, keys.start, {
+        name: "cvliststart",
+        of: "environment",
+        partners: new Map([["cvliststart", keys.start]]),
+      }),
+    ).toEqual({ answer: undefined, reason: "kind" });
+    // An answer that names a partner and holds no key for it cannot be paired.
+    const held = JSON.parse(JSON.stringify(await cache.get(keys.end)));
+    delete held.partnerKeys;
+    expect(
+      await answerFor(cacheOf({ [keys.end]: held }), keys.end, {
+        name: "cvlistend",
+        of: "command",
+        partners: new Map([
+          ["cvliststart", keys.start],
+          ["cvlistend", keys.end],
+        ]),
+      }),
+    ).toEqual({ answer: undefined, reason: "partner" });
+    // An answer that names no partner is the macro's under its own name.
+    const key = "a".repeat(64);
+    expect(
+      await answerFor(cacheOf({ [key]: stored() }), key, {
+        name: "cvjob",
+        of: "command",
+        partners: new Map(),
+      }),
+    ).toMatchObject({ name: "cvjob", answer: { kind: "entry" } });
   });
 });

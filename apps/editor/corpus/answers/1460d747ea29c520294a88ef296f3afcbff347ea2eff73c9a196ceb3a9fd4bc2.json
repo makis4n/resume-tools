@@ -26,5 +26,13 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["emailsymbol", "03f52d1f93bae599317a6d29380f17107d3160182a77cc718538102c7152834f"],
+    ["mailaddresssymbol", "0d9ead8e642ffec280657998ef1d0a26c6fd0b60fcc03b39854193e4521c4044"],
+    ["faAt", "b46cd921464cf1c1d9af73405d77e82792caba6d49a65880b4a99aa24be7cdc2"],
+    ["faEnvelope", "ae6c73405e98df4b35cd14635cc165751fcc7a8b1b5d7295896dceb0bda40818"],
+    ["faPreselectedIcon", "2a5dc986644c577dd65165934349664a897bcbc1519a613553442f9152b728ab"],
+    ["faPreselectedIcon code", "c4eafe31a9176f2026a2227ac57ac4a66df889337614500d5d36d20137b7efe8"]
+  ]
 }

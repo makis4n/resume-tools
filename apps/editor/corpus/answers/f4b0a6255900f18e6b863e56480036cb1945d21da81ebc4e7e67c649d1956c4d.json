@@ -18,5 +18,8 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["pcol@icolumnratio", "0d743b60dfe5860bb383091d8b607448d5f37b307b3d6a0c36e2e77887fe00ed"]
+  ]
 }

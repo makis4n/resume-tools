@@ -63,11 +63,17 @@
  *                 the verdicts the oracle expects against those found, and how many disagree
  *                 (`scripts/corpus-oracle.ts`). It exits 1 when the samples cannot be fetched
  *   seed          fetch the oracle's samples as `oracle` does, run each through the probe and the
- *                 naming request, and print each sample's macros and environments with their
- *                 hashes, keys and verdicts, and whether `corpus/answers/` holds an answer for
- *                 each that validates and whose hash is the macro's (`scripts/corpus-seed.ts`,
- *                 decision 0024). It exits 1 when one has none, or the samples cannot be fetched
+ *                 naming request, built with the header's values the sample's calls give, and
+ *                 print each sample's macros and environments with their hashes, keys and
+ *                 verdicts, whether `corpus/answers/` holds an answer for each that validates,
+ *                 whose hash is the macro's and that is filed under item 4's key, and what
+ *                 `--write` would change (`scripts/corpus-seed.ts`, decision 0024). It exits 1
+ *                 when one has none, a key moved, a file is not as `--write` writes it, or the
+ *                 samples cannot be fetched
  *   --json <file> write each sample's macros as JSON too: names, hashes, keys and verdicts
+ *   --write       write every answer file under item 4's key, with the dependencies the key is
+ *                 computed from and its list's partners' keys, moving a file whose key changed,
+ *                 as after a naming version's bump or an upgrade of the tree
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -75,7 +81,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -128,11 +134,19 @@ import {
   runPool,
   uploadOf,
 } from "./corpus-reference.ts";
-import { answersFolder, type SeedChildRow, type SeedRow, seedTable } from "./corpus-seed.ts";
+import {
+  ANSWERS_DIR,
+  answersFolder,
+  type SeedChildRow,
+  type SeedRow,
+  seedPlan,
+  seedStates,
+  seedTable,
+} from "./corpus-seed.ts";
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | seed [--json <file>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | seed [--json <file>] [--write]";
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
@@ -630,7 +644,7 @@ async function runOracle() {
   print(["", ...oracleTable(lines).trimEnd().split("\n")]);
 }
 
-async function runSeed(json: string | undefined) {
+async function runSeed(json: string | undefined, write: boolean) {
   const oracle = await fetchOracle();
   if (oracle === undefined) return;
   if (!existsSync(ENGINE_MANIFEST))
@@ -671,13 +685,25 @@ async function runSeed(json: string | undefined) {
     const row = rows.get(doc.id);
     return row === undefined ? [] : [row];
   });
-  const folder = answersFolder();
-  const { table, problems } = seedTable(ordered, folder.read, folder.keys);
+  let folder = answersFolder();
+  const plan = await seedPlan(ordered, folder);
+  if (write) {
+    // Every file is written before any it moved from is removed, and none another write takes.
+    const targets = new Set(plan.writes.map((each) => each.to));
+    for (const each of plan.writes)
+      writeAtomically(join(ANSWERS_DIR, `${each.to}.json`), each.text);
+    for (const each of plan.writes)
+      if (each.from !== each.to && !targets.has(each.from))
+        rmSync(join(ANSWERS_DIR, `${each.from}.json`));
+    folder = answersFolder();
+  }
+  const states = await seedStates(ordered, folder.read);
+  const { table, problems } = seedTable(ordered, states, folder.keys, { ...plan, written: write });
   print(["", ...table.trimEnd().split("\n")]);
   if (json !== undefined) writeAtomically(json, formatJson({ version: 1, documents: ordered }));
   if (problems > 0) {
     console.error(
-      "The seed has a macro with no answer that validates and whose hash is its own: write it under corpus/answers/",
+      "The seed has a problem: a macro whose answer is missing, does not validate or is not filed under its request's key, a redefinition that stops a compile, or an answer file `corpus seed --write` would write",
     );
     process.exitCode = 1;
   }
@@ -690,6 +716,7 @@ async function main() {
       only: { type: "string" },
       json: { type: "string" },
       tree: { type: "string" },
+      write: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
@@ -729,6 +756,7 @@ async function main() {
   )
     throw new Error("--json goes with survey, reference, parse, probe or seed");
   if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
+  if (values.write === true && command !== "seed") throw new Error("--write goes with seed");
   if (command === "fetch") return runFetch(values.only);
   if (command === "collect") return runCollect();
   // pnpm runs the script in the editor's folder; a path is the caller's, from where pnpm was run.
@@ -738,7 +766,7 @@ async function main() {
   if (command === "parse") return runParse(values.only, caller(values.json));
   if (command === "probe") return runProbe(values.only, caller(values.json));
   if (command === "oracle") return runOracle();
-  if (command === "seed") return runSeed(caller(values.json));
+  if (command === "seed") return runSeed(caller(values.json), values.write === true);
   return runSurvey(caller(values.json), caller(values.tree));
 }
 

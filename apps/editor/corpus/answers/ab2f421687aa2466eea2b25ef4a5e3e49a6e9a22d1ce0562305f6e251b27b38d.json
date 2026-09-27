@@ -26,5 +26,18 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["arraybackslash", "77f229d4f65dadaac67c2c2cd9aa918b11ad5dfb2c76c79467394e30194caf6b"],
+    ["multirow", "1e26a62eb6f5b90d7c9e3a3bdb383b173ab36266e3b4560a369d0da0dcb5cef6"],
+    ["BeginAccSupp", "2b60e442c5d7558284ab77202929e814f52679472c418eb4678dbd6032099501"],
+    ["EndAccSupp", "7a2ee46aae6b7c3a16d1b41b3a7e286a648e842f2cb9509271b13bf18ca60d3b"],
+    ["\\multirow", "3e269ea4dec2af857f0ffb07f74704edeb1724da9dca21b83af2a8bdef894f32"],
+    ["setkeys", "d7ade1f2a00faf375d936da9c0ed7cbfeb74d82f0f9df1e49d440fc20c901788"],
+    ["ACCSUPP@bdc", "f5ecb9852d34ba4f13143b65b87b236ae4ee3744a2c75beb720459de26a3ec6a"],
+    ["ACCSUPP@space", "ba763f5d94d1c405463f881c98e7b52913a9844aff2f7e65444adec328dcdabd"],
+    ["ACCSUPP@emc", "4e99a7c323d1f734a0b56a5587f92484d13bd69f6b0abecb995467f698006121"],
+    ["@multirow", "8e708656e64cbdc45bf7914bf491a4e69280c3060fa517ca5d30dde084134632"],
+    ["@@multirow", "3d0204401daa4b98fcf4a266da1871d39cf731716e0fad3899cf1b917a2f2b09"]
+  ]
 }

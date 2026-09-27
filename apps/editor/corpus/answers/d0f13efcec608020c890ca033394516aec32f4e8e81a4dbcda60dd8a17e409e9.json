@@ -25,5 +25,10 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["\\cvsection", "47037d73f557680a74581e2faa4afde0e8ed7277f55390e85923eefe35e0be52"],
+    ["ifstrequal", "040b4a4e03d57060a3226b5e7141f2689d4b026dc9940993f19186494f8fa78f"],
+    ["cvsectionfont", "da22b00bcafba1171c9990dae1dc4960adfa3902ba9b04beb7004737ad949433"]
+  ]
 }
