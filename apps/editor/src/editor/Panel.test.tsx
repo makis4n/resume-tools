@@ -3,6 +3,7 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { curated } from "../templates/curated";
+import type { TemplatePackage } from "../templates/package";
 import type { Field } from "../tex/fields";
 import { apply, type Command, fieldsOf, newDocument } from "./document";
 import {
@@ -12,6 +13,7 @@ import {
   needsInput,
   Panel,
   plainText,
+  REQUIRED,
   shownFieldsOf,
   thisMonth,
 } from "./Panel";
@@ -242,7 +244,10 @@ describe("Panel", () => {
     });
     // The header's fields and the links, each input typed into, each menu changed and each button
     // that is not disabled pressed, as the browser would.
-    for (const { type, props } of elementsOf(tree, new Set(["HeaderFields", "Links", "Reorder"]))) {
+    for (const { type, props } of elementsOf(
+      tree,
+      new Set(["HeaderFields", "Links", "Reorder", "AddButton"]),
+    )) {
       const name = typeof type === "function" ? type.name : type;
       if (name === "TypedInput" || name === "FieldInput")
         (props.onChange as (text: string) => void)("Typed");
@@ -330,5 +335,45 @@ describe("Panel", () => {
     ])
       expect(html).toContain(text);
     expect(html).not.toContain("\\");
+  });
+
+  it("marks a field the package requires, saying why, whether it has an input or not", () => {
+    // An imported package's required slots (decision 0026), given here to Jake's.
+    const { package: jake } = curated("jake");
+    const required = { header: ["location"], link: ["label"], section: ["title"] };
+    const pkg = { ...jake, required } as TemplatePackage;
+    const doc = newDocument("jake", sample, "en-US");
+    const html = renderToStaticMarkup(
+      <Panel document={doc} pkg={pkg} onCommand={() => {}} onSeal={() => {}} />,
+    );
+    const why = `title="${REQUIRED}"`;
+    // The location's input and the link's label's, each with its mark.
+    expect(html).toMatch(new RegExp(`Location<input [^>]*${why}[^>]*aria-required="true"`));
+    expect(html).toContain(
+      `<small style="color:#9a5b00;font-style:italic" ${why}>required</small>`,
+    );
+    // A section's title the page shows has no input here, and is marked by its label.
+    expect(html).toContain(`${why}>Title required</small>`);
+    expect(html.split("Title required")).toHaveLength(sample.sections.length + 1);
+    // Nothing else is, and the curated package marks nothing.
+    expect(html).not.toMatch(/Phone<input [^>]*aria-required/);
+    const plain = renderToStaticMarkup(
+      <Panel document={doc} onCommand={() => {}} onSeal={() => {}} />,
+    );
+    expect(plain).not.toContain("required");
+    expect(html).not.toContain("\\");
+  });
+
+  it("gives no input to a slot the document keeps as its upload had it", () => {
+    // An import keeps the header's location as the upload had it, where no field is (decision
+    // 0026), and the panel, which gives the other contact fields an input, gives it none.
+    const kept = structuredClone(sample);
+    Object.assign(kept.header, { location: "", kept: ["location"] });
+    const doc = { ...newDocument("jake", sample, "en-US"), resume: kept };
+    const html = renderToStaticMarkup(
+      <Panel document={doc} onCommand={() => {}} onSeal={() => {}} />,
+    );
+    expect(html).toContain("Phone");
+    expect(html).not.toContain("Location");
   });
 });

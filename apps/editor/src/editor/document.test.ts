@@ -10,19 +10,31 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { curated } from "../templates/curated";
 import { generateBody } from "../templates/generate";
-import { controlValuesFor, defaultControls, parsePackage } from "../templates/package";
 import {
+  controlValuesFor,
+  defaultControls,
+  parsePackage,
+  type TemplatePackage,
+} from "../templates/package";
+import {
+  addable,
   apply,
+  applyUnder,
   type Command,
   CommandError,
   Document,
   dropRefusedChoices,
+  type FieldSlot,
   fieldsOf,
   HISTORY_LIMIT,
   History,
+  isRequired,
   mintId,
   newDocument,
+  requiredFields,
   type StructureOp,
+  showsBullets,
+  UNIT_KINDS,
 } from "./document";
 
 const { package: jake, sample } = curated("jake");
@@ -997,5 +1009,200 @@ describe("structure", () => {
       expect(Document.parse(after)).toStrictEqual(after);
       expect(lockedOf(after)).toBe(lockedOf(kept));
     });
+  });
+});
+
+describe("an imported package's rules", () => {
+  // What an import's checks decide, which its package carries (decision 0026): the slots that stop
+  // the compile when empty, the kinds of unit a new one of which stops it, and an entry snippet
+  // with no place for bullets. The curated packages carry none of these, so these tests give them
+  // to the invented package, as the import's schema will have them.
+  const ruled = (rules: object): TemplatePackage => ({ ...EVERY, ...rules }) as TemplatePackage;
+  const doc: Document = { version: 1, template: "every", resume: FULL, controls: {} };
+  const structural = (op: StructureOp): Command => ({ type: "structure", op });
+  const refused = (id: string) =>
+    new CommandError(`the template requires ${id}, which cannot be left empty`);
+
+  it("refuses to empty a field the package requires, which keeps its value, and empties the rest", () => {
+    const pkg = ruled({
+      required: {
+        header: ["first", "location"],
+        link: ["label"],
+        section: { paragraph: ["text"] },
+        entry: ["title", "dates"],
+        bullet: ["text"],
+      },
+    });
+    for (const [command, id] of [
+      [{ type: "text", field: "header.first", text: "" }, "header.first"],
+      [{ type: "text", field: "header.first", text: " \t" }, "header.first"],
+      [{ type: "text", field: "kestrel.title", text: "" }, "kestrel.title"],
+      [{ type: "rich", field: "about.text", runs: [] }, "about.text"],
+      [{ type: "rich", field: "kestrel-1.text", runs: [{ text: " " }] }, "kestrel-1.text"],
+      [{ type: "dates", field: "kestrel.dates", dates: undefined }, "kestrel.dates"],
+      [structural({ op: "setHeader", location: "" }), "header.location"],
+      [structural({ op: "setLink", id: "folio", label: "" }), "folio.label"],
+    ] satisfies [Command, string][])
+      expect(() => applyUnder(pkg, doc, command), id).toThrow(refused(id));
+    // The history keeps the document as it was, and makes no step.
+    const history = new History(doc, pkg);
+    expect(() => history.dispatch({ type: "text", field: "header.first", text: "" })).toThrow(
+      CommandError,
+    );
+    expect(history.present).toBe(doc);
+    expect(history.canUndo).toBe(false);
+    // A field it does not require empties, and one it does takes other text.
+    const emptied = [
+      { type: "text", field: "header.last", text: "" },
+      { type: "text", field: "kestrel.subtitle", text: "" },
+      structural({ op: "setHeader", headline: "", location: "Ely, MN" }),
+      { type: "rich", field: "medal.text", runs: [] },
+      { type: "text", field: "header.first", text: "Orla" },
+    ] satisfies Command[];
+    const after = emptied.reduce((each, command) => applyUnder(pkg, each, command), doc);
+    expect(after.resume.header).toMatchObject({ name: { first: "Orla", last: "" } });
+    expect(after.resume.header.location).toBe("Ely, MN");
+    // A required field that is blank already can stay so, since the edit changes nothing.
+    const blank = applyUnder(undefined, doc, { type: "text", field: "kestrel.title", text: "" });
+    expect(applyUnder(pkg, blank, { type: "text", field: "kestrel.title", text: "" })).toEqual(
+      blank,
+    );
+    // The curated package requires nothing.
+    expect(
+      apply(doc, { type: "text", field: "header.first", text: "" }).resume.header.name.first,
+    ).toBe("");
+  });
+
+  it("reads the slots required for every role, for a role, and for a kind of section", () => {
+    const slot = (snippet: FieldSlot["snippet"], name: string, more: Partial<FieldSlot> = {}) => ({
+      snippet,
+      name,
+      ...more,
+    });
+    const pkg = ruled({
+      required: {
+        entry: { default: ["title"], education: ["place"] },
+        section: { entries: ["title"] },
+        labelledItem: ["label"],
+      },
+    });
+    expect(isRequired(pkg, slot("entry", "title", { role: "experience" }))).toBe(true);
+    expect(isRequired(pkg, slot("entry", "title", { role: "education" }))).toBe(false);
+    expect(isRequired(pkg, slot("entry", "place", { role: "education" }))).toBe(true);
+    expect(isRequired(pkg, slot("section", "title", { kind: "entries", role: "other" }))).toBe(
+      true,
+    );
+    expect(isRequired(pkg, slot("section", "title", { kind: "list", role: "other" }))).toBe(false);
+    expect(isRequired(pkg, slot("labelledItem", "label", { kind: "labelled" }))).toBe(true);
+    expect(isRequired(pkg, slot("item", "text", { kind: "list" }))).toBe(false);
+    expect(isRequired(EVERY, slot("header", "first"))).toBe(false);
+    expect(isRequired(undefined, slot("header", "first"))).toBe(false);
+    expect([...requiredFields(pkg, FULL)].sort()).toEqual([
+      "drawing.label",
+      "kestrel.title",
+      "work.title",
+    ]);
+  });
+
+  it("refuses a unit of a kind the package cannot take, and adds the rest", () => {
+    const pkg = ruled({ fixed: ["entry", "bullet", "labelledItem", "link", "section.list"] });
+    for (const [op, kind] of [
+      [{ op: "addEntry", section: "work" }, "entry"],
+      [{ op: "addBullet", entry: "kestrel" }, "bullet"],
+      [{ op: "addItem", section: "tools" }, "labelled item"],
+      [{ op: "addLink" }, "link"],
+      [{ op: "addSection", kind: "list", role: "skills" }, "list section"],
+    ] satisfies [StructureOp, string][])
+      expect(() => applyUnder(pkg, doc, structural(op)), op.op).toThrow(
+        new CommandError(`the template cannot take another ${kind}: a new one stops its compile`),
+      );
+    for (const kind of UNIT_KINDS)
+      expect(addable(pkg, kind), kind).toBe(
+        !["entry", "bullet", "labelledItem", "link", "section.list"].includes(kind),
+      );
+    const added = [
+      structural({ op: "addItem", section: "honours" }),
+      structural({ op: "addSection", kind: "entries", role: "projects" }),
+      structural({ op: "removeEntry", id: "kestrel" }),
+    ].reduce((each, command) => applyUnder(pkg, each, command), doc);
+    expect(added.resume.sections).toHaveLength(FULL.sections.length + 1);
+    // The curated package takes every kind.
+    for (const kind of UNIT_KINDS) expect(addable(jake, kind)).toBe(true);
+  });
+
+  it("refuses a bullet for an entry whose snippet shows none, as its snippet or its package says", () => {
+    const bullet = structural({ op: "addBullet", entry: "kestrel" });
+    const message = new CommandError(
+      "the template sets no bullets for an entry of its experience sections, as kestrel is",
+    );
+    // The entries of the work section, whose role is experience, have a variant with no list.
+    const variant = ruled({
+      snippets: {
+        ...EVERY.snippets,
+        entry: {
+          default: "{{title}} {{dates}}\n{{bullets}}",
+          experience: "{{title}} {{dates}}{{#bullets}}{{/bullets}}",
+        },
+      },
+    });
+    expect(showsBullets(variant, "experience")).toBe(false);
+    expect(showsBullets(variant, "education")).toBe(true);
+    expect(() => applyUnder(variant, doc, bullet)).toThrow(message);
+    // Or the package says so of the role's snippet.
+    const flagged = ruled({
+      snippets: {
+        ...EVERY.snippets,
+        entry: { default: EVERY.snippets.entry, experience: { bullets: false } },
+      },
+    });
+    expect(showsBullets(flagged, "experience")).toBe(false);
+    expect(() => applyUnder(flagged, doc, bullet)).toThrow(message);
+    // Every curated entry snippet shows bullets.
+    for (const role of ["experience", "education", "projects", "other"] as const)
+      expect(showsBullets(jake, role), role).toBe(true);
+    expect(applyUnder(EVERY, doc, bullet).resume).not.toEqual(doc.resume);
+  });
+
+  it("gives no field for a slot a node keeps as the upload had it, and takes no edit to it", () => {
+    // What an import keeps, as its model has it: the header's location, an entry's title and
+    // dates, a bullet's text, a labelled item's label and a section's title.
+    const resume = structuredClone(FULL) as Resume & { header: { kept?: string[] } };
+    resume.header.kept = ["location"];
+    const work = resume.sections[1];
+    const tools = resume.sections[3];
+    if (work?.kind !== "entries" || tools?.kind !== "labelled") throw new Error("the sections");
+    const kestrel = work.entries[0] as Entry & { kept?: string[] };
+    kestrel.kept = ["title", "dates"];
+    (kestrel.bullets[0] as { kept?: string[] }).kept = ["text"];
+    (tools.items[0] as { kept?: string[] }).kept = ["label"];
+    (tools as { kept?: string[] }).kept = ["title"];
+    const fields = fieldsOf(resume);
+    for (const id of [
+      "header.location",
+      "kestrel.title",
+      "kestrel.dates",
+      "kestrel-1.text",
+      "drawing.label",
+      "tools.title",
+    ])
+      expect(fields.has(id), id).toBe(false);
+    for (const id of [
+      "header.first",
+      "header.email",
+      "kestrel.subtitle",
+      "drawing.text",
+      "work.title",
+    ])
+      expect(fields.has(id), id).toBe(true);
+    const kept: Document = { ...doc, resume };
+    expect(() => apply(kept, { type: "text", field: "kestrel.title", text: "Lead" })).toThrow(
+      new CommandError("the document has no field kestrel.title"),
+    );
+    expect(() => apply(kept, structural({ op: "setHeader", location: "Ely" }))).toThrow(
+      new CommandError("header.location is kept as the upload had it, and takes no edit"),
+    );
+    expect(apply(kept, structural({ op: "setHeader", phone: "555" })).resume.header.phone).toBe(
+      "555",
+    );
   });
 });

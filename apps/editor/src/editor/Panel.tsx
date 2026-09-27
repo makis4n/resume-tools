@@ -10,6 +10,12 @@
  * the input takes the focus to when it loses it, is one step for undo, as a visit to a field on
  * the page is (item 12); anything else the panel does is a step of its own.
  *
+ * An imported template's package says what it requires and what it cannot take (decision 0026):
+ * the panel marks a field it requires, which cannot be emptied, gives no input to a slot the
+ * document keeps as its upload had it, which is no field, and disables a button that would add a
+ * unit the template cannot take, or a bullet to an entry whose snippet shows none, saying why. A
+ * curated package says none of these.
+ *
  * Plain HTML in plain English, with nothing in it that is LaTeX.
  */
 
@@ -40,17 +46,21 @@ import {
   useState,
 } from "react";
 import { type DrawnPage, fieldsShown } from "../page/draw";
-import { curated } from "../templates/curated";
+import { CURATED } from "../templates/curated";
 import { formatDates } from "../templates/dates";
 import { isBlank } from "../templates/escape";
-import { type DateFormat, defaultControls } from "../templates/package";
+import { type DateFormat, defaultControls, type TemplatePackage } from "../templates/package";
 import {
+  addable,
   type Command,
   type Document,
   fieldsOf,
   PLACEHOLDERS,
+  requiredFields,
   SECTION_TITLES,
   type StructureOp,
+  showsBullets,
+  type UnitKind,
 } from "./document";
 
 /** How long typing in the panel waits for a pause before it becomes a command, in milliseconds. */
@@ -208,8 +218,49 @@ const STYLE = {
   mark: { color: "#9a5b00", fontStyle: "italic" },
 } satisfies Record<string, CSSProperties>;
 
+/** What a required field's mark and input say when pointed at. */
+export const REQUIRED = "The template needs this filled in, so it cannot be left empty";
+
+/** Why a button that would add a unit the template cannot take is disabled. */
+const CANNOT_ADD = "The template cannot take another one of these";
+
+/** Why the button that would add a bullet to an entry whose snippet shows none is disabled. */
+const NO_BULLETS = "The template sets no bullets for an entry of this section";
+
+/**
+ * What the panel shows of a package's rules for the open document (decision 0026): the fields the
+ * document has, which a slot it keeps as its upload had it is not (`fieldsOf`), undefined for
+ * every field; the fields the package requires (`requiredFields`); whether it takes a new unit of
+ * a kind (`addable`); and whether an entry of a section of a role shows bullets (`showsBullets`).
+ */
+interface Rules {
+  fields?: ReadonlySet<string>;
+  required: ReadonlySet<string>;
+  addable: (kind: UnitKind) => boolean;
+  bullets: (role: SectionRole) => boolean;
+}
+
+/** A package's rules for a document; with no package, none, and every edit taken. */
+function rulesOf(pkg: TemplatePackage | undefined, document: Document): Rules {
+  return {
+    fields: new Set(fieldsOf(document.resume).keys()),
+    required: requiredFields(pkg, document.resume),
+    addable: (kind) => addable(pkg, kind),
+    bullets: (role) => showsBullets(pkg, role),
+  };
+}
+
+/** A package that says nothing, whose rules take every edit. */
+const NO_RULES: Rules = { required: new Set(), addable: () => true, bullets: () => true };
+
 export interface PanelProps {
   document: Document;
+  /**
+   * The document's package, which says what its template requires and what it cannot take
+   * (decision 0026): an imported one's, which the app passes; the curated one of the document's
+   * template when it is left out, which says neither.
+   */
+  pkg?: TemplatePackage;
   /**
    * The fields that count as shown on the page (`shownFieldsOf`), so that a filled field the page
    * does not show gets an input here; undefined before the first page.
@@ -233,25 +284,40 @@ const ShownFields = createContext<ReadonlySet<string> | undefined>(undefined);
 /** `PanelProps.onSeal`, carried to each `TypedInput` in the same way. */
 const Seal = createContext<() => void>(() => {});
 
-export function Panel({ document, shownFields, onCommand, onSeal }: PanelProps) {
+/** The package's rules (`Rules`), carried to each `FieldInput` and `AddSection` in the same way. */
+const RulesOf = createContext<Rules>(NO_RULES);
+
+export function Panel({ document, pkg, shownFields, onCommand, onSeal }: PanelProps) {
   const { header, sections } = document.resume;
+  const known = pkg ?? CURATED.get(document.template)?.package;
+  const rules = rulesOf(known, document);
   return (
     <ShownFields value={shownFields}>
       <Seal value={onSeal}>
-        <div style={STYLE.panel}>
-          <HeaderFields header={header} send={onCommand} />
-          <Links links={header.links} send={onCommand} />
-          <Sections sections={sections} format={dateFormatOf(document)} send={onCommand} />
-        </div>
+        <RulesOf value={rules}>
+          <div style={STYLE.panel}>
+            <HeaderFields header={header} rules={rules} send={onCommand} />
+            <Links links={header.links} rules={rules} send={onCommand} />
+            <Sections
+              sections={sections}
+              format={dateFormatOf(document, known)}
+              rules={rules}
+              send={onCommand}
+            />
+          </div>
+        </RulesOf>
       </Seal>
     </ShownFields>
   );
 }
 
-/** The date format the page sets dates in: the document's choice, or its template's default. */
-function dateFormatOf(document: Document): DateFormat {
+/**
+ * The date format the page sets dates in: the document's choice, or its template's default, and
+ * the generator's own where there is no package to say.
+ */
+function dateFormatOf(document: Document, pkg: TemplatePackage | undefined): DateFormat {
   const { dateFormat } = document.controls;
-  return dateFormat ?? defaultControls(curated(document.template).package).dateFormat;
+  return dateFormat ?? (pkg === undefined ? "MMM yyyy" : defaultControls(pkg).dateFormat);
 }
 
 /** The `setHeader` op for one of the header's fields. */
@@ -261,7 +327,15 @@ function setHeader(key: (typeof HEADER_FIELDS)[number]["key"], text: string): St
   return op;
 }
 
-function HeaderFields({ header, send }: { header: Header; send: Send }) {
+/** What a required field's input carries: the reason, when pointed at, and the flag. */
+const requiredInput = (required: boolean) =>
+  required ? { title: REQUIRED, "aria-required": true as const } : {};
+
+/**
+ * The header's name, and its other fields each with an input, but a slot the document keeps as
+ * its upload had it, which is no field; each marked where the package requires it.
+ */
+function HeaderFields({ header, rules, send }: { header: Header; rules: Rules; send: Send }) {
   return (
     <fieldset>
       <legend>Header</legend>
@@ -271,21 +345,28 @@ function HeaderFields({ header, send }: { header: Header; send: Send }) {
         {...textField("header.first", send)}
       />
       <FieldInput label="Last name" text={header.name.last} {...textField("header.last", send)} />
-      {HEADER_FIELDS.map(({ key, label, mode }) => (
-        <label key={key} style={STYLE.row}>
-          {label}
-          <TypedInput
-            value={header[key] ?? ""}
-            inputMode={mode}
-            onChange={(value) => send(structural(setHeader(key, value)), `header:${key}`)}
-          />
-        </label>
-      ))}
+      {HEADER_FIELDS.map(({ key, label, mode }) => {
+        const field = `header.${key}`;
+        if (rules.fields !== undefined && !rules.fields.has(field)) return null;
+        const required = rules.required.has(field);
+        return (
+          <label key={key} style={STYLE.row}>
+            {label}
+            <TypedInput
+              value={header[key] ?? ""}
+              inputMode={mode}
+              {...requiredInput(required)}
+              onChange={(value) => send(structural(setHeader(key, value)), `header:${key}`)}
+            />
+            {required && <Required />}
+          </label>
+        );
+      })}
     </fieldset>
   );
 }
 
-function Links({ links, send }: { links: readonly Link[]; send: Send }) {
+function Links({ links, rules, send }: { links: readonly Link[]; rules: Rules; send: Send }) {
   const set = (
     id: string,
     change: { kind?: LinkKind; label?: string; href?: string },
@@ -315,9 +396,11 @@ function Links({ links, send }: { links: readonly Link[]; send: Send }) {
                     that field, as a click on it there is. */}
                 <TypedInput
                   value={link.label}
+                  {...requiredInput(rules.required.has(`${link.id}.label`))}
                   onChange={(label) => set(link.id, { label }, `field:${link.id}.label`)}
                 />
                 {fieldStatus(link.label, PLACEHOLDERS.link.label) === "placeholder" && <Mark />}
+                {rules.required.has(`${link.id}.label`) && <Required />}
               </label>
               <label style={STYLE.row}>
                 Address
@@ -338,9 +421,12 @@ function Links({ links, send }: { links: readonly Link[]; send: Send }) {
           ))}
         </ol>
       )}
-      <button type="button" onClick={() => send(structural({ op: "addLink" }))}>
+      <AddButton
+        refused={rules.addable("link") ? undefined : CANNOT_ADD}
+        onClick={() => send(structural({ op: "addLink" }))}
+      >
         Add link
-      </button>
+      </AddButton>
     </fieldset>
   );
 }
@@ -348,10 +434,12 @@ function Links({ links, send }: { links: readonly Link[]; send: Send }) {
 function Sections({
   sections,
   format,
+  rules,
   send,
 }: {
   sections: readonly Section[];
   format: DateFormat;
+  rules: Rules;
   send: Send;
 }) {
   return (
@@ -375,6 +463,7 @@ function Sections({
                 index={index}
                 count={sections.length}
                 format={format}
+                rules={rules}
                 send={send}
               />
             ),
@@ -395,12 +484,14 @@ function SectionRow({
   index,
   count,
   format,
+  rules,
   send,
 }: {
   section: EditableSection;
   index: number;
   count: number;
   format: DateFormat;
+  rules: Rules;
   send: Send;
 }) {
   const [open, setOpen] = useState(false);
@@ -429,7 +520,7 @@ function SectionRow({
         />
       </div>
       <FieldInput label="Title" text={title} {...textField(`${id}.title`, send)} />
-      {open && <SectionContents section={section} format={format} send={send} />}
+      {open && <SectionContents section={section} format={format} rules={rules} send={send} />}
     </li>
   );
 }
@@ -469,19 +560,52 @@ function LockedRow({
   );
 }
 
+/**
+ * A button that adds a unit, disabled where the template cannot take one, which says why when
+ * pointed at.
+ */
+function AddButton({
+  refused,
+  onClick,
+  children,
+}: {
+  /** Why the template takes no unit here, if it takes none. */
+  refused: string | undefined;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={refused !== undefined}
+      {...(refused === undefined ? {} : { title: refused })}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
 /** What a section holds, each with the buttons that reorder and remove it, and one to add more. */
 function SectionContents({
   section,
   format,
+  rules,
   send,
 }: {
   section: EditableSection;
   format: DateFormat;
+  rules: Rules;
   send: Send;
 }) {
   switch (section.kind) {
     case "entries": {
       const { entries } = section;
+      const bullets = rules.bullets(section.role)
+        ? rules.addable("bullet")
+          ? undefined
+          : CANNOT_ADD
+        : NO_BULLETS;
       return (
         <>
           {entries.length > 0 && (
@@ -493,23 +617,26 @@ function SectionContents({
                   index={index}
                   count={entries.length}
                   format={format}
+                  rules={rules}
+                  bullets={bullets}
                   send={send}
                 />
               ))}
             </ol>
           )}
-          <button
-            type="button"
+          <AddButton
+            refused={rules.addable("entry") ? undefined : CANNOT_ADD}
             onClick={() => send(structural({ op: "addEntry", section: section.id }))}
           >
             Add entry
-          </button>
+          </AddButton>
         </>
       );
     }
     case "list":
     case "labelled": {
       const items: readonly (Item | LabelledItem)[] = section.items;
+      const kind = section.kind === "list" ? "item" : "labelledItem";
       return (
         <>
           {items.length > 0 && (
@@ -519,12 +646,12 @@ function SectionContents({
               ))}
             </ol>
           )}
-          <button
-            type="button"
+          <AddButton
+            refused={rules.addable(kind) ? undefined : CANNOT_ADD}
             onClick={() => send(structural({ op: "addItem", section: section.id }))}
           >
             Add item
-          </button>
+          </AddButton>
         </>
       );
     }
@@ -538,30 +665,36 @@ function SectionContents({
 /**
  * An entry: its title and dates as the page sets them, the fields the page does not show, and its
  * bullets. Dates are edited on the page (item 9), so an entry without them gets a button here, as
- * it has none on the page to click.
+ * it has none on the page to click, unless the entry keeps its dates as its upload had them, when
+ * they are no field. `bullets` says why no bullet can be added, where none can.
  */
 function EntryRow({
   entry,
   index,
   count,
   format,
+  rules,
+  bullets: refused,
   send,
 }: {
   entry: Entry;
   index: number;
   count: number;
   format: DateFormat;
+  rules: Rules;
+  bullets: string | undefined;
   send: Send;
 }) {
   const { id, bullets } = entry;
   const placeholder = PLACEHOLDERS.entry;
+  const dated = rules.fields === undefined || rules.fields.has(`${id}.dates`);
   return (
     <li>
       <div style={STYLE.row}>
         <span>{isBlank(entry.title) ? "Untitled entry" : entry.title}</span>
         {entry.dates ? (
           <span>{formatDates(entry.dates, format)}</span>
-        ) : (
+        ) : dated ? (
           <button
             type="button"
             onClick={() =>
@@ -570,7 +703,7 @@ function EntryRow({
           >
             Add dates
           </button>
-        )}
+        ) : null}
         <Reorder
           index={index}
           count={count}
@@ -598,9 +731,12 @@ function EntryRow({
       />
       <div style={STYLE.row}>
         {bullets.length === 1 ? "1 bullet" : `${bullets.length} bullets`}
-        <button type="button" onClick={() => send(structural({ op: "addBullet", entry: id }))}>
+        <AddButton
+          refused={refused}
+          onClick={() => send(structural({ op: "addBullet", entry: id }))}
+        >
           Add bullet
-        </button>
+        </AddButton>
       </div>
       {bullets.length > 0 && (
         <ol style={STYLE.list}>
@@ -669,16 +805,23 @@ function ItemRow({
   );
 }
 
-/** The kind and role of a new section, and the button that adds it at the end. */
+/**
+ * The kind and role of a new section, and the button that adds it at the end: of the kinds the
+ * template can take, and none where it takes no new section.
+ */
 function AddSection({ send }: { send: Send }) {
-  const [kind, setKind] = useState<SectionKind>("entries");
+  const rules = useContext(RulesOf);
+  const [chosen, setKind] = useState<SectionKind>("entries");
   const [role, setRole] = useState<SectionRole>("experience");
+  const kinds = SECTION_KINDS.filter((each) => rules.addable(`section.${each}`));
+  const kind = kinds.includes(chosen) ? chosen : kinds[0];
+  if (kind === undefined) return null;
   return (
     <div style={STYLE.row}>
       <label style={STYLE.row}>
         Kind
         <select value={kind} onChange={(event) => setKind(SectionKind.parse(event.target.value))}>
-          {SECTION_KINDS.map((each) => (
+          {kinds.map((each) => (
             <option key={each} value={each}>
               {KIND_NAMES[each]}
             </option>
@@ -792,7 +935,9 @@ function RichField({
  * still be filled in or cleared, or one that holds its placeholder, which the input marks. Any
  * other field is edited on the page, and the panel shows `children` for it instead. Once the input
  * has had the focus it stays, so that filling the field in does not pull the input, and the panel
- * below it, from under the pointer.
+ * below it, from under the pointer. A field the package requires is marked, whether it has an
+ * input or not, and its input says why (decision 0026); a slot the document keeps as its upload had
+ * it is no field, and gets no input.
  */
 function FieldInput({
   field,
@@ -814,14 +959,23 @@ function FieldInput({
   children?: ReactNode;
 }) {
   const shownFields = useContext(ShownFields);
+  const rules = useContext(RulesOf);
   const [used, setUsed] = useState(false);
+  if (rules.fields !== undefined && !rules.fields.has(field)) return <>{children}</>;
+  const required = rules.required.has(field);
   if (locked || (!used && !needsInput(field, text, placeholder, shownFields)))
-    return <>{children}</>;
+    return (
+      <>
+        {children}
+        {required && <Required label={label} />}
+      </>
+    );
   return (
     <label style={STYLE.row} onFocus={() => setUsed(true)}>
       {label}
-      <TypedInput value={text ?? ""} onChange={onChange} />
+      <TypedInput value={text ?? ""} {...requiredInput(required)} onChange={onChange} />
       {fieldStatus(text, placeholder) === "placeholder" && <Mark />}
+      {required && <Required />}
     </label>
   );
 }
@@ -829,6 +983,18 @@ function FieldInput({
 /** The mark on a field that still holds the text it started with. */
 function Mark() {
   return <small style={STYLE.mark}>placeholder</small>;
+}
+
+/**
+ * The mark on a field the package requires, which cannot be emptied, saying why when pointed at;
+ * with the field's label where it stands with no input beside it.
+ */
+function Required({ label }: { label?: string }) {
+  return (
+    <small style={STYLE.mark} title={REQUIRED}>
+      {label === undefined ? "required" : `${label} required`}
+    </small>
+  );
 }
 
 /**

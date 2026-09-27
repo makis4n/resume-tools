@@ -208,7 +208,10 @@ of each launch template must find editable what the hand-written port marks.
    the block before the first section holding the largest text, contact strings by pattern, and
    `\href` calls as links by the kind their address gives; and the report. Done when the three
    upstream samples assemble into packages that pass the full harness and set the reference's
-   glyphs, and a fork of Jake's Resume from the corpus goes through every step in Node.
+   glyphs, and a fork of Jake's Resume from the corpus goes through every step in Node; the
+   harness holds an import to its upload's own pages and passes, and the one finding it keeps on
+   the samples, Awesome-CV's entry titles in small capitals, which the PDF's text shows only in
+   capitals, is a limit of the PDF's text layer (decision 0026, the owed table below).
 
 ### Stage 4. XeTeX imports
 
@@ -457,3 +460,4 @@ pull request that acts on it. The first two the owner settled on 26 September.
 | Case folding in the aligner, for a field set through `\MakeUppercase` (decisions 0007 and 0013) | Item 5 |
 | The first load at 42 to 44 MB uncompressed | Milestone 5 |
 | The PDF's text layer showing a hyphen as U+2011 in some XeTeX fonts (decision 0014) | The ATS's reader; not this milestone |
+| The PDF's text layer showing an import's small capitals, set with `+smcp`, as capitals: the Awesome-CV sample's seven entry titles and four Awesome-CV forks (decision 0026) | The ATS's reader, or the PDF driver; not this milestone |
