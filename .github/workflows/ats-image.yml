@@ -1,6 +1,6 @@
 name: ats-image
 
-# The ATS service's container image (decision 0020): tested, built and smoke-tested on every pull
+# The ATS service's container image (decision 0029): tested, built and smoke-tested on every pull
 # request that changes what goes into it, and that same image published to GitHub's container
 # registry from main. Nothing deploys it yet.
 on:

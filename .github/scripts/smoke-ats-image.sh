@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Starts the ATS image and checks it answers as the service does: healthy, a PDF analysed, anything
-# else refused (decision 0020). Usage: bash .github/scripts/smoke-ats-image.sh <image>
+# else refused (decision 0029). Usage: bash .github/scripts/smoke-ats-image.sh <image>
 set -euo pipefail
 
 # Paths are relative to the root, wherever the script is run from.

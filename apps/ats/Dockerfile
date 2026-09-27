@@ -1,4 +1,4 @@
-# The ATS service's image (decision 0020). CI builds it from this folder and publishes it to
+# The ATS service's image (decision 0029). CI builds it from this folder and publishes it to
 # ghcr.io/makis4n/resume-tools-ats; for development, run `uv run ats-serve` instead.
 # Base images are pinned by digest, with the tag alongside for reading.
 
