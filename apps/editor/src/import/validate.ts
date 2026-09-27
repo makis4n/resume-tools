@@ -13,37 +13,60 @@
  * 1. **Same output.** The original body, compiled from the package's format, must set the
  *    reference's page, its glyphs, rules, colours, images and size: the preamble's rewrite changes
  *    hyperref's driver and bookmarks and nothing on the page. A redefinition or a control's default
- *    that moves it is dropped. Then the body the generator makes of the document must set exactly
- *    what that original body sets, the editor's markers aside (`sameGlyphs`); where it does not,
- *    the fields whose regeneration moves it are found and locked, their original bytes in their
- *    node's extras (`differs`); a difference that no field explains, which the document with every
- *    field locked shows too, leaves the import `partial`, with the first difference.
- * 2. **Mutations.** Every editable field set to a long text, then empty, then special characters,
- *    three compiles, bisected to the slot that stops the compile: one that stops only when empty is
- *    required, one that stops on text is locked in every instance (`text`).
- * 3. **Repeatable units.** An entry, a bullet, an item, a labelled item and a link, of each kind the
- *    document has, added as a copy of the first with the editor's placeholder texts, and the first
- *    removed, each compiled.
+ *    that moves it is dropped, alone or as the shortest run of those that move it together; where
+ *    the package without any of them does not keep the page either, none is proven, and every
+ *    redefinition is dropped (`unproven`). Then the body the generator makes of the document must
+ *    set exactly what that original body sets, the editor's markers aside (`sameGlyphs`); where it
+ *    does not, the fields whose regeneration moves it are found and locked, their original bytes in
+ *    their node's extras (`differs`); a difference that no field explains, which the document with
+ *    every field locked shows too, leaves the import `partial`, with the first difference. A
+ *    document that does not compile even so tells the other checks nothing: they stop there, every
+ *    control offered is dropped as `unchecked`, and the findings say so (`stopped`).
+ * 2. **Mutations.** Every field the editor edits, typeset or raw, set to a long text, then empty,
+ *    then special characters, three compiles, bisected to the slot that stops the compile: one that
+ *    stops only when empty is required, one that stops on text is locked in every instance
+ *    (`text`). A slot the bisection's budget leaves untried is neither, and the findings say so
+ *    (`untested`).
+ * 3. **Repeatable units.** An entry, a bullet, an item, a labelled item, a link and a section of
+ *    each kind, added as the side panel adds one, through the editor's own commands, and the first
+ *    removed, each compiled; a kind whose new unit stops the compile is one the editor cannot add,
+ *    which the package marks (`fixed`).
  * 4. **Controls.** Each control's every value but the document's compiled: one that stops the
  *    compile at a value, or sets the same page at one, is dropped.
  *
  * Then the harness (`validatePackage`) runs on the package and the document; a `fields` or
  * `alignment` finding on a field locks it, once, and the checks run again; any other finding is
- * recorded for item 13's report.
+ * recorded for item 13's report. The harness holds the package to the upload's own page count and
+ * passes, not a curated sample's one page and two. What is returned reads back under the model's
+ * and the package's schemas, or the import is refused (`keep`).
  */
 
 import type { NamingAnswer } from "@resume-tools/naming";
-import type { Resume, RichText, Section } from "@resume-tools/resume-model";
-import { mintId, PLACEHOLDERS } from "../editor/document";
+import {
+  type Resume,
+  type RichText,
+  SECTION_KINDS,
+  type Section,
+} from "@resume-tools/resume-model";
+import { z } from "zod";
+import {
+  applyUnder,
+  CommandError,
+  Document,
+  type StructureOp,
+  showsBullets,
+  type UnitKind,
+} from "../editor/document";
 import type { CompileResult, EngineSession, JobFiles } from "../engine/session";
 import type { FontLibrary } from "../page/fonts";
 import { type GeneratedBody, generateBody, generateFormat } from "../templates/generate";
-import { type ControlValues, fontFiles, type TemplatePackage } from "../templates/package";
+import { type ControlValues, fontFiles, TemplatePackage } from "../templates/package";
 import { MARKER_BEGIN, markerId } from "../tex/fields";
 import { type Finding, validatePackage } from "../validate/harness";
 import {
   type Assembled,
   type AssembledField,
+  type AssemblyChecks,
   assemble,
   type ControlName,
   type Decisions,
@@ -105,6 +128,31 @@ export const MUTATIONS = {
 
 /** The accent check 4 tries, a dark blue, or black where the document's accent is that blue. */
 const PROBE_ACCENT = "#1F4E79";
+
+/**
+ * What the checks decide besides `Decisions`, which the assembly takes as it takes the rest: the
+ * kinds of unit the editor cannot add, since check 3 found a new one stops the compile, which the
+ * package marks (`fixed`, decision 0026) and the editor's commands refuse (`addable`).
+ */
+export type CheckDecisions = Decisions & { fixed?: readonly UnitKind[] };
+
+/** A finding for item 13's report: the harness's, or one of the checks' own (`NOTES`). */
+type Note = AssemblyChecks["findings"][number];
+
+/**
+ * The checks' own findings beside the harness's, by what each says: `stopped`, the checks stopped
+ * at the first, since the document does not compile as it stands, and nothing after it was tried;
+ * `untested`, a bisection of the second check ran out of its budget and left slots untried, which
+ * stay editable, neither locked nor required; and `unproven`, the package without its
+ * redefinitions does not keep the original's page either, so none is proven and all are dropped.
+ */
+export const NOTES = ["stopped", "untested", "unproven"] as const;
+
+/** Why a control is dropped that the checks never tried, having stopped before the fourth. */
+export const UNCHECKED = "unchecked";
+
+/** `n` things, as a finding counts them: `1 slot`, `2 slots`. */
+const counted = (n: number, thing: string) => `${n} ${thing}${n === 1 ? "" : "s"}`;
 
 // Compiling.
 
@@ -334,100 +382,96 @@ function mutated(resume: Resume, fields: readonly AssembledField[], text: string
   return copy;
 }
 
-/** Every id a resume holds, which a new node's id must not be. */
-function idsOf(resume: Resume): Set<string> {
-  const ids = new Set<string>();
-  for (const link of resume.header.links) ids.add(link.id);
-  for (const section of resume.sections) {
-    ids.add(section.id);
-    if (section.kind === "entries")
-      for (const entry of section.entries) {
-        ids.add(entry.id);
-        for (const bullet of entry.bullets) ids.add(bullet.id);
-      }
-    else if (section.kind === "list" || section.kind === "labelled")
-      for (const item of section.items) ids.add(item.id);
-  }
-  return ids;
+/**
+ * A kind of unit check 3 tries: the op that adds one, as the side panel adds it, and the op that
+ * removes one, when the document has one to remove.
+ */
+interface UnitTrial {
+  kind: UnitKind;
+  add: StructureOp;
+  remove?: StructureOp;
 }
 
-/** The kinds of repeatable unit check 3 adds and removes. */
-type UnitKind = "entry" | "bullet" | "item" | "labelledItem" | "link";
-
 /**
- * A copy of a resume with a unit of `kind` added, a copy of the first with the editor's
- * placeholder texts and a new id, or the first removed; undefined when the resume has none.
+ * Where check 3 adds a unit of each kind, as the side panel adds one, and which it removes: an
+ * entry in the first section of entries that has any, and the first entry removed; a bullet in the
+ * first entry whose snippet shows bullets (`showsBullets`), one with bullets first, and the first
+ * bullet removed; an item in the first list and in the first labelled list, and the first item of
+ * each removed; a link, where the header has one, and the first removed; and a section of each
+ * kind at the end, with the role of the first section of its kind or `other`, and the first of the
+ * kind removed. A kind with nowhere to add one is not tried.
  */
-function withUnit(resume: Resume, kind: UnitKind, how: "add" | "remove"): Resume | undefined {
-  const copy = structuredClone(resume);
-  const taken = idsOf(copy);
-  const sections = copy.sections.filter(
+function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
+  const trials: UnitTrial[] = [];
+  const sections = resume.sections.filter(
     (section): section is Exclude<Section, { kind: "locked" }> => section.kind !== "locked",
   );
-  const change = <T>(list: T[], make: (first: T) => T) => {
-    const first = list[0];
-    if (first === undefined) return false;
-    if (how === "add") list.push(make(first));
-    else list.shift();
-    return true;
-  };
-  switch (kind) {
-    case "entry": {
-      const section = sections.find((each) => each.kind === "entries" && each.entries.length > 0);
-      if (section?.kind !== "entries") return undefined;
-      const { title, subtitle, place } = PLACEHOLDERS.entry;
-      return change(section.entries, (first) => ({
-        ...structuredClone(first),
-        id: mintId("ent", taken),
-        title,
-        ...(first.subtitle === undefined ? {} : { subtitle }),
-        ...(first.place === undefined ? {} : { place }),
-        bullets: first.bullets.map(() => ({
-          id: mintId("bul", taken),
-          text: [{ text: PLACEHOLDERS.bullet }],
-        })),
-      }))
-        ? copy
-        : undefined;
-    }
-    case "bullet": {
-      for (const section of sections)
-        if (section.kind === "entries")
-          for (const entry of section.entries)
-            if (entry.bullets.length > 0) {
-              change(entry.bullets, () => ({
-                id: mintId("bul", taken),
-                text: [{ text: PLACEHOLDERS.bullet }],
-              }));
-              return copy;
-            }
-      return undefined;
-    }
-    case "item": {
-      const section = sections.find((each) => each.kind === "list" && each.items.length > 0);
-      if (section?.kind !== "list") return undefined;
-      change(section.items, () => ({
-        id: mintId("itm", taken),
-        text: [{ text: PLACEHOLDERS.item }],
-      }));
-      return copy;
-    }
-    case "labelledItem": {
-      const section = sections.find((each) => each.kind === "labelled" && each.items.length > 0);
-      if (section?.kind !== "labelled") return undefined;
-      const { label, text } = PLACEHOLDERS.labelledItem;
-      change(section.items, () => ({ id: mintId("itm", taken), label, text: [{ text }] }));
-      return copy;
-    }
-    case "link":
-      return change(copy.header.links, (first) => ({
-        ...first,
-        id: mintId("lnk", taken),
-        label: PLACEHOLDERS.link.label,
-      }))
-        ? copy
-        : undefined;
+  const removing = (op: StructureOp | undefined) => (op === undefined ? {} : { remove: op });
+  const entries = sections.flatMap((section) => (section.kind === "entries" ? [section] : []));
+  const withEntries = entries.find((section) => section.entries.length > 0) ?? entries[0];
+  if (withEntries !== undefined) {
+    const first = withEntries.entries[0];
+    trials.push({
+      kind: "entry",
+      add: { op: "addEntry", section: withEntries.id },
+      ...removing(first === undefined ? undefined : { op: "removeEntry", id: first.id }),
+    });
   }
+  const shown = entries.flatMap((section) =>
+    showsBullets(pkg, section.role) ? section.entries : [],
+  );
+  const target = shown.find((entry) => entry.bullets.length > 0) ?? shown[0];
+  const bullet = entries
+    .flatMap((section) => section.entries)
+    .find((entry) => entry.bullets.length > 0)?.bullets[0];
+  if (target !== undefined)
+    trials.push({
+      kind: "bullet",
+      add: { op: "addBullet", entry: target.id },
+      ...removing(bullet === undefined ? undefined : { op: "removeBullet", id: bullet.id }),
+    });
+  for (const kind of ["item", "labelledItem"] as const) {
+    const of = kind === "item" ? "list" : "labelled";
+    const lists = sections.flatMap((section) =>
+      (section.kind === "list" || section.kind === "labelled") && section.kind === of
+        ? [section]
+        : [],
+    );
+    const list = lists.find((section) => section.items.length > 0) ?? lists[0];
+    if (list === undefined) continue;
+    const first = list.items[0];
+    trials.push({
+      kind,
+      add: { op: "addItem", section: list.id },
+      ...removing(first === undefined ? undefined : { op: "removeItem", id: first.id }),
+    });
+  }
+  const link = resume.header.links[0];
+  if (link !== undefined)
+    trials.push({
+      kind: "link",
+      add: { op: "addLink" },
+      remove: { op: "removeLink", id: link.id },
+    });
+  for (const kind of SECTION_KINDS) {
+    const first = sections.find((section) => section.kind === kind);
+    trials.push({
+      kind: `section.${kind}`,
+      add: { op: "addSection", kind, role: first?.role ?? "other" },
+      ...removing(first === undefined ? undefined : { op: "removeSection", id: first.id }),
+    });
+  }
+  return trials;
+}
+
+/**
+ * The font sizes check 4 tries: those the package offers, where its control lists the sizes its
+ * class declares (`sizes`), or every half point from 9 to 12.
+ */
+function fontSizesOf(pkg: TemplatePackage): number[] {
+  const sizes = (pkg.controls.fontSize as { sizes?: unknown } | undefined)?.sizes;
+  const listed = Array.isArray(sizes) ? sizes.filter((size) => typeof size === "number") : [];
+  return listed.length > 0 ? listed : [9, 9.5, 10, 10.5, 11, 11.5, 12];
 }
 
 /** The values check 4 tries of a control: every value but the document's. */
@@ -448,10 +492,9 @@ function valuesOf(pkg: TemplatePackage, name: ControlName, chosen: ControlValues
         chosen.margins ?? pkg.controls.margins?.default,
       ).map((margins) => ({ ...chosen, margins }));
     case "fontSize":
-      return other(
-        [9, 9.5, 10, 10.5, 11, 11.5, 12],
-        chosen.fontSize ?? pkg.controls.fontSize?.default,
-      ).map((fontSize) => ({ ...chosen, fontSize }));
+      return other(fontSizesOf(pkg), chosen.fontSize ?? pkg.controls.fontSize?.default).map(
+        (fontSize) => ({ ...chosen, fontSize }),
+      );
     case "font":
       return other(
         (pkg.controls.font?.choices ?? []).map((choice) => choice.id),
@@ -539,21 +582,25 @@ async function likeReference(
 /** What one round of the checks decided, and found. */
 interface Round {
   assembled: Assembled;
-  decisions: Decisions;
+  decisions: Required<CheckDecisions>;
   outcome: "assembled" | "partial";
   difference?: { kind: string; text: string };
   repeatable: { kind: string; added: boolean; removed: boolean }[];
   dropped: { control: string; why: string }[];
+  /** The harness's findings. */
   findings: Finding[];
+  /** The checks' own (`NOTES`). */
+  notes: Note[];
 }
 
 /**
  * Validate an import (decision 0026): assemble it, or take the assembly given, run the four
  * checks and the harness, and assemble it again with what they decided; or refuse it, for a font
- * the page cannot draw, or an assembly that refuses. The result's `checks` carry what item 13
- * reports: the fields editable and locked, with why and how many words, the required slots, the
- * controls proven and dropped, the redefinitions dropped, the harness's findings, and the compiles
- * and time the checks took.
+ * the page cannot draw, an assembly that refuses, or a package or document that does not read back
+ * under its schema. The result's `checks` carry what item 13 reports: the fields editable and
+ * locked, with why and how many words, the required slots, the controls proven and dropped, the
+ * redefinitions dropped, the units that cannot be added, the harness's findings and the checks'
+ * own, and the compiles and time the checks took.
  */
 export async function validate(inputs: ValidationInputs): Promise<Assembled | Refusal> {
   const job = inputs.job ?? IMPORT_JOB;
@@ -591,7 +638,9 @@ export async function validate(inputs: ValidationInputs): Promise<Assembled | Re
 
 /**
  * The checks' rounds through `compiler`: the four checks and `harness`, then, where the harness
- * finds a field unmarked or misaligned, the field locked and the checks run again, once.
+ * finds a field unmarked or misaligned, the field locked and the checks run again, once. The
+ * second round takes what the first decided and does not try it again, so the controls the first
+ * dropped, with why, and the redefinitions it could not prove are reported with the second's.
  */
 export async function validateWith(
   inputs: Omit<ValidationInputs, "session" | "fonts">,
@@ -599,7 +648,7 @@ export async function validateWith(
   harness?: (assembled: Assembled) => Promise<Finding[]>,
 ): Promise<Assembled | Refusal> {
   const started = performance.now();
-  const assembleWith = (decisions: Decisions) =>
+  const assembleWith = (decisions: CheckDecisions) =>
     assemble(
       inputs.intake,
       inputs.reference,
@@ -611,8 +660,9 @@ export async function validateWith(
       { decisions },
     );
   const harnessed = inputs.harness === false ? undefined : harness;
-  let round = await checks(inputs, compiler, assembleWith, {}, harnessed);
-  if ("refused" in round) return round;
+  const first = await checks(inputs, compiler, assembleWith, {}, harnessed);
+  if ("refused" in first) return first;
+  let round = first;
   // A field the harness finds unmarked or misaligned is locked, once, and the checks run again.
   const lockable = new Map(round.assembled.checks.all.map((field) => [field.field, field]));
   const locks: Record<string, LockReason> = {};
@@ -626,14 +676,20 @@ export async function validateWith(
       inputs,
       compiler,
       assembleWith,
-      { ...round.decisions, instances: { ...(round.decisions.instances ?? {}), ...locks } },
+      { ...round.decisions, instances: { ...round.decisions.instances, ...locks } },
       harnessed,
     );
     if ("refused" in again) return again;
     round = again;
   }
+  // What the first round settled, which the second takes as decided and does not try again.
+  const settled = round === first ? { dropped: [], notes: [] } : first;
+  const dropped = [...settled.dropped];
+  for (const each of round.dropped)
+    if (!dropped.some((one) => one.control === each.control)) dropped.push(each);
+  const notes = [...settled.notes.filter((note) => note.check === "unproven"), ...round.notes];
   const { assembled } = round;
-  return {
+  const result: Assembled = {
     ...assembled,
     checks: {
       ...assembled.checks,
@@ -642,19 +698,30 @@ export async function validateWith(
       controls: {
         ...assembled.checks.controls,
         proven: assembled.checks.controls.offered,
-        dropped: round.dropped,
+        dropped,
       },
       repeatable: round.repeatable,
-      findings: round.findings,
+      findings: [...notes, ...round.findings],
       compiles: compiler.count,
       ms: performance.now() - started,
+      decisions: round.decisions,
     },
   };
+  // What is kept reads back as the store and the loader will read it: the document under the
+  // model's schema, its kept LaTeX within its caps and free of the editor's markers, and the
+  // package under the package's; an import either would refuse is refused here (decision 0026).
+  const document = Document.safeParse(result.document);
+  const pkg = TemplatePackage.safeParse(result.package);
+  if (!document.success) return refusal("keep", undefined, z.prettifyError(document.error));
+  if (!pkg.success) return refusal("keep", undefined, z.prettifyError(pkg.error));
+  return result;
 }
 
 /**
  * The harness on an assembled package and document (`validatePackage`), through the session that
- * gives it the job's files (`harnessSession`).
+ * gives it the job's files (`harnessSession`), and held to the upload's own compile: the pages its
+ * reference set and the passes it took, where a curated sample is held to one page and two passes,
+ * since an upload may be two pages, and take three passes to settle, as AltaCV's paracol does.
  */
 async function harnessOf(
   inputs: ValidationInputs,
@@ -672,30 +739,36 @@ async function harnessOf(
     assembled.document.resume,
     {},
     compiles.job,
+    { pages: inputs.reference.pages.length, passes: inputs.reference.passes.length },
   );
   compiles.count += report.passes.length;
   inputs.session.forget(compiles.job);
   return report.findings;
 }
 
+/** A switch check 1 turns off to keep the original's page: a redefinition, or a control's default. */
+type Switch = { redefinition: string } | { control: ControlName };
+
 /** One round of the four checks and the harness, from `decisions`. */
 async function checks(
   inputs: Omit<ValidationInputs, "session" | "fonts">,
   compiles: Compiler,
-  assembleWith: (decisions: Decisions) => Promise<Assembled | Refusal>,
-  start: Decisions,
+  assembleWith: (decisions: CheckDecisions) => Promise<Assembled | Refusal>,
+  start: CheckDecisions,
   harness: ((assembled: Assembled) => Promise<Finding[]>) | undefined,
 ): Promise<Round | Refusal> {
   const budget = inputs.budget ?? CHECK_BUDGET;
   const setters = takenOut(inputs.intake, inputs.signatures, inputs.answer, inputs.rewrite);
-  let decisions: Required<Decisions> = {
+  let decisions: Required<CheckDecisions> = {
     dropped: [...(start.dropped ?? [])],
     placement: start.placement ?? "class",
     controls: [...(start.controls ?? [])],
     instances: { ...(start.instances ?? {}) },
     slots: { ...(start.slots ?? {}) },
     required: [...(start.required ?? [])],
+    fixed: [...(start.fixed ?? [])],
   };
+  const notes: Note[] = [];
   const initial = await assembleWith(decisions);
   if ("refused" in initial) return initial;
   let assembled: Assembled = initial;
@@ -760,36 +833,60 @@ async function checks(
     const offered = assembled.checks.controls.offered.filter(
       (name) => name === "margins" || name === "accent" || name === "font" || name === "density",
     );
-    const bare = await assembleWith({ ...decisions, dropped: applied, controls: offered });
-    if (!("refused" in bare) && keeps(await original(bare))) {
-      const culprits: string[] = [];
-      const controlCulprits: ControlName[] = [];
-      for (const name of applied) {
-        const one = await assembleWith({
-          ...decisions,
-          dropped: applied.filter((each) => each !== name),
-          controls: offered,
-        });
-        if (!("refused" in one) && !keeps(await original(one))) culprits.push(name);
+    const switches: Switch[] = [
+      ...applied.map((redefinition) => ({ redefinition })),
+      ...offered.map((control) => ({ control })),
+    ];
+    /** The decisions with only the switches of `on` left on: every other dropped. */
+    const only = (on: readonly Switch[]): Required<CheckDecisions> => ({
+      ...decisions,
+      dropped: [
+        ...decisions.dropped,
+        ...applied.filter(
+          (name) => !on.some((each) => "redefinition" in each && each.redefinition === name),
+        ),
+      ],
+      controls: [
+        ...decisions.controls,
+        ...offered.filter((name) => !on.some((each) => "control" in each && each.control === name)),
+      ],
+    });
+    const keepsWith = async (on: readonly Switch[]) => {
+      const tried = await assembleWith(only(on));
+      return !("refused" in tried) && keeps(await original(tried));
+    };
+    if (await keepsWith([])) {
+      // The package without them keeps the page: each is tried alone, and those that keep it alone
+      // together, where two can move it that each keep it alone; and where together they move it,
+      // the shortest run of them that does, in their order, is found by halving and its last is
+      // dropped, as the probe's union does (decision 0022), until the rest keep it.
+      let on: Switch[] = [];
+      for (const each of switches) if (await keepsWith([each])) on.push(each);
+      while (on.length > 1 && !(await keepsWith(on))) {
+        // A run of one keeps the page, each having kept it alone; the whole does not.
+        let lo = 1;
+        let hi = on.length;
+        while (hi - lo > 1) {
+          const mid = (lo + hi) >> 1;
+          if (await keepsWith(on.slice(0, mid))) lo = mid;
+          else hi = mid;
+        }
+        on = on.filter((_, i) => i !== hi - 1);
       }
-      for (const name of offered) {
-        const one = await assembleWith({
-          ...decisions,
-          dropped: applied,
-          controls: offered.filter((each) => each !== name),
-        });
-        if (!("refused" in one) && !keeps(await original(one))) controlCulprits.push(name);
-      }
-      decisions = {
-        ...decisions,
-        dropped: [...decisions.dropped, ...culprits],
-        controls: [...decisions.controls, ...controlCulprits],
-      };
-      const next = await assembleWith(decisions);
-      if ("refused" in next) return next;
-      assembled = next;
-      target = await original(assembled);
+      decisions = only(on);
+    } else if (applied.length > 0) {
+      // The package without any of them does not keep the page either, so that no compile can show
+      // that a redefinition keeps it: none is proven, and every one is dropped (decision 0026).
+      decisions = { ...decisions, dropped: [...decisions.dropped, ...applied] };
+      notes.push({
+        check: "unproven",
+        message: `the package without its redefinitions does not keep the original's page either, so none of the ${counted(applied.length, "redefinition")} is proven, and each is dropped: ${applied.join(", ")}`,
+      });
     }
+    const next = await assembleWith(decisions);
+    if ("refused" in next) return next;
+    assembled = next;
+    target = await original(assembled);
     if (!keeps(target)) {
       outcome = "partial";
       const found =
@@ -874,22 +971,38 @@ async function checks(
     }
   }
 
-  // A document that does not compile as it stands tells the other checks nothing.
+  // A document that does not compile as it stands tells the other checks nothing: they stop here,
+  // so that no control is proven that no compile tried, and the findings say so.
   if (first.compiled.broke) {
+    const offered = assembled.checks.controls.offered;
+    if (offered.length > 0) {
+      decisions = { ...decisions, controls: [...decisions.controls, ...offered] };
+      const next = await assembleWith(decisions);
+      if ("refused" in next) return next;
+      assembled = next;
+    }
+    notes.push({
+      check: "stopped",
+      message:
+        "the checks stopped at the first: the document does not compile as it stands, so no field was mutated, no unit added, no control tried, and the harness did not run",
+    });
     return {
       assembled,
       decisions,
       outcome: "partial",
       difference: differs ?? { kind: "stopped", text: "the document stopped" },
       repeatable: [],
-      dropped: [],
+      dropped: offered.map((control) => ({ control, why: UNCHECKED })),
       findings: [],
+      notes,
     };
   }
 
-  // 2. Mutations: long, empty and special texts in every editable field, bisected by slot.
+  // 2. Mutations: long, empty and special texts in every field the editor edits, typeset or raw,
+  // bisected by slot. A raw field, a contact or a link label whose address the template builds
+  // from its text, takes what is typed in the panel as a typeset one does.
   const editable = assembled.checks.all.filter(
-    (field) => field.mode === "typeset" && field.type !== "date",
+    (field) => field.mode !== "locked" && field.type !== "date",
   );
   const slots = [...new Set(editable.map((field) => field.slot))];
   const breaks = async (text: string, only?: ReadonlySet<string>) => {
@@ -897,7 +1010,11 @@ async function checks(
     const resume = mutated(assembled.document.resume, chosen, text);
     return (await compiles.document(assembled.package, resume)).broke;
   };
-  const failing = async (text: string): Promise<Set<string>> => {
+  /**
+   * The slots `text` stops the compile in. Those the bisection's budget leaves untried are not
+   * among them, since no compile showed them fail: they stay as they are, and a note says which.
+   */
+  const failing = async (text: string, name: string): Promise<Set<string>> => {
     if (slots.length === 0 || !(await breaks(text))) return new Set();
     const settled = await settle(
       probeOrder(slots.map((slot) => switchOf(slot, slot))),
@@ -909,15 +1026,23 @@ async function checks(
       }),
       budget,
     );
-    return new Set(
-      [...settled.verdicts].filter(([, { verdict }]) => verdict !== "editable").map(([id]) => id),
-    );
+    const failed = new Set<string>();
+    const untried: string[] = [];
+    for (const [id, { verdict }] of settled.verdicts)
+      if (verdict === "untested") untried.push(id);
+      else if (verdict !== "editable") failed.add(id);
+    if (untried.length > 0)
+      notes.push({
+        check: "untested",
+        message: `the second check's bisection of the ${name} text ran out of its ${counted(budget, "compile")} and left ${counted(untried.length, "slot")} untested, neither locked nor required: ${untried.join(", ")}`,
+      });
+    return failed;
   };
   const onText = new Set([
-    ...(await failing(MUTATIONS.long)),
-    ...(await failing(MUTATIONS.special)),
+    ...(await failing(MUTATIONS.long, "long")),
+    ...(await failing(MUTATIONS.special, "special")),
   ]);
-  const onEmpty = await failing(MUTATIONS.empty);
+  const onEmpty = await failing(MUTATIONS.empty, "empty");
   if (onText.size > 0 || onEmpty.size > 0) {
     decisions = {
       ...decisions,
@@ -934,17 +1059,33 @@ async function checks(
     assembled = next;
   }
 
-  // 3. Repeatable units: of each kind the document has, one added and the first removed.
+  // 3. Repeatable units: of each kind, one added as the side panel adds it, through the editor's
+  // own commands under the package, and the first removed, each compiled. A kind whose new unit
+  // stops the compile is one the editor cannot add, which the package marks and the editor then
+  // refuses, and which a later round reports as it stands, untried.
   const repeatable: Round["repeatable"] = [];
-  for (const kind of ["entry", "bullet", "item", "labelledItem", "link"] as const) {
-    const added = withUnit(assembled.document.resume, kind, "add");
-    const removed = withUnit(assembled.document.resume, kind, "remove");
-    if (added === undefined || removed === undefined) continue;
-    repeatable.push({
-      kind,
-      added: !(await compiles.document(assembled.package, added)).broke,
-      removed: !(await compiles.document(assembled.package, removed)).broke,
-    });
+  const fixed = new Set(decisions.fixed);
+  const compilesAfter = async (op: StructureOp | undefined) => {
+    if (op === undefined) return true;
+    let changed: Document;
+    try {
+      changed = applyUnder(assembled.package, assembled.document, { type: "structure", op });
+    } catch (error) {
+      if (error instanceof CommandError) return false;
+      throw error;
+    }
+    return !(await compiles.document(assembled.package, changed.resume)).broke;
+  };
+  for (const { kind, add, remove } of unitTrials(assembled.document.resume, assembled.package)) {
+    const added = !fixed.has(kind) && (await compilesAfter(add));
+    if (!added) fixed.add(kind);
+    repeatable.push({ kind, added, removed: await compilesAfter(remove) });
+  }
+  if (fixed.size > decisions.fixed.length) {
+    decisions = { ...decisions, fixed: [...fixed] };
+    const next = await assembleWith(decisions);
+    if ("refused" in next) return next;
+    assembled = next;
   }
 
   // 4. Controls: every value but the document's compiles, and one changes the page at least, or the
@@ -998,5 +1139,6 @@ async function checks(
     repeatable,
     dropped,
     findings,
+    notes,
   };
 }

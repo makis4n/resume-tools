@@ -15,6 +15,7 @@ import {
   type AnswerRow,
   answerOf,
   BODY,
+  ENVIRONMENTS,
   type Invented,
   inputsOf,
   JAKE_LIKE,
@@ -31,9 +32,11 @@ import { type GlyphStream, type Reference, type ReferenceItem, reference } from 
 import { isRefusal, type Refusal } from "./refusal";
 import { signatures } from "./signatures";
 import {
+  type CheckDecisions,
   type Compiled,
   type Compiler,
   MUTATIONS,
+  UNCHECKED,
   type ValidationInputs,
   validate,
   validateWith,
@@ -56,6 +59,13 @@ interface Behaviour {
   stopsOn?: RegExp;
   /** Preamble text that moves every glyph, as a redefinition that changes the page does. */
   shiftsOn?: RegExp;
+  /** Whether a preamble moves every glyph, as redefinitions that change the page together do. */
+  shifts?: (preamble: string) => boolean;
+  /**
+   * Whether the template cannot set a document, as a class whose entries need dates, or whose
+   * sections need text, stops on a unit the editor adds without them.
+   */
+  refuses?: (resume: Resume) => boolean;
   /**
    * Preamble text that stops every compile, as a redefinition of a macro a package or the
    * preamble defines does right after the class, where the macro is not defined yet.
@@ -173,7 +183,9 @@ function fakePage(
     margin === undefined || blind.has("margins")
       ? 0
       : Math.round((Number(margin) - 0.5) * 72.27 * SP);
-  if (pkg !== undefined && behaviour.shiftsOn?.test(pkg.preamble)) shift += 10 * SP;
+  const shifted =
+    behaviour.shiftsOn?.test(pkg?.preamble ?? "") || behaviour.shifts?.(pkg?.preamble ?? "");
+  if (pkg !== undefined && shifted) shift += 10 * SP;
   const size = blind.has("fontSize")
     ? fontSize
     : (values.fontSize ?? pkg?.controls.fontSize?.default ?? fontSize);
@@ -223,15 +235,21 @@ class Fake implements Compiler {
     values: ControlValues = {},
   ): Promise<Compiled> {
     const body = generateBody(pkg, resume, values);
+    if (this.behaviour.refuses?.(resume)) {
+      // A compile the engine makes, which stops, with no output to read.
+      this.count++;
+      return { body, broke: true };
+    }
     return { ...(await this.latex(pkg, values, body.latex)), body };
   }
 }
 
-/** An invented import validated through the fake, with the harness given. */
+/** An invented import validated through the fake, with the harness given, and a budget if one is. */
 async function validated(
   invented: Invented,
   behaviour: Behaviour = {},
   harness?: (assembled: Assembled) => Promise<Finding[]>,
+  budget?: number,
 ): Promise<{ result: Assembled | Refusal; fake: Fake }> {
   const inputs = inputsOf(invented);
   const setters = takenOut(inputs.intake, inputs.signatures, inputs.answer);
@@ -240,7 +258,7 @@ async function validated(
   const liked = await new Fake(original, 11, behaviour).like();
   if (isRefusal(liked)) throw new Error(liked.message);
   const reference: Reference = { ...REFERENCE, ...liked.stream };
-  const result = await validateWith({ ...inputs, reference }, fake, harness);
+  const result = await validateWith({ ...inputs, reference, budget }, fake, harness);
   return { result, fake };
 }
 
@@ -300,6 +318,11 @@ describe("the checks", () => {
       { kind: "entry", added: true, removed: true },
       { kind: "bullet", added: true, removed: true },
       { kind: "item", added: true, removed: true },
+      // A section of each kind, as the side panel adds one.
+      { kind: "section.entries", added: true, removed: true },
+      { kind: "section.list", added: true, removed: true },
+      { kind: "section.labelled", added: true, removed: true },
+      { kind: "section.paragraph", added: true, removed: true },
     ]);
     expect(checks.compiles).toBe(fake.count);
   });
@@ -504,6 +527,192 @@ describe("the checks", () => {
     expect(again.document).toEqual(first.document);
     expect(answerOf(ANSWERS).macros).toHaveLength(ANSWERS.length);
   });
+
+  test("add the units the editor adds, through its own commands, and mark a kind that stops", async () => {
+    // The editor's new entry has no dates, where a copy of the first would have its dates; and a
+    // new paragraph section has no text. A template that stops on either cannot take one.
+    const { result, fake } = await validated(JAKE_LIKE, {
+      refuses: (resume) =>
+        resume.sections.some(
+          (section) =>
+            (section.kind === "entries" &&
+              section.entries.some((entry) => entry.dates === undefined && !entry.extras?.dates)) ||
+            (section.kind === "paragraph" && section.text.length === 0),
+        ),
+    });
+    const { checks } = ok(result);
+    expect(checks.repeatable).toEqual([
+      { kind: "entry", added: false, removed: true },
+      { kind: "bullet", added: true, removed: true },
+      { kind: "item", added: true, removed: true },
+      { kind: "section.entries", added: true, removed: true },
+      { kind: "section.list", added: true, removed: true },
+      { kind: "section.labelled", added: true, removed: true },
+      { kind: "section.paragraph", added: false, removed: true },
+    ]);
+    // The kinds the editor cannot add, which the package marks and the editor then refuses.
+    expect((checks.decisions as CheckDecisions).fixed).toEqual(["entry", "section.paragraph"]);
+    expect(checks.compiles).toBe(fake.count);
+  });
+
+  test("mutate a raw field as a typeset one: locked where text stops it, required where empty does", async () => {
+    // A contact and a link whose addresses the class builds from their text, which the probe
+    // found set twice: both are raw, and edited in the panel alone.
+    const raw: Invented = {
+      ...ENVIRONMENTS,
+      verdicts: { "cvmail#1": ["twice"], "cvgit#1": ["twice"] },
+    };
+    const modes = (await plain(raw)).checks.all.filter((field) => field.mode === "raw");
+    expect(modes.map((field) => field.slot)).toEqual(["command|cvmail|1", "command|cvgit|1"]);
+    // The link's label stops on the special characters, and the email when it is empty.
+    const { result } = await validated(raw, { stopsOn: /\\cvgit\{[^\n]*\\\$|\\cvmail\{\}/ });
+    const { checks } = ok(result);
+    expect(checks.outcome).toBe("assembled");
+    expect(checks.decisions.slots).toEqual({ "command|cvgit|1": "text" });
+    expect(checks.required).toEqual(["command|cvmail|1"]);
+    expect(checks.all.find((field) => field.field === "header.email")?.mode).toBe("raw");
+    expect(checks.all.find((field) => field.slot === "command|cvgit|1")?.mode).toBe("locked");
+  });
+
+  test("leave a slot the bisection's budget did not reach untested, and say so", async () => {
+    // Every field stops on the special characters, and the budget is one compile: the bisection
+    // tries them all together and no more, and no compile showed any one of them fail.
+    const { result } = await validated(
+      JAKE_LIKE,
+      { stops: (_, text) => text.includes("ß") },
+      undefined,
+      1,
+    );
+    const { checks } = ok(result);
+    expect(checks.decisions.slots).toEqual({});
+    expect(checks.required).toEqual([]);
+    expect(checks.all.filter((field) => field.reason === "text")).toEqual([]);
+    const untested = checks.findings.filter((finding) => finding.check === "untested");
+    expect(untested).toHaveLength(1);
+    expect(untested[0]?.message).toContain("special text ran out of its 1 compile");
+    expect(untested[0]?.message).toContain("command|cventry|1");
+  });
+
+  test("keep the controls the first round dropped when the harness has the checks run again", async () => {
+    const bullet = fieldOf(await plain(JAKE_LIKE), "command|cvitem|1");
+    let rounds = 0;
+    const { result } = await validated(JAKE_LIKE, { blind: new Set(["margins"]) }, async () => {
+      rounds++;
+      return rounds === 1
+        ? [{ check: "fields", message: "an invented field is not marked", field: bullet }]
+        : [];
+    });
+    const { checks, package: pkg } = ok(result);
+    expect(rounds).toBe(2);
+    expect(checks.controls.dropped).toEqual([
+      { control: "margins", why: "sets the same page at every value" },
+    ]);
+    expect(checks.controls.proven).toEqual(["pageSize", "fontSize"]);
+    expect(pkg.controls.margins).toBeUndefined();
+  });
+
+  test("prove no control a stopped document never tried, and say the checks stopped", async () => {
+    // The original body sets the reference's page, and every document the generator makes stops.
+    const { result, fake } = await validated(JAKE_LIKE, { refuses: () => true });
+    const { checks, package: pkg } = ok(result);
+    expect(checks.outcome).toBe("partial");
+    expect(checks.difference?.kind).toBe("stopped");
+    expect(checks.controls.proven).toEqual([]);
+    expect(checks.controls.dropped).toEqual([
+      { control: "pageSize", why: UNCHECKED },
+      { control: "margins", why: UNCHECKED },
+      { control: "fontSize", why: UNCHECKED },
+    ]);
+    expect(pkg.controls.pageSize).toBeUndefined();
+    expect(pkg.controls.fontSize).toBeUndefined();
+    expect(checks.repeatable).toEqual([]);
+    expect(checks.findings).toEqual([
+      { check: "stopped", message: expect.stringContaining("the checks stopped at the first") },
+    ]);
+    expect(checks.compiles).toBe(fake.count);
+  });
+
+  /** The invented answers, with a redefinition of `\cventry` and one of `\cvitem`, reviewed. */
+  const REDEFINED: AnswerRow[] = ANSWERS.map(([of, name, answer]): AnswerRow => {
+    const latex =
+      name === "cvitem"
+        ? "\\renewcommand{\\cvitem}[1]{#1}"
+        : name === "cventry"
+          ? "\\renewcommand{\\cventry}[4]{#1#2#3#4}"
+          : undefined;
+    return latex === undefined
+      ? [of, name, answer]
+      : [of, name, { ...answer, reviewed: true, redefinitions: [{ name, latex }] }];
+  });
+
+  test("drop one of two redefinitions that move the page together, though each alone keeps it", async () => {
+    const { result } = await validated(
+      { ...JAKE_LIKE, answers: REDEFINED },
+      {
+        shifts: (preamble) =>
+          preamble.includes("\\renewcommand{\\cvitem}") &&
+          preamble.includes("\\renewcommand{\\cventry}"),
+      },
+    );
+    const { checks, package: pkg } = ok(result);
+    expect(checks.outcome).toBe("assembled");
+    expect(checks.redefinitions).toEqual({
+      applied: ["cventry"],
+      dropped: ["cvitem"],
+      placement: "class",
+    });
+    expect(pkg.preamble).toContain("\\renewcommand{\\cventry}");
+    expect(pkg.preamble).not.toContain("\\renewcommand{\\cvitem}");
+  });
+
+  test("prove no redefinition when the package without them does not keep the page either", async () => {
+    // The original's page differs from what the package's format sets for another reason, a rule
+    // the rewrite loses, and `\cvitem`'s redefinition moves it as well.
+    const inputs = inputsOf({ ...JAKE_LIKE, answers: REDEFINED });
+    const setters = takenOut(inputs.intake, inputs.signatures, inputs.answer);
+    const original = `${setters.join("\n")}\n\\begin{document}${inputs.tree.source}\\end{document}\n`;
+    const liked = await new Fake(original, 11).like();
+    if (isRefusal(liked)) throw new Error(liked.message);
+    const [page] = liked.stream.pages;
+    const moved: GlyphStream = {
+      ...liked.stream,
+      pages: [
+        { items: [...(page?.items ?? []), { kind: "rule", h: 0, v: 0, width: SP, height: SP }] },
+      ],
+    };
+    const fake = new Fake(original, 11, { like: moved, shiftsOn: /\\renewcommand\{\\cvitem\}/ });
+    const result = ok(
+      await validateWith({ ...inputs, reference: { ...REFERENCE, ...moved } }, fake),
+    );
+    expect(result.checks.outcome).toBe("partial");
+    expect(result.checks.redefinitions).toEqual({
+      applied: [],
+      dropped: ["cventry", "cvitem"],
+      placement: "class",
+    });
+    expect(result.package.preamble).not.toContain("\\renewcommand");
+    expect(result.checks.findings).toContainEqual({
+      check: "unproven",
+      message: expect.stringContaining("none of the 2 redefinitions is proven"),
+    });
+  });
+
+  test("refuse an import whose document its own schema refuses, as a list past kept LaTeX's cap", async () => {
+    // A list of invented publications kept whole, as its items are locked, past 65,536 characters.
+    const items = Array.from(
+      { length: 520 },
+      (_, i) =>
+        `  \\item Invented publication number ${i}, with invented words about invented research, in the Invented Journal of Invented Studies, volume ${i}.`,
+    ).join("\n");
+    const source = `${PREAMBLE}${BODY.replace(
+      "  \\item Invented skill\n  \\item Another skill\n",
+      `${items}\n`,
+    )}`;
+    expect(source.length).toBeGreaterThan(65_536);
+    const { result } = await validated({ ...JAKE_LIKE, source, verdicts: { item: ["breaks"] } });
+    if (!isRefusal(result)) throw new Error("the import was not refused");
+    expect(result.reason).toBe("keep");
+  });
 });
 
 describe.skipIf(!engineAvailable())("validation, on the engine", () => {
@@ -519,7 +728,7 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );
-  }, 60_000);
+  }, 120_000);
 
   /**
    * An invented class whose macros do what the checks look for: an entry that stops the compile
@@ -546,8 +755,9 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     source: string,
     answers: readonly AnswerRow[] = ANSWERS,
     more: Partial<ValidationInputs> = {},
+    cls = CLASS,
   ) {
-    const zipped = { "cv.tex": strToU8(source), "inventedcv.cls": strToU8(CLASS) };
+    const zipped = { "cv.tex": strToU8(source), "inventedcv.cls": strToU8(cls) };
     const taken = intake({ name: "invented.zip", bytes: zipSync(zipped) }, { tree });
     if (isRefusal(taken)) throw new Error(`refused at intake: ${taken.message}`);
     const made = await reference(session, fonts, taken as Intake);
@@ -579,7 +789,7 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
       answer: answerOf(answers),
       ...more,
     });
-    return { result, probed };
+    return { result, probed, made };
   }
 
   // The Jake-like document, but its spacing between two sections, which this class's page would
@@ -612,7 +822,29 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     expect(checks.findings).toEqual([]);
     expect(checks.fields.editable).toBeGreaterThan(8);
     expect(checks.compiles).toBeGreaterThan(10);
-  }, 60_000);
+  }, 120_000);
+
+  test("adds what the editor adds, marks a kind it cannot, and holds the harness to two pages", async () => {
+    // The class takes two entries at most, which a third, as the editor adds one, stops; and the
+    // upload sets two pages, a page break before its summary kept as the upload wrote it.
+    const limited = CLASS.replace(
+      "\\newcommand{\\cventry}[4]{",
+      "\\newcounter{cventries}\n\\newcommand{\\cventry}[4]{\\stepcounter{cventries}\\ifnum\\value{cventries}>2 \\errmessage{Invented: two entries at most}\\fi",
+    );
+    const source = SOURCE.replace("\\section{Summary}", "\\newpage\n\\section{Summary}");
+    const { result, made } = await validatedOnEngine(source, ANSWERS, {}, limited);
+    expect(made.pages).toHaveLength(2);
+    const { checks, document } = ok(result);
+    expect(checks.outcome).toBe("assembled");
+    expect(checks.repeatable).toContainEqual({ kind: "entry", added: false, removed: true });
+    expect(checks.repeatable).toContainEqual({ kind: "bullet", added: true, removed: true });
+    expect((checks.decisions as CheckDecisions).fixed).toContain("entry");
+    // The document is the upload's two pages, which the harness holds it to, not one.
+    expect(document.resume.sections.some((section) => section.kind === "locked")).toBe(true);
+    expect(
+      checks.findings.filter((each) => each.check === "pages" || each.check === "converges"),
+    ).toEqual([]);
+  }, 120_000);
 
   test("assembles an invented XeTeX import from its fonts declared by file", async () => {
     // With no size option and no geometry, the one control is the page's size. The probe compiles
@@ -642,5 +874,5 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     expect(checks.required).toContain("command|cventry|1");
     // Its format dumps, so the harness finds nothing.
     expect(checks.findings).toEqual([]);
-  }, 60_000);
+  }, 120_000);
 });

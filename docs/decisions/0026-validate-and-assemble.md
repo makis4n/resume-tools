@@ -206,37 +206,89 @@ bisects it as the probe does (`settle`, decision 0022), 48 compiles a bisection 
    specials and nothing on the page. The original body, compiled from the package's format with
    the storing calls issued before it and the controls at their defaults, must then set that page
    exactly, specials and all. Where it stops with the redefinitions after the class, they go at the
-   preamble's end, and where it does not keep the page, the redefinitions and controls that move
-   it are found, one by one, and dropped. A XeTeX import's body, its fonts declared by file,
+   preamble's end. Where it does not keep the page, **the redefinitions and the controls' defaults
+   are proven as a set**: with none of them the page must be the original's; then each is tried
+   alone, and those that keep it alone are tried together, since two can move the page together
+   that each keep it alone; where together they move it, the shortest run of them that does, in
+   their order, is found by halving and its last is dropped, as the probe's union does (decision
+   0022), until the rest keep it. **Where the package with none of them does not keep the page
+   either**, the page differs for another reason, and no compile can show that a redefinition
+   keeps it: none is proven, every one is dropped, and the findings say so (`unproven`), since a
+   reviewed answer's redefinition is applied only where it keeps upstream's output (decision
+   0024). A XeTeX import's body, its fonts declared by file,
    compares with the original, whose fonts were found by name, as item 8's check compares them, a
    native font by its file and a colour special wherever it stands, since it sets nothing on the
    page (decision 0023). Then the body the generator makes of the document must set
    exactly what the original body sets, the markers aside; where it does not, the fields whose
    regeneration moves it are bisected out and locked (`differs`), their bytes in their node's
    extras. A difference that the document with every field locked shows too leaves the import
-   `partial`, with its first difference, for item 13 to show; the rest of the checks still run,
-   but for a document that does not compile as it stands, which tells them nothing.
-2. **Mutations.** Every editable field set to a 300-character text, then empty, then characters
-   TeX reads (`\ { } $ & # ^ _ % ~ < > | [ ] * -- ' " é ß ø ω Ж ğ`), three compiles, each failing
-   one bisected to the slot. A slot that stops on text is locked in every instance (`text`); one
-   that stops only when empty is **required**: the package keeps it editable and the editor
-   refuses to empty it, as Awesome-CV's blank name stops the compile (decision 0015).
-3. **Repeatable units.** Of each kind the document has, entry, bullet, item, labelled item and
-   link, a copy of the first with the editor's placeholder texts added, and the first removed,
-   each compiled; what stops is recorded for item 13, since a unit that cannot be added is a
-   limit of the template, not a field to lock.
-4. **Controls.** Each control's every value but the document's compiled: one that stops the compile
-   at any value, or sets the same page at every one, is dropped.
+   `partial`, with its first difference, for item 13 to show; the rest of the checks still run.
+   **A document that does not compile even with every field locked** tells them nothing: the
+   checks stop there, every control offered is dropped as `unchecked`, since no compile tried it,
+   and the findings say the checks stopped (`stopped`), so that nothing reads as proven that no
+   compile showed.
+2. **Mutations.** Every field the editor edits, typeset or raw, set to a 300-character text, then
+   empty, then characters TeX reads (`\ { } $ & # ^ _ % ~ < > | [ ] * -- ' " é ß ø ω Ж ğ`), three
+   compiles, each failing one bisected to the slot. A raw field, a contact or a link's label whose
+   address the class builds from its text, takes what the panel sends as a typeset one does, and
+   is mutated as one. A slot that stops on text is locked in every instance (`text`); one that
+   stops only when empty is **required**: the package keeps it editable and lists it, the editor's
+   commands refuse to empty it and the side panel marks it (below), as Awesome-CV's blank name
+   stops the compile (decision 0015). A slot a bisection's budget leaves untried is **untested**:
+   no compile showed it fail, so it is neither locked nor required, and the findings name it and
+   the budget (`untested`).
+3. **Repeatable units.** Of each kind of unit the editor adds, one added as the side panel adds
+   it, through the editor's own commands under the package (`applyUnder`), with its placeholders
+   and nothing else, no dates and no extras, and the first removed, each compiled: an entry in the
+   first section of entries, a bullet in the first entry whose snippet shows bullets, an item of
+   each kind of list, a link where the header has one, and a section of each kind, empty, at the
+   end, with the role of the first of its kind. A kind whose new unit stops the compile, as a class
+   that takes no more entries than it has, is a limit of the template, not a field to lock: the
+   package marks it (`fixed`), the editor's commands refuse it and the side panel disables its
+   button (below), and `repeatable` reports it for item 13, as a later round does without trying
+   it again.
+4. **Controls.** Each control's every value but the document's compiled, the font size at the
+   sizes its package offers: one that stops the compile at any value, or sets the same page at
+   every one, is dropped.
 
-Then **the harness** (`validatePackage`) runs on the package and the document: a `fields` or
-`alignment` finding on a field locks it, or its list, once, and the checks run again; every other
-finding is recorded for item 13. The bodies it compiles are the generator's, as the checks' are,
-locked sections and extras among them.
+Then **the harness** (`validatePackage`) runs on the package and the document, held to the
+upload's own compile rather than to a curated sample's one page and two passes: to the pages the
+reference set and the passes it took (`Expected`), so that an upload of two pages, or one that
+takes three passes to settle, as AltaCV's `paracol` does, and then as many again, is no finding;
+more pages or more passes than the upload's are. A `fields` or `alignment` finding on a field
+locks it, or its list, once, and the checks run again, taking what the first round decided as
+settled: the controls it dropped, with why, and the redefinitions it could not prove are reported
+with the second round's. Every other finding is recorded for item 13. The bodies it compiles are
+the generator's, as the checks' are, locked sections and extras among them.
+
+What the validation returns reads back as the store and the loader will read it: the document
+under the model's schema, its kept LaTeX within its cap and free of the editor's markers, and the
+package under the package's; an import either refuses is refused (`keep`), as a list kept whole
+past kept LaTeX's cap is.
 
 The result is the package, the document, the locked parts with where each stands, why and how many
 words, and the checks: the fields editable, raw, required and locked by reason, the words in each,
-the sections mapped and locked, the controls offered, proven and dropped, the redefinitions applied
-and dropped, the repeatable units, the harness's findings, and the compiles and time.
+the sections mapped and locked, the controls offered, proven and dropped, with why, the
+redefinitions applied and dropped, the repeatable units and the kinds the editor cannot add, the
+harness's findings and the checks' own (`stopped`, `untested`, `unproven`), and the compiles and
+time.
+
+### The editor
+
+- **An imported package's rules hold in the editor.** `applyUnder(pkg, document, command)`, which
+  `History` applies with the document's package, refuses an edit that would leave a field the
+  package requires blank, as the generator reads blank, where it was not: the field keeps its
+  value, and the error says why. It refuses a unit of a kind the package cannot take (`fixed`), and
+  a bullet for an entry whose role's snippet has no bullets slot, or which the package says has
+  none, since such a bullet would be in the document and never on the page. The side panel, given
+  the package, marks a required field, whether it gives it an input or not, with a title that says
+  why, and disables a button that would add what the template cannot take, saying why when pointed
+  at, and offers a new section only of a kind it can take. A curated package carries none of these
+  rules and takes every edit, as before; `apply` is `applyUnder` with the document's curated
+  package.
+- **A slot a node keeps is no field.** Where the assembly keeps an instance as the upload had it
+  (`kept`), `fieldsOf` leaves its field out: the page has no marker for it, the panel gives it no
+  input, and no command reaches it; `setHeader` refuses a header slot kept so.
 
 ### The runner and the oracle
 
@@ -292,8 +344,9 @@ Against the places each port's snippets mark, what the import leaves out or lock
   stops the compile on the checks' text (`text`). The email and the three links are set raw, their
   addresses built from their text. Four redefinitions are applied and none dropped. The address
   and a section's title stop the compile when empty: they are required. The harness finds seven
-  of the nine entries' titles, which the class sets in small capitals, absent from the PDF's text
-  (`pdf`), and the sample is three pages (`pages`). Entries, bullets and links add and remove.
+  of the nine entries' titles, which the class sets in small capitals, in the PDF's text only in
+  capitals (`pdf`, Consequences), and the sample is three pages (`pages`). Entries, bullets and
+  links add and remove.
 
 The probe's own table against the oracle is unchanged by this item: 3 disagreements of 75, each
 explained in decision 0022.
@@ -431,8 +484,9 @@ other work: 15.4 minutes.
   `cvhonors`'s.
 - **The harness** runs every check on the XeTeX documents too, whose formats now dump: it finds
   `pages` on the 22 of two pages or more, `pdf` on four Awesome-CV forks whose small-capital entry
-  titles are absent from the PDF's text, and `converges` on one; none of `fields` or `alignment`
-  after the round that locks them, and no repeatable unit that stops. 18 documents have no finding.
+  titles the PDF's text shows only in capitals, and `converges` on one; none of `fields` or
+  `alignment` after the round that locks them, and no repeatable unit that stops. 18 documents
+  have no finding.
 - **Time**: the checks take 27 compiles at the median, 63 at most, and 9.8 s at the median, 16 s for
   an Awesome-CV fork compiled from its format, 38 s at most.
 
@@ -448,11 +502,13 @@ other work: 15.4 minutes.
   in the source, stand in for until then. Item 14 grows the controls from the ones proven here:
   margins where geometry is absent or uneven, and the answer's accent, font and density once item 9
   answers the preamble; the sizes a class declares it offers already. `checks.required` names the
-  slots the package marks required (`required`), which the editor refuses to empty. Item 15 draws
-  the locked sections and the extras with decision 0025's lock markers; `extras` lists each locked
-  part with where it stands, its node, its key, why and how many words. Item 12's pipeline asks the
-  signatures step of `SIZE_OPTIONS` besides the body's names, as `corpus assemble` does, or its
-  imports offer no font size.
+  slots the package marks required (`required`), which the editor refuses to empty. Item 12 opens
+  an imported document with its package, in `History` and in the side panel, where the app passes
+  none today, so that its rules hold: the slots it requires, the kinds of unit it cannot take, and
+  its entries' bullets (The editor, above); and its pipeline asks the signatures step of
+  `SIZE_OPTIONS` besides the body's names, as `corpus assemble` does, or its imports offer no font
+  size. Item 15 draws the locked sections and the extras with decision 0025's lock markers;
+  `extras` lists each locked part with where it stands, its node, its key, why and how many words.
 - **The model takes what the assembly makes.** Every package and document the assembly's tests
   make parse under the package's and the model's schemas, extras slots only where their nodes keep
   extras, and every locked section and extra kept LaTeX (decision 0025), as the store will parse
@@ -497,8 +553,20 @@ other work: 15.4 minutes.
   harness locks a field and the checks run again, each from the package's format, a XeTeX one's
   too; the rewrite's own check adds a whole compile, a dump and a compile from it, before the
   assembly starts.
-- **What the harness reports that is no fault of the import's**: a document of two pages
-  (`pages`), which a curated template's sample must not be and an upload may be, and a template
-  that takes three passes to settle (`converges`), as AltaCV's does. Its `pdf` finding on
-  Awesome-CV's small-capital titles, absent from the PDF's text, is for item 8 to look at: the
-  ATS reads that text.
+- **The harness holds an import to its upload.** A document of two pages, which a curated
+  template's sample must not be and an upload may be, and a template that takes three passes to
+  settle, as AltaCV's does, are no longer findings (`Expected`, The checks); more pages or passes
+  than the upload's own compile are.
+- **The PDF's text shows an import's small capitals as capitals, a limit the ATS would feel.** An
+  import sets small capitals as its upload does, from the font loaded with `+smcp` (item 8's
+  per-shape features, decision 0023), which the first check holds it to glyph for glyph. The page
+  reads each small capital as the letter typed; xdvipdfmx's ToUnicode map reads the glyphs the
+  feature substitutes as the capitals, so that the PDF's text holds such a title in capitals,
+  `HARBOR` for `Harbor`, as the upload's own PDF from the same driver does. The curated Awesome-CV
+  port passes the same check because its small-capital shape is the upright face (decision 0015),
+  which the PDF reads as typed; an import cannot take that face without leaving its reference. An
+  ATS that matches words in their case reads those titles otherwise: the Awesome-CV sample's seven
+  entry titles and four Awesome-CV forks in the corpus. The harness reports each such field
+  (`pdf`), saying it is in the text only in capitals; a ToUnicode map of the small capitals' own,
+  from the letters the feature substitutes them for, is the ATS's reader's to take up, or the
+  PDF driver's, not this milestone's (the milestone's owed table).

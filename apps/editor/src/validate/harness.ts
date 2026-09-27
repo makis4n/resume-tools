@@ -152,6 +152,19 @@ const PARAGRAPH_KEYS = [
 export const SETS_NO_GLYPH = new RegExp(`\\s|${INVISIBLE.source}|[^\\u0000-\\u007f]|_`, "gu");
 
 /**
+ * What an imported package is held to in place of a curated sample's one page and two passes
+ * (decision 0026): what its upload's own compile, the reference, set and took. An upload may be two
+ * pages or more, which a curated sample must not be, and may take three passes to settle, as
+ * AltaCV's paracol does, which its document then takes in the editor as well.
+ */
+export interface Expected {
+  /** The pages the reference set. */
+  pages: number;
+  /** The passes the reference took, two or three. */
+  passes: number;
+}
+
+/**
  * Check a package by compiling a resume through it as the editor does, with the document's
  * control values, any left out being the package's defaults, and reading the output back as the
  * page does. The checks run in the order of `CHECKS`, and each that fails adds its findings; a
@@ -161,6 +174,9 @@ export const SETS_NO_GLYPH = new RegExp(`\\s|${INVISIBLE.source}|[^\\u0000-\\u00
  * is checked as the user's document will compile. The dump replaces the job's format, so the job
  * starts again as a new document whatever it held, and a caller whose session holds a document
  * the user has open in that job runs the harness in a session of its own.
+ *
+ * `expected` holds an imported package to its upload's own page count and passes (`Expected`); a
+ * curated one is held to one page and two passes.
  */
 export async function validatePackage(
   session: EngineSession,
@@ -169,6 +185,7 @@ export async function validatePackage(
   sample: Resume,
   values: ControlValues = {},
   job = EDITOR_JOB,
+  expected?: Expected,
 ): Promise<Report> {
   const chosen: ControlValues = { ...defaultControls(pkg), ...values };
   const report: Report = {
@@ -222,7 +239,7 @@ export async function validatePackage(
 
   const second = attempt(findings, "converges", () => compile(body.latex));
   addPasses(report, second);
-  findings.push(...checkConverges(first, output, second));
+  findings.push(...checkConverges(first, output, second, expected?.passes));
 
   const editedBody = attempt(findings, "edits", () =>
     generateBody(pkg, editEverything(sample), chosen, { covers }),
@@ -256,7 +273,7 @@ export async function validatePackage(
   if (editedBody !== undefined && edited !== undefined)
     findings.push(...(await checkEdits(fonts, edited, editedBody.texts, body.texts, reported)));
   findings.push(
-    ...checkPages(doc, outside),
+    ...checkPages(doc, outside, expected?.pages),
     ...fieldFindings,
     ...alignmentFindings,
     ...checkFonts(undrawable),
@@ -402,18 +419,26 @@ function checkCompile(result: CompileResult): Finding[] {
  * editor recompiles an open document in one pass, reading the auxiliary files the compile before
  * it wrote, so a template whose auxiliary files do not settle shows a page that is wrong, or one
  * that changes on a keystroke that changed nothing.
+ *
+ * An import is held to its upload's own compile instead (`Expected.passes`): a new document may
+ * take as many passes as the reference took, and so may the same body again, since what makes the
+ * upload's compile run again, as paracol's columns do, makes its document's in the editor run again
+ * too; more than the reference took is a finding. The output must still be the same.
  */
-function checkConverges(
+export function checkConverges(
   first: CompileResult,
   output: Uint8Array,
   second: CompileResult | undefined,
+  passes?: number,
 ): Finding[] {
   const findings: Finding[] = [];
+  const upload = passes === undefined ? undefined : Math.max(2, passes);
+  const beyond = `, more than the ${upload} its upload's own compile took`;
   const fresh = first.passes.length;
-  if (fresh !== 2)
+  if (upload === undefined ? fresh !== 2 : fresh > upload)
     findings.push({
       check: "converges",
-      message: `a new document takes ${fresh} passes to compile, not two`,
+      message: `a new document takes ${fresh} passes to compile${upload === undefined ? ", not two" : beyond}`,
     });
   // A second compile that threw is already a finding, with what it threw.
   if (second === undefined) return findings;
@@ -425,11 +450,11 @@ function checkConverges(
     });
     return findings;
   }
-  const passes = second.passes.length;
-  if (passes !== 1)
+  const again = second.passes.length;
+  if (upload === undefined ? again !== 1 : again > upload)
     findings.push({
       check: "converges",
-      message: `the same body takes ${passes} passes to compile again, not one`,
+      message: `the same body takes ${again} passes to compile again${upload === undefined ? ", not one" : beyond}`,
     });
   if (!sameOutput(output, second.output))
     findings.push({ check: "converges", message: "the same body compiles again to other output" });
@@ -629,12 +654,24 @@ async function checkEdits(
  * read every page all the same, so that a spill is reported here and nowhere else. A field that
  * runs past an edge of the page (`outside`), as a table wider than the text sets one, is not
  * shown there, nor in the PDF, where the page ends too, and the user cannot see what is lost.
+ * An import is held to its upload's page count instead (`Expected.pages`): its document is its
+ * upload, regenerated, which may be two pages or more, and must set as many as the upload does.
  */
-function checkPages(doc: DviDocument, outside: readonly string[]): Finding[] {
+export function checkPages(
+  doc: DviDocument,
+  outside: readonly string[],
+  pages?: number,
+): Finding[] {
   const findings: Finding[] = [];
   const count = doc.pages.length;
-  if (count !== 1)
-    findings.push({ check: "pages", message: `the resume sets ${count} pages, not one` });
+  if (count !== (pages ?? 1))
+    findings.push({
+      check: "pages",
+      message:
+        pages === undefined
+          ? `the resume sets ${count} pages, not one`
+          : `the resume sets ${count} pages, not the ${pages} its upload's own compile sets`,
+    });
   for (const id of outside)
     findings.push({ check: "pages", field: id, message: `${id} runs past the page's edge` });
   return findings;
@@ -1012,6 +1049,11 @@ const LIGATURE = /ff|fi|fl|--|''|,,/;
  * joined, with that hyphen anywhere inside it. A field the fields or alignment checks report
  * (`reported`) is left to them. A PDF xdvipdfmx cannot make, as when the output uses a font it has
  * no Type 1 file of to embed, is one finding, with its words.
+ *
+ * A word the page sets in small capitals a font's feature substitutes, as an import's `+smcp`
+ * shape does (decision 0023), xdvipdfmx's ToUnicode map reads as capitals, where the page reads
+ * the letters typed: the word is in the text, in capitals, which the finding says, as a limit of
+ * the PDF's text rather than a word it lacks (decision 0026).
  */
 function checkPdf(
   made: PdfResult,
@@ -1061,10 +1103,16 @@ function checkPdf(
     const set = wordAsSet(field, word, text.length - text.trimStart().length);
     if (LIGATURE.test(set)) continue;
     if (shown.some((each) => each.includes(set)) || brokenAcross(joined, set)) continue;
+    const capitals = set.toUpperCase();
+    const inCapitals =
+      capitals !== set &&
+      (shown.some((each) => each.includes(capitals)) || brokenAcross(joined, capitals));
     findings.push({
       check: "pdf",
       field: field.id,
-      message: `the PDF's text does not show ${field.id}: no text operator shows its first word, ${word}`,
+      message: inCapitals
+        ? `the PDF's text shows ${field.id} only in capitals, ${capitals}, as xdvipdfmx reads small capitals a font's feature sets`
+        : `the PDF's text does not show ${field.id}: no text operator shows its first word, ${word}`,
     });
   }
   return findings;

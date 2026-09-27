@@ -18,6 +18,8 @@ import type { Field } from "../tex/fields";
 import {
   CHECKS,
   type Check,
+  checkConverges,
+  checkPages,
   checkSpecial,
   editEverything,
   type Report,
@@ -607,6 +609,61 @@ describe("validatePackage, with a session that ships output the page cannot read
     );
     expect(report.findings).toEqual([
       { check: "compile", message: "the output cannot be read: not a DVI file: missing preamble" },
+    ]);
+  });
+});
+
+describe("an import held to its upload's own compile", () => {
+  const fetched = { files: 0, bytes: 0, paths: [] };
+  const output = new Uint8Array(32).fill(7);
+  const compiled = (passes: number): CompileResult => ({
+    ok: true,
+    output,
+    pages: 1,
+    passes: Array.from({ length: passes }, () => 1),
+    log: "",
+    fetched,
+  });
+
+  it("takes as many passes as the upload's compile took, a new document's and again, and no more", () => {
+    // A curated sample: two passes as a new document, then one.
+    expect(checkConverges(compiled(3), output, compiled(3))).toEqual([
+      { check: "converges", message: "a new document takes 3 passes to compile, not two" },
+      { check: "converges", message: "the same body takes 3 passes to compile again, not one" },
+    ]);
+    // An upload that took three, as AltaCV's paracol does, and whose document takes three again.
+    expect(checkConverges(compiled(3), output, compiled(3), 3)).toEqual([]);
+    expect(checkConverges(compiled(2), output, compiled(1), 3)).toEqual([]);
+    // One that took two holds its document to two.
+    expect(checkConverges(compiled(3), output, compiled(1), 2)).toEqual([
+      {
+        check: "converges",
+        message:
+          "a new document takes 3 passes to compile, more than the 2 its upload's own compile took",
+      },
+    ]);
+    // Other output is a finding whatever the passes.
+    const other = { ...compiled(1), output: new Uint8Array(32).fill(8) };
+    expect(checkConverges(compiled(3), output, other, 3)).toEqual([
+      { check: "converges", message: "the same body compiles again to other output" },
+    ]);
+  });
+
+  it("sets as many pages as the upload does, where a curated sample sets one", () => {
+    const pages = (count: number) =>
+      ({ pages: Array.from({ length: count }, () => ({ items: [] })) }) as unknown as DviDocument;
+    expect(checkPages(pages(2), [])).toEqual([
+      { check: "pages", message: "the resume sets 2 pages, not one" },
+    ]);
+    expect(checkPages(pages(2), [], 2)).toEqual([]);
+    expect(checkPages(pages(3), [], 2)).toEqual([
+      {
+        check: "pages",
+        message: "the resume sets 3 pages, not the 2 its upload's own compile sets",
+      },
+    ]);
+    expect(checkPages(pages(1), ["a.text"], 1)).toEqual([
+      { check: "pages", field: "a.text", message: "a.text runs past the page's edge" },
     ]);
   });
 });
@@ -1277,6 +1334,46 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       bullet.text = [{ text: "Full-text search across the backlist, rebuilt in a month." }];
       const report = await validatePackage(session, fonts, sans, hyphenated);
       expect(report.findings).toEqual([]);
+    }, 120_000);
+
+    it("says a title set in small capitals a font's feature substitutes is in the PDF in capitals", async () => {
+      // An import's small capitals load their font with `+smcp` (decision 0023). The page reads
+      // each small capital as the letter typed; xdvipdfmx's ToUnicode map reads it as a capital,
+      // so the PDF's text holds the title in capitals, as it does for the upload's own PDF. The
+      // port's small capitals are the upright shape, which the PDF reads as typed (decision 0026).
+      const shapes = (features?: string) => ({
+        ...xetex,
+        fonts: xetex.fonts?.map((font) =>
+          font.family === "Roboto"
+            ? {
+                ...font,
+                shapes: {
+                  ...font.shapes,
+                  "m/sc":
+                    features === undefined
+                      ? "Roboto-Regular.otf"
+                      : { file: "Roboto-Regular.otf", features },
+                },
+              }
+            : font,
+        ),
+        snippets: {
+          ...xetex.snippets,
+          entry: String(xetex.snippets.entry).replace(
+            "{\\bfseries {{title}}}",
+            "{\\scshape {{title}}}",
+          ),
+        },
+      });
+      const port = parsePackage({ ...shapes(), id: "invented-xetex-upright-caps" });
+      expect((await validatePackage(session, fonts, port, sample)).findings).toEqual([]);
+      const smcp = parsePackage({ ...shapes("+smcp"), id: "invented-xetex-small-caps" });
+      const message = (id: string, word: string) =>
+        `the PDF's text shows ${id} only in capitals, ${word}, as xdvipdfmx reads small capitals a font's feature sets`;
+      expect((await validatePackage(session, fonts, smcp, sample)).findings).toEqual([
+        { check: "pdf", field: "harbor.title", message: message("harbor.title", "HARBOR") },
+        { check: "pdf", field: "gull.title", message: message("gull.title", "GULL") },
+      ]);
     }, 120_000);
 
     it("reports a character the template sets that its font lacks, which the page hides", async () => {
