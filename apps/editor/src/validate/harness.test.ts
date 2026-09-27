@@ -18,6 +18,8 @@ import type { Field } from "../tex/fields";
 import {
   CHECKS,
   type Check,
+  checkConverges,
+  checkPages,
   checkSpecial,
   editEverything,
   type Report,
@@ -123,6 +125,70 @@ function resumeWith(bullet: string, title = "Typesetter"): Resume {
 }
 
 const RESUME = resumeWith("Set the quarterly report");
+
+/**
+ * The plain package as an import assembles one for a class whose header commands belong in the
+ * preamble, as Awesome-CV's and moderncv's `\name` and `\position` do (decision 0025): the header
+ * set before `\begin{document}` through commands that store it, and typeset by the body's
+ * `\makeheader`; and extras slots in a section's and an entry's snippets.
+ */
+const HEADER_FIRST = parsePackage({
+  ...PLAIN,
+  id: "header-first",
+  preamble: [
+    PLAIN.preamble,
+    "\\makeatletter",
+    "\\newcommand{\\name}[2]{\\def\\cv@first{#1}\\def\\cv@last{#2}}",
+    "\\newcommand{\\position}[1]{\\def\\cv@position{#1}}",
+    "\\let\\cv@position\\@empty",
+    "\\newcommand{\\makeheader}{{\\Large\\cv@first\\ \\cv@last}\\par",
+    "  \\ifx\\cv@position\\@empty\\else{\\itshape\\cv@position}\\par\\fi}",
+    "\\makeatother",
+  ].join("\n"),
+  snippets: {
+    ...PLAIN.snippets,
+    document: "{{header}}\n\\begin{document}\n\\makeheader\n{{sections}}\n\\end{document}",
+    header: "\\name{{{first}}}{{{last}}}\n{{#headline}}\n\\position{{{headline}}}\n{{/headline}}",
+    section: {
+      ...PLAIN.snippets.section,
+      entries: "\\section*{{{title}}}{{&x.rule}}\n{{entries}}",
+    },
+    entry: "{{title}}{{#x.note}} {{&x.note}}{{/x.note}}\\par\n{{bullets}}",
+  },
+});
+
+/**
+ * An invented resume as an import might keep one: extras on a section and an entry, and a part of
+ * the resume the model has no place for, kept as its upload had it.
+ */
+const KEEPING = Resume.parse({
+  version: 1,
+  header: { name: { first: "Ines", last: "Calloway" }, headline: "Typesetter", links: [] },
+  sections: [
+    {
+      id: "work",
+      kind: "entries",
+      role: "experience",
+      title: "Experience",
+      extras: { rule: "\\hrulefill" },
+      entries: [
+        {
+          id: "tern",
+          title: "Typesetter",
+          extras: { note: "(part time)" },
+          bullets: [{ id: "tern-1", text: [{ text: "Set the quarterly report" }] }],
+        },
+      ],
+    },
+    {
+      kind: "locked",
+      id: "lock-hobbies",
+      title: "",
+      role: "other",
+      latex: "\\section*{Hobbies}\nRowing on the river, chess on Sundays.",
+    },
+  ],
+});
 
 describe("editEverything", () => {
   /** A resume with every text field the model has, and a location that is blank. */
@@ -259,6 +325,32 @@ describe("editEverything", () => {
         if (field.endsWith(".dates")) expect(after.get(field), field).toBe(text);
         else expect(after.get(field), field).not.toBe(text);
     }
+  });
+
+  it("leaves a locked section and every extra as they are, since none is a field", () => {
+    expect(editEverything(KEEPING)).toEqual({
+      ...KEEPING,
+      header: {
+        ...KEEPING.header,
+        name: { first: "Inex", last: "Callowax" },
+        headline: "Typesettex",
+      },
+      sections: [
+        {
+          ...KEEPING.sections[0],
+          title: "Experiencx",
+          entries: [
+            {
+              id: "tern",
+              title: "Typesettex",
+              extras: { note: "(part time)" },
+              bullets: [{ id: "tern-1", text: [{ text: "Set the quarterly reporx" }] }],
+            },
+          ],
+        },
+        KEEPING.sections[1],
+      ],
+    });
   });
 });
 
@@ -517,6 +609,61 @@ describe("validatePackage, with a session that ships output the page cannot read
     );
     expect(report.findings).toEqual([
       { check: "compile", message: "the output cannot be read: not a DVI file: missing preamble" },
+    ]);
+  });
+});
+
+describe("an import held to its upload's own compile", () => {
+  const fetched = { files: 0, bytes: 0, paths: [] };
+  const output = new Uint8Array(32).fill(7);
+  const compiled = (passes: number): CompileResult => ({
+    ok: true,
+    output,
+    pages: 1,
+    passes: Array.from({ length: passes }, () => 1),
+    log: "",
+    fetched,
+  });
+
+  it("takes as many passes as the upload's compile took, a new document's and again, and no more", () => {
+    // A curated sample: two passes as a new document, then one.
+    expect(checkConverges(compiled(3), output, compiled(3))).toEqual([
+      { check: "converges", message: "a new document takes 3 passes to compile, not two" },
+      { check: "converges", message: "the same body takes 3 passes to compile again, not one" },
+    ]);
+    // An upload that took three, as AltaCV's paracol does, and whose document takes three again.
+    expect(checkConverges(compiled(3), output, compiled(3), 3)).toEqual([]);
+    expect(checkConverges(compiled(2), output, compiled(1), 3)).toEqual([]);
+    // One that took two holds its document to two.
+    expect(checkConverges(compiled(3), output, compiled(1), 2)).toEqual([
+      {
+        check: "converges",
+        message:
+          "a new document takes 3 passes to compile, more than the 2 its upload's own compile took",
+      },
+    ]);
+    // Other output is a finding whatever the passes.
+    const other = { ...compiled(1), output: new Uint8Array(32).fill(8) };
+    expect(checkConverges(compiled(3), output, other, 3)).toEqual([
+      { check: "converges", message: "the same body compiles again to other output" },
+    ]);
+  });
+
+  it("sets as many pages as the upload does, where a curated sample sets one", () => {
+    const pages = (count: number) =>
+      ({ pages: Array.from({ length: count }, () => ({ items: [] })) }) as unknown as DviDocument;
+    expect(checkPages(pages(2), [])).toEqual([
+      { check: "pages", message: "the resume sets 2 pages, not one" },
+    ]);
+    expect(checkPages(pages(2), [], 2)).toEqual([]);
+    expect(checkPages(pages(3), [], 2)).toEqual([
+      {
+        check: "pages",
+        message: "the resume sets 3 pages, not the 2 its upload's own compile sets",
+      },
+    ]);
+    expect(checkPages(pages(1), ["a.text"], 1)).toEqual([
+      { check: "pages", field: "a.text", message: "a.text runs past the page's edge" },
     ]);
   });
 });
@@ -1091,6 +1238,32 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
     }, 60_000);
   });
 
+  describe("over an invented package that sets its header before \\begin{document}", () => {
+    it("passes every check, with the header marked and found, a locked part and extras", async () => {
+      const body = generateBody(HEADER_FIRST, KEEPING, {});
+      // The header's fields are set in the preamble's commands, before the document starts.
+      const start = body.latex.indexOf("\\begin{document}");
+      for (const field of ["header.first", "header.last", "header.headline"]) {
+        const at = body.latex.indexOf(`\\rtfield{${field}}`);
+        expect(at, field).toBeGreaterThanOrEqual(0);
+        expect(at, field).toBeLessThan(start);
+      }
+      const report = await validatePackage(session, fonts, HEADER_FIRST, KEEPING);
+      expect(report.findings).toEqual([]);
+      // Every field the body marks is found on the page, the header's among them, each with its
+      // paragraph special measured where `\makeheader` sets it, which the special check reads.
+      expect(report.fields).toBe(body.texts.size);
+      expect([...body.texts.keys()]).toEqual([
+        "header.first",
+        "header.last",
+        "header.headline",
+        "work.title",
+        "tern.title",
+        "tern-1.text",
+      ]);
+    }, 60_000);
+  });
+
   describe("over the invented XeTeX template", () => {
     const { package: xetex, sample } = INVENTED_XETEX;
 
@@ -1161,6 +1334,46 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       bullet.text = [{ text: "Full-text search across the backlist, rebuilt in a month." }];
       const report = await validatePackage(session, fonts, sans, hyphenated);
       expect(report.findings).toEqual([]);
+    }, 120_000);
+
+    it("says a title set in small capitals a font's feature substitutes is in the PDF in capitals", async () => {
+      // An import's small capitals load their font with `+smcp` (decision 0023). The page reads
+      // each small capital as the letter typed; xdvipdfmx's ToUnicode map reads it as a capital,
+      // so the PDF's text holds the title in capitals, as it does for the upload's own PDF. The
+      // port's small capitals are the upright shape, which the PDF reads as typed (decision 0026).
+      const shapes = (features?: string) => ({
+        ...xetex,
+        fonts: xetex.fonts?.map((font) =>
+          font.family === "Roboto"
+            ? {
+                ...font,
+                shapes: {
+                  ...font.shapes,
+                  "m/sc":
+                    features === undefined
+                      ? "Roboto-Regular.otf"
+                      : { file: "Roboto-Regular.otf", features },
+                },
+              }
+            : font,
+        ),
+        snippets: {
+          ...xetex.snippets,
+          entry: String(xetex.snippets.entry).replace(
+            "{\\bfseries {{title}}}",
+            "{\\scshape {{title}}}",
+          ),
+        },
+      });
+      const port = parsePackage({ ...shapes(), id: "invented-xetex-upright-caps" });
+      expect((await validatePackage(session, fonts, port, sample)).findings).toEqual([]);
+      const smcp = parsePackage({ ...shapes("+smcp"), id: "invented-xetex-small-caps" });
+      const message = (id: string, word: string) =>
+        `the PDF's text shows ${id} only in capitals, ${word}, as xdvipdfmx reads small capitals a font's feature sets`;
+      expect((await validatePackage(session, fonts, smcp, sample)).findings).toEqual([
+        { check: "pdf", field: "harbor.title", message: message("harbor.title", "HARBOR") },
+        { check: "pdf", field: "gull.title", message: message("gull.title", "GULL") },
+      ]);
     }, 120_000);
 
     it("reports a character the template sets that its font lacks, which the page hides", async () => {

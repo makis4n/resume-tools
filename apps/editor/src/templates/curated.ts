@@ -25,7 +25,7 @@ import awesomeTemplate from "./awesome-cv/template.json";
 import jakePreamble from "./jake/preamble.tex?raw";
 import jakeSample from "./jake/sample.json";
 import jakeTemplate from "./jake/template.json";
-import { parsePackage, type TemplatePackage } from "./package";
+import { IMPORTED_PREFIX, parsePackage, type TemplatePackage } from "./package";
 
 /** A curated package and its invented sample resume. */
 export interface Curated {
@@ -72,10 +72,21 @@ function assemble({ folder, template, preamble, files, sample }: Folder): Curate
   } catch (error) {
     throw new Error(`the curated package in ${folder}/ does not validate`, { cause: error });
   }
-  // The id names the package's formats and its folder (decision 0006).
-  if (curated.package.id !== folder)
-    throw new Error(`the curated package in ${folder}/ has the id ${curated.package.id}`);
+  checkCuratedId(folder, curated.package.id);
   return curated;
+}
+
+/**
+ * A curated package's id: the name of its folder, since it names the package's formats and its
+ * folder (decision 0006), and never under the prefix an imported package's id takes, so that no
+ * curated package's formats or documents are an import's (decision 0026). Throws otherwise.
+ */
+export function checkCuratedId(folder: string, id: string): void {
+  if (id !== folder) throw new Error(`the curated package in ${folder}/ has the id ${id}`);
+  if (id.startsWith(IMPORTED_PREFIX))
+    throw new Error(
+      `the curated package in ${folder}/ has the id ${id}, under the prefix of an imported package's`,
+    );
 }
 
 /** The curated packages and their samples by package id, in the order they were ported. */

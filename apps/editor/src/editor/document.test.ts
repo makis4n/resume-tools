@@ -10,19 +10,31 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { curated } from "../templates/curated";
 import { generateBody } from "../templates/generate";
-import { controlValuesFor, defaultControls, parsePackage } from "../templates/package";
 import {
+  controlValuesFor,
+  defaultControls,
+  parsePackage,
+  TemplatePackage,
+  UNIT_KINDS,
+} from "../templates/package";
+import {
+  addable,
   apply,
+  applyUnder,
   type Command,
   CommandError,
   Document,
   dropRefusedChoices,
+  type FieldSlot,
   fieldsOf,
   HISTORY_LIMIT,
   History,
+  isRequired,
   mintId,
   newDocument,
+  requiredFields,
   type StructureOp,
+  showsBullets,
 } from "./document";
 
 const { package: jake, sample } = curated("jake");
@@ -926,5 +938,295 @@ describe("structure", () => {
     const history = new History(doc);
     history.dispatch(structural({ op: "removeSection", id: "exp" }));
     expect(history.undo()).toBe(doc);
+  });
+
+  describe("with a locked section", () => {
+    /** A part of an imported resume kept as it was, invented, after the sample's experience. */
+    const LOCKED = "lock-q7w2e9";
+    const kept = newDocument(
+      "jake",
+      Resume.parse({
+        ...sample,
+        sections: [
+          ...sample.sections.slice(0, 2),
+          { kind: "locked", id: LOCKED, title: "", role: "other", latex: "\\section{Hobbies}" },
+          ...sample.sections.slice(2),
+        ],
+      }),
+      "en-US",
+    );
+    const lockedOf = (from: Document) => from.resume.sections.find(({ id }) => id === LOCKED);
+
+    it("gives it no field, so no command can edit it", () => {
+      const fields = fieldsOf(kept.resume);
+      expect(sortedKeys(fields)).toEqual(sortedKeys(fieldsOf(sample)));
+      expect(() =>
+        apply(kept, { type: "text", field: `${LOCKED}.title`, text: "Hobbies" }),
+      ).toThrow(`the document has no field ${LOCKED}.title`);
+    });
+
+    it("removes and moves it as any section, and undoes either as one step", () => {
+      const removed = restructured(kept, { op: "removeSection", id: LOCKED });
+      expect(removed.resume).toEqual(doc.resume);
+      const up = restructured(kept, { op: "moveSection", id: LOCKED, to: 0 });
+      expect(ids(up.resume.sections)).toEqual([LOCKED, "edu", "exp", "proj", "skills"]);
+      expect(lockedOf(up)).toBe(lockedOf(kept));
+      // Another section moves past it, which stays as it was.
+      const past = restructured(kept, { op: "moveSection", id: "skills", to: 1 });
+      expect(ids(past.resume.sections)).toEqual(["edu", "skills", "exp", LOCKED, "proj"]);
+      expect(lockedOf(past)).toBe(lockedOf(kept));
+      const history = new History(kept);
+      history.dispatch(structural({ op: "moveSection", id: LOCKED, to: 4 }));
+      history.dispatch(structural({ op: "removeSection", id: LOCKED }));
+      expect(history.undo()?.resume.sections.at(-1)).toBe(lockedOf(kept));
+      expect(history.undo()).toBe(kept);
+    });
+
+    it("takes no other op, and no command elsewhere changes it", () => {
+      for (const [op, message] of [
+        [
+          { op: "setSection", id: LOCKED, role: "skills" },
+          `the locked section ${LOCKED} keeps its role, other`,
+        ],
+        [{ op: "setSection", id: LOCKED }, `the locked section ${LOCKED} keeps its role, other`],
+        [{ op: "addEntry", section: LOCKED }, `the locked section ${LOCKED} holds no entries`],
+        [{ op: "addItem", section: LOCKED }, `the locked section ${LOCKED} holds no items`],
+        [{ op: "addBullet", entry: LOCKED }, `${LOCKED} is a section, not an entry`],
+        [{ op: "removeItem", id: LOCKED }, `${LOCKED} is a section, not an item`],
+      ] satisfies [StructureOp, string][])
+        expect(() => apply(kept, structural(op)), op.op).toThrow(new CommandError(message));
+      // A locked section only an import makes, never the panel.
+      const locked = { op: "addSection", kind: "locked", role: "other" } as unknown as StructureOp;
+      expect(() => apply(kept, structural(locked))).toThrow("a section's kind cannot be locked");
+      const edited = [
+        { type: "text", field: "exp.title", text: "Work" },
+        { type: "dates", field: "fennel.dates", dates: { start: "2020" } },
+        { type: "control", name: "margins", value: 0.7 },
+        structural({ op: "addEntry", section: "exp" }),
+        structural({ op: "setSection", id: "proj", role: "other" }),
+      ] satisfies Command[];
+      const after = edited.reduce(apply, kept);
+      expect(Document.parse(after)).toStrictEqual(after);
+      expect(lockedOf(after)).toBe(lockedOf(kept));
+    });
+  });
+});
+
+describe("an imported package's rules", () => {
+  // What an import's checks decide, which its package carries (decision 0026): the slots that stop
+  // the compile when empty, the kinds of unit a new one of which stops it, and an entry snippet
+  // with no place for bullets. The curated packages carry none of these, so these tests give them
+  // to the invented package, as the import's schema will have them.
+  const ruled = (rules: object): TemplatePackage => ({ ...EVERY, ...rules }) as TemplatePackage;
+  const doc: Document = { version: 1, template: "every", resume: FULL, controls: {} };
+  const structural = (op: StructureOp): Command => ({ type: "structure", op });
+  const refused = (id: string) =>
+    new CommandError(`the template requires ${id}, which cannot be left empty`);
+
+  it("refuses to empty a field the package requires, which keeps its value, and empties the rest", () => {
+    const pkg = ruled({
+      required: {
+        header: ["first", "location"],
+        link: ["label"],
+        section: ["text"],
+        entry: ["title", "dates"],
+        bullet: ["text"],
+      },
+    });
+    for (const [command, id] of [
+      [{ type: "text", field: "header.first", text: "" }, "header.first"],
+      [{ type: "text", field: "header.first", text: " \t" }, "header.first"],
+      [{ type: "text", field: "kestrel.title", text: "" }, "kestrel.title"],
+      [{ type: "rich", field: "about.text", runs: [] }, "about.text"],
+      [{ type: "rich", field: "kestrel-1.text", runs: [{ text: " " }] }, "kestrel-1.text"],
+      [{ type: "dates", field: "kestrel.dates", dates: undefined }, "kestrel.dates"],
+      [structural({ op: "setHeader", location: "" }), "header.location"],
+      [structural({ op: "setLink", id: "folio", label: "" }), "folio.label"],
+    ] satisfies [Command, string][])
+      expect(() => applyUnder(pkg, doc, command), id).toThrow(refused(id));
+    // The history keeps the document as it was, and makes no step.
+    const history = new History(doc, pkg);
+    expect(() => history.dispatch({ type: "text", field: "header.first", text: "" })).toThrow(
+      CommandError,
+    );
+    expect(history.present).toBe(doc);
+    expect(history.canUndo).toBe(false);
+    // A field it does not require empties, and one it does takes other text.
+    const emptied = [
+      { type: "text", field: "header.last", text: "" },
+      { type: "text", field: "kestrel.subtitle", text: "" },
+      structural({ op: "setHeader", headline: "", location: "Ely, MN" }),
+      { type: "rich", field: "medal.text", runs: [] },
+      { type: "text", field: "header.first", text: "Orla" },
+    ] satisfies Command[];
+    const after = emptied.reduce((each, command) => applyUnder(pkg, each, command), doc);
+    expect(after.resume.header).toMatchObject({ name: { first: "Orla", last: "" } });
+    expect(after.resume.header.location).toBe("Ely, MN");
+    // A required field that is blank already can stay so, since the edit changes nothing.
+    const blank = applyUnder(undefined, doc, { type: "text", field: "kestrel.title", text: "" });
+    expect(applyUnder(pkg, blank, { type: "text", field: "kestrel.title", text: "" })).toEqual(
+      blank,
+    );
+    // The curated package requires nothing.
+    expect(
+      apply(doc, { type: "text", field: "header.first", text: "" }).resume.header.name.first,
+    ).toBe("");
+  });
+
+  it("reads the slots required by the snippet that sets them, as the schema lists them", () => {
+    const slot = (snippet: FieldSlot["snippet"], name: string): FieldSlot => ({ snippet, name });
+    const pkg = ruled({
+      required: { entry: ["title"], section: ["title"], labelledItem: ["label"] },
+    });
+    // The lists are the package's own, which its schema takes (decision 0026).
+    expect(TemplatePackage.safeParse(pkg).success).toBe(true);
+    expect(isRequired(pkg, slot("entry", "title"))).toBe(true);
+    expect(isRequired(pkg, slot("entry", "place"))).toBe(false);
+    expect(isRequired(pkg, slot("section", "title"))).toBe(true);
+    expect(isRequired(pkg, slot("section", "text"))).toBe(false);
+    expect(isRequired(pkg, slot("labelledItem", "label"))).toBe(true);
+    expect(isRequired(pkg, slot("item", "text"))).toBe(false);
+    expect(isRequired(EVERY, slot("header", "first"))).toBe(false);
+    expect(isRequired(undefined, slot("header", "first"))).toBe(false);
+    expect([...requiredFields(pkg, FULL)].sort()).toEqual([
+      "about.title",
+      "drawing.label",
+      "honours.title",
+      "kestrel.title",
+      "tools.title",
+      "work.title",
+    ]);
+  });
+
+  it("refuses a unit of a kind the package cannot take, and adds the rest", () => {
+    const pkg = ruled({ fixed: ["entry", "bullet", "labelledItem", "link", "section.list"] });
+    for (const [op, kind] of [
+      [{ op: "addEntry", section: "work" }, "entry"],
+      [{ op: "addBullet", entry: "kestrel" }, "bullet"],
+      [{ op: "addItem", section: "tools" }, "labelled item"],
+      [{ op: "addLink" }, "link"],
+      [{ op: "addSection", kind: "list", role: "skills" }, "list section"],
+    ] satisfies [StructureOp, string][])
+      expect(() => applyUnder(pkg, doc, structural(op)), op.op).toThrow(
+        new CommandError(`the template cannot take another ${kind}: a new one stops its compile`),
+      );
+    for (const kind of UNIT_KINDS)
+      expect(addable(pkg, kind), kind).toBe(
+        !["entry", "bullet", "labelledItem", "link", "section.list"].includes(kind),
+      );
+    const added = [
+      structural({ op: "addItem", section: "honours" }),
+      structural({ op: "addSection", kind: "entries", role: "projects" }),
+      structural({ op: "removeEntry", id: "kestrel" }),
+    ].reduce((each, command) => applyUnder(pkg, each, command), doc);
+    expect(added.resume.sections).toHaveLength(FULL.sections.length + 1);
+    // The curated package takes every kind.
+    for (const kind of UNIT_KINDS) expect(addable(jake, kind)).toBe(true);
+  });
+
+  it("refuses a bullet for an entry whose snippet shows none, as its snippet or its package says", () => {
+    const bullet = structural({ op: "addBullet", entry: "kestrel" });
+    const message = new CommandError(
+      "the template sets no bullets for an entry of its experience sections, as kestrel is",
+    );
+    // The entries of the work section, whose role is experience, have a variant with no list.
+    const variant = ruled({
+      snippets: {
+        ...EVERY.snippets,
+        entry: {
+          default: "{{title}} {{dates}}\n{{bullets}}",
+          experience: "{{title}} {{dates}}{{#bullets}}{{/bullets}}",
+        },
+      },
+    });
+    expect(showsBullets(variant, "experience")).toBe(false);
+    expect(showsBullets(variant, "education")).toBe(true);
+    expect(() => applyUnder(variant, doc, bullet)).toThrow(message);
+    // Or the package says so of the role's entries, as an import's does (`entryBullets`).
+    const flagged = ruled({
+      snippets: { ...EVERY.snippets, entryBullets: { default: true, experience: false } },
+    });
+    expect(TemplatePackage.safeParse(flagged).success).toBe(true);
+    expect(showsBullets(flagged, "experience")).toBe(false);
+    expect(() => applyUnder(flagged, doc, bullet)).toThrow(message);
+    // Every curated entry snippet shows bullets.
+    for (const role of ["experience", "education", "projects", "other"] as const)
+      expect(showsBullets(jake, role), role).toBe(true);
+    expect(applyUnder(EVERY, doc, bullet).resume).not.toEqual(doc.resume);
+  });
+
+  it("gives no field for a slot a node keeps as the upload had it, and takes no edit to it", () => {
+    // What an import keeps, as its model has it (decision 0026): the header's location, an entry's
+    // title and dates and its bullets' list, and a labelled section's title and its items' list.
+    // A bullet, an item and a link keep nothing of their own: they are kept with their list.
+    const resume = structuredClone(FULL);
+    resume.header.kept = ["location"];
+    const work = resume.sections[1];
+    const tools = resume.sections[3];
+    if (work?.kind !== "entries" || tools?.kind !== "labelled") throw new Error("the sections");
+    const kestrel = work.entries[0] as Entry;
+    kestrel.kept = ["title", "dates", "bullets"];
+    tools.kept = ["title", "items"];
+    expect(Resume.safeParse(resume).success).toBe(true);
+    const fields = fieldsOf(resume);
+    for (const id of [
+      "header.location",
+      "kestrel.title",
+      "kestrel.dates",
+      "kestrel-1.text",
+      "drawing.label",
+      "drawing.text",
+      "tools.title",
+    ])
+      expect(fields.has(id), id).toBe(false);
+    for (const id of ["header.first", "header.email", "kestrel.subtitle", "work.title"])
+      expect(fields.has(id), id).toBe(true);
+    const kept: Document = { ...doc, resume };
+    expect(() => apply(kept, { type: "text", field: "kestrel.title", text: "Lead" })).toThrow(
+      new CommandError("the document has no field kestrel.title"),
+    );
+    expect(() => apply(kept, structural({ op: "setHeader", location: "Ely" }))).toThrow(
+      new CommandError("header.location is kept as the upload had it, and takes no edit"),
+    );
+    expect(apply(kept, structural({ op: "setHeader", phone: "555" })).resume.header.phone).toBe(
+      "555",
+    );
+  });
+
+  it("adds no unit to a list its node keeps whole, which the page sets from its extras", () => {
+    // Every list kept whole, as an import keeps one whose units its snippets cannot set: the page
+    // sets it from the node's extras, so a unit added would be in the document and never on it.
+    const resume = structuredClone(FULL);
+    resume.header.kept = ["links"];
+    const [, work, honours, tools] = resume.sections;
+    if (work?.kind !== "entries" || honours?.kind !== "list" || tools?.kind !== "labelled")
+      throw new Error("the sections");
+    (work.entries[0] as Entry).kept = ["bullets"];
+    honours.kept = ["items"];
+    tools.kept = ["items"];
+    const kept: Document = { ...doc, resume };
+    for (const [op, message] of [
+      [{ op: "addLink" }, "the header keeps its links"],
+      [{ op: "addBullet", entry: "kestrel" }, "kestrel keeps its bullets"],
+      [{ op: "addItem", section: "honours" }, "honours keeps its items"],
+      [{ op: "addItem", section: "tools" }, "tools keeps its items"],
+    ] satisfies [StructureOp, string][])
+      expect(() => apply(kept, structural(op)), op.op).toThrow(
+        new CommandError(`${message} as the upload had them, and takes no new one`),
+      );
+    // Nor do their units give fields.
+    for (const id of ["folio.label", "kestrel-1.text", "medal.text", "drawing.label"])
+      expect(fieldsOf(resume).has(id), id).toBe(false);
+    // A section that keeps its entries takes no new entry, and one beside it still does.
+    work.kept = ["entries"];
+    expect(() => apply(kept, structural({ op: "addEntry", section: "work" }))).toThrow(
+      new CommandError("work keeps its entries as the upload had them, and takes no new one"),
+    );
+    expect(fieldsOf(resume).has("kestrel.title")).toBe(false);
+    const added = apply(kept, structural({ op: "addSection", kind: "entries", role: "projects" }));
+    const fresh = added.resume.sections.at(-1);
+    if (fresh === undefined) throw new Error("no section");
+    const withEntry = apply(added, structural({ op: "addEntry", section: fresh.id }));
+    expect(withEntry.resume.sections.at(-1)).toMatchObject({ kind: "entries", entries: [{}] });
   });
 });

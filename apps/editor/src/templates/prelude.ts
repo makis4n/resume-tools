@@ -14,6 +14,14 @@ import { MARKER_BEGIN, MARKER_END } from "../tex/fields";
 export const PARAGRAPH_MARKER = "rt:p:";
 
 /**
+ * The prefix of the special written before and after a locked part of an imported resume, with
+ * its section's id (decision 0025): item 15's page reads it to show a lock over the part, and the
+ * import's comparison of glyph streams already leaves it out, as it does the other markers
+ * (decision 0019).
+ */
+export const LOCK_MARKER = "rt:l:";
+
+/**
  * - `\rtfield{<id>}{<content>}` marks a field, as decision 0003 found it must: `\leavevmode` so a
  *   field that starts a list item keeps the item's label, and `\texorpdfstring` so a bookmark
  *   holds the text and never the markers. Every special writes the id through `\detokenize`, so a
@@ -36,6 +44,22 @@ export const PARAGRAPH_MARKER = "rt:p:";
  *   keeps the loop's counter and the macro to itself. It is protected, so a moving argument,
  *   such as a section title bound for the table of contents, writes the command instead of
  *   expanding it: nothing the loop assigns happens in a write, so the loop could run forever.
+ * - `\rtlocked{<id>}{<latex>}` writes a locked section (decision 0025): its LaTeX, kept as the
+ *   upload had it, between two lock markers, `rt:l:<id>` both. It is `\rtfield` without the
+ *   paragraph special, since nothing in it is edited, and without `\texorpdfstring`'s second copy,
+ *   since it never stands in a PDF string; and without `\leavevmode`, since a locked part stands
+ *   between sections, in vertical mode, where starting a paragraph would set an empty line. A
+ *   marker is a whatsit, which hides the list's last skip from LaTeX's `\addvspace` and
+ *   `\addpenalty`: the skip before a section that follows a list would then be added to the
+ *   list's own rather than merged with it, 10 pt further down in `article`. So each marker takes
+ *   the last skip off and puts it back after itself (`\rt@lock`), in either mode. And glue after a
+ *   whatsit is a legal breakpoint, where after glue or a penalty it is not: a marker there would
+ *   let a page, a column or a line break where it could not, which moved every glyph of a
+ *   two-page, two-column AltaCV sample's right column. So after glue or a penalty a `\nobreak`
+ *   follows the marker (`\rt@mark`); after a kern or a math node none does, since each is a
+ *   breakpoint where glue follows it, which the glue after the marker takes over, and a `\nobreak`
+ *   would take it away. The part and what follows it are set, and broken, where they would be
+ *   with no marker.
  * - A character LaTeX's UTF-8 input has no definition for, such as an emoji or a letter of a
  *   script the template's fonts do not cover, is left out with a warning in the log, rather than
  *   stopping the compile with an error, so every character a user types either typesets or is
@@ -74,6 +98,31 @@ export const PRELUDE = String.raw`\makeatletter
       hangafter=\the\hangafter;parshape=\the\parshape;inner=\ifinner1\else0\fi;%
       shape=\rt@shape;spaceskip=\the\spaceskip;xspaceskip=\the\xspaceskip}%
   \endgroup
+}
+% A locked part of an imported resume, LaTeX kept as the upload had it, between two lock markers
+% the page reads (decision 0025). Each marker takes the list's last skip off and puts it back
+% after itself, so that \addvspace and \addpenalty, which read \lastskip, still find it last.
+\newcommand{\rtlocked}[2]{\rt@lock{#1}#2\rt@lock{#1}}
+\protected\def\rt@lock#1{%
+  \begingroup
+    \skip@\lastskip
+    \ifdim\skip@=\z@
+      \rt@mark{#1}%
+    \else\ifvmode
+      \vskip-\skip@\rt@mark{#1}\vskip\skip@
+    \else
+      \unskip\rt@mark{#1}\hskip\skip@
+    \fi\fi
+  \endgroup
+}
+% The marker itself, and after it a \nobreak where the node before it is glue or a penalty: glue
+% after a whatsit is a legal breakpoint, which after glue or a penalty it is not. After a kern or
+% a math node, glue is none either, but the kern or the math node is one where glue follows it,
+% and the glue after the marker breaks as it did, so the marker adds and takes away none there.
+\def\rt@mark#1{%
+  \count@\lastnodetype
+  \special{${LOCK_MARKER}\detokenize{#1}}%
+  \ifnum\count@=11 \nobreak\else\ifnum\count@=13 \nobreak\fi\fi
 }
 % A character LaTeX has no definition for is left out rather than stopping the compile. The
 % kernel restores its own handler from the saved copy at the start of every job, so both change.

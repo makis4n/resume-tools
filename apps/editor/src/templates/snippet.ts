@@ -17,7 +17,15 @@
  *
  * A block tag alone on its line takes the whole line with it, as in Mustache, so a block that is
  * left out leaves no blank line behind, which TeX would read as the end of a paragraph.
+ *
+ * An extras slot, `{{&x.photo}}`, writes the node's extra under that key as it is, LaTeX kept from
+ * the user's own upload, and `{{#x.photo}}` and `{{^x.photo}}` test whether the node has one. It
+ * is the one slot whose text the generator does not escape, so it is always raw, and only the
+ * header's, a section's and an entry's snippets have one, since only their nodes keep extras
+ * (decision 0025).
  */
+
+import { ExtraKey } from "@resume-tools/resume-model";
 
 export type SnippetNode =
   | { kind: "text"; text: string }
@@ -39,13 +47,23 @@ export class SnippetError extends Error {
 /** What a slot holds, which decides how a snippet may use it. */
 export type SlotType = "text" | "rich" | "date" | "url" | "list";
 
+/** What begins an extras slot's name, before its key: `{{&x.photo}}`. */
+export const EXTRAS_PREFIX = "x.";
+
+/** The key an extras slot's name holds, or undefined for any other slot's name. */
+export function extrasKey(name: string): string | undefined {
+  return name.startsWith(EXTRAS_PREFIX) ? name.slice(EXTRAS_PREFIX.length) : undefined;
+}
+
 /**
  * Two braces, an optional sigil, a name and two braces, with whitespace allowed in between. The
  * whitespace after the sigil sits inside the sigil's optional group. With a `\s*` on each side of
  * an optional sigil, a `{{` followed by a long run of whitespace that begins no tag is tried once
  * for every way of splitting the run between the two, and packages will come from other users.
+ * A name is a letter and letters and digits, or `x.` and a key, taken as letters, digits, `-` and
+ * `_` so that `checkSnippet` names a key the model refuses rather than leave the tag as TeX text.
  */
-const TAG = /\{\{\s*(?:([&#^/])\s*)?([A-Za-z][A-Za-z0-9]*)\s*\}\}/y;
+const TAG = /\{\{\s*(?:([&#^/])\s*)?(x\.[A-Za-z0-9_-]*|[A-Za-z][A-Za-z0-9]*)\s*\}\}/y;
 
 interface Tag {
   sigil: string;
@@ -100,11 +118,14 @@ export function parseSnippet(source: string): SnippetNode[] {
  * Check a parsed snippet against the slots its place in a package offers, and return what is
  * wrong, if anything: a name the place does not offer; a URL as a typeset slot, where its markers
  * would end up in the address; and a list as a raw slot, since a list goes in as the generator
- * renders it or names a block. A block may test any slot the place offers.
+ * renders it or names a block. A block may test any slot the place offers. An extras slot is
+ * offered where `extras` says the place's node keeps them, under a key the model takes, and goes
+ * in raw, since what it holds is LaTeX the generator never escapes.
  */
 export function checkSnippet(
   nodes: SnippetNode[],
   slots: Readonly<Record<string, SlotType>>,
+  extras = false,
 ): string[] {
   const problems = new Set<string>();
   const names = Object.keys(slots);
@@ -120,6 +141,23 @@ export function checkSnippet(
   push(nodes);
   for (let node = stack.pop(); node; node = stack.pop()) {
     if (node.kind === "text") continue;
+    if (node.kind === "block") push(node.children);
+    const key = extrasKey(node.name);
+    if (key !== undefined) {
+      if (!extras)
+        problems.add(
+          `there is no slot ${node.name} here; only the header's, a section's and an entry's snippets have extras`,
+        );
+      else if (!ExtraKey.safeParse(key).success)
+        problems.add(
+          `${node.name} names no extra: a key is a lowercase letter, then up to 31 lowercase letters, digits or -`,
+        );
+      else if (node.kind === "slot" && !node.raw)
+        problems.add(
+          `${node.name} is an extra, LaTeX kept from the upload, so it goes in raw, as {{&${node.name}}}`,
+        );
+      continue;
+    }
     // Own names only, since every object inherits a `constructor`.
     const type = Object.hasOwn(slots, node.name) ? slots[node.name] : undefined;
     if (type === undefined) {
@@ -130,7 +168,6 @@ export function checkSnippet(
     } else if (node.kind === "slot" && type === "list" && node.raw) {
       problems.add(`${node.name} is a list, so it goes in as {{${node.name}}} or names a block`);
     }
-    if (node.kind === "block") push(node.children);
   }
   return [...problems];
 }
@@ -148,7 +185,9 @@ const LINK_COMMANDS = new Set(["href", "url", "nolinkurl", "hyperlink"]);
  * address, since hyperref turns back only some of the escapes (decision 0007), and a typeset slot
  * would put its markers there; the generator builds a URL slot for what needs a link, such as a
  * contact's `href`. A slot right after a backslash would make its text a command's name, so that
- * `\{{&text}}` with `LaTeX rocks` sets the logo.
+ * `\{{&text}}` with `LaTeX rocks` sets the logo. An extras slot may stand in an address, since it
+ * writes back the upload's own LaTeX, which no escape of the generator's touches (decision 0025);
+ * the backslash rule holds for it as for any slot.
  *
  * The check reads as much of TeX as that takes: a comment, from a `%` to the end of its line, is
  * not read, tags and all; a control symbol, such as `\{`, `\%` or `\\`, is one token; an

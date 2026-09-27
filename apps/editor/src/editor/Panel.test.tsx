@@ -1,8 +1,9 @@
-import { type Section, YearMonth } from "@resume-tools/resume-model";
+import { Resume, type Section, YearMonth } from "@resume-tools/resume-model";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { curated } from "../templates/curated";
+import type { TemplatePackage } from "../templates/package";
 import type { Field } from "../tex/fields";
 import { apply, type Command, fieldsOf, newDocument } from "./document";
 import {
@@ -12,6 +13,7 @@ import {
   needsInput,
   Panel,
   plainText,
+  REQUIRED,
   shownFieldsOf,
   thisMonth,
 } from "./Panel";
@@ -152,6 +154,9 @@ describe("holdsContent", () => {
     for (const section of empty) expect(holdsContent(section), section.kind).toBe(false);
     for (const section of sample.sections) expect(holdsContent(section), section.id).toBe(true);
     expect(holdsContent({ ...base, kind: "paragraph", text: [{ text: "Writes." }] })).toBe(true);
+    const locked = { id: "lock-a", kind: "locked", title: "", role: "other" } as const;
+    expect(holdsContent({ ...locked, latex: "\\section*{Hobbies}" })).toBe(true);
+    expect(holdsContent({ ...locked, latex: " \n" })).toBe(false);
     expect(plainText([{ text: "Draws " }, { text: "letters", italic: true }])).toBe(
       "Draws letters",
     );
@@ -239,7 +244,10 @@ describe("Panel", () => {
     });
     // The header's fields and the links, each input typed into, each menu changed and each button
     // that is not disabled pressed, as the browser would.
-    for (const { type, props } of elementsOf(tree, new Set(["HeaderFields", "Links", "Reorder"]))) {
+    for (const { type, props } of elementsOf(
+      tree,
+      new Set(["HeaderFields", "Links", "Reorder", "AddButton"]),
+    )) {
       const name = typeof type === "function" ? type.name : type;
       if (name === "TypedInput" || name === "FieldInput")
         (props.onChange as (text: string) => void)("Typed");
@@ -273,6 +281,48 @@ describe("Panel", () => {
     ]);
   });
 
+  it("shows a locked section as a row kept as it was, which moves and removes, and nothing of it", () => {
+    const latex = "\\section*{Hobbies}\nRowing, chess.";
+    const locked = { kind: "locked", id: "lock-q7w2e9", title: "", role: "other", latex } as const;
+    const sections = [...sample.sections.slice(0, 1), locked, ...sample.sections.slice(1)];
+    const kept = newDocument("jake", Resume.parse({ ...sample, sections }), "en-US");
+    const html = renderToStaticMarkup(
+      <Panel document={kept} onCommand={() => {}} onSeal={() => {}} />,
+    );
+    expect(html).toContain("Kept as it was");
+    // No title, kind, role or text of it, and never its LaTeX.
+    expect(html).not.toContain("Rowing");
+    expect(html).not.toContain("\\");
+    expect(html).not.toContain("Untitled section");
+    const sent: Command[] = [];
+    const tree = Panel({
+      document: kept,
+      onCommand: (command) => sent.push(command),
+      onSeal: () => {},
+    });
+    // Its row, and the buttons the browser would press on it.
+    const rows = elementsOf(tree, new Set(["Sections"])).filter(
+      ({ type, props }) =>
+        typeof type === "function" && type.name === "LockedRow" && props.index === 1,
+    );
+    expect(rows).toHaveLength(1);
+    // Removing it loses what it holds, so the panel asks first, as for any section that holds any.
+    const asked: string[] = [];
+    vi.stubGlobal("confirm", (question: string) => asked.push(question) > 0);
+    try {
+      for (const { type, props } of elementsOf(rows, new Set(["LockedRow", "Reorder"])))
+        if (type === "button" && props.disabled !== true) (props.onClick as () => void)();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(asked).toEqual(["Remove this section and everything in it?"]);
+    expect(sent).toEqual([
+      { type: "structure", op: { op: "moveSection", id: "lock-q7w2e9", to: 0 } },
+      { type: "structure", op: { op: "moveSection", id: "lock-q7w2e9", to: 2 } },
+      { type: "structure", op: { op: "removeSection", id: "lock-q7w2e9" } },
+    ]);
+  });
+
   it("gives every field an input when the first page could not be made", () => {
     const html = render([], shownFieldsOf(undefined, newDocument("jake", sample, "en-US"), true));
     for (const text of [
@@ -285,5 +335,45 @@ describe("Panel", () => {
     ])
       expect(html).toContain(text);
     expect(html).not.toContain("\\");
+  });
+
+  it("marks a field the package requires, saying why, whether it has an input or not", () => {
+    // An imported package's required slots (decision 0026), given here to Jake's.
+    const { package: jake } = curated("jake");
+    const required = { header: ["location"], link: ["label"], section: ["title"] };
+    const pkg = { ...jake, required } as TemplatePackage;
+    const doc = newDocument("jake", sample, "en-US");
+    const html = renderToStaticMarkup(
+      <Panel document={doc} pkg={pkg} onCommand={() => {}} onSeal={() => {}} />,
+    );
+    const why = `title="${REQUIRED}"`;
+    // The location's input and the link's label's, each with its mark.
+    expect(html).toMatch(new RegExp(`Location<input [^>]*${why}[^>]*aria-required="true"`));
+    expect(html).toContain(
+      `<small style="color:#9a5b00;font-style:italic" ${why}>required</small>`,
+    );
+    // A section's title the page shows has no input here, and is marked by its label.
+    expect(html).toContain(`${why}>Title required</small>`);
+    expect(html.split("Title required")).toHaveLength(sample.sections.length + 1);
+    // Nothing else is, and the curated package marks nothing.
+    expect(html).not.toMatch(/Phone<input [^>]*aria-required/);
+    const plain = renderToStaticMarkup(
+      <Panel document={doc} onCommand={() => {}} onSeal={() => {}} />,
+    );
+    expect(plain).not.toContain("required");
+    expect(html).not.toContain("\\");
+  });
+
+  it("gives no input to a slot the document keeps as its upload had it", () => {
+    // An import keeps the header's location as the upload had it, where no field is (decision
+    // 0026), and the panel, which gives the other contact fields an input, gives it none.
+    const kept = structuredClone(sample);
+    Object.assign(kept.header, { location: "", kept: ["location"] });
+    const doc = { ...newDocument("jake", sample, "en-US"), resume: kept };
+    const html = renderToStaticMarkup(
+      <Panel document={doc} onCommand={() => {}} onSeal={() => {}} />,
+    );
+    expect(html).toContain("Phone");
+    expect(html).not.toContain("Location");
   });
 });
