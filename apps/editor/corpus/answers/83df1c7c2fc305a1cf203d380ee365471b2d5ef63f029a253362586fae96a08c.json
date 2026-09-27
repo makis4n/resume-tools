@@ -13,5 +13,10 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["namefont", "0dd7aab99ed70d1250f15753550d608fca8b9b7a03f237619a44f99aed44ae87"],
+    ["taglinefont", "c4e4430d34278660ba305b5f93bfa356c552ff885bb2f31cd5a71ab0776e8f8d"],
+    ["personalinfofont", "9a70105e3a4040023c235c6cae43afd54479ad6132fb76c54314a317613817fa"]
+  ]
 }

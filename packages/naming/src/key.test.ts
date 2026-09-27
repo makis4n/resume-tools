@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { keyOf, NAMING_VERSION, sha256 } from "./key";
+import { environmentKeyOf, keyOf, NAMING_VERSION, sha256 } from "./key";
 
 // Every definition here is invented.
 
@@ -69,5 +69,22 @@ describe("the key", () => {
       keyOf(NAMING_VERSION, a, [["one", b]]),
     ]);
     expect(new Set([key, ...others]).size).toBe(7);
+  });
+
+  test("keys an environment by its begin code, its end code first among its dependencies", async () => {
+    const [begin, end, style] = await Promise.all(
+      ["macro:->\\begin {itemize}", "macro:->\\end {itemize}", "macro:->\\small "].map(sha256),
+    );
+    const key = await environmentKeyOf(NAMING_VERSION, begin ?? "", "endcvlist", end ?? "", [
+      ["cvlist@style", style ?? ""],
+    ]);
+    expect(key).toBe(
+      await keyOf(NAMING_VERSION, begin ?? "", [
+        ["endcvlist", end ?? ""],
+        ["cvlist@style", style ?? ""],
+      ]),
+    );
+    // Its begin code alone, called as a command, is keyed otherwise.
+    expect(key).not.toBe(await keyOf(NAMING_VERSION, begin ?? "", [["cvlist@style", style ?? ""]]));
   });
 });

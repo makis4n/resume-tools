@@ -18,5 +18,9 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [],
+  "partnerKeys": {
+    "closedBy": "46916ae7b9078ff689fcad85f5c0d35396c8ee735cccee47bbc1497e1abf8ba0"
+  }
 }

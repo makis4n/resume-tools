@@ -16,5 +16,8 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["endcventries", "16fa938faba61b51550a74580392f881fcede11f4a7d6b3148b7a496d63c7b2e"]
+  ]
 }
