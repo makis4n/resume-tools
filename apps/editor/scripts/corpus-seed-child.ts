@@ -2,13 +2,16 @@
  * One child of `corpus seed`'s pool (`corpus-seed.ts`, decision 0024): an engine session and fonts
  * of its own, which take one oracle sample at a time, as a zip, through the intake, the reference
  * compile, the signatures' two compiles, asked of the body's commands, the preamble's and the
- * seed's extras for its family, the parse, the probe and the naming request; and answer with the
- * request's macros, their hashes, keys and verdicts, names and numbers only. Where the answers
- * under `corpus/answers/` for its macros carry redefinitions, it compiles the body, with the calls
- * to the macros they serve regenerated as item 7 writes them, with them and without them, and the
- * sample as it is with them, and says whether
- * each sets the glyphs of the other, and gives back the log of each of those compiles that stopped,
- * which quotes the sample, for the parent to keep under `.corpus/`.
+ * seed's extras for its family, the parse, the probe and the naming request, built again with the
+ * header's values the sample's own calls give by their answers (`headerOf`), as items 7 and 11
+ * build it; and answer with the request's macros, their hashes, keys and verdicts, and what each
+ * answer is filed under (`filingOf`), names and numbers only. Where the answers under
+ * `corpus/answers/` for its macros carry redefinitions, it compiles the body, with the calls to
+ * the macros they serve regenerated as item 7 writes them, with them and without them, and the
+ * sample as it is with them, and says whether each sets the glyphs of the other, and gives back
+ * the log of each of those compiles that stopped, which quotes the sample, for the parent to keep
+ * under `.corpus/`. Redefinitions go after `\documentclass`, and where a compile stops there,
+ * before `\begin{document}`.
  *
  * The editor's modules are written for Vite, so this file, which Node runs as it is, loads them
  * through Vite's module runner with the app's own config, as `corpus-probe-child.ts` does, and
@@ -25,6 +28,9 @@ import type { EngineManifest } from "../src/engine/manifest.ts";
 import type { Family } from "./corpus-manifest.ts";
 import {
   answersFolder,
+  commandAnswers,
+  filingOf,
+  headerOf,
   redefinitionsOf,
   SEED_EXTRAS,
   type SeedChildRow,
@@ -74,7 +80,8 @@ async function main() {
   const { readTree } = await runner.import<ImportFonts>("/src/import/fonts.ts");
   const { bodyOf, bodyOfText, buildTree, readBody } =
     await runner.import<ParseModule>("/src/import/parse.ts");
-  const { keysOf, signatures } = await runner.import<SignaturesModule>("/src/import/signatures.ts");
+  const signaturesModule = await runner.import<SignaturesModule>("/src/import/signatures.ts");
+  const { signatures } = signaturesModule;
   const { probe, probeUses } = await runner.import<ProbeModule>("/src/import/probe.ts");
   const { buildRequest, withRedefinitions } =
     await runner.import<NamingModule>("/src/import/naming.ts");
@@ -122,10 +129,14 @@ async function main() {
     if ("refused" in built) return done({ outcome: "not parsed", engine });
     try {
       const probed = await probe(session, fonts, taken, made, built, found, { treeImage });
-      const request = await buildRequest(built, found, probed, body.preamble, {
-        ...(extras === undefined ? {} : { also: extras }),
-      });
-      const { redefinitions, serving } = redefinitionsOf(request.macros, answersFolder().read);
+      const also = extras === undefined ? {} : { also: extras };
+      const answers = answersFolder().read;
+      // The header's values, found by the answers the request without them finds, and the request
+      // again with them, as items 7 and 11 build it.
+      const plain = await buildRequest(built, found, probed, body.preamble, also);
+      const header = headerOf(probed.candidates, commandAnswers(plain, answers));
+      const request = await buildRequest(built, found, probed, body.preamble, { ...also, header });
+      const { redefinitions, serving } = redefinitionsOf(request.macros, answers);
       let redefined: SeedRedefinitions | undefined;
       if (redefinitions.length > 0) {
         const compile = async (which: string, text: string | undefined) => {
@@ -137,6 +148,23 @@ async function main() {
           if (!("refused" in compiled)) return compiled.stream;
           logs[which] = compiled.log ?? compiled.message;
           return undefined;
+        };
+        type Some = typeof redefinitions;
+        // integrator: placement. Part A's withRedefinitions takes `{ placement }`, "class" after
+        // `\documentclass` and "preamble" before `\begin{document}`: switch this to
+        // `withRedefinitions(text, some, { placement })` for both. Until then every placement is
+        // after the class, and there is no second one to try.
+        const placed = (text: string, some: Some, placement: "class" | "preamble") =>
+          placement === "class" ? withRedefinitions(text, some) : undefined;
+        /**
+         * A compile with redefinitions after the class, and, when that stops, before the body, as a
+         * redefinition of a macro a package or the preamble defines needs.
+         */
+        const compileWith = async (which: string, text: string, some: Some) => {
+          const first = await compile(which, placed(text, some, "class"));
+          if (first !== undefined) return { stream: first };
+          const second = await compile(`${which}-preamble`, placed(text, some, "preamble"));
+          return second === undefined ? {} : { stream: second, placed: "preamble" as const };
         };
         // The calls and environments the redefinitions serve, outermost, regenerated; the rest of
         // the body as it is, since what the generator cannot write back yet, a wheel chart's data
@@ -160,20 +188,26 @@ async function main() {
           }
         };
         walk(built.content);
-        const plain = `${body.before}${regenerate({ ...built, content: served }, engine)}${body.after}`;
-        const without = await compile("regenerated", plain);
+        const rewritten = `${body.before}${regenerate({ ...built, content: served }, engine)}${body.after}`;
+        const without = await compile("regenerated", rewritten);
         /** What some of the redefinitions do: to the regenerated body, and to the sample as it is. */
-        const effect = async (some: typeof redefinitions, which: string) => {
-          const withThem = await compile(`${which}-regenerated`, withRedefinitions(plain, some));
-          const raw = await compile(`${which}-raw`, withRedefinitions(taken.main.text, some));
+        const effect = async (some: Some, which: string) => {
+          const withThem = await compileWith(`${which}-regenerated`, rewritten, some);
+          const raw = await compileWith(`${which}-raw`, taken.main.text, some);
           return {
             regenerated:
               without === undefined
                 ? "not regenerated"
-                : withThem === undefined
+                : withThem.stream === undefined
                   ? "stopped"
-                  : (difference(without, withThem)?.kind ?? "keeps"),
-            raw: raw === undefined ? "stopped" : (difference(made, raw)?.kind ?? "keeps"),
+                  : (difference(without, withThem.stream)?.kind ?? "keeps"),
+            raw:
+              raw.stream === undefined
+                ? "stopped"
+                : (difference(made, raw.stream)?.kind ?? "keeps"),
+            ...((withThem.placed ?? raw.placed) === undefined
+              ? {}
+              : { placed: "preamble" as const }),
           };
         };
         const all = await effect(redefinitions, "all");
@@ -197,7 +231,7 @@ async function main() {
       done({
         outcome: "requested",
         engine,
-        macros: seedMacros(request, await keysOf(found), extras),
+        macros: seedMacros(request, await filingOf(found, signaturesModule), extras),
         ...(redefined === undefined ? {} : { redefinitions: redefined }),
       });
     } catch {

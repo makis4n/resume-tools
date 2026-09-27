@@ -44,3 +44,17 @@ export function keyOf(
 ): Promise<string> {
   return sha256(JSON.stringify([version, hash, dependencies]));
 }
+
+/**
+ * An environment's cache key: `keyOf` over its `\begin` code's hash, with its `\end` code as
+ * the first dependency, by its end name, and its closures' definitions after it.
+ */
+export function environmentKeyOf(
+  version: number,
+  beginHash: string,
+  endName: string,
+  endHash: string | null,
+  dependencies: readonly Dependency[],
+): Promise<string> {
+  return keyOf(version, beginHash, [[endName, endHash], ...dependencies]);
+}

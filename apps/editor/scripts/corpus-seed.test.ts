@@ -1,46 +1,75 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { NAMING_VERSION } from "@resume-tools/naming";
+import {
+  answerFor,
+  type Dependency,
+  keyOf,
+  NAMING_VERSION,
+  StoredAnswer,
+} from "@resume-tools/naming";
 import { describe, expect, test } from "vitest";
 import type { EngineManifest } from "../src/engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/node";
-import { candidatesOf, isSetter } from "../src/import/candidates";
+import { type Candidate, candidatesOf, isSetter } from "../src/import/candidates";
 import { readTree } from "../src/import/fonts";
 import { type Intake, intake } from "../src/import/intake";
-import { buildRequest } from "../src/import/naming";
+import { buildRequest, type HeaderValues, withRedefinitions } from "../src/import/naming";
 import { bodyOf, bodyOfText, buildTree, readBody } from "../src/import/parse";
-import { probeUses } from "../src/import/probe";
-import { reference } from "../src/import/reference";
+import { PROBE_PRELUDE, type ProbeCandidate, probeUses } from "../src/import/probe";
+import {
+  compileLikeReference,
+  difference,
+  type GlyphStream,
+  reference,
+} from "../src/import/reference";
 import { isRefusal } from "../src/import/refusal";
-import { keysOf, signatures } from "../src/import/signatures";
+import * as signaturesModule from "../src/import/signatures";
 import { FontLibrary } from "../src/page/fonts";
 import { TexLiveIndex } from "../src/page/texlive";
+import { MARKER_BEGIN, MARKER_END } from "../src/tex/fields";
 import { ORACLE_DIR, ORACLE_FILE, Oracle, oracleDocument } from "./corpus-oracle";
 import { uploadOf } from "./corpus-reference";
 import {
+  ANSWERS_DIR,
   answerState,
   answersFolder,
+  commandAnswers,
+  type Filed,
+  filingOf,
+  formatAnswer,
+  headerOf,
   keyOfFile,
+  partnersOf,
   redefinitionsOf,
   SEED_EXTRAS,
   type SeedMacro,
   type SeedRow,
   seedMacros,
+  seedPlan,
+  seedStates,
   seedTable,
 } from "./corpus-seed";
 
-// The macros, keys and answers here are invented, but for the last block's, which the committed
-// seed's are, read from the oracle's samples when a machine has fetched them.
+// The macros, keys and answers here are invented, but for the blocks that read the committed
+// seed's, and those that run it on the oracle's samples when a machine has fetched them.
 
 const KEY = "a".repeat(64);
 const HASH = "b".repeat(64);
 
-/** An invented macro as the seed checks it. */
+/** What an invented macro's answer is filed under: its key, from its hash and no dependencies. */
+const filing = async (hash: string, dependencies: Dependency[] = []): Promise<Filed> => ({
+  key: await keyOf(NAMING_VERSION, hash, dependencies),
+  hash,
+  dependencies,
+});
+
+/** An invented macro as the seed checks it, filed under its own key. */
 const macro = (extra: Partial<SeedMacro> = {}): SeedMacro => ({
   of: "command",
   name: "cventry",
   hash: HASH,
   key: KEY,
+  filed: { key: KEY, hash: HASH, dependencies: [] },
   signature: "m m",
   arguments: [
     { index: 1, kind: "mandatory", verdict: "editable" },
@@ -76,23 +105,56 @@ const stored = (extra: Record<string, unknown> = {}, answer: Record<string, unkn
   });
 
 describe("the seed's check of an answer", () => {
-  test("takes an answer filed under its key, for its name, with its hash", () => {
-    expect(answerState(macro(), () => stored())).toEqual({ state: "ok" });
+  test("takes an answer filed under its key, for its name, with its hash", async () => {
+    expect(await answerState(macro(), () => stored())).toEqual({ state: "ok" });
   });
 
-  test("names what is wrong, and never needs an answer for a macro that holds data", () => {
-    expect(answerState(macro(), () => undefined)).toEqual({ state: "missing" });
-    expect(answerState(macro(), () => "{").state).toBe("invalid");
-    expect(answerState(macro(), () => stored({ reviewed: false })).state).toBe("invalid");
-    expect(answerState(macro(), () => stored({ key: "c".repeat(64) })).state).toBe("key");
-    expect(answerState(macro(), () => stored({ hash: "c".repeat(64) })).state).toBe("hash");
-    expect(answerState(macro(), () => stored({ name: "cvitem" })).state).toBe("name");
-    expect(answerState(macro(), () => stored({ of: "environment" })).state).toBe("name");
-    expect(answerState(macro({ key: undefined, hash: undefined }), () => undefined).state).toBe(
-      "data",
-    );
+  test("names what is wrong, and never needs an answer for a macro that holds data", async () => {
+    const state = async (each: SeedMacro, read: (key: string) => string | undefined) =>
+      (await answerState(each, read)).state;
+    expect(await state(macro(), () => undefined)).toBe("missing");
+    expect(await state(macro(), () => "{")).toBe("invalid");
+    expect(await state(macro(), () => stored({ reviewed: false }))).toBe("invalid");
+    expect(await state(macro(), () => stored({ key: "c".repeat(64) }))).toBe("key");
+    expect(await state(macro(), () => stored({ hash: "c".repeat(64) }))).toBe("hash");
+    expect(await state(macro(), () => stored({ name: "cvitem" }))).toBe("name");
+    expect(await state(macro(), () => stored({ of: "environment" }))).toBe("name");
+    expect(await state(macro({ key: undefined, hash: undefined }), () => undefined)).toBe("data");
+    // Dependencies that do not give the key it is filed under.
+    expect(await state(macro(), () => stored({ dependencies: [["cvrow", HASH]] }))).toBe("key");
     // A reason a schema gives names the field, never a text.
-    expect(answerState(macro(), () => stored({}, { kind: "chapter" })).why).toMatch(/^answer/);
+    expect((await answerState(macro(), () => stored({}, { kind: "chapter" }))).why).toMatch(
+      /^answer/,
+    );
+  });
+
+  test("finds a key a document's values moved off what its answer is filed under", async () => {
+    const moved = macro({ filed: { key: "c".repeat(64), hash: HASH, dependencies: [] } });
+    expect(await answerState(moved, () => stored())).toEqual({
+      state: "moved",
+      why: "filed under item 4's cccccccccccc",
+    });
+    expect((await answerState(macro({ filed: undefined }), () => stored())).state).toBe("moved");
+  });
+
+  test("finds a list's partner among the sample's macros by the key its answer holds", async () => {
+    const opens = { list: { does: "opens", closedBy: "cvlistend", holds: "bullet" } };
+    const list = { kind: "bulletList", arguments: [], repeatable: false };
+    const closer = "d".repeat(64);
+    const answer = stored({ partnerKeys: { closedBy: closer } }, { ...list, ...opens });
+    const partners = (key: string) =>
+      new Map([
+        ["cventry", KEY],
+        ["cvlistend", key],
+      ]);
+    expect(await answerState(macro(), () => answer, partners(closer))).toEqual({ state: "ok" });
+    expect((await answerState(macro(), () => answer, partners("e".repeat(64)))).state).toBe(
+      "partner",
+    );
+    // An answer that names its partner and holds no key for it.
+    expect(
+      (await answerState(macro(), () => stored({}, { ...list, ...opens }), partners(closer))).state,
+    ).toBe("partner");
   });
 
   test("knows an answer file's key by its name", () => {
@@ -130,7 +192,7 @@ describe("the seed's check of an answer", () => {
     expect([...found.serving]).toEqual(["command|cventry", "command|cvitem"]);
   });
 
-  test("tables each sample's macros, the answers no macro claims, and the problems", () => {
+  test("tables each sample's macros, the answers no macro claims, and the problems", async () => {
     const rows: SeedRow[] = [
       {
         id: "jake-0000",
@@ -139,29 +201,341 @@ describe("the seed's check of an answer", () => {
         engine: "pdftex",
         macros: [
           macro(),
-          macro({ name: "cvitem", key: "c".repeat(64), extra: true, arguments: [] }),
-          macro({ name: "cvname", key: undefined, hash: undefined }),
+          macro({
+            name: "cvitem",
+            key: "c".repeat(64),
+            filed: { key: "c".repeat(64), hash: HASH, dependencies: [] },
+            extra: true,
+            arguments: [],
+          }),
+          macro({ name: "cvname", key: undefined, hash: undefined, filed: undefined }),
+          macro({
+            name: "cvhead",
+            key: "e".repeat(64),
+            filed: { key: "f".repeat(64), hash: HASH, dependencies: [] },
+          }),
+          macro({ of: "environment", name: "cvlist", key: undefined, hash: undefined }),
         ],
-        redefinitions: { names: ["cventry"], regenerated: "keeps", raw: "position" },
+        redefinitions: {
+          names: ["cventry"],
+          regenerated: "keeps",
+          raw: "position",
+          placed: "preamble",
+        },
       },
       { id: "altacv-0000", family: "altacv", outcome: "no reference" },
     ];
-    const { table, problems } = seedTable(rows, (key) => (key === KEY ? stored() : undefined), [
+    const read = (key: string) => (key === KEY ? stored() : undefined);
+    const { table, problems } = seedTable(rows, await seedStates(rows, read), [
       KEY,
       "d".repeat(64),
     ]);
-    expect(problems).toBe(2);
+    expect(problems).toBe(3);
     expect(table).toContain(
       "| jake | `\\cventry` | `bbbbbbbbbbbb` | `aaaaaaaaaaaa` | #1 editable, #2 twice | ok |",
     );
     expect(table).toContain("| jake | `\\cvitem` (not called) |");
     expect(table).toContain("no arguments | **missing** |");
     expect(table).toContain("| data |");
+    expect(table).toContain(
+      "| jake | `\\cvhead` | `bbbbbbbbbbbb` | `eeeeeeeeeeee`, item 4's `ffffffffffff` |",
+    );
+    expect(table).toContain("**moved** (filed under item 4's ffffffffffff) |");
+    expect(table).toContain("| jake | `cvlist (environment)` |");
     expect(table).toContain("| altacv | no reference | | | | **missing** |");
     expect(table).toContain("Answer files no sample's macro claims: `dddddddddddd`.");
     expect(table).toContain(
-      "jake: 1 redefinition (\\cventry); its calls they serve regenerated, with them against without them: keeps; the sample as it is, against its reference: moves it (position).",
+      "jake: 1 redefinition (\\cventry) (placed before \\begin{document}); its calls they serve regenerated, with them against without them: keeps; the sample as it is, against its reference: moves it (position).",
     );
+  });
+});
+
+describe("the header's values a sample gives", () => {
+  /** Invented answers: a name of two arguments, a headline, a contact, a link, and a name given whole. */
+  const answers: Record<string, unknown> = {
+    cvname: {
+      kind: "header",
+      arguments: [
+        { index: 1, meaning: "title", slot: "first" },
+        { index: 2, meaning: "title", slot: "last" },
+      ],
+    },
+    cvrole: { kind: "header", arguments: [{ index: 1, meaning: "title", slot: "headline" }] },
+    cvmail: {
+      kind: "contact",
+      contact: "email",
+      arguments: [{ index: 1, meaning: "text", slot: "text" }],
+    },
+    cvgit: {
+      kind: "link",
+      link: "github",
+      arguments: [
+        { index: 1, meaning: "icon" },
+        { index: 2, meaning: "label", slot: "label" },
+      ],
+    },
+    cvwhole: {
+      kind: "header",
+      arguments: [
+        {
+          index: 1,
+          meaning: "title",
+          parts: [
+            { meaning: "title", slot: "first" },
+            { meaning: "title", slot: "last" },
+          ],
+        },
+      ],
+    },
+    cventry: { kind: "entry", arguments: [{ index: 1, meaning: "title", slot: "title" }] },
+  };
+  const answerOf = (name: string) => {
+    const answer = answers[name];
+    return answer === undefined
+      ? undefined
+      : StoredAnswer.parse(JSON.parse(stored({ name }, { repeatable: false, ...answer })));
+  };
+  const call = (name: string, index: number, text: string): Candidate => ({
+    id: `c${name}${index}`,
+    kind: "argument",
+    where: "preamble",
+    of: "call",
+    name,
+    index,
+    start: 0,
+    end: 0,
+    text,
+    empty: text.trim() === "",
+  });
+
+  test("reads each argument by the slot its macro's answer says it fills", () => {
+    expect(
+      headerOf(
+        [
+          call("cvname", 1, "Quill"),
+          call("cvname", 2, "Invented"),
+          call("cvrole", 1, "Invented Typesetter"),
+          call("cvmail", 1, "quill@example.invalid"),
+          call("cvgit", 1, "\\faGithub"),
+          call("cvgit", 2, "quill-invented"),
+          call("cvmail", 1, "wren@example.invalid"),
+          call("cventry", 1, "Invented Role"),
+          call("cvunknown", 1, "Harbour City"),
+        ],
+        answerOf,
+      ),
+    ).toEqual({
+      first: "Quill",
+      last: "Invented",
+      headline: "Invented Typesetter",
+      email: "quill@example.invalid",
+      links: [{ label: "quill-invented" }],
+    });
+  });
+
+  test("splits a name given whole before its last word, where the answer maps it to both", () => {
+    expect(headerOf([call("cvwhole", 1, "Quill Wren Invented")], answerOf)).toEqual({
+      first: "Quill Wren",
+      last: "Invented",
+    });
+    expect(headerOf([call("cvwhole", 1, "Quill")], answerOf)).toEqual({ first: "Quill" });
+  });
+
+  test("reads AltaCV's name as its port writes it, the first name and the last", () => {
+    // The committed seed's answer for AltaCV's `\name`, which takes the whole name and which the
+    // port writes as `{{first}} {{last}}`.
+    const folder = answersFolder();
+    const altacv = folder.keys
+      .map((key) => StoredAnswer.parse(JSON.parse(folder.read(key) ?? "")))
+      .find((each) => each.family === "altacv" && each.name === "name");
+    expect(altacv).toBeDefined();
+    expect(headerOf([call("name", 1, "Quill Invented")], () => altacv)).toEqual({
+      first: "Quill",
+      last: "Invented",
+    });
+  });
+});
+
+describe("what `corpus seed --write` writes", () => {
+  test("files each answer under its key, with its dependencies and its partners' keys", async () => {
+    const opener = await filing("c".repeat(64), [["cvlist@gap", "d".repeat(64)]]);
+    const closer = await filing("e".repeat(64));
+    const list = { kind: "bulletList", arguments: [], repeatable: false };
+    // The opener's file is under an older key, and found by its family, kind and name; the
+    // closer's is under its key already, with no dependencies.
+    const files: Record<string, string> = {
+      ["f".repeat(64)]: stored(
+        { key: "f".repeat(64), hash: opener.hash, name: "cvliststart" },
+        { ...list, list: { does: "opens", closedBy: "cvlistend", holds: "bullet" } },
+      ),
+      [closer.key]: stored(
+        { key: closer.key, hash: closer.hash, name: "cvlistend" },
+        { ...list, list: { does: "closes", openedBy: "cvliststart" } },
+      ),
+    };
+    const rows: SeedRow[] = [
+      {
+        id: "jake-0000",
+        family: "jake",
+        outcome: "requested",
+        macros: [
+          macro({ name: "cvliststart", key: opener.key, hash: opener.hash, filed: opener }),
+          macro({ name: "cvlistend", key: closer.key, hash: closer.hash, filed: closer }),
+        ],
+      },
+    ];
+    const { writes, problems } = await seedPlan(rows, {
+      read: (key) => files[key],
+      keys: Object.keys(files),
+    });
+    expect(problems).toEqual([]);
+    expect(writes.map(({ text: _, ...each }) => each)).toEqual([
+      {
+        family: "jake",
+        of: "command",
+        name: "cvliststart",
+        from: "f".repeat(64),
+        to: opener.key,
+        changes: ["key", "dependencies", "partnerKeys"],
+      },
+      {
+        family: "jake",
+        of: "command",
+        name: "cvlistend",
+        from: closer.key,
+        to: closer.key,
+        changes: ["dependencies", "partnerKeys"],
+      },
+    ]);
+    const [first, second] = writes.map((each) => JSON.parse(each.text));
+    expect(first).toMatchObject({
+      key: opener.key,
+      dependencies: opener.dependencies,
+      partnerKeys: { closedBy: closer.key },
+    });
+    expect(second).toMatchObject({ dependencies: [], partnerKeys: { openedBy: opener.key } });
+    // What it writes validates, is served under its key, and is as Biome formats it.
+    for (const each of writes) {
+      expect(await answerFor({ get: () => each.text }, each.to)).toBeDefined();
+      expect(formatAnswer(JSON.parse(each.text))).toBe(each.text);
+    }
+    // Written, there is nothing more to write.
+    const after: Record<string, string> = Object.fromEntries(
+      writes.map((each) => [each.to, each.text]),
+    );
+    const again = await seedPlan(rows, { read: (key) => after[key], keys: Object.keys(after) });
+    expect(again).toEqual({ writes: [], problems: [] });
+  });
+
+  test("files an answer of an older naming version again, under this version's key", async () => {
+    // What a bump of the naming version leaves: every file of the older version, under the key
+    // the older version gave it, which its dependencies file again.
+    const now = await filing("c".repeat(64), [["cvrow", "d".repeat(64)]]);
+    const older = "0".repeat(64);
+    const files: Record<string, string> = {
+      [older]: stored({ version: NAMING_VERSION - 1, key: older, hash: now.hash, name: "cvrole" }),
+    };
+    const rows: SeedRow[] = [
+      {
+        id: "jake-0000",
+        family: "jake",
+        outcome: "requested",
+        macros: [macro({ name: "cvrole", key: now.key, hash: now.hash, filed: now })],
+      },
+    ];
+    const { writes, problems } = await seedPlan(rows, {
+      read: (key) => files[key],
+      keys: Object.keys(files),
+    });
+    expect(problems).toEqual([]);
+    expect(writes.map((each) => [each.from, each.to, each.changes])).toEqual([
+      [older, now.key, ["version", "key", "dependencies"]],
+    ]);
+    expect(await answerFor({ get: () => writes[0]?.text }, now.key)).toMatchObject({
+      version: NAMING_VERSION,
+      name: "cvrole",
+    });
+  });
+
+  test("says what it cannot write: a macro with no answer, or a partner the sample has not", async () => {
+    const opener = await filing("c".repeat(64));
+    const files: Record<string, string> = {
+      [opener.key]: stored(
+        { key: opener.key, hash: opener.hash, name: "cvliststart" },
+        {
+          kind: "bulletList",
+          arguments: [],
+          repeatable: false,
+          list: { does: "opens", closedBy: "cvlistend", holds: "bullet" },
+        },
+      ),
+    };
+    const rows: SeedRow[] = [
+      {
+        id: "jake-0000",
+        family: "jake",
+        outcome: "requested",
+        macros: [
+          macro({ name: "cvliststart", key: opener.key, hash: opener.hash, filed: opener }),
+          macro({ name: "cvrow", key: "9".repeat(64), filed: await filing("9".repeat(64)) }),
+        ],
+      },
+    ];
+    const { problems } = await seedPlan(rows, {
+      read: (key) => files[key],
+      keys: Object.keys(files),
+    });
+    expect(problems).toEqual([
+      "jake `\\cvliststart`: its list names a macro the sample gives no key",
+      `jake \`\\cvrow\`: no answer to file under ${(await filing("9".repeat(64))).key.slice(0, 12)}`,
+    ]);
+  });
+});
+
+describe("the committed answers", () => {
+  const files = readdirSync(ANSWERS_DIR).filter((name) => name.endsWith(".json"));
+
+  test("each validate, and are served under the key their file is named by", async () => {
+    // What a naming version's bump, or a change to the contract, would break for every one, which
+    // no test that needs the engine or the oracle would see in CI.
+    expect(files.length).toBeGreaterThanOrEqual(65);
+    for (const file of files) {
+      const key = keyOfFile(file);
+      expect(key, file).toBeDefined();
+      const text = readFileSync(join(ANSWERS_DIR, file), "utf8");
+      const parsed = StoredAnswer.safeParse(JSON.parse(text));
+      expect(parsed.success, `${file}: ${parsed.error?.issues[0]?.message ?? ""}`).toBe(true);
+      expect(parsed.data?.source, file).toBe("seed");
+      expect(
+        await answerFor({ get: (asked) => (asked === key ? text : undefined) }, key ?? ""),
+        file,
+      ).toBeDefined();
+      // As `corpus seed --write` writes it: Biome's format, the dependencies its key is computed
+      // from, which `answerFor` checks, and its list's partners by their keys.
+      expect(formatAnswer(JSON.parse(text)), file).toBe(text);
+      expect(parsed.data?.dependencies, file).toBeDefined();
+      for (const which of ["closedBy", "openedBy"] as const)
+        if (parsed.data?.answer.list?.[which] !== undefined)
+          expect(parsed.data.partnerKeys?.[which], `${file} ${which}`).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  test("pair each command that opens a list with a closer of the seed, by name and by key", () => {
+    const answers = files.map((file) =>
+      StoredAnswer.parse(JSON.parse(readFileSync(join(ANSWERS_DIR, file), "utf8"))),
+    );
+    for (const opener of answers) {
+      const closedBy = opener.answer.list?.closedBy;
+      if (opener.of !== "command" || opener.answer.list?.does !== "opens") continue;
+      const closer = answers.find(
+        (each) => each.family === opener.family && each.of === "command" && each.name === closedBy,
+      );
+      expect(closer?.key, opener.name).toBe(opener.partnerKeys?.closedBy);
+      expect(closer?.answer.list, closedBy).toEqual({ does: "closes", openedBy: opener.name });
+      expect(closer?.partnerKeys?.openedBy, closedBy).toBe(opener.key);
+      // A closer is of its opener's kind.
+      expect(closer?.answer.kind, closedBy).toBe(opener.answer.kind);
+    }
   });
 });
 
@@ -174,17 +548,27 @@ if (!fetched)
 
 describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's samples", () => {
   const oracle = Oracle.parse(JSON.parse(readFileSync(ORACLE_FILE, "utf8")));
+  const manifest = JSON.parse(
+    readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+  ) as EngineManifest;
+
+  const pipelines = new Map<string, ReturnType<typeof takePipeline>>();
+
+  /** A sample as the pipeline takes it (`takePipeline`), once for the file's tests. */
+  function pipeline(id: string) {
+    const taken = pipelines.get(id) ?? takePipeline(id);
+    pipelines.set(id, taken);
+    return taken;
+  }
 
   /**
-   * A sample's request as the pipeline builds it, but with no probe: its preamble's storing calls
-   * found as the probe finds them, and no verdicts, which the seed's keys do not depend on.
+   * A sample as the pipeline takes it, but with no probe: the reference, the signatures, the tree,
+   * its candidates as the probe finds them with no verdicts, which the seed's keys do not depend
+   * on, and what each macro's answer is filed under.
    */
-  async function requested(id: string) {
+  async function takePipeline(id: string) {
     const doc = oracle.documents.find((each) => each.id === id);
     if (doc === undefined) throw new Error(`${id} is no oracle sample`);
-    const manifest = JSON.parse(
-      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
-    ) as EngineManifest;
     const session = await startNodeSession();
     const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
@@ -205,7 +589,7 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
     const head = readBody(bodyOfText(body.preamble));
     const extras = SEED_EXTRAS[doc.family];
     const uses = probeUses(read, isRefusal(head) ? undefined : head);
-    const found = await signatures(session, taken, made, body, {
+    const found = await signaturesModule.signatures(session, taken, made, body, {
       commands: [...new Set([...uses.commands, ...(extras?.commands ?? [])])].sort(),
       environments: [...new Set([...uses.environments, ...(extras?.environments ?? [])])].sort(),
     });
@@ -222,32 +606,216 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
       ...(preamble === undefined || isRefusal(preamble) ? {} : { preamble }),
       setters,
     });
-    const request = await buildRequest(
-      built,
-      found,
-      {
-        macros: [],
-        candidates: candidates.map((each) => ({
-          ...each,
-          verdict: "untested" as const,
-          settled: "budget" as const,
-        })),
-      },
-      body.preamble,
-      extras === undefined ? {} : { also: extras },
-    );
-    return { doc, macros: seedMacros(request, await keysOf(found), extras) };
+    const probed: ProbeCandidate[] = candidates.map((each) => ({
+      ...each,
+      verdict: "untested",
+      settled: "budget",
+    }));
+    const also = extras === undefined ? {} : { also: extras };
+    /** The sample's request, with the header's values given, and more stored values. */
+    const request = (header?: HeaderValues, stored: readonly string[] = []) =>
+      buildRequest(
+        built,
+        found,
+        {
+          macros: [],
+          candidates: [
+            ...probed,
+            ...stored.map(
+              (text, i): ProbeCandidate => ({
+                id: `hx${i}`,
+                kind: "paragraph",
+                where: "preamble",
+                name: "",
+                start: 0,
+                end: 0,
+                text,
+                empty: false,
+                verdict: "untested",
+                settled: "budget",
+              }),
+            ),
+          ],
+        },
+        body.preamble,
+        header === undefined ? also : { ...also, header },
+      );
+    const filed = await filingOf(found, signaturesModule);
+    return { doc, session, fonts, taken, made, candidates, extras, request, filed };
+  }
+
+  /** A sample's request as the seed checks it, with the header's values its own calls give. */
+  async function seeded(id: string) {
+    const sample = await pipeline(id);
+    const folder = answersFolder();
+    const plain = await sample.request();
+    const header = headerOf(sample.candidates, commandAnswers(plain, folder.read));
+    const request = await sample.request(header);
+    return {
+      ...sample,
+      plain: seedMacros(plain, sample.filed, sample.extras),
+      macros: seedMacros(request, sample.filed, sample.extras),
+      header,
+    };
+  }
+
+  /** Every key a sample's macros are asked by is item 4's, and each has its answer, as filed. */
+  async function checkSeeded(macros: readonly SeedMacro[]) {
+    const folder = answersFolder();
+    expect(macros.length).toBeGreaterThan(5);
+    const partners = partnersOf(macros);
+    for (const each of macros) {
+      if (each.key === undefined) continue;
+      // Nothing of the sample's text moved a key, a command's or an environment's.
+      expect(each.key, each.name).toBe(each.filed?.key);
+      expect((await answerState(each, folder.read, partners)).state, each.name).toBe("ok");
+      expect(
+        await keyOf(NAMING_VERSION, each.filed?.hash ?? "", each.filed?.dependencies ?? []),
+        each.name,
+      ).toBe(each.key);
+    }
   }
 
   for (const id of ["jake-0000", "altacv-0000", "awesome-cv-0000"])
     test(`has an answer for each of ${id}'s macros, filed under its key, with its hash`, async () => {
-      const { macros } = await requested(id);
-      const folder = answersFolder();
-      expect(macros.length).toBeGreaterThan(5);
-      for (const each of macros) {
-        // Nothing of the sample's text moved a key: each is item 4's.
-        expect(each.item4, each.name).toBeUndefined();
-        expect(answerState(each, folder.read).state, each.name).toMatch(/^(?:ok|data)$/);
-      }
+      const { plain, doc } = await seeded(id);
+      await checkSeeded(plain);
+      // The answers folder is as `corpus seed --write` writes it, for this sample's macros.
+      const row: SeedRow = { id, family: doc.family, outcome: "requested", macros: plain };
+      expect(await seedPlan([row], answersFolder())).toEqual({ writes: [], problems: [] });
     }, 60_000);
+
+  for (const id of ["jake-0000", "awesome-cv-0000"])
+    test(`keeps ${id}'s keys with the header's values its own calls give`, async () => {
+      const { macros, header } = await seeded(id);
+      if (id === "awesome-cv-0000") expect(header.first).toBeDefined();
+      await checkSeeded(macros);
+    }, 60_000);
+
+  // The upstream AltaCV sample's placeholder name holds, as a whole word, the colour the class
+  // passes to `\color` in `\makecvheader`'s closure, which the request builder masks by the
+  // header's words, moving the key off the seed's. Part A's masking reads `\color`'s argument as
+  // code: the integrator turns this on with it.
+  test.todo("keeps altacv-0000's keys with the header's values its own calls give", async () => {
+    const { macros, header } = await seeded("altacv-0000");
+    expect(header.first).toBeDefined();
+    await checkSeeded(macros);
+  }, 60_000);
+
+  // Names and stored values that are words of the launch templates' code, as the reviewers found:
+  // each moved a seed key when the request builder masked a class's definitions by them. Part A's
+  // masking leaves the tree's definitions alone and reads code as code: the integrator turns this
+  // on with it.
+  test.todo("keeps every seed key whatever words the header's values and the stored text hold", async () => {
+    const names = [
+      ["Quill", "Page"],
+      ["Quill", "Link"],
+      ["Quill", "Box"],
+      ["Quill", "White"],
+      ["Quill", "West"],
+      ["Quill", "East"],
+      ["Line", "Invented"],
+      ["Xing", "Invented"],
+    ];
+    const stored = ["Mobile Developer", "Harbour Square", "Full Stack", "Page", "Link"];
+    for (const id of ["jake-0000", "altacv-0000", "awesome-cv-0000"]) {
+      const sample = await pipeline(id);
+      for (const [first, last] of names) {
+        const request = await sample.request(
+          {
+            ...(first === undefined ? {} : { first }),
+            ...(last === undefined ? {} : { last }),
+            headline: "Mobile Developer",
+            location: "Harbour Square",
+            links: [{ label: "GitHub", href: "https://github.example/quill-invented" }],
+          },
+          stored,
+        );
+        for (const macro of request.macros)
+          if (macro.key !== undefined)
+            expect(macro.key, `${id} ${macro.name} with ${first} ${last}`).toBe(
+              sample.filed(macro.of, macro.name)?.key,
+            );
+      }
+    }
+  }, 120_000);
+
+  describe("Awesome-CV's section colour, redefined", () => {
+    /**
+     * The Awesome-CV sample with an invented body, highlighting off or on, and the editor's
+     * markers defined where a body marks a field, compiled as the seed child compiles it; with
+     * the seed's redefinitions of `\cvsection`'s answer after the class, or as upstream has it.
+     */
+    async function sectionPages() {
+      const sample = await pipeline("awesome-cv-0000");
+      const macros = seedMacros(await sample.request(), sample.filed, sample.extras);
+      const { redefinitions } = redefinitionsOf(
+        macros.filter((each) => each.name === "cvsection"),
+        answersFolder().read,
+      );
+      expect(redefinitions.map((each) => each.name)).toContain("@sectioncolor");
+      const main = sample.taken.main.text;
+      const begin = main.indexOf("\\begin{document}");
+      const end = main.indexOf("\\end{document}");
+      return async (
+        body: string,
+        options: { off?: boolean; markers?: boolean; redefined?: boolean },
+      ): Promise<GlyphStream | undefined> => {
+        // The sample's preamble sets the highlighting itself, so it is turned off after it.
+        const preamble = `${main.slice(0, begin)}${options.off ? "\\setbool{acvSectionColorHighlight}{false}\n" : ""}${options.markers ? PROBE_PRELUDE : ""}`;
+        const text = `${preamble}\\begin{document}\n${body}\n${main.slice(end)}`;
+        const redefined = options.redefined ? withRedefinitions(text, redefinitions) : text;
+        const compiled = await compileLikeReference(
+          sample.session,
+          sample.fonts,
+          sample.taken,
+          sample.made,
+          new TextEncoder().encode(redefined),
+        );
+        return isRefusal(compiled) ? undefined : compiled.stream;
+      };
+    }
+
+    const markers = (stream: GlyphStream | undefined) =>
+      (stream?.pages ?? []).flatMap((page) =>
+        page.items.flatMap((item) =>
+          item.kind === "special" &&
+          (item.text.startsWith(MARKER_BEGIN) || item.text.startsWith(MARKER_END))
+            ? [item.text]
+            : [],
+        ),
+      );
+
+    test("keeps upstream's page with highlighting off, a space among the first three dropped", async () => {
+      const page = await sectionPages();
+      const upstream = await page("\\cvsection{IT Invented}", { off: true });
+      expect(upstream).toBeDefined();
+      const redefined = await page("\\cvsection{IT Invented}", { off: true, redefined: true });
+      expect(redefined && upstream && difference(upstream, redefined)).toBeUndefined();
+      // Marked, the title is the field's whole, set as upstream sets it.
+      const marked = await page("\\cvsection{\\rtfield{f1}{IT Invented}}", {
+        off: true,
+        markers: true,
+        redefined: true,
+      });
+      expect(marked && upstream && difference(upstream, marked)).toBeUndefined();
+      expect(markers(marked)).toEqual([`${MARKER_BEGIN}f1`, `${MARKER_END}f1`]);
+    }, 120_000);
+
+    test("keeps upstream's page for a letter's section, whose style passes the title unbraced", async () => {
+      const page = await sectionPages();
+      const upstream = await page("\\lettersection{Invented}", {});
+      expect(upstream).toBeDefined();
+      const redefined = await page("\\lettersection{Invented}", { redefined: true });
+      expect(redefined && upstream && difference(upstream, redefined)).toBeUndefined();
+      // Marked, it compiles, sets upstream's page, and the field's markers go round the title.
+      const marked = await page("\\lettersection{\\rtfield{f1}{Invented}}", {
+        markers: true,
+        redefined: true,
+      });
+      expect(marked).toBeDefined();
+      expect(marked && upstream && difference(upstream, marked)).toBeUndefined();
+      expect(markers(marked)).toEqual([`${MARKER_BEGIN}f1`, `${MARKER_END}f1`]);
+    }, 120_000);
+  });
 });

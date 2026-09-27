@@ -121,8 +121,9 @@ export const ArgumentAnswer = z.strictObject({
 export type ArgumentAnswer = z.infer<typeof ArgumentAnswer>;
 
 /**
- * A list a macro opens or closes: for one that opens it, the macro that closes it, which an
- * environment's `\end` is, and what it holds; for one that closes it, the macro that opened it.
+ * A list a macro opens or closes: for one that opens it, the macro that closes it, which a command
+ * must name and an environment's `\end` is, and what it holds; for one that closes it, the macro
+ * that opened it. A closer is of its opener's kind.
  */
 export const ListAnswer = z.strictObject({
   does: z.enum(["opens", "closes"]),
@@ -237,6 +238,25 @@ function checkAnswer(answer: AnswerFields, ctx: z.core.$RefinementCtx) {
 }
 
 /**
+ * The check an answer takes where whether it is a command's or an environment's is known: a
+ * command that opens a list names the macro that closes it, which item 7 writes after the list,
+ * where an environment's `\end` closes its own.
+ */
+function checkList(
+  of: "command" | "environment",
+  answer: Pick<AnswerFields, "list">,
+  ctx: z.core.$RefinementCtx,
+  path: (string | number)[],
+) {
+  if (of === "command" && answer.list?.does === "opens" && answer.list.closedBy === undefined)
+    ctx.addIssue({
+      code: "custom",
+      message: "a command that opens a list names the macro that closes it",
+      path: [...path, "list", "closedBy"],
+    });
+}
+
+/**
  * What the model may answer for a macro: words from the lists above, and never LaTeX. It refuses
  * `reviewed` and `redefinitions`, which only a person gives.
  */
@@ -272,10 +292,25 @@ export const AnswerSource = z
 export type AnswerSource = z.infer<typeof AnswerSource>;
 
 /**
+ * The keys of the macros a stored answer's list names, its closer's or its opener's, as the
+ * document it was answered for keys them: a key vouches for what a name cannot, since another
+ * template may give the same definition another name, or the name another definition
+ * (`answerFor`).
+ */
+export const PartnerKeys = z.strictObject({
+  closedBy: Hash.optional(),
+  openedBy: Hash.optional(),
+});
+export type PartnerKeys = z.infer<typeof PartnerKeys>;
+
+/**
  * An answer as the cache stores it, by the macro's key: the naming version and the key it was
  * given under, the macro's own hash, its name and whether a command or an environment, the family
- * it came from, the answer, whether a person reviewed it, and where it came from. The committed
- * answers are files of it, `corpus/answers/<key>.json`.
+ * it came from, the answer, whether a person reviewed it, and where it came from; and, written by
+ * `corpus seed --write` and absent from older files, the dependencies the key was computed from,
+ * each its name and hash in the closure's order, an environment's `\end` first (`keyOf`), so that
+ * the answer can be filed again under a new version's key, and its list's partners by their keys.
+ * The committed answers are files of it, `corpus/answers/<key>.json`.
  */
 export const StoredAnswer = z
   .strictObject({
@@ -288,8 +323,21 @@ export const StoredAnswer = z
     answer: z.union([ReviewedAnswer, ModelAnswer]),
     reviewed: z.boolean(),
     source: AnswerSource,
+    dependencies: z
+      .array(z.tuple([MacroName, Hash.nullable()]))
+      .max(REQUEST_CAPS.definitions)
+      .optional(),
+    partnerKeys: PartnerKeys.optional(),
   })
   .superRefine((stored, ctx) => {
+    checkList(stored.of, stored.answer, ctx, ["answer"]);
+    for (const which of ["closedBy", "openedBy"] as const)
+      if (stored.partnerKeys?.[which] !== undefined && stored.answer.list?.[which] === undefined)
+        ctx.addIssue({
+          code: "custom",
+          message: "a partner's key is given for a partner the answer names",
+          path: ["partnerKeys", which],
+        });
     if (stored.reviewed !== "reviewed" in stored.answer)
       ctx.addIssue({
         code: "custom",
@@ -322,7 +370,11 @@ export const STYLE_PARAMETERS = [
  */
 export const StyleSetting = z.strictObject({
   parameter: z.enum(STYLE_PARAMETERS),
-  setting: z.int().min(0).max(REQUEST_CAPS.settings).optional(),
+  setting: z
+    .int()
+    .min(0)
+    .max(REQUEST_CAPS.settings - 1)
+    .optional(),
   command: z.string().regex(/^[A-Za-z@]{1,64}$/, "a command's name, without its backslash"),
   key: z.string().min(1).max(256).optional(),
 });
@@ -335,21 +387,38 @@ export const PreambleAnswer = z.strictObject({
 export type PreambleAnswer = z.infer<typeof PreambleAnswer>;
 
 /**
- * What the model answers for a whole request, which item 9 asks for as structured output: an
- * answer for each macro, by name, and the preamble's settings.
+ * What the model answers for a whole request, which item 9 asks for as structured output: one
+ * answer for each macro, by its name and whether a command or an environment, and the preamble's
+ * settings. Whether each partner a list names is a macro of the request is checked where the
+ * request is known, by item 9's `name` and by `corpus seed`.
  */
-export const ModelNaming = z.strictObject({
-  macros: z
-    .array(
-      z.strictObject({
-        of: z.enum(["command", "environment"]),
-        name: MacroName,
-        answer: ModelAnswer,
-      }),
-    )
-    .max(REQUEST_CAPS.macros),
-  preamble: PreambleAnswer,
-});
+export const ModelNaming = z
+  .strictObject({
+    macros: z
+      .array(
+        z.strictObject({
+          of: z.enum(["command", "environment"]),
+          name: MacroName,
+          answer: ModelAnswer,
+        }),
+      )
+      .max(REQUEST_CAPS.macros),
+    preamble: PreambleAnswer,
+  })
+  .superRefine((naming, ctx) => {
+    const seen = new Set<string>();
+    naming.macros.forEach((macro, i) => {
+      const id = `${macro.of}|${macro.name}`;
+      if (seen.has(id))
+        ctx.addIssue({
+          code: "custom",
+          message: "a macro is answered once",
+          path: ["macros", i, "name"],
+        });
+      seen.add(id);
+      checkList(macro.of, macro.answer, ctx, ["macros", i, "answer"]);
+    });
+  });
 export type ModelNaming = z.infer<typeof ModelNaming>;
 
 /**

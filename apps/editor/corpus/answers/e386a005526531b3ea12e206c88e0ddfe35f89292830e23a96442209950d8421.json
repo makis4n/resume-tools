@@ -37,5 +37,17 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["skilltypestyle", "a18bd620933ad275b79dcb9845046620b808a19f0a96aae2893a90780440ff0f"],
+    ["skillsetstyle", "ff2829c06c568a5c061ec9a1403ced1125c53d69fdee31ebe5d13e58d9778882"],
+    ["bodyfont", "19638a3b00f1fc99d2b8841b0c9e6b91fe2662c75012f17e53d858904f3fc913"],
+    ["bodyfontlight", "00451810b01a5e6404d44f747493139c26b7347a71a6ae62a9b51863f6181eae"],
+    ["sourcesanspro", "0852f0b98d05b92c5a06546d8c77e6993004ba677df6f9d68aa499fbac1c00af"],
+    ["sourcesansprolight", "ec03b4c7cb88b3a55ced0e986ed6435ec01245d2b0c4863131f3d732240ec307"],
+    ["sourcesanspro ", "537b5aae51cc0bf6f15dc466e6f327b31b70b8747954362cd9c38394bfd72383"],
+    ["sourcesanspro code", "a7e47edd4f7d1965a037b6a1552e28c294b80ba6b83c1a10786318b20294034e"],
+    ["sourcesansprolight ", "537b5aae51cc0bf6f15dc466e6f327b31b70b8747954362cd9c38394bfd72383"],
+    ["sourcesansprolight code", "492ff90067b31015440aa44049706c1f67a10e840463706683f953ff29cd1e01"]
+  ]
 }

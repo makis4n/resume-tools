@@ -19,16 +19,62 @@
     "redefinitions": [
       {
         "name": "@sectioncolor",
-        "latex": "\\makeatletter\n\\def\\@sectioncolor#1{%\n  \\ifbool{acvSectionColorHighlight}{\\rt@sectioncolor{#1}}{#1}%\n}\n\\def\\rt@sectioncolor#1{\\@ifnextchar\\rtfield\\rt@colorfield\\rt@colorthree#1\\rt@stop}\n\\def\\rt@colorfield\\rtfield#1#2\\rt@stop{\\rt@colorstart\\rtfield{#1}{\\rt@colorscan#2\\rt@stop}}\n\\protected\\def\\rt@stop{}\n\\@ifundefined{rt@left}{\\newcount\\rt@left}{}\n\\protected\\def\\rt@colorstart{\\begingroup\\color{awesome}\\rt@left=3\\relax}\n\\protected\\def\\rt@colorscan{\\rt@scan}\n\\protected\\def\\rt@colorthree{\\rt@colorstart\\rt@scan}\n\\def\\rt@scan{\\futurelet\\rt@next\\rt@look}\n\\def\\rt@look{%\n  \\ifx\\rt@next\\rt@stop\\let\\rt@do\\rt@end\n  \\else\\ifx\\rt@next\\@sptoken\\let\\rt@do\\rt@space\n  \\else\\ifx\\rt@next\\bgroup\\let\\rt@do\\rt@group\n  \\else\\let\\rt@do\\rt@token\\fi\\fi\\fi\n  \\rt@do}\n\\def\\rt@end\\rt@stop{\\endgroup}\n\\@firstofone{\\def\\rt@space} {\\rt@scan}\n\\def\\rt@group#1{{#1}\\if\\relax\\detokenize{#1}\\relax\n  \\expandafter\\rt@scan\\else\\expandafter\\rt@counted\\fi}\n\\def\\rt@token#1{#1\\rt@counted}\n\\def\\rt@counted{%\n  \\advance\\rt@left\\m@ne\n  \\ifnum\\rt@left>\\z@\\expandafter\\rt@scan\\else\\expandafter\\rt@rest\\expandafter\\@empty\\fi}\n\\def\\rt@rest#1\\rt@stop{\\endgroup#1}\n\\makeatother"
-      },
-      {
-        "name": "sectionstyle",
-        "latex": "\\makeatletter\n\\renewcommand*{\\sectionstyle}[1]{{\\fontsize{16pt}{1em}\\bodyfont\\bfseries\\color{text}\\@sectioncolor{#1}}}\n\\makeatother"
+        "latex": "\\makeatletter\n\\def\\@sectioncolor#1#2#3{%\n  \\def\\rt@sectionfirst{#1}%\n  \\ifx\\rt@sectionfirst\\rt@sectionfield\n    \\expandafter\\@firstoftwo\n  \\else\n    \\expandafter\\@secondoftwo\n  \\fi\n  {\\ifbool{acvSectionColorHighlight}%\n    {\\begingroup\\color{awesome}\\rtfield{#2}{\\rt@sectionthree#3\\rt@sectionstop\\rt@sectionstop\\rt@sectionstop\\@nil{\\endgroup}}}%\n    {\\rtfield{#2}{\\rt@sectionthree#3\\rt@sectionstop\\rt@sectionstop\\rt@sectionstop\\@nil{}}}}%\n  {\\ifbool{acvSectionColorHighlight}{{\\color{awesome}#1#2#3}}{#1#2#3}}%\n}\n\\def\\rt@sectionfield{\\rtfield}\n\\def\\rt@sectionthree#1#2#3#4\\@nil#5{#1#2#3#5#4}\n\\protected\\def\\rt@sectionstop{}\n\\makeatother"
       }
     ],
-    "notes": "Upstream's \\@sectioncolor colours a title's first three tokens, which in the editor are the marker macro and its two arguments; the redefinitions take the title whole and colour its first three characters inside its field, as the port does, dropping a space among them as upstream's arguments do. The LaTeX is adapted from the port's rt-awesome-cv.cls, a modified version of awesome-cv.cls, under the LPPL 1.3c.",
+    "notes": "Upstream's \\@sectioncolor reads a title's first three tokens as its three arguments, which in the editor are the marker macro and its two arguments, and sets them in the accent when highlighting is on. The redefinition reads its three arguments as upstream does, in both branches, from \\sectionstyle and \\lettersectionstyle alike, which pass the title unbraced; where the first is the editor's marker, it keeps the marker round the whole title and reads the title's first three tokens inside it as upstream reads them, dropping a space among them, in the accent only where highlighting is on, the accent's group opened before the field, where upstream opens it, so that the field's begin marker moves no colour special. A title of fewer than three tokens sets, where upstream's stops. The LaTeX modifies awesome-cv.cls's \\@sectioncolor, under the LPPL 1.3c, as the port's rt-awesome-cv.cls does.",
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["sectionstyle", "30230a8d16e8a921894b69d263a5f5e2d12ba08b472df7cd05c55da11a953900"],
+    ["phantomsection", "3a2a5021d1239f88f2a2a810d8bce54062b494cd8c948c9d32d58d9ac9d058d1"],
+    ["vhrulefill", "c3ca9d056b6ad055e3a0955e9cfa7a0e62dcdc96dc2a40658b55293434f81c6e"],
+    ["bodyfont", "19638a3b00f1fc99d2b8841b0c9e6b91fe2662c75012f17e53d858904f3fc913"],
+    ["@sectioncolor", "af4b5de1346a7341f8310b02bb56bc3f58cf34d3988e29b33ff8de964dd73f42"],
+    ["Hy@MakeCurrentHrefAuto", "1cf7565cd4014b49f097060a4752481a0aa141467ecb8b03d13569445182b79b"],
+    ["Hy@raisedlink", "ff6b995ec3d197cbd5f34b137ddaefa37e5890cc0a46d41b8c1dae466f55ba97"],
+    ["hyper@anchorstart", "1944c9f682c204414fb335528f82a64662552ee99fa08f81e10850cf2717d092"],
+    ["hyper@anchorend", "bfb2492873607ebfdb4f259ebe8a9f7460de9c8bf9779c6d37858508b79a578b"],
+    ["sourcesanspro", "0852f0b98d05b92c5a06546d8c77e6993004ba677df6f9d68aa499fbac1c00af"],
+    ["ifbool", "416bf5f081125abb065a5084cc588f9d54f52fb386be5e5e915f1fd878173a9f"],
+    ["Hy@GlobalStepCount", "be4b1ad826702e652496f5733056d2c52b0033b95d34f509b8b34cdc8154cbc0"],
+    ["Hy@MakeCurrentHref", "5dbd16d33b576ec5dcdf7bbaede0527c897e65a4cc9d50187be25d3e855ce5a5"],
+    ["Hy@SaveSpaceFactor", "71ec45a4e2f41c294eef435076b0f65d1718c396b91efa9e51ac5dd8507e3295"],
+    ["HyperRaiseLinkDefault", "4f4376143d66a7a5d3e81b4d2e7a35c44fe285b8e496e5541b97f67e64592732"],
+    ["Hy@RestoreSpaceFactor", "b607643f9c8a51e4a91db372466868c62849b26d9ceb8c9cda1a52a25e90d588"],
+    ["Hy@activeanchortrue", "b9ca62ac23de4f3e96457f7393fae42ccba8ca4d1f84fd901e75660c76969250"],
+    ["@pdfm@dest", "358d295bd23707853d4ceeb9f3217646921f0178de3872094010e7af52687969"],
+    ["Hy@activeanchorfalse", "617e0f1dd95b18bce96c9bda1d0853a43305864384d7f2afd8594c4bf1df81d6"],
+    ["sourcesanspro ", "537b5aae51cc0bf6f15dc466e6f327b31b70b8747954362cd9c38394bfd72383"],
+    ["sourcesanspro code", "a7e47edd4f7d1965a037b6a1552e28c294b80ba6b83c1a10786318b20294034e"],
+    ["ifcsundef", "2a74317e2d8f64a7ef7fab47f2cb5cb9a892a427bed17b49348e07d83b705f08"],
+    ["etb@err@nobool", "0bf5216d59c7463db5190f21f38eeed30791cfbd07a8df66682521e40e3462d5"],
+    ["Hy@wrapper@babel", "10cc1d66b4d827868ba0340c56f3fffa8caebe2be7e49fdb28e92656accda853"],
+    ["HyWrap@@pdfm@dest", "e8a2e063e27288f1dea4adef5ad8f7fe26adbc403fdadd88f3b141c14e0c3b13"],
+    ["etb@error", "3c5e3e9a017b60816b8f16ef95ed7bc844891fce8e2300521a7583907c18a369"],
+    ["Hy@safe@activestrue", "fb45065d3fadb1c4e5147cdb218fed54f26a9f5d6e87153cb35148422b4983c7"],
+    ["Hy@SaveLastskip", "688541920385bf566ea0033cafbc557ed3cf18db598b60bdcb37753dc57140ff"],
+    ["Hy@VerboseAnchor", "012c7761839c836b4cc0e08e80a4fb2600a991903e719c7f2d2e7fdde1eceaf6"],
+    ["Hy@pstringdef", "a9d8beb1d3a78e7d332251f7e10c414853a50fe52aeb19a804f826d8edcb6f8f"],
+    ["HyperDestNameFilter", "8c77f880f6d302a3e40f39e97441661c3b468a6d4f94dd4dacebc5221e802b7e"],
+    ["Hy@Warning", "c55d2008875511dc52a8220dc58e76823ac2f435e951ace63ad07acc3a476744"],
+    ["@pdfm@mark", "ecc9469fed0b71edd19e7c2140fc9cadbfc235986bbb92bc774b5723d8c8988d"],
+    ["Hy@Info", "cfc3ecd54318f1a712f8a0caa52934dc8df763f321917d8370c9b077fba61282"],
+    ["Hy@ExchangeBackslash", "868257c23151c4ad725f69ad792b245b1396ab7ba44457abc4c5de3ec27a1957"],
+    [
+      "Hy@ExchangeLeftParenthesis",
+      "e8effead35f0cee81caf2fbe0fd945316e48c4a61a2c23927763f57d4928af81"
+    ],
+    [
+      "Hy@ExchangeRightParenthesis",
+      "2da0c70e2caada6f07b3a7a343880031b1d2a58b46f73097a5f6122df688d3c7"
+    ],
+    ["@PackageWarning", "ed620383d76b38e6e76a40bad09c6b899efc9d44b7c1b8e86091b3d332fb9e35"],
+    ["@PackageInfo", "03fac0ae7e4d87e627485bf55644a90ea866f68d527a0b10d612cfaedd73008c"],
+    ["ltx@ReturnAfterFi", "beb497902180eee5c5e40aff3e380cc8620a28b38d8995e452115bb8339fa22d"],
+    ["GenericWarning", "30b23d635d5c54b7c772c78fc81403be74a4858d0b177c9c2f0972a85f6c16f4"],
+    ["GenericInfo", "6c4ec601078e7d00476dfd0b4d4168ab8dd16a369d3f4b908b0e10fa5eef2da7"]
+  ]
 }

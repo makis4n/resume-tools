@@ -24,5 +24,8 @@
     "reviewed": true
   },
   "reviewed": true,
-  "source": "seed"
+  "source": "seed",
+  "dependencies": [
+    ["endcvhonors", "cf7fa639e2349ecfbdb2beaa6f954f196c4014827d6bfb97260ffe7b1db67b19"]
+  ]
 }
