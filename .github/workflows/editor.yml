@@ -23,6 +23,15 @@ on:
       - "tsconfig.base.json"
       - ".github/workflows/editor.yml"
 
+permissions:
+  contents: read
+
+# A newer push to a pull request cancels the older run; every push to main gets its own group, so
+# each merge keeps its result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -30,9 +39,11 @@ jobs:
     # the test run, since the engine's call is synchronous, so the job's limit is what stops it.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
           cache: pnpm
@@ -45,7 +56,7 @@ jobs:
       # that writes fontconfig's configuration, the modules it merges the font maps with, which write
       # the tree's pdftex.map, and the one that reads the fonts' tables into the manifest, with the
       # version of opentype.js it reads them with.
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             apps/editor/.engine
@@ -55,3 +66,14 @@ jobs:
       - run: pnpm check
       - run: pnpm typecheck
       - run: pnpm test
+      # Built with no VITE_ variables set, so it is for inspection, not for deploying: nothing is
+      # deployed until the engine and TeX Live are on R2 (decision 0029).
+      - run: pnpm build
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: editor-dist
+          path: apps/editor/dist
+          if-no-files-found: error
+          retention-days: 14
+          # A re-run of the job uploads again under the same name.
+          overwrite: true

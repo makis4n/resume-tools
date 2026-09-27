@@ -1,0 +1,13 @@
+# Workflows pin every action to a commit (decision 0029); this keeps those pins current, in one
+# grouped pull request a month whose title passes the pr-title check.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(repo)"

@@ -40,6 +40,7 @@ pnpm check          # Biome: formatting and lint for the whole repo
 pnpm format         # the same, fixing what it can
 pnpm typecheck
 pnpm test
+pnpm build          # the production bundle in apps/editor/dist
 ```
 
 ATS:
@@ -51,7 +52,7 @@ uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
-CI runs exactly these commands. If they pass on your machine they pass there.
+CI runs exactly these commands. If they pass on your machine they pass there. It also runs three checks on every pull request: `bash .github/scripts/check-repo.sh`, which catches the mistakes listed in AGENTS.md that show in the file list, a check that every schema in `packages/contracts` is a valid schema (the command is in AGENTS.md), and a check that the pull request's title follows the commit convention below (decision 0029).
 
 ## Ownership
 
@@ -84,7 +85,7 @@ The tree above names the owner of each path. In short: you own your app, we both
 
 ## Hosting
 
-The editor is planned for Cloudflare Pages and Workers, with sign-in and saved resumes on Supabase; the reasoning and the costs are in the plan. The ATS service needs a Python host, which in practice rules out Cloudflare Workers. Where it runs is its owner's call and is not decided yet.
+The editor is planned for Cloudflare Pages and Workers, with sign-in and saved resumes on Supabase; the reasoning and the costs are in the plan. The ATS service needs a Python host, which in practice rules out Cloudflare Workers. Where it runs is its owner's call and is not decided yet. Until then CI deploys nothing: it keeps the editor's build as an artifact, and will publish the ATS image to GitHub's container registry once the service is on `main` (decision 0029).
 
 ## Documents
 
