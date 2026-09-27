@@ -134,7 +134,11 @@ export async function inventedRequest(options: InventedOptions = {}): Promise<Na
     definitions.push({ name: "cv@shared", text: padded("macro:#1->\\cv@style {#1}", size) });
     for (let i = 0; i < (options.extra ?? 0); i++) {
       const name = extraName(i);
-      definitions.push({ name, text: padded(`macro:#1#2->\\cv@shared {#1}\\hfill #2`, size) });
+      // Each its own definition, as a class's macros have, so that each has a key of its own.
+      definitions.push({
+        name,
+        text: padded(`macro:#1#2->\\cv@shared {#1}\\hfill #2\\kern ${i}sp `, size),
+      });
       macros.push({
         of: "command",
         name,

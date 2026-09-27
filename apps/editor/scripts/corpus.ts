@@ -76,17 +76,18 @@
  *                 as after a naming version's bump or an upgrade of the tree
  *   name          take every document whose body parses, build its naming request as `seed` builds a
  *                 sample's, in the same pool, and answer it macro by macro from the cache: the
- *                 committed answers under `corpus/answers/` first, then the model's under
- *                 `.corpus/cache/`; print what each document's macros came to and one table of
- *                 them all, names of macros and counts only (`scripts/corpus-name.ts`, decision
- *                 0026). Without `--model` the macros the cache does not answer are counted missing
+ *                 committed answers under `corpus/answers/` first, then the model's own under
+ *                 `.corpus/cache/<model id>/`, the model `NAMING_MODEL` names, gemini-3.8-flash
+ *                 when unset; print what each document's macros came to and one table of them all,
+ *                 names of macros and counts only (`scripts/corpus-name.ts`, decision 0026).
+ *                 Without `--model` the macros the cache does not answer are counted missing
  *   --only <id>   that document only
  *   --json <file> write each document's row as JSON too, macros' names and numbers only
- *   --model       ask the model for them, once a request passes the privacy gate: the document's
- *                 text is nowhere in it (`assertNoText`) and its keys hold (`checkRequest`); and
- *                 store its answers under `.corpus/cache/`. It needs a Gemini key in the
- *                 environment, `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`, and takes the
- *                 model's id from `NAMING_MODEL`, gemini-3.8-flash when unset. Never in CI
+ *   --model       ask the model for them, once a request passes the privacy gate: none of the text
+ *                 the builder knows as the document's is in it (`assertNoText`) and its keys hold
+ *                 (`checkRequest`); and store its answers, a part at a time as each validates,
+ *                 in the model's folder. It needs a Gemini key in the environment, one line with no
+ *                 spaces, `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`. Never in CI
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -102,6 +103,7 @@ import { AnswerSource } from "@resume-tools/naming";
 // Node runs this file by stripping its types, so the type import needs its real extension.
 import type { EngineManifest } from "../src/engine/manifest.ts";
 import { fileKey, readTree } from "../src/import/fonts.ts";
+import { modelCacheDir } from "./answer-cache.ts";
 import { collect, REASONS, type Reason } from "./corpus-collect.ts";
 import { fetchCorpus } from "./corpus-fetch.ts";
 import { environmentToken, GitHub } from "./corpus-github.ts";
@@ -741,8 +743,10 @@ async function runName(only: string | undefined, json: string | undefined, model
     throw new Error(
       "name --model asks Gemini, which needs a key: set GEMINI_API_KEY, or GOOGLE_GENERATIVE_AI_API_KEY, in the environment",
     );
-  if (model && !AnswerSource.safeParse(`model:${config.id}`).success)
+  // The model's id names its answers' folder, which the run reads whether it asks the model or not.
+  if (!AnswerSource.safeParse(`model:${config.id}`).success)
     throw new Error("NAMING_MODEL is not a model's id: letters, digits and ._:/@- only");
+  modelCacheDir(config.id);
   if (!existsSync(ENGINE_MANIFEST))
     throw new Error("name builds each request on the engine in .engine/: run fetch-engine first");
   const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
@@ -768,7 +772,7 @@ async function runName(only: string | undefined, json: string | undefined, model
   const rows: NameRow[] = [];
   const started = performance.now();
   print([
-    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${NAME_LIMIT_MS / 1000} s each at most; ${model ? `asking ${config.id} for what the cache does not answer` : "the cache alone, no model asked"}`,
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${NAME_LIMIT_MS / 1000} s each at most; the committed answers and ${config.id}'s; ${model ? `asking ${config.id} for what they do not answer` : "no model asked"}`,
   ]);
   await runPool({
     script: NAME_CHILD,
@@ -810,6 +814,7 @@ async function runName(only: string | undefined, json: string | undefined, model
         tree: { layout: engine.layout, files: Object.keys(engine.files).length },
         limitMs: NAME_LIMIT_MS,
         model: model ? config.id : null,
+        cache: config.id,
         documents: rows,
       }),
     );

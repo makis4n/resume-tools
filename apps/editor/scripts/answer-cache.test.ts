@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { answerFor, NAMING_VERSION, type StoredAnswer } from "@resume-tools/naming";
 import { afterEach, describe, expect, test } from "vitest";
-import { CACHE_DIR, FileAnswerCache } from "./answer-cache";
+import { CACHE_DIR, FileAnswerCache, modelCacheDir } from "./answer-cache";
 import { CORPUS_DIR } from "./corpus-manifest";
 import { ANSWERS_DIR } from "./corpus-seed";
 
@@ -44,11 +44,17 @@ afterEach(() => {
 });
 
 describe("the answers cache on disk", () => {
-  test("reads the committed answers and writes the model's to .corpus/cache/, by default", () => {
-    const cache = new FileAnswerCache();
+  test("reads the committed answers, and writes a model's to a folder of its own under .corpus/cache/", () => {
+    const cache = new FileAnswerCache({ model: "invented-model" });
     expect(cache.committed).toBe(ANSWERS_DIR);
-    expect(cache.writable).toBe(CACHE_DIR);
+    expect(cache.writable).toBe(join(CACHE_DIR, "invented-model"));
     expect(CACHE_DIR.startsWith(CORPUS_DIR)).toBe(true);
+    // A model's id names a folder and never a path: its separators are written out, and an id
+    // that is a step of a path is refused.
+    expect(modelCacheDir("models/invented:1@x", "/invented")).toBe(
+      join("/invented", "models%2Finvented%3A1%40x"),
+    );
+    for (const id of ["", ".", ".."]) expect(() => modelCacheDir(id)).toThrow("A model's id");
   });
 
   test("files a stored answer under its key, and reads it back as answerFor takes it", async () => {

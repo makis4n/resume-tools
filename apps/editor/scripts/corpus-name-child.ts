@@ -3,13 +3,14 @@
  * of its own, which take one document at a time, as a zip, through the intake, the reference
  * compile, the signatures' two compiles, asked of the body's commands and the preamble's, the parse,
  * the probe and the naming request, as `corpus seed`'s child does; then answer the request macro by
- * macro from the cache over `corpus/answers/` and `.corpus/cache/`, and, when the parent asks with
- * a model's id, from that model, behind the privacy gate (`answerDocument`). It answers with the
+ * macro from the cache over `corpus/answers/` and the model's own folder of `.corpus/cache/`, and,
+ * when the parent asks with a model's id, from that model, behind the privacy gate
+ * (`answerDocument`), each part of the request within a limit of its own. It answers with the
  * document's row, names of macros and numbers only.
  *
- * The key comes from this process's environment, which the parent's is; the parent checked that
- * there is one before it asked. The editor's modules are written for Vite, so this file, which Node
- * runs as it is, loads them through Vite's module runner with the app's own config, as
+ * The key and the model's id come from this process's environment, which the parent's is; the
+ * parent checked them before it asked. The editor's modules are written for Vite, so this file,
+ * which Node runs as it is, loads them through Vite's module runner with the app's own config, as
  * `corpus-seed-child.ts` does, and imports nothing of the editor itself but types. It prints
  * nothing: a document's text never reaches a terminal.
  */
@@ -21,6 +22,7 @@ import { googleModel } from "@resume-tools/naming/providers";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
+import type { DocumentText } from "../src/import/naming.ts";
 import { FileAnswerCache } from "./answer-cache.ts";
 import {
   answerDocument,
@@ -28,6 +30,7 @@ import {
   MODEL_RETRIES,
   type NameChildRow,
   namingConfig,
+  pageWords,
 } from "./corpus-name.ts";
 
 type NodeEngine = typeof import("../src/engine/node.ts");
@@ -83,8 +86,8 @@ async function main() {
   const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
     readFileSync(join(ENGINE_DIR, "files", path)),
   );
-  const cache = new FileAnswerCache();
-  const { key } = namingConfig(process.env);
+  const { key, id: model } = namingConfig(process.env);
+  const cache = new FileAnswerCache({ model });
 
   process.on("message", async (task: Task) => {
     if (task.type !== "task") return;
@@ -111,12 +114,17 @@ async function main() {
       const probed = await probe(session, fonts, taken, made, built, found, { treeImage });
       const request = await buildRequest(built, found, probed, body.preamble);
       // The document's text as the request was masked by: the body's tree, and the texts the
-      // preamble stores. Item 7 finds the header's values, which join it when it lands.
-      const document = {
+      // preamble stores; item 7 finds the header's values, which join it when it lands. So the
+      // gate catches a fault of the masking, and not a text that only a definition holds, as a
+      // name a preamble's own macro spells out (decision 0026). `page` is the reference page's
+      // words, the text the person sees, which `assertNoText` does not read yet: item 11 makes
+      // them its needles for the document's own definitions.
+      const document: DocumentText & { page: readonly string[] } = {
         tree: built,
         stored: probed.candidates
           .filter((each) => each.where === "preamble")
           .map((each) => each.text),
+        page: pageWords(made),
       };
       const id = task.message.model;
       const answered = await answerDocument(request, {
@@ -126,7 +134,7 @@ async function main() {
           ? {}
           : { model: { model: googleModel(key, id), id } }),
         maxRetries: MODEL_RETRIES,
-        abortSignal: AbortSignal.timeout(MODEL_LIMIT_MS),
+        partTimeoutMs: MODEL_LIMIT_MS,
       });
       // Item 7's validation hooks in here: once every macro has an answer, assemble the document's
       // package from the stored answers and the preamble's, run plan section 6's four checks on

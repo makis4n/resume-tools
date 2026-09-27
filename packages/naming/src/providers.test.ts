@@ -18,4 +18,18 @@ describe("Gemini's model", () => {
     expect(() => googleModel("")).toThrow("Gemini's model needs an API key");
     expect(() => googleModel("   ")).toThrow("Gemini's model needs an API key");
   });
+
+  test("refuses a key that is not one word, and never says what it is", () => {
+    for (const key of ["invented-key\n# a second line", "invented key"]) {
+      const error = (() => {
+        try {
+          googleModel(key);
+        } catch (thrown) {
+          return thrown as Error;
+        }
+      })();
+      expect(error?.message).toBe("Gemini's key is one line with no spaces");
+      expect(error?.message).not.toContain("invented");
+    }
+  });
 });

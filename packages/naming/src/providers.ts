@@ -20,12 +20,16 @@ export const DEFAULT_MODEL = "gemini-3.8-flash";
 /**
  * Google's model of the id given, which calls Google's API with `apiKey`, the key the caller read:
  * the provider reads one from the environment only when given none, which this never does. An
- * empty key throws here rather than at Google.
+ * empty key throws here rather than at Google, and so does a key of more than one line or with a
+ * space in it, as a key file with a comment gives, whose value the runtime would quote in the error
+ * it throws for a header it cannot send; neither message holds the key.
  */
 export function googleModel(
   apiKey: string,
   id: string = DEFAULT_MODEL,
 ): Exclude<LanguageModel, string> {
-  if (apiKey.trim() === "") throw new Error("Gemini's model needs an API key");
-  return createGoogle({ apiKey: apiKey.trim() })(id);
+  const key = apiKey.trim();
+  if (key === "") throw new Error("Gemini's model needs an API key");
+  if (/\s/.test(key)) throw new Error("Gemini's key is one line with no spaces");
+  return createGoogle({ apiKey: key })(id);
 }
