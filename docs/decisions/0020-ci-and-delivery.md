@@ -43,3 +43,6 @@ could check. The editor's production home needs the engine and TeX Live on R2 fi
   deleted.
 - A new lockfile type or config file that AGENTS.md forbids has to be added to
   `check-repo.sh` as well, or it goes unchecked.
+- The checks catch mistakes, not a pull request that sets out to pass them: it runs its own copy
+  of the workflows and the script, so it can change either. With no required reviews (0005), a
+  person reading the diff is the only guard against that.

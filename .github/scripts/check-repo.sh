@@ -26,7 +26,7 @@ forbid "A second package manager's lockfile. pnpm and uv are the only package ma
   '*requirements*.txt' '*poetry.lock' '*Pipfile' '*Pipfile.lock'
 
 forbid "An environment file. Only .env.example is committed; values live in .env or in secrets." \
-  '.env' '.env.*' '*/.env' '*/.env.*' ':!:*.example'
+  '.env' '.env.*' '*/.env' '*/.env.*' ':!:.env.example' ':!:*/.env.example'
 
 forbid "An ESLint or Prettier configuration. Biome is the only TypeScript formatter and linter." \
   '*.eslintrc' '*.eslintrc.*' '*eslint.config.*' '*.prettierrc' '*.prettierrc.*' \

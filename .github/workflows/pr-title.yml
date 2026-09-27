@@ -19,9 +19,11 @@ jobs:
         run: |
           types='feat|fix|docs|refactor|test|chore|ci'
           scopes='editor|ats|contracts|model|docs|repo'
-          # The summary starts with neither a capital nor a space, and ends in neither a period nor
-          # a space.
-          pattern="^($types)\(($scopes)\): [^[:upper:][:space:]](.*[^.[:space:]])?\$"
+          # The summary starts with neither a capital nor a space, ends in neither a period nor a
+          # space, and is not a lone period; it may start with one, as `.gitignore` does. Capitals
+          # later on are names, such as XeTeX or Awesome-CV.
+          first='[^[:upper:][:space:]]'
+          pattern="^($types)\(($scopes)\): ([^[:upper:][:space:].]|$first.*[^.[:space:]])\$"
           if [[ "$TITLE" =~ $pattern ]]; then
             echo "Title follows the convention."
           else
