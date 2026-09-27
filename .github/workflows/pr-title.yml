@@ -1,0 +1,73 @@
+name: pr-title
+
+# The squash merge uses the pull request's title as the commit message on main, so the title is
+# what has to follow Conventional Commits with an area scope (AGENTS.md, decision 0029).
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+# The dependabot job renames the pull request from the title its run started with, so only the
+# newest run for a pull request may finish; an older one could put back a stale title.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Dependabot starts its summary with a capital ("Bump") whatever prefix it is given, so its titles
+  # are lower-cased here, where the squash merge will read them, rather than let through.
+  dependabot:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+    outputs:
+      title: ${{ steps.lower.outputs.title }}
+    steps:
+      - id: lower
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="$TITLE"
+          if [[ "$title" =~ ^([a-z]+\([a-z]+\):\ )([[:upper:]])(.*)$ ]]; then
+            title="${BASH_REMATCH[1]}${BASH_REMATCH[2],,}${BASH_REMATCH[3]}"
+            # An edit made with this token starts no new run, so this cannot loop.
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --title "$title"
+          fi
+          {
+            echo "title<<EOF_TITLE"
+            echo "$title"
+            echo "EOF_TITLE"
+          } >> "$GITHUB_OUTPUT"
+
+  title:
+    needs: dependabot
+    # Runs whatever the dependabot job did: skipped for every other author, and if it failed the
+    # original title is checked and fails here, since a skipped required check counts as passed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - env:
+          # Through the environment, never interpolated into the script: a title is untrusted input.
+          TITLE: ${{ needs.dependabot.outputs.title || github.event.pull_request.title }}
+        run: |
+          types='feat|fix|docs|refactor|test|chore|ci'
+          scopes='editor|ats|contracts|model|docs|repo'
+          # The summary starts with neither a capital nor a space, ends in neither a period nor a
+          # space, and is not a lone period; it may start with one, as `.gitignore` does. Capitals
+          # later on are names, such as XeTeX or Awesome-CV.
+          first='[^[:upper:][:space:]]'
+          pattern="^($types)\(($scopes)\): ([^[:upper:][:space:].]|$first.*[^.[:space:]])\$"
+          if [[ "$TITLE" =~ $pattern ]]; then
+            echo "Title follows the convention."
+          else
+            echo "::error::The title must read '<type>(<scope>): <lower-case summary, no period>'."
+            echo "Types: ${types//|/ }. Scopes: ${scopes//|/ }."
+            echo "Got: $TITLE"
+            exit 1
+          fi

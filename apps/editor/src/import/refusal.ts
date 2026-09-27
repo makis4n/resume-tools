@@ -12,11 +12,13 @@
  * or by the reference compile, for a template, package, font or file the editor or the upload
  * lacks, an image it shows in a format with no stand-in (`image`), another error (`stopped`), or
  * output that changed on every pass (`passes`); by the parser, for a body it cannot find or that
- * is past its caps (`parse`); by the corpus runner, for a compile past its time (`timeout`); by
- * the XeTeX rewrite of its fonts (decision 0023), for a fontspec feature or package the rewrite
- * cannot reproduce (`feature`), or fonts that come out otherwise than the reference's
- * (`difference`); or by the naming request's builder, for a page set in fonts whose glyphs the
- * page names nothing for, which leaves the leak detector blind (`unreadable`, decision 0029).
+ * is past its caps (`parse`); by the assembly, for a part of the body it can keep neither as a
+ * locked section nor in a section's extras (`keep`, decision 0026); by the corpus runner, for a
+ * compile past its time (`timeout`); by the XeTeX rewrite of its fonts (decision 0023), for a
+ * fontspec feature or package the rewrite cannot reproduce (`feature`), or fonts that come out
+ * otherwise than the reference's (`difference`); or by the naming request's builder, for a page
+ * set in fonts whose glyphs the page names nothing for, which leaves the leak detector blind
+ * (`unreadable`, decision 0029).
  */
 export const REFUSAL_REASONS = [
   "intake",
@@ -29,6 +31,7 @@ export const REFUSAL_REASONS = [
   "stopped",
   "passes",
   "parse",
+  "keep",
   "timeout",
   "feature",
   "difference",
@@ -162,6 +165,7 @@ export function refusal(reason: RefusalReason, name?: string, log?: string): Ref
     passes:
       "This resume came out differently every time it was compiled, so this editor cannot take it.",
     parse: "This resume could not be read by this editor.",
+    keep: "This resume has a part this editor cannot keep as it was written.",
     timeout: "This resume took too long to compile.",
     difference: `This editor sets this resume's font ${shown} otherwise than the resume does, so it cannot take it.`,
     unreadable:

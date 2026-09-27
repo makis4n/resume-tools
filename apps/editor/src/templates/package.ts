@@ -9,19 +9,31 @@
  * (decision 0006).
  *
  * Every snippet is checked here against the slots its place offers, and for what it puts in an
- * address, so a package that parses is one the generator can render. The marker macros are not a
- * package's: they are the editor's, and the generator appends them to the preamble when it dumps
- * the format.
+ * address, so a package that parses is one the generator can render. The header's, a section's and
+ * an entry's snippets may also use extras slots, `{{&x.<key>}}`, which write back what an import
+ * kept of the node as LaTeX, since their nodes keep extras and no other does (decision 0025). The
+ * marker macros are not a package's: they are the editor's, and the generator appends them to the
+ * preamble when it dumps the format.
  *
  * A XeTeX package names its fonts by file (decision 0014): each family's shapes as OpenType or
  * TrueType files of the TeX Live tree, which the generator declares to NFSS in the format, and
  * which XeTeX loads only when a shape is selected, so that the format holds no native font. A
  * shape may carry XeTeX features of its own besides its family's, as an import's small capitals
  * load with `+smcp` while the family's other shapes do not (decision 0023).
+ *
+ * An imported package says besides what its template's checks found (decision 0026): the sizes its
+ * class declares, which its font size control offers alone; the slots whose field a document may
+ * not empty, since the template stops without them (`required`); what a unit the user adds writes
+ * for an argument each unit of the upload keeps in its extras (`snippets.defaults`); and the roles
+ * whose entries set no bullets a user adds (`snippets.entryBullets`); and the kinds of unit a new
+ * one of which stops its compile, which the editor does not add (`fixed`). Each is optional, and a
+ * curated package needs none.
  */
 
 import {
+  ExtraKey,
   Id,
+  KeptLatex,
   type LinkKind,
   SECTION_KINDS,
   SECTION_ROLES,
@@ -96,18 +108,38 @@ const Snippet = z.string().superRefine((source, ctx) => {
   }
 });
 
+/** Kept LaTeX by the key of the extras slot that writes it (decision 0025). */
+const Defaults = z.record(ExtraKey, KeptLatex);
+
 /**
  * A snippet or separator that may depend on the role of the section it sits in: the same one for
  * every role, or a `default` and a variant for each role that needs one.
  */
 export type ByRole<T> = T | ({ default: T } & Partial<Record<SectionRole, T>>);
 
+/** What a value that may depend on the role gives a section of `role`: its variant, or the default. */
+export function forRole<T>(value: ByRole<T>, role: SectionRole): T {
+  if (typeof value === "object" && value !== null && Object.hasOwn(value, "default")) {
+    const variants = value as { default: T } & Partial<Record<SectionRole, T>>;
+    return Object.hasOwn(variants, role) ? (variants[role] as T) : variants.default;
+  }
+  return value as T;
+}
+
 function byRole<T extends z.ZodType>(schema: T) {
+  return z.union([schema, everyRole(schema)]);
+}
+
+/**
+ * A value by role, always written as a default and a variant for each role that needs one, for a
+ * value whose own shape is an object, so that none is read as the other.
+ */
+function everyRole<T extends z.ZodType>(schema: T) {
   const variants = Object.fromEntries(SECTION_ROLES.map((role) => [role, schema.optional()]));
-  return z.union([
-    schema,
-    z.strictObject({ default: schema, ...(variants as Record<SectionRole, z.ZodOptional<T>>) }),
-  ]);
+  return z.strictObject({
+    default: schema,
+    ...(variants as Record<SectionRole, z.ZodOptional<T>>),
+  });
 }
 
 /** The engines a package can name, which `satisfies` holds to the session's, both ways. */
@@ -130,6 +162,39 @@ export type DateFormat = z.infer<typeof DateFormat>;
 const format = z.boolean().optional();
 
 /**
+ * The font size control: its default, and how it is applied; and for a class that sets only some
+ * sizes, as `article` sets 10, 11 and 12 points and ignores any other it is given, the sizes it
+ * offers, the default among them, each once. A package without `sizes` offers every half point
+ * from 9 to 12.
+ */
+const FontSizeControl = z
+  .strictObject({
+    default: FontSize,
+    apply: Snippet,
+    format,
+    sizes: z.array(FontSize).min(1).max(7).optional(),
+  })
+  .superRefine((control, ctx) => {
+    const { sizes } = control;
+    if (sizes === undefined) return;
+    if (new Set(sizes).size !== sizes.length)
+      ctx.addIssue({ code: "custom", message: "a size is offered twice", path: ["sizes"] });
+    if (!sizes.includes(control.default))
+      ctx.addIssue({
+        code: "custom",
+        message: `the default size ${control.default} is not one of the sizes offered`,
+        path: ["default"],
+      });
+  });
+
+/** The sizes a package's font size control offers, in points: its own, or every half point. */
+export function fontSizes(pkg: Pick<TemplatePackage, "controls">): number[] {
+  const control = pkg.controls.fontSize;
+  if (control === undefined) return [];
+  return [...(control.sizes ?? [9, 9.5, 10, 10.5, 11, 11.5, 12])].sort((a, b) => a - b);
+}
+
+/**
  * The style controls a package offers, from the closed set in docs/editor-plan.md section 5.4,
  * and how each is applied. An `apply` snippet goes in the body before `\begin{document}`, so
  * changing the control costs one ordinary compile. A control marked `format` is one the class
@@ -143,7 +208,7 @@ const Controls = z.strictObject({
     .strictObject({ default: PageSize, apply: z.record(PageSize, Snippet), format })
     .optional(),
   margins: z.strictObject({ default: Margin, apply: Snippet, format }).optional(),
-  fontSize: z.strictObject({ default: FontSize, apply: Snippet, format }).optional(),
+  fontSize: FontSizeControl.optional(),
   font: z
     .strictObject({
       default: Id,
@@ -208,7 +273,61 @@ const Snippets = z.strictObject({
       items: byRole(z.string()).default("\n"),
     })
     .prefault({}),
+  /**
+   * What the generator writes for an extras slot where the entry or the section it renders has no
+   * extra under its key, by its role, as a unit the user adds has none: an argument each unit of an
+   * import keeps in its extras, a length or an icon every call gives its own, or a field's slot
+   * locked in every instance, which the entry's snippet sets through its extra alone (decision
+   * 0026). Kept LaTeX, never escaped, as an extra is.
+   */
+  defaults: z
+    .strictObject({
+      entry: everyRole(Defaults).optional(),
+      section: everyRole(Defaults).optional(),
+    })
+    .optional(),
+  /**
+   * Whether an entry of a role sets the bullets a user adds: false where the template's entry has no
+   * list for them, which the editor then refuses to add (decision 0026). True where it is left out.
+   */
+  entryBullets: byRole(z.boolean()).optional(),
 });
+
+/**
+ * The slots whose field a document may not empty, by the snippet that sets them, for a template
+ * whose compile stops when one is empty, as Awesome-CV's does without a name (decision 0026): the
+ * editor keeps the previous value instead. None where it is left out, as for every curated package.
+ */
+const Required = z.strictObject({
+  header: z.array(z.enum(["first", "last", "headline", "email", "phone", "location"])).optional(),
+  link: z.array(z.enum(["label"])).optional(),
+  section: z.array(z.enum(["title", "text"])).optional(),
+  entry: z.array(z.enum(["title", "subtitle", "place", "dates"])).optional(),
+  bullet: z.array(z.enum(["text"])).optional(),
+  item: z.array(z.enum(["text"])).optional(),
+  labelledItem: z.array(z.enum(["label", "text"])).optional(),
+});
+export type Required = z.infer<typeof Required>;
+/** A place a required slot sits in: the snippet that sets it. */
+export type RequiredPlace = keyof Required;
+
+/**
+ * The kinds of unit the editor adds, as the side panel does: an entry, a bullet, an item of a list
+ * or of a labelled list, a link, and a section of each kind, `section.<kind>`, as the package's
+ * snippets name them.
+ */
+export const UNIT_KINDS = [
+  "entry",
+  "bullet",
+  "item",
+  "labelledItem",
+  "link",
+  "section.entries",
+  "section.list",
+  "section.labelled",
+  "section.paragraph",
+] as const;
+export type UnitKind = (typeof UNIT_KINDS)[number];
 
 /**
  * The shapes of a font family a resume needs most, as `<series>/<shape>` of NFSS's values: the
@@ -345,6 +464,13 @@ export function shapeFeatures(family: FontFamily, shape: FontShape): string | un
   return parts.length === 0 ? undefined : parts.join(";");
 }
 
+/**
+ * What an imported package's id starts with, before twelve hex digits of its content's hash
+ * (decision 0026), so that no curated package's id and no imported one's can be the other's: the
+ * curated loader refuses an id under it, and the store's loader an imported one outside it.
+ */
+export const IMPORTED_PREFIX = "import-";
+
 /** A package id is a model id that the engine also takes as a format name. */
 const PackageId = z
   .string()
@@ -387,9 +513,22 @@ export const TemplatePackage = z
     preamble: Snippet,
     controls: Controls,
     snippets: Snippets,
+    /** The slots whose field a document may not empty, for an import whose template needs them. */
+    required: Required.optional(),
+    /**
+     * The kinds of unit the editor may not add, for an import whose template stops when a new one
+     * of them is added as the editor adds it, which the third check finds (decision 0026).
+     */
+    fixed: z.array(z.enum(UNIT_KINDS)).optional(),
   })
   .superRefine((pkg, ctx) => {
-    const check = (source: string | undefined, slots: Slots, path: PropertyKey[]) => {
+    // `extras` says whether the snippet's node keeps extras, which its extras slots write back.
+    const check = (
+      source: string | undefined,
+      slots: Slots,
+      path: PropertyKey[],
+      extras = false,
+    ) => {
       if (source === undefined) return;
       let nodes: SnippetNode[];
       try {
@@ -398,19 +537,28 @@ export const TemplatePackage = z
         if (error instanceof SnippetError) return; // Snippet has reported it.
         throw error;
       }
-      for (const message of [...checkSnippet(nodes, slots), ...checkAddresses(source, slots)])
-        ctx.addIssue({ code: "custom", message, path });
+      const problems = [...checkSnippet(nodes, slots, extras), ...checkAddresses(source, slots)];
+      for (const message of problems) ctx.addIssue({ code: "custom", message, path });
     };
     const checkEach = (
       sources: Readonly<Record<string, string | undefined>>,
       slots: Slots,
       path: PropertyKey[],
+      extras = false,
     ) => {
-      for (const [key, source] of Object.entries(sources)) check(source, slots, [...path, key]);
+      for (const [key, source] of Object.entries(sources))
+        check(source, slots, [...path, key], extras);
     };
-    const checkByRole = (value: ByRole<string>, slots: Slots, path: PropertyKey[]) => {
-      if (typeof value === "string") check(value, slots, path);
-      else checkEach(value, slots, path);
+    // Each snippet that may depend on a role sits inside a section: a section's and an entry's
+    // nodes keep extras, and a bullet's and an item's do not.
+    const checkByRole = (
+      value: ByRole<string>,
+      slots: Slots,
+      path: PropertyKey[],
+      extras: boolean,
+    ) => {
+      if (typeof value === "string") check(value, slots, path, extras);
+      else checkEach(value, slots, path, extras);
     };
 
     if (pkg.fonts !== undefined) {
@@ -464,15 +612,15 @@ export const TemplatePackage = z
     }
 
     check(snippets.document, DOCUMENT_SLOTS, ["snippets", "document"]);
-    check(snippets.header, HEADER_SLOTS, ["snippets", "header"]);
+    check(snippets.header, HEADER_SLOTS, ["snippets", "header"], true);
     checkEach(snippets.contact ?? {}, CONTACT_SLOTS, ["snippets", "contact"]);
     checkEach(snippets.link, LINK_SLOTS, ["snippets", "link"]);
     for (const kind of SECTION_KINDS)
-      checkByRole(snippets.section[kind], SECTION_SLOTS[kind], ["snippets", "section", kind]);
-    checkByRole(snippets.entry, ENTRY_SLOTS, ["snippets", "entry"]);
-    checkByRole(snippets.bullet, BULLET_SLOTS, ["snippets", "bullet"]);
-    checkByRole(snippets.item, ITEM_SLOTS, ["snippets", "item"]);
-    checkByRole(snippets.labelledItem, LABELLED_ITEM_SLOTS, ["snippets", "labelledItem"]);
+      checkByRole(snippets.section[kind], SECTION_SLOTS[kind], ["snippets", "section", kind], true);
+    checkByRole(snippets.entry, ENTRY_SLOTS, ["snippets", "entry"], true);
+    checkByRole(snippets.bullet, BULLET_SLOTS, ["snippets", "bullet"], false);
+    checkByRole(snippets.item, ITEM_SLOTS, ["snippets", "item"], false);
+    checkByRole(snippets.labelledItem, LABELLED_ITEM_SLOTS, ["snippets", "labelledItem"], false);
   });
 export type TemplatePackage = z.infer<typeof TemplatePackage>;
 
@@ -576,13 +724,15 @@ export function defaultControls(
 
 /**
  * The schema for a document's choices under one package, which refuses a choice for a control
- * the package does not offer and a font it does not list. The date format is always allowed.
+ * the package does not offer, a font it does not list and a size it does not offer. The date
+ * format is always allowed.
  */
 export function controlValuesFor(pkg: TemplatePackage) {
   const offered = new Set(
     Object.entries(pkg.controls).flatMap(([name, control]) => (control ? [name] : [])),
   );
   const fonts = pkg.controls.font?.choices.map((choice) => choice.id) ?? [];
+  const sizes = fontSizes(pkg);
   return ControlValues.superRefine((values, ctx) => {
     for (const [name, value] of Object.entries(values))
       if (value !== undefined && name !== "dateFormat" && !offered.has(name))
@@ -597,5 +747,20 @@ export function controlValuesFor(pkg: TemplatePackage) {
         message: `${values.font} is not one of the template's fonts`,
         path: ["font"],
       });
+    const size = values.fontSize;
+    if (size !== undefined && offered.has("fontSize") && !sizes.some((each) => each === size))
+      ctx.addIssue({
+        code: "custom",
+        message: `${size} points is not one of the template's sizes`,
+        path: ["fontSize"],
+      });
   });
+}
+
+/**
+ * The slots a package requires in a place, whose field a document may not empty (decision 0026):
+ * none for a package that says nothing of it, as every curated one.
+ */
+export function requiredSlots(pkg: TemplatePackage, place: RequiredPlace): ReadonlySet<string> {
+  return new Set<string>(pkg.required?.[place] ?? []);
 }

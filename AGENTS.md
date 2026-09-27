@@ -64,6 +64,7 @@ pnpm format       # Biome, fixes formatting and safe lint issues
 pnpm check        # Biome, must be clean
 pnpm typecheck
 pnpm test
+pnpm build
 ```
 
 Python, inside `apps/ats`:
@@ -73,6 +74,15 @@ uv sync
 uv run ruff format .
 uv run ruff check --fix .
 uv run pytest
+```
+
+Every pull request also checks the repository's rules, the contract schemas and its own title
+against the commit convention above:
+
+```sh
+bash .github/scripts/check-repo.sh
+git ls-files -z 'packages/contracts/*.schema.json' |
+  xargs -0 uvx --exclude-newer 2026-09-26T00:00:00Z check-jsonschema@0.38.2 --check-metaschema
 ```
 
 Use `pnpm --filter @resume-tools/editor <script>` to run one package, and `uv run` for anything

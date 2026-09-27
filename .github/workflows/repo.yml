@@ -1,0 +1,42 @@
+name: repo
+
+# Checks for the whole repository, so no path filters: every pull request runs them (decision 0029).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to a pull request cancels the older run; every push to main gets its own group, so
+# each merge keeps its result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash .github/scripts/check-repo.sh
+
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      # Every schema must be a valid schema of the draft it names, whichever side reads it. The
+      # resolution is frozen at a date so a new release of a dependency cannot change the result.
+      # git's `*` crosses folders, so this finds schemas at any depth.
+      - run: |
+          git ls-files -z 'packages/contracts/*.schema.json' |
+            xargs -0 uvx --exclude-newer 2026-09-26T00:00:00Z \
+              check-jsonschema@0.38.2 --check-metaschema

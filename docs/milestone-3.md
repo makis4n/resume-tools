@@ -191,7 +191,7 @@ of each launch template must find editable what the hand-written port marks.
    the fixtures the pipeline's tests run on with no model, and the first cache entries, so that
    forks of the three hit the cache from day one, as plan section 7 wants. Done when the pipeline
    assembles a package for each upstream sample from the seed alone.
-7. [ ] **Validate and assemble.** Plan section 6's four checks, each a compile from the format,
+7. [x] **Validate and assemble.** Plan section 6's four checks, each a compile from the format,
    bisected as the probe is: the body generated from the model and the assembled snippets sets
    the reference's glyph stream with the markers stripped, a new harness check; every field
    mutated with long, empty and special-character text still compiles, the `edits` check grown
@@ -208,7 +208,10 @@ of each launch template must find editable what the hand-written port marks.
    the block before the first section holding the largest text, contact strings by pattern, and
    `\href` calls as links by the kind their address gives; and the report. Done when the three
    upstream samples assemble into packages that pass the full harness and set the reference's
-   glyphs, and a fork of Jake's Resume from the corpus goes through every step in Node.
+   glyphs, and a fork of Jake's Resume from the corpus goes through every step in Node; the
+   harness holds an import to its upload's own pages and passes, and the one finding it keeps on
+   the samples, Awesome-CV's entry titles in small capitals, which the PDF's text shows only in
+   capitals, is a limit of the PDF's text layer (decision 0026, the owed table below).
 
 ### Stage 4. XeTeX imports
 
@@ -448,7 +451,7 @@ pull request that acts on it. The first two the owner settled on 26 September.
 
 | Item | Where |
 |---|---|
-| Imported ids minted under a prefix no curated package uses, and a loader that refuses or re-mints the rest (decision 0006, item 4's review) | Item 7 |
+| Imported ids minted under a prefix no curated package uses, and a loader that refuses or re-mints the rest (decision 0006, item 4's review) | Item 7 for the curated loader (`checkCuratedId`, decision 0026); item 12 for the store's |
 | The harness in a worker the browser can terminate (decision 0008) | Item 12 |
 | The `controls` check draws each font an import proves (decision 0012) | Item 14 |
 | A template chooser for a new document | Item 12 |
@@ -457,3 +460,5 @@ pull request that acts on it. The first two the owner settled on 26 September.
 | Case folding in the aligner, for a field set through `\MakeUppercase` (decisions 0007 and 0013) | Item 5 |
 | The first load at 42 to 44 MB uncompressed | Milestone 5 |
 | The PDF's text layer showing a hyphen as U+2011 in some XeTeX fonts (decision 0014) | The ATS's reader; not this milestone |
+| The PDF's text layer showing an import's small capitals, set with `+smcp`, as capitals: the Awesome-CV sample's seven entry titles and four Awesome-CV forks (decision 0026) | The ATS's reader, or the PDF driver; not this milestone |
+| An imported section whose head opens its content's list, with the locked part that closes it, kept as one unit: removing the section alone stops the compile in 20 of Jake's forks (decision 0026) | The assembly, before item 12 stores an import |

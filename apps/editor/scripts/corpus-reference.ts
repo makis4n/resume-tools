@@ -334,6 +334,7 @@ const REASON_LABELS: Readonly<Record<RefusalReason, string>> = {
   stopped: "Refused: stopped for another reason",
   passes: "Refused: did not settle in three passes",
   parse: "Refused: the parser could not read its body",
+  keep: "Refused: a part the assembly cannot keep",
   timeout: `Refused: timed out, past ${LIMIT_MS / 1000} s`,
   intake: "Refused at intake",
   feature: "Refused: a font feature this editor cannot reproduce",

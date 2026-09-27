@@ -12,6 +12,7 @@
  *   pnpm --filter @resume-tools/editor corpus fonts [--only <id>] [--json <file>]
  *   pnpm --filter @resume-tools/editor corpus seed [--json <file>] [--write]
  *   pnpm --filter @resume-tools/editor corpus name [--only <id>] [--json <file>] [--model]
+ *   pnpm --filter @resume-tools/editor corpus assemble [--only <id>] [--json <file>]
  *   pnpm --filter @resume-tools/editor corpus leak [--only <id>] [--json <file>]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
@@ -68,7 +69,9 @@
  *   oracle        fetch the three launch templates' upstream samples that `corpus/oracle.json`
  *                 names into `.corpus/oracle/`, as `fetch` fetches a document, probe each, and print
  *                 the verdicts the oracle expects against those found, and how many disagree
- *                 (`scripts/corpus-oracle.ts`). It exits 1 when the samples cannot be fetched
+ *                 (`scripts/corpus-oracle.ts`); then assemble each from the seed, validate it with
+ *                 the checks and the harness, and print the fields found by the model's place
+ *                 against the slots its port marks. It exits 1 when the samples cannot be fetched
  *   fonts         take every XeTeX document that compiles to a reference, and every pdfTeX one that
  *                 guards on the engine and loads a font package that loads fontspec on XeTeX, on
  *                 XeTeX, and rewrite its fonts by file, check the rewrite against the reference,
@@ -103,6 +106,12 @@
  *                 (`checkRequest`); and store its answers, a part at a time as each validates,
  *                 in the model's folder. It needs a Gemini key in the environment, one line with no
  *                 spaces, `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`. Never in CI
+ *   assemble      take every document whose body parses and whose macros have an answer under
+ *                 `corpus/answers/`, probe it, assemble its package and document from the answer,
+ *                 and validate them with the four checks and the harness (`src/import/assemble.ts`,
+ *                 `validate.ts`), in the same pool, 900 s a document; print one table of what it
+ *                 found, per family and in all, names and counts only, and keep each document's
+ *                 assembly under `.corpus/assemble/` (`scripts/corpus-assemble.ts`, decision 0026)
  *   leak          take every document that compiles to a reference and whose body parses, build
  *                 its naming request as the import will, with its sources, its page's strings,
  *                 the texts its preamble stores and the header's values the seed's answers find,
@@ -131,6 +140,16 @@ import { AnswerSource } from "@resume-tools/naming";
 import type { EngineManifest } from "../src/engine/manifest.ts";
 import { readTree } from "../src/import/fonts.ts";
 import { modelCacheDir } from "./answer-cache.ts";
+import {
+  ASSEMBLE_LIMIT_MS,
+  type AssembleChildRow,
+  type AssembleRow,
+  assembleTable,
+  comparePlaces,
+  type PlaceCount,
+  placesTable,
+  portPlaces,
+} from "./corpus-assemble.ts";
 import { collect, REASONS, type Reason } from "./corpus-collect.ts";
 import { fetchCorpus } from "./corpus-fetch.ts";
 import { type FontsChildRow, type FontsRow, fontsTable } from "./corpus-fonts.ts";
@@ -201,7 +220,7 @@ import {
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | leak [--only <id>] [--json <file>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>] | leak [--only <id>] [--json <file>]";
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
@@ -238,6 +257,15 @@ const FONTS_CHILD = fileURLToPath(new URL("./corpus-fonts-child.ts", import.meta
 
 /** Where the fonts runner keeps each document's logs, which quote its source. */
 const FONTS_LOGS = join(CORPUS_DIR, "fonts");
+
+/** The assembly runner's child, which Node runs in each process of its pool, and the oracle's. */
+const ASSEMBLE_CHILD = fileURLToPath(new URL("./corpus-assemble-child.ts", import.meta.url));
+
+/** Where the assembly runner keeps each document's assembly, which holds its text. */
+const ASSEMBLE_KEPT = join(CORPUS_DIR, "assemble");
+
+/** The curated ports, whose `template.json` the oracle compares an assembly's fields with. */
+const TEMPLATES = fileURLToPath(new URL("../src/templates/", import.meta.url));
 
 /** The corpus holds at least this many documents, and at least this many of them are `other`. */
 const MIN_DOCUMENTS = 200;
@@ -625,6 +653,100 @@ async function runProbe(only: string | undefined, json: string | undefined) {
     );
 }
 
+/** An assembly's row, and its whole assembly kept under `dir`, from a child's reply or its fate. */
+function assembleRowOf(
+  task: { id: string },
+  family: AssembleRow["family"],
+  result: { reply?: unknown; timedOut?: boolean; wall: number },
+  dir: string,
+  probeDir?: string,
+): { row: AssembleRow; probe?: ProbeChildRow; fields?: Record<string, PlaceCount> } {
+  const reply = result.reply as
+    | {
+        row: AssembleChildRow;
+        probe?: ProbeChildRow;
+        probeDetail?: unknown;
+        fields?: Record<string, PlaceCount>;
+        detail?: unknown;
+      }
+    | undefined;
+  if (reply?.detail !== undefined)
+    writeAtomically(join(dir, `${task.id}.json`), `${JSON.stringify(reply.detail, null, 1)}\n`);
+  // The oracle keeps each sample's whole probe beside, as its probe runner did.
+  if (probeDir !== undefined && reply?.probeDetail !== undefined)
+    writeAtomically(
+      join(probeDir, `${task.id}.json`),
+      `${JSON.stringify(reply.probeDetail, null, 1)}\n`,
+    );
+  return {
+    row: {
+      id: task.id,
+      family,
+      ...(reply?.row ?? { outcome: result.timedOut ? "timeout" : "crashed" }),
+      wall: Math.round(result.wall),
+    },
+    ...(reply?.probe === undefined ? {} : { probe: reply.probe }),
+    ...(reply?.fields === undefined ? {} : { fields: reply.fields }),
+  };
+}
+
+/** An assembly's row as a line of progress: numbers only. */
+function assembleLine(row: AssembleRow): string {
+  if (row.outcome !== "assembled" && row.outcome !== "partial")
+    return `${row.outcome}${row.refused === undefined ? "" : ` (${row.refused})`}`;
+  const locked = Object.values(row.fields?.locked ?? {}).reduce((sum, n) => sum + (n ?? 0), 0);
+  return `${row.engine}, ${row.outcome}${row.difference === undefined ? "" : ` (${row.difference})`}, ${row.fields?.editable ?? 0} editable, ${locked} locked, ${row.compiles ?? 0} compiles, ${row.validateMs ?? 0} ms`;
+}
+
+async function runAssemble(only: string | undefined, json: string | undefined) {
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("assemble compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const documents = fetchedDocuments(only);
+  const treeFont = treeFonts(engine.files);
+  const tasks = documents.map((doc) => ({
+    id: doc.id,
+    message: () => ({
+      name: `${doc.id}.zip`,
+      bytes: uploadOf(
+        doc,
+        (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
+        treeFont,
+      ),
+    }),
+  }));
+  const families = new Map(documents.map((doc) => [doc.id, doc.family]));
+  const rows: AssembleRow[] = [];
+  const started = performance.now();
+  print([
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${ASSEMBLE_LIMIT_MS / 1000} s each at most`,
+  ]);
+  await runPool({
+    script: ASSEMBLE_CHILD,
+    tasks,
+    limitMs: ASSEMBLE_LIMIT_MS,
+    onResult: (task, result) => {
+      const { row } = assembleRowOf(task, families.get(task.id) ?? "other", result, ASSEMBLE_KEPT);
+      rows.push(row);
+      print([`${rows.length}/${documents.length} ${task.id}: ${assembleLine(row)}`]);
+    },
+  });
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const minutes = (performance.now() - started) / 60_000;
+  print(["", ...assembleTable(rows).trimEnd().split("\n")]);
+  print(["", `Took ${minutes.toFixed(1)} min.`]);
+  if (json !== undefined)
+    writeAtomically(
+      json,
+      formatJson({
+        version: 1,
+        tree: { layout: engine.layout, files: Object.keys(engine.files).length },
+        limitMs: ASSEMBLE_LIMIT_MS,
+        documents: rows,
+      }),
+    );
+}
+
 /**
  * The oracle, its samples fetched into `.corpus/oracle/` and checked; or undefined, the exit code
  * set and why said, when they could not be fetched as it names them.
@@ -679,19 +801,46 @@ async function runOracle() {
     message: () => ({ name: `${doc.id}.zip`, bytes: sampleUpload(doc, treeFont) }),
   }));
   const rows = new Map<string, ProbeRow>();
+  const assembled = new Map<string, { row: AssembleRow; fields?: Record<string, PlaceCount> }>();
   await runPool({
-    script: PROBE_CHILD,
+    script: ASSEMBLE_CHILD,
     tasks,
-    limitMs: PROBE_LIMIT_MS,
+    limitMs: ASSEMBLE_LIMIT_MS,
     onResult: (task, result) => {
       const family = oracle.documents.find((doc) => doc.id === task.id)?.family ?? "other";
-      const row = probeRowOf(task, family, result, join(ORACLE_DIR, "probe"));
+      const found = assembleRowOf(
+        task,
+        family,
+        result,
+        join(ORACLE_DIR, "assemble"),
+        join(ORACLE_DIR, "probe"),
+      );
+      const row: ProbeRow = {
+        id: task.id,
+        family,
+        ...(found.probe ?? { outcome: result.timedOut ? "timeout" : "crashed" }),
+        wall: Math.round(result.wall),
+      };
       rows.set(task.id, row);
-      print([`${task.id}: ${probeLine(row)}`]);
+      assembled.set(task.id, {
+        row: found.row,
+        ...(found.fields === undefined ? {} : { fields: found.fields }),
+      });
+      print([`${task.id}: ${probeLine(row)}; ${assembleLine(found.row)}`]);
     },
   });
   const lines = oracle.documents.flatMap((doc) => compare(doc, rows.get(doc.id)));
   print(["", ...oracleTable(lines).trimEnd().split("\n")]);
+  const samples = oracle.documents.map((doc) => {
+    const port = JSON.parse(readFileSync(join(TEMPLATES, doc.family, "template.json"), "utf8"));
+    const found = assembled.get(doc.id);
+    return {
+      template: doc.family,
+      ...(found === undefined ? {} : { row: found.row }),
+      lines: comparePlaces(doc.family, portPlaces(port), found?.fields),
+    };
+  });
+  print(["", ...placesTable(samples).trimEnd().split("\n")]);
 }
 
 async function runFonts(only: string | undefined, json: string | undefined) {
@@ -982,6 +1131,7 @@ async function main() {
     command !== "reference" &&
     command !== "parse" &&
     command !== "probe" &&
+    command !== "assemble" &&
     command !== "oracle" &&
     command !== "fonts" &&
     command !== "seed" &&
@@ -997,9 +1147,12 @@ async function main() {
     command !== "probe" &&
     command !== "fonts" &&
     command !== "name" &&
+    command !== "assemble" &&
     command !== "leak"
   )
-    throw new Error("--only goes with fetch, reference, parse, probe, fonts, name or leak");
+    throw new Error(
+      "--only goes with fetch, reference, parse, probe, fonts, name, assemble or leak",
+    );
   if (
     values.json !== undefined &&
     command !== "survey" &&
@@ -1009,9 +1162,12 @@ async function main() {
     command !== "fonts" &&
     command !== "seed" &&
     command !== "name" &&
+    command !== "assemble" &&
     command !== "leak"
   )
-    throw new Error("--json goes with survey, reference, parse, probe, fonts, seed, name or leak");
+    throw new Error(
+      "--json goes with survey, reference, parse, probe, fonts, seed, name, assemble or leak",
+    );
   if (values.model !== undefined && command !== "name") throw new Error("--model goes with name");
   if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
   if (values.write === true && command !== "seed") throw new Error("--write goes with seed");
@@ -1023,6 +1179,7 @@ async function main() {
   if (command === "reference") return runReference(values.only, caller(values.json));
   if (command === "parse") return runParse(values.only, caller(values.json));
   if (command === "probe") return runProbe(values.only, caller(values.json));
+  if (command === "assemble") return runAssemble(values.only, caller(values.json));
   if (command === "oracle") return runOracle();
   if (command === "fonts") return runFonts(values.only, caller(values.json));
   if (command === "seed") return runSeed(caller(values.json), values.write === true);

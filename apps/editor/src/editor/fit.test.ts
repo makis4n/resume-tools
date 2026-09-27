@@ -80,6 +80,21 @@ describe("fitSteps", () => {
     expect(fitSteps(none, {})).toEqual([]);
   });
 
+  it("steps through the sizes an imported class declares, and no other", () => {
+    // As `article` declares 10, 11 and 12 points and ignores any other (decision 0026).
+    const { fontSize, dateFormat } = jake.controls;
+    if (fontSize === undefined) throw new Error("Jake's Resume offers a font size");
+    const declared = parsePackage({
+      ...jake,
+      controls: { fontSize: { ...fontSize, default: 12, sizes: [10, 11, 12] }, dateFormat },
+    });
+    expect(fitSteps(declared, {}).map((step) => step.fontSize)).toEqual([11, 10]);
+    const schema = controlValuesFor(declared);
+    for (const start of [10, 11, 12])
+      for (const step of fitSteps(declared, { fontSize: start }))
+        expect(schema.safeParse(step).success, JSON.stringify(step)).toBe(true);
+  });
+
   it("gives only values the package takes, from every starting point", () => {
     const schema = controlValuesFor(jake);
     for (const density of ["compact", "normal", "relaxed"] as const)

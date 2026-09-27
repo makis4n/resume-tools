@@ -78,6 +78,44 @@ const is = (type: string, props: Props) => (element: ReactElement<Props>) =>
   element.type === type && Object.entries(props).every(([key, v]) => element.props[key] === v);
 
 describe("Controls", () => {
+  it("offers only the font sizes an imported class declares, as `article` declares three", () => {
+    const { fontSize } = jake.controls;
+    if (fontSize === undefined) throw new Error("Jake's Resume offers a font size");
+    const declared = parsePackage({
+      ...jake,
+      controls: { ...jake.controls, fontSize: { ...fontSize, sizes: [10, 11, 12] } },
+    });
+    const html = renderToStaticMarkup(
+      <Controls pkg={declared} values={{}} onChange={ignore} onSeal={ignore} />,
+    );
+    // A slider from 10 to 12 points a point at a time: no stop between two sizes.
+    const slider = tagWith(html, "input", 'step="1"');
+    expect(slider).toContain('min="10"');
+    expect(slider).toContain('max="12"');
+    expect(slider).toContain('value="11"');
+    const changes: ControlChange[] = [];
+    const size = (
+      <FontSizeControl
+        id="size"
+        value={11}
+        sizes={[10, 11, 12]}
+        onChange={(change) => changes.push(change)}
+        onSeal={ignore}
+      />
+    );
+    // Whatever the browser gives is read as the nearest size offered.
+    for (const value of ["10.6", "12", "9"])
+      fire(propsOf(size, is("input", { type: "range" })).onChange, value);
+    expect(changes).toEqual([
+      { name: "fontSize", value: 11 },
+      { name: "fontSize", value: 12 },
+      { name: "fontSize", value: 10 },
+    ]);
+    const schema = controlValuesFor(declared);
+    for (const { name, value } of changes)
+      expect(schema.safeParse({ [name]: value }).success, String(value)).toBe(true);
+  });
+
   it("shows each control Jake's Resume offers at the package's default", () => {
     const html = panel({});
     expect(tagWith(html, "input", 'value="letter"')).toContain('checked=""');
