@@ -169,7 +169,7 @@ of each launch template must find editable what the hand-written port marks.
    overlay shows such a field in capitals; decisions 0007 and 0013 left this to a later item.
    Done when the probe, run on the three launch templates' upstream samples, finds editable
    every argument the ports' snippets mark, and locks what the ports leave out of the model.
-6. [ ] **The naming contract, and the seed answers.** `packages/naming` holds the request and the
+6. [x] **The naming contract, and the seed answers.** `packages/naming` holds the request and the
    answer as Zod schemas. The request: each template macro's normalised definition and its
    dependencies, a few call sites with each argument's text replaced by a placeholder of the same
    length, the environments, and the preamble's candidate settings. The answer, for each macro
