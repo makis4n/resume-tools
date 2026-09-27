@@ -12,6 +12,7 @@ import { CURATED, curated } from "../templates/curated";
 import { generateBody } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
 import { defaultControls, parsePackage, type TemplatePackage } from "../templates/package";
+import { bound } from "../test/timing";
 import type { DviDocument, PageItem } from "../tex/dvi";
 import {
   CHECKS,
@@ -516,11 +517,14 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
         const { format, passes, pages, fields } = report();
         const timings = passes.map((ms) => `${Math.round(ms)} ms`).join(", ");
         console.log(`${id}: format ${format}; passes ${timings}; pages ${pages}; fields ${fields}`);
-        // Generous, so that a pathological slowdown fails CI and an ordinary slow runner does not.
         // The first pass is a new document's, and each after the same body's second compile is
-        // the edit's or a control's, as every edit and every change of a control costs.
+        // the edit's or a control's, as every edit and every change of a control costs. Each is
+        // bounded against the fastest pass of the same report, not against the clock: a
+        // pathological slowdown of one pass fails CI, while a loaded runner, which slows every
+        // pass alike, does not (the rule since #36 is a ratio, never a wall-clock number).
         expect(passes.length).toBeGreaterThanOrEqual(4);
-        for (const ms of passes) expect(ms).toBeLessThan(2_000);
+        const quickest = Math.min(...passes);
+        for (const ms of passes) expect(ms).toBeLessThan(bound(6, quickest));
       });
     });
   }
