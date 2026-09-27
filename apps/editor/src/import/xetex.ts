@@ -8,25 +8,36 @@
  * `\newfontface` and its kin, `\fontspec` and `\defaultfontfeatures`, are read where XeTeX would
  * run them, in the preamble and the class and style files the upload holds, in the order TeX loads
  * them, and in the body; each family is what fontspec would declare (`fontspec.ts`), from the tree's
- * fonts (`FontIndex`); and each command becomes what selects it: `\rmdefault`, `\sfdefault` or
- * `\ttdefault` set to the family, with the bold series fontspec sets for it, a command that selects
- * it (`\NewDocumentCommand` as fontspec defines one), or the selection itself. The font packages
- * that load fontspec on XeTeX, roboto, sourcesanspro, lato, fontawesome and plex, and fontawesome5,
- * which loads its fonts as it starts, become a style file of the rewrite's own, `rt-<package>.sty`,
- * that does what the package does on XeTeX with the families declared by file. fontspec,
- * unicode-math and `\setmathfont` go: mathematics stays on the stock math fonts. The preamble gains
- * `\RequirePackage[OT1]{fontenc}` before the class, so that nothing selects a native font before
- * the format is dumped, and `rt-fontspec.sty` at its end, which makes TU the encoding again and sets
- * mathematics up as fontspec does at `\begin{document}`. Everything else stays byte for byte.
+ * fonts (`FontIndex`), and must pass the package's schema; and each command becomes what selects
+ * it: `\rmdefault`, `\sfdefault` or `\ttdefault` set to the family, with the bold series and the
+ * encoding fontspec sets beside it and the normal font selected again, as fontspec's commands end
+ * (`\rt@setfamily`), a command that selects it (`\NewDocumentCommand` as fontspec defines one), or
+ * the selection itself.
  *
- * What it cannot reproduce it refuses, naming the font or the feature: a font the tree does not
- * have, an option fontspec's emulation does not know (`fontspec.ts`), and the packages that need
- * fontspec itself, polyglossia and xeCJK among them.
+ * Every package taken out is replaced where it was loaded by a style file of the rewrite's own that
+ * does what loading it does, but for its fonts: `rt-fontspec.sty` for fontspec, which makes TU the
+ * default encoding, Latin Modern's the default families, which TU's font definitions declare by
+ * file, selects the normal size, and sets mathematics up at `\begin{document}` as fontspec does;
+ * `rt-unicode-math.sty` for unicode-math, which loads what unicode-math loads, fontspec among them,
+ * and gives its symbols' commands their characters in text, while mathematics stays on TeX's own
+ * fonts; and for each font package that loads fontspec on XeTeX, roboto, sourcesanspro, lato,
+ * fontawesome and plex, and for fontawesome5, which loads its fonts as it starts,
+ * `rt-<package>.sty`, which does what the package does on XeTeX with the families declared by file.
+ * `\setmathfont` goes. The preamble gains `rt-preamble.sty` before the class, which keeps every
+ * font the preamble selects in TU a TFM font until `\begin{document}`, since a format cannot hold a
+ * native font (decision 0003), with the em and ex of the TU font it stands for. Everything else
+ * stays byte for byte.
+ *
+ * What it cannot reproduce it refuses, naming the font or the feature in plain words (`refusal.ts`):
+ * a font the tree does not have, an option fontspec's emulation does not know (`fontspec.ts`), a
+ * family the package's schema does not take, and the packages that need fontspec itself,
+ * polyglossia and xeCJK among them.
  *
  * It is a function of the intake and the tree, and runs in the browser and in Node alike.
  */
 
 import type { FontAdjust, FontFamily, FontShape } from "../templates/package";
+import { TemplatePackage } from "../templates/package";
 import type { Tree } from "./fonts";
 import {
   type Defaults,
@@ -43,7 +54,7 @@ import {
 } from "./fontspec";
 import { decodeText, encodeLike, type Intake } from "./intake";
 import { joinPath } from "./paths";
-import { type Refusal, refusal } from "./refusal";
+import { type Refusal, refusal, unreproduced } from "./refusal";
 import { blankComments, bracketed, group, xetexSkipped } from "./source";
 
 /** A XeTeX import with its fonts declared by file. */
@@ -61,27 +72,32 @@ export interface XetexRewrite {
   fonts: FontFamily[];
   /** What a developer, or the report, may want to know: plain English, naming fonts at most. */
   warnings: string[];
-  /** The font files of the tree unicode-math set mathematics in, which the stock fonts replace. */
+  /**
+   * Where unicode-math was taken out, the font files it set mathematics in, which the stock fonts
+   * replace: its default, Latin Modern Math, and each `\setmathfont`'s, by the tree's file or the
+   * name the document gave; otherwise none. The check lets a difference in their glyphs alone pass
+   * (`xetex-check.ts`).
+   */
   mathFonts: string[];
   /**
-   * Where unicode-math was taken out, the preamble and files with it kept, and its `\setmathfont`,
-   * which the check compiles to tell a difference unicode-math alone makes (`xetex-check.ts`).
+   * What a definition's body asks for that the rewrite cannot reproduce, which XeTeX meets only if
+   * the definition is used: the n-th stops such a compile with the error `rt-fonts` gives,
+   * `Unreproducible font or feature <n>`, and the check refuses the import with it.
    */
-  maths?: { preamble: string; files: Record<string, Uint8Array> };
+  deferred: Refusal[];
   /** What the corpus runner counts: the kinds of feature the families carry, each once per family. */
   features: Record<string, number>;
 }
 
-/**
- * Where a text of the job is edited: from `start` to before `end`, to `text`; or to `maths` in the
- * rewrite that keeps unicode-math (`XetexRewrite.maths`), when that differs.
- */
+/** Where a text of the job is edited: from `start` to before `end`, to `text`. */
 interface Edit {
   start: number;
   end: number;
   text: string;
-  maths?: string;
 }
+
+/** Spans of a text, each from its start to before its end. */
+type Span = readonly [start: number, end: number];
 
 /** A text the rewrite reads: the main file's, or a file of the job's by its path. */
 interface Source {
@@ -89,8 +105,10 @@ interface Source {
   text: string;
   /** The same text with its comments blanked, every character in its place (`blankComments`). */
   blanked: string;
-  /** The spans XeTeX does not read (`xetexSkipped`). */
-  skipped: [number, number][];
+  /** The spans XeTeX does not read (`xetexSkipped`), merged (`merged`). */
+  skipped: Span[];
+  /** The spans of definitions' bodies (`inDefinition`), merged, found when first asked for. */
+  definitions?: Span[];
   edits: Edit[];
 }
 
@@ -110,7 +128,7 @@ const REDEFINING = new Set([
 
 /** The commands the rewrite reads, as they appear in a source. */
 const COMMANDS =
-  /\\(documentclass|LoadClass|LoadClassWithOptions|usepackage|RequirePackage|RequirePackageWithOptions|input|include|setmainfont|setromanfont|setsansfont|setmonofont|newfontfamily|renewfontfamily|setfontfamily|providefontfamily|newfontface|renewfontface|setfontface|providefontface|fontspec|defaultfontfeatures|setmathfont|setboldmathfont|setmathrm|setboldmathrm|setmathsf|setmathtt|definecolor|colorlet|newfontfeature|newAATfeature|newopentypefeature|newICUfeature|aliasfontfeature|aliasfontfeatureoption|newfontscript|newfontlanguage|DeclareFontExtensions|addfontfeatures?|begin)(?![A-Za-z@])/g;
+  /\\(documentclass|LoadClass|LoadClassWithOptions|usepackage|RequirePackage|RequirePackageWithOptions|input|include|setmainfont|setromanfont|setsansfont|setmonofont|newfontfamily|renewfontfamily|setfontfamily|providefontfamily|newfontface|renewfontface|setfontface|providefontface|fontspec|defaultfontfeatures|setmathfont|setboldmathfont|setmathrm|setboldmathrm|setmathsf|setmathtt|definecolor|colorlet|newfontfeature|newAATfeature|newopentypefeature|newICUfeature|aliasfontfeature|aliasfontfeatureoption|newfontscript|newfontlanguage|DeclareFontExtensions|addfontfeatures?)(?![A-Za-z@])/g;
 
 /** fontspec's commands that set a family's kind, and the default each sets. */
 const KIND_COMMANDS: Readonly<Record<string, FamilyKind>> = {
@@ -134,6 +152,9 @@ const DEFINING: Readonly<Record<string, { define: string; face: boolean }>> = {
 
 /** The default math font unicode-math sets when a document names none. */
 const DEFAULT_MATH_FONT = "latinmodern-math.otf";
+
+/** The package schema's font family, `TemplatePackage`'s `fonts`, which every family must pass. */
+const FAMILY = TemplatePackage.shape.fonts.unwrap().element;
 
 /**
  * Rewrite a XeTeX import's fonts by file, from the tree's fonts; or refuse it, naming the font or
@@ -160,9 +181,10 @@ class Rewriter {
   private readonly added: Record<string, string> = {};
   private readonly warnings: string[] = [];
   private readonly features: Record<string, number> = {};
+  private readonly deferred: Refusal[] = [];
   private readonly mentioned: Set<string>;
-  private fontspec = false;
-  private noMath = false;
+  /** Whether fontspec is loaded, by the document or a package, and with `no-math` the first time. */
+  private fontspec: { noMath: boolean } | undefined;
   private unicodeMath = false;
   private mathFonts: string[] = [];
 
@@ -198,35 +220,30 @@ class Rewriter {
   private rewrite(): XetexRewrite {
     const main = this.source("", this.intake.main.text);
     const begin = this.beginDocument(main);
-    if (begin === undefined)
-      throw new Stop(refusal("feature", "a document that begins in another file"));
+    if (begin === undefined) throw new Stop(unreproduced({ document: "begin" }));
     this.read(main, 0, begin, true);
     const documentClass = this.firstCommand(main, /\\documentclass(?![A-Za-z@])/g, begin);
-    if (documentClass === undefined)
-      throw new Stop(refusal("feature", "a document without \\documentclass"));
-    main.edits.push({
-      start: documentClass,
-      end: documentClass,
-      text: "\\RequirePackage{rt-preamble}\n",
-    });
+    if (documentClass === undefined) throw new Stop(unreproduced({ document: "class" }));
+    // Before the class, and before any package the rewrite put in place before it.
+    const at = Math.min(documentClass, ...main.edits.map((edit) => edit.start));
+    main.edits.push({ start: at, end: at, text: "\\RequirePackage{rt-preamble}\n" });
     this.added["rt-preamble.sty"] = PREAMBLE_STAND_IN;
     this.read(main, begin, main.text.length, false);
 
-    this.added["rt-fontspec.sty"] = fontspecStandIn(
-      this.fontspec && !this.noMath && !this.unicodeMath,
-      this.unicodeMath
-        ? [...this.mentioned]
-            .filter((word) => /^[A-Za-z]+$/.test(word))
-            .sort()
-            .map((word): [string, string] => [UNICODE_MATH_ALIASES[word] ?? word, word])
-        : [],
-    );
-    const { preamble, body, files } = this.assemble(main, begin, false);
-    if (this.unicodeMath)
+    if (this.fontspec !== undefined)
+      this.added["rt-fontspec.sty"] = fontspecStandIn(!this.fontspec.noMath && !this.unicodeMath);
+    if (this.unicodeMath) {
+      this.added["rt-unicode-math.sty"] = unicodeMathStandIn(
+        [...this.mentioned]
+          .filter((word) => /^[A-Za-z]+$/.test(word))
+          .sort()
+          .map((word): [string, string] => [UNICODE_MATH_ALIASES[word] ?? word, word]),
+      );
       this.warnings.push(
         "unicode-math is left out: mathematics is set in TeX's own math fonts, not the resume's.",
       );
-    const kept = this.unicodeMath ? this.assemble(main, begin, true) : undefined;
+    }
+    const { preamble, body, files } = this.assemble(main, begin);
     return {
       preamble,
       body,
@@ -234,36 +251,27 @@ class Rewriter {
       fonts: this.families,
       warnings: this.warnings,
       mathFonts: this.unicodeMath ? this.mathFonts : [],
+      deferred: this.deferred,
       features: this.features,
-      ...(kept === undefined ? {} : { maths: { preamble: kept.preamble, files: kept.files } }),
     };
   }
 
-  /**
-   * The rewritten preamble, body and files, with every edit, or with unicode-math and
-   * `\setmathfont` kept (`maths`).
-   */
+  /** The rewritten preamble, body and files, with every edit. */
   private assemble(
     main: Source,
     begin: number,
-    maths: boolean,
   ): { preamble: string; body: string; files: Record<string, Uint8Array> } {
-    const chosen = (edits: readonly Edit[]) =>
-      edits.map((edit) =>
-        maths && edit.maths !== undefined ? { ...edit, text: edit.maths } : edit,
-      );
-    const edits = chosen(main.edits);
-    const text = applyEdits(main.text, edits);
-    const shift = edits
+    const text = applyEdits(main.text, main.edits);
+    const shift = main.edits
       .filter((edit) => edit.end <= begin)
       .reduce((sum, edit) => sum + edit.text.length - (edit.end - edit.start), 0);
-    const preamble = `${text.slice(0, begin + shift)}\\RequirePackage{rt-fontspec}\n`;
+    const preamble = text.slice(0, begin + shift);
     const body = text.slice(begin + shift);
     const files: Record<string, Uint8Array> = {};
     for (const [path, source] of this.sources) {
       if (path === "" || source.edits.length === 0) continue;
       const original = this.intake.files[path] ?? new Uint8Array();
-      const rewritten = applyEdits(source.text, chosen(source.edits));
+      const rewritten = applyEdits(source.text, source.edits);
       files[path] = encodeLike(original, rewritten) ?? new TextEncoder().encode(rewritten);
     }
     for (const [path, content] of Object.entries(this.added))
@@ -276,7 +284,13 @@ class Rewriter {
     const had = this.sources.get(path);
     if (had) return had;
     const blanked = blankComments(text);
-    const source: Source = { path, text, blanked, skipped: xetexSkipped(blanked), edits: [] };
+    const source: Source = {
+      path,
+      text,
+      blanked,
+      skipped: merged(xetexSkipped(blanked)),
+      edits: [],
+    };
     this.sources.set(path, source);
     return source;
   }
@@ -284,14 +298,14 @@ class Rewriter {
   /** Where `\begin{document}` is in the main file, outside what XeTeX skips. */
   private beginDocument(main: Source): number | undefined {
     for (const match of main.blanked.matchAll(/\\begin\s*\{document\}/g))
-      if (!skippedAt(main.skipped, match.index)) return match.index;
+      if (!within(main.skipped, match.index)) return match.index;
     return undefined;
   }
 
   /** The first command a pattern finds in a source before `stop`, outside what XeTeX skips. */
   private firstCommand(source: Source, pattern: RegExp, stop: number): number | undefined {
     for (const match of source.blanked.matchAll(pattern))
-      if (match.index < stop && !skippedAt(source.skipped, match.index)) return match.index;
+      if (match.index < stop && !within(source.skipped, match.index)) return match.index;
     return undefined;
   }
 
@@ -309,7 +323,7 @@ class Rewriter {
       match = pattern.exec(blanked)
     ) {
       const start = match.index;
-      if (skippedAt(source.skipped, start)) continue;
+      if (within(source.skipped, start)) continue;
       const command = match[1] ?? "";
       const at = start + match[0].length;
       const end = this.command(source, command, start, at, preamble);
@@ -329,10 +343,8 @@ class Rewriter {
     // A command a definition, a `\let` or a test names is not run where it stands, as AltaCV's
     // class lets `\newfontfamily` do nothing while academicons loads.
     if (named(text, start)) return at;
-    if (REDEFINING.has(command)) throw new Stop(refusal("feature", `\\${command}`));
+    if (REDEFINING.has(command)) throw new Stop(unreproduced({ command: `\\${command}` }));
     switch (command) {
-      case "begin":
-        return undefined;
       case "documentclass":
       case "LoadClass":
       case "LoadClassWithOptions": {
@@ -361,8 +373,11 @@ class Rewriter {
         if (targets) after = targets.end;
         const options = group(text, after);
         if (!options) return undefined;
-        setDefaults(this.defaults, plus, targets?.value, options.value);
-        source.edits.push({ start, end: options.end, text: "" });
+        // So many defaults that every family would read them all: past MAX_DEFAULTS, refused.
+        if (!setDefaults(this.defaults, plus, targets?.value, options.value))
+          throw new Stop(unreproduced({ command: "\\defaultfontfeatures" }));
+        // fontspec's command ends with `\ignorespaces`, which in the body keeps a space out.
+        source.edits.push({ start, end: options.end, text: preamble ? "" : "\\ignorespaces " });
         return options.end;
       }
       case "setmathfont":
@@ -374,12 +389,7 @@ class Rewriter {
         const call = fontCall(text, at);
         if (!call) return undefined;
         if (command === "setmathfont") this.setMathFont(call.name, call.options);
-        source.edits.push({
-          start,
-          end: call.end,
-          text: "",
-          maths: source.text.slice(start, call.end),
-        });
+        source.edits.push({ start, end: call.end, text: "" });
         return call.end;
       }
       case "definecolor": {
@@ -423,9 +433,11 @@ class Rewriter {
   }
 
   /**
-   * `\usepackage` and its kin: fontspec and unicode-math taken out, a font package the rewrite
-   * translates put in the place of its own style file (`rt-<package>.sty`), a package that needs
-   * fontspec refused, and a package of the job read where it is loaded.
+   * `\usepackage` and its kin, their packages loaded in the order given: fontspec, unicode-math and
+   * a font package the rewrite translates each replaced by the rewrite's own style file where it was
+   * loaded (`rt-fontspec.sty`, `rt-unicode-math.sty`, `rt-<package>.sty`), the packages kept loaded
+   * as they were, with the command's options, around them; a package that needs fontspec refused;
+   * and a package of the job read where it is loaded.
    */
   private usepackage(
     source: Source,
@@ -441,63 +453,71 @@ class Rewriter {
     const date = bracketed(text, names.end);
     const end = date?.end ?? names.end;
     const given = splitList(options?.value ?? "");
-    const kept: string[] = [];
+    const loads: string[] = [];
+    let kept: string[] = [];
     let changed = false;
-    let unicodeMath = false;
-    const replacements: string[] = [];
+    const keep = () => {
+      if (kept.length > 0)
+        loads.push(
+          `\\${command}${options ? `[${options.value}]` : ""}{${kept.join(",")}}${date ? `[${date.value}]` : ""}`,
+        );
+      kept = [];
+    };
+    const standIn = (name: string) => {
+      changed = true;
+      keep();
+      loads.push(`\\${command === "usepackage" ? "usepackage" : "RequirePackage"}{${name}}`);
+    };
     for (const raw of names.value.split(",")) {
       const name = raw.trim();
       if (name === "") continue;
       if (name === "fontspec") {
-        changed = true;
-        this.fontspec = true;
-        if (given.some((option) => option.trim() === "no-math")) this.noMath = true;
+        this.loadFontspec(given.some((option) => option.trim() === "no-math"));
+        standIn("rt-fontspec");
         continue;
       }
       if (name === "unicode-math") {
-        changed = true;
-        unicodeMath = true;
-        this.fontspec = true;
         this.unicodeMath = true;
+        this.loadFontspec(false);
         if (this.mathFonts.length === 0) this.mathFonts = [DEFAULT_MATH_FONT];
+        standIn("rt-unicode-math");
         continue;
       }
-      if (NEEDS_FONTSPEC.has(name)) throw new Stop(refusal("feature", name));
+      if (NEEDS_FONTSPEC.has(name)) throw new Stop(unreproduced({ package: name }));
       const translate = FONT_PACKAGES[name];
       if (translate !== undefined && this.intake.files[`${name}.sty`] === undefined) {
-        changed = true;
-        if (this.loaded.has(`package:${name}`)) continue;
-        this.loaded.add(`package:${name}`);
-        const standIn = translate(this, given);
-        if (standIn === undefined) {
-          kept.push(name);
+        if (this.loaded.has(`package:${name}`)) {
+          changed = true;
           continue;
         }
-        this.added[`rt-${name}.sty`] = standIn;
-        replacements.push(
-          `\\${command === "usepackage" ? "usepackage" : "RequirePackage"}{rt-${name}}`,
-        );
-        continue;
+        this.loaded.add(`package:${name}`);
+        const translated = translate(this, given);
+        if (translated !== undefined) {
+          this.added[`rt-${name}.sty`] = translated;
+          standIn(`rt-${name}`);
+          continue;
+        }
       }
       kept.push(name);
       if (preamble) this.loadFile(`${name}.sty`);
     }
-    if (changed) {
-      const load = (packages: string[]) =>
-        packages.length === 0
-          ? ""
-          : `\\${command}${options ? `[${options.value}]` : ""}{${packages.join(",")}}${date ? `[${date.value}]` : ""}`;
-      const text = [load(kept), ...replacements].join("");
-      source.edits.push({
-        start,
-        end,
-        text,
-        ...(unicodeMath
-          ? { maths: [load([...kept, "unicode-math"]), ...replacements].join("") }
-          : {}),
-      });
-    }
+    keep();
+    if (changed) source.edits.push({ start, end, text: loads.join("") });
     return end;
+  }
+
+  /** fontspec loaded, by the document or by a package: `no-math` counts where it first loads. */
+  private loadFontspec(noMath: boolean) {
+    this.fontspec ??= { noMath };
+  }
+
+  /**
+   * fontspec loaded by a font package the rewrite translates, as it loads it on XeTeX: the line
+   * that loads the rewrite's stand-in for it in the package's own.
+   */
+  fontspecLoad(): string {
+    this.loadFontspec(false);
+    return "\\RequirePackage{rt-fontspec}";
   }
 
   /** unicode-math's `\setmathfont`, whose font's glyphs the stock math fonts replace. */
@@ -533,37 +553,45 @@ class Rewriter {
     const options = defining?.face
       ? `BoldFont={},ItalicFont={},SmallCapsFont={},${call.options}`
       : call.options;
+    // The label fontspec keeps a family's defaults under: its family command's, or the command
+    // `\newfontfamily` defines.
+    const label = kind !== undefined ? `${kind}family` : defined?.slice(1);
     let family: string;
     try {
-      family = this.family({ name: call.name, options, ...(kind ? { kind } : {}) });
+      family = this.family({
+        name: call.name,
+        options,
+        ...(kind ? { kind } : {}),
+        ...(label ? { label } : {}),
+      });
     } catch (error) {
       // A font or feature a definition's body asks for, which XeTeX meets only if the command is
-      // used, stops the compile only then, naming the font, as fontspec would.
+      // used, stops the compile only then, as fontspec would.
       if (!(error instanceof Stop) || !inDefinition(source, start)) throw error;
-      const name = error.refusal.name ?? call.name;
+      const n = this.deferred.push(error.refusal) - 1;
       source.edits.push({
         start,
         end: call.end,
-        text: `\\PackageError{rt-fonts}{${error.refusal.reason === "font" ? "missing font" : "unreproducible feature"} ${name.replace(/[^A-Za-z0-9 .,=+-]/g, "")}}{}`,
+        text: `\\PackageError{rt-fonts}{Unreproducible font or feature ${n}}{}`,
       });
       return call.end;
     }
     let replacement: string;
-    if (kind !== undefined) {
-      const which = kind === "rm" ? "rm" : kind === "sf" ? "sf" : "tt";
-      replacement = `\\DeclareFontSeriesDefault[${which}]{bf}{\\bfdefault}\\def\\${which}default{${family}}\\ignorespaces `;
-    } else if (defining !== undefined && defined !== undefined) {
+    if (kind !== undefined)
+      replacement = `\\csname rt@setfamily\\endcsname{${kind}}{${family}}\\ignorespaces `;
+    else if (defining !== undefined && defined !== undefined)
       replacement = `\\${defining.define}${defined}{}{\\fontfamily{${family}}\\fontencoding{TU}\\selectfont}`;
-    } else replacement = `\\fontfamily{${family}}\\fontencoding{TU}\\selectfont\\ignorespaces `;
+    else replacement = `\\fontfamily{${family}}\\fontencoding{TU}\\selectfont\\ignorespaces `;
     source.edits.push({ start, end: call.end, text: replacement });
     return call.end;
   }
 
   /**
    * The NFSS family for a font fontspec asks for, declared once for all that ask for the same
-   * shapes; or a refusal, thrown, naming the font or feature that cannot be reproduced.
+   * shapes; or a refusal, thrown, naming the font or feature that cannot be reproduced, or the key
+   * of an option that makes a family the package's schema does not take.
    */
-  family(request: { name: string; options: string; kind?: FamilyKind }): string {
+  family(request: { name: string; options: string; kind?: FamilyKind; label?: string }): string {
     const spec = familyFor(request, this.defaults, this.index, this.colours);
     if ("unreproducible" in spec) throw new Stop(unreproducible(spec));
     const nfss = /(?:^|,)\s*NFSSFamily\s*=\s*([^,]*)/.exec(request.options)?.[1]?.trim();
@@ -574,7 +602,7 @@ class Rewriter {
     let name: string;
     if (nfss !== undefined) {
       if (!/^[A-Za-z][A-Za-z0-9-]*$/.test(nfss) || this.names.has(nfss))
-        throw new Stop(refusal("feature", "NFSSFamily"));
+        throw new Stop(unreproduced({ option: "NFSSFamily" }));
       name = nfss;
     } else {
       const base = `Rt${request.name
@@ -584,9 +612,12 @@ class Rewriter {
       name = base;
       for (let n = 2; this.names.has(name); n++) name = `${base}${n}`;
     }
+    const declared = { ...family, family: name };
+    const checked = FAMILY.safeParse(declared);
+    if (!checked.success) throw new Stop(outsideSchema(checked.error.issues));
     this.names.add(name);
     this.bySignature.set(signature, name);
-    this.families.push({ ...family, family: name });
+    this.families.push(declared);
     for (const kind of spec.kinds) this.features[kind] = (this.features[kind] ?? 0) + 1;
     return name;
   }
@@ -623,14 +654,12 @@ function named(text: string, start: number): boolean {
 
 /**
  * Whether an index falls in the body of a definition, a macro TeX runs only where it is used:
- * `\newcommand` and its kin, and `\def` and its kin, read once for each source.
+ * `\newcommand` and its kin, and `\def` and its kin, found once for each source and merged, so
+ * that each question is a binary search.
  */
-const definitions = new WeakMap<Source, [number, number][]>();
-
 function inDefinition(source: Source, at: number): boolean {
-  let spans = definitions.get(source);
-  if (spans === undefined) {
-    spans = [];
+  if (source.definitions === undefined) {
+    const spans: Span[] = [];
     const text = source.blanked;
     const definer =
       /\\((?:re)?newcommand|providecommand|DeclareRobustCommand|(?:New|Renew|Provide|Declare)DocumentCommand|g?def|[ex]def)(?![A-Za-z@])/g;
@@ -655,17 +684,37 @@ function inDefinition(source: Source, at: number): boolean {
         )
           from = option.end;
       const body = group(text, from);
+      // A span starts at its body's first character, which may be the command itself.
       if (body) spans.push([body.end - body.value.length - 1, body.end]);
     }
-    definitions.set(source, spans);
+    source.definitions = merged(spans);
   }
-  // A span starts at its body's first character, which may be the command itself.
-  return spans.some(([start, end]) => at >= start && at < end);
+  return within(source.definitions, at);
 }
 
-/** Whether an index falls in one of a source's skipped spans. */
-function skippedAt(spans: readonly [number, number][], at: number): boolean {
-  return spans.some(([start, end]) => at >= start && at < end);
+/** Spans merged where they overlap, nest or touch, in order of their starts. */
+function merged(spans: readonly Span[]): Span[] {
+  const out: [number, number][] = [];
+  for (const [start, end] of [...spans].sort((a, b) => a[0] - b[0])) {
+    const last = out[out.length - 1];
+    if (last !== undefined && start <= last[1]) last[1] = Math.max(last[1], end);
+    else out.push([start, end]);
+  }
+  return out;
+}
+
+/** Whether an index falls in one of merged spans (`merged`), by binary search. */
+function within(spans: readonly Span[], at: number): boolean {
+  let low = 0;
+  let high = spans.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    const [start, end] = spans[middle] as Span;
+    if (at < start) high = middle - 1;
+    else if (at >= end) low = middle + 1;
+    else return true;
+  }
+  return false;
 }
 
 /** A mandatory argument after any optional ones, with the index after it. */
@@ -707,15 +756,42 @@ function applyEdits(text: string, edits: readonly Edit[]): string {
   return out + text.slice(at);
 }
 
-/** A refusal for what the emulation cannot reproduce. */
+/** A refusal for what the emulation cannot reproduce: a font by its name, an option by its key. */
 function unreproducible(why: Unreproducible): Refusal {
-  return refusal(why.unreproducible === "font" ? "font" : "feature", why.name);
+  return why.unreproducible === "font"
+    ? refusal("font", why.name)
+    : unreproduced({ option: why.name });
+}
+
+/** The option of fontspec's that sets each field of `FontAdjust`. */
+const ADJUST_KEYS: Readonly<Record<string, string>> = {
+  wordSpace: "WordSpace",
+  punctuationSpace: "PunctuationSpace",
+  hyphenChar: "HyphenChar",
+};
+
+/**
+ * A refusal for a family the package's schema does not take, naming the option that made the part
+ * it refuses: an adjustment, the option that sets it; the scale, `Scale`; the family's name,
+ * `NFSSFamily`; features, `RawFeature`, the one of free form; and a shape, `FontFace`, the one
+ * option that names shapes of its own, as `{extrabold}{n}`, of more letters than NFSS takes. A
+ * shape's file is the tree's, whose every name the schema takes.
+ */
+function outsideSchema(issues: readonly { path: readonly PropertyKey[] }[]): Refusal {
+  const path = issues[0]?.path ?? [];
+  const adjust = path.indexOf("adjust");
+  if (adjust >= 0) return unreproduced({ option: ADJUST_KEYS[String(path[adjust + 1])] ?? "" });
+  if (path[0] === "scale") return unreproduced({ option: "Scale" });
+  if (path[0] === "family") return unreproduced({ option: "NFSSFamily" });
+  if (path.includes("features")) return unreproduced({ option: "RawFeature" });
+  return unreproduced({ option: "FontFace" });
 }
 
 /**
  * A family as the package's `fonts` holds it (decision 0014, extended by decision 0023): each
  * shape's file and the features it loads with besides those every shape shares, which the family
- * holds; its scale and adjustments, which every shape of a fontspec family shares.
+ * holds; its scale, which every shape of a fontspec family shares; and what fontspec does to its
+ * shapes as it loads them, the family's where every shape has the same, else each shape's own.
  */
 function toFamily(spec: FamilySpec, name: string): FontFamily {
   const shapes = [...spec.shapes.entries()];
@@ -726,14 +802,23 @@ function toFamily(spec: FamilySpec, name: string): FontFamily {
     while (n < common.length && n < list.length && common[n] === list[n]) n++;
     common = common.slice(0, n);
   }
+  const adjusts = shapes.map(([, shape]) => JSON.stringify(shape.adjust ?? null));
+  const shared = adjusts.every((each) => each === adjusts[0]);
   const out: Record<string, FontShape> = {};
   for (const [key, shape] of shapes) {
     const own = shape.features.slice(common.length);
+    const adjust: FontAdjust | undefined = shared ? undefined : shape.adjust;
     out[key] =
-      own.length === 0 ? shape.font.file : { file: shape.font.file, features: own.join(";") };
+      own.length === 0 && adjust === undefined
+        ? shape.font.file
+        : {
+            file: shape.font.file,
+            ...(own.length === 0 ? {} : { features: own.join(";") }),
+            ...(adjust === undefined ? {} : { adjust }),
+          };
   }
   const first = shapes[0]?.[1];
-  const adjust: FontAdjust | undefined = first?.adjust;
+  const adjust = shared ? first?.adjust : undefined;
   return {
     family: name,
     shapes: out,
@@ -746,58 +831,115 @@ function toFamily(spec: FamilySpec, name: string): FontFamily {
 // The rewrite's own style files.
 
 /**
- * `rt-preamble.sty`, loaded before the class: the preamble set in OT1, whose fonts are TFM fonts, so
- * that the format holds no native font (decision 0003), where XeTeX's LaTeX sets it in TU, whose
- * fonts are native. A native font's quad is its size, which a TFM font's is not, cmr12's being
- * 11.74982 pt at 12 pt; so each TFM font the preamble selects has its quad set to its size, and the
- * lengths a class and its size option set in em as they load, `\leftmargini`, `\labelsep` and
- * `\parindent` among them, come out as XeTeX's LaTeX sets them. `rt-fontspec.sty` takes the hook
- * away where the preamble ends.
+ * `rt-preamble.sty`, loaded before the class. TU's fonts are native fonts, which a format cannot
+ * hold (decision 0003), so until `\begin{document}` a font asked for in TU is loaded in OT1
+ * instead, a TFM font of the same family where OT1 has one: `\fontencoding` takes TU for OT1, and
+ * the current encoding, TU as the job starts, is taken so. `\encodingdefault` stays what it is,
+ * TU, as XeTeX's LaTeX and fontspec have it. Such a font's em and ex are made those of the TU font
+ * it stands for, since the lengths the class and the preamble set in em and ex as they run,
+ * `\leftmargini`, `\parindent` and a `\parskip` in ex among them, are measured in them: a native
+ * font's quad is its size, which a TFM font's is not, cmr12's being 11.74982 pt at 12 pt; and its
+ * x-height is the TU Latin Modern's at that size, which is the TFM's x-height in thousandths of the
+ * size, rounded as Latin Modern's OpenType files round it, 431 for its roman where the TFM has
+ * 430.555. `\begin{document}` puts back TU and every such font's own em and ex, so the body is set
+ * as XeTeX's LaTeX sets it.
+ *
+ * It also defines what the rewrite puts in the place of fontspec's `\setmainfont`, `\setsansfont`
+ * and `\setmonofont` (fontspec-xetex.sty's `\__fontspec_main_setmainfont:nn`): the bold series
+ * default, the family's default, TU as the default encoding where the document's default family
+ * is that one, and the normal font selected again.
  */
 const PREAMBLE_STAND_IN = [
   "\\NeedsTeXFormat{LaTeX2e}",
   "\\ProvidesPackage{rt-preamble}[2026/09/27 resume-tools: the preamble in TFM fonts (decision 0023)]",
-  "\\def\\rt@quad{\\ifnum\\XeTeXfonttype\\font=\\z@\\fontdimen6\\font=\\f@size\\p@\\fi}",
-  "\\AddToHook{selectfont}[rt-preamble]{\\rt@quad}",
-  "\\RequirePackage[OT1]{fontenc}",
+  "\\def\\rt@tu{TU}",
+  "\\expandafter\\let\\expandafter\\rt@fontencoding\\csname fontencoding \\endcsname",
+  "\\expandafter\\def\\csname fontencoding \\endcsname#1{\\edef\\rt@encoding{#1}%",
+  "  \\ifx\\rt@encoding\\rt@tu\\rt@fontencoding{OT1}\\else\\rt@fontencoding{#1}\\fi}",
+  "\\fontencoding{\\f@encoding}",
+  "\\let\\rt@restore\\@empty",
+  "\\newdimen\\rt@size",
+  "\\def\\rt@metrics{\\ifx\\rt@encoding\\rt@tu\\ifnum\\XeTeXfonttype\\font=\\z@",
+  "  \\expandafter\\ifx\\csname rt@font@\\fontname\\font\\endcsname\\relax",
+  "    \\expandafter\\global\\expandafter\\let\\csname rt@font@\\fontname\\font\\endcsname\\@empty",
+  "    \\xdef\\rt@restore{\\rt@restore\\fontdimen5\\the\\font=\\the\\fontdimen5\\font",
+  "      \\fontdimen6\\the\\font=\\the\\fontdimen6\\font\\relax}%",
+  "  \\fi",
+  "  \\rt@size=\\f@size\\p@",
+  "  \\fontdimen5\\font=\\numexpr\\numexpr\\fontdimen5\\font*1000/\\rt@size\\relax",
+  "    *\\rt@size/1000\\relax sp",
+  "  \\fontdimen6\\font=\\rt@size",
+  "\\fi\\fi}",
+  "\\AddToHook{selectfont}[rt-preamble]{\\rt@metrics}",
+  "\\AddToHook{begindocument/before}[rt-preamble]{%",
+  "  \\expandafter\\let\\csname fontencoding \\endcsname\\rt@fontencoding",
+  "  \\RemoveFromHook{selectfont}[rt-preamble]\\rt@restore}",
+  "\\def\\rt@setfamily#1#2{\\DeclareFontSeriesDefault[#1]{bf}{\\bfdefault}%",
+  "  \\expandafter\\def\\csname #1default\\endcsname{#2}%",
+  "  \\edef\\rt@family{\\familydefault}\\edef\\rt@this{#2}%",
+  "  \\ifx\\rt@family\\rt@this\\def\\encodingdefault{TU}\\fi",
+  "  \\normalfont}",
   "\\endinput",
   "",
 ].join("\n");
 
+/** fontspec's version as the tree has it, which `\@ifpackagelater{fontspec}` reads. */
+const FONTSPEC_VERSION = "2022/01/15 v2.8a Font selection for XeLaTeX and LuaLaTeX";
+
 /**
- * `rt-fontspec.sty`, loaded at the end of the rewritten preamble: TU as the encoding again, which
- * `\RequirePackage[OT1]{fontenc}` before the class set aside, unless the document chose another;
- * where fontspec was loaded without its `no-math` option and without unicode-math, mathematics set
- * up as fontspec sets it at `\begin{document}` (fontspec-code-math): the letters and symbols of
- * `legacymaths`, Computer Modern, and the operators and alphabets in the main font; and where
- * unicode-math was loaded, each of its symbols' commands that `symbols` names made to set its
- * character in text, as unicode-math makes it by letting the command be the character at
- * `\begin{document}`, while mathematics keeps TeX's own fonts (`UNICODE_MATH_TEXT`).
+ * `rt-fontspec.sty`, loaded where fontspec was, or where a package loads it: what loading fontspec
+ * 2.8a does besides defining its commands (fontspec-xetex.sty). fontspec marked loaded, without
+ * options; Latin Modern's families the default ones, which TU's own font definitions declare by
+ * file; `\RequirePackage[TU]{fontenc}`, which makes TU the default encoding, even after another,
+ * and selects the default font, a TFM font in its stead until `\begin{document}`
+ * (`rt-preamble.sty`); the normal size where a class is loaded; TU as the Latin and Cyrillic
+ * encodings, and again at `\begin{document}`; and, where fontspec first loaded without its
+ * `no-math` option and unicode-math is not loaded, mathematics set up as fontspec sets it at
+ * `\begin{document}` (`FONTSPEC_MATHS`).
  */
-function fontspecStandIn(
-  maths: boolean,
-  symbols: readonly [symbol: string, command: string][],
-): string {
+function fontspecStandIn(maths: boolean): string {
+  return [
+    "\\NeedsTeXFormat{LaTeX2e}",
+    "\\ProvidesPackage{rt-fontspec}[2026/09/27 resume-tools: fontspec's loading, its fonts by file (decision 0023)]",
+    `\\expandafter\\def\\csname ver@fontspec.sty\\endcsname{${FONTSPEC_VERSION}}`,
+    "\\expandafter\\let\\csname opt@fontspec.sty\\endcsname\\@empty",
+    "\\def\\rmdefault{lmr}\\def\\sfdefault{lmss}\\def\\ttdefault{lmtt}",
+    "\\RequirePackage[TU]{fontenc}",
+    "\\def\\UTFencname{TU}",
+    "\\edef\\rt@files{\\noexpand\\in@{.cls}{\\@filelist}}\\rt@files\\ifin@\\normalsize\\fi",
+    "\\def\\cyrillicencoding{TU}\\def\\latinencoding{TU}",
+    "\\AtBeginDocument{\\def\\cyrillicencoding{TU}\\def\\latinencoding{TU}}",
+    ...(maths ? FONTSPEC_MATHS : []),
+    "\\endinput",
+    "",
+  ].join("\n");
+}
+
+/**
+ * `rt-unicode-math.sty`, loaded where unicode-math was: what loading unicode-math 0.8q loads on
+ * XeTeX (unicode-math-xetex.sty), xparse, l3keys2e, fontspec, fix-cm and amsmath, with fontspec's
+ * stand-in; and each of its symbols' commands that `symbols` names given its character in text, as
+ * unicode-math lets the command be the character at `\begin{document}` (`UNICODE_MATH_TEXT`), while
+ * mathematics keeps TeX's own fonts.
+ */
+function unicodeMathStandIn(symbols: readonly [symbol: string, command: string][]): string {
   const lines = [
     "\\NeedsTeXFormat{LaTeX2e}",
-    "\\ProvidesPackage{rt-fontspec}[2026/09/27 resume-tools: fontspec's fonts by file (decision 0023)]",
-    "\\edef\\rt@encoding{\\encodingdefault}\\def\\rt@otone{OT1}",
-    "\\ifx\\rt@encoding\\rt@otone\\renewcommand{\\encodingdefault}{TU}\\fi",
-    "\\RemoveFromHook{selectfont}[rt-preamble]",
+    "\\ProvidesPackage{rt-unicode-math}[2026/09/27 resume-tools: unicode-math's loading, mathematics in TeX's own fonts (decision 0023)]",
+    "\\RequirePackage{xparse,l3keys2e}",
+    "\\RequirePackage{rt-fontspec}",
+    "\\RequirePackage{fix-cm}",
+    "\\RequirePackage{amsmath}",
+    ...UNICODE_MATH_TEXT,
   ];
-  if (maths) lines.push(...FONTSPEC_MATHS);
-  if (symbols.length > 0) {
-    lines.push(...UNICODE_MATH_TEXT);
-    for (let at = 0; at < symbols.length; at += 6)
-      lines.push(
-        symbols
-          .slice(at, at + 6)
-          .map(([symbol, command]) => `\\rt@want{${symbol}}{${command}}`)
-          .join(""),
-      );
-    lines.push(...UNICODE_MATH_TABLE);
-  }
-  lines.push("\\endinput", "");
+  for (let at = 0; at < symbols.length; at += 6)
+    lines.push(
+      symbols
+        .slice(at, at + 6)
+        .map(([symbol, command]) => `\\rt@want{${symbol}}{${command}}`)
+        .join(""),
+    );
+  lines.push(...UNICODE_MATH_TABLE, "\\endinput", "");
   return lines.join("\n");
 }
 
@@ -807,10 +949,11 @@ function fontspecStandIn(
  * (`\__um_define_math_chars:`), so that one used in text, as Awesome-CV's example sets `\cdotp`
  * between two titles and its class `\bullet` as a list's label, sets the character in the text's
  * font. Here each such command the document names, and each of unicode-math's commands that stands
- * for one (`UNICODE_MATH_ALIASES`), sets the symbol's character in text, and in mathematics is
- * what LaTeX made it, which the stock math fonts set: the command's meaning is kept, and the
- * command becomes one that asks the mode. `\rt@want{<symbol>}{<command>}` names each, each by its
- * name, so that no command of the document's is a token here.
+ * for one (`UNICODE_MATH_ALIASES`), sets the symbol's character in text at `\begin{document}`, and
+ * in mathematics is what it was then, which the stock math fonts set: the command's meaning is
+ * kept, and the command becomes one that asks the mode. `\rt@want{<symbol>}{<command>}` names each,
+ * each by its name, so that no command of the document's is a token here; the table is read as
+ * the package loads, as unicode-math reads it, and `\rt@umchars` holds what `\begin{document}` does.
  */
 const UNICODE_MATH_TEXT = [
   "\\def\\rt@want#1#2{\\ifcsname rt@want@#1\\endcsname",
@@ -823,6 +966,7 @@ const UNICODE_MATH_TEXT = [
   "  \\protected\\xdef#1{\\noexpand\\ifmmode",
   "    \\expandafter\\noexpand\\csname rt@um@\\string#1\\endcsname",
   "    \\noexpand\\else\\char#2\\relax\\noexpand\\fi}}",
+  "\\let\\rt@umchars\\@empty",
 ];
 
 /**
@@ -858,7 +1002,10 @@ const UNICODE_MATH_ALIASES: Readonly<Record<string, string>> = {
   Digamma: "upDigamma",
 };
 
-/** Reading unicode-math's table for the commands `\rt@want` names (`UNICODE_MATH_TEXT`). */
+/**
+ * Reading unicode-math's table for the commands `\rt@want` names (`UNICODE_MATH_TEXT`): each wanted
+ * symbol's commands and character added to `\rt@umchars`, which `\begin{document}` runs.
+ */
 const UNICODE_MATH_TABLE = [
   "\\begingroup",
   "  \\def\\UnicodeMathSymbol#1#2#3#4{%",
@@ -867,11 +1014,13 @@ const UNICODE_MATH_TABLE = [
   "      \\ifin@",
   "        \\expandafter\\let\\expandafter\\rt@commands",
   "          \\csname rt@want@\\expandafter\\@gobble\\string#2\\endcsname",
-  "        \\@for\\rt@command:=\\rt@commands\\do{\\expandafter\\rt@umtext\\csname\\rt@command\\endcsname{#1}}%",
+  "        \\@for\\rt@command:=\\rt@commands\\do{\\xdef\\rt@umchars{\\unexpanded\\expandafter{\\rt@umchars}%",
+  "          \\noexpand\\rt@umtext\\expandafter\\noexpand\\csname\\rt@command\\endcsname{#1}}}%",
   "      \\fi",
   "    \\fi}",
   "  \\input{unicode-math-table.tex}",
   "\\endgroup",
+  "\\AtBeginDocument{\\rt@umchars}",
 ];
 
 /** fontspec 2.8a's `\fontspec_maybe_setup_maths:`, in LaTeX2e, as it runs at `\begin{document}`. */
@@ -973,8 +1122,10 @@ function standInHead(name: string, version: string): string[] {
 
 /**
  * A font package's family, declared through fontspec's emulation with the defaults the package
- * sets; with the command that selects it when `command` is given, only where the document names
- * that command or one of `uses`.
+ * sets: as the package's `\setsansfont` and its kin set it, where `kind` is given, the normal font
+ * selected again after it as theirs ends (`\rt@setfamily`); with the command that selects it, as
+ * its `\newfontfamily` defines one, when `command` is given, only where the document names that
+ * command or one of `uses`.
  */
 function packageFamily(
   rewriter: Rewriter,
@@ -983,15 +1134,14 @@ function packageFamily(
 ) {
   const { command, kind } = request;
   if (command !== undefined && !rewriter.mentions(command, ...(request.uses ?? []))) return;
+  const label = kind !== undefined ? `${kind}family` : command?.slice(1);
   const family = rewriter.family({
     name: request.name,
     options: request.options,
     ...(kind ? { kind } : {}),
+    ...(label ? { label } : {}),
   });
-  if (kind !== undefined)
-    lines.push(
-      `\\DeclareFontSeriesDefault[${kind}]{bf}{\\bfdefault}\\def\\${kind}default{${family}}`,
-    );
+  if (kind !== undefined) lines.push(`\\rt@setfamily{${kind}}{${family}}`);
   if (command !== undefined)
     lines.push(
       `\\NewDocumentCommand${command}{}{\\fontfamily{${family}}\\fontencoding{TU}\\selectfont}`,
@@ -1095,6 +1245,7 @@ const roboto: Translate = (rewriter, given) => {
       "2022/09/10 (Bob Tennent) Supports Roboto fonts for all LaTeX engines.",
     ),
     "\\RequirePackage{ifxetex,ifluatex,xkeyval,textcomp}",
+    rewriter.fontspecLoad(),
   ];
   rewriter.setDefaults(`Ligatures=TeX,Scale=${scale},Extension=.otf`);
   const faces = (up: string, it: string, bf: string, bfit: string) =>
@@ -1280,7 +1431,7 @@ const sourcesanspro: Translate = (rewriter, given) => {
   const boldstyle = black ? "Black" : semibold ? "Semibold" : "Bold";
   const regstyle = light ? "Light" : extralight ? "ExtraLight" : "Regular";
   const lines = standInHead("sourcesanspro", "2018/05/19 v2.7 Adobe's Source Sans Pro typeface");
-  lines.push("\\RequirePackage{ifxetex,ifluatex,xkeyval}");
+  lines.push("\\RequirePackage{ifxetex,ifluatex,xkeyval}", rewriter.fontspecLoad());
   rewriter.setDefaults(
     `Ligatures=TeX,Numbers={${figurealign},${figurestyle}},Scale=${scale},Extension=.otf`,
   );
@@ -1378,7 +1529,7 @@ const lato: Translate = (rewriter, given) => {
     "\\RequirePackage{ifxetex}",
     "\\RequirePackage{xkeyval}",
   );
-  lines.push(`\\newcommand*{\\latofamily}{lato-${width}${style}}`);
+  lines.push(`\\newcommand*{\\latofamily}{lato-${width}${style}}`, rewriter.fontspecLoad());
   // The four figure styles' families, which \lato and \latofamily select, by the names lato.sty
   // gives them, when the document names either.
   if (rewriter.mentions("\\lato", "\\latofamily")) {
@@ -1421,8 +1572,9 @@ const fontawesome: Translate = (rewriter) => {
     "\\RequirePackage{ifxetex,ifluatex}",
     "\\newcommand*{\\faicon}[1]{{\\csname faicon@#1\\endcsname}}",
     "\\input{fontawesomesymbols-generic.tex}",
+    rewriter.fontspecLoad(),
   );
-  const family = rewriter.family({ name: "FontAwesome", options: "" });
+  const family = rewriter.family({ name: "FontAwesome", options: "", label: "FA" });
   lines.push(
     `\\NewDocumentCommand\\FA{}{\\fontfamily{${family}}\\fontencoding{TU}\\selectfont}`,
     "\\input{fontawesomesymbols-xeluatex.tex}",
@@ -1551,6 +1703,7 @@ function plex(which: "sans" | "serif" | "mono"): Translate {
     const lines = [
       ...standInHead(`plex-${which}`, `2023/09/30 (Bob Tennent) Style file for ${base} fonts`),
       "\\RequirePackage{ifxetex,ifluatex,xkeyval,textcomp}",
+      rewriter.fontspecLoad(),
     ];
     rewriter.setDefaults(`Ligatures=TeX,Scale=${scale},Extension=.otf`);
     const name = which === "sans" && condensed ? "IBMPlexSansCondensed" : base;

@@ -41,6 +41,7 @@ import {
   type LABELLED_ITEM_SLOTS,
   type LINK_SLOTS,
   type SECTION_SLOTS,
+  shapeAdjust,
   shapeFeatures,
   shapeFile,
   type TemplatePackage,
@@ -176,8 +177,9 @@ export function generateFormat(pkg: TemplatePackage, values: ControlValues): Gen
  * with `\DeclareFontShape{TU}{<family>}{<series>}{<shape>}{<->"[<file>]:<features>"}{}`, or
  * `[<file>]` alone for a shape without features. A shape's features are its family's and its own
  * (`shapeFeatures`, decision 0023); a family's scale goes before the name, `<->s*[<scale>]`, and
- * what fontspec did to a font as it loaded it (`FontAdjust`) in the declaration's last argument,
- * which NFSS runs once the font is loaded. XeTeX finds the file by its name through kpathsea, and
+ * what fontspec did to a font as it loaded it (`FontAdjust`, the shape's own or its family's,
+ * `shapeAdjust`) in the declaration's last argument, which NFSS runs once the font is loaded.
+ * XeTeX finds the file by its name through kpathsea, and
  * loads nothing until a shape is selected, so the format they are dumped in holds no native font
  * and dumps; a template selects them in the body, as its preamble's
  * `\renewcommand{\rmdefault}{<family>}` does at `\begin{document}`. In the families' and shapes'
@@ -188,12 +190,12 @@ export function fontDeclarations(fonts: readonly FontFamily[]): string {
   for (const family of fonts) {
     lines.push(`\\DeclareFontFamily{TU}{${family.family}}{}`);
     const size = family.scale === undefined ? "<->" : `<->s*[${texDecimal(family.scale)}]`;
-    const adjust = adjustCode(family.adjust);
     for (const [key, shape] of Object.entries(family.shapes)) {
       const [series, shapeName] = key.split("/");
       const features = shapeFeatures(family, shape);
       const file = shapeFile(shape);
       const name = features === undefined ? `[${file}]` : `[${file}]:${features}`;
+      const adjust = adjustCode(shapeAdjust(family, shape));
       lines.push(
         `\\DeclareFontShape{TU}{${family.family}}{${series}}{${shapeName}}{${size}"${name}"}{${adjust}}`,
       );
@@ -204,11 +206,14 @@ export function fontDeclarations(fonts: readonly FontFamily[]): string {
 
 /**
  * A number as TeX reads a decimal: its digits, and at most five places, which is past the 2^-16
- * TeX keeps of a factor; never an exponent, which TeX cannot read.
+ * TeX keeps of a factor; never an exponent, which TeX cannot read. A number TeX cannot read as a
+ * factor at all, one not finite or of 16,384 or more, as no dimension of TeX's is, throws: the
+ * package's schema refuses such a value before it comes here (decision 0023).
  */
 export function texDecimal(value: number): string {
-  if (Number.isInteger(value)) return String(value);
-  const fixed = value.toFixed(5).replace(/0+$/, "").replace(/\.$/, "");
+  if (!Number.isFinite(value) || Math.abs(value) >= 16_384)
+    throw new RangeError(`${value} is no decimal TeX reads as a factor`);
+  const fixed = value.toFixed(5).replace(/\.?0+$/, "");
   return fixed === "-0" ? "0" : fixed;
 }
 

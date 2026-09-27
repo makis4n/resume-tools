@@ -5,6 +5,7 @@ import {
   FontIndex,
   familyFor,
   fileKeyOf,
+  fontKey,
   htmlColour,
   initialDefaults,
   keyVals,
@@ -97,20 +98,54 @@ describe("fontspec's options", () => {
     expect(unbrace("{a}{b}")).toBe("{a}{b}");
   });
 
-  it("keeps \\defaultfontfeatures for every font, a kind of family and a font, adding with +", () => {
+  it("keeps \\defaultfontfeatures for every font, a family's command and a font, adding with +", () => {
     const defaults = initialDefaults();
     setDefaults(defaults, false, undefined, "Numbers=OldStyle");
     setDefaults(defaults, true, undefined, "Color=00FF00");
     setDefaults(defaults, true, "\\rmfamily, Quire Sans", "Letters=SmallCaps");
+    setDefaults(defaults, false, "\\headingfont,QuireSans-Light.otf", "Numbers=Lining");
     expect(defaults.all).toEqual([
       { key: "Numbers", value: "OldStyle" },
       { key: "Color", value: "00FF00" },
     ]);
-    expect(defaults.kinds.rm.map((each) => each.key)).toEqual(["Ligatures", "Letters"]);
-    expect(defaults.fonts.get("QuireSans")).toEqual([{ key: "Letters", value: "SmallCaps" }]);
+    expect(defaults.labels.get("rmfamily")?.map((each) => each.key)).toEqual([
+      "Ligatures",
+      "Letters",
+    ]);
+    // A font's name keeps its spaces, as fontspec compares it, and loses its extension.
+    expect(defaults.fonts.get("Quire Sans")).toEqual([{ key: "Letters", value: "SmallCaps" }]);
+    expect(defaults.fonts.get("QuireSans")).toBeUndefined();
+    expect(defaults.fonts.get("QuireSans-Light")).toEqual([{ key: "Numbers", value: "Lining" }]);
+    // A command that is not a family command keys the family \newfontfamily defines with it.
+    expect(defaults.labels.get("headingfont")).toEqual([{ key: "Numbers", value: "Lining" }]);
     // Without the +, a family's defaults are replaced.
     setDefaults(defaults, false, "\\rmfamily", "Numbers=Lining");
-    expect(defaults.kinds.rm).toEqual([{ key: "Numbers", value: "Lining" }]);
+    expect(defaults.labels.get("rmfamily")).toEqual([{ key: "Numbers", value: "Lining" }]);
+    expect(fontKey("Quire Sans.otf")).toBe("Quire Sans");
+  });
+
+  it("gives a family the defaults of its command's label and of its font's name, as fontspec", () => {
+    const defaults = initialDefaults();
+    setDefaults(defaults, false, "\\headingfont", "Numbers=OldStyle");
+    setDefaults(defaults, false, "Quire Sans", "Letters=SmallCaps");
+    const heading = familyFor(
+      { name: "QuireSans-Light", options: "Extension=.otf", label: "headingfont" },
+      defaults,
+      index,
+      new Map(),
+    );
+    expect(shapes(heading)["m/n"]).toBe(`QuireSans-Light.otf ${LATIN};+onum`);
+    // A font of the same family under another name, or a family of another label, has none.
+    const other = familyFor(
+      { name: "QuireSans-Light", options: "Extension=.otf", label: "otherfont" },
+      defaults,
+      index,
+      new Map(),
+    );
+    expect(shapes(other)["m/n"]).toBe(`QuireSans-Light.otf ${LATIN}`);
+    expect(
+      shapes(familyFor({ name: "Quire Sans", options: "" }, defaults, index, new Map()))["m/n"],
+    ).toBe(`QuireSans-Regular.otf ${LATIN};+smcp`);
   });
 
   it("reads an xcolor colour as fontspec converts it to HTML", () => {
@@ -250,7 +285,21 @@ describe("familyFor, as fontspec declares a family", () => {
     expect([...spec.kinds].sort()).toEqual(["hyphenchar", "punctuationspace", "smcp", "wordspace"]);
   });
 
-  it("refuses what it cannot reproduce, naming the font or the feature", () => {
+  it("writes a colour unless it is fontspec's default black, whose opacity was never set", () => {
+    const colour = (options: string) => shapes(family("Quire Sans", options))["m/n"];
+    expect(colour("Color=black")).toBe(`QuireSans-Regular.otf ${LATIN}`);
+    expect(colour("Color=000000")).toBe(`QuireSans-Regular.otf ${LATIN}`);
+    expect(colour("Color=red,Color=black")).toBe(`QuireSans-Regular.otf ${LATIN}`);
+    // An opacity given, a full one too, writes it, as fontspec's comparison has it.
+    expect(colour("Color=000000FF")).toBe(`QuireSans-Regular.otf ${LATIN};color=000000FF`);
+    expect(colour("Opacity=0.5")).toBe(`QuireSans-Regular.otf ${LATIN};color=0000007F`);
+    expect(colour("Color=1f4e79")).toBe(`QuireSans-Regular.otf ${LATIN};color=1F4E79`);
+    const black = family("Quire Sans", "Color=black");
+    if ("unreproducible" in black) throw new Error(black.name);
+    expect(black.kinds.has("color")).toBe(false);
+  });
+
+  it("refuses what it cannot reproduce, naming the font as given or the option by its key", () => {
     const refused = (name: string, options = "") => family(name, options);
     expect(refused("Quire Serif")).toEqual({ unreproducible: "font", name: "Quire Serif" });
     expect(refused("\\myfont")).toEqual({ unreproducible: "font", name: "\\myfont" });
@@ -259,18 +308,20 @@ describe("familyFor, as fontspec declares a family", () => {
       name: "Quire Serif Bold",
     });
     for (const [options, name] of [
-      ["Scale=MatchLowercase", "Scale=MatchLowercase"],
-      ["Numbers=Roman", "Numbers=Roman"],
+      ["Scale=MatchLowercase", "Scale"],
+      ["Numbers=Roman", "Numbers"],
       ["Frobnicate=Yes", "Frobnicate"],
-      ["Renderer=AAT", "Renderer=AAT"],
-      ["Script=Greek", "Script=Greek"],
-      ["Language=Turkish", "Language=Turkish"],
-      ["Mapping=tex-ansi", "Mapping=tex-ansi"],
-      ["RawFeature={+smcp=2}", "RawFeature=+smcp=2"],
-      ["Color=\\accent", "Color=\\accent"],
+      ["Renderer=AAT", "Renderer"],
+      ["Script=Greek", "Script"],
+      ["Language=Turkish", "Language"],
+      ["Mapping=tex-ansi", "Mapping"],
+      ["RawFeature={+smcp=2}", "RawFeature"],
+      ["Color=\\accent", "Color"],
+      ["WordSpace={1,2}", "WordSpace"],
+      ["LetterSpace=\\myspace", "LetterSpace"],
       ["SizeFeatures={{Size=-10}}", "SizeFeatures"],
     ])
-      expect(refused("Quire Sans", options), options).toEqual({ unreproducible: "feature", name });
+      expect(refused("Quire Sans", options), options).toEqual({ unreproducible: "option", name });
     // A raw feature a plain + or - makes is taken as it is.
     expect(shapes(family("Quire Sans", "RawFeature={+zero;-kern}"))["m/n"]).toBe(
       `QuireSans-Regular.otf ${LATIN};+zero;-kern`,

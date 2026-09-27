@@ -13,9 +13,10 @@
  *   `Path`, `Extension` or a file's extension ask for, is the tree's file of that name, or, for a
  *   name the tree has no file of, the font whose PostScript name it is, as Adobe's older
  *   `SourceSansPro-It` is `SourceSansPro-RegularIt.otf`: a zip's own copy is never kept.
- * - A family's options are fontspec's defaults, `\defaultfontfeatures` and those for its kind,
- *   `Ligatures=TeX` for the main and sans families and the mono family's spaces, then the command's
- *   own; its bold, italic and bold italic are what XeTeX gives for `/B`, `/I` and `/BI` when they
+ * - A family's options are fontspec's defaults, `\defaultfontfeatures` for every font, then for
+ *   the command that sets the family, `Ligatures=TeX` for the main and sans families and the mono
+ *   family's spaces among them, then for its font's name, then the command's own; its bold,
+ *   italic and bold italic are what XeTeX gives for `/B`, `/I` and `/BI` when they
  *   are other faces and no option names them; and each face is declared as fontspec declares it:
  *   `m/n`, `b/n`, `m/it` and `b/it`, the slanted shapes as the italic ones, `bx` as `b` but for
  *   `bx/sc`, which is the bold upright as fontspec has it, and a face's small capitals, `sc` or
@@ -23,14 +24,16 @@
  * - A face's features are `script=latn;language=dflt`, or `DFLT` for a font without Latin, then
  *   fontspec's keys, `LetterSpace`, `FakeBold`, `FakeSlant` and `FakeStretch`, then the OpenType
  *   ones, `Numbers`, `Letters`, `Ligatures` and the rest, each only where the font has the feature
- *   and each taking out what it clashes with, then the mapping and the colour; `Scale` is the
- *   declaration's scale, and `WordSpace`, `PunctuationSpace` and `HyphenChar` what the declaration
- *   does to the font as it loads it (`FontAdjust`).
+ *   and each taking out what it clashes with, then the mapping and the colour, unless it is
+ *   fontspec's default black; `Scale` is the declaration's scale, and `WordSpace`,
+ *   `PunctuationSpace` and `HyphenChar` what the declaration does to the font as it loads it
+ *   (`FontAdjust`), a face's own where its features set them.
  *
- * What it cannot reproduce it refuses, naming the font or the feature: a font the tree does not
- * have, an option it does not know, `Scale=MatchLowercase`, a renderer other than OpenType, a
- * script or language other than the default, a mapping other than `tex-text`, a raw feature other
- * than a plain `+tag` or `-tag`, and a value only TeX could read, such as a macro's.
+ * What it cannot reproduce it refuses, naming the font as the document named it, or the option by
+ * its key alone: a font the tree does not have, an option it does not know, `Scale=MatchLowercase`,
+ * a renderer other than OpenType, a script or language other than the default, a mapping other than
+ * `tex-text`, a raw feature other than a plain `+tag` or `-tag`, and a value only TeX could read,
+ * such as a macro's.
  *
  * It is pure, as the rest of `src/import/` is, and imports only types, so that Node's scripts load
  * it as it stands.
@@ -278,13 +281,22 @@ function bestMatch(family: Family, weight: number, width: number, slant: number)
 /** The families fontspec keeps defaults for besides every font's: the main, sans and mono ones. */
 export type FamilyKind = "rm" | "sf" | "tt";
 
-/** What `\defaultfontfeatures` has set so far. */
+/**
+ * What `\defaultfontfeatures` has set so far. fontspec keeps a family's defaults under the label of
+ * the command that sets the family, `\rmfamily`'s for `\setmainfont`, `\headingfont`'s for
+ * `\newfontfamily\headingfont`, and a font's under its name, and gives a family the defaults of its
+ * label and of its font's name.
+ */
 export interface Defaults {
   /** Every font's, `\defaultfontfeatures{...}`. */
   all: KeyVal[];
-  /** A kind of family's, `\defaultfontfeatures[\rmfamily]{...}`, fontspec.cfg's first. */
-  kinds: Record<FamilyKind, KeyVal[]>;
-  /** A font's by its name, spaces taken out, `\defaultfontfeatures[Roboto]{...}`. */
+  /**
+   * A family's, by its command's name: `rmfamily`, `sffamily` and `ttfamily` for the main, sans and
+   * mono families, fontspec.cfg's first, and a `\newfontfamily` command's own,
+   * `\defaultfontfeatures[\headingfont]{...}`.
+   */
+  labels: Map<string, KeyVal[]>;
+  /** A font's, by its name as fontspec compares it (`fontKey`), `\defaultfontfeatures[Roboto]{...}`. */
   fonts: Map<string, KeyVal[]>;
 }
 
@@ -292,57 +304,93 @@ export interface Defaults {
 export function initialDefaults(): Defaults {
   return {
     all: [],
-    kinds: {
-      rm: [{ key: "Ligatures", value: "TeX" }],
-      sf: [{ key: "Ligatures", value: "TeX" }],
-      tt: [
-        { key: "WordSpace", value: "1,0,0" },
-        { key: "HyphenChar", value: "None" },
-        { key: "PunctuationSpace", value: "WordSpace" },
+    labels: new Map([
+      ["rmfamily", [{ key: "Ligatures", value: "TeX" }]],
+      ["sffamily", [{ key: "Ligatures", value: "TeX" }]],
+      [
+        "ttfamily",
+        [
+          { key: "WordSpace", value: "1,0,0" },
+          { key: "HyphenChar", value: "None" },
+          { key: "PunctuationSpace", value: "WordSpace" },
+        ],
       ],
-    },
+    ]),
     fonts: new Map(),
   };
 }
 
+/** fontspec's font extensions, in the order it looks for one in a name (`\DeclareFontExtensions`). */
+const EXTENSIONS = [".otf", ".ttf", ".OTF", ".TTF", ".ttc", ".TTC", ".dfont"];
+
+/**
+ * A font's name as fontspec keeps defaults under it and looks them up (`\__fontspec_sanitise_fontname:Nn`):
+ * as given, spaces and all, with the first of its extensions the name holds taken out once.
+ */
+export function fontKey(name: string): string {
+  const extension = EXTENSIONS.find((each) => name.includes(each));
+  return extension === undefined ? name : name.replace(extension, "");
+}
+
+/**
+ * The most options `\defaultfontfeatures` may keep for every font, or for one family or font: a
+ * document sets a few, and every family a command declares reads all that apply to it, so that
+ * more, as `\defaultfontfeatures+` repeated would pile up, would make the rewrite's time grow as
+ * their number times the families'.
+ */
+export const MAX_DEFAULTS = 256;
+
 /**
  * `\defaultfontfeatures`, with a `+` or not, for every font or for the families and fonts it
- * names: each takes the options in place of what it had, or after them with the `+`.
+ * names: each takes the options in place of what it had, or after them with the `+`. A target that
+ * is a command names the family that command sets, `\rmfamily` the main family's and
+ * `\headingfont` the one `\newfontfamily\headingfont` sets; any other names a font. False when
+ * they would hold more than MAX_DEFAULTS options for one, which the rewrite refuses.
  */
 export function setDefaults(
   defaults: Defaults,
   plus: boolean,
   targets: string | undefined,
   options: string,
-): void {
+): boolean {
   const given = keyVals(options);
   const set = (had: KeyVal[]) => (plus ? [...had, ...given] : given);
   if (targets === undefined) {
-    defaults.all = set(defaults.all);
-    return;
+    const all = set(defaults.all);
+    if (all.length > MAX_DEFAULTS) return false;
+    defaults.all = all;
+    return true;
   }
   for (const target of splitList(targets)) {
-    const kind = /^\\(rm|sf|tt)family$/.exec(target)?.[1] as FamilyKind | undefined;
-    if (kind !== undefined) defaults.kinds[kind] = set(defaults.kinds[kind]);
-    else {
-      const name = target.replace(/\s+/g, "");
-      defaults.fonts.set(name, set(defaults.fonts.get(name) ?? []));
-    }
+    const label = /^\\([A-Za-z@]+)$/.exec(target)?.[1];
+    const [table, key] =
+      label === undefined ? [defaults.fonts, fontKey(target)] : [defaults.labels, label];
+    const list = set(table.get(key) ?? []);
+    if (list.length > MAX_DEFAULTS) return false;
+    table.set(key, list);
   }
+  return true;
 }
 
 // A family.
 
-/** A font a fontspec command asks for: its name, its own options, and its kind of family. */
+/**
+ * A font a fontspec command asks for: its name, its own options, its kind of family, and the label
+ * its defaults are kept under (`Defaults.labels`), the kind's family command's by default.
+ */
 export interface FontRequest {
   name: string;
   options: string;
   kind?: FamilyKind;
+  label?: string;
 }
 
-/** Why a family cannot be reproduced: a font the tree lacks, or a feature, each by its name. */
+/**
+ * Why a family cannot be reproduced: a font the tree lacks, by the name the document gave it, or
+ * one of fontspec's options, by its key alone.
+ */
 export interface Unreproducible {
-  unreproducible: "font" | "feature";
+  unreproducible: "font" | "option";
   name: string;
 }
 
@@ -400,6 +448,9 @@ const PREPARSE_KEYS = new Set([
 /** A value that only TeX could read: a macro, a parameter or a group left in it. */
 const byTeX = (value: string) => /[\\#{}]/.test(value);
 
+/** The longest name a face may have once its `*` stand for the font's: none of the tree's is near. */
+const MAX_FACE_NAME = 1024;
+
 /** The file extensions that make fontspec take a name for a file's. */
 const EXTERNAL = /\.(?:otf|ttf|ttc|otc|pfb|pfa)$/i;
 
@@ -414,11 +465,12 @@ export function familyFor(
   colours: ReadonlyMap<string, string>,
 ): FamilySpec | Unreproducible {
   const name = request.name.trim();
-  if (name === "" || byTeX(name)) return { unreproducible: "font", name: name || "(no name)" };
+  if (name === "" || byTeX(name)) return { unreproducible: "font", name };
+  const label = request.label ?? (request.kind === undefined ? undefined : `${request.kind}family`);
   const all: KeyVal[] = [
     ...defaults.all,
-    ...(request.kind === undefined ? [] : defaults.kinds[request.kind]),
-    ...(defaults.fonts.get(name.replace(/\s+/g, "")) ?? []),
+    ...(label === undefined ? [] : (defaults.labels.get(label) ?? [])),
+    ...(defaults.fonts.get(fontKey(name)) ?? []),
     ...keyVals(request.options),
   ];
   const value = (key: string) => {
@@ -430,15 +482,18 @@ export function familyFor(
     value("Path") !== undefined || value("Extension") !== undefined || EXTERNAL.test(name);
   const extension = value("Extension");
   if (extension !== undefined && byTeX(extension))
-    return { unreproducible: "feature", name: "Extension" };
+    return { unreproducible: "option", name: "Extension" };
   const renderer = value("Renderer");
   if (renderer !== undefined && !/^(?:OpenType|HarfBuzz|ICU|Harfbuzz)$/.test(renderer))
-    return { unreproducible: "feature", name: `Renderer=${renderer}` };
+    return { unreproducible: "option", name: "Renderer" };
   for (const key of ["SizeFeatures", "OpticalSize", "Weight", "Width", "ScaleAgain"])
-    if (value(key) !== undefined) return { unreproducible: "feature", name: key };
+    if (value(key) !== undefined) return { unreproducible: "option", name: key };
 
-  // The faces and their names, `*` as the font's name.
-  const star = (face: string) => face.replaceAll("*", name).trim();
+  // The faces and their names, `*` as the font's name; one that would be longer than any font's
+  // name is none of the tree's, and is not made, since stars could make it a square of the text.
+  const starred = (face: string) => face.length + (face.split("*").length - 1) * name.length;
+  const star = (face: string) =>
+    starred(face) > MAX_FACE_NAME ? face : face.replaceAll("*", name).trim();
   const faces = new Map<string, { name: string; features: KeyVal[] }>();
   const none = new Set<string>();
   for (const { key, value: given } of all) {
@@ -524,13 +579,13 @@ export function familyFor(
   for (const { key, value: given } of all) {
     if (key !== "FontFace" || given === undefined) continue;
     const parts = /^\{([a-z]+)\}\s*\{([a-z]+)\}\s*\{([\s\S]*)\}$/.exec(given.trim());
-    if (!parts) return { unreproducible: "feature", name: "FontFace" };
+    if (!parts) return { unreproducible: "option", name: "FontFace" };
     const [, series, shape, spec = ""] = parts;
     const items = keyVals(spec);
     const font = items.find((each) => each.key === "Font")?.value;
     const face =
       font ?? (items.length === 1 && items[0]?.value === undefined ? items[0]?.key : undefined);
-    if (face === undefined) return { unreproducible: "feature", name: "FontFace" };
+    if (face === undefined) return { unreproducible: "option", name: "FontFace" };
     faces.set(`${series}/${shape}`, {
       name: star(face),
       features: items.filter((each) => each.key !== "Font" && each.value !== undefined),
@@ -553,7 +608,7 @@ export function familyFor(
       : undefined;
   const scale = value("Scale");
   if (scale !== undefined && !/^\d*\.?\d+$/.test(scale))
-    return { unreproducible: "feature", name: `Scale=${scale}` };
+    return { unreproducible: "option", name: "Scale" };
   const smallCapsName = value("SmallCapsFont");
   const smallCapsFeatures = keyVals(value("SmallCapsFeatures") ?? "");
   const noSmallCaps = smallCapsName === "";
@@ -790,7 +845,7 @@ function featuresOf(
     if (fontspecFeature !== undefined) {
       const amount = value === undefined || value === "" ? fontspecFeature.otherwise : value;
       if (amount === undefined || !/^-?\d*\.?\d+$/.test(amount))
-        return { unreproducible: "feature", name: `${key}=${value ?? ""}` };
+        return { unreproducible: "option", name: key };
       update(`${fontspecFeature.feature}=${amount}`);
       kinds.add(fontspecFeature.feature);
       continue;
@@ -799,21 +854,19 @@ function featuresOf(
       case "Color":
       case "Colour": {
         const hex = colourOf(value ?? "", colours);
-        if (hex === undefined) return { unreproducible: "feature", name: `Color=${value ?? ""}` };
+        if (hex === undefined) return { unreproducible: "option", name: key };
         colour = hex.slice(0, 6);
         if (hex.length === 8) opacity = hex.slice(6);
-        kinds.add("color");
         break;
       }
       case "Opacity": {
         const amount = Number(value);
         if (!Number.isFinite(amount) || amount < 0 || amount > 1)
-          return { unreproducible: "feature", name: `Opacity=${value ?? ""}` };
+          return { unreproducible: "option", name: key };
         opacity = Math.trunc(255 * amount)
           .toString(16)
           .toUpperCase()
           .padStart(2, "0");
-        kinds.add("color");
         break;
       }
       case "WordSpace": {
@@ -822,7 +875,7 @@ function featuresOf(
           !(factors.length === 1 || factors.length === 3) ||
           factors.some((f) => !Number.isFinite(f))
         )
-          return { unreproducible: "feature", name: `WordSpace=${value ?? ""}` };
+          return { unreproducible: "option", name: key };
         const [space = 1, stretch = space, shrink = space] =
           factors.length === 1 ? [factors[0], factors[0], factors[0]] : factors;
         adjust.wordSpace = [space, stretch, shrink];
@@ -834,7 +887,7 @@ function featuresOf(
         else if (value === "TwiceWordSpace") adjust.punctuationSpace = { factor: 1, of: "space" };
         else if (value !== undefined && /^-?\d*\.?\d+$/.test(value))
           adjust.punctuationSpace = { factor: Number(value), of: "punctuation" };
-        else return { unreproducible: "feature", name: `PunctuationSpace=${value ?? ""}` };
+        else return { unreproducible: "option", name: key };
         kinds.add("punctuationspace");
         break;
       }
@@ -845,17 +898,16 @@ function featuresOf(
         else if (value !== undefined && /^"[0-9A-Fa-f]{1,6}$/.test(value))
           adjust.hyphenChar = Number.parseInt(value.slice(1), 16);
         else if (value !== undefined && /^\d+$/.test(value)) adjust.hyphenChar = Number(value);
-        else return { unreproducible: "feature", name: `HyphenChar=${value ?? ""}` };
+        else return { unreproducible: "option", name: key };
         kinds.add("hyphenchar");
         break;
       }
       case "Script":
         if (value !== "Latin" && value !== "Default" && value !== "CustomDefault")
-          return { unreproducible: "feature", name: `Script=${value ?? ""}` };
+          return { unreproducible: "option", name: key };
         break;
       case "Language":
-        if (value !== "Default")
-          return { unreproducible: "feature", name: `Language=${value ?? ""}` };
+        if (value !== "Default") return { unreproducible: "option", name: key };
         break;
       default:
         opentype.push({ key, ...(value === undefined ? {} : { value }) });
@@ -863,8 +915,7 @@ function featuresOf(
   }
   for (const { key, value } of opentype) {
     if (key === "Mapping") {
-      if (value !== "tex-text")
-        return { unreproducible: "feature", name: `Mapping=${value ?? ""}` };
+      if (value !== "tex-text") return { unreproducible: "option", name: key };
       mapping = value;
       continue;
     }
@@ -873,8 +924,7 @@ function featuresOf(
         .split(";")
         .map((each) => each.trim())
         .filter(Boolean)) {
-        if (!/^[+-][A-Za-z0-9]{4}$/.test(setting))
-          return { unreproducible: "feature", name: `RawFeature=${setting}` };
+        if (!/^[+-][A-Za-z0-9]{4}$/.test(setting)) return { unreproducible: "option", name: key };
         update(setting);
         kinds.add(setting.slice(1));
       }
@@ -884,7 +934,7 @@ function featuresOf(
       for (const each of splitList(value ?? "")) {
         const number = Number(each);
         if (!Number.isInteger(number) || number < 1 || number > 99)
-          return { unreproducible: "feature", name: `${key}=${each}` };
+          return { unreproducible: "option", name: key };
         const tag = `${key === "StylisticSet" ? "ss" : "cv"}${String(number).padStart(2, "0")}`;
         if (has(tag)) update(`+${tag}`);
         kinds.add(tag);
@@ -892,7 +942,7 @@ function featuresOf(
       continue;
     }
     const table = OPENTYPE[key];
-    if (table === undefined) return { unreproducible: "feature", name: key };
+    if (table === undefined) return { unreproducible: "option", name: key };
     for (const choice of splitList(value ?? "")) {
       if (key === "Ligatures" && choice === "TeX") {
         mapping = "tex-text";
@@ -904,7 +954,7 @@ function featuresOf(
         continue;
       }
       const option = table[choice];
-      if (option === undefined) return { unreproducible: "feature", name: `${key}=${choice}` };
+      if (option === undefined) return { unreproducible: "option", name: key };
       if (option.set === undefined) {
         raw = raw.filter((each) => !option.clashes.includes(each));
         continue;
@@ -917,16 +967,18 @@ function featuresOf(
       if (option.tag !== undefined) kinds.add(option.tag);
     }
   }
+  // fontspec writes the colour unless it is its default, black with the opacity never set: an
+  // opacity given, even a full one, as an eight-digit colour's is, writes it.
+  const coloured = (colour !== undefined && colour !== "000000") || opacity !== undefined;
   const features = [
     ...(script === undefined ? [] : [`script=${script}`]),
     "language=dflt",
     ...raw,
     ...(mapping === undefined ? [] : [`mapping=${mapping}`]),
-    ...(colour === undefined && opacity === undefined
-      ? []
-      : [`color=${colour ?? "000000"}${opacity ?? ""}`]),
+    ...(coloured ? [`color=${colour ?? "000000"}${opacity ?? ""}`] : []),
   ];
   if (mapping !== undefined) kinds.add("mapping");
+  if (coloured) kinds.add("color");
   return {
     features,
     ...(Object.keys(adjust).length === 0 ? {} : { adjust }),
