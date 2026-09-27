@@ -1,5 +1,8 @@
 {
   "name": "@resume-tools/contracts",
   "private": true,
-  "version": "0.0.1"
+  "version": "0.0.1",
+  "exports": {
+    "./ats/v1/*.json": "./ats/v1/*.json"
+  }
 }
