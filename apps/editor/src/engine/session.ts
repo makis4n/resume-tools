@@ -216,6 +216,13 @@ export interface StartResult {
 export interface RunResult {
   code: number;
   ms: number;
+  /**
+   * The CPU time of the thread that ran the program, in milliseconds, over its run alone: not
+   * what the thread waited for while other work ran, nor the heap's reset after the run, which
+   * `ms` counts. Node gives it (`threadCpuMs`); the browser's worker, which has no `process`,
+   * does not.
+   */
+  cpuMs?: number;
   /** What the program printed to the terminal. */
   output: string;
 }
@@ -237,6 +244,12 @@ export interface CompileResult {
   pages: number;
   /** How long each pass took, in milliseconds, including a retry as a new document. */
   passes: number[];
+  /**
+   * Each of `passes` in the CPU time of the thread that ran it (`RunResult.cpuMs`), when every
+   * pass has it, as in Node, and not in the browser's worker. What a timing test bounds, since
+   * load that comes in bursts slows one pass and not the next in elapsed time.
+   */
+  cpuPasses?: number[];
   log: string;
   error?: string;
   errorLine?: number;
@@ -454,6 +467,19 @@ function fontFoldersOf(manifest: EngineManifest): string[] {
 /** What an error thrown says, for a result's `error`. */
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/**
+ * The CPU time the calling thread has spent, in milliseconds, where the platform says: Node's
+ * `process.threadCpuUsage`, as the tests' timing reads it (`src/test/timing.ts`). The browser's
+ * worker has no `process`, so none there; nothing of Node's is imported, so the worker's build
+ * stays free of it.
+ */
+function threadCpuMs(): number | undefined {
+  if (typeof process === "undefined" || typeof process.threadCpuUsage !== "function")
+    return undefined;
+  const { user, system } = process.threadCpuUsage();
+  return (user + system) / 1000;
+}
+
 /** The end of every file `dump` runs, which dumps the format. */
 const DUMP = "\n\\dump\n";
 
@@ -617,9 +643,13 @@ export class EngineSession {
     this.printed.length = 0;
     fs.chdir(cwd);
     const started = performance.now();
+    const cpuStarted = threadCpuMs();
     let code: number;
+    let cpuMs: number | undefined;
     try {
       code = this.engine.callMain([...args]); // callMain changes the array it is given
+      const cpuEnded = threadCpuMs();
+      if (cpuStarted !== undefined && cpuEnded !== undefined) cpuMs = cpuEnded - cpuStarted;
       this.engine._flush_streams();
     } finally {
       // Put the engine back as start-up left it, even when the run threw.
@@ -631,7 +661,12 @@ export class EngineSession {
       fs.chdir(HOME);
       this.afterRun?.();
     }
-    return { code, ms: performance.now() - started, output: this.printed.join("\n") };
+    return {
+      code,
+      ms: performance.now() - started,
+      ...(cpuMs === undefined ? {} : { cpuMs }),
+      output: this.printed.join("\n"),
+    };
   }
 
   /**
@@ -767,7 +802,11 @@ export class EngineSession {
       if (!attempt.ok && !attempt.fresh && left > 0) {
         this.clearFolder(job);
         const again = this.passes(spec, formatPath, job, body, left, fonts, onChange);
+        const cpu = attempt.cpuPasses;
         attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
+        // In CPU time only when both attempts' passes are.
+        if (cpu === undefined || again.cpuPasses === undefined) delete attempt.cpuPasses;
+        else attempt.cpuPasses = [...cpu, ...again.cpuPasses];
       }
     } finally {
       // The session's default again: the next compile of the job scans no folder.
@@ -934,6 +973,8 @@ export class EngineSession {
     if (fonts !== undefined) this.engine.FS.writeFile(`${folder}/${FONTCONFIG_FILE}`, fonts);
     const fresh = !this.engine.FS.analyzePath(at("aux")).exists;
     const passes: number[] = [];
+    // The passes in CPU time, while every pass has it.
+    let cpuPasses: number[] | undefined = [];
     let run: RunResult;
     let log: string;
     for (;;) {
@@ -943,6 +984,8 @@ export class EngineSession {
       const before = onChange ? this.contentsOf(folder) : undefined;
       run = this.run([spec.program, ...spec.args, "--fmt", formatPath, `${job}.tex`], folder);
       passes.push(run.ms);
+      if (run.cpuMs === undefined) cpuPasses = undefined;
+      else cpuPasses?.push(run.cpuMs);
       log = this.read(at("log"), "utf8") ?? "";
       // Only a pass that shipped pages is worth another: one that failed, or that TeX finished
       // with nothing to ship, would do the same again.
@@ -967,6 +1010,7 @@ export class EngineSession {
       output,
       pages: summary.pages,
       passes,
+      ...(cpuPasses === undefined ? {} : { cpuPasses }),
       log,
       error: ok ? undefined : failure,
       errorLine: ok ? undefined : summary.errorLine,

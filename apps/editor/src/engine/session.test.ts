@@ -187,6 +187,24 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     expect(second.passes.length).toBe(1);
   }, 30_000);
 
+  it("times each pass in the CPU time of the thread that runs it, too, no more than it took", () => {
+    // Node gives the thread's CPU time over TeX's run, which leaves out what the thread waits
+    // for while other work runs, and the heap's reset after it, which the elapsed time counts.
+    session.dump("pdftex", "timed", PREAMBLE);
+    const timed = (body: string) => {
+      const compiled = session.compile("pdftex", "timed", body, { job: "timed" });
+      expect(compiled.cpuPasses).toHaveLength(compiled.passes.length);
+      compiled.cpuPasses?.forEach((cpu, i) => {
+        expect(cpu).toBeGreaterThanOrEqual(0);
+        expect(cpu).toBeLessThanOrEqual(compiled.passes[i] ?? 0);
+      });
+      return compiled.passes.length;
+    };
+    // A new document's two passes; then a failed edit's, and its retry as a new document.
+    expect(timed("\\begin{document}x\\end{document}")).toBe(2);
+    expect(timed("\\begin{document}\\nosuchmacro\\end{document}")).toBe(2);
+  }, 30_000);
+
   it("passes again, when asked, while a pass changes a file of the job's folder", () => {
     // A table of contents a pass rewrites is set by the next pass alone, and LaTeX's log never
     // asks for it.

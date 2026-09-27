@@ -552,17 +552,25 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
         });
 
       it("compiles in good time, a new document, an edit and a control alike, and says how long", () => {
-        const { format, passes, pages, fields } = report();
-        const timings = passes.map((ms) => `${Math.round(ms)} ms`).join(", ");
-        console.log(`${id}: format ${format}; passes ${timings}; pages ${pages}; fields ${fields}`);
+        const { format, passes, cpuPasses, pages, fields } = report();
+        const timings = (each: readonly number[] | undefined) =>
+          each === undefined ? "none" : each.map((ms) => `${Math.round(ms)} ms`).join(", ");
+        console.log(
+          `${id}: format ${format}; passes ${timings(passes)}; in CPU time ${timings(cpuPasses)}; pages ${pages}; fields ${fields}`,
+        );
         // The first pass is a new document's, and each after the same body's second compile is
         // the edit's or a control's, as every edit and every change of a control costs. Each is
         // bounded against the fastest pass of the same report, not against the clock: a
-        // pathological slowdown of one pass fails CI, while a loaded runner, which slows every
-        // pass alike, does not (the rule since #36 is a ratio, never a wall-clock number).
+        // pathological slowdown of one pass fails CI, while a loaded runner does not (the rule
+        // since #36 is a ratio, never a wall-clock number). The passes are bounded in the CPU time
+        // of the thread that ran them, where the session gives it (`src/test/timing.ts`): load
+        // that comes in bursts slows one pass and not the next in elapsed time, which counts what
+        // the thread waited for.
         expect(passes.length).toBeGreaterThanOrEqual(4);
-        const quickest = Math.min(...passes);
-        for (const ms of passes) expect(ms).toBeLessThan(bound(6, quickest));
+        const bounded = cpuPasses ?? passes;
+        expect(bounded).toHaveLength(passes.length);
+        const quickest = Math.min(...bounded);
+        for (const ms of bounded) expect(ms).toBeLessThan(bound(6, quickest));
       });
     });
   }
