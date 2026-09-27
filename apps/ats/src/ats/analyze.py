@@ -14,9 +14,8 @@ class NotAPdfError(ValueError):
 def analyze(pdf: bytes) -> dict[str, Any]:
     """Analyse a resume PDF and return a result matching packages/contracts/ats/v1.
 
-    Reads the PDF's text and layout with `ats.extract`, letting `EncryptedPdfError` and
-    `UnreadablePdfError` propagate. Scoring and findings are still a placeholder until the
-    real analyser exists.
+    Reads the PDF's text with `ats.extract`, letting `EncryptedPdfError` and `UnreadablePdfError`
+    propagate. Scoring and findings are still a placeholder until the real analyser exists.
     """
     if not pdf.startswith(b"%PDF"):
         raise NotAPdfError("not a PDF")

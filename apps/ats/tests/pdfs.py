@@ -30,17 +30,27 @@ def _assemble(objects: Sequence[bytes]) -> bytes:
     return bytes(out)
 
 
-def build_pdf(pages: Sequence[Sequence[Line]], *, width: float = 612, height: float = 792) -> bytes:
+def build_pdf(
+    pages: Sequence[Sequence[Line]],
+    *,
+    width: float = 612,
+    height: float = 792,
+    crop_box: tuple[float, float, float, float] | None = None,
+) -> bytes:
     """A valid PDF with one page per entry in `pages`, in a standard-14 font (Helvetica).
 
     Each page is a sequence of `(text, x, y)` lines, drawn with a `Td` move to `(x, y)` and a `Tj`
     showing `text`; an empty sequence gives a page with no text layer at all. Built by hand with a
     correct xref so tests need no PDF-writing library. Positions are in PDF points, origin at the
-    page's bottom-left, matching the coordinates `ats.extract` reports.
+    page's bottom-left.
+
+    `crop_box`, as `(left, bottom, right, top)`, sets every page's `/CropBox`; omitted, a page has
+    none and its displayed box is the full `MediaBox`.
     """
     n_pages = len(pages)
     font_obj = 3
     first_page_obj = 4  # each page then takes two objects: the page, then its content stream
+    crop_box_entry = b" /CropBox [%g %g %g %g]" % crop_box if crop_box else b""
 
     kids = b" ".join(b"%d 0 R" % (first_page_obj + 2 * i) for i in range(n_pages))
     objects = [
@@ -52,9 +62,9 @@ def build_pdf(pages: Sequence[Sequence[Line]], *, width: float = 612, height: fl
         content = _content_stream(lines)
         content_obj_number = first_page_obj + 2 * i + 1
         objects.append(
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %g %g] "
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %g %g]%s "
             b"/Resources << /Font << /F1 %d 0 R >> >> /Contents %d 0 R >>"
-            % (width, height, font_obj, content_obj_number)
+            % (width, height, crop_box_entry, font_obj, content_obj_number)
         )
         objects.append(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content))
 

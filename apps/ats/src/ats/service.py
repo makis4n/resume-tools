@@ -32,7 +32,8 @@ MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
 NOT_A_PDF = "This file is not a PDF. Export your resume as a PDF and try again."
 PDF_ENCRYPTED = (
-    "This PDF is password-protected. Remove the password, export it again and try again."
+    "This PDF is protected, so it cannot be read. Export it again without a password or other "
+    "protection and try again."
 )
 PDF_UNREADABLE = "This PDF could not be read. It may be damaged; export it again and try again."
 INVALID_REQUEST = "The request must include a PDF in the `file` field."

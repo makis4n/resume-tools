@@ -14,6 +14,15 @@ import pypdfium2 as pdfium
 # page or text page anywhere in this module is serialised behind this lock.
 _PDFIUM_LOCK = threading.Lock()
 
+# `get_text_bounded()` called with no bounds clips to the page's displayed box (MediaBox
+# intersect CropBox, the same box `get_size()` reports), silently dropping any text placed
+# outside it -- exactly where keyword-stuffed or otherwise hidden text would be, which an ATS
+# readiness check must still see. Passing bounds this large instead captures the whole content
+# stream regardless of the page's declared boxes (checked empirically against pypdfium2 5.13.0:
+# FPDFText_GetBoundedText takes C doubles and returns correctly with bounds up to the high 1e38
+# range; this is far beyond any plausible PDF content placement, with headroom to spare).
+_UNBOUNDED = 1_000_000.0
+
 
 class ExtractError(ValueError):
     """Base class for a PDF that pypdfium2 could not turn into text."""
@@ -29,7 +38,11 @@ class UnreadablePdfError(ExtractError):
 
 @dataclass(frozen=True)
 class Page:
-    """One page: its 1-based number, its size in PDF points, and its full text."""
+    """One page: its 1-based number, its displayed size and its full text.
+
+    `width` and `height`, in PDF points, are the page's displayed size (`PdfPage.get_size()`):
+    its MediaBox with rotation and the CropBox already applied, not necessarily the raw MediaBox.
+    """
 
     number: int
     width: float
@@ -77,9 +90,10 @@ def _read_page(pdf_page: pdfium.PdfPage, number: int) -> Page:
     text_page = pdf_page.get_textpage()
     try:
         # Not `get_text_range`: pypdfium2 documents it as limited to UCS-2, while
-        # `get_text_bounded` supports full Unicode. Called with no bounds, it returns the whole
-        # page's text.
-        text = text_page.get_text_bounded()
+        # `get_text_bounded` supports full Unicode. Not called with no bounds either: that clips
+        # to the page's displayed box and would silently drop hidden or off-page text (see
+        # `_UNBOUNDED`'s comment).
+        text = text_page.get_text_bounded(-_UNBOUNDED, -_UNBOUNDED, _UNBOUNDED, _UNBOUNDED)
     finally:
         text_page.close()
     return Page(number=number, width=width, height=height, text=text)

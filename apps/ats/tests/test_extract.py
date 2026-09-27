@@ -29,6 +29,24 @@ def test_a_page_with_no_text_yields_empty_text() -> None:
     assert page.text == ""
 
 
+def test_text_outside_the_media_box_still_appears() -> None:
+    # 700 is off the right edge of a 612-wide page: get_text_bounded()'s default bounds (the
+    # page's displayed box) would silently drop it, which is exactly where hidden or
+    # keyword-stuffed text would be placed.
+    pdf = build_pdf([[("OnPage", 72, 700), ("OffPage", 700, 700)]], width=612, height=792)
+    (page,) = extract(pdf).pages
+    assert "OnPage" in page.text
+    assert "OffPage" in page.text
+
+
+def test_text_clipped_by_a_smaller_crop_box_still_appears() -> None:
+    pdf = build_pdf([[("Cropped", 500, 700)]], width=612, height=792, crop_box=(0, 0, 400, 792))
+    (page,) = extract(pdf).pages
+    assert "Cropped" in page.text
+    # The displayed size still reflects the crop box, even though the text itself is not clipped.
+    assert page.width == 400
+
+
 def test_the_committed_minimal_fixture_matches_its_builder() -> None:
     # The smoke-test script cannot import tests.pdfs, so it posts this committed file instead;
     # this guards against the file drifting from what minimal_pdf() actually builds.
@@ -63,28 +81,32 @@ def test_an_encrypted_pdf_raises_encrypted() -> None:
 
 
 def test_extract_serialises_calls_from_several_threads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every call into pypdfium2 must be mutually exclusive; this fails if the lock is removed
-    or narrowed to cover less than the whole open-read-close sequence."""
+    """Every call into pypdfium2 -- opening a document and reading each page -- must be mutually
+    exclusive; this fails if the lock is removed, or narrowed to cover only part of that work."""
     import ats.extract as extract_module
 
-    real_open_document = extract_module._open_document
     active = 0
     max_active = 0
     guard = threading.Lock()
 
-    def tracking_open_document(pdf: bytes) -> extract_module.pdfium.PdfDocument:
-        nonlocal active, max_active
-        with guard:
-            active += 1
-            max_active = max(max_active, active)
-        try:
-            time.sleep(0.05)  # long enough that a second thread would overlap if unsynchronised
-            return real_open_document(pdf)
-        finally:
+    def instrument(real):
+        def wrapped(*args, **kwargs):
+            nonlocal active, max_active
             with guard:
-                active -= 1
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                # Long enough that a second thread would overlap if unsynchronised.
+                time.sleep(0.02)
+                return real(*args, **kwargs)
+            finally:
+                with guard:
+                    active -= 1
 
-    monkeypatch.setattr(extract_module, "_open_document", tracking_open_document)
+        return wrapped
+
+    monkeypatch.setattr(extract_module, "_open_document", instrument(extract_module._open_document))
+    monkeypatch.setattr(extract_module, "_read_page", instrument(extract_module._read_page))
 
     pdf = minimal_pdf("Invented Concurrent Person")
     results: list[Document | None] = [None] * 8
@@ -103,3 +125,23 @@ def test_extract_serialises_calls_from_several_threads(monkeypatch: pytest.Monke
         result is not None and result.pages[0].text == "Invented Concurrent Person"
         for result in results
     )
+
+
+def test_a_zero_page_document_closes_the_native_handle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards the pypdfium2 5.13.0 leak workaround in `_open_document`: opening a zero-page PDF
+    must close the raw handle itself, since pypdfium2's own opener never does on that path."""
+    import ats.extract as extract_module
+
+    real_close = extract_module.pdfium.raw.FPDF_CloseDocument
+    calls = []
+
+    def tracking_close(raw):
+        calls.append(raw)
+        return real_close(raw)
+
+    monkeypatch.setattr(extract_module.pdfium.raw, "FPDF_CloseDocument", tracking_close)
+
+    with pytest.raises(UnreadablePdfError):
+        extract(zero_page_pdf())
+
+    assert len(calls) == 1
