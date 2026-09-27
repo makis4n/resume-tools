@@ -365,10 +365,13 @@ export async function answerState(
   if (stored.version !== NAMING_VERSION || stored.key !== macro.key) return { state: "key" };
   if (stored.hash !== macro.hash) return { state: "hash" };
   if (stored.name !== macro.name || stored.of !== macro.of) return { state: "name" };
+  // The seed's files hold their partners' keys, which `--write` writes: a partner is found by key
+  // alone, never by the name a fork keeps (decision 0028).
   const served = await answerFor({ get: () => json }, macro.key, {
     name: macro.name,
     of: macro.of,
     partners,
+    byName: false,
   });
   if (served === undefined) return { state: "key", why: "its dependencies do not give its key" };
   if (served.answer === undefined)

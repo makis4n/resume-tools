@@ -6,9 +6,10 @@
  * model's answers are filed and read back, so that a candidate model swapped in is asked afresh
  * rather than served another's answers, and each answer's source is the folder's model. `get`
  * looks in the committed folder first, so that a reviewed answer always wins; `put` files only a
- * stored answer this naming version reads, under its own key (`storable`), and only in the model's
- * folder. A key is 64 hex digits or no key at all, and a model's id names a folder and never a
- * path, so no key or id names a place elsewhere.
+ * stored answer this naming version reads, under its own key (`storable`), only in the model's
+ * folder, and only under a key neither folder holds, never over another answer (decision 0028). A
+ * key is 64 hex digits or no key at all, and a model's id names a folder and never a path, so no
+ * key or id names a place elsewhere.
  *
  * It reads and writes files, so it lives with the editor's scripts: the package runs in the browser
  * and in a Worker too, where item 10's service keeps its answers in KV instead.
@@ -76,9 +77,17 @@ export class FileAnswerCache implements AnswerCache {
     return undefined;
   }
 
-  /** Files a stored answer under its own key in the model's folder; throws for anything else. */
-  put(key: string, answer: StoredAnswer): void {
+  /**
+   * Files a stored answer under its own key in the model's folder, when neither folder holds a file
+   * under the key, and says whether it did: nothing is filed over another answer, a person's
+   * reviewed one above all (decision 0028); two filings of one key at once may both write, the
+   * later kept. Throws for anything but a stored answer under its own key.
+   */
+  put(key: string, answer: StoredAnswer): boolean {
     if (!KEY.test(key)) throw new Error("A stored answer's key is 64 lower-case hex digits");
-    writeAtomically(join(this.writable, `${key}.json`), formatJson(storable(key, answer)));
+    const text = formatJson(storable(key, answer));
+    if (this.get(key) !== undefined) return false;
+    writeAtomically(join(this.writable, `${key}.json`), text);
+    return true;
   }
 }

@@ -256,6 +256,45 @@ describe("a model's answer, stored", () => {
     ]);
   });
 
+  test("gives each macro its own answer, named for it, whether its key's is filed or not", async () => {
+    // Two lists of one template whose openers and closers share their definitions: the model pairs
+    // each with its own, and the jobs list holds entries where the skills list holds bullets.
+    const twins = await commandsRequest([
+      { name: "jobsstart", text: OPEN },
+      { name: "skillsstart", text: OPEN },
+      { name: "jobsend", text: CLOSE },
+      { name: "skillsend", text: CLOSE },
+    ]);
+    const entries: ModelAnswer = { ...opens("jobsend"), kind: "layout" };
+    if (entries.list !== undefined) entries.list.holds = "entry";
+    const filing = await storedAnswersOf(
+      twins,
+      naming({
+        jobsstart: entries,
+        skillsstart: opens("skillsend"),
+        jobsend: { ...closes("jobsstart"), kind: "layout" },
+        skillsend: closes("skillsstart"),
+      }),
+      "model:invented-model",
+    );
+    // The openers disagree, and the closers too, by kind: neither key is filed.
+    expect(filing.answers).toEqual([]);
+    expect(filing.conflicts).toHaveLength(2);
+    // Each macro keeps its own answer, its own name and its own partner.
+    expect(
+      filing.answered.map((each) => [
+        each.name,
+        each.answer.list?.closedBy ?? each.answer.list?.openedBy,
+      ]),
+    ).toEqual([
+      ["jobsstart", "jobsend"],
+      ["skillsstart", "skillsend"],
+      ["jobsend", "jobsstart"],
+      ["skillsend", "skillsstart"],
+    ]);
+    for (const each of filing.answered) expect(StoredAnswer.parse(each)).toEqual(each);
+  });
+
   test("is filed by a cache and read back under its key, and nothing else is filed", async () => {
     const request = await inventedRequest();
     const cache = memoryCache();

@@ -233,10 +233,11 @@ model's list price, `LIST_PRICES`: Gemini 3.8 Flash's paid tier as its pricing p
 2026-09-27, $0.75 a million tokens in, $0.075 from the cache and $3.75 out, through 2026-12-31,
 doubled from 2027-01-01; then the macros most often missing. The JSON names the model asked, if
 any, and the model whose folder was read. Without a key nothing is asked, and each document's misses
-are counted and named: the corpus's `jake-0001` has 11 macros, 2 of them answered by the seed and 9
-missing, `\resumeSubHeadingListEnd` among them, which has the seed's key, but whose answer names an
-opener by a key the fork's `\resumeSubHeadingListStart` has not, so the cache refuses it. Over the
-corpus, 14 of the 117 requests built are named whole, and 447 of their 1,092 macros are answered.
+are counted and named: the corpus's `jake-0001` has 11 macros, 3 of them answered by the seed and 8
+missing. Its `\resumeSubHeadingListEnd` has the seed's key, whose answer names an opener by a key
+the fork's `\resumeSubHeadingListStart` has not; the cache refused it, until decision 0028 had a
+partner that no macro has the key of found by its name, which the fork keeps. Over the corpus,
+before that, 14 of the 117 requests built were named whole, and 447 of their 1,092 macros answered.
 
 Whether each document's import validates is item 7's assembly: the child marks the place its
 checks hook in, once every macro has an answer, on the same engine session.
@@ -250,11 +251,13 @@ checks hook in, once every macro has an answer, on the same engine session.
   it asks the cache as each macro, files a `Filing`'s answers and counts its conflicts, passes the
   document's commands the cache answered as `partners`, and files parts through `onPart`, one key
   one answer; it runs the same gate before it trusts a request's keys.
-- The preamble's answer comes with every call and is stored nowhere, since no key files it; a
-  document whose every macro hits asks nothing, and so has no preamble's answer, which item 7 then
-  reads from the settings or asks for alone.
+- The preamble's answer comes with every call and the runner stores it nowhere, since no key files
+  it; a document whose every macro hits asks nothing, and so has no preamble's answer, which item 7
+  then reads from the settings or asks for alone. The naming service keeps it by the preamble's own
+  key, and asks for it alone (decision 0028).
 - Two children may ask for the same macro before either files it, once per template at the start
-  of a run, a few calls in all; the later filing replaces the earlier under its key.
+  of a run, a few calls in all; the earlier filing stays, since the cache files nothing over what a
+  key holds (decision 0028).
 - A key that two macros answered otherwise, or that the cache holds another macro's answer under,
   is asked again every run and never filed: the conflicts count says how often the name-less key
   cannot tell two macros apart, which a later version of the key may have to.

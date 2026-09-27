@@ -14,11 +14,13 @@ import type { NamingRequest, RequestMacro } from "./request.ts";
 
 /**
  * A cache of stored answers by key: `get` gives back a stored answer, its JSON, or nothing; `put`
- * files one under its key, and refuses anything that is not a stored answer under its own key.
+ * files one under its key, and refuses anything that is not a stored answer under its own key. A
+ * cache that files only under a key that holds nothing, as the editor's do (decision 0028), says
+ * whether it filed: false when the key held an answer already.
  */
 export interface AnswerCache {
   get(key: string): unknown | Promise<unknown>;
-  put(key: string, answer: StoredAnswer): void | Promise<void>;
+  put(key: string, answer: StoredAnswer): void | boolean | Promise<void | boolean>;
 }
 
 /**
@@ -29,6 +31,13 @@ export interface AskingMacro {
   name: string;
   of: "command" | "environment";
   partners: ReadonlyMap<string, string>;
+  /**
+   * Whether a partner no macro of the request is by key may be found by the name the answer gives
+   * it, as a fork whose list's closer is another's definition keeps the list's names (decision
+   * 0028): so unless false. The seed's check of its own files, whose partners' keys it writes,
+   * passes false.
+   */
+  byName?: boolean;
 }
 
 /**
@@ -50,11 +59,13 @@ export interface RefusedAnswer {
  * Asked for a document's macro (`macro`), it gives the answer as that macro's: named as the macro
  * is, since a key leaves the name out and another template may give the same definition another
  * name; of the macro's kind; and with each partner its list names found by the key the answer
- * holds for it (`partnerKeys`) among the request's macros, and named as the request names it. An
- * answer whose kind is not the macro's, or whose partner the request has no macro of, or holds no
- * key for, is refused (`RefusedAnswer`): a fork that renames a list's two macros keeps their answers,
- * and one whose closer is a bare `\end{itemize}` that another template's list ends with does not
- * take that list's pairing.
+ * holds for it (`partnerKeys`) among the request's macros, and named as the request names it, or,
+ * where no macro of the request has that key, by the name the answer gives it (decision 0028). An
+ * answer whose kind is not the macro's, or whose partner the request has no macro of by key or by
+ * name, or holds no key for, is refused (`RefusedAnswer`): a fork that renames a list's two macros
+ * keeps their answers, and so does a fork that keeps their names and makes the closer a bare
+ * `\end{itemize}`; a template whose list's opener has another template's definition, and whose
+ * closer has neither the definition nor the name of that list's closer, does not take its pairing.
  */
 export function answerFor(
   cache: Pick<AnswerCache, "get">,
@@ -97,12 +108,16 @@ export async function answerFor(
     const named = list[which];
     if (named === undefined) continue;
     const partner = stored.partnerKeys?.[which];
+    if (partner === undefined) return { answer: undefined, reason: "partner" };
     const names = [...macro.partners].flatMap(([name, each]) => (each === partner ? [name] : []));
-    if (partner === undefined || names.length === 0)
-      return { answer: undefined, reason: "partner" };
-    // Two macros of one key have one definition: the one of the answer's name, where the request
-    // has it, else the first.
-    paired[which] = names.includes(named) ? named : (names[0] ?? named);
+    if (names.length > 0)
+      // Two macros of one key have one definition: the one of the answer's name, where the request
+      // has it, else the first.
+      paired[which] = names.includes(named) ? named : (names[0] ?? named);
+    // No macro of the request has the partner's key: a macro of the partner's name is it, as a
+    // fork that changed the list's closer calls it still.
+    else if (macro.byName !== false && macro.partners.has(named)) paired[which] = named;
+    else return { answer: undefined, reason: "partner" };
   }
   return { ...stored, name: macro.name, answer: { ...stored.answer, list: paired } };
 }
@@ -137,6 +152,11 @@ export type FilingMacro = Pick<RequestMacro, "of" | "name">;
 export interface Filing {
   /** One stored answer for each key whose macros' answers agree, the first macro's by name. */
   answers: StoredAnswer[];
+  /**
+   * Each macro's own stored answer, named for it, in the request's order, whether its key's is
+   * filed or not: what a caller that gives every macro its answer gives back (decision 0028).
+   */
+  answered: StoredAnswer[];
   /** The keys whose macros the model answered otherwise, each with its macros: none is filed. */
   conflicts: { key: string; macros: FilingMacro[] }[];
   /** The macros whose list names a partner no command of the request is: not filed. */
@@ -168,10 +188,10 @@ function comparable(stored: StoredAnswer): string {
  * answer under the key its definitions give (`requestKey`), with its own definition's hash, the
  * dependencies its key is computed from, its name, the request's family, the answer, the keys of
  * the partners its list names, each a command of the request found by its name, `reviewed: false`,
- * and the model's id as its source; then one a key, where the answers under it agree. What the
- * model answered of anything else, and the preamble's answer, which no key files, are left out. It
- * stores nothing: the caller files them, after `checkRequest` (decision 0024), and asks the model
- * again for the macros it cannot.
+ * and the model's id as its source (`answered`); then one a key, where the answers under it agree.
+ * What the model answered of anything else, and the preamble's answer, which no key files, are
+ * left out. It stores nothing: the caller files them, after `checkRequest` (decision 0024), and asks
+ * the model again for the macros it cannot.
  */
 export async function storedAnswersOf(
   request: NamingRequest,
@@ -187,6 +207,7 @@ export async function storedAnswersOf(
     if (key !== undefined) commands.set(macro.name, key);
   }
   const byKey = new Map<string, { macros: FilingMacro[]; stored: StoredAnswer[] }>();
+  const answered: StoredAnswer[] = [];
   const invalid: FilingMacro[] = [];
   for (const macro of request.macros) {
     const answer = answers.get(`${macro.of}|${macro.name}`);
@@ -219,12 +240,13 @@ export async function storedAnswersOf(
       dependencies: dependenciesOf(request, macro),
       ...(Object.keys(partnerKeys).length === 0 ? {} : { partnerKeys }),
     });
+    answered.push(stored);
     const group = byKey.get(key) ?? { macros: [], stored: [] };
     group.macros.push({ of: macro.of, name: macro.name });
     group.stored.push(stored);
     byKey.set(key, group);
   }
-  const filing: Filing = { answers: [], conflicts: [], invalid };
+  const filing: Filing = { answers: [], answered, conflicts: [], invalid };
   for (const [key, group] of byKey) {
     const [first] = group.stored;
     if (first === undefined) continue;
