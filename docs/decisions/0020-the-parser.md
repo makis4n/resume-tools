@@ -275,9 +275,19 @@ back. `corpus parse` runs it over the corpus.
   macro that hands its arguments on to another, `\ding` to `\Pisymbol{pzd}`, or looks ahead for
   them, reads so from its meaning, and the group would otherwise read as text the call in fact
   takes. The call and the groups after it are one raw chunk, unresolved and marked `suspect`, and
-  the runner counts them per family. A template environment whose own macros' meanings open an
-  alignment, `tabular`, `tabular*`, `tabularx`, `tabulary`, `array`, `longtable` or `\halign`,
-  keeps its arguments placed and its body one raw chunk, since the body is cells.
+  the runner counts them per family. A template environment whose body holds an alignment's `&` of
+  its own, a bare one where TeX reads it as a table's tab, not in a group, mathematics, verbatim, a
+  comment or a nested environment, and outside every template call's arguments, a bracketed one's
+  too, keeps its arguments placed and its body one raw chunk: it is a table its author wrote by
+  hand, and its cells are not text. One whose body holds template calls and no such `&` is placed,
+  whatever the environment opens for them: Awesome-CV's `cvskills` and `cvhonors` open a `tabular*`,
+  and europecv's `europecv` a `longtable`, whose rows `\cvskill`, `\cvhonor` and `\ecvitem` set;
+  `parse.test.ts` compiles an invented class's three such environments, one of them a second time
+  with its rows written by hand, and both round trips set the reference's glyphs. A body with an `&`
+  among its own nodes is placed first, to find its calls' arguments; for a table, the placing is let
+  go, and its nodes do not count against the caps. The first version of this rule read the
+  environment's own macros' meanings instead, and kept the body raw wherever they opened `tabular`
+  or its kin, which took those three environments' calls with it (below).
 - **Groups** and **blocks**: a braced group that is not text, and `center`, `flushleft`,
   `flushright`, `quote`, `quotation`, `verse`, `raggedright`, `raggedleft`, `centering`,
   `samepage`, `sloppypar`, `minipage` and `multicols`, whose content the parser places; and a
@@ -298,11 +308,14 @@ back. `corpus parse` runs it over the corpus.
   and geometry give them in unified-latex's CTAN table, but for a few it has wrong; TeX's own
   definitions, `\def` with its parameters and body and `\let` with its token, whole; a primitive or
   a register with the quantity after it, `\vskip 3pt plus 1pt`; a paragraph with an alignment's `&`
-  in it, one of the source's and not `\&`, which is a template's cells; and any command the table
-  does not know and the engine did not resolve, alone. A raw chunk is the smallest node the parser
-  cannot place: `\vspace{2pt}` between two paragraphs is one chunk, and a command whose argument is
-  text the page shows, `\textcolor{red}{...}`, `\underline`, a box, `\textbf` over a call, keeps
-  that argument placed inside it, so that a call in it is still a call.
+  in it, one of the source's and not `\&`, which is a table's cells, and, among nodes that hold
+  such an `&` of their own (an environment's body, a group's or an argument's content, an item's),
+  a paragraph with a `\\` that text follows in it, which there ends a table's row where the model
+  would read a space; and any command the table does not know and the engine did not resolve,
+  alone. A raw chunk is the smallest node the parser cannot place: `\vspace{2pt}` between two
+  paragraphs is one chunk, and a command whose argument is text the page shows,
+  `\textcolor{red}{...}`, `\underline`, a box, `\textbf` over a call, keeps that argument placed
+  inside it, so that a call in it is still a call.
 - Every node keeps its span in the inlined body, and every argument its span and its content's.
   `print(tree)` gives back the body's bytes for every span, a node's children in turn and the
   body's between them, so that a tree printed as it was parsed is the inlined body exactly, and a
@@ -385,8 +398,11 @@ unified-latex's. `-util-macros`, which expands macros, is not needed either.
   generator writes as `\textit{...}` and so adds an italic correction; and the second of TeX's two
   spaces around a mid-paragraph input. Item 7 decides what to make of each.
 
-The table is the run after the review's fixes. The first run, before them, had the byte-for-byte
-round trip alone, which set the reference's glyphs on all 117 documents then too.
+The table is the run after the review's fixes and the alignment rule's (above). The first run,
+before them, had the byte-for-byte round trip alone, which set the reference's glyphs on all 117
+documents then too. Run again with the rule that read an environment's meanings, every document
+counts the same but 20: six europecv documents, 13 Awesome-CV forks and one hand-rolled document
+on Awesome-CV's class, whose table environments that rule kept raw (below).
 
 `corpus parse` on 27 September 2026, the tree of layout 6, the M4 Pro, four children: 1.8 minutes.
 
@@ -405,12 +421,12 @@ round trip alone, which set the reference's glyphs on all 117 documents then too
 | Round trip byte for byte differs first in a special | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Round trip byte for byte differs first otherwise: pages, size, count, rule | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Round trip byte for byte did not compile | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| Round trip regenerated sets the reference's glyphs | 13 | 13 | 5 | 10 | 6 | 6 | 53 |
-| Round trip regenerated differs | 22 | 4 | 4 | 4 | 0 | 25 | 59 |
+| Round trip regenerated sets the reference's glyphs | 13 | 13 | 5 | 10 | 1 | 6 | 48 |
+| Round trip regenerated differs | 22 | 4 | 4 | 4 | 5 | 25 | 64 |
 | Round trip regenerated differs first in a glyph | 5 | 0 | 0 | 1 | 0 | 0 | 6 |
-| Round trip regenerated differs first in a position | 13 | 4 | 3 | 3 | 0 | 22 | 45 |
+| Round trip regenerated differs first in a position | 13 | 4 | 3 | 3 | 3 | 22 | 48 |
 | Round trip regenerated differs first in a special | 4 | 0 | 1 | 0 | 0 | 0 | 5 |
-| Round trip regenerated differs first otherwise: pages, size, count, rule | 0 | 0 | 0 | 0 | 0 | 3 | 3 |
+| Round trip regenerated differs first otherwise: pages, size, count, rule | 0 | 0 | 0 | 0 | 2 | 3 | 5 |
 | Round trip regenerated did not compile | 0 | 1 | 1 | 0 | 0 | 3 | 5 |
 | **Template macros the body calls** |  |  |  |  |  |  |  |
 | In all | 270 | 107 | 162 | 54 | 62 | 145 | 800 |
@@ -437,14 +453,14 @@ round trip alone, which set the reference's glyphs on all 117 documents then too
 | Other keys otherwise | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | They call none of the file's macros in common | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | **The body's characters** |  |  |  |  |  |  |  |
-| In rich text and dates | 13% | 3% | 41% | 8% | 0% | 39% | 23% |
-| In template calls' arguments | 50% | 49% | 19% | 66% | 0% | 13% | 33% |
-| In raw chunks | 5% | 9% | 2% | 2% | 98% | 24% | 14% |
-| Dates read | 203 | 137 | 111 | 143 | 0 | 205 | 799 |
-| Parse time, median | 7 ms | 9 ms | 6 ms | 7 ms | 3 ms | 9 ms | 8 ms |
-| Parse time, slowest | 17 ms | 25 ms | 65 ms | 15 ms | 11 ms | 67 ms | 67 ms |
-| Signatures' two compiles, median | 228 ms | 1523 ms | 1153 ms | 1064 ms | 295 ms | 253 ms | 304 ms |
-| Signatures' two compiles, slowest | 327 ms | 1969 ms | 1388 ms | 1088 ms | 365 ms | 1566 ms | 1969 ms |
+| In rich text and dates | 13% | 3% | 41% | 8% | 1% | 39% | 23% |
+| In template calls' arguments | 50% | 53% | 19% | 66% | 71% | 13% | 35% |
+| In raw chunks | 5% | 0% | 2% | 2% | 13% | 24% | 11% |
+| Dates read | 203 | 187 | 111 | 143 | 37 | 205 | 886 |
+| Parse time, median | 7 ms | 10 ms | 6 ms | 6 ms | 5 ms | 10 ms | 8 ms |
+| Parse time, slowest | 19 ms | 30 ms | 67 ms | 13 ms | 18 ms | 65 ms | 67 ms |
+| Signatures' two compiles, median | 231 ms | 1524 ms | 1140 ms | 1042 ms | 307 ms | 255 ms | 317 ms |
+| Signatures' two compiles, slowest | 317 ms | 1980 ms | 1400 ms | 1084 ms | 391 ms | 1542 ms | 1980 ms |
 | **Unresolved, by why** |  |  |  |  |  |  |  |
 | delimited | 0 | 1 | 1 | 0 | 1 | 0 | 3 |
 | looks ahead | 0 | 0 | 0 | 0 | 2 | 1 | 3 |
@@ -459,25 +475,31 @@ environments, 7 are `\height`, which exists only in a box's dimensions, and 29 a
 own, which the signatures, read at `\begin{document}`, do not see: 11 in one document, 11 in
 another, and 7 in three more.
 
-The 64 regenerated round trips that did not set the reference's glyphs, each bisected to the first
+The 69 regenerated round trips that did not set the reference's glyphs, each bisected to the first
 text or date whose regeneration makes it differ:
 
 - 35 differ in a paragraph with `\\` in it, a line's break the model reads as a space: 30 first in a
   position, 3 in the count of pages, and in 2 the compile stops.
 - 12 in a link: 5 in the special that holds its address, which the generator writes otherwise, and
   7 in a position.
-- 11 in plain text: five Jake's Resume forks with no `fontenc`, whose OT1 fonts set `|` as an em
+- 14 in plain text: five Jake's Resume forks with no `fontenc`, whose OT1 fonts set `|` as an em
   dash and `<` as an inverted exclamation mark, where the generator writes `\textbar{}` and
   `\textless{}`; a T1 document whose ``` `` ``` and `''` the model holds as curly quotes, which the
-  generator writes as characters its setup does not take, so that the compile stops; a XeTeX
-  document whose text holds brackets, which the generator braces, and whose compile stops; and
-  four in a position.
-- 1 in `\textsc`'s small capitals, 1 in a date, 1 in a group holding a space and comments alone, 2
-  in bold and italic runs, and 1 in `\em` beside `\&`, whose compile stops.
+  generator writes as characters its setup does not take, so that the compile stops, and a
+  europecv document on OT1 whose curly quotes the generator writes so set in another position; a
+  XeTeX document whose text holds brackets, which the generator braces, and whose compile stops;
+  two europecv documents whose `\nobibliography`, unresolved and kept raw alone, leaves the file
+  it names to be read as text, which the generator writes after the command unbraced, so that the
+  name is set and an item of another kind differs first; and four in a position.
+- 3 in `\textsc`'s small capitals, two of them europecv documents' labels, 1 in a date, 1 in a
+  group holding a space and comments alone, 2 in bold and italic runs, and 1 in `\em` beside `\&`,
+  whose compile stops.
 
-These are the decodings "Its first documents" names, `\\` above all, and two it does not: the
-characters an OT1 font sets as others, and quotes a document's setup cannot set as characters.
-Item 7 decides what to make of each.
+These are the decodings "Its first documents" names, `\\` above all, and three it does not: the
+characters an OT1 font sets as others, quotes a document's setup does not set as characters as it
+set the ligatures, and the argument of a command the parser keeps raw alone, which it reads as
+text. The five europecv documents are new to the list: their bodies were raw, and could not
+differ, until the alignment rule placed them. Item 7 decides what to make of each.
 
 ### What the table says for items 5 and 6
 
@@ -485,25 +507,32 @@ Item 7 decides what to make of each.
   byte for byte, and that body, with the preamble, sets the reference's glyphs, on all 117, pdfTeX
   and XeTeX. What item 5 wraps and item 7 splices starts from a body that compiles as the original
   did.
-- **The regenerated round trip holds on 53 of the 117**, differs on 59, and stops on 5. More than
+- **The regenerated round trip holds on 48 of the 117**, differs on 64, and stops on 5. More than
   half of what does not hold is `\\` inside a paragraph, which a field of the model, one paragraph,
-  cannot hold; the rest is links, characters an OT1 font sets as others, and a few marks. What item
-  7 regenerates sets the page as the source did for under half the corpus until it decides what to
-  make of those.
-- **A third of a resume's characters are in template calls' arguments**, and 23% in rich text, the
-  rest the commands' own names, delimiters, spaces and raw chunks (14%). Jake's Resume forks (50%),
-  Awesome-CV's (49%) and moderncv's (66%) are mostly calls: item 5's probe has most of their text to
-  wrap. Hand-rolled documents are mostly rich text (39%) and raw chunks (24%), and AltaCV's too (41%
-  text): for them the model's paragraphs and lists matter more than the naming step.
-- **An alignment's body is raw, and the calls in it with it.** A template environment whose own
-  macros open a `tabular`, a `longtable` or their kin keeps its body one raw chunk, since its cells
-  are not text. That takes in europecv's whole body, whose `europecv` environment is a `longtable`:
-  98% of the family's characters are raw, where the first version read 69% as rich text, with
-  `\ecvitem`'s arguments outside its calls, and its 247 calls to it are no calls now. It takes in
-  Awesome-CV's `cvskills` and `cvhonors` too, `tabular*`s: 9% of that family's characters, in 13
-  documents, and 48 of its dates. Those bodies hold template calls and no `&` of their own; whether
-  such a body places its calls, as any other template environment's does, is for item 5 or 7 to
-  decide.
+  cannot hold; the rest is links, characters an OT1 font sets as others, quotes, an unresolved
+  command's argument read as text, and a few marks. What item 7 regenerates sets the page as the
+  source did for under half the corpus until it decides what to make of those.
+- **A third of a resume's characters are in template calls' arguments** (35%), and 23% in rich text,
+  the rest the commands' own names, delimiters, spaces and raw chunks (11%). Jake's Resume forks
+  (50%), Awesome-CV's (53%), moderncv's (66%) and europecv's (71%) are mostly calls: item 5's probe
+  has most of their text to wrap. Hand-rolled documents are mostly rich text (39%) and raw chunks
+  (24%), and AltaCV's too (41% text): for them the model's paragraphs and lists matter more than the
+  naming step.
+- **A table its author wrote is raw; the calls a template's table holds are calls.** A template
+  environment keeps its body one raw chunk only where the body holds an `&` of its own, which no
+  corpus document's does. europecv's `europecv`, a `longtable`, and Awesome-CV's `cvskills` and
+  `cvhonors`, `tabular*`s, hold template calls that set their rows, and are placed. The rule that
+  read the environments' meanings kept them raw: 98% of europecv's characters, where the first
+  version read 69% as rich text with `\ecvitem`'s arguments outside its calls, and 9% of
+  Awesome-CV's. Now 71% of europecv's characters are in calls' arguments and 13% raw: 223 of the 247
+  `\ecvitem`s in its six bodies are calls, and the other 24 lie in an `\ifthenelse` in each of two
+  documents that gives no else branch before a blank line, a call a mandatory argument of which is
+  missing, which stays raw; 37 of its dates are read, where none were. Awesome-CV's 58 `\cvskill`
+  and 54 `\cvhonor` calls, in 13 documents, take its raw share from 9% to 0% and its calls' from 49%
+  to 53%, and 50 more of its dates are read, 187; one hand-rolled document on Awesome-CV's class
+  gains four `\cvskill` calls. Placed, five of europecv's six regenerated round trips differ, where
+  a raw body could not, each first in a text the list above names; Awesome-CV's differ first where
+  they did.
 - **A document calls few template macros**: 6 at the median, 15 for AltaCV's, 2 for a hand-rolled
   one; 800 in the corpus, 105 environments besides. Item 6 names few macros a document, and forks
   share them, which is what its per-macro cache is for.
@@ -523,10 +552,10 @@ Item 7 decides what to make of each.
   differ only where both preambles define a macro those hand their work to, as item 6's cache
   needs.
 - **Time**: parsing takes 8 ms at the median and 67 ms at most. The signatures' two compiles take
-  228 ms at the median for a Jake's Resume fork and 1.5 s for an Awesome-CV fork, and 2.0 s for
+  231 ms at the median for a Jake's Resume fork and 1.5 s for an Awesome-CV fork, and 2.0 s for
   the slowest document, the preamble's compile from the stock format, fontspec's scan included,
   most of it: an import pays them once. Reading the meanings, their tails and their data, and
-  hashing, add 4 ms at the median and at most 143 ms, for an AltaCV or moderncv document whose
+  hashing, add 4 ms at the median and at most 147 ms, for an AltaCV or moderncv document whose
   closures reach a package's machinery.
 
 ## Consequences
@@ -551,9 +580,10 @@ Item 7 decides what to make of each.
 - A signature marked `tail` may take more arguments than it says: the parser keeps a call to it
   raw where a brace group follows its arguments, as it does a call that takes no mandatory
   argument.
-- A template environment whose own macros open an alignment keeps its body raw, the calls in it
-  too: a europecv document's whole body, and Awesome-CV's skills and honours, are raw chunks to
-  items 5 and 7 until one of them decides to place such a body's calls.
+- A template environment keeps its body raw only where the body holds an `&` of its own, a table
+  its author wrote by hand, whose cells items 5 and 7 take as they are. One whose rows template
+  calls set is placed, whatever it opens for them: europecv's items and Awesome-CV's skills and
+  honours are calls, whose arguments item 5 wraps and item 7 regenerates, in a table's cells.
 - The session reads a file a compile wrote in its job, by a path inside its folder; the reference
   compile gives back its files (`referenceFiles`) and compiles a document as it did
   (`compileLikeReference`); and `difference` says how two glyph streams first differ, which the
