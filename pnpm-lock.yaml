@@ -111,6 +111,15 @@ importers:
 
   packages/contracts: {}
 
+  packages/naming:
+    dependencies:
+      '@resume-tools/resume-model':
+        specifier: workspace:*
+        version: link:../resume-model
+      zod:
+        specifier: ^4.6.2
+        version: 4.6.2
+
   packages/resume-model:
     dependencies:
       zod:

@@ -1,0 +1,17 @@
+{
+  "name": "@resume-tools/naming",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@resume-tools/resume-model": "workspace:*",
+    "zod": "^4.6.2"
+  }
+}
