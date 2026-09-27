@@ -126,7 +126,7 @@ describe("the checks' own findings in the table", () => {
       unrepeatable: ["entry"],
       fixed: ["entry", "section.paragraph", `evil ${SECRET}`],
     }),
-    row("altacv-0001", "altacv", { findings: {} }),
+    row("altacv-0001", "altacv", { findings: {}, latinModern: true }),
   ]);
   const cells = (label: string) =>
     table
@@ -155,6 +155,9 @@ describe("the checks' own findings in the table", () => {
     ]);
     expect(cells("The editor cannot add: `entry`")?.at(-1)).toBe("1");
     expect(cells("The editor cannot add: `section.paragraph`")?.at(-1)).toBe("1");
+    expect(
+      cells("Set in Latin Modern: Computer Modern in T1 or TS1, which the page cannot draw"),
+    ).toEqual(["0", "0", "1", "0", "0", "0", "1"]);
     expect(table).not.toContain(SECRET);
   });
 
@@ -363,6 +366,7 @@ describe("a validation's row", () => {
       compiles: 12,
       ms: 1234.5,
       decisions: { fixed: ["link"] },
+      latinModern: ["ecrm1000"],
       all: [],
     };
     const made = assembleRow(checks, "pdftex", { answered: 3, unanswered: 1 });
@@ -373,6 +377,7 @@ describe("a validation's row", () => {
       findings: { pages: 2 },
       unrepeatable: ["link"],
       fixed: ["link"],
+      latinModern: true,
       compiles: 12,
       validateMs: 1235,
     });

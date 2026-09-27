@@ -10,21 +10,22 @@
  * needs: the preamble's calls that store the header's text, which the answer names as header,
  * contact, link or other, are taken out, and set from the model before `\begin{document}`; hyperref
  * gets the dvipdfmx driver on pdfTeX and no bookmarks, and is loaded with `hidelinks` where the
- * reference compile's log shows the document never loads it, even late, as moderncv's class does
- * at the preamble's end; the reviewed answers' redefinitions go right after `\documentclass`;
- * a class size option becomes the font size control's slot, offering the sizes the class declares
- * (`SIZE_OPTIONS`). No font changes, no T1 and no Latin Modern, as a port takes (decision 0009): an
- * import keeps its fonts, so that the reference check can hold. Its files are the upload's class
- * and style files, as text, with the configurations the reference compile gave pdfTeX's DVI
- * (decision 0019). Its snippets are the template's own code, read from the body where the answer's
- * kinds place the model: a section's head and what frames its content, an entry's call and its
- * bullets' list, which every entry's snippet sets, a list's items, the header's calls; each field
- * an argument of its meaning as a typeset slot, beside a raw extras slot that holds the original
- * bytes of an instance the checks lock; every other argument the same bytes in every call where it
- * is code, or an extras slot of its own, with what a unit the user adds writes there (`defaults`).
- * Comments never reach a snippet, and nor does the body's text. It marks the slots the checks
- * found required. Its source is `main.tex`, and its id `import-` and twelve hex digits of the
- * SHA-256 of the rest of it.
+ * reference compile's log shows the document never loads it, even late, as moderncv's class does at
+ * the preamble's end; the reviewed answers' redefinitions go right after `\documentclass`; a class
+ * size option becomes the font size control's slot, offering the sizes the class declares
+ * (`SIZE_OPTIONS`). An import keeps its fonts, so that the reference check holds glyph for glyph;
+ * one set in Computer Modern's T1 or TS1 fonts, which the page cannot draw, comes read with T1 and
+ * Latin Modern after its class, as every pdfTeX port takes them (`inLatinModern`, decision 0009),
+ * and its preamble keeps the two lines with the rest. Its files are the upload's class and style
+ * files, as text, with the configurations the reference compile gave pdfTeX's DVI (decision 0019).
+ * Its snippets are the template's own code, read from the body where the answer's kinds place the
+ * model: a section's head and what frames its content, an entry's call and its bullets' list, which
+ * every entry's snippet sets, a list's items, the header's calls; each field an argument of its
+ * meaning as a typeset slot, beside a raw extras slot that holds the original bytes of an instance
+ * the checks lock; every other argument the same bytes in every call where it is code, or an extras
+ * slot of its own, with what a unit the user adds writes there (`defaults`). Comments never reach a
+ * snippet, and nor does the body's text. It marks the slots the checks found required. Its source
+ * is `main.tex`, and its id `import-` and twelve hex digits of the SHA-256 of the rest of it.
  *
  * **The document.** The model built from the tree through the answer: the header from its calls,
  * a name in one argument split at its last space, links of the kind the answer or their address
@@ -212,6 +213,12 @@ export interface AssemblyChecks {
   compiles: number;
   ms: number;
   decisions: Decisions;
+  /**
+   * The fonts the upload's reference set that the page cannot draw, Computer Modern's in T1 and
+   * TS1, where the import is read in Latin Modern (`inLatinModern`), by name; absent where it keeps
+   * its fonts.
+   */
+  latinModern?: string[];
   /** Every field of the document, how it is set, and why where it is locked. */
   all: AssembledField[];
 }

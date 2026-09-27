@@ -12,16 +12,19 @@
  *
  * 1. **Same output.** The original body, compiled from the package's format, must set the
  *    reference's page, its glyphs, rules, colours, images and size: the preamble's rewrite changes
- *    hyperref's driver and bookmarks and nothing on the page. A redefinition or a control's default
- *    that moves it is dropped, alone or as the shortest run of those that move it together; where
- *    the package without any of them does not keep the page either, none is proven, and every
- *    redefinition is dropped (`unproven`). Then the body the generator makes of the document must
- *    set exactly what that original body sets, the editor's markers aside (`sameGlyphs`); where it
- *    does not, the fields whose regeneration moves it are found and locked, their original bytes in
- *    their node's extras (`differs`); a difference that no field explains, which the document with
- *    every field locked shows too, leaves the import `partial`, with the first difference. A
- *    document that does not compile even so tells the other checks nothing: they stop there, every
- *    control offered is dropped as `unchecked`, and the findings say so (`stopped`).
+ *    hyperref's driver and bookmarks and nothing on the page. An import set in Computer Modern's T1
+ *    or TS1 fonts, which the page cannot draw, comes read in Latin Modern (`inLatinModern`), its
+ *    reference compiled with T1 and Latin Modern after its class, which the package's preamble
+ *    keeps: that is the page it must set. A redefinition or a control's default that moves it is
+ *    dropped, alone or as the shortest run of those that move it together; where the package
+ *    without any of them does not keep the page either, none is proven, and every redefinition is
+ *    dropped (`unproven`). Then the body the generator makes of the document must set exactly what
+ *    that original body sets, the editor's markers aside (`sameGlyphs`); where it does not, the
+ *    fields whose regeneration moves it are found and locked, their original bytes in their node's
+ *    extras (`differs`); a difference that no field explains, which the document with every field
+ *    locked shows too, leaves the import `partial`, with the first difference. A document that does
+ *    not compile even so tells the other checks nothing: they stop there, every control offered is
+ *    dropped as `unchecked`, and the findings say so (`stopped`).
  * 2. **Mutations.** Every field the editor edits, typeset or raw, set to a long text, then empty,
  *    then special characters, three compiles, bisected to the slot that stops the compile: one that
  *    stops only when empty is required, one that stops on text is locked in every instance
@@ -83,6 +86,7 @@ import {
 } from "./assemble";
 import type { Candidate } from "./candidates";
 import { encodeLike, type Intake } from "./intake";
+import { undrawableFonts } from "./latin-modern";
 import { bodyOf, type Tree } from "./parse";
 import { type CompileSet, type Probe, probeOrder, type SetResult, settle } from "./probe";
 import {
@@ -120,6 +124,12 @@ export interface ValidationInputs {
   budget?: number;
   /** Whether the harness runs; true by default. */
   harness?: boolean;
+  /**
+   * The fonts the upload's reference set that the page cannot draw, Computer Modern's in T1 or
+   * TS1, where the import is read in Latin Modern from its reference on (`inLatinModern`), which
+   * the report says; none where it keeps its fonts.
+   */
+  latinModern?: readonly string[];
 }
 
 /** How many compiles one bisection of a check may make, as the probe's budget bounds its own. */
@@ -597,22 +607,17 @@ interface Round {
  * under its schema. The result's `checks` carry what item 13 reports: the fields editable and
  * locked, with why and how many words, the required slots, the controls proven and dropped, the
  * redefinitions dropped, the units that cannot be added, the harness's findings and the checks'
- * own, and the compiles and time the checks took.
+ * own, the fonts swapped for Latin Modern (`latinModern`), and the compiles and time the checks
+ * took.
  */
 export async function validate(inputs: ValidationInputs): Promise<Assembled | Refusal> {
   const job = inputs.job ?? IMPORT_JOB;
   const { session, fonts, reference } = inputs;
   // A font the page cannot draw: an import keeps its fonts, so the document is refused, naming it.
-  for (const name of reference.fonts.tex) {
-    let missing: string | undefined;
-    try {
-      missing = (await fonts.load(name))?.missing;
-    } catch {
-      missing = "unreadable";
-    }
-    if (missing !== undefined && !reference.fonts.shipped.includes(name))
-      return refusal("font", name);
-  }
+  // Computer Modern's in T1 and TS1 the pipeline has already swapped for Latin Modern where it
+  // could (`inLatinModern`), so that the probe read a page it can draw.
+  const [cannot] = await undrawableFonts(fonts, reference.fonts);
+  if (cannot !== undefined) return refusal("font", cannot);
   const files = referenceFiles(inputs.intake, reference, {
     job,
     ...(inputs.treeImage === undefined ? {} : { treeImage: inputs.treeImage }),
@@ -702,6 +707,9 @@ export async function validateWith(
       compiles: compiler.count,
       ms: performance.now() - started,
       decisions: round.decisions,
+      ...(inputs.latinModern === undefined || inputs.latinModern.length === 0
+        ? {}
+        : { latinModern: [...inputs.latinModern] }),
     },
   };
   // What is kept reads back as the store and the loader will read it: the document under the

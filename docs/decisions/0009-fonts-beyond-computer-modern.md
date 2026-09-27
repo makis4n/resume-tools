@@ -147,3 +147,5 @@ bullet, `$`, `€` and `°` from TS1 even in OT1, and in OT1 cannot set `ą`, `�
   of the Ubuntu tree's, counts a TrueType or OpenType file as an outline file, and makes the
   layout 3; CI's key covers `scripts/containers.ts`, `scripts/fontconfig.ts` and `scripts/tlpdb.ts`
   too.
+- Decision 0026 gives an import the ports' two lines where the page cannot draw its Computer
+  Modern in T1 or TS1: it is read with them right after its reference compile (`inLatinModern`).

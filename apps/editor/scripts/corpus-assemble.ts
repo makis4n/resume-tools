@@ -120,6 +120,11 @@ export interface AssembleRow {
   unrepeatable?: string[];
   /** The kinds of unit the package marks the editor cannot add (`fixed`). */
   fixed?: string[];
+  /**
+   * Whether the package sets the document in Latin Modern in T1, its Computer Modern in T1 or TS1
+   * being fonts the page cannot draw (`latinModern`, decision 0026).
+   */
+  latinModern?: boolean;
   compiles?: number;
   /** Milliseconds: the probe, and the assembly with its checks. */
   probeMs?: number;
@@ -161,6 +166,7 @@ export function assembleRow(
       .filter((each) => !each.added || !each.removed)
       .map((each) => each.kind),
     fixed: [...(checks.decisions.fixed ?? [])],
+    ...(checks.latinModern === undefined ? {} : { latinModern: true }),
     compiles: checks.compiles,
     validateMs: Math.round(checks.ms),
   };
@@ -190,10 +196,10 @@ const shownName = (name: string) => (/^[A-Za-z@*]{1,63}$/.test(name) ? `\\${name
 /**
  * What assembling the corpus came to, as one Markdown table, per family and in all: the documents
  * that reached the assembly and why others did not, those assembled, partial with the kind of the
- * first difference, and refused; the fields editable, raw where the page cannot mark them, required
- * and locked by reason, and their words; the sections mapped and locked; the controls proven and
- * dropped; the redefinitions dropped; the harness's findings by check, and the checks' own; the
- * kinds of unit that stop the compile; and the compiles and times.
+ * first difference, set in Latin Modern, and refused; the fields editable, raw where the page
+ * cannot mark them, required and locked by reason, and their words; the sections mapped and locked;
+ * the controls proven and dropped; the redefinitions dropped; the harness's findings by check, and
+ * the checks' own; the kinds of unit that stop the compile; and the compiles and times.
  */
 export function assembleTable(rows: readonly AssembleRow[]): string {
   const of = (column: (typeof COLUMNS)[number]) =>
@@ -281,6 +287,10 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
     count("Partial: the first check differs", (row) => row.outcome === "partial"),
     ...differences.map((kind) =>
       count(`Partial, the first difference: \`${kind}\``, (row) => row.difference === kind),
+    ),
+    count(
+      "Set in Latin Modern: Computer Modern in T1 or TS1, which the page cannot draw",
+      (row) => done(row) && row.latinModern === true,
     ),
     count("Refused", (row) => row.outcome === "refused"),
     ...refusals.flatMap((reason) => [

@@ -27,6 +27,7 @@ import type { Finding } from "../validate/harness";
 import { type Assembled, assemble, SIZE_OPTIONS, takenOut } from "./assemble";
 import { readTree } from "./fonts";
 import { type Intake, intake } from "./intake";
+import { inLatinModern, isComputerModernT1 } from "./latin-modern";
 import { bodyOf, bodyOfText, buildTree, readBody } from "./parse";
 import { probe, probeUses } from "./probe";
 import { type GlyphStream, type Reference, type ReferenceItem, reference } from "./reference";
@@ -458,6 +459,25 @@ describe("the checks", () => {
     expect(result.checks.all.some((field) => field.reason === "differs")).toBe(false);
   });
 
+  test("say which fonts an import read in Latin Modern was set in, for the report", async () => {
+    // What `inLatinModern` swapped, which the pipeline passes on (decision 0026).
+    const inputs = inputsOf(JAKE_LIKE);
+    const setters = takenOut(inputs.intake, inputs.signatures, inputs.answer);
+    const original = `${setters.join("\n")}\n\\begin{document}${inputs.tree.source}\\end{document}\n`;
+    const liked = await new Fake(original, 11).like();
+    if (isRefusal(liked)) throw new Error(liked.message);
+    const reference: Reference = { ...REFERENCE, ...liked.stream };
+    const swapped = ok(
+      await validateWith(
+        { ...inputs, reference, latinModern: ["ecrm1000", "tcrm1000"] },
+        new Fake(original, 11),
+      ),
+    );
+    expect(swapped.checks.latinModern).toEqual(["ecrm1000", "tcrm1000"]);
+    const kept = ok(await validateWith({ ...inputs, reference }, new Fake(original, 11)));
+    expect(kept.checks.latinModern).toBeUndefined();
+  });
+
   test("compare a XeTeX import's fonts by file with the original's as item 8's check does", async () => {
     // A colour special the package's format sets 20 sp from where the original set it, as a
     // font by file and by name can, which sets nothing on the page (decision 0023).
@@ -766,17 +786,29 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
 `;
 
   /** An invented upload through the whole pipeline, with the invented answers, validated. */
+  /**
+   * An invented upload through the whole pipeline, as the runner takes it, read in Latin Modern
+   * where the page cannot draw its Computer Modern in T1 or TS1 (`inLatinModern`), unless `swap`
+   * is false; with the invented answers, validated.
+   */
   async function validatedOnEngine(
     source: string,
     answers: readonly AnswerRow[] = ANSWERS,
     more: Partial<ValidationInputs> = {},
     cls = CLASS,
+    swap = true,
   ) {
     const zipped = { "cv.tex": strToU8(source), "inventedcv.cls": strToU8(cls) };
-    const taken = intake({ name: "invented.zip", bytes: zipSync(zipped) }, { tree });
-    if (isRefusal(taken)) throw new Error(`refused at intake: ${taken.message}`);
-    const made = await reference(session, fonts, taken as Intake);
-    if (isRefusal(made)) throw new Error(`refused: ${made.message}`);
+    const uploaded = intake({ name: "invented.zip", bytes: zipSync(zipped) }, { tree });
+    if (isRefusal(uploaded)) throw new Error(`refused at intake: ${uploaded.message}`);
+    const first = await reference(session, fonts, uploaded as Intake);
+    if (isRefusal(first)) throw new Error(`refused: ${first.message}`);
+    const swapped = swap
+      ? await inLatinModern(session, fonts, uploaded as Intake, first)
+      : undefined;
+    if (swapped !== undefined && isRefusal(swapped)) throw new Error(swapped.message);
+    const taken = swapped?.intake ?? (uploaded as Intake);
+    const made = swapped?.reference ?? first;
     const body = bodyOf(taken);
     if (isRefusal(body)) throw new Error(body.message);
     const read = readBody(body);
@@ -802,9 +834,10 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
       signatures: found,
       probe: probed,
       answer: answerOf(answers),
+      ...(swapped === undefined ? {} : { latinModern: swapped.swapped }),
       ...more,
     });
-    return { result, probed, made };
+    return { result, probed, made, first };
   }
 
   // The Jake-like document, but its spacing between two sections, which this class's page would
@@ -838,6 +871,35 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     expect(checks.fields.editable).toBeGreaterThan(8);
     expect(checks.compiles).toBeGreaterThan(10);
   }, 120_000);
+
+  test("reads an invented import set in Computer Modern's T1 fonts in Latin Modern, which the page draws", async () => {
+    // The Jake-like document in T1 with Computer Modern: the EC fonts it sets have metrics in the
+    // tree and no outlines, so the page cannot draw them, and the import was refused for them.
+    // Read with T1 and Latin Modern after its class, as the ports are (decision 0009), it assembles
+    // with its fields editable, and the page draws every glyph: the harness's fonts, fields and
+    // alignment checks, which read the page, find nothing (decision 0026).
+    const source = SOURCE.replace(
+      "\\documentclass[11pt,letterpaper]{inventedcv}\n",
+      "\\documentclass[11pt,letterpaper]{inventedcv}\n\\usepackage[T1]{fontenc}\n",
+    );
+    const before = await validatedOnEngine(source, ANSWERS, {}, CLASS, false);
+    const ec = before.first.fonts.tex.filter(isComputerModernT1);
+    expect(ec.length).toBeGreaterThan(0);
+    expect(isRefusal(before.result) && before.result.reason).toBe("font");
+    const { result, made } = await validatedOnEngine(source);
+    expect(made.fonts.tex.filter(isComputerModernT1)).toEqual([]);
+    const { checks, package: pkg } = ok(result);
+    expect(checks.latinModern).toEqual(ec);
+    expect(checks.outcome).toBe("assembled");
+    expect(pkg.preamble).toContain(
+      "{inventedcv}\n\\usepackage[T1]{fontenc}\n\\usepackage{lmodern}\n",
+    );
+    expect(
+      checks.findings.filter((each) => ["fonts", "fields", "alignment"].includes(each.check)),
+    ).toEqual([]);
+    expect(checks.fields.editable).toBeGreaterThan(8);
+    expect(checks.fields.locked.misaligned ?? 0).toBe(0);
+  }, 240_000);
 
   test("adds what the editor adds, marks a kind it cannot, and holds the harness to two pages", async () => {
     // The class takes two entries at most, which a third, as the editor adds one, stops; and the

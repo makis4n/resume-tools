@@ -451,7 +451,7 @@ pull request that acts on it. The first two the owner settled on 26 September.
 
 | Item | Where |
 |---|---|
-| Imported ids minted under a prefix no curated package uses, and a loader that refuses or re-mints the rest (decision 0006, item 4's review) | Item 7 |
+| Imported ids minted under a prefix no curated package uses, and a loader that refuses or re-mints the rest (decision 0006, item 4's review) | Item 7 for the curated loader (`checkCuratedId`, decision 0026); item 12 for the store's |
 | The harness in a worker the browser can terminate (decision 0008) | Item 12 |
 | The `controls` check draws each font an import proves (decision 0012) | Item 14 |
 | A template chooser for a new document | Item 12 |
@@ -461,3 +461,4 @@ pull request that acts on it. The first two the owner settled on 26 September.
 | The first load at 42 to 44 MB uncompressed | Milestone 5 |
 | The PDF's text layer showing a hyphen as U+2011 in some XeTeX fonts (decision 0014) | The ATS's reader; not this milestone |
 | The PDF's text layer showing an import's small capitals, set with `+smcp`, as capitals: the Awesome-CV sample's seven entry titles and four Awesome-CV forks (decision 0026) | The ATS's reader, or the PDF driver; not this milestone |
+| An imported section whose head opens its content's list, with the locked part that closes it, kept as one unit: removing the section alone stops the compile in 20 of Jake's forks (decision 0026) | The assembly, before item 12 stores an import |

@@ -1,17 +1,18 @@
 /**
  * One child of `corpus assemble`'s pool (`corpus-assemble.ts`, decision 0026), which `corpus
  * oracle` runs too: an engine session and fonts of its own, which take one document at a time, as a
- * zip, through the intake, the reference compile, the signatures' two compiles, asked of the body's
- * commands, the preamble's and the sizes the class may declare (`SIZE_OPTIONS`, decision 0026),
- * the parse, the probe and the naming request, built as items 7 and 11
- * build it, with the upload's sources and the header's values (decision 0024); find the answers the
- * committed folder holds for its macros' keys, each as the document's macro (`answerFor`); and,
- * where it holds any, rewrite a XeTeX document's fonts by file and check the rewrite (decision
- * 0023), and assemble the document's package and document and validate them. It answers with the
- * document's row, names and numbers only; the probe's row and the whole probe, for the oracle; the
- * fields found by the model's place, for the oracle's comparison with the ports; and the whole
- * assembly, which holds the document's text, as the whole probe does, and which the parent keeps
- * under `.corpus/` alone.
+ * zip, through the intake, the reference compile, read in Latin Modern where the page cannot draw
+ * its Computer Modern in T1 or TS1 (`inLatinModern`, decision 0026), the signatures' two compiles,
+ * asked of the body's commands, the preamble's and the sizes the class may declare (`SIZE_OPTIONS`,
+ * decision 0026), the parse, the probe and the naming request, built as items 7 and 11 build it,
+ * with the upload's sources and the header's values (decision 0024); find the answers the committed
+ * folder holds for its macros' keys, each as the document's macro (`answerFor`); and, where it
+ * holds any, rewrite a XeTeX document's fonts by file and check the rewrite (decision 0023), and
+ * assemble the document's package and document and validate them. It answers with the document's
+ * row, names and numbers only; the probe's row and the whole probe, for the oracle; the fields
+ * found by the model's place, for the oracle's comparison with the ports; and the whole assembly,
+ * which holds the document's text, as the whole probe does, and which the parent keeps under
+ * `.corpus/` alone.
  *
  * The editor's modules are written for Vite, so this file, which Node runs as it is, loads them
  * through Vite's module runner with the app's own config, as `corpus-probe-child.ts` does, and
@@ -35,6 +36,7 @@ type Fonts = typeof import("../src/page/fonts.ts");
 type TexLive = typeof import("../src/page/texlive.ts");
 type IntakeModule = typeof import("../src/import/intake.ts");
 type ReferenceModule = typeof import("../src/import/reference.ts");
+type LatinModernModule = typeof import("../src/import/latin-modern.ts");
 type ImportFonts = typeof import("../src/import/fonts.ts");
 type ParseModule = typeof import("../src/import/parse.ts");
 type SignaturesModule = typeof import("../src/import/signatures.ts");
@@ -72,6 +74,7 @@ async function main() {
   const { TexLiveIndex } = await runner.import<TexLive>("/src/page/texlive.ts");
   const { intake, treeImages } = await runner.import<IntakeModule>("/src/import/intake.ts");
   const { reference } = await runner.import<ReferenceModule>("/src/import/reference.ts");
+  const { inLatinModern } = await runner.import<LatinModernModule>("/src/import/latin-modern.ts");
   const { readTree } = await runner.import<ImportFonts>("/src/import/fonts.ts");
   const { bodyOf, bodyOfText, buildTree, readBody } =
     await runner.import<ParseModule>("/src/import/parse.ts");
@@ -110,13 +113,20 @@ async function main() {
       ...(refused.reason === "font" && refused.name !== undefined ? { font: refused.name } : {}),
       ...more,
     });
-    const taken = intake(
+    const uploaded = intake(
       { name: task.message.name, bytes: new Uint8Array(task.message.bytes) },
       { tree, treeImage },
     );
-    if ("refused" in taken) return done({ outcome: "no reference" });
-    const made = await reference(session, fonts, taken, { treeImage });
-    if ("refused" in made) return done({ outcome: "no reference" });
+    if ("refused" in uploaded) return done({ outcome: "no reference" });
+    const first = await reference(session, fonts, uploaded, { treeImage });
+    if ("refused" in first) return done({ outcome: "no reference" });
+    // A document set in Computer Modern's T1 or TS1 fonts, which the page cannot draw, is read with
+    // T1 and Latin Modern after its class from here on, as every pdfTeX port is, so that the probe
+    // reads a page it can draw (decision 0026).
+    const swap = await inLatinModern(session, fonts, uploaded, first, { treeImage });
+    if (swap !== undefined && "refused" in swap) return done(refusedRow(swap, first.engine));
+    const taken = swap?.intake ?? uploaded;
+    const made = swap?.reference ?? first;
     const engine = made.engine;
     const body = bodyOf(taken);
     if ("refused" in body) return done({ outcome: "not parsed", engine });
@@ -187,6 +197,7 @@ async function main() {
         probe: probed,
         answer: { version: NAMING_VERSION, macros: answers.found, preamble: { parameters: [] } },
         ...(rewrite === undefined || "refused" in rewrite ? {} : { rewrite }),
+        ...(swap === undefined ? {} : { latinModern: swap.swapped }),
         treeImage,
       });
       if ("refused" in validated) return done(refusedRow(validated, engine, counted), probedRow);

@@ -54,19 +54,36 @@ generator's writing of both, which every compile of the checks and the harness g
   at the preamble's end, right before `\begin{document}` (`withRedefinitions`, `class` and then
   `preamble`, decision 0024), each once. Where the preamble ends in `\makeatletter`, `@`'s category
   is kept for the body. A XeTeX document's preamble is item 8's rewrite of it, its fonts declared by
-  file, the rewrite's style files among the package's files and its families the package's
-  `fonts`, and the rewrite's own check has passed before the assembly starts (decision 0023), so
-  that its format dumps. Nothing else changes: **no T1, no Latin Modern, no font of the editor's,
-  no geometry**. Decision 0009 is for ports, whose output the editor defines; an import's output is
-  its reference, which the first check holds the package to glyph for glyph, and a font changed is
-  every glyph changed. The plan's item text asks for the port's rewrite, T1 and Latin Modern for a
-  pdfTeX document in Computer Modern, EC or TS1, as decisions 0008 and 0009 have every port;
-  **this record does not do it yet, and the item owes it**: the rewrite is to be made, and the
-  reference compiled with the same rewrite, so that the first check holds against it and the page
-  can draw every glyph, in the item's review round. Until then such a document keeps its fonts,
-  and one whose fonts the page cannot draw is refused (below).
+  file, the rewrite's style files among the package's files and its families the package's `fonts`,
+  and the rewrite's own check has passed before the assembly starts (decision 0023), so that its
+  format dumps. A pdfTeX document set in Computer Modern's T1 or TS1 fonts takes T1 and Latin Modern
+  (below); nothing else changes: **no font of the editor's otherwise, and no geometry**. An import's
+  output is its reference, which the first check holds the package to glyph for glyph, and a font
+  changed is every glyph changed, so an import keeps its fonts where the page can draw them.
+- **Latin Modern for Computer Modern in T1 and TS1** (the plan's item text: the preamble rewritten
+  "as decisions 0008 and 0009 have every pdfTeX port"). The tree has metrics and no outlines for
+  Computer Modern's T1 and TS1 fonts, the EC and TC fonts (decision 0009), which a document sets
+  as soon as it loads `\usepackage[T1]{fontenc}`, or sets LaTeX 2023's itemize bullet, `$`, `€` or
+  `°` even in OT1 (decision 0008), so the page could draw none of their glyphs. Where every font
+  the reference sets that the page cannot draw is an EC or TC font, on pdfTeX, the import is read
+  from its reference on with `\usepackage[T1]{fontenc}` and `\usepackage{lmodern}` right after
+  `\documentclass`, as Jake's port loads them (`LATIN_MODERN`), and its reference is compiled again
+  so (`inLatinModern`, `latin-modern.ts`): Latin Modern is Computer Modern's scalable successor,
+  the same design, whose T1 and TS1 fonts the tree has outlines for. It is a step of the pipeline,
+  right after the reference compile and before the signatures, the parse and the probe, rather
+  than of the assembly alone, since the probe reads the page's glyphs to decide what aligns, and on
+  a page it cannot draw every field would be `misaligned`; so the probe, the assembly, which copies
+  the two lines into the package's preamble with the rest of it, and the first check, which holds
+  the package to the original compiled with them (`compileLikeReference`) as to any reference, all
+  read the document as the editor sets it. The report names the fonts swapped (`latinModern`). A
+  document the page can draw, one that loads Latin Modern already or another family whose fonts
+  have outlines, is untouched; one whose fonts the lines leave undrawable is refused, naming the
+  font; and one that sets a font the page cannot draw that is no EC or TC font keeps its fonts, and
+  is refused (below). The same step serves item 11's page reader, on its branch, once it lands: it
+  reads the page after the swap, as the probe does.
 - **A document whose reference sets a font the page cannot draw is refused**, naming the font, as
-  the reference's fonts are the package's: TeX fonts only, a font the upload ships aside.
+  the reference's fonts are the package's: TeX fonts only, a font the upload ships aside, and after
+  the swap to Latin Modern above.
 - **Its controls** are the generic ones the preamble proves it has, each with the document's own
   value as its default, so that the first compile is the original: `pageSize` where the class or
   geometry names the paper, or the reference's size is Letter or A4 (geometry loaded by the other
@@ -210,31 +227,31 @@ that validates one import after another does not keep them all. Each check that 
 bisects it as the probe does (`settle`, decision 0022), 48 compiles a bisection at most.
 
 1. **Same output.** The original, compiled as the reference was but with the rewrite's hyperref
-   lines, must set the reference's glyphs and rules: the driver and the bookmarks move
-   specials and nothing on the page. The original body, compiled from the package's format with
-   the storing calls issued before it and the controls at their defaults, must then set that page
-   exactly, specials and all. Where it stops with the redefinitions after the class, they go at the
-   preamble's end. Where it does not keep the page, **the redefinitions and the controls' defaults
-   are proven as a set**: with none of them the page must be the original's; then each is tried
-   alone, and those that keep it alone are tried together, since two can move the page together
-   that each keep it alone; where together they move it, the shortest run of them that does, in
-   their order, is found by halving and its last is dropped, as the probe's union does (decision
-   0022), until the rest keep it. **Where the package with none of them does not keep the page
-   either**, the page differs for another reason, and no compile can show that a redefinition
+   lines, must set the reference's glyphs and rules: the driver and the bookmarks move specials and
+   nothing on the page. For an import read in Latin Modern, the original and its reference have the
+   two lines after the class (above), and the page is theirs. The original body, compiled from the
+   package's format with the storing calls issued before it and the controls at their defaults, must
+   then set that page exactly, specials and all. Where it stops with the redefinitions after the
+   class, they go at the preamble's end. Where it does not keep the page, **the redefinitions and
+   the controls' defaults are proven as a set**: with none of them the page must be the original's;
+   then each is tried alone, and those that keep it alone are tried together, since two can move the
+   page together that each keep it alone; where together they move it, the shortest run of them that
+   does, in their order, is found by halving and its last is dropped, as the probe's union does
+   (decision 0022), until the rest keep it. **Where the package with none of them does not keep the
+   page either**, the page differs for another reason, and no compile can show that a redefinition
    keeps it: none is proven, every one is dropped, and the findings say so (`unproven`), since a
-   reviewed answer's redefinition is applied only where it keeps upstream's output (decision
-   0024). A XeTeX import's body, its fonts declared by file,
-   compares with the original, whose fonts were found by name, as item 8's check compares them, a
-   native font by its file and a colour special wherever it stands, since it sets nothing on the
-   page (decision 0023). Then the body the generator makes of the document must set
-   exactly what the original body sets, the markers aside; where it does not, the fields whose
-   regeneration moves it are bisected out and locked (`differs`), their bytes in their node's
-   extras. A difference that the document with every field locked shows too leaves the import
-   `partial`, with its first difference, for item 13 to show; the rest of the checks still run.
-   **A document that does not compile even with every field locked** tells them nothing: the
-   checks stop there, every control offered is dropped as `unchecked`, since no compile tried it,
-   and the findings say the checks stopped (`stopped`), so that nothing reads as proven that no
-   compile showed.
+   reviewed answer's redefinition is applied only where it keeps upstream's output (decision 0024).
+   A XeTeX import's body, its fonts declared by file, compares with the original, whose fonts were
+   found by name, as item 8's check compares them, a native font by its file and a colour special
+   wherever it stands, since it sets nothing on the page (decision 0023). Then the body the
+   generator makes of the document must set exactly what the original body sets, the markers aside;
+   where it does not, the fields whose regeneration moves it are bisected out and locked
+   (`differs`), their bytes in their node's extras. A difference that the document with every field
+   locked shows too leaves the import `partial`, with its first difference, for item 13 to show; the
+   rest of the checks still run. **A document that does not compile even with every field locked**
+   tells them nothing: the checks stop there, every control offered is dropped as `unchecked`, since
+   no compile tried it, and the findings say the checks stopped (`stopped`), so that nothing reads
+   as proven that no compile showed.
 2. **Mutations.** Every field the editor edits, typeset or raw, set to a 300-character text, then
    empty, then characters TeX reads (`\ { } $ & # ^ _ % ~ < > | [ ] * -- ' " é ß ø ω Ж ğ`), three
    compiles, each failing one bisected to the slot. A raw field, a contact or a link's label whose
@@ -311,26 +328,28 @@ time.
 ### The runner and the oracle
 
 - `corpus assemble [--only <id>] [--json <file>]` takes each fetched document through the probe's
-  pipeline in the reference runner's pool, 900 s a document, finds the answers the committed
-  folder holds for its macros' keys (above), and, where it holds any, rewrites a XeTeX document's
-  fonts by file and checks the rewrite, which refuses what it cannot reproduce (decision 0023),
-  and assembles and validates it; it prints the table below, names and numbers only, and keeps
-  each document's package and document under `.corpus/assemble/`.
+  pipeline in the reference runner's pool, 900 s a document, reading it in Latin Modern right after
+  its reference where the page cannot draw its Computer Modern in T1 or TS1 (above), finds the
+  answers the committed folder holds for its macros' keys (above), and, where it holds any, rewrites
+  a XeTeX document's fonts by file and checks the rewrite, which refuses what it cannot reproduce
+  (decision 0023), and assembles and validates it; it prints the table below, names and numbers
+  only, and keeps each document's package and document under `.corpus/assemble/`.
 - `corpus oracle` assembles and validates the three upstream samples from the seed after probing
   them, and prints, beside the probe's table, the model's places each port's snippets mark
   against how the assembly came out for each.
 
 ## The oracle
 
-`corpus oracle` on 27 September 2026, the tree of layout 7, the M4 Pro: the three upstream samples
-assemble from the seed and their first check holds, the original body and the body the generator
-makes of the document setting the same glyph stream.
+`corpus oracle` on 27 September 2026, after the item's review round, the tree of layout 7, the M4
+Pro: the three upstream samples assemble from the seed and their first check holds, the original
+body and the body the generator makes of the document setting the same glyph stream. None sets a
+font the page cannot draw, so none is read in Latin Modern, and the rewrite changes nothing here.
 
 | Sample | Outcome | Fields editable | Words editable | Parts locked, by reason | Harness | Compiles |
 |---|---|--:|--:|---|---|--:|
-| Jake's Resume | assembled | 47 | 323 of 389 | `date` 3, `unmapped` 2 | no finding | 27 |
-| AltaCV | assembled | 38 | 80 of 288 | `unmapped` 13, `date` 4, `differs` 3, `shape` 2, `moved` 1 | `converges` 2, `pages` 1 | 70 |
-| Awesome-CV | assembled | 119, and 4 raw | 1023 of 1249 | `date` 9, `unmapped` 4, `differs` 1, `shape` 1, `text` 1 | `pages` 1, `pdf` 7 | 67 |
+| Jake's Resume | assembled | 47 | 323 of 389 | `date` 3, `unmapped` 2 | no finding | 28 |
+| AltaCV | assembled | 33 | 67 of 282 | `unmapped` 16, `date` 4, `differs` 4, `moved` 1, `shape` 1 | no finding | 72 |
+| Awesome-CV | assembled | 119, and 4 raw | 1023 of 1260 | `date` 9, `unmapped` 5, `differs` 1, `shape` 1, `text` 1 | `pdf` 7 | 70 |
 
 Against the places each port's snippets mark, what the import leaves out or locks, and why:
 
@@ -340,18 +359,22 @@ Against the places each port's snippets mark, what the import leaves out or lock
   broken by `\\` inside `\small{...}`, which no list reads: no item or labelled item. Three dates
   abbreviate their months with a stop, which the generator does not write (`date`). The three
   places the probe once saw move the page are editable since its fixes (decision 0022). The sample
-  has no paragraph. Entries and bullets add and remove.
+  has no paragraph. Entries, bullets and a section of each kind add and remove, and the font size
+  offers `article`'s 10, 11 and 12 points.
 - **AltaCV.** Its name, one argument the seed maps to the first name and the last, is split at its
   last space, and its section titles, set in capitals, are editable, since the aligner folds case
   (decision 0021). The redefinitions of `\cvevent` and `\cvtag` change the page and are dropped by
-  the first check, as decision 0024 expected, and `\printinfo`'s is kept. The name, the email and a
-  paragraph moved the page when regenerated (`differs`). Its tags moved the page when the probe
-  marked them, and with their redefinition dropped they are kept as the upload wrote them (`moved`),
-  as are its achievements, skills, wheel chart and bibliography, which the seed answers `other`.
-  Four dates are not dates the model holds (`date`), and an event's title and a part of the header
-  are kept for their shape (`shape`). A section title stops the compile when empty: it is
-  required. The template takes three passes to settle (`converges`) and its sample is two pages
-  (`pages`).
+  the first check, as decision 0024 expected, and `\printinfo`'s is kept. The name, the email, the
+  header's run of links and a paragraph moved the page when regenerated (`differs`), and are kept as
+  the upload wrote them, the links' labels no fields of the document's. Its tags moved the page when
+  the probe marked them, and with their redefinition dropped they are kept as the upload wrote them
+  (`moved`), as are its achievements, skills, wheel chart and bibliography, which the seed answers
+  `other`, and what its header's calls and two paragraphs' heads hold that no field takes
+  (`unmapped`). Four dates are not dates the model holds (`date`), and an event's title is kept for
+  its shape (`shape`). A section title stops the compile when empty: the package requires it. A
+  section of any kind the editor adds at the end stops the compile, so the package marks the four
+  kinds (`fixed`) and the editor adds none; entries and bullets add and remove. The harness holds
+  the package to the upload's two pages and the three passes `paracol` takes, and finds nothing.
 - **Awesome-CV.** Its format dumps with its fonts declared by file (item 8's rewrite, decision
   0023), and its first check holds against the original compiled with its fonts found by name, a
   colour special's place aside, as the rewrite's own check compares them. Its entries' titles and
@@ -359,75 +382,67 @@ Against the places each port's snippets mark, what the import leaves out or lock
   dates abbreviate their months with a stop and join their ends with a hyphen, which the generator
   writes otherwise (`date`); the position, whose separators are raw, is kept (`shape`), and the
   last name moved the page (`differs`); the mobile number, from which the class builds its address,
-  stops the compile on the checks' text (`text`). The email and the three links are set raw, their
+  stops the compile on the checks' text (`text`); and the quote, which no field of the header's
+  takes, is kept and counted (`unmapped`). The email and the three links are set raw, their
   addresses built from their text. Four redefinitions are applied and none dropped. The address
-  and a section's title stop the compile when empty: they are required. The harness finds seven
-  of the nine entries' titles, which the class sets in small capitals, in the PDF's text only in
-  capitals (`pdf`, Consequences), and the sample is three pages (`pages`). Entries, bullets and
-  links add and remove.
+  and a section's title stop the compile when empty: the package requires them. The harness finds
+  seven of the nine entries' titles, which the class sets in small capitals, in the PDF's text only
+  in capitals (`pdf`, Consequences); the sample's three pages are the upload's. Entries, bullets,
+  links and a section of each kind add and remove.
 
 The probe's own table against the oracle is unchanged by this item: 3 disagreements of 75, each
 explained in decision 0022.
 
 ## The corpus
 
-`corpus assemble` on 27 September 2026, the tree of layout 7, the M4 Pro, four children beside
-other work: 15.4 minutes.
+`corpus assemble` on 27 September 2026, after the item's review round and the Latin Modern
+rewrite, the tree of layout 7, the M4 Pro, four children beside other work: 15.4 minutes.
 
 |  | jake | awesome-cv | altacv | moderncv | europecv | other | all |
 |---|--:|--:|--:|--:|--:|--:|--:|
 | Documents whose body parsed | 35 | 18 | 10 | 14 | 6 | 34 | 117 |
 | Not probed: the body unmarked did not set the reference's glyphs | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| No answer for any macro the body calls | 3 | 0 | 0 | 1 | 6 | 33 | 43 |
-| Assembled and checked | 14 | 14 | 6 | 8 | 0 | 0 | 42 |
-| Assembled: the first check holds | 12 | 12 | 6 | 8 | 0 | 0 | 38 |
-| Partial: the first check differs | 2 | 2 | 0 | 0 | 0 | 0 | 4 |
-| Partial, the first difference: `position` | 2 | 2 | 0 | 0 | 0 | 0 | 4 |
-| Refused | 18 | 4 | 3 | 5 | 0 | 1 | 31 |
+| No answer for any macro the body calls | 1 | 0 | 0 | 1 | 6 | 32 | 40 |
+| Assembled and checked | 34 | 14 | 8 | 13 | 0 | 1 | 70 |
+| Assembled: the first check holds | 32 | 12 | 8 | 12 | 0 | 1 | 65 |
+| Partial: the first check differs | 2 | 2 | 0 | 1 | 0 | 0 | 5 |
+| Partial, the first difference: `position` | 2 | 2 | 0 | 1 | 0 | 0 | 5 |
+| Set in Latin Modern: Computer Modern in T1 or TS1, which the page cannot draw | 19 | 0 | 2 | 5 | 0 | 0 | 26 |
+| Refused | 0 | 4 | 1 | 0 | 0 | 1 | 6 |
 | Refused: difference | 0 | 4 | 0 | 0 | 0 | 1 | 5 |
-| Refused: font | 18 | 0 | 2 | 5 | 0 | 0 | 25 |
-| Refused: font `ecbx0900` | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
-| Refused: font `ecbx1000` | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
-| Refused: font `ectt0900` | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
-| Refused: font `tcbx1000` | 3 | 0 | 0 | 0 | 0 | 0 | 3 |
-| Refused: font `tcrm0900` | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
-| Refused: font `tcrm1000` | 9 | 0 | 0 | 0 | 0 | 0 | 9 |
-| Refused: font `tcrm1095` | 3 | 0 | 0 | 0 | 0 | 0 | 3 |
-| Refused: font `tcsl1000` | 0 | 0 | 0 | 3 | 0 | 0 | 3 |
-| Refused: font `tcss1000` | 0 | 0 | 0 | 2 | 0 | 0 | 2 |
 | Refused: keep | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
 | Timed out or died | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
-| Template macros with an answer | 114 | 209 | 77 | 26 | 0 | 11 | 437 |
-| Template macros with none | 156 | 84 | 82 | 70 | 95 | 140 | 627 |
-| Template macros with none: the answer held is another kind's, or its partner is not theirs | 23 | 0 | 0 | 0 | 0 | 1 | 24 |
+| Template macros with an answer | 137 | 209 | 77 | 26 | 0 | 12 | 461 |
+| Template macros with none | 133 | 84 | 82 | 70 | 95 | 139 | 603 |
+| Template macros with none: the answer held is another kind's, or its partner is not theirs | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | **Fields** |  |  |  |  |  |  |  |
-| Editable | 299 | 357 | 137 | 41 | 0 | 0 | 834 |
-| Raw: set, and edited in the panel alone | 0 | 48 | 0 | 12 | 0 | 0 | 60 |
+| Editable | 513 | 357 | 146 | 77 | 0 | 4 | 1097 |
+| Raw: set, and edited in the panel alone | 0 | 48 | 0 | 6 | 0 | 0 | 54 |
 | Required | 1 | 28 | 2 | 0 | 0 | 0 | 31 |
 | Parts locked: `raw` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Parts locked: `breaks` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Parts locked: `vanished` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Parts locked: `twice` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| Parts locked: `moved` | 1 | 0 | 1 | 0 | 0 | 0 | 2 |
-| Parts locked: `misaligned` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Parts locked: `moved` | 1 | 0 | 1 | 1 | 0 | 0 | 3 |
+| Parts locked: `misaligned` | 5 | 0 | 0 | 0 | 0 | 0 | 5 |
 | Parts locked: `case` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Parts locked: `split` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| Parts locked: `untested` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| Parts locked: `date` | 16 | 31 | 6 | 0 | 0 | 0 | 53 |
-| Parts locked: `shape` | 21 | 9 | 3 | 0 | 0 | 0 | 33 |
-| Parts locked: `unmapped` | 84 | 31 | 46 | 33 | 0 | 0 | 194 |
-| Parts locked: `differs` | 1 | 7 | 0 | 0 | 0 | 0 | 8 |
-| Parts locked: `text` | 0 | 5 | 0 | 0 | 0 | 0 | 5 |
+| Parts locked: `untested` | 0 | 0 | 0 | 11 | 0 | 0 | 11 |
+| Parts locked: `date` | 23 | 31 | 6 | 0 | 0 | 0 | 60 |
+| Parts locked: `shape` | 39 | 9 | 3 | 0 | 0 | 0 | 51 |
+| Parts locked: `unmapped` | 174 | 36 | 55 | 67 | 0 | 5 | 337 |
+| Parts locked: `differs` | 3 | 7 | 0 | 1 | 0 | 0 | 11 |
+| Parts locked: `text` | 0 | 5 | 0 | 7 | 0 | 0 | 12 |
 | Parts locked: `fields` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Parts locked: `alignment` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| Words in editable fields | 31% | 28% | 21% | 6% |  |  | 26% |
+| Words in editable fields | 21% | 28% | 16% | 5% |  | 1% | 20% |
 | **Sections** |  |  |  |  |  |  |  |
-| Mapped onto the model | 72 | 39 | 16 | 32 | 0 | 0 | 159 |
-| Locked | 71 | 33 | 17 | 32 | 0 | 0 | 153 |
+| Mapped onto the model | 161 | 39 | 16 | 63 | 0 | 4 | 283 |
+| Locked | 167 | 33 | 19 | 63 | 0 | 5 | 287 |
 | **Controls, documents** |  |  |  |  |  |  |  |
-| `pageSize` proven | 14 | 14 | 6 | 8 | 0 | 0 | 42 |
+| `pageSize` proven | 34 | 14 | 8 | 13 | 0 | 1 | 70 |
 | `margins` proven | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `fontSize` proven | 13 | 14 | 6 | 8 | 0 | 0 | 41 |
+| `fontSize` proven | 32 | 14 | 8 | 13 | 0 | 1 | 68 |
 | `font` proven | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `accent` proven | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `density` proven | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -437,76 +452,99 @@ other work: 15.4 minutes.
 | `font` dropped | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `accent` dropped | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `density` dropped | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Dropped unchecked: the checks stopped before the fourth | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | **Redefinitions, documents** |  |  |  |  |  |  |  |
-| Applied after `\documentclass` | 0 | 12 | 1 | 0 | 0 | 0 | 13 |
+| Applied after `\documentclass` | 0 | 12 | 2 | 0 | 0 | 0 | 14 |
 | Applied before `\begin{document}`: a compile after the class stopped | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | Dropped: `\cvevent` | 0 | 0 | 3 | 0 | 0 | 0 | 3 |
 | Dropped: `\cvhonors` | 0 | 1 | 0 | 0 | 0 | 0 | 1 |
-| Dropped: `\cvtag` | 0 | 0 | 2 | 0 | 0 | 0 | 2 |
+| Dropped: `\cvtag` | 0 | 0 | 3 | 0 | 0 | 0 | 3 |
 | **The harness's findings, documents** |  |  |  |  |  |  |  |
 | `dump` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `compile` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `converges` | 0 | 1 | 0 | 0 | 0 | 0 | 1 |
+| `converges` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `controls` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `edits` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `pages` | 9 | 7 | 2 | 4 | 0 | 0 | 22 |
+| `pages` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `fields` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `alignment` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `fonts` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `special` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `pdf` | 0 | 4 | 0 | 0 | 0 | 0 | 4 |
-| No finding | 5 | 5 | 4 | 4 | 0 | 0 | 18 |
-| A repeatable unit stops the compile | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| **The checks' own findings, documents** |  |  |  |  |  |  |  |
+| `stopped` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `untested` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `unproven` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| No finding, the harness's or the checks' | 34 | 10 | 8 | 13 | 0 | 1 | 66 |
+| **Repeatable units, documents** |  |  |  |  |  |  |  |
+| A unit added or removed stops the compile | 20 | 7 | 0 | 0 | 0 | 0 | 27 |
+| The editor cannot add: `link` | 0 | 7 | 0 | 0 | 0 | 0 | 7 |
 | **Compiles and time** |  |  |  |  |  |  |  |
-| Compiles, median | 23 | 44 | 24 | 21 |  |  | 27 |
-| Compiles, most | 54 | 63 | 41 | 23 |  |  | 63 |
-| The probe, median | 899 ms | 42406 ms | 18519 ms | 10744 ms |  |  | 12124 ms |
-| Assembly and checks, median | 5646 ms | 16062 ms | 14790 ms | 9334 ms |  |  | 9770 ms |
-| Assembly and checks, slowest | 9644 ms | 37755 ms | 25890 ms | 9896 ms |  |  | 37755 ms |
+| Compiles, median | 26 | 51 | 25 | 25 |  | 23 | 27 |
+| Compiles, most | 56 | 70 | 45 | 32 |  | 23 | 70 |
+| The probe, median | 1167 ms | 44806 ms | 17338 ms | 11514 ms |  | 6286 ms | 3100 ms |
+| Assembly and checks, median | 4443 ms | 16620 ms | 12674 ms | 10102 ms |  | 6562 ms | 8093 ms |
+| Assembly and checks, slowest | 9308 ms | 42178 ms | 26211 ms | 12226 ms |  | 6562 ms | 42178 ms |
 
 ### What the table says
 
 - **The seed reaches the launch templates' documents, and little else.** Of 117 bodies that parse,
-  43 call no macro the seed answers, 33 of the 34 `other` and all six europecv's; 42 are assembled
-  and checked, and 38 of them keep their reference's glyph stream with the fields they have.
-  Until item 9 answers the rest, 627 of the template macros the body calls have no answer. For 24
-  of them, 23 in Jake's forks, the cache holds an answer it refuses for the document's macro: a
-  fork that rewrote one of a list's two macros keeps the other's answer out too, since its partner
-  is no longer the seed's by key (decision 0024), which leaves two forks with no answer at all.
-- **What is locked is what nothing answers.** 26% of the words of the documents assembled are in
-  editable fields (Jake's 31%, Awesome-CV's 28%, AltaCV's 21%, moderncv's 6%), and 93% of the
-  locked words are `unmapped`: a fork's own macros, and Jake's header, a block of text and links
-  with no macro to answer (Consequences). One document reaches item 13's 90%, an Awesome-CV fork
-  at 94%, partial, and the next, another, 89%. What the checks lock beyond the probe is small: 8
-  parts whose regeneration moved the page (`differs`), 5 slots whose text stops the compile
-  (`text`), and 31 slots required, 28 of them Awesome-CV's.
-- **Refusals are fonts.** 25 documents, 18 of Jake's forks and 5 of moderncv's, set a font the
-  page cannot draw: TS1's bullet and symbols in Computer Modern (`tcrm`, `tcbx`, `tcsl`, `tcss`,
-  22 documents) and EC's (3), which the T1 and Latin Modern rewrite this item owes would draw
-  (Consequences). Item 8's check refuses 5 XeTeX documents, 4 of them Awesome-CV forks, whose
-  fonts by file set their glyphs otherwise than the reference (`difference`, decision 0023). One
-  AltaCV fork has a verbatim part before its first section (`keep`), and one's body at the font
-  size control's 9 points never ends (`timeout`).
-- **Four are partial**, each by a position: two of Jake's, by a tenth of a point near the top of
+  40 call no macro the seed answers, 32 of the 34 `other` and all six europecv's; 70 are assembled
+  and checked, and 65 of them keep their reference's glyph stream with the fields they have.
+  Until item 9 answers the rest, 603 of the template macros the body calls have no answer. The
+  cache refuses none of the answers it holds any more, where it refused 24, 23 in Jake's forks:
+  a fork that rewrote one of a list's two macros finds the other's partner by its name (decision
+  0028), and three documents that had no answer at all now assemble.
+- **Latin Modern lifts the font refusals.** 26 documents, 19 of Jake's forks, 5 of moderncv's and 2
+  of AltaCV's, set Computer Modern's T1 or TS1 fonts, TS1's itemize bullet above all, and are read
+  in Latin Modern (above): every one the round before refused for its fonts, 25, and one that had no
+  answer then. 25 keep their reference's glyph stream, read so, and one is partial; their fields are
+  editable where the probe, reading a page it can draw, found them so, 253 of them. Without the
+  rewrite, validation refuses those 26 for their fonts, as it did: 44 assembled and checked, 40 of
+  them holding, and 32 refused, 26 for fonts. No document is refused for its fonts now.
+- **What is locked is what nothing answers.** 20% of the words of the documents assembled are in
+  editable fields (Jake's 21%, Awesome-CV's 28%, AltaCV's 16%, moderncv's 5%), and 92% of the locked
+  words are `unmapped`: a fork's own macros, and Jake's header, a block of text and links with no
+  macro to answer (Consequences); the documents read in Latin Modern, most of them Jake's forks with
+  their own macros, have 11% in editable fields. One document reaches item 13's 90%, an Awesome-CV
+  fork at 92%, partial, and the next, another, 88%. What the checks lock beyond the probe is small:
+  11 parts whose regeneration moved the page (`differs`), 12 slots whose text stops the compile
+  (`text`), and 31 slots required, 28 of them Awesome-CV's. The probe's budget left 11 instances of
+  two moderncv forks unsettled (`untested`, decision 0022), and it found five of a Jake fork's
+  misaligned; the assembly keeps them as the upload wrote them.
+- **Refusals are item 8's and one kept part.** Item 8's check refuses 5 XeTeX documents, 4 of them
+  Awesome-CV forks, whose fonts by file set their glyphs otherwise than the reference
+  (`difference`, decision 0023). One AltaCV fork has a verbatim part before its first section
+  (`keep`), and one's body at the font size control's 9 points never ends (`timeout`).
+- **Five are partial**, each by a position: two of Jake's, by a tenth of a point near the top of
   the page and by a line broken otherwise near its foot, which the original compiled with the
-  rewrite's hyperref lines alone shows already; and two of Awesome-CV's, on their second page,
-  which the body with every field locked shows with no lock marker too. Item 15's lock markers and
-  the hyperref lines are where to look again.
-- **Controls**: the page size is proven on every document and the font size on all 41 whose
-  `\documentclass` names a size; no document sets geometry's margins as one length in tenths of an
-  inch, so `margins` is never offered, and the seed has no preamble settings, so neither are
-  `accent`, `font` and `density`. Nothing is dropped.
-- **Redefinitions** are applied after the class in 13 documents, and none needed the preamble's
+  rewrite's hyperref lines alone shows already; two of Awesome-CV's, on their second page, which
+  the body with every field locked shows with no lock marker too; and one of moderncv's read in
+  Latin Modern. Item 15's lock markers and the hyperref lines are where to look again.
+- **Controls**: the page size is proven on all 70, and the font size on the 68 whose class declares
+  the document's size and another, at the sizes it declares; no document sets geometry's margins
+  as one length in tenths of an inch, so `margins` is never offered, and the seed has no preamble
+  settings, so neither are `accent`, `font` and `density`. Nothing is dropped, and no document's
+  checks stopped before the fourth.
+- **Redefinitions** are applied after the class in 14 documents, and none needed the preamble's
   end. AltaCV's `\cvevent` and `\cvtag` change the page and are dropped, as on the upstream sample,
-  in three and two of its six documents, and `\printinfo`'s is kept; one Awesome-CV fork drops
-  `cvhonors`'s.
-- **The harness** runs every check on the XeTeX documents too, whose formats now dump: it finds
-  `pages` on the 22 of two pages or more, `pdf` on four Awesome-CV forks whose small-capital entry
-  titles the PDF's text shows only in capitals, and `converges` on one; none of `fields` or
-  `alignment` after the round that locks them, and no repeatable unit that stops. 18 documents
-  have no finding.
-- **Time**: the checks take 27 compiles at the median, 63 at most, and 9.8 s at the median, 16 s for
-  an Awesome-CV fork compiled from its format, 38 s at most.
+  in three of its eight documents each, and `\printinfo`'s is kept; one Awesome-CV fork drops
+  `cvhonors`'s. No redefinition was left unproven.
+- **The harness** holds each document to its upload's pages and passes, so `pages` and `converges`
+  are gone; it finds `pdf` on four Awesome-CV forks, whose small-capital entry titles the PDF's
+  text shows only in capitals, and nothing else: none of `fields`, `alignment` or `fonts`, the
+  documents read in Latin Modern among them. 66 documents have no finding, the harness's or the
+  checks' own (`stopped`, `untested`, `unproven`, none).
+- **Repeatable units.** Check 3 adds and removes a section of each kind now, as well as entries,
+  bullets, items and links, and 27 documents have a unit whose addition or removal stops the
+  compile. Seven Awesome-CV forks cannot take a new link, which their packages mark (`fixed`); and
+  in 20 of Jake's forks, removing the first section of a kind stops the compile, a list section's in
+  15, a paragraph section's in 5, a section of entries' in 2, and in one the first entry's. In 21 of
+  those 22 sections the assembly keeps the opener of a list the section's content begins with in the
+  section's `before`, and its closer in the locked part after it, so that the section cannot go
+  alone (Consequences); the other section and the entry are yet to be read.
+- **Time**: the checks take 27 compiles at the median, 70 at most, and 8.1 s at the median, 17 s
+  for an Awesome-CV fork compiled from its format, 42 s at most.
 
 ## Consequences
 
@@ -530,7 +568,7 @@ other work: 15.4 minutes.
 - **The model takes what the assembly makes.** Every package and document the assembly's tests
   make parse under the package's and the model's schemas, extras slots only where their nodes keep
   extras, and every locked section and extra kept LaTeX (decision 0025), as the store will parse
-  them, and so do the 42 the corpus run assembled; `isKept`, which decides what a locked section
+  them, and so do the 70 the corpus run assembled; `isKept`, which decides what a locked section
   can hold, is the model's `KeptLatex`, and a locked section's LaTeX is `LockedLatex` besides. The
   assembly refuses what the model would refuse (`keep`) rather than hand the store a document it
   cannot read.
@@ -540,13 +578,24 @@ other work: 15.4 minutes.
   right column elsewhere and was partial for it; and a marker after a formula must keep the break
   there, whose loss moved two Awesome-CV forks' lines by a point. The markers now add and take
   away no breakpoint (decision 0025).
-- **The T1 and Latin Modern rewrite is owed** (above): a pdfTeX document in Computer Modern, EC or
-  TS1 is to take the ports' fonts, against a reference compiled with the same rewrite, in the
-  item's review round, which lifts the font refusals below.
-- **Fonts the page cannot draw refuse an import**, until the rewrite above. Keeping the upload's
-  fonts costs the documents set in a font the tree has no outline for: Computer Modern's EC and TC
-  fonts (decision 0009), above all LaTeX 2023's first-level itemize bullet, TS1's `tcrm1000`, which
-  every OT1 document with a bulleted list sets (decision 0008).
+- **Latin Modern is a step of the pipeline** (above). Item 12 runs `inLatinModern` right after the
+  reference compile, as `corpus assemble` does, and reads the document it gives from then on, the
+  signatures, the parse, the probe, the naming request and the validation, passing the fonts
+  swapped on to the report; item 11's page reader, on its branch, reads the page after it too, and
+  so draws the header of a document set in Computer Modern's T1 or TS1 fonts, which it could not.
+  Item 13 says the fonts were swapped (`checks.latinModern`), Computer Modern's for the same
+  design's Latin Modern, which the page can draw. Nothing the user typed is in the two lines, and
+  the naming request carries them as any line of the preamble.
+- **Fonts the page cannot draw still refuse an import** where they are not Computer Modern's in T1
+  or TS1, or the swap leaves them: keeping the upload's fonts costs the documents set in a font the
+  tree has no outline for.
+- **A section whose head opens its content's list cannot go alone.** Where the assembly keeps the
+  opener of the list a section's content begins with in the section's `before`, and the list's
+  closer in the locked part after it, removing the section takes the opener and leaves the closer,
+  and the compile stops: 20 of Jake's forks, which check 3 finds and reports (`repeatable`) for
+  item 13. The section and the part that closes its list are one unit, which the assembly is to
+  keep together, locked or moved as one, before item 12 stores an import (the milestone's owed
+  table).
 - **The seed answers only the launch templates' own macros.** A fork that redefined a macro, as
   many of Jake's did, has no answer for it until item 9, and what its macros set is kept whole:
   in the corpus, most of what is locked is `unmapped` for want of an answer.
@@ -568,9 +617,9 @@ other work: 15.4 minutes.
   box hooks does not catch it. The runner's 900 s limit reports it as timed out, and the browser's
   worker is terminated (item 12).
 - **The checks cost compiles.** A document takes about two dozen and up to a hundred where the
-  harness locks a field and the checks run again, each from the package's format, a XeTeX one's
-  too; the rewrite's own check adds a whole compile, a dump and a compile from it, before the
-  assembly starts.
+  harness locks a field and the checks run again, each from the package's format, a XeTeX one's too;
+  the rewrite's own check adds a whole compile, a dump and a compile from it, before the assembly
+  starts, and reading a document in Latin Modern adds its reference compile once more.
 - **The harness holds an import to its upload.** A document of two pages, which a curated
   template's sample must not be and an upload may be, and a template that takes three passes to
   settle, as AltaCV's does, are no longer findings (`Expected`, The checks); more pages or passes
