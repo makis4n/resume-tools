@@ -21,7 +21,8 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+# Pinned, since it builds the wheel the image installs and uv.lock does not cover it.
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

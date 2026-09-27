@@ -1,5 +1,6 @@
-# Workflows pin every action to a commit (decision 0029); this keeps those pins current, in one
-# grouped pull request a month whose title passes the pr-title check.
+# Workflows pin every action to a commit (decision 0029), and the ATS image pins its base images by
+# digest; this keeps both current, in one grouped pull request a month each whose title passes the
+# pr-title check.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -11,3 +12,17 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: "chore(repo)"
+  - package-ecosystem: docker
+    directory: /apps/ats
+    schedule:
+      interval: monthly
+    groups:
+      ats-image:
+        patterns: ["*"]
+    # New digests only for Python: moving to a newer version changes the Python pin, which takes a
+    # decision record.
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    commit-message:
+      prefix: "chore(ats)"
