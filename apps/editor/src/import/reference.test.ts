@@ -130,6 +130,38 @@ describe("comparing glyph streams", () => {
     }
   });
 
+  test("leaves out the first shipout's black in whatever colour model xcolor writes it", () => {
+    // xcolor's black follows the model a document asks for: gray, rgb or cmyk, or the dvips
+    // driver's name for it.
+    const withFirst = (text: string): ReferenceItem[] => [
+      base[0] as ReferenceItem,
+      base[1] as ReferenceItem,
+      { kind: "special", h: 90, v: 3_000_000, text },
+      ...base.slice(2),
+    ];
+    for (const black of [
+      "color push gray 0",
+      "color push rgb 0 0 0",
+      "color push rgb 0.0 0.0 0.0",
+      "color push cmyk 0 0 0 1",
+      "color push  Black",
+    ])
+      expect(sameGlyphs(stream(withFirst(black)), stream(base)), black).toBe(true);
+    // Another colour is the page's, and so is a black a pop takes off.
+    for (const colour of [
+      "color push rgb 0 0 1",
+      "color push cmyk 0 0 0 0.5",
+      "color push gray 0.5",
+      "color push Blue",
+    ])
+      expect(sameGlyphs(stream(withFirst(colour)), stream(base)), colour).toBe(false);
+    const popped: ReferenceItem[] = [
+      ...withFirst("color push rgb 0 0 0"),
+      { kind: "special", h: 700_000, v: 3_000_000, text: "color pop" },
+    ];
+    expect(sameGlyphs(stream(popped), stream(base))).toBe(false);
+  });
+
   test("tells a colour, an image or a link apart, naming only its command", () => {
     const special = (text: string): ReferenceItem => ({
       kind: "special",
@@ -202,6 +234,29 @@ describe("comparing glyph streams", () => {
     expect(kindOf({ ...stream(base), pages: [{ items: base }, { items: [] }] })).toBe("pages");
     expect(kindOf({ ...stream(base), size: { width: 1, height: 1 } })).toBe("size");
     expect(kindOf(stream(base.map((item, j) => (j === 3 ? glyph(1, 1) : item))))).toBe("kind");
+  });
+
+  test("says where the second stream parts from the first, markers and all", () => {
+    // The probe reads the field whose begin marker comes last before this item as the one that
+    // moved the page, so the item is the second stream's own, found among its markers.
+    const marker: ReferenceItem = { kind: "special", h: 100, v: 3_000_000, text: "rt:b:c1-1" };
+    const moved = { ...base[4], h: 600_100 } as ReferenceItem;
+    const other = stream([
+      ...base.slice(0, 2),
+      marker,
+      base[2] as ReferenceItem,
+      base[3] as ReferenceItem,
+      moved,
+    ]);
+    const found = difference(stream(base), other);
+    expect(found?.kind).toBe("position");
+    expect(found?.page).toBe(0);
+    expect(found?.item).toBe(moved);
+    expect(other.pages[0]?.items.indexOf(found?.item as ReferenceItem)).toBe(5);
+    // A page with fewer items gives its last; a page more or fewer gives no place.
+    const short = stream(base.slice(0, 4));
+    expect(difference(stream(base), short)?.item).toBe(base[3]);
+    expect(difference(stream(base), { ...stream(base), pages: [] })?.page).toBeUndefined();
   });
 
   test("lists a special by its command", () => {

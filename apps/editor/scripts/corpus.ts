@@ -52,6 +52,18 @@
  *                 did not set the reference's glyphs (`scripts/corpus-parse.ts`, decision 0020)
  *   --only <id>   that document only
  *   --json <file> write each document's row as JSON too, macros' names and numbers only
+ *   probe         take every document whose body parses, and probe which of its macros' arguments
+ *                 and standard nodes the editor may mark (`src/import/probe.ts`), in the same
+ *                 pool, 600 s a document; print one table of what it found, per family and in all,
+ *                 names of macros and counts only, and keep each document's whole probe under
+ *                 `.corpus/probe/` (`scripts/corpus-probe.ts`, decision 0022). It takes several
+ *                 minutes, a XeTeX document's compiles being whole
+ *   --only <id>   that document only
+ *   --json <file> write each document's row as JSON too, macros' names and numbers only
+ *   oracle        fetch the three launch templates' upstream samples that `corpus/oracle.json`
+ *                 names into `.corpus/oracle/`, as `fetch` fetches a document, probe each, and print
+ *                 the verdicts the oracle expects against those found, and how many disagree
+ *                 (`scripts/corpus-oracle.ts`). It exits 1 when the samples cannot be fetched
  *   fonts         take every XeTeX document that compiles to a reference, and every pdfTeX one that
  *                 guards on the engine and loads a font package that loads fontspec on XeTeX, on
  *                 XeTeX, and rewrite its fonts by file, check the rewrite against the reference,
@@ -92,7 +104,23 @@ import {
   printable,
   writeAtomically,
 } from "./corpus-manifest.ts";
+import {
+  compare,
+  ORACLE_DIR,
+  ORACLE_FILE,
+  Oracle,
+  oracleDocument,
+  oracleManifest,
+  oracleTable,
+} from "./corpus-oracle.ts";
 import { type ParseChildRow, type ParseRow, parseNames, parseTable } from "./corpus-parse.ts";
+import {
+  PROBE_LIMIT_MS,
+  type ProbeChildRow,
+  type ProbeRow,
+  probeNames,
+  probeTable,
+} from "./corpus-probe.ts";
 import {
   type ChildRow,
   LIMIT_MS,
@@ -107,7 +135,7 @@ import {
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | fonts [--only <id>] [--json <file>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>]";
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
@@ -129,6 +157,12 @@ const PARSE_CHILD = fileURLToPath(new URL("./corpus-parse-child.ts", import.meta
  * printed document and its log, which quote the source.
  */
 const PARSE_KEPT = join(CORPUS_DIR, "parse");
+
+/** The probe runner's child, which Node runs in each process of its pool, and the oracle's. */
+const PROBE_CHILD = fileURLToPath(new URL("./corpus-probe-child.ts", import.meta.url));
+
+/** Where the probe runner keeps each document's whole probe, which holds its text. */
+const PROBE_KEPT = join(CORPUS_DIR, "probe");
 
 /** The fonts runner's child, which Node runs in each process of its pool. */
 const FONTS_CHILD = fileURLToPath(new URL("./corpus-fonts-child.ts", import.meta.url));
@@ -468,6 +502,139 @@ async function runParse(only: string | undefined, json: string | undefined) {
     );
 }
 
+/** A probe's row, and its whole probe kept under `dir`, from a child's reply or its fate. */
+function probeRowOf(
+  task: { id: string },
+  family: ProbeRow["family"],
+  result: { reply?: unknown; timedOut?: boolean; wall: number },
+  dir: string,
+): ProbeRow {
+  const reply = result.reply as { row: ProbeChildRow; detail?: unknown } | undefined;
+  if (reply?.detail !== undefined)
+    writeAtomically(join(dir, `${task.id}.json`), `${JSON.stringify(reply.detail, null, 1)}\n`);
+  return {
+    id: task.id,
+    family,
+    ...(reply?.row ?? { outcome: result.timedOut ? "timeout" : "crashed" }),
+    wall: Math.round(result.wall),
+  };
+}
+
+/** A probe's row as a line of progress: numbers only. */
+function probeLine(row: ProbeRow): string {
+  if (row.outcome !== "probed")
+    return `${row.outcome}${row.baseline === undefined ? "" : ` (${row.baseline})`}`;
+  const all = Object.values(row.candidates ?? {}).reduce((sum, n) => sum + (n ?? 0), 0);
+  return `${row.engine}, ${row.path}${row.fallback === undefined ? "" : ` (${row.fallback})`}, ${row.compiles} compiles, ${row.candidates?.editable ?? 0} of ${all} candidates editable, ${row.probeMs} ms`;
+}
+
+async function runProbe(only: string | undefined, json: string | undefined) {
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("probe compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const documents = fetchedDocuments(only);
+  const treeFont = treeFonts(engine.files);
+  const tasks = documents.map((doc) => ({
+    id: doc.id,
+    message: () => ({
+      name: `${doc.id}.zip`,
+      bytes: uploadOf(
+        doc,
+        (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
+        treeFont,
+      ),
+    }),
+  }));
+  const families = new Map(documents.map((doc) => [doc.id, doc.family]));
+  const rows: ProbeRow[] = [];
+  const started = performance.now();
+  print([
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${PROBE_LIMIT_MS / 1000} s each at most`,
+  ]);
+  await runPool({
+    script: PROBE_CHILD,
+    tasks,
+    limitMs: PROBE_LIMIT_MS,
+    onResult: (task, result) => {
+      const row = probeRowOf(task, families.get(task.id) ?? "other", result, PROBE_KEPT);
+      rows.push(row);
+      print([`${rows.length}/${documents.length} ${task.id}: ${probeLine(row)}`]);
+    },
+  });
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const minutes = (performance.now() - started) / 60_000;
+  print(["", ...probeTable(rows).trimEnd().split("\n")]);
+  print(["", `Took ${minutes.toFixed(1)} min.`]);
+  if (json !== undefined)
+    writeAtomically(
+      json,
+      formatJson({
+        version: 1,
+        tree: { layout: engine.layout, files: Object.keys(engine.files).length },
+        limitMs: PROBE_LIMIT_MS,
+        names: probeNames(rows),
+        documents: rows,
+      }),
+    );
+}
+
+async function runOracle() {
+  const oracle = parseJson(Oracle, readFileSync(ORACLE_FILE, "utf8"), ORACLE_FILE);
+  const fetched = await fetchCorpus({
+    github: new GitHub({ token: githubToken(), log: console.log }),
+    manifest: oracleManifest(oracle, new Date().toISOString().slice(0, 10)),
+    dir: ORACLE_DIR,
+    log: console.log,
+  });
+  if (fetched.states.fetched < oracle.documents.length) {
+    const offline = fetched.problems.some((problem) => problem.state === "failed");
+    console.error(
+      [
+        offline
+          ? "The oracle's samples could not be fetched: GitHub could not be reached, so this machine may have no network"
+          : "The oracle's samples could not be fetched as corpus/oracle.json names them",
+        ...fetched.problems.map(
+          (problem) =>
+            `  ${problem.id}${problem.path === undefined ? "" : ` ${problem.path}`}: ${problem.message}`,
+        ),
+      ]
+        .map(printable)
+        .join("\n"),
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("oracle compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const treeFont = treeFonts(engine.files);
+  const tasks = oracle.documents.map((doc) => ({
+    id: doc.id,
+    message: () => ({
+      name: `${doc.id}.zip`,
+      bytes: uploadOf(
+        oracleDocument(doc),
+        (path) => new Uint8Array(readFileSync(join(ORACLE_DIR, doc.id, ...path.split("/")))),
+        treeFont,
+      ),
+    }),
+  }));
+  const rows = new Map<string, ProbeRow>();
+  await runPool({
+    script: PROBE_CHILD,
+    tasks,
+    limitMs: PROBE_LIMIT_MS,
+    onResult: (task, result) => {
+      const family = oracle.documents.find((doc) => doc.id === task.id)?.family ?? "other";
+      const row = probeRowOf(task, family, result, join(ORACLE_DIR, "probe"));
+      rows.set(task.id, row);
+      print([`${task.id}: ${probeLine(row)}`]);
+    },
+  });
+  const lines = oracle.documents.flatMap((doc) => compare(doc, rows.get(doc.id)));
+  print(["", ...oracleTable(lines).trimEnd().split("\n")]);
+}
+
 async function runFonts(only: string | undefined, json: string | undefined) {
   if (!existsSync(ENGINE_MANIFEST))
     throw new Error("fonts compiles on the engine in .engine/: run fetch-engine first");
@@ -562,6 +729,8 @@ async function main() {
     command !== "survey" &&
     command !== "reference" &&
     command !== "parse" &&
+    command !== "probe" &&
+    command !== "oracle" &&
     command !== "fonts"
   )
     throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
@@ -570,17 +739,19 @@ async function main() {
     command !== "fetch" &&
     command !== "reference" &&
     command !== "parse" &&
+    command !== "probe" &&
     command !== "fonts"
   )
-    throw new Error("--only goes with fetch, reference, parse or fonts");
+    throw new Error("--only goes with fetch, reference, parse, probe or fonts");
   if (
     values.json !== undefined &&
     command !== "survey" &&
     command !== "reference" &&
     command !== "parse" &&
+    command !== "probe" &&
     command !== "fonts"
   )
-    throw new Error("--json goes with survey, reference, parse or fonts");
+    throw new Error("--json goes with survey, reference, parse, probe or fonts");
   if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
   if (command === "fetch") return runFetch(values.only);
   if (command === "collect") return runCollect();
@@ -589,6 +760,8 @@ async function main() {
     path === undefined ? undefined : resolve(process.env.INIT_CWD ?? ".", path);
   if (command === "reference") return runReference(values.only, caller(values.json));
   if (command === "parse") return runParse(values.only, caller(values.json));
+  if (command === "probe") return runProbe(values.only, caller(values.json));
+  if (command === "oracle") return runOracle();
   if (command === "fonts") return runFonts(values.only, caller(values.json));
   return runSurvey(caller(values.json), caller(values.tree));
 }

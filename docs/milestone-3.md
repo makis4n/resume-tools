@@ -156,7 +156,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 3. Probe, name and validate, with no model
 
-5. [ ] **The probe.** Every argument of every template-macro call is wrapped in `\rtfield`, the
+5. [x] **The probe.** Every argument of every template-macro call is wrapped in `\rtfield`, the
    prelude's marker macro (decision 0007), the original's preamble is dumped as a format, and the
    marked body compiles; the harness's `fields` and `alignment` checks say which arguments come
    out intact around exactly their text. Failures are bisected, halving the set of wrapped
