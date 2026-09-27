@@ -114,6 +114,38 @@ describe("comparing glyph streams", () => {
     expect(sameGlyphs(stream(body), stream(popped))).toBe(false);
   });
 
+  test("leaves out the first shipout's black in whatever colour model xcolor writes it", () => {
+    // xcolor's black follows the model a document asks for: gray, rgb or cmyk, or the dvips
+    // driver's name for it.
+    const withFirst = (text: string): ReferenceItem[] => [
+      base[0] as ReferenceItem,
+      base[1] as ReferenceItem,
+      { kind: "special", h: 90, v: 3_000_000, text },
+      ...base.slice(2),
+    ];
+    for (const black of [
+      "color push gray 0",
+      "color push rgb 0 0 0",
+      "color push rgb 0.0 0.0 0.0",
+      "color push cmyk 0 0 0 1",
+      "color push  Black",
+    ])
+      expect(sameGlyphs(stream(withFirst(black)), stream(base)), black).toBe(true);
+    // Another colour is the page's, and so is a black a pop takes off.
+    for (const colour of [
+      "color push rgb 0 0 1",
+      "color push cmyk 0 0 0 0.5",
+      "color push gray 0.5",
+      "color push Blue",
+    ])
+      expect(sameGlyphs(stream(withFirst(colour)), stream(base)), colour).toBe(false);
+    const popped: ReferenceItem[] = [
+      ...withFirst("color push rgb 0 0 0"),
+      { kind: "special", h: 700_000, v: 3_000_000, text: "color pop" },
+    ];
+    expect(sameGlyphs(stream(popped), stream(base))).toBe(false);
+  });
+
   test("tells a colour, an image or a link apart, naming only its command", () => {
     const special = (text: string): ReferenceItem => ({
       kind: "special",

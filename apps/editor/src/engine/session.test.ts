@@ -187,6 +187,46 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     expect(second.passes.length).toBe(1);
   }, 30_000);
 
+  it("passes again, when asked, while a pass changes a file of the job's folder", () => {
+    // A table of contents a pass rewrites is set by the next pass alone, and LaTeX's log never
+    // asks for it.
+    session.dump("pdftex", "contents", "\\documentclass{article}");
+    const body = (title: string) =>
+      String.raw`\begin{document}\tableofcontents\section{${title}}Invented words.\end{document}`;
+    const compile = (title: string, rerunOnChange?: boolean) =>
+      session.compile("pdftex", "contents", body(title), {
+        job: "contents",
+        ...(rerunOnChange === undefined ? {} : { rerunOnChange }),
+      }).passes.length;
+    expect(compile("Invented one")).toBe(2);
+    expect(compile("Invented two")).toBe(1);
+    expect(compile("Invented three", true)).toBe(2);
+    // A pass that changes nothing is the same again.
+    expect(compile("Invented three", true)).toBe(1);
+  }, 30_000);
+
+  it("drops a format, which a job compiled with it meets afresh when it is made again", () => {
+    session.dump("pdftex", "dropped", PREAMBLE);
+    const body = "\\begin{document}x\\end{document}";
+    const compile = () => session.compile("pdftex", "dropped", body, { job: "drops" });
+    expect(compile().passes).toHaveLength(2);
+    expect(compile().passes).toHaveLength(1);
+    session.dropFormat("pdftex", "dropped");
+    expect(compile).toThrow("no pdftex format named dropped");
+    const fs = (session as unknown as { engine: { FS: { readdir(path: string): string[] } } })
+      .engine.FS;
+    expect(fs.readdir("/home/web_user/formats")).not.toContain("pdftex-dropped.fmt");
+    // Made again, it is a new format to the job, which starts again as a new document.
+    session.dump("pdftex", "dropped", PREAMBLE);
+    expect(compile().passes).toHaveLength(2);
+    // Forgetting a job leaves its format in place.
+    session.forget("drops");
+    expect(compile().ok).toBe(true);
+    // A name never made is nothing to drop; the engine's own format is not the session's.
+    expect(() => session.dropFormat("pdftex", "never-made")).not.toThrow();
+    expect(() => session.dropFormat("pdftex", "stock")).toThrow("stock is the engine's own format");
+  }, 30_000);
+
   it("fails a compile with TeX's first error and the line", () => {
     session.dump("pdftex", "errors", PREAMBLE);
     const result = session.compile(

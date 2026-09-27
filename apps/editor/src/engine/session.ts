@@ -294,6 +294,16 @@ export interface CompileOptions {
    * reads it, and pdfTeX never uses fontconfig.
    */
   fontsByName?: boolean;
+  /**
+   * Pass again, within `maxPasses`, whenever a pass changed a file of the job's folder, its log
+   * and its output aside, though its log asks for nothing: LaTeX never says that a table of
+   * contents it rewrote differs from the one it read, which only the next pass sets. A pass that
+   * changed nothing it could read would be the same again, so none follows it. The import
+   * pipeline's probe asks for it (decision 0022), since its compiles start from the auxiliary
+   * files its baseline wrote rather than as new documents; the editor's own compiles take the
+   * log's word, as a LaTeX user does.
+   */
+  rerunOnChange?: boolean;
 }
 
 const checkName = (kind: string, name: string) => {
@@ -526,8 +536,13 @@ export class EngineSession {
    * one whose format is made again starts again as a new document and keeps its files.
    */
   private readonly formatOf = new Map<string, { format: string; generation: number }>();
-  /** How many times each format has been put in place, by engine and name. */
+  /**
+   * How many times each format has been put in place, by engine and name, a count that a dropped
+   * format keeps, so that a job compiled with it before starts again when it is put back.
+   */
   private readonly generations = new Map<string, number>();
+  /** The formats in place, by engine and name, which compiles can load. */
+  private readonly installed = new Set<string>();
   /** The files each job was given, written back whenever the session clears its folder. */
   private readonly filesOf = new Map<string, JobFiles>();
   /**
@@ -681,6 +696,22 @@ export class EngineSession {
   }
 
   /**
+   * Take a format out of the session, to free what it holds, 6 to 9 MB: `dump`'s or `putFormat`'s
+   * by its name. The import pipeline dumps a format for each resume it takes in (decision 0022),
+   * which the one who asked for it drops when done with it. A compile that names it then throws,
+   * as one that names a format never made does, until it is dumped or put again; the jobs
+   * compiled with it keep their files, and start again as new documents then, as after a dump that
+   * replaces a format. Dropping a name the session does not hold does nothing, and `stock`, the
+   * engine's own, cannot be dropped. Forgetting a job (`forget`) leaves every format in place.
+   */
+  dropFormat(engine: Engine, name: string) {
+    checkEngine(engine);
+    checkFormatName(name);
+    this.removeTree(this.formatPath(engine, name));
+    this.installed.delete(`${engine}:${name}`);
+  }
+
+  /**
    * Compile a body from a format: `stock` for the engine's own, or a name given to `dump` or
    * `putFormat`. The body is everything the format does not hold, usually from
    * `\begin{document}` on. A new document gets a second pass, since the first writes the
@@ -714,7 +745,8 @@ export class EngineSession {
     if (format !== "stock") {
       checkName("format", format);
       const made = this.generations.get(key);
-      if (made === undefined) throw new Error(`no ${engine} format named ${format}`);
+      if (made === undefined || !this.installed.has(key))
+        throw new Error(`no ${engine} format named ${format}`);
       formatPath = this.formatPath(engine, format);
       generation = made;
     }
@@ -729,11 +761,12 @@ export class EngineSession {
     const fonts = options.fontsByName && engine === "xetex" ? this.fontconfig(job) : undefined;
     let attempt: ReturnType<EngineSession["passes"]>;
     try {
-      attempt = this.passes(spec, formatPath, job, body, maxPasses, fonts);
+      const onChange = options.rerunOnChange === true;
+      attempt = this.passes(spec, formatPath, job, body, maxPasses, fonts, onChange);
       const left = maxPasses - attempt.passes.length;
       if (!attempt.ok && !attempt.fresh && left > 0) {
         this.clearFolder(job);
-        const again = this.passes(spec, formatPath, job, body, left, fonts);
+        const again = this.passes(spec, formatPath, job, body, left, fonts, onChange);
         attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
       }
     } finally {
@@ -862,7 +895,10 @@ export class EngineSession {
     return this.read(at);
   }
 
-  /** Forget a job: its folder, its files and its format, so its next compile starts afresh. */
+  /**
+   * Forget a job: its folder, its files and which format it was compiled with, so its next
+   * compile starts afresh. The format itself stays in place for other jobs (`dropFormat`).
+   */
   forget(job: string) {
     checkName("job", job);
     this.clearFolder(job);
@@ -877,8 +913,9 @@ export class EngineSession {
   }
 
   /**
-   * Compile a job's body once, and again while it is new or its log asks, with `fonts`, when
-   * given, as fontconfig's configuration in the job's folder.
+   * Compile a job's body once, and again while it is new or its log asks, or, with `onChange`,
+   * while a pass changes a file of its folder, with `fonts`, when given, as fontconfig's
+   * configuration in the job's folder.
    */
   private passes(
     spec: EngineSpec,
@@ -887,6 +924,7 @@ export class EngineSession {
     body: string | Uint8Array,
     maxPasses: number,
     fonts?: string,
+    onChange = false,
   ): Omit<CompileResult, "fetched"> & { fresh: boolean } {
     const folder = `${JOBS}/${job}`;
     const at = (extension: string) => `${folder}/${job}.${extension}`;
@@ -902,13 +940,19 @@ export class EngineSession {
       // What an earlier pass wrote must not pass for what this one did.
       this.removeTree(at(spec.output));
       this.removeTree(at("log"));
+      const before = onChange ? this.contentsOf(folder) : undefined;
       run = this.run([spec.program, ...spec.args, "--fmt", formatPath, `${job}.tex`], folder);
       passes.push(run.ms);
       log = this.read(at("log"), "utf8") ?? "";
       // Only a pass that shipped pages is worth another: one that failed, or that TeX finished
       // with nothing to ship, would do the same again.
       const shipped = run.code === 0 && this.engine.FS.analyzePath(at(spec.output)).exists;
-      const again = shipped && ((fresh && passes.length === 1) || summariseLog(log).rerun);
+      const changed =
+        before !== undefined &&
+        shipped &&
+        this.changedSince(folder, before, [at(spec.output), at("log")]);
+      const again =
+        shipped && ((fresh && passes.length === 1) || summariseLog(log).rerun || changed);
       if (!again || passes.length >= maxPasses) break;
     }
     const summary = summariseLog(log);
@@ -935,6 +979,43 @@ export class EngineSession {
     this.engine.FS.writeFile(this.formatPath(engine, name), format);
     const key = `${engine}:${name}`;
     this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
+    this.installed.add(key);
+  }
+
+  /** Every file below a folder, by its path, with what it holds. */
+  private contentsOf(folder: string): Map<string, Uint8Array> {
+    const fs = this.engine.FS;
+    const found = new Map<string, Uint8Array>();
+    const walk = (path: string) => {
+      for (const name of fs.readdir(path)) {
+        if (name === "." || name === "..") continue;
+        const at = `${path}/${name}`;
+        if (fs.isDir(fs.stat(at).mode)) walk(at);
+        else found.set(at, fs.readFile(at));
+      }
+    };
+    if (fs.analyzePath(folder).exists) walk(folder);
+    return found;
+  }
+
+  /**
+   * Whether a file below a folder, but those at `aside`, is not as `before` had it: new, gone, or
+   * holding other bytes.
+   */
+  private changedSince(
+    folder: string,
+    before: ReadonlyMap<string, Uint8Array>,
+    aside: readonly string[],
+  ): boolean {
+    const after = this.contentsOf(folder);
+    for (const path of aside) after.delete(path);
+    for (const path of before.keys()) if (!aside.includes(path) && !after.has(path)) return true;
+    for (const [path, bytes] of after) {
+      const was = before.get(path);
+      if (was === undefined || was.length !== bytes.length) return true;
+      for (let i = 0; i < bytes.length; i++) if (was[i] !== bytes[i]) return true;
+    }
+    return false;
   }
 
   private formatPath(engine: Engine, name: string): string {

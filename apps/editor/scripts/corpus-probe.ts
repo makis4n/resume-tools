@@ -84,6 +84,8 @@ export interface ProbeRow {
   /** Why nothing could be probed, for a document whose unmarked body differs. */
   baseline?: string;
   compiles?: number;
+  /** The passes its compiles took in all: one each, and a second where the first changed a file. */
+  passes?: number;
   /** Its candidates, by verdict. */
   candidates?: Partial<Record<Verdict, number>>;
   /** Its macros' and environments' arguments. */
@@ -104,8 +106,24 @@ export interface ProbeRow {
 /** A row as a child sends it, before the parent adds the document's id, family and time. */
 export type ProbeChildRow = Omit<ProbeRow, "id" | "family" | "wall">;
 
-/** A probe's row: its counts and its macros' names, never a candidate's text. */
+/**
+ * A probe's row: its counts and its macros' names, never a candidate's text. A document the probe
+ * could not probe, its unmarked body not setting the reference's glyphs, has no verdicts to count,
+ * and its row says why and how long it took alone.
+ */
 export function probeRow(found: Probe): ProbeChildRow {
+  if (found.baseline !== undefined)
+    return {
+      outcome: "baseline",
+      engine: found.engine,
+      path: found.path,
+      ...(found.fallback === undefined ? {} : { fallback: found.fallback }),
+      ...(found.formatDifference === undefined ? {} : { formatDifference: found.formatDifference }),
+      baseline: found.baseline,
+      ...(found.dumpMs === undefined ? {} : { dumpMs: Math.round(found.dumpMs) }),
+      baselineMs: Math.round(found.baselineMs),
+      probeMs: Math.round(found.ms),
+    };
   const candidates: Partial<Record<Verdict, number>> = {};
   for (const each of found.candidates)
     candidates[each.verdict] = (candidates[each.verdict] ?? 0) + 1;
@@ -125,13 +143,13 @@ export function probeRow(found: Probe): ProbeChildRow {
   };
   for (const run of found.uncovered) glyphs[run.by] += run.to - run.from;
   return {
-    outcome: found.baseline === undefined ? "probed" : "baseline",
+    outcome: "probed",
     engine: found.engine,
     path: found.path,
     ...(found.fallback === undefined ? {} : { fallback: found.fallback }),
     ...(found.formatDifference === undefined ? {} : { formatDifference: found.formatDifference }),
-    ...(found.baseline === undefined ? {} : { baseline: found.baseline }),
     compiles: found.compiles,
+    passes: found.passes,
     candidates,
     arguments: found.macros.map(argumentRow),
     standard,
@@ -185,10 +203,13 @@ export function shownArgument(
 /** How many argument names the table lists under each heading; the JSON has them all. */
 export const TOP_ARGUMENTS = 15;
 
+/** Whether a document was probed, so that its verdicts count. */
+const probed = (row: ProbeRow) => row.outcome === "probed";
+
 /** Every locked argument's name and verdict, with how many documents lock it so, the most first. */
 function lockedTally(rows: readonly ProbeRow[]): [string, number][] {
   const tally = new Map<string, number>();
-  for (const row of rows)
+  for (const row of rows.filter(probed))
     for (const name of new Set(
       (row.arguments ?? []).flatMap((each) => {
         const shown = shownArgument(each);
@@ -204,7 +225,7 @@ function lockedTally(rows: readonly ProbeRow[]): [string, number][] {
 /** Every argument's name that is editable in some document, with how many, the most first. */
 function editableTally(rows: readonly ProbeRow[]): [string, number][] {
   const tally = new Map<string, number>();
-  for (const row of rows)
+  for (const row of rows.filter(probed))
     for (const name of new Set(
       (row.arguments ?? []).flatMap((each) => {
         const shown = shownArgument(each);
@@ -215,7 +236,10 @@ function editableTally(rows: readonly ProbeRow[]): [string, number][] {
   return [...tally].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0));
 }
 
-/** Every locked argument's name and verdict with its count, and every editable one's, for the JSON. */
+/**
+ * Every locked argument's name and verdict with its count, and every editable one's, for the
+ * JSON: of the documents probed alone.
+ */
 export function probeNames(rows: readonly ProbeRow[]): {
   locked: Record<string, number>;
   editable: Record<string, number>;
@@ -250,21 +274,24 @@ function editableMacros(row: ProbeRow): { called: number; editable: number } {
 
 /**
  * What probing the corpus came to, as one Markdown table, per family and in all: the documents
- * probed, and why others were not; the compiles each took, from its format or whole, and whether
- * the budget ran out; its candidates by verdict; its macros' and environments' arguments by
- * verdict, and the macros every argument of which is editable; its standard nodes editable; the
- * share of the reference's glyphs editable fields cover, and what sets the rest; and the times.
- * Under it, the locked arguments the most documents give, with their verdict, and the editable ones.
+ * whose body parsed, those probed, and why others were not; the compiles each took, from its
+ * format or whole, their passes, and whether the budget ran out; its candidates by verdict; its
+ * macros' and environments' arguments by verdict, and the macros every argument of which is
+ * editable; its standard nodes editable; the share of the reference's glyphs editable fields
+ * cover, and what sets the rest; and the times. What a document has verdicts for counts only when
+ * it was probed. Under the table, the locked arguments the most documents give, with their
+ * verdict, and the editable ones.
  */
 export function probeTable(rows: readonly ProbeRow[]): string {
-  const of = (column: (typeof COLUMNS)[number]) =>
+  const all = (column: (typeof COLUMNS)[number]) =>
     rows.filter((row) => column === "all" || row.family === column);
+  const of = (column: (typeof COLUMNS)[number]) => all(column).filter(probed);
   const line = (label: string, values: readonly (number | string)[]) =>
     `| ${label} | ${values.join(" | ")} |`;
   const count = (label: string, test: (row: ProbeRow) => boolean) =>
     line(
       label,
-      COLUMNS.map((column) => of(column).filter(test).length),
+      COLUMNS.map((column) => all(column).filter(test).length),
     );
   const sum = (label: string, pick: (row: ProbeRow) => number) =>
     line(
@@ -314,20 +341,19 @@ export function probeTable(rows: readonly ProbeRow[]): string {
       `**${label}**`,
       COLUMNS.map(() => ""),
     );
-  const probed = (row: ProbeRow) => row.outcome === "probed";
   const verdicts = (row: ProbeRow, verdict: Verdict) => row.candidates?.[verdict] ?? 0;
   const argumentsBy = (row: ProbeRow, verdict: Verdict) =>
     (row.arguments ?? []).filter((each) => each.verdict === verdict).length;
   const standard = (kind: string) => (row: ProbeRow) =>
     row.standard?.[kind] ?? { total: 0, editable: 0 };
-  const locked = lockedTally(rows.filter(probed)).slice(0, TOP_ARGUMENTS);
-  const editable = editableTally(rows.filter(probed)).slice(0, TOP_ARGUMENTS);
+  const locked = lockedTally(rows).slice(0, TOP_ARGUMENTS);
+  const editable = editableTally(rows).slice(0, TOP_ARGUMENTS);
   const lines = [
     line("", COLUMNS),
     `|---|${COLUMNS.map(() => "--:").join("|")}|`,
     count(
       "Documents whose body parsed",
-      (row) => row.outcome !== "no reference" && row.outcome !== "not parsed",
+      (row) => row.outcome === "probed" || row.outcome === "baseline",
     ),
     count("Probed", probed),
     count(
@@ -348,8 +374,13 @@ export function probeTable(rows: readonly ProbeRow[]): string {
       "Path: whole compiles, the format did not set the reference's glyphs",
       (row) => probed(row) && row.fallback === "baseline",
     ),
-    middle("Compiles per document, median", (row) => (probed(row) ? row.compiles : undefined)),
-    most("Compiles per document, most", (row) => (probed(row) ? row.compiles : undefined)),
+    middle("Compiles per document, median", (row) => row.compiles),
+    most("Compiles per document, most", (row) => row.compiles),
+    share(
+      "Compiles that took a second pass",
+      (row) => (row.passes === undefined ? 0 : row.passes - (row.compiles ?? 0)),
+      (row) => row.compiles ?? 0,
+    ),
     count("The budget ran out", (row) => probed(row) && verdicts(row, "untested") > 0),
     section("Candidates"),
     sum("In all", (row) => VERDICTS.reduce((total, verdict) => total + verdicts(row, verdict), 0)),
