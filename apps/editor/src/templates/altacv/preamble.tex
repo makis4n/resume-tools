@@ -18,8 +18,8 @@
 % what the editor's compile loop needs changed, as rt-altacv.cls says at its top. The port changes
 % the sample only as follows, each where it is made. The class is the renamed one, and takes no
 % withhyper option, since it always loads hyperref. The name and the section titles are not set in
-% capitals, because the editor's page cannot yet match a capital to the lower-case letter the
-% resume holds. A symbol of LaTeX's TS1 encoding that a family lacks, such as an arrow
+% capitals, for the cost decision 0013 measured, though the editor's aligner folds case since
+% decision 0021. A symbol of LaTeX's TS1 encoding that a family lacks, such as an arrow
 % in Roboto Slab, is set in Latin Modern, where LaTeX would take Computer Modern, whose TS1 fonts
 % the editor's TeX Live has no outlines for, so that neither the page nor the PDF could show it. The
 % margins control sets the margins after the format, the same on every side, and its default is half
@@ -179,13 +179,13 @@
 \renewcommand{\cvsubsectionfont}{\large\bfseries}
 
 % The name and the section titles as the user types them. The class sets both in capitals through
-% \MakeUppercase, which the port takes out of \makecvheader and \cvsection: the editor's page
-% cannot yet match a capital it draws to the lower-case letter the resume holds, so a click would
-% land on the wrong one; and \MakeUppercase takes time that grows with the square of its argument's
-% length, about 2 seconds a pass for a title of 8,000 characters. In \cvsection, whose optional
-% argument makes \cvsection a wrapper around the macro that sets the title, \leavevmode takes its
-% place, so that a blank title still starts the line the class ends with \\, which would otherwise
-% stop the compile. A class that no longer has them stops the dump.
+% \MakeUppercase, which the port takes out of \makecvheader and \cvsection for its cost, which
+% decision 0013 measured: it takes time that grows with the square of its argument's length, about
+% 2 seconds a pass for a title of 8,000 characters. The editor's aligner folds case since decision
+% 0021, so the page would align the capitals; the cost is what keeps them out. In \cvsection, whose
+% optional argument makes \cvsection a wrapper around the macro that sets the title, \leavevmode
+% takes its place, so that a blank title still starts the line the class ends with \\, which would
+% otherwise stop the compile. A class that no longer has them stops the dump.
 \makeatletter
 \newcommand*\rt@unpatched[1]{\errmessage{rt-altacv: no \string\MakeUppercase\space in \string#1}}
 \patchcmd{\makecvheader}{\MakeUppercase}{}{}{\rt@unpatched\makecvheader}

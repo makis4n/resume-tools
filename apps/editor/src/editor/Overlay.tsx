@@ -11,10 +11,12 @@
  * `white-space: pre`, and its `word-spacing` is the glue TeX sets on the line: the line's shortfall
  * shared between its spaces and its skips as TeX shares it. The rows are set in a web font built
  * from the page's own outlines (`page/webfont.ts`), or, for a field XeTeX set in a native font,
- * in the font's own file (decision 0014), and wait for it. When the compile's page
- * arrives the overlay reads its place from the new page and stays open with its text and caret; a
- * page without the field leaves it where it was (`placementFor`), and only a document without the
- * field closes it (`shouldClose`).
+ * in the font's own file (decision 0014), and wait for it. A field the page sets in another case
+ * than its text's, as a title a class sets through `\MakeUppercase`, is measured and shown in
+ * that case, through CSS's `text-transform`, while the text the user edits keeps its own (decision
+ * 0021). When the compile's page arrives the overlay reads its place from the new page and stays
+ * open with its text and caret; a page without the field leaves it where it was (`placementFor`),
+ * and only a document without the field closes it (`shouldClose`).
  *
  * Offsets are UTF-16 indices throughout, as the DOM and the model slice by. A field is one
  * paragraph, so Enter inserts nothing, and pasted text comes in plain, its line breaks as spaces.
@@ -42,6 +44,7 @@ import {
   webFontMetrics,
   webFontOf,
 } from "../page/webfont";
+import type { Fold } from "../tex/fields";
 import {
   type Node as BreakNode,
   type BreakParams,
@@ -59,7 +62,7 @@ import {
 import { scaleTfm } from "../tex/tfm";
 import type { Shown } from "./compiler";
 import { type Command, type Document, fieldsOf } from "./document";
-import { type Look, RichOverlay } from "./RichOverlay";
+import { type Look, RichOverlay, textTransform } from "./RichOverlay";
 import { breakRuns, VARIANTS, type Variant, variantFonts, variantOf } from "./rich";
 
 /** Scaled points in a point. */
@@ -143,13 +146,38 @@ function rowsOf(
 }
 
 /**
- * The rows a field's text is set in: TeX's lines for `params` (`rowsOf`), and one row for a field
- * TeX never breaks, which has none.
+ * A field's text as the page sets it, for the breaker to measure, when the page folds its case
+ * (`FieldLayout.folded`, decision 0021): each character in capitals, or in small letters, where
+ * that is a character as long, so that every offset is still the text's; one whose folded form is
+ * longer, as ß's capitals are SS, is measured as it stands. Capitals are wider than small letters,
+ * and a period after a capital ends no sentence, since TeX's space factor after one is 999, so a
+ * title the page sets in capitals breaks where it would not in the text's own case. A field whose
+ * glyphs are of both cases (`mixed`), which no one case shows, is measured as typed.
  */
-export function layoutRows(text: string, face: Face, params: BreakParams | undefined): Row[] {
+export function shownCase(text: string, folded: Fold | undefined): string {
+  if (folded === undefined || folded === "mixed") return text;
+  let shown = "";
+  for (const char of text) {
+    const each = folded === "upper" ? char.toUpperCase() : char.toLowerCase();
+    shown += each.length === char.length ? each : char;
+  }
+  return shown;
+}
+
+/**
+ * The rows a field's text is set in: TeX's lines for `params` (`rowsOf`), and one row for a field
+ * TeX never breaks, which has none. A field the page folds to a case (`folded`) is measured in it
+ * (`shownCase`).
+ */
+export function layoutRows(
+  text: string,
+  face: Face,
+  params: BreakParams | undefined,
+  folded?: Fold,
+): Row[] {
   if (params === undefined) return [{ from: 0, to: text.length, wordSpacingSp: 0 }];
   const { spaceSkip, xspaceSkip } = params;
-  const nodes = paragraphNodes(text, face, { spaceSkip, xspaceSkip });
+  const nodes = paragraphNodes(shownCase(text, folded), face, { spaceSkip, xspaceSkip });
   return rowsOf(nodes, text.length, params, () => face.spaceGlue().space);
 }
 
@@ -189,14 +217,27 @@ export function slantOf(faces: RichFaces): (variant: Variant) => boolean {
 /**
  * The rows a rich field's runs are set in, as `layoutRows` sets a field's text: each run in the
  * face of its variant, or the letter face when it has none (`RichFaces`), with the italic
- * corrections LaTeX sets around `\textit` and `\textbf` (`breakRuns`, `slantOf`), and each space
- * measured in its own run's font, which the browser draws it in too.
+ * corrections LaTeX sets around `\textit` and `\textbf` (`breakRuns`, `slantOf`), each space
+ * measured in its own run's font, which the browser draws it in too, and each run in the case the
+ * page folds the field to (`shownCase`).
  */
-export function richRows(runs: RichText, faces: RichFaces, params: BreakParams | undefined): Row[] {
+export function richRows(
+  runs: RichText,
+  faces: RichFaces,
+  params: BreakParams | undefined,
+  folded?: Fold,
+): Row[] {
   const length = runs.reduce((sum, run) => sum + run.text.length, 0);
   if (params === undefined) return [{ from: 0, to: length, wordSpacingSp: 0 }];
   const faceOf = (variant: Variant) => faces.variants.get(variant) ?? faces.letter;
-  const set = breakRuns(runs, slantOf(faces)).map((run) => ({ ...run, face: faceOf(run.variant) }));
+  const shown =
+    folded === undefined || folded === "mixed"
+      ? runs
+      : runs.map((run) => ({ ...run, text: shownCase(run.text, folded) }));
+  const set = breakRuns(shown, slantOf(faces)).map((run) => ({
+    ...run,
+    face: faceOf(run.variant),
+  }));
   const { spaceSkip, xspaceSkip } = params;
   const nodes = richParagraphNodes(set, { spaceSkip, xspaceSkip });
   // Where each run starts, for the face a space is set in, found by halves, since a field may
@@ -460,10 +501,14 @@ export function lineStartOf(
   return Math.min(layout.x, leftmost ?? layout.x);
 }
 
-/** How the overlay breaks a field: the face, and the parameters, none for a field on one row. */
+/**
+ * How the overlay breaks a field: the face, the parameters, none for a field on one row, and the
+ * case the page folds the field to, which the overlay measures and shows it in (`shownCase`).
+ */
 export interface Setting {
   face: Face;
   params: BreakParams | undefined;
+  folded?: Fold;
 }
 
 /** Fields whose paragraph special could not be read, which the console has heard of. */
@@ -474,17 +519,19 @@ const unread = new Set<string>();
  * from its paragraph special, the first line shortened by however far into it the field starts
  * (`lineStartOf`). A field TeX never breaks (`inner`) has no parameters. Without a special it can
  * read, a field breaks by LaTeX's defaults over the width the page suggests, its line's start
- * taken as the margin on both sides, and the console hears of it once.
+ * taken as the margin on both sides, and the console hears of it once. A field the page folds to
+ * a case is set in it (`FieldLayout.folded`).
  */
 export function settingFor(id: string, layout: FieldLayout, pageWidth: number): Setting {
   const face = faceFor(layout, layout.fonts);
+  const { folded } = layout;
   const paragraph = layout.paragraph === undefined ? undefined : parseParagraph(layout.paragraph);
-  if (paragraph?.inner) return { face, params: undefined };
+  if (paragraph?.inner) return { face, params: undefined, folded };
   const into = (start: number) => Math.round((layout.x - start) * PT);
   if (paragraph !== undefined) {
     const params = breakParams(paragraph);
     const start = lineStartOf(layout, params.lines, paragraph.hsize, paragraph.leftSkip);
-    return { face, params: startingAt(params, into(start)) };
+    return { face, params: startingAt(params, into(start)), folded };
   }
   if (!unread.has(id)) {
     unread.add(id);
@@ -497,6 +544,7 @@ export function settingFor(id: string, layout: FieldLayout, pageWidth: number): 
   return {
     face,
     params: startingAt({ ...LATEX_PARAMS, lines: [{ indent: 0, width }] }, into(start)),
+    folded,
   };
 }
 
@@ -820,7 +868,13 @@ function frameOf(
     widths: lines.map((line) => line.width * pxPerSp),
   };
   const { setting: _, ...placed } = frame;
-  const key = JSON.stringify([placed, setting.params, ready.font.name, layout.size]);
+  const key = JSON.stringify([
+    placed,
+    setting.params,
+    setting.folded,
+    ready.font.name,
+    layout.size,
+  ]);
   return { ...frame, key };
 }
 
@@ -862,6 +916,7 @@ class FieldRows {
       fontFamily: frame.family,
       fontSize: `${frame.fontPx}px`,
       lineHeight: `${frame.lineHeightPx}px`,
+      textTransform: textTransform(frame.setting.folded),
     });
     this.draw(caret);
   }
@@ -954,12 +1009,13 @@ class FieldRows {
     const frame = this.frame;
     if (!frame) return;
     let rows: Row[];
+    const { face, params, folded } = frame.setting;
     try {
-      rows = layoutRows(this.text, frame.setting.face, frame.setting.params);
+      rows = layoutRows(this.text, face, params, folded);
     } catch (error) {
       // The breaker refuses only a font or parameters no real paragraph has; one row still edits.
       console.warn("The overlay could not break the field's lines", error);
-      rows = layoutRows(this.text, frame.setting.face, undefined);
+      rows = layoutRows(this.text, face, undefined);
     }
     this.rows = rows;
     this.element.replaceChildren(...rows.map((row, i) => this.line(row, i, frame)));
@@ -1181,7 +1237,7 @@ function RichField(props: OpenProps) {
   const setting = useMemo(() => settingFor(id, layout, pageWidth), [id, layout, pageWidth]);
   const faces = useMemo(() => richFaces(all, layout), [all, layout]);
   const rowsFor = useCallback(
-    (runs: RichText) => richRows(runs, faces, setting.params),
+    (runs: RichText) => richRows(runs, faces, setting.params, setting.folded),
     [faces, setting],
   );
   const looks = useMemo(() => {
@@ -1211,6 +1267,7 @@ function RichField(props: OpenProps) {
       runs={runs}
       family={family}
       looks={looks}
+      folded={setting.folded}
       measure={measure}
       rowsFor={rowsFor}
       onCommand={props.onCommand}

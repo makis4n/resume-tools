@@ -74,7 +74,8 @@ bullet, `$`, `€` and `°` from TS1 even in OT1, and in OT1 cannot set `ą`, `�
   U+FB01. A virtual font's composed character is named after its parts, joined by `+` with any
   accent after the rest (`A+breve`), and a rule is `rule`; it reads as its parts' texts with each
   accent as its combining mark after the rest, composed (NFC), so `A+breve` is `Ă`. A part with
-  no text leaves the whole without one.
+  no text leaves the whole without one. Decision 0021 later read a small capital a font names
+  after its capital, as Roboto's `A.c2sc` and Source Sans Pro's `A.s`, as its small letter.
 - **A virtual font's text from its encoding.** A code's glyph may say less than the code: fontinst
   builds `ď` from a `d` and a `quoteright`, `đ` from a `d` and a `macron`, a small-caps
   font's `a` from a smaller `A`, and Courier's en dash from a hyphen. So a virtual font whose name
