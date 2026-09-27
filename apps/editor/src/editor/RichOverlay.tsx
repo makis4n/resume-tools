@@ -38,6 +38,7 @@ import {
 } from "@tiptap/react";
 import { type MouseEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { linkAddress } from "../templates/generate";
+import type { Fold } from "../tex/fields";
 import type { Command } from "./document";
 import { docToRuns, linePositions, RICH_SCHEMA, runsToDoc, TEXT_START, type Variant } from "./rich";
 
@@ -80,6 +81,17 @@ export interface Look {
   features?: string;
 }
 
+/**
+ * The CSS `text-transform` that shows a field's text in the case the page folds it to, capitals or
+ * small letters (`FieldLayout.folded`, decision 0021), while the text itself, which the user edits
+ * and the document holds, keeps its own case; `none` for a field the page sets as it stands, and
+ * for one whose glyphs are of both cases (`mixed`), which no one case shows, so its text as typed.
+ */
+export function textTransform(folded: Fold | undefined): "uppercase" | "lowercase" | "none" {
+  if (folded === "upper") return "uppercase";
+  return folded === "lower" ? "lowercase" : "none";
+}
+
 export interface RichOverlayProps {
   /** The field's id, as the page's markers and the document's commands name it. */
   field: string;
@@ -95,6 +107,12 @@ export interface RichOverlayProps {
   family: string;
   /** How each variant the page sets is drawn. */
   looks: ReadonlyMap<Variant, Look>;
+  /**
+   * The case the page sets the field in when it is not the runs' own, as a title a class sets
+   * through `\MakeUppercase` (`FieldLayout.folded`): the text is shown in it, or as typed where the
+   * glyphs are of both cases (`textTransform`), and the runs keep their own case.
+   */
+  folded?: Fold;
   /** Where the field is set on the page as shown now; a new one comes with each page. */
   measure: () => RichFrame | undefined;
   /** The rows TeX sets runs in, which the editor draws its lines as. */
@@ -252,15 +270,17 @@ let scopes = 0;
 /**
  * The editor's style, scoped to it by `scope`: each variant in its font's family, and at its size
  * when that differs from the field's, with no weight or slant the browser would add on top, since
- * the fonts are already bold or italic; the first line's indent; and a link underlined, since the
- * page may not show links at all. What ProseMirror's own style sheet does for the DOM it draws is
- * here too, since Tiptap's is not loaded: it would set the text to wrap.
+ * the fonts are already bold or italic; the first line's indent; the case the page folds the field
+ * to (`textTransform`); and a link underlined, since the page may not show links at all. What
+ * ProseMirror's own style sheet does for the DOM it draws is here too, since Tiptap's is not
+ * loaded: it would set the text to wrap.
  */
 function styleFor(
   scope: string,
   family: string,
   looks: ReadonlyMap<Variant, Look>,
   frame: RichFrame | undefined,
+  folded?: Fold,
 ): string {
   const at = `.${scope}`;
   const font = (variant: Variant) => {
@@ -273,6 +293,7 @@ function styleFor(
   const indent = frame ? indentOf(frame, 0) : 0;
   return [
     `${at} .ProseMirror { ${font("regular")} text-indent: ${indent}px; }`,
+    `${at} .ProseMirror { text-transform: ${textTransform(folded)}; }`,
     `${at} .ProseMirror p { margin: 0; }`,
     `${at} strong { font-weight: normal; ${font("bold")} }`,
     `${at} em { font-style: normal; ${font("italic")} }`,
@@ -340,6 +361,7 @@ export function RichOverlay({
   runs,
   family,
   looks,
+  folded,
   measure,
   rowsFor,
   onCommand,
@@ -518,7 +540,7 @@ export function RichOverlay({
         if (event.target === event.currentTarget) event.preventDefault();
       }}
     >
-      <style>{styleFor(scope, family, looks, frame)}</style>
+      <style>{styleFor(scope, family, looks, frame, folded)}</style>
       {/* The lines' white, under the text, as wide as TeX's lines, which hides the page's glyphs
           under them and nothing beside them, such as a label before the field's first line. */}
       <div aria-hidden style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}>

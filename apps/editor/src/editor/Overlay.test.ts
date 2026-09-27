@@ -53,6 +53,7 @@ import {
   type Setting,
   settingFor,
   shouldClose,
+  shownCase,
   slantOf,
   spaceWidths,
   variantFontsOf,
@@ -151,6 +152,22 @@ describe("layoutRows", () => {
     expect(shared[0]?.wordSpacingSp).toBeGreaterThan(0);
     const rigid = { ...raggedRight, spaceSkip: { ...ZERO_GLUE, width: face.spaceGlue().space } };
     for (const row of layoutRows(BULLET, face, rigid)) expect(row.wordSpacingSp).toBe(0);
+  });
+
+  it("measures a field the page folds to a case in that case, and keeps the text's offsets", () => {
+    // Each character in capitals, or small letters, where that is as long: ß, whose capitals are
+    // SS, and İ, whose small letter is i and a dot, are measured as they stand.
+    expect(shownCase("Stra\u{df}e \u{131}l\u{131}k", "upper")).toBe("STRA\u{df}E ILIK");
+    expect(shownCase("\u{130}PEK", "lower")).toBe("\u{130}pek");
+    expect(shownCase("As typed", undefined)).toBe("As typed");
+    // Glyphs of both cases, as a class that capitalises each word's first letter sets them, which
+    // no one case shows: as typed.
+    expect(shownCase("Machine learning", "mixed")).toBe("Machine learning");
+    expect(layoutRows(BULLET, face, params, "mixed")).toEqual(layoutRows(BULLET, face, params));
+    // The bullet in capitals is wider, so it takes more rows, which tile the text as it stands.
+    const rows = layoutRows(BULLET, face, params, "upper");
+    expect(rows.length).toBeGreaterThan(layoutRows(BULLET, face, params).length);
+    expect(texts(BULLET, rows).join("")).toBe(BULLET);
   });
 
   it("sets a field TeX never breaks on one row, and an empty field on one empty row", () => {
@@ -755,19 +772,20 @@ function compare(page: DrawnPage, id: string, text: string) {
   const layout = page.fields.get(id)?.layout;
   if (!layout) throw new Error(`${id} has no layout`);
   const setting = settingFor(id, layout, page.size.width);
-  const rows = layoutRows(text, setting.face, setting.params);
+  const rows = layoutRows(text, setting.face, setting.params, setting.folded);
   return { rows: rowStarts(text, rows), page: pageLines(page, id), setting, layout };
 }
 
 /**
  * How far each row's last glyph sits from its first, in points, as the overlay sets the row: the
  * boxes and kerns, and each space as the browser sets it, the font's space and the row's word
- * spacing.
+ * spacing; in the case the page folds the field to (`shownCase`).
  */
 function overlayEnds(text: string, setting: Setting): { first: number; last: number; x: number }[] {
-  const { face, params } = setting;
-  const nodes = paragraphNodes(text, face, params);
-  return rowEnds(nodes, layoutRows(text, face, params), () => face.spaceGlue().space);
+  const { face, params, folded } = setting;
+  const nodes = paragraphNodes(shownCase(text, folded), face, params);
+  const rows = layoutRows(text, face, params, folded);
+  return rowEnds(nodes, rows, () => face.spaceGlue().space);
 }
 
 /** `overlayEnds` for rows of `nodes` whose spaces the browser sets at `space` before spacing. */
@@ -1637,6 +1655,69 @@ x\end{document}`;
       }
     }, 60_000);
   });
+
+  it("breaks a field TeX sets in capitals where TeX did, measured in capitals", async () => {
+    // A field a class sets through \MakeUppercase, which the page folds (decision 0021): capitals
+    // are wider than small letters, and a period after one ends no sentence, so the rows measured
+    // in the text's own case break elsewhere than TeX's lines.
+    const text =
+      "Rebuilt the office's typesetting service. Cut a proof's turnaround from a day to forty minutes, and wrote the style guide the house rules come from.";
+    const texts = new Map([["caps.text", text]]);
+    const page = await article(
+      "overlay-capitals",
+      "\\hyphenpenalty=10000\\parindent=0pt",
+      `{\\MakeUppercase{\\rtfield{caps.text}{${text}}}\\par}`,
+      texts,
+    );
+    expect(page.unmatched).toBe(0);
+    const { rows, page: lines, setting, layout } = compare(page, "caps.text", text);
+    expect(layout.folded).toBe("upper");
+    expect(setting.folded).toBe("upper");
+    expect(lines.length).toBeGreaterThan(1);
+    expect(rows).toEqual(lines);
+    const own = rowStarts(text, layoutRows(text, setting.face, setting.params));
+    expect(own).not.toEqual(lines);
+    // Each row ends where TeX ends its line, the capitals measured as the page sets them.
+    const glyphs = page.glyphs.filter((glyph) => glyph.field === "caps.text");
+    const at = (offset: number) => glyphs.find((glyph) => glyph.offset === offset)?.x ?? NaN;
+    for (const row of overlayEnds(text, setting)) {
+      const tex = at(row.last) - at(row.first);
+      expect(Math.abs(row.x - tex), `at ${row.last}`).toBeLessThan(0.01);
+    }
+  }, 60_000);
+
+  it("reads small capitals named after their capitals as small letters, and breaks them where TeX did", async () => {
+    // Roboto's small-caps encoding names the glyphs at the small letters' codes A.c2sc, and Source
+    // Sans's A.s. Read as the capitals they are named after, they made a \textsc field fold to
+    // capitals, which the overlay measured and drew wider than the page's small capitals. Read as
+    // the small letters they stand for, they match as typed, fold nothing, and the rows start where
+    // TeX's lines do. Latin Modern names its small capitals after the small letters, as before.
+    const text =
+      "Rebuilt the house typesetting service and cut a proof turnaround from a day to thirty minutes across each team we run, then wrote the style guide the house rules come from.";
+    for (const [name, family] of [
+      ["roboto", "\\usepackage[sfdefault]{roboto}"],
+      ["sourcesans", "\\usepackage[default]{sourcesanspro}"],
+      ["lmodern", ""],
+    ] as const) {
+      const texts = new Map([["sc.text", text]]);
+      const page = await article(
+        `overlay-small-capitals-${name}`,
+        `${family}\\hyphenpenalty=10000\\parindent=0pt`,
+        `{\\textsc{\\rtfield{sc.text}{${text}}}\\par}`,
+        texts,
+      );
+      expect(page.unmatched, name).toBe(0);
+      const { rows, page: lines, setting, layout } = compare(page, "sc.text", text);
+      expect(layout.font.name, name).toMatch(/sc|csc/);
+      expect(layout.folded, name).toBeUndefined();
+      expect(setting.folded, name).toBeUndefined();
+      expect(lines.length, name).toBeGreaterThan(2);
+      expect(rows, name).toEqual(lines);
+      // Measured in capitals, as the page folded them to, the rows break elsewhere.
+      const capitals = rowStarts(text, layoutRows(text, setting.face, setting.params, "upper"));
+      expect(capitals, name).not.toEqual(lines);
+    }
+  }, 60_000);
 
   it("breaks hanging, shaped, justified and ragged paragraphs where TeX did", async () => {
     const texts = new Map([

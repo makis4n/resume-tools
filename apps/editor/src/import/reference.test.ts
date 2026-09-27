@@ -11,6 +11,8 @@ import { readTree } from "./fonts";
 import { type Intake, intake, treeImages } from "./intake";
 import {
   COMPATIBILITY,
+  compileLikeReference,
+  difference,
   firstDifference,
   type GlyphStream,
   GRAPHICS_CFG,
@@ -18,6 +20,7 @@ import {
   type Reference,
   type ReferenceItem,
   reference,
+  referenceFiles,
   sameGlyphs,
   specialCommand,
 } from "./reference";
@@ -182,6 +185,23 @@ describe("comparing glyph streams", () => {
     expect(
       sameGlyphs(stream(base), { ...stream(base), size: { width: 595.3, height: 841.9 } }),
     ).toBe(false);
+  });
+
+  test("says what kind of difference comes first", () => {
+    const change = (i: number, to: Partial<ReferenceItem>) =>
+      stream(base.map((item, j) => (j === i ? ({ ...item, ...to } as ReferenceItem) : item)));
+    const kindOf = (other: GlyphStream) => difference(stream(base), other)?.kind;
+    expect(kindOf(stream(base))).toBeUndefined();
+    expect(kindOf(change(2, { code: 111 }))).toBe("glyph");
+    expect(kindOf(change(2, { font: "cmbx10" }))).toBe("glyph");
+    expect(kindOf(change(2, { h: 400_000 }))).toBe("position");
+    expect(kindOf(change(3, { width: 1 }))).toBe("rule");
+    expect(kindOf(change(0, { text: "papersize=1pt,1pt" }))).toBe("special");
+    expect(kindOf(stream([...base.slice(0, 1), ...base.slice(2)]))).toBe("glyph");
+    expect(kindOf(stream(base.slice(0, 4)))).toBe("count");
+    expect(kindOf({ ...stream(base), pages: [{ items: base }, { items: [] }] })).toBe("pages");
+    expect(kindOf({ ...stream(base), size: { width: 1, height: 1 } })).toBe("size");
+    expect(kindOf(stream(base.map((item, j) => (j === 3 ? glyph(1, 1) : item))))).toBe("kind");
   });
 
   test("lists a special by its command", () => {
@@ -433,6 +453,59 @@ Invented \includegraphics{\logo} logo.
     const before = glyphs.find((glyph) => glyph.text === "d");
     const after = glyphs.find((glyph) => glyph.text === "l");
     expect(((after?.h ?? 0) - (before?.h ?? 0)) / 65536).toBeGreaterThan(144);
+  }, 60_000);
+
+  test("gives back the files it compiled with, so that a document compiles as it did", async () => {
+    const logo = new Uint8Array([
+      ...[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+      ...[0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 144, 0, 0, 0, 72, 8, 0, 0, 0, 0],
+      ...[0, 0, 0, 0],
+    ]);
+    const main = String.raw`\documentclass{article}
+\usepackage{graphicx}
+\newcommand{\logo}{invented-logo.png}
+\begin{document}
+Invented \includegraphics{\logo} logo.
+\end{document}
+`;
+    const taken = take({ "cv.tex": main });
+    const treeImage = (name: string) => (name === "invented-logo.png" ? logo : undefined);
+    const result = made(await reference(session, fonts, taken, { treeImage }));
+    const files = referenceFiles(taken, result, { treeImage });
+    expect(Object.keys(files)).toEqual(
+      expect.arrayContaining([
+        "invented-logo.png",
+        "invented-logo.xbb",
+        ...Object.keys(COMPATIBILITY.pdftex),
+      ]),
+    );
+    const again = await compileLikeReference(session, fonts, taken, result, taken.main.bytes, {
+      treeImage,
+    });
+    if (isRefusal(again)) throw new Error(again.message);
+    expect(sameGlyphs(result, again.stream)).toBe(true);
+    const changed = await compileLikeReference(
+      session,
+      fonts,
+      taken,
+      result,
+      new TextEncoder().encode(main.replace("Invented", "Changed")),
+      { treeImage },
+    );
+    if (isRefusal(changed)) throw new Error(changed.message);
+    expect(difference(result, changed.stream)?.kind).toBe("glyph");
+    const stopped = await compileLikeReference(
+      session,
+      fonts,
+      taken,
+      result,
+      new TextEncoder().encode(main.replace("} logo.", "} \\inventedundefined.")),
+    );
+    expect(stopped).toMatchObject({
+      refused: true,
+      reason: "stopped",
+      name: "\\inventedundefined",
+    });
   }, 60_000);
 
   test("goes on without a bibliography it has no .bbl for, and says so", async () => {

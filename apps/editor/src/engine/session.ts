@@ -862,6 +862,20 @@ export class EngineSession {
     };
   }
 
+  /**
+   * A file of a job's folder, by its path there (`isJobPath`): one the caller gave the job, or one
+   * TeX wrote in it, as the import pipeline reads what a compile of its own prints to a file
+   * (decision 0020); undefined when there is none. Only the job's own folder can be read.
+   */
+  written(job: string, path: string): Uint8Array | undefined {
+    checkName("job", job);
+    checkJobPath(path);
+    const at = `${JOBS}/${job}/${path}`;
+    const fs = this.engine.FS;
+    if (!fs.analyzePath(at).exists || fs.isDir(fs.stat(at).mode)) return undefined;
+    return this.read(at);
+  }
+
   /** Forget a job: its folder, its files and its format, so its next compile starts afresh. */
   forget(job: string) {
     checkName("job", job);

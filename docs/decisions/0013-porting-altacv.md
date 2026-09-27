@@ -201,7 +201,8 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   no density sets a line over another in Roboto for that reason. Clicks on Lato's text resolve
   against boxes twice their size until the reader scales outlines by the matrix.
 - The capitals can come back when the aligner folds case, and then need a way around
-  `\MakeUppercase`'s cost, as the bookmarks did in decision 0008.
+  `\MakeUppercase`'s cost, as the bookmarks did in decision 0008. Decision 0021 later taught the
+  aligner to fold case; the cost is still to be got round, so the port keeps no capitals.
 - Each font sets the ligatures its T1 metrics form, as the sample does, and the page reads each as
   the letters it joins (decision 0009), Lato's and Roboto's `uniFB00` to `uniFB04` among them:
   ff, fi, fl, ffi and ffl in Lato and Latin Modern, ff, fi, fl and ft in Source Sans, and fi and fl

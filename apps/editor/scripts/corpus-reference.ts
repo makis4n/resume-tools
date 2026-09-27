@@ -302,15 +302,19 @@ const REASON_LABELS: Readonly<Record<RefusalReason, string>> = {
   image: "Refused: shows an image in a format with no stand-in",
   stopped: "Refused: stopped for another reason",
   passes: "Refused: did not settle in three passes",
+  parse: "Refused: the parser could not read its body",
   timeout: `Refused: timed out, past ${LIMIT_MS / 1000} s`,
   intake: "Refused at intake",
   feature: "Refused: a font feature this editor cannot reproduce",
   difference: "Refused: fonts that come out otherwise",
 };
 
-/** The reasons a reference compile can give, which the table has a row each for. */
+/**
+ * The reasons a reference compile can give, which the table has a row each for: not the parser's,
+ * which come after the reference, nor the font rewrite's (decision 0023).
+ */
 const REFERENCE_REASONS = REFUSAL_REASONS.filter(
-  (reason) => reason !== "feature" && reason !== "difference",
+  (reason) => reason !== "parse" && reason !== "feature" && reason !== "difference",
 );
 
 /** The median of numbers, or undefined for none. */

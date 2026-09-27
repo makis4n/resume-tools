@@ -149,7 +149,7 @@ begin marker carrying the paragraph TeX sets the field in.
   guillemets and low quotes, set nothing or their base letter, with a warning in the log, and a
   field that holds one does not align with the model's text. T1 fonts (item 16) fix both.
 - A field set in `\MakeUppercase` is found, but its glyphs do not align with the model's text
-  until the aligner learns case folding (item 9).
+  until the aligner learns case folding (item 9). Decision 0021 later taught it to.
 - Two texts can share a body, since a soft hyphen or a zero-width space changes only `texts`:
   item 8 must treat a body and its `texts` as one unit when it drops a stale compile.
 - LaTeX 2023 sets `\$`, its itemize bullet and characters such as `•`, `°` and `€` from TS1, even

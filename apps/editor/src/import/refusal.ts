@@ -11,10 +11,11 @@
  * Why a resume was refused: at intake, for its size, its files or its engine (`intake`, `luatex`);
  * or by the reference compile, for a template, package, font or file the editor or the upload
  * lacks, an image it shows in a format with no stand-in (`image`), another error (`stopped`), or
- * output that changed on every pass (`passes`); by the corpus runner, for a compile past its
- * time (`timeout`); or by the XeTeX rewrite of its fonts (decision 0023), for a fontspec feature or
- * package the rewrite cannot reproduce (`feature`), or fonts that come out otherwise than the
- * reference's (`difference`).
+ * output that changed on every pass (`passes`); by the parser, for a body it cannot find or that
+ * is past its caps (`parse`); by the corpus runner, for a compile past its time (`timeout`); or by
+ * the XeTeX rewrite of its fonts (decision 0023), for a fontspec feature or package the rewrite
+ * cannot reproduce (`feature`), or fonts that come out otherwise than the reference's
+ * (`difference`).
  */
 export const REFUSAL_REASONS = [
   "intake",
@@ -26,6 +27,7 @@ export const REFUSAL_REASONS = [
   "image",
   "stopped",
   "passes",
+  "parse",
   "timeout",
   "feature",
   "difference",
@@ -157,6 +159,7 @@ export function refusal(reason: RefusalReason, name?: string, log?: string): Ref
     stopped: "This resume could not be compiled by this editor.",
     passes:
       "This resume came out differently every time it was compiled, so this editor cannot take it.",
+    parse: "This resume could not be read by this editor.",
     timeout: "This resume took too long to compile.",
     difference: `This editor sets this resume's font ${shown} otherwise than the resume does, so it cannot take it.`,
   };
@@ -178,6 +181,13 @@ export const refusedAtIntake = (message: string, name?: string): Refusal => ({
   reason: "intake",
   message,
   ...(name === undefined ? {} : { name }),
+});
+
+/** A refusal by the parser with its own message, which says which cap or rule in plain English. */
+export const refusedParse = (message: string): Refusal => ({
+  refused: true,
+  reason: "parse",
+  message,
 });
 
 /** Whether a result is a refusal. */

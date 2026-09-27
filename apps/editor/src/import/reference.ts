@@ -343,6 +343,78 @@ export async function reference(
 }
 
 /**
+ * The files the reference compile gave its job when it made the reference, for a compile of the
+ * document as the reference compiled it: the intake's, the `.bbl` of the job's name, the stand-ins
+ * the compile added as it ran, made again from what the reference says of them (`addStandIn`),
+ * and the compatibility files of the engine it compiled on (`COMPATIBILITY`).
+ */
+export function referenceFiles(
+  intake: Intake,
+  made: Reference,
+  options: ReferenceOptions = {},
+): Record<string, Uint8Array> {
+  const job = options.job ?? IMPORT_JOB;
+  const files: Record<string, Uint8Array> = { ...intake.files };
+  const bbl = files[`${withoutExtension(nameOf(intake.main.path))}.bbl`];
+  if (bbl !== undefined) files[`${job}.bbl`] = bbl;
+  for (const image of made.images) addStandIn(files, image.name, made.engine, options.treeImage);
+  for (const [name, text] of Object.entries(COMPATIBILITY[made.engine]))
+    files[name] ??= new TextEncoder().encode(text);
+  return files;
+}
+
+/** A document compiled as the reference was, and its output read as the reference's. */
+export interface LikeReference {
+  stream: GlyphStream;
+  /** How long each pass took, in milliseconds. */
+  passes: number[];
+  /** The compile's log, for developers only: it quotes the source. */
+  log: string;
+}
+
+/**
+ * A main file compiled as the reference compiled the original, in its job, forgotten first: from
+ * the stock format, on the reference's engine, with its files (`referenceFiles`), two passes,
+ * three at most, and fontconfig given the tree's fonts on XeTeX; its output read as the
+ * reference's was (`glyphStream`), so that the two compare (`sameGlyphs`). A refusal when the
+ * compile stops, or its log still asks for a pass after the third. The job is left holding the
+ * compile, as the reference's is.
+ */
+export async function compileLikeReference(
+  session: EngineSession,
+  fonts: FontLibrary,
+  intake: Intake,
+  made: Reference,
+  main: Uint8Array,
+  options: ReferenceOptions = {},
+): Promise<LikeReference | Refusal> {
+  const job = options.job ?? IMPORT_JOB;
+  const files = referenceFiles(intake, made, options);
+  session.forget(job);
+  let result: CompileResult;
+  try {
+    result = session.compile(made.engine, "stock", main, {
+      job,
+      maxPasses: 3,
+      files,
+      fontsByName: made.engine === "xetex",
+    });
+  } catch (error) {
+    return refusal("stopped", undefined, error instanceof Error ? error.message : String(error));
+  }
+  if (!result.ok || result.output === undefined) return refusalOf(result.log);
+  if (result.passes.length >= 3 && asksForRerun(result.log))
+    return refusal("passes", undefined, result.log);
+  try {
+    const stream = await glyphStream(fonts, result.output, (path) => shippedFont(files, job, path));
+    return { stream, passes: result.passes, log: result.log };
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error);
+    return refusal("stopped", undefined, `${result.log}\n\nThe output cannot be read: ${why}`);
+  }
+}
+
+/**
  * What the reference compile writes into the job whatever the upload holds there: the job's body,
  * `<job>.tex`, the main file; its `.bbl`, the upload's of the main file's name; on the intake's
  * engine, the compatibility files (`COMPATIBILITY`), pdfTeX's names holding XeTeX's; and nothing
@@ -694,20 +766,47 @@ function firstBlack(stream: GlyphStream): Set<ReferenceItem> {
  * which a body compiled from a dumped format lacks and which set nothing on the page.
  */
 export function sameGlyphs(a: GlyphStream, b: GlyphStream): boolean {
-  return firstDifference(a, b) === undefined;
+  return difference(a, b) === undefined;
 }
 
 /**
- * Where two glyph streams first differ, for a developer, or undefined when they set the same
- * glyphs at the same places (`sameGlyphs`). It names pages, fonts, codes, specials' commands and
- * places, never a glyph's text or a special's.
+ * What kind of difference two glyph streams first show: a page more or fewer (`pages`), a page of
+ * another size (`size`), a page with more or fewer items (`count`), two glyphs that are not the
+ * same glyph (`glyph`), two rules of other sizes (`rule`), two specials of other texts (`special`),
+ * two items of other kinds (`kind`), or the same item at another place (`position`).
  */
-export function firstDifference(a: GlyphStream, b: GlyphStream): string | undefined {
-  if (a.pages.length !== b.pages.length) return `${a.pages.length} pages against ${b.pages.length}`;
+export type DifferenceKind =
+  | "pages"
+  | "size"
+  | "count"
+  | "glyph"
+  | "rule"
+  | "special"
+  | "kind"
+  | "position";
+
+/** Where two glyph streams first differ, and how, for a developer and the corpus's table. */
+export interface Difference {
+  kind: DifferenceKind;
+  /** The difference in words, naming pages, fonts, codes, specials' commands and places. */
+  text: string;
+}
+
+/**
+ * Where two glyph streams first differ, and how, or undefined when they set the same glyphs at the
+ * same places (`sameGlyphs`). It names pages, fonts, codes, specials' commands and places, never a
+ * glyph's text or a special's.
+ */
+export function difference(a: GlyphStream, b: GlyphStream): Difference | undefined {
+  if (a.pages.length !== b.pages.length)
+    return { kind: "pages", text: `${a.pages.length} pages against ${b.pages.length}` };
   const near = (x: number, y: number) => Math.abs(x - y) <= TOLERANCE;
   const pt = (points: number) => Math.round(points * SP);
   if (!near(pt(a.size.width), pt(b.size.width)) || !near(pt(a.size.height), pt(b.size.height)))
-    return `a page of ${a.size.width} by ${a.size.height} pt against ${b.size.width} by ${b.size.height} pt`;
+    return {
+      kind: "size",
+      text: `a page of ${a.size.width} by ${a.size.height} pt against ${b.size.width} by ${b.size.height} pt`,
+    };
   const counted = (stream: GlyphStream) => {
     const black = firstBlack(stream);
     return (item: ReferenceItem) =>
@@ -724,29 +823,56 @@ export function firstDifference(a: GlyphStream, b: GlyphStream): string | undefi
       const x = ours[i];
       const y = theirs[i];
       if (x === undefined || y === undefined)
-        return `${where} sets ${ours.length} glyphs, rules and specials against ${theirs.length}`;
-      const same =
-        x.kind === "glyph" && y.kind === "glyph"
-          ? x.font === y.font &&
-            x.native === y.native &&
-            x.size === y.size &&
-            x.index === y.index &&
-            x.rgba === y.rgba &&
-            x.slant === y.slant &&
-            x.embolden === y.embolden &&
-            x.extend === y.extend &&
-            x.code === y.code &&
-            near(x.h, y.h) &&
-            near(x.v, y.v)
-          : x.kind === "rule" && y.kind === "rule"
-            ? near(x.h, y.h) && near(x.v, y.v) && near(x.width, y.width) && near(x.height, y.height)
-            : x.kind === "special" && y.kind === "special"
-              ? x.text === y.text && near(x.h, y.h) && near(x.v, y.v)
-              : false;
-      if (!same) return `${where}, item ${i + 1}: ${describe(x)} against ${describe(y)}`;
+        return {
+          kind: "count",
+          text: `${where} sets ${ours.length} glyphs, rules and specials against ${theirs.length}`,
+        };
+      const kind = differs(x, y, near);
+      if (kind !== undefined)
+        return { kind, text: `${where}, item ${i + 1}: ${describe(x)} against ${describe(y)}` };
     }
   }
   return undefined;
+}
+
+/** How two items differ, or undefined when they are the same at the same place. */
+function differs(
+  x: ReferenceItem,
+  y: ReferenceItem,
+  near: (x: number, y: number) => boolean,
+): DifferenceKind | undefined {
+  const placed = near(x.h, y.h) && near(x.v, y.v);
+  if (x.kind === "glyph" && y.kind === "glyph") {
+    const same =
+      x.font === y.font &&
+      x.native === y.native &&
+      x.size === y.size &&
+      x.index === y.index &&
+      x.rgba === y.rgba &&
+      x.slant === y.slant &&
+      x.embolden === y.embolden &&
+      x.extend === y.extend &&
+      x.code === y.code;
+    return !same ? "glyph" : placed ? undefined : "position";
+  }
+  if (x.kind === "rule" && y.kind === "rule")
+    return !(near(x.width, y.width) && near(x.height, y.height))
+      ? "rule"
+      : placed
+        ? undefined
+        : "position";
+  if (x.kind === "special" && y.kind === "special")
+    return x.text !== y.text ? "special" : placed ? undefined : "position";
+  return x.kind === "special" || y.kind === "special" ? "special" : "kind";
+}
+
+/**
+ * Where two glyph streams first differ, for a developer, or undefined when they set the same
+ * glyphs at the same places (`sameGlyphs`). It names pages, fonts, codes, specials' commands and
+ * places, never a glyph's text or a special's.
+ */
+export function firstDifference(a: GlyphStream, b: GlyphStream): string | undefined {
+  return difference(a, b)?.text;
 }
 
 /**

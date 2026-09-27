@@ -138,7 +138,7 @@ of each launch template must find editable what the hand-written port marks.
    editor does not have") and never a line of source. Done when every corpus document either
    compiles to a reference or is refused with a message that names why, and the runner counts
    both.
-4. [ ] **Parse the body.** unified-latex (`@unified-latex/unified-latex-util-parse`,
+4. [x] **Parse the body.** unified-latex (`@unified-latex/unified-latex-util-parse`,
    `-util-arguments`, `-util-argspec`, `-util-macros`, `-util-to-string`, `-util-visit` and
    `-ctan`) parses the main file. Signatures come from the engine, not from parsing class files:
    one compile prints `\meaning` (and xparse's argument specification) of every control

@@ -10,10 +10,11 @@ import {
 import { beforeAll, describe, expect, it } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
-import type { EngineSession } from "../engine/session";
+import type { Engine, EngineSession } from "../engine/session";
 import { type DrawnPage, drawPage, type GlyphBox, ruleCrossings } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
+import { bound, fastest } from "../test/timing";
 import { type PageItem, parseDvi } from "../tex/dvi";
 import { checkSpecial, validatePackage } from "../validate/harness";
 import { mediaBoxes, shownTexts, strokedPaths } from "../validate/pdf";
@@ -356,6 +357,34 @@ const fieldFontsOf = (page: DrawnPage) =>
     ),
   );
 
+/**
+ * Compile the LaTeX of a sample with a long title, `whole`, in one pass, as a job of its own, and
+ * bound the pass in the CPU time of this thread, where the engine runs: against a pass of the same
+ * sample with the title a tenth as long, `tenth`, the fastest of five of each, taken in turn
+ * (`src/test/timing.ts`), so that the test files running beside it do not count, as they did
+ * against the 1,000 ms of elapsed time this bound was; and by those 1,000 ms, of CPU time, as a
+ * ceiling. A title of 8,000 characters costs a pass 1.1 to 1.2 times what a tenth of it does at
+ * rest, and 0.9 to 1.2 times while the whole suite runs, which slowed one port's two passes alike,
+ * to 0.43 and 0.48 s; with hyperref's bookmarks, whose conversion grows with the square of a
+ * title's length, Jake's cost 37 times, 4.2 s against 0.11 s.
+ */
+function expectTitleInTime(
+  session: EngineSession,
+  engine: Engine,
+  format: string,
+  tenth: string,
+  whole: string,
+) {
+  const pass = (latex: string, job: string) => () =>
+    session.compile(engine, format, latex, { job, maxPasses: 1 });
+  const result = pass(whole, "long-title")();
+  expect(result.ok).toBe(true);
+  expect(result.log).not.toMatch(/^! /m);
+  const [short = 0, long = 0] = fastest([pass(tenth, "tenth-title"), pass(whole, "long-title")], 5);
+  expect(long).toBeLessThan(bound(5, short));
+  expect(long).toBeLessThan(1_000);
+}
+
 // What every package must do with its sample, the validation harness checks for each curated
 // package (src/validate/harness.test.ts): it compiles to one page and converges, every field it
 // marks is on the page with glyphs that align with its text and a paragraph special after its
@@ -414,7 +443,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     // A project: the name, what it is built with and the dates on one line.
     expect(baseline("marginalia.subtitle")).toBe(baseline("marginalia.title"));
     expect(baseline("marginalia.dates")).toBe(baseline("marginalia.title"));
-  });
+  }, 60_000);
 
   it("draws and aligns an accented letter, a dash and the symbols T1 and TS1 set", () => {
     // The port sets Latin Modern in T1, so é, the en dash, $ and Đ are glyphs of ec-lmr10, and
@@ -445,7 +474,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     }
     expect(drawn.unmatched).toBe(0);
     expect(drawn.missingFonts).toEqual(new Map());
-  });
+  }, 60_000);
 
   it("draws and aligns TS1's symbols that the glyph list lacks or reads as other characters", async () => {
     // LaTeX sets ‱ and ⟨ ⟩ from TS1, whose glyphs lm-ts1.enc names permyriad, angleleft and
@@ -472,7 +501,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
       );
       expect(page.svg, char).toMatch(use);
     }
-  });
+  }, 60_000);
 
   it("keeps the glyphs after a font in place when its outlines cannot be read this time", async () => {
     // A reader that fails once on Latin Modern Bold's outlines, as a dropped request would. A
@@ -499,7 +528,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     expect(second.missingFonts).toEqual(new Map());
     expect(second.glyphs).toEqual(drawn.glyphs);
     expect(second.unmatched).toBe(0);
-  });
+  }, 60_000);
 
   it("links the email and the website through hyperref's dvipdfmx driver", () => {
     // dvips's driver would write PostScript pdfmarks, which xdvipdfmx ignores.
@@ -509,7 +538,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
       return uri ? [uri[1]] : [];
     });
     expect(links).toEqual(["mailto:mara@example.com", "https://quist.example.com"]);
-  });
+  }, 60_000);
 
   it("sets US Letter with half-inch margins, as upstream does, and follows the controls", async () => {
     expect(drawn.size.width).toBeCloseTo(8.5 * INCH, 2);
@@ -524,7 +553,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     expect(page.size.height).toBeCloseTo((297 / 25.4) * INCH, 2);
     expect(leftmost(page)).toBeCloseTo(0.8 * INCH, 2);
     expect(page.unmatched).toBe(0);
-  });
+  }, 60_000);
 
   it("spaces sections, entries and bullets together by density, each on one page", async () => {
     // Where each gap is measured: a section's title from the last line of the section before it,
@@ -587,7 +616,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     expect(page.unmatched).toBe(0);
     // Upstream's look by default: nothing on the page the sample opens with has a colour.
     expect(drawn.svg).not.toMatch(/fill="rgb/);
-  });
+  }, 60_000);
 
   it("sets article's own sizes at the default size, to the byte", async () => {
     // Upstream's look by default (decision 0008): at 11 points \rtfontsize sets every length
@@ -816,7 +845,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
     expect(page.unmatched).toBe(0);
     // The summary's smaller size ends with it, so the sections after it are set as before.
     expect(widthOf(page, "northgate.title")).toBeCloseTo(widthOf(drawn, "northgate.title"), 3);
-  });
+  }, 60_000);
 
   it("sets a link, a project and a labelled item with a blank field, and no stray separator", async () => {
     const blank = Resume.parse(structuredClone(sample));
@@ -854,7 +883,7 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
         lineOf(page, id).filter((glyph) => glyph.field === undefined),
         id,
       ).toEqual([]);
-  });
+  }, 60_000);
 
   it("compiles blank items anywhere in a list or labelled section, each other one a line", async () => {
     // Where the blank items are: each x an item with text, each - an empty one, and each _ one
@@ -912,24 +941,20 @@ describe.skipIf(!engineAvailable())("Jake's Resume and its sample through the en
           if (k > 0) expect(y, `${shape} ${prefix}`).toBeGreaterThan(ys[k - 1] ?? Infinity);
       }
     }
-  });
+  }, 60_000);
 
-  it("compiles a section title of 8,000 characters in under a second, with no bookmarks", () => {
+  it("compiles a section title of 8,000 characters in under a second and about the time of 800, with no bookmarks", () => {
     // hyperref's bookmark for a section converts its title in time that grows with the square
     // of its length, about 4 s a pass at this length; Jake's port turns bookmarks off.
-    const long = Resume.parse(structuredClone(sample));
-    const [first] = long.sections;
-    if (!first) throw new Error("the sample moved");
-    first.title = "Research and teaching ".repeat(400).slice(0, 8_000);
-    const { latex } = generateBody(pkg, long, values);
-    const result = session.compile(pkg.engine, format.name, latex, {
-      job: "long-title",
-      maxPasses: 1,
-    });
-    expect(result.ok).toBe(true);
-    expect(result.log).not.toMatch(/^! /m);
-    expect(result.passes[0]).toBeLessThan(1000);
-  });
+    const titled = (length: number) => {
+      const long = Resume.parse(structuredClone(sample));
+      const [first] = long.sections;
+      if (!first) throw new Error("the sample moved");
+      first.title = "Research and teaching ".repeat(400).slice(0, length);
+      return generateBody(pkg, long, values).latex;
+    };
+    expectTitleInTime(session, pkg.engine, format.name, titled(800), titled(8_000));
+  }, 60_000);
 });
 
 // What follows is AltaCV's own: its columns by role, its entries and icons, its links, its
@@ -1096,7 +1121,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     }
     // Both columns start level, under the header.
     expect(baselinesOf(drawn, "summary.title")[0]).toBe(baselinesOf(drawn, "experience.title")[0]);
-  });
+  }, 60_000);
 
   it("sets an entry as \\cvevent does, with a dashed divider between two", () => {
     const baseline = (id: string) => baselinesOf(drawn, id)[0] ?? Number.NaN;
@@ -1128,7 +1153,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
         .join(""),
     ).toBe("Experience");
     expect(drawn.unmatched).toBe(0);
-  });
+  }, 60_000);
 
   it("sets each tag's text where the PDF has it, as the page shows it", () => {
     // pgf's dvipdfmx driver places a TikZ node's text through a pdf:btrans transform, which
@@ -1155,7 +1180,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     }
     // The harness's special check finds no field of the sample in a PDF-only transform.
     expect(checkSpecial(parseDvi(output, () => undefined))).toEqual([]);
-  });
+  }, 60_000);
 
   it("keeps every tag's frame in the column, a tag being one box as upstream's node is", async () => {
     // A tag set as its frame, a kern, its text and a kern, with the space after it, gave TeX a
@@ -1177,7 +1202,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
       expect(left - width / 2).toBeGreaterThan(COLUMN.start * bp - 0.001);
       expect(right + width / 2).toBeLessThan(COLUMN.end * bp + 0.001);
     }
-  });
+  }, 60_000);
 
   it("sets a tag wider than the column in lines of the column's width, even one of 3,500 characters", async () => {
     // Upstream's tag is one line, so a skill wider than the column ran off the page, and one of
@@ -1261,7 +1286,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     expect(Math.max(...place.map(({ right }) => right))).toBeLessThan(COLUMN.end);
     expect(baselinesOf(page, "mentoring.dates").length).toBeGreaterThan(1);
     expect(baselinesOf(page, "mentoring.place").length).toBeGreaterThan(1);
-  });
+  }, 60_000);
 
   it("draws the contacts' icons in the accent and the entries' markers, from Font Awesome's Type 1 fonts", () => {
     expect(drawn.missingFonts).toEqual(new Map());
@@ -1277,7 +1302,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     expect(contacts.filter((icon) => icon.font.startsWith("fa5brands"))).toHaveLength(2);
     // A calendar for each entry's dates, and a marker for each place: five and three.
     expect(icons.length - contacts.length).toBe(8);
-  });
+  }, 60_000);
 
   it("links the phone, the email and each header link through hyperref's dvipdfmx driver", () => {
     // dvips's driver would write PostScript pdfmarks, which xdvipdfmx ignores. Each link covers
@@ -1289,7 +1314,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
       { uri: "https://code.example.com/ncastellan", glyphs: "ncastellan".length },
       { uri: "https://people.example.com/noor-castellan", glyphs: "noor-castellan".length },
     ]);
-  });
+  }, 60_000);
 
   it("sets a no-break space in a contact or a link's label as a space, on the page and in the PDF", async () => {
     // The generator writes ~ for U+00A0, U+202F and U+2007, which pasted phone numbers carry,
@@ -1331,7 +1356,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     const kerns = phone?.parts.filter((part) => typeof part === "number") ?? [];
     expect(kerns).toHaveLength(3);
     for (const kern of kerns) expect(kern).toBeLessThanOrEqual(-200);
-  });
+  }, 60_000);
 
   it("sets A4 with half-inch margins, and follows the page size and margins controls", async () => {
     expect(drawn.size.width).toBeCloseTo((210 / 25.4) * INCH, 2);
@@ -1346,7 +1371,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     expect(page.size.height).toBeCloseTo(11 * INCH, 2);
     expect(leftmost(page)).toBeCloseTo(0.8 * INCH, 2);
     expect(page.unmatched).toBe(0);
-  });
+  }, 60_000);
 
   it("sets the class's own sizes at the default size, to the byte", async () => {
     // Upstream's look by default: at 10 points \rtfontsize sets every length the class's
@@ -1633,7 +1658,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
       expect(icon.fill).toBe("rgb(31,78,121)");
     expect(fillOf(page, ["tidewater-1.text"])).toBe("rgb(102,102,102)");
     expect(page.unmatched).toBe(0);
-  });
+  }, 60_000);
 
   it("compiles every section kind in either column, empty sections and blank items, as edits pass through", async () => {
     const edges = Resume.parse({
@@ -1712,7 +1737,7 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
     expect(rulesOf(page).filter((rule) => rule.height === 2)).toHaveLength(edges.sections.length);
     // A blank tag is left out, so a skills section of blank items draws no tag.
     expect(edgeBody.latex).not.toContain("\\cvtag{}");
-  });
+  }, 60_000);
 
   it("sets a link with no label as its address, and one it does not link as its label alone", async () => {
     const blank = Resume.parse(structuredClone(sample));
@@ -1739,25 +1764,21 @@ describe.skipIf(!engineAvailable())("AltaCV and its sample through the engine", 
       "https://people.example.com/noor-castellan",
     ]);
     expect(page.fields.get("tool.label")?.glyphs).toHaveLength("Portfolio".length);
-  });
+  }, 60_000);
 
-  it("compiles a section title and a name of 8,000 characters in under a second", () => {
+  it("compiles a section title and a name of 8,000 characters in under a second and about the time of 800", () => {
     // hyperref's bookmarks, which the class turns off, and the class's \MakeUppercase, which the
     // port takes out, both cost time that grows with the square of a title's length.
-    const long = Resume.parse(structuredClone(sample));
-    const [first] = long.sections;
-    if (!first) throw new Error("the sample moved");
-    first.title = "Research and teaching ".repeat(400).slice(0, 8_000);
-    long.header.name.last = first.title;
-    const { latex } = generateBody(pkg, long, values);
-    const result = session.compile(pkg.engine, format.name, latex, {
-      job: "long-title",
-      maxPasses: 1,
-    });
-    expect(result.ok).toBe(true);
-    expect(result.log).not.toMatch(/^! /m);
-    expect(result.passes[0]).toBeLessThan(1000);
-  });
+    const titled = (length: number) => {
+      const long = Resume.parse(structuredClone(sample));
+      const [first] = long.sections;
+      if (!first) throw new Error("the sample moved");
+      first.title = "Research and teaching ".repeat(400).slice(0, length);
+      long.header.name.last = first.title;
+      return generateBody(pkg, long, values).latex;
+    };
+    expectTitleInTime(session, pkg.engine, format.name, titled(800), titled(8_000));
+  }, 60_000);
 });
 
 // What follows is Awesome-CV's own: its fonts, declared by file, and its icons; its header,
@@ -1876,7 +1897,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
       // (decision 0023).
       if (text) expect(shapes["m/sc"], family).toBe(shapes["m/n"]);
     }
-  });
+  }, 60_000);
 
   it("sets the header as the class does: the name in Roboto's light and bold, then the headline, the address and the contacts", () => {
     const baseline = (id: string) => baselinesOf(drawn, id)[0] ?? Number.NaN;
@@ -1909,7 +1930,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(sizeOf(drawn, "header.headline")).toBe(7.6);
     expect(sizeOf(drawn, "header.location")).toBe(8);
     expect(sizeOf(drawn, "header.phone")).toBe(6.8);
-  });
+  }, 60_000);
 
   it("draws the contacts' icons from Font Awesome's fonts, outside every field, and links each contact", () => {
     // Every native font drawn: the text's and the icons'.
@@ -1944,7 +1965,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(shownTexts(made.pdf).map((shown) => shown.text)).toEqual(
       expect.arrayContaining(["HarbourlineLogistics", "SeniorInfrastructureEngineer"]),
     );
-  });
+  }, 60_000);
 
   it("sets an entry as \\cventry does: the organisation and place, then the title and dates, then the bullets", () => {
     const baseline = (id: string) => baselinesOf(drawn, id)[0] ?? Number.NaN;
@@ -1989,7 +2010,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
       baseline("kestrel.subtitle") - (baselinesOf(drawn, "harbourline-3.text").at(-1) ?? 0),
       3,
     );
-  });
+  }, 60_000);
 
   it("sets awards through cvhonors, skills through cvskills, and a list's items where a paragraph's text is", () => {
     const baseline = (id: string) => baselinesOf(drawn, id)[0] ?? Number.NaN;
@@ -2019,7 +2040,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(sizeOf(drawn, "cycling.text")).toBe(9);
     const items = ["cycling.text", "letterpress.text", "mentoring.text"].map(baseline);
     expect(items).toEqual([...items].sort((a, b) => a - b));
-  });
+  }, 60_000);
 
   it("sets A4 with half-inch margins, and follows the page size and margins controls", async () => {
     expect(drawn.size.width).toBeCloseTo((210 / 25.4) * INCH, 2);
@@ -2034,7 +2055,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(page.size.height).toBeCloseTo(11 * INCH, 2);
     expect(leftmost(page)).toBeCloseTo(0.8 * INCH, 2);
     expect(page.unmatched).toBe(0);
-  });
+  }, 60_000);
 
   it("sets the class's own sizes at the default size, to the byte", async () => {
     // Upstream's look by default: at 11 points \rtfontsize sets every size the class and
@@ -2265,7 +2286,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     highlighted(page, "rgb(31,78,121)");
     expect(fillOf(page, ["header.last", "harbourline-1.text"])).toBe("rgb(51,51,51)");
     expect(page.unmatched).toBe(0);
-  });
+  }, 60_000);
 
   it("wraps a label of 110 characters, or 4,000, and leaves the skills' text a third of the width", async () => {
     // Measured on one line, a label of 4,000 characters passed TeX's largest dimension and stopped
@@ -2504,7 +2525,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     // Where upstream's own class, through fontspec, sets the O of the sample's last name, with the
     // port's half-inch margins: the port kept the space between the halves, and set it 4 pt right.
     expect(last[0]?.x).toBeCloseTo(251.46, 1);
-  });
+  }, 60_000);
 
   it("compiles blank fields, empty sections, a bare header and bullets under an award, as edits pass through", async () => {
     // Every argument a macro of the class takes may come empty, as a user's edits leave it.
@@ -2668,7 +2689,7 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
       "https://people.example.com/linnea-okafor",
     ]);
     expect(page.fields.get("tool.label")?.glyphs).toHaveLength("Portfolio".length);
-  });
+  }, 60_000);
 
   it("sets letters that carry accents in pieces the engine takes, every glyph on the page and in order", async () => {
     // A run of 200 letters with five accents each, 1,200 characters and no space, set nothing at
@@ -2745,21 +2766,17 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
     expect(uris.filter((uri) => uri === address)).toHaveLength(2);
   }, 120_000);
 
-  it("compiles a section title and a name of 8,000 characters in under a second", () => {
+  it("compiles a section title and a name of 8,000 characters in under a second and about the time of 800", () => {
     // hyperref's bookmarks, which the class turns off, cost time that grows with the square of a
     // title's length.
-    const long = Resume.parse(structuredClone(sample));
-    const [first] = long.sections;
-    if (!first) throw new Error("the sample moved");
-    first.title = "Research and teaching ".repeat(400).slice(0, 8_000);
-    long.header.name.last = first.title;
-    const { latex } = generateBody(pkg, long, values);
-    const result = session.compile(pkg.engine, format.name, latex, {
-      job: "long-title",
-      maxPasses: 1,
-    });
-    expect(result.ok).toBe(true);
-    expect(result.log).not.toMatch(/^! /m);
-    expect(result.passes[0]).toBeLessThan(1000);
-  });
+    const titled = (length: number) => {
+      const long = Resume.parse(structuredClone(sample));
+      const [first] = long.sections;
+      if (!first) throw new Error("the sample moved");
+      first.title = "Research and teaching ".repeat(400).slice(0, length);
+      long.header.name.last = first.title;
+      return generateBody(pkg, long, values).latex;
+    };
+    expectTitleInTime(session, pkg.engine, format.name, titled(800), titled(8_000));
+  }, 60_000);
 });
