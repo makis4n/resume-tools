@@ -259,7 +259,8 @@ with no findings, 57 fields on one page, in 13 passes of 107 to 132 ms.
   side; the contacts, in the resume's order; and what has no place in the model. Small capitals
   and proportional figures can come back when the page reads the texts of glyphs a single
   substitution makes, and a family can load one shape with features of its own; both are
-  additions to decision 0014.
+  additions to decision 0014. Decision 0023 makes them and gives Roboto its figures back; the
+  small capitals stay upright, since xdvipdfmx's ToUnicode shows them as capitals in the PDF.
 - Source Sans Pro reaches its apostrophe and its hyphen from several code points each, and
   xdvipdfmx's ToUnicode map shows the hyphen as U+2011, the non-breaking hyphen: the page takes
   any of a glyph's code points as its text, and the harness's PDF check reads the hyphen as typed

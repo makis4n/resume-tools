@@ -120,6 +120,41 @@ const ENV: Record<string, string> = {
 /** The start of the heap restored after every run; all of the engine's state fits in it. */
 const HEADER_BYTES = 2 ** 26;
 
+/**
+ * What a dump runs after the preamble: a line for `\everyjob`, which TeX runs as a job loads the
+ * format and before it reads the body, then `\dump`.
+ *
+ * TeX dumps only an empty page with no dead cycles, and LaTeX's preamble leaves neither: the class's
+ * `\onecolumn` clears a page as it loads, a dead cycle, and what a package writes onto the page as
+ * the preamble runs stays there, as hyperref's PDF version and dvipdfmx's flags, and xcolor's
+ * first colour and a page colour, which a whole compile ships with its first page. So `\dump`, as
+ * `\end` does, first appends `\hbox to\hsize{}\vfill\penalty-'10000000000` and runs the output
+ * routine, which LaTeX's `\@specialoutput` answers by putting the page into `\@holdpg`: what the
+ * preamble wrote, the `\topskip` glue, the box and the `\vfill`. The format kept all that and the
+ * output penalty that fired it, and a body compiled from it started with them: what the preamble
+ * wrote never reached the page (decision 0014), and a page whose first output finds an empty page,
+ * as paracol's does at the top of one, set its text below the box (decision 0023). So each job of
+ * the format starts as the whole document does: what the preamble wrote back on the page, less
+ * what `\dump` added, the glue only when no box stood on the page before it, `\@holdpg` void, and
+ * the output penalty, the dead cycles and the main list's `\prevdepth` as the preamble left them,
+ * which the line reads before `\dump`.
+ */
+const DUMP_END = String.raw`\begingroup\catcode64=11\relax
+\edef\x{\endgroup\everyjob{\the\everyjob
+  \begingroup
+    \setbox0=\vbox{\unvbox\@holdpg
+      \noexpand\ifnum\lastnodetype=11 \unskip\noexpand\fi
+      \noexpand\ifnum\lastnodetype=1 \setbox0=\lastbox\noexpand\fi
+      \ifdim\pagegoal=\maxdimen\noexpand\ifnum\lastnodetype=11 \unskip\noexpand\fi\fi}%
+    \unvbox0
+  \endgroup
+  \global\setbox\@holdpg=\box\voidb@x
+  \global\outputpenalty=\the\outputpenalty\relax
+  \deadcycles=\the\deadcycles\relax
+  \prevdepth=\the\prevdepth\relax}}\x
+\dump
+`;
+
 /** A file in Emscripten's in-memory file system. */
 interface MemfsNode {
   usedBytes: number;
@@ -193,8 +228,9 @@ export interface SessionOptions {
 }
 
 /**
- * Files a template supplies, such as a class file, by plain file name; or, for a compile or a dump,
- * the files of an upload, by their paths in the job's or the dump's folder (`isJobPath`).
+ * Files a dump or a compile takes, by their paths in the folder it runs in (`isJobPath`): a
+ * template's class and style files, which a package names by plain file name, or an upload's
+ * files, in their folders as the upload has them.
  */
 export type JobFiles = Record<string, string | Uint8Array>;
 
@@ -321,9 +357,6 @@ export interface CompileOptions {
 
 const checkName = (kind: string, name: string) => {
   if (!NAME.test(name)) throw new Error(`${kind} name must be letters, digits, - and _: ${name}`);
-};
-const checkFileName = (name: string) => {
-  if (!isFileName(name)) throw new Error(`not a plain file name: ${name}`);
 };
 /**
  * A file's path in a job's folder: plain file names joined by `/`, so no part is empty, `.`, `..`
@@ -480,10 +513,10 @@ function threadCpuMs(): number | undefined {
   return (user + system) / 1000;
 }
 
-/** The end of every file `dump` runs, which dumps the format. */
-const DUMP = "\n\\dump\n";
+/** The end of every file `dump` runs, which dumps the format: `DUMP_END`, on a line of its own. */
+const DUMP = `\n${DUMP_END}`;
 
-/** A preamble with `\dump` after it: text as text, and bytes as bytes, as `dump` was given it. */
+/** A preamble with `DUMP` after it: text as text, and bytes as bytes, as `dump` was given it. */
 function withDump(preamble: string | Uint8Array): string | Uint8Array {
   if (typeof preamble === "string") return `${preamble}${DUMP}`;
   const end = new TextEncoder().encode(DUMP);
@@ -687,6 +720,7 @@ export class EngineSession {
   ): DumpResult {
     checkEngine(engine);
     checkFormatName(name);
+    for (const path of Object.keys(files)) checkJobPath(path);
     const spec = ENGINES[engine];
     const folder = `${BUILDS}/${name}`;
     this.tally.take();
@@ -696,7 +730,7 @@ export class EngineSession {
     let log: string;
     let format: Uint8Array | undefined;
     try {
-      this.writeFiles(folder, files, checkJobPath);
+      this.writeFiles(folder, files);
       this.engine.FS.writeFile(`${folder}/${name}.tex`, withDump(preamble));
       run = this.run(
         [spec.program, "-ini", `-jobname=${name}`, ...spec.args, `&${spec.program}`, `${name}.tex`],
@@ -968,7 +1002,7 @@ export class EngineSession {
     const folder = `${JOBS}/${job}`;
     const at = (extension: string) => `${folder}/${job}.${extension}`;
     this.engine.FS.mkdirTree(folder);
-    this.writeFiles(folder, this.filesOf.get(job) ?? {}, checkJobPath);
+    this.writeFiles(folder, this.filesOf.get(job) ?? {});
     this.engine.FS.writeFile(at("tex"), body);
     if (fonts !== undefined) this.engine.FS.writeFile(`${folder}/${FONTCONFIG_FILE}`, fonts);
     const fresh = !this.engine.FS.analyzePath(at("aux")).exists;
@@ -1067,12 +1101,12 @@ export class EngineSession {
   }
 
   /**
-   * Write files into a folder, each after `check` takes its name: a plain file name for a dump's,
-   * a path in the job's folder for a compile's, whose folders are made first.
+   * Write a dump's or a compile's files into the folder it runs in, each at its path there
+   * (`isJobPath`), its folders made first.
    */
-  private writeFiles(folder: string, files: JobFiles, check = checkFileName) {
+  private writeFiles(folder: string, files: JobFiles) {
     for (const [name, data] of Object.entries(files)) {
-      check(name);
+      checkJobPath(name);
       const slash = name.lastIndexOf("/");
       if (slash > 0) this.engine.FS.mkdirTree(`${folder}/${name.slice(0, slash)}`);
       this.engine.FS.writeFile(`${folder}/${name}`, data);

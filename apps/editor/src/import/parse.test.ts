@@ -1147,7 +1147,7 @@ describe.skipIf(!engineAvailable())("the round trips, on the engine", () => {
     const manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
-    tree = readTree(manifest.files);
+    tree = readTree(manifest.files, manifest.fonts);
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );

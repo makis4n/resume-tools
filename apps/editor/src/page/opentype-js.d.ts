@@ -50,6 +50,10 @@ declare module "opentype.js" {
     ascender: number;
     descender: number;
     glyphs: Glyph[];
+    /** The `OS/2` table's weight and width classes, and the `post` table's italic angle. */
+    weightClass?: number;
+    widthClass?: number;
+    italicAngle?: number;
     /** Values for the tables the writer makes, which win over the ones it works out. */
     tables?: { os2?: Record<string, number> };
   }
@@ -63,8 +67,14 @@ declare module "opentype.js" {
     descender: number;
     glyphs: { length: number; get(index: number): Glyph | undefined };
     tables: Record<string, Record<string, unknown> | undefined>;
-    /** The font's GSUB table as the writer makes it; the tests add a ligature through it. */
-    substitution: { add(feature: string, rule: { sub: number[]; by: number }): void };
+    /**
+     * The font's GSUB table as the writer makes it; the tests add a ligature through it, and a
+     * single substitution, which `add` does not take for most features.
+     */
+    substitution: {
+      add(feature: string, rule: { sub: number[]; by: number }): void;
+      addSingle(feature: string, rule: { sub: number; by: number }): void;
+    };
     charToGlyphIndex(char: string): number;
     /** The kerning between two glyphs, by index, in font units, from GPOS or the `kern` table. */
     getKerningValue(left: number, right: number): number;

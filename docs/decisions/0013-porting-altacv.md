@@ -259,6 +259,9 @@ them in `extras` (decision 0006), and the port's `sample.json` leaves them out.
   removed, and the page comes back with the compile that edit starts.
 - The port's default page is the sample's but for the capitals, the margins, a pale rule in place
   of the gold, and what has no place in the model.
+- A format's `\dump` left a `\topskip`-high box in `\@holdpg`, which paracol sets above its columns
+  where it opens at the top of a page; decision 0023's session voids it, and the port, which opens
+  paracol below its header, sets its page where it did, every glyph in the same place.
 - xdvipdfmx warns once for each of the editor's marker specials, which it does not know, as it
   does for Jake's.
 - Plan section 7 lists AltaCV's licence as MIT; the class says LPPL 1.3c.

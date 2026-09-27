@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
+import type { TreeFont } from "../src/engine/manifest";
 import { readTree } from "../src/import/fonts";
 import { environmentToken } from "./corpus-github";
 import { type CorpusFile, firstCounters, type LiveDocument, Manifest } from "./corpus-manifest";
@@ -23,23 +24,52 @@ const SECRET = "Quillwort";
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const bytes = (text: string) => new TextEncoder().encode(text);
 
-/** A small tree: a few classes and packages under `tex/`, and Roboto's and Lato's font files. */
-const tree = readTree({
-  "/texlive/texmf-dist/tex/latex/base/article.cls": 1,
-  "/texlive/texmf-dist/tex/latex/geometry/geometry.sty": 1,
-  "/texlive/texmf-dist/tex/latex/fontspec/fontspec.sty": 1,
-  "/texlive/texmf-dist/tex/latex/hyperref/hyperref.sty": 1,
-  "/texlive/texmf-dist/tex/latex/roboto/roboto.sty": 1,
-  "/texlive/texmf-dist/tex/latex/roboto/roboto-mono.sty": 1,
-  "/texlive/texmf-dist/fonts/opentype/google/roboto/Roboto-Regular.otf": 1,
-  "/texlive/texmf-dist/fonts/opentype/google/roboto/Roboto-Bold.otf": 1,
-  "/texlive/texmf-dist/tex/latex/lato/lato.sty": 1,
-  "/texlive/texmf-dist/fonts/truetype/typoland/lato/Lato-Regular.ttf": 1,
-  "/texlive/texmf-dist/tex/latex/amsfonts/amssymb.sty": 1,
-  "/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb": 1,
-  "/texlive/texmf-dist/source/latex/invented/inventeddoc.sty": 1,
-  "/texmf/texmf-dist/tex/latex/moderncv/moderncv.cls": 1,
+/** A font of the tree as the manifest's table records it, by its family, style and four-style family. */
+const font = (
+  family: string,
+  style: string,
+  fontFamily = family,
+  fontSubfamily = style,
+): TreeFont => ({
+  family,
+  style,
+  fontFamily,
+  fontSubfamily,
+  fullName: style === "Regular" ? family : `${family} ${style}`,
+  postScriptName: `${family}-${style}`,
+  weight: 400,
+  width: 5,
+  scripts: ["latn"],
+  features: [],
 });
+
+/** A small tree: a few classes and packages under `tex/`, and Roboto's and Lato's font files. */
+const tree = readTree(
+  {
+    "/texlive/texmf-dist/tex/latex/base/article.cls": 1,
+    "/texlive/texmf-dist/tex/latex/geometry/geometry.sty": 1,
+    "/texlive/texmf-dist/tex/latex/fontspec/fontspec.sty": 1,
+    "/texlive/texmf-dist/tex/latex/hyperref/hyperref.sty": 1,
+    "/texlive/texmf-dist/tex/latex/roboto/roboto.sty": 1,
+    "/texlive/texmf-dist/tex/latex/roboto/roboto-mono.sty": 1,
+    "/texlive/texmf-dist/fonts/opentype/google/roboto/Roboto-Regular.otf": 1,
+    "/texlive/texmf-dist/fonts/opentype/google/roboto/Roboto-Bold.otf": 1,
+    "/texlive/texmf-dist/tex/latex/lato/lato.sty": 1,
+    "/texlive/texmf-dist/fonts/truetype/typoland/lato/Lato-Regular.ttf": 1,
+    "/texlive/texmf-dist/tex/latex/amsfonts/amssymb.sty": 1,
+    "/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb": 1,
+    "/texlive/texmf-dist/source/latex/invented/inventeddoc.sty": 1,
+    "/texmf/texmf-dist/tex/latex/moderncv/moderncv.cls": 1,
+  },
+  {
+    "/texlive/texmf-dist/fonts/opentype/google/roboto/Roboto-Regular.otf": font(
+      "Roboto",
+      "Regular",
+    ),
+    "/texlive/texmf-dist/fonts/opentype/google/roboto/Roboto-Bold.otf": font("Roboto", "Bold"),
+    "/texlive/texmf-dist/fonts/truetype/typoland/lato/Lato-Regular.ttf": font("Lato", "Regular"),
+  },
+);
 
 /** An invented document of the given files, the first the main file, and what the survey reads. */
 function invented(

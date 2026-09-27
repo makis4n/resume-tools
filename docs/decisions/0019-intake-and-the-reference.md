@@ -198,13 +198,14 @@ the survey and the intake both call.
   compiled from a dumped format lacks (decisions 0003 and 0014): `pdf:majorversion`,
   `pdf:minorversion`, `dvipdfmx:config`, and xcolor's black, found by where it is, the
   `color push gray 0` at the bottom of the colour stack that no `color pop` takes off, with any
-  black nothing takes off above it. The first version left every special out, and kept only a
+  black nothing takes off above it (decision 0023 adds black in RGB and CMYK, and a white
+  `\pagecolor`'s background). The first version left every special out, and kept only a
   native font's file, so that a lost colour, photo, fake bold, slant or colour passed. On the
   engine: an article with xcolor and hyperref compiled whole on pdfTeX has that one black more
   than its body, marked and compiled from a format of its preamble, and the two are the same; a
   red word, a photo against an empty box, and XeTeX's FakeBold, FakeSlant and Color each differ.
   A difference names a special by its command alone, since its text may be the resume's, as a
-  link's address is.
+  link's address is. (Decision 0023: a body from a format now keeps the first shipout's specials.)
 - The editor's pdfTeX writes DVI (decision 0003), and most documents are written for pdfTeX's PDF
   mode. So a pdfTeX job gets a `graphics.cfg` and a `color.cfg` that give graphics, color and
   xcolor dvipdfmx's driver, the default and for the `pdftex` and `dvips` drivers a document names,

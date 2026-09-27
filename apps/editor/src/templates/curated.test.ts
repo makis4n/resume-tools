@@ -25,6 +25,7 @@ import {
   defaultControls,
   fontFiles,
   parsePackage,
+  shapeFile,
   type TemplatePackage,
 } from "./package";
 
@@ -1883,14 +1884,17 @@ describe.skipIf(!engineAvailable())("Awesome-CV and its sample through the engin
       "FontAwesomeBrands",
     ]);
     for (const { family, shapes, features } of pkg.fonts ?? []) {
-      for (const [shape, file] of Object.entries(shapes))
-        expect(files.has(file), `${family} ${shape}: ${file}`).toBe(true);
-      // tex-text for the text, which is what fontspec's Ligatures=TeX set for the class; none for
-      // the icons, which are set by their code points.
+      for (const [shape, font] of Object.entries(shapes))
+        expect(files.has(shapeFile(font)), `${family} ${shape}: ${shapeFile(font)}`).toBe(true);
+      // tex-text for the text, which is what fontspec's Ligatures=TeX set for the class, and for
+      // Roboto the proportional lining figures roboto.sty asks for, which the page reads as their
+      // digits (decision 0023); none for the icons, which are set by their code points.
       const text = !family.startsWith("FontAwesome");
-      expect(features, family).toBe(text ? "mapping=tex-text" : undefined);
-      // Small capitals are the family's upright, since a glyph that +smcp substitutes has no text
-      // the page can match (decision 0014).
+      const figures = family.startsWith("Roboto") ? ";+pnum;+lnum" : "";
+      expect(features, family).toBe(text ? `mapping=tex-text${figures}` : undefined);
+      // Small capitals are the family's upright: the page reads +smcp's glyphs, but xdvipdfmx's
+      // ToUnicode gives them their capitals, so the PDF's text would not be what the user typed
+      // (decision 0023).
       if (text) expect(shapes["m/sc"], family).toBe(shapes["m/n"]);
     }
   }, 60_000);

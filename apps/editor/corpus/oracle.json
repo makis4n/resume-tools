@@ -546,7 +546,7 @@
           "macro": "cventry",
           "argument": 1,
           "port": "marks",
-          "expected": "misaligned",
+          "expected": "editable",
           "why": "Decision 0015: the class sets every entry's position in \\scshape, as the headline; editable once item 8 reads small capitals."
         },
         {
@@ -581,7 +581,7 @@
           "macro": "cvsubsection",
           "argument": 1,
           "port": "omits",
-          "expected": "misaligned",
+          "expected": "editable",
           "why": "Decision 0015: subsections have no place in the model; set in \\scshape."
         },
         {

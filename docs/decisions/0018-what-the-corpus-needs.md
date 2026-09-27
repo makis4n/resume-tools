@@ -22,9 +22,11 @@ survey, the tables and the tree here are the corrected ones.
   is the engine manifest's file list alone: a class or package is there when a `.cls` or `.sty`
   of its name is under a `tex/` folder, a font file when an OpenType or TrueType file of its name
   is, whatever its extension or case, and a family when `TREE_FAMILIES`, a table written from the
-  name tables of the tree's files, names it and the tree holds the file it names for it.
+  name tables of the tree's files, names it and the tree holds the file it names for it
+  (decision 0023 reads the table from the files themselves, into the manifest).
   `--tree <file>` checks the documents against another engine manifest's file list instead of
-  `.engine/`'s; the two tables below come from the same code, layout 4's from a checkout of main.
+  `.engine/`'s; the two tables below come from the same code, layout 4's from a checkout of main
+  (decision 0023 has `--tree` take layout 7 or later, whose manifest names the tree's fonts).
 - For each document: its class and the classes its classes load, and every package its files
   load, each held by the document, by the tree, or by neither, and those it loads only if present;
   its engine; how it loads fonts, through fontspec by a family's name, by a file's (a file name,

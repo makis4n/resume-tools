@@ -64,7 +64,7 @@ async function main() {
   const manifest = JSON.parse(
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
   ) as EngineManifest;
-  const tree = readTree(manifest.files);
+  const tree = readTree(manifest.files, manifest.fonts);
   const treeImage = treeImages(
     manifest.files,
     (path) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path))),

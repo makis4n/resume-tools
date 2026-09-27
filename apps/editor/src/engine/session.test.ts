@@ -436,6 +436,25 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       ).toThrow("not a path inside the job's folder");
   }, 30_000);
 
+  it("puts a dump's files at their paths in its folder, as a job's, and no path outside it", () => {
+    const files = {
+      "parts/settings.tex": "\\input{parts/deeper/name}",
+      "parts/deeper/name.tex": "\\newcommand\\inventedname{An invented name}",
+    };
+    const preamble = `${PREAMBLE}\n\\input{parts/settings}`;
+    expect(session.dump("pdftex", "folders", preamble, files).error).toBeUndefined();
+    const body = "\\begin{document}\\inventedname\\end{document}";
+    expect(session.compile("pdftex", "folders", body, { job: "folders" }).error).toBeUndefined();
+    // A path that would leave the folder is refused before anything is written, and the format
+    // made before stays.
+    for (const path of ["a//b.tex", ".fonts.conf", "parts/../../x.tex", "a/.git/config"])
+      expect(
+        () => session.dump("pdftex", "folders", preamble, { ...files, [path]: "x" }),
+        path,
+      ).toThrow("not a path inside the job's folder");
+    expect(session.compile("pdftex", "folders", body, { job: "folders" }).error).toBeUndefined();
+  }, 30_000);
+
   describe("lets XeTeX find a font by name for one compile", () => {
     const byName = (font: string) =>
       `\\documentclass{article}\\usepackage{fontspec}\\setmainfont{${font}}\\begin{document}Invented.\\end{document}`;
@@ -589,6 +608,107 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     expect(after.error).toBeUndefined();
     expect(after.passes.length).toBe(2);
   }, 60_000);
+
+  describe("starts a body from a format as the whole document starts it", () => {
+    // OT1 before the class, so that XeTeX's preamble selects no native font, which it cannot dump.
+    const COLUMNS = String.raw`\RequirePackage[OT1]{fontenc}
+\documentclass{article}
+\usepackage{paracol}`;
+    /** Every glyph and rule of an output, page by page, with its font, code and place. */
+    const placed = (output: Uint8Array | undefined) => {
+      const doc = parseDvi(output ?? new Uint8Array(), () => undefined);
+      return doc.pages.map((page) =>
+        page.items.flatMap((item) =>
+          item.kind === "glyph"
+            ? [`${doc.fonts.get(item.font)?.name} ${item.code} ${item.h} ${item.v}`]
+            : item.kind === "rule"
+              ? [`rule ${item.h} ${item.v} ${item.width} ${item.height}`]
+              : [],
+        ),
+      );
+    };
+
+    for (const engine of ["pdftex", "xetex"] as const) {
+      it(`on ${engine}, whose body opens paracol at the top of its page`, () => {
+        // \dump flushed the page with the penalty \end uses, and LaTeX put a box as high as
+        // \topskip into \@holdpg, which the format kept: paracol, starting on an empty page, set
+        // its columns below it, 7 points lower than the whole document does.
+        const body = String.raw`\begin{document}
+\begin{paracol}{2}
+An invented left column, long enough to be set over two lines of its own column.
+\switchcolumn
+An invented right column.
+\end{paracol}
+And a line after the columns.
+\end{document}
+`;
+        const dumped = session.dump(engine, `columns-${engine}`, COLUMNS);
+        expect(dumped.error).toBeUndefined();
+        const fromFormat = session.compile(engine, `columns-${engine}`, body, {
+          job: `columns-${engine}`,
+        });
+        const whole = session.compile(engine, "stock", `${COLUMNS}\n${body}`, {
+          job: `columns-whole-${engine}`,
+        });
+        expect(fromFormat.error).toBeUndefined();
+        expect(whole.error).toBeUndefined();
+        expect(fromFormat.pages).toBe(1);
+        const [ours, theirs] = [fromFormat, whole].map((result) => placed(result.output));
+        expect(ours?.[0]?.length).toBeGreaterThan(50);
+        expect(ours).toEqual(theirs);
+      }, 60_000);
+
+      it(`on ${engine}, with what the preamble wrote onto its page`, () => {
+        // xcolor's page colour and a special the preamble writes as it runs stand on the page
+        // until the first shipout, which \dump flushed into \@holdpg and each job puts back.
+        const preamble = String.raw`${COLUMNS}
+\usepackage{xcolor}
+\pagecolor[rgb]{0.95,0.95,0.9}
+\special{invented:preamble}`;
+        const body = String.raw`\begin{document}\begin{paracol}{2}Left.\switchcolumn Right.\end{paracol}
+\end{document}`;
+        expect(session.dump(engine, `page-${engine}`, preamble).error).toBeUndefined();
+        const fromFormat = session.compile(engine, `page-${engine}`, body, {
+          job: `page-${engine}`,
+        });
+        const whole = session.compile(engine, "stock", `${preamble}\n${body}`, {
+          job: `page-whole-${engine}`,
+        });
+        const specials = (output: Uint8Array | undefined) =>
+          parseDvi(output ?? new Uint8Array(), () => undefined).pages.map((page) =>
+            page.items.flatMap((item) => (item.kind === "special" ? [item.text] : [])),
+          );
+        const [ours, theirs] = [fromFormat, whole].map((result) => specials(result.output));
+        expect(ours?.[0]).toEqual(expect.arrayContaining(["invented:preamble"]));
+        expect(ours?.[0]?.some((text) => /^background rgb 0\.95 0\.95 0\.9/.test(text))).toBe(true);
+        expect(ours).toEqual(theirs);
+        expect(placed(fromFormat.output)).toEqual(placed(whole.output));
+      }, 60_000);
+
+      it(`on ${engine}, with \\@holdpg void and the output routine's state the preamble left`, () => {
+        // Read in vertical mode, where \prevdepth can be, before \begin{document}.
+        const probe = String.raw`\makeatletter\edef\x{STATE \ifvoid\@holdpg void\else\the\ht\@holdpg\fi,
+\the\outputpenalty, \the\deadcycles, \the\prevdepth}\typeout{\x}\makeatother
+\begin{document}x\end{document}
+`;
+        const preamble = `${COLUMNS}\n\\usepackage[hidelinks]{hyperref}`;
+        expect(session.dump(engine, `state-${engine}`, preamble).error).toBeUndefined();
+        const fromFormat = session.compile(engine, `state-${engine}`, probe, {
+          job: `state-${engine}`,
+          maxPasses: 1,
+        });
+        const whole = session.compile(engine, "stock", `${preamble}\n${probe}`, {
+          job: `state-whole-${engine}`,
+          maxPasses: 1,
+        });
+        const state = (log: string) => log.split("\n").find((line) => line.startsWith("STATE "));
+        // The class's \onecolumn cleared a page as it loaded, which fired the output routine once
+        // with \clearpage's penalty and shipped nothing.
+        expect(state(whole.log)).toBe("STATE void, -10001, 1, 0.0pt");
+        expect(state(fromFormat.log)).toBe(state(whole.log));
+      }, 60_000);
+    }
+  });
 
   it("keeps a format when dumping it again fails", () => {
     expect(session.dump("pdftex", "keep", PREAMBLE).ok).toBe(true);
@@ -899,10 +1019,11 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(box?.height).toBeCloseTo(841.89, 1);
     }, 60_000);
 
-    it("from a XeTeX template's format as from a whole compile, but for what nothing links to", () => {
+    it("from a XeTeX template's format as from a whole compile", () => {
       // Decision 0003's loop: the format holds the preamble and the fonts' declarations, and the
-      // body alone is compiled. \dump drops what hyperref and xcolor write at the first shipout,
-      // which a whole compile from the stock format keeps (decision 0014).
+      // body alone is compiled. What hyperref and xcolor write onto the page as the preamble runs,
+      // which \dump flushes into \@holdpg, each job of the format puts back (decision 0023), where
+      // decision 0014 found it lost.
       const { package: pkg, sample } = INVENTED_XETEX;
       const values = defaultControls(pkg);
       const format = generateFormat(pkg, values);
@@ -920,26 +1041,21 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
         const specials = items.flatMap((item) => (item.kind === "special" ? [item.text] : []));
         return { specials, drawn: items.filter((item) => item.kind !== "special") };
       });
-      // The same glyphs, rules and runs, and the same specials but for these, which the whole
-      // compile writes first: the PDF's version, a compatibility flag that keeps named
+      // The same glyphs, rules and runs, and the same specials in the same order, those the
+      // preamble writes first among them: the PDF's version, a compatibility flag that keeps named
       // destinations nothing links to, and a black to start the colour stack with.
       expect(looped?.drawn).toEqual(wholly?.drawn);
-      const lost = [...(wholly?.specials ?? [])];
-      const gained: string[] = [];
-      for (const special of looped?.specials ?? []) {
-        const at = lost.indexOf(special);
-        if (at < 0) gained.push(special);
-        else lost.splice(at, 1);
-      }
-      expect(gained).toEqual([]);
-      expect(lost.sort()).toEqual([
-        "color push gray 0",
-        "dvipdfmx:config C 0x0010",
-        "pdf:majorversion 1",
-        "pdf:minorversion 5",
-      ]);
-      // So the PDFs are the same version, size, text, links and colours; the whole compile's
-      // only has the two named destinations hyperref makes, which nothing links to.
+      expect(looped?.specials).toEqual(wholly?.specials);
+      expect(looped?.specials).toEqual(
+        expect.arrayContaining([
+          "color push gray 0",
+          "dvipdfmx:config C 0x0010",
+          "pdf:majorversion 1",
+          "pdf:minorversion 5",
+        ]),
+      );
+      // So the PDFs are the same version, size, text, links and colours, and both have the two
+      // named destinations hyperref makes, which nothing links to.
       const fromLoop = session.pdf("xeloop", { compress: 0 }).pdf ?? new Uint8Array();
       const fromWhole = session.pdf("xewhole", { compress: 0 }).pdf ?? new Uint8Array();
       const read = (pdf: Uint8Array) => {
@@ -958,8 +1074,8 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       expect(read(fromLoop).boxes).toEqual([{ width: 612, height: 792 }]);
       expect(read(fromLoop).shown.join(" ")).toContain(sample.header.name.last);
       expect(read(fromLoop).colours.length).toBeGreaterThan(0);
-      expect(text(fromWhole)).toMatch(/\/Names\s*\[\(Doc-Start\)\d+ 0 R\(page\.1\)\d+ 0 R\]/);
-      expect(text(fromLoop)).not.toMatch(/\(Doc-Start\)|\(page\.1\)/);
+      for (const pdf of [fromLoop, fromWhole])
+        expect(text(pdf)).toMatch(/\/Names\s*\[\(Doc-Start\)\d+ 0 R\(page\.1\)\d+ 0 R\]/);
     }, 60_000);
 
     it("honours a pdf:pagesize special in a pdfTeX DVI too", () => {

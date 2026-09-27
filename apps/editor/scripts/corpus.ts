@@ -7,6 +7,9 @@
  *   pnpm --filter @resume-tools/editor corpus survey [--json <file>] [--tree <file>]
  *   pnpm --filter @resume-tools/editor corpus reference [--only <id>] [--json <file>]
  *   pnpm --filter @resume-tools/editor corpus parse [--only <id>] [--json <file>]
+ *   pnpm --filter @resume-tools/editor corpus probe [--only <id>] [--json <file>]
+ *   pnpm --filter @resume-tools/editor corpus oracle
+ *   pnpm --filter @resume-tools/editor corpus fonts [--only <id>] [--json <file>]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
  *                 upstream templates' forks give the candidates, public repositories only, and
@@ -30,8 +33,9 @@
  *                 (`scripts/corpus-survey.ts`, decision 0018). It needs `.engine/`, which
  *                 `fetch-engine` builds
  *   --json <file> write each document's row as JSON too, from where pnpm was run
- *   --tree <file> check the documents against another engine manifest's file list, such as a
- *                 checkout's of an older layout, from where pnpm was run, in place of `.engine/`'s
+ *   --tree <file> check the documents against another engine manifest's file list and table of
+ *                 fonts, such as another checkout's, of layout 7 or later, from where pnpm was
+ *                 run, in place of `.engine/`'s
  *   reference     take every document the last fetch marks fetched in as a zip of its files, and
  *                 compile it to the import pipeline's reference, or refuse it, on the engine in
  *                 `.engine/`, in a pool of four child processes with 90 s a document; print one
@@ -62,6 +66,14 @@
  *                 names into `.corpus/oracle/`, as `fetch` fetches a document, probe each, and print
  *                 the verdicts the oracle expects against those found, and how many disagree
  *                 (`scripts/corpus-oracle.ts`). It exits 1 when the samples cannot be fetched
+ *   fonts         take every XeTeX document that compiles to a reference, and every pdfTeX one that
+ *                 guards on the engine and loads a font package that loads fontspec on XeTeX, on
+ *                 XeTeX, and rewrite its fonts by file, check the rewrite against the reference,
+ *                 dump its preamble and compile its body from the format, in the same pool; print
+ *                 one table of what became of them; and keep each document's logs under
+ *                 `.corpus/fonts/` (`scripts/corpus-fonts.ts`, decision 0023). It takes a few minutes
+ *   --only <id>   that document only
+ *   --json <file> write each document's row as JSON too, names and numbers only
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -78,6 +90,7 @@ import type { EngineManifest } from "../src/engine/manifest.ts";
 import { fileKey, readTree } from "../src/import/fonts.ts";
 import { collect, REASONS, type Reason } from "./corpus-collect.ts";
 import { fetchCorpus } from "./corpus-fetch.ts";
+import { type FontsChildRow, type FontsRow, fontsTable } from "./corpus-fonts.ts";
 import { environmentToken, GitHub } from "./corpus-github.ts";
 import {
   CORPUS_DIR,
@@ -124,7 +137,7 @@ import {
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>]";
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
@@ -152,6 +165,12 @@ const PROBE_CHILD = fileURLToPath(new URL("./corpus-probe-child.ts", import.meta
 
 /** Where the probe runner keeps each document's whole probe, which holds its text. */
 const PROBE_KEPT = join(CORPUS_DIR, "probe");
+
+/** The fonts runner's child, which Node runs in each process of its pool. */
+const FONTS_CHILD = fileURLToPath(new URL("./corpus-fonts-child.ts", import.meta.url));
+
+/** Where the fonts runner keeps each document's logs, which quote its source. */
+const FONTS_LOGS = join(CORPUS_DIR, "fonts");
 
 /** The corpus holds at least this many documents, and at least this many of them are `other`. */
 const MIN_DOCUMENTS = 200;
@@ -269,6 +288,14 @@ function runSurvey(json: string | undefined, tree: string | undefined) {
       "survey checks documents against the tree's file list in .engine/manifest.json: run fetch-engine first",
     );
   const engine = JSON.parse(readFileSync(tree ?? ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  // The survey names a document's fonts from the manifest's table of the tree's, which a manifest
+  // written before layout 7 has not (decision 0023).
+  if (typeof engine.fonts !== "object" || engine.fonts === null)
+    throw new Error(
+      tree === undefined
+        ? "the engine's manifest in .engine/ has no table of the tree's fonts: run fetch-engine again"
+        : `the engine manifest --tree names is layout ${engine.layout}, which has no table of the tree's fonts: the survey takes layout 7 or later`,
+    );
   const manifest = readManifest();
   const report = existsSync(FETCH_REPORT_FILE)
     ? parseJson(FetchReport, readFileSync(FETCH_REPORT_FILE, "utf8"), FETCH_REPORT_FILE)
@@ -276,7 +303,7 @@ function runSurvey(json: string | undefined, tree: string | undefined) {
   const survey = surveyCorpus({
     manifest,
     report,
-    tree: readTree(engine.files),
+    tree: readTree(engine.files, engine.fonts),
     read: (doc, file) => {
       try {
         return readFileSync(join(CORPUS_DIR, doc.id, ...file.path.split("/")));
@@ -324,7 +351,10 @@ function treeFonts(files: Readonly<Record<string, number>>) {
   };
 }
 
-/** The fetched documents, or the one `--only` names, as the reference and parse runners take them. */
+/**
+ * The fetched documents, or the one `--only` names, as the reference, parse, probe and fonts
+ * runners take them.
+ */
 function fetchedDocuments(only: string | undefined) {
   const manifest = readManifest();
   const report = existsSync(FETCH_REPORT_FILE)
@@ -607,6 +637,77 @@ async function runOracle() {
   print(["", ...oracleTable(lines).trimEnd().split("\n")]);
 }
 
+async function runFonts(only: string | undefined, json: string | undefined) {
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("fonts compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const documents = fetchedDocuments(only);
+  const treeFont = treeFonts(engine.files);
+  const tasks = documents.map((doc) => ({
+    id: doc.id,
+    message: () => ({
+      name: `${doc.id}.zip`,
+      bytes: uploadOf(
+        doc,
+        (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
+        treeFont,
+      ),
+    }),
+  }));
+  const families = new Map(documents.map((doc) => [doc.id, doc.family]));
+  const rows: FontsRow[] = [];
+  const started = performance.now();
+  print([
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${LIMIT_MS / 1000} s each at most`,
+  ]);
+  let seen = 0;
+  await runPool({
+    script: FONTS_CHILD,
+    tasks,
+    onResult: (task, result) => {
+      seen++;
+      const reply = result.reply as
+        | { row?: FontsChildRow; logs?: Record<string, string> }
+        | undefined;
+      // A child that timed out or died did not say whether it took the document: its row is
+      // counted as that alone (`FontsRow.taken`).
+      const row: FontsChildRow | undefined =
+        reply?.row ??
+        (result.timedOut
+          ? { outcome: "timeout" }
+          : reply === undefined
+            ? { outcome: "crashed" }
+            : undefined);
+      for (const [kind, log] of Object.entries(reply?.logs ?? {}))
+        if (log !== "") writeAtomically(join(FONTS_LOGS, `${task.id}.${kind}.log`), log);
+      if (row === undefined) return;
+      const full: FontsRow = {
+        id: task.id,
+        family: families.get(task.id) ?? "other",
+        ...row,
+        wall: Math.round(result.wall),
+      };
+      rows.push(full);
+      print([
+        `${seen}/${documents.length} ${task.id}: ${full.taken === undefined ? "" : `${full.taken}, `}${full.outcome}${full.name === undefined ? "" : ` (${full.name})`}`,
+      ]);
+    },
+  });
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const minutes = (performance.now() - started) / 60_000;
+  print(["", ...fontsTable(rows).trimEnd().split("\n"), "", `Took ${minutes.toFixed(1)} min.`]);
+  if (json !== undefined)
+    writeAtomically(
+      json,
+      formatJson({
+        version: 1,
+        tree: { layout: engine.layout, files: Object.keys(engine.files).length },
+        limitMs: LIMIT_MS,
+        documents: rows,
+      }),
+    );
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -631,7 +732,8 @@ async function main() {
     command !== "reference" &&
     command !== "parse" &&
     command !== "probe" &&
-    command !== "oracle"
+    command !== "oracle" &&
+    command !== "fonts"
   )
     throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
   if (
@@ -639,17 +741,19 @@ async function main() {
     command !== "fetch" &&
     command !== "reference" &&
     command !== "parse" &&
-    command !== "probe"
+    command !== "probe" &&
+    command !== "fonts"
   )
-    throw new Error("--only goes with fetch, reference, parse or probe");
+    throw new Error("--only goes with fetch, reference, parse, probe or fonts");
   if (
     values.json !== undefined &&
     command !== "survey" &&
     command !== "reference" &&
     command !== "parse" &&
-    command !== "probe"
+    command !== "probe" &&
+    command !== "fonts"
   )
-    throw new Error("--json goes with survey, reference, parse or probe");
+    throw new Error("--json goes with survey, reference, parse, probe or fonts");
   if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
   if (command === "fetch") return runFetch(values.only);
   if (command === "collect") return runCollect();
@@ -660,6 +764,7 @@ async function main() {
   if (command === "parse") return runParse(values.only, caller(values.json));
   if (command === "probe") return runProbe(values.only, caller(values.json));
   if (command === "oracle") return runOracle();
+  if (command === "fonts") return runFonts(values.only, caller(values.json));
   return runSurvey(caller(values.json), caller(values.tree));
 }
 

@@ -31,7 +31,7 @@ import { accentMark, glyphOf } from "../tex/glyphs";
 import { glyphKey, INCH, type PageSize, paperSizeOf, renderPage, US_LETTER } from "../tex/svg";
 import { scaleTfm } from "../tex/tfm";
 import type { FontLibrary, NativePageFont, PageFont } from "./fonts";
-import { type NativeFontFile, nativeFileName } from "./native";
+import { type NativeFontFile, nativeFileName, singleFeaturesOn } from "./native";
 import { paragraphId } from "./paragraph";
 
 /**
@@ -89,6 +89,13 @@ export interface FieldFont {
    * which the XDV does not record (`DrawOptions.features`); left out when it adds nothing.
    */
   letterSpace?: number;
+  /**
+   * The features of `SINGLE_FEATURES` XeTeX sets a native font's glyphs with, as small capitals
+   * are set with `smcp`, from those its family and shape load its file with, which the XDV does not
+   * record (`nativeFeatures`): the overlay measures its characters as the glyphs they substitute
+   * and sets its rows with them (decision 0023). Left out when there are none.
+   */
+  features?: readonly string[];
   /** How many of the field's glyphs it sets. */
   glyphs: number;
   /** How many of those stand for letters or digits. */
@@ -124,6 +131,7 @@ export interface FieldLayout {
   extend?: number;
   slant?: number;
   letterSpace?: number;
+  features?: readonly string[];
   /** The first glyph's origin on its baseline, in TeX points from the page's top-left corner. */
   x: number;
   y: number;
@@ -313,23 +321,40 @@ export function nativeProblem(
  * that loaded, by name; a glyph from any other font, or from one without outlines, has no text,
  * and so matches no character of a field's text. A glyph of a native run reads as its file says
  * (`NativeFontFile.textOf`), when the file, by its name in `natives`, loaded, and stands for the
- * file's other characters for it as well (`alternatives`). The validation harness names glyphs
- * with this.
+ * file's other characters for it as well (`alternatives`). `features` are the ways the package
+ * loads each file, by its name (`DrawOptions.features`): a glyph a single substitution makes
+ * reads as the glyph it is made from only for the features one of its file's ways turns on, and
+ * for every one when they are not given, as for a reference, whose fonts fontspec loaded. The
+ * validation harness names glyphs with this.
  */
 export function glyphTextOf(
   doc: DviDocument,
   loaded: ReadonlyMap<string, PageFont>,
   natives: ReadonlyMap<string, NativePageFont> = new Map(),
+  features?: ReadonlyMap<string, readonly string[]>,
 ): GlyphTextOf {
   const fontOf = (item: PageItem) => {
     const font = item.kind === "glyph" ? doc.fonts.get(item.font) : undefined;
     return font && loaded.get(font.name);
   };
+  // The features of SINGLE_FEATURES each file is loaded with, by its name, once each.
+  const turnedOn = new Map<string, string[]>();
+  const featuresOf = (file: string): string[] | undefined => {
+    if (features === undefined) return undefined;
+    let on = turnedOn.get(file);
+    if (on === undefined) {
+      on = [...new Set((features.get(file) ?? []).flatMap((way) => singleFeaturesOn(way)))];
+      turnedOn.set(file, on);
+    }
+    return on;
+  };
   /** Every text a native run's glyph stands for, as its file reads it. */
   const nativeTexts = (item: PageItem, glyph?: number): readonly string[] => {
     if (item.kind !== "native" || glyph === undefined) return [];
     const run = item.glyphs[glyph];
-    return (run && fileOf(doc.nativeFonts.get(item.font), natives)?.textsOf(run.id)) ?? [];
+    const def = doc.nativeFonts.get(item.font);
+    const file = fileOf(def, natives);
+    return (run && file?.textsOf(run.id, featuresOf(nativeFileName(def?.name ?? "")))) ?? [];
   };
   const textOf = (item: PageItem, glyph?: number) =>
     item.kind === "glyph" ? fontOf(item)?.text(item.code) : nativeTexts(item, glyph)[0];
@@ -449,7 +474,7 @@ function fontsOf(
   loaded: ReadonlyMap<string, PageFont>,
   natives: ReadonlyMap<string, NativePageFont>,
   field: Field,
-  features: ReadonlyMap<string, string>,
+  features: ReadonlyMap<number, string>,
 ): FieldFont[] {
   const pt = pointsPerUnit(doc);
   // By the DVI's font number, which a TeX font and a native one share, and kind apart all the same.
@@ -459,7 +484,7 @@ function fontsOf(
     let key: string;
     let font: LayoutFont | undefined;
     let size: number;
-    const spacing: Pick<FieldFont, "extend" | "slant" | "letterSpace"> = {};
+    const spacing: Pick<FieldFont, "extend" | "slant" | "letterSpace" | "features"> = {};
     if (item?.kind === "glyph") {
       const def = doc.fonts.get(item.font);
       key = `tex:${item.font}`;
@@ -473,10 +498,12 @@ function fontsOf(
       size = (def?.size ?? 0) * pt;
       const extend = (def?.extend ?? 65536) / 65536;
       const slant = (def?.slant ?? 0) / 65536;
-      const letterSpace = letterSpaceOf(features.get(file), size);
+      const letterSpace = letterSpaceOf(features.get(item.font), size);
+      const on = singleFeaturesOn(features.get(item.font));
       if (extend !== 1) spacing.extend = extend;
       if (slant !== 0) spacing.slant = slant;
       if (letterSpace !== 0) spacing.letterSpace = letterSpace;
+      if (on.length > 0) spacing.features = on;
     } else continue;
     if (font === undefined) continue;
     const count = counts.get(key) ?? {
@@ -507,9 +534,10 @@ function layoutsOf(
   loaded: ReadonlyMap<string, PageFont>,
   natives: ReadonlyMap<string, NativePageFont>,
   fields: ReadonlyMap<string, Field>,
-  features: ReadonlyMap<string, string>,
+  features: ReadonlyMap<string, readonly string[]>,
 ): Map<string, FieldLayout | undefined> {
   const pt = pointsPerUnit(doc);
+  const loadedWith = nativeFeatures(doc, page, natives, features);
   // The fields each item is the first glyph of, or holds the first glyph of, in a native run.
   const firsts = new Map<number, { id: string; glyph: number | undefined }[]>();
   for (const field of fields.values()) {
@@ -562,7 +590,7 @@ function layoutsOf(
   for (const [id, field] of fields) {
     const first = field.glyphs[0];
     const at = first && originOf(page.items[first.item], first.glyph);
-    const fonts = fontsOf(doc, page, loaded, natives, field, features);
+    const fonts = fontsOf(doc, page, loaded, natives, field, loadedWith);
     const [primary] = fonts;
     if (at === undefined || !primary) {
       layouts.set(id, undefined);
@@ -576,6 +604,7 @@ function layoutsOf(
       ...(primary.extend === undefined ? {} : { extend: primary.extend }),
       ...(primary.slant === undefined ? {} : { slant: primary.slant }),
       ...(primary.letterSpace === undefined ? {} : { letterSpace: primary.letterSpace }),
+      ...(primary.features === undefined ? {} : { features: primary.features }),
       x: INCH + at.h * pt,
       y: INCH + at.v * pt,
       secondLine: secondLineOf(page, field, at.v, primary.size / 2 / pt, pt),
@@ -583,6 +612,57 @@ function layoutsOf(
     });
   }
   return layouts;
+}
+
+/**
+ * The features each native font of a page is loaded with, by its number in the XDV, of those the
+ * package loads its file with (`DrawOptions.features`). The XDV names a font's file and size and
+ * not its features, so a file loaded two ways, as a family's upright and its small capitals load
+ * one file, is told apart by the glyphs the page sets in it (decision 0023): the way whose single
+ * substitutions (`NativeFontFile.substitute`) make the most of them from the characters they read
+ * as, the first of two that make as many. A file loaded one way is loaded that way.
+ */
+function nativeFeatures(
+  doc: DviDocument,
+  page: DviPage,
+  natives: ReadonlyMap<string, NativePageFont>,
+  features: ReadonlyMap<string, readonly string[]>,
+): Map<number, string> {
+  const glyphs = new Map<number, Set<number>>();
+  for (const item of page.items) {
+    if (item.kind !== "native") continue;
+    const ids = glyphs.get(item.font) ?? new Set<number>();
+    for (const { id } of item.glyphs) ids.add(id);
+    glyphs.set(item.font, ids);
+  }
+  const chosen = new Map<number, string>();
+  for (const [font, ids] of glyphs) {
+    const def = doc.nativeFonts.get(font);
+    const ways = features.get(nativeFileName(def?.name ?? "")) ?? [];
+    const file = fileOf(def, natives);
+    let best = ways[0];
+    if (file !== undefined && ways.length > 1) {
+      let most = -1;
+      for (const way of ways) {
+        const on = singleFeaturesOn(way);
+        let made = 0;
+        for (const id of ids)
+          if (
+            file.textsOf(id).some((text) => {
+              const glyph = file.glyphFor(text);
+              return glyph !== undefined && file.substitute(glyph, on) === id;
+            })
+          )
+            made++;
+        if (made > most) {
+          most = made;
+          best = way;
+        }
+      }
+    }
+    if (best !== undefined) chosen.set(font, best);
+  }
+  return chosen;
 }
 
 /** Add `value` to the list `key` holds in `lists`. */
@@ -673,10 +753,15 @@ export function widthsOf(loaded: ReadonlyMap<string, PageFont>): WidthProvider {
 export interface DrawOptions {
   /**
    * The XeTeX features each native font file is loaded with, by the file's name, from the
-   * package's `fonts` section (`fontFeatures`): what XeTeX letterspaces a font by, which the XDV
-   * does not record, is read from them for the overlay (`FieldFont.letterSpace`, decision 0014).
+   * package's `fonts` section (`fontFeatures`): every way its shapes load it, as a family's upright
+   * and its small capitals load one file two ways, of which a font's glyphs tell (`nativeFeatures`).
+   * What XeTeX letterspaces a font by, and the features that substitute its glyphs, which the XDV
+   * does not record, are read from them for the overlay (`FieldFont.letterSpace`, decision 0014,
+   * and `FieldFont.features`, decision 0023), and a glyph a substitution makes reads as the glyph
+   * it is made from only for the features they turn on (`glyphTextOf`): a file they leave out, for
+   * none. Left out, every feature counts.
    */
-  features?: ReadonlyMap<string, string>;
+  features?: ReadonlyMap<string, readonly string[]>;
 }
 
 /**
@@ -736,7 +821,7 @@ export async function drawPage(
   const page = doc.pages[pageIndex];
   if (!page) throw new Error(`the document has ${doc.pages.length} pages, not ${pageIndex + 1}`);
 
-  const found = collectFields(page, glyphTextOf(doc, loaded, natives));
+  const found = collectFields(page, glyphTextOf(doc, loaded, natives, options.features));
   let unmatched = 0;
   const folds = new Map<string, Fold>();
   for (const field of found.values()) {

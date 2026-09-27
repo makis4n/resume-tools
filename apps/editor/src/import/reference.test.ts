@@ -112,6 +112,22 @@ describe("comparing glyph streams", () => {
       { kind: "special", h: 700_000, v: 3_000_000, text: "color pop" },
     ];
     expect(sameGlyphs(stream(body), stream(popped))).toBe(false);
+    // A white page's background, which \pagecolor{white} writes at the first shipout, counts
+    // for nothing; another colour's does.
+    const white = { kind: "special" as const, h: 0, v: 0, text: "background rgb 1 1 1" };
+    expect(sameGlyphs(stream([white, ...whole]), stream(body))).toBe(true);
+    expect(
+      sameGlyphs(stream([{ ...white, text: "background rgb 1 0 0" }, ...whole]), stream(body)),
+    ).toBe(false);
+    // xcolor's black is RGB's or CMYK's in a document of that colour model, as AltaCV's is.
+    for (const black of ["color push rgb 0 0 0", "color push cmyk 0 0 0 1"]) {
+      const model = whole.map((item) =>
+        item.kind === "special" && item.text === "color push gray 0"
+          ? { ...item, text: black }
+          : item,
+      );
+      expect(sameGlyphs(stream(model), stream(body)), black).toBe(true);
+    }
   });
 
   test("leaves out the first shipout's black in whatever colour model xcolor writes it", () => {
@@ -266,7 +282,7 @@ describe.skipIf(!engineAvailable())("the reference compile", () => {
     const manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
-    tree = readTree(manifest.files);
+    tree = readTree(manifest.files, manifest.fonts);
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );
@@ -621,7 +637,8 @@ Invented \cite{invented}.
       const empty = await of("Invented Heading", "");
       expect(sameGlyphs(plain, empty)).toBe(false);
       // The same body, marked as the editor marks it and compiled from a format of the preamble,
-      // lacks the first shipout's specials, and sets the same glyphs, rules and specials else.
+      // sets the same glyphs, rules and specials, the first shipout's among them, which each job
+      // of a format puts back on its page (decision 0023).
       // XeTeX dumps no format with native fonts loaded, as fontspec loads them; its templates
       // declare theirs (decision 0014), and the unit tests above take its first shipout's.
       if (engine === "xetex") return;
@@ -645,12 +662,12 @@ Invented \cite{invented}.
       expect(compiled.error).toBeUndefined();
       const marked = await glyphStream(fonts, compiled.output ?? new Uint8Array());
       expect(marked.specials).toContain("rt:b");
-      // The whole compile's one more black, xcolor's at its first shipout, is left out.
+      // xcolor's black at the first shipout, which a body from a format once lacked, is in both.
       const blacks = (stream: GlyphStream) =>
         stream.pages
           .flatMap((page) => page.items)
           .filter((item) => item.kind === "special" && item.text === "color push gray 0").length;
-      expect(blacks(plain)).toBe(blacks(marked) + 1);
+      expect(blacks(marked)).toBe(blacks(plain));
       expect(firstDifference(plain, marked)).toBeUndefined();
     }, 60_000);
 
