@@ -268,6 +268,11 @@ format takes a third of the whole compile's time, which is what every edit after
 
 ## Consequences
 
+- The probe's corpus changes with this item (decision 0022, regenerated on this branch): every one
+  of the 91 pdfTeX documents compiles from its own format, where nine fell back to whole compiles
+  before for what was the leftover `\@holdpg` box, and Awesome-CV's dates, places and addresses
+  in Roboto's proportional figures align, 92% of its glyphs covered where 87% were.
+
 - The Awesome-CV port's Roboto families load roboto.sty's proportional lining figures,
   `+pnum;+lnum`, as upstream's did; the curated tests and the harness pass with them, and the
   contacts' digits are proportional. Its small capitals stay upright: the page reads them, but
