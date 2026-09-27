@@ -1,4 +1,4 @@
-"""HTTP layer of the ATS (decision 0018). It checks each request and hands the PDF to `analyze`.
+"""HTTP layer of the ATS (decision 0030). It checks each request and hands the PDF to `analyze`.
 
 Nothing here reads, logs or keeps the PDF's contents.
 """

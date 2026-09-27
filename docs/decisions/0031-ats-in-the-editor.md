@@ -1,4 +1,4 @@
-# 0019. The ATS in the editor
+# 0031. The ATS in the editor
 
 Date: 2026-09-25 · Status: proposed; needs the editor owner's agreement
 
@@ -21,7 +21,7 @@ they need its owner's agreement. `editor-plan.md` is not edited; this record car
   the editor.
 - **One implementation.** The panel and the check page share one API client, one requirement-review
   component and one results component, all in `apps/editor/src/features/ats`. The client validates
-  responses against `packages/contracts` and ignores properties it does not know (decision 0018).
+  responses against `packages/contracts` and ignores properties it does not know (decision 0030).
 - **The PDF.** The panel takes the PDF from `Compiler.pdf()`, the call the download button uses,
   so it analyses the bytes a user would download. That call already waits for the newest document
   to compile.

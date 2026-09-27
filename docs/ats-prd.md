@@ -17,7 +17,7 @@ returns JSON defined in `packages/contracts`.
 
 This document covers the ATS product and its editor integration. The editor itself remains
 governed by `docs/editor-plan.md` and the decisions in `docs/decisions/`. The HTTP service is
-decision 0018; the editor's side of the integration is decision 0019.
+decision 0030; the editor's side of the integration is decision 0031.
 
 ## 2. Current state
 
@@ -34,7 +34,7 @@ decision 0018; the editor's side of the integration is decision 0019.
 - `packages/contracts/ats/v1/analysis.schema.json` defines a draft response containing `contract`,
   `score` and `findings`.
 - `apps/editor/.env.example` already declares `VITE_ATS_SERVICE_URL=http://localhost:8000`.
-- `docs/editor-plan.md` does not yet mention the ATS panel or the check page; decision 0019
+- `docs/editor-plan.md` does not yet mention the ATS panel or the check page; decision 0031
   proposes them. `docs/milestone-2.md` already requires the PDF's text to be extractable because
   the ATS reads it.
 
@@ -226,7 +226,7 @@ session. Persistent history is deferred.
 
 ### 8.2 ATS HTTP service
 
-Decision 0018 records the service's shape.
+Decision 0030 records the service's shape.
 
 - Expose `POST /v1/analyze`, `POST /v1/job-requirements` and a lightweight health endpoint.
 - `POST /v1/analyze` is deterministic and never calls a model provider.
@@ -349,7 +349,7 @@ non-2xx reply except a refused CORS preflight, which the CORS layer answers in p
 ### 10.2 v1 revision
 
 The contract is still a draft, and its only client is the editor's milestone 0 client. Decision
-0018 sets out these changes within `ats/v1`; the first has landed with milestone 0:
+0030 sets out these changes within `ats/v1`; the first has landed with milestone 0:
 
 - **Tolerate additions (landed).** Remove `additionalProperties: false` from the response and from
   `finding`, and require clients to ignore unknown properties. Without this, deploying a new field
@@ -418,7 +418,7 @@ invented people and experience. The corpus should include:
 the readiness checks with no `critical` finding and no `layout` warning. A failure is a template
 bug for the editor to fix, not something a user should see. The editor's validation harness
 already checks that each curated PDF's text can be extracted and matches the page; the ATS gate
-adds what it cannot see, such as reading order, sections and contact details. Decision 0019 covers
+adds what it cannot see, such as reading order, sections and contact details. Decision 0031 covers
 how this runs.
 
 ### 12.2 Initial success measures
@@ -447,7 +447,7 @@ Version one is milestones 0 to 3.
 
 ### Milestone 0: integration skeleton
 
-- Add the FastAPI service around the placeholder `analyze` function (decision 0018).
+- Add the FastAPI service around the placeholder `analyze` function (decision 0030).
 - Add the editor API client and a minimal analysis panel.
 - Send a synthetic fixture PDF and display the empty response.
 - Add contract validation and integration tests.
@@ -503,7 +503,7 @@ with the provider disabled.
 ## 14. Dependencies and sequencing
 
 - ATS milestones 0 and 1 can proceed before the curated editor is complete by using synthetic PDFs.
-- The panel tab, the check page and the PDF exposure are editor changes; decision 0019 needs the
+- The panel tab, the check page and the PDF exposure are editor changes; decision 0031 needs the
   editor owner's agreement before milestone 2.
 - The editor's PDF export, which milestone 2 needs, has landed.
 - Contract changes affect both products. Decision 0005 means no review is requested automatically,
@@ -561,9 +561,9 @@ required notices. Dependencies added to this repository must be named in the pul
 
 ## 18. Immediate next actions
 
-1. Agree decision 0019 with the editor owner: panel tab, check page and where the panel gets the
+1. Agree decision 0031 with the editor owner: panel tab, check page and where the panel gets the
    PDF.
-2. Accept decision 0018.
+2. Accept decision 0030.
 3. Mount the panel with a `getPdf` that wraps `Compiler.pdf()`, and try it in a real browser.
 4. Benchmark pdfminer.six and pypdfium2 on the fixture corpus before designing the rubric around
    either library's behaviour.
