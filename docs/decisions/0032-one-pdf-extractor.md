@@ -6,9 +6,9 @@ Date: 2026-09-27 · Status: accepted
 
 `docs/ats-prd.md` §8.3 asked for two permissively licensed PDF extractors, chosen by benchmarking
 pdfminer.six against pypdfium2, with disagreement between the two as a readiness signal. Decision
-0030 left extraction unresolved, deferring the choice to a milestone-1 benchmark. That benchmark
-has not been useful enough to justify running: it settles which library to prefer, not whether the
-project needs two of them at all.
+0030 left extraction unresolved, deferring the choice to a milestone-1 benchmark. The owner judged
+that benchmark not worth running: either permissive library reads text and its positions, and the
+choice stays cheap to revisit later because every call to it goes through one module, `ats.extract`.
 
 ## Decision
 
@@ -31,3 +31,8 @@ project needs two of them at all.
   `ats.extract` serialises every call that touches a document, page or text page behind a single
   process-wide lock.
 - Adding a second extractor later needs a new decision record.
+- There is no processing-time limit yet. PDFium cannot be interrupted mid-call, so one
+  pathological page holds the process-wide lock for as long as PDFium takes: a single, densely
+  typeset page at the 5 MB upload cap measured at roughly 17 seconds in this repository. A time
+  limit, and rate limits generally, come with milestone 1's limits work and the sandboxing
+  question already open in the PRD.

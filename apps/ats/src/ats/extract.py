@@ -1,4 +1,4 @@
-"""Reads text and layout from a PDF using pypdfium2 (decision 0032). `ats.analyze` calls `extract`.
+"""Reads text from a PDF using pypdfium2 (decision 0032). `ats.analyze` calls `extract`.
 
 Extraction never logs, or puts into an exception message, any text taken from the PDF: the service
 must never leak resume content.
@@ -14,8 +14,11 @@ import pypdfium2 as pdfium
 # page or text page anywhere in this module is serialised behind this lock.
 _PDFIUM_LOCK = threading.Lock()
 
-# PDFium's own error code for "this document needs a password", from FPDF_ERR_PASSWORD.
-_FPDF_ERR_PASSWORD = 4
+# A resume never legitimately has this many pages. The cap exists because a page tree's /Kids
+# array can reference the same small page object thousands of times, so the upload's byte size
+# does not bound its page count: without this check, such a file would hold _PDFIUM_LOCK for a
+# long time, denying every other concurrent request.
+_MAX_PAGES = 50
 
 
 class ExtractError(ValueError):
@@ -23,7 +26,7 @@ class ExtractError(ValueError):
 
 
 class EncryptedPdfError(ExtractError):
-    """The PDF needs a password pypdfium2 was not given."""
+    """The PDF is password-protected, or protected by a security handler PDFium cannot open."""
 
 
 class UnreadablePdfError(ExtractError):
@@ -31,25 +34,13 @@ class UnreadablePdfError(ExtractError):
 
 
 @dataclass(frozen=True)
-class TextBox:
-    """One of a text page's rectangles, in PDF points, with the text it bounds."""
-
-    left: float
-    bottom: float
-    right: float
-    top: float
-    text: str
-
-
-@dataclass(frozen=True)
 class Page:
-    """One page: its 1-based number, its size in PDF points, its full text and its text boxes."""
+    """One page: its 1-based number, its size in PDF points, and its full text."""
 
     number: int
     width: float
     height: float
     text: str
-    boxes: tuple[TextBox, ...]
 
 
 @dataclass(frozen=True)
@@ -59,43 +50,66 @@ class Document:
     pages: tuple[Page, ...]
 
 
+def _open_document(pdf: bytes) -> pdfium.PdfDocument:
+    """Open `pdf`, working around a native-memory leak in pypdfium2 5.13.0's own opener.
+
+    `pdfium.PdfDocument(bytes)` calls `FPDF_LoadMemDocument64` itself, then raises `PdfiumError`
+    whenever the resulting page count is under 1 -- which is also how it reports a real open
+    failure, since a failed load returns a null handle and a null handle's page count reads as
+    under 1 too. But for a document that truly opened with zero pages, that handle is never
+    closed on that path (`pypdfium2/_helpers/document.py::_open_pdf`, checked in 5.13.0's
+    source): every such upload leaks a native PDFium document. Calling the raw API ourselves lets
+    us tell the two cases apart and close a handle we are not keeping.
+
+    `pdf` must stay referenced by the caller for as long as the returned document is open:
+    PDFium reads directly from this buffer rather than copying it, and the wrapped
+    `pdfium.PdfDocument` returned here does not hold its own reference the way one built from
+    bytes normally would.
+    """
+    raw = pdfium.raw.FPDF_LoadMemDocument64(pdf, len(pdf), None)
+    if not raw:
+        err_code = pdfium.raw.FPDF_GetLastError()
+        if err_code in (pdfium.raw.FPDF_ERR_PASSWORD, pdfium.raw.FPDF_ERR_SECURITY):
+            raise EncryptedPdfError("the PDF is password-protected") from None
+        raise UnreadablePdfError("the PDF could not be opened") from None
+    if pdfium.raw.FPDF_GetPageCount(raw) < 1:
+        pdfium.raw.FPDF_CloseDocument(raw)
+        raise UnreadablePdfError("the PDF has no pages") from None
+    return pdfium.PdfDocument(raw)
+
+
 def _read_page(pdf_page: pdfium.PdfPage, number: int) -> Page:
     width, height = pdf_page.get_size()
     text_page = pdf_page.get_textpage()
     try:
-        text = text_page.get_text_range()
-        rect_count = text_page.count_rects()
-        boxes = tuple(
-            TextBox(left, bottom, right, top, text_page.get_text_bounded(left, bottom, right, top))
-            for left, bottom, right, top in (
-                text_page.get_rect(index) for index in range(rect_count)
-            )
-        )
+        # Not `get_text_range`: pypdfium2 documents it as limited to UCS-2, while
+        # `get_text_bounded` supports full Unicode. Called with no bounds, it returns the whole
+        # page's text.
+        text = text_page.get_text_bounded()
     finally:
         text_page.close()
-    return Page(number=number, width=width, height=height, text=text, boxes=boxes)
+    return Page(number=number, width=width, height=height, text=text)
 
 
 def extract(pdf: bytes) -> Document:
-    """Extract text and layout from every page of `pdf`.
+    """Extract text from every page of `pdf`.
 
     Raises:
-        EncryptedPdfError: the PDF needs a password.
+        EncryptedPdfError: the PDF needs a password, or uses a security handler PDFium does not
+            support.
         UnreadablePdfError: the PDF, or one of its pages, could not be read for any other reason
-            (damaged, or not really a PDF once pypdfium2 looks past the signature).
+            (damaged, no pages, or not really a PDF once pypdfium2 looks past the signature).
     """
     with _PDFIUM_LOCK:
+        document = _open_document(pdf)
         try:
-            document = pdfium.PdfDocument(pdf)
-        except pdfium.PdfiumError as error:
-            if error.err_code == _FPDF_ERR_PASSWORD:
-                raise EncryptedPdfError("the PDF is password-protected") from None
-            raise UnreadablePdfError("the PDF could not be opened") from None
+            page_count = len(document)
+            if page_count > _MAX_PAGES:
+                raise UnreadablePdfError("the PDF has too many pages")
 
-        try:
             pages = []
             try:
-                for number in range(1, len(document) + 1):
+                for number in range(1, page_count + 1):
                     pdf_page = document.get_page(number - 1)
                     try:
                         pages.append(_read_page(pdf_page, number))

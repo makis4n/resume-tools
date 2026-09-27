@@ -1,10 +1,17 @@
 import threading
+import time
 from pathlib import Path
 
 import pytest
 
 from ats.extract import Document, EncryptedPdfError, UnreadablePdfError, extract
-from tests.pdfs import build_pdf, malformed_page_tree_pdf, minimal_pdf
+from tests.pdfs import (
+    build_pdf,
+    duplicated_kids_pdf,
+    malformed_page_tree_pdf,
+    minimal_pdf,
+    zero_page_pdf,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -22,29 +29,16 @@ def test_extracts_text_per_page_with_page_numbers_and_sizes() -> None:
     assert document.pages[1].text == "Page Two Text"
 
 
-def test_boxes_carry_positions_and_their_text() -> None:
-    document = extract(minimal_pdf("Invented Box Text"))
-    (page,) = document.pages
-    assert len(page.boxes) == 1
-    box = page.boxes[0]
-    assert box.text == "Invented Box Text"
-    assert box.left < box.right
-    assert box.bottom < box.top
-
-
-def test_a_two_column_layout_has_boxes_with_distinct_x_positions() -> None:
-    pdf = build_pdf([[("Left Column", 72, 700), ("Right Column", 320, 700)]])
-    (page,) = extract(pdf).pages
-    assert len(page.boxes) == 2
-    lefts = sorted(box.left for box in page.boxes)
-    assert lefts[1] - lefts[0] > 100
-
-
-def test_a_page_with_no_text_yields_empty_text_and_no_boxes() -> None:
+def test_a_page_with_no_text_yields_empty_text() -> None:
     pdf = build_pdf([[]])
     (page,) = extract(pdf).pages
     assert page.text == ""
-    assert page.boxes == ()
+
+
+def test_the_committed_minimal_fixture_matches_its_builder() -> None:
+    # The smoke-test script cannot import tests.pdfs, so it posts this committed file instead;
+    # this guards against the file drifting from what minimal_pdf() actually builds.
+    assert (FIXTURES / "minimal.pdf").read_bytes() == minimal_pdf()
 
 
 def test_damaged_bytes_raise_unreadable() -> None:
@@ -63,21 +57,51 @@ def test_a_document_that_opens_but_has_an_unloadable_page_raises_unreadable() ->
         extract(malformed_page_tree_pdf())
 
 
+def test_a_document_with_zero_pages_raises_unreadable() -> None:
+    with pytest.raises(UnreadablePdfError):
+        extract(zero_page_pdf())
+
+
+def test_a_document_with_more_pages_than_the_cap_raises_unreadable() -> None:
+    with pytest.raises(UnreadablePdfError):
+        extract(duplicated_kids_pdf(51))
+
+
 def test_an_encrypted_pdf_raises_encrypted() -> None:
     data = (FIXTURES / "encrypted.pdf").read_bytes()
     with pytest.raises(EncryptedPdfError):
         extract(data)
 
 
-def test_extract_is_safe_to_call_from_several_threads_at_once() -> None:
+def test_extract_serialises_calls_from_several_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every call into pypdfium2 must be mutually exclusive; this fails if the lock is removed
+    or narrowed to cover less than the whole open-read-close sequence."""
+    import ats.extract as extract_module
+
+    real_open_document = extract_module._open_document
+    active = 0
+    max_active = 0
+    guard = threading.Lock()
+
+    def tracking_open_document(pdf: bytes) -> extract_module.pdfium.PdfDocument:
+        nonlocal active, max_active
+        with guard:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            time.sleep(0.05)  # long enough that a second thread would overlap if unsynchronised
+            return real_open_document(pdf)
+        finally:
+            with guard:
+                active -= 1
+
+    monkeypatch.setattr(extract_module, "_open_document", tracking_open_document)
+
     pdf = minimal_pdf("Invented Concurrent Person")
-    results: list[Document | Exception] = [None] * 8  # type: ignore[list-item]
+    results: list[Document | None] = [None] * 8
 
     def run(index: int) -> None:
-        try:
-            results[index] = extract(pdf)
-        except Exception as error:  # noqa: BLE001
-            results[index] = error
+        results[index] = extract(pdf)
 
     threads = [threading.Thread(target=run, args=(i,)) for i in range(len(results))]
     for thread in threads:
@@ -85,5 +109,8 @@ def test_extract_is_safe_to_call_from_several_threads_at_once() -> None:
     for thread in threads:
         thread.join()
 
-    assert all(isinstance(result, Document) for result in results)
-    assert all(result.pages[0].text == "Invented Concurrent Person" for result in results)
+    assert max_active == 1, "more than one thread was inside pypdfium2 at once"
+    assert all(
+        result is not None and result.pages[0].text == "Invented Concurrent Person"
+        for result in results
+    )

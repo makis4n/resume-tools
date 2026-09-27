@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
 from ats.service import create_app, readable_size
-from tests.pdfs import malformed_page_tree_pdf, minimal_pdf
+from tests.pdfs import malformed_page_tree_pdf, minimal_pdf, zero_page_pdf
 
 CONTRACTS = Path(__file__).parents[3] / "packages" / "contracts" / "ats" / "v1"
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -111,6 +111,10 @@ def test_rejects_a_damaged_pdf(client: TestClient) -> None:
 
 def test_rejects_a_pdf_whose_document_opens_but_whose_page_does_not(client: TestClient) -> None:
     assert_error(upload(client, malformed_page_tree_pdf()), 422, "pdf-unreadable")
+
+
+def test_rejects_a_pdf_with_zero_pages(client: TestClient) -> None:
+    assert_error(upload(client, zero_page_pdf()), 422, "pdf-unreadable")
 
 
 def test_rejects_a_file_over_the_limit_after_reading(client: TestClient) -> None:

@@ -79,3 +79,32 @@ def malformed_page_tree_pdf() -> bytes:
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
     return _assemble(objects)
+
+
+def zero_page_pdf() -> bytes:
+    """A structurally valid PDF whose page tree declares zero pages."""
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [] /Count 0 >>",
+    ]
+    return _assemble(objects)
+
+
+def duplicated_kids_pdf(count: int) -> bytes:
+    """A small PDF whose page tree claims `count` pages, all the same single page object.
+
+    A real page tree's size is bounded by the file's byte size; this one is not, because its
+    `/Kids` array repeats one page object's reference instead of defining `count` distinct pages.
+    It stays a few hundred bytes however large `count` is. Used to test that `ats.extract` refuses
+    a page count over its cap before doing per-page work, rather than being cheap to build a
+    denial-of-service upload with.
+    """
+    kids = b" ".join([b"4 0 R"] * count)
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [%s] /Count %d >>" % (kids, count),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 3 0 R >> >> >>",
+    ]
+    return _assemble(objects)

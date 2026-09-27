@@ -23,9 +23,10 @@ decision 0030; the editor's side of the integration is decision 0031.
 
 - Milestone 0 is built. `apps/ats/src/ats/service.py` serves `POST /v1/analyze` and
   `GET /health` (`uv run ats-serve`); `apps/ats/src/ats/analyze.py` behind it checks the PDF
-  signature and returns an empty analysis. `apps/editor/src/features/ats` holds the client, which
+  signature, opens the file with pypdfium2 (decision 0032) and refuses an encrypted or unreadable
+  one, then returns an empty analysis. `apps/editor/src/features/ats` holds the client, which
   validates replies against the contract, and a panel that nothing mounts yet.
-- The ATS now has a text extractor but no scoring engine or model integration.
+- The ATS has a text extractor but no scoring engine or model integration.
 - The editor's milestone 2 has landed: three curated templates, the side panel, documents kept in
   the browser and PDF download. `Compiler.pdf()` in `apps/editor/src/editor/compiler.ts` returns the
   bytes the download button saves, which are the bytes the panel sends.

@@ -34,6 +34,8 @@ echo
 
 # The contract's schemas; the image's replies must match them as the service's do.
 contracts=packages/contracts/ats/v1
+# Committed fixtures (apps/ats/tests/fixtures/README.md), so a real PDF is posted here too.
+fixtures=apps/ats/tests/fixtures
 
 # Checks a JSON file against a schema, with the same pinned tool as the repo workflow.
 matches() {
@@ -63,14 +65,15 @@ expect() {
   fi
 }
 
-# Invented bytes with a PDF's signature; the placeholder analysis reads nothing else.
-printf '%%PDF-1.4\n%%%%EOF\n' >"$work/resume.pdf"
+# A real, parseable PDF: the placeholder analysis opens it with pypdfium2 (decision 0032) and
+# reads nothing else from it.
 printf 'not a pdf\n' >"$work/notes.txt"
 
-expect "$work/resume.pdf" application/pdf 200 "$contracts/analysis.schema.json"
+expect "$fixtures/minimal.pdf" application/pdf 200 "$contracts/analysis.schema.json"
 expect "$work/notes.txt" text/plain 415 "$contracts/error.schema.json" not-a-pdf
 # Declared a PDF but without the signature, so only the signature check refuses it.
 expect "$work/notes.txt" application/pdf 415 "$contracts/error.schema.json" not-a-pdf
+expect "$fixtures/encrypted.pdf" application/pdf 422 "$contracts/error.schema.json" pdf-encrypted
 
 if [ "$status" -ne 0 ]; then
   docker logs "$container"
