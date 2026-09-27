@@ -5,7 +5,6 @@
  */
 
 import {
-  type AnswerCache,
   keyOf,
   type ModelNaming,
   NAMING_VERSION,
@@ -14,6 +13,7 @@ import {
   sha256,
   storable,
 } from "@resume-tools/naming";
+import type { ServiceCache } from "./name.ts";
 
 /** The invented class's definitions, as the engine would print them, masked. */
 export const TEXTS: Readonly<Record<string, string>> = {
@@ -117,6 +117,61 @@ export async function inventedRequest(): Promise<NamingRequest> {
   });
 }
 
+/** A command of `commandsRequest`: its name, its definition, and those it hands its work to. */
+export interface InventedCommand {
+  name: string;
+  text: string;
+  dependencies?: string[];
+}
+
+/**
+ * A request of commands that take no argument, each by its name and definition, with the
+ * definitions they hand their work to (`shared`) and the preamble's settings, each key as `keysOf`
+ * gives it: for the tests of templates whose macros share definitions, and of what a request may
+ * cost. The texts are TeX's meanings of template code, invented or a public template's, and never
+ * a document's text.
+ */
+export async function commandsRequest(
+  commands: readonly InventedCommand[],
+  shared: readonly { name: string; text: string }[] = [],
+  options: { settings?: string[]; family?: "jake" } = {},
+): Promise<NamingRequest> {
+  const hash = new Map<string, string>();
+  for (const each of [...commands, ...shared]) hash.set(each.name, await sha256(each.text));
+  return NamingRequest.parse({
+    version: NAMING_VERSION,
+    engine: "pdftex",
+    ...(options.family === undefined ? {} : { family: options.family }),
+    preamble: {
+      class: { name: "article", options: [] },
+      settings: options.settings ?? [],
+    },
+    macros: await Promise.all(
+      commands.map(async (command) => ({
+        of: "command",
+        name: command.name,
+        signature: "",
+        key: await keyOf(
+          NAMING_VERSION,
+          hash.get(command.name) ?? "",
+          (command.dependencies ?? []).map((each) => [each, hash.get(each) ?? null] as const),
+        ),
+        dependencies: command.dependencies ?? [],
+        capped: false,
+        arguments: [],
+        sites: [{ arguments: [] }],
+        calls: 1,
+      })),
+    ),
+    definitions: [...commands, ...shared].map((each) => ({
+      kind: "definition",
+      name: each.name,
+      hash: hash.get(each.name),
+      text: each.text,
+    })),
+  });
+}
+
 /** A model's invented answer to the invented request: each macro with a key, and the preamble. */
 export function inventedNaming(): ModelNaming {
   return {
@@ -160,8 +215,11 @@ export function inventedNaming(): ModelNaming {
   };
 }
 
-/** A cache in memory that files what `storable` takes, as every cache does, and counts its use. */
-export function memoryCache(): AnswerCache & {
+/**
+ * A cache in memory that files what `storable` takes, as every cache does, only under a key that
+ * holds nothing, as the service's caches do, and counts its reads and its filings.
+ */
+export function memoryCache(): ServiceCache & {
   held: Map<string, unknown>;
   gets: number;
   puts: number;
@@ -176,8 +234,11 @@ export function memoryCache(): AnswerCache & {
       return held.get(key);
     },
     put(key, answer: StoredAnswer) {
+      const stored = storable(key, answer);
+      if (held.has(key)) return false;
       this.puts++;
-      held.set(key, storable(key, answer));
+      held.set(key, stored);
+      return true;
     },
   };
 }

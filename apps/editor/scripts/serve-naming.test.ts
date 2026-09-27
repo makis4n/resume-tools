@@ -29,7 +29,10 @@ afterAll(async () => {
   for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** The variables the route reads, taken out of this process's environment for a test. */
+/**
+ * The variables the route reads, and the name it read before, taken out of this process's
+ * environment for a test.
+ */
 const VARIABLES = ["NAMING_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "NAMING_MODEL"];
 const saved = new Map(VARIABLES.map((name) => [name, process.env[name]]));
 afterEach(() => {
@@ -170,19 +173,28 @@ describe("the naming route on the dev server", () => {
     expect(reply.missing.map((each) => each.name)).toEqual(["cvsection", "cventry", "cvitems"]);
   });
 
-  test("reads its key from the editor's .env on the server side, never under the VITE_ prefix, and never says it", async () => {
+  test("reads its key from the editor's .env on the server side, under the runner's name alone, never under the VITE_ prefix, and never says it", async () => {
     delete process.env.NAMING_API_KEY;
     delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     delete process.env.NAMING_MODEL;
+    expect(CACHE_ALONE).toContain("set GOOGLE_GENERATIVE_AI_API_KEY in apps/editor/.env");
     const prefixed = await serve(
       { cache: freshCache() },
-      { ".env": "VITE_NAMING_API_KEY=invented-key-0001\n" },
+      { ".env": "VITE_GOOGLE_GENERATIVE_AI_API_KEY=invented-key-0001\n" },
     );
     expect(prefixed.lines).toContain(CACHE_ALONE);
+    // The service's own name for the key is gone: one key, one variable, the runner's.
+    const dropped = await serve(
+      { cache: freshCache() },
+      { ".env": "NAMING_API_KEY=invented-key-0004\n" },
+    );
+    expect(dropped.lines).toContain(CACHE_ALONE);
     // A key makes a model, which nothing here asks.
     const keyed = await serve(
       { cache: freshCache() },
-      { ".env": "NAMING_API_KEY=invented-key-0002\nNAMING_MODEL=gemini-3.7-flash\n" },
+      {
+        ".env": "GOOGLE_GENERATIVE_AI_API_KEY=invented-key-0002\nNAMING_MODEL=gemini-3.7-flash\n",
+      },
     );
     expect(keyed.lines).toContain(
       "The naming route, /v1/name, asks gemini-3.7-flash for what the cache does not hold.",
@@ -192,7 +204,12 @@ describe("the naming route on the dev server", () => {
 
   test("will not start with a model's id that is none, and never runs in vitest's own server", async () => {
     await expect(
-      serve({ env: { NAMING_API_KEY: "invented-key-0003", NAMING_MODEL: "an id with spaces" } }),
+      serve({
+        env: {
+          GOOGLE_GENERATIVE_AI_API_KEY: "invented-key-0003",
+          NAMING_MODEL: "an id with spaces",
+        },
+      }),
     ).rejects.toThrow("NAMING_MODEL is not a model's id");
     const { origin, lines } = await serve({ env: {}, cache: freshCache() }, {}, { mode: "test" });
     expect(lines).not.toContain(CACHE_ALONE);

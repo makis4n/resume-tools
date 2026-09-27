@@ -641,6 +641,37 @@ describe("reading the cache", () => {
     });
   });
 
+  test("finds a partner by the name the answer gives it where no macro of the request has its key", async () => {
+    const { keys, cache } = await listCache();
+    // A fork that keeps the list's names and changes its closer's definition, as a Jake fork whose
+    // `\resumeItemListEnd` is a bare `\end{itemize}` does: no macro of it has the closer's key.
+    const closer = await keyOf(NAMING_VERSION, await sha256("macro:->\\end {itemize}\\par "), []);
+    const partners = new Map([
+      ["cvliststart", keys.start],
+      ["cvlistend", closer],
+    ]);
+    expect(
+      await answerFor(cache, keys.start, { name: "cvliststart", of: "command", partners }),
+    ).toMatchObject({
+      name: "cvliststart",
+      answer: { list: { does: "opens", closedBy: "cvlistend", holds: "bullet" } },
+    });
+    // A key found among the request's macros is taken first: the name only where no key is.
+    const both = new Map([...partners, ["cvitemsend", keys.end]]);
+    expect(
+      await answerFor(cache, keys.start, { name: "cvliststart", of: "command", partners: both }),
+    ).toMatchObject({ answer: { list: { closedBy: "cvitemsend" } } });
+    // The seed's check of its own files finds partners by key alone.
+    expect(
+      await answerFor(cache, keys.start, {
+        name: "cvliststart",
+        of: "command",
+        partners,
+        byName: false,
+      }),
+    ).toEqual({ answer: undefined, reason: "partner" });
+  });
+
   test("refuses a partner no macro of the request is by key, and a kind that is not the macro's", async () => {
     const { keys, cache } = await listCache();
     // A bare `\end{itemize}` closes a list another template's opener opens: its closer's answer

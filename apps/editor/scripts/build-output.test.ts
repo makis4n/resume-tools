@@ -27,7 +27,6 @@ describe("the page's build", () => {
     const out = mkdtempSync(join(tmpdir(), "resume-tools-build-"));
     made.push(out);
     const values = {
-      NAMING_API_KEY: "invented-naming-key-4f1d",
       GOOGLE_GENERATIVE_AI_API_KEY: "invented-provider-key-9c2e",
       NAMING_MODEL: "invented-naming-model",
     };

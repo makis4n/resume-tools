@@ -300,6 +300,49 @@ describe("a request over the budget", () => {
     expect(model.doGenerateCalls).toHaveLength(0);
   });
 
+  test("throws budget, before any call, for more parts or characters than the options allow", async () => {
+    const request = await inventedRequest({ extra: 40, size: 10 });
+    const parts = batchesOf(request);
+    expect(parts).toHaveLength(2);
+    const chars = parts.reduce((sum, part) => sum + part.chars, 0);
+    const preamble = inventedNaming(request).preamble;
+    for (const limits of [{ maxParts: 1 }, { maxChars: chars - 1 }]) {
+      const model = answering(preamble);
+      const error = await name(request, { model, ...limits }).catch((thrown: unknown) => thrown);
+      expect(error, JSON.stringify(limits)).toMatchObject({ reason: "budget", part: undefined });
+      expect(model.doGenerateCalls).toHaveLength(0);
+    }
+    const model = answering(preamble);
+    await name(request, { model, maxParts: 2, maxChars: chars });
+    expect(model.doGenerateCalls).toHaveLength(2);
+    // A part's size is its prompt's, to the character, the instructions among them.
+    const sent = model.doGenerateCalls.map((call) =>
+      messagesOf(call).reduce((sum, each) => sum + each.text.length, 0),
+    );
+    expect(sent).toEqual(parts.map((part) => part.chars));
+  });
+
+  test("tells each call's prompt in characters, and the preamble's answer with its part", async () => {
+    const request = await inventedRequest({ extra: 40, size: 10 });
+    const preamble = inventedNaming(request).preamble;
+    const model = answering(preamble);
+    const sizes: number[] = [];
+    const told: (typeof preamble | undefined)[] = [];
+    await name(request, {
+      model,
+      onCall: (_, chars) => sizes.push(chars),
+      onPart: (_, answered) => {
+        told.push(answered);
+      },
+    });
+    expect(sizes).toEqual(
+      model.doGenerateCalls.map((call) =>
+        messagesOf(call).reduce((sum, each) => sum + each.text.length, 0),
+      ),
+    );
+    expect(told).toEqual([preamble, undefined]);
+  });
+
   test("tells each part's answers once they validate, and names the part that fails", async () => {
     const request = await inventedRequest({ extra: 40, size: 10 });
     expect(batchesOf(request).map((part) => askedOf(part.request).length)).toEqual([32, 13]);

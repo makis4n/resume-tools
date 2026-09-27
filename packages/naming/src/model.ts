@@ -117,6 +117,13 @@ export interface NameOptions {
   model: Exclude<LanguageModel, string>;
   /** The most characters a call's prompt may hold; BUDGET, and never more. */
   budget?: number;
+  /**
+   * The most parts the request may be asked in, and the most characters their prompts may hold
+   * together: a request that needs more throws `budget` before any call, as the naming service
+   * bounds what one request may cost (decision 0028). No limit by default.
+   */
+  maxParts?: number;
+  maxChars?: number;
   /** How many times the AI SDK tries a failed call again, its default 2. */
   maxRetries?: number;
   /** Stops every call the request makes. */
@@ -129,8 +136,11 @@ export interface NameOptions {
   partTimeoutMs?: number;
   /** Options for the provider, as `{ google: { structuredOutputs: false } }`. */
   providerOptions?: Parameters<typeof generateText>[0]["providerOptions"];
-  /** Told each call's tokens, whether its answer was taken or not. */
-  onCall?: (usage: NamingUsage) => void;
+  /**
+   * Told each call's tokens, whether its answer was taken or not, and the characters of its prompt,
+   * the instructions and the messages, which the naming service counts against an address's day.
+   */
+  onCall?: (usage: NamingUsage, chars: number) => void;
   /**
    * The document's commands the request leaves out, which a list's answer may name as its partner:
    * those the cache answered. The prompt names them with the request's own (`commandsOf`).
@@ -138,15 +148,23 @@ export interface NameOptions {
   partners?: readonly string[];
   /**
    * Told each part's answers once they validate, before the next part is asked, so that a caller
-   * that files them loses none to a later part's failure, and asks only the parts left next time.
+   * that files them loses none to a later part's failure, and asks only the parts left next time;
+   * with the preamble's answer, for the part that asks it.
    */
-  onPart?: (macros: ModelNaming["macros"]) => void | Promise<void>;
+  onPart?: (
+    macros: ModelNaming["macros"],
+    preamble: ModelNaming["preamble"] | undefined,
+  ) => void | Promise<void>;
 }
 
-/** A part of a request, as one call asks it: the request narrowed, and whether it asks the preamble. */
+/**
+ * A part of a request, as one call asks it: the request narrowed, whether it asks the preamble, and
+ * the characters of its prompt, the instructions among them.
+ */
 export interface Part {
   request: NamingRequest;
   preamble: boolean;
+  chars: number;
 }
 
 /**
@@ -192,13 +210,15 @@ const capped = (text: string, most = 200) =>
  * to, once, and the first alone the preamble's settings. The first part takes the macros that fit
  * beside the preamble, later ones too, and a macro too large for it starts the next part, so that
  * the order of the macros never makes a request too large. One part, for a request that fits.
- * Throws `budget` when a macro and its definitions are over the budget alone, or the preamble is.
- * `commands` are those the prompt names, the whole request's (`commandsOf`).
+ * Throws `budget` when a macro and its definitions are over the budget alone, or the preamble is,
+ * or when the request needs more than `most` parts, as soon as it does. `commands` are those the
+ * prompt names, the whole request's (`commandsOf`).
  */
 export function batchesOf(
   request: NamingRequest,
   budget: number = BUDGET,
   commands: readonly string[] = commandsOf(request),
+  most: number = Number.POSITIVE_INFINITY,
 ): Part[] {
   const limit = Math.min(budget, BUDGET);
   const size = measure(request, commands);
@@ -260,11 +280,17 @@ export function batchesOf(
         "budget",
         `The budget of ${limit} characters is too small for ${shown(macro)} and the definitions it hands its work to, on their own`,
       );
+    if (parts.length > most)
+      throw new NamingError(
+        "budget",
+        `The request needs more than the ${most} ${most === 1 ? "part" : "parts"} of ${limit} characters it may be asked in`,
+      );
     add(current, macro);
   }
   return parts.map((part) => ({
     request: narrow(request, part.macros, part.preamble),
     preamble: part.preamble,
+    chars: part.chars,
   }));
 }
 
@@ -295,9 +321,10 @@ export function coverage(
 
 /**
  * A key of the preamble's answer: an option or a name, as `margin`, `11pt` or `awesome-red`, which
- * item 7 writes into a control's snippet, so nothing that TeX reads as more than a name.
+ * item 7 writes into a control's snippet, so nothing that TeX reads as more than a name. The naming
+ * service checks a preamble's answer its cache holds by it too.
  */
-const PLAIN_KEY = /^[A-Za-z0-9@][A-Za-z0-9@._-]{0,63}$/;
+export const PLAIN_KEY = /^[A-Za-z0-9@][A-Za-z0-9@._-]{0,63}$/;
 
 /**
  * What an answer must fit of its request, past the schema: the commands a list's partner may be,
@@ -436,12 +463,20 @@ interface Reply {
   problems: string[];
 }
 
+/** The characters of a call's prompt: the instructions, and the messages' texts. */
+const charsOf = (messages: readonly ModelMessage[]) =>
+  messages.reduce(
+    (sum, message) => sum + (typeof message.content === "string" ? message.content.length : 0),
+    INSTRUCTIONS.length,
+  );
+
 /** One call: the instructions, the messages, and the answer as structured output. */
 async function call(
   messages: ModelMessage[],
   options: NameOptions,
   abortSignal: AbortSignal | undefined,
 ): Promise<Reply> {
+  const chars = charsOf(messages);
   try {
     const result = await generateText({
       model: options.model,
@@ -454,7 +489,7 @@ async function call(
         ? {}
         : { providerOptions: options.providerOptions }),
     });
-    options.onCall?.(usageOf(result.usage));
+    options.onCall?.(usageOf(result.usage), chars);
     if (result.finishReason === "content-filter")
       throw new NamingError("refused", "The model's provider filtered its answer out");
     let value: unknown;
@@ -472,7 +507,7 @@ async function call(
   } catch (error) {
     if (error instanceof NamingError) throw error;
     if (NoObjectGeneratedError.isInstance(error)) {
-      options.onCall?.(usageOf(error.usage));
+      options.onCall?.(usageOf(error.usage), chars);
       if (error.finishReason === "length")
         throw new NamingError(
           "budget",
@@ -587,13 +622,20 @@ async function ask(part: Part, asking: Asking, options: NameOptions): Promise<Mo
  * prompt is over the budget (`batchesOf`), each told to `onPart` once it validates, the answers
  * merged in the request's order, the preamble's from the first part. Throws a `NamingError` that
  * says why, and which part, when the model gives no answer, its answer does not validate after a
- * retry, the call fails, or the request is too large to ask.
+ * retry, the call fails, or the request is too large to ask, over the budget or over the parts and
+ * the characters the options allow it, which it says before any call.
  */
 export async function name(request: NamingRequest, options: NameOptions): Promise<ModelNaming> {
   if (typeof options.model === "string")
     throw new NamingError("provider", "The naming step takes a model, not a model's name");
   const commands = commandsOf(request, options.partners);
-  const parts = batchesOf(request, options.budget, commands);
+  const parts = batchesOf(request, options.budget, commands, options.maxParts);
+  const chars = parts.reduce((sum, part) => sum + part.chars, 0);
+  if (options.maxChars !== undefined && chars > options.maxChars)
+    throw new NamingError(
+      "budget",
+      `The request's parts hold ${chars} characters, more than the ${options.maxChars} it may send`,
+    );
   const alike = {
     order: definitionOrder(request),
     commands,
@@ -605,7 +647,7 @@ export async function name(request: NamingRequest, options: NameOptions): Promis
   for (const [i, part] of parts.entries()) {
     const answer = await ask(part, { ...alike, index: i + 1 }, options);
     answers.push(answer);
-    await options.onPart?.(answer.macros);
+    await options.onPart?.(answer.macros, part.preamble ? answer.preamble : undefined);
   }
   const rank = new Map(askedOf(request).map((macro, i) => [identity(macro), i]));
   const place = (macro: { of: string; name: string }) => rank.get(identity(macro)) ?? rank.size;

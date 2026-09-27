@@ -23,15 +23,16 @@ function fakeFetch(response: () => Response | Promise<Response>) {
 /** A reply the service would give the invented request: every macro answered by the model. */
 async function inventedReply() {
   const request = await inventedRequest();
-  const macros = await storedAnswersOf(request, inventedNaming(), "model:invented-model");
+  const { answered } = await storedAnswersOf(request, inventedNaming(), "model:invented-model");
   return {
     request,
     reply: {
       version: 1,
-      macros,
+      macros: answered,
       preamble: inventedNaming().preamble,
       hits: 0,
       asked: 3,
+      conflicts: 0,
       missing: [],
     },
   };

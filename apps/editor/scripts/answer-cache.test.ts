@@ -82,6 +82,22 @@ describe("the answers cache on disk", () => {
     expect(JSON.parse(readFileSync(join(committed, `${KEY}.json`), "utf8"))).toEqual(reviewed);
   });
 
+  test("never files over an answer either folder holds, and says whether it filed", () => {
+    const committed = folder();
+    const cache = new FileAnswerCache({ committed, writable: folder() });
+    expect(cache.put(KEY, stored())).toBe(true);
+    const text = readFileSync(join(cache.writable, `${KEY}.json`), "utf8");
+    // Another model's reading of the same key, later: the first stays.
+    const later = stored(KEY, { name: "cvheading", source: "model:another-model" });
+    expect(cache.put(KEY, later)).toBe(false);
+    expect(readFileSync(join(cache.writable, `${KEY}.json`), "utf8")).toBe(text);
+    // Nor under a key the committed answers hold, which the cache reads first.
+    const other = "d".repeat(64);
+    writeFileSync(join(committed, `${other}.json`), JSON.stringify(stored(other)));
+    expect(cache.put(other, stored(other))).toBe(false);
+    expect(readdirSync(cache.writable)).toEqual([`${KEY}.json`]);
+  });
+
   test("refuses anything but a stored answer under its own key, and a key that is a path", () => {
     const cache = new FileAnswerCache({ committed: folder(), writable: folder() });
     const other = "c".repeat(64);
