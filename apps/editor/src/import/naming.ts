@@ -83,9 +83,10 @@ export interface DocumentText {
 /** What a text of the document's is, as a leak names it. */
 type Origin = "text" | "link" | "date" | "raw" | "header" | "stored";
 
-/** A text of the document's, as it is matched: its letters and digits, folded. */
+/** A text of the document's, as it is matched: its letters and digits, each folded. */
 interface Needle {
-  text: string;
+  /** Its characters, each a code point folded (`fold`). */
+  chars: string[];
   origin: Origin;
 }
 
@@ -230,11 +231,12 @@ function stringsOf(document: DocumentText): Strings {
     if (text === undefined) return;
     if ((origin === "text" || origin === "date" || origin === "raw") && !isWritten(text)) return;
     const found = folded(text);
-    if (found.length < MIN_NEEDLE || placeholderLike(found) || seen.has(found)) return;
+    const chars = [...found];
+    if (chars.length < MIN_NEEDLE || placeholderLike(found) || seen.has(found)) return;
     seen.add(found);
-    const prefix = found.slice(0, MIN_NEEDLE);
+    const prefix = chars.slice(0, MIN_NEEDLE).join("");
     const list = byPrefix.get(prefix) ?? [];
-    list.push({ text: found, origin });
+    list.push({ chars, origin });
     byPrefix.set(prefix, list);
   };
   const addWords = (text: string | undefined, origin: Origin) => {
@@ -408,18 +410,18 @@ function found(
   strings: Strings,
   anywhere = false,
 ): { hide: Uint8Array; origin?: Origin } {
-  const hide = new Uint8Array(visible.text.length);
+  const chars = visible.text;
+  const size = chars.length;
+  const hide = new Uint8Array(size);
   let origin: Origin | undefined;
-  const joined = visible.text.join("");
-  // Each visible character is one code unit once folded, so the joined text's places are its.
-  const size = visible.text.length;
   const startsAt = (i: number) => i >= size || visible.starts[i] === true;
+  const at = (i: number, needle: Needle) => needle.chars.every((char, k) => chars[i + k] === char);
   for (let i = 0; i + MIN_NEEDLE <= size; i++) {
-    const candidates = strings.byPrefix.get(joined.slice(i, i + MIN_NEEDLE));
+    const candidates = strings.byPrefix.get(chars.slice(i, i + MIN_NEEDLE).join(""));
     if (candidates === undefined) continue;
     for (const needle of candidates) {
-      const length = needle.text.length;
-      if (!joined.startsWith(needle.text, i)) continue;
+      const length = needle.chars.length;
+      if (i + length > size || !at(i, needle)) continue;
       if (!anywhere && length < ANYWHERE && !(startsAt(i) && startsAt(i + length))) continue;
       hide.fill(1, i, i + length);
       origin ??= needle.origin;
@@ -1198,12 +1200,12 @@ function textsOf(request: NamingRequest): { where: string; text: string; meaning
 }
 
 /**
- * Throw when a request holds any of a document's text: a text run of the body, a link's address, a
- * date, a raw chunk's words, a header value or a text the preamble stores, of three letters and
- * digits or more, spelt out, spaces and commands aside, in a definition, a call site or a setting;
- * or a word of the person's name, anywhere a word is. The message says what kind of text is where,
- * never the text. The builder masks by the same rules, so its requests pass; the check is what
- * item 11's corpus-wide test runs, and what a change to the builder must still pass.
+ * Throw when a request holds any of a document's text: a text of the body's, a date or a raw
+ * chunk's words that the person wrote (`isWritten`), a link's address, a header value or a word of
+ * the name, or a text the preamble stores, spelt out in a definition, a call site, a setting or the
+ * class, spaces, commands and punctuation aside (`found`). The message says what kind of text is
+ * where, never the text. The builder masks by the same rules, so its requests pass; the check is
+ * what item 11's corpus-wide test runs, and what a change to the builder must still pass.
  */
 export function assertNoText(request: NamingRequest, document: DocumentText): void {
   const strings = stringsOf(document);
