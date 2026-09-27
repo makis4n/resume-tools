@@ -15,6 +15,7 @@ import {
   controlValuesFor,
   defaultControls,
   ENTRY_SLOTS,
+  type FontAdjust,
   fontFeatures,
   fontFiles,
   HEADER_SLOTS,
@@ -24,6 +25,7 @@ import {
   pageSizeFor,
   parsePackage,
   SECTION_SLOTS,
+  shapeAdjust,
   shapeFeatures,
   shapeFile,
   TemplatePackage,
@@ -388,6 +390,24 @@ describe("a XeTeX package's fonts", () => {
       [{ code: "\\relax" }, "fonts.0.adjust"],
     ] as const)
       expect(paths(xetexWith([{ ...roboto, adjust: bad }])), path).toEqual([path]);
+  });
+
+  it("takes what fontspec did to one shape alone, in place of its family's (decision 0023)", () => {
+    const adjust: FontAdjust = { wordSpace: [2, 2, 2] };
+    const bold = { file: "Roboto-Bold.otf", adjust };
+    const family = { ...roboto, shapes: { ...roboto.shapes, "b/n": bold } };
+    const pkg = parsePackage(xetexWith([family]));
+    expect(pkg.fonts?.[0]?.shapes["b/n"]).toEqual(bold);
+    const [parsed] = pkg.fonts ?? [];
+    if (parsed === undefined) throw new Error("no family");
+    expect(shapeAdjust(parsed, bold)).toEqual(adjust);
+    expect(shapeAdjust(parsed, "Roboto-Regular.otf")).toBeUndefined();
+    const withFamily = { ...parsed, adjust: { hyphenChar: -1 } };
+    expect(shapeAdjust(withFamily, "Roboto-Regular.otf")).toEqual({ hyphenChar: -1 });
+    expect(shapeAdjust(withFamily, bold)).toEqual(adjust);
+    expect(
+      paths(xetexWith([{ ...roboto, shapes: { "b/n": { ...bold, adjust: { wordSpace: [2] } } } }])),
+    ).toEqual(["fonts.0.shapes.b/n"]);
   });
 
   it("takes a plain OpenType or TrueType file name, which cannot break the declaration", () => {

@@ -5,11 +5,11 @@
  * reference's glyph stream (`sameGlyphs`); then the preamble dumps as a format, `generateFormat`'s
  * way, with the declarations and the prelude after it, and the body compiled from that format must
  * set the same glyphs again. A difference refuses the import, naming the first font whose glyphs
- * differ, but one that lies only in mathematics, which unicode-math set in its own font and the
- * rewrite sets in TeX's, is a warning: the rewrite compiled with unicode-math kept sets the
- * reference's glyphs, so that what differs is unicode-math's alone, its math font's glyphs and the
- * parameters of it that place what TeX builds with mathematics, a centred table on the math axis
- * and an underline's rule.
+ * differ. Where the rewrite took unicode-math out, which set mathematics in a math font of its own
+ * where the rewrite sets it in TeX's, a difference is a warning instead when every glyph that
+ * differs, in either stream, is a math font's and nothing else differs (`compareGlyphs`): not a
+ * glyph of the text, nor a rule, nor any place, which a math font's parameters can move as much
+ * as its glyphs.
  *
  * A native font is compared by its file's name without its extension: a font the upload shipped,
  * which the reference compile set from the upload's copy, is the tree's file of the same name.
@@ -21,7 +21,7 @@ import { fontDeclarations } from "../templates/generate";
 import { PRELUDE } from "../templates/prelude";
 import { fileKeyOf } from "./fontspec";
 import { imageInfo, ONE_BY_ONE, ONE_POINT_PDF, standIn, tooLarge } from "./images";
-import type { Intake } from "./intake";
+import { type Intake, TEXT_EXTENSIONS } from "./intake";
 import { extensionOf, nameOf, withoutExtension } from "./paths";
 import {
   COMPATIBILITY,
@@ -31,7 +31,7 @@ import {
   type Reference,
   type ReferenceItem,
 } from "./reference";
-import { type Refusal, refusal } from "./refusal";
+import type { Refusal } from "./refusal";
 import type { XetexRewrite } from "./xetex";
 
 /** What the check measured, and what it found short of a refusal. */
@@ -86,44 +86,17 @@ export async function checkRewrite(
   const whole = session.compile("xetex", "stock", `${preamble}${rewrite.body}`, {
     job,
     maxPasses: 3,
-    files,
+    files: withBibliography(files, intake, job),
   });
   const wholeMs = whole.passes.reduce((sum, pass) => sum + pass, 0);
-  if (!whole.ok || whole.output === undefined) {
-    // A font or feature a macro asks for that the rewrite could not reproduce, which the document
-    // uses (`xetex.ts`).
-    const unused =
-      /Package rt-fonts Error: (missing font|unreproducible feature) ([^\n]*?)\.?\n/.exec(
-        whole.log,
-      );
-    if (unused)
-      return refusal(
-        unused[1] === "missing font" ? "font" : "feature",
-        (unused[2] ?? "").trim(),
-        whole.log,
-      );
-    return stopped("This resume could not be compiled with its fonts declared by file.", whole.log);
-  }
+  if (!whole.ok || whole.output === undefined)
+    return (
+      deferredIn(rewrite, whole.log) ??
+      stopped("This resume could not be compiled with its fonts declared by file.", whole.log)
+    );
   const ours = await glyphStream(fonts, whole.output);
   const warnings: string[] = [];
-  let found = compare(reference, ours, rewrite.mathFonts);
-  if (found.kind === "difference" && rewrite.maths !== undefined) {
-    // The same rewrite with unicode-math kept, which finds its math font by name if it must.
-    const kept = { ...rewrite, preamble: rewrite.maths.preamble, files: rewrite.maths.files };
-    const keptJob = `${job}-maths`;
-    session.forget(keptJob);
-    const withMaths = session.compile("xetex", "stock", `${formatPreamble(kept)}${rewrite.body}`, {
-      job: keptJob,
-      maxPasses: 3,
-      files: jobFiles(intake, reference, kept, options.treeImage),
-      fontsByName: true,
-    });
-    session.forget(keptJob);
-    if (withMaths.ok && withMaths.output !== undefined) {
-      const same = compare(reference, await glyphStream(fonts, withMaths.output), []);
-      if (same.kind === "same") found = { kind: "maths" };
-    }
-  }
+  const found = compareGlyphs(reference, ours, rewrite.mathFonts);
   if (found.kind === "difference")
     return differs(found.font, `against the reference: ${found.detail}`, whole.log);
   if (found.kind === "maths")
@@ -132,10 +105,7 @@ export async function checkRewrite(
     );
 
   // The format, and the body from it.
-  const dumpFiles: Record<string, Uint8Array> = {};
-  for (const [path, bytes] of Object.entries(files))
-    if (!path.includes("/") && TEXT.test(path)) dumpFiles[path] = bytes;
-  const dumped = session.dump("xetex", format, preamble, dumpFiles);
+  const dumped = session.dump("xetex", format, preamble, dumpFiles(files));
   if (!dumped.ok || dumped.format === undefined)
     return stopped(
       "This resume's preamble could not be kept with its fonts declared by file.",
@@ -146,11 +116,14 @@ export async function checkRewrite(
   const body = session.compile("xetex", format, rewrite.body, {
     job: bodyJob,
     maxPasses: 3,
-    files,
+    files: withBibliography(files, intake, bodyJob),
   });
   const bodyMs = body.passes.reduce((sum, pass) => sum + pass, 0);
   if (!body.ok || body.output === undefined)
-    return stopped("This resume could not be compiled from its kept preamble.", body.log);
+    return (
+      deferredIn(rewrite, body.log) ??
+      stopped("This resume could not be compiled from its kept preamble.", body.log)
+    );
   const fromFormat = await glyphStream(fonts, body.output);
   const again = firstDifference(fromFormat, ours);
   if (again !== undefined)
@@ -162,14 +135,12 @@ export async function checkRewrite(
   return { wholeMs, dumpMs: dumped.ms, formatBytes: dumped.format.length, bodyMs, warnings };
 }
 
-/** The text files a dump takes beside the preamble: classes, packages and the like. */
-const TEXT = /\.(?:tex|cls|sty|def|clo|fd|cfg|ldf|lco)$/i;
-
 /**
  * The job's files for the rewrite's compiles: the upload's, less its fonts, which the loop never
  * keeps, so that XeTeX finds each font the declarations name in the tree; the compatibility files
- * and the bibliography the reference compile gave the job; the stand-ins it added as it ran; and
- * the rewrite's own files, over the upload's where it changed them.
+ * the reference compile gave the job; the stand-ins it added as it ran; and the rewrite's own
+ * files, over the upload's where it changed them. Each job takes the upload's bibliography under
+ * its own name besides (`withBibliography`).
  */
 export function jobFiles(
   intake: Intake,
@@ -194,17 +165,42 @@ export function jobFiles(
           : ONE_BY_ONE;
     files[added.path] ??= standIn(size);
   }
-  const bbl = files[`${withoutExtension(nameOf(intake.main.path))}.bbl`];
-  if (bbl !== undefined) files["fonts.bbl"] = bbl;
   return { ...files, ...rewrite.files };
+}
+
+/**
+ * A job's files with the upload's bibliography, the `.bbl` of its main file's name, under the
+ * job's name besides, `<job>.bbl`, which `\bibliography` reads, as the reference compile gives it
+ * to its own job.
+ */
+export function withBibliography(
+  files: Readonly<Record<string, Uint8Array>>,
+  intake: Intake,
+  job: string,
+): Record<string, Uint8Array> {
+  const bbl = files[`${withoutExtension(nameOf(intake.main.path))}.bbl`];
+  return bbl === undefined ? { ...files } : { ...files, [`${job}.bbl`]: bbl };
+}
+
+/**
+ * The files a dump takes beside the preamble, as the whole compile has them: the job's text files,
+ * of the kinds the intake keeps as text, the bibliography's among them, and the rewrite's and the
+ * compatibility's style files, at their paths. The session's `dump`, as a package's `files`, takes
+ * plain file names alone, so a file in a folder cannot go with it: a preamble that reads one stops
+ * the dump, which refuses the import as stopped.
+ */
+export function dumpFiles(files: Readonly<Record<string, Uint8Array>>): Record<string, Uint8Array> {
+  const text = new Set([...TEXT_EXTENSIONS, ".bbl"]);
+  const out: Record<string, Uint8Array> = {};
+  for (const [path, bytes] of Object.entries(files))
+    if (!path.includes("/") && text.has(extensionOf(path))) out[path] = bytes;
+  return out;
 }
 
 /**
  * A glyph stream as the check compares it: each native font named by its file's name without its
  * extension, and each colour special at no place, since a colour's push or pop means the same
- * wherever it stands. unicode-math centres a table on the axis of its own math font, which the
- * stock math fonts put a few scaled points elsewhere, so the colour specials a centred table's
- * baseline holds move by as much while none of its glyphs does, as in every Awesome-CV fork.
+ * wherever it stands.
  */
 export function normalized(stream: GlyphStream): GlyphStream {
   return {
@@ -222,11 +218,41 @@ export function normalized(stream: GlyphStream): GlyphStream {
 }
 
 /**
- * How the rewrite's stream compares with the reference's: the same; different in mathematics alone,
- * once the unicode-math font's glyphs and the TeX fonts the reference sets nothing in are left out
- * of both; or different, naming the reference's font at the first difference.
+ * TeX's own math fonts, as the stock format's mathematics sets in them: Computer Modern's and Latin
+ * Modern's math italic, symbols and extension, and the upright, bold, sans, typewriter and italic
+ * fonts LaTeX's operators and math alphabets take; the AMS fonts, Euler, and the script and symbol
+ * fonts of LaTeX's math packages. By their TFM names, at any size.
  */
-function compare(
+const TEX_MATH_FONTS =
+  /^(?:cm(?:mi|mib|sy|bsy|ex|r|bx|ss|tt|ti)|lm(?:mi|mib|sy|bsy|ex)|rm-lm(?:r|bx|ss|tt|ri)|ms[ab]m|eu[frsx][mb]|rsfs|lasyb?|stmary|wasy)\d+$/;
+
+/**
+ * Whether a glyph is a math font's, of the kind that the rewrite's taking unicode-math out changes:
+ * a native font's whose file is a math font, one unicode-math set mathematics in (`mathFonts`) or
+ * one whose name says so, as Latin Modern Math's and the rest's do; or a TFM font's of TeX's own
+ * mathematics (`TEX_MATH_FONTS`) that the reference sets nothing in, so that a TFM font the
+ * document sets text in is never taken for one.
+ */
+function mathGlyph(
+  mathFonts: readonly string[],
+  referenceTex: ReadonlySet<string>,
+): (item: ReferenceItem) => boolean {
+  const files = new Set(mathFonts.map(fileKeyOf));
+  return (item) =>
+    item.kind === "glyph" &&
+    (item.native
+      ? files.has(item.font) || /math/.test(item.font)
+      : TEX_MATH_FONTS.test(item.font) && !referenceTex.has(item.font));
+}
+
+/**
+ * How the rewrite's stream compares with the reference's: the same; different in mathematics
+ * alone, which only a rewrite that took unicode-math out can be, when the two are the same once
+ * every math font's glyph is left out of both (`mathGlyph`), so that every glyph that differs, in
+ * either, is a math font's and nothing else differs, not the text, a rule, a special or a place;
+ * or different, naming the reference's font at the first difference that is not a math font's.
+ */
+export function compareGlyphs(
   reference: GlyphStream,
   ours: GlyphStream,
   mathFonts: readonly string[],
@@ -238,24 +264,15 @@ function compare(
   const mine = normalized(ours);
   const detail = firstDifference(theirs, mine);
   if (detail === undefined) return { kind: "same" };
-  if (mathFonts.length > 0) {
-    const maths = new Set(mathFonts.map(fileKeyOf));
-    const referenceTex = new Set(reference.fonts.tex);
-    const without = (stream: GlyphStream, drop: (item: ReferenceItem) => boolean): GlyphStream => ({
-      ...stream,
-      pages: stream.pages.map((page) => ({ items: page.items.filter((item) => !drop(item)) })),
-    });
-    const a = without(
-      theirs,
-      (item) => item.kind === "glyph" && item.native === true && maths.has(item.font),
-    );
-    const b = without(
-      mine,
-      (item) => item.kind === "glyph" && !item.native && !referenceTex.has(item.font),
-    );
-    if (firstDifference(a, b) === undefined) return { kind: "maths" };
-  }
-  return { kind: "difference", font: firstFontIn(detail), detail };
+  if (mathFonts.length === 0) return { kind: "difference", font: firstFontIn(detail), detail };
+  const maths = mathGlyph(mathFonts, new Set(reference.fonts.tex));
+  const without = (stream: GlyphStream): GlyphStream => ({
+    ...stream,
+    pages: stream.pages.map((page) => ({ items: page.items.filter((item) => !maths(item)) })),
+  });
+  const rest = firstDifference(without(theirs), without(mine));
+  if (rest === undefined) return { kind: "maths" };
+  return { kind: "difference", font: firstFontIn(rest), detail: rest };
 }
 
 /**
@@ -280,7 +297,17 @@ function differs(font: string | undefined, detail: string, log: string): Refusal
   };
 }
 
+/**
+ * The refusal a compile stopped on that a definition's body put off (`XetexRewrite.deferred`),
+ * which the document used, with the compile's log; undefined for any other stop.
+ */
+function deferredIn(rewrite: XetexRewrite, log: string): Refusal | undefined {
+  const n = /Package rt-fonts Error: Unreproducible font or feature (\d+)\./.exec(log)?.[1];
+  const refusal = n === undefined ? undefined : rewrite.deferred[Number(n)];
+  return refusal === undefined ? undefined : { ...refusal, log };
+}
+
 /** A refusal for a compile or a dump that stopped once the fonts were declared by file. */
 function stopped(message: string, log: string): Refusal {
-  return { refused: true, reason: "difference", message, name: "stopped", log };
+  return { refused: true, reason: "stopped", message, log };
 }

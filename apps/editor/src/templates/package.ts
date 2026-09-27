@@ -270,17 +270,6 @@ const FontFeatures = z
     "font features are letters, digits, =, ;, +, -, . and _, as XeTeX's feature syntax has them",
   );
 
-/**
- * A shape's font: a file of the tree, or a file and the XeTeX features this shape alone loads it
- * with, after its family's (decision 0023), as a family's small capitals load its upright file
- * with `+smcp`.
- */
-const FontShape = z.union([
-  FontFile,
-  z.strictObject({ file: FontFile, features: FontFeatures.optional() }),
-]);
-export type FontShape = z.infer<typeof FontShape>;
-
 /** A decimal factor, as fontspec's `Scale` and `WordSpace` take one. */
 const Factor = z.number().min(-100).max(100);
 
@@ -299,6 +288,22 @@ const FontAdjust = z.strictObject({
   hyphenChar: z.number().int().min(-1).max(0x10ffff).optional(),
 });
 export type FontAdjust = z.infer<typeof FontAdjust>;
+
+/**
+ * A shape's font: a file of the tree, or a file and the XeTeX features this shape alone loads it
+ * with, after its family's (decision 0023), as a family's small capitals load its upright file
+ * with `+smcp`, and what fontspec did to this shape alone as it loaded it, in place of its
+ * family's `adjust`, as `BoldFeatures={WordSpace=2}` does to the bold alone.
+ */
+const FontShape = z.union([
+  FontFile,
+  z.strictObject({
+    file: FontFile,
+    features: FontFeatures.optional(),
+    adjust: FontAdjust.optional(),
+  }),
+]);
+export type FontShape = z.infer<typeof FontShape>;
 
 /**
  * One family of a XeTeX package's fonts (decision 0014): its NFSS name, which may hold a hyphen as
@@ -323,6 +328,10 @@ export type FontFamily = z.infer<typeof FontFamily>;
 /** A shape's file. */
 export const shapeFile = (shape: FontShape): string =>
   typeof shape === "string" ? shape : shape.file;
+
+/** What fontspec did to a shape of a family as it loaded it: the shape's own, else its family's. */
+export const shapeAdjust = (family: FontFamily, shape: FontShape): FontAdjust | undefined =>
+  (typeof shape === "string" ? undefined : shape.adjust) ?? family.adjust;
 
 /**
  * The XeTeX features a shape of a family loads its file with: the family's, then the shape's own,

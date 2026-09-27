@@ -1074,6 +1074,31 @@ describe("generateFormat", () => {
       '\\DeclareFontShape{TU}{Caps}{m}{sc}{<->"[Lato-Regular.ttf]:+c2sc"}{}',
     ]);
   });
+
+  it("declares what fontspec did to one shape alone in that shape's declaration (decision 0023)", () => {
+    const fonts = parsePackage({
+      ...input,
+      engine: "xetex",
+      preamble: "\\documentclass{article}",
+      fonts: [
+        {
+          family: "Spaced",
+          shapes: {
+            "m/n": "Roboto-Regular.otf",
+            "b/n": { file: "Roboto-Bold.otf", adjust: { wordSpace: [2, 2, 2] } },
+          },
+        },
+      ],
+    }).fonts;
+    const spaced =
+      "\\fontdimen2\\font=2\\fontdimen2\\font\\fontdimen3\\font=2\\fontdimen3\\font" +
+      "\\fontdimen4\\font=2\\fontdimen4\\font";
+    expect(fontDeclarations(fonts ?? []).split("\n")).toEqual([
+      "\\DeclareFontFamily{TU}{Spaced}{}",
+      '\\DeclareFontShape{TU}{Spaced}{m}{n}{<->"[Roboto-Regular.otf]"}{}',
+      `\\DeclareFontShape{TU}{Spaced}{b}{n}{<->"[Roboto-Bold.otf]"}{${spaced}}`,
+    ]);
+  });
 });
 
 describe("texDecimal", () => {
@@ -1088,6 +1113,10 @@ describe("texDecimal", () => {
       "12.5",
       "0.66667",
     ]);
+    expect([100, 1_000, 16_383.5].map(texDecimal)).toEqual(["100", "1000", "16383.5"]);
+    // None TeX reads as a factor, which the package's schema refuses before it comes here.
+    for (const value of [16_384, 1e21, -1e21, Number.NaN, Number.POSITIVE_INFINITY])
+      expect(() => texDecimal(value), `${value}`).toThrow(RangeError);
   });
 });
 
