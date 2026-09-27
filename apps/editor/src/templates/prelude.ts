@@ -52,8 +52,14 @@ export const LOCK_MARKER = "rt:l:";
  *   marker is a whatsit, which hides the list's last skip from LaTeX's `\addvspace` and
  *   `\addpenalty`: the skip before a section that follows a list would then be added to the
  *   list's own rather than merged with it, 10 pt further down in `article`. So each marker takes
- *   the last skip off and puts it back after itself (`\rt@lock`), in either mode, and the part and
- *   what follows it are set where they would be with no marker.
+ *   the last skip off and puts it back after itself (`\rt@lock`), in either mode. And glue after a
+ *   whatsit is a legal breakpoint, where after glue or a penalty it is not: a marker there would
+ *   let a page, a column or a line break where it could not, which moved every glyph of a
+ *   two-page, two-column AltaCV sample's right column. So after glue or a penalty a `\nobreak`
+ *   follows the marker (`\rt@mark`); after a kern or a math node none does, since each is a
+ *   breakpoint where glue follows it, which the glue after the marker takes over, and a `\nobreak`
+ *   would take it away. The part and what follows it are set, and broken, where they would be
+ *   with no marker.
  * - A character LaTeX's UTF-8 input has no definition for, such as an emoji or a letter of a
  *   script the template's fonts do not cover, is left out with a warning in the log, rather than
  *   stopping the compile with an error, so every character a user types either typesets or is
@@ -101,13 +107,22 @@ export const PRELUDE = String.raw`\makeatletter
   \begingroup
     \skip@\lastskip
     \ifdim\skip@=\z@
-      \special{${LOCK_MARKER}\detokenize{#1}}%
+      \rt@mark{#1}%
     \else\ifvmode
-      \vskip-\skip@\special{${LOCK_MARKER}\detokenize{#1}}\vskip\skip@
+      \vskip-\skip@\rt@mark{#1}\vskip\skip@
     \else
-      \unskip\special{${LOCK_MARKER}\detokenize{#1}}\hskip\skip@
+      \unskip\rt@mark{#1}\hskip\skip@
     \fi\fi
   \endgroup
+}
+% The marker itself, and after it a \nobreak where the node before it is glue or a penalty: glue
+% after a whatsit is a legal breakpoint, which after glue or a penalty it is not. After a kern or
+% a math node, glue is none either, but the kern or the math node is one where glue follows it,
+% and the glue after the marker breaks as it did, so the marker adds and takes away none there.
+\def\rt@mark#1{%
+  \count@\lastnodetype
+  \special{${LOCK_MARKER}\detokenize{#1}}%
+  \ifnum\count@=11 \nobreak\else\ifnum\count@=13 \nobreak\fi\fi
 }
 % A character LaTeX has no definition for is left out rather than stopping the compile. The
 % kernel restores its own handler from the saved copy at the start of every job, so both change.

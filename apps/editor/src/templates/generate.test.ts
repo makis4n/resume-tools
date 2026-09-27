@@ -2016,6 +2016,42 @@ describe.skipIf(!engineAvailable())("what an import keeps, through the engine", 
     expect([...marked.fields].sort()).toEqual([...body.texts.keys()].sort());
   }, 60_000);
 
+  it("breaks a page and a line where the part alone would, its markers adding no breakpoint", async () => {
+    // Glue after a whatsit is a legal breakpoint, and after glue or a penalty it is not: a marker
+    // there must add none. `\vsplit` breaks a box as TeX breaks a page, and splits this one after
+    // its first line, the best break there is, unless a marker lets it break after the stretchable
+    // space, which fits the height better and sets the rest lower; and the tie keeps the part on
+    // the line before it, unless a marker lets the line break there. And after a formula or a kern
+    // followed by a space, the line may break, which the marker must not take away.
+    const body = (locked: boolean) => {
+      const lock = (id: string, latex: string) => (locked ? `\\rtlocked{${id}}{${latex}}` : latex);
+      return [
+        "\\begin{document}",
+        `\\setbox0=\\vbox{\\hbox{Aqq}\\vskip 3pt plus 20pt\\vskip 0pt${lock("lock-split", "\\vskip 2pt\\hbox{Bqq}")}\\hbox{Cqq}}`,
+        "\\setbox2=\\vsplit0 to 14pt",
+        "\\box2 \\box0",
+        `\\parbox{2.3cm}{\\raggedright\\sloppy\\noindent\\hbox to 1cm{A} \\hbox to 1cm{B}~${lock("lock-tie", "\\hbox to 1cm{C}")}}`,
+        `\\parbox{2.3cm}{\\raggedright\\sloppy\\noindent\\hbox to 1cm{A} \\hbox to 0.8cm{B}$x$ ${lock("lock-math", "\\hbox to 1cm{C}")}}`,
+        `\\parbox{2.3cm}{\\raggedright\\sloppy\\noindent\\hbox to 1cm{A} \\hbox to 0.8cm{B}\\kern1pt{} ${lock("lock-kern", "\\hbox to 1cm{C}")}}`,
+        "\\end{document}",
+        "",
+      ].join("\n");
+    };
+    const marked = await compiled(body(true), "breaks-locked");
+    const alone = await compiled(body(false), "breaks-alone");
+    expect(marked.locks).toEqual([
+      "rt:l:lock-split",
+      "rt:l:lock-split",
+      "rt:l:lock-tie",
+      "rt:l:lock-tie",
+      "rt:l:lock-math",
+      "rt:l:lock-math",
+      "rt:l:lock-kern",
+      "rt:l:lock-kern",
+    ]);
+    expect(difference(alone.stream, marked.stream)).toBeUndefined();
+  }, 60_000);
+
   it("sets an extra where its snippet writes it, as the upload's own LaTeX", async () => {
     const withThem = await compiled(generateBody(keeping, extended, {}).latex, "extras");
     const without = await compiled(generateBody(keeping, resume, {}).latex, "no-extras");

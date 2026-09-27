@@ -12,8 +12,8 @@ an icon or text a macro takes apart. Plan section 5.2 keeps such fields as extra
 lost on import, and decision 0006 kept extras on the header, a section and an entry, never typeset
 until the pipeline needed them, which it now does. A class whose header commands belong in the
 preamble, as Awesome-CV's and moderncv's `\name` and `\position` do, also needs its header set
-before `\begin{document}`. This record is item 7's part A: the model, the snippet language, the
-generator and the prelude. The assembly that fills them is part B's, and the page's lock item 15's.
+before `\begin{document}`. This record is item 7's model, snippet language, generator and prelude;
+the assembly that fills them is decision 0026's, and the page's lock item 15's.
 The code is `packages/resume-model/src/index.ts` and, under `apps/editor/src/`,
 `templates/snippet.ts`, `package.ts`, `generate.ts` and `prelude.ts`, with the commands in
 `editor/document.ts` and the panel's row in `editor/Panel.tsx`.
@@ -129,12 +129,25 @@ the generator writes as they are. The schema refuses, so that nothing ever write
   list's where the two would merge. So each marker takes the last skip off and puts it back after
   itself (`\rt@lock`), in either mode, and the part and what follows it are set where they are with
   no marker.
+- And a marker must break nothing otherwise. Glue after a whatsit is a legal breakpoint, where
+  after glue or a penalty it is not: a marker after such a node, the skip `\rt@lock` puts back
+  after it among them, lets a page, a column or a line break where it could not, and where that
+  fits a page better, TeX takes it: the AltaCV sample, two pages of two columns, broke its right
+  column elsewhere and set every glyph of it lower, 0.49 pt at its head, with every field locked.
+  So after glue or a penalty a `\nobreak` follows the marker (`\rt@mark`, by `\lastnodetype`),
+  and no breakpoint comes. After a kern or a math node none does: glue after either is no
+  breakpoint, but the kern or the math node is one where glue follows it, which the glue after the
+  marker takes over, and a `\nobreak` there took it away, which moved an Awesome-CV fork's lines
+  after a formula by a point. So no breakpoint goes either.
 - On the engine, with a part in twelve places, after a list, ending with a list, after `\vspace`, a
   paragraph, a table, at the top of the page, two parts in a row, a paragraph running on before it
   or after it, a part whose last line is a comment, one that ends in a blank line and one with an
   escaped `\#` in an address: markers alone moved the next heading 10 pt down in three of the first
   ten, and with `\leavevmode` 10 to 33 pt in six; `\rt@lock`'s moved nothing in any of the twelve.
-  `generate.test.ts` holds two of the places, and fails on markers alone.
+  `generate.test.ts` holds two of the places, and fails on markers alone; and four breaks, a box
+  split as TeX breaks a page, a line with a tie before the part, which fail on a marker with no
+  `\nobreak` after it, each on its own, and a line with a formula and one with a kern before the
+  part, which fail on a `\nobreak` after every marker that follows a node TeX discards at a break.
 - What TeX cannot take in a macro's argument cannot be locked this way, as the engine showed: a `#`
   in `\href`'s address, which hyperref reads with category codes of its own only outside an
   argument ("Illegal parameter number"); a `%` in `\url`'s, which becomes a comment, and which the
@@ -144,15 +157,15 @@ the generator writes as they are. The schema refuses, so that nothing ever write
 
 ### The format hash
 
-The prelude gains `\rtlocked` and `\rt@lock`, and is part of what is dumped, so every format's name
-changes once, its form unchanged (decision 0007): Jake's `jake-3e1f45f3` becomes `jake-03c56b08`,
-AltaCV's `altacv-8031c3bd` becomes `altacv-2e040f20`, Awesome-CV's `awesome-cv-81810baf` becomes
-`awesome-cv-e393e768`, and the invented XeTeX template's and every `import-` format the probe dumps
-change likewise. The store keeps formats by name (decision 0010), so a browser that kept an old one
-asks for the new name, finds none, dumps once and keeps it: a redump, not a failure
-(`compiler.test.ts`: a format the store kept is put, and one it lacks is dumped and kept). The old
-one is never asked for again, and goes as the least recently used of the twenty. No curated
-package changes, so their round trips and the harness pass as they did.
+The prelude gains `\rtlocked`, `\rt@lock` and `\rt@mark`, and is part of what is dumped, so every
+format's name changes once, its form unchanged (decision 0007): Jake's `jake-cf9db902` becomes
+`jake-3a32bb1d`, AltaCV's `altacv-2895aaaf` becomes `altacv-bfe88432`, Awesome-CV's
+`awesome-cv-881d0402` becomes `awesome-cv-89727ebf`, and the invented XeTeX template's and every
+`import-` format the probe dumps change likewise. The store keeps formats by name (decision
+0010), so a browser that kept an old one asks for the new name, finds none, dumps once and keeps
+it: a redump, not a failure (`compiler.test.ts`: a format the store kept is put, and one it lacks
+is dumped and kept). The old one is never asked for again, and goes as the least recently used of
+the twenty. No curated package changes, so their round trips and the harness pass as they did.
 
 ## Consequences
 

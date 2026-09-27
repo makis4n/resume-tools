@@ -62,7 +62,6 @@ import { isBlank } from "../templates/escape";
 import {
   type ByRole,
   type DateFormat,
-  type FontFamily,
   IMPORTED_PREFIX,
   type TemplatePackage,
 } from "../templates/package";
@@ -98,19 +97,7 @@ import {
   templateText,
   wordsIn,
 } from "./templating";
-
-// The interface of the XeTeX rewrite.
-
-/**
- * What item 8's rewrite of a XeTeX import's fonts gives (`rewriteForXetex`): the preamble with its
- * fontspec commands turned into families declared by file, the job's files it changed or added,
- * and the families. TODO(merge): item 8's `XetexRewrite`, whose `fonts` carry features per shape.
- */
-export interface XetexRewrite {
-  preamble: string;
-  files: Record<string, Uint8Array>;
-  fonts: FontFamily[];
-}
+import type { XetexRewrite } from "./xetex";
 
 // What assembly makes.
 
@@ -145,12 +132,16 @@ export interface LockedPart {
 
 /**
  * What the checks decide, which the assembly takes again: redefinitions the reference check
- * refused, controls dropped, field instances and whole slots locked with why, and the slots that
- * are required. A field instance is named by where its content starts (`LockedPart.at` and its
- * slot), a slot by its macro and argument (`slotKey`).
+ * refused, and where the rest go, right after `\documentclass` (`class`, the default) or, where a
+ * compile after the class stops, as it does for a macro a package or the preamble defines, at the
+ * preamble's end, right before `\begin{document}` (`preamble`, decision 0024); controls dropped,
+ * field instances and whole slots locked with why, and the slots that are required. A field
+ * instance is named by where its content starts (`LockedPart.at` and its slot), a slot by its macro
+ * and argument (`slotKey`).
  */
 export interface Decisions {
   dropped?: readonly string[];
+  placement?: "class" | "preamble";
   controls?: readonly ControlName[];
   instances?: Readonly<Record<string, LockReason>>;
   slots?: Readonly<Record<string, LockReason>>;
@@ -200,7 +191,7 @@ export interface AssemblyChecks {
     proven: ControlName[];
     dropped: { control: string; why: string }[];
   };
-  redefinitions: { applied: string[]; dropped: string[] };
+  redefinitions: { applied: string[]; dropped: string[]; placement: "class" | "preamble" };
   repeatable: { kind: string; added: boolean; removed: boolean }[];
   findings: { check: string; message: string; field?: string }[];
   compiles: number;
@@ -876,12 +867,28 @@ function putParts(
 
 // Building the context.
 
-/** The answers by what they answer, `command|<name>` or `environment|<name>`. */
-function answersOf(answer: NamingAnswer): Map<string, Answer> {
+/**
+ * The answers by what they answer, `command|<name>` or `environment|<name>`, each as the cache
+ * gave it for the document's macro (`answerFor`, decision 0024), so under the document's names; and
+ * a command's closer of its opener's kind, as decision 0024 has it, where the answers give it
+ * another: the list it closes is its opener's, whichever way round the two answers name it.
+ */
+export function answersOf(answer: NamingAnswer): Map<string, Answer> {
   const answers = new Map<string, Answer>();
   for (const stored of answer.macros) {
     const key = `${stored.of}|${stored.name}`;
     if (!answers.has(key)) answers.set(key, stored.answer);
+  }
+  for (const [id, each] of answers) {
+    const list = each.list;
+    if (!id.startsWith("command|") || list === undefined) continue;
+    const partner = list.does === "opens" ? list.closedBy : list.openedBy;
+    const other = partner === undefined ? undefined : answers.get(`command|${partner}`);
+    if (other === undefined) continue;
+    const [opener, closer, closerId] =
+      list.does === "opens" ? [each, other, `command|${partner}`] : [other, each, id];
+    if (opener.list?.does === "opens" && closer.kind !== opener.kind)
+      answers.set(closerId, { ...closer, kind: opener.kind });
   }
   return answers;
 }
@@ -1049,7 +1056,10 @@ function isCode(ctx: Context, node: Node): boolean {
         ? commandAnswer(ctx.answers, node.name)
         : environmentAnswer(ctx.answers, node.name);
     if (answer?.kind === "layout" && node.kind === "call") return true;
-    if (answer?.kind === "header" && answer.arguments.every((arg) => arg.slot === undefined))
+    if (
+      answer?.kind === "header" &&
+      answer.arguments.every((arg) => headerSlotOf(arg) === undefined)
+    )
       return node.kind === "call";
     if (node.kind === "call") return wordsOf([...inside(node)]) === 0 && answer === undefined;
   }
@@ -1067,6 +1077,17 @@ const HEADER_SLOTS: Readonly<Record<string, SlotOf>> = {
   phone: { slot: "phone", type: "text" },
   location: { slot: "location", type: "text" },
 };
+
+/**
+ * The header's slot an argument fills: its own; or, for a name given whole whose answer maps it to
+ * the first name and the last a space apart, as AltaCV's `\name` (decision 0024), the first, which
+ * the split at its last space fills with the last beside it.
+ */
+function headerSlotOf(arg: ArgumentAnswer): string | undefined {
+  if (arg.slot !== undefined) return arg.slot;
+  const parts = arg.parts?.map((part) => part.slot);
+  return parts?.length === 2 && parts[0] === "first" && parts[1] === "last" ? "first" : undefined;
+}
 
 /** The header's links' run among the decisions, as the checks lock it whole. */
 export const LINKS = "h.links";
@@ -1125,22 +1146,25 @@ function headerOf(
     }
     const slots: Record<string, SlotOf> = {};
     for (const arg of answer.arguments) {
-      const name =
-        answer.kind === "contact" && arg.slot === "text" ? (answer.contact ?? "") : arg.slot;
+      const own = headerSlotOf(arg);
+      const name = answer.kind === "contact" && own === "text" ? (answer.contact ?? "") : own;
       if (name === undefined || HEADER_SLOTS[name] === undefined || filled.has(name)) continue;
-      slots[arg.slot ?? ""] = HEADER_SLOTS[name];
+      slots[own ?? ""] = HEADER_SLOTS[name];
       filled.add(name);
+      // A name given whole fills the last name too, which no other call then fills.
+      if (arg.slot === undefined && name === "first") filled.add("last");
     }
     // A name in one argument is split at its last space, the first name before it.
     const oneName =
-      answer.arguments.some((arg) => arg.slot === "first") &&
-      !answer.arguments.some((arg) => arg.slot === "last");
+      answer.arguments.some((arg) => headerSlotOf(arg) === "first") &&
+      !answer.arguments.some((arg) => headerSlotOf(arg) === "last");
     const rawable = answer.kind === "contact" || answer.kind === "link" || answer.kind === "header";
     template.code(`\\${at.name}`);
     at.args.forEach((arg, i) => {
       const index = i + 1;
       const answered = answer.arguments.find((each) => each.index === index);
-      const wanted = answered?.slot === undefined ? undefined : slots[answered.slot];
+      const own = answered === undefined ? undefined : headerSlotOf(answered);
+      const wanted = own === undefined ? undefined : slots[own];
       if (answered?.slot === "contacts" && arg.present && arg.content !== undefined) {
         template.code(arg.open === "" ? "{" : arg.open);
         walk(arg.content, where, arg.innerStart, arg.innerEnd);
@@ -2987,7 +3011,7 @@ function preambleText(
   }
   out += snippetText(text.slice(at));
   const kept = redefinitions.map((each) => ({ name: each.name, latex: snippetText(each.latex) }));
-  const redefined = withRedefinitions(out, kept) ?? out;
+  const redefined = placed(out, kept, ctx.decisions.placement);
   const atLetter = /\\makeatletter(?![A-Za-z])/.test(settingsText(text));
   const hyperref = hyperrefLines(ctx.engine, loadsHyperref(ctx.made));
   const preamble = [
@@ -2998,6 +3022,24 @@ function preambleText(
     "",
   ].join("\n");
   return { preamble, at: atLetter };
+}
+
+/**
+ * A preamble with the redefinitions where `placement` puts them, through `withRedefinitions` as
+ * decision 0024 has item 7 put them: right after `\documentclass`, or at the preamble's end, where
+ * `\begin{document}` follows it; the preamble as it is when it has no `\documentclass` to put them
+ * by.
+ */
+function placed(
+  preamble: string,
+  redefinitions: readonly { name: string; latex: string }[],
+  placement: "class" | "preamble",
+): string {
+  if (placement === "class") return withRedefinitions(preamble, redefinitions) ?? preamble;
+  const begin = "\\begin{document}";
+  const text = `${preamble.replace(/\s*$/, "")}\n${begin}`;
+  const put = withRedefinitions(text, redefinitions, { placement });
+  return put === undefined ? preamble : put.slice(0, -begin.length);
 }
 
 /** The upload's files a package keeps, as text: its classes and styles, and what its preamble inputs. */
@@ -3098,6 +3140,7 @@ export async function assemble(
   if (body.text !== tree.source) throw new Error("the tree is not of the intake's body");
   const decisions: Required<Decisions> = {
     dropped: options.decisions?.dropped ?? [],
+    placement: options.decisions?.placement ?? "class",
     controls: options.decisions?.controls ?? [],
     instances: options.decisions?.instances ?? {},
     slots: options.decisions?.slots ?? {},
@@ -3281,6 +3324,7 @@ function checksOf(
     redefinitions: {
       applied: redefinitions.map((each) => each.name),
       dropped: [...ctx.decisions.dropped],
+      placement: ctx.decisions.placement,
     },
     repeatable: [],
     findings: [],

@@ -4,10 +4,11 @@
  * caller brings the engine session and the fonts, as the harness's caller does (plan section 5.7).
  *
  * Every compile is in the `import` job, from the package's format, dumped once for each format a
- * value names, or whole from the stock format where the preamble cannot be dumped, as a XeTeX one
- * that loads fontspec cannot until item 8 rewrites it; with the job's files the reference compile
- * had (decision 0019). The four checks of plan section 6 step 5, each bisected as the probe bisects
- * (`settle`, decision 0022):
+ * value names, a XeTeX package's with its fonts declared by file as item 8's rewrite gives them
+ * (decision 0023), or whole from the stock format where the preamble cannot be dumped, or where
+ * the probe found the document's own format did not set the reference's glyphs; with the job's
+ * files the reference compile had (decision 0019). The four checks of plan section 6 step 5, each
+ * bisected as the probe bisects (`settle`, decision 0022):
  *
  * 1. **Same output.** The original body, compiled from the package's format, must set the
  *    reference's page, its glyphs, rules, colours, images and size: the preamble's rewrite changes
@@ -50,7 +51,6 @@ import {
   type LockReason,
   loadsHyperref,
   takenOut,
-  type XetexRewrite,
 } from "./assemble";
 import type { Candidate } from "./candidates";
 import { encodeLike, type Intake } from "./intake";
@@ -70,6 +70,8 @@ import {
 } from "./reference";
 import { type Refusal, refusal } from "./refusal";
 import type { EngineSignatures } from "./signatures";
+import type { XetexRewrite } from "./xetex";
+import { normalized } from "./xetex-check";
 
 /** What validation takes: the import's inputs, and the session and fonts to compile and read with. */
 export interface ValidationInputs {
@@ -139,6 +141,8 @@ class Compiles implements Compiler {
   count = 0;
   ms = 0;
   private readonly dumped = new Map<string, boolean>();
+  /** The formats dumped for the validation, the harness's among them, which it drops when done. */
+  readonly formats = new Set<string>();
 
   constructor(
     private readonly inputs: ValidationInputs,
@@ -160,6 +164,7 @@ class Compiles implements Compiler {
     const format = generateFormat(pkg, values);
     let dumped = this.whole ? false : this.dumped.get(format.name);
     if (dumped === undefined) {
+      this.formats.add(format.name);
       try {
         const result = session.dump(
           pkg.engine,
@@ -184,14 +189,11 @@ class Compiles implements Compiler {
             maxPasses: 3,
             files: this.files,
           })
-        : // A preamble that does not dump, as a XeTeX one that loads fontspec until item 8's
-          // rewrite declares its fonts by file (TODO(merge)), compiles whole, finding its fonts by
-          // name as the reference compile did.
+        : // A preamble that does not dump compiles whole, its fonts declared as the format's are.
           session.compile(pkg.engine, "stock", `${format.preamble}\n${latex}`, {
             job: this.job,
             maxPasses: 3,
             files: this.withPackage(pkg),
-            fontsByName: pkg.engine === "xetex",
           });
     } catch {
       return { body, broke: true };
@@ -477,16 +479,19 @@ const shownValue = (values: ControlValues, name: ControlName) => `${name} ${Stri
  * The session the harness compiles through: the job's files given to every dump and compile, as
  * the harness gives only the package's, and the stand-ins of the upload's images listed for its
  * PDF. The bodies it compiles are the generator's, locked sections and extras among them (decision
- * 0025).
+ * 0025). The names of the formats it dumps go in `formats`, which the validation drops.
  */
 function harnessSession(
   session: EngineSession,
   files: Record<string, Uint8Array>,
   images: readonly string[],
+  formats: Set<string>,
 ): EngineSession {
   const proxy = Object.create(session) as EngineSession;
-  proxy.dump = (engine, name, preamble, own = {}) =>
-    session.dump(engine, name, preamble, { ...files, ...own });
+  proxy.dump = (engine, name, preamble, own = {}) => {
+    formats.add(name);
+    return session.dump(engine, name, preamble, { ...files, ...own });
+  };
   proxy.compile = (engine, format, body, options = {}) =>
     session.compile(engine, format, body, {
       ...options,
@@ -578,6 +583,9 @@ export async function validate(inputs: ValidationInputs): Promise<Assembled | Re
     );
   } finally {
     session.forget(job);
+    // Each format is dropped by the one who dumped it, when done with it (`dropFormat`), so that
+    // a session that validates one import after another does not keep them all, 6 to 9 MB each.
+    for (const name of compiles.formats) session.dropFormat(reference.engine, name);
   }
 }
 
@@ -658,7 +666,7 @@ async function harnessOf(
     ...inputs.reference.images.map((image) => image.path),
   ];
   const report = await validatePackage(
-    harnessSession(inputs.session, compiles.files, images),
+    harnessSession(inputs.session, compiles.files, images, compiles.formats),
     inputs.fonts,
     assembled.package,
     assembled.document.resume,
@@ -682,6 +690,7 @@ async function checks(
   const setters = takenOut(inputs.intake, inputs.signatures, inputs.answer, inputs.rewrite);
   let decisions: Required<Decisions> = {
     dropped: [...(start.dropped ?? [])],
+    placement: start.placement ?? "class",
     controls: [...(start.controls ?? [])],
     instances: { ...(start.instances ?? {}) },
     slots: { ...(start.slots ?? {}) },
@@ -717,13 +726,35 @@ async function checks(
     outcome = "partial";
     differs = { kind: drift.kind, text: drift.text };
   }
+  // A XeTeX package's fonts are declared by file, as item 8's rewrite gives them, where the
+  // original found them by name: the two compare as the rewrite's own check compares them (decision
+  // 0023), a native font by its file and a colour special wherever it stands, since it sets nothing
+  // on the page. The package's own compiles, all from its format, compare exactly.
+  const across = inputs.rewrite === undefined ? (stream: GlyphStream) => stream : normalized;
   const keeps = (compiled: { broke: boolean; stream?: GlyphStream }) =>
     !compiled.broke &&
     compiled.stream !== undefined &&
-    difference(liked.stream, compiled.stream) === undefined;
+    difference(across(liked.stream), across(compiled.stream)) === undefined;
 
   // 1. The rewrite keeps the page: each redefinition and each control that moves it dropped.
   let target = await original(assembled);
+  // The redefinitions go after the class, and where a compile after it stops, as it does for a
+  // macro a package or the preamble defines, at the preamble's end instead (decision 0024).
+  if (
+    target.broke &&
+    decisions.placement === "class" &&
+    assembled.checks.redefinitions.applied.length > 0
+  ) {
+    const moved = await assembleWith({ ...decisions, placement: "preamble" });
+    if (!("refused" in moved)) {
+      const again = await original(moved);
+      if (!again.broke) {
+        decisions = { ...decisions, placement: "preamble" };
+        assembled = moved;
+        target = again;
+      }
+    }
+  }
   if (!keeps(target)) {
     const applied = assembled.checks.redefinitions.applied;
     const offered = assembled.checks.controls.offered.filter(
@@ -762,7 +793,9 @@ async function checks(
     if (!keeps(target)) {
       outcome = "partial";
       const found =
-        target.stream === undefined ? undefined : difference(liked.stream, target.stream);
+        target.stream === undefined
+          ? undefined
+          : difference(across(liked.stream), across(target.stream));
       differs ??=
         found === undefined
           ? { kind: "stopped", text: "the original body stopped" }

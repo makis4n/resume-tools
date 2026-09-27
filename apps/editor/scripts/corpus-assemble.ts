@@ -18,6 +18,7 @@
 
 // Node runs this file by stripping its types, so it imports values only from files that import
 // nothing Node lacks, and the editor's modules as types alone, with their real extensions.
+import { type AnswerCache, answerFor, type StoredAnswer } from "@resume-tools/naming";
 import type { AssemblyChecks, LockReason } from "../src/import/assemble.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 
@@ -86,9 +87,13 @@ export interface AssembleRow {
   font?: string;
   /** For a partial one, the kind of the first check's first difference. */
   difference?: string;
-  /** The body's template macros with an answer, and without. */
+  /**
+   * The body's template macros with an answer, and without; and of those without, how many the
+   * cache holds an answer for that does not fit the document's macro (`answerFor`'s refusal).
+   */
   answered?: number;
   unanswered?: number;
+  answersRefused?: number;
   fields?: {
     editable: number;
     raw: number;
@@ -98,7 +103,7 @@ export interface AssembleRow {
   words?: { editable: number; locked: Partial<Record<LockReason, number>> };
   sections?: { mapped: number; locked: number };
   controls?: { proven: string[]; dropped: string[] };
-  redefinitions?: { applied: string[]; dropped: string[] };
+  redefinitions?: { applied: string[]; dropped: string[]; placement?: "class" | "preamble" };
   /** The harness's findings, by check. */
   findings?: Partial<Record<string, number>>;
   /** The repeatable kinds whose unit added or removed stopped the compile. */
@@ -118,7 +123,7 @@ export type AssembleChildRow = Omit<AssembleRow, "id" | "family" | "wall">;
 export function assembleRow(
   checks: AssemblyChecks,
   engine: "pdftex" | "xetex",
-  answered: { answered: number; unanswered: number },
+  answered: { answered: number; unanswered: number; answersRefused?: number },
 ): AssembleChildRow {
   const findings: Partial<Record<string, number>> = {};
   for (const finding of checks.findings)
@@ -264,6 +269,10 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
     count("Timed out or died", (row) => row.outcome === "timeout" || row.outcome === "crashed"),
     sum("Template macros with an answer", (row) => row.answered ?? 0),
     sum("Template macros with none", (row) => row.unanswered ?? 0),
+    sum(
+      "Template macros with none: the answer held is another kind's, or its partner is not theirs",
+      (row) => row.answersRefused ?? 0,
+    ),
     section("Fields"),
     sum("Editable", (row) => row.fields?.editable ?? 0),
     sum("Raw: set, and edited in the panel alone", (row) => row.fields?.raw ?? 0),
@@ -286,16 +295,26 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
     ...CONTROLS.map((name) =>
       count(`\`${name}\` dropped`, (row) => (row.controls?.dropped ?? []).includes(name)),
     ),
-    ...(redefinitions.length === 0
-      ? []
-      : [
-          section("Redefinitions dropped, documents"),
-          ...redefinitions.map((name) =>
-            count(`\`${name}\``, (row) =>
-              (row.redefinitions?.dropped ?? []).some((each) => shownName(each) === name),
-            ),
-          ),
-        ]),
+    section("Redefinitions, documents"),
+    count(
+      "Applied after `\\documentclass`",
+      (row) =>
+        done(row) &&
+        (row.redefinitions?.applied.length ?? 0) > 0 &&
+        row.redefinitions?.placement !== "preamble",
+    ),
+    count(
+      "Applied before `\\begin{document}`: a compile after the class stopped",
+      (row) =>
+        done(row) &&
+        (row.redefinitions?.applied.length ?? 0) > 0 &&
+        row.redefinitions?.placement === "preamble",
+    ),
+    ...redefinitions.map((name) =>
+      count(`Dropped: \`${name}\``, (row) =>
+        (row.redefinitions?.dropped ?? []).some((each) => shownName(each) === name),
+      ),
+    ),
     section("The harness's findings, documents"),
     ...CHECKS.map((check) => count(`\`${check}\``, (row) => (row.findings?.[check] ?? 0) > 0)),
     count("No finding", (row) => done(row) && Object.keys(row.findings ?? {}).length === 0),
@@ -312,33 +331,50 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
 
 // The answers.
 
-/** A stored answer's fields the runner reads: which macro it answers. */
-interface Stored {
+/** A request's macro as the runner asks the cache for it. */
+interface Asked {
   of: "command" | "environment";
   name: string;
+  key?: string;
+  calls: number;
 }
 
 /**
- * The answers the committed folder holds for a request's macros, by key; and how many of the
- * body's macros have one and how many have none. `read` gives a key's file's text.
+ * The answers a cache holds for a request's macros (decision 0024), each asked for by its key as
+ * the document's macro (`answerFor`), so that an answer comes named as the document names the
+ * macro, and its list's partners are the request's commands, found by their keys; an answer the
+ * cache holds but refuses for the macro, another kind's or naming a partner the request has no
+ * macro of, is no answer, and the macro stays as the probe left it. And how many of the body's
+ * macros have one, how many have none, and of those how many the cache refused.
  */
-export function answersFor<T extends Stored>(
-  macros: readonly { key?: string; calls: number }[],
-  read: (key: string) => string | undefined,
-  parse: (text: string) => T | undefined,
-): { found: T[]; answered: number; unanswered: number } {
-  const found: T[] = [];
+export async function answersFor(
+  macros: readonly Asked[],
+  cache: AnswerCache,
+): Promise<{ found: StoredAnswer[]; answered: number; unanswered: number; refused: number }> {
+  const partners = new Map(
+    macros.flatMap((macro) =>
+      macro.of === "command" && macro.key !== undefined ? [[macro.name, macro.key] as const] : [],
+    ),
+  );
+  const found: StoredAnswer[] = [];
   let answered = 0;
   let unanswered = 0;
+  let refused = 0;
   for (const macro of macros) {
-    const text = macro.key === undefined ? undefined : read(macro.key);
-    const stored = text === undefined ? undefined : parse(text);
+    const given =
+      macro.key === undefined
+        ? undefined
+        : await answerFor(cache, macro.key, { name: macro.name, of: macro.of, partners });
+    const stored = given === undefined || "reason" in given ? undefined : given;
     if (stored !== undefined) found.push(stored);
     if (macro.key === undefined || macro.calls === 0) continue;
-    if (stored === undefined) unanswered++;
-    else answered++;
+    if (stored !== undefined) answered++;
+    else {
+      unanswered++;
+      if (given !== undefined) refused++;
+    }
   }
-  return { found, answered, unanswered };
+  return { found, answered, unanswered, refused };
 }
 
 // The model's places, for the oracle's comparison with the ports.

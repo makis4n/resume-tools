@@ -21,6 +21,7 @@ import {
 import { bound, fastestAsync } from "../test/timing";
 import {
   type Assembled,
+  answersOf,
   assemble,
   type Decisions,
   hyperrefLines,
@@ -429,6 +430,74 @@ describe("the document", () => {
     const without = ok((await assembled({ answers, decisions: { dropped: ["cvitem"] } })).result);
     expect(without.package.preamble).not.toContain("\\renewcommand{\\cvitem}");
     expect(without.package.id).not.toBe(withIt.package.id);
+    // Where a compile after the class stops, the checks put them at the preamble's end instead,
+    // right before `\begin{document}` (decision 0024).
+    const late = ok((await assembled({ answers, decisions: { placement: "preamble" } })).result);
+    expect(late.package.preamble).toContain(
+      "\\usepackage[margin=0.5in]{geometry}\n\\renewcommand{\\cvitem}[1]{#1}\n",
+    );
+    expect(late.package.preamble).not.toContain("{inventedcv}\n\\renewcommand");
+    expect(late.checks.redefinitions).toEqual({
+      applied: ["cvitem"],
+      dropped: [],
+      placement: "preamble",
+    });
+  });
+
+  test("reads a name given whole as the first name and the last, where its answer's parts say so", async () => {
+    // AltaCV's `\name` as the seed answers it: one argument, the first name and the last a space
+    // apart (decision 0024).
+    const answers: AnswerRow[] = ANSWERS.map(
+      ([of, name, answer]): AnswerRow =>
+        name === "cvname"
+          ? [
+              of,
+              name,
+              {
+                ...answer,
+                arguments: [
+                  {
+                    index: 1,
+                    meaning: "title",
+                    parts: [
+                      { meaning: "title", slot: "first" },
+                      { meaning: "title", slot: "last" },
+                    ],
+                  },
+                ],
+              },
+            ]
+          : [of, name, answer],
+    );
+    const result = ok((await assembled({ answers })).result);
+    expect(result.document.resume.header.name).toEqual({ first: "Quill", last: "Invented" });
+    expect(result.package.snippets.header).toContain("{{first}}{{#last}} {{last}}{{/last}}");
+    const names = result.checks.all.filter((field) => field.slot === "command|cvname|1");
+    expect(names.map((field) => field.field)).toEqual(["header.first", "header.last"]);
+    // The same as the answer that names the first name alone, which the split fills the last of.
+    const plain = ok((await assembled()).result);
+    expect(result.document).toEqual(plain.document);
+    expect(result.package.snippets.header).toBe(plain.package.snippets.header);
+  });
+
+  test("takes a closer's kind from its opener's, whatever kind its own answer gives", async () => {
+    const answers: AnswerRow[] = ANSWERS.map(
+      ([of, name, answer]): AnswerRow =>
+        name === "cvitemsEnd" ? [of, name, { ...answer, kind: "layout" }] : [of, name, answer],
+    );
+    expect(answersOf(answerOf(answers)).get("command|cvitemsEnd")?.kind).toBe("bulletList");
+    // A closer whose own answer says nothing of the list is its opener's too, by the opener's word.
+    const unlisted = answers.map(
+      ([of, name, answer]): AnswerRow =>
+        name === "cvitemsEnd"
+          ? [of, name, { kind: "layout", arguments: [], repeatable: false }]
+          : [of, name, answer],
+    );
+    expect(answersOf(answerOf(unlisted)).get("command|cvitemsEnd")?.kind).toBe("bulletList");
+    const result = ok((await assembled({ answers })).result);
+    const plain = ok((await assembled()).result);
+    expect(result.document).toEqual(plain.document);
+    expect(result.package).toEqual(plain.package);
   });
 
   test("locks a standard list's labels with its items, under the list's name", async () => {

@@ -1,3 +1,4 @@
+import { NAMING_VERSION } from "@resume-tools/naming";
 import { describe, expect, test } from "vitest";
 import type { AssemblyChecks } from "../src/import/assemble";
 import {
@@ -44,6 +45,10 @@ describe("the table", () => {
       words: { editable: 20, locked: { misaligned: 20 } },
       findings: { dump: 1 },
       unrepeatable: ["link"],
+      answered: 5,
+      unanswered: 1,
+      answersRefused: 1,
+      redefinitions: { applied: ["cvsection"], dropped: [], placement: "preamble" },
       compiles: 30,
       validateMs: 50_000,
     }),
@@ -80,7 +85,16 @@ describe("the table", () => {
     expect(cells("Parts locked: `unmapped`")?.at(-1)).toBe("3");
     expect(cells("Words in editable fields")?.at(-1)).toBe("57%");
     expect(cells("`margins` dropped")?.at(-1)).toBe("1");
-    expect(cells("`\\cvevent`")?.at(-1)).toBe("1");
+    expect(cells("Dropped: `\\cvevent`")?.at(-1)).toBe("1");
+    expect(cells("Applied after `\\documentclass`")?.at(-1)).toBe("0");
+    expect(
+      cells("Applied before `\\begin{document}`: a compile after the class stopped")?.at(-1),
+    ).toBe("1");
+    expect(
+      cells(
+        "Template macros with none: the answer held is another kind's, or its partner is not theirs",
+      )?.at(-1),
+    ).toBe("1");
     expect(cells("`dump`")?.at(-1)).toBe("1");
     expect(cells("A repeatable unit stops the compile")?.at(-1)).toBe("1");
     expect(cells("Assembly and checks, slowest")?.at(-1)).toBe("50000 ms");
@@ -93,21 +107,84 @@ describe("the table", () => {
 });
 
 describe("the answers", () => {
-  test("are found by key, and the body's macros counted with an answer and without", () => {
-    const store: Record<string, string> = { a: "one", b: "not an answer" };
-    const found = answersFor(
+  /** An invented key of 64 hex digits. */
+  const key = (n: number) => n.toString(16).padStart(64, "0");
+  /** An invented model's stored answer, filed under `at`. */
+  const stored = (at: string, of: "command" | "environment", name: string, answer: object) =>
+    JSON.stringify({
+      version: NAMING_VERSION,
+      key: at,
+      hash: key(99),
+      of,
+      name,
+      answer: { arguments: [], repeatable: false, ...answer },
+      reviewed: false,
+      source: "model:invented",
+    });
+
+  test("are found by key as the document's macros, and the body's macros counted", async () => {
+    const store: Record<string, string> = {
+      [key(1)]: stored(key(1), "command", "inventedentry", {
+        kind: "entry",
+        arguments: [{ index: 1, meaning: "title", slot: "title" }],
+        repeatable: true,
+      }),
+      [key(2)]: "not an answer",
+      // Filed for an environment, asked for by a command.
+      [key(3)]: stored(key(3), "environment", "inventedbox", { kind: "layout" }),
+      // A list's opener and closer, each naming the other by its key.
+      [key(4)]: JSON.stringify({
+        ...JSON.parse(
+          stored(key(4), "command", "inventedStart", {
+            kind: "bulletList",
+            list: { does: "opens", closedBy: "inventedEnd", holds: "bullet" },
+          }),
+        ),
+        partnerKeys: { closedBy: key(5) },
+      }),
+      [key(5)]: JSON.stringify({
+        ...JSON.parse(
+          stored(key(5), "command", "inventedEnd", {
+            kind: "bulletList",
+            list: { does: "closes", openedBy: "inventedStart" },
+          }),
+        ),
+        partnerKeys: { openedBy: key(4) },
+      }),
+    };
+    const cache = { get: (asked: string) => store[asked] };
+    const found = await answersFor(
       [
-        { key: "a", calls: 2 },
-        { key: "b", calls: 1 },
-        { key: "c", calls: 3 },
-        { calls: 1 },
-        { key: "d", calls: 0 },
+        // A fork's own names for the macros the answers were filed under.
+        { of: "command", name: "forkentry", key: key(1), calls: 2 },
+        { of: "command", name: "broken", key: key(2), calls: 1 },
+        { of: "command", name: "unknown", key: key(9), calls: 3 },
+        { of: "command", name: "data", calls: 1 },
+        { of: "command", name: "unused", key: key(1), calls: 0 },
+        { of: "command", name: "box", key: key(3), calls: 1 },
+        { of: "command", name: "forkStart", key: key(4), calls: 1 },
+        { of: "command", name: "forkEnd", key: key(5), calls: 1 },
       ],
-      (key) => store[key],
-      (text) => (text === "one" ? { of: "command" as const, name: "inventedentry" } : undefined),
+      cache,
     );
-    expect(found.found).toEqual([{ of: "command", name: "inventedentry" }]);
-    expect(found).toMatchObject({ answered: 1, unanswered: 2 });
+    // Each answer named as the document names its macro, the list's partners as it names them.
+    expect(found.found.map((each) => [each.of, each.name])).toEqual([
+      ["command", "forkentry"],
+      ["command", "unused"],
+      ["command", "forkStart"],
+      ["command", "forkEnd"],
+    ]);
+    expect(found.found[2]?.answer.list).toMatchObject({ closedBy: "forkEnd" });
+    expect(found.found[3]?.answer.list).toMatchObject({ openedBy: "forkStart" });
+    // An environment's answer asked for by a command is refused: that macro has no answer.
+    expect(found).toMatchObject({ answered: 3, unanswered: 3, refused: 1 });
+
+    // An opener whose closer the document has not, by key, is refused for its partner.
+    const alone = await answersFor(
+      [{ of: "command", name: "forkStart", key: key(4), calls: 1 }],
+      cache,
+    );
+    expect(alone).toMatchObject({ found: [], answered: 0, unanswered: 1, refused: 1 });
   });
 });
 
@@ -203,7 +280,7 @@ describe("a validation's row", () => {
         proven: ["pageSize"],
         dropped: [{ control: "margins", why: "sets the same page at every value" }],
       },
-      redefinitions: { applied: [], dropped: [] },
+      redefinitions: { applied: [], dropped: [], placement: "class" },
       repeatable: [
         { kind: "entry", added: true, removed: true },
         { kind: "link", added: false, removed: true },

@@ -38,6 +38,8 @@ import {
   validate,
   validateWith,
 } from "./validate";
+import type { XetexRewrite } from "./xetex";
+import { rewriteForXetex } from "./xetex";
 
 // Every document here is invented for these tests (`../test/invented-import.ts`), and compiled by
 // a fake that sets a body's text as glyphs in a row, as far as the checks need a page.
@@ -54,6 +56,13 @@ interface Behaviour {
   stopsOn?: RegExp;
   /** Preamble text that moves every glyph, as a redefinition that changes the page does. */
   shiftsOn?: RegExp;
+  /**
+   * Preamble text that stops every compile, as a redefinition of a macro a package or the
+   * preamble defines does right after the class, where the macro is not defined yet.
+   */
+  stopsOnPreamble?: RegExp;
+  /** A colour special the fake sets first on the page, this far down it, in scaled points. */
+  colour?: number;
   /** A reference page of the original's other than the one the fake sets. */
   like?: GlyphStream;
 }
@@ -149,6 +158,7 @@ function fakePage(
   fontSize: number,
 ): { broke: boolean; stream?: GlyphStream } {
   if (behaviour.stopsOn?.test(latex)) return { broke: true };
+  if (pkg !== undefined && behaviour.stopsOnPreamble?.test(pkg.preamble)) return { broke: true };
   for (const found of latex.matchAll(/\\rtfield\{([^}]*)\}/g)) {
     const at = (found.index ?? 0) + found[0].length;
     const content = latex.slice(at + 1, groupEnd(latex, at) - 1);
@@ -171,6 +181,8 @@ function fakePage(
   const items = glyphsOf(body, shift, behaviour.moves ?? new Set()).map((item) =>
     item.kind === "glyph" ? { ...item, size: size * SP } : item,
   );
+  if (behaviour.colour !== undefined)
+    items.unshift({ kind: "special", h: 0, v: behaviour.colour, text: "color push gray 0.5" });
   const a4 = !blind.has("pageSize") && /\\geometry\{a4paper\}/.test(before);
   return {
     broke: false,
@@ -339,6 +351,35 @@ describe("the checks", () => {
     expect(pkg.controls.fontSize).toBeDefined();
   });
 
+  test("put the redefinitions at the preamble's end where a compile after the class stops", async () => {
+    const answers: AnswerRow[] = ANSWERS.map(
+      ([of, name, answer]): AnswerRow =>
+        name === "cvitem"
+          ? [
+              of,
+              name,
+              {
+                ...answer,
+                reviewed: true,
+                redefinitions: [{ name: "cvitem", latex: "\\renewcommand{\\cvitem}[1]{#1}" }],
+              },
+            ]
+          : [of, name, answer],
+    );
+    const { result } = await validated(
+      { ...JAKE_LIKE, answers },
+      { stopsOnPreamble: /\{inventedcv\}\n\\renewcommand/ },
+    );
+    const late = ok(result);
+    expect(late.checks.outcome).toBe("assembled");
+    expect(late.checks.redefinitions).toEqual({
+      applied: ["cvitem"],
+      dropped: [],
+      placement: "preamble",
+    });
+    expect(late.package.preamble).toContain("{geometry}\n\\renewcommand{\\cvitem}[1]{#1}\n");
+  });
+
   test("drop a redefinition that moves the original's page", async () => {
     const answers: AnswerRow[] = ANSWERS.map(
       ([of, name, answer]): AnswerRow =>
@@ -356,11 +397,19 @@ describe("the checks", () => {
     );
     const invented = { ...JAKE_LIKE, answers };
     const kept = ok((await validated(invented)).result);
-    expect(kept.checks.redefinitions).toEqual({ applied: ["cvitem"], dropped: [] });
+    expect(kept.checks.redefinitions).toEqual({
+      applied: ["cvitem"],
+      dropped: [],
+      placement: "class",
+    });
     const { result } = await validated(invented, { shiftsOn: /\\renewcommand\{\\cvitem\}/ });
     const dropped = ok(result);
     expect(dropped.checks.outcome).toBe("assembled");
-    expect(dropped.checks.redefinitions).toEqual({ applied: [], dropped: ["cvitem"] });
+    expect(dropped.checks.redefinitions).toEqual({
+      applied: [],
+      dropped: ["cvitem"],
+      placement: "class",
+    });
     expect(dropped.package.preamble).not.toContain("\\renewcommand{\\cvitem}");
   });
 
@@ -384,6 +433,42 @@ describe("the checks", () => {
     expect(result.checks.difference?.kind).toBe("count");
     // The document still sets what the original body sets, and nothing is locked for it.
     expect(result.checks.all.some((field) => field.reason === "differs")).toBe(false);
+  });
+
+  test("compare a XeTeX import's fonts by file with the original's as item 8's check does", async () => {
+    // A colour special the package's format sets 20 sp from where the original set it, as a
+    // font by file and by name can, which sets nothing on the page (decision 0023).
+    const inputs = inputsOf(JAKE_LIKE);
+    const setters = takenOut(inputs.intake, inputs.signatures, inputs.answer);
+    const original = `${setters.join("\n")}\n\\begin{document}${inputs.tree.source}\\end{document}\n`;
+    const liked = await new Fake(original, 11, { colour: 0 }).latex(
+      await plain(JAKE_LIKE).then((each) => each.package),
+      {},
+      original,
+    );
+    if (liked.stream === undefined) throw new Error("no stream");
+    const reference: Reference = { ...REFERENCE, ...liked.stream };
+    const rewrite: XetexRewrite = {
+      preamble: PREAMBLE,
+      body: inputs.tree.source,
+      files: {},
+      fonts: [],
+      warnings: [],
+      mathFonts: [],
+      deferred: [],
+      features: {},
+    };
+    const behaviour = { like: liked.stream, colour: 20 };
+    const rewritten = ok(
+      await validateWith({ ...inputs, reference, rewrite }, new Fake(original, 11, behaviour)),
+    );
+    expect(rewritten.checks.outcome).toBe("assembled");
+    // Without the rewrite, the fonts are the original's, and the special's place counts.
+    const exact = ok(
+      await validateWith({ ...inputs, reference }, new Fake(original, 11, behaviour)),
+    );
+    expect(exact.checks.outcome).toBe("partial");
+    expect(exact.checks.difference?.kind).toBe("position");
   });
 
   test("lock a field the harness finds unmarked, once, and keep its other findings", async () => {
@@ -430,7 +515,7 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     const manifest = JSON.parse(
       readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
     ) as EngineManifest;
-    tree = readTree(manifest.files);
+    tree = readTree(manifest.files, manifest.fonts);
     fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
       readFileSync(join(ENGINE_DIR, "files", path)),
     );
@@ -529,26 +614,33 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     expect(checks.compiles).toBeGreaterThan(10);
   }, 60_000);
 
-  test("assembles an invented XeTeX import, compiled whole", async () => {
-    // With no size option and no geometry, the one control is the page's size: every compile is
-    // a whole one until item 8.
+  test("assembles an invented XeTeX import from its fonts declared by file", async () => {
+    // With no size option and no geometry, the one control is the page's size. The probe compiles
+    // a XeTeX document whole; the package's format holds its fonts by file, as item 8's rewrite
+    // declares them, so that the checks and the harness compile from it (decision 0023).
     const source = SOURCE.replace("[11pt,letterpaper]", "[letterpaper]").replace(
       "\\usepackage[margin=0.5in]{geometry}\n",
       "\\usepackage{fontspec}\n",
     );
-    const { result, probed } = await validatedOnEngine(source);
+    const zipped = { "cv.tex": strToU8(source), "inventedcv.cls": strToU8(CLASS) };
+    const taken = intake({ name: "invented.zip", bytes: zipSync(zipped) }, { tree });
+    if (isRefusal(taken)) throw new Error(`refused at intake: ${taken.message}`);
+    const rewrite = rewriteForXetex(taken as Intake, tree);
+    if (isRefusal(rewrite)) throw new Error(`the rewrite refused: ${rewrite.message}`);
+    const { result, probed } = await validatedOnEngine(source, ANSWERS, { rewrite });
     expect(probed.engine).toBe("xetex");
     expect(probed.path).toBe("whole");
     const { checks, package: pkg } = ok(result);
     expect(pkg.engine).toBe("xetex");
+    // fontspec gone, and the rewrite's style files in its place, which the format loads.
+    expect(pkg.preamble).not.toContain("{fontspec}");
+    expect(Object.keys(pkg.files)).toEqual(
+      expect.arrayContaining(["rt-fontspec.sty", "rt-preamble.sty"]),
+    );
     expect(checks.outcome).toBe("assembled");
     expect(checks.decisions.slots).toMatchObject({ "command|cvitem|1": "text" });
     expect(checks.required).toContain("command|cventry|1");
-    // TODO(merge): item 8's rewrite declares a XeTeX import's fonts by file, so that its format
-    // dumps; until then the harness's dump check fails on one that loads fontspec, and the checks
-    // compile it whole.
-    expect(checks.findings).toEqual([
-      { check: "dump", message: expect.stringContaining("native fonts") },
-    ]);
+    // Its format dumps, so the harness finds nothing.
+    expect(checks.findings).toEqual([]);
   }, 60_000);
 });
