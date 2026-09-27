@@ -5,11 +5,14 @@
  * the page. It gives back the service's reply, checked against its schema (`NamingReply`), or throws
  * a `NamingServiceError` whose message says in plain English what went wrong, from the status
  * alone: a person reads it, so it never quotes the reply, and never holds LaTeX. Item 12's import
- * screen calls it.
+ * screen calls it. A request names a macro named after a word of the person's by a placeholder
+ * (decision 0029), and the map back to the document's names, which never leaves the browser, reads
+ * the reply's names back (`withRealNames`), since item 7 assembles by name.
  */
 
 import type { NamingRequest } from "@resume-tools/naming";
 import { NamingReply } from "../service/reply";
+import { realName } from "./naming";
 
 /** The route the service answers, relative to the page. */
 export const NAMING_ROUTE = "/v1/name";
@@ -68,15 +71,49 @@ function retryAfterOf(response: Response): number | undefined {
 }
 
 /**
+ * A reply with the names its request masked read back as the document names its macros, through
+ * the builder's map (`BuiltRequest.names`): each macro's answer and the partners its list names, and
+ * each macro left with no answer. Any other name is as the reply gives it.
+ */
+export function withRealNames(reply: NamingReply, names: ReadonlyMap<string, string>): NamingReply {
+  if (names.size === 0) return reply;
+  const real = (name: string) => realName(names, name);
+  return {
+    ...reply,
+    macros: reply.macros.map((each) => {
+      const list = each.answer.list;
+      return {
+        ...each,
+        name: real(each.name),
+        answer:
+          list === undefined
+            ? each.answer
+            : {
+                ...each.answer,
+                list: {
+                  ...list,
+                  ...(list.closedBy === undefined ? {} : { closedBy: real(list.closedBy) }),
+                  ...(list.openedBy === undefined ? {} : { openedBy: real(list.openedBy) }),
+                },
+              },
+      };
+    }),
+    missing: reply.missing.map((each) => ({ ...each, name: real(each.name) })),
+  };
+}
+
+/**
  * The naming service's reply to a request: posted to `/v1/name` as JSON, and checked against
- * `NamingReply`. Throws a `NamingServiceError` when no reply comes, the reply is not a 200, or it
- * cannot be read; an abort through `signal` is thrown as it comes, so that a cancel is not taken for
- * a failure.
+ * `NamingReply`, its names read back through `names`, the builder's map, when given
+ * (`withRealNames`). Throws a `NamingServiceError` when no reply comes, the reply is not a 200, or
+ * it cannot be read; an abort through `signal` is thrown as it comes, so that a cancel is not taken
+ * for a failure.
  */
 export async function nameOnService(
   request: NamingRequest,
   fetchLike: FetchLike = (input, init) => fetch(input, init),
   signal?: AbortSignal,
+  names?: ReadonlyMap<string, string>,
 ): Promise<NamingReply> {
   let response: Response;
   try {
@@ -108,5 +145,5 @@ export async function nameOnService(
   const parsed = NamingReply.safeParse(reply);
   if (!parsed.success)
     throw new NamingServiceError(response.status, "The naming service's answer could not be read.");
-  return parsed.data;
+  return names === undefined ? parsed.data : withRealNames(parsed.data, names);
 }

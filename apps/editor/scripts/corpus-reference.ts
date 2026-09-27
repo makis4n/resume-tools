@@ -22,7 +22,11 @@
  */
 
 import { type ChildProcess, fork } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
+import { fileKey } from "../src/import/fonts.ts";
 import type { Intake, StandIn } from "../src/import/intake.ts";
 import type { Reference } from "../src/import/reference.ts";
 import { REFUSAL_REASONS, type Refusal, type RefusalReason } from "../src/import/refusal.ts";
@@ -181,6 +185,33 @@ export function uploadOf(
   return zipSync(files);
 }
 
+/** The engine's tree, whose files the runners put in a zip for the fonts a document names. */
+const ENGINE_FILES = fileURLToPath(new URL("../.engine/files", import.meta.url));
+
+/**
+ * The tree's font files by name, without the extension, in lower case: OpenType and TrueType for
+ * a font the manifest names as either, and Type 1 for one it names as `.pfb`; `files` is the
+ * engine's manifest's file list, and a file is read from the engine's tree when it is asked for,
+ * as `uploadOf` asks.
+ */
+export function treeFonts(files: Readonly<Record<string, number>>) {
+  const found = new Map<string, string>();
+  for (const path of Object.keys(files)) {
+    const kind = /\/fonts\/(?:opentype|truetype)\/.*\.(?:otf|ttf)$/i.test(path)
+      ? "outline"
+      : /\/fonts\/type1\/.*\.pfb$/i.test(path)
+        ? "pfb"
+        : undefined;
+    const key = kind && `${kind}:${fileKey(path)}`;
+    if (key && !found.has(key)) found.set(key, path);
+  }
+  return (name: string) => {
+    const kind = /\.pfb$/i.test(name) ? "pfb" : "outline";
+    const path = found.get(`${kind}:${fileKey(name)}`);
+    return path === undefined ? undefined : new Uint8Array(readFileSync(join(ENGINE_FILES, path)));
+  };
+}
+
 // The pool.
 
 /**
@@ -308,14 +339,20 @@ const REASON_LABELS: Readonly<Record<RefusalReason, string>> = {
   intake: "Refused at intake",
   feature: "Refused: a font feature this editor cannot reproduce",
   difference: "Refused: fonts that come out otherwise",
+  unreadable: "Refused: a page set in fonts the page cannot read",
 };
 
 /**
  * The reasons a reference compile can give, which the table has a row each for: not the parser's,
- * which come after the reference, nor the font rewrite's (decision 0023).
+ * which come after the reference, nor the font rewrite's (decision 0023), nor the naming request
+ * builder's (decision 0029).
  */
 const REFERENCE_REASONS = REFUSAL_REASONS.filter(
-  (reason) => reason !== "parse" && reason !== "feature" && reason !== "difference",
+  (reason) =>
+    reason !== "parse" &&
+    reason !== "feature" &&
+    reason !== "difference" &&
+    reason !== "unreadable",
 );
 
 /** The median of numbers, or undefined for none. */

@@ -9,15 +9,15 @@
  * counted missing, and nothing is asked.
  *
  * Nothing is asked of a request that fails the privacy gate: `assertNoText` against its document,
- * which refuses it when it holds any text the builder knows as the document's, the body's tree and
- * the texts the preamble stores, and the header's values once items 7 and 11 pass them, which
- * catches a fault of the masking, not a text that only a definition holds, as a name a preamble's
- * own macro spells out (item 11 adds the reference page's own text to what the check looks for);
- * and `checkRequest`, which refuses it when its keys do not hold, so that no answer is filed under
- * another template's key. Until item 11's corpus-wide leak test lands, a real call happens only
- * behind the flag, never in CI, and never for a request the gate refuses. The model's answers are
- * filed as each part of the request validates (`storedAnswersOf`), one a key, under each macro's
- * key, unreviewed, with the model's id as their source.
+ * which refuses it when it holds any text the builder knows as the document's, the body's tree,
+ * the texts the preamble stores and the page's strings (decision 0029), and the header's values
+ * once item 7 passes them, so that a name a preamble's own macro spells out is found where the page
+ * shows it (`gatedRequest`); and `checkRequest`, which refuses it when its keys do not hold, so that
+ * no answer is filed under another template's key. A page the detector cannot read refuses the
+ * request before it is built. A real call happens only behind the flag, never in CI, and never for
+ * a request the gate refuses. The model's answers are filed as each part of the request validates
+ * (`storedAnswersOf`), one a key, under each macro's key, unreviewed, with the model's id as their
+ * source.
  *
  * What is printed and written names macros and counts, never a request's text nor a document's:
  * a macro's name only when it is plainly one, the gate's and the step's reasons, which name where
@@ -46,7 +46,12 @@ import {
   narrow,
 } from "@resume-tools/naming/model";
 import { DEFAULT_MODEL } from "@resume-tools/naming/providers";
-import type { GlyphStream } from "../src/import/reference.ts";
+import type { Intake } from "../src/import/intake.ts";
+import type { HeaderValues, PageFonts } from "../src/import/naming.ts";
+import type { Tree } from "../src/import/parse.ts";
+import type { Probe } from "../src/import/probe.ts";
+import type { Reference } from "../src/import/reference.ts";
+import type { EngineSignatures } from "../src/import/signatures.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 import { shownMacro } from "./corpus-parse.ts";
 import { PROBE_LIMIT_MS } from "./corpus-probe.ts";
@@ -332,77 +337,71 @@ export async function answerDocument(
   return answered;
 }
 
-/** A glyph's advance, as a share of its size, roughly, by its character (Computer Modern's). */
-function advanceOf(text: string): number {
-  if (/^[iljI.,:;'!|`]$/.test(text)) return 0.28;
-  if (/^[ftr()[\]]$/.test(text)) return 0.36;
-  if (/^[mw]$/.test(text)) return 0.78;
-  if (/^[MW]$/.test(text)) return 0.95;
-  if (/^[A-Z]$/.test(text)) return 0.72;
-  return 0.5;
-}
-
-/** How far past a glyph's advance, as a share of its size, the next glyph starts a new word. */
-const WORD_GAP = 0.12;
-
-/** How many letters a text holds. */
-const letters = (text: string) => (text.match(/\p{L}/gu) ?? []).length;
+/** The naming module's functions a document's request is built and gated with. */
+type Naming = Pick<
+  typeof import("../src/import/naming.ts"),
+  "assertNoText" | "buildRequest" | "pageStrings" | "sourcesOf"
+>;
 
 /**
- * The reference page's words, as the privacy gate's hook takes them (`page`, decision 0027): each
- * word of three letters or more, and each two words of a line together, in the order the page
- * sets them, each once. A glyph stream carries no widths, so a word ends where the next glyph
- * starts further on than the glyph's advance, as Computer Modern's roughly are, a space's worth
- * more, or on another line, or at anything but a letter, a digit or a mark: an approximation, which
- * errs toward splitting a word, whose pieces the gate finds anyway, since it reads letters across
- * spaces. `assertNoText` does not read them yet; item 11 makes them its needles for the document's
- * own definitions.
+ * What a document's request is built from, as the runner's child takes it through the pipeline,
+ * and the header's values once item 7 finds them.
  */
-export function pageWords(stream: Pick<GlyphStream, "pages">): string[] {
-  const lines: string[][] = [];
-  for (const page of stream.pages) {
-    let line: string[] = [];
-    let word = "";
-    let last: { h: number; v: number; size: number; text: string } | undefined;
-    const endWord = () => {
-      if (word !== "") line.push(word);
-      word = "";
-    };
-    const endLine = () => {
-      endWord();
-      if (line.length > 0) lines.push(line);
-      line = [];
-    };
-    for (const item of page.items) {
-      if (item.kind !== "glyph" || item.text === undefined) continue;
-      if (last !== undefined) {
-        const sameLine = Math.abs(item.v - last.v) <= 0.3 * last.size && item.h >= last.h;
-        if (!sameLine) endLine();
-        else if (item.h - last.h > (advanceOf(last.text) + WORD_GAP) * last.size) endWord();
-      }
-      for (const char of item.text) {
-        if (/[\p{L}\p{N}\p{M}]/u.test(char)) word += char;
-        else endWord();
-      }
-      last = { h: item.h, v: item.v, size: item.size, text: item.text };
-    }
-    endLine();
-  }
-  const words = new Set<string>();
-  for (const line of lines)
-    line.forEach((word, i) => {
-      if (letters(word) >= 3) words.add(word);
-      const next = line[i + 1];
-      if (next !== undefined && letters(word) + letters(next) >= 3) words.add(`${word} ${next}`);
-    });
-  return [...words];
+export interface NamingInputs {
+  tree: Tree;
+  found: EngineSignatures;
+  probed: Pick<Probe, "macros" | "candidates">;
+  preamble: string;
+  taken: Intake;
+  made: Reference;
+  fonts: PageFonts;
+  header?: HeaderValues;
 }
 
-/** What became of a document in `corpus name`: its request answered, or why there is none. */
+/**
+ * A document's request as the runner builds it, and its privacy gate: built with the upload's
+ * sources and the page's strings, read with the upload's fonts first as the reference read them
+ * (`pageStrings`), as `corpus leak` builds it (decision 0029); and the gate, `assertNoText` fed the
+ * same, the body's tree and the texts the preamble stores, so that a name a macro of the preamble
+ * writes, which no body text names, is masked where the page shows it and refused where it is not.
+ * A page the detector cannot read refuses the request (`refused`, the builder's message).
+ */
+export async function gatedRequest(
+  naming: Naming,
+  inputs: NamingInputs,
+): Promise<
+  | { request: NamingRequest; names: ReadonlyMap<string, string>; gate: () => void }
+  | { refused: string }
+> {
+  const { tree, found, probed, preamble, taken, made, fonts } = inputs;
+  const sources = naming.sourcesOf(taken);
+  const page = await naming.pageStrings(made, fonts, taken.files);
+  const header = inputs.header === undefined ? {} : { header: inputs.header };
+  const built = await naming.buildRequest(tree, found, probed, preamble, {
+    sources,
+    page,
+    ...header,
+  });
+  if ("refused" in built) return { refused: built.message };
+  const document = {
+    tree,
+    stored: probed.candidates.filter((each) => each.where === "preamble").map((each) => each.text),
+    sources,
+    page,
+    names: built.names,
+    ...header,
+  };
+  return { ...built, gate: () => naming.assertNoText(built.request, document) };
+}
+
+/**
+ * What became of a document in `corpus name`: its request answered; refused, its page set in fonts
+ * the detector cannot read, the reason in `refused`; or why there is none.
+ */
 export interface NameRow extends Partial<Answered> {
   id: string;
   family: Family;
-  outcome: "requested" | "no reference" | "not parsed" | "crashed" | "timeout";
+  outcome: "requested" | "refused" | "no reference" | "not parsed" | "crashed" | "timeout";
   engine?: "pdftex" | "xetex";
 }
 
@@ -418,6 +417,8 @@ const named = (row: NameRow) =>
 
 /** A row as a line of progress: numbers, reasons and the names of macros, never text. */
 export function nameLine(row: NameRow): string {
+  if (row.outcome === "refused")
+    return `${row.engine ?? "unknown engine"}, refused: ${row.refused ?? "no reason"}`;
   if (row.outcome !== "requested") return row.outcome;
   const hits = (row.hits?.reviewed ?? 0) + (row.hits?.model ?? 0);
   const refusedCache = row.refusedCache ?? 0;
@@ -479,7 +480,10 @@ export function nameTable(rows: readonly NameRow[], model?: string): string {
     `|---|${COLUMNS.map(() => "--:").join("|")}|`,
     count("Documents", () => true),
     count("Requests built", requested),
-    count("Not built: no reference, not parsed, timed out or died", (row) => !requested(row)),
+    count(
+      "Not built: no reference, not parsed, a page the detector cannot read, timed out or died",
+      (row) => !requested(row),
+    ),
     count("Named: every macro and environment answered", named),
     sum("Macros and environments to answer", (row) => row.macros ?? 0),
     sum("Answered from the cache: reviewed", (row) => row.hits?.reviewed ?? 0),

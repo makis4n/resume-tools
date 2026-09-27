@@ -3,15 +3,16 @@
  * of its own, which take one oracle sample at a time, as a zip, through the intake, the reference
  * compile, the signatures' two compiles, asked of the body's commands, the preamble's and the
  * seed's extras for its family, the parse, the probe and the naming request, with the upload's
- * sources, built again with the header's values the sample's own calls give by their answers
- * (`headerOf`), as items 7 and 11 build it; and answer with the request's macros, their hashes,
- * keys and verdicts, and what each answer is filed under (`filingOf`), names and numbers only.
- * Where the answers under `corpus/answers/` for its macros carry redefinitions, it compiles the
- * body, with the calls to the macros they serve regenerated as item 7 writes them, with them and
- * without them, and the sample as it is with them, and says whether each sets the glyphs of the
- * other, and gives back the log of each of those compiles that stopped, which quotes the sample,
- * for the parent to keep under `.corpus/`. Redefinitions go after `\documentclass`, and where a
- * compile stops there, before `\begin{document}`.
+ * sources and the page's strings its reference sets (`pageStrings`), built again with the header's
+ * values the sample's own calls give by their answers (`headerOf`), as items 7 and 11 build it;
+ * and answer with the request's macros, their hashes, keys and verdicts, and what each answer is
+ * filed under (`filingOf`), names and numbers only. Where the answers under `corpus/answers/` for
+ * its macros carry redefinitions, it compiles the body, with the calls to the macros they serve
+ * regenerated as item 7 writes them, with them and without them, and the sample as it is with
+ * them, and says whether each sets the glyphs of the other, and gives back the log of each of
+ * those compiles that stopped, which quotes the sample, for the parent to keep under `.corpus/`.
+ * Redefinitions go after `\documentclass`, and where a compile stops there, before
+ * `\begin{document}`.
  *
  * The editor's modules are written for Vite, so this file, which Node runs as it is, loads them
  * through Vite's module runner with the app's own config, as `corpus-probe-child.ts` does, and
@@ -83,7 +84,7 @@ async function main() {
   const signaturesModule = await runner.import<SignaturesModule>("/src/import/signatures.ts");
   const { signatures } = signaturesModule;
   const { probe, probeUses } = await runner.import<ProbeModule>("/src/import/probe.ts");
-  const { buildRequest, sourcesOf, withRedefinitions } =
+  const { buildRequest, pageStrings, realName, sourcesOf, withRedefinitions } =
     await runner.import<NamingModule>("/src/import/naming.ts");
   const { regenerate } = await runner.import<PrintModule>("/src/import/print.ts");
 
@@ -133,20 +134,28 @@ async function main() {
       // are whole, as the reference's, so it goes now, as the probe runner's child drops it.
       if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
       // The upload's sources say which definitions are the sample's own, the class it ships among
-      // them, which alone the document's values mask.
+      // them, which alone the document's values mask; and the page's strings, read with the
+      // upload's fonts, mask them too.
       const options = {
         ...(extras === undefined ? {} : { also: extras }),
         sources: sourcesOf(taken),
+        page: await pageStrings(made, fonts, taken.files),
       };
       const answers = answersFolder().read;
       // The header's values, found by the answers the request without them finds, and the request
       // again with them, as items 7 and 11 build it.
       const plain = await buildRequest(built, found, probed, body.preamble, options);
-      const header = headerOf(probed.candidates, commandAnswers(plain, answers));
-      const request = await buildRequest(built, found, probed, body.preamble, {
+      if ("refused" in plain) throw new Error(plain.message);
+      const header = headerOf(
+        probed.candidates,
+        commandAnswers(plain.request, answers, (name) => realName(plain.names, name)),
+      );
+      const requested = await buildRequest(built, found, probed, body.preamble, {
         ...options,
         header,
       });
+      if ("refused" in requested) throw new Error(requested.message);
+      const request = requested.request;
       const { redefinitions, serving } = redefinitionsOf(request.macros, answers);
       let redefined: SeedRedefinitions | undefined;
       if (redefinitions.length > 0) {

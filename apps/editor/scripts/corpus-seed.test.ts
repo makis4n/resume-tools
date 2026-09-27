@@ -16,6 +16,9 @@ import { type Intake, intake } from "../src/import/intake";
 import {
   buildRequest,
   type HeaderValues,
+  type PageStrings,
+  pageReadable,
+  pageStrings,
   sourcesOf,
   withRedefinitions,
 } from "../src/import/naming";
@@ -32,8 +35,19 @@ import * as signaturesModule from "../src/import/signatures";
 import { FontLibrary } from "../src/page/fonts";
 import { TexLiveIndex } from "../src/page/texlive";
 import { MARKER_BEGIN, MARKER_END } from "../src/tex/fields";
+import { checkCorpus } from "./corpus-leak";
+import {
+  CORPUS_DIR,
+  FETCH_REPORT_FILE,
+  FetchReport,
+  isLive,
+  MANIFEST_FILE,
+  Manifest,
+  matchingEntries,
+  parseJson,
+} from "./corpus-manifest";
 import { ORACLE_DIR, ORACLE_FILE, Oracle, oracleDocument } from "./corpus-oracle";
-import { uploadOf } from "./corpus-reference";
+import { treeFonts, uploadOf } from "./corpus-reference";
 import {
   ANSWERS_DIR,
   answerState,
@@ -569,9 +583,10 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
   /**
    * A sample as the pipeline takes it, but with no probe: the reference, the signatures, the tree,
    * its candidates as the probe finds them with no verdicts, which the seed's keys do not depend
-   * on, and what each macro's answer is filed under.
+   * on, and what each macro's answer is filed under. `change` rewrites its main file, all of what
+   * it adds invented.
    */
-  async function takePipeline(id: string) {
+  async function takePipeline(id: string, change?: (text: string) => string) {
     const doc = oracle.documents.find((each) => each.id === id);
     if (doc === undefined) throw new Error(`${id} is no oracle sample`);
     const session = await startNodeSession();
@@ -580,7 +595,14 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
     );
     const zip = uploadOf(
       oracleDocument(doc),
-      (path) => new Uint8Array(readFileSync(join(ORACLE_DIR, doc.id, ...path.split("/")))),
+      (path) => {
+        const bytes = new Uint8Array(readFileSync(join(ORACLE_DIR, doc.id, ...path.split("/"))));
+        if (change === undefined || path !== doc.main) return bytes;
+        const text = new TextDecoder().decode(bytes);
+        const changed = change(text);
+        if (changed === text) throw new Error(`the change leaves ${id}'s main file as it is`);
+        return new TextEncoder().encode(changed);
+      },
       () => undefined,
     );
     const taken = intake(
@@ -619,14 +641,23 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
       verdict: "untested",
       settled: "budget",
     }));
-    // The upload's sources, which say which definitions are the sample's own, its class among them.
+    // The upload's sources, which say which definitions are the sample's own, its class among them,
+    // and the page's strings, which mask those as the body's text does.
     const options = {
       ...(extras === undefined ? {} : { also: extras }),
       sources: sourcesOf(taken),
+      page: await pageStrings(made, fonts, taken.files),
     };
-    /** The sample's request, with the header's values given, and more stored values. */
-    const request = (header?: HeaderValues, stored: readonly string[] = []) =>
-      buildRequest(
+    /**
+     * The sample's request, with the header's values given, more stored values, and another page's
+     * strings in place of its own, as a fork that ships the class unchanged shows its page.
+     */
+    const request = async (
+      header?: HeaderValues,
+      stored: readonly string[] = [],
+      page: PageStrings = options.page,
+    ) => {
+      const result = await buildRequest(
         built,
         found,
         {
@@ -650,10 +681,13 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
           ],
         },
         body.preamble,
-        header === undefined ? options : { ...options, header },
+        { ...options, ...(header === undefined ? {} : { header }), page },
       );
+      if ("refused" in result) throw new Error(result.message);
+      return result.request;
+    };
     const filed = await filingOf(found, signaturesModule);
-    return { doc, session, fonts, taken, made, candidates, extras, request, filed };
+    return { doc, session, fonts, taken, made, candidates, extras, request, filed, found };
   }
 
   /** A sample's request as the seed checks it, with the header's values its own calls give. */
@@ -750,6 +784,110 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
       }
     }
   }, 120_000);
+
+  // Item 11's review: a stored text that names a command made the macro it filled code in the
+  // engine's closures, so its dependents keyed otherwise than the request, which sends it as data,
+  // and moved off the seed's answers. The signatures step now holds it as data too.
+  test("keeps awesome-cv-0000's keys when a text the preamble stores names a command", async () => {
+    const variants: [string, (text: string) => string][] = [
+      ["a size", (text) => text.replace("\n\\position{", "\n\\position{\\small ")],
+      ["an icon", (text) => text.replace("\n\\position{", "\n\\position{\\faCode\\ ")],
+      [
+        "an extra's icon",
+        (text) =>
+          text.replace(/(\n\\position\{[^\n]*\n)/, "$1\\extrainfo{\\faGlobe\\ Invented Harbour}\n"),
+      ],
+    ];
+    for (const [label, change] of variants) {
+      const sample = await takePipeline("awesome-cv-0000", change);
+      const folder = answersFolder();
+      const plain = await sample.request();
+      const header = headerOf(sample.candidates, commandAnswers(plain, folder.read));
+      const macros = seedMacros(await sample.request(header), sample.filed, sample.extras);
+      for (const name of ["@position", "@extrainfo"])
+        if (Object.hasOwn(sample.found.macros, name))
+          expect(sample.found.macros[name], `${label}: ${name}`).toMatchObject({ kind: "data" });
+      for (const each of macros)
+        if (each.key !== undefined) {
+          expect(each.key, `${label}: ${each.name}`).toBe(each.filed?.key);
+          expect(
+            (await answerState(each, folder.read, partnersOf(macros))).state,
+            `${label}: ${each.name}`,
+          ).toBe("ok");
+        }
+      sample.session.forget("import");
+    }
+  }, 300_000);
+
+  // Item 11's review: a resume's words that are words of a class's code, tikz's `node` and `at`,
+  // masked a shipped class's definition that holds them, as a pair of the page's.
+  test("keeps every seed key with the reviewers' sentences in a sample's body", async () => {
+    const sentences = [
+      "Built invented services with Node at Larkspur.",
+      "Invented Node at Larkspur with rounded corners in in-house plain in tools.",
+    ];
+    for (const id of ["jake-0000", "altacv-0000", "awesome-cv-0000"])
+      for (const sentence of sentences) {
+        const sample = await takePipeline(id, (text) =>
+          text.replace("\\end{document}", `${sentence}\n\\end{document}`),
+        );
+        const request = await sample.request();
+        for (const macro of request.macros)
+          if (macro.key !== undefined)
+            expect(macro.key, `${id} ${macro.name} with ${sentence}`).toBe(
+              sample.filed(macro.of, macro.name)?.key,
+            );
+        sample.session.forget("import");
+      }
+  }, 300_000);
+
+  // Item 11's review: a fork that ships a launch template's class unchanged shows a page of its
+  // own, whose pairs and numbers the class's definitions must not match: each sample's request,
+  // built with each corpus page's strings in place of its own, keeps every seed key.
+  describe.skipIf(!existsSync(FETCH_REPORT_FILE))("against the corpus's pages", () => {
+    test("keeps every seed key with each corpus page's strings", async () => {
+      const report = parseJson(
+        FetchReport,
+        readFileSync(FETCH_REPORT_FILE, "utf8"),
+        FETCH_REPORT_FILE,
+      );
+      const corpus = parseJson(Manifest, readFileSync(MANIFEST_FILE, "utf8"), MANIFEST_FILE);
+      const entries = matchingEntries(corpus, report);
+      const documents = corpus.documents
+        .filter(isLive)
+        .filter((doc) => entries.get(doc.id)?.state === "fetched");
+      const byId = new Map(documents.map((doc) => [doc.id, doc]));
+      const treeFont = treeFonts(manifest.files);
+      // Each page holds its document's text: it is kept in memory, and never printed.
+      const pages = new Map<string, PageStrings>();
+      await checkCorpus({
+        documents,
+        upload: (id) => {
+          const doc = byId.get(id);
+          if (doc === undefined) throw new Error(`${id} is no fetched document`);
+          return uploadOf(
+            doc,
+            (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
+            treeFont,
+          );
+        },
+        onPage: (id, page) => pages.set(id, page),
+      });
+      expect(pages.size).toBeGreaterThan(100);
+      for (const id of ["jake-0000", "altacv-0000", "awesome-cv-0000"]) {
+        const sample = await pipeline(id);
+        for (const [doc, page] of pages) {
+          if (!pageReadable(page)) continue;
+          const request = await sample.request(undefined, [], page);
+          for (const macro of request.macros)
+            if (macro.key !== undefined)
+              expect(macro.key, `${id} ${macro.name} with ${doc}'s page`).toBe(
+                sample.filed(macro.of, macro.name)?.key,
+              );
+        }
+      }
+    }, 1_800_000);
+  });
 
   describe("Awesome-CV's section colour, redefined", () => {
     /**

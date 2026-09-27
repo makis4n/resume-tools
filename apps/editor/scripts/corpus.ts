@@ -13,6 +13,7 @@
  *   pnpm --filter @resume-tools/editor corpus seed [--json <file>] [--write]
  *   pnpm --filter @resume-tools/editor corpus name [--only <id>] [--json <file>] [--model]
  *   pnpm --filter @resume-tools/editor corpus assemble [--only <id>] [--json <file>]
+ *   pnpm --filter @resume-tools/editor corpus leak [--only <id>] [--json <file>]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
  *                 upstream templates' forks give the candidates, public repositories only, and
@@ -111,6 +112,16 @@
  *                 `validate.ts`), in the same pool, 900 s a document; print one table of what it
  *                 found, per family and in all, names and counts only, and keep each document's
  *                 assembly under `.corpus/assemble/` (`scripts/corpus-assemble.ts`, decision 0026)
+ *   leak          take every document that compiles to a reference and whose body parses, build
+ *                 its naming request as the import will, with its sources, its page's strings,
+ *                 the texts its preamble stores and the header's values the seed's answers find,
+ *                 and check it with the leak detector fed all of those, in the same pool; print
+ *                 how many were checked, passed and failed, and refused for a page the detector
+ *                 cannot read, and for each failure the macro and what kind of text is where,
+ *                 never the text (`scripts/corpus-leak.ts`, decision 0029). It exits 1 when a
+ *                 request holds its document's text, the builder made one its contract refuses, a
+ *                 document crashed or timed out, or fewer documents were checked or refused than
+ *                 have a reference, and takes about a minute for the corpus
  *   --only <id>   that document only
  *   --json <file> write each document's row as JSON too, names and numbers only
  *
@@ -127,7 +138,7 @@ import { parseArgs } from "node:util";
 import { AnswerSource } from "@resume-tools/naming";
 // Node runs this file by stripping its types, so the type import needs its real extension.
 import type { EngineManifest } from "../src/engine/manifest.ts";
-import { fileKey, readTree } from "../src/import/fonts.ts";
+import { readTree } from "../src/import/fonts.ts";
 import { modelCacheDir } from "./answer-cache.ts";
 import {
   ASSEMBLE_LIMIT_MS,
@@ -143,6 +154,7 @@ import { collect, REASONS, type Reason } from "./corpus-collect.ts";
 import { fetchCorpus } from "./corpus-fetch.ts";
 import { type FontsChildRow, type FontsRow, fontsTable } from "./corpus-fonts.ts";
 import { environmentToken, GitHub } from "./corpus-github.ts";
+import { checkCorpus, leakFailures, leakLine, leakTable } from "./corpus-leak.ts";
 import {
   CORPUS_DIR,
   FAMILIES,
@@ -193,6 +205,7 @@ import {
   referenceNames,
   referenceTable,
   runPool,
+  treeFonts,
   uploadOf,
 } from "./corpus-reference.ts";
 import {
@@ -207,13 +220,10 @@ import {
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>] | leak [--only <id>] [--json <file>]";
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
-
-/** The engine's tree, whose files the reference runner puts in a zip for the fonts it names. */
-const ENGINE_FILES = fileURLToPath(new URL("../.engine/files", import.meta.url));
 
 /** The reference runner's child, which Node runs in each process of its pool. */
 const REFERENCE_CHILD = fileURLToPath(new URL("./corpus-reference-child.ts", import.meta.url));
@@ -415,30 +425,8 @@ function runSurvey(json: string | undefined, tree: string | undefined) {
 }
 
 /**
- * The tree's font files by name, without the extension, in lower case: OpenType and TrueType for
- * a font the manifest names as either, and Type 1 for one it names as `.pfb`.
- */
-function treeFonts(files: Readonly<Record<string, number>>) {
-  const found = new Map<string, string>();
-  for (const path of Object.keys(files)) {
-    const kind = /\/fonts\/(?:opentype|truetype)\/.*\.(?:otf|ttf)$/i.test(path)
-      ? "outline"
-      : /\/fonts\/type1\/.*\.pfb$/i.test(path)
-        ? "pfb"
-        : undefined;
-    const key = kind && `${kind}:${fileKey(path)}`;
-    if (key && !found.has(key)) found.set(key, path);
-  }
-  return (name: string) => {
-    const kind = /\.pfb$/i.test(name) ? "pfb" : "outline";
-    const path = found.get(`${kind}:${fileKey(name)}`);
-    return path === undefined ? undefined : new Uint8Array(readFileSync(join(ENGINE_FILES, path)));
-  };
-}
-
-/**
- * The fetched documents, or the one `--only` names, as the reference, parse, probe and fonts
- * runners take them.
+ * The fetched documents, or the one `--only` names, as the reference, parse, probe, fonts and
+ * leak runners take them.
  */
 function fetchedDocuments(only: string | undefined) {
   const manifest = readManifest();
@@ -1074,6 +1062,49 @@ async function runName(only: string | undefined, json: string | undefined, model
     );
 }
 
+async function runLeak(only: string | undefined, json: string | undefined) {
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("leak compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const documents = fetchedDocuments(only);
+  const treeFont = treeFonts(engine.files);
+  const byId = new Map(documents.map((doc) => [doc.id, doc]));
+  const started = performance.now();
+  print([
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${LIMIT_MS / 1000} s each at most`,
+  ]);
+  const rows = await checkCorpus({
+    documents,
+    upload: (id) => {
+      const doc = byId.get(id);
+      if (doc === undefined) throw new Error(`${id} is no document of the run`);
+      return uploadOf(
+        doc,
+        (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
+        treeFont,
+      );
+    },
+    onRow: (row, done) => print([`${done}/${documents.length} ${row.id}: ${leakLine(row)}`]),
+  });
+  const minutes = (performance.now() - started) / 60_000;
+  print(["", ...leakTable(rows).trimEnd().split("\n"), "", `Took ${minutes.toFixed(1)} min.`]);
+  if (json !== undefined)
+    writeAtomically(
+      json,
+      formatJson({
+        version: 1,
+        tree: { layout: engine.layout, files: Object.keys(engine.files).length },
+        limitMs: LIMIT_MS,
+        documents: rows,
+      }),
+    );
+  const failures = leakFailures(rows);
+  if (failures.length > 0) {
+    console.error(failures.join("\n"));
+    process.exitCode = 1;
+  }
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -1104,7 +1135,8 @@ async function main() {
     command !== "oracle" &&
     command !== "fonts" &&
     command !== "seed" &&
-    command !== "name"
+    command !== "name" &&
+    command !== "leak"
   )
     throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
   if (
@@ -1115,9 +1147,12 @@ async function main() {
     command !== "probe" &&
     command !== "fonts" &&
     command !== "name" &&
-    command !== "assemble"
+    command !== "assemble" &&
+    command !== "leak"
   )
-    throw new Error("--only goes with fetch, reference, parse, probe, fonts, name or assemble");
+    throw new Error(
+      "--only goes with fetch, reference, parse, probe, fonts, name, assemble or leak",
+    );
   if (
     values.json !== undefined &&
     command !== "survey" &&
@@ -1127,10 +1162,11 @@ async function main() {
     command !== "fonts" &&
     command !== "seed" &&
     command !== "name" &&
-    command !== "assemble"
+    command !== "assemble" &&
+    command !== "leak"
   )
     throw new Error(
-      "--json goes with survey, reference, parse, probe, fonts, seed, name or assemble",
+      "--json goes with survey, reference, parse, probe, fonts, seed, name, assemble or leak",
     );
   if (values.model !== undefined && command !== "name") throw new Error("--model goes with name");
   if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
@@ -1148,6 +1184,7 @@ async function main() {
   if (command === "fonts") return runFonts(values.only, caller(values.json));
   if (command === "seed") return runSeed(caller(values.json), values.write === true);
   if (command === "name") return runName(values.only, caller(values.json), values.model === true);
+  if (command === "leak") return runLeak(values.only, caller(values.json));
   return runSurvey(caller(values.json), caller(values.tree));
 }
 

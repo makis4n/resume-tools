@@ -239,14 +239,19 @@ function storedOf(text: string | undefined): StoredAnswer | undefined {
 /**
  * The answers the folder holds for a request's commands, by name, under the keys the request
  * gives them: what item 7 reads a document's header values by, before it asks again with them.
+ * `realName` gives the document's name of a name the request masks (`realName` of `naming.ts`),
+ * since the answers are asked for by the document's names.
  */
 export function commandAnswers(
   request: Pick<NamingRequest, "macros">,
   read: (key: string) => string | undefined,
+  realName: (name: string) => string = (name) => name,
 ): (name: string) => StoredAnswer | undefined {
   const keys = new Map(
     request.macros.flatMap((macro) =>
-      macro.of === "command" && macro.key !== undefined ? [[macro.name, macro.key] as const] : [],
+      macro.of === "command" && macro.key !== undefined
+        ? [[realName(macro.name), macro.key] as const]
+        : [],
     ),
   );
   return (name) => {

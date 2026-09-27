@@ -611,7 +611,9 @@ An invented note.
     const found = await inventedSignatures();
     const tree = parseBody(bodyOfText(BODY), found);
     if (isRefusal(tree)) throw new Error(tree.message);
-    const request = await buildRequest(tree, found, { macros: [], candidates: [] }, "");
+    const built = await buildRequest(tree, found, { macros: [], candidates: [] }, "");
+    if (isRefusal(built)) throw new Error(built.message);
+    const { request } = built;
     const keys = await keysOf(found);
     for (const [of, name] of [
       ["environment", "cvlist"],

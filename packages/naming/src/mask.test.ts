@@ -169,6 +169,35 @@ describe("masking a definition", () => {
       expect(maskDefinition(`macro:->{${email}}`)).toBe(`macro:->{${hidden("email", email)}}`);
   });
 
+  test("masks a postcode of letters and digits, and none of a class's code with numbers", () => {
+    for (const code of [
+      "QV1A 2ZX",
+      "QX1A 1BZ",
+      "Q1 1QX",
+      "QX33 8XQ",
+      "XQ2 6QX",
+      "X9Q 0Q9",
+      "Q5V 3Q9",
+    ])
+      expect(maskDefinition(`macro:->Harbour City\\\\ ${code}\\par `), code).toBe(
+        `macro:->Harbour City\\\\ ${"_".repeat(code.length)}\\par `,
+      );
+    // A postcode of digits alone is a number as code writes one, and one written without its
+    // capitals or its space is no shape a pattern can tell: both are left to the document's values.
+    const code = [
+      "macro:->\\penalty 10000 \\hskip 12345sp \\@M 10000\\relax 94103\\par ",
+      "macro:->\\fontencoding {T1}\\fontsize {10}{12}\\selectfont \\usefont {LY1}{ptm}{m}{n}",
+      'macro:->\\DeclareFontShape {T1}{lmr}{m}{n}{<-> ec-lmr10}{}\\char "1F600 ',
+      "macro:->\\definecolor {accent}{HTML}{1F4E79}\\setcounter {secnumdepth}{0}",
+      "macro:->\\ProvidesClass {inventedcv}[v1.2 an invented class]\\LoadClass [11pt]{article}",
+      "macro:->\\geometry {a4paper, margin=1.5cm, top=2cm}\\pgfmathsetmacro \\x {360*0.25}",
+      "macro:->A4 paper, T1 OT1 TS1 TU, LY1 A5 B5, \\hyphenpenalty =10000 \\exhyphenpenalty 50",
+      "macro:->\\node [minimum width=3cm] at (0,4.5) {X1}; \\draw (A1) -- (B2);",
+      "macro:->qv1a 2zx QV1A2ZX X9Q0Q9",
+    ];
+    for (const text of code) expect(maskDefinition(text), text).toBe(text);
+  });
+
   test("takes time linear in a definition's length, however it is spelled", () => {
     // Runs of what an address is made of, which unbounded patterns tried from every start: each
     // costs about ten times what a tenth of it costs, in CPU time, where it cost 90 times before

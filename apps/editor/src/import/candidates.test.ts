@@ -1,5 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { type Candidate, candidatesOf, isSetter, marked, reissued, tightened } from "./candidates";
+import {
+  type Candidate,
+  candidatesOf,
+  isSetter,
+  marked,
+  reissued,
+  storedIn,
+  tightened,
+} from "./candidates";
 import { bodyOfText, parseBody, type Signatures, type Tree } from "./parse";
 import { isRefusal } from "./refusal";
 
@@ -180,6 +188,21 @@ describe("the preamble's calls that store a header's text", () => {
     expect(isSetter(macro("macro:->\\@protected@testopt \\invented \\\\invented {}"))).toBe(false);
     expect(isSetter({ kind: "data" })).toBe(false);
     expect(isSetter(undefined)).toBe(false);
+  });
+
+  test("store each argument in a macro, which then holds the person's text", () => {
+    expect(storedIn(macro("macro:#1#2->\\def \\@firstname {#1}\\def \\@lastname {#2}"))).toEqual([
+      "@firstname",
+      "@lastname",
+    ]);
+    expect(storedIn(macro("macro:#1->\\global \\def \\ecv@rfoot {#1}"))).toEqual(["ecv@rfoot"]);
+    // What a setter makes of what it stored is its own code, not an argument's store.
+    expect(
+      storedIn(macro("macro:#1-> \\def \\@mobile {#1} \\def \\@teluri {tel:\\@mobile }")),
+    ).toEqual(["@mobile"]);
+    expect(storedIn(macro("macro:#1->\\textbf {#1}"))).toEqual([]);
+    expect(storedIn({ kind: "data" })).toEqual([]);
+    expect(storedIn(undefined)).toEqual([]);
   });
 
   test("are candidates, issued again with their arguments in their markers", () => {

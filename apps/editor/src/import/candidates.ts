@@ -40,7 +40,7 @@
  */
 
 import type { Argument, Node, RawWhy, Span, Tree } from "./parse";
-import { readMeaning, type TemplateMacro, tokensOf } from "./signatures";
+import { storedTargets, type TemplateMacro } from "./signatures";
 
 /** What a candidate is. */
 export type CandidateKind = "argument" | "section" | "item" | "label" | "paragraph";
@@ -232,37 +232,23 @@ function spanOf(nodes: readonly Node[]): Span | undefined {
  * its calls are not candidates.
  */
 export function isSetter(macro: TemplateMacro | { kind: "data" } | undefined): boolean {
-  if (macro === undefined || macro.kind === "data") return false;
-  const meaning = readMeaning(macro.meaning);
-  if (meaning.kind !== "macro" || !/^(?:#\d)+$/.test(meaning.parameters)) return false;
-  const parameters = meaning.parameters.length / 2;
-  const tokens = tokensOf(meaning.replacement).filter(
-    (token) => !(token.kind === "char" && token.text === " "),
-  );
-  const stored = new Set<string>();
-  let at = 0;
-  for (;;) {
-    let next = at;
-    while (tokens[next]?.kind === "cs" && /^(?:global|long)$/.test(nameOf(tokens[next]))) next++;
-    const [def, target, open, parameter, close] = tokens.slice(next, next + 5);
-    const assigns =
-      def?.kind === "cs" &&
-      /^g?def$/.test(def.name) &&
-      target?.kind === "cs" &&
-      open?.kind === "open" &&
-      parameter?.kind === "parameter" &&
-      parameter.text !== "##" &&
-      !stored.has(parameter.text) &&
-      close?.kind === "close";
-    if (!assigns) break;
-    stored.add(parameter.text);
-    at = next + 5;
-  }
-  if (stored.size !== parameters) return false;
-  return tokens.slice(at).every((token) => token.kind !== "parameter" || token.text === "##");
+  return storesOf(macro) !== undefined;
 }
 
-const nameOf = (token: { kind: string; name?: string } | undefined) => token?.name ?? "";
+/**
+ * The macros a setter stores its arguments in (`isSetter`), each `\def`'s or `\gdef`'s target, in
+ * its parameters' order, as Awesome-CV's `\position` stores `\@position` and europecv's
+ * `\ecvfootnote` `\ecv@rfoot`; none for a macro that is not a setter. Once the preamble has called
+ * the setter, each holds the person's text, whoever defines it.
+ */
+export function storedIn(macro: TemplateMacro | { kind: "data" } | undefined): string[] {
+  return storesOf(macro) ?? [];
+}
+
+/** The macros a setter stores its arguments in, in order; undefined for a macro that is not one. */
+function storesOf(macro: TemplateMacro | { kind: "data" } | undefined): string[] | undefined {
+  return macro === undefined || macro.kind === "data" ? undefined : storedTargets(macro.meaning);
+}
 
 /** Options for finding candidates. */
 export interface CandidateOptions {

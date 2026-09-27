@@ -8,9 +8,11 @@ import {
   NAMING_VERSION,
   type NamingRequest,
   placeholder,
+  REQUEST_CAPS,
   sha256,
 } from "@resume-tools/naming";
 import { strToU8, zipSync } from "fflate";
+import { Font, Glyph, Path } from "opentype.js";
 import { beforeAll, describe, expect, test } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
@@ -18,16 +20,24 @@ import type { EngineSession } from "../engine/session";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { bound, fastestAsync } from "../test/timing";
+import type { Tfm } from "../tex/tfm";
 import { readTree } from "./fonts";
 import { type Intake, intake } from "./intake";
 import {
   assertNoText,
   buildRequest,
   documentStart,
+  findLeaks,
   type HeaderValues,
+  InvalidRequest,
   isOwn,
   maskedSignature,
   ownNames,
+  type PageFonts,
+  type PageStrings,
+  pageReadable,
+  pageStrings,
+  realName,
   sourcesOf,
   visibleOfMeaning,
   visibleOfSource,
@@ -35,13 +45,14 @@ import {
 } from "./naming";
 import { bodyOf, bodyOfText, buildTree, parseBody, readBody, type Tree } from "./parse";
 import { type Aggregate, type ProbeCandidate, probe, probeUses } from "./probe";
-import { reference } from "./reference";
+import { type GlyphStream, type ReferenceGlyph, reference } from "./reference";
 import { isRefusal } from "./refusal";
 import {
   closure,
   type EngineSignatures,
   keysOf,
   masked,
+  namesIn,
   type Signature,
   signatures,
 } from "./signatures";
@@ -256,7 +267,7 @@ async function invented(
 ) {
   const found = await inventedSignatures();
   const tree = treeOf(BODY, found);
-  const request = await buildRequest(tree, found, PROBE, PREAMBLE, {
+  const request = await requestOf(tree, found, PROBE, PREAMBLE, {
     ...(header === undefined ? {} : { header }),
     sources,
   });
@@ -294,6 +305,13 @@ function textsOf(request: NamingRequest): string[] {
       ? []
       : [request.preamble.class.name, ...request.preamble.class.options]),
   ];
+}
+
+/** The request the builder gives, which these tests expect it to build rather than refuse. */
+async function requestOf(...args: Parameters<typeof buildRequest>): Promise<NamingRequest> {
+  const built = await buildRequest(...args);
+  if ("refused" in built) throw new Error(built.message);
+  return built.request;
 }
 
 /** Whether the check throws on a request, and its message, which never holds the text. */
@@ -439,7 +457,7 @@ describe("the request builder, on an invented template", () => {
 \definecolor{quillinvblue}{HTML}{1F4E79}
 `;
     const options = (header: HeaderValues) => ({ header, sources: SOURCES });
-    const plain = await buildRequest(tree, found, NO_PROBE, preamble, { sources: SOURCES });
+    const plain = await requestOf(tree, found, NO_PROBE, preamble, { sources: SOURCES });
     expect(plain.preamble.settings).toEqual([
       "\\usepackage[top=0.5in, bottom=0.5in, left=0.6in, right=0.6in]{geometry}",
       "\\setmainfont{Source Sans Pro}[ItalicFont=*-Italic]",
@@ -448,11 +466,11 @@ describe("the request builder, on an invented template", () => {
     ]);
     // A short first name never rewrites a keyword it is inside: `bottom`, `ItalicFont`, `article`.
     for (const first of ["Tom", "Ali", "Art"]) {
-      const request = await buildRequest(tree, found, NO_PROBE, preamble, options({ first }));
+      const request = await requestOf(tree, found, NO_PROBE, preamble, options({ first }));
       expect(request.preamble, first).toEqual(plain.preamble);
     }
     // A whole word of the name is masked, and a handle inside a colour's name.
-    const quill = await buildRequest(
+    const quill = await requestOf(
       tree,
       found,
       NO_PROBE,
@@ -498,7 +516,7 @@ describe("the request builder, on an invented template", () => {
       ["endcvnote"],
     );
     const tree = treeOf("\\begin{cvnote}\nInvented note.\n\\end{cvnote}\n", found);
-    const request = await buildRequest(tree, found, NO_PROBE, "\\documentclass{article}\n");
+    const request = await requestOf(tree, found, NO_PROBE, "\\documentclass{article}\n");
     const note = macroOf(request, "cvnote");
     expect(note?.dependencies).toEqual(["endcvnote", "cv@style"]);
     expect(definitionOf(request, "endcvnote")).toEqual({ kind: "data", name: "endcvnote" });
@@ -587,7 +605,7 @@ describe("the request builder, on an invented template", () => {
     const sources = [String.raw`\gdef\bottomline{\hrule\vskip 2pt bottom}`];
     const preamble = "\\documentclass{article}\n\\usepackage[top=1in, bottom=1in]{geometry}\n";
     const header: HeaderValues = { first: "Tom", last: "Lee" };
-    const request = await buildRequest(tree, found, NO_PROBE, preamble, { header, sources });
+    const request = await requestOf(tree, found, NO_PROBE, preamble, { header, sources });
     // `bottom` in the class's own `\bottomline` keeps its letters: Tom is no word of it.
     expect(textOf(request, "bottomline")).toBe(MEANINGS.bottomline);
     expect(request.preamble.settings).toEqual(["\\usepackage[top=1in, bottom=1in]{geometry}"]);
@@ -811,7 +829,7 @@ describe("the request builder, telling the document's own definitions from the t
       ),
     });
     const build = (header: HeaderValues, texts: readonly string[] = []) =>
-      buildRequest(tree, found, stored(texts), "\\documentclass{inventedcv}\n", {
+      requestOf(tree, found, stored(texts), "\\documentclass{inventedcv}\n", {
         header,
         sources,
       });
@@ -907,7 +925,7 @@ Quill Invented, typesetter at Larkspur Labs in Harbour City.
 \newcommand{\cvword}[1]{\textbf{Larkspur}#1}
 \begin{document}${body}\end{document}`,
     ];
-    const request = await buildRequest(tree, found, NO_PROBE, "\\documentclass{article}\n", {
+    const request = await requestOf(tree, found, NO_PROBE, "\\documentclass{article}\n", {
       sources,
     });
     expect(textOf(request, "cvsign")).toBe("macro:#1->{\\Large Xxxxx Xxxxxxxx}#1");
@@ -958,7 +976,7 @@ Quill Invented, typesetter at Larkspur Labs in Harbour City.
       macros: [],
       candidates: [candidate({ id: "h1", where: "preamble", name: "cvname", text: "Quill" })],
     };
-    const request = await buildRequest(tree, found, probed, "\\documentclass{article}\n", {
+    const request = await requestOf(tree, found, probed, "\\documentclass{article}\n", {
       header,
       sources,
     });
@@ -1001,7 +1019,7 @@ describe("the request builder, sending signatures", () => {
     );
     const body = "\\cvmail{Xy} \\cvphone{Xy} \\cvsign{Xy} \\cvglyph{Xy} \\textbf{Larkspur}\n";
     const tree = treeOf(body, found);
-    const request = await buildRequest(tree, found, NO_PROBE, "\\documentclass{article}\n", {
+    const request = await requestOf(tree, found, NO_PROBE, "\\documentclass{article}\n", {
       header: HEADER,
     });
     expect(macroOf(request, "cvsign")?.signature).toBe("O{Xxxxx Xxxxxxxx} m");
@@ -1050,7 +1068,7 @@ describe("the leak check", () => {
     const tree = treeOf(BODY_CHECKED, found);
     // `\cvrole` is the document's own; `\cvpage` an invented package's of the tree's.
     const sources = [String.raw`\newcommand{\cvrole}[2]{\textbf{#1}\hfill #2\par}`];
-    const request = await buildRequest(tree, found, NO_PROBE, "\\documentclass{article}\n", {
+    const request = await requestOf(tree, found, NO_PROBE, "\\documentclass{article}\n", {
       sources,
     });
     const document = { tree, sources };
@@ -1075,6 +1093,873 @@ describe("the leak check", () => {
     expect(planted("tree", "Larkspur")).toBe("passes");
     expect(planted("tree", "{Invented Role}")).toMatch(/\(text\) in the definition of cvpage/);
     expect(planted("tree", "+44\\, 20\\, 7946\\, 0000")).toMatch(/in the definition of cvpage/);
+  });
+});
+
+/** The size an invented page sets its text at, 10 pt, an em of it, in scaled points. */
+const EM = 10 * 65536;
+
+/** An invented TeX font whose every glyph is half an em wide. */
+const HALF_EM: Tfm = {
+  checksum: 0,
+  designSize: 10,
+  bc: 0,
+  ec: 255,
+  widths: Int32Array.from([0, 2 ** 19]),
+  heights: new Int32Array(1),
+  depths: new Int32Array(1),
+  italics: new Int32Array(1),
+  chars: Array.from({ length: 256 }, () => ({
+    width: 1,
+    height: 0,
+    depth: 0,
+    italic: 0,
+    tag: 0,
+    remainder: 0,
+  })),
+  ligKern: [],
+  kerns: new Int32Array(0),
+  params: new Int32Array(8),
+};
+
+/** The fonts an invented page loads: `inventedrm`, and no other. */
+const PAGE_FONTS: PageFonts = {
+  load: async (name) =>
+    name === "inventedrm" ? { kind: "tex", name, tfm: HALF_EM, text: () => undefined } : undefined,
+  loadNative: async () => undefined,
+};
+
+/** An invented glyph of the invented font where the page names it `text`, at `h` and `v`. */
+const glyph = (text: string | undefined, h: number, v = 0): ReferenceGlyph => ({
+  kind: "glyph",
+  font: "inventedrm",
+  size: EM,
+  code: 65,
+  ...(text === undefined ? {} : { text }),
+  h,
+  v,
+});
+
+/** An invented glyph stream of one page for each list of glyphs. */
+const streamOf = (...pages: ReferenceGlyph[][]): GlyphStream => ({
+  pages: pages.map((items) => ({ items })),
+  size: { width: 612, height: 792 },
+  fonts: { tex: ["inventedrm"], native: [], shipped: [] },
+  specials: [],
+});
+
+/**
+ * An invented page's glyphs: each line set in the invented font, 12 pt apart, a space a third of
+ * an em and a thin space, U+2009, a sixth, as `\,` sets one.
+ */
+function lines(texts: readonly string[], from = 0): ReferenceGlyph[] {
+  const items: ReferenceGlyph[] = [];
+  texts.forEach((text, n) => {
+    let h = 0;
+    for (const char of text) {
+      if (char === " " || char === "\u2009") {
+        h += char === " " ? EM / 3 : EM / 6;
+        continue;
+      }
+      items.push(glyph(char, h, (from + n) * 12 * 65536));
+      h += EM / 2;
+    }
+  });
+  return items;
+}
+
+/** The strings of an invented page of these lines. */
+const pageOf = (texts: readonly string[]) => pageStrings(streamOf(lines(texts)), PAGE_FONTS);
+
+/** The letters of an invented sans font, and their advances in ems, as Roboto's roughly are. */
+const SANS_ADVANCES: Record<string, number> = {
+  W: 0.89,
+  i: 0.24,
+  l: 0.24,
+  m: 0.87,
+  r: 0.34,
+  Q: 0.69,
+  u: 0.55,
+  a: 0.54,
+  s: 0.52,
+  h: 0.55,
+};
+const SANS_LETTERS = Object.keys(SANS_ADVANCES);
+const SANS_SPACE = 0.25;
+
+/** An invented OpenType font of those letters, written by opentype.js, 1000 units an em. */
+function inventedSans(): Uint8Array {
+  const box = (width: number) => {
+    const path = new Path();
+    path.moveTo(40, 0);
+    path.lineTo(width - 40, 0);
+    path.lineTo(width - 40, 700);
+    path.lineTo(40, 700);
+    path.close();
+    return path;
+  };
+  const glyphs = [
+    new Glyph({ name: ".notdef", advanceWidth: 500, path: new Path() }),
+    ...SANS_LETTERS.map((char) => {
+      const width = Math.round((SANS_ADVANCES[char] ?? 0.5) * 1000);
+      return new Glyph({
+        name: char,
+        unicodes: [char.codePointAt(0) ?? 0],
+        advanceWidth: width,
+        path: box(width),
+      });
+    }),
+  ];
+  const font = new Font({
+    familyName: "InventedSans",
+    styleName: "Regular",
+    unitsPerEm: 1000,
+    ascender: 900,
+    descender: -300,
+    glyphs,
+  });
+  return new Uint8Array(font.toArrayBuffer());
+}
+
+describe("the page, as the leak detector reads it", () => {
+  test("reads words, their pairs and identifiers, each once, a line's digits as a phone's", async () => {
+    const page = await pageOf([
+      "Quill Invented, Typesetter",
+      "quill@example.invalid | github.com/quillinv",
+      "+44\u200920\u20097946\u20090000 Quill",
+    ]);
+    expect(page.words).toEqual([
+      "Quill",
+      "Invented",
+      "Typesetter",
+      "quill",
+      "example",
+      "invalid",
+      "github",
+      "com",
+      "quillinv",
+    ]);
+    // A pair is two words of one line, each of three letters or more: never across a line's end,
+    // and never a number or a word of one or two letters, `com`'s among them.
+    expect(page.pairs).toEqual([
+      "Quill Invented",
+      "Invented Typesetter",
+      "quill example",
+      "example invalid",
+      "invalid github",
+      "github com",
+      "com quillinv",
+    ]);
+    // Each number of two digits or more, a phone's parts among them.
+    expect(page.numbers).toEqual(["44", "20", "7946", "0000"]);
+    expect(page.glyphs).toBe(page.readable);
+    // A link the page shows without its scheme is read as one: its address, host and handle.
+    expect(new Set(page.identifiers)).toEqual(
+      new Set([
+        "quill@example.invalid",
+        "github.com/quillinv",
+        "github.com",
+        "quillinv",
+        "442079460000",
+      ]),
+    );
+  });
+
+  test("parts words where the gap after a glyph's advance is a space's, not a kern's", async () => {
+    // Each glyph after the gap before it, in ems: kerns of the invented font's, and a space
+    // shrunk nearly to nothing; then glyphs of a font that is nowhere, which the page cannot read.
+    const gaps: [string, number][] = [
+      ["A", 0],
+      ["V", -0.08],
+      ["O", 0.05],
+      ["N", 0.06],
+      ["x", 0.14],
+      ["y", 0],
+      ["z", 0],
+    ];
+    let h = 0;
+    const items = gaps.map(([text, gap]) => {
+      h += gap * EM;
+      const each = glyph(text, h);
+      h += EM / 2;
+      return each;
+    });
+    const unloaded = ["P", "a", "g", "e"].map((text, i) => ({
+      ...glyph(text, i * (EM / 2), EM * 2),
+      font: "inventedsans",
+    }));
+    const page = await pageStrings(streamOf([...items, ...unloaded]), PAGE_FONTS);
+    expect(page.words).toEqual(["AVON", "xyz"]);
+    expect([page.glyphs, page.readable]).toEqual([11, 7]);
+  });
+
+  test("reads a native glyph's advance from the upload's font file, as the reference read it", async () => {
+    // Item 11's review: a font the upload ships, which the tree lacks by name, set at a sans
+    // font's advances, as Roboto's are; read at half an em a glyph, its words split and join.
+    const bytes = inventedSans();
+    const file = "InventedSans-Regular.otf";
+    const glyphs: ReferenceGlyph[] = [];
+    let h = 0;
+    for (const char of "Wilmrim Quillmarsh") {
+      if (char === " ") {
+        h += SANS_SPACE * EM;
+        continue;
+      }
+      const code = SANS_LETTERS.indexOf(char) + 1;
+      glyphs.push({ kind: "glyph", font: file, native: true, size: EM, code, text: char, h, v: 0 });
+      h += (SANS_ADVANCES[char] ?? 0.5) * EM;
+    }
+    const stream = { ...streamOf(glyphs), fonts: { tex: [], native: [file], shipped: [file] } };
+    const page = await pageStrings(stream, PAGE_FONTS, { [`fonts/${file}`]: bytes });
+    expect(page.words).toEqual(["Wilmrim", "Quillmarsh"]);
+    expect(page.pairs).toEqual(["Wilmrim Quillmarsh"]);
+    expect([page.glyphs, page.readable]).toEqual([17, 17]);
+    // Without the upload's file the font is nowhere: no glyph of it is read, and none joins words.
+    const blind = await pageStrings(stream, PAGE_FONTS);
+    expect([blind.words, blind.readable]).toEqual([[], 0]);
+  });
+
+  test("reads letter-spaced words joined, and each number of two digits or more", async () => {
+    // soul's `\so` sets a quarter of an em between letters and more between words.
+    const spaced: ReferenceGlyph[] = [];
+    let h = 0;
+    for (const char of "Quill Invented") {
+      if (char === " ") {
+        h += 0.6 * EM;
+        continue;
+      }
+      spaced.push(glyph(char, h));
+      h += EM / 2 + EM / 4;
+    }
+    const page = await pageStrings(
+      streamOf([...spaced, ...lines(["Born 12 March 1994, Larkspurstraat 17"], 1)]),
+      PAGE_FONTS,
+    );
+    expect(page.runs).toEqual(["Quill", "Invented"]);
+    expect(page.numbers).toEqual(["12", "1994", "17"]);
+    expect(page.words).not.toContain("Quill");
+  });
+
+  test("reads no page it cannot read, whose fonts name no glyph's text, as one the detector can", async () => {
+    const readable = await pageOf(["Quill Invented, Typesetter at Larkspur Labs"]);
+    expect(pageReadable(readable)).toBe(true);
+    // T1's Computer Modern: metrics the tree has, and no outlines, so no glyph's text.
+    const blank = await pageStrings(
+      streamOf(Array.from({ length: 80 }, (_, i) => glyph(undefined, i * (EM / 2)))),
+      PAGE_FONTS,
+    );
+    expect([blank.words.length, blank.glyphs, blank.readable]).toEqual([0, 80, 0]);
+    expect(pageReadable(blank)).toBe(false);
+    // A word or two among many glyphs it cannot read is a page mostly unread.
+    const mostly = await pageStrings(
+      streamOf([
+        ...lines(["Quill"]),
+        ...Array.from({ length: 200 }, (_, i) => glyph(undefined, i * (EM / 2), EM * 2)),
+      ]),
+      PAGE_FONTS,
+    );
+    expect(mostly.words).toEqual(["Quill"]);
+    expect(pageReadable(mostly)).toBe(false);
+    // And a page it reads whose glyphs make hardly a word, one in more than a hundred.
+    const symbols = await pageStrings(
+      streamOf([...lines(["Quill"]), ...lines(["=".repeat(120)], 2)]),
+      PAGE_FONTS,
+    );
+    expect([symbols.readable, symbols.words.length]).toEqual([125, 1]);
+    expect(pageReadable(symbols)).toBe(false);
+  });
+
+  test("reads a word TeX hyphenated whole, and a letter under an accent or a mark with its word", async () => {
+    const hyphenated = lines(["Harbour Inven-", "ted city Quill-", "Invented"]);
+    // OT1 sets `\'e` as the accent, raised and centred, and then the letter where it began.
+    const accented = [
+      ...lines(["Jos"], 3),
+      glyph("´", 1.55 * EM, 3 * 12 * 65536 - EM / 10),
+      glyph("e", 1.5 * EM, 3 * 12 * 65536),
+      // XeTeX may place a mark's glyph over its letter, above the line.
+      glyph("R", 0, 4 * 12 * 65536),
+      glyph("e", EM / 2, 4 * 12 * 65536),
+      glyph("n", EM, 4 * 12 * 65536),
+      glyph("e", 1.5 * EM, 4 * 12 * 65536),
+      glyph("\u0301", 1.6 * EM, 4 * 12 * 65536 - EM / 3),
+    ];
+    // A glyph with no text, as an icon's, parts words, and a glyph that steps back starts a line.
+    const icon = [
+      ...lines(["Quill"], 5),
+      glyph(undefined, 2.5 * EM, 5 * 12 * 65536),
+      ...lines(["Invented"], 5).map((each) => ({ ...each, h: each.h + 3 * EM })),
+      glyph("x", 0, 5 * 12 * 65536),
+    ];
+    const page = await pageStrings(streamOf([...hyphenated, ...accented, ...icon]), PAGE_FONTS);
+    expect(page.words).toEqual(["Harbour", "Invented", "city", "Quill", "Jose", "Rene\u0301"]);
+    expect(page.pairs).toContain("Harbour Invented");
+    expect(page.pairs).toContain("city Quill");
+    expect(page.pairs).toContain("Quill Invented");
+  });
+
+  test("takes time linear in the glyphs, as a twenty-page reference against a two-page one", async () => {
+    /** An invented word of its own for each number, of letters alone. */
+    const word = (n: number) =>
+      `inv${n.toString(26).replace(/[0-9]/g, (d) => "abcdefghij"[+d] ?? "")}`;
+    const reference = (pages: number) =>
+      streamOf(
+        ...Array.from({ length: pages }, (_, p) =>
+          lines(
+            Array.from({ length: 50 }, (_, l) =>
+              Array.from({ length: 10 }, (_, w) => word((p * 50 + l) * 10 + w)).join(" "),
+            ),
+          ),
+        ),
+      );
+    const [two, twenty] = [reference(2), reference(20)];
+    const [tenth = 0, whole = 0] = await fastestAsync(
+      [() => pageStrings(two, PAGE_FONTS), () => pageStrings(twenty, PAGE_FONTS)],
+      5,
+    );
+    // Ten times the pages cost about ten times as much.
+    expect(whole).toBeLessThan(bound(30, tenth));
+  }, 60_000);
+});
+
+describe("the request builder, reading the page", () => {
+  const PREAMBLE_ONLY = "\\documentclass{article}\n";
+
+  test("masks a name a macro of the preamble writes, which no text of the body names", async () => {
+    // Item 9's review: the preamble hard-codes the person's name and city, and the body calls it.
+    const contact = "macro:->{\\Large \\bfseries Quill Invented}\\par Harbour City\\par ";
+    const found = await signaturesOf(
+      { cvcontact: contact, cvrole: "macro:#1->\\textbf {#1}\\par " },
+      { cvcontact: template(""), cvrole: template("m") },
+    );
+    const body = "\\cvcontact\n\\cvrole{Larkspur Labs}\n";
+    const tree = treeOf(body, found);
+    const sources = [
+      String.raw`\documentclass{article}
+\newcommand{\cvcontact}{{\Large\bfseries Quill Invented}\par Harbour City\par}
+\newcommand{\cvrole}[1]{\textbf{#1}\par}
+\begin{document}${body}\end{document}`,
+    ];
+    const page = await pageOf(["Quill Invented", "Harbour City", "Larkspur Labs"]);
+    const document = { tree, sources, page };
+    // Without the page nothing names it, and the check, which reads the page, finds it.
+    const unpaged = await requestOf(tree, found, NO_PROBE, PREAMBLE_ONLY, { sources });
+    expect(textOf(unpaged, "cvcontact")).toBe(contact);
+    expect(findLeaks(unpaged, document)).toEqual([
+      {
+        origin: "page",
+        kind: "own definition",
+        macro: "cvcontact",
+        where: "the definition of cvcontact",
+      },
+    ]);
+    expect(checked(unpaged, { tree, sources })).toBe("passes");
+    // With it, the pairs the page shows mask it, and the macro that holds none keeps its key.
+    const request = await requestOf(tree, found, NO_PROBE, PREAMBLE_ONLY, { sources, page });
+    expect(textOf(request, "cvcontact")).toBe(
+      "macro:->{\\Large \\bfseries Xxxxx Xxxxxxxx}\\par Xxxxxxx Xxxx\\par ",
+    );
+    expect(macroOf(request, "cvrole")?.key).toBe((await keysOf(found)).cvrole);
+    expect(checked(request, document)).toBe("passes");
+    expect(await checkRequest(request)).toEqual([]);
+  });
+
+  test("masks no single word the page shows, which the check finds, own definitions among them", async () => {
+    const found = await signaturesOf(
+      {
+        cvheading: "macro:->\\textbf {Experience}\\par ",
+        cvinfo: "macro:->\\textbf {Information}\\par ",
+        cvlabel: "macro:#1->\\textsc {#1}",
+        cvpersonal: "macro:->\\textbf {Personal information}\\par ",
+      },
+      {
+        cvheading: template(""),
+        cvinfo: template(""),
+        cvlabel: template("m"),
+        cvpersonal: template(""),
+      },
+    );
+    const body = "\\cvheading \\cvinfo \\cvpersonal \\cvlabel{Larkspur}\n";
+    const tree = treeOf(body, found);
+    // `\cvpersonal` is an invented package's of the tree's, and sets its words on the page too.
+    const sources = [
+      String.raw`\newcommand{\cvheading}{\textbf{Experience}\par}\newcommand{\cvlabel}[1]{\textsc{#1}}`,
+      String.raw`\newcommand{\cvinfo}{\textbf{Information}\par}`,
+    ];
+    const page = await pageOf(["Experience", "Information", "Personal information", "Larkspur"]);
+    const request = await requestOf(tree, found, NO_PROBE, PREAMBLE_ONLY, { sources, page });
+    const keys = await keysOf(found);
+    // A word the page shows alone is the template's as often as the person's, and masks nothing;
+    // the tree's code is never masked by the document's values, the page's among them.
+    for (const name of ["cvheading", "cvinfo", "cvpersonal"]) {
+      const macro = found.macros[name];
+      expect(textOf(request, name), name).toBe(macro?.kind === "data" ? undefined : macro?.meaning);
+      expect(macroOf(request, name)?.key, name).toBe(keys[name]);
+    }
+    // The check, stricter, finds it in an own definition, `Born 12 March` in a preamble's macro as
+    // well as a heading, and the gate refuses the request, the builder not at fault; but not a word
+    // the tree's code shows too, its vocabulary, as `\cvpersonal`'s `information`.
+    const document = { tree, sources, page };
+    expect(findLeaks(request, document)).toEqual([
+      {
+        origin: "page",
+        kind: "own definition",
+        macro: "cvheading",
+        where: "the definition of cvheading",
+        alone: true,
+      },
+    ]);
+    expect(checked(request, document)).toMatch(/\(page\) in the definition of cvheading\.$/);
+    const withoutHeading = {
+      ...request,
+      definitions: request.definitions.filter((each) => each.name !== "cvheading"),
+      macros: request.macros.filter((each) => each.name !== "cvheading"),
+    };
+    expect(checked(withoutHeading, document)).toBe("passes");
+    const planted = (plant: (changed: NamingRequest) => void) => {
+      const changed = structuredClone(withoutHeading);
+      plant(changed);
+      return findLeaks(changed, document).map((leak) => `${leak.kind} ${leak.origin}`);
+    };
+    expect(
+      planted((changed) => {
+        const site = changed.macros.find((each) => each.name === "cvlabel")?.sites[0];
+        if (site !== undefined) site.arguments[0] = "Experience";
+      }),
+    ).toEqual(["call site page"]);
+    expect(
+      planted((changed) => changed.preamble.settings.push("\\newcommand{\\where}{Experience}")),
+    ).toEqual(["setting page"]);
+    expect(
+      planted((changed) => {
+        const label = changed.macros.find((each) => each.name === "cvlabel");
+        if (label !== undefined) label.signature = "O{Experience} m";
+      }),
+    ).toEqual(["signature page"]);
+  });
+
+  test("reads a signature's defaults, not the letters of its argument types", async () => {
+    const found = await signaturesOf(
+      { cvnote: "macro:#1#2#3->#1#2#3" },
+      { cvnote: template("som") },
+    );
+    const tree = treeOf("\\cvnote{Xy}\n", found);
+    // `som` is a word of the page's, as of a Swedish resume's, and xparse's `s o m`.
+    const page = await pageOf(["Invented som Larkspur"]);
+    const request = await requestOf(tree, found, NO_PROBE, PREAMBLE_ONLY, { page });
+    expect(macroOf(request, "cvnote")?.signature).toBe("som");
+    expect(checked(request, { tree, page })).toBe("passes");
+    const leaked = structuredClone(request);
+    const note = leaked.macros.find((each) => each.name === "cvnote");
+    if (note !== undefined) note.signature = "sO{Larkspur}m";
+    expect(checked(leaked, { tree, page })).toMatch(/\(page\) in the signature of cvnote/);
+  });
+});
+
+describe("the request builder and the check, as item 11's review found them", () => {
+  const PREAMBLE_ONLY = "\\documentclass{article}\n";
+
+  /** A meaning's visible words (`visibleOfMeaning`), each folded, a space between. */
+  const wordsIn = (meaning: string) => {
+    const visible = visibleOfMeaning(meaning);
+    const words: string[] = [];
+    visible.text.forEach((char, i) => {
+      if (visible.starts[i] === true || words.length === 0) words.push(char);
+      else words[words.length - 1] += char;
+    });
+    return words.join(" ");
+  };
+
+  /**
+   * An invented document whose own macros `meanings` holds, the body calling each of `called`, the
+   * page showing `lines`: its request, built with its sources and page, and what the check finds.
+   */
+  async function built(
+    meanings: Record<string, string>,
+    called: readonly string[],
+    page: PageStrings,
+    header?: HeaderValues,
+  ) {
+    const found = await signaturesOf(
+      meanings,
+      Object.fromEntries(Object.keys(meanings).map((name) => [name, template("")])),
+    );
+    const tree = treeOf(called.map((name) => `\\${name}\n`).join(""), found);
+    const sources = [
+      Object.keys(meanings)
+        .map((name) => `\\def\\${name}{}`)
+        .join("\n"),
+    ];
+    const options = { sources, page, ...(header === undefined ? {} : { header }) };
+    const result = await buildRequest(tree, found, NO_PROBE, PREAMBLE_ONLY, options);
+    if ("refused" in result) throw new Error(result.message);
+    const document = { tree, sources, page, names: result.names, ...(header ? { header } : {}) };
+    return { ...result, found, document, leaks: findLeaks(result.request, document) };
+  }
+
+  test("reads `\\\\` as a line's end, a control symbol, before text, and an optional argument's code as a name", () => {
+    // The printout writes the break with no space after it, the backslash being the escape.
+    expect(wordsIn("\\long macro:->\\textbf {Quill Invented}\\\\Larkspur Lane\\\\Harbour")).toBe(
+      "quill invented larkspur lane harbour",
+    );
+    // `\\cvitem ` names the code the kernel hands `\cvitem`'s work to: a name, no text.
+    expect(wordsIn("\\protected macro:->\\@protected@testopt \\cvitem \\\\cvitem {}")).toBe("");
+    expect(wordsIn("macro:->\\@protected@testopt \\cvitem  \\\\cvitem  {Larkspur}")).toBe(
+      "larkspur",
+    );
+    expect(wordsIn("macro:->\\@testopt \\\\cvitem {Larkspur}")).toBe("larkspur");
+    // Before a command, and as a delimiter of the parameters.
+    expect(wordsIn("macro:->Quill\\\\\\textit {Invented}")).toBe("quill invented");
+    expect(wordsIn("macro:#1\\\\->#1 Larkspur")).toBe("larkspur");
+    expect(wordsIn("macro:[#1]#2->#2 Harbour")).toBe("harbour");
+    // And the kernel's reading of names agrees: the break and the name are tokens of their own.
+    expect(namesIn("\\@protected@testopt \\cvitem \\\\cvitem {}")).toEqual([
+      "@protected@testopt",
+      "cvitem",
+      "\\cvitem",
+    ]);
+    expect(namesIn("Quill\\\\Larkspur \\\\\\textit {Invented}")).toEqual(["\\", "\\", "textit"]);
+  });
+
+  test("masks a name after a line's end, which the page shows as a pair", async () => {
+    const { request, leaks } = await built(
+      { cvcontact: "macro:->\\textbf {\\Large Quill Invented}\\\\Harbour City\\\\Larkspur Lane" },
+      ["cvcontact"],
+      await pageOf(["Quill Invented", "Harbour City", "Larkspur Lane"]),
+    );
+    expect(textOf(request, "cvcontact")).toBe(
+      "macro:->\\textbf {\\Large Xxxxx Xxxxxxxx}\\\\Xxxxxxx Xxxx\\\\Xxxxxxxx Xxxx",
+    );
+    expect(leaks).toEqual([]);
+  });
+
+  test("reads LaTeX's letter commands and accents as the letters the page shows", async () => {
+    // The reviewers' names, as the printout writes them and as the page reads them.
+    const names: [string, string, string][] = [
+      ["Bj\\o rnstad", "Bjørnstad", "Xxxxxxxxx"],
+      ["Wei\\ss {}enfeld", "Weißenfeld", "Xxxx{}xxxxxx"],
+      ["Wr\\' o\\- b\\l ewska", "Wróbłewska", "Xxx\\- xxxxxxx"],
+      ["Gr\\ae nl\\aa kke", "Grænlåkke", "Xxxxxxxxx"],
+      ["Mar\\' {\\i }n Garc\\' {\\i }a", "Marín García", "Xxxxx Xxxxxx"],
+    ];
+    for (const [spelt, shown, masked] of names) {
+      expect(wordsIn(`macro:->${spelt}`), spelt).toBe(
+        [...shown.normalize("NFD")]
+          .filter((char) => !/\p{M}/u.test(char))
+          .join("")
+          .toLowerCase(),
+      );
+      const { request, leaks } = await built(
+        { cvcontact: `macro:->{\\Large Quill ${spelt}}\\par Harbour City\\par ` },
+        ["cvcontact"],
+        await pageOf([`Quill ${shown}`, "Harbour City"]),
+      );
+      expect(textOf(request, "cvcontact"), spelt).toBe(
+        `macro:->{\\Large Xxxxx ${masked}}\\par Xxxxxxx Xxxx\\par `,
+      );
+      expect(leaks, spelt).toEqual([]);
+    }
+  });
+
+  test("masks a pair across glue, a page's numbers and its letter-spaced words, and checks the rest", async () => {
+    // A length between the two words of a pair the page shows is glue.
+    const glued = await built(
+      { cvcontact: "macro:->{\\Large Quill\\hspace {0.4em}Invented}\\par " },
+      ["cvcontact"],
+      await pageOf(["Quill Invented"]),
+    );
+    expect(textOf(glued.request, "cvcontact")).toBe(
+      "macro:->{\\Large Xxxxx\\hspace {0.4em}Xxxxxxxx}\\par ",
+    );
+    expect(glued.leaks).toEqual([]);
+    // A street, a postcode and a birth date: the page's numbers are masked, and the words the page
+    // shows alone the check finds, which the gate refuses.
+    const street = await built(
+      {
+        cvaddress: "macro:->Larkspurstraat 17, 1012 Harbourdam\\par ",
+        cvborn: "macro:->Born 12 March 1994\\par ",
+      },
+      ["cvaddress", "cvborn"],
+      await pageOf(["Larkspurstraat 17, 1012 Harbourdam", "Born 12 March 1994"]),
+    );
+    expect(textOf(street.request, "cvaddress")).toBe(
+      "macro:->Larkspurstraat 00, 0000 Harbourdam\\par ",
+    );
+    expect(textOf(street.request, "cvborn")).toBe("macro:->Born 00 March 0000\\par ");
+    expect(street.leaks.map((leak) => `${leak.macro} ${leak.origin} ${leak.alone}`)).toEqual([
+      "cvaddress page true",
+      "cvborn page true",
+    ]);
+    // A name soul sets letter-spaced, which the page reads as runs of single letters.
+    const letters: ReferenceGlyph[] = [];
+    let h = 0;
+    for (const char of "Quill Invented") {
+      if (char === " ") h += 0.6 * EM;
+      else {
+        letters.push(glyph(char, h));
+        h += EM / 2 + EM / 4;
+      }
+    }
+    const spaced = await built(
+      { cvcontact: "macro:->{\\Large \\so {Quill Invented}}\\par " },
+      ["cvcontact"],
+      await pageStrings(
+        streamOf([...letters, ...lines(["Typesetter at Larkspur Labs"], 1)]),
+        PAGE_FONTS,
+      ),
+    );
+    expect(textOf(spaced.request, "cvcontact")).toBe(
+      "macro:->{\\Large \\so {Xxxxx Xxxxxxxx}}\\par ",
+    );
+    expect(spaced.leaks).toEqual([]);
+  });
+
+  test("matches a pair across glue alone, never across code, and no pair of the tree's words", async () => {
+    // The page parts lines at `\par`: no pair, and the check finds the words alone.
+    const parted = await built(
+      { cvcontact: "macro:->{\\Large Quill}\\par {\\Large Invented}\\par " },
+      ["cvcontact"],
+      await pageOf(["Quill", "Invented"]),
+    );
+    expect(textOf(parted.request, "cvcontact")).toBe(
+      "macro:->{\\Large Quill}\\par {\\Large Invented}\\par ",
+    );
+    expect(parted.leaks.map((leak) => leak.alone)).toEqual([true]);
+    // A parameter, a colour's code or an option's bracket between two words parts the pair.
+    const page = await pageOf(["Quill Invented"]);
+    for (const between of ["#1", "\\color {accent}", "[x]"]) {
+      const { request } = await built(
+        { cvpair: `macro:${between === "#1" ? "#1" : ""}->Quill${between}Invented` },
+        ["cvpair"],
+        page,
+      );
+      expect(textOf(request, "cvpair"), between).toBe(
+        `macro:${between === "#1" ? "#1" : ""}->Quill${between}Invented`,
+      );
+    }
+    // A page's pair that holds a word the tree's code shows, tikz's `node`, masks nothing: a
+    // resume's `Node services` is no reason to move a class's key.
+    const found = await signaturesOf(
+      {
+        cvwheel: "macro:->\\draw (0,0) node services;\\cv@node ",
+        "cv@node": "macro:->\\pgfnode node anchor",
+      },
+      { cvwheel: template("") },
+    );
+    const tree = treeOf("\\cvwheel\n", found);
+    const sources = ["\\def\\cvwheel{}"];
+    const result = await buildRequest(tree, found, NO_PROBE, PREAMBLE_ONLY, {
+      sources,
+      page: await pageOf(["Built Node services with Larkspur"]),
+    });
+    if ("refused" in result) throw new Error(result.message);
+    expect(textOf(result.request, "cvwheel")).toBe("macro:->\\draw (0,0) node services;\\cv@node ");
+    expect(macroOf(result.request, "cvwheel")?.key).toBe((await keysOf(found)).cvwheel);
+  });
+
+  test("finds a word only the page shows in a macro of the preamble's, and masks the macro named after it", async () => {
+    // other-0028's shape, invented: a macro spells a word only the page shows, and a macro is
+    // named after the word it spells. The first the gate refuses; the second the builder masks,
+    // its name and the word, which the request writes as a placeholder throughout.
+    const page = await pageOf(["Wrenfield Typesetting", "Wren", "email: quill@example.invalid"]);
+    const alone = await built({ cvsig: "macro:->\\textit {Wren}" }, ["cvsig"], page);
+    expect(textOf(alone.request, "cvsig")).toBe("macro:->\\textit {Wren}");
+    expect(alone.leaks).toEqual([
+      {
+        origin: "page",
+        kind: "own definition",
+        macro: "cvsig",
+        where: "the definition of cvsig",
+        alone: true,
+      },
+    ]);
+    const named = await built(
+      {
+        Wren: "macro:->\\textit {Wren}",
+        cvheader: "macro:->{\\Large \\Wren }\\par \\email ",
+        email: "macro:->\\href {mailto:quill@example.invalid}{}",
+      },
+      ["cvheader", "Wren"],
+      page,
+    );
+    expect([...named.names]).toEqual([["rtxa", "Wren"]]);
+    expect(named.request.macros.map((macro) => macro.name)).toEqual(["cvheader", "rtxa"]);
+    expect(named.request.definitions.map((each) => each.name).sort()).toEqual([
+      "cvheader",
+      "email",
+      "rtxa",
+    ]);
+    expect(textOf(named.request, "rtxa")).toBe("macro:->\\textit {Xxxx}");
+    expect(textOf(named.request, "cvheader")).toBe("macro:->{\\Large \\rtxa }\\par \\email ");
+    expect(macroOf(named.request, "cvheader")?.dependencies).toEqual(["rtxa", "email"]);
+    // A template's name for the words its page shows as labels, which it never spells, is kept.
+    expect(named.request.definitions.some((each) => each.name === "email")).toBe(true);
+    expect(named.leaks).toEqual([]);
+    expect(await checkRequest(named.request)).toEqual([]);
+    // The map reads every name back, and the check finds the real one, naming no macro.
+    expect(realName(named.names, "rtxa")).toBe("Wren");
+    expect(realName(named.names, "rtxa ")).toBe("Wren ");
+    expect(realName(named.names, "\\rtxa")).toBe("\\Wren");
+    expect(realName(named.names, "cvheader")).toBe("cvheader");
+    const unmasked = structuredClone(named.request);
+    for (const macro of unmasked.macros) if (macro.name === "rtxa") macro.name = "Wren";
+    for (const definition of unmasked.definitions)
+      if (definition.name === "rtxa")
+        Object.assign(definition, { name: "Wren", text: "macro:->\\textit {Wren}" });
+    expect(
+      findLeaks(unmasked, { ...named.document, names: new Map() }).filter(
+        (leak) => leak.kind === "name",
+      ),
+    ).toEqual([{ origin: "page", kind: "name", where: "a name the request holds" }]);
+    // A word of the header's name in a name that spells it is the person's too.
+    const header = await built(
+      { cvQuill: "macro:->\\textbf {Quill}" },
+      ["cvQuill"],
+      await pageOf(["Quill Invented"]),
+      { first: "Quill", last: "Invented" },
+    );
+    expect(header.request.macros.map((macro) => macro.name)).toEqual(["rtxa"]);
+    expect(header.leaks).toEqual([]);
+  });
+
+  test("sends a definition's metadata with its text as placeholders", async () => {
+    const { request, leaks } = await built(
+      {
+        cvmeta:
+          "macro:->\\hypersetup {pdfauthor={Quill Invented},pdftitle={Quill's resume},colorlinks=true,urlcolor=blue,pdfkeywords={\\@keywords }}",
+      },
+      ["cvmeta"],
+      await pageOf(["Larkspur Labs"]),
+    );
+    expect(textOf(request, "cvmeta")).toBe(
+      "macro:->\\hypersetup {pdfauthor={Xxxxx Xxxxxxxx},pdftitle={Xxxxx'x xxxxxx},colorlinks=true,urlcolor=blue,pdfkeywords={\\@keywords }}",
+    );
+    expect(leaks).toEqual([]);
+  });
+
+  test("throws a request its contract refuses, naming where by kind and macro, never what", async () => {
+    // A definition past the request's cap, which the schema refuses, as it would a site that held
+    // the document's text: the builder never gives such a request back.
+    const found = await signaturesOf(
+      { cvhuge: `macro:->${"x".repeat(REQUEST_CAPS.definition + 1)}` },
+      { cvhuge: template("") },
+    );
+    const tree = treeOf("\\cvhuge\n", found);
+    const built = buildRequest(tree, found, NO_PROBE, PREAMBLE_ONLY, {
+      sources: ["\\def\\cvhuge{}"],
+    });
+    await expect(built).rejects.toBeInstanceOf(InvalidRequest);
+    await expect(built).rejects.toMatchObject({
+      problems: [{ kind: "own definition", macro: "cvhuge" }],
+      message: "The naming request breaks its contract in own definition of cvhuge.",
+    });
+  });
+
+  test("refuses a request for a page the detector cannot read, and the gate refuses one too", async () => {
+    const found = await signaturesOf(
+      { cvcontact: "macro:->Quill Invented" },
+      {
+        cvcontact: template(""),
+      },
+    );
+    const tree = treeOf("\\cvcontact\n", found);
+    const page = await pageStrings(
+      streamOf(Array.from({ length: 40 }, (_, i) => glyph(undefined, i * (EM / 2)))),
+      PAGE_FONTS,
+    );
+    const refused = await buildRequest(tree, found, NO_PROBE, PREAMBLE_ONLY, {
+      sources: ["\\def\\cvcontact{}"],
+      page,
+    });
+    expect(refused).toMatchObject({ refused: true, reason: "unreadable" });
+    const request = await requestOf(tree, found, NO_PROBE, PREAMBLE_ONLY);
+    expect(checked(request, { tree, page })).toMatch(/the page's fonts cannot be read/);
+  });
+});
+
+describe("the request builder, masking a postal address", () => {
+  test("masks a street's number and name, and a postcode, but never a number alone", async () => {
+    const meanings: Record<string, string> = {
+      cvstreet: "macro:->\\textbf {221B Larkspur}\\par ",
+      cvpost: "macro:->\\small qv1a2zx\\par ",
+      cvcity: "macro:->\\small Invented Town 94103\\par ",
+      cvgap: "macro:->\\penalty 10000 \\cv@rule ",
+      // An invented package's of the tree's.
+      "cv@rule": "macro:->\\penalty 10000 \\hrule ",
+    };
+    const found = await signaturesOf(
+      meanings,
+      Object.fromEntries(
+        ["cvstreet", "cvpost", "cvcity", "cvgap"].map((name) => [name, template("")]),
+      ),
+    );
+    const tree = treeOf("\\cvstreet \\cvpost \\cvcity \\cvgap\n", found);
+    const sources = [
+      ["cvstreet", "cvpost", "cvcity", "cvgap"].map((name) => `\\def\\${name}{}`).join("\n"),
+    ];
+    const build = (location: string) =>
+      requestOf(tree, found, NO_PROBE, "\\documentclass{article}\n", {
+        header: { first: "Quill", last: "Invented", location },
+        sources,
+      });
+    const lane = await build("221B Larkspur Lane, Harbour City QV1A 2ZX");
+    expect(textOf(lane, "cvstreet")).toBe("macro:->\\textbf {000X Xxxxxxxx}\\par ");
+    expect(textOf(lane, "cvpost")).toBe("macro:->\\small xx0x0xx\\par ");
+    const town = await build("12 Harbour Road, Invented Town 94103");
+    expect(textOf(town, "cvcity")).toBe("macro:->\\small Xxxxxxxx Xxxx 00000\\par ");
+    // A postcode of digits alone is sought with the word beside it, since code writes numbers.
+    const numbered = await build("Harbour Road 5, 10000 Invented");
+    const keys = await keysOf(found);
+    for (const name of ["cvgap", "cv@rule"])
+      expect(textOf(numbered, name), name).toBe(meanings[name]);
+    expect(macroOf(numbered, "cvgap")?.key).toBe(keys.cvgap);
+    const header = { first: "Quill", last: "Invented", location: "Harbour Road 5, 10000 Invented" };
+    expect(checked(numbered, { tree, header, sources })).toBe("passes");
+  });
+});
+
+describe("the request builder, sending what the preamble stored", () => {
+  test("sends a macro a storing call filled as data, whoever defines it", async () => {
+    // An invented class of the tree's: a setter the preamble calls with a text that holds a
+    // command, which makes what it stores code, and a footer that sets it; and another setter
+    // the preamble never calls, whose macro holds the class's default.
+    const found = await signaturesOf(
+      {
+        cvfootnote: "macro:#1->\\def \\cv@foot {#1}",
+        "cv@foot": "macro:->\\small Quill Invented, Harbour City",
+        cvfooter: "macro:->\\hfill \\cv@foot \\hfill \\cv@motto ",
+        cvmotto: "macro:#1->\\def \\cv@motto {#1}",
+        "cv@motto": "macro:->\\itshape Invented default",
+      },
+      { cvfootnote: template("m"), cvfooter: template(""), cvmotto: template("m") },
+    );
+    const preamble =
+      "\\documentclass{inventedcv}\n\\cvfootnote{\\small Quill Invented, Harbour City}\n";
+    const tree = treeOf("\\cvfooter\n", found);
+    const probed = {
+      macros: [],
+      candidates: [
+        candidate({
+          id: "h1-1",
+          where: "preamble",
+          name: "cvfootnote",
+          text: "Quill Invented, Harbour City",
+        }),
+      ],
+    };
+    const request = await requestOf(tree, found, probed, preamble);
+    expect(definitionOf(request, "cv@foot")).toEqual({ kind: "data", name: "cv@foot" });
+    const motto = found.macros["cv@motto"];
+    expect(textOf(request, "cv@motto")).toBe(motto?.kind === "data" ? undefined : motto?.meaning);
+    const hashOf = (name: string) => {
+      const definition = definitionOf(request, name);
+      return definition?.kind === "definition" ? definition.hash : "";
+    };
+    // What the preamble stored takes no part in the footer's key, as data takes none.
+    expect(macroOf(request, "cvfooter")?.key).toBe(
+      await keyOf(NAMING_VERSION, hashOf("cvfooter"), [["cv@motto", hashOf("cv@motto")]]),
+    );
+    const stored = probed.candidates.map((each) => each.text);
+    expect(checked(request, { tree, stored })).toBe("passes");
   });
 });
 
@@ -1122,7 +2007,7 @@ test("grows with the body, as its calls and texts do", async () => {
   const run = (calls: number) => {
     const tree = treeOf(body(calls), found);
     return async () => {
-      await buildRequest(tree, found, PROBE, PREAMBLE, { header: HEADER, sources: SOURCES });
+      await requestOf(tree, found, PROBE, PREAMBLE, { header: HEADER, sources: SOURCES });
     };
   };
   const [tenth = 0, whole = 0] = await fastestAsync([run(200), run(2000)], 5);
@@ -1182,7 +2067,7 @@ describe.skipIf(!engineAvailable())("the request builder, on the engine", () => 
 `;
 
   /** An invented upload through the whole pipeline to the request, and what it was built from. */
-  async function requested(main: string) {
+  async function throughPipeline(main: string) {
     const zipped = { "cv.tex": strToU8(main), "inventedprobe.cls": strToU8(CLASS) };
     const taken = intake({ name: "invented.zip", bytes: zipSync(zipped) }, { tree });
     if (isRefusal(taken)) throw new Error(`refused at intake: ${taken.message}`);
@@ -1207,16 +2092,25 @@ describe.skipIf(!engineAvailable())("the request builder, on the engine", () => 
     if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
     const header = { first: "Quill", last: "Invented", email: "quill@example.invalid" };
     const sources = sourcesOf(taken);
-    const request = await buildRequest(built, found, probed, body.preamble, { header, sources });
+    const page = await pageStrings(made, fonts, taken.files);
+    const request = await requestOf(built, found, probed, body.preamble, {
+      header,
+      sources,
+      page,
+    });
     const stored = probed.candidates
       .filter((each) => each.where === "preamble")
       .map((each) => each.text);
-    return { request, found, document: { tree: built, header, stored, sources } };
+    return { request, found, page, document: { tree: built, header, stored, sources, page } };
   }
 
   /** What an end-to-end request must be: valid, keyed as item 4 keys, and holding no text. */
   async function check(main: string, engine: "pdftex" | "xetex") {
-    const { request, found, document } = await requested(main);
+    const { request, found, page, document } = await throughPipeline(main);
+    // The page reads as the body and the class set it: the name, the entry and the gap's words.
+    for (const pair of ["Quill Invented", "Larkspur Labs", "Invented gap"])
+      expect(page.pairs, pair).toContain(pair);
+    expect(page.identifiers).toContain("quill@example.invalid");
     expect(request.engine).toBe(engine);
     expect(await checkRequest(request)).toEqual([]);
     expect(checked(request, document)).toBe("passes");
@@ -1229,7 +2123,12 @@ describe.skipIf(!engineAvailable())("the request builder, on the engine", () => 
     expect(textOf(request, "cvrule")).toBe(rule?.kind === "data" ? undefined : rule?.meaning);
     // The one that holds the person's name as text is masked, and its key is the document's own.
     expect(request.macros.find((macro) => macro.name === "cvsign")?.key).not.toBe(keys.cvsign);
-    expect(textOf(request, "cvsign")).toMatch(/Signed, Xxxxx Xxxxxxxx/);
+    // The page shows the class's word before the name, which goes with it.
+    expect(textOf(request, "cvsign")).toMatch(/\{Xxxxxx, Xxxxx Xxxxxxxx\}/);
+    // So is a phrase of the class's own that the page shows, which no one can tell from the
+    // person's: `\cvgap`'s words.
+    expect(textOf(request, "cvgap")).toMatch(/Xxxxxxxx xxx\\par $/);
+    expect(request.macros.find((macro) => macro.name === "cvgap")?.key).not.toBe(keys.cvgap);
     const byName = (name: string) => request.macros.find((macro) => macro.name === name);
     expect(byName("cvname")?.sites).toEqual([{ arguments: ["Xxxxx", "Xxxxxxxx"] }]);
     expect(byName("cvplain")?.arguments).toEqual([
@@ -1260,6 +2159,145 @@ describe.skipIf(!engineAvailable())("the request builder, on the engine", () => 
     );
     expect(request.preamble.settings).toContain("\\usepackage{fontspec}");
   }, 60_000);
+
+  /**
+   * An invented upload of `files` through the reference, the signatures and the parse to its
+   * request, as the import builds it, with the upload's sources and the page's strings read with
+   * its fonts, but no probe: what the preamble stores the signatures step reads itself.
+   */
+  async function uploaded(files: Record<string, string | Uint8Array>) {
+    const zipped = Object.fromEntries(
+      Object.entries(files).map(([path, each]) => [
+        path,
+        typeof each === "string" ? strToU8(each) : each,
+      ]),
+    );
+    const taken = intake({ name: "invented.zip", bytes: zipSync(zipped) }, { tree });
+    if (isRefusal(taken)) throw new Error(`refused at intake: ${taken.message}`);
+    const made = await reference(session, fonts, taken as Intake);
+    if (isRefusal(made)) throw new Error(`refused: ${made.message}`);
+    const body = bodyOf(taken);
+    if (isRefusal(body)) throw new Error(body.message);
+    const read = readBody(body);
+    if (isRefusal(read)) throw new Error(read.message);
+    const head = readBody(bodyOfText(body.preamble));
+    const found = await signatures(
+      session,
+      taken,
+      made,
+      body,
+      probeUses(read, isRefusal(head) ? undefined : head),
+    );
+    if (isRefusal(found)) throw new Error("no signatures");
+    const built = buildTree(read, found);
+    if (isRefusal(built)) throw new Error(built.message);
+    const sources = sourcesOf(taken);
+    const page = await pageStrings(made, fonts, (taken as Intake).files);
+    const result = await buildRequest(built, found, NO_PROBE, body.preamble, { sources, page });
+    return { result, page, found, document: { tree: built, sources, page } };
+  }
+
+  test("reads a font the upload ships from the upload, and masks the name it sets", async () => {
+    // Item 11's review: a XeTeX document whose font the upload ships under a name the tree lacks,
+    // here a copy of the tree's TeX Gyre Termes, and a name in a macro of the preamble's.
+    const termes = readFileSync(
+      join(
+        ENGINE_DIR,
+        "files",
+        "texlive/texmf-dist/fonts/opentype/public/tex-gyre/texgyretermes-regular.otf",
+      ),
+    );
+    const { result, page, document } = await uploaded({
+      "main.tex": String.raw`\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{inventedserif.otf}
+\newcommand{\cvcontact}{{\Large Quill Invented}\par Harbour City\par}
+\newcommand{\cvrole}[1]{#1\par}
+\begin{document}
+\cvcontact
+\cvrole{Larkspur Labs}
+\end{document}
+`,
+      "inventedserif.otf": new Uint8Array(termes),
+    });
+    expect(page.pairs).toContain("Quill Invented");
+    expect(page.pairs).toContain("Harbour City");
+    expect(page.readable).toBe(page.glyphs);
+    if (isRefusal(result)) throw new Error(result.message);
+    expect(textOf(result.request, "cvcontact")).toBe(
+      "\\long macro:->{\\Large Xxxxx Xxxxxxxx}\\par Xxxxxxx Xxxx\\par ",
+    );
+    expect(checked(result.request, document)).toBe("passes");
+  }, 60_000);
+
+  test("refuses a document in T1's Computer Modern, whose page names no glyph's text", async () => {
+    // Item 11's review: the EC fonts have metrics in the tree and no outlines, so the page reads
+    // no word, and a name a macro of the preamble writes would go unseen.
+    const main = (fonts: string) => String.raw`\documentclass{article}
+${fonts}
+\newcommand{\cvcontact}{\textbf{\Large Quill Invented}\par Harbour City\par}
+\begin{document}
+\cvcontact
+Built the invented typesetter at Larkspur Labs.
+\end{document}
+`;
+    const ec = await uploaded({ "main.tex": main("\\usepackage[T1]{fontenc}") });
+    expect([ec.page.words.length, ec.page.readable]).toEqual([0, 0]);
+    expect(ec.result).toMatchObject({ refused: true, reason: "unreadable" });
+    // With Latin Modern the same document is read, and its request built and masked.
+    const lm = await uploaded({
+      "main.tex": main("\\usepackage[T1]{fontenc}\\usepackage{lmodern}"),
+    });
+    if (isRefusal(lm.result)) throw new Error(lm.result.message);
+    expect(textOf(lm.result.request, "cvcontact")).toBe(
+      "\\long macro:->\\textbf {\\Large Xxxxx Xxxxxxxx}\\par Xxxxxxx Xxxx\\par ",
+    );
+  }, 60_000);
+
+  test("sends what the preamble's storing calls filled as data, the kernel's and an input's", async () => {
+    // Item 11's review: `\author` stores a text holding a command, which an own macro reads; and
+    // moderncv's setters called from a file the preamble inputs. Each macro they fill is data.
+    const author = await uploaded({
+      "main.tex": String.raw`\documentclass{article}
+\author{\Large Quill Invented}
+\makeatletter
+\newcommand{\cvauthor}{{\@author}\par}
+\makeatother
+\begin{document}
+\cvauthor
+Built the invented typesetter at Larkspur Labs.
+\end{document}
+`,
+    });
+    if (isRefusal(author.result)) throw new Error(author.result.message);
+    expect(definitionOf(author.result.request, "@author")).toEqual({
+      kind: "data",
+      name: "@author",
+    });
+    expect(author.found.macros["@author"]).toMatchObject({ kind: "data" });
+    expect(checked(author.result.request, author.document)).toBe("passes");
+    const moderncv = await uploaded({
+      "main.tex": String.raw`\documentclass[11pt]{moderncv}
+\moderncvstyle{classic}
+\moderncvcolor{blue}
+\input{personal.tex}
+\begin{document}
+\makecvtitle
+\section{Experience}
+\cventry{2020}{Typesetter}{Larkspur Labs}{}{}{}
+\end{document}
+`,
+      "personal.tex": String.raw`\name{Quill}{Invented}
+\extrainfo{\small Harbour City}
+`,
+    });
+    if (isRefusal(moderncv.result)) throw new Error(moderncv.result.message);
+    expect(definitionOf(moderncv.result.request, "@extrainfo")).toEqual({
+      kind: "data",
+      name: "@extrainfo",
+    });
+    expect(checked(moderncv.result.request, moderncv.document)).toBe("passes");
+  }, 120_000);
 
   test("redefines a package's macro before the document, where after the class it stops", async () => {
     const main = String.raw`\documentclass{article}

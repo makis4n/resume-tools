@@ -80,7 +80,8 @@ async function main() {
     await runner.import<ParseModule>("/src/import/parse.ts");
   const { signatures } = await runner.import<SignaturesModule>("/src/import/signatures.ts");
   const { probe, probeUses } = await runner.import<ProbeModule>("/src/import/probe.ts");
-  const { buildRequest, sourcesOf } = await runner.import<NamingModule>("/src/import/naming.ts");
+  const { buildRequest, realName, sourcesOf } =
+    await runner.import<NamingModule>("/src/import/naming.ts");
   const { rewriteForXetex } = await runner.import<XetexModule>("/src/import/xetex.ts");
   const { checkRewrite } = await runner.import<CheckModule>("/src/import/xetex-check.ts");
   const { validate } = await runner.import<ValidateModule>("/src/import/validate.ts");
@@ -161,12 +162,25 @@ async function main() {
       // finds (decision 0024).
       const options = { sources: sourcesOf(taken) };
       const plain = await buildRequest(built, found, probed, body.preamble, options);
-      const header = headerOf(probed.candidates, commandAnswers(plain, folder.read));
-      const request = await buildRequest(built, found, probed, body.preamble, {
+      if ("refused" in plain) return done({ outcome: "no answer", engine, answered: 0 }, probedRow);
+      const header = headerOf(
+        probed.candidates,
+        commandAnswers(plain.request, folder.read, (name) => realName(plain.names, name)),
+      );
+      const requested = await buildRequest(built, found, probed, body.preamble, {
         ...options,
         header,
       });
-      const answers = await answersFor(request.macros, cache);
+      if ("refused" in requested)
+        return done({ outcome: "no answer", engine, answered: 0 }, probedRow);
+      // The request writes a macro named after a word of the person's as a placeholder (decision
+      // 0029); the answers are asked for, and come back, under the document's own names.
+      const request = requested.request;
+      const asked = request.macros.map((macro) => ({
+        ...macro,
+        name: realName(requested.names, macro.name),
+      }));
+      const answers = await answersFor(asked, cache);
       const counted = {
         answered: answers.answered,
         unanswered: answers.unanswered,

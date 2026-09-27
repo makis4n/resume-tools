@@ -65,6 +65,7 @@ import { packageSignature, twooptSpec } from "./packages";
 import type { Body, Known, Uses } from "./parse";
 import { IMPORT_JOB, type Reference, type ReferenceOptions, referenceFiles } from "./reference";
 import { type Refusal, refusal } from "./refusal";
+import { maskComments } from "./source";
 import { QUANTITIES, SCRATCH, STANDARD } from "./standard";
 
 /** How a command's arguments were read: from which shape of its meaning, or not at all. */
@@ -435,10 +436,17 @@ export type Token =
 /**
  * A meaning's tokens as the compile prints them, where every printable character is a letter: a
  * control sequence is a backslash and its name up to the space TeX prints after it, but for the
- * control space, `\ `, whose space is its name; a parameter is `#` and a digit, or `##`.
+ * control space, `\ `, whose space is its name; the control symbol `\\`, which TeX prints with no
+ * space after it, the backslash's category being the escape's, so that what follows it is text or
+ * the next token; and a control symbol of a character outside printable ASCII that is no letter,
+ * which it prints so too. A name that starts with a backslash is an optional argument's code, `\\cvitem `, which the
+ * kernel hands a command's work to right after naming the command, `\@protected@testopt \cvitem
+ * \\cvitem {}`, or after `\@testopt`. A parameter is `#` and a digit, or `##`.
  */
 export function tokensOf(text: string): Token[] {
   const tokens: Token[] = [];
+  /** The control sequence read last, and where it ended, spaces after it passed over. */
+  let last = { name: "", end: -1 };
   for (let at = 0; at < text.length; ) {
     const char = text[at] ?? "";
     const next = text[at + 1];
@@ -448,10 +456,39 @@ export function tokensOf(text: string): Token[] {
         at += 2;
         continue;
       }
+      if (next === "\\") {
+        const before = last.end === at ? last.name : undefined;
+        const named =
+          before === "@testopt"
+            ? /^[^\s\\{}]+(?= )/.exec(text.slice(at + 2, at + 258))?.[0]
+            : before !== undefined && text.startsWith(`${before} `, at + 2)
+              ? before
+              : undefined;
+        if (named === undefined) {
+          tokens.push({ kind: "cs", name: "\\" });
+          at += 2;
+        } else {
+          tokens.push({ kind: "cs", name: `\\${named}` });
+          at += 3 + named.length;
+        }
+        continue;
+      }
+      const code = text.codePointAt(at + 1) ?? 0;
+      if (code < 33 || (code > 126 && !/^\p{L}$/u.test(String.fromCodePoint(code)))) {
+        const symbol = String.fromCodePoint(code);
+        tokens.push({ kind: "cs", name: symbol });
+        at += 1 + symbol.length;
+        continue;
+      }
       const space = text.indexOf(" ", at + 1);
       const end = space < 0 ? text.length : space;
-      tokens.push({ kind: "cs", name: text.slice(at + 1, end) });
+      const name = text.slice(at + 1, end);
+      tokens.push({ kind: "cs", name });
       at = end + 1;
+      // A robust command's name ends in a space of its own, `\cvitem  `, which is passed over.
+      let after = at;
+      while (text[after] === " ") after++;
+      last = { name, end: after };
       continue;
     }
     if (char === "#" && next !== undefined && /[1-9#]/.test(next)) {
@@ -469,6 +506,96 @@ export function tokensOf(text: string): Token[] {
     at++;
   }
   return tokens;
+}
+
+/**
+ * The macros a setter stores its arguments in, each `\def`'s or `\gdef`'s target, in its
+ * parameters' order, from its printed meaning: its replacement text begins, spaces aside, with
+ * `\def` or `\gdef`, either after `\global` or `\long`, a control sequence and a group holding one
+ * parameter alone, for each of its parameters once; and what follows names no parameter, as
+ * Awesome-CV's `\position` stores `\@position`, europecv's `\ecvfootnote` `\ecv@rfoot` and the
+ * kernel's `\author` `\@author`. Undefined for a macro that is not a setter, one with an optional
+ * argument or xparse's among them.
+ */
+export function storedTargets(printed: string): string[] | undefined {
+  const meaning = readMeaning(printed);
+  if (meaning.kind !== "macro" || !/^(?:#\d)+$/.test(meaning.parameters)) return undefined;
+  const parameters = meaning.parameters.length / 2;
+  const tokens = tokensOf(meaning.replacement).filter(
+    (token) => !(token.kind === "char" && token.text === " "),
+  );
+  const nameOf = (token: Token | undefined) => (token?.kind === "cs" ? token.name : "");
+  const stored = new Set<string>();
+  const targets: string[] = [];
+  let at = 0;
+  for (;;) {
+    let next = at;
+    while (tokens[next]?.kind === "cs" && /^(?:global|long)$/.test(nameOf(tokens[next]))) next++;
+    const [def, target, open, parameter, close] = tokens.slice(next, next + 5);
+    const assigns =
+      def?.kind === "cs" &&
+      /^g?def$/.test(def.name) &&
+      target?.kind === "cs" &&
+      open?.kind === "open" &&
+      parameter?.kind === "parameter" &&
+      parameter.text !== "##" &&
+      !stored.has(parameter.text) &&
+      close?.kind === "close";
+    if (!assigns) break;
+    stored.add(parameter.text);
+    targets.push(nameOf(target));
+    at = next + 5;
+  }
+  if (stored.size !== parameters) return undefined;
+  return tokens.slice(at).every((token) => token.kind !== "parameter" || token.text === "##")
+    ? targets
+    : undefined;
+}
+
+/**
+ * Setters of the tree's that store the person's text where `storedTargets` cannot read it, by the
+ * macros they store it in: moderncv's `\address`, xparse's, its street, city and country; its
+ * `\phone` and `\social`, which add to a collection; and hyperref's keys for a document's
+ * metadata, which `\hypersetup` stores when the preamble gives them (`METADATA`).
+ */
+const TREE_STORAGE: ReadonlyMap<string, (name: string) => boolean> = new Map([
+  ["address", (name: string) => /^@address(?:street|city|country)$/.test(name)],
+  ["phone", (name: string) => /^collection@phones@/.test(name)],
+  ["social", (name: string) => /^collection@socials@/.test(name)],
+]);
+
+/** hyperref's keys for a document's metadata, and the macro each stores its text in. */
+const METADATA: ReadonlyMap<string, string> = new Map([
+  ["pdfauthor", "@pdfauthor"],
+  ["pdftitle", "@pdftitle"],
+  ["pdfsubject", "@pdfsubject"],
+  ["pdfkeywords", "@pdfkeywords"],
+]);
+
+/**
+ * The texts of a preamble and of the files it inputs, and theirs, by their paths in the job, each
+ * once: `\input`, `\include`, `\subfile` and `\import`'s, a name with `.tex` or without. A
+ * storing call in any of them stores the person's text (decision 0029).
+ */
+export function preambleTexts(
+  preamble: string,
+  files: Readonly<Record<string, Uint8Array>>,
+): string[] {
+  const texts = [preamble];
+  const seen = new Set<string>();
+  const INPUTS =
+    /\\(?:input|include|subfile)\s*\{([^}]+)\}|\\input\s+([^\s{}\\%]+)|\\(?:sub)?import\s*\{([^}]*)\}\s*\{([^}]+)\}/g;
+  for (let i = 0; i < texts.length && texts.length < 64; i++)
+    for (const found of maskComments(texts[i] ?? "").matchAll(INPUTS)) {
+      const name = (found[1] ?? found[2] ?? `${found[3] ?? ""}${found[4] ?? ""}`)
+        .trim()
+        .replace(/^(?:\.\/)+/, "");
+      const path = [name, `${name}.tex`].find((each) => files[each] !== undefined);
+      if (path === undefined || seen.has(path)) continue;
+      seen.add(path);
+      texts.push(decodeText(files[path] ?? new Uint8Array()));
+    }
+  return texts;
 }
 
 /**
@@ -1265,8 +1392,22 @@ export async function signatures(
 ): Promise<EngineSignatures | Refusal> {
   const job = options.job ?? IMPORT_JOB;
   const engine = made.engine;
+  // The preamble's files, the main file's and those it inputs, whose storing calls store the
+  // person's text: the commands the inputs call are asked too, so that a setter among them is read.
+  const texts = preambleTexts(body.preamble, intake.files);
+  const calledIn = (list: readonly string[]) =>
+    new Set(
+      list.flatMap((text) =>
+        [...maskComments(text).matchAll(/\\([A-Za-z@]+)/g)].map((found) => found[1] ?? ""),
+      ),
+    );
+  const called = calledIn(texts);
+  const inputs = [...calledIn(texts.slice(1))].filter(
+    (name) => !STANDARD.has(name) && !uses.commands.includes(name),
+  );
   const asked = [
     ...uses.commands,
+    ...inputs.sort(),
     ...uses.environments.flatMap((name) => [name, `end${name}`]),
   ].filter(isGivable);
   const files = referenceFiles(intake, made, options);
@@ -1337,6 +1478,29 @@ export async function signatures(
   const environments = record<Signature>();
   for (const name of uses.environments) environments[name] = signatureOf(name);
 
+  // What the preamble's storing calls filled: each setter's macros it calls in any of its files,
+  // the template's and the kernel's, `\author`'s `\@author` among them, read from its meaning
+  // (`storedTargets`) or known of the tree's (`TREE_STORAGE`), and hyperref's metadata the
+  // preamble gives. Each holds the person's text, whoever defines it, and is data though that text
+  // names a command, `\position{\small ...}` making `\@position` code, so that no closure follows
+  // or counts it, and its dependents key as they would had the text named none (decision 0029).
+  const stored = new Set<string>();
+  const storing: ((name: string) => boolean)[] = [];
+  for (const name of called) {
+    // A robust setter's code is its name's with a space, `\author`'s among them.
+    for (const code of [name, `${name} `]) {
+      const printed = records.get(code);
+      for (const target of printed === undefined ? [] : (storedTargets(printed.meaning) ?? []))
+        stored.add(target);
+    }
+    const tree = TREE_STORAGE.get(name);
+    if (tree !== undefined) storing.push(tree);
+  }
+  for (const text of texts)
+    for (const [key, target] of METADATA)
+      if (new RegExp(`\\b${key}\\s*=`).test(maskComments(text))) stored.add(target);
+  const isStored = (name: string) => stored.has(name) || storing.some((test) => test(name));
+
   // The template's macros: data, whose text never leaves this function, and definitions, masked;
   // scratch macros are neither. A macro that holds data takes nothing itself.
   const takesArguments = (name: string) =>
@@ -1350,7 +1514,10 @@ export async function signatures(
       const own = resolveOnce(name);
       return own.spec === "" && own.tail === undefined;
     };
-    if (meaning.kind === "macro" && isData(meaning, takesArguments) && takesNothing())
+    if (
+      meaning.kind === "macro" &&
+      ((isData(meaning, takesArguments) && takesNothing()) || isStored(name))
+    )
       data.set(name, meaning.replacement.length);
     else meanings.set(name, masked(printed.meaning));
   }
