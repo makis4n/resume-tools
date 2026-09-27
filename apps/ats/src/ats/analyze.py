@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from ats.extract import extract
+
 CONTRACT = "ats/v1"
 
 
@@ -12,8 +14,11 @@ class NotAPdfError(ValueError):
 def analyze(pdf: bytes) -> dict[str, Any]:
     """Analyse a resume PDF and return a result matching packages/contracts/ats/v1.
 
-    Placeholder: returns an empty analysis until the real analyser exists.
+    Reads the PDF's text and layout with `ats.extract`, letting `EncryptedPdfError` and
+    `UnreadablePdfError` propagate. Scoring and findings are still a placeholder until the
+    real analyser exists.
     """
     if not pdf.startswith(b"%PDF"):
         raise NotAPdfError("not a PDF")
+    extract(pdf)
     return {"contract": CONTRACT, "score": None, "findings": []}

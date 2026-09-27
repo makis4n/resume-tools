@@ -25,7 +25,7 @@ decision 0030; the editor's side of the integration is decision 0031.
   `GET /health` (`uv run ats-serve`); `apps/ats/src/ats/analyze.py` behind it checks the PDF
   signature and returns an empty analysis. `apps/editor/src/features/ats` holds the client, which
   validates replies against the contract, and a panel that nothing mounts yet.
-- The ATS has no PDF extractor, scoring engine or model integration.
+- The ATS now has a text extractor but no scoring engine or model integration.
 - The editor's milestone 2 has landed: three curated templates, the side panel, documents kept in
   the browser and PDF download. `Compiler.pdf()` in `apps/editor/src/editor/compiler.ts` returns the
   bytes the download button saves, which are the bytes the panel sends.
@@ -104,8 +104,7 @@ named vendor's proprietary algorithm.
 - `POST /v1/job-requirements` turns pasted job-description text into a structured requirement
   list, which the user can review and edit.
 - Reject unsupported, oversized, encrypted or unreadable files with a safe user-facing error.
-- Extract text per page with two permissively licensed extractors and keep position information to
-  inspect reading order.
+- Extract text per page with pypdfium2 and keep position information to inspect reading order.
 - Produce an ATS-readiness score with deterministic findings, each tagged with its origin.
 - Detect the tool that produced the PDF and tailor suggestions to it.
 - Detect conventional contact information and sections without storing their contents.
@@ -241,9 +240,10 @@ Decision 0030 records the service's shape.
 
 ### 8.3 PDF extraction and readiness
 
-Extraction uses two libraries with permissive licences (MIT, BSD or Apache); AGPL libraries such as
-PyMuPDF are excluded. The candidates are pdfminer.six and pypdfium2, to be confirmed by benchmark.
-Where the two disagree materially on text or order, that is itself a readiness signal.
+Extraction uses pypdfium2, a permissively licensed library (Apache-2.0 / BSD-3-Clause); AGPL
+libraries such as PyMuPDF are excluded (decision 0032). There is no second extractor, so reading
+order is checked from pypdfium2's own character and rectangle positions rather than from
+disagreement between two libraries.
 
 The analyser must detect at least:
 
@@ -315,7 +315,7 @@ runtime and model are decided at that milestone.
 ```text
 Job description text                      PDF bytes
   -> strip contact details                  -> validation and limits
-  -> cache lookup                           -> text and layout from two extractors
+  -> cache lookup                           -> text and layout from pypdfium2
   -> model extraction, or rules             -> producer detection
   -> schema validation                      -> structured resume sections
   -> requirement list                       -> deterministic readiness findings
@@ -457,7 +457,7 @@ the Python service.
 
 ### Milestone 1: real PDF readiness
 
-- Benchmark the candidate extractors and adopt two with permissive licences.
+- Adopt pypdfium2 as the PDF extractor (decision 0032).
 - Implement text-layer, page, contact, section, glyph-mapping and reading-order checks.
 - Add finding origins and producer detection.
 - Define and version the first deterministic rubric.
@@ -518,7 +518,7 @@ with the provider disabled.
 | Risk | Mitigation |
 |---|---|
 | A score is mistaken for a hiring prediction | Label readiness and match separately; explain the rubric and evidence |
-| PDF reading order differs from visual order | Keep layout data, compare two extractors, test multi-column fixtures |
+| PDF reading order differs from visual order | Keep layout data, test multi-column fixtures |
 | Users see findings they cannot act on | Tag each finding's origin; gate curated templates in CI |
 | Model misreads a job description | Show the list for review and editing; cache it; keep a rule-based fallback |
 | Job-description text contains prompt injection | Strict output schema, no tools, validation before return |
@@ -534,7 +534,7 @@ with the provider disabled.
 
 These require measurements or an accepted decision record before they become architecture:
 
-- Which two extractors, chosen by benchmark, and the sandboxing approach.
+- The sandboxing approach.
 - The first skills taxonomy and its licence.
 - The model provider for requirement extraction, its data-retention terms and the daily cap.
 - Exact score dimensions, weights and thresholds.
@@ -565,6 +565,4 @@ required notices. Dependencies added to this repository must be named in the pul
    PDF.
 2. Accept decision 0030.
 3. Mount the panel with a `getPdf` that wraps `Compiler.pdf()`, and try it in a real browser.
-4. Benchmark pdfminer.six and pypdfium2 on the fixture corpus before designing the rubric around
-   either library's behaviour.
-5. Collect the hand-checked job-description set before choosing a model provider.
+4. Collect the hand-checked job-description set before choosing a model provider.
