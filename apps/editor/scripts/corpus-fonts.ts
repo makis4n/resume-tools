@@ -37,7 +37,11 @@ export type FontsOutcome =
 export interface FontsRow {
   id: string;
   family: Family;
-  taken: Taken;
+  /**
+   * How the runner took the document; left out for one whose child timed out or died before it
+   * said, which is counted under its own row alone, and never as taken.
+   */
+  taken?: Taken;
   outcome: FontsOutcome;
   /** The font, feature or package a refusal names, as shown (`shownName`). */
   name?: string;
@@ -61,9 +65,16 @@ export interface FontsRow {
 /** A row as a child sends it, before the parent adds the document's id, family and time. */
 export type FontsChildRow = Omit<FontsRow, "id" | "family" | "wall">;
 
-/** A name as a row keeps it: plainly a name, or `(unprintable name)` (`shownName`). */
-export const rowName = (name: string | undefined) =>
-  name === undefined ? undefined : /^\\[A-Za-z@]{1,63}$/.test(name) ? name : shownName(name);
+/**
+ * A name as a row keeps it: a command's as it is, as `\addfontfeatures`; an option's by its key
+ * alone, `Numbers` of `Numbers=Proportional` as of `Numbers`, since its value is the document's;
+ * and any other plainly a name, or `(unprintable name)` (`shownName`).
+ */
+export function rowName(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  if (/^\\[A-Za-z@]{1,63}$/.test(name)) return name;
+  return shownName(/^([A-Za-z]{1,63})=/.exec(name)?.[1] ?? name);
+}
 
 const COLUMNS = [...FAMILIES, "all"] as const;
 

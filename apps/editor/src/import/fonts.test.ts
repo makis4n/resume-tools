@@ -125,6 +125,17 @@ describe("the tree", () => {
     expect([...tree.fontPackages].sort()).toEqual(["lato", "roboto", "roboto-mono"]);
   });
 
+  test("refuses a manifest written before layout 7, which has no table of the tree's fonts", () => {
+    const older = JSON.parse(
+      JSON.stringify({ release: "invented", layout: 6, bundles: [], files: { "/a.sty": 1 } }),
+    ) as EngineManifest;
+    expect(() => readTree(older.files, older.fonts)).toThrow(
+      "the engine's manifest has no table of the tree's fonts, which layout 7 added",
+    );
+    // A table, however empty, names the fonts among the files it describes.
+    expect(readTree(older.files, {}).fonts).toEqual([]);
+  });
+
   /** A tree holding every file of the table. */
   const full = readTree(Object.fromEntries(Object.keys(TABLE).map((path) => [path, 1])), TABLE);
 

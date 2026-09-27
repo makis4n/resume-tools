@@ -31,7 +31,7 @@ export interface Tree {
   fontPackages: ReadonlySet<string>;
   /**
    * Its OpenType and TrueType files as the manifest's table describes them (`TreeFont`), each with
-   * its path and its file's name, in path order; none for a manifest without the table.
+   * its path and its file's name, in path order.
    */
   fonts: readonly TreeFontFile[];
 }
@@ -44,13 +44,19 @@ export interface TreeFontFile extends TreeFont {
 
 /**
  * Index the tree's files, by path in the engine's file system, once, with the manifest's table of
- * its fonts: only a font among `files` is taken, so that the table of one manifest can describe
- * the files of another, as the survey's `--tree` checks an older layout's list with it.
+ * its fonts (`EngineManifest.fonts`), of which only a font among `files` is taken. The table must
+ * be given: a manifest written before layout 7 has none, and is refused with an error, since a
+ * tree whose fonts cannot be named would take every font a document asks for by name for one it
+ * lacks.
  */
 export function readTree(
   files: Readonly<Record<string, number>>,
-  table: Readonly<Record<string, TreeFont>> = {},
+  table: Readonly<Record<string, TreeFont>> | undefined,
 ): Tree {
+  if (typeof table !== "object" || table === null)
+    throw new Error(
+      "the engine's manifest has no table of the tree's fonts, which layout 7 added: run `pnpm --filter @resume-tools/editor fetch-engine`",
+    );
   const styles = new Set<string>();
   const fontFiles = new Set<string>();
   const fontFolders = new Set<string>();

@@ -38,7 +38,8 @@
  *   .engine/busytex.wasm     the engine: pdfTeX, XeTeX, LuaHBTeX and xdvipdfmx in one binary
  *   .engine/files/<path>     every TeX Live file, at the path the engine sees it under
  *   .engine/manifest.json    { release, layout, bundles, packages, files: { <path>: <size> },
- *                            fonts: { <path>: <what its tables say> } }, written last
+ *                            fonts: { <path>: <what its tables say> }, fontReader }, written
+ *                            last
  *
  * One run at a time: a run holds `.engine/.lock` while it builds, and a second run stops. Each run
  * writes its downloads and its staging folder under names that carry its process id, so even
@@ -63,7 +64,7 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { fileURLToPath } from "node:url";
 // Node runs this file by stripping its types, so the type import needs its real extension.
-import type { EngineManifest, TreeFont } from "../src/engine/manifest.ts";
+import type { EngineManifest, FontReader, TreeFont } from "../src/engine/manifest.ts";
 import { unpackPackages } from "./containers.ts";
 import { withoutFontFolders } from "./fontconfig.ts";
 import { mergeFontMaps } from "./fontmaps.ts";
@@ -74,15 +75,20 @@ const RELEASE = "build_wasm_4499aa69fd3cf77ad86a47287d9a5193cf5ad993_7936974349_
 const RELEASE_URL = `https://github.com/busytex/busytex/releases/download/${RELEASE}/`;
 
 /**
- * The version of what this script writes. Bump it whenever the output changes (the files, the
- * loaders, the manifest's shape), so a `.engine/` built by an older version is rebuilt. CI keys its
- * cached `.engine/` on the seven files the output depends on, this script, `containers.ts` and
- * `tlpdb.ts`, which unpack the added packages and read their entries, `fontconfig.ts`, which
- * writes fontconfig's configuration, `fontmaps.ts` and `src/page/fontmap.ts`, which merge the
- * font maps into `pdftex.map`, and `fonttable.ts`, which reads the fonts' tables, so a change to
- * any of them rebuilds it there; a `.engine/` built on a machine is rebuilt only by the bump or by a
- * change to `PACKAGES`. Layout 7 adds the manifest's `fonts` (decision 0023); the files are
- * layout 6's.
+ * The version of what this script writes. Bump it whenever the files or the loaders change, so a
+ * `.engine/` built by an older version is rebuilt. The layout is part of the tag the browser
+ * fetches the engine and the tree under (`engineTag`), so a bump costs a returning browser the
+ * engine and every file of the tree it fetches again, and every format it kept (decision 0023). A
+ * change to the manifest alone needs no bump, since the browser reads the manifest afresh on every
+ * load: the font table's reader is recorded in it (`fontReader`), and `upToDate` compares that.
+ * CI keys its cached `.engine/` on the seven files the output depends on, this script,
+ * `containers.ts` and `tlpdb.ts`, which unpack the added packages and read their entries,
+ * `fontconfig.ts`, which writes fontconfig's configuration, `fontmaps.ts` and
+ * `src/page/fontmap.ts`, which merge the font maps into `pdftex.map`, and `fonttable.ts`, which
+ * reads the fonts' tables, and on the version of opentype.js, which it reads them with, so a
+ * change to any of them rebuilds it there. A `.engine/` built on a machine is rebuilt by the bump,
+ * by a change to `PACKAGES`, and by a change to `fonttable.ts` or to opentype.js's version. Layout
+ * 7 adds the manifest's `fonts` (decision 0023); the files are layout 6's.
  */
 const LAYOUT = 7;
 
@@ -417,6 +423,8 @@ const OUTLINES = ["/texlive/texmf-dist/fonts/", "/texmf/texmf-dist/fonts/"].flat
 );
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".engine");
+/** The reader of the fonts' tables, which the manifest records a hash of (`fontReader`). */
+const FONT_TABLE_READER = fileURLToPath(new URL("./fonttable.ts", import.meta.url));
 const DOWNLOADS = join(ROOT, "downloads");
 const FILES = join(ROOT, "files");
 const MANIFEST = join(ROOT, "manifest.json");
@@ -658,7 +666,23 @@ function fontParser(): ParseFont {
 const revisions = (): Record<string, number> =>
   Object.fromEntries(Object.entries(PACKAGES).map(([name, { revision }]) => [name, revision]));
 
-/** True when `.engine/` holds a finished build of this release, layout, bundles and packages. */
+/**
+ * What reads the fonts' tables into the manifest: the version of opentype.js installed, and a
+ * SHA-256 of `fonttable.ts`. The manifest records it (`EngineManifest.fontReader`), so that a
+ * change to either rebuilds the table, which the layout need not move for.
+ */
+function fontReader(): FontReader {
+  const { version } = createRequire(import.meta.url)("opentype.js/package.json") as {
+    version: string;
+  };
+  const table = createHash("sha256").update(readFileSync(FONT_TABLE_READER)).digest("hex");
+  return { opentype: version, table };
+}
+
+/**
+ * True when `.engine/` holds a finished build of this release, layout, bundles and packages, whose
+ * font table the reader there is now read.
+ */
 async function upToDate(): Promise<boolean> {
   try {
     const manifest = JSON.parse(await readFile(MANIFEST, "utf8")) as EngineManifest;
@@ -667,6 +691,7 @@ async function upToDate(): Promise<boolean> {
       manifest.layout === LAYOUT &&
       manifest.bundles.join() === BUNDLES.join() &&
       JSON.stringify(manifest.packages) === JSON.stringify(revisions()) &&
+      JSON.stringify(manifest.fontReader) === JSON.stringify(fontReader()) &&
       ["busytex.js", "busytex.mjs", "busytex.wasm"].every((f) => existsSync(join(ROOT, f))) &&
       REQUIRED.every((path) => existsSync(join(FILES, path)))
     );
@@ -815,6 +840,7 @@ async function build(from: string | undefined) {
   const old = `${FILES}.old-${process.pid}`;
   let files: Record<string, number>;
   let fonts: Record<string, TreeFont>;
+  let reader: FontReader;
   try {
     files = copyOut(await mount(), staging);
     const { maps } = unpackPackages(
@@ -831,6 +857,7 @@ async function build(from: string | undefined) {
     files = byPath(files);
     const missing = REQUIRED.filter((path) => files[path] === undefined);
     if (missing.length) throw new Error(`the TeX Live tree lacks ${missing.join(", ")}`);
+    reader = fontReader();
     const read = treeFonts(files, (path) => readFileSync(join(staging, path)), fontParser());
     fonts = read.fonts;
     console.log(
@@ -858,6 +885,7 @@ async function build(from: string | undefined) {
     packages: revisions(),
     files,
     fonts,
+    fontReader: reader,
   };
   // Written under another name and renamed, so a run stopped while writing it leaves no
   // manifest rather than part of one.

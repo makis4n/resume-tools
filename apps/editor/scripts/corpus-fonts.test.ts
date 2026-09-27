@@ -12,6 +12,12 @@ const row = (id: string, family: FontsRow["family"], changes: Partial<FontsRow>)
   ...changes,
 });
 
+/** A row of a document whose child timed out or died before it said whether it took it. */
+const unsaid = (id: string, family: FontsRow["family"], outcome: "timeout" | "crashed") => {
+  const { taken: _, ...left } = row(id, family, { outcome });
+  return left;
+};
+
 const rewritten = (id: string, family: FontsRow["family"], changes: Partial<FontsRow> = {}) =>
   row(id, family, {
     families: 3,
@@ -40,8 +46,8 @@ describe("the fonts table", () => {
     row("other-0002", "other", { outcome: "feature", name: "\\addfontfeatures" }),
     row("other-0003", "other", { outcome: "stopped", name: "stopped" }),
     row("jake-0001", "jake", { taken: "either", outcome: "no-reference" }),
-    row("other-0004", "other", { outcome: "timeout" }),
-    row("other-0005", "other", { outcome: "crashed" }),
+    unsaid("other-0004", "other", "timeout"),
+    unsaid("other-0005", "other", "crashed"),
   ];
   const table = fontsTable(rows);
   const cells = (label: string) =>
@@ -53,14 +59,15 @@ describe("the fonts table", () => {
       .map((cell) => cell.trim());
 
   test("counts the documents taken per family and in all, and what became of them", () => {
+    // A document whose child timed out or died is not counted as taken, whatever it was.
     expect(cells("Documents taken: XeTeX, with a reference")).toEqual([
       "0",
       "2",
       "1",
       "0",
       "0",
-      "5",
-      "8",
+      "3",
+      "6",
     ]);
     expect(
       cells("Documents taken: pdfTeX guarded on the engine, with font packages, on XeTeX")?.at(-1),
@@ -115,6 +122,12 @@ describe("the fonts table", () => {
   test("shows a command's name as it is, and any other name only when it is plainly a name", () => {
     expect(rowName("\\addfontfeatures")).toBe("\\addfontfeatures");
     expect(rowName("Invented Sans")).toBe("Invented Sans");
+    // An option by its key alone, whether the name gives its value or not: the value is the
+    // document's, and may be anything.
+    expect(rowName("Numbers=Proportional")).toBe("Numbers");
+    expect(rowName("Numbers")).toBe("Numbers");
+    expect(rowName("Color=a\nb\u001b[2J;{}")).toBe("Color");
+    expect(rowName("RawFeature=+smcp;+onum")).toBe("RawFeature");
     expect(rowName("a\nb")).not.toContain("\n");
     expect(rowName(undefined)).toBeUndefined();
   });

@@ -17,11 +17,17 @@
  * ligature. A glyph that a single substitution of one of `SINGLE_FEATURES` makes, as `+smcp` makes a
  * small capital and `+pnum` a proportional figure, reads as the glyph it was substituted from, a chain
  * of them as its start (decision 0023), so that a position set in small capitals aligns with the
- * lower-case text a resume holds. A glyph reached none of these ways has no text.
+ * lower-case text a resume holds: after what the glyph reads as itself, as `²`, which `sups` makes
+ * of `2`, reads as `²` first, and only for the features the file is loaded with, when the reader
+ * knows them (`textsOf`). A glyph reached none of these ways has no text.
  *
  * A file is read whole, so it is bounded as decision 0009 bounds a virtual font: a file of more
  * than 32 MB, or with more than 65,535 glyphs, is refused. Every file comes from the TeX Live tree,
- * whose largest, Lato's, are under 1 MB.
+ * whose largest, Lato's, are under 1 MB, or from an upload, whose reference the import reads. So
+ * the reading of a file's substitutions is bounded too, however its tables are laid out: only a
+ * glyph the file has is read, each lookup's substitution of a glyph once, and at most
+ * `MAX_SUBTABLES` subtables, `MAX_COVERED` entries of their coverage tables and `MAX_SUBSTITUTIONS`
+ * substitutions a file, and a glyph's text walks back through at most `MAX_WALK` of them.
  */
 
 import { type Font, parse } from "opentype.js";
@@ -51,13 +57,15 @@ export interface NativeFontFile extends NativeOutlines {
    * The character or characters the glyph stands for, or undefined when nothing says: the first
    * of `textsOf`.
    */
-  textOf: (glyph: number) => string | undefined;
+  textOf: (glyph: number, features?: readonly string[]) => string | undefined;
   /**
    * Every text the glyph stands for, the one a field's text likelier holds first: each character
-   * the character map gives it (`likelihood`), or a ligature's components. Empty when nothing
-   * says.
+   * the character map gives it (`likelihood`), or a ligature's components; then, for a glyph a
+   * single substitution of one of `features` makes, the texts of the glyph it is made from, a
+   * chain as its start, at most `MAX_TEXTS` of them. `features` are those of `SINGLE_FEATURES`
+   * the file is loaded with, every one when the reader does not know them. Empty when nothing says.
    */
-  textsOf: (glyph: number) => readonly string[];
+  textsOf: (glyph: number, features?: readonly string[]) => readonly string[];
   /** The glyph's advance in font units, or undefined past the file's glyphs. */
   advanceOf: (glyph: number) => number | undefined;
   /** The glyph the character map gives a character, or undefined when it gives none. */
@@ -175,6 +183,8 @@ export const SINGLE_FEATURES = [
   "frac",
 ] as const;
 
+const SINGLE_TAGS: ReadonlySet<string> = new Set(SINGLE_FEATURES);
+
 /**
  * The features of `SINGLE_FEATURES` a XeTeX features string turns on, in that order: `+smcp`, or
  * `smcp` as HarfBuzz reads a bare tag, turns one on, `-smcp` or `+smcp=0` off, and the last of a
@@ -190,82 +200,208 @@ export function singleFeaturesOn(features: string | undefined): string[] {
 }
 
 /**
- * One single substitution: the feature and lookup it is of, the glyph it makes of another, and
- * whether XeTeX's shaping applies it (`shapedFeatures`), which a language's lookup it does not.
+ * The most single substitutions read from one font, each a glyph a lookup replaces: as many as a
+ * font can have glyphs. Roboto's features of `SINGLE_FEATURES` make 1,763, the most of the tree's.
  */
-interface Single {
-  feature: string;
-  lookup: number;
-  from: number;
-  to: number;
-  shaped: boolean;
+export const MAX_SUBSTITUTIONS = 65_535;
+
+/**
+ * The most subtables of a font's lookups walked for its single substitutions, and again for its
+ * ligatures. Roboto's 31 are the most of the tree's fonts.
+ */
+export const MAX_SUBTABLES = 4_096;
+
+/**
+ * The most entries of those subtables' coverage tables visited in one font, a glyph or a range
+ * each, those passed over as well as those read: four times `MAX_SUBSTITUTIONS`.
+ */
+export const MAX_COVERED = 4 * MAX_SUBSTITUTIONS;
+
+/** What one reading of a font's lookups may still take (`MAX_SUBTABLES` and the rest). */
+interface Budget {
+  subtables: number;
+  covered: number;
+  substitutions: number;
+}
+
+const budget = (): Budget => ({
+  subtables: MAX_SUBTABLES,
+  covered: MAX_COVERED,
+  substitutions: MAX_SUBSTITUTIONS,
+});
+
+/** Whether a value is a glyph of a font of `count` glyphs. */
+const isGlyphOf = (value: unknown, count: number): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0 && value < count;
+
+/**
+ * Each glyph a coverage table lists that a font of `count` glyphs has, with its coverage index,
+ * which is its record's in the subtable, in the table's order, while the budget lasts: every entry
+ * and every range costs one, and a range is walked only over the glyphs the font has, however far
+ * it runs. A range's glyphs are indexed from its start coverage index, as HarfBuzz reads them.
+ */
+function eachCovered(
+  coverage: unknown,
+  count: number,
+  budget: Budget,
+  visit: (glyph: number, index: number) => void,
+) {
+  if (!isObject(coverage)) return;
+  if (coverage.format === 1 && Array.isArray(coverage.glyphs)) {
+    const glyphs: unknown[] = coverage.glyphs;
+    for (let index = 0; index < glyphs.length && budget.covered > 0; index++) {
+      budget.covered--;
+      const glyph = glyphs[index];
+      if (isGlyphOf(glyph, count)) visit(glyph, index);
+    }
+  } else if (coverage.format === 2 && Array.isArray(coverage.ranges)) {
+    let next = 0;
+    for (const range of coverage.ranges as unknown[]) {
+      if (budget.covered <= 0) return;
+      budget.covered--;
+      if (!isObject(range)) continue;
+      const { start, end } = range;
+      if (!isGlyphOf(start, 0x10000) || !isGlyphOf(end, 0x10000) || end < start) continue;
+      const first = isGlyphOf(range.index, 0x10000) ? range.index : next;
+      next = first + end - start + 1;
+      for (let glyph = start; glyph <= end && glyph < count && budget.covered > 0; glyph++) {
+        budget.covered--;
+        visit(glyph, first + glyph - start);
+      }
+    }
+  }
 }
 
 /**
- * The single substitutions of `SINGLE_FEATURES`, in every script, lookup type 1 and extension lookups
- * wrapping it, each glyph of each subtable's coverage with the glyph it becomes, in the features'
- * order and then the lookups'. A table opentype.js did not parse as expected gives none rather than
- * an error, so that the glyphs keep the text the character map gives them.
+ * The subtables of a lookup, an extension lookup's read through, each with its type, while the
+ * budget lasts: every subtable costs one.
  */
-function singlesOf(font: Font): Single[] {
-  const singles: Single[] = [];
+function* subtablesOf(
+  lookup: unknown,
+  budget: Budget,
+): Generator<{ type: unknown; table: Record<string, unknown> }> {
+  if (!isObject(lookup) || !Array.isArray(lookup.subtables)) return;
+  for (const subtable of lookup.subtables as unknown[]) {
+    if (budget.subtables <= 0) return;
+    budget.subtables--;
+    if (!isObject(subtable)) continue;
+    const extended = lookup.lookupType === EXTENSION;
+    const table = extended ? subtable.extension : subtable;
+    if (isObject(table)) yield { type: extended ? subtable.lookupType : lookup.lookupType, table };
+  }
+}
+
+/**
+ * A lookup of the single substitutions of `SINGLE_FEATURES`: its index in the lookup list, the
+ * features that list it, those of them whose shaping applies it (`shapedFeatures`), which a
+ * language's lookup they do not, and what it makes of each glyph it covers, the first subtable's
+ * that covers the glyph, as XeTeX's shaping applies it: the glyph itself where that subtable makes
+ * one the font has not, since HarfBuzz tries no later subtable there.
+ */
+interface SingleLookup {
+  index: number;
+  listed: Set<string>;
+  shaped: Set<string>;
+  made: Map<number, number>;
+}
+
+/**
+ * The lookups of `SINGLE_FEATURES` in a font of `count` glyphs, in every script, each read once,
+ * in the order of the lookup list: lookup type 1, and extension lookups wrapping it, within
+ * `budget`. A table opentype.js did not parse as expected gives none rather than an error, so that
+ * the glyphs keep the text the character map gives them.
+ */
+function singleLookupsOf(font: Font, count: number): SingleLookup[] {
   try {
     const gsub = font.tables.gsub as unknown as Gsub | undefined;
     if (!isObject(gsub) || !Array.isArray(gsub.features) || !Array.isArray(gsub.lookups)) return [];
     const shapedIndexes = shapedFeatures(gsub);
-    for (const tag of SINGLE_FEATURES) {
-      const indexes = new Set<number>();
-      const shaped = new Set<number>();
-      gsub.features.forEach(({ tag: each, feature }, i) => {
-        if (each !== tag) return;
-        for (const index of feature.lookupListIndexes) {
-          indexes.add(index);
-          if (shapedIndexes === undefined || shapedIndexes.has(i)) shaped.add(index);
+    const byIndex = new Map<number, SingleLookup>();
+    gsub.features.forEach((record, i) => {
+      const tag = isObject(record) ? record.tag : undefined;
+      const indexes = isObject(record?.feature) ? record.feature.lookupListIndexes : undefined;
+      if (typeof tag !== "string" || !SINGLE_TAGS.has(tag) || !Array.isArray(indexes)) return;
+      for (const index of indexes) {
+        if (!isGlyphOf(index, gsub.lookups.length)) continue;
+        let lookup = byIndex.get(index);
+        if (lookup === undefined) {
+          lookup = { index, listed: new Set(), shaped: new Set(), made: new Map() };
+          byIndex.set(index, lookup);
         }
-      });
-      for (const index of [...indexes].sort((a, b) => a - b)) {
-        const lookup = gsub.lookups[index];
-        for (const subtable of lookup?.subtables ?? []) {
-          if (!isObject(subtable)) continue;
-          const extended = lookup?.lookupType === EXTENSION;
-          const type = extended ? subtable.lookupType : lookup?.lookupType;
-          const table = (extended ? subtable.extension : subtable) as SingleSubtable | undefined;
-          if (type !== SINGLE || !isObject(table) || !isObject(table.coverage)) continue;
-          coverageGlyphs(table.coverage).forEach((from, i) => {
-            const to =
-              table.substFormat === 1
-                ? (from + (table.deltaGlyphId ?? 0)) & 0xffff
-                : table.substitute?.[i];
-            if (typeof to === "number" && to !== from)
-              singles.push({ feature: tag, lookup: index, from, to, shaped: shaped.has(index) });
-          });
-        }
+        lookup.listed.add(tag);
+        if (shapedIndexes === undefined || shapedIndexes.has(i)) lookup.shaped.add(tag);
       }
-    }
+    });
+    const left = budget();
+    const lookups = [...byIndex.values()].sort((a, b) => a.index - b.index);
+    for (const lookup of lookups)
+      for (const { type, table } of subtablesOf(gsub.lookups[lookup.index], left)) {
+        if (type !== SINGLE) continue;
+        const { substFormat, deltaGlyphId, substitute } = table as Partial<SingleSubtable>;
+        eachCovered(table.coverage, count, left, (from, i) => {
+          if (left.substitutions <= 0 || lookup.made.has(from)) return;
+          const to =
+            substFormat === 1
+              ? Number.isInteger(deltaGlyphId)
+                ? (from + (deltaGlyphId ?? 0)) & 0xffff
+                : undefined
+              : Array.isArray(substitute)
+                ? substitute[i]
+                : undefined;
+          // A subtable that gives no glyph for one it covers is passed over, as HarfBuzz passes it.
+          if (typeof to !== "number") return;
+          lookup.made.set(from, isGlyphOf(to, count) ? to : from);
+          left.substitutions--;
+        });
+      }
+    return lookups;
   } catch {
     return [];
   }
-  return singles;
+}
+
+/**
+ * Each glyph the lookups make, with the glyphs each is made from and, for each of those, the
+ * features that make it so: in the order of `SINGLE_FEATURES`, then of the lookups, then of their
+ * coverage.
+ */
+function sourcesOf(lookups: readonly SingleLookup[]): Map<number, Map<number, Set<string>>> {
+  const sources = new Map<number, Map<number, Set<string>>>();
+  for (const feature of SINGLE_FEATURES)
+    for (const lookup of lookups) {
+      if (!lookup.listed.has(feature)) continue;
+      for (const [from, to] of lookup.made) {
+        if (to === from) continue;
+        let froms = sources.get(to);
+        if (froms === undefined) {
+          froms = new Map();
+          sources.set(to, froms);
+        }
+        let via = froms.get(from);
+        if (via === undefined) {
+          via = new Set();
+          froms.set(from, via);
+        }
+        via.add(feature);
+      }
+    }
+  return sources;
 }
 
 /** The most ligatures deep a ligature's components may be made, such as ffi from ff and i. */
 const LIGATURE_DEPTH = 4;
 
+/**
+ * The most glyphs a glyph's text walks back through, the glyphs its substitutions are made from,
+ * and theirs, and the most texts it reads from them. Source Sans Pro's small capital a is made
+ * from two, the a and the A.
+ */
+const MAX_WALK = 256;
+const MAX_TEXTS = 16;
+
 /** Whether a value is an object, which a parsed table is. */
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
-
-/**
- * The glyphs a coverage table lists, in its order, which is the order of its subtable's records.
- * A coverage never lists more glyphs than a font can have, so a longer one is cut there.
- */
-function coverageGlyphs(coverage: Coverage): number[] {
-  if (coverage.format === 1) return coverage.glyphs.slice(0, MAX_GLYPHS);
-  const glyphs: number[] = [];
-  for (const { start, end } of coverage.ranges)
-    for (let glyph = start; glyph <= end && glyphs.length < MAX_GLYPHS; glyph++) glyphs.push(glyph);
-  return glyphs;
-}
 
 /**
  * The features whose ligatures read as their components: `liga`, which XeTeX's shaping applies,
@@ -275,11 +411,12 @@ const LIGATURE_FEATURES = new Set(["ccmp", "liga"]);
 
 /**
  * The ligatures of a font's `liga` and `ccmp` features, in every script, each as its glyph and
- * the glyphs it is made of, in the order of the font's lookups. Extension lookups are read through.
- * A table opentype.js did not parse as expected gives no ligatures rather than an error, so that
- * the glyphs keep the text the character map gives them.
+ * the glyphs it is made of, in the order of the font's lookups, of the glyphs the font has, within
+ * a budget of their own. Extension lookups are read through. A table opentype.js did not parse as
+ * expected gives no ligatures rather than an error, so that the glyphs keep the text the character
+ * map gives them.
  */
-function ligaturesOf(font: Font): { glyph: number; components: number[] }[] {
+function ligaturesOf(font: Font, count: number): { glyph: number; components: number[] }[] {
   const ligatures: { glyph: number; components: number[] }[] = [];
   try {
     const gsub = font.tables.gsub as unknown as Gsub | undefined;
@@ -288,23 +425,27 @@ function ligaturesOf(font: Font): { glyph: number; components: number[] }[] {
     for (const { tag, feature } of gsub.features)
       if (LIGATURE_FEATURES.has(tag))
         for (const index of feature.lookupListIndexes) indexes.add(index);
-    for (const index of [...indexes].sort((a, b) => a - b)) {
-      const lookup = gsub.lookups[index];
-      for (const subtable of lookup?.subtables ?? []) {
-        if (!isObject(subtable)) continue;
-        const extended = lookup?.lookupType === EXTENSION;
-        const type = extended ? subtable.lookupType : lookup?.lookupType;
-        const table = (extended ? subtable.extension : subtable) as LigatureSubtable | undefined;
-        if (type !== LIGATURE || !isObject(table) || !Array.isArray(table.ligatureSets)) continue;
-        const firsts = coverageGlyphs(table.coverage);
-        table.ligatureSets.forEach((set, i) => {
-          const first = firsts[i];
-          if (first === undefined || !Array.isArray(set)) return;
-          for (const { ligGlyph, components } of set)
-            ligatures.push({ glyph: ligGlyph, components: [first, ...components] });
+    const left = budget();
+    for (const index of [...indexes].sort((a, b) => a - b))
+      for (const { type, table } of subtablesOf(gsub.lookups[index], left)) {
+        const { ligatureSets } = table as Partial<LigatureSubtable>;
+        if (type !== LIGATURE || !Array.isArray(ligatureSets)) continue;
+        eachCovered(table.coverage, count, left, (first, i) => {
+          const set = ligatureSets[i];
+          if (!Array.isArray(set)) return;
+          for (const ligature of set) {
+            if (left.substitutions <= 0) return;
+            left.substitutions--;
+            const { ligGlyph, components } = isObject(ligature) ? ligature : {};
+            if (
+              isGlyphOf(ligGlyph, count) &&
+              Array.isArray(components) &&
+              components.every((component) => isGlyphOf(component, count))
+            )
+              ligatures.push({ glyph: ligGlyph, components: [first, ...components] });
+          }
         });
       }
-    }
   } catch {
     return [];
   }
@@ -330,17 +471,18 @@ function likelihood(point: number): number {
 }
 
 /**
- * Each glyph's texts: every character the character map gives it, the likeliest first, then the
- * ligatures' components (`ligaturesOf`), a pass for each level a ligature may be made of others,
- * up to `LIGATURE_DEPTH`, each component read as its first text and the whole composed (NFC), as
- * d and U+0323 compose to ḍ. A ligature takes its components' text first when it has none, or when
- * the character map reaches it only through a character that decomposes to that text, as U+FB01
- * ﬁ decomposes to fi and Roboto's À, which its `ccmp` makes of A and U+0300, to them.
+ * Each glyph's own texts: every character the character map gives it, the likeliest first, then
+ * the ligatures' components (`ligaturesOf`), a pass for each level a ligature may be made of
+ * others, up to `LIGATURE_DEPTH`, each component read as its first text and the whole composed
+ * (NFC), as d and U+0323 compose to ḍ. A ligature takes its components' text first when it has
+ * none, or when the character map reaches it only through a character that decomposes to that
+ * text, as U+FB01 ﬁ decomposes to fi and Roboto's À, which its `ccmp` makes of A and U+0300, to
+ * them.
  */
-function glyphTexts(
+function ownTexts(
   font: Font,
   cmap: Readonly<Record<number, number>>,
-  singles: readonly Single[],
+  count: number,
 ): Map<number, string[]> {
   const points = new Map<number, number[]>();
   for (const [code, glyph] of Object.entries(cmap)) {
@@ -357,7 +499,7 @@ function glyphTexts(
       codes.map((point) => String.fromCodePoint(point)),
     );
   }
-  const ligatures = ligaturesOf(font);
+  const ligatures = ligaturesOf(font, count);
   for (let pass = 0; pass < LIGATURE_DEPTH; pass++) {
     let changed = false;
     for (const { glyph, components } of ligatures) {
@@ -374,27 +516,6 @@ function glyphTexts(
       }
     }
     if (!changed) break;
-  }
-  // A glyph a single substitution makes reads as the glyph it replaces, ahead of what the character
-  // map gives it: a chain of substitutions as its start, where the glyph a step replaces has no
-  // text of its own.
-  const sources = new Map<number, number[]>();
-  for (const { from, to } of singles) {
-    const had = sources.get(to);
-    if (had === undefined) sources.set(to, [from]);
-    else if (!had.includes(from)) had.push(from);
-  }
-  const own = new Map(texts);
-  const through = (glyph: number, depth: number, seen: Set<number>): string[] => {
-    const mine = own.get(glyph) ?? [];
-    if (mine.length > 0 || depth >= LIGATURE_DEPTH || seen.has(glyph)) return mine;
-    seen.add(glyph);
-    return (sources.get(glyph) ?? []).flatMap((from) => through(from, depth + 1, seen));
-  };
-  for (const [glyph, froms] of sources) {
-    const read = froms.flatMap((from) => through(from, 1, new Set([glyph])));
-    if (read.length === 0) continue;
-    texts.set(glyph, [...new Set([...read, ...(own.get(glyph) ?? [])])]);
   }
   return texts;
 }
@@ -453,50 +574,71 @@ export function parseNativeFont(bytes: Uint8Array): NativeFontFile {
     }
     return outlines.get(glyph);
   };
-  let singles: Single[] | undefined;
+  let singles: SingleLookup[] | undefined;
   const singlesRead = () => {
-    singles ??= singlesOf(font);
+    singles ??= singleLookupsOf(font, count);
     return singles;
   };
-  let texts: Map<number, string[]> | undefined;
-  const textsOf = (glyph: number): readonly string[] => {
-    texts ??= glyphTexts(font, map, singlesRead());
-    return texts.get(glyph) ?? [];
+  let own: Map<number, string[]> | undefined;
+  let sources: Map<number, Map<number, Set<string>>> | undefined;
+  // Each glyph's texts under each set of features asked for, by the features, sorted.
+  const read = new Map<string, Map<number, readonly string[]>>();
+  const textsOf = (glyph: number, features: readonly string[] = SINGLE_FEATURES) => {
+    if (!known(glyph)) return [];
+    const on = new Set(features.filter((feature) => SINGLE_TAGS.has(feature)));
+    const key = [...on].sort().join();
+    let texts = read.get(key);
+    if (texts === undefined) {
+      texts = new Map();
+      read.set(key, texts);
+    }
+    const had = texts.get(glyph);
+    if (had !== undefined) return had;
+    own ??= ownTexts(font, map, count);
+    sources ??= sourcesOf(singlesRead());
+    const mine = own.get(glyph) ?? [];
+    // What the glyphs it is made from read as, a chain as its start, depth first, in the order of
+    // the substitutions: a glyph with texts of its own ends the walk back through it.
+    const through: string[] = [];
+    const seen = new Set([glyph]);
+    let walked = 0;
+    const walk = (at: number, depth: number) => {
+      for (const [from, via] of sources?.get(at) ?? []) {
+        if (through.length >= MAX_TEXTS || walked >= MAX_WALK) return;
+        if (seen.has(from) || ![...via].some((feature) => on.has(feature))) continue;
+        seen.add(from);
+        walked++;
+        const its = own?.get(from) ?? [];
+        if (its.length > 0) through.push(...its.slice(0, MAX_TEXTS - through.length));
+        else if (depth < LIGATURE_DEPTH) walk(from, depth + 1);
+      }
+    };
+    walk(glyph, 1);
+    const all = through.length === 0 ? mine : [...new Set([...mine, ...through])];
+    texts.set(glyph, all);
+    return all;
   };
   let makers: Map<number, string[]> | undefined;
   const madeBy = (glyph: number): readonly string[] => {
     if (makers === undefined) {
+      sources ??= sourcesOf(singlesRead());
       makers = new Map();
-      for (const { feature, to } of singlesRead()) {
-        const had = makers.get(to);
-        if (had === undefined) makers.set(to, [feature]);
-        else if (!had.includes(feature)) had.push(feature);
+      for (const [to, froms] of sources) {
+        const by = new Set([...froms.values()].flatMap((via) => [...via]));
+        makers.set(
+          to,
+          SINGLE_FEATURES.filter((feature) => by.has(feature)),
+        );
       }
     }
     return makers.get(glyph) ?? [];
   };
-  // The lookups XeTeX's shaping applies, in their order, each with the features that apply it and
-  // the glyph it makes of each it covers: its first subtable's that covers the glyph.
-  let lookups: { features: Set<string>; made: Map<number, number> }[] | undefined;
   const substitute = (glyph: number, features: readonly string[]): number => {
-    if (lookups === undefined) {
-      const byIndex = new Map<number, { features: Set<string>; made: Map<number, number> }>();
-      for (const { feature, lookup, from, to, shaped } of singlesRead()) {
-        if (!shaped) continue;
-        let entry = byIndex.get(lookup);
-        if (entry === undefined) {
-          entry = { features: new Set(), made: new Map() };
-          byIndex.set(lookup, entry);
-        }
-        entry.features.add(feature);
-        if (!entry.made.has(from)) entry.made.set(from, to);
-      }
-      lookups = [...byIndex].sort(([a], [b]) => a - b).map(([, entry]) => entry);
-    }
     let out = glyph;
-    // Each lookup replaces the glyph once, and the next sees what it made.
-    for (const { features: of, made } of lookups)
-      if (features.some((feature) => of.has(feature))) out = made.get(out) ?? out;
+    // The lookups XeTeX's shaping applies, in their order: each replaces the glyph once, and the
+    // next sees what it made.
+    for (const { shaped, made } of singlesRead())
+      if (features.some((feature) => shaped.has(feature))) out = made.get(out) ?? out;
     return out;
   };
   const privateUse = (point: number) => (point >= 0xe000 && point <= 0xf8ff) || point >= 0xf0000;
@@ -522,7 +664,7 @@ export function parseNativeFont(bytes: Uint8Array): NativeFontFile {
     unitsPerEm,
     pathOf: (glyph) => outline(glyph)?.d,
     boxOf: (glyph) => outline(glyph)?.box,
-    textOf: (glyph) => textsOf(glyph)[0],
+    textOf: (glyph, features) => textsOf(glyph, features)[0],
     textsOf,
     advanceOf,
     glyphFor,

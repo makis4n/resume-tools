@@ -205,7 +205,7 @@ the survey and the intake both call.
   than its body, marked and compiled from a format of its preamble, and the two are the same; a
   red word, a photo against an empty box, and XeTeX's FakeBold, FakeSlant and Color each differ.
   A difference names a special by its command alone, since its text may be the resume's, as a
-  link's address is.
+  link's address is. (Decision 0023: a body from a format now keeps the first shipout's specials.)
 - The editor's pdfTeX writes DVI (decision 0003), and most documents are written for pdfTeX's PDF
   mode. So a pdfTeX job gets a `graphics.cfg` and a `color.cfg` that give graphics, color and
   xcolor dvipdfmx's driver, the default and for the `pdftex` and `dvips` drivers a document names,

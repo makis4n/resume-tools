@@ -30,8 +30,9 @@
  *                 (`scripts/corpus-survey.ts`, decision 0018). It needs `.engine/`, which
  *                 `fetch-engine` builds
  *   --json <file> write each document's row as JSON too, from where pnpm was run
- *   --tree <file> check the documents against another engine manifest's file list, such as a
- *                 checkout's of an older layout, from where pnpm was run, in place of `.engine/`'s
+ *   --tree <file> check the documents against another engine manifest's file list and table of
+ *                 fonts, such as another checkout's, of layout 7 or later, from where pnpm was
+ *                 run, in place of `.engine/`'s
  *   reference     take every document the last fetch marks fetched in as a zip of its files, and
  *                 compile it to the import pipeline's reference, or refuse it, on the engine in
  *                 `.engine/`, in a pool of four child processes with 90 s a document; print one
@@ -232,13 +233,14 @@ function runSurvey(json: string | undefined, tree: string | undefined) {
       "survey checks documents against the tree's file list in .engine/manifest.json: run fetch-engine first",
     );
   const engine = JSON.parse(readFileSync(tree ?? ENGINE_MANIFEST, "utf8")) as EngineManifest;
-  // A manifest before layout 7 has no table of its fonts; the tree's files are the same ones, so
-  // `.engine/`'s table describes those of its fonts the other tree holds (`readTree`).
-  const table =
-    engine.fonts ??
-    (existsSync(ENGINE_MANIFEST)
-      ? (JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest).fonts
-      : undefined);
+  // The survey names a document's fonts from the manifest's table of the tree's, which a manifest
+  // written before layout 7 has not (decision 0023).
+  if (typeof engine.fonts !== "object" || engine.fonts === null)
+    throw new Error(
+      tree === undefined
+        ? "the engine's manifest in .engine/ has no table of the tree's fonts: run fetch-engine again"
+        : `the engine manifest --tree names is layout ${engine.layout}, which has no table of the tree's fonts: the survey takes layout 7 or later`,
+    );
   const manifest = readManifest();
   const report = existsSync(FETCH_REPORT_FILE)
     ? parseJson(FetchReport, readFileSync(FETCH_REPORT_FILE, "utf8"), FETCH_REPORT_FILE)
@@ -246,7 +248,7 @@ function runSurvey(json: string | undefined, tree: string | undefined) {
   const survey = surveyCorpus({
     manifest,
     report,
-    tree: readTree(engine.files, table),
+    tree: readTree(engine.files, engine.fonts),
     read: (doc, file) => {
       try {
         return readFileSync(join(CORPUS_DIR, doc.id, ...file.path.split("/")));
@@ -426,12 +428,14 @@ async function runFonts(only: string | undefined, json: string | undefined) {
       const reply = result.reply as
         | { row?: FontsChildRow; logs?: Record<string, string> }
         | undefined;
+      // A child that timed out or died did not say whether it took the document: its row is
+      // counted as that alone (`FontsRow.taken`).
       const row: FontsChildRow | undefined =
         reply?.row ??
         (result.timedOut
-          ? { taken: "xetex", outcome: "timeout" }
+          ? { outcome: "timeout" }
           : reply === undefined
-            ? { taken: "xetex", outcome: "crashed" }
+            ? { outcome: "crashed" }
             : undefined);
       for (const [kind, log] of Object.entries(reply?.logs ?? {}))
         if (log !== "") writeAtomically(join(FONTS_LOGS, `${task.id}.${kind}.log`), log);
@@ -444,7 +448,7 @@ async function runFonts(only: string | undefined, json: string | undefined) {
       };
       rows.push(full);
       print([
-        `${seen}/${documents.length} ${task.id}: ${full.taken}, ${full.outcome}${full.name === undefined ? "" : ` (${full.name})`}`,
+        `${seen}/${documents.length} ${task.id}: ${full.taken === undefined ? "" : `${full.taken}, `}${full.outcome}${full.name === undefined ? "" : ` (${full.name})`}`,
       ]);
     },
   });

@@ -490,7 +490,7 @@ describe("the engine", () => {
       "\\documentclass{article}",
       "\\IfFileExists{fontspec.sty}{\\usepackage{fontspec}}{}",
     );
-    const tree = readTree({ "/texlive/texmf-dist/tex/latex/fontspec/fontspec.sty": 1 });
+    const tree = readTree({ "/texlive/texmf-dist/tex/latex/fontspec/fontspec.sty": 1 }, {});
     expect(taken({ "cv.tex": source }).engine).toBe("pdftex");
     const withTree = intake({ name: "cv.tex", bytes: strToU8(source) }, { tree });
     expect(isRefusal(withTree) ? undefined : withTree.engine).toBe("xetex");
