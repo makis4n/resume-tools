@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "key": "1460d747ea29c520294a88ef296f3afcbff347ea2eff73c9a196ceb3a9fd4bc2",
+  "hash": "1e2ab836e09225fdd7ca5b3de037a1d12ad55175319ed3410d77eed481e23b85",
+  "of": "command",
+  "name": "cvref",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title"
+      },
+      {
+        "index": 2,
+        "meaning": "text"
+      },
+      {
+        "index": 3,
+        "meaning": "place"
+      }
+    ],
+    "repeatable": true,
+    "notes": "A referee, which the model has no place for (decision 0013).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

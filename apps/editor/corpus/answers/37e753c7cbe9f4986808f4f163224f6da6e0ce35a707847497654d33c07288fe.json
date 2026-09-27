@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "key": "37e753c7cbe9f4986808f4f163224f6da6e0ce35a707847497654d33c07288fe",
+  "hash": "01d4ef1954fdb7b486afd85551dafe6532551147390a2ef7924617f83d281bba",
+  "of": "command",
+  "name": "faGitlab",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other",
+        "blank": "absent"
+      },
+      {
+        "index": 2,
+        "meaning": "other",
+        "blank": "absent"
+      }
+    ],
+    "repeatable": false,
+    "notes": "A Font Awesome icon, given to \\NewInfoField.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

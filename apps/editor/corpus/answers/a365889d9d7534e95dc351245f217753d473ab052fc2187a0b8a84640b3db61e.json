@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "key": "a365889d9d7534e95dc351245f217753d473ab052fc2187a0b8a84640b3db61e",
+  "hash": "119a14036646a2024429328093b5a6ea39b7941b2f9646ce52722e29e534a31f",
+  "of": "environment",
+  "name": "cvitems",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "bulletList",
+    "arguments": [],
+    "repeatable": false,
+    "list": {
+      "does": "opens",
+      "holds": "bullet"
+    },
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "key": "51035964ff17461affac9629a293381e8ba04af220029045adea50cf5290134d",
+  "hash": "6f1277488dc06a5c501b64970178c843f5f44b91642ac8f64d18dad226104c40",
+  "of": "command",
+  "name": "cvsubsection",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title"
+      }
+    ],
+    "repeatable": false,
+    "notes": "A subsection, which the model has no place for (decision 0015).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

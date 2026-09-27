@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "key": "a0b48160eb50ebda83ec2b1299808466d2f400fdbc4f3931b8aeeea13934843b",
+  "hash": "ba30df9cd62d67708152104bd5ed78c9bbdd9a9544ddc5b81fa2f42295d0b7ec",
+  "of": "command",
+  "name": "resumeSubItem",
+  "family": "jake",
+  "answer": {
+    "kind": "bullet",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "notes": "\\resumeItem with less space after it. The sample defines it and never calls it.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

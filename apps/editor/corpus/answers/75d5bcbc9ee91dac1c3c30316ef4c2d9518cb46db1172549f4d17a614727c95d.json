@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "key": "75d5bcbc9ee91dac1c3c30316ef4c2d9518cb46db1172549f4d17a614727c95d",
+  "hash": "ecc94fcbbe07bb71f63d08e894e1c35903750117a16f50b97dff1a0e5934f7fa",
+  "of": "command",
+  "name": "makecvfooter",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other"
+      },
+      {
+        "index": 2,
+        "meaning": "text"
+      },
+      {
+        "index": 3,
+        "meaning": "other"
+      }
+    ],
+    "repeatable": false,
+    "notes": "The footer, set on every page by fancyhdr, which the model has no place for (decision 0015).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

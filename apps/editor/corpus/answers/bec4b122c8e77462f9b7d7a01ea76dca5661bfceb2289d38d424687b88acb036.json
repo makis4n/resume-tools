@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "key": "bec4b122c8e77462f9b7d7a01ea76dca5661bfceb2289d38d424687b88acb036",
+  "hash": "5652987e8f79861474349f1c73d3e026cc400c9315316e88c774e5a8ed0a0b95",
+  "of": "command",
+  "name": "homepage",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "link",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "label",
+        "blank": "empty"
+      }
+    ],
+    "link": "website",
+    "repeatable": true,
+    "notes": "Stores the homepage, which \\makecvheader sets as a link to itself.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

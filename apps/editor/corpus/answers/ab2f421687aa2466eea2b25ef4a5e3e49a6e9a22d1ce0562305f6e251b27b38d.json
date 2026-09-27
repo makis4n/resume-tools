@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "key": "ab2f421687aa2466eea2b25ef4a5e3e49a6e9a22d1ce0562305f6e251b27b38d",
+  "hash": "d09d97d6f41219cb3510b6578782978d039284d6b9876cbefaf1f9d4c5d696b2",
+  "of": "command",
+  "name": "cvachievement",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "icon"
+      },
+      {
+        "index": 2,
+        "meaning": "title"
+      },
+      {
+        "index": 3,
+        "meaning": "text"
+      }
+    ],
+    "repeatable": true,
+    "notes": "An achievement with an icon, which the model has no place for (decision 0013): item 7 keeps it as an extra.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

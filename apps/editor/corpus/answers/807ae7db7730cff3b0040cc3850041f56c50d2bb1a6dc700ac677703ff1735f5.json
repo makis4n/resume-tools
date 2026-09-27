@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "key": "807ae7db7730cff3b0040cc3850041f56c50d2bb1a6dc700ac677703ff1735f5",
+  "hash": "457e5c3e55f69aa93c3b8cee3d65390b0490a7adf02fb8d4239fdfef2b8219e8",
+  "of": "command",
+  "name": "email",
+  "family": "altacv",
+  "answer": {
+    "kind": "contact",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "contact": "email",
+    "repeatable": false,
+    "redefinitions": [
+      {
+        "name": "printinfo",
+        "latex": "\\makeatletter\n\\ExplSyntaxOn\n\\cs_set_protected:Npn \\rt_info_text:n #1\n  { \\tl_if_head_eq_meaning:nNTF {#1} \\rtfield { {#1} ~ } { \\utffriendlydetokenize {#1} } }\n\\RenewDocumentCommand{\\printinfo}{o m m o}{%\n  \\IfNoValueTF{#4}{%\n    \\mbox{\\textcolor{accent}%\n    {\\BeginAccSupp{method=escape,ActualText={\\IfNoValueTF{#1}{\\detokenize{#2}}{#1}:\\space}}\\normalfont #2\\EndAccSupp{}}%\n    ~\\rt_info_text:n {#3}\\hspace{2em}}%\n  }{%\n    \\iftoggle{withhyper}{%\n      \\mbox{\\textcolor{accent}%\n      {\\BeginAccSupp{method=escape,ActualText={\\IfNoValueTF{#1}{\\detokenize{#2}}{#1}:\\space}}\\normalfont #2\\EndAccSupp{}}%\n      ~%\n      \\group_begin:\n      \\cs_set_eq:NN \\rt@keptfield \\rtfield\n      \\cs_set_eq:NN \\rtfield \\use_ii:nn\n      \\BeginAccSupp{method=escape,ActualText={#4}}%\n      \\href{#4}{\\cs_set_eq:NN \\rtfield \\rt@keptfield \\rt_info_text:n {#3}}%\n      \\EndAccSupp{}%\n      \\group_end:\n      \\hspace{2em}}%\n     }{%\n       \\ClassWarning{Please specify [withhyper] option to enable hyperlinks. Printing out full hyperlink prefix #1 for now.}%\n      \\mbox{\\textcolor{accent}\n      {\\BeginAccSupp{method=escape,ActualText={\\IfNoValueTF{#1}{\\detokenize{#2}}{#1}:\\space}}\\normalfont #2\\EndAccSupp{}}%\n      ~{\\utffriendlydetokenize{#4}}\\hspace{2em}}%\n    }%\n  }%\n}%\n\\ExplSyntaxOff\n\\makeatother"
+      }
+    ],
+    "notes": "The class builds the mailto: address from the text it also sets, so the probe finds the field twice; the redefinition of \\printinfo sets a field's text as it comes, as the port's does, re-reads anything else as upstream does, and builds the address with the editor's markers taken out. The LaTeX is adapted from the port's rt-altacv.cls, a modified version of altacv.cls v1.7.4, under the LPPL 1.3c.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

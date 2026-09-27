@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "key": "f20bf4705494d558a3f83234b97aea2b300832c6617d010e17615add2a70f065",
+  "hash": "6a63fb71e0741a178a852e5ba6b95f31ca87fd8127ca88627de3b3a83a05459f",
+  "of": "command",
+  "name": "wheelchart",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other"
+      },
+      {
+        "index": 2,
+        "meaning": "length"
+      },
+      {
+        "index": 3,
+        "meaning": "length"
+      },
+      {
+        "index": 4,
+        "meaning": "key"
+      }
+    ],
+    "repeatable": false,
+    "notes": "A wheel chart, which the model has no place for (decision 0013).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

@@ -1081,6 +1081,80 @@ export async function buildRequest(
   });
 }
 
+// Redefinitions.
+
+/** Where a statement's argument in `open` and `close` that starts at `at` ends, past its close. */
+function closing(text: string, at: number, open: string, close: string): number {
+  let depth = 0;
+  for (let i = at; i < text.length; i++) {
+    const char = text[i];
+    if (char === "\\") i++;
+    else if (char === open) depth++;
+    else if (char === close && --depth === 0) return i + 1;
+  }
+  return -1;
+}
+
+/**
+ * Where a main file's `\documentclass` statement ends, its options and its class's name read: the
+ * first outside a comment; or -1 when it has none.
+ */
+export function classEnd(text: string): number {
+  let offset = 0;
+  for (const line of text.split("\n")) {
+    let comment = line.length;
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] !== "%") continue;
+      let backslashes = 0;
+      for (let j = i - 1; j >= 0 && line[j] === "\\"; j--) backslashes++;
+      if (backslashes % 2 === 0) {
+        comment = i;
+        break;
+      }
+    }
+    const found = /\\documentclass(?![A-Za-z@])/.exec(line.slice(0, comment));
+    if (found !== null) {
+      let at = offset + found.index + found[0].length;
+      const skip = () => {
+        while (/\s/.test(text[at] ?? "")) at++;
+      };
+      skip();
+      if (text[at] === "[") {
+        at = closing(text, at, "[", "]");
+        if (at < 0) return -1;
+        skip();
+      }
+      if (text[at] !== "{") return -1;
+      return closing(text, at, "{", "}");
+    }
+    offset += line.length + 1;
+  }
+  return -1;
+}
+
+/**
+ * A main file's text with an answer's redefinitions after its document class, each once by its
+ * name, the first given of a name taken, in order, a line each: what item 7 does with the
+ * redefinitions of the answers it assembles from (decision 0024). Undefined when the text has no
+ * `\documentclass` to put them after.
+ */
+export function withRedefinitions(
+  text: string,
+  redefinitions: readonly { name: string; latex: string }[],
+): string | undefined {
+  const at = classEnd(text);
+  if (at < 0) return undefined;
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const each of redefinitions) {
+    if (seen.has(each.name)) continue;
+    seen.add(each.name);
+    lines.push(each.latex);
+  }
+  if (lines.length === 0) return text;
+  return `${text.slice(0, at)}\n${lines.join("\n")}\n${text.slice(at)}`;
+}
+
 // The leak check.
 
 /** Where a request holds a text, for a leak's message: never the text itself. */

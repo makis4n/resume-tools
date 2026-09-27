@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "key": "c4bd0e9631cab43552a9f120ebe02843564780c1d46ded6394ec56da830f0084",
+  "hash": "3ce2b6998d1e2346ca25df40defcca7fdfb44dbd04beaa795edc9ec0386dc959",
+  "of": "command",
+  "name": "address",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "header",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "place",
+        "slot": "location",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": false,
+    "notes": "Stores the location, set in Roboto, whose proportional figures the page cannot read until item 8 (decision 0022).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

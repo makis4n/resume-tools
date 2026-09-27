@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "key": "4edb0b13b3ee7c9fdf44eadfe87b47fdca860be485386ac1162e3943617a738f",
+  "hash": "35887b41348033349866058eb34876d583df026fa7aff48d68122ec5fcdce9f0",
+  "of": "command",
+  "name": "faMastodon",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other",
+        "blank": "absent"
+      },
+      {
+        "index": 2,
+        "meaning": "other",
+        "blank": "absent"
+      }
+    ],
+    "repeatable": false,
+    "notes": "A Font Awesome icon, given to \\NewInfoField.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

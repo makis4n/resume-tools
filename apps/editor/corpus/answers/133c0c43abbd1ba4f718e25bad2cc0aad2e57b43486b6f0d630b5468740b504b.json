@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "key": "133c0c43abbd1ba4f718e25bad2cc0aad2e57b43486b6f0d630b5468740b504b",
+  "hash": "9d429acb0126cafc9dec14bec39ff98e6022c5a7ac944ea0f94f3b14b0d77853",
+  "of": "command",
+  "name": "bibnamedelima",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [],
+    "repeatable": false,
+    "notes": "biblatex's name delimiter.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

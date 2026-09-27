@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "key": "c813798fa9c8bbbb485cf65b59be6ac41b04b48347e5f7323bd3eec21c877f38",
+  "hash": "9cc69af5ab967ab8dae0d0e0ffe2b5a9ae181023a927c1194572a59c12de5b93",
+  "of": "environment",
+  "name": "paracol",
+  "family": "altacv",
+  "answer": {
+    "kind": "layout",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other",
+        "blank": "absent"
+      }
+    ],
+    "repeatable": false,
+    "notes": "Two columns; the port puts a section on the right by its role (decision 0013). The engine reads it as taking an optional argument alone, so the column count after it is a paragraph of the body (decision 0022).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}
