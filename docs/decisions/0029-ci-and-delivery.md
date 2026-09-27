@@ -21,7 +21,9 @@ could check. The editor's production home needs the engine and TeX Live on R2 fi
   the wrong side of the boundary. It also checks every schema in `packages/contracts` against its
   draft's metaschema, with the tool's dependencies resolved as of a fixed date.
 - A `pr-title` workflow checks the title against `<type>(<scope>): <summary>` with the types and
-  scopes in AGENTS.md.
+  scopes in AGENTS.md. Dependabot capitalises its summary ("Bump") whatever prefix it is given, so
+  on its pull requests the workflow first lower-cases that letter in the title itself, and the
+  squash merge still follows the convention.
 - Workflows get a read-only token by default. A job that publishes asks for more itself.
 - Every third-party action is pinned to a commit, with its version in a comment. Dependabot opens
   one grouped pull request a month to move the pins.
