@@ -44,9 +44,17 @@
  * length, closed over the template macros it names, the first reached first, to 64 definitions
  * and 64 KB, the data among them by name alone, but for scratch macros, whose meaning is whatever
  * was last put in them; each definition's SHA-256, and its closure's (`keysOf`), are item 6's
- * cache key.
+ * cache key. The masking and the key are the naming contract's (`@resume-tools/naming`), so that
+ * the editor, the naming service and the corpus runner read one rule.
  */
 
+import {
+  type Dependency,
+  keyOf,
+  maskDefinition,
+  NAMING_VERSION,
+  sha256,
+} from "@resume-tools/naming";
 import { printRaw } from "@unified-latex/unified-latex-util-argspec";
 import type { Engine, EngineSession } from "../engine/session";
 import { isReadable, readSpec } from "./arguments";
@@ -1100,41 +1108,13 @@ export function isScratch(name: string): boolean {
   );
 }
 
-/** A placeholder of `length` characters for what item 11's patterns found: `<email___>`. */
-function placeholder(kind: string, length: number): string {
-  if (length < kind.length + 2) return "_".repeat(length);
-  return `<${kind}${"_".repeat(length - kind.length - 2)}>`;
-}
-
-/** A link: a scheme and an address, `www.` and one, or a domain and a path. */
-const LINK =
-  /\b(?:(?:https?|ftp):\/\/|mailto:|www\.)[^\s{}\\]+|\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\/[^\s{}\\]*/g;
-
-/** An email address. */
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
-
-/** A run of digits and the separators a phone number has; one of 7 digits or more is one. */
-const PHONE = /\+?\(?\d[\d ().~/+-]*\d/g;
-
 /**
  * A definition with the personal data item 11's patterns find in it masked, each by a placeholder
  * of its own length: links, email addresses, and runs of 7 digits or more with separators, which
- * phone numbers are. A definition then hashes the same whoever's address it holds.
+ * phone numbers are. A definition then hashes the same whoever's address it holds. The rule is the
+ * naming contract's (`maskDefinition`), since what leaves the browser is masked by it.
  */
-export function masked(text: string): string {
-  return text
-    .replace(LINK, (found) => placeholder("link", found.length))
-    .replace(EMAIL, (found) => placeholder("email", found.length))
-    .replace(PHONE, (found) =>
-      (found.match(/\d/g) ?? []).length >= 7 ? placeholder("phone", found.length) : found,
-    );
-}
-
-/** The SHA-256 of a text in UTF-8, in hex. */
-async function sha256(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
+export const masked = maskDefinition;
 
 /**
  * Each template macro's closure: the template macros its meaning names and those it hands its
@@ -1177,23 +1157,24 @@ export function closure(
 }
 
 /**
- * Each definition's key: the SHA-256 of its hash and its dependencies' that are definitions, in
- * order, by name. A macro that holds data takes no part, neither its text nor whether a preamble
- * set it. It is item 6's cache key but for the naming version, and what the corpus runner compares
+ * Each definition's key, item 6's cache key (`keyOf`): the SHA-256 of the naming version, its hash
+ * and its dependencies' that are definitions, in order, by name. A macro that holds data takes no
+ * part, neither its text nor whether a preamble set it. It is what the corpus runner compares
  * between documents: two whose class or style is the same file give each macro the file defines,
  * and the preamble leaves alone, the same key, whatever the person's name and settings.
  */
 export async function keysOf(
   signatures: Pick<EngineSignatures, "macros">,
+  version: number = NAMING_VERSION,
 ): Promise<Record<string, string>> {
   const keys = record<string>();
   for (const [name, macro] of Object.entries(signatures.macros)) {
     if (macro.kind === "data") continue;
-    const dependencies = macro.dependencies.flatMap((dependency) => {
+    const dependencies = macro.dependencies.flatMap((dependency): Dependency[] => {
       const found = signatures.macros[dependency];
       return found?.kind === "data" ? [] : [[dependency, found?.hash ?? null]];
     });
-    keys[name] = await sha256(JSON.stringify([macro.hash, dependencies]));
+    keys[name] = await keyOf(version, macro.hash, dependencies);
   }
   return keys;
 }
