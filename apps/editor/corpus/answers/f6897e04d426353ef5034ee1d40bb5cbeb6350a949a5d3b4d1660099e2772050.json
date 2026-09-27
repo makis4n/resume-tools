@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "key": "f6897e04d426353ef5034ee1d40bb5cbeb6350a949a5d3b4d1660099e2772050",
+  "hash": "ff1a696e2817453fd8eec944bbb333506896b012986d48f511dbc2df91bc4c0b",
+  "of": "command",
+  "name": "makecvheader",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "header",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "key",
+        "blank": "kept"
+      }
+    ],
+    "repeatable": false,
+    "redefinitions": [
+      {
+        "name": "makecvheader",
+        "latex": "\\makeatletter\n\\def\\rt@cleanlinks{%\n  \\let\\rt@keptfield\\rtfield\n  \\let\\rt@href\\href\n  \\def\\href##1##2{\\begingroup\\let\\rtfield\\@secondoftwo\n    \\rt@href{##1}{\\let\\rtfield\\rt@keptfield##2}\\endgroup}}\n\\def\\rt@patchfailed{\\ClassError{awesome-cv}{The seed's patch of \\string\\makecvheader\\space did not apply}{}}\n\\expandafter\\patchcmd\\csname\\string\\makecvheader\\endcsname\n  {\\\\[\\acvHeaderAfterNameSkip]}{\\ifvmode\\leavevmode\\fi\\\\[\\acvHeaderAfterNameSkip]}{}{\\rt@patchfailed}\n\\expandafter\\patchcmd\\csname\\string\\makecvheader\\endcsname\n  {\\\\[\\acvHeaderAfterSocialSkip]}{\\ifvmode\\leavevmode\\fi\\\\[\\acvHeaderAfterSocialSkip]}{}{\\rt@patchfailed}\n\\expandafter\\patchcmd\\csname\\string\\makecvheader\\endcsname\n  {\\newbool{isstart}}{\\rt@cleanlinks\\newbool{isstart}}{}{\\rt@patchfailed}\n\\makeatother"
+      }
+    ],
+    "notes": "Sets the header from what the preamble stored; its argument is the alignment. The redefinition patches it by name: it starts the name's line and the contacts' line when nothing on them has, as the port does, so that a blank name or no contacts sets, and it builds each contact's address with the editor's markers taken out, so that a stored contact is set once. The LaTeX is adapted from the port's rt-awesome-cv.cls, a modified version of awesome-cv.cls, under the LPPL 1.3c.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

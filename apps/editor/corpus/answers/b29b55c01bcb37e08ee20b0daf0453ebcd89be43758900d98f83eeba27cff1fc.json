@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "key": "b29b55c01bcb37e08ee20b0daf0453ebcd89be43758900d98f83eeba27cff1fc",
+  "hash": "552985374adaf33da30ec87c5077e1444fe05de0b7f9876963df0663d0ac7cae",
+  "of": "command",
+  "name": "extrainfo",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "header",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other",
+        "slot": "contacts"
+      }
+    ],
+    "repeatable": false,
+    "notes": "The class's place for what it has no command for, after the other contacts; the port sets every contact here, each an \\href to the address the generator builds around its icon and text, in the resume's order (decision 0015). The example resume leaves it out.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

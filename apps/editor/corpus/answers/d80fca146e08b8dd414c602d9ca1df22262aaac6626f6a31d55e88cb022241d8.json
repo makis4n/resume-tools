@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "key": "d80fca146e08b8dd414c602d9ca1df22262aaac6626f6a31d55e88cb022241d8",
+  "hash": "0225668dcdb25d2fb41388c331ca1f67c18b16f64252d96f32d16174222bf81f",
+  "of": "command",
+  "name": "faHeartbeat",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other",
+        "blank": "absent"
+      },
+      {
+        "index": 2,
+        "meaning": "other",
+        "blank": "absent"
+      }
+    ],
+    "repeatable": false,
+    "notes": "A Font Awesome icon.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

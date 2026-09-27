@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "key": "1a9bbe0c8992054d906e491b499a497e4b8cb4da67cd1740b6f0dac6604d9d2e",
+  "hash": "957064ceb00fa72dd0bf9e70cce9b845127b2946ef42105cb8f079b491d9f639",
+  "of": "command",
+  "name": "bibnamedelimi",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [],
+    "repeatable": false,
+    "notes": "biblatex's name delimiter.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

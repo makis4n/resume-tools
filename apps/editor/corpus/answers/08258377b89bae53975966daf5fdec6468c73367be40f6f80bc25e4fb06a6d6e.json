@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "key": "08258377b89bae53975966daf5fdec6468c73367be40f6f80bc25e4fb06a6d6e",
+  "hash": "c57ae0e644025733f0d37f5ffdb12cbea1f671b7fc51b59cb07f1c6a0fce377a",
+  "of": "command",
+  "name": "cvtag",
+  "family": "altacv",
+  "answer": {
+    "kind": "bullet",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "role": "skills",
+    "repeatable": true,
+    "omitWhenBlank": true,
+    "redefinitions": [
+      {
+        "name": "cvtag",
+        "latex": "\\makeatletter\n\\@ifundefined{rt@tag}{\\newsavebox\\rt@tag}{}\n\\@ifundefined{rt@tagline}{\\newsavebox\\rt@tagline}{}\n\\@ifundefined{rt@tagwd}{\\newdimen\\rt@tagwd}{}\n\\@ifundefined{rt@tagdp}{\\newdimen\\rt@tagdp}{}\n\\renewcommand{\\cvtag}[1]{%\n  \\leavevmode\n  \\begingroup\n    \\rt@tagwd=\\dimexpr\\linewidth-2ex-0.4pt\\relax\n    \\sbox\\rt@tag{\\parbox[t]{\\rt@tagwd}{\\raggedright\\leavevmode#1\\par\n      \\xdef\\rt@taglines{\\the\\prevgraf}\\xdef\\rt@tagbadness{\\the\\badness}%\n      \\xdef\\rt@taglast{\\the\\prevdepth}}}%\n    \\rt@tagdp=\\dimexpr\\dp\\rt@tag-\\rt@taglast+.25ex\\relax\n    \\ifnum\\rt@taglines=\\@ne\\ifnum\\rt@tagbadness<1000000\n      \\sbox\\rt@tagline{#1}%\n      \\ifdim\\wd\\rt@tagline>\\rt@tagwd\\else\n        \\setbox\\rt@tag\\box\\rt@tagline\n        \\rt@tagwd=\\wd\\rt@tag\n        \\rt@tagdp=.25ex\n      \\fi\n    \\fi\\fi\n    \\ht\\rt@tag\\z@ \\dp\\rt@tag\\z@\n    \\hbox{%\n      \\rlap{\\tikz[baseline=0pt]{%\n        \\useasboundingbox (0pt,-\\rt@tagdp-0.75ex-0.2pt) rectangle (\\rt@tagwd+2ex+0.4pt,2.25ex+0.2pt);\n        \\draw[draw=body!30,rounded corners]\n          (0.2pt,-\\rt@tagdp-0.75ex) rectangle (\\rt@tagwd+2ex+0.2pt,2.25ex);}}%\n      \\kern\\dimexpr1ex+0.2pt\\relax\\usebox\\rt@tag\\kern\\dimexpr1ex+0.2pt\\relax}%\n  \\endgroup\\space\n}\n\\makeatother"
+      }
+    ],
+    "notes": "A skill, as a tag. The class sets its text in a TikZ node, which the PDF places through a transform the page does not apply (decision 0013); the redefinition sets the text as an ordinary box and has TikZ draw only its frame, as the port does. A blank tag would leave an empty frame, so it is left out. The LaTeX is adapted from the port's rt-altacv.cls, a modified version of altacv.cls v1.7.4, under the LPPL 1.3c.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

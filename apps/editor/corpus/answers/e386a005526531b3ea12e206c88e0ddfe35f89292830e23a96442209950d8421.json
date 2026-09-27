@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "key": "e386a005526531b3ea12e206c88e0ddfe35f89292830e23a96442209950d8421",
+  "hash": "c10de920c70615ee216fe297c305f566f2da6740aee2b1d725409bb0e34e24b4",
+  "of": "command",
+  "name": "cvskill",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "labelledItem",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "label",
+        "slot": "label",
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      },
+      {
+        "index": 3,
+        "meaning": "other",
+        "blank": "absent"
+      },
+      {
+        "index": 4,
+        "meaning": "other",
+        "blank": "absent"
+      }
+    ],
+    "role": "skills",
+    "repeatable": true,
+    "notes": "A labelled item. It ends with \\\\, whose star and optional argument are the third and fourth arguments, never given. The example resume leaves it out.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

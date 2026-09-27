@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "key": "fc52faa2560f71ad00b529cf52383e89e300522b389f2980f6c56e0bba44f265",
+  "hash": "480e588ad8d612695bc4afe4b6fb028c364405f5b2e92599a81a9c6cc4ea3331",
+  "of": "command",
+  "name": "linkedin",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "link",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "label",
+        "blank": "empty"
+      }
+    ],
+    "link": "linkedin",
+    "repeatable": true,
+    "notes": "Stores the account's name, which \\makecvheader sets as a link to its profile.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

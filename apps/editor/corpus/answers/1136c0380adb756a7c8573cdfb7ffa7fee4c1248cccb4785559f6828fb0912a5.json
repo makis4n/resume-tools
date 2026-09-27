@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "key": "1136c0380adb756a7c8573cdfb7ffa7fee4c1248cccb4785559f6828fb0912a5",
+  "hash": "a001d2111d9698e5d8ea851643d2d0dc4991941ad13b3dc7ce9e369d979b105c",
+  "of": "command",
+  "name": "cvhonor",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "slot": "title",
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "subtitle",
+        "slot": "subtitle",
+        "blank": "empty"
+      },
+      {
+        "index": 3,
+        "meaning": "place",
+        "slot": "place",
+        "blank": "empty"
+      },
+      {
+        "index": 4,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "empty"
+      },
+      {
+        "index": 5,
+        "meaning": "other",
+        "blank": "absent"
+      },
+      {
+        "index": 6,
+        "meaning": "other",
+        "blank": "absent"
+      }
+    ],
+    "role": "awards",
+    "repeatable": true,
+    "notes": "An award: its title, the event after a comma, the place and the date. It ends with \\\\, which reads a star and an optional argument after it: the fifth and sixth arguments are those, never given.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

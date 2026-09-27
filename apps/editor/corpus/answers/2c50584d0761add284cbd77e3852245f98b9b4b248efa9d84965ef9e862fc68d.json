@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "key": "2c50584d0761add284cbd77e3852245f98b9b4b248efa9d84965ef9e862fc68d",
+  "hash": "894ded37bba1e12cd5c17f83b5d0708c59450705b534f9677417d742ff8ec8ae",
+  "of": "command",
+  "name": "nocite",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [],
+    "repeatable": false,
+    "notes": "biblatex's \\nocite, whose delimited parameters the engine cannot read (decision 0020).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

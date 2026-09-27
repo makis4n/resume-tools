@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "key": "9407be88787ba18ebd45150eca55cbe096a27daafcb1f70faeb6ea6a2d6703eb",
+  "hash": "a8034afbaa315bbb88b09b3e88b09113121b50acac9fd6c84199d60c661fd3f4",
+  "of": "command",
+  "name": "photoR",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "length"
+      },
+      {
+        "index": 2,
+        "meaning": "other"
+      }
+    ],
+    "repeatable": false,
+    "notes": "A photo, a width and an image's name, which the model has no place for (decision 0013).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

@@ -74,6 +74,12 @@
  *                 `.corpus/fonts/` (`scripts/corpus-fonts.ts`, decision 0023). It takes a few minutes
  *   --only <id>   that document only
  *   --json <file> write each document's row as JSON too, names and numbers only
+ *   seed          fetch the oracle's samples as `oracle` does, run each through the probe and the
+ *                 naming request, and print each sample's macros and environments with their
+ *                 hashes, keys and verdicts, and whether `corpus/answers/` holds an answer for
+ *                 each that validates and whose hash is the macro's (`scripts/corpus-seed.ts`,
+ *                 decision 0024). It exits 1 when one has none, or the samples cannot be fetched
+ *   --json <file> write each sample's macros as JSON too: names, hashes, keys and verdicts
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -106,6 +112,7 @@ import {
   printable,
   writeAtomically,
 } from "./corpus-manifest.ts";
+import type { OracleDocument } from "./corpus-oracle.ts";
 import {
   compare,
   ORACLE_DIR,
@@ -134,10 +141,11 @@ import {
   runPool,
   uploadOf,
 } from "./corpus-reference.ts";
+import { answersFolder, type SeedChildRow, type SeedRow, seedTable } from "./corpus-seed.ts";
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>]";
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
@@ -162,6 +170,9 @@ const PARSE_KEPT = join(CORPUS_DIR, "parse");
 
 /** The probe runner's child, which Node runs in each process of its pool, and the oracle's. */
 const PROBE_CHILD = fileURLToPath(new URL("./corpus-probe-child.ts", import.meta.url));
+
+/** The seed's child, which Node runs in each process of its pool. */
+const SEED_CHILD = fileURLToPath(new URL("./corpus-seed-child.ts", import.meta.url));
 
 /** Where the probe runner keeps each document's whole probe, which holds its text. */
 const PROBE_KEPT = join(CORPUS_DIR, "probe");
@@ -580,7 +591,11 @@ async function runProbe(only: string | undefined, json: string | undefined) {
     );
 }
 
-async function runOracle() {
+/**
+ * The oracle, its samples fetched into `.corpus/oracle/` and checked; or undefined, the exit code
+ * set and why said, when they could not be fetched as it names them.
+ */
+async function fetchOracle(): Promise<Oracle | undefined> {
   const oracle = parseJson(Oracle, readFileSync(ORACLE_FILE, "utf8"), ORACLE_FILE);
   const fetched = await fetchCorpus({
     github: new GitHub({ token: githubToken(), log: console.log }),
@@ -604,22 +619,30 @@ async function runOracle() {
         .join("\n"),
     );
     process.exitCode = 1;
-    return;
+    return undefined;
   }
+  return oracle;
+}
+
+/** An oracle sample's zip, as a person would upload it, from `.corpus/oracle/`. */
+function sampleUpload(doc: OracleDocument, treeFont: (name: string) => Uint8Array | undefined) {
+  return uploadOf(
+    oracleDocument(doc),
+    (path) => new Uint8Array(readFileSync(join(ORACLE_DIR, doc.id, ...path.split("/")))),
+    treeFont,
+  );
+}
+
+async function runOracle() {
+  const oracle = await fetchOracle();
+  if (oracle === undefined) return;
   if (!existsSync(ENGINE_MANIFEST))
     throw new Error("oracle compiles on the engine in .engine/: run fetch-engine first");
   const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
   const treeFont = treeFonts(engine.files);
   const tasks = oracle.documents.map((doc) => ({
     id: doc.id,
-    message: () => ({
-      name: `${doc.id}.zip`,
-      bytes: uploadOf(
-        oracleDocument(doc),
-        (path) => new Uint8Array(readFileSync(join(ORACLE_DIR, doc.id, ...path.split("/")))),
-        treeFont,
-      ),
-    }),
+    message: () => ({ name: `${doc.id}.zip`, bytes: sampleUpload(doc, treeFont) }),
   }));
   const rows = new Map<string, ProbeRow>();
   await runPool({
@@ -708,6 +731,59 @@ async function runFonts(only: string | undefined, json: string | undefined) {
     );
 }
 
+async function runSeed(json: string | undefined) {
+  const oracle = await fetchOracle();
+  if (oracle === undefined) return;
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("seed compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const treeFont = treeFonts(engine.files);
+  const tasks = oracle.documents.map((doc) => ({
+    id: doc.id,
+    message: () => ({
+      name: `${doc.id}.zip`,
+      bytes: sampleUpload(doc, treeFont),
+      family: doc.family,
+    }),
+  }));
+  const rows = new Map<string, SeedRow>();
+  await runPool({
+    script: SEED_CHILD,
+    tasks,
+    limitMs: PROBE_LIMIT_MS,
+    onResult: (task, result) => {
+      const family = oracle.documents.find((doc) => doc.id === task.id)?.family ?? "other";
+      const reply = result.reply as
+        | { row: SeedChildRow; logs?: Record<string, string> }
+        | undefined;
+      // A compile's log quotes the sample, so it is kept under .corpus/ alone.
+      for (const [which, log] of Object.entries(reply?.logs ?? {}))
+        writeAtomically(join(ORACLE_DIR, "seed", `${task.id}-${which}.log`), log);
+      const row: SeedRow = {
+        id: task.id,
+        family,
+        ...(reply?.row ?? { outcome: result.timedOut ? "timeout" : "crashed" }),
+      };
+      rows.set(task.id, row);
+      print([`${task.id}: ${row.outcome}, ${row.macros?.length ?? 0} macros and environments`]);
+    },
+  });
+  const ordered = oracle.documents.flatMap((doc) => {
+    const row = rows.get(doc.id);
+    return row === undefined ? [] : [row];
+  });
+  const folder = answersFolder();
+  const { table, problems } = seedTable(ordered, folder.read, folder.keys);
+  print(["", ...table.trimEnd().split("\n")]);
+  if (json !== undefined) writeAtomically(json, formatJson({ version: 1, documents: ordered }));
+  if (problems > 0) {
+    console.error(
+      "The seed has a macro with no answer that validates and whose hash is its own: write it under corpus/answers/",
+    );
+    process.exitCode = 1;
+  }
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -733,7 +809,8 @@ async function main() {
     command !== "parse" &&
     command !== "probe" &&
     command !== "oracle" &&
-    command !== "fonts"
+    command !== "fonts" &&
+    command !== "seed"
   )
     throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
   if (
@@ -751,9 +828,10 @@ async function main() {
     command !== "reference" &&
     command !== "parse" &&
     command !== "probe" &&
-    command !== "fonts"
+    command !== "fonts" &&
+    command !== "seed"
   )
-    throw new Error("--json goes with survey, reference, parse, probe or fonts");
+    throw new Error("--json goes with survey, reference, parse, probe, fonts or seed");
   if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
   if (command === "fetch") return runFetch(values.only);
   if (command === "collect") return runCollect();
@@ -765,6 +843,7 @@ async function main() {
   if (command === "probe") return runProbe(values.only, caller(values.json));
   if (command === "oracle") return runOracle();
   if (command === "fonts") return runFonts(values.only, caller(values.json));
+  if (command === "seed") return runSeed(caller(values.json));
   return runSurvey(caller(values.json), caller(values.tree));
 }
 

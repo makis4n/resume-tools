@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "key": "8544a5e57d644b5e24ab51f6e4cdf39ef83ffb0f5178662d5f5450b53dc735b8",
+  "hash": "52bcef061f45836a4387aed2f2fd9d9307ad4f01e9086494643bde9a6ac4846c",
+  "of": "environment",
+  "name": "cvskills",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "layout",
+    "arguments": [],
+    "role": "skills",
+    "repeatable": false,
+    "list": {
+      "does": "opens",
+      "holds": "labelledItem"
+    },
+    "redefinitions": [
+      {
+        "name": "cvskills",
+        "latex": "\\makeatletter\n\\@ifundefined{rt@labelwidth}{\\newlength\\rt@labelwidth}{}\n\\@ifundefined{rt@labelroom}{\\newlength\\rt@labelroom}{}\n\\@ifundefined{rt@skillwidth}{\\newlength\\rt@skillwidth}{}\n\\@ifundefined{rt@labellines}{\\newcount\\rt@labellines}{}\n\\@ifundefined{ifrt@labelswrap}{\\newif\\ifrt@labelswrap}{}\n\\def\\rt@widestline{%\n  \\unskip\\unpenalty\\unskip\\unpenalty\n  \\setbox\\tw@\\lastbox\n  \\ifvoid\\tw@\\else\n    \\global\\advance\\rt@labellines\\@ne\n    \\setbox\\tw@\\hbox{\\unhbox\\tw@}%\n    \\ifdim\\wd\\tw@>\\rt@labelwidth \\global\\rt@labelwidth\\wd\\tw@ \\fi\n    \\expandafter\\rt@widestline\n  \\fi}\n\\long\\def\\rt@skilllabels#1{%\n  \\setlength\\rt@labelroom{\\textwidth - \\textwidth / 3 - 3\\tabcolsep}%\n  \\global\\rt@labelwidth\\z@\n  \\global\\rt@labelswrapfalse\n  \\setbox\\z@\\hbox{%\n    \\def\\cvskill##1##2{%\n      \\global\\rt@labellines\\z@\n      \\setbox\\z@\\vbox{%\n        \\hsize\\rt@labelroom \\leftskip\\z@ \\rightskip\\z@\\@plus1fil \\parfillskip\\z@\\@plus1fil\n        \\everypar{}\\noindent\\skilltypestyle{##1}\\@@par\n        \\rt@widestline}%\n      \\ifnum\\rt@labellines>\\@ne \\global\\rt@labelswraptrue \\fi}%\n    #1}%\n  \\ifdim\\rt@labelwidth>\\rt@labelroom\n    \\global\\rt@labelswraptrue\n    \\global\\rt@labelwidth\\rt@labelroom\n  \\fi\n  \\setlength\\rt@skillwidth{\\textwidth * \\real{0.9}}%\n  \\setlength\\dimen@{\\textwidth - \\rt@labelwidth - 3\\tabcolsep}%\n  \\ifdim\\dimen@<\\rt@skillwidth \\setlength\\rt@skillwidth{\\dimen@}\\fi\n  \\ifrt@labelswrap\n    \\def\\rt@labelcolumn{R{\\rt@labelwidth}}%\n  \\else\n    \\def\\rt@labelcolumn{r}%\n  \\fi}\n\\long\\def\\rt@skilltable#1#2{%\n  \\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}} #1 L{\\rt@skillwidth}}\n    #2\n  \\end{tabular*}}\n\\RenewDocumentEnvironment{cvskills}{+b}{%\n  \\vspace{\\acvSectionContentTopSkip}\n  \\vspace{-2.0mm}\n  \\begin{center}\n    \\setlength\\tabcolsep{1ex}\n    \\setlength{\\extrarowheight}{0pt}\n    \\rt@skilllabels{#1}%\n    \\expandafter\\rt@skilltable\\expandafter{\\rt@labelcolumn}{#1}%\n  \\end{center}\n}{}\n\\makeatother"
+      }
+    ],
+    "notes": "Upstream sets the skills' text in 0.9 of the text's width whatever the labels, past the page's edge when a label is long; the redefinition sets it in what the labels' column leaves, as the port does. The example resume leaves it out. The LaTeX is adapted from the port's rt-awesome-cv.cls, a modified version of awesome-cv.cls, under the LPPL 1.3c.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "key": "f27b48af62419575181525851d5749c5e4fefc7df512c85408230cf225b46540",
+  "hash": "942edc49d1cc9d412d9c97227781947486b5ae5dd522ff728893bc09ec587d0e",
+  "of": "command",
+  "name": "resumeSubHeadingListStart",
+  "family": "jake",
+  "answer": {
+    "kind": "layout",
+    "arguments": [],
+    "repeatable": false,
+    "list": {
+      "does": "opens",
+      "closedBy": "resumeSubHeadingListEnd",
+      "holds": "entry"
+    },
+    "notes": "Opens the list a section's entries are items of; the port writes it around {{entries}} (decision 0006).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

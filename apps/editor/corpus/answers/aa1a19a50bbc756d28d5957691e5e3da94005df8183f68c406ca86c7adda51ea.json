@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "key": "aa1a19a50bbc756d28d5957691e5e3da94005df8183f68c406ca86c7adda51ea",
+  "hash": "67540056e59cc0f40880d5f52812d6df54b209cf23cb053e1f4ffa4e5c811ec7",
+  "of": "environment",
+  "name": "cvparagraph",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "paragraph",
+    "arguments": [],
+    "repeatable": false,
+    "notes": "Holds a paragraph section's text.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

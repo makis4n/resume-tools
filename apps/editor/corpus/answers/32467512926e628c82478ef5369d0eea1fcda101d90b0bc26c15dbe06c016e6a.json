@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "key": "32467512926e628c82478ef5369d0eea1fcda101d90b0bc26c15dbe06c016e6a",
+  "hash": "de52af532bdddad041118c55eae42e2da6b99e910eb5c0e31f2320c6c529085e",
+  "of": "command",
+  "name": "cvskill",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "label"
+      },
+      {
+        "index": 2,
+        "meaning": "key"
+      }
+    ],
+    "repeatable": true,
+    "notes": "A skill with a rating, a number the class compares; the model has no ratings (decision 0013).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

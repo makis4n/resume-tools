@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "key": "009ff45ea9848e2f00820f7afdab30d714982f4c746fe92bb3a4531592cfb58b",
+  "hash": "38f9ea287a03fb70661ce8c7fc556a012b87ed552878e3e1ba63abd32fae05b1",
+  "of": "command",
+  "name": "faTrophy",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other",
+        "blank": "absent"
+      },
+      {
+        "index": 2,
+        "meaning": "other",
+        "blank": "absent"
+      }
+    ],
+    "repeatable": false,
+    "notes": "A Font Awesome icon.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

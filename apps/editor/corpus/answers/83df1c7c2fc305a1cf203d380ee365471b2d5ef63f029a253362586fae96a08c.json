@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "key": "83df1c7c2fc305a1cf203d380ee365471b2d5ef63f029a253362586fae96a08c",
+  "hash": "563a049e1898f174333d97e05e188bf03d86c9543d1d244344c293ffd2596923",
+  "of": "command",
+  "name": "makecvheader",
+  "family": "altacv",
+  "answer": {
+    "kind": "header",
+    "arguments": [],
+    "repeatable": false,
+    "notes": "Sets the header from what \\name, \\tagline, \\personalinfo and the photos stored. The port takes \\MakeUppercase out of it, which changes the page and is no redefinition.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

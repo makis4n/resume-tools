@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "key": "d1483c8b8b8d044f17c3ed50d4c08079d1fd468582edb6df3ae7aa4e19c2b734",
+  "hash": "f1aa2c3178171f965c93c0b49f1e9b56c661b844bf2663b193fc5b94f8f459de",
+  "of": "environment",
+  "name": "cventries",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "layout",
+    "arguments": [],
+    "repeatable": false,
+    "list": {
+      "does": "opens",
+      "holds": "entry"
+    },
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

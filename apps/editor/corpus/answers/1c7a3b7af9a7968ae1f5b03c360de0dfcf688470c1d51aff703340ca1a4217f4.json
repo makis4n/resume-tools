@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "key": "1c7a3b7af9a7968ae1f5b03c360de0dfcf688470c1d51aff703340ca1a4217f4",
+  "hash": "a906c3e2d1a748e9635aa5b7fd611127ab794f6e4be48323d5e75f2e3ca5b74c",
+  "of": "command",
+  "name": "cventry",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "slot": "title",
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "subtitle",
+        "slot": "subtitle",
+        "blank": "empty"
+      },
+      {
+        "index": 3,
+        "meaning": "place",
+        "slot": "place",
+        "blank": "empty"
+      },
+      {
+        "index": 4,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "empty"
+      },
+      {
+        "index": 5,
+        "meaning": "other",
+        "slot": "bullets",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "notes": "The class's position, on the second line with the dates, is the model's title, and its title, the organisation, the model's subtitle (decision 0015). The position is set in small capitals, which the page reads from item 8. The fifth argument holds the bullets' cvitems.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

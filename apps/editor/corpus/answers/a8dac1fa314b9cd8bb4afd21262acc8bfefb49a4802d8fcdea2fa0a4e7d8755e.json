@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "key": "a8dac1fa314b9cd8bb4afd21262acc8bfefb49a4802d8fcdea2fa0a4e7d8755e",
+  "hash": "c201fc5f09b0f20672fae3c3ad26fa967e1e05c99e3dcbe858163d47549ad2d2",
+  "of": "command",
+  "name": "cvevent",
+  "family": "altacv",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "slot": "title",
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "subtitle",
+        "slot": "subtitle",
+        "blank": "empty"
+      },
+      {
+        "index": 3,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "empty"
+      },
+      {
+        "index": 4,
+        "meaning": "place",
+        "slot": "place",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "redefinitions": [
+      {
+        "name": "cvevent",
+        "latex": "\\renewcommand{\\cvevent}[4]{%\n  {\\large\\color{emphasis}#1\\par}\n  \\smallskip\\normalsize\n  \\ifstrequal{#2}{}{}{\n  \\textbf{\\color{accent}#2}\\par\n  \\smallskip}\n  \\ifstrequal{#3}{}{}{%\n    {\\small\\parbox[t]{0.5\\linewidth}%\n      {\\raggedright\\BeginAccSupp{method=pdfstringdef,ActualText={\\datename:}}\\cvDateMarker\\EndAccSupp{}%\n      ~#3}%\n    }}%\n  \\ifstrequal{#4}{}{}{%\n    {\\small\\parbox[t]{0.5\\linewidth}%\n      {\\raggedright\\BeginAccSupp{method=pdfstringdef,ActualText={\\locationname:}}\\cvLocationMarker\\EndAccSupp{}%\n        ~#4}%\n    }}\\par\n  \\medskip\\normalsize\n}"
+      }
+    ],
+    "notes": "The dates and the place are each set in a box half the column wide, which cannot break; the redefinition sets each as a ragged-right paragraph of that width, as the port does, whose first line is where the box's was. The LaTeX is adapted from the port's rt-altacv.cls, a modified version of altacv.cls v1.7.4, under the LPPL 1.3c.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}

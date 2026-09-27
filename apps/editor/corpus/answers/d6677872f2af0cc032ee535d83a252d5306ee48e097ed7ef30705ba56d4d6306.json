@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "key": "d6677872f2af0cc032ee535d83a252d5306ee48e097ed7ef30705ba56d4d6306",
+  "hash": "8ec2f97e1356ea5db2ec5dc9147bce4f2f22bccc71467be65bf2297b5cac2722",
+  "of": "command",
+  "name": "tagline",
+  "family": "altacv",
+  "answer": {
+    "kind": "header",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "subtitle",
+        "slot": "headline",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": false,
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed"
+}
