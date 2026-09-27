@@ -70,11 +70,11 @@ the generator writes as they are. The schema refuses, so that nothing ever write
   fools only its own page, so the check guards against accidents and is no boundary;
 - braces that do not balance as TeX reads them: each `{` closed by a later `}`, where a brace after
   a backslash is a control symbol and a comment, from a `%` no backslash escapes to its line's end,
-  is not read; but a `%` in the address of `\href`, `\url`, `\path` or `\nolinkurl`, in its braces or
-  between the pair of another character `\url|...|` takes, is a character of it, as those commands
-  read it where they stand outside a macro's argument. An extra stands where its argument or its
-  part of the body stood in the upload, inside an argument or outside any, so it balances as TeX
-  read it there: `\href{https://quill.example/a%20b}{...}` between two header calls, which the
+  is not read; but a `%` in the address of `\href`, `\url`, `\path` or `\nolinkurl`, in its braces
+  or between the pair of another character `\url|...|` takes, is a character of it, as those
+  commands read it where they stand outside a macro's argument. An extra stands where its argument
+  or its part of the body stood in the upload, inside an argument or outside any, so it balances as
+  TeX read it there: `\href{https://quill.example/a%20b}{...}` between two header calls, which the
   model refused while hyperref set it, is kept (the item's review round). A locked section's LaTeX
   is always written inside an argument, `\rtlocked`'s, so it balances, too, with every such `%` a
   comment (`LockedLatex`), where one would end the argument inside itself or run on past it to the

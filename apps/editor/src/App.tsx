@@ -4,6 +4,7 @@ import { COULD_NOT_MAKE_PDF, Compiler, type CompilerEvents, type Shown } from ".
 import { DocumentList } from "./editor/DocumentList";
 import {
   type Command,
+  CommandError,
   dropRefusedChoices,
   type Document as EditorDocument,
   History,
@@ -29,6 +30,7 @@ import {
   type Summary,
 } from "./storage/store";
 import { CURATED, curated } from "./templates/curated";
+import type { TemplatePackage } from "./templates/package";
 
 /**
  * The editor as far as milestone 2 has come: the documents kept in this browser, and one of them
@@ -113,6 +115,11 @@ interface Open {
   id: string;
   /** The revision it was read at, which its saves name, so none is written over another tab's. */
   revision: number;
+  /**
+   * Its template's package, whose rules its commands keep (decision 0026): what an imported
+   * template requires and cannot take, which the history, the side panel and the controls follow.
+   */
+  pkg: TemplatePackage;
   history: History;
   /** The history's present, as state, so that an edit renders. */
   present: EditorDocument;
@@ -227,7 +234,8 @@ export function App() {
     setOpen({
       id,
       revision,
-      history: new History(document),
+      pkg,
+      history: new History(document, pkg),
       present: document,
       canUndo: false,
       canRedo: false,
@@ -409,21 +417,31 @@ export function App() {
     );
   }
 
-  const { id, history, present, canUndo, canRedo, stale, unsaved } = open;
+  const { id, pkg, history, present, canUndo, canRedo, stale, unsaved } = open;
 
   /**
    * Apply a command to the open document. One of a visit to a field, which the overlay and the
    * panel's inputs make, or of a drag of a slider, comes with the group of the visit or the drag,
    * so that it is one step of the history (`History.dispatch`); any other is a step of its own. A
    * command that changes nothing, such as a click on the density already chosen, is no step, and
-   * nothing is compiled or saved for it.
+   * nothing is compiled or saved for it; nor is one the package refuses, as emptying a field an
+   * imported template requires (decision 0026), which leaves the document as it was, the side
+   * panel's input showing it again and marking why.
    */
   const edit = (command: Command, group?: string) => {
     // A document another tab has changed takes no edit until it is read again: one made here
     // could not be saved over the other tab's, and would be lost on the reload.
     if (stale) return;
     const before = history.present;
-    if (history.dispatch(command, group) !== before) followPresent(open);
+    let after: EditorDocument;
+    try {
+      after = history.dispatch(command, group);
+    } catch (error) {
+      if (!(error instanceof CommandError)) throw error;
+      console.warn("The template refused an edit:", error.message);
+      return;
+    }
+    if (after !== before) followPresent(open);
   };
 
   /**
@@ -458,8 +476,7 @@ export function App() {
    */
   const tryAgain = () => {
     setError(undefined);
-    const doc = history.present;
-    compiler.current?.open(curated(doc.template).package, doc);
+    compiler.current?.open(pkg, history.present);
   };
 
   /**
@@ -532,12 +549,13 @@ export function App() {
     <aside inert={stale} style={{ flex: "none", width: "24rem" }}>
       <Panel
         document={present}
+        pkg={pkg}
         shownFields={shownFieldsOf(shown?.latest, present, error !== undefined)}
         onCommand={edit}
         onSeal={seal}
       />
       <Controls
-        pkg={curated(present.template).package}
+        pkg={pkg}
         values={present.controls}
         onChange={(change, group) => edit({ type: "control", ...change }, group)}
         onSeal={seal}
@@ -557,7 +575,6 @@ export function App() {
     const owned = compiler.current;
     if (owned === undefined || stale) return;
     const doc = history.present;
-    const pkg = curated(doc.template).package;
     /** Say what the fit came to, or nothing, as long as it is still the fit of this document. */
     const say = (note?: string) =>
       setFitting((now) => {

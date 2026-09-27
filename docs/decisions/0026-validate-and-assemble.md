@@ -24,9 +24,11 @@ generator's writing of both, which every compile of the checks and the harness g
   it: with the upload's sources, so that the macros it defines are its own, and with the header's
   values its calls give, found by the answers the request without them finds. An answer comes
   named as the document names the macro, and its list's partners as the request names them, found
-  by their keys; one the cache holds but refuses for the macro, another kind's or naming a partner
-  the request has no macro of, is no answer, and the macro stays as the probe left it. A command's
-  closer is of its opener's kind, whatever kind its own answer gives it.
+  by their keys, or by their names where no macro of the request has the key (decision 0028), as a
+  fork that rewrote one of a list's two macros keeps the other's; one the cache holds but refuses
+  for the macro, another kind's or naming a partner the request has no macro of by either, is no
+  answer, and the macro stays as the probe left it. A command's closer is of its opener's kind,
+  whatever kind its own answer gives it.
 
 ### The package
 
@@ -75,11 +77,13 @@ generator's writing of both, which every compile of the checks and the harness g
   besides the body's names (`SIZE_OPTIONS`), and a size is declared where the engine finds its
   option's code defined, as `article`'s 10, 11 and 12 points are, where any other it ignores with a
   warning and sets 10 points, so that the slider and the page disagreed; a class that declares none,
-  or not the document's size, and a caller that did not ask, offer no control; `dateFormat` where
-  a date with a month is set from the model, since years alone read the same in every format. The
-  answer's preamble parameters give `accent` (a colour `\definecolor` defines), `density`
-  (`\linespread`) and, on pdfTeX, `font` (the document's own and three of the tree's families); the
-  seed has none, so the corpus shows none yet. Each is kept only if the fourth check proves it.
+  or not the document's size, or that size alone, which leaves nothing to choose, and a caller that
+  did not ask, offer no control; the side panel's slider and the fit to one page offer the sizes
+  declared alone (The editor, below); `dateFormat` where a date with a month is set from the model,
+  since years alone read the same in every format. The answer's preamble parameters give `accent` (a
+  colour `\definecolor` defines), `density` (`\linespread`) and, on pdfTeX, `font` (the document's
+  own and three of the tree's families); the seed has none, so the corpus shows none yet. Each is
+  kept only if the fourth check proves it.
 - **Its snippets are the template's code, read from the body where the answer places the model.**
   A section's head, a list's opener and closer, an entry's call and its bullets' list, a list's
   items, a labelled item's call, the header's calls, and the document's code around the header and
@@ -106,18 +110,18 @@ generator's writing of both, which every compile of the checks and the harness g
   answer calls layout that shows a word, or the header's call with no field of the header's that
   does, is no code: a locked section where it stands, or the header's extra.
 - **What a unit the user adds writes** where each unit of the upload keeps an argument in its
-  extras: an argument with no slot, as a length each call gives its own, and a field's slot locked in
-  every instance, which the entry's snippet sets through its extra alone. The package's
+  extras: an argument with no slot, as a length each call gives its own, and a field's slot locked
+  in every instance, which the entry's snippet sets through its extra alone. The package's
   `snippets.defaults` gives it, by the entry's or the section's role, always as a default and a
-  variant for each role whose own differ, from the answer's blank rule (decision 0024): `kept`,
-  the first call's bytes; `empty`, the argument's delimiters with nothing inside, or nothing inside
-  the ones the snippet writes itself; `absent`, nothing. Where the answer says nothing, a code-like
+  variant for each role whose own differ, from the answer's blank rule (decision 0024): `kept`, the
+  first call's bytes; `empty`, the argument's delimiters with nothing inside, or nothing inside the
+  ones the snippet writes itself; `absent`, nothing. Where the answer says nothing, a code-like
   argument is kept, an optional one or a star is left out, and anything else is empty, so that no
   text of the person's, a date among them, reaches a new unit or the package: an entry of a class
   that cannot take an empty date is one the third check finds cannot be added. Every unit of the
-  upload has the key, empty or not, so that its own writes itself. On the engine, an entry the editor
-  adds to the reviewers' shape of a length each call gives its own, and to the shape of a class that
-  reads its date's two ends apart whose answer says kept, compiles.
+  upload has the key, empty or not, so that its own writes itself. On the engine, an entry the
+  editor adds to the reviewers' shape of a length each call gives its own, and to the shape of a
+  class that reads its date's two ends apart whose answer says kept, compiles.
 - **Every entry's snippet sets the bullets a user adds** (the item's review round). A role whose
   upload's entries set no bullets takes the list another role's entries of the same macro set
   theirs in, with that role's bullet and separator where it has none of its own; else the list the
@@ -126,10 +130,14 @@ generator's writing of both, which every compile of the checks and the harness g
   the editor reads to refuse a bullet there. Education before experience, as Jake's upstream
   sample has it, gave education's entries, and every role's that took the default, a snippet that
   set no bullet a user added.
-- **Its required slots.** The slots the second check finds stop the compile only when empty are the
-  package's `required`, by the snippet that sets them and their slots there, `header`, `link`,
-  `section`, `entry`, `bullet`, `item` and `labelledItem`, which the editor refuses to empty (decision
-  0006's package gains it, additively; no curated package has one). They are part of its id.
+- **Its required slots, and the units it cannot take.** The slots the second check finds stop the
+  compile only when empty are the package's `required`, by the snippet that sets them and their
+  slots there, `header`, `link`, `section`, `entry`, `bullet`, `item` and `labelledItem`, the same
+  in every section, which the editor refuses to empty; and the kinds of unit the third check finds a
+  new one of stops the compile are its `fixed`, in the order the editor names them (`UNIT_KINDS`:
+  `entry`, `bullet`, `item`, `labelledItem`, `link` and `section.<kind>`), which the editor refuses
+  to add (decision 0006's package gains both, additively; no curated package has either). Both are
+  part of its id.
 - **Everything kept is kept LaTeX.** Every extra, locked section and default the assembly copies
   from the upload, a list kept whole, the section's growing `after`, an argument's bytes, is held to
   the model's `KeptLatex`, a locked section's to `LockedLatex` (decision 0025): one past the cap, as
@@ -237,16 +245,16 @@ bisects it as the probe does (`settle`, decision 0022), 48 compiles a bisection 
    stops the compile (decision 0015). A slot a bisection's budget leaves untried is **untested**:
    no compile showed it fail, so it is neither locked nor required, and the findings name it and
    the budget (`untested`).
-3. **Repeatable units.** Of each kind of unit the editor adds, one added as the side panel adds
-   it, through the editor's own commands under the package (`applyUnder`), with its placeholders
-   and nothing else, no dates and no extras, and the first removed, each compiled: an entry in the
-   first section of entries, a bullet in the first entry whose snippet shows bullets, an item of
-   each kind of list, a link where the header has one, and a section of each kind, empty, at the
-   end, with the role of the first of its kind. A kind whose new unit stops the compile, as a class
-   that takes no more entries than it has, is a limit of the template, not a field to lock: the
-   package marks it (`fixed`), the editor's commands refuse it and the side panel disables its
-   button (below), and `repeatable` reports it for item 13, as a later round does without trying
-   it again.
+3. **Repeatable units.** Of each kind of unit the editor adds, one added as the side panel adds it,
+   through the editor's own commands under the package (`applyUnder`), with its placeholders and
+   nothing else, no dates and no extras, and the first removed, each compiled: an entry in the first
+   section of entries, a bullet in the first entry whose snippet shows bullets, an item of each kind
+   of list, a link where the header has one, and a section of each kind, empty, at the end, with the
+   role of the first of its kind; never in a list its node keeps whole, which takes no unit (The
+   editor, below). A kind whose new unit stops the compile, as a class that takes no more entries
+   than it has, is a limit of the template, not a field to lock: the package marks it (`fixed`), the
+   editor's commands refuse it and the side panel disables its button (below), and `repeatable`
+   reports it for item 13, as a later round does without trying it again.
 4. **Controls.** Each control's every value but the document's compiled, the font size at the
    sizes its package offers: one that stops the compile at any value, or sets the same page at
    every one, is dropped.
@@ -277,18 +285,28 @@ time.
 
 - **An imported package's rules hold in the editor.** `applyUnder(pkg, document, command)`, which
   `History` applies with the document's package, refuses an edit that would leave a field the
-  package requires blank, as the generator reads blank, where it was not: the field keeps its
-  value, and the error says why. It refuses a unit of a kind the package cannot take (`fixed`), and
-  a bullet for an entry whose role's snippet has no bullets slot, or which the package says has
-  none, since such a bullet would be in the document and never on the page. The side panel, given
-  the package, marks a required field, whether it gives it an input or not, with a title that says
-  why, and disables a button that would add what the template cannot take, saying why when pointed
-  at, and offers a new section only of a kind it can take. A curated package carries none of these
-  rules and takes every edit, as before; `apply` is `applyUnder` with the document's curated
-  package.
+  package requires blank, as the generator reads blank, where it was not: the field keeps its value,
+  and the error says why. It refuses a unit of a kind the package cannot take (`fixed`), and a
+  bullet for an entry whose role's snippet has no bullets slot, or whose role the package says sets
+  none (`snippets.entryBullets`), since such a bullet would be in the document and never on the
+  page. The side panel, given the package, marks a required field, whether it gives it an input or
+  not, with a title that says why, and disables a button that would add what the template cannot
+  take, saying why when pointed at, and offers a new section only of a kind it can take. A curated
+  package carries none of these rules and takes every edit, as before; `apply` is `applyUnder` with
+  the document's curated package.
 - **A slot a node keeps is no field.** Where the assembly keeps an instance as the upload had it
-  (`kept`), `fieldsOf` leaves its field out: the page has no marker for it, the panel gives it no
-  input, and no command reaches it; `setHeader` refuses a header slot kept so.
+  (`kept`, on the header, a section or an entry), `fieldsOf` leaves its field out: the page has no
+  marker for it, the panel gives it no input, and no command reaches it; `setHeader` refuses a
+  header slot kept so. A list the node keeps whole, `bullets`, `entries`, `items` or `links`, is
+  set from its extras alone: none of its units is a field, and the commands refuse to add one and
+  the panel disables the button, since a unit added would be in the document and never on the page.
+- **The sizes a class declares.** The side panel's font size slider offers the package's sizes
+  alone (`fontSizes`), stepping by the longest step that reaches each, a point for `article`'s 10,
+  11 and 12, and reading what the browser gives as the nearest of them; and the fit to one page
+  steps down through them. A curated package offers every half point from 9 to 12, as before.
+- **The app opens a document with its package**, which its history, side panel, controls, retry
+  and fit follow, a curated one's until item 12's store gives an import's; an edit the package
+  refuses leaves the document as it was, and the panel's input shows its value again.
 
 ### The runner and the oracle
 
@@ -492,23 +510,23 @@ other work: 15.4 minutes.
 
 ## Consequences
 
-- **What items 12 to 15 take.** Item 12 stores the package, whose id is its content's hash, and
-  runs `validate` on the editor's engine in the `import` job; the checks cannot stop a compile
-  that never ends (below), which item 12's worker, terminated and started afresh, is the answer
-  to. Item 13 reads `checks`: the outcome and the first difference of a partial one, the fields
-  and words editable, raw, required and locked by reason, the sections mapped and locked, the
-  controls dropped with why, the redefinitions dropped, the units that cannot be added or removed
-  and the harness's findings; its rate is the reference's glyphs', which the words here, counted
-  in the source, stand in for until then. Item 14 grows the controls from the ones proven here:
-  margins where geometry is absent or uneven, and the answer's accent, font and density once item 9
-  answers the preamble; the sizes a class declares it offers already. `checks.required` names the
-  slots the package marks required (`required`), which the editor refuses to empty. Item 12 opens
-  an imported document with its package, in `History` and in the side panel, where the app passes
-  none today, so that its rules hold: the slots it requires, the kinds of unit it cannot take, and
-  its entries' bullets (The editor, above); and its pipeline asks the signatures step of
-  `SIZE_OPTIONS` besides the body's names, as `corpus assemble` does, or its imports offer no font
-  size. Item 15 draws the locked sections and the extras with decision 0025's lock markers;
-  `extras` lists each locked part with where it stands, its node, its key, why and how many words.
+- **What items 12 to 15 take.** Item 12 stores the package, whose id is its content's hash, and runs
+  `validate` on the editor's engine in the `import` job; the checks cannot stop a compile that never
+  ends (below), which item 12's worker, terminated and started afresh, is the answer to. Item 13
+  reads `checks`: the outcome and the first difference of a partial one, the fields and words
+  editable, raw, required and locked by reason, the sections mapped and locked, the controls dropped
+  with why, the redefinitions dropped, the units that cannot be added or removed and the harness's
+  findings; its rate is the reference's glyphs', which the words here, counted in the source, stand
+  in for until then. Item 14 grows the controls from the ones proven here: margins where geometry is
+  absent or uneven, and the answer's accent, font and density once item 9 answers the preamble; the
+  sizes a class declares it offers already. `checks.required` names the slots the package marks
+  required (`required`), which the editor refuses to empty. Item 12 opens an imported document with
+  its package from the store, as the app opens a curated one with its own (The editor, above), so
+  that its rules hold: the slots it requires, the kinds of unit it cannot take, the lists it keeps
+  whole and its entries' bullets; and its pipeline asks the signatures step of `SIZE_OPTIONS`
+  besides the body's names, as `corpus assemble` does, or its imports offer no font size. Item 15
+  draws the locked sections and the extras with decision 0025's lock markers; `extras` lists each
+  locked part with where it stands, its node, its key, why and how many words.
 - **The model takes what the assembly makes.** Every package and document the assembly's tests
   make parse under the package's and the model's schemas, extras slots only where their nodes keep
   extras, and every locked section and extra kept LaTeX (decision 0025), as the store will parse

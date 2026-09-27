@@ -74,6 +74,8 @@ import {
   IMPORTED_PREFIX,
   type RequiredPlace,
   type TemplatePackage,
+  UNIT_KINDS,
+  type UnitKind,
 } from "../templates/package";
 import { isSetter, maySetText, tightened } from "./candidates";
 import { decodeText, type Intake } from "./intake";
@@ -146,9 +148,10 @@ export interface LockedPart {
  * refused, and where the rest go, right after `\documentclass` (`class`, the default) or, where a
  * compile after the class stops, as it does for a macro a package or the preamble defines, at the
  * preamble's end, right before `\begin{document}` (`preamble`, decision 0024); controls dropped,
- * field instances and whole slots locked with why, and the slots that are required. A field
- * instance is named by where its content starts (`LockedPart.at` and its slot), a slot by its macro
- * and argument (`slotKey`).
+ * field instances and whole slots locked with why, the slots that are required, and the kinds of
+ * unit a new one of which stops the compile, which the package marks (`fixed`). A field instance
+ * is named by where its content starts (`LockedPart.at` and its slot), a slot by its macro and
+ * argument (`slotKey`).
  */
 export interface Decisions {
   dropped?: readonly string[];
@@ -157,6 +160,7 @@ export interface Decisions {
   instances?: Readonly<Record<string, LockReason>>;
   slots?: Readonly<Record<string, LockReason>>;
   required?: readonly string[];
+  fixed?: readonly UnitKind[];
 }
 
 /** The style controls a package offers (decision 0006), but the date format, which is the generator's. */
@@ -3165,10 +3169,11 @@ function controlsOf(
   }
   // The class's size option, where the class declares it, with every other size it declares: a
   // class declaring none, or not the document's own, offers no control, since the page would not
-  // follow it.
+  // follow it; nor does one declaring the document's size alone, which leaves nothing to choose.
   const option = sizeOption(preamble);
   const sizes = option === undefined ? [] : declaredSizes(ctx.found);
-  const size = option !== undefined && sizes.includes(option.size) ? option : undefined;
+  const size =
+    option !== undefined && sizes.length > 1 && sizes.includes(option.size) ? option : undefined;
   if (size !== undefined && !dropped.has("fontSize"))
     controls.fontSize = { default: size.size, apply: "", format: true, sizes };
   for (const parameter of answer.preamble.parameters) {
@@ -3553,6 +3558,7 @@ export async function assemble(
     instances: options.decisions?.instances ?? {},
     slots: options.decisions?.slots ?? {},
     required: options.decisions?.required ?? [],
+    fixed: options.decisions?.fixed ?? [],
   };
   const answers = answersOf(answer);
   const dropped = new Set(decisions.dropped);
@@ -3672,6 +3678,11 @@ export async function assemble(
       ...(entryBullets === undefined ? {} : { entryBullets }),
     },
     ...(required === undefined ? {} : { required }),
+    // The kinds of unit the third check found a new one of stops the compile, in the order the
+    // editor names them, so that the same decisions hash the same.
+    ...(decisions.fixed.length === 0
+      ? {}
+      : { fixed: UNIT_KINDS.filter((kind) => decisions.fixed.includes(kind)) }),
   };
   // Every extra, locked part and default is kept LaTeX, as the model and the package take it: one
   // they would refuse, as a list past the cap, is a part this editor cannot keep (decision 0026).

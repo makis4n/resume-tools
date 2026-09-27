@@ -25,7 +25,8 @@
  * class declares, which its font size control offers alone; the slots whose field a document may
  * not empty, since the template stops without them (`required`); what a unit the user adds writes
  * for an argument each unit of the upload keeps in its extras (`snippets.defaults`); and the roles
- * whose entries set no bullets a user adds (`snippets.entryBullets`). Each is optional, and a
+ * whose entries set no bullets a user adds (`snippets.entryBullets`); and the kinds of unit a new
+ * one of which stops its compile, which the editor does not add (`fixed`). Each is optional, and a
  * curated package needs none.
  */
 
@@ -311,6 +312,24 @@ export type Required = z.infer<typeof Required>;
 export type RequiredPlace = keyof Required;
 
 /**
+ * The kinds of unit the editor adds, as the side panel does: an entry, a bullet, an item of a list
+ * or of a labelled list, a link, and a section of each kind, `section.<kind>`, as the package's
+ * snippets name them.
+ */
+export const UNIT_KINDS = [
+  "entry",
+  "bullet",
+  "item",
+  "labelledItem",
+  "link",
+  "section.entries",
+  "section.list",
+  "section.labelled",
+  "section.paragraph",
+] as const;
+export type UnitKind = (typeof UNIT_KINDS)[number];
+
+/**
  * The shapes of a font family a resume needs most, as `<series>/<shape>` of NFSS's values: the
  * series medium, bold and bold extended, which LaTeX's `\bfseries` asks for, and the shapes
  * upright, italic, slanted and small capitals. A family may declare any other `ShapeKey` too.
@@ -496,6 +515,11 @@ export const TemplatePackage = z
     snippets: Snippets,
     /** The slots whose field a document may not empty, for an import whose template needs them. */
     required: Required.optional(),
+    /**
+     * The kinds of unit the editor may not add, for an import whose template stops when a new one
+     * of them is added as the editor adds it, which the third check finds (decision 0026).
+     */
+    fixed: z.array(z.enum(UNIT_KINDS)).optional(),
   })
   .superRefine((pkg, ctx) => {
     // `extras` says whether the snippet's node keeps extras, which its extras slots write back.

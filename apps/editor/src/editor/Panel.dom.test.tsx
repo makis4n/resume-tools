@@ -32,11 +32,11 @@ describe("the side panel, under an imported package's rules", () => {
   });
 
   /** The panel for `pkg`, with the section titled `title` opened, as a click on it opens it. */
-  function rendered(pkg: TemplatePackage, title: string) {
+  function rendered(pkg: TemplatePackage, title: string, shown: Document = doc) {
     act(() =>
       root.render(
         <Panel
-          document={doc}
+          document={shown}
           pkg={pkg}
           onCommand={(command) => sent.push(command)}
           onSeal={() => {}}
@@ -96,5 +96,34 @@ describe("the side panel, under an imported package's rules", () => {
     const education = rendered(pkg, "Education");
     for (const each of buttons(education, "Add bullet")) expect(each.disabled).toBe(false);
     expect(buttons(education, "Add entry")[0]?.disabled).toBe(false);
+  });
+
+  it("disables adding a unit to a list kept as it was imported, and says why", () => {
+    // What an import keeps whole (decision 0026): the header's links, one entry's bullets and the
+    // skills' items.
+    const resume = structuredClone(doc.resume);
+    resume.header.kept = ["links"];
+    const [, experience, , skills] = resume.sections;
+    if (experience?.kind !== "entries" || skills?.kind !== "labelled")
+      throw new Error("the sample's sections");
+    const [fennel] = experience.entries;
+    if (fennel === undefined) throw new Error("the sample's entry");
+    fennel.kept = ["bullets"];
+    skills.kept = ["items"];
+    const kept = "These were kept as they were imported, so none can be added here";
+    const row = rendered(jake, "Experience", { ...doc, resume });
+    const [first, second] = buttons(row, "Add bullet");
+    expect(first?.disabled).toBe(true);
+    expect(first?.title).toBe(kept);
+    expect(second?.disabled).toBe(false);
+    const [link] = [...host.querySelectorAll("button")].filter(
+      (button) => button.textContent === "Add link",
+    );
+    expect(link?.disabled).toBe(true);
+    expect(link?.title).toBe(kept);
+    const items = rendered(jake, "Technical Skills", { ...doc, resume });
+    expect(buttons(items, "Add item")[0]?.title).toBe(kept);
+    act(() => first?.click());
+    expect(sent).toEqual([]);
   });
 });

@@ -60,6 +60,15 @@ const CHECKS = [
   "pdf",
 ] as const;
 
+/**
+ * The checks' own findings beside the harness's, in the order the table counts them: `stopped`,
+ * `untested` and `unproven`, as `validate.ts` names them (`NOTES`), which this file cannot import.
+ */
+export const CHECK_NOTES = ["stopped", "untested", "unproven"] as const;
+
+/** Why a control is dropped that the checks never tried, as `validate.ts` says it (`UNCHECKED`). */
+export const UNCHECKED_WHY = "unchecked";
+
 /** The style controls, in the order the table counts them. */
 const CONTROLS = ["pageSize", "margins", "fontSize", "font", "accent", "density"] as const;
 
@@ -102,12 +111,15 @@ export interface AssembleRow {
   };
   words?: { editable: number; locked: Partial<Record<LockReason, number>> };
   sections?: { mapped: number; locked: number };
-  controls?: { proven: string[]; dropped: string[] };
+  /** The controls proven and dropped, and of those dropped, those the checks never tried. */
+  controls?: { proven: string[]; dropped: string[]; unchecked?: string[] };
   redefinitions?: { applied: string[]; dropped: string[]; placement?: "class" | "preamble" };
   /** The harness's findings, by check. */
   findings?: Partial<Record<string, number>>;
   /** The repeatable kinds whose unit added or removed stopped the compile. */
   unrepeatable?: string[];
+  /** The kinds of unit the package marks the editor cannot add (`fixed`). */
+  fixed?: string[];
   compiles?: number;
   /** Milliseconds: the probe, and the assembly with its checks. */
   probeMs?: number;
@@ -139,12 +151,16 @@ export function assembleRow(
     controls: {
       proven: checks.controls.proven,
       dropped: checks.controls.dropped.map((each) => each.control),
+      unchecked: checks.controls.dropped
+        .filter((each) => each.why === UNCHECKED_WHY)
+        .map((each) => each.control),
     },
     redefinitions: checks.redefinitions,
     findings,
     unrepeatable: checks.repeatable
       .filter((each) => !each.added || !each.removed)
       .map((each) => each.kind),
+    fixed: [...(checks.decisions.fixed ?? [])],
     compiles: checks.compiles,
     validateMs: Math.round(checks.ms),
   };
@@ -165,6 +181,9 @@ function median(values: readonly number[]): number | undefined {
 /** A font's name as the table shows it: a TFM's name from the tree, letters, digits and dashes. */
 const FONT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
+/** A kind of unit as the table shows it: `entry`, `section.list` and the like, and nothing else. */
+const UNIT_NAME = /^[A-Za-z]{1,16}(\.[A-Za-z]{1,16})?$/;
+
 /** A redefinition's or a macro's name as the table shows it, when it is plainly one. */
 const shownName = (name: string) => (/^[A-Za-z@*]{1,63}$/.test(name) ? `\\${name}` : undefined);
 
@@ -173,7 +192,8 @@ const shownName = (name: string) => (/^[A-Za-z@*]{1,63}$/.test(name) ? `\\${name
  * that reached the assembly and why others did not, those assembled, partial with the kind of the
  * first difference, and refused; the fields editable, raw where the page cannot mark them, required
  * and locked by reason, and their words; the sections mapped and locked; the controls proven and
- * dropped; the redefinitions dropped; the harness's findings by check; and the compiles and times.
+ * dropped; the redefinitions dropped; the harness's findings by check, and the checks' own; the
+ * kinds of unit that stop the compile; and the compiles and times.
  */
 export function assembleTable(rows: readonly AssembleRow[]): string {
   const of = (column: (typeof COLUMNS)[number]) =>
@@ -234,6 +254,9 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
     ),
   ].sort();
   const differences = [...new Set(rows.flatMap((row) => row.difference ?? []))].sort();
+  const fixed = [
+    ...new Set(rows.flatMap((row) => (row.fixed ?? []).filter((kind) => UNIT_NAME.test(kind)))),
+  ].sort();
   const redefinitions = [
     ...new Set(
       rows.flatMap((row) =>
@@ -295,6 +318,10 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
     ...CONTROLS.map((name) =>
       count(`\`${name}\` dropped`, (row) => (row.controls?.dropped ?? []).includes(name)),
     ),
+    count(
+      "Dropped unchecked: the checks stopped before the fourth",
+      (row) => (row.controls?.unchecked ?? []).length > 0,
+    ),
     section("Redefinitions, documents"),
     count(
       "Applied after `\\documentclass`",
@@ -317,8 +344,20 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
     ),
     section("The harness's findings, documents"),
     ...CHECKS.map((check) => count(`\`${check}\``, (row) => (row.findings?.[check] ?? 0) > 0)),
-    count("No finding", (row) => done(row) && Object.keys(row.findings ?? {}).length === 0),
-    count("A repeatable unit stops the compile", (row) => (row.unrepeatable ?? []).length > 0),
+    section("The checks' own findings, documents"),
+    ...CHECK_NOTES.map((note) => count(`\`${note}\``, (row) => (row.findings?.[note] ?? 0) > 0)),
+    count(
+      "No finding, the harness's or the checks'",
+      (row) => done(row) && Object.keys(row.findings ?? {}).length === 0,
+    ),
+    section("Repeatable units, documents"),
+    count(
+      "A unit added or removed stops the compile",
+      (row) => (row.unrepeatable ?? []).length > 0,
+    ),
+    ...fixed.map((kind) =>
+      count(`The editor cannot add: \`${kind}\``, (row) => (row.fixed ?? []).includes(kind)),
+    ),
     section("Compiles and time"),
     middle("Compiles, median", (row) => (done(row) ? row.compiles : undefined)),
     most("Compiles, most", (row) => (done(row) ? row.compiles : undefined)),
@@ -349,7 +388,7 @@ interface Asked {
  */
 export async function answersFor(
   macros: readonly Asked[],
-  cache: AnswerCache,
+  cache: Pick<AnswerCache, "get">,
 ): Promise<{ found: StoredAnswer[]; answered: number; unanswered: number; refused: number }> {
   const partners = new Map(
     macros.flatMap((macro) =>

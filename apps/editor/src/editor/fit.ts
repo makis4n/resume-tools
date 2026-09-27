@@ -2,7 +2,8 @@
  * Fit to one page (item 18): the short search plan section 5.4 describes, for a document whose
  * page runs onto a second. It steps the controls that change how much fits, each by one step in
  * turn: the density one step tighter, then the margins a tenth of an inch narrower, then the font
- * size half a point smaller, and round again while any of them has a step left. Each setting is
+ * size one size smaller, half a point or the next size an imported class declares, and round again
+ * while any of them has a step left. Each setting is
  * compiled in the worker (`Compiler.tryControls`), and the search stops at the first that sets one
  * page. Each setting is a step further than the one before, so the first that fits is the least
  * change this order allows, and the ranges are fixed, so the search is short: two steps of density
@@ -13,7 +14,12 @@
  * changes.
  */
 
-import { type ControlValues, defaultControls, type TemplatePackage } from "../templates/package";
+import {
+  type ControlValues,
+  defaultControls,
+  fontSizes,
+  type TemplatePackage,
+} from "../templates/package";
 import type { Compiler } from "./compiler";
 import type { Document, History } from "./document";
 
@@ -46,11 +52,10 @@ interface Range {
 }
 
 /**
- * The margins, from 0.4 to 1 inch in tenths, and the font size, from 9 to 12 points in halves: the
- * ranges of plan section 5.4, which the package schema holds values to.
+ * The margins, from 0.4 to 1 inch in tenths: the range of plan section 5.4, which the package
+ * schema holds values to. The font sizes are the package's own (`fontSizes`).
  */
 const MARGINS: Range = { least: 0.4, most: 1, perUnit: 10 };
-const FONT_SIZES: Range = { least: 9, most: 12, perUnit: 2 };
 
 /**
  * One step below `value` in `range`, counted in steps rather than in units, so that 0.8 inch less a
@@ -66,14 +71,16 @@ function stepBelow({ least, most, perUnit }: Range, value: number): number {
  * The settings the search tries, in order, each a step further than the one before, starting from
  * the document's own values with the package's defaults filled in: the density one step tighter,
  * relaxed to normal and normal to compact; then the margins 0.1 inch narrower; then the font size
- * 0.5 point smaller; then each of the three again that has a step left, until every one of them
- * the package offers is at its least. A control the package does not offer is skipped, and every
- * other control stays as it is. Each setting holds a value for every control the package offers.
- * Every value a step makes is one the package takes (`stepBelow`); a value a setting keeps from
- * the document is as the document has it.
+ * the next size smaller the package offers, 0.5 point smaller or, for a class that declares whole
+ * sizes alone, a point (`fontSizes`); then each of the three again that has a step left, until
+ * every one of them the package offers is at its least. A control the package does not offer is
+ * skipped, and every other control stays as it is. Each setting holds a value for every control the
+ * package offers. Every value a step makes is one the package takes (`stepBelow`, `fontSizes`); a
+ * value a setting keeps from the document is as the document has it.
  */
 export function fitSteps(pkg: TemplatePackage, values: ControlValues): ControlValues[] {
   const { density, margins, fontSize } = pkg.controls;
+  const sizes = fontSizes(pkg);
   const steps: ControlValues[] = [];
   let at: ControlValues = { ...defaultControls(pkg), ...values };
   const take = (next: ControlValues) => {
@@ -86,8 +93,9 @@ export function fitSteps(pkg: TemplatePackage, values: ControlValues): ControlVa
     if (density && tighter) take({ ...at, density: tighter });
     if (margins && at.margins !== undefined && at.margins > MARGINS.least)
       take({ ...at, margins: stepBelow(MARGINS, at.margins) });
-    if (fontSize && at.fontSize !== undefined && at.fontSize > FONT_SIZES.least)
-      take({ ...at, fontSize: stepBelow(FONT_SIZES, at.fontSize) });
+    const size = at.fontSize;
+    const smaller = size === undefined ? undefined : sizes.filter((each) => each < size).at(-1);
+    if (fontSize && smaller !== undefined) take({ ...at, fontSize: smaller });
     stepped = steps.length > before;
   }
   return steps;

@@ -53,14 +53,20 @@ import {
   applyUnder,
   CommandError,
   Document,
+  keptOf,
   type StructureOp,
   showsBullets,
-  type UnitKind,
 } from "../editor/document";
 import type { CompileResult, EngineSession, JobFiles } from "../engine/session";
 import type { FontLibrary } from "../page/fonts";
 import { type GeneratedBody, generateBody, generateFormat } from "../templates/generate";
-import { type ControlValues, fontFiles, TemplatePackage } from "../templates/package";
+import {
+  type ControlValues,
+  fontFiles,
+  fontSizes,
+  TemplatePackage,
+  type UnitKind,
+} from "../templates/package";
 import { MARKER_BEGIN, markerId } from "../tex/fields";
 import { type Finding, validatePackage } from "../validate/harness";
 import {
@@ -128,13 +134,6 @@ export const MUTATIONS = {
 
 /** The accent check 4 tries, a dark blue, or black where the document's accent is that blue. */
 const PROBE_ACCENT = "#1F4E79";
-
-/**
- * What the checks decide besides `Decisions`, which the assembly takes as it takes the rest: the
- * kinds of unit the editor cannot add, since check 3 found a new one stops the compile, which the
- * package marks (`fixed`, decision 0026) and the editor's commands refuse (`addable`).
- */
-export type CheckDecisions = Decisions & { fixed?: readonly UnitKind[] };
 
 /** A finding for item 13's report: the harness's, or one of the checks' own (`NOTES`). */
 type Note = AssemblyChecks["findings"][number];
@@ -399,7 +398,8 @@ interface UnitTrial {
  * bullet removed; an item in the first list and in the first labelled list, and the first item of
  * each removed; a link, where the header has one, and the first removed; and a section of each
  * kind at the end, with the role of the first section of its kind or `other`, and the first of the
- * kind removed. A kind with nowhere to add one is not tried.
+ * kind removed. A kind with nowhere to add one is not tried, and nor is a list its node keeps whole
+ * as the upload had it (`kept`), whose units are not the model's and which takes none.
  */
 function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
   const trials: UnitTrial[] = [];
@@ -407,7 +407,9 @@ function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
     (section): section is Exclude<Section, { kind: "locked" }> => section.kind !== "locked",
   );
   const removing = (op: StructureOp | undefined) => (op === undefined ? {} : { remove: op });
-  const entries = sections.flatMap((section) => (section.kind === "entries" ? [section] : []));
+  const entries = sections.flatMap((section) =>
+    section.kind === "entries" && !keptOf(section).has("entries") ? [section] : [],
+  );
   const withEntries = entries.find((section) => section.entries.length > 0) ?? entries[0];
   if (withEntries !== undefined) {
     const first = withEntries.entries[0];
@@ -418,7 +420,9 @@ function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
     });
   }
   const shown = entries.flatMap((section) =>
-    showsBullets(pkg, section.role) ? section.entries : [],
+    showsBullets(pkg, section.role)
+      ? section.entries.filter((entry) => !keptOf(entry).has("bullets"))
+      : [],
   );
   const target = shown.find((entry) => entry.bullets.length > 0) ?? shown[0];
   const bullet = entries
@@ -433,7 +437,9 @@ function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
   for (const kind of ["item", "labelledItem"] as const) {
     const of = kind === "item" ? "list" : "labelled";
     const lists = sections.flatMap((section) =>
-      (section.kind === "list" || section.kind === "labelled") && section.kind === of
+      (section.kind === "list" || section.kind === "labelled") &&
+      section.kind === of &&
+      !keptOf(section).has("items")
         ? [section]
         : [],
     );
@@ -446,7 +452,7 @@ function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
       ...removing(first === undefined ? undefined : { op: "removeItem", id: first.id }),
     });
   }
-  const link = resume.header.links[0];
+  const link = keptOf(resume.header).has("links") ? undefined : resume.header.links[0];
   if (link !== undefined)
     trials.push({
       kind: "link",
@@ -462,16 +468,6 @@ function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
     });
   }
   return trials;
-}
-
-/**
- * The font sizes check 4 tries: those the package offers, where its control lists the sizes its
- * class declares (`sizes`), or every half point from 9 to 12.
- */
-function fontSizesOf(pkg: TemplatePackage): number[] {
-  const sizes = (pkg.controls.fontSize as { sizes?: unknown } | undefined)?.sizes;
-  const listed = Array.isArray(sizes) ? sizes.filter((size) => typeof size === "number") : [];
-  return listed.length > 0 ? listed : [9, 9.5, 10, 10.5, 11, 11.5, 12];
 }
 
 /** The values check 4 tries of a control: every value but the document's. */
@@ -492,7 +488,8 @@ function valuesOf(pkg: TemplatePackage, name: ControlName, chosen: ControlValues
         chosen.margins ?? pkg.controls.margins?.default,
       ).map((margins) => ({ ...chosen, margins }));
     case "fontSize":
-      return other(fontSizesOf(pkg), chosen.fontSize ?? pkg.controls.fontSize?.default).map(
+      // The sizes the package offers: those its class declares, or every half point from 9 to 12.
+      return other(fontSizes(pkg), chosen.fontSize ?? pkg.controls.fontSize?.default).map(
         (fontSize) => ({ ...chosen, fontSize }),
       );
     case "font":
@@ -582,7 +579,7 @@ async function likeReference(
 /** What one round of the checks decided, and found. */
 interface Round {
   assembled: Assembled;
-  decisions: Required<CheckDecisions>;
+  decisions: Required<Decisions>;
   outcome: "assembled" | "partial";
   difference?: { kind: string; text: string };
   repeatable: { kind: string; added: boolean; removed: boolean }[];
@@ -648,7 +645,7 @@ export async function validateWith(
   harness?: (assembled: Assembled) => Promise<Finding[]>,
 ): Promise<Assembled | Refusal> {
   const started = performance.now();
-  const assembleWith = (decisions: CheckDecisions) =>
+  const assembleWith = (decisions: Decisions) =>
     assemble(
       inputs.intake,
       inputs.reference,
@@ -753,13 +750,13 @@ type Switch = { redefinition: string } | { control: ControlName };
 async function checks(
   inputs: Omit<ValidationInputs, "session" | "fonts">,
   compiles: Compiler,
-  assembleWith: (decisions: CheckDecisions) => Promise<Assembled | Refusal>,
-  start: CheckDecisions,
+  assembleWith: (decisions: Decisions) => Promise<Assembled | Refusal>,
+  start: Decisions,
   harness: ((assembled: Assembled) => Promise<Finding[]>) | undefined,
 ): Promise<Round | Refusal> {
   const budget = inputs.budget ?? CHECK_BUDGET;
   const setters = takenOut(inputs.intake, inputs.signatures, inputs.answer, inputs.rewrite);
-  let decisions: Required<CheckDecisions> = {
+  let decisions: Required<Decisions> = {
     dropped: [...(start.dropped ?? [])],
     placement: start.placement ?? "class",
     controls: [...(start.controls ?? [])],
@@ -838,7 +835,7 @@ async function checks(
       ...offered.map((control) => ({ control })),
     ];
     /** The decisions with only the switches of `on` left on: every other dropped. */
-    const only = (on: readonly Switch[]): Required<CheckDecisions> => ({
+    const only = (on: readonly Switch[]): Required<Decisions> => ({
       ...decisions,
       dropped: [
         ...decisions.dropped,

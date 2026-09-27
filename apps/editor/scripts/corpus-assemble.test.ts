@@ -1,15 +1,18 @@
 import { NAMING_VERSION } from "@resume-tools/naming";
 import { describe, expect, test } from "vitest";
 import type { AssemblyChecks } from "../src/import/assemble";
+import { NOTES, UNCHECKED } from "../src/import/validate";
 import {
   type AssembleRow,
   answersFor,
   assembleRow,
   assembleTable,
+  CHECK_NOTES,
   comparePlaces,
   fieldsFound,
   placesTable,
   portPlaces,
+  UNCHECKED_WHY,
 } from "./corpus-assemble";
 
 // Every row, answer and resume here is invented for these tests; SECRET stands for a document's
@@ -96,13 +99,68 @@ describe("the table", () => {
       )?.at(-1),
     ).toBe("1");
     expect(cells("`dump`")?.at(-1)).toBe("1");
-    expect(cells("A repeatable unit stops the compile")?.at(-1)).toBe("1");
+    expect(cells("A unit added or removed stops the compile")?.at(-1)).toBe("1");
     expect(cells("Assembly and checks, slowest")?.at(-1)).toBe("50000 ms");
   });
 
   test("shows no text of a document, a name that is not plainly one left out", () => {
     expect(table).not.toContain(SECRET);
     expect(table.split("\n").every((line) => !/\p{Cc}/u.test(line))).toBe(true);
+  });
+});
+
+describe("the checks' own findings in the table", () => {
+  const table = assembleTable([
+    row("jake-0001", "jake", {
+      outcome: "partial",
+      difference: "stopped",
+      controls: {
+        proven: [],
+        dropped: ["pageSize", "fontSize"],
+        unchecked: ["pageSize", "fontSize"],
+      },
+      findings: { stopped: 1 },
+    }),
+    row("awesome-cv-0001", "awesome-cv", {
+      findings: { untested: 1, unproven: 1, pages: 1 },
+      unrepeatable: ["entry"],
+      fixed: ["entry", "section.paragraph", `evil ${SECRET}`],
+    }),
+    row("altacv-0001", "altacv", { findings: {} }),
+  ]);
+  const cells = (label: string) =>
+    table
+      .split("\n")
+      .find((line) => line.startsWith(`| ${label} |`))
+      ?.split("|")
+      .slice(2, -1)
+      .map((cell) => cell.trim());
+
+  test("counts each note, the controls never tried, and the kinds the editor cannot add", () => {
+    // Columns: jake, awesome-cv, altacv, moderncv, europecv, other, all.
+    expect(cells("`stopped`")).toEqual(["1", "0", "0", "0", "0", "0", "1"]);
+    expect(cells("`untested`")?.at(-1)).toBe("1");
+    expect(cells("`unproven`")?.at(-1)).toBe("1");
+    expect(cells("`pages`")?.at(-1)).toBe("1");
+    expect(cells("Dropped unchecked: the checks stopped before the fourth")?.at(-1)).toBe("1");
+    expect(cells("`fontSize` dropped")?.at(-1)).toBe("1");
+    expect(cells("No finding, the harness's or the checks'")).toEqual([
+      "0",
+      "0",
+      "1",
+      "0",
+      "0",
+      "0",
+      "1",
+    ]);
+    expect(cells("The editor cannot add: `entry`")?.at(-1)).toBe("1");
+    expect(cells("The editor cannot add: `section.paragraph`")?.at(-1)).toBe("1");
+    expect(table).not.toContain(SECRET);
+  });
+
+  test("names the notes and the unchecked controls as the checks do", () => {
+    expect(CHECK_NOTES).toEqual(NOTES);
+    expect(UNCHECKED_WHY).toBe(UNCHECKED);
   });
 });
 
@@ -288,7 +346,10 @@ describe("a validation's row", () => {
       controls: {
         offered: ["pageSize"],
         proven: ["pageSize"],
-        dropped: [{ control: "margins", why: "sets the same page at every value" }],
+        dropped: [
+          { control: "margins", why: "sets the same page at every value" },
+          { control: "fontSize", why: UNCHECKED },
+        ],
       },
       redefinitions: { applied: [], dropped: [], placement: "class" },
       repeatable: [
@@ -301,16 +362,17 @@ describe("a validation's row", () => {
       ],
       compiles: 12,
       ms: 1234.5,
-      decisions: {},
+      decisions: { fixed: ["link"] },
       all: [],
     };
     const made = assembleRow(checks, "pdftex", { answered: 3, unanswered: 1 });
     expect(made).toMatchObject({
       outcome: "partial",
       difference: "position",
-      controls: { proven: ["pageSize"], dropped: ["margins"] },
+      controls: { proven: ["pageSize"], dropped: ["margins", "fontSize"], unchecked: ["fontSize"] },
       findings: { pages: 2 },
       unrepeatable: ["link"],
+      fixed: ["link"],
       compiles: 12,
       validateMs: 1235,
     });

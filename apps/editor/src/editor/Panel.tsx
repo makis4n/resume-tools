@@ -13,8 +13,8 @@
  * An imported template's package says what it requires and what it cannot take (decision 0026):
  * the panel marks a field it requires, which cannot be emptied, gives no input to a slot the
  * document keeps as its upload had it, which is no field, and disables a button that would add a
- * unit the template cannot take, or a bullet to an entry whose snippet shows none, saying why. A
- * curated package says none of these.
+ * unit the template cannot take, a bullet to an entry whose snippet shows none, or a unit to a list
+ * the document keeps whole as its upload had it, saying why. A curated package says none of these.
  *
  * Plain HTML in plain English, with nothing in it that is LaTeX.
  */
@@ -49,18 +49,23 @@ import { type DrawnPage, fieldsShown } from "../page/draw";
 import { CURATED } from "../templates/curated";
 import { formatDates } from "../templates/dates";
 import { isBlank } from "../templates/escape";
-import { type DateFormat, defaultControls, type TemplatePackage } from "../templates/package";
+import {
+  type DateFormat,
+  defaultControls,
+  type TemplatePackage,
+  type UnitKind,
+} from "../templates/package";
 import {
   addable,
   type Command,
   type Document,
   fieldsOf,
+  keptOf,
   PLACEHOLDERS,
   requiredFields,
   SECTION_TITLES,
   type StructureOp,
   showsBullets,
-  type UnitKind,
 } from "./document";
 
 /** How long typing in the panel waits for a pause before it becomes a command, in milliseconds. */
@@ -227,6 +232,9 @@ const CANNOT_ADD = "The template cannot take another one of these";
 /** Why the button that would add a bullet to an entry whose snippet shows none is disabled. */
 const NO_BULLETS = "The template sets no bullets for an entry of this section";
 
+/** Why the button that would add a unit to a list kept as it was imported is disabled. */
+const KEPT = "These were kept as they were imported, so none can be added here";
+
 /**
  * What the panel shows of a package's rules for the open document (decision 0026): the fields the
  * document has, which a slot it keeps as its upload had it is not (`fieldsOf`), undefined for
@@ -297,7 +305,12 @@ export function Panel({ document, pkg, shownFields, onCommand, onSeal }: PanelPr
         <RulesOf value={rules}>
           <div style={STYLE.panel}>
             <HeaderFields header={header} rules={rules} send={onCommand} />
-            <Links links={header.links} rules={rules} send={onCommand} />
+            <Links
+              links={header.links}
+              kept={keptOf(header).has("links")}
+              rules={rules}
+              send={onCommand}
+            />
             <Sections
               sections={sections}
               format={dateFormatOf(document, known)}
@@ -366,7 +379,18 @@ function HeaderFields({ header, rules, send }: { header: Header; rules: Rules; s
   );
 }
 
-function Links({ links, rules, send }: { links: readonly Link[]; rules: Rules; send: Send }) {
+/** The header's links, and the button to add one, disabled where the header keeps them whole. */
+function Links({
+  links,
+  kept,
+  rules,
+  send,
+}: {
+  links: readonly Link[];
+  kept: boolean;
+  rules: Rules;
+  send: Send;
+}) {
   const set = (
     id: string,
     change: { kind?: LinkKind; label?: string; href?: string },
@@ -422,7 +446,7 @@ function Links({ links, rules, send }: { links: readonly Link[]; rules: Rules; s
         </ol>
       )}
       <AddButton
-        refused={rules.addable("link") ? undefined : CANNOT_ADD}
+        refused={kept ? KEPT : rules.addable("link") ? undefined : CANNOT_ADD}
         onClick={() => send(structural({ op: "addLink" }))}
       >
         Add link
@@ -625,7 +649,13 @@ function SectionContents({
             </ol>
           )}
           <AddButton
-            refused={rules.addable("entry") ? undefined : CANNOT_ADD}
+            refused={
+              keptOf(section).has("entries")
+                ? KEPT
+                : rules.addable("entry")
+                  ? undefined
+                  : CANNOT_ADD
+            }
             onClick={() => send(structural({ op: "addEntry", section: section.id }))}
           >
             Add entry
@@ -647,7 +677,9 @@ function SectionContents({
             </ol>
           )}
           <AddButton
-            refused={rules.addable(kind) ? undefined : CANNOT_ADD}
+            refused={
+              keptOf(section).has("items") ? KEPT : rules.addable(kind) ? undefined : CANNOT_ADD
+            }
             onClick={() => send(structural({ op: "addItem", section: section.id }))}
           >
             Add item
@@ -732,7 +764,7 @@ function EntryRow({
       <div style={STYLE.row}>
         {bullets.length === 1 ? "1 bullet" : `${bullets.length} bullets`}
         <AddButton
-          refused={refused}
+          refused={keptOf(entry).has("bullets") ? KEPT : refused}
           onClick={() => send(structural({ op: "addBullet", entry: id }))}
         >
           Add bullet

@@ -1136,6 +1136,12 @@ describe("what the assembly counts and says (decision 0026)", () => {
       commands: { ...COMMANDS, "ds@10pt": "", "ds@12pt": "" },
     });
     expect(ok(other.result).package.controls.fontSize).toBeUndefined();
+    // A class that declares the document's size alone leaves nothing to choose, and offers none.
+    const single = await assembleInvented({
+      ...JAKE_LIKE,
+      commands: { ...COMMANDS, "ds@11pt": "" },
+    });
+    expect(ok(single.result).package.controls.fontSize).toBeUndefined();
     expect(SIZE_OPTIONS).toEqual([
       "ds@8pt",
       "ds@8.5pt",
@@ -1152,6 +1158,17 @@ describe("what the assembly counts and says (decision 0026)", () => {
       "ds@14pt",
     ]);
     expect(ARTICLE_SIZES).toEqual({ "ds@10pt": "", "ds@11pt": "", "ds@12pt": "" });
+  });
+
+  test("marks the kinds of unit that stop the compile, in the package and its id", async () => {
+    const plain = ok((await assembleInvented(JAKE_LIKE)).result).package;
+    const decisions: Decisions = { fixed: ["section.paragraph", "entry"] };
+    const marked = ok((await assembleInvented({ ...JAKE_LIKE, decisions })).result).package;
+    expect(plain.fixed).toBeUndefined();
+    // In the order the editor names the kinds, so that the same decisions hash the same.
+    expect(marked.fixed).toEqual(["entry", "section.paragraph"]);
+    expect(marked.id).not.toBe(plain.id);
+    expect(() => parsePackage(marked)).not.toThrow();
   });
 });
 

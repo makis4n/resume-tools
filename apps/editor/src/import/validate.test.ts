@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Resume } from "@resume-tools/resume-model";
 import { strToU8, zipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
+import { applyUnder, CommandError } from "../editor/document";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
@@ -23,7 +24,7 @@ import {
   REFERENCE,
 } from "../test/invented-import";
 import type { Finding } from "../validate/harness";
-import { type Assembled, assemble, takenOut } from "./assemble";
+import { type Assembled, assemble, SIZE_OPTIONS, takenOut } from "./assemble";
 import { readTree } from "./fonts";
 import { type Intake, intake } from "./intake";
 import { bodyOf, bodyOfText, buildTree, readBody } from "./parse";
@@ -32,7 +33,6 @@ import { type GlyphStream, type Reference, type ReferenceItem, reference } from 
 import { isRefusal, type Refusal } from "./refusal";
 import { signatures } from "./signatures";
 import {
-  type CheckDecisions,
   type Compiled,
   type Compiler,
   MUTATIONS,
@@ -550,8 +550,19 @@ describe("the checks", () => {
       { kind: "section.labelled", added: true, removed: true },
       { kind: "section.paragraph", added: false, removed: true },
     ]);
-    // The kinds the editor cannot add, which the package marks and the editor then refuses.
-    expect((checks.decisions as CheckDecisions).fixed).toEqual(["entry", "section.paragraph"]);
+    // The kinds the editor cannot add, which the package marks, in its hash too, and the editor
+    // then refuses.
+    expect(checks.decisions.fixed).toEqual(["entry", "section.paragraph"]);
+    const { package: pkg, document } = ok(result);
+    expect(pkg.fixed).toEqual(["entry", "section.paragraph"]);
+    expect(pkg.id).not.toBe(ok((await validated(JAKE_LIKE)).result).package.id);
+    const work = document.resume.sections.find((section) => section.kind === "entries");
+    if (work === undefined) throw new Error("no entries");
+    expect(() =>
+      applyUnder(pkg, document, { type: "structure", op: { op: "addEntry", section: work.id } }),
+    ).toThrow(
+      new CommandError("the template cannot take another entry: a new one stops its compile"),
+    );
     expect(checks.compiles).toBe(fake.count);
   });
 
@@ -566,12 +577,16 @@ describe("the checks", () => {
     expect(modes.map((field) => field.slot)).toEqual(["command|cvmail|1", "command|cvgit|1"]);
     // The link's label stops on the special characters, and the email when it is empty.
     const { result } = await validated(raw, { stopsOn: /\\cvgit\{[^\n]*\\\$|\\cvmail\{\}/ });
-    const { checks } = ok(result);
+    const { checks, extras, document } = ok(result);
     expect(checks.outcome).toBe("assembled");
     expect(checks.decisions.slots).toEqual({ "command|cvgit|1": "text" });
     expect(checks.required).toEqual(["command|cvmail|1"]);
     expect(checks.all.find((field) => field.field === "header.email")?.mode).toBe("raw");
-    expect(checks.all.find((field) => field.slot === "command|cvgit|1")?.mode).toBe("locked");
+    // The link locked, its run of links is kept whole as the upload wrote it, for the check's
+    // reason, and none of them is a field or in the model (decision 0026).
+    expect(checks.all.some((field) => field.slot === "command|cvgit|1")).toBe(false);
+    expect(document.resume.header.links).toEqual([]);
+    expect(extras).toContainEqual(expect.objectContaining({ kind: "header", reason: "text" }));
   });
 
   test("leave a slot the bisection's budget did not reach untested, and say so", async () => {
@@ -767,13 +782,13 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     const read = readBody(body);
     if (isRefusal(read)) throw new Error(read.message);
     const preamble = readBody(bodyOfText(body.preamble));
-    const found = await signatures(
-      session,
-      taken,
-      made,
-      body,
-      probeUses(read, isRefusal(preamble) ? undefined : preamble),
-    );
+    const uses = probeUses(read, isRefusal(preamble) ? undefined : preamble);
+    // Asked of the sizes the class may declare too, as the runner asks, which the font size
+    // control offers alone (decision 0026).
+    const found = await signatures(session, taken, made, body, {
+      ...uses,
+      commands: [...uses.commands, ...SIZE_OPTIONS],
+    });
     if (isRefusal(found)) throw new Error("no signatures");
     const built = buildTree(read, found);
     if (isRefusal(built)) throw new Error(built.message);
@@ -838,7 +853,8 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     expect(checks.outcome).toBe("assembled");
     expect(checks.repeatable).toContainEqual({ kind: "entry", added: false, removed: true });
     expect(checks.repeatable).toContainEqual({ kind: "bullet", added: true, removed: true });
-    expect((checks.decisions as CheckDecisions).fixed).toContain("entry");
+    expect(checks.decisions.fixed).toContain("entry");
+    expect(ok(result).package.fixed).toContain("entry");
     // The document is the upload's two pages, which the harness holds it to, not one.
     expect(document.resume.sections.some((section) => section.kind === "locked")).toBe(true);
     expect(

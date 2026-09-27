@@ -36,6 +36,7 @@ import {
   shapeFeatures,
   shapeFile,
   TemplatePackage,
+  UNIT_KINDS,
 } from "./package";
 
 type PackageInput = z.input<typeof TemplatePackage>;
@@ -411,6 +412,21 @@ describe("what an import's checks found (decision 0026)", () => {
     expect(issues(requiring({ contact: ["text"] })).map((issue) => issue.message)).toEqual([
       'Unrecognized key: "contact"',
     ]);
+  });
+
+  it("marks the kinds of unit the editor may not add, as the editor names them", () => {
+    const fixing = (fixed: unknown) =>
+      plainWith((pkg) => {
+        (pkg as { fixed?: unknown }).fixed = fixed;
+      });
+    expect(parsePackage(fixing(["entry", "section.paragraph"])).fixed).toEqual([
+      "entry",
+      "section.paragraph",
+    ]);
+    expect(parsePackage(fixing([...UNIT_KINDS])).fixed).toEqual([...UNIT_KINDS]);
+    expect(parsePackage(plain).fixed).toBeUndefined();
+    expect(issues(fixing(["section.locked"])).map((issue) => issue.path)).toEqual(["fixed.0"]);
+    expect(issues(fixing(["header"])).map((issue) => issue.path)).toEqual(["fixed.0"]);
   });
 
   it("takes defaults for an entry's and a section's extras slots as kept LaTeX, by role", () => {

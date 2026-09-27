@@ -24,6 +24,7 @@ import {
   type ControlValues,
   DateFormat,
   defaultControls,
+  fontSizes,
   type TemplatePackage,
 } from "../templates/package";
 
@@ -118,6 +119,7 @@ export function Controls({ pkg, values, onChange, onSeal }: ControlsProps) {
         <FontSizeControl
           id={`${id}-font-size`}
           value={shown.fontSize ?? fontSize.default}
+          sizes={fontSizes(pkg)}
           onChange={onChange}
           onSeal={onSeal}
         />
@@ -231,25 +233,43 @@ export function MarginsControl({
 /** A size to the nearest half point, the step every font size is taken in. */
 const halfPoints = (size: number) => Math.round(size * 2) / 2;
 
+/** Every font size a package offers when its class does not say which it declares. */
+const EVERY_SIZE = [9, 9.5, 10, 10.5, 11, 11.5, 12] as const;
+
+/** The greatest common divisor of two whole numbers. */
+const divisor = (a: number, b: number): number => (b === 0 ? a : divisor(b, a % b));
+
 /**
- * A slider over the font sizes, 9 to 12 points in half points, with the size in points beside it;
- * `id` names the slider. The slider's value is text, which the change reads to the half point, so
- * that no size the browser gives can be one the package refuses. A whole size shows as `11 pt`
- * and a half as `10.5 pt`. A drag is one step, which ends as the slider loses the focus.
+ * A slider over the font sizes the package offers (`fontSizes`), every half point from 9 to 12
+ * points or those its class declares, as `article` declares 10, 11 and 12 and ignores any other,
+ * with the size in points beside it; `id` names the slider. It steps by the longest step that
+ * reaches every size offered, a half point or, for `article`'s, a point; and the slider's value is
+ * text, which the change reads as the nearest size offered, so that no size the browser gives can
+ * be one the package refuses. A whole size shows as `11 pt` and a half as `10.5 pt`. A drag is one
+ * step, which ends as the slider loses the focus.
  */
 export function FontSizeControl({
   id,
   value,
+  sizes = EVERY_SIZE,
   onChange,
   onSeal,
 }: {
   id: string;
   value: number;
+  sizes?: readonly number[];
   onChange: OnChange;
   onSeal: () => void;
 }) {
   const slider = `${id}-slider`;
   const shown = String(halfPoints(value));
+  const halves = sizes.map((size) => Math.round(size * 2));
+  const step = halves.reduce((gap, half, i) => divisor(gap, half - (halves[i - 1] ?? half)), 0);
+  const nearest = (size: number) =>
+    sizes.reduce(
+      (best, each) => (Math.abs(each - size) < Math.abs(best - size) ? each : best),
+      sizes[0] ?? halfPoints(size),
+    );
   return (
     <div style={GROUP}>
       <div style={SPREAD}>
@@ -263,14 +283,14 @@ export function FontSizeControl({
       <input
         id={slider}
         type="range"
-        min={9}
-        max={12}
-        step={0.5}
+        min={sizes[0] ?? 9}
+        max={sizes.at(-1) ?? 12}
+        step={step === 0 ? 0.5 : step / 2}
         value={value}
         aria-valuetext={`${shown} points`}
         onChange={(event) =>
           onChange(
-            { name: "fontSize", value: halfPoints(Number(event.target.value)) },
+            { name: "fontSize", value: nearest(Number(event.target.value)) },
             dragOf("fontSize"),
           )
         }

@@ -40,8 +40,12 @@ import { isBlank } from "../templates/escape";
 import {
   ControlValues,
   controlValuesFor,
+  forRole,
   pageSizeFor,
+  type RequiredPlace,
+  requiredSlots,
   type TemplatePackage,
+  type UnitKind,
 } from "../templates/package";
 import { parseSnippet, SnippetError, type SnippetNode } from "../templates/snippet";
 
@@ -109,26 +113,15 @@ export type FieldRef = (
     }
 ) & { slot: FieldSlot };
 
-/** The snippets of a package that set a field. */
-export type FieldSnippet =
-  | "header"
-  | "link"
-  | "section"
-  | "entry"
-  | "bullet"
-  | "item"
-  | "labelledItem";
-
 /**
- * Where a field sits among a package's snippets: the snippet that sets it, the name of its slot
- * there, and, inside a section, the section's kind and role, which choose the snippet's variant
- * (`ByRole`). A labelled item's field is `labelledItem`'s, an item's `item`'s.
+ * Where a field sits among a package's snippets: the snippet that sets it, as the package's
+ * required slots name it (`RequiredPlace`), and the name of its slot there. A labelled item's field
+ * is `labelledItem`'s, an item's `item`'s, and a paragraph's text, like any section's title,
+ * `section`'s.
  */
 export interface FieldSlot {
-  snippet: FieldSnippet;
+  snippet: RequiredPlace;
   name: string;
-  kind?: SectionKind;
-  role?: SectionRole;
 }
 
 /**
@@ -228,19 +221,19 @@ const SECTIONS = under(ROOT, "sections");
 /** The header's text fields besides the name, each named `header.<key>` as the model's key. */
 const HEADER_TEXTS = ["headline", "email", "phone", "location"] as const;
 
-/** Whether a value is a JSON object, not an array. */
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+/** No slot kept. */
+const NONE: ReadonlySet<string> = new Set();
 
 /**
- * The slots a node keeps as the upload had them (`kept`, decision 0026): an import's instance the
- * checks locked, whose bytes the generator writes back from the node's extras and never from the
- * model, so that they are no fields and nothing edits them. Read as the model has it, a list of
- * slot names on the header, a section, an entry, a bullet or an item; none on any other node.
+ * The slots a node keeps as the upload had them (`kept`, decision 0026): an instance of a field an
+ * import's checks locked, whose bytes the generator writes back from the node's extras and never
+ * from the model, so that it is no field and nothing edits it; or a list the node keeps whole,
+ * `bullets`, `entries`, `items` or `links`, which the generator sets from the extras alone, so
+ * that none of its units is a field and none can be added to it. Only the header, a section and
+ * an entry keep any (the model's `kept`).
  */
-function keptOf(node: object): ReadonlySet<string> {
-  const kept = (node as { kept?: unknown }).kept;
-  return new Set(Array.isArray(kept) ? kept.filter((name) => typeof name === "string") : []);
+export function keptOf(node: { kept?: readonly string[] | undefined }): ReadonlySet<string> {
+  return node.kept === undefined ? NONE : new Set(node.kept);
 }
 
 /**
@@ -248,101 +241,91 @@ function keptOf(node: object): ReadonlySet<string> {
  * body of any package could mark, blank or not, since a blank field is still one a user fills in,
  * and nothing a body never marks, such as a link's address or a section's role. A locked section
  * has none: it is LaTeX an import kept, which the page draws and nothing edits (decision 0025);
- * and nor has a slot its node keeps as the upload had it (`kept`, decision 0026).
+ * and nor has a slot its node keeps as the upload had it, or a list it keeps whole (`kept`,
+ * decision 0026).
  */
 export function fieldsOf(resume: Resume): Map<string, FieldRef> {
   const fields = new Map<string, FieldRef>();
   /** The field `id`, unless its node keeps its slot. */
-  const add = (id: string, field: FieldRef, node: object) => {
-    if (!keptOf(node).has(field.slot.name)) fields.set(id, field);
+  const add = (id: string, field: FieldRef, kept: ReadonlySet<string> = NONE) => {
+    if (!kept.has(field.slot.name)) fields.set(id, field);
   };
+  const slot = (snippet: RequiredPlace, name: string): FieldSlot => ({ snippet, name });
   const { header } = resume;
-  add("header.first", text(under(NAME, "first"), { snippet: "header", name: "first" }), header);
-  add("header.last", text(under(NAME, "last"), { snippet: "header", name: "last" }), header);
+  const keeps = keptOf(header);
+  add("header.first", text(under(NAME, "first"), slot("header", "first")), keeps);
+  add("header.last", text(under(NAME, "last"), slot("header", "last")), keeps);
   for (const key of HEADER_TEXTS)
-    add(`header.${key}`, text(under(HEADER, key), { snippet: "header", name: key }), header);
-  header.links.forEach((link, l) => {
-    const label = under(at(LINKS, l, link.id), "label");
-    add(`${link.id}.label`, text(label, { snippet: "link", name: "label" }), link);
-  });
+    add(`header.${key}`, text(under(HEADER, key), slot("header", key)), keeps);
+  if (!keeps.has("links"))
+    header.links.forEach((link, l) => {
+      const label = under(at(LINKS, l, link.id), "label");
+      add(`${link.id}.label`, text(label, slot("link", "label")));
+    });
   resume.sections.forEach((section, s) => {
     if (section.kind === "locked") return;
     const place = at(SECTIONS, s, section.id);
-    const { kind, role } = section;
-    const slot = (snippet: FieldSnippet, name: string): FieldSlot => ({
-      snippet,
-      name,
-      kind,
-      role,
-    });
-    add(`${section.id}.title`, text(under(place, "title"), slot("section", "title")), section);
+    const kept = keptOf(section);
+    add(`${section.id}.title`, text(under(place, "title"), slot("section", "title")), kept);
     switch (section.kind) {
       case "entries": {
+        if (kept.has("entries")) break;
         const entries = under(ofKind(place, "entries"), "entries");
         section.entries.forEach((entry, e) => {
           const node = at(entries, e, entry.id);
-          add(`${entry.id}.title`, text(under(node, "title"), slot("entry", "title")), entry);
-          add(
-            `${entry.id}.subtitle`,
-            text(under(node, "subtitle"), slot("entry", "subtitle")),
-            entry,
-          );
-          add(`${entry.id}.place`, text(under(node, "place"), slot("entry", "place")), entry);
-          add(`${entry.id}.dates`, dates(node, slot("entry", "dates")), entry);
+          const own = keptOf(entry);
+          add(`${entry.id}.title`, text(under(node, "title"), slot("entry", "title")), own);
+          const subtitle = under(node, "subtitle");
+          add(`${entry.id}.subtitle`, text(subtitle, slot("entry", "subtitle")), own);
+          add(`${entry.id}.place`, text(under(node, "place"), slot("entry", "place")), own);
+          add(`${entry.id}.dates`, dates(node, slot("entry", "dates")), own);
+          if (own.has("bullets")) return;
           const bullets = under(node, "bullets");
           entry.bullets.forEach((bullet, b) => {
             const runs = under(at(bullets, b, bullet.id), "text");
-            add(`${bullet.id}.text`, rich(runs, slot("bullet", "text")), bullet);
+            add(`${bullet.id}.text`, rich(runs, slot("bullet", "text")));
           });
         });
         break;
       }
       case "list": {
+        if (kept.has("items")) break;
         const items = under(ofKind(place, "list"), "items");
         section.items.forEach((item, i) => {
           const runs = under(at(items, i, item.id), "text");
-          add(`${item.id}.text`, rich(runs, slot("item", "text")), item);
+          add(`${item.id}.text`, rich(runs, slot("item", "text")));
         });
         break;
       }
       case "labelled": {
+        if (kept.has("items")) break;
         const items = under(ofKind(place, "labelled"), "items");
         section.items.forEach((item, i) => {
           const node = at(items, i, item.id);
-          add(`${item.id}.label`, text(under(node, "label"), slot("labelledItem", "label")), item);
-          add(`${item.id}.text`, rich(under(node, "text"), slot("labelledItem", "text")), item);
+          add(`${item.id}.label`, text(under(node, "label"), slot("labelledItem", "label")));
+          add(`${item.id}.text`, rich(under(node, "text"), slot("labelledItem", "text")));
         });
         break;
       }
-      case "paragraph":
-        add(
-          `${section.id}.text`,
-          rich(under(ofKind(place, "paragraph"), "text"), slot("section", "text")),
-          section,
-        );
+      case "paragraph": {
+        const runs = under(ofKind(place, "paragraph"), "text");
+        add(`${section.id}.text`, rich(runs, slot("section", "text")), kept);
         break;
+      }
     }
   });
   return fields;
 }
 
 /**
- * Whether `pkg` requires the field at `slot`: whether the snippet that sets it lists its slot among
- * those an import's checks found stop the compile when empty (`required`, decision 0026), which the
- * editor refuses to empty, as a required form field is refused, since Awesome-CV stops on a blank
- * name (decision 0015). The package gives each snippet a list of its slots' names, the same for
- * every role, or a list for each role as a snippet that depends on one is given (`ByRole`), and
- * the sections' snippet a list for each kind of section too. A package without the list, as every
- * curated one, requires nothing.
+ * Whether `pkg` requires the field at `slot`: whether the package lists its slot among those of
+ * the snippet that sets it which an import's checks found stop the compile when empty (`required`,
+ * decision 0026), which the editor refuses to empty, as a required form field is refused, since
+ * Awesome-CV stops on a blank name (decision 0015). A package without the list, as every curated
+ * one, requires nothing.
  */
 export function isRequired(pkg: TemplatePackage | undefined, slot: FieldSlot): boolean {
-  const required = (pkg as { required?: unknown } | undefined)?.required;
-  if (!isRecord(required)) return false;
-  let names = required[slot.snippet];
-  if (isRecord(names) && slot.kind !== undefined && slot.kind in names) names = names[slot.kind];
-  if (isRecord(names))
-    names = (slot.role === undefined ? undefined : names[slot.role]) ?? names.default;
-  return Array.isArray(names) && names.includes(slot.name);
+  return pkg !== undefined && requiredSlots(pkg, slot.snippet).has(slot.name);
 }
 
 /** The fields of a resume its package requires (`isRequired`), which the side panel marks. */
@@ -352,24 +335,6 @@ export function requiredFields(pkg: TemplatePackage | undefined, resume: Resume)
   for (const [id, field] of fieldsOf(resume)) if (isRequired(pkg, field.slot)) required.add(id);
   return required;
 }
-
-/**
- * The kinds of unit the editor adds, as the side panel does: an entry, a bullet, an item of a list
- * or of a labelled list, a link, and a section of each kind, `section.<kind>`, as the package's
- * snippets name them.
- */
-export const UNIT_KINDS = [
-  "entry",
-  "bullet",
-  "item",
-  "labelledItem",
-  "link",
-  "section.entries",
-  "section.list",
-  "section.labelled",
-  "section.paragraph",
-] as const;
-export type UnitKind = (typeof UNIT_KINDS)[number];
 
 /** Each kind of unit as an error message names it. */
 const UNIT_NAMES: Readonly<Record<UnitKind, string>> = {
@@ -391,8 +356,7 @@ const UNIT_NAMES: Readonly<Record<UnitKind, string>> = {
  * curated one, takes every kind.
  */
 export function addable(pkg: TemplatePackage | undefined, kind: UnitKind): boolean {
-  const fixed = (pkg as { fixed?: unknown } | undefined)?.fixed;
-  return !(Array.isArray(fixed) && fixed.includes(kind));
+  return !(pkg?.fixed ?? []).includes(kind);
 }
 
 /** Whether a snippet's nodes, however deep, hold the slot `name`. */
@@ -405,20 +369,17 @@ function holdsSlot(nodes: readonly SnippetNode[], name: string): boolean {
 }
 
 /**
- * Whether an entry in a section of `role` shows its bullets under `pkg`: whether the entry snippet
- * the role takes (`ByRole`) has a bullets slot, and the package does not say it has none (`bullets:
- * false`), as an import's may say for a role whose entries had no list in the upload (decision
- * 0026). A bullet added to such an entry would be in the document and never on the page. With no
- * package, or one whose entry snippet it cannot read, it does.
+ * Whether an entry in a section of `role` shows its bullets under `pkg`: whether the package does
+ * not say its entries of the role set none (`snippets.entryBullets`), as an import's says for a
+ * role whose entries had no list in the upload (decision 0026), and the entry snippet the role
+ * takes (`ByRole`) has a bullets slot. A bullet added to such an entry would be in the document and
+ * never on the page. With no package, or one whose entry snippet it cannot read, it does.
  */
 export function showsBullets(pkg: TemplatePackage | undefined, role: SectionRole): boolean {
   if (pkg === undefined) return true;
-  const entry: unknown = pkg.snippets.entry;
-  const chosen = isRecord(entry) ? (entry[role] ?? entry.default) : entry;
-  if (isRecord(chosen)) return chosen.bullets !== false;
-  if (typeof chosen !== "string") return true;
+  if (!forRole(pkg.snippets.entryBullets ?? true, role)) return false;
   try {
-    return holdsSlot(parseSnippet(chosen), "bullets");
+    return holdsSlot(parseSnippet(forRole(pkg.snippets.entry, role)), "bullets");
   } catch (error) {
     if (error instanceof SnippetError) return true;
     throw error;
@@ -490,9 +451,10 @@ export function mintId(prefix: string, taken: ReadonlySet<string>): string {
  * role can be set. `setHeader` and `setLink` leave a value the op leaves out as it is. A locked
  * section, which only an import makes, is removed and moved like any other, and no other op
  * touches it: it holds no entries or items, keeps the role `other`, and cannot be added
- * (decision 0025). An op that adds a unit the package cannot take (`addable`), or a bullet to an
- * entry whose snippet shows none (`showsBullets`), is refused, and so is one that empties a field
- * the package requires (`isRequired`, decision 0026).
+ * (decision 0025). An op that adds a unit the package cannot take (`addable`), a bullet to an
+ * entry whose snippet shows none (`showsBullets`), or a unit to a list its node keeps whole as the
+ * upload had it (`kept`), is refused, and so is one that empties a field the package requires
+ * (`isRequired`, decision 0026).
  */
 export type StructureOp =
   | { op: "addSection"; kind: SectionKind; role: SectionRole; at?: number }
@@ -651,6 +613,22 @@ export function applyUnder(
       return { ...doc, controls: controls.data };
     }
   }
+}
+
+/**
+ * A `CommandError` for a unit added to a list its node keeps whole as the upload had it (`kept`):
+ * the generator sets that list from the node's extras alone, so a new unit would be in the
+ * document and never on the page (decision 0026).
+ */
+function refuseKept(
+  node: { kept?: readonly string[] | undefined },
+  list: "bullets" | "entries" | "items" | "links",
+  name: string,
+): void {
+  if (keptOf(node).has(list))
+    throw new CommandError(
+      `${name} keeps its ${list} as the upload had them, and takes no new one`,
+    );
 }
 
 /** A `CommandError` for a unit of a kind `pkg` cannot take (`addable`). */
@@ -817,8 +795,9 @@ function newSection(id: string, kind: SectionKind, role: SectionRole): Section {
  * `CommandError` for a node the resume does not have or of another kind than the op's, a section
  * that cannot hold what is added to it, an index outside the list, and a kind, role or text the
  * model refuses; and, by `pkg`, a unit of a kind the package cannot take, a bullet for an entry
- * whose snippet shows none, a slot the header keeps as the upload had it, and a field it requires
- * emptied. A new node's id is minted against every id in the resume, so ids stay unique.
+ * whose snippet shows none, a unit for a list its node keeps whole, a slot the header keeps as the
+ * upload had it, and a field it requires emptied. A new node's id is minted against every id in the
+ * resume, so ids stay unique.
  */
 function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | undefined): Resume {
   const nodes = nodesOf(resume);
@@ -852,9 +831,11 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
     }
     case "addEntry": {
       const { node } = find(op.section, "section");
-      const { kind } = node.get(resume);
+      const section = node.get(resume);
+      const { kind } = section;
       if (kind !== "entries")
         throw new CommandError(`the ${kind} section ${op.section} holds no entries`);
+      refuseKept(section, "entries", op.section);
       refuseUnaddable(pkg, "entry");
       const { title, subtitle, place } = PLACEHOLDERS.entry;
       const entry: Entry = { id: mint("ent"), title, subtitle, place, bullets: [] };
@@ -866,6 +847,7 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
       return moveTo(resume, find(op.id, "entry"), op.id, op.to);
     case "addBullet": {
       const entry = find(op.entry, "entry");
+      refuseKept(entry.node.get(resume), "bullets", op.entry);
       // A bullet the entry's snippet has no place for would be in the document and never on the
       // page.
       if (!showsBullets(pkg, entry.role))
@@ -883,7 +865,9 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
       return moveTo(resume, find(op.id, "bullet"), op.id, op.to);
     case "addItem": {
       const { node } = find(op.section, "section");
-      const { kind } = node.get(resume);
+      const section = node.get(resume);
+      const { kind } = section;
+      if (kind === "list" || kind === "labelled") refuseKept(section, "items", op.section);
       if (kind === "list") {
         refuseUnaddable(pkg, "item");
         const item = { id: mint("itm"), text: [{ text: PLACEHOLDERS.item }] };
@@ -902,6 +886,7 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
     case "moveItem":
       return moveTo(resume, find(op.id, "item"), op.id, op.to);
     case "addLink": {
+      refuseKept(resume.header, "links", "the header");
       refuseUnaddable(pkg, "link");
       const { label } = PLACEHOLDERS.link;
       const link: Link = { id: mint("lnk"), kind: "website", label, href: "" };

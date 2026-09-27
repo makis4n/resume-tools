@@ -14,7 +14,8 @@ import {
   controlValuesFor,
   defaultControls,
   parsePackage,
-  type TemplatePackage,
+  TemplatePackage,
+  UNIT_KINDS,
 } from "../templates/package";
 import {
   addable,
@@ -34,7 +35,6 @@ import {
   requiredFields,
   type StructureOp,
   showsBullets,
-  UNIT_KINDS,
 } from "./document";
 
 const { package: jake, sample } = curated("jake");
@@ -1028,7 +1028,7 @@ describe("an imported package's rules", () => {
       required: {
         header: ["first", "location"],
         link: ["label"],
-        section: { paragraph: ["text"] },
+        section: ["text"],
         entry: ["title", "dates"],
         bullet: ["text"],
       },
@@ -1073,33 +1073,27 @@ describe("an imported package's rules", () => {
     ).toBe("");
   });
 
-  it("reads the slots required for every role, for a role, and for a kind of section", () => {
-    const slot = (snippet: FieldSlot["snippet"], name: string, more: Partial<FieldSlot> = {}) => ({
-      snippet,
-      name,
-      ...more,
-    });
+  it("reads the slots required by the snippet that sets them, as the schema lists them", () => {
+    const slot = (snippet: FieldSlot["snippet"], name: string): FieldSlot => ({ snippet, name });
     const pkg = ruled({
-      required: {
-        entry: { default: ["title"], education: ["place"] },
-        section: { entries: ["title"] },
-        labelledItem: ["label"],
-      },
+      required: { entry: ["title"], section: ["title"], labelledItem: ["label"] },
     });
-    expect(isRequired(pkg, slot("entry", "title", { role: "experience" }))).toBe(true);
-    expect(isRequired(pkg, slot("entry", "title", { role: "education" }))).toBe(false);
-    expect(isRequired(pkg, slot("entry", "place", { role: "education" }))).toBe(true);
-    expect(isRequired(pkg, slot("section", "title", { kind: "entries", role: "other" }))).toBe(
-      true,
-    );
-    expect(isRequired(pkg, slot("section", "title", { kind: "list", role: "other" }))).toBe(false);
-    expect(isRequired(pkg, slot("labelledItem", "label", { kind: "labelled" }))).toBe(true);
-    expect(isRequired(pkg, slot("item", "text", { kind: "list" }))).toBe(false);
+    // The lists are the package's own, which its schema takes (decision 0026).
+    expect(TemplatePackage.safeParse(pkg).success).toBe(true);
+    expect(isRequired(pkg, slot("entry", "title"))).toBe(true);
+    expect(isRequired(pkg, slot("entry", "place"))).toBe(false);
+    expect(isRequired(pkg, slot("section", "title"))).toBe(true);
+    expect(isRequired(pkg, slot("section", "text"))).toBe(false);
+    expect(isRequired(pkg, slot("labelledItem", "label"))).toBe(true);
+    expect(isRequired(pkg, slot("item", "text"))).toBe(false);
     expect(isRequired(EVERY, slot("header", "first"))).toBe(false);
     expect(isRequired(undefined, slot("header", "first"))).toBe(false);
     expect([...requiredFields(pkg, FULL)].sort()).toEqual([
+      "about.title",
       "drawing.label",
+      "honours.title",
       "kestrel.title",
+      "tools.title",
       "work.title",
     ]);
   });
@@ -1148,13 +1142,11 @@ describe("an imported package's rules", () => {
     expect(showsBullets(variant, "experience")).toBe(false);
     expect(showsBullets(variant, "education")).toBe(true);
     expect(() => applyUnder(variant, doc, bullet)).toThrow(message);
-    // Or the package says so of the role's snippet.
+    // Or the package says so of the role's entries, as an import's does (`entryBullets`).
     const flagged = ruled({
-      snippets: {
-        ...EVERY.snippets,
-        entry: { default: EVERY.snippets.entry, experience: { bullets: false } },
-      },
+      snippets: { ...EVERY.snippets, entryBullets: { default: true, experience: false } },
     });
+    expect(TemplatePackage.safeParse(flagged).success).toBe(true);
     expect(showsBullets(flagged, "experience")).toBe(false);
     expect(() => applyUnder(flagged, doc, bullet)).toThrow(message);
     // Every curated entry snippet shows bullets.
@@ -1164,18 +1156,18 @@ describe("an imported package's rules", () => {
   });
 
   it("gives no field for a slot a node keeps as the upload had it, and takes no edit to it", () => {
-    // What an import keeps, as its model has it: the header's location, an entry's title and
-    // dates, a bullet's text, a labelled item's label and a section's title.
-    const resume = structuredClone(FULL) as Resume & { header: { kept?: string[] } };
+    // What an import keeps, as its model has it (decision 0026): the header's location, an entry's
+    // title and dates and its bullets' list, and a labelled section's title and its items' list.
+    // A bullet, an item and a link keep nothing of their own: they are kept with their list.
+    const resume = structuredClone(FULL);
     resume.header.kept = ["location"];
     const work = resume.sections[1];
     const tools = resume.sections[3];
     if (work?.kind !== "entries" || tools?.kind !== "labelled") throw new Error("the sections");
-    const kestrel = work.entries[0] as Entry & { kept?: string[] };
-    kestrel.kept = ["title", "dates"];
-    (kestrel.bullets[0] as { kept?: string[] }).kept = ["text"];
-    (tools.items[0] as { kept?: string[] }).kept = ["label"];
-    (tools as { kept?: string[] }).kept = ["title"];
+    const kestrel = work.entries[0] as Entry;
+    kestrel.kept = ["title", "dates", "bullets"];
+    tools.kept = ["title", "items"];
+    expect(Resume.safeParse(resume).success).toBe(true);
     const fields = fieldsOf(resume);
     for (const id of [
       "header.location",
@@ -1183,16 +1175,11 @@ describe("an imported package's rules", () => {
       "kestrel.dates",
       "kestrel-1.text",
       "drawing.label",
+      "drawing.text",
       "tools.title",
     ])
       expect(fields.has(id), id).toBe(false);
-    for (const id of [
-      "header.first",
-      "header.email",
-      "kestrel.subtitle",
-      "drawing.text",
-      "work.title",
-    ])
+    for (const id of ["header.first", "header.email", "kestrel.subtitle", "work.title"])
       expect(fields.has(id), id).toBe(true);
     const kept: Document = { ...doc, resume };
     expect(() => apply(kept, { type: "text", field: "kestrel.title", text: "Lead" })).toThrow(
@@ -1204,5 +1191,42 @@ describe("an imported package's rules", () => {
     expect(apply(kept, structural({ op: "setHeader", phone: "555" })).resume.header.phone).toBe(
       "555",
     );
+  });
+
+  it("adds no unit to a list its node keeps whole, which the page sets from its extras", () => {
+    // Every list kept whole, as an import keeps one whose units its snippets cannot set: the page
+    // sets it from the node's extras, so a unit added would be in the document and never on it.
+    const resume = structuredClone(FULL);
+    resume.header.kept = ["links"];
+    const [, work, honours, tools] = resume.sections;
+    if (work?.kind !== "entries" || honours?.kind !== "list" || tools?.kind !== "labelled")
+      throw new Error("the sections");
+    (work.entries[0] as Entry).kept = ["bullets"];
+    honours.kept = ["items"];
+    tools.kept = ["items"];
+    const kept: Document = { ...doc, resume };
+    for (const [op, message] of [
+      [{ op: "addLink" }, "the header keeps its links"],
+      [{ op: "addBullet", entry: "kestrel" }, "kestrel keeps its bullets"],
+      [{ op: "addItem", section: "honours" }, "honours keeps its items"],
+      [{ op: "addItem", section: "tools" }, "tools keeps its items"],
+    ] satisfies [StructureOp, string][])
+      expect(() => apply(kept, structural(op)), op.op).toThrow(
+        new CommandError(`${message} as the upload had them, and takes no new one`),
+      );
+    // Nor do their units give fields.
+    for (const id of ["folio.label", "kestrel-1.text", "medal.text", "drawing.label"])
+      expect(fieldsOf(resume).has(id), id).toBe(false);
+    // A section that keeps its entries takes no new entry, and one beside it still does.
+    work.kept = ["entries"];
+    expect(() => apply(kept, structural({ op: "addEntry", section: "work" }))).toThrow(
+      new CommandError("work keeps its entries as the upload had them, and takes no new one"),
+    );
+    expect(fieldsOf(resume).has("kestrel.title")).toBe(false);
+    const added = apply(kept, structural({ op: "addSection", kind: "entries", role: "projects" }));
+    const fresh = added.resume.sections.at(-1);
+    if (fresh === undefined) throw new Error("no section");
+    const withEntry = apply(added, structural({ op: "addEntry", section: fresh.id }));
+    expect(withEntry.resume.sections.at(-1)).toMatchObject({ kind: "entries", entries: [{}] });
   });
 });
