@@ -634,11 +634,12 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
     }, 60_000);
 
     it("reports a field that does not align, where a font cannot be drawn as well", async () => {
-      // The title in capitals matches none of its text but its first letter; the TS1 bullet
-      // stops the page drawing, which used to hide the misaligned field.
-      const both = plainWith("capitals-bulleted", {
+      // The title in a symbol font, whose glyphs at its lower-case letters' codes stand for other
+      // characters, matches none of its text but its first letter, which is a capital there; the
+      // TS1 bullet stops the page drawing, which used to hide the misaligned field.
+      const both = plainWith("symbols-bulleted", {
         entry: [
-          "\\MakeUppercase{{{title}}}\\par",
+          "{\\usefont{OMS}{cmsy}{m}{n}{{title}}}\\par",
           "{{#bullets}}",
           "\\begin{itemize}",
           "{{bullets}}",
@@ -657,6 +658,26 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
         { check: "fonts", message: expect.stringMatching(/^the page cannot draw tcrm1000: /) },
         { check: "pdf", message: expect.stringContaining('"tcrm1000"') },
       ]);
+    }, 60_000);
+
+    it("passes a name and titles a class sets in capitals, which the page aligns once folded", async () => {
+      // As AltaCV sets its name and section titles through \MakeUppercase (decision 0013): the page
+      // folds each to the resume's text (decision 0021), ß's capitals SS included, and the PDF
+      // shows each first word in capitals.
+      const capitals = plainWith("capitals", {
+        header: "{\\Large\\MakeUppercase{{{first}} {{last}}}}\\par",
+        section: {
+          entries: "\\section*{\\MakeUppercase{{{title}}}}\n{{entries}}",
+          list: "\\section*{\\MakeUppercase{{{title}}}}\n{{items}}",
+          labelled: "\\section*{\\MakeUppercase{{{title}}}}\n{{items}}",
+          paragraph: "\\section*{\\MakeUppercase{{{title}}}}\n{{text}}\\par",
+        },
+        entry: "\\MakeUppercase{{{title}}}\\par\n{{bullets}}",
+      });
+      const resume = resumeWith("Set the quarterly report", "Stra\u{df}enbahn planner");
+      const report = await validatePackage(session, fonts, capitals, resume);
+      expect(report.findings).toEqual([]);
+      expect(report.fields).toBe(5);
     }, 60_000);
 
     it("reports a field cut short, which loses its end marker and the rest of its text", async () => {
@@ -972,6 +993,20 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       expect(report.passes).toHaveLength(6);
       for (const ms of report.passes) expect(ms).toBeLessThan(2_000);
     }, 120_000);
+
+    it("passes section titles its heading sets in capitals, which the page aligns once folded", async () => {
+      const capitals = parsePackage({
+        ...xetex,
+        id: "invented-xetex-capitals",
+        preamble: xetex.preamble.replace(
+          "\\color{rtaccent}#1}",
+          "\\color{rtaccent}\\MakeUppercase{#1}}",
+        ),
+      });
+      expect(capitals.preamble).toContain("\\MakeUppercase{#1}");
+      const report = await validatePackage(session, fonts, capitals, sample);
+      expect(report.findings).toEqual([]);
+    }, 60_000);
 
     it("leaves out a character no font of the package has, rather than set a box for it", async () => {
       // Roboto has no arrow and no emoji: XeTeX would set its .notdef for each.

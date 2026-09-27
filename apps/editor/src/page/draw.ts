@@ -19,9 +19,10 @@ import {
   type WidthProvider,
 } from "../tex/dvi";
 import {
-  alignGlyphs,
+  alignField,
   collectFields,
   type Field,
+  type Fold,
   type GlyphTextOf,
   MARKER_BEGIN,
   markerId,
@@ -139,6 +140,13 @@ export interface FieldLayout {
    * of it, the nearest when there are two, and the fields on one baseline share it.
    */
   baseline: readonly number[];
+  /**
+   * The case the page sets the field in when it is not the text's own, as a class that sets a
+   * title through `\MakeUppercase` sets it in capitals (`Alignment.folded`, decision 0021): the
+   * overlay measures and shows the field's text in it, and keeps the text's own case for what the
+   * user types. Left out when the page sets the text as it stands.
+   */
+  folded?: Fold;
 }
 
 /**
@@ -682,7 +690,8 @@ export function letterSpaceOf(features: string | undefined, size: number): numbe
 
 /**
  * Draw one page of a DVI, or of XeTeX's XDV. `texts` holds each field's text as the model has
- * it; glyphs are matched against it so a click can say which character it landed on. A font the
+ * it; glyphs are matched against it, folded to the page's case where that is not the text's own
+ * (`FieldLayout.folded`), so a click can say which character it landed on. A font the
  * page cannot draw, or whose outlines cannot be read this time, is left out and named in
  * `missingFonts`, while its metrics still place every glyph after its own; the next draw reads it
  * again. A native font the page cannot draw (`nativeProblem`) is drawn as boxes, one for each of
@@ -728,10 +737,19 @@ export async function drawPage(
 
   const found = collectFields(page, glyphTextOf(doc, loaded, natives));
   let unmatched = 0;
-  for (const field of found.values()) unmatched += alignGlyphs(field, texts.get(field.id) ?? "");
+  const folds = new Map<string, Fold>();
+  for (const field of found.values()) {
+    const alignment = alignField(field, texts.get(field.id) ?? "");
+    unmatched += alignment.unmatched;
+    if (alignment.folded !== undefined) folds.set(field.id, alignment.folded);
+  }
   const layouts = layoutsOf(doc, page, loaded, natives, found, options.features ?? new Map());
   const fields = new Map<string, PageField>();
-  for (const [id, field] of found) fields.set(id, { ...field, layout: layouts.get(id) });
+  for (const [id, field] of found) {
+    const layout = layouts.get(id);
+    const folded = folds.get(id);
+    fields.set(id, { ...field, layout: layout && folded ? { ...layout, folded } : layout });
+  }
 
   const size = sizeOf(doc, pageIndex);
   const svg = renderPage(doc, page, {

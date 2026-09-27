@@ -7,7 +7,8 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
 import { generateBody, generateFormat } from "../templates/generate";
 import { INVENTED_XETEX } from "../templates/invented";
-import { defaultControls, fontFiles } from "../templates/package";
+import { defaultControls, fontFiles, parsePackage } from "../templates/package";
+import { PRELUDE } from "../templates/prelude";
 import { bound, fastestAsync } from "../test/timing";
 import { type DviDocument, type PageItem, parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
@@ -871,6 +872,72 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
       expect(bullet?.secondLine).toBeCloseTo(bullet?.x ?? 0, 3);
     });
   });
+
+  it("aligns a title a heading sets in capitals, and says the page folds it, on pdfTeX and XeTeX", async () => {
+    // An invented preamble whose section macro uppercases its argument, as AltaCV's does, set in
+    // T1 and Latin Modern with the prelude, on pdfTeX; and the invented XeTeX template with its
+    // heading made to do the same (decision 0021).
+    const title = "Stra\u{df}enbahn planning";
+    const body = [
+      "\\documentclass{article}\\usepackage[T1]{fontenc}\\usepackage{lmodern}",
+      PRELUDE,
+      "\\newcommand{\\heading}[1]{\\section*{\\MakeUppercase{#1}}}",
+      "\\begin{document}",
+      `\\heading{\\rtfield{work.title}{${title}}}`,
+      "\\rtfield{tern-1.text}{Set the quarterly report}\\par",
+      "\\end{document}",
+    ].join("\n");
+    const compiled = session.compile("pdftex", "stock", body, { job: "folded", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const texts = new Map([
+      ["work.title", title],
+      ["tern-1.text", "Set the quarterly report"],
+    ]);
+    const page = await drawPage(compiled.output, fonts, texts);
+    expect(page.missingFonts).toEqual(new Map());
+    expect(page.unmatched).toBe(0);
+    const heading = page.fields.get("work.title");
+    expect(heading?.glyphs.map((g) => g.text).join("")).toBe("STRASSENBAHNPLANNING");
+    expect(heading?.layout?.folded).toBe("upper");
+    expect(page.fields.get("tern-1.text")?.layout?.folded).toBeUndefined();
+    // ß's two capitals S both stand at its offset, so a click on either lands on it.
+    const sharp = title.indexOf("\u{df}");
+    expect(heading?.glyphs.filter((g) => g.offset === sharp).map((g) => g.text)).toEqual([
+      "S",
+      "S",
+    ]);
+
+    const { package: pkg, sample } = INVENTED_XETEX;
+    const capitals = parsePackage({
+      ...pkg,
+      id: "invented-xetex-capitals",
+      preamble: pkg.preamble.replace(
+        "\\color{rtaccent}#1}",
+        "\\color{rtaccent}\\MakeUppercase{#1}}",
+      ),
+    });
+    const values = defaultControls(capitals);
+    const format = generateFormat(capitals, values);
+    const dumped = session.dump("xetex", format.name, format.preamble, format.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    const covers = (await fonts.coverage(fontFiles(capitals))).covers;
+    const generated = generateBody(capitals, sample, values, { covers });
+    const xetex = session.compile("xetex", format.name, generated.latex, { job: "xefolded" });
+    if (!xetex.output) throw new Error(xetex.error);
+    const xePage = await drawPage(xetex.output, fonts, generated.texts);
+    expect(xePage.unmatched).toBe(0);
+    const titles = ["summary.title", "work.title", "skills.title"];
+    for (const id of generated.texts.keys()) {
+      const field = xePage.fields.get(id);
+      expect(field?.layout?.folded, id).toBe(titles.includes(id) ? "upper" : undefined);
+    }
+    expect(
+      xePage.fields
+        .get("work.title")
+        ?.glyphs.map((g) => g.text)
+        .join(""),
+    ).toBe("EXPERIENCE");
+  }, 60_000);
 
   it("names a native font XeTeX emboldens, and draws its runs as boxes", async () => {
     const body = String.raw`\documentclass{article}\pagestyle{empty}\begin{document}

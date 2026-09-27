@@ -201,6 +201,12 @@ export function markerId(text: string, marker: string): string | undefined {
   return text.slice(marker.length).toLowerCase();
 }
 
+/**
+ * The case a page sets a field in where it is not the text's own: capitals, as a class sets a title
+ * through `\MakeUppercase`, or small letters, through `\MakeLowercase`.
+ */
+export type Fold = "upper" | "lower";
+
 /** What aligning a field's glyphs with its text found. */
 export interface Alignment {
   /** Glyphs that could not be matched to a character of the text. */
@@ -212,6 +218,26 @@ export interface Alignment {
    * cuts short, as truncate.sty does, where every glyph the page shows still matches.
    */
   covered: number;
+  /**
+   * The case the page sets the field in, when some of its glyphs matched their characters only
+   * once the text was folded to it (`alignField`) and every glyph with a case is in it, as
+   * `\MakeUppercase` leaves a title: the overlay shows the field in it (decision 0021). Undefined
+   * when every glyph matched as it stands, and when the glyphs are of both cases, as a class that
+   * capitalises only a word's first letter sets them, which no one case shows.
+   */
+  folded?: Fold;
+}
+
+/**
+ * Where a glyph matches the text: from `at` to `end`, with the glyphs after it that the same
+ * characters take (`glyphs`, one for most), and whether it matched only once the text was folded
+ * to a case (`foldedAt`).
+ */
+interface Match {
+  at: number;
+  end: number;
+  glyphs: number;
+  folded?: boolean;
 }
 
 /**
@@ -223,28 +249,42 @@ export interface Alignment {
  * alignment walks the text and the glyphs together. Before each glyph it skips
  * whitespace and the invisible characters. A glyph matches any spelling of its text or
  * of what else it stands for (`FieldGlyph.alternatives`), or an accented letter whose base
- * one is, set without its accents (`accentedAt`). A glyph that does not match
+ * one is, set without its accents (`accentedAt`); and failing both, the text in capitals, or
+ * then in small letters, as a template that sets a field through `\MakeUppercase` or
+ * `\MakeLowercase` shows it (`foldedAt`, decision 0021): a glyph É matches é, and two glyphs S
+ * the one ß whose capitals they are, each with ß's offset. A glyph that does not match
  * there is tried past each character that may set no glyph where it stands, such as an
  * emoji or a letter of a script the fonts lack; an unmatched hyphen is a break TeX
  * inserted, which is U+002D's glyph, the font's `\hyphenchar`, so a glyph that stands
  * for U+2010 or U+2011 and not for it is not one; and a glyph a few code units on
- * resynchronises the walk. A native font's `.notdef` (`FieldGlyph.dropped`) stands where
- * the walk is and matches nothing. Returns the number of glyphs that could not be
- * matched, and how much of the text the glyphs account for.
+ * resynchronises the walk, as it stands or folded. A native font's `.notdef`
+ * (`FieldGlyph.dropped`) stands where the walk is and matches nothing. Returns the number of
+ * glyphs that could not be matched, how much of the text the glyphs account for, and the case
+ * the page sets the field in when it folded it (`Alignment.folded`).
  *
  * A run of such characters is read once, however many glyphs fail to match in it: a
- * glyph whose spellings all begin with printable ASCII, which no character of the run
- * is, can match only at the run's end, so only a glyph with a spelling outside ASCII,
- * such as an en dash, walks the run a character at a time.
+ * glyph whose spellings all begin with printable ASCII matches no character of the run as it
+ * stands, so it can match only at the run's end, or at a letter whose base, capital or small
+ * letter begins with printable ASCII, as é's base is e and ß's capitals are SS, and of those the
+ * walk tries the first; only a glyph with a spelling outside ASCII, such as an en dash, walks
+ * the run a character at a time.
  */
 export function alignField(field: Field, text: string): Alignment {
+  const { glyphs } = field;
   let pos = 0;
   let unmatched = 0;
+  // Whether a glyph matched only once the text was folded to a case.
+  let folded = false;
   // The end of the run of characters that may set no glyph from `pos` on: the first index at or
   // after it whose character is printable ASCII, or the text's end. Every character before it
   // sets no glyph, so it holds until `pos` passes it and is recomputed only then.
   let runEnd = -1;
-  for (const glyph of field.glyphs) {
+  // The first index at or after `pos`, and before `runEnd`, whose letter a spelling in printable
+  // ASCII may match (`basedOnGlyph`), or `runEnd` when there is none; recomputed, as `runEnd` is,
+  // only when `pos` passes it, so each character is looked at once.
+  let based = -1;
+  for (let i = 0; i < glyphs.length; i++) {
+    const glyph = glyphs[i] as FieldGlyph;
     while (pos < text.length && SKIPPED.test(charAt(text, pos))) pos += charAt(text, pos).length;
     if (glyph.dropped) {
       // A character the font lacks, which the next glyph skips as one that may set no glyph.
@@ -257,59 +297,177 @@ export function alignField(field: Field, text: string): Alignment {
       unmatched++;
       continue;
     }
-    const own = glyph.alternatives === undefined ? [g] : [g, ...glyph.alternatives];
-    const candidates = own.length === 1 ? spellingsOf(g) : [...new Set(own.flatMap(spellingsOf))];
-    const matchAt = (at: number) =>
-      candidates.find((c) => text.startsWith(c, at)) ?? accentedAt(text, at, candidates);
+    const candidates = spellingsOfGlyph(glyph);
+    const matchAt = (at: number) => {
+      const exact =
+        candidates.find((c) => text.startsWith(c, at)) ?? accentedAt(text, at, candidates);
+      return exact === undefined
+        ? foldedMatch(text, at, glyphs, i, candidates)
+        : { at, end: at + exact.length, glyphs: 1 };
+    };
     // The spellings are tried where the walk stands first, so "–" still matches the "--"
     // glyph, and only then past the characters that may set no glyph.
-    let at = pos;
-    let match = matchAt(at);
+    let match: Match | undefined = matchAt(pos);
     if (match === undefined) {
       if (runEnd < pos) runEnd = endOfRun(text, pos);
       if (candidates.every(beginsWithGlyph)) {
-        // No character of the run is a spelling's first, so only its end can match.
-        at = runEnd;
-        match = matchAt(at);
+        // No character of the run is a spelling's first as it stands, so only its end can match,
+        // or a letter of it decomposed or folded, of which the first is tried.
+        if (based < pos) based = firstBased(text, pos, runEnd);
+        if (based > pos && based < runEnd) match = matchAt(based);
+        match ??= matchAt(runEnd);
       } else {
         // A spelling outside ASCII, such as "–" or "’", may match anywhere in the run, which
         // is walked a code point at a time.
+        let at = pos;
         while (match === undefined && at < runEnd) {
           at += charAt(text, at).length;
           match = matchAt(at);
         }
       }
     }
-    if (match !== undefined) {
-      glyph.offset = at;
-      pos = at + match.length;
-    } else if (g === "-") {
+    if (match === undefined && g === "-") {
       // A hyphen TeX inserted at a line break: it belongs to the character before it. A native
       // glyph that stands for U+2010 or U+2011 as well reads as U+002D first; one that does not
       // stand for U+002D is not the font's \hyphenchar, and reads as one of the others.
       glyph.offset = Math.max(0, pos - 1);
       glyph.inserted = true;
-    } else {
-      // Try to resynchronise a little further on; otherwise count it as unmatched.
-      let ahead: number | undefined;
-      let spelled = g;
-      for (const k of [1, 2, 3]) {
-        const found = own.find((each) => text.startsWith(each, pos + k));
-        if (found === undefined) continue;
-        ahead = k;
-        spelled = found;
+      continue;
+    }
+    // Try to resynchronise a little further on, on the glyph's own texts; otherwise count it as
+    // unmatched.
+    const own = glyph.alternatives === undefined ? [g] : [g, ...glyph.alternatives];
+    for (let k = 1; match === undefined && k <= 3; k++) {
+      const at = pos + k;
+      const found = own.find((each) => text.startsWith(each, at));
+      match =
+        found === undefined
+          ? foldedMatch(text, at, glyphs, i, own)
+          : { at, end: at + found.length, glyphs: 1 };
+    }
+    if (match === undefined) {
+      glyph.offset = pos;
+      unmatched++;
+      continue;
+    }
+    // A letter whose capitals are several takes as many glyphs, each at the letter's offset.
+    for (let k = 0; k < match.glyphs; k++) (glyphs[i + k] as FieldGlyph).offset = match.at;
+    folded ||= match.folded === true;
+    pos = match.end;
+    i += match.glyphs - 1;
+  }
+  return { unmatched, covered: pos, folded: folded ? caseOfGlyphs(glyphs) : undefined };
+}
+
+/** Every spelling a glyph may have in a field's text: its text's, and what else it stands for. */
+function spellingsOfGlyph(glyph: FieldGlyph): readonly string[] {
+  const g = glyph.text;
+  if (g === undefined) return [];
+  if (glyph.alternatives === undefined) return spellingsOf(g);
+  return [...new Set([g, ...glyph.alternatives].flatMap(spellingsOf))];
+}
+
+/**
+ * Where the glyphs from `first` on match the text at `at` in capitals, or failing that in small
+ * letters (`foldedAt`).
+ */
+function foldedMatch(
+  text: string,
+  at: number,
+  glyphs: readonly FieldGlyph[],
+  first: number,
+  spellings: readonly string[],
+): Match | undefined {
+  return (
+    foldedAt(text, at, glyphs, first, spellings, "upper") ??
+    foldedAt(text, at, glyphs, first, spellings, "lower")
+  );
+}
+
+/**
+ * Where the glyphs from `first` on match the text at `at` once the text is folded to `fold`, a
+ * character at a time, as `toUpperCase` or `toLowerCase` folds it, and both are decomposed (NFD),
+ * `spellings` being the first glyph's: a glyph for each character, as É for é; one for several,
+ * as a ligature is; several for one, as a letter's capitals may be, where each glyph takes the
+ * letter's folded form on from where the one before it stopped, as the two glyphs S take the SS
+ * that is ß in capitals, or as ﬁ's are FI; and a letter set without the accents its folded form
+ * has, as ǰ's capital is J and a caron, or İ's small letter i and a dot. In small letters a glyph
+ * ς is taken for σ, since Σ is ς at a word's end, which a character alone does not say. Undefined
+ * when the text is not folded there, since the character at `at` is already in that case or has
+ * none, or when the glyphs do not spell it.
+ */
+function foldedAt(
+  text: string,
+  at: number,
+  glyphs: readonly FieldGlyph[],
+  first: number,
+  spellings: readonly string[],
+  fold: Fold,
+): Match | undefined {
+  if (at >= text.length) return undefined;
+  const head = charAt(text, at);
+  if (caseOf(head, fold) === head) return undefined;
+  // The text from `at`, folded and decomposed as far as the glyphs have needed it, and where each
+  // of its characters ends there and in the text.
+  let form = "";
+  let next = at;
+  const ends: { form: number; text: number }[] = [];
+  const grow = (length: number) => {
+    while (form.length < length && next < text.length) {
+      const char = charAt(text, next);
+      form += caseOf(char, fold).normalize("NFD");
+      next += char.length;
+      ends.push({ form: form.length, text: next });
+    }
+  };
+  // How much of `form` the glyphs have spelled, and where they may stop inside a character whose
+  // rest is accents they left out, should the next glyph not go on with it.
+  let used = 0;
+  let stop: Match | undefined;
+  for (let j = first; j < glyphs.length; j++) {
+    const glyph = glyphs[j] as FieldGlyph;
+    if (glyph.dropped) break;
+    let spelled: string | undefined;
+    for (const spelling of j === first ? spellings : spellingsOfGlyph(glyph)) {
+      // Σ's small letter is ς at a word's end, which a character at a time never gives.
+      const small = fold === "lower" ? spelling.replaceAll("\u{3c2}", "\u{3c3}") : spelling;
+      const decomposed = small.normalize("NFD");
+      if (decomposed === "") continue;
+      grow(used + decomposed.length);
+      if (form.startsWith(decomposed, used)) {
+        spelled = decomposed;
         break;
       }
-      if (ahead !== undefined) {
-        glyph.offset = pos + ahead;
-        pos += ahead + spelled.length;
-      } else {
-        glyph.offset = pos;
-        unmatched++;
-      }
     }
+    if (spelled === undefined) break;
+    used += spelled.length;
+    const end = ends.find((each) => each.form >= used);
+    if (end === undefined) break;
+    const taken = { at, end: end.text, glyphs: j - first + 1, folded: true };
+    if (end.form === used) return taken;
+    stop = ACCENTS.test(form.slice(used, end.form)) ? taken : undefined;
   }
-  return { unmatched, covered: pos };
+  return stop;
+}
+
+/** A character in capitals or small letters, as `alignField` folds a text, a character at a time. */
+const caseOf = (char: string, fold: Fold) =>
+  fold === "upper" ? char.toUpperCase() : char.toLowerCase();
+
+/**
+ * The case of a field's glyphs, once some matched only folded: capitals when none of them has a
+ * small letter, small letters when none has a capital, and neither when they have both.
+ */
+function caseOfGlyphs(glyphs: readonly FieldGlyph[]): Fold | undefined {
+  let capital = false;
+  let small = false;
+  for (const { text } of glyphs) {
+    if (text === undefined) continue;
+    capital ||= text !== text.toLowerCase();
+    small ||= text !== text.toUpperCase();
+  }
+  if (!small) return "upper";
+  return capital ? undefined : "lower";
 }
 
 /**
@@ -355,6 +513,28 @@ function endOfRun(text: string, from: number): number {
   let at = from;
   while (at < text.length && setsNoGlyph(charAt(text, at))) at += charAt(text, at).length;
   return at;
+}
+
+/**
+ * Whether a spelling that begins with printable ASCII may match a character that does not: one
+ * whose base, capital or small letter does, decomposed, as é's base is e, ı's capital I and ß's
+ * capitals SS.
+ */
+function basedOnGlyph(char: string): boolean {
+  if (beginsWithGlyph(char.normalize("NFD"))) return true;
+  const upper = caseOf(char, "upper");
+  const lower = caseOf(char, "lower");
+  return (
+    (upper !== char && beginsWithGlyph(upper.normalize("NFD"))) ||
+    (lower !== char && beginsWithGlyph(lower.normalize("NFD")))
+  );
+}
+
+/** The first index from `from` to `to` whose character is `basedOnGlyph`, or `to`. */
+function firstBased(text: string, from: number, to: number): number {
+  let at = from;
+  while (at < to && !basedOnGlyph(charAt(text, at))) at += charAt(text, at).length;
+  return Math.min(at, to);
 }
 
 /**

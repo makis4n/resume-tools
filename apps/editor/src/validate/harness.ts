@@ -658,9 +658,11 @@ function checkFields(
  * `alignField` pairs them, and the glyphs account for the whole text: what follows the last glyph
  * matched is only what the page may leave out without a glyph (`SETS_NO_GLYPH`). A glyph that
  * matches none leaves the editor unable to say which character a click landed on: the template
- * sets the field otherwise than the resume has it, such as in capitals or with text of its own
- * inside the markers, or from a font whose glyphs the page cannot name, which the fonts check
- * names as well. Text after the last glyph is text the page does not show, as when a template
+ * sets the field otherwise than the resume has it, such as in a symbol font whose glyphs stand
+ * for other characters, or with text of its own inside the markers, or from a font whose glyphs
+ * the page cannot name, which the fonts check names as well. A field set in capitals, as a class
+ * sets a title through `\MakeUppercase`, or in small letters, aligns once folded, and passes
+ * (decision 0021). Text after the last glyph is text the page does not show, as when a template
  * cuts a field short. It is looked at only when every glyph matched, since a walk that misses
  * stops short of text the page does show, and only when the resume sets one page (`coverage`),
  * since a spill splits a field across pages and is the pages check's to report. A field is
@@ -966,7 +968,11 @@ const LIGATURE = /ff|fi|fl|--|''|,,/;
  * A field is looked for by its first word, its text up to the first space, among the strings the
  * PDF's text operators show, where the glyphs' codes stand for the characters, which holds only
  * for what `SHOWN_AS_ITSELF` allows, and not for a ligature; a field whose first word has a
- * character outside ASCII, or anything else those rule out, is skipped. A native font's text,
+ * character outside ASCII, or anything else those rule out, is skipped. The word is looked for
+ * whatever its case, since a template may set a field in capitals, as a class sets a title through
+ * `\MakeUppercase`, which the page aligns once folded (decision 0021), or capitalise only some of
+ * its letters; and whether it is set with a ligature is judged in the case the page folds it to
+ * (`Alignment.folded`), since small letters join where capitals do not. A native font's text,
  * XeTeX's, is read through its ToUnicode map (`shownTexts`), where the quotes XeTeX's
  * `tex-text` mapping curls read as the straight ones the text holds, and a character its font's
  * map gives one glyph with others as the one the glyph reads as first (`unaliased`), since
@@ -1013,16 +1019,23 @@ function checkPdf(
       message: "no font of the PDF has a ToUnicode map, so its text cannot be read",
     });
   const files = [...natives.values()].flatMap((font) => font.file ?? []);
-  const read = (text: string) => unaliased(text, files).replace(CURLED, "'");
+  // Each text in small letters, as each word is looked for.
+  const read = (text: string) => unaliased(text, files).replace(CURLED, "'").toLowerCase();
   const operators = shownTexts(pdf);
   const shown = abuttingRuns(operators).map(read);
   // The operators joined in order, nothing between them, so a first word broken across two of them
   // reads as one, its halves split by the hyphen TeX inserted at the break.
   const joined = operators.map((each) => read(each.text)).join("");
   for (const field of found.values()) {
-    const word = texts.get(field.id)?.trim().split(/\s/, 1)[0] ?? "";
-    if (reported.has(field.id) || !SHOWN_AS_ITSELF.test(word) || LIGATURE.test(word)) continue;
-    if (shown.some((text) => text.includes(word)) || brokenAcross(joined, word)) continue;
+    const text = texts.get(field.id) ?? "";
+    const word = text.trim().split(/\s/, 1)[0] ?? "";
+    if (reported.has(field.id) || !SHOWN_AS_ITSELF.test(word)) continue;
+    const folded = alignField(field, text).folded;
+    const set =
+      folded === "upper" ? word.toUpperCase() : folded === "lower" ? word.toLowerCase() : word;
+    if (LIGATURE.test(set)) continue;
+    const sought = set.toLowerCase();
+    if (shown.some((each) => each.includes(sought)) || brokenAcross(joined, sought)) continue;
     findings.push({
       check: "pdf",
       field: field.id,
