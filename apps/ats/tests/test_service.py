@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
 from ats.service import create_app, readable_size
-from tests.pdfs import malformed_page_tree_pdf, minimal_pdf, zero_page_pdf
+from tests.pdfs import image_only_pdf, malformed_page_tree_pdf, minimal_pdf, zero_page_pdf
 
 CONTRACTS = Path(__file__).parents[3] / "packages" / "contracts" / "ats" / "v1"
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -68,6 +68,22 @@ def test_analyze_returns_a_schema_valid_analysis(client: TestClient) -> None:
     response = upload(client, minimal_pdf())
     assert response.status_code == 200
     ANALYSIS.validate(response.json())
+
+
+def test_a_clean_one_page_pdf_scores_100_with_no_findings(client: TestClient) -> None:
+    response = upload(client, minimal_pdf())
+    body = response.json()
+    ANALYSIS.validate(body)
+    assert body["score"] == 100
+    assert body["findings"] == []
+
+
+def test_a_text_less_pdf_returns_a_critical_finding(client: TestClient) -> None:
+    response = upload(client, image_only_pdf())
+    assert response.status_code == 200
+    body = response.json()
+    ANALYSIS.validate(body)
+    assert any(f["severity"] == "critical" for f in body["findings"])
 
 
 def test_accepts_a_pdf_declared_with_a_generic_type(client: TestClient) -> None:

@@ -5,7 +5,15 @@ from pathlib import Path
 import pytest
 
 from ats.extract import Document, EncryptedPdfError, UnreadablePdfError, extract
-from tests.pdfs import build_pdf, malformed_page_tree_pdf, minimal_pdf, zero_page_pdf
+from tests.pdfs import (
+    build_pdf,
+    glyph_case_pdf,
+    image_only_pdf,
+    malformed_page_tree_pdf,
+    minimal_pdf,
+    text_as_outlines_pdf,
+    zero_page_pdf,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -145,3 +153,101 @@ def test_a_zero_page_document_closes_the_native_handle(monkeypatch: pytest.Monke
         extract(zero_page_pdf())
 
     assert len(calls) == 1
+
+
+def test_a_plain_text_page_has_one_text_object_and_no_images_or_paths() -> None:
+    (page,) = extract(minimal_pdf()).pages
+    assert page.char_count == len("Invented Person")
+    assert page.unmapped_count == 0
+    assert page.private_use_count == 0
+    assert page.ligature_count == 0
+    assert page.text_objects == 1
+    assert page.image_objects == 0
+    assert page.path_objects == 0
+
+
+def test_char_count_excludes_a_pdfium_generated_space() -> None:
+    # Two separate show-text operators with a horizontal gap and no explicit space character:
+    # PDFium inserts a generated space between them (verified experimentally against pypdfium2
+    # 5.13.0), which must not inflate `char_count` or any of the counts derived from it.
+    pdf = build_pdf([[("One", 72, 700), ("Two", 112, 700)]])
+    (page,) = extract(pdf).pages
+    assert page.text == "One Two"
+    assert page.char_count == len("OneTwo")
+
+
+def test_image_only_page_reports_an_image_object_and_no_text() -> None:
+    (page,) = extract(image_only_pdf()).pages
+    assert page.char_count == 0
+    assert page.text_objects == 0
+    assert page.image_objects == 1
+    assert page.path_objects == 0
+
+
+def test_text_as_outlines_page_reports_only_path_objects() -> None:
+    (page,) = extract(text_as_outlines_pdf(rectangles=15)).pages
+    assert page.char_count == 0
+    assert page.text_objects == 0
+    assert page.image_objects == 0
+    assert page.path_objects == 15
+
+
+def test_glyph_case_pdf_reports_a_private_use_and_an_unmapped_character() -> None:
+    # Built by tests.pdfs.glyph_case_pdf(): see its docstring for what was verified about each
+    # code, and why no fixture here can make `ligature_count` positive.
+    (page,) = extract(glyph_case_pdf()).pages
+    assert page.char_count == 2
+    assert page.private_use_count == 1
+    assert page.unmapped_count == 1
+    assert page.ligature_count == 0
+    assert "" in page.text
+
+
+def test_document_reads_producer_and_creator_metadata() -> None:
+    pdf = build_pdf(
+        [[("Invented Text", 72, 700)]],
+        producer="pdfTeX-1.40.26",
+        creator="Invented Template with LaTeX",
+    )
+    document = extract(pdf)
+    assert document.producer == "pdfTeX-1.40.26"
+    assert document.creator == "Invented Template with LaTeX"
+
+
+def test_document_metadata_with_a_non_ascii_value_round_trips() -> None:
+    # Written as UTF-16BE with a byte-order mark (tests.pdfs._text_string); this guards against
+    # that encoding choice being wrong.
+    pdf = build_pdf([[("Invented Text", 72, 700)]], producer="Microsoft® Word for Microsoft 365")
+    document = extract(pdf)
+    assert document.producer == "Microsoft® Word for Microsoft 365"
+
+
+def test_document_metadata_is_none_when_absent() -> None:
+    document = extract(minimal_pdf())
+    assert document.producer is None
+    assert document.creator is None
+
+
+def test_ligature_count_classifies_a_raw_ligature_codepoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No real PDF can make pypdfium2 report a raw ligature codepoint at all: see
+    `tests.pdfs.glyph_case_pdf`'s docstring for what was verified -- PDFium always expands one of
+    U+FB00-FB06 into its plain-letter equivalent before `FPDFText_GetUnicode` ever returns it, no
+    matter how the character's Unicode value was derived. This drives that one call directly
+    instead, to prove `ats.extract`'s per-character loop classifies U+FB01 as a ligature when it
+    is actually given one."""
+    import ats.extract as extract_module
+
+    real_get_unicode = extract_module.pdfium.raw.FPDFText_GetUnicode
+
+    def fake_get_unicode(text_page: object, index: int) -> int:
+        return 0xFB01 if index == 0 else real_get_unicode(text_page, index)
+
+    monkeypatch.setattr(extract_module.pdfium.raw, "FPDFText_GetUnicode", fake_get_unicode)
+
+    (page,) = extract(minimal_pdf("A")).pages
+    assert page.char_count == 1
+    assert page.ligature_count == 1
+    assert page.unmapped_count == 0
+    assert page.private_use_count == 0

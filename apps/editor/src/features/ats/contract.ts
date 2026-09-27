@@ -9,9 +9,14 @@ import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
  */
 export type Severity = "info" | "warning" | "critical";
 
+export type Origin = "content" | "layout";
+
+export type Producer = "latex" | "word" | "google-docs" | "canva" | "other";
+
 export interface Finding {
   id: string;
   severity: Severity;
+  origin?: Origin;
   message: string;
   page?: number;
   suggestion?: string;
@@ -21,6 +26,9 @@ export interface Analysis {
   contract: "ats/v1";
   score: number | null;
   findings: Finding[];
+  producer?: Producer;
+  rubric_version?: string;
+  analyser_version?: string;
 }
 
 export interface ServiceErrorBody {

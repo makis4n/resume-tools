@@ -1,7 +1,10 @@
-"""Reads text from a PDF using pypdfium2 (decision 0032). `ats.analyze` calls `extract`.
+"""Reads text and layout facts from a PDF using pypdfium2 (decision 0032). `ats.analyze` calls
+`extract`, and `ats.readiness` turns its per-page facts into findings.
 
 Extraction never logs, or puts into an exception message, any text taken from the PDF: the service
-must never leak resume content.
+must never leak resume content. `Document.producer` and `Document.creator` are the PDF's raw
+metadata strings; they exist only so `ats.producer.classify` can turn them into a `Producer`, and
+no caller may return or log them.
 """
 
 import threading
@@ -23,6 +26,18 @@ _PDFIUM_LOCK = threading.Lock()
 # range; this is far beyond any plausible PDF content placement, with headroom to spare).
 _UNBOUNDED = 1_000_000.0
 
+# Codepoints classified as icon-font glyphs with no real Unicode mapping behind them: the BMP
+# Private Use Area, and Supplementary Private Use Areas A and B (decision 0033).
+_PRIVATE_USE_RANGES = ((0xE000, 0xF8FF), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD))
+
+# Latin small-letter ligatures (ﬀ ﬁ ﬂ ﬃ ﬄ ﬅ ﬆ) that keyword search on the extracted text misses,
+# because e.g. "ﬁle" does not contain the substring "file" (decision 0033).
+_LIGATURE_RANGE = (0xFB00, 0xFB06)
+
+# A character extracted as one of these stands in for "no real mapping was found", the same as a
+# character PDFium itself flags with `FPDFText_HasUnicodeMapError`.
+_UNMAPPED_CODEPOINTS = (0xFFFD, 0x0000)
+
 
 class ExtractError(ValueError):
     """Base class for a PDF that pypdfium2 could not turn into text."""
@@ -38,23 +53,54 @@ class UnreadablePdfError(ExtractError):
 
 @dataclass(frozen=True)
 class Page:
-    """One page: its 1-based number, its displayed size and its full text.
+    """One page: its 1-based number, its displayed size, its full text and the per-page facts the
+    readiness checks (`ats.readiness`) need.
 
     `width` and `height`, in PDF points, are the page's displayed size (`PdfPage.get_size()`):
     its MediaBox with rotation and the CropBox already applied, not necessarily the raw MediaBox.
+
+    `char_count`, `unmapped_count`, `private_use_count` and `ligature_count` all count characters
+    from the same single pass over the page's text (see `_char_stats`), and all exclude characters
+    PDFium generated itself (inserted spaces and line breaks that are not really in the page's
+    content stream) -- so `unmapped_count`, `private_use_count` and `ligature_count` are always
+    counts within `char_count`, keeping any fraction of them well-formed.
+
+    - `char_count`: non-generated characters on the page.
+    - `unmapped_count`: characters with no usable Unicode mapping -- PDFium flags these directly
+      (`FPDFText_HasUnicodeMapError`), or they decode as the replacement character U+FFFD or as
+      NUL.
+    - `private_use_count`: characters in a Private Use Area, i.e. an icon font with no real text
+      behind it.
+    - `ligature_count`: characters that are a single Latin ligature glyph (ﬀ ﬁ ﬂ ﬃ ﬄ ﬅ ﬆ), which
+      breaks plain keyword search on the extracted text.
+
+    `text_objects`, `image_objects` and `path_objects` count only the page's own, top-level
+    objects (`FPDFPage_CountObjects` / `FPDFPage_GetObject`): a Form XObject is counted once, as
+    its own object, and its contents are not recursed into.
     """
 
     number: int
     width: float
     height: float
     text: str
+    char_count: int
+    unmapped_count: int
+    private_use_count: int
+    ligature_count: int
+    text_objects: int
+    image_objects: int
+    path_objects: int
 
 
 @dataclass(frozen=True)
 class Document:
-    """The pages read from a PDF, in order."""
+    """The pages read from a PDF, in order, and the raw producer/creator metadata used only to
+    classify the tool that made it (`ats.producer.classify`). Neither string is ever returned to a
+    client or logged."""
 
     pages: tuple[Page, ...]
+    producer: str | None
+    creator: str | None
 
 
 def _open_document(pdf: bytes) -> pdfium.PdfDocument:
@@ -85,6 +131,65 @@ def _open_document(pdf: bytes) -> pdfium.PdfDocument:
     return pdfium.PdfDocument(raw)
 
 
+def _metadata_value(document: pdfium.PdfDocument, key: str) -> str | None:
+    """`document`'s metadata value for `key`, or `None` when it is absent or empty."""
+    value = document.get_metadata_value(key)
+    return value or None
+
+
+def _is_private_use(codepoint: int) -> bool:
+    return any(low <= codepoint <= high for low, high in _PRIVATE_USE_RANGES)
+
+
+def _char_stats(text_page: pdfium.PdfTextPage) -> tuple[int, int, int, int]:
+    """Classify every character on `text_page` in one linear pass over its character list.
+
+    Returns `(char_count, unmapped_count, private_use_count, ligature_count)`, as documented on
+    `Page`. A character PDFium generated itself (`FPDFText_IsGenerated`) is skipped entirely, so
+    an inserted space or line break can never be miscounted as an unmapped or private-use glyph.
+    """
+    char_count = 0
+    unmapped_count = 0
+    private_use_count = 0
+    ligature_count = 0
+    total = text_page.count_chars()
+    for index in range(total):
+        if pdfium.raw.FPDFText_IsGenerated(text_page, index) == 1:
+            continue
+        char_count += 1
+        codepoint = pdfium.raw.FPDFText_GetUnicode(text_page, index)
+        has_map_error = pdfium.raw.FPDFText_HasUnicodeMapError(text_page, index) == 1
+        if has_map_error or codepoint in _UNMAPPED_CODEPOINTS:
+            unmapped_count += 1
+        if _is_private_use(codepoint):
+            private_use_count += 1
+        if _LIGATURE_RANGE[0] <= codepoint <= _LIGATURE_RANGE[1]:
+            ligature_count += 1
+    return char_count, unmapped_count, private_use_count, ligature_count
+
+
+def _count_objects(pdf_page: pdfium.PdfPage) -> tuple[int, int, int]:
+    """Count `pdf_page`'s own, top-level page objects by type: `(text, image, path)`.
+
+    Only `FPDFPage_CountObjects` / `FPDFPage_GetObject` are used, so a Form XObject on the page is
+    counted once, as its own object, and its contents are never recursed into.
+    """
+    text_objects = 0
+    image_objects = 0
+    path_objects = 0
+    count = pdfium.raw.FPDFPage_CountObjects(pdf_page)
+    for index in range(count):
+        raw_obj = pdfium.raw.FPDFPage_GetObject(pdf_page, index)
+        obj_type = pdfium.raw.FPDFPageObj_GetType(raw_obj)
+        if obj_type == pdfium.raw.FPDF_PAGEOBJ_TEXT:
+            text_objects += 1
+        elif obj_type == pdfium.raw.FPDF_PAGEOBJ_IMAGE:
+            image_objects += 1
+        elif obj_type == pdfium.raw.FPDF_PAGEOBJ_PATH:
+            path_objects += 1
+    return text_objects, image_objects, path_objects
+
+
 def _read_page(pdf_page: pdfium.PdfPage, number: int) -> Page:
     width, height = pdf_page.get_size()
     text_page = pdf_page.get_textpage()
@@ -94,13 +199,27 @@ def _read_page(pdf_page: pdfium.PdfPage, number: int) -> Page:
         # to the page's displayed box and would silently drop hidden or off-page text (see
         # `_UNBOUNDED`'s comment).
         text = text_page.get_text_bounded(-_UNBOUNDED, -_UNBOUNDED, _UNBOUNDED, _UNBOUNDED)
+        char_count, unmapped_count, private_use_count, ligature_count = _char_stats(text_page)
     finally:
         text_page.close()
-    return Page(number=number, width=width, height=height, text=text)
+    text_objects, image_objects, path_objects = _count_objects(pdf_page)
+    return Page(
+        number=number,
+        width=width,
+        height=height,
+        text=text,
+        char_count=char_count,
+        unmapped_count=unmapped_count,
+        private_use_count=private_use_count,
+        ligature_count=ligature_count,
+        text_objects=text_objects,
+        image_objects=image_objects,
+        path_objects=path_objects,
+    )
 
 
 def extract(pdf: bytes) -> Document:
-    """Extract text from every page of `pdf`.
+    """Extract text and layout facts from every page of `pdf`.
 
     Raises:
         EncryptedPdfError: the PDF needs a password, or uses a security handler PDFium does not
@@ -111,6 +230,8 @@ def extract(pdf: bytes) -> Document:
     with _PDFIUM_LOCK:
         document = _open_document(pdf)
         try:
+            producer = _metadata_value(document, "Producer")
+            creator = _metadata_value(document, "Creator")
             page_count = len(document)
             pages = []
             try:
@@ -127,4 +248,4 @@ def extract(pdf: bytes) -> Document:
         finally:
             document.close()
 
-    return Document(pages=tuple(pages))
+    return Document(pages=tuple(pages), producer=producer, creator=creator)
