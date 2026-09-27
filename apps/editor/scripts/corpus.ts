@@ -7,6 +7,8 @@
  *   pnpm --filter @resume-tools/editor corpus survey [--json <file>] [--tree <file>]
  *   pnpm --filter @resume-tools/editor corpus reference [--only <id>] [--json <file>]
  *   pnpm --filter @resume-tools/editor corpus parse [--only <id>] [--json <file>]
+ *   pnpm --filter @resume-tools/editor corpus probe [--only <id>] [--json <file>]
+ *   pnpm --filter @resume-tools/editor corpus oracle
  *   pnpm --filter @resume-tools/editor corpus fonts [--only <id>] [--json <file>]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
@@ -350,8 +352,8 @@ function treeFonts(files: Readonly<Record<string, number>>) {
 }
 
 /**
- * The fetched documents, or the one `--only` names, as the reference, parse and fonts runners take
- * them.
+ * The fetched documents, or the one `--only` names, as the reference, parse, probe and fonts
+ * runners take them.
  */
 function fetchedDocuments(only: string | undefined) {
   const manifest = readManifest();
