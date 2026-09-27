@@ -12,16 +12,19 @@
  * gets the dvipdfmx driver on pdfTeX and no bookmarks, and is loaded with `hidelinks` where the
  * reference compile's log shows the document never loads it, even late, as moderncv's class does
  * at the preamble's end; the reviewed answers' redefinitions go right after `\documentclass`;
- * a class size option becomes the font size control's slot. No font changes, no T1 and no Latin
- * Modern, as a port takes (decision 0009): an import keeps its fonts, so that the reference check
- * can hold. Its files are the upload's class and style files, as text, with the configurations the
- * reference compile gave pdfTeX's DVI (decision 0019). Its snippets are the template's own code,
- * read from the body where the answer's kinds place the model: a section's head and what frames
- * its content, an entry's call and its bullets' list, a list's items, the header's calls; each
- * field an argument of its meaning as a typeset slot, beside a raw extras slot that holds the
- * original bytes of an instance the checks lock; every other argument the same bytes in every
- * call, or an extras slot of its own. Comments never reach a snippet, and nor does the body's
- * text. Its id is `import-` and twelve hex digits of the SHA-256 of the rest of it.
+ * a class size option becomes the font size control's slot, offering the sizes the class declares
+ * (`SIZE_OPTIONS`). No font changes, no T1 and no Latin Modern, as a port takes (decision 0009): an
+ * import keeps its fonts, so that the reference check can hold. Its files are the upload's class
+ * and style files, as text, with the configurations the reference compile gave pdfTeX's DVI
+ * (decision 0019). Its snippets are the template's own code, read from the body where the answer's
+ * kinds place the model: a section's head and what frames its content, an entry's call and its
+ * bullets' list, which every entry's snippet sets, a list's items, the header's calls; each field
+ * an argument of its meaning as a typeset slot, beside a raw extras slot that holds the original
+ * bytes of an instance the checks lock; every other argument the same bytes in every call where it
+ * is code, or an extras slot of its own, with what a unit the user adds writes there (`defaults`).
+ * Comments never reach a snippet, and nor does the body's text. It marks the slots the checks
+ * found required. Its source is `main.tex`, and its id `import-` and twelve hex digits of the
+ * SHA-256 of the rest of it.
  *
  * **The document.** The model built from the tree through the answer: the header from its calls,
  * a name in one argument split at its last space, links of the kind the answer or their address
@@ -29,8 +32,10 @@
  * and paragraphs; dates read from the tree, in the one format the generator writes most of them
  * in, years alone read in any; each node with an id minted from where it
  * stands in the source. What a snippet cannot hold is kept: an argument or a list the checks lock,
- * in its node's extras; and a part of the body no snippet can express, a raw chunk or a call the
- * answer does not place, as a locked section where it stands.
+ * in its node's extras, its node naming the slot kept (`kept`), which is then no field; and a part
+ * of the body no snippet can express, a raw chunk or a call the answer does not place, as a locked
+ * section where it stands. Every part kept is counted, and everything kept is kept LaTeX, or the
+ * import is refused (`keep`).
  */
 
 import {
@@ -42,15 +47,19 @@ import {
 } from "@resume-tools/naming";
 import {
   type Dates,
+  ENTRY_KEPT,
   type Entry,
   ExtraKey,
   type Extras,
+  HEADER_KEPT,
   type Header,
   type Link,
   type LinkKind,
+  LockedLatex,
   type Resume,
   type RichText,
   type Run,
+  SECTION_KEPT,
   type Section,
   type SectionKind,
   type SectionRole,
@@ -63,6 +72,7 @@ import {
   type ByRole,
   type DateFormat,
   IMPORTED_PREFIX,
+  type RequiredPlace,
   type TemplatePackage,
 } from "../templates/package";
 import { isSetter, maySetText, tightened } from "./candidates";
@@ -82,7 +92,7 @@ import {
   type TextNode,
   type Tree,
 } from "./parse";
-import { extensionOf, nameOf } from "./paths";
+import { extensionOf } from "./paths";
 import type { Probe, ProbeCandidate, Verdict } from "./probe";
 import { COMPATIBILITY, type Reference } from "./reference";
 import { type Refusal, refusal } from "./refusal";
@@ -95,6 +105,7 @@ import {
   isKept,
   snippetText,
   templateText,
+  withoutComments,
   wordsIn,
 } from "./templating";
 import type { XetexRewrite } from "./xetex";
@@ -453,12 +464,16 @@ function wordsOf(nodes: readonly Node[]): number {
 
 /**
  * A snippet as it is built: template text, copied from the source (`templateText`), and tags; and
- * what one instance holds: its values by slot, its extras by key, and its fields.
+ * what one instance holds: its values by slot, its extras by key, the slots it keeps as the upload
+ * had them (`kept`), and what a unit the user adds writes for each extras slot this one fills with
+ * its own (`defaults`, decision 0026).
  */
 class Template {
   readonly parts: string[] = [];
   readonly values: Record<string, unknown> = {};
   readonly extras: Record<string, string> = {};
+  readonly kept = new Set<string>();
+  readonly defaults: Record<string, string> = {};
 
   /** Source copied as template text. */
   text(source: string) {
@@ -472,17 +487,37 @@ class Template {
     return this;
   }
 
-  /** An extras slot and what this instance holds in it. */
-  extra(key: string, bytes: string) {
+  /**
+   * An extras slot and what this instance holds in it: nothing where it holds nothing, unless
+   * `always`, for an extra every unit of the upload has, empty or not, whose default a unit the
+   * user adds writes instead, so that the upload's own empty one writes nothing.
+   */
+  extra(key: string, bytes: string, always = false) {
     if (!ExtraKey.safeParse(key).success) throw new Error(`not an extras key: ${key}`);
     this.parts.push(extrasSlot(key));
-    if (bytes !== "") this.extras[key] = bytes;
+    if (bytes !== "" || always) this.extras[key] = bytes;
     return this;
   }
 
   snippet(): string {
     return this.parts.join("");
   }
+}
+
+/**
+ * What a unit the user adds writes for an argument each unit of the upload keeps in its extras,
+ * by the answer's blank rule (decision 0024): `kept`, the first call's bytes, which the first unit
+ * gives, as a length or an icon every call gives its own; `empty`, the argument's delimiters with
+ * nothing inside, or nothing inside the ones the snippet writes itself; `absent`, nothing, the
+ * argument left out. Where the answer says nothing, a code-like argument is kept, an optional one
+ * or a star left out, and any other empty, so that no text of the person's is copied to a new unit.
+ */
+function defaultOf(
+  blank: ArgumentAnswer["blank"],
+  argument: { bytes: string; empty: string; code: boolean; optional: boolean },
+): string {
+  const rule = blank ?? (argument.code ? "kept" : argument.optional ? "absent" : "empty");
+  return rule === "kept" ? argument.bytes : rule === "empty" ? argument.empty : "";
 }
 
 /** The node kinds a field's instance can be locked alone in: those that keep extras. */
@@ -607,6 +642,9 @@ function putField(
       reason,
       words,
     });
+  // A locked instance is kept, not editable: its node names the slot kept, so that the generator
+  // sets its extra alone and the editor opens nothing on it (decision 0026).
+  if (reason !== undefined && lockable) template.kept.add(slot);
   return {
     slot: placed,
     extra: lockable ? extrasSlot(key) : "",
@@ -616,9 +654,12 @@ function putField(
   };
 }
 
-/** A placed field's extras slot, with this instance's bytes, where its node keeps extras. */
+/**
+ * A placed field's extras slot, with this instance's bytes, where its node keeps extras: a locked
+ * instance's always, empty or not, so that a slot's default never stands in for it.
+ */
 function putExtra(template: Template, placed: Placed, key: string) {
-  if (placed.extra !== "") template.extra(key, placed.bytes);
+  if (placed.extra !== "") template.extra(key, placed.bytes, !placed.set);
 }
 
 /** An argument's span of content, tightened as the probe wraps it (`tightened`). */
@@ -628,24 +669,82 @@ function contentSpan(source: string, arg: Argument): Span {
   return arg.open === "" ? span : tightened(source, span);
 }
 
-/** An argument as its call's template writes it, when it is no field: the same in every call, or an extra. */
+/** The meanings of an argument that sets none of the resume's text: code the template reads. */
+const CODE_MEANINGS: ReadonlySet<string> = new Set(["key", "length", "icon", "colour"]);
+
+/**
+ * The text a piece of LaTeX shows, near enough to find a word of the person's in it: its comments,
+ * its commands' names and its environments' names left out.
+ */
+function visibleText(latex: string): string {
+  return withoutComments(latex)
+    .replace(/\\(?:begin|end)\s*\{[^}]*\}/g, " ")
+    .replace(/\\[A-Za-z@]+/g, " ")
+    .replace(/\\./g, " ");
+}
+
+/** Whether LaTeX shows a word, three letters or more, as layout the answer names may not. */
+const showsWord = (latex: string) => /\p{L}{3,}/u.test(visibleText(latex));
+
+/**
+ * An argument as its call's template writes it, when it is no field (decision 0026). The body's
+ * text never reaches a snippet: the argument is the template's own text only where every call gives
+ * it alike and it is code, by its answer's meaning (a key, a length, an icon or a colour), by its
+ * call's being layout and showing no word, or by holding no letter or digit at all, as a star or an
+ * empty group does, or an argument no call gives. Anything else each unit keeps in its extras, with
+ * a locked part that counts its words, and a unit the user adds writes the answer's blank for it
+ * (`defaultOf`); a node that keeps no extras, a bullet's, an item's or a link's, cannot, and the
+ * call does not fit (false).
+ */
 function putConstant(
   ctx: Context,
   template: Template,
-  source: string,
   arg: Argument,
-  name: string,
-  index: number,
-  key: string,
-  of: "command" | "environment" = "command",
-) {
-  const values = ctx.constants.get(slotKey(of, name, index));
+  call: { name: string; index: number; of?: "command" | "environment" },
+  options: {
+    where: "b" | "p";
+    key: string;
+    holder: Holder;
+    node: string;
+    answered?: ArgumentAnswer | undefined;
+    layout?: boolean;
+  },
+): boolean {
+  const source = options.where === "p" ? (ctx.preamble.tree?.source ?? "") : ctx.source;
+  const values = ctx.constants.get(slotKey(call.of ?? "command", call.name, call.index));
   const bytes = arg.present ? source.slice(arg.start, arg.end) : "";
-  if (values !== undefined && values.size === 1) {
+  const meaning = options.answered?.meaning;
+  const coded =
+    (meaning !== undefined && CODE_MEANINGS.has(meaning)) ||
+    (options.layout === true && !showsWord(bytes));
+  const code = coded || wordsIn(visibleText(bytes)) === 0;
+  if (values !== undefined && values.size === 1 && code) {
     // Every call gives it alike: the template's own, as a key or a length is.
     if (arg.present && arg.open === "" && /[A-Za-z@]$/.test(template.snippet())) template.code(" ");
     template.text(bytes);
-  } else template.extra(key, bytes);
+    return true;
+  }
+  if (options.holder === "none") return false;
+  template.extra(options.key, bytes, true);
+  const open = arg.open === "" ? "{" : arg.open;
+  const close = arg.close === "" ? "}" : arg.close;
+  template.defaults[options.key] = defaultOf(options.answered?.blank, {
+    bytes,
+    empty: arg.kind === "mandatory" || arg.kind === "optional" ? `${open}${close}` : "",
+    code: coded,
+    optional: arg.kind !== "mandatory",
+  });
+  const words = arg.content === undefined ? wordsIn(visibleText(bytes)) : wordsOf(arg.content);
+  if (!coded && words > 0)
+    ctx.locked.push({
+      at: `${options.where}${arg.start}`,
+      node: options.node,
+      key: options.key,
+      kind: options.holder === "header" ? "header" : "field",
+      reason: "unmapped",
+      words,
+    });
+  return true;
 }
 
 /** A slot the snippet language gives a kind of place, by the answer's slot name. */
@@ -691,12 +790,29 @@ function callTemplate(
   template.code(`\\${call.name}`);
   const prefix = options.keyPrefix ?? "";
   let ok = true;
+  const constant = (arg: Argument, index: number, answered: ArgumentAnswer | undefined) => {
+    const put = putConstant(
+      ctx,
+      template,
+      arg,
+      { name: call.name, index },
+      {
+        where: options.where,
+        key: `${prefix}a${index}`,
+        holder: options.holder,
+        node: options.node,
+        answered,
+        layout: options.answer?.kind === "layout",
+      },
+    );
+    if (!put) ok = false;
+  };
   call.args.forEach((arg, i) => {
     const index = i + 1;
     const answered = argumentAnswer(options.answer, index, options.role);
     const slotName = slotKey("command", call.name, index);
     if (arg.kind === "star") {
-      putConstant(ctx, template, source, arg, call.name, index, `${prefix}a${index}`);
+      constant(arg, index, answered);
       return;
     }
     const wanted = answered?.slot === undefined ? undefined : options.slots[answered.slot];
@@ -721,7 +837,9 @@ function callTemplate(
         return;
       }
       if (arg.content === undefined) {
-        putConstant(ctx, template, source, arg, call.name, index, `${prefix}a${index}`);
+        // A field the parser could not read, whose bytes the unit keeps: not editable.
+        constant(arg, index, answered);
+        if (options.holder !== "none") template.kept.add(wanted.slot);
         return;
       }
       const blank = meaningful(arg.content).length === 0 && arg.innerEnd > arg.innerStart;
@@ -747,6 +865,15 @@ function callTemplate(
       if (!placed.set && options.holder === "none") ok = false;
       const open = arg.open === "" ? "{" : arg.open;
       const close = arg.close === "" ? "}" : arg.close;
+      // A slot locked in every instance has no slot in the snippet, its extra alone: a unit the user
+      // adds writes the answer's blank for it, the first call's bytes where it says kept.
+      if (placed.slot === "" && placed.extra !== "")
+        template.defaults[`${prefix}${wanted.slot}`] = defaultOf(answered?.blank, {
+          bytes: blank ? source.slice(arg.innerStart, arg.innerEnd) : placed.bytes,
+          empty: optional ? `${open}${close}` : "",
+          code: false,
+          optional,
+        });
       if (optional) {
         if (placed.slot !== "") {
           template.code(`{{#${wanted.slot}}}${open}`);
@@ -774,7 +901,7 @@ function callTemplate(
       if (!putParts(ctx, template, arg, answered, options, slotName)) ok = false;
       return;
     }
-    putConstant(ctx, template, source, arg, call.name, index, `${prefix}a${index}`);
+    constant(arg, index, answered);
   });
   return ok;
 }
@@ -815,8 +942,17 @@ function putParts(
   const close = arg.close === "" ? "}" : arg.close;
   template.code(open);
   if (!fits) {
-    template.extra(whole, source.slice(arg.innerStart, arg.innerEnd));
+    const bytes = source.slice(arg.innerStart, arg.innerEnd);
+    template.extra(whole, bytes, true);
     template.code(close);
+    // Every part's field is kept with the argument, and a unit the user adds writes its blank.
+    for (const part of parts) if (part.slot !== undefined) template.kept.add(part.slot);
+    template.defaults[whole] = defaultOf(answered.blank, {
+      bytes,
+      empty: "",
+      code: false,
+      optional: false,
+    });
     const words = wordsOf(content);
     if (words > 0)
       ctx.locked.push({
@@ -1035,11 +1171,27 @@ const NUMBER = /^\s*[{[]?\s*-?\d*\.?\d+\s*(?:pt|em|ex|cm|mm|in|bp|sp|cc|dd|pc)?\
 const macroOf = (slot: string) => slot.split("|").slice(0, 2).join("|");
 
 /**
+ * Whether a node shows a word of the person's in its arguments, however deep: a word of three
+ * letters or more in a text, or a date, which a call the answer calls layout may not hold and stay
+ * the template's code (decision 0026).
+ */
+function showsWordIn(node: Node): boolean {
+  for (const each of everyNode([...inside(node)]))
+    if (
+      each.kind === "date" ||
+      (each.kind === "text" && /\p{L}{3,}/u.test(each.runs.map((run) => run.text).join(" ")))
+    )
+      return true;
+  return false;
+}
+
+/**
  * Whether a node of the body is the template's own code, which a snippet may hold as it stands: it
  * sets none of the person's text. Whitespace; a raw chunk that sets nothing, spacing, a size, a
- * rule or a definition (`maySetText`), holding no text; a call or an environment the answer says is
- * layout, or the header's call that holds none of its fields, as `\makecvheader`; and a call no
- * argument of which holds text.
+ * rule or a definition (`maySetText`), holding no text; a call the answer says is layout, or the
+ * header's call that holds none of its fields, as `\makecvheader`, where it shows no word, since
+ * the body's text never reaches a snippet whatever the answer says: one that shows a word is a
+ * locked section where it stands; and a call no argument of which holds text.
  */
 function isCode(ctx: Context, node: Node): boolean {
   if (isBlankText(node)) return true;
@@ -1055,12 +1207,12 @@ function isCode(ctx: Context, node: Node): boolean {
       node.kind === "call"
         ? commandAnswer(ctx.answers, node.name)
         : environmentAnswer(ctx.answers, node.name);
-    if (answer?.kind === "layout" && node.kind === "call") return true;
+    if (answer?.kind === "layout" && node.kind === "call") return !showsWordIn(node);
     if (
       answer?.kind === "header" &&
       answer.arguments.every((arg) => headerSlotOf(arg) === undefined)
     )
-      return node.kind === "call";
+      return node.kind === "call" && !showsWordIn(node);
     if (node.kind === "call") return wordsOf([...inside(node)]) === 0 && answer === undefined;
   }
   return false;
@@ -1132,6 +1284,8 @@ function headerOf(
   const links = new Map<LinkKind, string>();
   let linksSeparator = "\n";
   let linksPlaced = false;
+  // Whether a run of links is kept whole, which, where no other run is `{{links}}`, the header keeps.
+  let linksKept = false;
   let counter = 0;
   const node = "header";
 
@@ -1172,12 +1326,18 @@ function headerOf(
         return;
       }
       if (wanted === undefined || !arg.present || arg.content === undefined) {
-        const meaning = answered?.meaning;
-        const constant =
-          meaning === "key" || meaning === "length" || meaning === "icon" || meaning === "colour";
-        const bytes = arg.present ? source.slice(arg.start, arg.end) : "";
-        if (constant || bytes === "") template.text(bytes);
-        else template.extra(`${prefix}a${index}`, bytes);
+        // An argument with no header slot, or a second value for a slot another call filled: the
+        // template's own where it is code, and otherwise kept in the header's extras, its words
+        // counted as locked (`putConstant`).
+        putConstant(
+          ctx,
+          template,
+          arg,
+          { name: at.name, index },
+          { where, key: `${prefix}a${index}`, holder: "header", node, answered },
+        );
+        // A field the parser could not read, whose bytes the header keeps: not editable.
+        if (wanted !== undefined && arg.present) template.kept.add(wanted.slot);
         return;
       }
       const span = contentSpan(source, arg);
@@ -1214,6 +1374,8 @@ function headerOf(
             .replace("{{&first}}", "{{&first}}{{#last}} {{&last}}{{/last}}")
         : placed.slot;
       if (!placed.set) delete template.values.last;
+      // A name in one argument kept as the upload had it keeps the last name with the first.
+      if (!placed.set && oneName && wanted.slot === "first") template.kept.add("last");
       // The last name the split gives is a field of the same argument, locked with it.
       const first = ctx.fields.at(-1);
       if (split && placed.set && typeof template.values.last === "string" && first !== undefined) {
@@ -1232,6 +1394,7 @@ function headerOf(
   /** A run of link calls, `{{links}}`, each link's snippet its kind's; false when they differ. */
   const linkRun = (run: readonly CallNode[], where: "b" | "p", gaps: readonly string[]) => {
     const source = where === "p" ? (ctx.preamble.tree?.source ?? "") : ctx.source;
+    const snapshot = ctx.fields.length;
     const made: { kind: LinkKind; snippet: string; link: Link; set: boolean }[] = [];
     for (const each of run) {
       const answer = commandAnswer(ctx.answers, each.name);
@@ -1286,7 +1449,23 @@ function headerOf(
               other.kind !== each.kind || comparable(other.snippet) === comparable(each.snippet),
           ),
       );
-    return { made, agree, separator: gaps[0] === undefined ? "\n" : templateText(gaps[0]) };
+    // A run kept whole has no fields: its links are not in the model, and it is locked for the
+    // checks' reason, or its first locked link's, or else for its shape (decision 0026).
+    const why = agree
+      ? undefined
+      : (ctx.decisions.instances[LINKS] ??
+        ctx.fields.slice(snapshot).find((field) => field.reason)?.reason ??
+        "shape");
+    if (!agree) {
+      ctx.fields.length = snapshot;
+      linksKept = true;
+    }
+    return {
+      made,
+      agree,
+      why: why ?? "shape",
+      separator: gaps[0] === undefined ? "\n" : templateText(gaps[0]),
+    };
   };
 
   /** A region's nodes in turn, with the gaps between them, from `from` to `to`. */
@@ -1317,7 +1496,7 @@ function headerOf(
           }
           break;
         }
-        const { made, agree, separator } = linkRun(run, where, gaps);
+        const { made, agree, why, separator } = linkRun(run, where, gaps);
         const last = run.at(-1) as CallNode;
         if (agree) {
           linksPlaced = true;
@@ -1330,13 +1509,16 @@ function headerOf(
           template.extra("links", "");
         } else {
           template.extra(`n${++counter}`, source.slice(each.start, last.end));
-          ctx.locked.push({
-            at: `${where}${each.start}`,
-            node,
-            kind: "header",
-            reason: "shape",
-            words: wordsOf(run),
-          });
+          const words = wordsOf(run);
+          if (words > 0)
+            ctx.locked.push({
+              at: `${where}${each.start}`,
+              node,
+              key: `n${counter}`,
+              kind: "header",
+              reason: why,
+              words,
+            });
         }
         at = last.end;
         i = j - 1;
@@ -1361,6 +1543,7 @@ function headerOf(
         ctx.locked.push({
           at: `${where}${each.start}`,
           node,
+          key: `n${counter}`,
           kind: "header",
           reason: "unmapped",
           words,
@@ -1375,16 +1558,27 @@ function headerOf(
     const isLink = (each: CallNode | undefined) =>
       each !== undefined && commandAnswer(ctx.answers, each.name)?.kind === "link";
     if (!isLink(setter) || linksPlaced) {
-      if (isLink(setter))
+      if (isLink(setter)) {
+        // A link after the header's run of them, which `{{links}}` has set: kept as it was.
         template.extra(`n${++counter}`, ctx.preamble.text.slice(setter.start, setter.end));
-      else call(setter, "p");
+        const words = wordsOf([setter]);
+        if (words > 0)
+          ctx.locked.push({
+            at: `p${setter.start}`,
+            node,
+            key: `n${counter}`,
+            kind: "header",
+            reason: "unmapped",
+            words,
+          });
+      } else call(setter, "p");
       template.code("\n");
       continue;
     }
     let j = i;
     while (isLink(setters[j + 1])) j++;
     const run = setters.slice(i, j + 1);
-    const { made, agree } = linkRun(
+    const { made, agree, why } = linkRun(
       run,
       "p",
       run.slice(1).map(() => "\n"),
@@ -1402,13 +1596,16 @@ function headerOf(
       for (const each of run) {
         template.extra(`n${++counter}`, ctx.preamble.text.slice(each.start, each.end));
         template.code("\n");
-        ctx.locked.push({
-          at: `p${each.start}`,
-          node,
-          kind: "header",
-          reason: "shape",
-          words: wordsOf([each]),
-        });
+        const words = wordsOf([each]);
+        if (words > 0)
+          ctx.locked.push({
+            at: `p${each.start}`,
+            node,
+            key: `n${counter}`,
+            kind: "header",
+            reason: why,
+            words,
+          });
       }
     template.code("\n");
     i = j;
@@ -1426,7 +1623,20 @@ function headerOf(
     if (typeof value === "string" && !isBlank(value)) header[field] = value;
   }
   if (Object.keys(template.extras).length > 0) header.extras = { ...template.extras };
+  // Links kept whole, with none the header's snippet sets as `{{links}}`: a link added would not show.
+  if (linksKept && !linksPlaced) template.kept.add("links");
+  const kept = keptOf(template.kept, HEADER_KEPT);
+  if (kept !== undefined) header.kept = kept;
   return { snippet: template.snippet(), header, links, linksSeparator };
+}
+
+/**
+ * The slots a node keeps as the upload had it (decision 0026), of those its kind may name, in the
+ * model's order; undefined for none, so that a node that keeps none has no `kept`.
+ */
+function keptOf<T extends string>(kept: ReadonlySet<string>, slots: readonly T[]): T[] | undefined {
+  const found = slots.filter((slot) => kept.has(slot));
+  return found.length === 0 ? undefined : found;
 }
 
 // Sections.
@@ -1473,6 +1683,20 @@ type Proposal = Map<string, string>;
  */
 class Registry {
   readonly snippets = new Map<string, string>();
+  /**
+   * What a unit the user adds writes for an extras slot each unit of the upload fills, by the
+   * snippet's place and role, `entry:<role>` or `section:<role>`: the first unit's, which the
+   * proposals do not compare, since each upload's first call gives its own (decision 0026).
+   */
+  readonly defaults = new Map<string, Record<string, string>>();
+
+  /** A unit's defaults under `key`, each where no unit has given one for its extras key yet. */
+  addDefaults(key: string, defaults: Readonly<Record<string, string>> | undefined) {
+    const there = this.defaults.get(key) ?? {};
+    for (const [slot, latex] of Object.entries(defaults ?? {}))
+      if (!Object.hasOwn(there, slot)) there[slot] = latex;
+    this.defaults.set(key, there);
+  }
 
   /** How a snippet under `key` compares with another. */
   private static shape(key: string, snippet: string) {
@@ -1680,6 +1904,10 @@ interface Content {
   span: Span;
   end: number;
   words: number;
+  /** What an entry the user adds writes for an extras slot each entry fills (decision 0026). */
+  defaults?: Record<string, string>;
+  /** The section's slots its content keeps as the upload had them: its text, or its items. */
+  kept?: readonly string[];
 }
 
 /**
@@ -1763,6 +1991,7 @@ function entriesAt(
   const entries: Entry[] = [];
   const separators: string[] = [];
   let entryKind: string | undefined;
+  let defaults: Record<string, string> | undefined;
   let ok = true;
   const snapshot = { fields: ctx.fields.length, locked: ctx.locked.length };
   let j = 0;
@@ -1811,7 +2040,19 @@ function entriesAt(
           return true;
         }
         if (found === undefined || meaningful(rest).length > 0) {
+          // Not a clean list: kept as the upload had it, and its words counted as locked.
           inner.extra("bullets", ctx.source.slice(arg.innerStart, arg.innerEnd));
+          inner.kept.add("bullets");
+          const words = wordsOf(content);
+          if (words > 0)
+            ctx.locked.push({
+              at: `b${arg.innerStart}`,
+              node: id,
+              key: "bullets",
+              kind: "list",
+              reason: "unmapped",
+              words,
+            });
           return true;
         }
         bullets = bulletListOf(ctx, found.items, found, `b${call.start}.bullets`, role);
@@ -1824,6 +2065,7 @@ function entriesAt(
         inner.code("{{/bullets}}");
         bulletsBytes = ctx.source.slice(arg.innerStart, arg.innerEnd);
         inner.extra("bullets", bullets.ok ? "" : bulletsBytes);
+        if (!bullets.ok) inner.kept.add("bullets");
         return true;
       },
     });
@@ -1840,6 +2082,7 @@ function entriesAt(
         template.code("{{/bullets}}");
         bulletsBytes = ctx.source.slice(call.end, found.close.end);
         template.extra("bullets", bullets.ok ? "" : bulletsBytes);
+        if (!bullets.ok) template.kept.add("bullets");
         unitEnd = found.close.end;
         j = found.end - 1;
       } else {
@@ -1890,6 +2133,7 @@ function entriesAt(
     const values = template.values;
     const text = (slot: string) =>
       typeof values[slot] === "string" ? (values[slot] as string) : undefined;
+    const kept = keptOf(template.kept, ENTRY_KEPT);
     const entry: Entry = {
       id,
       title: text("title") ?? "",
@@ -1898,8 +2142,12 @@ function entriesAt(
       ...(values.dates === undefined ? {} : { dates: values.dates as Dates }),
       bullets: list !== undefined && list.ok ? list.bullets : [],
       ...(Object.keys(template.extras).length === 0 ? {} : { extras: { ...template.extras } }),
+      ...(kept === undefined ? {} : { kept }),
     };
     entries.push(entry);
+    // What an entry the user adds writes for the arguments each entry keeps: the first's, which
+    // gives the first call's bytes where the answer says kept.
+    defaults ??= { ...template.defaults };
   }
   if (!ok || entries.length === 0) {
     ctx.fields.length = snapshot.fields;
@@ -1927,6 +2175,7 @@ function entriesAt(
     span,
     end,
     words: wordsOf(nodes.slice(i, end)),
+    defaults: defaults ?? {},
   };
 }
 
@@ -2196,6 +2445,7 @@ function itemsAt(
     span,
     end,
     words,
+    ...(ok ? {} : { kept: ["items"] }),
   };
 }
 
@@ -2263,6 +2513,7 @@ function paragraphAt(
     span: { start: node.start, end: node.end },
     end: i + 1,
     words: wordsOf([node]),
+    ...(placed.set ? {} : { kept: ["text"] }),
   };
 }
 
@@ -2393,6 +2644,8 @@ function sectionAt(
     return undefined;
   }
   registry.add(proposal);
+  registry.addDefaults(`section:${role}`, headTemplate.defaults);
+  if (content?.kind === "entries") registry.addDefaults(`entry:${role}`, content.defaults);
   const extras: Record<string, string> = { ...headTemplate.extras };
   if (typeof headTemplate.values.before === "string") extras.before = headTemplate.values.before;
   const base = {
@@ -2410,6 +2663,14 @@ function sectionAt(
       ...(section.extras ?? {}),
       [key]: ctx.source.slice(content.span.start, content.span.end),
     };
+  }
+  // What the section keeps as the upload had it, its title or its content, is no field of it.
+  if (section.kind !== "locked") {
+    const kept = keptOf(
+      new Set([...headTemplate.kept, ...(content?.kept ?? [])]),
+      SECTION_KEPT[section.kind],
+    );
+    if (kept !== undefined) section.kept = kept as typeof section.kept;
   }
   const end = content === undefined ? i + 1 : content.end;
   return {
@@ -2551,15 +2812,17 @@ function bodyOf_(ctx: Context): BodyOut | Refusal {
     const latex = source.slice(first.start, last.end);
     const kept = asLocked(`${leadOf(first.start)}${latex}`);
     const words = wordsOf(run);
-    if (kept !== undefined) {
+    const word = kept !== undefined && endsInControlWord(kept);
+    const locked = kept === undefined ? undefined : word ? kept : `${kept}%`;
+    // `\rtlocked` takes the part as an argument, where every `%` is a comment (`LockedLatex`).
+    if (locked !== undefined && LockedLatex.safeParse(locked).success) {
       const id = ctx.ids.id("lock", `b${first.start}`);
-      const word = endsInControlWord(kept);
       sections.push({
         kind: "locked",
         id,
         title: "",
         role: "other",
-        latex: word ? kept : `${kept}%`,
+        latex: locked,
       });
       lastEnd = last.end;
       afterWord = word;
@@ -2757,6 +3020,33 @@ function sizeOption(preamble: string): { span: Span; size: number } | undefined 
   return { span: { start, end: start + (option[2] ?? "").length }, size };
 }
 
+/**
+ * The names the signatures step is asked of for the sizes a class declares (decision 0026): LaTeX
+ * keeps a class option's code as `\ds@<option>`, which the engine finds defined for a size the
+ * class, or a class it passes its options to, declares, and undefined for one it would ignore, as
+ * `article` ignores 10.5pt with a warning. From 8 to 14 points in half points; the font size
+ * control offers those from 9 to 12.
+ */
+export const SIZE_OPTIONS: readonly string[] = Array.from(
+  { length: 13 },
+  (_, i) => `ds@${8 + i / 2}pt`,
+);
+
+/**
+ * The sizes the font size control may offer, 9 to 12 points in half points, that the class
+ * declares, as the signatures step found `\ds@<size>pt` defined (`SIZE_OPTIONS`): none where the
+ * step was not asked of them, since a size the class does not declare sets its own default size.
+ */
+function declaredSizes(found: EngineSignatures): number[] {
+  const sizes: number[] = [];
+  for (let size = 9; size <= 12; size += 0.5) {
+    const name = `ds@${size}pt`;
+    const signature = Object.hasOwn(found.commands, name) ? found.commands[name] : undefined;
+    if (signature !== undefined && signature.kind !== "undefined") sizes.push(size);
+  }
+  return sizes;
+}
+
 /** The keys and values of a key-value list, as geometry's options give them. */
 function keyValues(list: string): Map<string, string> {
   const values = new Map<string, string>();
@@ -2873,9 +3163,14 @@ function controlsOf(
     )
       controls.margins = { default: tenths, apply: "\\geometry{margin={{value}}in}" };
   }
-  const size = sizeOption(preamble);
+  // The class's size option, where the class declares it, with every other size it declares: a
+  // class declaring none, or not the document's own, offers no control, since the page would not
+  // follow it.
+  const option = sizeOption(preamble);
+  const sizes = option === undefined ? [] : declaredSizes(ctx.found);
+  const size = option !== undefined && sizes.includes(option.size) ? option : undefined;
   if (size !== undefined && !dropped.has("fontSize"))
-    controls.fontSize = { default: size.size, apply: "", format: true };
+    controls.fontSize = { default: size.size, apply: "", format: true, sizes };
   for (const parameter of answer.preamble.parameters) {
     if (dropped.has(parameter.parameter as ControlName)) continue;
     const text = settingsText(preamble);
@@ -3083,6 +3378,119 @@ function byRole(registry: Registry, prefix: string, generic: string): ByRole<str
   return { default: first[1], ...variants };
 }
 
+/**
+ * Every entry's snippet with a list for the bullets a user adds (decision 0026). An entry of a role
+ * whose upload's entries set no bullets takes the list another role's entries of the same macro
+ * set theirs in, with that role's bullet and separator where it has none of its own; else the list
+ * the answer pairs, a bullets' opener and its closer, or an environment, that take no argument;
+ * else it sets none, and the package says its role's entries take no bullets. Each role's snippet
+ * is changed in place in the registry, and the result is whether each role's entries take bullets.
+ */
+function framedEntries(ctx: Context, registry: Registry): Map<SectionRole, boolean> {
+  const takes = new Map<SectionRole, boolean>();
+  const entries = [...registry.snippets].filter(([key]) => key.startsWith("entry:"));
+  const macro = (snippet: string) => /^\\([A-Za-z@]+)/.exec(snippet)?.[1];
+  for (const [key, snippet] of entries) {
+    const role = key.slice("entry:".length) as SectionRole;
+    if (bulletsOf(snippet) !== "") {
+      takes.set(role, true);
+      continue;
+    }
+    const donor = entries.find(
+      ([other, each]) => other !== key && macro(each) === macro(snippet) && bulletsOf(each) !== "",
+    );
+    let frame: string | undefined;
+    if (donor !== undefined) {
+      frame = bulletsOf(donor[1]);
+      const from = donor[0].slice("entry:".length);
+      for (const prefix of ["bullet", "sep:bullets"]) {
+        const there = registry.snippets.get(`${prefix}:${from}`);
+        if (there !== undefined && !registry.snippets.has(`${prefix}:${role}`))
+          registry.snippets.set(`${prefix}:${role}`, there);
+      }
+    } else frame = pairedList(ctx);
+    takes.set(role, frame !== undefined);
+    if (frame !== undefined) registry.snippets.set(key, withFrame(snippet, frame));
+  }
+  return takes;
+}
+
+/** An entry's snippet with `frame` in its bullets' block, which it adds before its bullets' extra. */
+function withFrame(snippet: string, frame: string): string {
+  const block = `{{#bullets}}${frame}{{/bullets}}`;
+  if (snippet.includes("{{#bullets}}{{/bullets}}"))
+    return snippet.replace("{{#bullets}}{{/bullets}}", () => block);
+  const extra = extrasSlot("bullets");
+  return snippet.includes(extra)
+    ? snippet.replace(extra, () => `${block}${extra}`)
+    : `${snippet}${block}`;
+}
+
+/**
+ * The bullets' list the answer pairs, as an entry's snippet sets it after the entry: the first
+ * bullets' opener with its closer, or environment, whose names are letters and which take no
+ * argument; or none.
+ */
+function pairedList(ctx: Context): string | undefined {
+  const takesNothing = (record: Readonly<Record<string, { spec?: string }>>, name: string) =>
+    /^[A-Za-z]+$/.test(name) && Object.hasOwn(record, name) && record[name]?.spec === "";
+  for (const [id, answer] of ctx.answers) {
+    if (answer.kind !== "bulletList" || answer.list?.does !== "opens") continue;
+    const [of, name = ""] = id.split("|");
+    if (of === "environment") {
+      if (takesNothing(ctx.found.environments, name))
+        return `\n\\begin{${name}}\n{{bullets}}\n\\end{${name}}`;
+      continue;
+    }
+    const closer = answer.list.closedBy ?? "";
+    if (takesNothing(ctx.found.commands, name) && takesNothing(ctx.found.commands, closer))
+      return `\n\\${name}\n{{bullets}}\n\\${closer}`;
+  }
+  return undefined;
+}
+
+/**
+ * Whether each role's entries take bullets, as the package says it (decision 0026): nothing where
+ * every role's do; else the default the first role's, which a role without a snippet of its own
+ * takes as it takes its snippet (`byRole`), and each role that differs.
+ */
+function entryBulletsOf(takes: ReadonlyMap<SectionRole, boolean>): ByRole<boolean> | undefined {
+  const all = [...takes];
+  const [first] = all;
+  if (first === undefined || all.every(([, each]) => each)) return undefined;
+  if (all.every(([, each]) => each === first[1])) return first[1];
+  const variants: Partial<Record<SectionRole, boolean>> = {};
+  for (const [role, each] of all) if (each !== first[1]) variants[role] = each;
+  return { default: first[1], ...variants };
+}
+
+/** Defaults by role, always as a default and a variant for each role whose own differ. */
+type RoleDefaults = { default: Record<string, string> } & Partial<
+  Record<SectionRole, Record<string, string>>
+>;
+
+/**
+ * The defaults the registry holds for a place, `entry` or `section`, by role (decision 0026): the
+ * first role's as the default, which a role with no snippet of its own takes as it takes its
+ * snippet, and each other role's whose differ, none among them, since a role's snippet is its own
+ * and a key another's gives no default for may stand in it; none where no role has any.
+ */
+function defaultsOf(registry: Registry, place: "entry" | "section"): RoleDefaults | undefined {
+  const found: [SectionRole, Record<string, string>][] = [];
+  for (const [key, defaults] of registry.defaults)
+    if (key.startsWith(`${place}:`))
+      found.push([key.slice(place.length + 1) as SectionRole, defaults]);
+  const [first] = found;
+  if (first === undefined || found.every(([, each]) => Object.keys(each).length === 0))
+    return undefined;
+  const same = (a: Record<string, string>, b: Record<string, string>) =>
+    JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
+  const variants: Partial<Record<SectionRole, Record<string, string>>> = {};
+  for (const [role, defaults] of found.slice(1))
+    if (!same(defaults, first[1])) variants[role] = defaults;
+  return { default: first[1], ...variants };
+}
+
 /** A section kind's snippet by role: each role's head, what stands before, its frame, and after. */
 function sectionSnippets(registry: Registry, kind: SectionKind): ByRole<string> {
   const heads = new Map<SectionRole, string>();
@@ -3211,6 +3619,12 @@ export async function assemble(
       "{{#href}}\\href{{{&href}}}{{{label}}}{{/href}}{{^href}}{{label}}{{/href}}",
   };
   for (const [kind, snippet] of header.links) if (kind !== "other") links[kind] = snippet;
+  // Every entry's snippet sets the bullets a user adds, or the package says it does not.
+  const entryBullets = entryBulletsOf(framedEntries(ctx, registry));
+  const entryDefaults = defaultsOf(registry, "entry");
+  const sectionDefaults = defaultsOf(registry, "section");
+  const resume: Resume = { version: 1, header: header.header, sections };
+  const required = requiredOf(ctx, resume);
   const fields: Omit<TemplatePackage, "id"> = {
     version: 1,
     name:
@@ -3218,7 +3632,9 @@ export async function assemble(
       documentClass(preambleText0) ??
       "Imported",
     engine: made.engine,
-    source: { url: nameOf(intake.main.path), license: "", attribution: "" },
+    // The template's, never the upload's own file name, which is the person's as often as not:
+    // two uploads of one template share a package whatever their main files are called.
+    source: { url: MAIN_FILE, license: "", attribution: "" },
     files: filesOf(ctx, rewrite),
     ...(rewrite === undefined || rewrite.fonts.length === 0 ? {} : { fonts: rewrite.fonts }),
     preamble: preambleSnippet,
@@ -3245,10 +3661,22 @@ export async function assemble(
         bullets: byRole(registry, "sep:bullets", "\n"),
         items: byRole(registry, "sep:items", "\n"),
       },
+      ...(entryDefaults === undefined && sectionDefaults === undefined
+        ? {}
+        : {
+            defaults: {
+              ...(entryDefaults === undefined ? {} : { entry: entryDefaults }),
+              ...(sectionDefaults === undefined ? {} : { section: sectionDefaults }),
+            },
+          }),
+      ...(entryBullets === undefined ? {} : { entryBullets }),
     },
+    ...(required === undefined ? {} : { required }),
   };
+  // Every extra, locked part and default is kept LaTeX, as the model and the package take it: one
+  // they would refuse, as a list past the cap, is a part this editor cannot keep (decision 0026).
+  if (!keptEverywhere(resume, fields)) return refusal("keep");
   const pkg = await packageOf(fields);
-  const resume: Resume = { version: 1, header: header.header, sections };
   const document: Document = { version: 1, template: pkg.id, resume, controls: {} };
   return {
     package: pkg,
@@ -3256,6 +3684,87 @@ export async function assemble(
     extras: ctx.locked,
     checks: checksOf(ctx, pkg, sections, redefinitions),
   };
+}
+
+/** The name an imported package gives its source: the template's main file, whatever the upload's is. */
+export const MAIN_FILE = "main.tex";
+
+/**
+ * Whether every extra of a resume, every locked section and every default of its package is kept
+ * LaTeX (`KeptLatex`), a locked section's as `\rtlocked`'s argument takes it (`LockedLatex`): what the
+ * assembly copied from the upload, a list kept whole, the growing `after`, an argument's bytes, is
+ * held to the cap and the rules the model holds a stored document to.
+ */
+function keptEverywhere(resume: Resume, pkg: Omit<TemplatePackage, "id">): boolean {
+  const kept = (extras: Readonly<Record<string, string>> | undefined) =>
+    Object.values(extras ?? {}).every(isKept);
+  if (!kept(resume.header.extras)) return false;
+  for (const section of resume.sections) {
+    if (!kept(section.extras)) return false;
+    if (section.kind === "locked" && !LockedLatex.safeParse(section.latex).success) return false;
+    if (section.kind === "entries" && !section.entries.every((entry) => kept(entry.extras)))
+      return false;
+  }
+  const defaults = pkg.snippets.defaults;
+  for (const roles of [defaults?.entry, defaults?.section])
+    for (const each of Object.values(roles ?? {})) if (!kept(each)) return false;
+  return true;
+}
+
+/** The places of a resume's nodes, by id, as the package's required slots name them. */
+function placesOf(resume: Resume): Map<string, RequiredPlace> {
+  const places = new Map<string, RequiredPlace>([["header", "header"]]);
+  for (const link of resume.header.links) places.set(link.id, "link");
+  for (const section of resume.sections) {
+    if (section.kind === "locked") continue;
+    places.set(section.id, "section");
+    if (section.kind === "entries")
+      for (const entry of section.entries) {
+        places.set(entry.id, "entry");
+        for (const bullet of entry.bullets) places.set(bullet.id, "bullet");
+      }
+    else if (section.kind === "list") for (const item of section.items) places.set(item.id, "item");
+    else if (section.kind === "labelled")
+      for (const item of section.items) places.set(item.id, "labelledItem");
+  }
+  return places;
+}
+
+/** The slots each place of a package may require. */
+const REQUIRABLE: Readonly<Record<RequiredPlace, readonly string[]>> = {
+  header: ["first", "last", "headline", "email", "phone", "location"],
+  link: ["label"],
+  section: ["title", "text"],
+  entry: ["title", "subtitle", "place", "dates"],
+  bullet: ["text"],
+  item: ["text"],
+  labelledItem: ["label", "text"],
+};
+
+/**
+ * The slots the package requires (decision 0026): of the fields the checks found stop the compile
+ * when empty and nothing else (`Decisions.required`, by macro and argument), each by the snippet
+ * that sets it and its slot there, which the editor refuses to empty; none where none is required.
+ */
+function requiredOf(ctx: Context, resume: Resume): TemplatePackage["required"] | undefined {
+  const wanted = new Set(ctx.decisions.required);
+  if (wanted.size === 0) return undefined;
+  const places = placesOf(resume);
+  const found = new Map<RequiredPlace, Set<string>>();
+  for (const field of ctx.fields) {
+    if (field.mode === "locked" || !wanted.has(field.slot)) continue;
+    const place = places.get(field.node);
+    const slot = field.field.slice(field.field.lastIndexOf(".") + 1);
+    if (place === undefined || !REQUIRABLE[place].includes(slot)) continue;
+    found.set(place, (found.get(place) ?? new Set()).add(slot));
+  }
+  if (found.size === 0) return undefined;
+  const required: Record<string, string[]> = {};
+  for (const [place, slots] of Object.entries(REQUIRABLE) as [RequiredPlace, string[]][]) {
+    const named = slots.filter((slot) => found.get(place)?.has(slot));
+    if (named.length > 0) required[place] = named;
+  }
+  return required as TemplatePackage["required"];
 }
 
 /** The slots of a trusted macro that the probe has verdicts for. */

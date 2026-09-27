@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Extras, KeptLatex, MAX_KEPT_LATEX, Resume } from "./index";
+import { Extras, KeptLatex, LockedLatex, MAX_KEPT_LATEX, Resume } from "./index";
 
 // Everything in these resumes is invented.
 
@@ -284,16 +284,16 @@ describe("Resume, with what an import keeps", () => {
       expect(KeptLatex.safeParse(latex).success, latex).toBe(true);
   });
 
-  it("refuses kept LaTeX whose braces do not balance as TeX reads an argument", () => {
-    const refused = "kept LaTeX's braces do not balance as TeX reads an argument";
+  it("refuses kept LaTeX whose braces do not balance as TeX reads them", () => {
+    const refused = "kept LaTeX's braces do not balance as TeX reads them";
     for (const latex of [
       "\\textbf{Rowing",
       "Rowing}",
       "}{",
       "\\\\{",
-      // A comment takes the rest of its line, braces and all, as it does in an argument, where
-      // hyperref's own reading of a % in an address never runs.
-      "\\url{https://example.com/50%off}",
+      // A comment takes the rest of its line, braces and all, outside an address.
+      "\\href{https://example.com/}{50%off}",
+      "\\url|https://example.com/",
     ])
       expect(messages(KeptLatex.safeParse(latex)), latex).toEqual([refused]);
     for (const latex of [
@@ -305,6 +305,65 @@ describe("Resume, with what an import keeps", () => {
       "\\begin{tabular}{ll}\nA & B\\\\\n\\end{tabular}",
     ])
       expect(KeptLatex.safeParse(latex).success, latex).toBe(true);
+  });
+
+  it("reads a % in an address as the address's own, as \\href and url.sty read it outside an argument", () => {
+    // An extra stands where the upload had it, as an address between two header calls did, where
+    // hyperref reads the % as a character.
+    for (const latex of [
+      "\\href{https://quill.example/a%20b}{my site}",
+      "\\href [pdfnewwindow] {https://quill.example/a%20b}{my site}",
+      "\\url{https://example.com/50%off}",
+      "\\url|https://example.com/50%off{|",
+      "\\path{C:/Invented%20Folder}",
+      "\\nolinkurl{quill.example/a%7Bb}",
+      // Braces inside an address are counted as the command counts them.
+      "\\url{https://example.com/{a}%b}",
+    ])
+      expect(KeptLatex.safeParse(latex).success, latex).toBe(true);
+    // A locked part is written inside `\rtlocked`'s argument, where every % is a comment.
+    const locked = "a locked part's braces do not balance as TeX reads an argument";
+    expect(messages(LockedLatex.safeParse("\\url{https://example.com/50%off}"))).toEqual([locked]);
+    expect(messages(LockedLatex.safeParse("\\url{https://example.com/50\\%off}"))).toEqual([]);
+    expect(accepts(withLocked({ latex: "\\href{https://quill.example/a%20b}{x}" }))).toBe(false);
+    expect(accepts(withLocked({ latex: "\\href{https://quill.example/a\\%20b}{x}" }))).toBe(true);
+  });
+
+  it("holds each node's kept slots to the slots it has, and none on a locked section", () => {
+    const kept = {
+      ...everything,
+      header: { ...everything.header, kept: ["first", "last", "links"] },
+      sections: everything.sections.map((section) => {
+        switch (section.kind) {
+          case "entries":
+            return {
+              ...section,
+              kept: ["title"],
+              entries: (section.entries ?? []).map((entry) => ({
+                ...entry,
+                kept: ["dates", "bullets"],
+              })),
+            };
+          case "paragraph":
+            return { ...section, kept: ["text"] };
+          default:
+            return { ...section, kept: ["title", "items"] };
+        }
+      }),
+    };
+    expect(Resume.parse(kept)).toEqual(kept);
+    expect(accepts(withEntry({ kept: ["label"] }))).toBe(false);
+    expect(accepts(withEntry({ kept: "dates" }))).toBe(false);
+    const header = (slots: unknown) => ({
+      ...minimal,
+      sections: [],
+      header: { ...minimal.header, kept: slots },
+    });
+    expect(accepts(header(["email"]))).toBe(true);
+    expect(accepts(header(["contacts"]))).toBe(false);
+    const paragraph = { kind: "paragraph", id: "p", title: "", role: "other", text: [] };
+    expect(accepts({ ...minimal, sections: [{ ...paragraph, kept: ["items"] }] })).toBe(false);
+    expect(accepts(withLocked({ kept: ["title"] }))).toBe(false);
   });
 
   it("takes extras as kept LaTeX under a key a snippet can name, and nothing else", () => {

@@ -20,7 +20,8 @@ import { z } from "zod";
  * the user's own upload, which a snippet writes back as it is through an extras slot. A `locked`
  * section holds a part of an imported resume the model has no place for, as LaTeX the generator
  * writes where the section sits. Neither is typed by the user, and neither is a field (decision
- * 0025).
+ * 0025). `kept` on the same nodes names the slots whose value an import keeps in the extras as the
+ * upload had it, which are no fields either (decision 0026).
  */
 
 /**
@@ -96,30 +97,79 @@ const EDITOR_MACRO = /\\rt(?:field|locked)(?![A-Za-z])|\\rt@/;
 const EDITOR_MARKER = /rt:[bepl]:/i;
 
 /**
- * Whether LaTeX's braces balance as TeX reads a macro's argument: each `{` closed by a later `}`,
- * where a brace after a backslash is a control symbol, `\{` or `\}`, and a comment, from a `%` no
- * backslash escapes to the end of its line, is not read. One pass, so it costs the text's length.
+ * The commands whose first argument is an address, which hyperref's `\href` and url.sty's `\url`,
+ * `\path` and `\nolinkurl` read with `%` as a character of it, where it stands outside another
+ * command's argument: `\href{https://quill.example/a%20b}{...}` sets no comment.
  */
-function balanced(latex: string): boolean {
+const ADDRESS_COMMAND = /\\(href|url|path|nolinkurl)(?![A-Za-z@])/y;
+
+/**
+ * Whether LaTeX's braces balance as TeX reads it: each `{` closed by a later `}`, where a brace
+ * after a backslash is a control symbol, `\{` or `\}`, and a comment, from a `%` no backslash
+ * escapes to the end of its line, is not read. With `addresses`, as TeX reads it where it stands
+ * outside any argument: a `%` in the address of `\href`, `\url`, `\path` or `\nolinkurl`, in its
+ * braces or between the pair of another character `\url|...|` takes, is a character, as those
+ * commands read it. Without, as TeX reads it inside a macro's argument, which reads the address
+ * before the command can, so that every such `%` begins a comment. One pass, so it costs the
+ * text's length.
+ */
+function balanced(latex: string, addresses: boolean): boolean {
   const lineEnd = (char: string | undefined) => char === "\n" || char === "\r";
   let depth = 0;
+  // The depth an address's braces close back to, while one is open; and the character that closes
+  // one `\url|...|` opened.
+  let address = -1;
+  let delimiter: string | undefined;
   for (let at = 0; at < latex.length; at++) {
     const char = latex[at];
-    if (char === "\\") at++;
-    else if (char === "%") while (at + 1 < latex.length && !lineEnd(latex[at + 1])) at++;
-    else if (char === "{") depth++;
-    else if (char === "}" && --depth < 0) return false;
+    if (delimiter !== undefined) {
+      if (char === delimiter) delimiter = undefined;
+      continue;
+    }
+    if (char === "\\") {
+      ADDRESS_COMMAND.lastIndex = at;
+      const command = addresses && address < 0 ? ADDRESS_COMMAND.exec(latex) : null;
+      if (command === null) {
+        at++;
+        continue;
+      }
+      let next = ADDRESS_COMMAND.lastIndex;
+      while (next < latex.length && /\s/.test(latex[next] ?? "")) next++;
+      // `\href` may take its options first, in brackets.
+      if (command[1] === "href" && latex[next] === "[") {
+        const close = latex.indexOf("]", next);
+        if (close >= 0) next = close + 1;
+        while (next < latex.length && /\s/.test(latex[next] ?? "")) next++;
+      }
+      const opens = latex[next];
+      if (opens === "{") {
+        address = depth;
+        depth++;
+        at = next;
+      } else if (opens !== undefined && command[1] !== "href" && !/[\s\\%}A-Za-z]/.test(opens)) {
+        delimiter = opens;
+        at = next;
+      } else at = next - 1;
+    } else if (char === "%" && address < 0) {
+      while (at + 1 < latex.length && !lineEnd(latex[at + 1])) at++;
+    } else if (char === "{") depth++;
+    else if (char === "}") {
+      if (--depth < 0) return false;
+      if (depth === address) address = -1;
+    }
   }
-  return depth === 0;
+  return depth === 0 && delimiter === undefined;
 }
 
 /**
  * LaTeX kept byte for byte from the user's own upload, which the generator writes as it is, never
  * escaped: a locked section's, or an extra's. It never holds the editor's own macros or marker
  * texts, which would give the page a field or a locked part the model does not have, and its braces
- * balance as TeX reads an argument, since the generator writes it inside one, as `\rtlocked`'s or a
- * template macro's. What else TeX cannot take in an argument, such as `\verb`, stops the compile,
- * which the import's checks see (decision 0025).
+ * balance as TeX reads it where the upload had it (`balanced`): an extra stands where its argument
+ * or its part of the body stood, inside an argument or outside any, as the upload's own did, and a
+ * `%` in an address read outside any argument is a character, as `\href` reads it. What else TeX
+ * cannot take where the generator writes it, such as `\verb` in an argument, stops the compile,
+ * which the import's checks see (decisions 0025 and 0026).
  */
 export const KeptLatex = z
   .string()
@@ -128,8 +178,20 @@ export const KeptLatex = z
     (latex) => !EDITOR_MACRO.test(latex) && !EDITOR_MARKER.test(latex),
     "kept LaTeX holds the editor's own macros or markers, which only the generator writes",
   )
-  .refine(balanced, "kept LaTeX's braces do not balance as TeX reads an argument");
+  .refine((latex) => balanced(latex, true), "kept LaTeX's braces do not balance as TeX reads them");
 export type KeptLatex = z.infer<typeof KeptLatex>;
+
+/**
+ * A locked section's LaTeX: kept LaTeX whose braces balance as TeX reads a macro's argument, too,
+ * every `%` no backslash escapes a comment, since the generator always writes it inside one,
+ * `\rtlocked`'s, where a `%` in an address would end the argument inside itself or run it on past
+ * its end (decision 0025).
+ */
+export const LockedLatex = KeptLatex.refine(
+  (latex) => balanced(latex, false),
+  "a locked part's braces do not balance as TeX reads an argument",
+);
+export type LockedLatex = z.infer<typeof LockedLatex>;
 
 /**
  * What an imported template has and the model lacks, on the header, a section or an entry: LaTeX
@@ -137,6 +199,38 @@ export type KeptLatex = z.infer<typeof KeptLatex>;
  */
 export const Extras = z.record(ExtraKey, KeptLatex);
 export type Extras = z.infer<typeof Extras>;
+
+/**
+ * The slots of a node an import keeps as the upload had it (decision 0026): an instance of a field
+ * the probe's verdicts or the import's checks lock, whose bytes are in the node's extras, which its
+ * snippet writes where the field would be; or a list its snippets cannot set, kept whole there. A
+ * kept slot is no field: the generator sets nothing of the model's value for it, markers included,
+ * and the editor opens nothing on it. Only the nodes that keep extras have them, the header, a
+ * section and an entry: a bullet, an item or a link is kept with its list, whole. A node the user
+ * adds keeps none.
+ */
+const keptSlots = <const T extends readonly [string, ...string[]]>(slots: T) =>
+  z.array(z.enum(slots)).optional();
+
+/** The slots an entry may keep: its fields, and its bullets' list. */
+export const ENTRY_KEPT = ["title", "subtitle", "place", "dates", "bullets"] as const;
+/** The slots the header may keep: its fields, and its links' list. */
+export const HEADER_KEPT = [
+  "first",
+  "last",
+  "headline",
+  "email",
+  "phone",
+  "location",
+  "links",
+] as const;
+/** The slots a section may keep, by its kind: its title, and what it holds. */
+export const SECTION_KEPT = {
+  entries: ["title", "entries"],
+  list: ["title", "items"],
+  labelled: ["title", "items"],
+  paragraph: ["title", "text"],
+} as const;
 
 export const Entry = z.strictObject({
   id: Id,
@@ -146,6 +240,7 @@ export const Entry = z.strictObject({
   dates: Dates.optional(),
   bullets: z.array(Bullet),
   extras: Extras.optional(),
+  kept: keptSlots(ENTRY_KEPT),
 });
 export type Entry = z.infer<typeof Entry>;
 
@@ -187,16 +282,36 @@ export const LockedSection = z.strictObject({
   id: Id,
   title: z.literal(""),
   role: z.literal("other"),
-  latex: KeptLatex,
+  latex: LockedLatex,
   extras: Extras.optional(),
 });
 export type LockedSection = z.infer<typeof LockedSection>;
 
 export const Section = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("entries"), ...sectionBase, entries: z.array(Entry) }),
-  z.strictObject({ kind: z.literal("list"), ...sectionBase, items: z.array(Item) }),
-  z.strictObject({ kind: z.literal("labelled"), ...sectionBase, items: z.array(LabelledItem) }),
-  z.strictObject({ kind: z.literal("paragraph"), ...sectionBase, text: RichText }),
+  z.strictObject({
+    kind: z.literal("entries"),
+    ...sectionBase,
+    entries: z.array(Entry),
+    kept: keptSlots(SECTION_KEPT.entries),
+  }),
+  z.strictObject({
+    kind: z.literal("list"),
+    ...sectionBase,
+    items: z.array(Item),
+    kept: keptSlots(SECTION_KEPT.list),
+  }),
+  z.strictObject({
+    kind: z.literal("labelled"),
+    ...sectionBase,
+    items: z.array(LabelledItem),
+    kept: keptSlots(SECTION_KEPT.labelled),
+  }),
+  z.strictObject({
+    kind: z.literal("paragraph"),
+    ...sectionBase,
+    text: RichText,
+    kept: keptSlots(SECTION_KEPT.paragraph),
+  }),
   LockedSection,
 ]);
 export type Section = z.infer<typeof Section>;
@@ -224,6 +339,7 @@ export const Header = z.strictObject({
   location: z.string().optional(),
   links: z.array(Link),
   extras: Extras.optional(),
+  kept: keptSlots(HEADER_KEPT),
 });
 export type Header = z.infer<typeof Header>;
 

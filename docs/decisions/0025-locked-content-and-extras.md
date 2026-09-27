@@ -45,8 +45,17 @@ The code is `packages/resume-model/src/index.ts` and, under `apps/editor/src/`,
   has written one since, no curated package, no command and no import, so narrowing them refuses no
   document an editor has saved, and the model stays version 1.
 - An import puts a locked argument's bytes in its node's extras, under a key of its choosing, and
-  the snippet it assembles writes them back where the argument was. Nothing else in the model
-  changes for them.
+  the snippet it assembles writes them back where the argument was.
+- **A kept slot is no field** (the item's review round). The header, a section and an entry gain,
+  additively, `kept`: the names of the slots whose value the node keeps in its extras as the upload
+  had it, of those its kind has, the header's fields and `links`, an entry's fields and `bullets`,
+  and a section's `title` and what its kind holds, `entries`, `items` or `text` (`HEADER_KEPT`,
+  `ENTRY_KEPT`, `SECTION_KEPT`). An import names a slot kept for every instance the checks or the
+  probe lock, and for a list it keeps whole. The editor opens nothing on a kept slot (`fieldsOf`),
+  and the generator sets nothing of the model's value for it, markers included, so that a date typed
+  into a locked instance anyway sets the kept date alone, where it set both, one after the other. A
+  node the user adds keeps none. A bullet, an item and a link keep no extras, so they have no
+  `kept`: an import keeps one with its whole list, in its entry's, its section's or the header's.
 
 ### Kept LaTeX, and what the schema refuses
 
@@ -59,11 +68,18 @@ the generator writes as they are. The schema refuses, so that nothing ever write
   reads them, which would give the page a field or a lock the model does not have. The check reads
   the text as it stands: LaTeX that builds a marker's text another way, through `\csname` or `^^`,
   fools only its own page, so the check guards against accidents and is no boundary;
-- braces that do not balance as TeX reads a macro's argument: each `{` closed by a later `}`, where
-  a brace after a backslash is a control symbol and a comment, from a `%` no backslash escapes to
-  its line's end, is not read. The generator writes kept LaTeX inside an argument, `\rtlocked`'s or
-  a template macro's, where an unbalanced one would end the argument inside itself or run on past
-  it to the end of the document.
+- braces that do not balance as TeX reads them: each `{` closed by a later `}`, where a brace after
+  a backslash is a control symbol and a comment, from a `%` no backslash escapes to its line's end,
+  is not read; but a `%` in the address of `\href`, `\url`, `\path` or `\nolinkurl`, in its braces or
+  between the pair of another character `\url|...|` takes, is a character of it, as those commands
+  read it where they stand outside a macro's argument. An extra stands where its argument or its
+  part of the body stood in the upload, inside an argument or outside any, so it balances as TeX
+  read it there: `\href{https://quill.example/a%20b}{...}` between two header calls, which the
+  model refused while hyperref set it, is kept (the item's review round). A locked section's LaTeX
+  is always written inside an argument, `\rtlocked`'s, so it balances, too, with every such `%` a
+  comment (`LockedLatex`), where one would end the argument inside itself or run on past it to the
+  end of the document; the assembly escapes the address's `%` there (decision 0026), or keeps the
+  part outside any argument.
 
 ### Extras slots
 
@@ -101,6 +117,18 @@ the generator writes as they are. The schema refuses, so that nothing ever write
   comment on its last line ends before the brace. LaTeX that ends in a line's end of its own gets a
   blank line there, a `\par`, which does nothing between sections; the assembly gives it without.
 - **Extras** are charged their length against `MAX_BODY`, as a slot's source is (decision 0007).
+- **A kept slot** is set through its extra alone: the generator gives the node's value for it as
+  absent, a text or a date none, a rich text no runs, a list no parts, so that the snippet's slot
+  sets nothing, markers included, `{{#slot}}` is false and `{{^slot}}` true, and the extras slot
+  beside it writes what the upload had there. A header that keeps `links` sets none of its links,
+  in `{{links}}` or `{{contacts}}`.
+- **A default for a new unit.** Where an entry or a section has no extra under an extras slot's
+  key, as a unit the user adds has none, the slot writes the package's default for the key, by the
+  node's role (`snippets.defaults`, decision 0026), and nothing where the package has none: an
+  argument each unit of an import keeps its own of, a length or an icon, and a field's slot locked
+  in every instance, which the entry's snippet sets through its extra alone, take what a blank unit
+  needs there. An extra that is there, empty or not, writes itself, never the default; a key that
+  names a property every object has, as `constructor`, finds no default.
 - **A header set before `\begin{document}`.** The document snippet may hold text before
   `\begin{document}`, and `{{header}}` may stand there. The body is the controls, then the document
   snippet (decision 0007), so a header set there comes after the format and the controls and before
@@ -151,7 +179,8 @@ the generator writes as they are. The schema refuses, so that nothing ever write
 - What TeX cannot take in a macro's argument cannot be locked this way, as the engine showed: a `#`
   in `\href`'s address, which hyperref reads with category codes of its own only outside an
   argument ("Illegal parameter number"); a `%` in `\url`'s, which becomes a comment, and which the
-  schema refuses since the braces then do not balance; `\verb`; and a category code the part changes
+  schema refuses in a locked section since the braces then do not balance there (`LockedLatex`);
+  `\verb`; and a category code the part changes
   for itself, as `\makeatletter` before an `\@` command. The compile stops, which item 7's checks
   report; item 15 decides how such a part is kept.
 
@@ -183,4 +212,10 @@ the twenty. No curated package changes, so their round trips and the harness pas
   extras too (decision 0006), so that an import can keep a header argument the probe locks, as
   Awesome-CV's positions in small capitals.
 - An editor older than this record refuses a document that holds a locked section or extras, as it
-  refuses any newer document (decision 0010), which the strict schema intends.
+  refuses any newer document (decision 0010), which the strict schema intends; and one older than
+  its review round a document that keeps a slot (`kept`), or a package with defaults, required
+  slots, sizes or entries without bullets (decision 0026).
+- `fieldsOf` leaves a kept slot out, so that the page opens nothing on it and no text command
+  reaches it, and the side panel adds no bullet to an entry that keeps its bullets, no item to a
+  section that keeps its items and no link to a header that keeps its links, which the generator
+  would not set.

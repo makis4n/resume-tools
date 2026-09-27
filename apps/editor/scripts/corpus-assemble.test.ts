@@ -222,6 +222,16 @@ describe("the oracle's places", () => {
     });
   });
 
+  test("file a field whose node the resume does not hold under its own kind, never an entry's", () => {
+    // A link the resume keeps whole in its header's extras, as a check locks a run of them.
+    const found = fieldsFound(resume, [
+      { field: "lnk-2.label", mode: "typeset" as const },
+      { field: "itm-9.text", mode: "typeset" as const },
+      { field: "odd.text", mode: "typeset" as const },
+    ]);
+    expect(Object.keys(found).sort()).toEqual(["item.text", "link.label", "odd.text"]);
+  });
+
   test("set against the places a port's typeset slots mark", () => {
     const port = portPlaces({
       snippets: {

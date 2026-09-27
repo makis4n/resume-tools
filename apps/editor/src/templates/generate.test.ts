@@ -1016,6 +1016,83 @@ describe("generateBody, with what an import keeps", () => {
     expect(escaped.latex).toContain(" [50\\% off\n% a line of its own\nsmall]\\par");
   });
 
+  it("sets a slot a node keeps through its extra alone, whatever the model holds for it", () => {
+    // An import keeps what its snippet cannot set editably in the node's extras, under the slot's
+    // key beside the slot, and names the slot kept (decision 0026).
+    const beside = packageWith((pkg) => {
+      pkg.snippets.header = "{\\Large {{first}}{{&x.first}} {{last}}}\\\\\n{{links}}{{&x.links}}";
+      pkg.snippets.section.entries = "\\section*{{{title}}{{&x.title}}}\n{{entries}}";
+      pkg.snippets.entry = [
+        "\\textbf{{{title}}} \\hfill {{#dates}}[{{dates}}]{{/dates}}{{&x.dates}}\\par",
+        "{{#bullets}}",
+        "\\begin{itemize}",
+        "{{bullets}}",
+        "\\end{itemize}",
+        "{{/bullets}}{{&x.bullets}}",
+      ].join("\n");
+    });
+    const typed = structuredClone(resume);
+    typed.header.kept = ["first", "links"];
+    typed.header.extras = { first: "Ilse K.", links: "\\href{https://kept.example}{kept}" };
+    const [, work] = typed.sections;
+    if (work?.kind !== "entries") throw new Error("the resume's second section is its experience");
+    work.kept = ["title"];
+    work.extras = { title: "Work \\& more" };
+    const [fennel] = work.entries;
+    if (fennel === undefined) throw new Error("the experience has an entry");
+    // A date the upload spelled as no format does, which the user then typed a date into anyway.
+    fennel.kept = ["dates", "bullets"];
+    fennel.extras = { dates: "Summer 2021", bullets: "\\begin{itemize}\\item Kept\\end{itemize}" };
+    const { latex, texts } = generateBody(beside, Resume.parse(typed), {});
+    // The kept date once, with no marker and no date of the model's beside it.
+    expect(latex).toContain("\\textbf{\\rtfield{fennel.title}{Engineer}} \\hfill Summer 2021\\par");
+    expect(latex.match(/Summer 2021/g)).toHaveLength(1);
+    expect(latex).not.toContain("Mar 2021");
+    // The kept list, and none of the model's bullets.
+    expect(latex).toContain("\\begin{itemize}\\item Kept\\end{itemize}");
+    expect(latex).not.toContain("fennel-1");
+    expect(latex).toContain("{\\Large Ilse K. \\rtfield{header.last}{Marrow}}\\\\");
+    expect(latex).not.toContain("code.example");
+    expect(latex).toContain("\\section*{Work \\& more}");
+    for (const field of [
+      "header.first",
+      "code.label",
+      "work.title",
+      "fennel.dates",
+      "fennel-1.text",
+    ])
+      expect(texts.has(field), field).toBe(false);
+    expect(texts.get("larch.dates")).toBe("Jun 2019 \u2013 Sep 2019");
+  });
+
+  it("writes an entry's or a section's default where it has no extra under the key, by role", () => {
+    const defaulted = packageWith((pkg) => {
+      pkg.snippets.section.entries = "\\section*{{{title}}}{{&x.icon}}\n{{entries}}";
+      pkg.snippets.entry = "\\vspace{{&x.gap}}\\textbf{{{title}}}{{&x.constructor}}\\par";
+      (pkg.snippets as { defaults?: object }).defaults = {
+        entry: { default: { gap: "{2pt}" }, projects: { gap: "{4pt}" } },
+        section: { default: { icon: "\\,*" } },
+      };
+    });
+    const extended = structuredClone(resume);
+    const [, work, projects] = extended.sections;
+    if (work?.kind !== "entries" || projects?.kind !== "entries") throw new Error("entries");
+    const [fennel, larch] = work.entries;
+    if (fennel === undefined || larch === undefined) throw new Error("two entries");
+    // Its own, an empty one that is there all the same, and none.
+    fennel.extras = { gap: "{6pt}" };
+    larch.extras = { gap: "" };
+    projects.extras = { icon: "" };
+    const { latex } = generateBody(defaulted, Resume.parse(extended), {});
+    expect(latex).toContain("\\vspace{6pt}\\textbf{\\rtfield{fennel.title}{Engineer}}\\par");
+    expect(latex).toContain("\\vspace\\textbf{\\rtfield{larch.title}{Intern}}\\par");
+    expect(latex).toContain("\\vspace{4pt}\\textbf{\\rtfield{galley.title}{Galley}}\\par");
+    expect(latex).toContain("\\section*{\\rtfield{work.title}{Experience}}\\,*\n");
+    expect(latex).toContain("\\section*{\\rtfield{projects.title}{Projects}}\n");
+    // A key no default has, even one every object inherits, writes nothing.
+    expect(latex).not.toContain("function");
+  });
+
   it("charges an extra its length, so repeating a long one stops at MAX_BODY", () => {
     const repeated = packageWith((pkg) => {
       pkg.snippets.entry = "{{&x.icon}}".repeat(20);

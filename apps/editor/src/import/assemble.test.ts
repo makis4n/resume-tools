@@ -1,13 +1,24 @@
-import type { Section } from "@resume-tools/resume-model";
-import { describe, expect, test } from "vitest";
-import { Document } from "../editor/document";
-import { parsePackage } from "../templates/package";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Entry, Resume, Section } from "@resume-tools/resume-model";
+import { strToU8, zipSync } from "fflate";
+import { beforeAll, describe, expect, test } from "vitest";
+import { apply, Document } from "../editor/document";
+import type { EngineManifest } from "../engine/manifest";
+import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
+import type { EngineSession } from "../engine/session";
+import { FontLibrary } from "../page/fonts";
+import { TexLiveIndex } from "../page/texlive";
+import { generateBody, generateFormat } from "../templates/generate";
+import { forRole, parsePackage, type TemplatePackage } from "../templates/package";
 import { parseSnippet } from "../templates/snippet";
 import {
   ANSWERS,
   type AnswerRow,
+  ARTICLE_SIZES,
   answerOf,
   BODY,
+  CLASS,
   COMMANDS,
   ENVIRONMENTS,
   type Invented,
@@ -15,8 +26,10 @@ import {
   JAKE_LIKE,
   MEANINGS,
   PREAMBLE,
+  probeOf,
   REFERENCE,
   signaturesOf,
+  treeOf,
 } from "../test/invented-import";
 import { bound, fastestAsync } from "../test/timing";
 import {
@@ -27,12 +40,17 @@ import {
   hyperrefLines,
   kindOfAddress,
   LINKS,
+  MAIN_FILE,
+  SIZE_OPTIONS,
   takenOut,
 } from "./assemble";
-import type { Intake } from "./intake";
-import type { Verdict } from "./probe";
-import type { Reference } from "./reference";
+import { readTree } from "./fonts";
+import { type Intake, intake } from "./intake";
+import { bodyOf, bodyOfText, buildTree, readBody } from "./parse";
+import { probe, probeUses, type Verdict } from "./probe";
+import { type Reference, reference } from "./reference";
 import { isRefusal, type Refusal } from "./refusal";
+import { signatures } from "./signatures";
 
 // Every document, class, answer and verdict here is invented for these tests
 // (`../test/invented-import.ts`); nothing is taken from a real resume.
@@ -69,7 +87,7 @@ function assembled(
   return assembleInvented({
     ...JAKE_LIKE,
     source: `${options.preamble ?? PREAMBLE}${options.body ?? BODY}`,
-    commands: { ...COMMANDS, ...(options.commands ?? {}) },
+    commands: { ...JAKE_LIKE.commands, ...(options.commands ?? {}) },
     answers: options.answers ?? ANSWERS,
     ...(options.verdicts === undefined ? {} : { verdicts: options.verdicts }),
     ...(options.decisions === undefined ? {} : { decisions: options.decisions }),
@@ -107,7 +125,7 @@ describe("the package", () => {
     );
     expect(other.package.id).toBe(first.package.id);
     expect(first.package.name).toBe("inventedcv");
-    expect(first.package.source).toEqual({ url: "cv.tex", license: "", attribution: "" });
+    expect(first.package.source).toEqual({ url: "main.tex", license: "", attribution: "" });
     expect(Object.keys(first.package.files)).toContain("inventedcv.cls");
   });
 
@@ -143,7 +161,12 @@ describe("the package", () => {
     expect(controls.pageSize?.apply.letter).toBe("");
     expect(controls.pageSize?.apply.a4).toContain("\\geometry{a4paper}");
     expect(controls.margins).toEqual({ default: 0.5, apply: "\\geometry{margin={{value}}in}" });
-    expect(controls.fontSize).toEqual({ default: 11, apply: "", format: true });
+    expect(controls.fontSize).toEqual({
+      default: 11,
+      apply: "",
+      format: true,
+      sizes: [10, 11, 12],
+    });
     expect(controls.dateFormat?.default).toBe("MMM yyyy");
   });
 
@@ -726,4 +749,635 @@ describe("the assembly's work", () => {
     // Ten times the entries costs about ten times as much.
     expect(whole).toBeLessThan(bound(20, tenth));
   }, 60_000);
+});
+
+/** The answers with one macro's answer changed. */
+const answering = (
+  answers: readonly AnswerRow[],
+  name: string,
+  change: (answer: AnswerRow[2]) => AnswerRow[2],
+): AnswerRow[] =>
+  answers.map(
+    ([of, each, answer]): AnswerRow => [of, each, each === name ? change(answer) : answer],
+  );
+
+/** A section's entries, or a failure where it holds none. */
+function entriesOf(result: Assembled, at: number): Entry[] {
+  const section = sectionOf(result, at);
+  if (section.kind !== "entries") throw new Error(`section ${at} holds no entries`);
+  return section.entries;
+}
+
+/** The snippet a package gives a role's entries. */
+const entrySnippet = (pkg: TemplatePackage, role: Section["role"]) =>
+  forRole(pkg.snippets.entry, role);
+
+/** A body of one section of Jake-like entries, invented, with the calls given. */
+const entriesBody = (calls: string) =>
+  `\\begin{document}\n\\cvheader\n\n\\section{Invented experience}\n\\cvlistStart\n${calls}\\cvlistEnd\n\\end{document}\n`;
+
+describe("a locked instance is kept, not editable (decision 0026)", () => {
+  test("names the slot kept, so that a date typed into it anyway sets the kept one alone", async () => {
+    const result = ok((await assembled()).result);
+    const third = entriesOf(result, 0)[2];
+    if (third === undefined) throw new Error("three entries");
+    expect(third.kept).toEqual(["dates"]);
+    expect(third.extras?.dates).toBe("Summer 2017");
+    // Only the locked entry keeps the slot; the others are editable as they were.
+    expect(entriesOf(result, 0).map((entry) => entry.kept)).toEqual([
+      undefined,
+      undefined,
+      ["dates"],
+    ]);
+    const typed: Resume = structuredClone(result.document.resume);
+    const work = typed.sections[0];
+    if (work?.kind !== "entries" || work.entries[2] === undefined) throw new Error("entries");
+    work.entries[2].dates = { start: "2017-06" };
+    const { latex, texts } = generateBody(result.package, typed, {});
+    expect(latex.match(/Summer 2017/g)).toHaveLength(1);
+    expect(latex).not.toContain("Jun 2017");
+    expect(texts.has(`${third.id}.dates`)).toBe(false);
+  });
+
+  test("keeps a name given whole with both its parts, and a list kept whole", async () => {
+    const result = ok(
+      (
+        await assembled({
+          verdicts: { "cvname#1": ["moved"], "cvitem#1": ["moved", "editable"] },
+        })
+      ).result,
+    );
+    const { header } = result.document.resume;
+    expect(header.kept).toEqual(["first", "last"]);
+    expect(header.name).toEqual({ first: "", last: "" });
+    const typed: Resume = structuredClone(result.document.resume);
+    typed.header.name = { first: "Typedfirst", last: "Typedlast" };
+    const { latex } = generateBody(result.package, typed, {});
+    expect(latex).toContain("\\cvname{Quill Invented}");
+    expect(latex).not.toContain("Typed");
+    // The entry whose bullets are kept whole keeps its list, which a bullet added is not set in.
+    const [first] = entriesOf(result, 0);
+    expect(first?.kept).toEqual(["bullets"]);
+  });
+});
+
+describe("the body's text never reaches a snippet (decision 0026)", () => {
+  /** The Jake-like template with an entry's fifth argument, which the answer gives no slot. */
+  const noted = (note: string, blank?: "empty" | "absent") =>
+    assembled({
+      body: entriesBody(
+        `  \\cventry{Invented role}{Jan 2020 -- Present}{Quill Co}{Harbour City}{${note}}\n`,
+      ),
+      commands: { cventry: "m m m m m" },
+      answers: answering(ANSWERS, "cventry", (answer) => ({
+        ...answer,
+        arguments: [
+          ...answer.arguments,
+          { index: 5, meaning: "text", ...(blank === undefined ? {} : { blank }) },
+        ],
+      })),
+    });
+
+  test("keeps an argument with no slot in each entry's extras, locked and counted, called once", async () => {
+    const result = ok((await noted("Invented private note")).result);
+    const snippet = entrySnippet(result.package, "experience");
+    expect(snippet).toContain("{{&x.a5}}");
+    expect(JSON.stringify(result.package)).not.toContain("private");
+    const [entry] = entriesOf(result, 0);
+    expect(entry?.extras?.a5).toBe("{Invented private note}");
+    expect(result.extras).toContainEqual(
+      expect.objectContaining({ node: entry?.id, key: "a5", reason: "unmapped", words: 3 }),
+    );
+    // An entry the editor adds writes the answer's blank for it, an empty group where it says none.
+    expect(result.package.snippets.defaults?.entry?.default).toEqual({ a5: "{}" });
+    const added = apply(result.document, {
+      type: "structure",
+      op: { op: "addEntry", section: sectionOf(result, 0).id },
+    });
+    const { latex } = generateBody(result.package, added.resume, {});
+    expect(latex.match(/Invented private note/g)).toHaveLength(1);
+    expect(latex).toMatch(/\{\\rtfield\{ent-[a-z0-9]{6}\.place\}\{Place\}\}\{\}/);
+    // Two uploads of one template whose notes differ share a package.
+    const other = ok((await noted("Another invented note, longer")).result);
+    expect(other.package.id).toBe(result.package.id);
+    // The answer's blank is read: left out, nothing.
+    const absent = ok((await noted("Invented private note", "absent")).result);
+    expect(absent.package.snippets.defaults?.entry?.default).toEqual({ a5: "" });
+  });
+
+  test("keeps the template's own an argument no call gives, as the seed's \\cvhonor #5-6", async () => {
+    const result = ok(
+      (
+        await assembled({
+          body: entriesBody(
+            "  \\cventry{Invented role}{2020}{Quill Co}{Harbour City}\n  \\cventry{Second role}{2019}{Other Co}{Harbour City}\n",
+          ),
+          commands: { cventry: "m m m m s o" },
+          answers: answering(ANSWERS, "cventry", (answer) => ({
+            ...answer,
+            arguments: [
+              ...answer.arguments,
+              { index: 5, meaning: "other", blank: "absent" },
+              { index: 6, meaning: "other", blank: "absent" },
+            ],
+          })),
+        })
+      ).result,
+    );
+    expect(entrySnippet(result.package, "experience")).not.toContain("x.a5");
+    expect(entrySnippet(result.package, "experience")).not.toContain("x.a6");
+    expect(entriesOf(result, 0).map((entry) => entry.extras)).toEqual([undefined, undefined]);
+    expect(result.extras.some((part) => part.key === "a5" || part.key === "a6")).toBe(false);
+  });
+
+  test("keeps a layout call that shows words as a locked section, and one that shows none as code", async () => {
+    const banner = (argument: string) =>
+      assembled({
+        body: BODY.replace("\\cvheader\n", `\\cvheader\n\\cvbanner{${argument}}\n`),
+        commands: { cvbanner: "m" },
+        answers: [
+          ...ANSWERS,
+          [
+            "command",
+            "cvbanner",
+            { kind: "layout", arguments: [{ index: 1, meaning: "other" }], repeatable: false },
+          ],
+        ],
+      });
+    const words = ok((await banner("Invented private banner words")).result);
+    expect(words.package.snippets.document).not.toContain("banner words");
+    const [locked] = words.document.resume.sections;
+    expect(locked?.kind === "locked" && locked.latex).toContain("Invented private banner words");
+    expect(words.extras).toContainEqual(
+      expect.objectContaining({ node: locked?.id, kind: "section", reason: "unmapped", words: 4 }),
+    );
+    const code = ok((await banner("2pt")).result);
+    expect(code.package.snippets.document).toContain("\\cvbanner{2pt}");
+    expect(code.document.resume.sections[0]?.kind).toBe("entries");
+  });
+});
+
+describe("every entry's snippet sets the bullets a user adds (decision 0026)", () => {
+  const educationFirst = entriesBody(
+    ["  \\cventry{Invented University}{2014 -- 2018}{Invented degree}{Harbour City}\n"].join(""),
+  )
+    .replace(
+      "\\end{document}",
+      "\n\\section{Invented work}\n\\cvlistStart\n  \\cventry{Invented role}{Jan 2020 -- Present}{Quill Co}{Harbour City}\n    \\cvitemsStart\n      \\cvitem{Invented first bullet}\n    \\cvitemsEnd\n\\cvlistEnd\n\\end{document}",
+    )
+    .replace("Invented experience", "Education");
+
+  test("takes the list another role's entries of the same macro set theirs in", async () => {
+    const result = ok((await assembled({ body: educationFirst })).result);
+    const { snippets } = result.package;
+    const education = entrySnippet(result.package, "education");
+    const work = entrySnippet(result.package, "experience");
+    expect(education).toContain(
+      "{{#bullets}}\n\\cvitemsStart\n{{bullets}}\n\\cvitemsEnd{{/bullets}}",
+    );
+    expect(education).toBe(work);
+    expect(forRole(snippets.bullet, "education")).toBe("\\cvitem{{{text}}}");
+    expect(snippets.entryBullets).toBeUndefined();
+    // A bullet added to the education's entry is on the page.
+    const [entry] = entriesOf(result, 0);
+    const added = apply(result.document, {
+      type: "structure",
+      op: { op: "addBullet", entry: entry?.id ?? "" },
+    });
+    const bullet = added.resume.sections[0];
+    const id = bullet?.kind === "entries" ? bullet.entries[0]?.bullets[0]?.id : undefined;
+    expect(generateBody(result.package, added.resume, {}).latex).toContain(`\\rtfield{${id}.text}`);
+  });
+
+  test("takes the list the answer pairs where no entry of the macro sets bullets", async () => {
+    const body = entriesBody("  \\cventry{Invented role}{2020}{Quill Co}{Harbour City}\n").replace(
+      "\\end{document}",
+      "\n\\section{Invented notes}\n\\cvitemsStart\n  \\cvitem{Invented note}\n\\cvitemsEnd\n\\end{document}",
+    );
+    const result = ok((await assembled({ body })).result);
+    expect(entrySnippet(result.package, "experience")).toContain(
+      "{{#bullets}}\n\\cvitemsStart\n{{bullets}}\n\\cvitemsEnd{{/bullets}}{{&x.bullets}}",
+    );
+    expect(result.package.snippets.entryBullets).toBeUndefined();
+  });
+
+  test("says a role's entries take no bullets where no list is set or paired anywhere", async () => {
+    const answers = ANSWERS.filter(([, name]) => !name.startsWith("cvitem"));
+    const result = ok(
+      (
+        await assembled({
+          body: entriesBody("  \\cventry{Invented role}{2020}{Quill Co}{Harbour City}\n"),
+          answers,
+        })
+      ).result,
+    );
+    const snippet = entrySnippet(result.package, "experience");
+    expect(
+      parseSnippet(snippet).some((node) => node.kind === "slot" && node.name === "bullets"),
+    ).toBe(false);
+    expect(snippet).not.toContain("{{bullets}}");
+    expect(result.package.snippets.entryBullets).toBe(false);
+  });
+});
+
+describe("what the assembly counts and says (decision 0026)", () => {
+  test("rolls a links' run kept whole out of the fields, for the reason the checks decided", async () => {
+    const plain = ok((await assembleInvented(ENVIRONMENTS)).result);
+    const locked = ok(
+      (
+        await assembleInvented({
+          ...ENVIRONMENTS,
+          decisions: { instances: { [LINKS]: "differs" } },
+        })
+      ).result,
+    );
+    expect(plain.checks.all.filter((field) => field.field.startsWith("lnk-"))).toHaveLength(2);
+    expect(locked.checks.all.some((field) => field.field.startsWith("lnk-"))).toBe(false);
+    expect(locked.checks.fields.editable).toBe(plain.checks.fields.editable - 2);
+    expect(locked.checks.words.editable).toBe(plain.checks.words.editable - 4);
+    expect(locked.extras.filter((part) => part.node === "header")).toEqual([
+      expect.objectContaining({ kind: "header", reason: "differs", words: 7 }),
+    ]);
+    expect(locked.document.resume.header.kept).toEqual(["links"]);
+  });
+
+  test("counts what the header keeps: an argument with no slot, and a second value for one", async () => {
+    const preamble = PREAMBLE.replace(
+      "\\cvname{Quill Invented}",
+      "\\cvname{Quill Invented}\n\\cvquote{Invented words of an invented quote}",
+    );
+    const result = ok(
+      (
+        await assembleInvented({
+          ...JAKE_LIKE,
+          source: `${preamble}${BODY}`,
+          commands: { ...JAKE_LIKE.commands, cvquote: "m" },
+          meanings: { ...MEANINGS, cvquote: "\\long macro:#1->\\def \\cv@quote {#1}" },
+          answers: [
+            ...ANSWERS,
+            [
+              "command",
+              "cvquote",
+              { kind: "other", arguments: [{ index: 1, meaning: "text" }], repeatable: false },
+            ],
+          ],
+        })
+      ).result,
+    );
+    // Stored by the preamble, so taken out and issued again from the header's snippet.
+    expect(result.package.snippets.header).toContain("\\cvquote{{&x.c2-a1}}");
+    expect(result.document.resume.header.extras?.["c2-a1"]).toBe(
+      "{Invented words of an invented quote}",
+    );
+    expect(result.extras).toContainEqual(
+      expect.objectContaining({ node: "header", key: "c2-a1", reason: "unmapped", words: 6 }),
+    );
+    // A second email, where the first fills the header's.
+    const twice = ok(
+      (
+        await assembleInvented({
+          ...ENVIRONMENTS,
+          source: ENVIRONMENTS.source.replace(
+            "\\cvmail{quill@example.invalid}",
+            "\\cvmail{quill@example.invalid}\n\\cvmail{second@example.invalid}",
+          ),
+        })
+      ).result,
+    );
+    expect(twice.document.resume.header.email).toBe("quill@example.invalid");
+    expect(twice.document.resume.header.extras?.["c3-a1"]).toBe("{second@example.invalid}");
+    expect(twice.extras).toContainEqual(
+      expect.objectContaining({ node: "header", key: "c3-a1", reason: "unmapped", words: 3 }),
+    );
+  });
+
+  test("counts an entry's bullets that are not a clean list, kept as the upload had them", async () => {
+    const source = ENVIRONMENTS.source.replace(
+      /\\cvrow\{Invented role\}[\s\S]*?\\cvrow\{Second role\}\{Other Co\}\{\}\{2019\}\{\}\n/,
+      "\\cvrow{Invented role}{Quill Co}{Harbour City}{Jan 2020 -- Present}{Invented plain words, no list}\n",
+    );
+    const result = ok((await assembleInvented({ ...ENVIRONMENTS, source })).result);
+    const [entry] = entriesOf(result, 0);
+    expect(entry?.bullets).toEqual([]);
+    expect(entry?.extras?.bullets).toBe("Invented plain words, no list");
+    expect(entry?.kept).toEqual(["bullets"]);
+    expect(result.extras).toContainEqual(
+      expect.objectContaining({
+        node: entry?.id,
+        key: "bullets",
+        kind: "list",
+        reason: "unmapped",
+        words: 5,
+      }),
+    );
+    // A new entry takes the list the answer pairs, inside the argument.
+    expect(entrySnippet(result.package, "experience")).toContain(
+      "{{{#bullets}}\n\\begin{cvpoints}\n{{bullets}}\n\\end{cvpoints}{{/bullets}}{{&x.bullets}}}",
+    );
+  });
+
+  test("marks the slots the checks found required in the package, by the snippet that sets them", async () => {
+    const plain = ok((await assembleInvented(ENVIRONMENTS)).result);
+    expect(plain.package.required).toBeUndefined();
+    const required = ok(
+      (
+        await assembleInvented({
+          ...ENVIRONMENTS,
+          decisions: { required: ["command|cvname|1", "command|cvsection|1", "command|cvrow|4"] },
+        })
+      ).result,
+    );
+    expect(required.package.required).toEqual({
+      header: ["first"],
+      section: ["title"],
+      entry: ["dates"],
+    });
+    expect(required.package.id).not.toBe(plain.package.id);
+  });
+
+  test("names the package's source for the template, never for the upload's main file", async () => {
+    const idFor = async (main: string) => {
+      const taken = intake({
+        name: "invented.zip",
+        bytes: zipSync({
+          [main]: strToU8(JAKE_LIKE.source),
+          "inventedcv.cls": strToU8(CLASS),
+        }),
+      });
+      if (isRefusal(taken)) throw new Error(taken.message);
+      const found = signaturesOf(JAKE_LIKE.commands, {}, MEANINGS);
+      const tree = treeOf(taken, found);
+      const probed = probeOf(taken, tree, found);
+      return ok(await assemble(taken, REFERENCE, tree, found, probed, answerOf(ANSWERS))).package;
+    };
+    const one = await idFor("cv.tex");
+    const two = await idFor("quill-invented-cv.tex");
+    expect(two.id).toBe(one.id);
+    expect(two.source.url).toBe(MAIN_FILE);
+  });
+
+  test("offers the font sizes the class declares, and no control where it declares none", async () => {
+    const withSizes = (sizes: readonly string[]) =>
+      assembled({ commands: Object.fromEntries(sizes.map((name) => [name, ""])) });
+    const article = ok((await assembled()).result).package;
+    expect(article.controls.fontSize?.sizes).toEqual([10, 11, 12]);
+    const ext = ok((await withSizes(["ds@9pt", "ds@14pt"])).result).package;
+    expect(ext.controls.fontSize?.sizes).toEqual([9, 10, 11, 12]);
+    // A class that declares none, or not the document's size, offers none, and keeps its option.
+    const none = await assembleInvented({
+      ...JAKE_LIKE,
+      commands: COMMANDS,
+    });
+    const bare = ok(none.result).package;
+    expect(bare.controls.fontSize).toBeUndefined();
+    expect(bare.preamble).toContain("\\documentclass[11pt,letterpaper]{inventedcv}");
+    const other = await assembleInvented({
+      ...JAKE_LIKE,
+      commands: { ...COMMANDS, "ds@10pt": "", "ds@12pt": "" },
+    });
+    expect(ok(other.result).package.controls.fontSize).toBeUndefined();
+    expect(SIZE_OPTIONS).toEqual([
+      "ds@8pt",
+      "ds@8.5pt",
+      "ds@9pt",
+      "ds@9.5pt",
+      "ds@10pt",
+      "ds@10.5pt",
+      "ds@11pt",
+      "ds@11.5pt",
+      "ds@12pt",
+      "ds@12.5pt",
+      "ds@13pt",
+      "ds@13.5pt",
+      "ds@14pt",
+    ]);
+    expect(ARTICLE_SIZES).toEqual({ "ds@10pt": "", "ds@11pt": "", "ds@12pt": "" });
+  });
+});
+
+describe("extras are kept LaTeX everywhere (decision 0026)", () => {
+  test("keeps an address whose % hyperref reads as its own between two header calls", async () => {
+    const source = ENVIRONMENTS.source.replace(
+      "\\cvmail{",
+      "\\href{https://quill.example/a%20b}{my site}\n\\cvmail{",
+    );
+    const result = ok((await assembleInvented({ ...ENVIRONMENTS, source })).result);
+    expect(Object.values(result.document.resume.header.extras ?? {})).toContain(
+      "\\href{https://quill.example/a%20b}{my site}",
+    );
+  });
+
+  test("refuses a part past the cap as one it cannot keep, as a list of 74 KB kept whole", async () => {
+    const items = Array.from(
+      { length: 420 },
+      (_, i) =>
+        `  \\item Invented publication number ${i} with invented words about invented research on invented topics, in the Invented Journal of Invented Studies, volume ${i}, pages 1 to 20.`,
+    ).join("\n");
+    const body = entriesBody(
+      "  \\cventry{Invented role}{Jan 2020 -- Present}{Quill Co}{Harbour City}\n",
+    ).replace(
+      "\\end{document}",
+      `\n\\section{Invented publications}\n\\begin{itemize}\n${items}\n\\end{itemize}\n\\end{document}`,
+    );
+    const whole = await assembled({ body, verdicts: { item: ["breaks"] } });
+    expect(isRefusal(whole.result) && (whole.result as Refusal).reason).toBe("keep");
+    // Mapped onto the model, the list is no extra, and the import assembles.
+    ok((await assembled({ body })).result);
+  });
+});
+
+describe.skipIf(!engineAvailable())("the assembly, on the engine (decision 0026)", () => {
+  let session: EngineSession;
+  let fonts: FontLibrary;
+  let texTree: ReturnType<typeof readTree>;
+  beforeAll(async () => {
+    session = await startNodeSession();
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    texTree = readTree(manifest.files, manifest.fonts);
+    fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+      readFileSync(join(ENGINE_DIR, "files", path)),
+    );
+  }, 60_000);
+
+  /**
+   * An invented upload through the intake, the reference, the signatures, asked of the sizes a
+   * class may declare too (`SIZE_OPTIONS`), the parse and the probe, and assembled from `answers`.
+   */
+  async function assembledOn(
+    files: Record<string, string>,
+    answers: readonly AnswerRow[],
+  ): Promise<Assembled> {
+    const zipped = Object.fromEntries(
+      Object.entries(files).map(([path, text]) => [path, strToU8(text)]),
+    );
+    const taken = intake({ name: "invented.zip", bytes: zipSync(zipped) }, { tree: texTree });
+    if (isRefusal(taken)) throw new Error(`refused at intake: ${taken.message}`);
+    const made = await reference(session, fonts, taken);
+    if (isRefusal(made)) throw new Error(`refused: ${made.message}`);
+    const body = bodyOf(taken);
+    if (isRefusal(body)) throw new Error(body.message);
+    const read = readBody(body);
+    if (isRefusal(read)) throw new Error(read.message);
+    const preamble = readBody(bodyOfText(body.preamble));
+    const uses = probeUses(read, isRefusal(preamble) ? undefined : preamble);
+    const found = await signatures(session, taken, made, body, {
+      ...uses,
+      commands: [...uses.commands, ...SIZE_OPTIONS],
+    });
+    if (isRefusal(found)) throw new Error("no signatures");
+    const built = buildTree(read, found);
+    if (isRefusal(built)) throw new Error(built.message);
+    const probed = await probe(session, fonts, taken, made, built, found);
+    if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
+    return ok(await assemble(taken, made, built, found, probed, answerOf(answers)));
+  }
+
+  /** Whether a resume compiles through a package, from its format. */
+  function compiles(pkg: TemplatePackage, resume: Resume): boolean {
+    const format = generateFormat(pkg, {});
+    try {
+      if (!session.dump(pkg.engine, format.name, format.preamble, pkg.files).ok) return false;
+      const body = generateBody(pkg, resume, {}).latex;
+      return session.compile(pkg.engine, format.name, body, { job: "assemble", maxPasses: 3 }).ok;
+    } finally {
+      session.dropFormat(pkg.engine, format.name);
+      session.forget("assemble");
+    }
+  }
+
+  /** The resume with an entry the editor adds, as the side panel adds one, in its first section. */
+  const withNewEntry = (result: Assembled) =>
+    apply(result.document, {
+      type: "structure",
+      op: { op: "addEntry", section: sectionOf(result, 0).id },
+    }).resume;
+
+  const LIST = [
+    "environment",
+    "cvlist",
+    {
+      kind: "layout",
+      arguments: [],
+      repeatable: false,
+      list: { does: "opens", holds: "entry" },
+    },
+  ] as const satisfies AnswerRow;
+
+  test("gives an argument each entry holds its own a default a new entry compiles with", async () => {
+    // A length each call gives its own, which no slot holds: kept in each entry's extras.
+    const cls = String.raw`\NeedsTeXFormat{LaTeX2e}
+\ProvidesClass{inventedcv}[2026/09/27 an invented class]
+\LoadClass{article}
+\newcommand{\cvrow}[3]{\vspace{#2}\noindent\textbf{#1}\hfill #3\par}
+\newenvironment{cvlist}{\par}{\par}
+`;
+    const source = String.raw`\documentclass[letterpaper]{inventedcv}
+\begin{document}
+\section{Invented experience}
+\begin{cvlist}
+  \cvrow{Invented role}{2pt}{2020}
+  \cvrow{Second role}{6pt}{2019}
+\end{cvlist}
+\end{document}
+`;
+    const result = await assembledOn({ "cv.tex": source, "inventedcv.cls": cls }, [
+      [
+        "command",
+        "cvrow",
+        {
+          kind: "entry",
+          arguments: [
+            { index: 1, meaning: "title", slot: "title" },
+            { index: 2, meaning: "length" },
+            { index: 3, meaning: "dates", slot: "dates" },
+          ],
+          repeatable: true,
+        },
+      ],
+      LIST,
+    ]);
+    expect(entriesOf(result, 0).map((entry) => entry.extras?.a2)).toEqual(["{2pt}", "{6pt}"]);
+    expect(result.package.snippets.defaults?.entry?.default).toEqual({ a2: "{2pt}" });
+    expect(compiles(result.package, result.document.resume)).toBe(true);
+    expect(compiles(result.package, withNewEntry(result))).toBe(true);
+  }, 120_000);
+
+  test("gives a slot locked in every instance the answer's blank, the first call's where it says kept", async () => {
+    // A class that reads its dates' two ends apart, which the editor's markers break.
+    const cls = String.raw`\NeedsTeXFormat{LaTeX2e}
+\ProvidesClass{inventedcv}[2026/09/27 an invented class]
+\LoadClass{article}
+\def\cv@ends#1 -- #2\@nil{#1\,--\,#2}
+\newcommand{\cvrow}[2]{\noindent\textbf{#1}\hfill\cv@ends#2\@nil\par}
+\newenvironment{cvlist}{\par}{\par}
+`;
+    const source = String.raw`\documentclass[letterpaper]{inventedcv}
+\begin{document}
+\section{Invented experience}
+\begin{cvlist}
+  \cvrow{Invented role}{Jan 2020 -- Present}
+  \cvrow{Second role}{Mar 2018 -- Dec 2019}
+\end{cvlist}
+\end{document}
+`;
+    const row = (blank?: "kept") =>
+      [
+        "command",
+        "cvrow",
+        {
+          kind: "entry",
+          arguments: [
+            { index: 1, meaning: "title", slot: "title" },
+            {
+              index: 2,
+              meaning: "dates",
+              slot: "dates",
+              ...(blank === undefined ? {} : { blank }),
+            },
+          ],
+          repeatable: true,
+        },
+      ] as const satisfies AnswerRow;
+    const kept = await assembledOn({ "cv.tex": source, "inventedcv.cls": cls }, [
+      row("kept"),
+      LIST,
+    ]);
+    expect(entrySnippet(kept.package, "experience")).not.toContain("{{dates}}");
+    expect(entriesOf(kept, 0).map((entry) => entry.kept)).toEqual([["dates"], ["dates"]]);
+    expect(kept.package.snippets.defaults?.entry?.default).toEqual({
+      dates: "Jan 2020 -- Present",
+    });
+    expect(compiles(kept.package, kept.document.resume)).toBe(true);
+    expect(compiles(kept.package, withNewEntry(kept))).toBe(true);
+    // Where the answer says nothing of it, a date is the person's text, which no new entry copies:
+    // the new entry writes the argument empty, which this class cannot take, as check 3 reports.
+    const silent = await assembledOn({ "cv.tex": source, "inventedcv.cls": cls }, [row(), LIST]);
+    expect(silent.package.snippets.defaults?.entry?.default).toEqual({ dates: "" });
+    expect(JSON.stringify(silent.package)).not.toContain("Jan 2020");
+  }, 120_000);
+
+  test("offers the font sizes the engine finds the class declares", async () => {
+    const source = String.raw`\documentclass[11pt]{inventedcv}
+\begin{document}
+Invented words of an invented summary.
+\end{document}
+`;
+    const sizesOf = async (cls: string) =>
+      (
+        await assembledOn(
+          {
+            "cv.tex": source,
+            "inventedcv.cls": `\\NeedsTeXFormat{LaTeX2e}\\ProvidesClass{inventedcv}${cls}`,
+          },
+          [],
+        )
+      ).package.controls.fontSize?.sizes;
+    const passing = (base: string) =>
+      `\\DeclareOption*{\\PassOptionsToClass{\\CurrentOption}{${base}}}\\ProcessOptions\\relax\\LoadClass{${base}}`;
+    expect(await sizesOf(passing("article"))).toEqual([10, 11, 12]);
+    expect(await sizesOf(passing("extarticle"))).toEqual([9, 10, 11, 12]);
+    expect(await sizesOf("\\LoadClass{minimal}")).toBeUndefined();
+  }, 120_000);
 });
