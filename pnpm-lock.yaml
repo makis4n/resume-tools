@@ -20,6 +20,9 @@ importers:
 
   apps/editor:
     dependencies:
+      '@resume-tools/naming':
+        specifier: workspace:*
+        version: link:../../packages/naming
       '@resume-tools/resume-model':
         specifier: workspace:*
         version: link:../../packages/resume-model
