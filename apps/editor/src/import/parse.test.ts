@@ -439,32 +439,87 @@ After.`;
 });
 
 describe("alignments", () => {
-  test("keeps a template environment's body raw where its meaning opens an alignment", () => {
-    const signatures: Signatures = {
-      ...SIGNATURES,
-      environments: { ...SIGNATURES.environments, cvskills: { kind: "template", spec: "m" } },
-      macros: {
-        cvskills: { meaning: "\\long macro:#1->\\textbf {#1}\\begin {tabular}{ll}" },
-        endcvskills: { meaning: "\\long macro:->\\end {tabular}" },
-        cvbox: { meaning: "\\long macro:#1->\\par \\textbf {#1}\\par " },
-      },
-    };
+  /**
+   * What the engine would say of an invented class's `skilltable`, which wraps a `tabular`, and of
+   * its `\skill`, which sets a row: the class's meanings no longer count, only the body's `&`.
+   */
+  const TABLES: Signatures = {
+    commands: { ...SIGNATURES.commands, skill: { kind: "template", spec: "m m" } },
+    environments: { ...SIGNATURES.environments, skilltable: { kind: "template", spec: "" } },
+  };
+
+  test("places the calls in a template environment's body, and keeps it raw where it holds an & of its own", () => {
     const tree = treeOf(
-      String.raw`\begin{cvskills}{Invented}
+      String.raw`\begin{skilltable}
+\skill{Languages}{Quill, Wort}
+\skill{Tools}{Invented}
+\end{skilltable}
+\begin{skilltable}
 Languages & Quill, Wort \\
-\end{cvskills}
-\begin{cvbox}{Box}Inside\end{cvbox}`,
-      signatures,
+Tools & Invented \\
+\end{skilltable}`,
+      TABLES,
     );
     expect(tree.content).toMatchObject([
       {
         kind: "environment",
-        name: "cvskills",
-        args: [{ content: [{ kind: "text" }] }],
-        content: [{ kind: "raw", why: "alignment" }],
+        name: "skilltable",
+        content: [
+          {
+            kind: "call",
+            name: "skill",
+            args: [
+              { content: [{ kind: "text", runs: [{ text: "Languages" }] }] },
+              { content: [{ kind: "text", runs: [{ text: "Quill, Wort" }] }] },
+            ],
+          },
+          { kind: "call", name: "skill" },
+        ],
       },
-      { kind: "environment", name: "cvbox", content: [{ kind: "text" }] },
+      { kind: "environment", name: "skilltable", content: [{ kind: "raw", why: "alignment" }] },
     ]);
+    const [, table] = tree.content;
+    const body = table?.kind === "environment" ? table.content[0] : undefined;
+    expect(body && sourceOf(tree, body)).toBe(
+      "Languages & Quill, Wort \\\\\nTools & Invented \\\\",
+    );
+  });
+
+  test("keeps the body placed where its & is in a call's argument or in mathematics", () => {
+    const tree = treeOf(
+      String.raw`\begin{skilltable}
+\skill{Languages}{Quill & Wort}
+\cvopt[Tools & Made-up]{Invented}
+\skill{Invented}{$a & b$}
+\end{skilltable}`,
+      TABLES,
+    );
+    expect(tree.content).toMatchObject([
+      {
+        kind: "environment",
+        content: [
+          { kind: "call", args: [{}, { content: [{ kind: "raw", why: "alignment" }] }] },
+          {
+            kind: "call",
+            name: "cvopt",
+            args: [
+              { kind: "optional", content: [{ kind: "raw", why: "alignment" }] },
+              { content: [{ kind: "text", runs: [{ text: "Invented" }] }] },
+            ],
+          },
+          { kind: "call", args: [{}, { content: [{ kind: "raw", why: "math" }] }] },
+        ],
+      },
+    ]);
+    // The tree counts what it keeps, and none of what a table's body lets go.
+    const table = treeOf(
+      String.raw`\begin{skilltable}\skill{a}{b} x & y \\ \end{skilltable}`,
+      TABLES,
+    );
+    expect(table.content).toMatchObject([
+      { kind: "environment", content: [{ kind: "raw", why: "alignment" }] },
+    ]);
+    expect(table.nodes).toBe(2);
   });
 
   test("keeps a paragraph with an alignment's & raw, but not one with \\&", () => {
@@ -476,6 +531,35 @@ Quill \& Wort`);
       { kind: "raw", why: "alignment" },
       { kind: "text", runs: [{ text: "Quill & Wort" }] },
     ]);
+  });
+
+  test("keeps raw a paragraph whose \\\\ ends a table's row, and reads one elsewhere as a space", () => {
+    // The argument holds an & of its own, so the \\ with text after it in its second paragraph
+    // ends a row; the body around it holds none, so its \\ breaks a line, a space in a field.
+    const tree = treeOf(String.raw`\cvopt{Languages & Quill \\
+
+Certified \\ Invented}
+
+Quill \\ Wort`);
+    expect(tree.content).toMatchObject([
+      {
+        kind: "call",
+        args: [
+          { present: false },
+          {
+            content: [
+              { kind: "raw", why: "alignment" },
+              { kind: "raw", name: "\\" },
+              { kind: "raw", why: "alignment" },
+            ],
+          },
+        ],
+      },
+      { kind: "text", runs: [{ text: "Quill Wort" }] },
+    ]);
+    const [call] = tree.content;
+    const certified = call?.kind === "call" ? call.args[1]?.content?.[2] : undefined;
+    expect(certified && sourceOf(tree, certified)).toBe("Certified \\\\ Invented");
   });
 });
 
@@ -1117,6 +1201,77 @@ Tools & Pretend, Fictional \\
       { kind: "environment", content: [{ kind: "raw", why: "alignment" }] },
       { kind: "call", args: [{}, { content: [{ kind: "date" }] }] },
     ]);
+    expect(byte).toBe(true);
+    expect(regenerated).toBe(true);
+  }, 60_000);
+
+  test("places the calls in a class's environments that wrap a table, and keeps raw one whose body holds an & of its own", async () => {
+    // An invented class: `skilltable` wraps a `tabular` and `\skill` sets a row of it, as a
+    // hand-rolled class does; `cvskills` and `cvhonors` wrap a `tabular*` in a `center`, and
+    // `\cvskill` and `\cvhonor` set their rows, as Awesome-CV's do.
+    const cls = String.raw`\NeedsTeXFormat{LaTeX2e}
+\ProvidesClass{inventedtables}
+\LoadClass{article}
+\newenvironment{skilltable}{\begin{tabular}{ll}}{\end{tabular}}
+\newcommand{\skill}[2]{\textbf{#1} & #2 \\}
+\newenvironment{cvskills}{\begin{center}\setlength\tabcolsep{1ex}%
+  \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} r p{0.7\textwidth}}}%
+  {\end{tabular*}\end{center}}
+\newcommand*{\cvskill}[2]{\textbf{#1} & #2 \\}
+\newenvironment{cvhonors}{\begin{center}%
+  \begin{tabular*}{\textwidth}{@{} l @{\extracolsep{\fill}} r}}%
+  {\end{tabular*}\end{center}}
+\newcommand*{\cvhonor}[2]{#1 & #2 \\}
+`;
+    const { built, byte, regenerated } = await roundTrips(
+      {
+        "inventedtables.cls": cls,
+        "cv.tex": String.raw`\documentclass{inventedtables}
+\begin{document}
+\begin{skilltable}
+\skill{Languages}{Quill, Wort}
+\skill{Tools}{Invented, Made-up}
+\end{skilltable}
+
+\begin{skilltable}
+Languages & Quill, Wort \\
+Tools & Invented, Made-up \\
+\end{skilltable}
+
+\begin{cvskills}
+  \cvskill{Languages}{Quill, Wort}
+  \cvskill{Tools}{Invented, Made-up}
+\end{cvskills}
+
+\begin{cvhonors}
+  \cvhonor{Invented Prize}{2019}
+  \cvhonor{Made-up Award}{2020 -- 2021}
+\end{cvhonors}
+\end{document}
+`,
+      },
+      true,
+    );
+    const calls = (name: string, count: number) =>
+      Array.from({ length: count }, () => ({ kind: "call", name }));
+    expect(built.content).toMatchObject([
+      { kind: "environment", name: "skilltable", content: calls("skill", 2) },
+      { kind: "environment", name: "skilltable", content: [{ kind: "raw", why: "alignment" }] },
+      { kind: "environment", name: "cvskills", content: calls("cvskill", 2) },
+      { kind: "environment", name: "cvhonors", content: calls("cvhonor", 2) },
+    ]);
+    // Each call's arguments are text, and an award's second a date.
+    const [skills, , cvskills, honors] = built.content;
+    const argument = (node: Node | undefined, call: number, index: number) =>
+      node?.kind === "environment" && node.content[call]?.kind === "call"
+        ? (node.content[call] as CallNode).args[index]?.content
+        : undefined;
+    expect(argument(skills, 0, 1)).toMatchObject([
+      { kind: "text", runs: [{ text: "Quill, Wort" }] },
+    ]);
+    expect(argument(cvskills, 1, 0)).toMatchObject([{ kind: "text", runs: [{ text: "Tools" }] }]);
+    expect(argument(honors, 0, 1)).toMatchObject([{ kind: "date", text: "2019" }]);
+    expect(argument(honors, 1, 1)).toMatchObject([{ kind: "date", text: "2020 – 2021" }]);
     expect(byte).toBe(true);
     expect(regenerated).toBe(true);
   }, 60_000);

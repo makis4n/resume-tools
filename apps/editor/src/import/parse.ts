@@ -24,10 +24,11 @@
  *   declaration used as one, `small` or `bfseries`, whose content the parser places;
  * - and **raw chunks**, everything else, byte for byte: math, verbatim, `tabular` and the
  *   environments the table does not know, commands whose effect is not text, typewriter text, a
- *   paragraph an alignment's `&` is in, what a constant-false conditional skips, and any command
- *   the table does not know and the engine did not resolve, or resolved with a signature a group
- *   after the call belies. A raw chunk is the smallest node the parser cannot place: a raw command
- *   whose argument is text a page shows keeps that argument placed inside it.
+ *   paragraph an alignment's `&` is in or whose `\\` ends a table's row, the body of a template
+ *   environment that holds an `&` of its own, what a constant-false conditional skips, and any
+ *   command the table does not know and the engine did not resolve, or resolved with a signature a
+ *   group after the call belies. A raw chunk is the smallest node the parser cannot place: a raw
+ *   command whose argument is text a page shows keeps that argument placed inside it.
  *
  * Every node keeps its span in the body, so that the printer gives back the bytes of what nobody
  * changed. A body past 5 MB, nested past 64 levels, or making a tree of more than 200,000 nodes or
@@ -639,8 +640,8 @@ export interface BlockNode extends Span {
  * (`unresolved`); a definition in TeX's syntax (`definition`); an environment the parser does not
  * place (`environment`); mathematics (`math`); verbatim text (`verbatim`); typewriter text, which
  * the model has no mark for (`typewriter`); what a constant-false conditional skips (`skipped`);
- * or an alignment's cells, a template environment's body that is one or a paragraph with an
- * alignment's `&` in it (`alignment`).
+ * or an alignment's cells (`alignment`): a paragraph with an alignment's `&` in it, one whose `\\`
+ * ends a table's row, or the body of a template environment that holds an `&` of its own.
  */
 export type RawWhy =
   | "command"
@@ -706,20 +707,10 @@ export interface Known {
   tail?: "unresolved";
 }
 
-/**
- * A template macro as the parser reads it: a definition, with its meaning, or a macro that holds
- * data, whose text the signatures never keep.
- */
-export type MacroMeaning = { kind?: "definition"; meaning: string } | { kind: "data" };
-
-/**
- * What the engine said of the names a body uses (`signatures.ts`), as far as the parser needs it:
- * and the template's macros' meanings, which say whether an environment is an alignment.
- */
+/** What the engine said of the names a body uses (`signatures.ts`), as far as the parser needs it. */
 export interface Signatures {
   commands: Readonly<Record<string, Known>>;
   environments: Readonly<Record<string, Known>>;
-  macros?: Readonly<Record<string, MacroMeaning>>;
 }
 
 /**
@@ -814,12 +805,14 @@ function sequence(nodes: Ast.Node[], context: Context, state: TextState): Node[]
   let skipped: Map<number, number> | undefined;
   /** The conditionals' `\else` and `\fi`, matched once, at the first constant one. */
   let conditionals: Map<number, Matched> | undefined;
+  /** Whether the nodes hold an alignment's `&` of their own, found once, at the first paragraph. */
+  let table: boolean | undefined;
   // Appended a node at a time: a spread of a long list would pass each as an argument.
   const add = (nodes: readonly Node[]) => {
     for (const node of nodes) out.push(node);
   };
   const flush = () => {
-    if (items.length > 0) add(paragraphs(items, context));
+    if (items.length > 0) add(paragraphs(items, context, (table ??= holdsTab(nodes))));
     items = [];
   };
   if (state.typewriter === true) return rawRun(nodes, 0, nodes.length, "typewriter", context);
@@ -991,13 +984,64 @@ const aligns = (item: TextItem) =>
   );
 
 /**
+ * Whether a node is an alignment's `&` of the nodes it is among, where TeX reads it as a table's
+ * tab: a bare one, which unified-latex gives as a string of its own, not the escape `\&`. One
+ * inside a group, a template call's braced arguments among them, or inside mathematics, verbatim,
+ * a comment or an environment, is a node of theirs.
+ */
+const isTab = (node: Ast.Node | undefined) => node?.type === "string" && node.content.includes("&");
+
+/** Whether nodes hold an alignment's `&` of their own (`isTab`). */
+const holdsTab = (nodes: readonly Ast.Node[]) => nodes.some(isTab);
+
+/**
+ * Whether a template environment's body is a table its author wrote by hand: an alignment's `&`
+ * of its own (`tabs`, in order) lies outside every template call placed at its level, before its
+ * first item or in one, whose arguments, a bracketed one among them, may hold one for a table the
+ * call sets. The calls come in the body's order too, so one pass over both finds it.
+ */
+function writtenTable(tabs: readonly Ast.Node[], content: readonly Node[]): boolean {
+  const calls: Span[] = [];
+  const collect = (nodes: readonly Node[]) => {
+    for (const node of nodes)
+      if (node.kind === "call" || (node.kind === "raw" && node.why === "unresolved" && node.args))
+        calls.push(node);
+      else if (node.kind === "item") collect(node.content);
+  };
+  collect(content);
+  let k = 0;
+  for (const tab of tabs) {
+    const at = spanOf(tab)?.start ?? -1;
+    while (k < calls.length && (calls[k]?.end ?? 0) <= at) k++;
+    const call = calls[k];
+    if (call === undefined || call.start > at) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a paragraph's items hold a `\\` with text after it in the paragraph, which among nodes
+ * that hold an alignment's `&` ends a table's row rather than breaking a line in a field.
+ */
+function breaksRow(items: readonly TextItem[]): boolean {
+  let broke = false;
+  for (const item of items)
+    for (const piece of item.pieces) {
+      if (piece.kind === "break") broke = true;
+      else if (broke && piece.kind === "text") return true;
+    }
+  return false;
+}
+
+/**
  * Text items as paragraphs, a blank line ending one: each paragraph's text from its first item
  * that is not a space, a comment or a break to its last, which is a date when all of it reads as
  * one and it has no mark, and a text otherwise; a break at a paragraph's edge is raw, since it is
- * no space between words there. A paragraph that holds an alignment's `&` is an alignment's
- * cells, as a template's `tabular` sets them, and raw.
+ * no space between words there. A paragraph that holds an alignment's `&` is a table's cells, and
+ * raw; so is one with a `\\` that text follows, when the nodes it is among hold an `&` of their
+ * own (`table`), since that `\\` ends a row the model would read as a space.
  */
-function paragraphs(items: readonly TextItem[], context: Context): Node[] {
+function paragraphs(items: readonly TextItem[], context: Context, table: boolean): Node[] {
   const out: Node[] = [];
   let from = 0;
   for (let i = 0; i <= items.length; i++) {
@@ -1026,7 +1070,7 @@ function paragraphs(items: readonly TextItem[], context: Context): Node[] {
     const inside = paragraph.slice(first, last + 1);
     const start = inside[0]?.start ?? 0;
     const end = inside.at(-1)?.end ?? start;
-    if (inside.some(aligns))
+    if (inside.some(aligns) || (table && breaksRow(inside)))
       out.push(made(context, { kind: "raw", why: "alignment", start, end } satisfies RawNode));
     else {
       const runs = runsOf(inside.flatMap((item) => item.pieces));
@@ -1497,34 +1541,6 @@ function beginEnd(source: string, start: number): number {
   return start + (match?.[0].length ?? 0);
 }
 
-/** A meaning that begins an alignment: `tabular` and its kin, `array`, `longtable`, `\halign`. */
-const ALIGNMENT =
-  /\\begin \{(?:tabular\*?|tabularx|tabulary|array|longtable)\}|\\(?:tabular|tabularx|tabulary|array|longtable|halign)(?![A-Za-z@])/;
-
-/**
- * Whether a template environment is an alignment, as a `skills` environment that opens a
- * `tabular` is: its own macros' meanings, `\x`, `\endx` and those they hand their work to, name
- * one. Its body is then cells, raw, where text would read `&` as a character.
- */
-function isAlignment(name: string, context: Context): boolean {
-  const macros = context.signatures?.macros;
-  if (macros === undefined) return false;
-  const own = [name, `end${name}`].flatMap((each) => [
-    each,
-    `${each} `,
-    `\\${each}`,
-    `${each} code`,
-  ]);
-  return [
-    ...own,
-    ...["code", "end", "end aux", "end code"].map((part) => `environment ${name} ${part}`),
-  ].some((each) => {
-    // A macro that holds data has no meaning kept, and opens nothing.
-    const macro = Object.hasOwn(macros, each) ? macros[each] : undefined;
-    return macro !== undefined && macro.kind !== "data" && ALIGNMENT.test(macro.meaning);
-  });
-}
-
 /** Place an environment: a list, a block, raw, the template's, or raw for want of knowing it. */
 function placeEnvironment(
   nodes: Ast.Node[],
@@ -1567,7 +1583,30 @@ function placeEnvironment(
     marks: change === undefined ? state.marks : changed(state.marks, change),
     grouped: true,
   };
-  if (standard === undefined && isAlignment(name, context))
+  // A template environment whose body holds an `&` of its own outside its calls' arguments is a
+  // table its author wrote by hand, whatever the environment opens: its body is cells, raw, where
+  // text would read `&` as a character, and what was placed of it is let go. One whose body holds
+  // template calls alone is placed, whether or not it opens a `tabular` for them, as Awesome-CV's
+  // `cvskills` and europecv's `europecv` do.
+  const tabs = standard === undefined ? bodyNodes.filter(isTab) : [];
+  if (tabs.length > 0) {
+    const count = { ...context.count };
+    const content = withItems(bodyNodes, inner, body);
+    if (!writtenTable(tabs, content))
+      return {
+        nodes: [
+          made(context, {
+            kind: "environment",
+            name,
+            ...span,
+            args,
+            content,
+          } satisfies EnvironmentNode),
+        ],
+        next: i + 1,
+      };
+    context.count.nodes = count.nodes;
+    context.count.levels = count.levels;
     return {
       nodes: [
         made(context, {
@@ -1580,6 +1619,7 @@ function placeEnvironment(
       ],
       next: i + 1,
     };
+  }
   if (standard?.role === "block")
     return {
       nodes: [
