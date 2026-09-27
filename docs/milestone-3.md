@@ -254,7 +254,7 @@ of each launch template must find editable what the hand-written port marks.
     a test asserts. Deploying it is milestone 5's, with the rest of hosting. Tests: the module's
     own, and the handler against a fake cache. Done when an import in the browser hits the dev
     server's route and the second import of the same template hits the cache.
-11. [ ] **What leaves the browser.** Before a request is built, names, emails, phone numbers,
+11. [x] **What leaves the browser.** Before a request is built, names, emails, phone numbers,
     addresses and links found in definitions are replaced, by pattern and by the document's own
     header values; call sites carry placeholders of the same length and character class in place
     of their text, a few per macro; nothing of the body's text goes. A test runs every corpus

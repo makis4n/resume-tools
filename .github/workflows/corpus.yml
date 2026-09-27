@@ -1,8 +1,9 @@
 name: corpus
 
-# The corpus of public resumes, fetched from the sources its manifest names, and surveyed
-# (decisions 0017 and 0018). It runs nightly and on demand, never on a pull request, so that no
-# pull request downloads real resumes; milestone 3's item 17 adds the import runner to it.
+# The corpus of public resumes, fetched from the sources its manifest names, surveyed (decisions
+# 0017 and 0018), and each document's naming request checked for its text (decision 0029). It runs
+# nightly and on demand, never on a pull request, so that no pull request downloads real resumes;
+# milestone 3's item 17 adds the import runner to it.
 on:
   workflow_dispatch:
   schedule:
@@ -14,7 +15,7 @@ permissions:
 jobs:
   survey:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -52,3 +53,20 @@ jobs:
         with:
           name: survey
           path: survey.json
+      # Every document's naming request, built as the import builds it and checked for the
+      # document's text by the leak detector: the lines name documents, macros, kinds of text and
+      # counts, never a document's text, and the step fails when a request holds any of it.
+      - id: leak
+        run: pnpm --filter @resume-tools/editor corpus leak --json leak.json > leak.md
+      - if: always() && steps.leak.outcome != 'skipped'
+        run: |
+          {
+            echo "## What leaves the browser"
+            echo
+            cat leak.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - if: always() && steps.leak.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: leak
+          path: leak.json

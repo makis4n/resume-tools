@@ -16,6 +16,7 @@ import { type Intake, intake } from "../src/import/intake";
 import {
   buildRequest,
   type HeaderValues,
+  pageStrings,
   sourcesOf,
   withRedefinitions,
 } from "../src/import/naming";
@@ -619,10 +620,12 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
       verdict: "untested",
       settled: "budget",
     }));
-    // The upload's sources, which say which definitions are the sample's own, its class among them.
+    // The upload's sources, which say which definitions are the sample's own, its class among them,
+    // and the page's strings, which mask those as the body's text does.
     const options = {
       ...(extras === undefined ? {} : { also: extras }),
       sources: sourcesOf(taken),
+      page: await pageStrings(made, fonts),
     };
     /** The sample's request, with the header's values given, and more stored values. */
     const request = (header?: HeaderValues, stored: readonly string[] = []) =>

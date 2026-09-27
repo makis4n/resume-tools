@@ -25,10 +25,19 @@
  * the definition holds it as whole words; and each pair of adjacent words of the definition's
  * text that a phrase of the document holds, however much longer the phrase. A definition that
  * masking changes is sent with the hash of what is sent, so that no hash of the person's text
- * leaves the browser; its key, and its dependents', are then the document's own.
+ * leaves the browser; its key, and its dependents', are then the document's own. A macro a
+ * storing call of the preamble's filled holds the person's text, whoever defines it, and goes by
+ * its name alone, as data does.
  *
- * `assertNoText` checks a request against a document more strictly than the builder masks, and
- * throws, naming where but never what, when any of the document's text is in it.
+ * The document's values are its body's text, its header's values and the texts its preamble
+ * stores, and its page (`pageStrings`, decision 0029): the reference compile's glyphs, read as
+ * words, which hold whatever a macro of the preamble writes that no body text names. The page's
+ * pairs of words and its identifiers mask the document's own definitions and the settings as the
+ * body's do; its single words are the template's as often as the person's, and mask nothing.
+ *
+ * `findLeaks` checks a request against a document more strictly than the builder masks, the
+ * page's single words among what it looks for outside definitions, and `assertNoText` throws,
+ * naming where but never what, when any of the document's text is in it.
  */
 
 import {
@@ -49,7 +58,11 @@ import {
   type RequestPreamble,
   sha256,
 } from "@resume-tools/naming";
+import type { FontLibrary } from "../page/fonts";
+import type { NativeFontFile } from "../page/native";
+import type { Tfm } from "../tex/tfm";
 import { readSpec } from "./arguments";
+import { storedIn } from "./candidates";
 import { decodeText, type Intake } from "./intake";
 import {
   type Argument,
@@ -62,6 +75,7 @@ import {
 } from "./parse";
 import { extensionOf } from "./paths";
 import type { Probe } from "./probe";
+import type { GlyphStream, ReferenceGlyph } from "./reference";
 import type { EngineSignatures, Signature } from "./signatures";
 import { maskComments } from "./source";
 import { STANDARD } from "./standard";
@@ -82,13 +96,17 @@ export interface HeaderValues {
 /**
  * A document's text, as the leak check and the masking read it: the body's tree, whose text runs,
  * link addresses, dates and raw chunks are the person's; the header's values, when found; the
- * texts the preamble stores, as Awesome-CV's `\name{...}` does, the probe's candidates there; and
- * the upload's sources, which say which definitions are the document's own.
+ * texts the preamble stores, as Awesome-CV's `\name{...}` does, the probe's candidates there; the
+ * page, what the reference compile set (`pageStrings`), which holds what a macro of the preamble
+ * writes that no body text names; and the upload's sources, which say which definitions are the
+ * document's own.
  */
 export interface DocumentText {
   tree: Tree;
   header?: HeaderValues;
   stored?: readonly string[];
+  /** The page's strings (`pageStrings`), the strongest of the detector's sources. */
+  page?: PageStrings;
   /**
    * The upload's sources (`sourcesOf`): a definition whose name one of them defines is the
    * document's own (`ownNames`). Without them every definition is the tree's, and none is masked by
@@ -171,7 +189,7 @@ export const isOwn = (name: string, owned: ReadonlySet<string>) => owned.has(bas
 // The document's texts, as the matchers read them.
 
 /** What a text of the document's is, as a leak names it. */
-type Origin = "text" | "link" | "date" | "raw" | "header" | "stored";
+export type Origin = "text" | "link" | "date" | "raw" | "header" | "stored" | "page";
 
 /**
  * A text of the document's, as it is matched: its letters and digits, each folded; where it came
@@ -397,6 +415,203 @@ function identifiersIn(text: string): string[] {
 /** Whether a word starts with a letter: a word of text, where `5cm` and `2020` are numbers. */
 const lettered = (word: string) => /^\p{L}/u.test(word);
 
+/** How many letters a word holds, of any script. */
+const lettersOf = (word: string) => (word.match(/\p{L}/gu) ?? []).length;
+
+/**
+ * A postcode of letters and digits, as an address writes it: the UK's, `QV1A 2ZX`, and Canada's,
+ * `X9Q 0Q9`, a space between their halves or none, in any case.
+ */
+const POSTCODE =
+  /(?<![\p{L}\p{N}])(?:[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}|[A-Z]\d[A-Z] ?\d[A-Z]\d)(?![\p{L}\p{N}])/giu;
+
+/**
+ * What a postal address is looked for by besides its phrase, as the header's location gives one:
+ * each postcode of letters and digits (`POSTCODE`), an identifier; and each of its words that
+ * holds a digit, a street's number or a postcode of digits, with the word before it and the word
+ * after it where those start with letters, a phrase: `221B Larkspur`, `Hauptstraße 5`, `75001 Paris`
+ * and `City 94103`, which no class's code holds, where a number alone may be, as `10000` is.
+ */
+function addressNeedles(address: string | undefined): [string, "identifier" | "phrase"][] {
+  if (address === undefined) return [];
+  const found: [string, "identifier" | "phrase"][] = [];
+  for (const code of address.match(POSTCODE) ?? []) found.push([code, "identifier"]);
+  const words = address.split(/[\s,;/]+/).filter((word) => folded(word) !== "");
+  words.forEach((word, i) => {
+    if (!/\p{N}/u.test(word)) return;
+    const [before, after] = [words[i - 1], words[i + 1]];
+    if (before !== undefined && lettered(folded(before)))
+      found.push([`${before} ${word}`, "phrase"]);
+    if (after !== undefined && lettered(folded(after))) found.push([`${word} ${after}`, "phrase"]);
+  });
+  return found;
+}
+
+// The page, as the leak detector reads it.
+
+/** What `pageStrings` reads a glyph's advance through: the fonts, as the page loads them. */
+export type PageFonts = Pick<FontLibrary, "load" | "loadNative">;
+
+/**
+ * The page's strings, as the leak detector reads them (`pageStrings`): the reference compile's
+ * glyph stream is the document's text as the world reads it, whatever of it the body holds, the
+ * header gives or a macro of the preamble writes. Each word of MIN_NEEDLE letters or more; each
+ * pair of adjacent words that start with letters, a space between; and each identifier, an email,
+ * a link's address, host or handle, or a run of DIGITS digits or more. Each once, in the page's
+ * order.
+ */
+export interface PageStrings {
+  words: readonly string[];
+  pairs: readonly string[];
+  identifiers: readonly string[];
+}
+
+/**
+ * The spacing accents TeX's `\accent` sets over a letter, as the page reads their glyphs
+ * (`ACCENTS` of `tex/glyphs.ts`): OT1 sets `é` as `´` and `e`, and a word reads on through them.
+ */
+const SPACING_ACCENTS: ReadonlySet<string> = new Set([..."`´ˆ˜¯˘˙¨˚˝ˇ¸˛"]);
+
+/**
+ * The least gap between two glyphs of a line, in ems of the one before it, that parts two words.
+ * Over the corpus's references a space, shrunk to its least, is 0.14 em or more, and a kern 0.06
+ * em at most, and nothing lies between but a glyph or two.
+ */
+const WORD_GAP = 0.1;
+
+/**
+ * The most a glyph's baseline may move from the one before it, in ems, and the two be read on one
+ * line: a superscript moves more.
+ */
+const BASELINE_MOVE = 0.2;
+
+/** A host as a page shows one, bare: labels of letters, digits and hyphens, the last of letters. */
+const BARE_HOST = /^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+$/u;
+
+/**
+ * The identifiers a word of the page holds, as `identifiersIn` finds them, and a link the page
+ * shows without its scheme, `quill.example/type` or `quill.example`, read as `linkIdentifiers`
+ * reads an address: its host and its handles.
+ */
+function pageIdentifiers(token: string): string[] {
+  const found = identifiersIn(token);
+  const bare = token.replace(/^[(<"'[]+|[)>"'.,;:\]]+$/g, "");
+  const host = bare.split(/[/?#]/, 1)[0] ?? "";
+  if (
+    !bare.includes("@") &&
+    !/^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|www\.)/i.test(bare) &&
+    host.length <= 253 &&
+    BARE_HOST.test(host) &&
+    /\.\p{L}{2,}$/u.test(host)
+  )
+    found.push(...linkIdentifiers(`https://${bare}`));
+  return found;
+}
+
+/**
+ * The advance of a glyph of a glyph stream, in scaled points, as its font gives it: a TeX font's
+ * width from its metrics, at its size, and a native font's advance from its file, at its size and
+ * stretched as XeTeX stretches it; or undefined when its font did not load. Each font is loaded
+ * once, as the page loads it.
+ */
+async function advancesOf(
+  stream: GlyphStream,
+  fonts: PageFonts,
+): Promise<(glyph: ReferenceGlyph) => number | undefined> {
+  const tex = new Map<string, Tfm | undefined>();
+  const native = new Map<string, NativeFontFile | undefined>();
+  for (const page of stream.pages)
+    for (const item of page.items)
+      if (item.kind === "glyph") (item.native === true ? native : tex).set(item.font, undefined);
+  for (const name of tex.keys())
+    tex.set(name, (await fonts.load(name).catch(() => undefined))?.tfm);
+  for (const name of native.keys())
+    native.set(name, (await fonts.loadNative(name).catch(() => undefined))?.file);
+  return (glyph) => {
+    if (glyph.native === true) {
+      const file = native.get(glyph.font);
+      const units = file?.advanceOf(glyph.code);
+      if (file === undefined || units === undefined || !(file.unitsPerEm > 0)) return undefined;
+      return (units / file.unitsPerEm) * glyph.size * ((glyph.extend ?? 65536) / 65536);
+    }
+    const tfm = tex.get(glyph.font);
+    const info = tfm?.chars[glyph.code - tfm.bc];
+    const width = info === undefined ? undefined : tfm?.widths[info.width];
+    return width === undefined ? undefined : (width / 2 ** 20) * glyph.size;
+  };
+}
+
+/**
+ * What a reference's glyphs read as, for the leak detector (`PageStrings`): each glyph's text as
+ * the page names it (`glyphTextOf`), in the order the output sets them, a line's glyphs joined and
+ * parted into words where the gap after a glyph's advance is WORD_GAP of an em or more, and lines
+ * parted where a glyph's baseline moves or it steps back; a word TeX hyphenated at a line's end
+ * read whole, a spacing accent left out and a mark kept with its letter. The words are then read
+ * as a body's text is read, parted at punctuation (`wordsOf`), and a line's digits as a phone's
+ * (`digitRuns`). A glyph with no text parts words. It takes time linear in the glyphs.
+ */
+export async function pageStrings(stream: GlyphStream, fonts: PageFonts): Promise<PageStrings> {
+  const advance = await advancesOf(stream, fonts);
+  const lines: string[][] = [];
+  let line: string[] = [];
+  let token = "";
+  let last: ReferenceGlyph | undefined;
+  const endToken = () => {
+    if (token !== "") line.push(token);
+    token = "";
+  };
+  const endLine = () => {
+    endToken();
+    if (line.length > 0) lines.push(line);
+    line = [];
+  };
+  for (const page of stream.pages) {
+    endLine();
+    last = undefined;
+    for (const item of page.items) {
+      if (item.kind !== "glyph") continue;
+      const text = item.text ?? "";
+      if (SPACING_ACCENTS.has(text)) continue;
+      // A mark goes with the letter before it, wherever XeTeX places it.
+      if (text !== "" && /^\p{M}+$/u.test(text)) {
+        token += text;
+        continue;
+      }
+      if (last !== undefined) {
+        const em = last.size;
+        const end = last.h + (advance(last) ?? em / 2);
+        if (Math.abs(item.v - last.v) > BASELINE_MOVE * em || item.h < last.h) {
+          // A word TeX hyphenated at a line's end goes on at the next line's start.
+          if (/\p{L}[-\u2010\u00ad]$/u.test(token) && /^\p{Ll}/u.test(text))
+            token = token.slice(0, -1);
+          else endLine();
+        } else if (item.h - end >= WORD_GAP * em) endToken();
+      }
+      last = item;
+      if (text.trim() === "") endToken();
+      else token += text;
+    }
+  }
+  endLine();
+  const identifiers = new Set<string>();
+  const sequence: string[] = [];
+  for (const each of lines) {
+    for (const word of each) {
+      for (const found of pageIdentifiers(word)) identifiers.add(found);
+      for (const part of wordsOf(word)) sequence.push(part);
+    }
+    for (const run of digitRuns(each.join(" "))) identifiers.add(run);
+  }
+  const words = new Set<string>();
+  const pairs = new Set<string>();
+  sequence.forEach((word, i) => {
+    if (lettersOf(word) >= MIN_NEEDLE) words.add(word);
+    const next = sequence[i + 1];
+    if (next !== undefined && lettered(word) && lettered(next)) pairs.add(`${word} ${next}`);
+  });
+  return { words: [...words], pairs: [...pairs], identifiers: [...identifiers] };
+}
+
 /**
  * The document's texts the matchers look for (`Needles`), each of MIN_NEEDLE letters and digits
  * or more, and none shaped as a placeholder. What the builder masks by: every phrase, two words or
@@ -404,11 +619,15 @@ const lettered = (word: string) => /^\p{L}/u.test(word);
  * header's values, the name whole among them, and of the texts the preamble stores, each with its
  * pairs of adjacent words that start with letters; every identifier any of them holds, and each
  * link's, the header's and the body's alike; and each word of the header's name of MIN_NEEDLE
- * letters or more. Never a link's label, which is the class's word as often as not (`GitHub`), nor
- * a single word of the body's or a stored text's. What the check looks for (`check`) is that and
- * every other text of the document's besides, the single words among them. A text of the body's
- * that holds `=` is code, `leftmargin=*`, and so is a raw chunk's quantity, `0.5cm`, and a single
- * word of its options' brackets, `\faFile*[regular]`: none is looked for.
+ * letters or more; the header's location, a postal address, by its postcodes of letters and
+ * digits and by each of its words that holds a digit, a street's number or a postcode of digits,
+ * with the word before it and the word after it (`addressNeedles`); and the page's pairs of words
+ * and its identifiers (`PageStrings`), as the body's. Never a link's label, which is the class's
+ * word as often as not (`GitHub`), nor a single word of the body's, a stored text's or the page's.
+ * What the check looks for (`check`) is that and every other text of the document's besides, the
+ * single words among them, the page's too. A text of the body's that holds `=` is code,
+ * `leftmargin=*`, and so is a raw chunk's quantity, `0.5cm`, and a single word of its options'
+ * brackets, `\faFile*[regular]`: none is looked for.
  */
 function needlesOf(document: DocumentText, check: boolean): Needles {
   const byPrefix = new Map<string, Needle[]>();
@@ -471,13 +690,21 @@ function needlesOf(document: DocumentText, check: boolean): Needles {
   for (const value of [header.first, header.last, header.headline, header.email, header.phone])
     text(value, "header");
   text(header.location, "header");
+  for (const [each, shape] of addressNeedles(header.location)) add(each, "header", shape);
   if (header.first !== undefined || header.last !== undefined)
     text(`${header.first ?? ""} ${header.last ?? ""}`.trim(), "header");
   for (const each of header.links ?? []) link(each.href, "header");
   for (const value of [header.first, header.last])
     for (const word of wordsOf(value ?? ""))
-      if ((word.match(/\p{L}/gu) ?? []).length >= MIN_NEEDLE) add(word, "header", "word");
+      if (lettersOf(word) >= MIN_NEEDLE) add(word, "header", "word");
   for (const value of document.stored ?? []) text(value, "stored");
+  // The page, last, so that a text the body or the header holds too is known as theirs: its
+  // identifiers and its pairs of words, which mask as the body's phrases do, and for the check its
+  // single words too.
+  const page = document.page;
+  for (const each of page?.identifiers ?? []) add(each, "page", "identifier");
+  for (const pair of page?.pairs ?? []) add(pair, "page", "phrase");
+  if (check) for (const word of page?.words ?? []) add(word, "page", "word");
   return { byPrefix, pairs };
 }
 
@@ -542,7 +769,7 @@ function reader() {
  * What a pattern masked (`maskDefinition`), `<link____>`: its kind's name is the contract's word,
  * not the text's, and no matcher reads it.
  */
-const PATTERN_PLACEHOLDER = /<(?:link|email|phone)_*>/y;
+const PATTERN_PLACEHOLDER = /<(?:link|email|phone|postcode)_*>/y;
 
 /** The length of a pattern's placeholder at `at` of a text, or 0. */
 function placeholderAt(text: string, at: number): number {
@@ -914,11 +1141,16 @@ function pairsFound(visible: Visible, pairs: ReadonlyMap<string, Origin>, hide: 
 
 /**
  * What of an own definition's visible text is the document's (decision 0024): each of its texts
- * the definition holds as whole words, and each pair of adjacent words of one of the definition's
- * literals that a phrase of the document holds (`pairsFound`); and where the first came from.
+ * the definition holds as whole words, as `take` takes them, and each pair of adjacent words of one
+ * of the definition's literals that a phrase of the document holds (`pairsFound`); and where the
+ * first came from.
  */
-function ownHidden(visible: Visible, needles: Needles): { hide: Uint8Array; origin?: Origin } {
-  const { hide, origin } = found(visible, needles, () => "whole");
+function ownHidden(
+  visible: Visible,
+  needles: Needles,
+  take: (needle: Needle) => Take = () => "whole",
+): { hide: Uint8Array; origin?: Origin } {
+  const { hide, origin } = found(visible, needles, take);
   const paired = pairsFound(visible, needles.pairs, hide);
   const first = origin ?? paired;
   return { hide, ...(first === undefined ? {} : { origin: first }) };
@@ -1381,6 +1613,12 @@ export interface RequestOptions {
    * it.
    */
   sources?: readonly string[];
+  /**
+   * The page's strings (`pageStrings`), whose pairs of words and identifiers mask the document's
+   * own definitions and the settings as the body's do, so that a name a macro of the preamble
+   * writes, which no body text names, is masked where the page shows it.
+   */
+  page?: PageStrings;
 }
 
 /** A call, or an environment opened, in the body or the preamble: its node, whatever holds it. */
@@ -1454,9 +1692,10 @@ function preambleCalls(
  * its closure's, masked, its key, the probe's verdicts and up to three call sites; and the
  * preamble's settings. `tree` is the body's, `signatures` what the engine said of the body's names
  * and the preamble's (`probeUses`), `probe` the probe's aggregates and candidates, and
- * `preamble` the main file's text before `\begin{document}`. The request is checked against the
- * contract's schema before it is given back, so that a call site holding the document's text
- * throws rather than leaves.
+ * `preamble` the main file's text before `\begin{document}`; the options give the upload's
+ * sources, the header's values and the page's strings, which the import passes all of (decision
+ * 0029). The request is checked against the contract's schema before it is given back, so that a
+ * call site holding the document's text throws rather than leaves.
  */
 export async function buildRequest(
   tree: Tree,
@@ -1471,6 +1710,7 @@ export async function buildRequest(
       tree,
       ...(options.header === undefined ? {} : { header: options.header }),
       stored: ofPreamble.map((each) => each.text),
+      ...(options.page === undefined ? {} : { page: options.page }),
     },
     false,
   );
@@ -1545,12 +1785,16 @@ export async function buildRequest(
   }
 
   // The definitions: every macro's own and its closure's; the document's own masked by its values.
+  // A macro a storing call of the preamble's stored its argument in holds the person's text,
+  // whoever defines it, as europecv's `\ecv@rfoot` holds what `\ecvfootnote` was given: it is data,
+  // as it would be had that text named no command, and goes by its name alone.
+  const storage = new Set([...setters].flatMap((name) => storedIn(macroOf(name))));
   const definitions = new Map<string, RequestDefinition>();
   const define = async (name: string) => {
     if (definitions.has(name)) return;
     const macro = macroOf(name);
     if (macro === undefined) return;
-    if (macro.kind === "data") {
+    if (macro.kind === "data" || storage.has(name)) {
       definitions.set(name, { kind: "data", name });
       return;
     }
@@ -1778,74 +2022,144 @@ export function withRedefinitions(
  */
 type Reads = "own" | "tree" | "setting" | "source";
 
-/** Where a request holds a text, for a leak's message, and how it is read: never the text itself. */
-function textsOf(
-  request: NamingRequest,
-  owned: ReadonlySet<string>,
-): { where: string; text: string; reads: Reads }[] {
-  const texts: { where: string; text: string; reads: Reads }[] = [];
+/** What kind of place in a request holds a text, as a leak names it. */
+export type LeakKind =
+  | "own definition"
+  | "tree definition"
+  | "call site"
+  | "signature"
+  | "setting"
+  | "class";
+
+/**
+ * A text of the document's that a request holds (`findLeaks`): what kind of text it is, the
+ * body's, a link's, a date, a raw chunk's, the header's, a stored text or the page's; what kind of
+ * place holds it, and the macro whose definition, call site or signature that is, none for a
+ * setting or the class; and where, as a message says it. Never the text.
+ */
+export interface Leak {
+  origin: Origin;
+  kind: LeakKind;
+  macro?: string;
+  where: string;
+}
+
+/** A text of a request as the check reads it: where it is, and how it is read. */
+interface Held {
+  kind: LeakKind;
+  macro?: string;
+  where: string;
+  text: string;
+  reads: Reads;
+}
+
+/**
+ * The texts of a signature's brace groups, a space between: its defaults, `O{...}`'s among them,
+ * and the tokens `e{...}`, `E{...}{...}` and `u{...}` give. What lies outside them is xparse's
+ * argument types, `s o m`, which are code however they spell a word.
+ */
+function signatureText(spec: string): string {
+  const groups: string[] = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < spec.length; i++) {
+    const char = spec[i];
+    if (char === "\\") i++;
+    else if (char === "{" && depth++ === 0) from = i + 1;
+    else if (char === "}" && depth > 0 && --depth === 0) groups.push(spec.slice(from, i));
+  }
+  return groups.join(" ");
+}
+
+/** Where a request holds a text, and how the check reads it: never the text itself. */
+function textsOf(request: NamingRequest, owned: ReadonlySet<string>): Held[] {
+  const texts: Held[] = [];
   for (const definition of request.definitions)
-    if (definition.kind === "definition")
+    if (definition.kind === "definition") {
+      const own = isOwn(definition.name, owned);
       texts.push({
+        kind: own ? "own definition" : "tree definition",
+        macro: definition.name,
         where: `the definition of ${definition.name}`,
         text: definition.text,
-        reads: isOwn(definition.name, owned) ? "own" : "tree",
+        reads: own ? "own" : "tree",
       });
+    }
   for (const macro of request.macros) {
+    const name = macro.name;
     if (macro.signature !== undefined)
       texts.push({
-        where: `the signature of ${macro.name}`,
-        text: macro.signature,
+        kind: "signature",
+        macro: name,
+        where: `the signature of ${name}`,
+        text: signatureText(macro.signature),
         reads: "source",
       });
     macro.sites.forEach((site, s) => {
       site.arguments.forEach((argument, a) => {
         if (argument !== null)
           texts.push({
-            where: `call site ${s + 1} of ${macro.name}, argument ${a + 1}`,
+            kind: "call site",
+            macro: name,
+            where: `call site ${s + 1} of ${name}, argument ${a + 1}`,
             text: argument,
             reads: "source",
           });
       });
       if (site.body !== undefined)
         texts.push({
-          where: `call site ${s + 1} of ${macro.name}, its body`,
+          kind: "call site",
+          macro: name,
+          where: `call site ${s + 1} of ${name}, its body`,
           text: site.body,
           reads: "source",
         });
     });
   }
   request.preamble.settings.forEach((setting, i) =>
-    texts.push({ where: `setting ${i + 1}`, text: setting, reads: "setting" }),
+    texts.push({ kind: "setting", where: `setting ${i + 1}`, text: setting, reads: "setting" }),
   );
   const documentClass = request.preamble.class;
   if (documentClass !== undefined) {
-    texts.push({ where: "the class's name", text: documentClass.name, reads: "setting" });
+    texts.push({
+      kind: "class",
+      where: "the class's name",
+      text: documentClass.name,
+      reads: "setting",
+    });
     documentClass.options.forEach((option, i) =>
-      texts.push({ where: `the class's option ${i + 1}`, text: option, reads: "setting" }),
+      texts.push({
+        kind: "class",
+        where: `the class's option ${i + 1}`,
+        text: option,
+        reads: "setting",
+      }),
     );
   }
   return texts;
 }
 
 /**
- * Throw when a request holds any of a document's text, more strictly than the builder masks, on
- * purpose: any text of the body's, a run, a date as it is spelt or a raw chunk's piece, any header
- * value or word of the name, any text the preamble stores, and any identifier any of them holds, of
+ * Each place a request holds any of a document's text (`Leak`), found more strictly than the
+ * builder masks, on purpose: any text of the body's, a run, a date as it is spelt or a raw
+ * chunk's piece, any header value or word of the name, any text the preamble stores, any word or
+ * pair of words the page shows (`PageStrings`), and any identifier any of them holds, of
  * MIN_NEEDLE letters and digits or more, single words among them, spelt out as whole words in a
- * call site, a signature, a setting, the class or a definition of the document's own (and in one of
- * those, any pair of adjacent words a phrase of the document holds); and in a definition of the
- * tree's, a phrase of two words or more or an identifier, since a single word of public code is
- * no leak; nor, in a setting or the class, is a single word of the body's or a stored text's that
- * a setting keeps as it is, one of its keywords (`KEYWORDS`), `english` for a language section's
- * word, or the name of a colour the settings define, which the class's code names too; a word of
- * the header's is, since the builder masks it there. A text of one word and numbers, a name set
- * above a phone number that the parser reads as one run, is looked for as that word alone too.
- * The message says what kind of text is where,
- * never the text. What it reads of a definition is what the builder reads (`visibleOfMeaning`): a
- * text written into code, a colour's name or a message, it does not see.
+ * call site, a signature's defaults, a setting or the class; in a definition of the document's
+ * own, the same but a single word only the page shows, which is the template's as often as the
+ * person's (and in one, any pair of adjacent words a phrase of the document holds); and in a
+ * definition of the tree's, a phrase of two words or more or an identifier of the body's, the
+ * header's or a stored text's, since a single word of public code is no leak, and the tree's
+ * classes set their own words on the page. Nor, in a setting or the class, is a single word of the
+ * body's, a stored text's or the page's that a setting keeps as it is, one of its keywords
+ * (`KEYWORDS`), `english` for a language section's word, or the name of a colour the settings
+ * define, which the class's code names too; a word of the header's is, since the builder masks it
+ * there. A text of one word and numbers, a name set above a phone number that the parser reads as
+ * one run, is looked for as that word alone too. What it reads of a definition is what the
+ * builder reads (`visibleOfMeaning`): a text written into code, a colour's name or a message, it
+ * does not see.
  */
-export function assertNoText(request: NamingRequest, document: DocumentText): void {
+export function findLeaks(request: NamingRequest, document: DocumentText): Leak[] {
   const needles = needlesOf(document, true);
   const owned = ownNames(document.sources ?? []);
   const kept = new Set(
@@ -1855,17 +2169,32 @@ export function assertNoText(request: NamingRequest, document: DocumentText): vo
     needle.shape === "word" && needle.origin !== "header" && kept.has(needle.chars.join(""))
       ? undefined
       : settingTake(needle);
-  for (const { where, text, reads } of textsOf(request, owned)) {
+  const ownTake = (needle: Needle): Take =>
+    needle.shape === "word" && needle.origin === "page" ? undefined : "whole";
+  const treeTake = (needle: Needle): Take =>
+    needle.shape === "word" || needle.origin === "page" ? undefined : "whole";
+  const leaks: Leak[] = [];
+  for (const { kind, macro, where, text, reads } of textsOf(request, owned)) {
     let origin: Origin | undefined;
     if (reads === "source") origin = found(visibleOfSource(text), needles, settingTake).origin;
     else if (reads === "setting")
       origin = found(visibleOfSource(text), needles, settingWord).origin;
-    else if (reads === "own") origin = ownHidden(visibleOfMeaning(text), needles).origin;
-    else
-      origin = found(visibleOfMeaning(text), needles, (needle) =>
-        needle.shape === "word" ? undefined : "whole",
-      ).origin;
+    else if (reads === "own") origin = ownHidden(visibleOfMeaning(text), needles, ownTake).origin;
+    else origin = found(visibleOfMeaning(text), needles, treeTake).origin;
     if (origin !== undefined)
-      throw new Error(`The naming request holds the document's text (${origin}) in ${where}.`);
+      leaks.push({ origin, kind, ...(macro === undefined ? {} : { macro }), where });
   }
+  return leaks;
+}
+
+/**
+ * Throw when a request holds any of a document's text, as `findLeaks` finds it: the message says
+ * what kind of text is where, never the text.
+ */
+export function assertNoText(request: NamingRequest, document: DocumentText): void {
+  const [leak] = findLeaks(request, document);
+  if (leak !== undefined)
+    throw new Error(
+      `The naming request holds the document's text (${leak.origin}) in ${leak.where}.`,
+    );
 }

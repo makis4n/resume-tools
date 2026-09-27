@@ -151,8 +151,12 @@ since a template's closures overlap: every Awesome-CV macro reaches the same sty
   holds that no document string names; and anything the caller's header and stored texts leave
   out. Over the corpus's 117 compiling documents, each with its sources and a header of its own
   name's words, no definition of the tree's is masked, and the check passes on the builder's
-  request for 114: the three it fails on hold a word of the person's, stored or written raw, in a
-  definition of their own, which the builder does not mask as a single word.
+  request for 114: the three it fails on hold the person's text, stored or written raw, in a
+  definition the builder does not mask by it: a single word in two of their own, and a stored
+  text in the tree's `\ecv@rfoot`, which europecv's setter filled. Item 11 (decision 0029) adds
+  the page and the header's address to the builder's and the check's sources, sends a macro a
+  storing call filled as data, and reads a signature by its defaults; with those the check passes
+  on all 117 (`corpus leak`).
 
 `REQUEST_CAPS` bounds what a service reads: 512 macros, 8,192 definitions of a megabyte each at
 most, 32 arguments, three sites of 4,000 characters, 256 settings of 2,000. The schema refuses a
@@ -485,23 +489,23 @@ document.
   `corpus oracle` and `corpus seed --write`, and review what moved: a key moves with any
   definition in its closure, and `--write` files each answer again under its new key. Items 5 and
   8, which changed the probe and the tree's fonts, moved none.
-- Item 11 finishes the masking. What the builder does not mask: a person's text that only a
-  definition holds, which no document string names, as a preamble's own macro holding a summary; a
-  single word of the body's or of a stored text's in an own definition, which the check finds, as
-  it does in the corpus where a storage macro holds a stored word (`\@extrainfo`, `\ecv@rfoot`) or a
-  header macro a word the body draws in a picture, and which a storage macro holds whenever a
-  stored text holds a command, `\position{\small ...}` making `\@position` code; a phrase an own
-  definition parts across commands that the body writes only inside a longer text; a name inside
-  a longer word, as a colour named after its owner, in a definition or a setting; text written into
-  code the matcher does not read, as a `pdfauthor` in a class's `\hypersetup` or a message that
-  names the person; and a macro the upload defines through a `\csname` built from an argument, as
-  AltaCV's `\NewInfoField` defines its contacts, which is read as the tree's. And a word of the
-  header's name that an uploaded copy of a public class holds as text, `\hfill Page \thepage` for a
-  surname Page, is masked, so that a reader with the public class can tell the surname from the
-  request: the disclosure is left to the person's own uploads, since no definition of the tree's is
-  masked. Item 4's link pattern masks an address template a class writes itself, `mailto:#1` among
-  them, which the model then reads as a link to somewhere; changing it moves every key, and goes
-  with a version.
+- Item 11 finished the masking (decision 0029): the page masks a person's text a definition of
+  their own writes where the page shows it beside other words, and a macro a storing call filled
+  goes as data, `\@extrainfo` and `\ecv@rfoot` among them. What the builder does not mask: a
+  person's text that only a definition holds and the page never shows, as a preamble's own macro
+  holding a summary it never calls; a single word of the body's, a stored text's or the page's in
+  an own definition that the page does not show beside another of its words, which the check
+  finds but for the page's; a phrase an own definition parts across commands that the body writes
+  only inside a longer text; a name inside a longer word, as a colour named after its owner, in a
+  definition or a setting; text written into code the matcher does not read, as a `pdfauthor` in a
+  class's `\hypersetup` or a message that names the person; and a macro the upload defines through
+  a `\csname` built from an argument, as AltaCV's `\NewInfoField` defines its contacts, which is
+  read as the tree's. And a word of the header's name that an uploaded copy of a public class
+  holds as text, `\hfill Page \thepage` for a surname Page, is masked, so that a reader with the
+  public class can tell the surname from the request: the disclosure is left to the person's own
+  uploads, since no definition of the tree's is masked. Item 4's link pattern masks an address
+  template a class writes itself, `mailto:#1` among them, which the model then reads as a link to
+  somewhere; changing it moves every key, and goes with a version.
 - The milestone's line for this item, that the pipeline assembles a package for each upstream
   sample from the seed alone, is item 7's to meet; the seed's check is that each sample's every
   macro has an answer that validates under its key, asked with the sample's sources and the

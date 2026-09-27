@@ -232,14 +232,30 @@ function spanOf(nodes: readonly Node[]): Span | undefined {
  * its calls are not candidates.
  */
 export function isSetter(macro: TemplateMacro | { kind: "data" } | undefined): boolean {
-  if (macro === undefined || macro.kind === "data") return false;
+  return storesOf(macro) !== undefined;
+}
+
+/**
+ * The macros a setter stores its arguments in (`isSetter`), each `\def`'s or `\gdef`'s target, in
+ * its parameters' order, as Awesome-CV's `\position` stores `\@position` and europecv's
+ * `\ecvfootnote` `\ecv@rfoot`; none for a macro that is not a setter. Once the preamble has called
+ * the setter, each holds the person's text, whoever defines it.
+ */
+export function storedIn(macro: TemplateMacro | { kind: "data" } | undefined): string[] {
+  return storesOf(macro) ?? [];
+}
+
+/** The macros a setter stores its arguments in, in order; undefined for a macro that is not one. */
+function storesOf(macro: TemplateMacro | { kind: "data" } | undefined): string[] | undefined {
+  if (macro === undefined || macro.kind === "data") return undefined;
   const meaning = readMeaning(macro.meaning);
-  if (meaning.kind !== "macro" || !/^(?:#\d)+$/.test(meaning.parameters)) return false;
+  if (meaning.kind !== "macro" || !/^(?:#\d)+$/.test(meaning.parameters)) return undefined;
   const parameters = meaning.parameters.length / 2;
   const tokens = tokensOf(meaning.replacement).filter(
     (token) => !(token.kind === "char" && token.text === " "),
   );
   const stored = new Set<string>();
+  const targets: string[] = [];
   let at = 0;
   for (;;) {
     let next = at;
@@ -256,10 +272,13 @@ export function isSetter(macro: TemplateMacro | { kind: "data" } | undefined): b
       close?.kind === "close";
     if (!assigns) break;
     stored.add(parameter.text);
+    targets.push(nameOf(target));
     at = next + 5;
   }
-  if (stored.size !== parameters) return false;
-  return tokens.slice(at).every((token) => token.kind !== "parameter" || token.text === "##");
+  if (stored.size !== parameters) return undefined;
+  return tokens.slice(at).every((token) => token.kind !== "parameter" || token.text === "##")
+    ? targets
+    : undefined;
 }
 
 const nameOf = (token: { kind: string; name?: string } | undefined) => token?.name ?? "";
