@@ -10,12 +10,18 @@
  * is wrapped in the markers `fields.ts` reads, named after its node's id so that a field keeps
  * its name through a reorder, and the body comes with each field's text, which the page aligns
  * its glyphs to. Decision 0007 records the rules.
+ *
+ * The one exception is what an import kept of the user's own upload, which no user types: a locked
+ * section's LaTeX and a node's extras, which the generator writes as they are, the first between
+ * lock markers (`\rtlocked`), the second through an extras slot (decision 0025).
  */
 
 import type {
   Entry,
+  Extras,
   Header,
   Link,
+  LockedSection,
   Resume,
   RichText,
   Section,
@@ -47,7 +53,7 @@ import {
   type TemplatePackage,
 } from "./package";
 import { PRELUDE } from "./prelude";
-import { parseSnippet, type SlotType, type SnippetNode, shownSlots } from "./snippet";
+import { extrasKey, parseSnippet, type SlotType, type SnippetNode, shownSlots } from "./snippet";
 
 /** A package the generator cannot render: the body would pass MAX_BODY, or a variant is missing. */
 export class GenerateError extends Error {
@@ -131,10 +137,16 @@ type ScopeOf<S extends Readonly<Record<string, SlotType>>> = {
   readonly [K in keyof S]: ValueOf<S[K]>;
 };
 
-/** A snippet and the slots it renders with: the whole document, or one item of a list. */
+/**
+ * A snippet and the slots it renders with: the whole document, or one item of a list. `extras`
+ * are its node's, which its extras slots write: the header's, a section's or an entry's, an empty
+ * record where the node keeps none. Any other part has none, and the schema lets no extras slot
+ * into its snippet.
+ */
 interface Part {
   nodes: readonly SnippetNode[];
   scope: Scope;
+  extras?: Extras;
 }
 
 /** The name of the format for a package and a document's values, which `generateFormat` gives. */
@@ -501,7 +513,7 @@ function headerPart(build: Build, header: Header): Part {
     links: listSlot(links, snippets.separators.links),
     contacts: listSlot([...contacts, ...links], snippets.separators.contacts),
   };
-  return { nodes: build.tree(snippets.header), scope };
+  return { nodes: build.tree(snippets.header), scope, extras: header.extras ?? {} };
 }
 
 /**
@@ -520,12 +532,17 @@ function linkPart(build: Build, link: Link): Part | undefined {
   return { nodes: build.tree(snippets[link.kind] ?? snippets.other), scope };
 }
 
-/** A section through its kind's snippet, and everything in it through its role's variants. */
+/**
+ * A section through its kind's snippet, and everything in it through its role's variants; a
+ * locked one through no snippet (`lockedPart`).
+ */
 function sectionPart(build: Build, section: Section): Part {
+  if (section.kind === "locked") return lockedPart(section);
   const { snippets } = build.pkg;
   const { role } = section;
   const nodes = build.tree(byRole(snippets.section[section.kind], role));
   const title = textSlot(`${section.id}.title`, section.title);
+  const extras = section.extras ?? {};
   switch (section.kind) {
     case "entries": {
       const entries = section.entries.map((entry) => entryPart(build, entry, role));
@@ -533,7 +550,7 @@ function sectionPart(build: Build, section: Section): Part {
         title,
         entries: listSlot(entries, byRole(snippets.separators.entries, role)),
       };
-      return { nodes, scope };
+      return { nodes, scope, extras };
     }
     case "list": {
       const item = build.tree(byRole(snippets.item, role));
@@ -545,7 +562,7 @@ function sectionPart(build: Build, section: Section): Part {
         title,
         items: listSlot(items, byRole(snippets.separators.items, role)),
       };
-      return { nodes, scope };
+      return { nodes, scope, extras };
     }
     case "labelled": {
       const item = build.tree(byRole(snippets.labelledItem, role));
@@ -560,16 +577,27 @@ function sectionPart(build: Build, section: Section): Part {
         title,
         items: listSlot(items, byRole(snippets.separators.items, role)),
       };
-      return { nodes, scope };
+      return { nodes, scope, extras };
     }
     case "paragraph": {
       const scope: ScopeOf<(typeof SECTION_SLOTS)["paragraph"]> = {
         title,
         text: richSlot(`${section.id}.text`, section.text),
       };
-      return { nodes, scope };
+      return { nodes, scope, extras };
     }
   }
+}
+
+/**
+ * A locked section: its LaTeX as the upload had it, never escaped, and a line's end, so that a
+ * comment on its last line ends before the brace that closes it, in the prelude's `\rtlocked`,
+ * which writes a lock marker before and after it (decision 0025). No snippet sets it, so it renders
+ * the same in every package, where it sits among the sections, and nothing in it is a field.
+ */
+function lockedPart(section: LockedSection): Part {
+  const text = `\\rtlocked{${section.id}}{${section.latex}\n}`;
+  return { nodes: [{ kind: "text", text }], scope: {} };
 }
 
 function entryPart(build: Build, entry: Entry, role: SectionRole): Part {
@@ -586,7 +614,7 @@ function entryPart(build: Build, entry: Entry, role: SectionRole): Part {
     dates: dateSlot(`${entry.id}.dates`, entry.dates && formatDates(entry.dates, build.dateFormat)),
     bullets: listSlot(bullets, byRole(snippets.separators.bullets, role)),
   };
-  return { nodes: build.tree(byRole(snippets.entry, role)), scope };
+  return { nodes: build.tree(byRole(snippets.entry, role)), scope, extras: entry.extras ?? {} };
 }
 
 /** A snippet or separator for a section's role: the role's own variant, or the default. */
@@ -625,7 +653,7 @@ function valueSlot(text: string): Extract<Value, { type: "value" }> {
 
 /** A walk's place in a snippet, or in a list whose items it is rendering one by one. */
 type Frame =
-  | { kind: "nodes"; nodes: readonly SnippetNode[]; next: number; scope: Scope }
+  | { kind: "nodes"; nodes: readonly SnippetNode[]; next: number; scope: Scope; extras?: Extras }
   | { kind: "list"; list: ValueOf<"list">; next: number };
 
 /**
@@ -634,7 +662,7 @@ type Frame =
  * join the stack one at a time, so every step is small and each is counted against MAX_BODY. A
  * block reads the presence its slot's value was built with, and a block over a list never
  * iterates: a list renders only through its slot. `shown` holds the slot nodes a snippet shows in
- * `\href`'s text (`markShown`).
+ * `\href`'s text (`markShown`). An extras slot writes the part's node's extra as it is (`kept`).
  */
 function render(
   part: Part,
@@ -643,7 +671,9 @@ function render(
   escape: Escape,
   shown: WeakSet<SnippetNode>,
 ) {
-  const stack: Frame[] = [{ kind: "nodes", nodes: part.nodes, next: 0, scope: part.scope }];
+  const stack: Frame[] = [
+    { kind: "nodes", nodes: part.nodes, next: 0, scope: part.scope, extras: part.extras },
+  ];
   for (let frame = stack.at(-1); frame !== undefined; frame = stack.at(-1)) {
     out.step();
     if (frame.kind === "list") {
@@ -654,17 +684,31 @@ function render(
       }
       if (frame.next > 0) out.add(frame.list.separator);
       frame.next++;
-      stack.push({ kind: "nodes", nodes: item.nodes, next: 0, scope: item.scope });
+      stack.push({
+        kind: "nodes",
+        nodes: item.nodes,
+        next: 0,
+        scope: item.scope,
+        extras: item.extras,
+      });
       continue;
     }
     const node = frame.nodes[frame.next++];
+    const key = node === undefined || node.kind === "text" ? undefined : extrasKey(node.name);
     if (node === undefined) {
       stack.pop();
     } else if (node.kind === "text") {
       out.add(node.text);
     } else if (node.kind === "block") {
-      if (slot(frame.scope, node.name).present === node.present)
-        stack.push({ kind: "nodes", nodes: node.children, next: 0, scope: frame.scope });
+      const present =
+        key === undefined ? slot(frame.scope, node.name).present : extra(frame, key) !== undefined;
+      if (present === node.present) stack.push({ ...frame, nodes: node.children, next: 0 });
+    } else if (key !== undefined) {
+      // The schema refuses a typeset extra, since what it holds is LaTeX no escape has seen.
+      if (!node.raw) throw new Error(`${node.name} is an extra, which only ever goes in raw`);
+      const latex = extra(frame, key) ?? "";
+      out.charge(latex.length);
+      out.add(kept(latex));
     } else {
       const value = slot(frame.scope, node.name);
       if (value.type !== "list")
@@ -680,6 +724,32 @@ function slot(scope: Scope, name: string): Value {
   const value = Object.hasOwn(scope, name) ? scope[name] : undefined;
   if (value === undefined) throw new Error(`there is no slot ${name} here`);
   return value;
+}
+
+/**
+ * The extra a frame's node keeps under `key`, or undefined when it keeps none: an extra is present
+ * when the node has the key, whatever it holds, since what an upload gave empty, as `\item[]`'s
+ * label, is not what it left out. The schema lets only the header's, a section's and an entry's
+ * snippets use extras slots, so a frame of another part is a bug.
+ */
+function extra(frame: Extract<Frame, { kind: "nodes" }>, key: string): string | undefined {
+  const { extras } = frame;
+  if (extras === undefined) throw new Error(`there is no extras slot x.${key} here`);
+  return Object.hasOwn(extras, key) ? extras[key] : undefined;
+}
+
+/**
+ * LaTeX kept from the upload as the generator writes it, as it is, with a line's end after it when
+ * its last line holds a comment, which would otherwise run on over what the snippet sets after the
+ * slot: the comment takes the line's end, so TeX reads nothing that the upload did not have there.
+ */
+function kept(latex: string): string {
+  const last = latex.slice(Math.max(latex.lastIndexOf("\n"), latex.lastIndexOf("\r")) + 1);
+  for (let at = 0; at < last.length; at++) {
+    if (last[at] === "\\") at++;
+    else if (last[at] === "%") return `${latex}\n`;
+  }
+  return latex;
 }
 
 /**

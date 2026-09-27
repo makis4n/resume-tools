@@ -7,6 +7,7 @@ import type { EngineManifest } from "../engine/manifest";
 import { isFormatName } from "../engine/names";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { CompileResult, EngineSession } from "../engine/session";
+import { difference, glyphStream } from "../import/reference";
 import { type DrawnPage, drawPage } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
@@ -14,6 +15,7 @@ import { bound, fastest } from "../test/timing";
 import { type PageItem, parseDvi } from "../tex/dvi";
 import { alignGlyphs, collectFields, MARKER_BEGIN, MARKER_END } from "../tex/fields";
 import { curated } from "./curated";
+import { escapeText } from "./escape";
 import {
   fontDeclarations,
   formatName,
@@ -27,7 +29,7 @@ import {
 } from "./generate";
 import { INVENTED_XETEX } from "./invented";
 import { type ControlValues, defaultControls, parsePackage, type TemplatePackage } from "./package";
-import { PARAGRAPH_MARKER, PRELUDE } from "./prelude";
+import { LOCK_MARKER, PARAGRAPH_MARKER, PRELUDE } from "./prelude";
 
 type PackageInput = z.input<typeof TemplatePackage>;
 
@@ -919,6 +921,116 @@ function withSummary(length: number): Resume {
   });
 }
 
+/**
+ * LaTeX an import kept, invented: a part of a resume set as a table its author wrote by hand, with
+ * characters the escaper would change, an escaped percent, a comment and its line's end.
+ */
+const KEPT = [
+  "\\section*{Hobbies \\& clubs}",
+  "\\begin{tabular}{@{}ll}",
+  "Rowing & 50\\% of weekends % the river club {",
+  "\\\\ Chess\\_club & \\$5 a month",
+  "\\end{tabular}",
+].join("\n");
+
+/** The test resume with a locked section of KEPT after its experience. */
+const kept = Resume.parse({
+  ...resume,
+  sections: [
+    ...resume.sections.slice(0, 2),
+    { kind: "locked", id: "lock-k3pt9a", title: "", role: "other", latex: KEPT },
+    ...resume.sections.slice(2),
+  ],
+});
+
+/**
+ * The package with extras slots in the header's, a section's and an entry's snippets: a photo
+ * before the header, a rule after each section of entries' title, and an entry's icon, or a dash
+ * where it has none, and its label in brackets where it has one.
+ */
+const keeping = packageWith((pkg) => {
+  pkg.snippets.header = `{{#x.photo}}\\fbox{{{&x.photo}}}\n{{/x.photo}}${pkg.snippets.header}`;
+  pkg.snippets.section.entries = "\\section*{\\color{accent}{{title}}}{{&x.rule}}\n{{entries}}";
+  pkg.snippets.entry = [
+    "{{#x.icon}}{{&x.icon}}{{/x.icon}}{{^x.icon}}-{{/x.icon}} \\textbf{{{title}}}{{#x.label}} [{{&x.label}}]{{/x.label}}\\par",
+    "{{#bullets}}",
+    "\\begin{itemize}",
+    "{{bullets}}",
+    "\\end{itemize}",
+    "{{/bullets}}",
+  ].join("\n");
+});
+
+/** The test resume with extras on its header, its experience, and that section's first entry. */
+function withExtras(label: string): Resume {
+  const extended = structuredClone(resume);
+  extended.header.extras = { photo: "face_1.png & \\$5 #1" };
+  const [, work] = extended.sections;
+  if (work?.kind !== "entries") throw new Error("the resume's second section is its experience");
+  work.extras = { rule: "\\hfill\\rule{1em}{0.4pt}" };
+  const [fennel] = work.entries;
+  if (fennel === undefined) throw new Error("the experience has an entry");
+  fennel.extras = { icon: "\\textbf{New}", label };
+  return Resume.parse(extended);
+}
+
+describe("generateBody, with what an import keeps", () => {
+  it("writes a locked section's LaTeX as it is and a line's end in \\rtlocked, where it sits", () => {
+    // The escaper would change it, every backslash, brace, ampersand and percent.
+    expect(escapeText(KEPT)).not.toBe(KEPT);
+    const { latex, texts } = generateBody(pkg, kept, {});
+    const locked = `\\rtlocked{lock-k3pt9a}{${KEPT}\n}`;
+    // Between the experience and the projects, with the separator between sections either side.
+    expect(latex).toContain(
+      `\\par\n\n\n${locked}\n\n\\section*{\\color{accent}\\rtfield{projects.title}{Projects}}`,
+    );
+    // It marks no field, and every other field is marked as it was.
+    expect(Object.fromEntries(texts)).toEqual(TEXTS);
+    // No snippet sets it, so it is the same through every package.
+    const { package: jake } = curated("jake");
+    expect(generateBody(jake, kept, defaultControls(jake)).latex).toContain(`\n${locked}\n`);
+  });
+
+  it("writes an extra as it is, never escaped, where a snippet asks, and a block tests for it", () => {
+    const covers = (char: string) => char !== "#";
+    const { latex, texts, dropped } = generateBody(keeping, withExtras(""), {}, { covers });
+    expect(latex).toContain("\\fbox{face_1.png & \\$5 #1}\n\\plainmark\n");
+    expect(latex).toContain(
+      "\\section*{\\color{accent}\\rtfield{work.title}{Experience}}\\hfill\\rule{1em}{0.4pt}\n",
+    );
+    // An empty extra is there all the same, as an empty argument is not one left out.
+    expect(latex).toContain("\\textbf{New} \\textbf{\\rtfield{fennel.title}{Engineer}} []\\par");
+    // A node without the key, or without extras at all, gets nothing, and the inverted block.
+    expect(latex).toContain("- \\textbf{\\rtfield{larch.title}{Intern}}\\par");
+    expect(latex).toContain("\\section*{\\color{accent}\\rtfield{projects.title}{Projects}}\n");
+    // What the fonts cannot set is left out of the text, never out of what an import kept.
+    expect(dropped).toEqual([]);
+    // No extra is a field.
+    expect(texts).toEqual(generateBody(keeping, resume, {}, { covers }).texts);
+  });
+
+  it("ends an extra whose last line is a comment with a line's end, and no other", () => {
+    const commented = generateBody(keeping, withExtras("\\small % smaller"), {}).latex;
+    expect(commented).toContain(" [\\small % smaller\n]\\par");
+    const escaped = generateBody(keeping, withExtras("50\\% off\n% a line of its own\nsmall"), {});
+    expect(escaped.latex).toContain(" [50\\% off\n% a line of its own\nsmall]\\par");
+  });
+
+  it("charges an extra its length, so repeating a long one stops at MAX_BODY", () => {
+    const repeated = packageWith((pkg) => {
+      pkg.snippets.entry = "{{&x.icon}}".repeat(20);
+    });
+    const long = withExtras("");
+    const [, work] = long.sections;
+    const [fennel] = work?.kind === "entries" ? work.entries : [];
+    if (fennel === undefined) throw new Error("the experience has an entry");
+    fennel.extras = { icon: "x".repeat(40_000) };
+    const error = thrown(() => generateBody(repeated, long, {}));
+    expect(error).toBeInstanceOf(GenerateError);
+    expect(error.message).toContain("MAX_BODY");
+  });
+});
+
 describe("formatName", () => {
   /** The package with no format-bound control, and a preamble of its own. */
   const unbound = (preamble: string) =>
@@ -1791,4 +1903,132 @@ describe.skipIf(!engineAvailable())("the generated LaTeX through the engine", ()
       }
     });
   });
+});
+
+// Needs `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
+describe.skipIf(!engineAvailable())("what an import keeps, through the engine", () => {
+  let session: EngineSession;
+  let fonts: FontLibrary;
+  const format = generateFormat(keeping, {});
+  beforeAll(async () => {
+    session = await startNodeSession();
+    const dumped = session.dump("pdftex", format.name, format.preamble, format.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+      readFileSync(join(ENGINE_DIR, "files", path)),
+    );
+  }, 60_000);
+
+  /**
+   * Two parts of an invented resume kept as their upload had them, each where a mark between it
+   * and what comes before or after it would move the page: one that ends with a list before the
+   * next section's heading, and one after the last section's list, at the end.
+   */
+  const LOCKED = [
+    {
+      id: "lock-hobbies",
+      latex: "\\section*{Hobbies}\n\\begin{itemize}\n\\item Rowing on the river\n\\end{itemize}",
+    },
+    { id: "lock-talks", latex: "\\section*{Talks}\nOn setting type by hand, 2019." },
+  ];
+
+  /**
+   * The resume with extras TeX can set: the photo a word in italics, where the string tests' holds
+   * `_`, `&` and `#`, which TeX sets only where a template's macro takes them as a file's name.
+   */
+  const extended = (() => {
+    const resume = withExtras("");
+    resume.header.extras = { photo: "\\textit{Portrait}" };
+    return resume;
+  })();
+
+  /** The resume with extras, and a locked part after its experience and at its end. */
+  const lockedResume = (() => {
+    const [first, second] = LOCKED.map(({ id, latex }) => ({
+      kind: "locked",
+      id,
+      title: "",
+      role: "other",
+      latex,
+    }));
+    return Resume.parse({
+      ...extended,
+      sections: [...extended.sections.slice(0, 2), first, ...extended.sections.slice(2), second],
+    });
+  })();
+
+  /** A body's output read as the page reads it, with its lock markers and fields. */
+  async function compiled(latex: string, job: string) {
+    const result = session.compile("pdftex", format.name, latex, { job });
+    if (!result.output) throw new Error(result.error);
+    expect(result.log).not.toMatch(/^! /m);
+    const stream = await glyphStream(fonts, result.output);
+    const items = stream.pages.flatMap((page) => page.items);
+    const locks = items.flatMap((item) =>
+      item.kind === "special" && item.text.startsWith(LOCK_MARKER) ? [item.text] : [],
+    );
+    const pages = parseDvi(result.output, () => undefined).pages;
+    const fields = pages.flatMap((page) => [...collectFields(page, () => undefined).keys()]);
+    return { stream, items, locks, fields };
+  }
+
+  it("sets a locked part where its LaTeX alone sets, between its two lock markers", async () => {
+    const body = generateBody(keeping, lockedResume, {});
+    let bare = body.latex;
+    for (const { id, latex } of LOCKED) {
+      const wrapped = `\\rtlocked{${id}}{${latex}\n}`;
+      expect(bare).toContain(wrapped);
+      bare = bare.replace(wrapped, `${latex}\n`);
+    }
+    const marked = await compiled(body.latex, "locked");
+    const alone = await compiled(bare, "unlocked");
+    // The glyph streams leave the editor's markers out, so the two set the same page only if the
+    // lock markers moved nothing.
+    expect(difference(alone.stream, marked.stream)).toBeUndefined();
+    expect(marked.locks).toEqual([
+      "rt:l:lock-hobbies",
+      "rt:l:lock-hobbies",
+      "rt:l:lock-talks",
+      "rt:l:lock-talks",
+    ]);
+    // Each part's glyphs lie between its two markers, and no field's marker does.
+    const between = (id: string) => {
+      const markers = marked.items.flatMap((item, at) =>
+        item.kind === "special" && item.text === `${LOCK_MARKER}${id}` ? [at] : [],
+      );
+      expect(markers).toHaveLength(2);
+      return marked.items.slice(markers[0], markers[1]);
+    };
+    const spelt = (items: typeof marked.items) =>
+      items.flatMap((item) => (item.kind === "glyph" ? [item.text] : [])).join("");
+    // The item's label is the package's own bullet, `$\bullet$`.
+    expect(spelt(between("lock-hobbies"))).toBe("Hobbies•Rowingontheriver");
+    expect(spelt(between("lock-talks"))).toBe("TalksOnsettingtypebyhand,2019.");
+    for (const { id } of LOCKED)
+      expect(
+        between(id).filter((item) => item.kind === "special" && /^rt:[bep]:/.test(item.text)),
+      ).toEqual([]);
+    // The fields are the body's, and the same as the bare LaTeX's.
+    expect(marked.fields).toEqual(alone.fields);
+    expect([...marked.fields].sort()).toEqual([...body.texts.keys()].sort());
+  }, 60_000);
+
+  it("sets an extra where its snippet writes it, as the upload's own LaTeX", async () => {
+    const withThem = await compiled(generateBody(keeping, extended, {}).latex, "extras");
+    const without = await compiled(generateBody(keeping, resume, {}).latex, "no-extras");
+    const set = (items: typeof withThem.items, font: string) =>
+      items.flatMap((item) => (item.kind === "glyph" && item.font === font ? [item.text] : []));
+    const rules = (items: typeof withThem.items) => items.filter((item) => item.kind === "rule");
+    // The photo's word in italics, the icon's in bold and the rule after the experience's title,
+    // and a box around the photo: none of them there without the extras.
+    expect(set(withThem.items, "cmti10").join("")).toContain("Portrait");
+    expect(set(without.items, "cmti10").join("")).not.toContain("Portrait");
+    expect(set(withThem.items, "cmbx10").join("")).toContain("New");
+    expect(set(without.items, "cmbx10").join("")).not.toContain("New");
+    expect(rules(withThem.items).length).toBeGreaterThan(rules(without.items).length);
+    expect(withThem.fields).toEqual(without.fields);
+  }, 60_000);
 });

@@ -194,7 +194,8 @@ const HEADER_TEXTS = ["headline", "email", "phone", "location"] as const;
 /**
  * Every field of a resume by its id, as the generator names them (decision 0007): each field the
  * body of any package could mark, blank or not, since a blank field is still one a user fills in,
- * and nothing a body never marks, such as a link's address or a section's role.
+ * and nothing a body never marks, such as a link's address or a section's role. A locked section
+ * has none: it is LaTeX an import kept, which the page draws and nothing edits (decision 0025).
  */
 export function fieldsOf(resume: Resume): Map<string, FieldRef> {
   const fields = new Map<string, FieldRef>([
@@ -206,6 +207,7 @@ export function fieldsOf(resume: Resume): Map<string, FieldRef> {
     fields.set(`${link.id}.label`, text(under(at(LINKS, l, link.id), "label")));
   });
   resume.sections.forEach((section, s) => {
+    if (section.kind === "locked") return;
     const place = at(SECTIONS, s, section.id);
     fields.set(`${section.id}.title`, text(under(place, "title")));
     switch (section.kind) {
@@ -310,7 +312,10 @@ export function mintId(prefix: string, taken: ReadonlySet<string>): string {
  * leaves: an entry stays in its section and a bullet in its entry. A new node gets its id from
  * `mintId` and its text from `PLACEHOLDERS`, and a new section its role's title and nothing in it.
  * A section's kind is its shape, which never changes under the user (decision 0006), so only its
- * role can be set. `setHeader` and `setLink` leave a value the op leaves out as it is.
+ * role can be set. `setHeader` and `setLink` leave a value the op leaves out as it is. A locked
+ * section, which only an import makes, is removed and moved like any other, and no other op
+ * touches it: it holds no entries or items, keeps the role `other`, and cannot be added
+ * (decision 0025).
  */
 export type StructureOp =
   | { op: "addSection"; kind: SectionKind; role: SectionRole; at?: number }
@@ -509,6 +514,7 @@ function nodesOf(resume: Resume): Map<string, Located> {
         break;
       }
       case "paragraph":
+      case "locked":
         break;
     }
   });
@@ -591,9 +597,12 @@ function restructure(resume: Resume, op: StructureOp): Resume {
       return moveTo(resume, find(op.id, "section"), op.id, op.to);
     case "setSection": {
       const { node } = find(op.id, "section");
+      const section = node.get(resume);
+      if (section.kind === "locked")
+        throw new CommandError(`the locked section ${op.id} keeps its role, other`);
       if (op.role === undefined) return resume;
       const role = checked(SectionRole, op.role, "a section's role");
-      return node.put(resume, { ...node.get(resume), role });
+      return node.put(resume, { ...section, role });
     }
     case "addEntry": {
       const { node } = find(op.section, "section");

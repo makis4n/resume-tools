@@ -290,8 +290,8 @@ export async function validateCurated(
  * A resume after an edit to every text field: each has its last character replaced, as a user
  * retyping one does, and a rich text has the last character of its last run replaced. Dates and
  * addresses stay as they are, and so does a field that is blank, which the body does not mark, so
- * that the edited body marks the same fields as the resume's, under the same ids. The resume
- * given is left as it was.
+ * that the edited body marks the same fields as the resume's, under the same ids; and so do a
+ * locked section and every extra, which hold no field. The resume given is left as it was.
  */
 export function editEverything(resume: Resume): Resume {
   const edited = structuredClone(resume);
@@ -319,6 +319,8 @@ export function editEverything(resume: Resume): Resume {
   if (header.location !== undefined) header.location = edit(header.location);
   for (const link of header.links) link.label = edit(link.label);
   for (const section of edited.sections) {
+    // A locked section is LaTeX an import kept, with no field to edit (decision 0025).
+    if (section.kind === "locked") continue;
     section.title = edit(section.title);
     switch (section.kind) {
       case "entries":

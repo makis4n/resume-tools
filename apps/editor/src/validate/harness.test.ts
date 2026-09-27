@@ -124,6 +124,70 @@ function resumeWith(bullet: string, title = "Typesetter"): Resume {
 
 const RESUME = resumeWith("Set the quarterly report");
 
+/**
+ * The plain package as an import assembles one for a class whose header commands belong in the
+ * preamble, as Awesome-CV's and moderncv's `\name` and `\position` do (decision 0025): the header
+ * set before `\begin{document}` through commands that store it, and typeset by the body's
+ * `\makeheader`; and extras slots in a section's and an entry's snippets.
+ */
+const HEADER_FIRST = parsePackage({
+  ...PLAIN,
+  id: "header-first",
+  preamble: [
+    PLAIN.preamble,
+    "\\makeatletter",
+    "\\newcommand{\\name}[2]{\\def\\cv@first{#1}\\def\\cv@last{#2}}",
+    "\\newcommand{\\position}[1]{\\def\\cv@position{#1}}",
+    "\\let\\cv@position\\@empty",
+    "\\newcommand{\\makeheader}{{\\Large\\cv@first\\ \\cv@last}\\par",
+    "  \\ifx\\cv@position\\@empty\\else{\\itshape\\cv@position}\\par\\fi}",
+    "\\makeatother",
+  ].join("\n"),
+  snippets: {
+    ...PLAIN.snippets,
+    document: "{{header}}\n\\begin{document}\n\\makeheader\n{{sections}}\n\\end{document}",
+    header: "\\name{{{first}}}{{{last}}}\n{{#headline}}\n\\position{{{headline}}}\n{{/headline}}",
+    section: {
+      ...PLAIN.snippets.section,
+      entries: "\\section*{{{title}}}{{&x.rule}}\n{{entries}}",
+    },
+    entry: "{{title}}{{#x.note}} {{&x.note}}{{/x.note}}\\par\n{{bullets}}",
+  },
+});
+
+/**
+ * An invented resume as an import might keep one: extras on a section and an entry, and a part of
+ * the resume the model has no place for, kept as its upload had it.
+ */
+const KEEPING = Resume.parse({
+  version: 1,
+  header: { name: { first: "Ines", last: "Calloway" }, headline: "Typesetter", links: [] },
+  sections: [
+    {
+      id: "work",
+      kind: "entries",
+      role: "experience",
+      title: "Experience",
+      extras: { rule: "\\hrulefill" },
+      entries: [
+        {
+          id: "tern",
+          title: "Typesetter",
+          extras: { note: "(part time)" },
+          bullets: [{ id: "tern-1", text: [{ text: "Set the quarterly report" }] }],
+        },
+      ],
+    },
+    {
+      kind: "locked",
+      id: "lock-hobbies",
+      title: "",
+      role: "other",
+      latex: "\\section*{Hobbies}\nRowing on the river, chess on Sundays.",
+    },
+  ],
+});
+
 describe("editEverything", () => {
   /** A resume with every text field the model has, and a location that is blank. */
   const resume = Resume.parse({
@@ -259,6 +323,32 @@ describe("editEverything", () => {
         if (field.endsWith(".dates")) expect(after.get(field), field).toBe(text);
         else expect(after.get(field), field).not.toBe(text);
     }
+  });
+
+  it("leaves a locked section and every extra as they are, since none is a field", () => {
+    expect(editEverything(KEEPING)).toEqual({
+      ...KEEPING,
+      header: {
+        ...KEEPING.header,
+        name: { first: "Inex", last: "Callowax" },
+        headline: "Typesettex",
+      },
+      sections: [
+        {
+          ...KEEPING.sections[0],
+          title: "Experiencx",
+          entries: [
+            {
+              id: "tern",
+              title: "Typesettex",
+              extras: { note: "(part time)" },
+              bullets: [{ id: "tern-1", text: [{ text: "Set the quarterly reporx" }] }],
+            },
+          ],
+        },
+        KEEPING.sections[1],
+      ],
+    });
   });
 });
 
@@ -1088,6 +1178,32 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
         hyphenating,
       );
       expect(report.findings).toEqual([]);
+    }, 60_000);
+  });
+
+  describe("over an invented package that sets its header before \\begin{document}", () => {
+    it("passes every check, with the header marked and found, a locked part and extras", async () => {
+      const body = generateBody(HEADER_FIRST, KEEPING, {});
+      // The header's fields are set in the preamble's commands, before the document starts.
+      const start = body.latex.indexOf("\\begin{document}");
+      for (const field of ["header.first", "header.last", "header.headline"]) {
+        const at = body.latex.indexOf(`\\rtfield{${field}}`);
+        expect(at, field).toBeGreaterThanOrEqual(0);
+        expect(at, field).toBeLessThan(start);
+      }
+      const report = await validatePackage(session, fonts, HEADER_FIRST, KEEPING);
+      expect(report.findings).toEqual([]);
+      // Every field the body marks is found on the page, the header's among them, each with its
+      // paragraph special measured where `\makeheader` sets it, which the special check reads.
+      expect(report.fields).toBe(body.texts.size);
+      expect([...body.texts.keys()]).toEqual([
+        "header.first",
+        "header.last",
+        "header.headline",
+        "work.title",
+        "tern.title",
+        "tern-1.text",
+      ]);
     }, 60_000);
   });
 

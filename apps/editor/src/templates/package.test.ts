@@ -5,6 +5,7 @@ import {
   Item,
   LabelledItem,
   Link,
+  LockedSection,
   SECTION_KINDS,
   Section,
 } from "@resume-tools/resume-model";
@@ -146,6 +147,62 @@ describe("TemplatePackage", () => {
     ]);
   });
 
+  it("offers extras slots to the header's, a section's and an entry's snippets, and no other's", () => {
+    // An extras slot in each snippet whose node keeps extras, whole or in a role's variant.
+    const extra = "{{#x.note}}{{&x.note}}{{/x.note}}";
+    const kept = plainWith((pkg) => {
+      pkg.snippets.header += extra;
+      pkg.snippets.section.entries = {
+        default: `${extra}{{title}}`,
+        projects: `{{&x.a}}{{title}}`,
+      };
+      pkg.snippets.section.paragraph += extra;
+      pkg.snippets.entry += extra;
+    });
+    expect(issues(kept)).toEqual([]);
+    const refused = (path: string) => ({
+      path,
+      message:
+        "there is no slot x.note here; only the header's, a section's and an entry's snippets have extras",
+    });
+    const elsewhere = plainWith((pkg) => {
+      pkg.preamble += extra;
+      pkg.controls.margins = { default: 0.5, apply: `{{value}}${extra}` };
+      pkg.snippets.document += extra;
+      pkg.snippets.contact = { phone: `{{text}}${extra}` };
+      pkg.snippets.link.other += extra;
+      pkg.snippets.bullet = { default: "\\item {{text}}", projects: `\\item {{text}}${extra}` };
+      pkg.snippets.item += extra;
+      pkg.snippets.labelledItem += extra;
+    });
+    expect(issues(elsewhere)).toEqual([
+      refused("preamble"),
+      refused("controls.margins.apply"),
+      refused("snippets.document"),
+      refused("snippets.contact.phone"),
+      refused("snippets.link.other"),
+      refused("snippets.bullet.projects"),
+      refused("snippets.item"),
+      refused("snippets.labelledItem"),
+    ]);
+    // Where an extra is offered, it goes in raw and under a key the model takes.
+    const typeset = plainWith((pkg) => {
+      pkg.snippets.entry = "{{x.note}}{{&x.Note}}";
+    });
+    expect(issues(typeset)).toEqual([
+      {
+        path: "snippets.entry",
+        message:
+          "x.note is an extra, LaTeX kept from the upload, so it goes in raw, as {{&x.note}}",
+      },
+      {
+        path: "snippets.entry",
+        message:
+          "x.Note names no extra: a key is a lowercase letter, then up to 31 lowercase letters, digits or -",
+      },
+    ]);
+  });
+
   it("needs a link's address raw", () => {
     const linked = (other: string) =>
       plainWith((pkg) => {
@@ -270,12 +327,15 @@ describe("slot vocabularies", () => {
     expect(slots(HEADER_SLOTS)).toEqual(
       [...fields(Header, "name", "extras"), "first", "last", "contacts"].sort(),
     );
+    // A locked section is set by no snippet, so it has no slots: every other kind has a snippet
+    // whose slots are its fields (decision 0025).
     const kinds = Section.options.map((option) => option.shape.kind.value);
-    expect([...kinds].sort()).toEqual([...SECTION_KINDS].sort());
-    for (const option of Section.options)
-      expect(slots(SECTION_SLOTS[option.shape.kind.value])).toEqual(
-        fields(option, "id", "kind", "role", "extras"),
-      );
+    expect([...kinds].sort()).toEqual([...SECTION_KINDS, LockedSection.shape.kind.value].sort());
+    for (const option of Section.options) {
+      const kind = option.shape.kind.value;
+      if (kind === "locked") continue;
+      expect(slots(SECTION_SLOTS[kind])).toEqual(fields(option, "id", "kind", "role", "extras"));
+    }
   });
 });
 

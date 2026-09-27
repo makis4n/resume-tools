@@ -9,9 +9,11 @@
  * (decision 0006).
  *
  * Every snippet is checked here against the slots its place offers, and for what it puts in an
- * address, so a package that parses is one the generator can render. The marker macros are not a
- * package's: they are the editor's, and the generator appends them to the preamble when it dumps
- * the format.
+ * address, so a package that parses is one the generator can render. The header's, a section's and
+ * an entry's snippets may also use extras slots, `{{&x.<key>}}`, which write back what an import
+ * kept of the node as LaTeX, since their nodes keep extras and no other does (decision 0025). The
+ * marker macros are not a package's: they are the editor's, and the generator appends them to the
+ * preamble when it dumps the format.
  *
  * A XeTeX package names its fonts by file (decision 0014): each family's shapes as OpenType or
  * TrueType files of the TeX Live tree, which the generator declares to NFSS in the format, and
@@ -389,7 +391,13 @@ export const TemplatePackage = z
     snippets: Snippets,
   })
   .superRefine((pkg, ctx) => {
-    const check = (source: string | undefined, slots: Slots, path: PropertyKey[]) => {
+    // `extras` says whether the snippet's node keeps extras, which its extras slots write back.
+    const check = (
+      source: string | undefined,
+      slots: Slots,
+      path: PropertyKey[],
+      extras = false,
+    ) => {
       if (source === undefined) return;
       let nodes: SnippetNode[];
       try {
@@ -398,19 +406,28 @@ export const TemplatePackage = z
         if (error instanceof SnippetError) return; // Snippet has reported it.
         throw error;
       }
-      for (const message of [...checkSnippet(nodes, slots), ...checkAddresses(source, slots)])
-        ctx.addIssue({ code: "custom", message, path });
+      const problems = [...checkSnippet(nodes, slots, extras), ...checkAddresses(source, slots)];
+      for (const message of problems) ctx.addIssue({ code: "custom", message, path });
     };
     const checkEach = (
       sources: Readonly<Record<string, string | undefined>>,
       slots: Slots,
       path: PropertyKey[],
+      extras = false,
     ) => {
-      for (const [key, source] of Object.entries(sources)) check(source, slots, [...path, key]);
+      for (const [key, source] of Object.entries(sources))
+        check(source, slots, [...path, key], extras);
     };
-    const checkByRole = (value: ByRole<string>, slots: Slots, path: PropertyKey[]) => {
-      if (typeof value === "string") check(value, slots, path);
-      else checkEach(value, slots, path);
+    // Each snippet that may depend on a role sits inside a section: a section's and an entry's
+    // nodes keep extras, and a bullet's and an item's do not.
+    const checkByRole = (
+      value: ByRole<string>,
+      slots: Slots,
+      path: PropertyKey[],
+      extras: boolean,
+    ) => {
+      if (typeof value === "string") check(value, slots, path, extras);
+      else checkEach(value, slots, path, extras);
     };
 
     if (pkg.fonts !== undefined) {
@@ -464,15 +481,15 @@ export const TemplatePackage = z
     }
 
     check(snippets.document, DOCUMENT_SLOTS, ["snippets", "document"]);
-    check(snippets.header, HEADER_SLOTS, ["snippets", "header"]);
+    check(snippets.header, HEADER_SLOTS, ["snippets", "header"], true);
     checkEach(snippets.contact ?? {}, CONTACT_SLOTS, ["snippets", "contact"]);
     checkEach(snippets.link, LINK_SLOTS, ["snippets", "link"]);
     for (const kind of SECTION_KINDS)
-      checkByRole(snippets.section[kind], SECTION_SLOTS[kind], ["snippets", "section", kind]);
-    checkByRole(snippets.entry, ENTRY_SLOTS, ["snippets", "entry"]);
-    checkByRole(snippets.bullet, BULLET_SLOTS, ["snippets", "bullet"]);
-    checkByRole(snippets.item, ITEM_SLOTS, ["snippets", "item"]);
-    checkByRole(snippets.labelledItem, LABELLED_ITEM_SLOTS, ["snippets", "labelledItem"]);
+      checkByRole(snippets.section[kind], SECTION_SLOTS[kind], ["snippets", "section", kind], true);
+    checkByRole(snippets.entry, ENTRY_SLOTS, ["snippets", "entry"], true);
+    checkByRole(snippets.bullet, BULLET_SLOTS, ["snippets", "bullet"], false);
+    checkByRole(snippets.item, ITEM_SLOTS, ["snippets", "item"], false);
+    checkByRole(snippets.labelledItem, LABELLED_ITEM_SLOTS, ["snippets", "labelledItem"], false);
   });
 export type TemplatePackage = z.infer<typeof TemplatePackage>;
 

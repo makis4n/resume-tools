@@ -21,6 +21,7 @@ import {
   LINK_KINDS,
   type Link,
   LinkKind,
+  type LockedSection,
   type RichText,
   SECTION_KINDS,
   SECTION_ROLES,
@@ -162,8 +163,13 @@ export function holdsContent(section: Section): boolean {
       return section.items.length > 0;
     case "paragraph":
       return !isBlank(plainText(section.text));
+    case "locked":
+      return !isBlank(section.latex);
   }
 }
+
+/** Any section but a locked one, which nothing edits and the panel only moves and removes. */
+type EditableSection = Exclude<Section, LockedSection>;
 
 /** Each kind of section in plain English. */
 const KIND_NAMES: Readonly<Record<SectionKind, string>> = {
@@ -353,16 +359,26 @@ function Sections({
       <legend>Sections</legend>
       {sections.length > 0 && (
         <ol style={STYLE.list}>
-          {sections.map((section, index) => (
-            <SectionRow
-              key={section.id}
-              section={section}
-              index={index}
-              count={sections.length}
-              format={format}
-              send={send}
-            />
-          ))}
+          {sections.map((section, index) =>
+            section.kind === "locked" ? (
+              <LockedRow
+                key={section.id}
+                section={section}
+                index={index}
+                count={sections.length}
+                send={send}
+              />
+            ) : (
+              <SectionRow
+                key={section.id}
+                section={section}
+                index={index}
+                count={sections.length}
+                format={format}
+                send={send}
+              />
+            ),
+          )}
         </ol>
       )}
       <AddSection send={send} />
@@ -381,7 +397,7 @@ function SectionRow({
   format,
   send,
 }: {
-  section: Section;
+  section: EditableSection;
   index: number;
   count: number;
   format: DateFormat;
@@ -418,13 +434,48 @@ function SectionRow({
   );
 }
 
+/**
+ * A locked section: a part of an imported resume kept as its upload had it, which the page draws
+ * and nothing edits, so the panel moves and removes it and shows nothing of what it holds, which
+ * is LaTeX. Item 15 names it by the first words the page shows of it; until then it is "Kept as it
+ * was" (decision 0025).
+ */
+function LockedRow({
+  section,
+  index,
+  count,
+  send,
+}: {
+  section: LockedSection;
+  index: number;
+  count: number;
+  send: Send;
+}) {
+  const { id } = section;
+  const remove = () => {
+    if (holdsContent(section) && !confirm("Remove this section and everything in it?")) return;
+    send(structural({ op: "removeSection", id }));
+  };
+  return (
+    <li style={STYLE.row}>
+      <span>Kept as it was</span>
+      <Reorder
+        index={index}
+        count={count}
+        onMove={(to) => send(structural({ op: "moveSection", id, to }))}
+        onRemove={remove}
+      />
+    </li>
+  );
+}
+
 /** What a section holds, each with the buttons that reorder and remove it, and one to add more. */
 function SectionContents({
   section,
   format,
   send,
 }: {
-  section: Section;
+  section: EditableSection;
   format: DateFormat;
   send: Send;
 }) {

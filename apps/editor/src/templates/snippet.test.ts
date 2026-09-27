@@ -3,6 +3,7 @@ import { bound, fastest } from "../test/timing";
 import {
   checkAddresses,
   checkSnippet,
+  extrasKey,
   parseSnippet,
   SnippetError,
   type SnippetNode,
@@ -154,6 +155,79 @@ describe("checkSnippet", () => {
   });
 });
 
+describe("extras slots", () => {
+  const slots = { title: "text", bullets: "list" } as const;
+  const check = (source: string, extras = true) =>
+    checkSnippet(parseSnippet(source), slots, extras);
+
+  it("reads an extras slot and a block over one, the key after x.", () => {
+    expect(parseSnippet("\\cventry{{{&x.org}}}{{{title}}}")).toEqual([
+      text("\\cventry{"),
+      slot("x.org", true),
+      text("}{"),
+      slot("title"),
+      text("}"),
+    ]);
+    expect(
+      parseSnippet("{{#x.photo}}\\photo{{{&x.photo}}}{{/x.photo}}{{^ x.arg-2 }}-{{/x.arg-2}}"),
+    ).toEqual([
+      block("x.photo", [text("\\photo{"), slot("x.photo", true), text("}")]),
+      block("x.arg-2", [text("-")], false),
+    ]);
+    expect(extrasKey("x.arg-2")).toBe("arg-2");
+    expect(extrasKey("title")).toBeUndefined();
+  });
+
+  it("reads a key the model refuses as a tag, for the check to name, and changes no other name", () => {
+    expect(parseSnippet("{{&x.Org_1}}")).toEqual([slot("x.Org_1", true)]);
+    expect(parseSnippet("{{&x.}}")).toEqual([slot("x.", true)]);
+    // A slot named x, or a name that begins with it, is a slot as it was, and a dot after any
+    // other name, or after a space, begins no tag.
+    expect(parseSnippet("{{x}}{{xray}}")).toEqual([slot("x"), slot("xray")]);
+    expect(parseSnippet("{{title.org}}{{x .org}}")).toEqual([text("{{title.org}}{{x .org}}")]);
+  });
+
+  it("passes an extras slot raw, and a block over one, where the place's node keeps extras", () => {
+    expect(
+      check("{{#x.photo}}\\photo{{{&x.photo}}}{{/x.photo}}{{^x.photo}}{{title}}{{/x.photo}}"),
+    ).toEqual([]);
+  });
+
+  it("refuses an extras slot typeset, since what it holds is LaTeX no escape has seen", () => {
+    expect(check("\\textbf{{{x.org}}}")).toEqual([
+      "x.org is an extra, LaTeX kept from the upload, so it goes in raw, as {{&x.org}}",
+    ]);
+  });
+
+  it("refuses a key the model refuses", () => {
+    const refused = (name: string) =>
+      `${name} names no extra: a key is a lowercase letter, then up to 31 lowercase letters, digits or -`;
+    expect(check("{{&x.Org}}{{&x.}}{{#x.a_b}}{{/x.a_b}}{{&x.1a}}")).toEqual([
+      refused("x.Org"),
+      refused("x."),
+      refused("x.a_b"),
+      refused("x.1a"),
+    ]);
+    expect(check(`{{&x.${"a".repeat(32)}}}`)).toEqual([]);
+    expect(check(`{{&x.${"a".repeat(33)}}}`)).toEqual([refused(`x.${"a".repeat(33)}`)]);
+  });
+
+  it("refuses an extras slot, or a block over one, where the place's node keeps none", () => {
+    const refused =
+      "there is no slot x.org here; only the header's, a section's and an entry's snippets have extras";
+    expect(check("{{&x.org}}", false)).toEqual([refused]);
+    expect(check("{{#x.org}}{{title}}{{/x.org}}", false)).toEqual([refused]);
+  });
+
+  it("lets an extras slot stand in an address, and never after a backslash", () => {
+    const places = { text: "text", href: "url" } as const;
+    expect(checkAddresses("\\href{{{&x.url}}}{{{text}}}", places)).toEqual([]);
+    expect(checkAddresses("\\{{&x.command}}", places)).toEqual([
+      "a slot cannot follow a backslash; the text would become a command",
+    ]);
+  });
+});
+
 describe("checkAddresses", () => {
   const slots = { text: "text", href: "url", summary: "rich", dates: "date" } as const;
   const check = (source: string) => checkAddresses(source, slots);
@@ -249,17 +323,25 @@ describe("crafted snippets", () => {
   });
 
   it("costs time in proportion to the snippet's length, whatever it holds", () => {
-    // Both took seconds while the tag regex and the standalone-line test scanned quadratically.
-    // Each now costs 8.9 to 11.9 times what it costs at a tenth of its length, in CPU time
-    // (`fastest`); with the regex and the line test they first had, 95 and 99 times. So each is
-    // bound by five times ten times its tenth, as draw.test.ts bounds a page, and by 1,000 ms.
+    // The first two took seconds while the tag regex and the standalone-line test scanned
+    // quadratically. Each now costs 8.9 to 11.9 times what it costs at a tenth of its length, in
+    // CPU time (`fastest`); with the regex and the line test they first had, 95 and 99 times. So
+    // each is bound by five times ten times its tenth, as draw.test.ts bounds a page, and by
+    // 1,000 ms. The last two are an extras slot's name (decision 0025), which the tag reads as one
+    // of two names: a key that runs on and never closes, and openers that each end at once.
     const blanks = (count: number) => `{{${"\n".repeat(count)}\\relax}}`;
     const tags = (count: number) => "{{#a}}{{/a}}".repeat(count);
+    const key = (count: number) => `{{&x.${"a".repeat(count)}`;
+    const openers = (count: number) => "{{&x.".repeat(count);
     expect(parseSnippet(blanks(200_000))).toEqual([text(blanks(200_000))]);
     expect(parseSnippet(tags(50_000))).toHaveLength(50_000);
+    expect(parseSnippet(key(200_000))).toEqual([text(key(200_000))]);
+    expect(parseSnippet(openers(100_000))).toEqual([text(openers(100_000))]);
     for (const [snippet, count] of [
       [blanks, 200_000],
       [tags, 50_000],
+      [key, 200_000],
+      [openers, 100_000],
     ] as const) {
       const [short = 0, long = 0] = fastest(
         [count / 10, count].map((each) => {

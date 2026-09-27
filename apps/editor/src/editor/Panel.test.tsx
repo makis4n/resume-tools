@@ -1,7 +1,7 @@
-import { type Section, YearMonth } from "@resume-tools/resume-model";
+import { Resume, type Section, YearMonth } from "@resume-tools/resume-model";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { curated } from "../templates/curated";
 import type { Field } from "../tex/fields";
 import { apply, type Command, fieldsOf, newDocument } from "./document";
@@ -152,6 +152,9 @@ describe("holdsContent", () => {
     for (const section of empty) expect(holdsContent(section), section.kind).toBe(false);
     for (const section of sample.sections) expect(holdsContent(section), section.id).toBe(true);
     expect(holdsContent({ ...base, kind: "paragraph", text: [{ text: "Writes." }] })).toBe(true);
+    const locked = { id: "lock-a", kind: "locked", title: "", role: "other" } as const;
+    expect(holdsContent({ ...locked, latex: "\\section*{Hobbies}" })).toBe(true);
+    expect(holdsContent({ ...locked, latex: " \n" })).toBe(false);
     expect(plainText([{ text: "Draws " }, { text: "letters", italic: true }])).toBe(
       "Draws letters",
     );
@@ -270,6 +273,48 @@ describe("Panel", () => {
       [setLink({ href: "Typed" }), "link:site"],
       [{ type: "structure", op: { op: "removeLink", id: "site" } }, undefined],
       [{ type: "structure", op: { op: "addLink" } }, undefined],
+    ]);
+  });
+
+  it("shows a locked section as a row kept as it was, which moves and removes, and nothing of it", () => {
+    const latex = "\\section*{Hobbies}\nRowing, chess.";
+    const locked = { kind: "locked", id: "lock-q7w2e9", title: "", role: "other", latex } as const;
+    const sections = [...sample.sections.slice(0, 1), locked, ...sample.sections.slice(1)];
+    const kept = newDocument("jake", Resume.parse({ ...sample, sections }), "en-US");
+    const html = renderToStaticMarkup(
+      <Panel document={kept} onCommand={() => {}} onSeal={() => {}} />,
+    );
+    expect(html).toContain("Kept as it was");
+    // No title, kind, role or text of it, and never its LaTeX.
+    expect(html).not.toContain("Rowing");
+    expect(html).not.toContain("\\");
+    expect(html).not.toContain("Untitled section");
+    const sent: Command[] = [];
+    const tree = Panel({
+      document: kept,
+      onCommand: (command) => sent.push(command),
+      onSeal: () => {},
+    });
+    // Its row, and the buttons the browser would press on it.
+    const rows = elementsOf(tree, new Set(["Sections"])).filter(
+      ({ type, props }) =>
+        typeof type === "function" && type.name === "LockedRow" && props.index === 1,
+    );
+    expect(rows).toHaveLength(1);
+    // Removing it loses what it holds, so the panel asks first, as for any section that holds any.
+    const asked: string[] = [];
+    vi.stubGlobal("confirm", (question: string) => asked.push(question) > 0);
+    try {
+      for (const { type, props } of elementsOf(rows, new Set(["LockedRow", "Reorder"])))
+        if (type === "button" && props.disabled !== true) (props.onClick as () => void)();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(asked).toEqual(["Remove this section and everything in it?"]);
+    expect(sent).toEqual([
+      { type: "structure", op: { op: "moveSection", id: "lock-q7w2e9", to: 0 } },
+      { type: "structure", op: { op: "moveSection", id: "lock-q7w2e9", to: 2 } },
+      { type: "structure", op: { op: "removeSection", id: "lock-q7w2e9" } },
     ]);
   });
 

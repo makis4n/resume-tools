@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Resume } from "./index";
+import { Extras, KeptLatex, MAX_KEPT_LATEX, Resume } from "./index";
 
 // Everything in these resumes is invented.
 
@@ -201,5 +201,122 @@ describe("Resume, being strict", () => {
     expect(root.error?.issues.map((issue) => issue.message)).toEqual([
       'Unrecognized key: "language"',
     ]);
+  });
+});
+
+/** A resume with one locked section, changed as a test needs. */
+const withLocked = (locked: object) => ({
+  ...minimal,
+  sections: [
+    {
+      kind: "locked",
+      id: "lock-a1b2c3",
+      title: "",
+      role: "other",
+      latex: "\\section*{Hobbies}\n\\begin{tabular}{ll}\nRowing & Weekly\n\\end{tabular}",
+      ...locked,
+    },
+  ],
+});
+
+/** The messages of what is wrong with a value, by a schema. */
+const messages = (result: { error?: { issues: { message: string }[] } }) =>
+  result.error?.issues.map((issue) => issue.message) ?? [];
+
+describe("Resume, with what an import keeps", () => {
+  it("accepts a locked section, with no title and the role other, and extras on its nodes", () => {
+    const imported = {
+      ...everything,
+      header: { ...everything.header, extras: { photo: "\\photo[circle]{face}" } },
+      sections: [
+        ...everything.sections.map((section) =>
+          section.kind === "entries" ? { ...section, extras: { "rule-width": "0.4pt" } } : section,
+        ),
+        withLocked({ extras: { note: "% kept" } }).sections[0],
+      ],
+    };
+    expect(Resume.parse(imported)).toEqual(imported);
+    const entry = withEntry({ extras: { icon: "\\faBriefcase", "arg-2": "" } });
+    expect(Resume.parse(entry)).toEqual(entry);
+  });
+
+  it("refuses a locked section with a title, another role, or a field it does not know", () => {
+    expect(accepts(withLocked({}))).toBe(true);
+    expect(accepts(withLocked({ title: "Hobbies" }))).toBe(false);
+    expect(accepts(withLocked({ role: "skills" }))).toBe(false);
+    expect(accepts(withLocked({ items: [] }))).toBe(false);
+    const { latex: _, ...bare } = withLocked({}).sections[0] ?? {};
+    expect(accepts({ ...minimal, sections: [bare] })).toBe(false);
+  });
+
+  it("keeps a locked section's id unique across the document", () => {
+    const twice = withEntry({});
+    const locked = withLocked({ id: "work" }).sections[0];
+    const result = Resume.safeParse({ ...twice, sections: [...twice.sections, locked] });
+    expect(result.error?.issues).toMatchObject([
+      { message: "the id work is already used by another node", path: ["sections", 1, "id"] },
+    ]);
+  });
+
+  it("holds kept LaTeX to its cap", () => {
+    expect(KeptLatex.safeParse("x".repeat(MAX_KEPT_LATEX)).success).toBe(true);
+    expect(messages(KeptLatex.safeParse("x".repeat(MAX_KEPT_LATEX + 1)))).toEqual([
+      "kept LaTeX is at most 65536 characters",
+    ]);
+    expect(accepts(withLocked({ latex: "x".repeat(MAX_KEPT_LATEX + 1) }))).toBe(false);
+  });
+
+  it("refuses kept LaTeX that holds the editor's own macros or markers, in any case", () => {
+    const refused =
+      "kept LaTeX holds the editor's own macros or markers, which only the generator writes";
+    for (const latex of [
+      "\\rtfield{work.title}{Rowing}",
+      "\\rtlocked{lock-b}{x}",
+      "\\makeatletter\\rt@par{x}\\makeatother",
+      "\\special{rt:b:work.title}",
+      "\\special{rt:e:work.title}",
+      "\\special{rt:p:work.title:hsize=1pt}",
+      "\\special{RT:L:lock-b}",
+    ])
+      expect(messages(KeptLatex.safeParse(latex)), latex).toEqual([refused]);
+    // A macro of another name, and a special of another kind, are the upload's own.
+    for (const latex of ["\\rtfieldwidth", "\\rtimes", "\\special{rt:x:1}", "art: a b"])
+      expect(KeptLatex.safeParse(latex).success, latex).toBe(true);
+  });
+
+  it("refuses kept LaTeX whose braces do not balance as TeX reads an argument", () => {
+    const refused = "kept LaTeX's braces do not balance as TeX reads an argument";
+    for (const latex of [
+      "\\textbf{Rowing",
+      "Rowing}",
+      "}{",
+      "\\\\{",
+      // A comment takes the rest of its line, braces and all, as it does in an argument, where
+      // hyperref's own reading of a % in an address never runs.
+      "\\url{https://example.com/50%off}",
+    ])
+      expect(messages(KeptLatex.safeParse(latex)), latex).toEqual([refused]);
+    for (const latex of [
+      "",
+      "\\textbf{Rowing} \\{ and \\}",
+      "Rowing % a comment {\nand more",
+      "Rowing % a comment }\r\nand more",
+      "a\\%{b}",
+      "\\begin{tabular}{ll}\nA & B\\\\\n\\end{tabular}",
+    ])
+      expect(KeptLatex.safeParse(latex).success, latex).toBe(true);
+  });
+
+  it("takes extras as kept LaTeX under a key a snippet can name, and nothing else", () => {
+    const longest = `a${"b".repeat(31)}`;
+    for (const key of ["a", "photo", "arg-2", "a1", longest])
+      expect(Extras.safeParse({ [key]: "x" }).success, key).toBe(true);
+    for (const key of ["", "A", "Photo", "1a", "-a", "a_b", "a.b", `${longest}c`])
+      expect(Extras.safeParse({ [key]: "x" }).success, key).toBe(false);
+    expect(Extras.safeParse({ photo: 3 }).success).toBe(false);
+    expect(Extras.safeParse({ photo: { file: "face.png" } }).success).toBe(false);
+    expect(Extras.safeParse({ photo: "\\rtfield{x}{y}" }).success).toBe(false);
+    expect(Extras.safeParse({ photo: "\\photo{face" }).success).toBe(false);
+    expect(accepts(withEntry({ extras: { Icon: "x" } }))).toBe(false);
   });
 });

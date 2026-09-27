@@ -16,8 +16,11 @@ import { z } from "zod";
  * survives a reorder because the id moves with its node.
  *
  * `extras` on the header, a section or an entry hold what an imported template has and this model
- * lacks, such as a photo, a skill rating or an icon. They are kept so nothing is lost on import,
- * and never typeset, until the import pipeline needs them.
+ * lacks, such as a photo, a skill rating, an icon or an argument the editor cannot mark: LaTeX from
+ * the user's own upload, which a snippet writes back as it is through an extras slot. A `locked`
+ * section holds a part of an imported resume the model has no place for, as LaTeX the generator
+ * writes where the section sits. Neither is typed by the user, and neither is a field (decision
+ * 0025).
  */
 
 /**
@@ -69,7 +72,70 @@ export type Item = z.infer<typeof Item>;
 export const LabelledItem = z.strictObject({ id: Id, label: z.string(), text: RichText });
 export type LabelledItem = z.infer<typeof LabelledItem>;
 
-export const Extras = z.record(z.string(), z.unknown());
+/**
+ * The key an extra is kept under: a lowercase letter, then up to 31 lowercase letters, digits and
+ * dashes, as a snippet names it in an extras slot, `{{&x.<key>}}`.
+ */
+export const ExtraKey = z
+  .string()
+  .regex(
+    /^[a-z][a-z0-9-]{0,31}$/,
+    "an extra's key is a lowercase letter, then up to 31 lowercase letters, digits or -",
+  );
+export type ExtraKey = z.infer<typeof ExtraKey>;
+
+/** The most characters a locked section's LaTeX, or one extra, may hold. */
+export const MAX_KEPT_LATEX = 65_536;
+
+/**
+ * The editor's own LaTeX, which only the generator writes: the macros of its prelude, `\rtfield`,
+ * `\rtlocked` and those under `\rt@`, and the texts of the specials the page reads as its markers, a
+ * field's begin, end and paragraph markers and a locked part's, in any case, as the page reads them.
+ */
+const EDITOR_MACRO = /\\rt(?:field|locked)(?![A-Za-z])|\\rt@/;
+const EDITOR_MARKER = /rt:[bepl]:/i;
+
+/**
+ * Whether LaTeX's braces balance as TeX reads a macro's argument: each `{` closed by a later `}`,
+ * where a brace after a backslash is a control symbol, `\{` or `\}`, and a comment, from a `%` no
+ * backslash escapes to the end of its line, is not read. One pass, so it costs the text's length.
+ */
+function balanced(latex: string): boolean {
+  const lineEnd = (char: string | undefined) => char === "\n" || char === "\r";
+  let depth = 0;
+  for (let at = 0; at < latex.length; at++) {
+    const char = latex[at];
+    if (char === "\\") at++;
+    else if (char === "%") while (at + 1 < latex.length && !lineEnd(latex[at + 1])) at++;
+    else if (char === "{") depth++;
+    else if (char === "}" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+/**
+ * LaTeX kept byte for byte from the user's own upload, which the generator writes as it is, never
+ * escaped: a locked section's, or an extra's. It never holds the editor's own macros or marker
+ * texts, which would give the page a field or a locked part the model does not have, and its braces
+ * balance as TeX reads an argument, since the generator writes it inside one, as `\rtlocked`'s or a
+ * template macro's. What else TeX cannot take in an argument, such as `\verb`, stops the compile,
+ * which the import's checks see (decision 0025).
+ */
+export const KeptLatex = z
+  .string()
+  .max(MAX_KEPT_LATEX, `kept LaTeX is at most ${MAX_KEPT_LATEX} characters`)
+  .refine(
+    (latex) => !EDITOR_MACRO.test(latex) && !EDITOR_MARKER.test(latex),
+    "kept LaTeX holds the editor's own macros or markers, which only the generator writes",
+  )
+  .refine(balanced, "kept LaTeX's braces do not balance as TeX reads an argument");
+export type KeptLatex = z.infer<typeof KeptLatex>;
+
+/**
+ * What an imported template has and the model lacks, on the header, a section or an entry: LaTeX
+ * kept from the upload under a key, which a snippet writes back through an extras slot.
+ */
+export const Extras = z.record(ExtraKey, KeptLatex);
 export type Extras = z.infer<typeof Extras>;
 
 export const Entry = z.strictObject({
@@ -87,7 +153,8 @@ export type Entry = z.infer<typeof Entry>;
  * A section's kind fixes the shape of its data, so a section never changes shape under the user.
  * Its role says what the section is about, and is only a hint a package may use to pick a variant
  * snippet: Jake's Resume sets projects with `\resumeProjectHeading` and every other entry with
- * `\resumeSubheading`, on the same entry shape.
+ * `\resumeSubheading`, on the same entry shape. These are the kinds a package sets through a
+ * snippet of its own and a user can add; the fifth, `locked`, only an import makes (`LockedSection`).
  */
 export const SECTION_KINDS = ["entries", "list", "labelled", "paragraph"] as const;
 export const SectionKind = z.enum(SECTION_KINDS);
@@ -109,11 +176,28 @@ export type SectionRole = z.infer<typeof SectionRole>;
 
 const sectionBase = { id: Id, title: z.string(), role: SectionRole, extras: Extras.optional() };
 
+/**
+ * A part of an imported resume the model has no place for, kept as the user's own upload had it:
+ * LaTeX the generator writes where the section sits, between two lock markers the page reads, and
+ * never escapes (decision 0025). Nothing in it is a field, so it has no title and its role is
+ * `other`, which it keeps; the side panel moves and removes it, and nothing else changes it.
+ */
+export const LockedSection = z.strictObject({
+  kind: z.literal("locked"),
+  id: Id,
+  title: z.literal(""),
+  role: z.literal("other"),
+  latex: KeptLatex,
+  extras: Extras.optional(),
+});
+export type LockedSection = z.infer<typeof LockedSection>;
+
 export const Section = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("entries"), ...sectionBase, entries: z.array(Entry) }),
   z.strictObject({ kind: z.literal("list"), ...sectionBase, items: z.array(Item) }),
   z.strictObject({ kind: z.literal("labelled"), ...sectionBase, items: z.array(LabelledItem) }),
   z.strictObject({ kind: z.literal("paragraph"), ...sectionBase, text: RichText }),
+  LockedSection,
 ]);
 export type Section = z.infer<typeof Section>;
 
@@ -171,7 +255,7 @@ export const Resume = z
             visit(bullet.id, ["sections", s, "entries", e, "bullets", b]),
           );
         });
-      } else if (section.kind !== "paragraph") {
+      } else if (section.kind === "list" || section.kind === "labelled") {
         section.items.forEach((item, i) => visit(item.id, ["sections", s, "items", i]));
       }
     });

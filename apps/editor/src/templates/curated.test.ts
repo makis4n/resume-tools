@@ -77,7 +77,7 @@ function filledFields(resume: Resume): string[] {
         add(`${item.id}.label`, item.label);
         add(`${item.id}.text`, joined(item.text));
       }
-    } else {
+    } else if (section.kind === "list") {
       for (const item of section.items) add(`${item.id}.text`, joined(item.text));
     }
   }

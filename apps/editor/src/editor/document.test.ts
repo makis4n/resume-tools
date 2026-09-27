@@ -927,4 +927,75 @@ describe("structure", () => {
     history.dispatch(structural({ op: "removeSection", id: "exp" }));
     expect(history.undo()).toBe(doc);
   });
+
+  describe("with a locked section", () => {
+    /** A part of an imported resume kept as it was, invented, after the sample's experience. */
+    const LOCKED = "lock-q7w2e9";
+    const kept = newDocument(
+      "jake",
+      Resume.parse({
+        ...sample,
+        sections: [
+          ...sample.sections.slice(0, 2),
+          { kind: "locked", id: LOCKED, title: "", role: "other", latex: "\\section{Hobbies}" },
+          ...sample.sections.slice(2),
+        ],
+      }),
+      "en-US",
+    );
+    const lockedOf = (from: Document) => from.resume.sections.find(({ id }) => id === LOCKED);
+
+    it("gives it no field, so no command can edit it", () => {
+      const fields = fieldsOf(kept.resume);
+      expect(sortedKeys(fields)).toEqual(sortedKeys(fieldsOf(sample)));
+      expect(() =>
+        apply(kept, { type: "text", field: `${LOCKED}.title`, text: "Hobbies" }),
+      ).toThrow(`the document has no field ${LOCKED}.title`);
+    });
+
+    it("removes and moves it as any section, and undoes either as one step", () => {
+      const removed = restructured(kept, { op: "removeSection", id: LOCKED });
+      expect(removed.resume).toEqual(doc.resume);
+      const up = restructured(kept, { op: "moveSection", id: LOCKED, to: 0 });
+      expect(ids(up.resume.sections)).toEqual([LOCKED, "edu", "exp", "proj", "skills"]);
+      expect(lockedOf(up)).toBe(lockedOf(kept));
+      // Another section moves past it, which stays as it was.
+      const past = restructured(kept, { op: "moveSection", id: "skills", to: 1 });
+      expect(ids(past.resume.sections)).toEqual(["edu", "skills", "exp", LOCKED, "proj"]);
+      expect(lockedOf(past)).toBe(lockedOf(kept));
+      const history = new History(kept);
+      history.dispatch(structural({ op: "moveSection", id: LOCKED, to: 4 }));
+      history.dispatch(structural({ op: "removeSection", id: LOCKED }));
+      expect(history.undo()?.resume.sections.at(-1)).toBe(lockedOf(kept));
+      expect(history.undo()).toBe(kept);
+    });
+
+    it("takes no other op, and no command elsewhere changes it", () => {
+      for (const [op, message] of [
+        [
+          { op: "setSection", id: LOCKED, role: "skills" },
+          `the locked section ${LOCKED} keeps its role, other`,
+        ],
+        [{ op: "setSection", id: LOCKED }, `the locked section ${LOCKED} keeps its role, other`],
+        [{ op: "addEntry", section: LOCKED }, `the locked section ${LOCKED} holds no entries`],
+        [{ op: "addItem", section: LOCKED }, `the locked section ${LOCKED} holds no items`],
+        [{ op: "addBullet", entry: LOCKED }, `${LOCKED} is a section, not an entry`],
+        [{ op: "removeItem", id: LOCKED }, `${LOCKED} is a section, not an item`],
+      ] satisfies [StructureOp, string][])
+        expect(() => apply(kept, structural(op)), op.op).toThrow(new CommandError(message));
+      // A locked section only an import makes, never the panel.
+      const locked = { op: "addSection", kind: "locked", role: "other" } as unknown as StructureOp;
+      expect(() => apply(kept, structural(locked))).toThrow("a section's kind cannot be locked");
+      const edited = [
+        { type: "text", field: "exp.title", text: "Work" },
+        { type: "dates", field: "fennel.dates", dates: { start: "2020" } },
+        { type: "control", name: "margins", value: 0.7 },
+        structural({ op: "addEntry", section: "exp" }),
+        structural({ op: "setSection", id: "proj", role: "other" }),
+      ] satisfies Command[];
+      const after = edited.reduce(apply, kept);
+      expect(Document.parse(after)).toStrictEqual(after);
+      expect(lockedOf(after)).toBe(lockedOf(kept));
+    });
+  });
 });
