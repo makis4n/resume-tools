@@ -44,9 +44,19 @@
  * length, closed over the template macros it names, the first reached first, to 64 definitions
  * and 64 KB, the data among them by name alone, but for scratch macros, whose meaning is whatever
  * was last put in them; each definition's SHA-256, and its closure's (`keysOf`), are item 6's
- * cache key.
+ * cache key, and an environment's covers its `\end` code and that code's closure too, as its
+ * request does. The masking and the key are the naming contract's (`@resume-tools/naming`), so
+ * that the editor, the naming service and the corpus runner read one rule.
  */
 
+import {
+  type Dependency,
+  environmentKeyOf,
+  keyOf,
+  maskDefinition,
+  NAMING_VERSION,
+  sha256,
+} from "@resume-tools/naming";
 import { printRaw } from "@unified-latex/unified-latex-util-argspec";
 import type { Engine, EngineSession } from "../engine/session";
 import { isReadable, readSpec } from "./arguments";
@@ -1100,41 +1110,13 @@ export function isScratch(name: string): boolean {
   );
 }
 
-/** A placeholder of `length` characters for what item 11's patterns found: `<email___>`. */
-function placeholder(kind: string, length: number): string {
-  if (length < kind.length + 2) return "_".repeat(length);
-  return `<${kind}${"_".repeat(length - kind.length - 2)}>`;
-}
-
-/** A link: a scheme and an address, `www.` and one, or a domain and a path. */
-const LINK =
-  /\b(?:(?:https?|ftp):\/\/|mailto:|www\.)[^\s{}\\]+|\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\/[^\s{}\\]*/g;
-
-/** An email address. */
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
-
-/** A run of digits and the separators a phone number has; one of 7 digits or more is one. */
-const PHONE = /\+?\(?\d[\d ().~/+-]*\d/g;
-
 /**
  * A definition with the personal data item 11's patterns find in it masked, each by a placeholder
  * of its own length: links, email addresses, and runs of 7 digits or more with separators, which
- * phone numbers are. A definition then hashes the same whoever's address it holds.
+ * phone numbers are. A definition then hashes the same whoever's address it holds. The rule is the
+ * naming contract's (`maskDefinition`), since what leaves the browser is masked by it.
  */
-export function masked(text: string): string {
-  return text
-    .replace(LINK, (found) => placeholder("link", found.length))
-    .replace(EMAIL, (found) => placeholder("email", found.length))
-    .replace(PHONE, (found) =>
-      (found.match(/\d/g) ?? []).length >= 7 ? placeholder("phone", found.length) : found,
-    );
-}
-
-/** The SHA-256 of a text in UTF-8, in hex. */
-async function sha256(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
+export const masked = maskDefinition;
 
 /**
  * Each template macro's closure: the template macros its meaning names and those it hands its
@@ -1177,23 +1159,90 @@ export function closure(
 }
 
 /**
- * Each definition's key: the SHA-256 of its hash and its dependencies' that are definitions, in
- * order, by name. A macro that holds data takes no part, neither its text nor whether a preamble
- * set it. It is item 6's cache key but for the naming version, and what the corpus runner compares
- * between documents: two whose class or style is the same file give each macro the file defines,
- * and the preamble leaves alone, the same key, whatever the person's name and settings.
+ * What a template macro's key is computed from (`keyOf`): its own definition's hash, and its
+ * dependencies that are definitions, each its name and hash, in its closure's order, those that
+ * hold data left out, neither their text nor whether a preamble set them taking part. An
+ * environment's is its `\begin` code's hash, and the closure of its `\begin` and `\end` codes as
+ * the request builder reads it (`buildRequest` in `naming.ts`): the `\end` code first, then the
+ * names of the `\begin` code's closure and of the `\end` code's, each once, but the environment's
+ * own, and those that are data left out, the `\end` code among them when it is. Undefined for a
+ * macro that holds data, or that the compile did not print.
+ */
+export function keyInputs(
+  signatures: Pick<EngineSignatures, "macros">,
+  of: "command" | "environment",
+  name: string,
+): { hash: string; dependencies: Dependency[] } | undefined {
+  const macroOf = (each: string) =>
+    Object.hasOwn(signatures.macros, each) ? signatures.macros[each] : undefined;
+  const own = macroOf(name);
+  if (own === undefined || own.kind === "data") return undefined;
+  if (of === "command")
+    return {
+      hash: own.hash,
+      dependencies: own.dependencies.flatMap((dependency): Dependency[] => {
+        const found = macroOf(dependency);
+        return found?.kind === "data" ? [] : [[dependency, found?.hash ?? null]];
+      }),
+    };
+  const endName = `end${name}`;
+  const end = macroOf(endName);
+  const closure = [
+    ...(end === undefined ? [] : [endName]),
+    ...own.dependencies,
+    ...(end === undefined || end.kind === "data" ? [] : end.dependencies),
+  ];
+  return {
+    hash: own.hash,
+    dependencies: [...new Set(closure)].flatMap((dependency): Dependency[] => {
+      const found = dependency === name ? undefined : macroOf(dependency);
+      return found === undefined || found.kind === "data" ? [] : [[dependency, found.hash]];
+    }),
+  };
+}
+
+/**
+ * Each definition's key, item 6's cache key (`keyOf`): the SHA-256 of the naming version, its hash
+ * and its dependencies' that are definitions, in order, by name (`keyInputs`). A macro that holds
+ * data takes no part, neither its text nor whether a preamble set it. And each template
+ * environment the body opens (`environments`), by its name, its key as an environment
+ * (`environmentKeysOf`), in place of its `\begin` code's alone, since that is the key its request
+ * gives it and an answer is filed under. It is what the corpus runner compares between documents:
+ * two whose class or style is the same file give each macro and environment the file defines, and
+ * the preamble leaves alone, the same key, whatever the person's name and settings.
  */
 export async function keysOf(
-  signatures: Pick<EngineSignatures, "macros">,
+  signatures: Pick<EngineSignatures, "macros"> & Partial<Pick<EngineSignatures, "environments">>,
+  version: number = NAMING_VERSION,
 ): Promise<Record<string, string>> {
   const keys = record<string>();
-  for (const [name, macro] of Object.entries(signatures.macros)) {
-    if (macro.kind === "data") continue;
-    const dependencies = macro.dependencies.flatMap((dependency) => {
-      const found = signatures.macros[dependency];
-      return found?.kind === "data" ? [] : [[dependency, found?.hash ?? null]];
-    });
-    keys[name] = await sha256(JSON.stringify([macro.hash, dependencies]));
+  for (const name of Object.keys(signatures.macros)) {
+    const inputs = keyInputs(signatures, "command", name);
+    if (inputs !== undefined) keys[name] = await keyOf(version, inputs.hash, inputs.dependencies);
+  }
+  return Object.assign(keys, await environmentKeysOf(signatures, version));
+}
+
+/**
+ * Each template environment's key, by its name, as its request gives it (`environmentKeyOf`): its
+ * `\begin` code's hash, with its `\end` code as its first dependency, and both closures after it
+ * (`keyInputs`); an `\end` code that holds data, as an empty one does, is left out, as every
+ * dependency that holds data is.
+ */
+export async function environmentKeysOf(
+  signatures: Pick<EngineSignatures, "macros"> & Partial<Pick<EngineSignatures, "environments">>,
+  version: number = NAMING_VERSION,
+): Promise<Record<string, string>> {
+  const keys = record<string>();
+  for (const [name, signature] of Object.entries(signatures.environments ?? {})) {
+    const inputs =
+      signature.kind === "template" ? keyInputs(signatures, "environment", name) : undefined;
+    if (inputs === undefined) continue;
+    const [end, ...rest] = inputs.dependencies;
+    keys[name] =
+      end !== undefined && end[0] === `end${name}`
+        ? await environmentKeyOf(version, inputs.hash, end[0], end[1], rest)
+        : await keyOf(version, inputs.hash, inputs.dependencies);
   }
   return keys;
 }

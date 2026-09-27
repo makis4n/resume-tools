@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "key": "784c61b29ca9cd31d3f617fbc58da1c2f85e1986559d205d74e07ce9ee145f91",
+  "hash": "fcecd1be7700545b7e82f0162cc7f24941e1358a0a87b87330412c759bd696ed",
+  "of": "command",
+  "name": "personalinfo",
+  "family": "altacv",
+  "answer": {
+    "kind": "header",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other",
+        "slot": "contacts"
+      }
+    ],
+    "repeatable": false,
+    "notes": "Holds the contacts' calls, which the port sets through {{contacts}}.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": []
+}

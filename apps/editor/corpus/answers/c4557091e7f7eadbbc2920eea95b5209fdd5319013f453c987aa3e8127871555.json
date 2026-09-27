@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "key": "c4557091e7f7eadbbc2920eea95b5209fdd5319013f453c987aa3e8127871555",
+  "hash": "112667cab4d52263d5d24e1674e990ec656b52e3053aae7937062e1855596545",
+  "of": "command",
+  "name": "quote",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text"
+      }
+    ],
+    "repeatable": false,
+    "notes": "The quote under the header, which the model has no place for (decision 0015).",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": []
+}

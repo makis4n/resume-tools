@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "key": "f4b0a6255900f18e6b863e56480036cb1945d21da81ebc4e7e67c649d1956c4d",
+  "hash": "6593e574f183a6d664fb07a63078e2eae8f786f668db05edcd64606fddad2a5d",
+  "of": "command",
+  "name": "columnratio",
+  "family": "altacv",
+  "answer": {
+    "kind": "layout",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "length"
+      }
+    ],
+    "repeatable": false,
+    "notes": "paracol's column ratio, which the port sets in its document snippet.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": [
+    ["pcol@icolumnratio", "0d743b60dfe5860bb383091d8b607448d5f37b307b3d6a0c36e2e77887fe00ed"]
+  ]
+}

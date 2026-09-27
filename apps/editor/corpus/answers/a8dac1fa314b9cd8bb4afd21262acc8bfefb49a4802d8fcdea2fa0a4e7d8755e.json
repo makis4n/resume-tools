@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "key": "a8dac1fa314b9cd8bb4afd21262acc8bfefb49a4802d8fcdea2fa0a4e7d8755e",
+  "hash": "c201fc5f09b0f20672fae3c3ad26fa967e1e05c99e3dcbe858163d47549ad2d2",
+  "of": "command",
+  "name": "cvevent",
+  "family": "altacv",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "slot": "title",
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "subtitle",
+        "slot": "subtitle",
+        "blank": "empty"
+      },
+      {
+        "index": 3,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "empty"
+      },
+      {
+        "index": 4,
+        "meaning": "place",
+        "slot": "place",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "redefinitions": [
+      {
+        "name": "cvevent",
+        "latex": "\\renewcommand{\\cvevent}[4]{%\n  {\\large\\color{emphasis}#1\\par}\n  \\smallskip\\normalsize\n  \\ifstrequal{#2}{}{}{\n  \\textbf{\\color{accent}#2}\\par\n  \\smallskip}\n  \\ifstrequal{#3}{}{}{%\n    {\\small\\parbox[t]{0.5\\linewidth}%\n      {\\raggedright\\BeginAccSupp{method=pdfstringdef,ActualText={\\datename:}}\\cvDateMarker\\EndAccSupp{}%\n      ~#3}%\n    }}%\n  \\ifstrequal{#4}{}{}{%\n    {\\small\\parbox[t]{0.5\\linewidth}%\n      {\\raggedright\\BeginAccSupp{method=pdfstringdef,ActualText={\\locationname:}}\\cvLocationMarker\\EndAccSupp{}%\n        ~#4}%\n    }}\\par\n  \\medskip\\normalsize\n}"
+      }
+    ],
+    "notes": "The dates and the place are each set in a box half the column wide, which cannot break; the redefinition sets each as a ragged-right paragraph of that width, as the port does, whose first line is where the box's was. The LaTeX is adapted from the port's rt-altacv.cls, a modified version of altacv.cls v1.7.4, under the LPPL 1.3c.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": [
+    ["ifstrequal", "040b4a4e03d57060a3226b5e7141f2689d4b026dc9940993f19186494f8fa78f"],
+    ["BeginAccSupp", "2b60e442c5d7558284ab77202929e814f52679472c418eb4678dbd6032099501"],
+    ["cvDateMarker", "647e8ac3389f6fef10b7883d2e96b9ee59d822daa2e06cbc2374670bc623e71a"],
+    ["EndAccSupp", "7a2ee46aae6b7c3a16d1b41b3a7e286a648e842f2cb9509271b13bf18ca60d3b"],
+    ["cvLocationMarker", "b043123de2864541bb5fa7df909c8e0d024c87bf325afa89c2384b617aeec827"],
+    ["setkeys", "d7ade1f2a00faf375d936da9c0ed7cbfeb74d82f0f9df1e49d440fc20c901788"],
+    ["ACCSUPP@bdc", "f5ecb9852d34ba4f13143b65b87b236ae4ee3744a2c75beb720459de26a3ec6a"],
+    ["ACCSUPP@space", "ba763f5d94d1c405463f881c98e7b52913a9844aff2f7e65444adec328dcdabd"],
+    ["faCalendar", "3365e577f0b686b3dcf6631972f76d9d01f56630b516897ea23ea246c19b3347"],
+    ["ACCSUPP@emc", "4e99a7c323d1f734a0b56a5587f92484d13bd69f6b0abecb995467f698006121"],
+    ["faMapMarker", "8a07c857dc62ef089b511852b73ab3b0762f337a7b37ad004102ef97d1c2bb20"],
+    ["faPreselectedIcon", "2a5dc986644c577dd65165934349664a897bcbc1519a613553442f9152b728ab"],
+    ["faPreselectedIcon code", "c4eafe31a9176f2026a2227ac57ac4a66df889337614500d5d36d20137b7efe8"]
+  ]
+}

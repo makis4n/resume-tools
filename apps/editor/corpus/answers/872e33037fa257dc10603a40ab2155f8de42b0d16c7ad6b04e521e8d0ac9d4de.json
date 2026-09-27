@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "key": "872e33037fa257dc10603a40ab2155f8de42b0d16c7ad6b04e521e8d0ac9d4de",
+  "hash": "9c9f4b114e31324f4bd6aacd6c78f693bef2ff38e00ef2d36a9aa2d2ad83f54b",
+  "of": "command",
+  "name": "mobile",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "contact",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "contact": "phone",
+    "repeatable": false,
+    "redefinitions": [
+      {
+        "name": "mobile",
+        "latex": "\\makeatletter\n\\renewcommand*{\\mobile}[1]{%\n  \\def\\@mobile{#1}%\n  \\begingroup\n  \\let\\rtfield\\@secondoftwo\n  \\def\\@teluri{tel:\\@mobile}%\n  \\StrDel{\\@teluri}{ }[\\@teluri]%\n  \\StrDel{\\@teluri}{-}[\\@teluri]%\n  \\StrDel{\\@teluri}{(}[\\@teluri]%\n  \\StrDel{\\@teluri}{)}[\\@teluri]%\n  \\expandafter\\endgroup\\expandafter\\def\\expandafter\\@teluri\\expandafter{\\@teluri}%\n}\n\\makeatother"
+      }
+    ],
+    "notes": "Stores the phone number and makes its tel: address from it; the redefinition makes the address with the editor's markers taken out, so that \\makecvheader's link holds none. The LaTeX is adapted from the port's rt-awesome-cv.cls, a modified version of awesome-cv.cls, under the LPPL 1.3c.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": [["StrDel", "8ad70adb6fda675c478a7b82749ce0499651f4c563f32c2c9d82ae4cf61d5ca5"]]
+}

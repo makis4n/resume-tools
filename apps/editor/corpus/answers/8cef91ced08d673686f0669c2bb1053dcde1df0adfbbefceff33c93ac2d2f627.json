@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "key": "8cef91ced08d673686f0669c2bb1053dcde1df0adfbbefceff33c93ac2d2f627",
+  "hash": "578bf9d05af4ee5122d7490945ef3f57f9dffe56668da052954d9022510f7cef",
+  "of": "command",
+  "name": "resumeProjectHeading",
+  "family": "jake",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "parts": [
+          {
+            "meaning": "title",
+            "slot": "title"
+          },
+          {
+            "meaning": "subtitle",
+            "slot": "subtitle"
+          }
+        ],
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "empty"
+      }
+    ],
+    "role": "projects",
+    "repeatable": true,
+    "notes": "A project's heading: its first argument holds the title in \\textbf and the subtitle in \\emph with $|$ between them, a raw chunk, so the probe finds its two parts editable and the argument raw; the port writes it from both slots.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": []
+}

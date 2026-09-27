@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "key": "133c0c43abbd1ba4f718e25bad2cc0aad2e57b43486b6f0d630b5468740b504b",
+  "hash": "9d429acb0126cafc9dec14bec39ff98e6022c5a7ac944ea0f94f3b14b0d77853",
+  "of": "command",
+  "name": "bibnamedelima",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [],
+    "repeatable": false,
+    "notes": "biblatex's name delimiter.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": [
+    ["addhighpenspace", "2516467f5c826f81f2eb4f268900a02e2286b44b933edf451919baad73fa9214"],
+    ["unspace", "f75cd3cfb0646f3d5b2741d9f73c2b6583a7356f8bcf7dea80879be62c13a8ef"],
+    ["blx@imc@resetpunctfont", "fe27c68d19b537bf5d233075fef7258d5f9e395f69343d76b9ece722171b083c"],
+    ["ifbool", "416bf5f081125abb065a5084cc588f9d54f52fb386be5e5e915f1fd878173a9f"],
+    ["ifdimgreater", "963a243ee4895c253d089a542d37fe909c83108def79c1c288e282376dc97325"],
+    ["ifnumgreater", "05e4fa78a8e79a81a4745832b265d83ff1086d5174f9aa0f2b3d346b51170df1"],
+    ["blx@ifpuncthook", "96951a12cbb9c5b796c0885859efc33902c2632d69ed4630bd1c2deaacb74d65"],
+    ["abx@puncthook", "240556d49a04418b69d955a81170bd2006c6670764c5bb9e917a8e45c7ba5df2"],
+    ["ifcsundef", "2a74317e2d8f64a7ef7fab47f2cb5cb9a892a427bed17b49348e07d83b705f08"],
+    ["etb@err@nobool", "0bf5216d59c7463db5190f21f38eeed30791cfbd07a8df66682521e40e3462d5"],
+    ["ifdimcomp", "631ed408680ef264f7f5da3709440215e528450107c8b4428c8246e925d8ac9b"],
+    ["ifnumcomp", "1b1a0b1c9917d98e4a3f33f333d46566bfd8f0574873a14a00d5fbf4a066d94b"],
+    ["etb@error", "3c5e3e9a017b60816b8f16ef95ed7bc844891fce8e2300521a7583907c18a369"]
+  ]
+}

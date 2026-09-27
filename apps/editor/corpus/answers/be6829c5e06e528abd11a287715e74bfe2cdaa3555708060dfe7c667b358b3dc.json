@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "key": "be6829c5e06e528abd11a287715e74bfe2cdaa3555708060dfe7c667b358b3dc",
+  "hash": "8b1e42fe637526d8803df6e3e4b29e9db7d6d326d12336a7a9770c9e92b4e719",
+  "of": "command",
+  "name": "divider",
+  "family": "altacv",
+  "answer": {
+    "kind": "layout",
+    "arguments": [],
+    "repeatable": false,
+    "notes": "The rule between entries, which the port writes as the entries' separator.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "seed",
+  "dependencies": [
+    ["hdashrule", "708558d42728aa58b8262bb2585cf5f2db3175b5249f2b5a093e8ae890b55511"],
+    ["hdashrule ", "1b21d3d9bf9732ed6506e1ad9a2dcb707fd6de142418702f6abe196853918891"],
+    ["hdashrule@i", "715410153d76c6603ad55617a95b6f3b2ac192fb325b787d09d1c11efca0cb5f"],
+    ["hdashrule@ii", "058c5436d88e3b55436b6a2f76b262739f46b943cdc27014c7b3253884b50d7c"],
+    ["@ifmtarg", "f01c0491f7c18458bf739a4f5ac9f54ce5447ede4d13d78b0165dbea208bf878"],
+    ["hdr@do@rule", "d012032a44e69e9d39586f4e267828e216796c83909502a1df6e211d1277723e"],
+    ["hdr@tally@segments", "d931d5d0156d34bec167d16c2128be6f1dc21e17d3a14f774e3acdf72879ab4d"],
+    ["hdr@do@skip", "6e0f52b9923bc013a32455c3396e3873cf4fc36cd80657e25f9e1a09b2e98eab"]
+  ]
+}
