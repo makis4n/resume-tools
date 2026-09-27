@@ -193,8 +193,8 @@ export interface SessionOptions {
 }
 
 /**
- * Files a template supplies, such as a class file, by plain file name; or, for a compile, the
- * files of an upload, by their paths in the job's folder (`isJobPath`).
+ * Files a template supplies, such as a class file, by plain file name; or, for a compile or a dump,
+ * the files of an upload, by their paths in the job's or the dump's folder (`isJobPath`).
  */
 export type JobFiles = Record<string, string | Uint8Array>;
 
@@ -216,6 +216,13 @@ export interface StartResult {
 export interface RunResult {
   code: number;
   ms: number;
+  /**
+   * The CPU time of the thread that ran the program, in milliseconds, over its run alone: not
+   * what the thread waited for while other work ran, nor the heap's reset after the run, which
+   * `ms` counts. Node gives it (`threadCpuMs`); the browser's worker, which has no `process`,
+   * does not.
+   */
+  cpuMs?: number;
   /** What the program printed to the terminal. */
   output: string;
 }
@@ -237,6 +244,12 @@ export interface CompileResult {
   pages: number;
   /** How long each pass took, in milliseconds, including a retry as a new document. */
   passes: number[];
+  /**
+   * Each of `passes` in the CPU time of the thread that ran it (`RunResult.cpuMs`), when every
+   * pass has it, as in Node, and not in the browser's worker. What a timing test bounds, since
+   * load that comes in bursts slows one pass and not the next in elapsed time.
+   */
+  cpuPasses?: number[];
   log: string;
   error?: string;
   errorLine?: number;
@@ -294,6 +307,16 @@ export interface CompileOptions {
    * reads it, and pdfTeX never uses fontconfig.
    */
   fontsByName?: boolean;
+  /**
+   * Pass again, within `maxPasses`, whenever a pass changed a file of the job's folder, its log
+   * and its output aside, though its log asks for nothing: LaTeX never says that a table of
+   * contents it rewrote differs from the one it read, which only the next pass sets. A pass that
+   * changed nothing it could read would be the same again, so none follows it. The import
+   * pipeline's probe asks for it (decision 0022), since its compiles start from the auxiliary
+   * files its baseline wrote rather than as new documents; the editor's own compiles take the
+   * log's word, as a LaTeX user does.
+   */
+  rerunOnChange?: boolean;
 }
 
 const checkName = (kind: string, name: string) => {
@@ -445,6 +468,32 @@ function fontFoldersOf(manifest: EngineManifest): string[] {
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
+ * The CPU time the calling thread has spent, in milliseconds, where the platform says: Node's
+ * `process.threadCpuUsage`, as the tests' timing reads it (`src/test/timing.ts`). The browser's
+ * worker has no `process`, so none there; nothing of Node's is imported, so the worker's build
+ * stays free of it.
+ */
+function threadCpuMs(): number | undefined {
+  if (typeof process === "undefined" || typeof process.threadCpuUsage !== "function")
+    return undefined;
+  const { user, system } = process.threadCpuUsage();
+  return (user + system) / 1000;
+}
+
+/** The end of every file `dump` runs, which dumps the format. */
+const DUMP = "\n\\dump\n";
+
+/** A preamble with `\dump` after it: text as text, and bytes as bytes, as `dump` was given it. */
+function withDump(preamble: string | Uint8Array): string | Uint8Array {
+  if (typeof preamble === "string") return `${preamble}${DUMP}`;
+  const end = new TextEncoder().encode(DUMP);
+  const bytes = new Uint8Array(preamble.length + end.length);
+  bytes.set(preamble);
+  bytes.set(end, preamble.length);
+  return bytes;
+}
+
+/**
  * A path an output names, as a path in the job's folder: a relative one, from the folder, as TeX
  * and XeTeX write a file they found there, with `./` or without; or an absolute one inside it, as
  * fontconfig gives a font it found there. Undefined for any other.
@@ -513,8 +562,13 @@ export class EngineSession {
    * one whose format is made again starts again as a new document and keeps its files.
    */
   private readonly formatOf = new Map<string, { format: string; generation: number }>();
-  /** How many times each format has been put in place, by engine and name. */
+  /**
+   * How many times each format has been put in place, by engine and name, a count that a dropped
+   * format keeps, so that a job compiled with it before starts again when it is put back.
+   */
   private readonly generations = new Map<string, number>();
+  /** The formats in place, by engine and name, which compiles can load. */
+  private readonly installed = new Set<string>();
   /** The files each job was given, written back whenever the session clears its folder. */
   private readonly filesOf = new Map<string, JobFiles>();
   /**
@@ -589,9 +643,13 @@ export class EngineSession {
     this.printed.length = 0;
     fs.chdir(cwd);
     const started = performance.now();
+    const cpuStarted = threadCpuMs();
     let code: number;
+    let cpuMs: number | undefined;
     try {
       code = this.engine.callMain([...args]); // callMain changes the array it is given
+      const cpuEnded = threadCpuMs();
+      if (cpuStarted !== undefined && cpuEnded !== undefined) cpuMs = cpuEnded - cpuStarted;
       this.engine._flush_streams();
     } finally {
       // Put the engine back as start-up left it, even when the run threw.
@@ -603,17 +661,30 @@ export class EngineSession {
       fs.chdir(HOME);
       this.afterRun?.();
     }
-    return { code, ms: performance.now() - started, output: this.printed.join("\n") };
+    return {
+      code,
+      ms: performance.now() - started,
+      ...(cpuMs === undefined ? {} : { cpuMs }),
+      output: this.printed.join("\n"),
+    };
   }
 
   /**
    * Dump a preamble into a format named `name`, which later compiles with the same engine can
-   * load. It runs in a folder of its own, with `files` beside it, and leaves only the format. A
-   * dump that fails leaves any earlier format of that name in place. One that succeeds replaces
-   * it, and the jobs compiled with it start again as new documents, keeping their files; a name
-   * stands for one template, so another template needs another name.
+   * load. It runs in a folder of its own, with `files` beside it at their paths in the folder, as
+   * a compile's are (`isJobPath`): a template's by plain file name, or an upload's, whose preamble
+   * may input a file of a folder of its own. It leaves only the format. The preamble is text,
+   * written as UTF-8, or bytes, written as they are, as an imported resume's preamble is in the
+   * encoding its file had. A dump that fails leaves any earlier format of that name in place. One
+   * that succeeds replaces it, and the jobs compiled with it start again as new documents, keeping
+   * their files; a name stands for one template, so another template needs another name.
    */
-  dump(engine: Engine, name: string, preamble: string, files: JobFiles = {}): DumpResult {
+  dump(
+    engine: Engine,
+    name: string,
+    preamble: string | Uint8Array,
+    files: JobFiles = {},
+  ): DumpResult {
     checkEngine(engine);
     checkFormatName(name);
     const spec = ENGINES[engine];
@@ -625,8 +696,8 @@ export class EngineSession {
     let log: string;
     let format: Uint8Array | undefined;
     try {
-      this.writeFiles(folder, files);
-      this.engine.FS.writeFile(`${folder}/${name}.tex`, `${preamble}\n\\dump\n`);
+      this.writeFiles(folder, files, checkJobPath);
+      this.engine.FS.writeFile(`${folder}/${name}.tex`, withDump(preamble));
       run = this.run(
         [spec.program, "-ini", `-jobname=${name}`, ...spec.args, `&${spec.program}`, `${name}.tex`],
         folder,
@@ -657,6 +728,22 @@ export class EngineSession {
     checkEngine(engine);
     checkFormatName(name);
     this.install(engine, name, format);
+  }
+
+  /**
+   * Take a format out of the session, to free what it holds, 6 to 9 MB: `dump`'s or `putFormat`'s
+   * by its name. The import pipeline dumps a format for each resume it takes in (decision 0022),
+   * which the one who asked for it drops when done with it. A compile that names it then throws,
+   * as one that names a format never made does, until it is dumped or put again; the jobs
+   * compiled with it keep their files, and start again as new documents then, as after a dump that
+   * replaces a format. Dropping a name the session does not hold does nothing, and `stock`, the
+   * engine's own, cannot be dropped. Forgetting a job (`forget`) leaves every format in place.
+   */
+  dropFormat(engine: Engine, name: string) {
+    checkEngine(engine);
+    checkFormatName(name);
+    this.removeTree(this.formatPath(engine, name));
+    this.installed.delete(`${engine}:${name}`);
   }
 
   /**
@@ -693,7 +780,8 @@ export class EngineSession {
     if (format !== "stock") {
       checkName("format", format);
       const made = this.generations.get(key);
-      if (made === undefined) throw new Error(`no ${engine} format named ${format}`);
+      if (made === undefined || !this.installed.has(key))
+        throw new Error(`no ${engine} format named ${format}`);
       formatPath = this.formatPath(engine, format);
       generation = made;
     }
@@ -708,12 +796,17 @@ export class EngineSession {
     const fonts = options.fontsByName && engine === "xetex" ? this.fontconfig(job) : undefined;
     let attempt: ReturnType<EngineSession["passes"]>;
     try {
-      attempt = this.passes(spec, formatPath, job, body, maxPasses, fonts);
+      const onChange = options.rerunOnChange === true;
+      attempt = this.passes(spec, formatPath, job, body, maxPasses, fonts, onChange);
       const left = maxPasses - attempt.passes.length;
       if (!attempt.ok && !attempt.fresh && left > 0) {
         this.clearFolder(job);
-        const again = this.passes(spec, formatPath, job, body, left, fonts);
+        const again = this.passes(spec, formatPath, job, body, left, fonts, onChange);
+        const cpu = attempt.cpuPasses;
         attempt = { ...again, passes: [...attempt.passes, ...again.passes] };
+        // In CPU time only when both attempts' passes are.
+        if (cpu === undefined || again.cpuPasses === undefined) delete attempt.cpuPasses;
+        else attempt.cpuPasses = [...cpu, ...again.cpuPasses];
       }
     } finally {
       // The session's default again: the next compile of the job scans no folder.
@@ -841,7 +934,10 @@ export class EngineSession {
     return this.read(at);
   }
 
-  /** Forget a job: its folder, its files and its format, so its next compile starts afresh. */
+  /**
+   * Forget a job: its folder, its files and which format it was compiled with, so its next
+   * compile starts afresh. The format itself stays in place for other jobs (`dropFormat`).
+   */
   forget(job: string) {
     checkName("job", job);
     this.clearFolder(job);
@@ -856,8 +952,9 @@ export class EngineSession {
   }
 
   /**
-   * Compile a job's body once, and again while it is new or its log asks, with `fonts`, when
-   * given, as fontconfig's configuration in the job's folder.
+   * Compile a job's body once, and again while it is new or its log asks, or, with `onChange`,
+   * while a pass changes a file of its folder, with `fonts`, when given, as fontconfig's
+   * configuration in the job's folder.
    */
   private passes(
     spec: EngineSpec,
@@ -866,6 +963,7 @@ export class EngineSession {
     body: string | Uint8Array,
     maxPasses: number,
     fonts?: string,
+    onChange = false,
   ): Omit<CompileResult, "fetched"> & { fresh: boolean } {
     const folder = `${JOBS}/${job}`;
     const at = (extension: string) => `${folder}/${job}.${extension}`;
@@ -875,19 +973,29 @@ export class EngineSession {
     if (fonts !== undefined) this.engine.FS.writeFile(`${folder}/${FONTCONFIG_FILE}`, fonts);
     const fresh = !this.engine.FS.analyzePath(at("aux")).exists;
     const passes: number[] = [];
+    // The passes in CPU time, while every pass has it.
+    let cpuPasses: number[] | undefined = [];
     let run: RunResult;
     let log: string;
     for (;;) {
       // What an earlier pass wrote must not pass for what this one did.
       this.removeTree(at(spec.output));
       this.removeTree(at("log"));
+      const before = onChange ? this.contentsOf(folder) : undefined;
       run = this.run([spec.program, ...spec.args, "--fmt", formatPath, `${job}.tex`], folder);
       passes.push(run.ms);
+      if (run.cpuMs === undefined) cpuPasses = undefined;
+      else cpuPasses?.push(run.cpuMs);
       log = this.read(at("log"), "utf8") ?? "";
       // Only a pass that shipped pages is worth another: one that failed, or that TeX finished
       // with nothing to ship, would do the same again.
       const shipped = run.code === 0 && this.engine.FS.analyzePath(at(spec.output)).exists;
-      const again = shipped && ((fresh && passes.length === 1) || summariseLog(log).rerun);
+      const changed =
+        before !== undefined &&
+        shipped &&
+        this.changedSince(folder, before, [at(spec.output), at("log")]);
+      const again =
+        shipped && ((fresh && passes.length === 1) || summariseLog(log).rerun || changed);
       if (!again || passes.length >= maxPasses) break;
     }
     const summary = summariseLog(log);
@@ -902,6 +1010,7 @@ export class EngineSession {
       output,
       pages: summary.pages,
       passes,
+      ...(cpuPasses === undefined ? {} : { cpuPasses }),
       log,
       error: ok ? undefined : failure,
       errorLine: ok ? undefined : summary.errorLine,
@@ -914,6 +1023,43 @@ export class EngineSession {
     this.engine.FS.writeFile(this.formatPath(engine, name), format);
     const key = `${engine}:${name}`;
     this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
+    this.installed.add(key);
+  }
+
+  /** Every file below a folder, by its path, with what it holds. */
+  private contentsOf(folder: string): Map<string, Uint8Array> {
+    const fs = this.engine.FS;
+    const found = new Map<string, Uint8Array>();
+    const walk = (path: string) => {
+      for (const name of fs.readdir(path)) {
+        if (name === "." || name === "..") continue;
+        const at = `${path}/${name}`;
+        if (fs.isDir(fs.stat(at).mode)) walk(at);
+        else found.set(at, fs.readFile(at));
+      }
+    };
+    if (fs.analyzePath(folder).exists) walk(folder);
+    return found;
+  }
+
+  /**
+   * Whether a file below a folder, but those at `aside`, is not as `before` had it: new, gone, or
+   * holding other bytes.
+   */
+  private changedSince(
+    folder: string,
+    before: ReadonlyMap<string, Uint8Array>,
+    aside: readonly string[],
+  ): boolean {
+    const after = this.contentsOf(folder);
+    for (const path of aside) after.delete(path);
+    for (const path of before.keys()) if (!aside.includes(path) && !after.has(path)) return true;
+    for (const [path, bytes] of after) {
+      const was = before.get(path);
+      if (was === undefined || was.length !== bytes.length) return true;
+      for (let i = 0; i < bytes.length; i++) if (was[i] !== bytes[i]) return true;
+    }
+    return false;
   }
 
   private formatPath(engine: Engine, name: string): string {

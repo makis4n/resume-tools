@@ -90,6 +90,11 @@ export interface Report {
    * value names another format.
    */
   passes: number[];
+  /**
+   * The same passes in the CPU time of the thread that ran them (`CompileResult.cpuPasses`), when
+   * every pass has it, as a session in Node gives it and the browser's does not.
+   */
+  cpuPasses?: number[];
   /** The pages the resume sets. */
   pages: number;
   /** The fields the page finds. */
@@ -140,9 +145,10 @@ const PARAGRAPH_KEYS = [
  * What the page may leave out of a field's text without a glyph, and the aligner skips:
  * whitespace, the invisible characters, anything past ASCII, which pdfTeX drops where the font
  * has no glyph for it, and the underscore, which OT1 sets as a rule rather than a glyph. What is
- * left of a text without them is printable ASCII.
+ * left of a text without them is printable ASCII. The probe (item 5) reads a field's coverage
+ * with it too.
  */
-const SETS_NO_GLYPH = new RegExp(`\\s|${INVISIBLE.source}|[^\\u0000-\\u007f]|_`, "gu");
+export const SETS_NO_GLYPH = new RegExp(`\\s|${INVISIBLE.source}|[^\\u0000-\\u007f]|_`, "gu");
 
 /**
  * Check a package by compiling a resume through it as the editor does, with the document's
@@ -202,7 +208,7 @@ export async function validatePackage(
   if (body === undefined) return report;
   const first = attempt(findings, "compile", () => compile(body.latex));
   if (first === undefined) return report;
-  report.passes.push(...first.passes);
+  addPasses(report, first);
   findings.push(...checkCompile(first));
   const output = first.output;
   if (output === undefined) return report;
@@ -214,7 +220,7 @@ export async function validatePackage(
   const pdf = attempt(pdfFindings, "pdf", () => session.pdf(job, { compress: 0 }));
 
   const second = attempt(findings, "converges", () => compile(body.latex));
-  report.passes.push(...(second?.passes ?? []));
+  addPasses(report, second);
   findings.push(...checkConverges(first, output, second));
 
   const editedBody = attempt(findings, "edits", () =>
@@ -224,7 +230,7 @@ export async function validatePackage(
     editedBody === undefined
       ? undefined
       : attempt(findings, "edits", () => compile(editedBody.latex));
-  report.passes.push(...(edited?.passes ?? []));
+  addPasses(report, edited);
 
   // The controls' compiles come last, after the edit's, though `CHECKS` lists their check before
   // `edits`: each leaves the job as it compiled it, with another format where a value names one,
@@ -233,7 +239,7 @@ export async function validatePackage(
   // edit's compile wrote, so only a template whose page shows what they hold, which the edits
   // check reports, could pass a control that does nothing.
   const controls = checkControls(session, pkg, sample, chosen, format.name, output, job, covers);
-  report.passes.push(...controls.passes);
+  addPasses(report, controls.timing);
   findings.push(...controls.findings);
 
   const { fields, undrawable, natives, outside } = await readFields(fonts, output, doc);
@@ -426,6 +432,22 @@ function checkConverges(
   return findings;
 }
 
+/** How long compiles took, pass by pass, as the session timed them (`CompileResult`). */
+type Timing = Pick<CompileResult, "passes" | "cpuPasses">;
+
+/**
+ * Add a compile's passes to those so far: elapsed, and in CPU time while every pass so far has
+ * it, as a session in Node gives it and the browser's does not.
+ */
+function addPasses(timing: Timing, result: Timing | undefined) {
+  if (result === undefined || result.passes.length === 0) return;
+  const every = timing.passes.length === 0 || timing.cpuPasses !== undefined;
+  timing.passes.push(...result.passes);
+  if (every && result.cpuPasses !== undefined)
+    timing.cpuPasses = [...(timing.cpuPasses ?? []), ...result.cpuPasses];
+  else delete timing.cpuPasses;
+}
+
 /**
  * `controls`: every style control the package offers takes effect, in an ordinary compile. The
  * editor applies a control's value in the body, before `\begin{document}` (decision 0006), so a
@@ -448,9 +470,9 @@ function checkControls(
   output: Uint8Array,
   job: string,
   covers: ((char: string) => boolean) | undefined,
-): { findings: Finding[]; passes: number[] } {
+): { findings: Finding[]; timing: Timing } {
   const findings: Finding[] = [];
-  const passes: number[] = [];
+  const timing: Timing = { passes: [] };
   const add = (message: string) => findings.push({ check: "controls", message });
   for (const { values, set, was } of probesOf(pkg, chosen)) {
     try {
@@ -464,7 +486,7 @@ function checkControls(
       }
       const body = generateBody(pkg, sample, values, { covers });
       const result = session.compile(pkg.engine, probe.name, body.latex, { job, maxPasses: 3 });
-      passes.push(...result.passes);
+      addPasses(timing, result);
       const error = compileError(result);
       if (error !== undefined || result.output === undefined)
         add(`with ${set}, the body does not compile: ${error ?? "no output"}`);
@@ -476,7 +498,7 @@ function checkControls(
       add(`with ${set}, ${messageOf(error)}`);
     }
   }
-  return { findings, passes };
+  return { findings, timing };
 }
 
 /** One value the controls check tries, and how a finding names it and the document's value. */
