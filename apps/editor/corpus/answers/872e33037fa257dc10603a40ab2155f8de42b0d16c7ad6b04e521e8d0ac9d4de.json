@@ -20,7 +20,7 @@
     "redefinitions": [
       {
         "name": "mobile",
-        "latex": "\\makeatletter\n\\renewcommand*{\\mobile}[1]{%\n  \\def\\@mobile{#1}%\n  \\begingroup\n  \\let\\rtfield\\@secondoftwo\n  \\def\\@teluri{tel:#1}%\n  \\StrDel{\\@teluri}{ }[\\@teluri]%\n  \\StrDel{\\@teluri}{-}[\\@teluri]%\n  \\StrDel{\\@teluri}{(}[\\@teluri]%\n  \\StrDel{\\@teluri}{)}[\\@teluri]%\n  \\expandafter\\endgroup\\expandafter\\def\\expandafter\\@teluri\\expandafter{\\@teluri}%\n}\n\\makeatother"
+        "latex": "\\makeatletter\n\\renewcommand*{\\mobile}[1]{%\n  \\def\\@mobile{#1}%\n  \\begingroup\n  \\let\\rtfield\\@secondoftwo\n  \\def\\@teluri{tel:\\@mobile}%\n  \\StrDel{\\@teluri}{ }[\\@teluri]%\n  \\StrDel{\\@teluri}{-}[\\@teluri]%\n  \\StrDel{\\@teluri}{(}[\\@teluri]%\n  \\StrDel{\\@teluri}{)}[\\@teluri]%\n  \\expandafter\\endgroup\\expandafter\\def\\expandafter\\@teluri\\expandafter{\\@teluri}%\n}\n\\makeatother"
       }
     ],
     "notes": "Stores the phone number and makes its tel: address from it; the redefinition makes the address with the editor's markers taken out, so that \\makecvheader's link holds none. The LaTeX is adapted from the port's rt-awesome-cv.cls, a modified version of awesome-cv.cls, under the LPPL 1.3c.",
