@@ -20,6 +20,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ats.analyze import NotAPdfError, analyze
+from ats.extract import EncryptedPdfError, UnreadablePdfError
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,11 @@ DEFAULT_ALLOWED_ORIGINS = "http://localhost:5173"
 MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
 NOT_A_PDF = "This file is not a PDF. Export your resume as a PDF and try again."
+PDF_ENCRYPTED = (
+    "This PDF is protected, so it cannot be read. Export it again without a password or other "
+    "protection and try again."
+)
+PDF_UNREADABLE = "This PDF could not be read. It may be damaged; export it again and try again."
 INVALID_REQUEST = "The request must include a PDF in the `file` field."
 INTERNAL_ERROR = "Something went wrong while analysing the resume. Please try again."
 
@@ -210,6 +216,10 @@ def create_app(
             return await run_in_threadpool(analyze, pdf)
         except NotAPdfError:
             raise ServiceError(415, "not-a-pdf", NOT_A_PDF) from None
+        except EncryptedPdfError:
+            raise ServiceError(422, "pdf-encrypted", PDF_ENCRYPTED) from None
+        except UnreadablePdfError:
+            raise ServiceError(422, "pdf-unreadable", PDF_UNREADABLE) from None
 
     return app
 

@@ -10,8 +10,10 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
 from ats.service import create_app, readable_size
+from tests.pdfs import malformed_page_tree_pdf, minimal_pdf, zero_page_pdf
 
 CONTRACTS = Path(__file__).parents[3] / "packages" / "contracts" / "ats" / "v1"
+FIXTURES = Path(__file__).parent / "fixtures"
 EDITOR_ORIGIN = "http://localhost:5173"
 MAX_UPLOAD_BYTES = 4096
 
@@ -22,31 +24,6 @@ def load_schema(name: str) -> Draft202012Validator:
 
 ANALYSIS = load_schema("analysis.schema.json")
 ERROR = load_schema("error.schema.json")
-
-
-def minimal_pdf(text: str = "Invented Person") -> bytes:
-    """A one-page PDF with a line of ASCII text, built by hand so the tests need no PDF library."""
-    escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-    stream = f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET".encode("ascii")
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream),
-    ]
-    out = bytearray(b"%PDF-1.4\n")
-    offsets = []
-    for number, body in enumerate(objects, start=1):
-        offsets.append(len(out))
-        out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
-    xref = len(out)
-    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
-    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
-    out += b"trailer\n<< /Size %d /Root 1 0 R >>\n" % (len(objects) + 1)
-    out += b"startxref\n%d\n%%%%EOF\n" % xref
-    return bytes(out)
 
 
 @pytest.fixture
@@ -120,6 +97,24 @@ def test_rejects_bytes_without_a_pdf_signature(client: TestClient) -> None:
 
 def test_rejects_an_empty_file(client: TestClient) -> None:
     assert_error(upload(client, b""), 415, "not-a-pdf")
+
+
+def test_rejects_an_encrypted_pdf(client: TestClient) -> None:
+    encrypted = (FIXTURES / "encrypted.pdf").read_bytes()
+    assert_error(upload(client, encrypted), 422, "pdf-encrypted")
+
+
+def test_rejects_a_damaged_pdf(client: TestClient) -> None:
+    damaged = b"%PDF-1.4\n" + b"not a real pdf body" * 20
+    assert_error(upload(client, damaged), 422, "pdf-unreadable")
+
+
+def test_rejects_a_pdf_whose_document_opens_but_whose_page_does_not(client: TestClient) -> None:
+    assert_error(upload(client, malformed_page_tree_pdf()), 422, "pdf-unreadable")
+
+
+def test_rejects_a_pdf_with_zero_pages(client: TestClient) -> None:
+    assert_error(upload(client, zero_page_pdf()), 422, "pdf-unreadable")
 
 
 def test_rejects_a_file_over_the_limit_after_reading(client: TestClient) -> None:
