@@ -190,7 +190,7 @@ class defines to hold the surname its preamble stores, is refused as the child b
 now, and passes once item 7 gives the name. Before item 11 the gate did not catch a text that only
 a definition holds, which no string of the document's names: a name a preamble's own macro spells
 out, `\newcommand{\cvcontact}{{\Large Quill Invented}\par}`, went to the model with the gate
-passing. Item 11 (decision 0029) makes the reference's page, read with the upload's fonts, a source
+passing. Item 11 (decision 0033) makes the reference's page, read with the upload's fonts, a source
 of the builder's and the gate's, and the child builds the request and its gate as `corpus leak`
 does (`gatedRequest`): such a name is masked where the page shows it as a pair, the gate refuses a
 request whose own definition still holds a word only the page shows, it reads the request's names

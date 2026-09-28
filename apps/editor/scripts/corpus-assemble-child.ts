@@ -174,7 +174,7 @@ async function main() {
       if ("refused" in requested)
         return done({ outcome: "no answer", engine, answered: 0 }, probedRow);
       // The request writes a macro named after a word of the person's as a placeholder (decision
-      // 0029); the answers are asked for, and come back, under the document's own names.
+      // 0033); the answers are asked for, and come back, under the document's own names.
       const request = requested.request;
       const asked = request.macros.map((macro) => ({
         ...macro,

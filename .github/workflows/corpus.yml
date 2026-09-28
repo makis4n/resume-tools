@@ -1,7 +1,7 @@
 name: corpus
 
 # The corpus of public resumes, fetched from the sources its manifest names, surveyed (decisions
-# 0017 and 0018), and each document's naming request checked for its text (decision 0029). It runs
+# 0017 and 0018), and each document's naming request checked for its text (decision 0033). It runs
 # weekly, on Monday nights, and on demand, never on a pull request, so that no pull request downloads real resumes;
 # milestone 3's item 17 adds the import runner to it.
 on:
@@ -58,7 +58,7 @@ jobs:
       # Every document's naming request, built as the import builds it and checked for the
       # document's text by the leak detector: the lines name documents, macros, kinds of text and
       # counts, never a document's text, and the step fails when a request holds text the builder
-      # should have masked, or the check covers fewer documents than it should (decision 0029).
+      # should have masked, or the check covers fewer documents than it should (decision 0033).
       - id: leak
         run: pnpm --filter @resume-tools/editor corpus leak --json leak.json > leak.md
       - if: always() && steps.leak.outcome != 'skipped'

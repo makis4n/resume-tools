@@ -4,7 +4,7 @@
  * (`placeholder`), a date by its shape (`datePlaceholder`), and a definition's emails, links, phone
  * numbers and postcodes, by a placeholder of the same length that names what it hides where it is
  * long enough to (`maskDefinition`, decision 0020's rule, which item 4 made and item 11 finished,
- * decision 0029). `holdsText` is the check the
+ * decision 0033). `holdsText` is the check the
  * request's schema makes of every call site: no letter but `x` and `X`, and no digit but `0`,
  * outside the names of commands and environments; `specDefaults` reads the defaults an xparse
  * signature gives, which the schema checks the same way.
@@ -202,7 +202,7 @@ const PHONE = /\+?\(?\d[\d ().~/+-]*\d/g;
  * A postcode of letters and digits, in capitals, a space between its halves, as an address writes
  * one: the UK's, `QV1A 2ZX`, and Canada's, `X9Q 0Q9`. No class's or package's code is so shaped,
  * where a postcode of digits alone, `94103` or `10115`, is a number as code writes them,
- * `\penalty 10000`, and is left to the document's own values (decision 0029).
+ * `\penalty 10000`, and is left to the document's own values (decision 0033).
  */
 const POSTCODE = /\b(?:[A-Z]{1,2}\d[A-Z\d]? \d[A-Z]{2}|[A-Z]\d[A-Z] \d[A-Z]\d)\b/g;
 
@@ -212,7 +212,7 @@ const POSTCODE = /\b(?:[A-Z]{1,2}\d[A-Z\d]? \d[A-Z]{2}|[A-Z]\d[A-Z] \d[A-Z]\d)\b
  * are (decision 0020), and postcodes of letters and digits (`POSTCODE`). A definition then hashes
  * the same whoever's address it holds. What the patterns miss, a name or a street, the request
  * builder masks by the document's own values and its page before anything leaves the browser
- * (decision 0029). It takes time linear in the definition's length (`HOST`).
+ * (decision 0033). It takes time linear in the definition's length (`HOST`).
  */
 export function maskDefinition(text: string): string {
   return text

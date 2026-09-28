@@ -118,7 +118,7 @@
  *                 and check it with the leak detector fed all of those, in the same pool; print
  *                 how many were checked, passed and failed, and refused for a page the detector
  *                 cannot read, and for each failure the macro and what kind of text is where,
- *                 never the text (`scripts/corpus-leak.ts`, decision 0029). It exits 1 when a
+ *                 never the text (`scripts/corpus-leak.ts`, decision 0033). It exits 1 when a
  *                 request holds its document's text, the builder made one its contract refuses, a
  *                 document crashed or timed out, or fewer documents were checked or refused than
  *                 have a reference, and takes about a minute for the corpus

@@ -6,7 +6,7 @@
  * a `NamingServiceError` whose message says in plain English what went wrong, from the status
  * alone: a person reads it, so it never quotes the reply, and never holds LaTeX. Item 12's import
  * screen calls it. A request names a macro named after a word of the person's by a placeholder
- * (decision 0029), and the map back to the document's names, which never leaves the browser, reads
+ * (decision 0033), and the map back to the document's names, which never leaves the browser, reads
  * the reply's names back (`withRealNames`), since item 7 assembles by name.
  */
 

@@ -10,7 +10,7 @@
  *
  * Nothing is asked of a request that fails the privacy gate: `assertNoText` against its document,
  * which refuses it when it holds any text the builder knows as the document's, the body's tree,
- * the texts the preamble stores and the page's strings (decision 0029), and the header's values
+ * the texts the preamble stores and the page's strings (decision 0033), and the header's values
  * once item 7 passes them, so that a name a preamble's own macro spells out is found where the page
  * shows it (`gatedRequest`); and `checkRequest`, which refuses it when its keys do not hold, so that
  * no answer is filed under another template's key. A page the detector cannot read refuses the
@@ -361,7 +361,7 @@ export interface NamingInputs {
 /**
  * A document's request as the runner builds it, and its privacy gate: built with the upload's
  * sources and the page's strings, read with the upload's fonts first as the reference read them
- * (`pageStrings`), as `corpus leak` builds it (decision 0029); and the gate, `assertNoText` fed the
+ * (`pageStrings`), as `corpus leak` builds it (decision 0033); and the gate, `assertNoText` fed the
  * same, the body's tree and the texts the preamble stores, so that a name a macro of the preamble
  * writes, which no body text names, is masked where the page shows it and refused where it is not.
  * A page the detector cannot read refuses the request (`refused`, the builder's message).

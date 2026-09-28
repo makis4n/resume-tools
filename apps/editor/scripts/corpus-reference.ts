@@ -345,7 +345,7 @@ const REASON_LABELS: Readonly<Record<RefusalReason, string>> = {
 /**
  * The reasons a reference compile can give, which the table has a row each for: not the parser's,
  * which come after the reference, nor the font rewrite's (decision 0023), nor the naming request
- * builder's (decision 0029).
+ * builder's (decision 0033).
  */
 const REFERENCE_REASONS = REFUSAL_REASONS.filter(
   (reason) =>

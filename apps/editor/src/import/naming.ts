@@ -27,11 +27,11 @@
  * masking changes is sent with the hash of what is sent, so that no hash of the person's text
  * leaves the browser; its key, and its dependents', are then the document's own. A macro a
  * storing call of the preamble's filled holds the person's text, whoever defines it, and goes by
- * its name alone, as data does (the signatures step reads it so, decision 0029). The text of a
+ * its name alone, as data does (the signatures step reads it so, decision 0033). The text of a
  * definition's metadata, a `\hypersetup`'s `pdfauthor`, goes as its placeholder (`maskedMetadata`).
  *
  * The document's values are its body's text, its header's values and the texts its preamble
- * stores, and its page (`pageStrings`, decision 0029): the reference compile's glyphs, read as
+ * stores, and its page (`pageStrings`, decision 0033): the reference compile's glyphs, read as
  * words with the fonts the reference read them with, which hold whatever a macro of the preamble
  * writes that no body text names. The page's identifiers, its pairs of words, where a definition
  * holds the two adjacent or parted by glue alone, its numbers and its letter-spaced words mask the
@@ -545,7 +545,7 @@ export const GLYPHS_PER_WORD = 100;
  * Whether the detector can read a page: it reads READABLE_SHARE of its glyphs, a word for every
  * GLYPHS_PER_WORD of those, and a word at least. A page it cannot read tells it nothing of what a
  * macro of the preamble writes, and the request is refused rather than built without it
- * (decision 0029).
+ * (decision 0033).
  */
 export const pageReadable = (page: PageStrings): boolean =>
   page.words.length > 0 &&
@@ -1578,7 +1578,7 @@ function visibleWords(visible: Visible): string[] {
  * text (`visibleOfMeaning`), folded, tikz's `node` and `at`, hyperref's `http`, a class's `Page`.
  * It is built from the request itself, never from a dictionary: the check reads no word of it as
  * the person's alone in an own definition or a name, and no pair of the page's that holds one of
- * them masks an own definition (decision 0029).
+ * them masks an own definition (decision 0033).
  */
 function vocabularyOf(meanings: Iterable<string>): Set<string> {
   const vocabulary = new Set<string>();
@@ -2507,7 +2507,7 @@ function topLevel(list: string, separator: string): string[] {
  * `pdftitle`'s, written as its placeholder: metadata never reaches the page, which the detector
  * reads, and the matchers read a key list as code, so what it holds is sent as no text at all. A
  * value that is a command, a number or a length, a hex colour, a keyword or a colour of xcolor's
- * is kept (decision 0029).
+ * is kept (decision 0033).
  */
 function maskedMetadata(meaning: string): string {
   let out = "";
@@ -2576,7 +2576,7 @@ function problemsOf(
  * and the preamble's (`probeUses`), `probe` the probe's aggregates and candidates, and
  * `preamble` the main file's text before `\begin{document}`; the options give the upload's
  * sources, the header's values and the page's strings, which the import passes all of (decision
- * 0029). A name of the document's own that is a word of the person's is written as a placeholder
+ * 0033). A name of the document's own that is a word of the person's is written as a placeholder
  * throughout, and the map back to it is given with the request (`BuiltRequest`), never in it. The
  * request is checked against the contract's schema before it is given back, so that a call site
  * holding the document's text throws (`InvalidRequest`) rather than leaves; and a page the
