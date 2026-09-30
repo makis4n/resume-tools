@@ -118,7 +118,7 @@ export interface AssembleRow {
   findings?: Partial<Record<string, number>>;
   /** The repeatable kinds whose unit added or removed stopped the compile. */
   unrepeatable?: string[];
-  /** The kinds of unit the package marks the editor cannot add (`fixed`). */
+  /** The kinds of unit the package marks, which the editor neither adds nor removes (`fixed`). */
   fixed?: string[];
   /**
    * Whether the package sets the document in Latin Modern in T1, its Computer Modern in T1 or TS1
@@ -366,7 +366,9 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
       (row) => (row.unrepeatable ?? []).length > 0,
     ),
     ...fixed.map((kind) =>
-      count(`The editor cannot add: \`${kind}\``, (row) => (row.fixed ?? []).includes(kind)),
+      count(`The editor neither adds nor removes: \`${kind}\``, (row) =>
+        (row.fixed ?? []).includes(kind),
+      ),
     ),
     section("Compiles and time"),
     middle("Compiles, median", (row) => (done(row) ? row.compiles : undefined)),

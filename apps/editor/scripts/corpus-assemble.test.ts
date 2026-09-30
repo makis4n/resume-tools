@@ -153,8 +153,8 @@ describe("the checks' own findings in the table", () => {
       "0",
       "1",
     ]);
-    expect(cells("The editor cannot add: `entry`")?.at(-1)).toBe("1");
-    expect(cells("The editor cannot add: `section.paragraph`")?.at(-1)).toBe("1");
+    expect(cells("The editor neither adds nor removes: `entry`")?.at(-1)).toBe("1");
+    expect(cells("The editor neither adds nor removes: `section.paragraph`")?.at(-1)).toBe("1");
     expect(
       cells("Set in Latin Modern: Computer Modern in T1 or TS1, which the page cannot draw"),
     ).toEqual(["0", "0", "1", "0", "0", "0", "1"]);

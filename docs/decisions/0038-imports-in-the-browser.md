@@ -142,6 +142,18 @@ of each kind as well as the first, since the first alone missed a last one that 
 tests on the done-test's fork remove its last section, bullets inside the entries' list and a
 section of entries, and compile.
 
+### A kind whose removal stops the compile is fixed
+
+Check 3 marks a kind the removal of whose first or last unit stops the compile, as it marks one
+whose new unit does, and the assembly runs again with it (`fixed`). A kind the package marks is one
+the editor neither adds nor removes, whichever stopped it, so a kind marked for its new unit alone,
+which the editor used to let go, now keeps its units too: `applyUnder` refuses the removal, and the
+side panel disables its Remove, saying why when pointed at. The check tries the removals in every
+round under the package as though it marked nothing, since the editor would refuse them. A move is
+not tried, and stays offered. An engine test imports an invented fork whose skills list is opened,
+after the section's head, by a macro no answer names, and closed after the list: list sections are
+marked, and no other kind.
+
 ### The way in
 
 The document list gets "New", which opens a chooser of the three curated templates, each with its
@@ -185,4 +197,5 @@ and an accent were tried the same way. Nobody looked at a corpus document.
 - A first XeTeX import reads the tree's fonts for fontconfig's scan, 57.5 MB (decision 0019), which
   the progress line's "slower the first time" is all it says of.
 - The owed row of the milestone's table is done: `corpus assemble` should find fewer documents whose
-  first section of a kind cannot be removed, which a corpus run would show.
+  first section of a kind cannot be removed, which a corpus run would show, and the package marks
+  each kind that still cannot go, which its row `The editor neither adds nor removes` counts.

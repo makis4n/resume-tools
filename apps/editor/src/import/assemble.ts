@@ -150,7 +150,8 @@ export interface LockedPart {
  * compile after the class stops, as it does for a macro a package or the preamble defines, at the
  * preamble's end, right before `\begin{document}` (`preamble`, decision 0024); controls dropped,
  * field instances and whole slots locked with why, the slots that are required, and the kinds of
- * unit a new one of which stops the compile, which the package marks (`fixed`). A field instance
+ * unit a new one of which, or the removal of one, stops the compile, which the package marks
+ * (`fixed`) and the editor neither adds nor removes (decision 0038). A field instance
  * is named by where its content starts (`LockedPart.at` and its slot), a slot by its macro and
  * argument (`slotKey`).
  */

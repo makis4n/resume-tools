@@ -73,6 +73,30 @@ describe("the side panel, under an imported package's rules", () => {
     expect(kinds).not.toContain("List");
   });
 
+  it("disables removing a unit of a kind the template cannot lose, and says why", () => {
+    // Entries and sections of entries kept as they are: neither the Experience section nor its
+    // entries can go, and its bullets can (decision 0038).
+    const pkg = { ...jake, fixed: ["entry", "section.entries"] } as TemplatePackage;
+    const row = rendered(pkg, "Experience");
+    const experience = sample.sections.find((section) => section.title === "Experience");
+    if (experience?.kind !== "entries") throw new Error("no experience");
+    const bullets = experience.entries.reduce((sum, entry) => sum + entry.bullets.length, 0);
+    const removes = buttons(row, "Remove");
+    const refused = removes.filter((button) => button.disabled);
+    // The section's own and each entry's.
+    expect(refused).toHaveLength(1 + experience.entries.length);
+    for (const each of refused)
+      expect(each.title).toBe("The template cannot do without one of these");
+    for (const each of refused) act(() => each.click());
+    expect(sent).toEqual([]);
+    expect(removes.filter((button) => !button.disabled)).toHaveLength(bullets);
+    // A section of another kind, and its items, can go.
+    const skills = rendered(pkg, "Technical Skills");
+    const kept = buttons(skills, "Remove");
+    expect(kept.length).toBeGreaterThan(1);
+    for (const each of kept) expect(each.disabled).toBe(false);
+  });
+
   it("disables adding a bullet to an entry whose snippet shows none, and not elsewhere", () => {
     const entry = jake.snippets.entry as Exclude<TemplatePackage["snippets"]["entry"], string>;
     const pkg = {

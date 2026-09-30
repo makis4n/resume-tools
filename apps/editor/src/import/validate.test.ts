@@ -581,8 +581,43 @@ describe("the checks", () => {
     expect(() =>
       applyUnder(pkg, document, { type: "structure", op: { op: "addEntry", section: work.id } }),
     ).toThrow(
-      new CommandError("the template cannot take another entry: a new one stops its compile"),
+      new CommandError(
+        "the template cannot take another entry: adding or removing one stops its compile",
+      ),
     );
+    expect(checks.compiles).toBe(fake.count);
+  });
+
+  test("mark a kind the removal of whose first or last unit stops, and leave the other kinds", async () => {
+    // A template that stops without a list section, as a list whose opener the section keeps and
+    // whose closer stands after it would: its one list section cannot go, while a new one can
+    // come; the editor neither adds nor removes one (decision 0038).
+    const { result, fake } = await validated(JAKE_LIKE, {
+      refuses: (resume) => !resume.sections.some((section) => section.kind === "list"),
+    });
+    const { checks, package: pkg, document } = ok(result);
+    expect(checks.repeatable).toEqual([
+      { kind: "entry", added: true, removed: true },
+      { kind: "bullet", added: true, removed: true },
+      { kind: "item", added: true, removed: true },
+      { kind: "section.entries", added: true, removed: true },
+      { kind: "section.list", added: true, removed: false },
+      { kind: "section.labelled", added: true, removed: true },
+      { kind: "section.paragraph", added: true, removed: true },
+    ]);
+    expect(checks.decisions.fixed).toEqual(["section.list"]);
+    expect(pkg.fixed).toEqual(["section.list"]);
+    const list = document.resume.sections.find((section) => section.kind === "list");
+    const work = document.resume.sections.find((section) => section.kind === "entries");
+    if (list === undefined || work === undefined) throw new Error("no list or no entries");
+    const remove = (id: string) =>
+      applyUnder(pkg, document, { type: "structure", op: { op: "removeSection", id } });
+    expect(() => remove(list.id)).toThrow(
+      new CommandError(
+        "the template cannot lose a list section: adding or removing one stops its compile",
+      ),
+    );
+    expect(remove(work.id).resume.sections).toHaveLength(document.resume.sections.length - 1);
     expect(checks.compiles).toBe(fake.count);
   });
 
@@ -923,6 +958,39 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
       checks.findings.filter((each) => each.check === "pages" || each.check === "converges"),
     ).toEqual([]);
   }, 120_000);
+
+  test("marks a kind whose removal stops the compile, and leaves the document's other kinds", async () => {
+    // An invented fork whose skills list is opened, after the section's head, by a macro no answer
+    // names, and closed after it: the section keeps the opener before its items, the closer stands
+    // in the locked section after it, and removing the section takes the one and leaves the other,
+    // which stops the compile. So the package marks list sections, and the editor neither adds nor
+    // removes one; the document's other kinds it adds and removes as before (decision 0038).
+    const cls = `${CLASS}\\newcommand{\\cvskillsStart}{\\begingroup}\n\\newcommand{\\cvskillsEnd}{\\endgroup}\n`;
+    const source = SOURCE.replace(
+      "\\section{Invented skills}\n",
+      "\\section{Invented skills}\n\\cvskillsStart\n",
+    ).replace("\\end{itemize}\n", "\\end{itemize}\n\\cvskillsEnd\n");
+    const { result } = await validatedOnEngine(source, ANSWERS, {}, cls);
+    const { checks, package: pkg, document } = ok(result);
+    const { sections } = document.resume;
+    const at = sections.findIndex((section) => section.kind === "list");
+    const list = sections[at];
+    if (list === undefined || list.kind !== "list") throw new Error("no list section");
+    expect(list.extras?.before).toContain("\\cvskillsStart");
+    expect(sections[at + 1]?.kind).toBe("locked");
+    expect(checks.repeatable).toContainEqual({ kind: "section.list", added: true, removed: false });
+    for (const unit of checks.repeatable.filter((each) => each.kind !== "section.list"))
+      expect(unit, unit.kind).toMatchObject({ removed: true });
+    expect(checks.decisions.fixed).toEqual(["section.list"]);
+    expect(pkg.fixed).toEqual(["section.list"]);
+    // The editor refuses to remove the list section, and removes a section of another kind.
+    const remove = (id: string) =>
+      applyUnder(pkg, document, { type: "structure", op: { op: "removeSection", id } });
+    expect(() => remove(list.id)).toThrow(CommandError);
+    const summary = sections.find((section) => section.kind === "paragraph");
+    if (summary === undefined) throw new Error("no paragraph section");
+    expect(remove(summary.id).resume.sections).toHaveLength(sections.length - 1);
+  }, 240_000);
 
   test("assembles an invented XeTeX import from its fonts declared by file", async () => {
     // With no size option and no geometry, the one control is the page's size. The probe compiles

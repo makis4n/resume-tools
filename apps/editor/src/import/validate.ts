@@ -32,8 +32,8 @@
  *    (`untested`).
  * 3. **Repeatable units.** An entry, a bullet, an item, a labelled item, a link and a section of
  *    each kind, added as the side panel adds one, through the editor's own commands, and the first
- *    removed, each compiled; a kind whose new unit stops the compile is one the editor cannot add,
- *    which the package marks (`fixed`).
+ *    and the last removed, each compiled; a kind whose new unit, or the removal of either, stops
+ *    the compile is one the editor neither adds nor removes, which the package marks (`fixed`).
  * 4. **Controls.** Each control's every value but the document's compiled: one that stops the
  *    compile at a value, or sets the same page at one, is dropped.
  *
@@ -1077,26 +1077,29 @@ async function checks(
 
   // 3. Repeatable units: of each kind, one added as the side panel adds it, through the editor's
   // own commands under the package, and the first and the last removed, each compiled. A kind whose
-  // new unit stops the compile is one the editor cannot add, which the package marks and the editor
-  // then refuses, and which a later round reports as it stands, untried.
+  // new unit stops the compile, or the removal of either, is one whose units the template keeps as
+  // they are: the package marks it, the editor then neither adds nor removes one, and a later round
+  // reports its new unit as it stands, untried (decision 0038). Its removals are tried in every
+  // round, under the package as though it marked no kind, since the editor would refuse them.
   const repeatable: Round["repeatable"] = [];
   const fixed = new Set(decisions.fixed);
-  const compilesAfter = async (op: StructureOp | undefined) => {
+  const compilesAfter = async (op: StructureOp | undefined, pkg = assembled.package) => {
     if (op === undefined) return true;
     let changed: Document;
     try {
-      changed = applyUnder(assembled.package, assembled.document, { type: "structure", op });
+      changed = applyUnder(pkg, assembled.document, { type: "structure", op });
     } catch (error) {
       if (error instanceof CommandError) return false;
       throw error;
     }
     return !(await compiles.document(assembled.package, changed.resume)).broke;
   };
+  const unmarked: TemplatePackage = { ...assembled.package, fixed: [] };
   for (const { kind, add, removes } of unitTrials(assembled.document.resume, assembled.package)) {
     const added = !fixed.has(kind) && (await compilesAfter(add));
-    if (!added) fixed.add(kind);
     let removed = true;
-    for (const remove of removes) removed = (await compilesAfter(remove)) && removed;
+    for (const remove of removes) removed = (await compilesAfter(remove, unmarked)) && removed;
+    if (!added || !removed) fixed.add(kind);
     repeatable.push({ kind, added, removed });
   }
   if (fixed.size > decisions.fixed.length) {

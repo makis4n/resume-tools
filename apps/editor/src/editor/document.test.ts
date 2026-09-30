@@ -32,6 +32,7 @@ import {
   isRequired,
   mintId,
   newDocument,
+  removable,
   requiredFields,
   type StructureOp,
   showsBullets,
@@ -1098,7 +1099,7 @@ describe("an imported package's rules", () => {
     ]);
   });
 
-  it("refuses a unit of a kind the package cannot take, and adds the rest", () => {
+  it("refuses to add or remove a unit of a kind the package keeps as it is, and takes the rest", () => {
     const pkg = ruled({ fixed: ["entry", "bullet", "labelledItem", "link", "section.list"] });
     for (const [op, kind] of [
       [{ op: "addEntry", section: "work" }, "entry"],
@@ -1108,20 +1109,45 @@ describe("an imported package's rules", () => {
       [{ op: "addSection", kind: "list", role: "skills" }, "list section"],
     ] satisfies [StructureOp, string][])
       expect(() => applyUnder(pkg, doc, structural(op)), op.op).toThrow(
-        new CommandError(`the template cannot take another ${kind}: a new one stops its compile`),
+        new CommandError(
+          `the template cannot take another ${kind}: adding or removing one stops its compile`,
+        ),
       );
-    for (const kind of UNIT_KINDS)
-      expect(addable(pkg, kind), kind).toBe(
-        !["entry", "bullet", "labelledItem", "link", "section.list"].includes(kind),
+    // Nor does it lose one of them, which would stop the compile as surely (decision 0038).
+    for (const [op, kind] of [
+      [{ op: "removeEntry", id: "kestrel" }, "entry"],
+      [{ op: "removeBullet", id: "kestrel-1" }, "bullet"],
+      [{ op: "removeItem", id: "drawing" }, "labelled item"],
+      [{ op: "removeLink", id: "folio" }, "link"],
+      [{ op: "removeSection", id: "honours" }, "list section"],
+    ] satisfies [StructureOp, string][])
+      expect(() => applyUnder(pkg, doc, structural(op)), op.op).toThrow(
+        new CommandError(
+          `the template cannot lose a ${kind}: adding or removing one stops its compile`,
+        ),
       );
-    const added = [
+    for (const kind of UNIT_KINDS) {
+      const kept = ["entry", "bullet", "labelledItem", "link", "section.list"].includes(kind);
+      expect(addable(pkg, kind), kind).toBe(!kept);
+      expect(removable(pkg, kind), kind).toBe(!kept);
+    }
+    const changed = [
       structural({ op: "addItem", section: "honours" }),
       structural({ op: "addSection", kind: "entries", role: "projects" }),
-      structural({ op: "removeEntry", id: "kestrel" }),
+      structural({ op: "removeItem", id: "medal" }),
+      structural({ op: "removeSection", id: "about" }),
     ].reduce((each, command) => applyUnder(pkg, each, command), doc);
-    expect(added.resume.sections).toHaveLength(FULL.sections.length + 1);
-    // The curated package takes every kind.
-    for (const kind of UNIT_KINDS) expect(addable(jake, kind)).toBe(true);
+    expect(changed.resume.sections).toHaveLength(FULL.sections.length);
+    expect(changed.resume.sections.map((section) => section.id)).not.toContain("about");
+    // An id the document does not have is refused for that, whatever the kind.
+    expect(() => applyUnder(pkg, doc, structural({ op: "removeEntry", id: "gone" }))).toThrow(
+      new CommandError("the document has no entry gone"),
+    );
+    // The curated package takes every kind, and lets every kind go.
+    for (const kind of UNIT_KINDS) {
+      expect(addable(jake, kind)).toBe(true);
+      expect(removable(jake, kind)).toBe(true);
+    }
   });
 
   it("refuses a bullet for an entry whose snippet shows none, as its snippet or its package says", () => {

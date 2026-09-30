@@ -26,8 +26,8 @@
  * not empty, since the template stops without them (`required`); what a unit the user adds writes
  * for an argument each unit of the upload keeps in its extras (`snippets.defaults`); and the roles
  * whose entries set no bullets a user adds (`snippets.entryBullets`); and the kinds of unit a new
- * one of which stops its compile, which the editor does not add (`fixed`). Each is optional, and a
- * curated package needs none.
+ * one of which, or the removal of one, stops its compile, which the editor neither adds nor removes
+ * (`fixed`). Each is optional, and a curated package needs none.
  */
 
 import {
@@ -516,8 +516,9 @@ export const TemplatePackage = z
     /** The slots whose field a document may not empty, for an import whose template needs them. */
     required: Required.optional(),
     /**
-     * The kinds of unit the editor may not add, for an import whose template stops when a new one
-     * of them is added as the editor adds it, which the third check finds (decision 0026).
+     * The kinds of unit the editor may neither add nor remove, for an import whose template stops
+     * when a new one of them is added as the editor adds it, or one of the document's is removed,
+     * which the third check finds (decisions 0026 and 0038).
      */
     fixed: z.array(z.enum(UNIT_KINDS)).optional(),
   })
