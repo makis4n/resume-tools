@@ -130,7 +130,6 @@ writes after its content, where it was a locked section of its own. Removed or m
 takes both. What stands after the closer stays a locked part of its own. An engine test removes such
 a section from an invented Jake-shaped fork and compiles; without the change it stops.
 
-### The way in
 The last unit's closer stood past the sections' region, among the template's code the document
 snippet keeps after `{{sections}}`, so the review found the last section, and a last locked part,
 still stopped the compile once removed. The region now runs to the closer of each list its units
@@ -140,6 +139,7 @@ of each kind as well as the first, since the first alone missed a last one that 
 tests on the done-test's fork remove its last section, bullets inside the entries' list and a
 section of entries, and compile.
 
+### The way in
 
 The document list gets "New", which opens a chooser of the three curated templates, each with its
 name, a line on its look and its engine; and "Import a resume", a file picker taking `.tex` and
@@ -148,6 +148,8 @@ picker. Several files, the `.tex` and what it needs beside it, are packed into o
 names, stored uncompressed; a zip among several, or two files of one name, is refused. While an
 import runs, the list shows its step and the compiles so far, with a Cancel, and nothing else
 starts; a refusal comes back as the list's notice, in its own words; success opens the document.
+A drag of files is always taken, so that the browser never opens a dropped file in the tab and
+leaves the editor; while an import runs, or where nothing can import, a drop does nothing.
 
 ## Done
 

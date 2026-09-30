@@ -76,6 +76,20 @@ describe("the document list's way in", () => {
 
   const picker = () => host.querySelector<HTMLInputElement>('input[type="file"]');
 
+  /**
+   * A drag event dispatched on the list, holding what `types` and `files` say, as a browser's
+   * carries them; the transfer comes back too, for what the list set on it.
+   */
+  const dragged = (type: string, types: string[], files: File[] = []) => {
+    const main = host.querySelector("main");
+    if (main === null) throw new Error("no list");
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    const transfer: { types: string[]; files: File[]; dropEffect?: string } = { types, files };
+    Object.defineProperty(event, "dataTransfer", { value: transfer });
+    act(() => main.dispatchEvent(event));
+    return { event, transfer };
+  };
+
   it("imports the files chosen in the picker, which takes a .tex or a zip, and says what leaves", () => {
     rendered();
     const input = picker();
@@ -94,20 +108,26 @@ describe("the document list's way in", () => {
 
   it("imports what is dropped on the list, and takes the drag only when it holds files", () => {
     rendered();
-    const main = host.querySelector("main");
-    if (main === null) throw new Error("no list");
-    const dragged = (type: string, types: string[], files: File[] = []) => {
-      const event = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(event, "dataTransfer", { value: { types, files } });
-      act(() => main.dispatchEvent(event));
-      return event;
-    };
-    expect(dragged("dragover", ["text/plain"]).defaultPrevented).toBe(false);
-    expect(dragged("dragover", ["Files"]).defaultPrevented).toBe(true);
+    expect(dragged("dragover", ["text/plain"]).event.defaultPrevented).toBe(false);
+    expect(dragged("dragover", ["Files"]).event.defaultPrevented).toBe(true);
     expect(host.textContent).toContain("Drop your .tex file or zip to import it.");
     const file = texFile();
-    expect(dragged("drop", ["Files"], [file]).defaultPrevented).toBe(true);
+    expect(dragged("drop", ["Files"], [file]).event.defaultPrevented).toBe(true);
     expect(calls.imported).toEqual([[file]]);
+  });
+
+  it("takes a drop of files while an import runs as nothing, so the browser opens no file", () => {
+    // Left to the browser, a drop of a file opens it in the tab, and the import goes with the page.
+    rendered({ importing: { label: "Finding the parts you can edit", compiles: 3 } });
+    const over = dragged("dragover", ["Files"]);
+    expect(over.event.defaultPrevented).toBe(true);
+    expect(over.transfer.dropEffect).toBe("none");
+    expect(dragged("drop", ["Files"], [texFile()]).event.defaultPrevented).toBe(true);
+    expect(calls.imported).toEqual([]);
+    // The same where nothing can import, as when the engine's files did not load.
+    rendered({ importing: undefined, onImport: undefined });
+    expect(dragged("drop", ["Files"], [texFile()]).event.defaultPrevented).toBe(true);
+    expect(calls.imported).toEqual([]);
   });
 
   it("offers the three curated templates for a new document, each with its name, a line and its engine", () => {

@@ -117,16 +117,22 @@ export function DocumentList({
   return (
     <main
       onDragOver={(event) => {
-        if (onImport === undefined || busy || !holdsFiles(event)) return;
-        // Taking the drag is what lets the list be dropped on.
+        if (!holdsFiles(event)) return;
+        // Taking every drag of files keeps the browser from opening the file in the tab, which
+        // would leave the editor, and an import under way with it; one that nothing can import
+        // takes the drop as nothing.
         event.preventDefault();
+        if (onImport === undefined || busy) {
+          if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+          return;
+        }
         setOver(true);
       }}
       onDragLeave={(event) => {
         if (event.currentTarget === event.target) setOver(false);
       }}
       onDrop={(event) => {
-        if (onImport === undefined) return;
+        if (!holdsFiles(event)) return;
         event.preventDefault();
         setOver(false);
         importFiles([...(event.dataTransfer?.files ?? [])]);
