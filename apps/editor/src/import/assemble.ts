@@ -3076,19 +3076,20 @@ function offeredSizes(found: EngineSignatures): number[] {
 }
 
 /**
- * The document's own size among those the control offers (decision 0040): the size its class
- * option names, where that is one of them; else the one whose normal size is the one the class set,
- * within a tenth of a point, as `11pt` sets 10.95 (`Layout.size`), for a class given no size or
- * one it ignores; none where neither is.
+ * The document's own size among those the control offers (decision 0040): the size the engine
+ * found the class set (`Layout.size`), the one whose normal size is within a tenth of a point of
+ * it, as `11pt` sets 10.95, whatever the class's options name, since the page is set at that size
+ * where the two disagree, as a class that ignores the size it is given sets another; and none where
+ * the class declares no such size, since the control's default would then set another page. Where
+ * the engine found no layout, the size the options name, where the class declares it.
  */
 function ownSize(
   named: number | undefined,
   layout: Layout | undefined,
   sizes: readonly number[],
 ): number | undefined {
-  if (named !== undefined && sizes.includes(named)) return named;
-  if (layout === undefined) return undefined;
-  return sizes.find((size) => Math.abs(size - layout.size) < 0.1);
+  if (layout !== undefined) return sizes.find((size) => Math.abs(size - layout.size) < 0.1);
+  return named !== undefined && sizes.includes(named) ? named : undefined;
 }
 
 /** TeX's points to the inch. */
@@ -3116,30 +3117,43 @@ function ownMargin(layout: Layout | undefined, preamble: string): number | undef
 }
 
 /**
+ * What geometry is told besides a page's margins, so that it sets the text block where they say:
+ * no `\\hoffset` or `\\voffset`, which a document may place its page with and geometry would
+ * count once more, as `\\oddsidemargin` is the left margin less an inch and the offsets; head,
+ * foot and marginal notes outside the body; no binding offset; and the text's height as the margins
+ * leave it, not rounded to its lines (decision 0040).
+ */
+const GEOMETRY_RESETS = "hoffset=0pt,voffset=0pt,ignoreall,bindingoffset=0pt,heightrounded=false";
+
+/**
  * The margins control's snippet (decision 0040), in the body's preamble region: nothing at the
  * document's own value, `own`, which TeX compares the value with, so that the unchanged control is
  * the original to the byte whatever margins the document has, geometry's or the class's; at any
- * other, one margin on every side, reissued to geometry where the class or the preamble loaded it,
- * after the document's own, and geometry loaded with it where nothing did. The space after the
+ * other, one margin on every side of the text block, reissued to geometry where the class or the
+ * preamble loaded it, after the document's own, and geometry loaded with it where nothing did,
+ * with what else geometry must be told to set it (`GEOMETRY_RESETS`). The space after the
  * comparison ends its dimension, so that TeX does not expand what follows looking for one, and the
  * branch taken runs outside the conditional, as a package loaded inside one might not.
  */
 export function marginsSnippet(own: number): string {
+  const options = `margin={{value}}in,${GEOMETRY_RESETS}`;
   return [
     `\\ifdim{{value}}in=${shownValue(own)}in `,
     "\\expandafter\\csname @gobble\\expandafter\\endcsname",
     "\\else\\expandafter\\csname @firstofone\\expandafter\\endcsname\\fi",
     "{\\csname @ifpackageloaded\\endcsname{geometry}",
-    "{\\geometry{margin={{value}}in}}{\\usepackage[margin={{value}}in]{geometry}}}",
+    `{\\geometry{${options}}}{\\usepackage[${options}]{geometry}}}`,
   ].join("");
 }
 
 /**
  * The page size control's snippet for the paper the document is not on (decision 0040), in the
- * body's preamble region: the paper reissued to geometry where the class or the preamble loaded
- * it, which keeps the margins it was given; and where nothing did, geometry loaded with the paper
- * and the margins the document has, each side's and its head's and foot's as TeX finds them there,
- * so that the text keeps its margins on the other paper, where geometry's own would set others.
+ * body's preamble region: the margins the document has, each side's of its text block and its
+ * head's and foot's, measured as TeX finds them there, then given to geometry with the paper,
+ * reissued where the class or the preamble loaded it and loaded with them where nothing did, with
+ * what else geometry must be told to set them (`GEOMETRY_RESETS`); so that the text keeps its own
+ * margins on the other paper, where geometry's own layout, or the options it was given before a
+ * document adjusted its page by hand, would set others.
  */
 export function pageSizeSnippet(paper: "letter" | "a4"): string {
   const margins = [
@@ -3150,11 +3164,13 @@ export function pageSizeSnippet(paper: "letter" | "a4"): string {
     "headheight=\\the\\headheight",
     "headsep=\\the\\headsep",
     "footskip=\\the\\footskip",
+    GEOMETRY_RESETS,
   ].join(",");
   return [
-    `\\csname @ifpackageloaded\\endcsname{geometry}{\\geometry{${paper}paper}}`,
-    `{\\xdef\\rtimportlayout{${margins}}`,
-    `\\expandafter\\usepackage\\expandafter[\\rtimportlayout,${paper}paper]{geometry}}`,
+    `\\xdef\\rtimportlayout{${margins}}`,
+    "\\csname @ifpackageloaded\\endcsname{geometry}",
+    `{\\expandafter\\geometry\\expandafter{\\rtimportlayout,${paper}paper}}`,
+    `{\\expandafter\\usepackage\\expandafter[\\rtimportlayout,${paper}paper]{geometry}}`,
   ].join("");
 }
 

@@ -258,7 +258,10 @@ describe("the milestone's bar", () => {
     expect(dropKind(DROPPED.moves)).toBe("moves");
     expect(dropKind(`${DROPPED.stops}margins 0.4`)).toBe("stops");
     expect(dropKind(DROPPED.same)).toBe("same");
-    expect(dropKind(`${DROPPED.harness}with font charter, ${SECRET}`)).toBe("harness");
+    expect(dropKind(`${DROPPED.layout}margins 0.6`)).toBe("layout");
+    expect(dropKind(DROPPED.harness)).toBe("harness");
+    // A reason in no words of the checks' is none of their kinds.
+    expect(dropKind(`${DROPPED.harness}: ${SECRET}`)).toBe("other");
     expect(dropKind(SECRET)).toBe("other");
     const checks = {
       outcome: "assembled",
@@ -271,7 +274,7 @@ describe("the milestone's bar", () => {
         proven: ["pageSize"],
         dropped: [
           { control: "margins", why: DROPPED.same },
-          { control: "font", why: `${DROPPED.harness}with font charter, ${SECRET}` },
+          { control: "font", why: DROPPED.harness },
           { control: SECRET, why: DROPPED.same },
         ],
       },

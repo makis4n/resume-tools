@@ -70,12 +70,16 @@ export const CHECK_NOTES = ["stopped", "untested", "unproven"] as const;
 /** Why a control is dropped that the checks never tried, as `validate.ts` says it (`UNCHECKED`). */
 export const UNCHECKED_WHY = "unchecked";
 
-/** How the other reasons a control is dropped begin, as `validate.ts` says them (`DROPPED`). */
+/**
+ * The other reasons a control is dropped, or how they begin, as `validate.ts` says them
+ * (`DROPPED`).
+ */
 export const DROPPED_WHY = {
   moves: "moves the original's page at the document's own value",
   stops: "stops the compile at ",
   same: "sets the same page at every value",
-  harness: "the harness: ",
+  layout: "sets another page than it asks at ",
+  harness: "the harness finds it does not work",
 } as const;
 
 /**
@@ -86,6 +90,7 @@ export const DROP_KINDS = {
   moves: "its default moves the original's page",
   stops: "a value stops the compile",
   same: "every value sets the same page",
+  layout: "a value sets another page than it asks",
   harness: "the harness finds it does not work",
   unchecked: "the checks stopped before the fourth",
   other: "another reason",
@@ -99,7 +104,8 @@ export function dropKind(why: string): DropKind {
   if (why === DROPPED_WHY.moves) return "moves";
   if (why.startsWith(DROPPED_WHY.stops)) return "stops";
   if (why === DROPPED_WHY.same) return "same";
-  if (why.startsWith(DROPPED_WHY.harness)) return "harness";
+  if (why.startsWith(DROPPED_WHY.layout)) return "layout";
+  if (why === DROPPED_WHY.harness) return "harness";
   return "other";
 }
 

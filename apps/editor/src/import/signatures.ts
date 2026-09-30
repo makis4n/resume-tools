@@ -179,6 +179,56 @@ const LAYOUT_CODE = String.raw`\iow_now:Nx \g__rtsig_iow
     \f@size
   }`;
 
+/** `Layout`'s values in the order `LAYOUT_CODE` and `LAYOUT_TYPEOUT` give them. */
+const LAYOUT_KEYS = [
+  "left",
+  "top",
+  "width",
+  "height",
+  "paperWidth",
+  "paperHeight",
+  "size",
+] as const satisfies readonly (keyof Layout)[];
+
+/**
+ * LaTeX that has the log say the document's layout at `\begin{document}` (`Layout`, decision
+ * 0040), a line for each value, `rtimport:layout left=36.135pt`, which `layoutOfLog` reads back:
+ * what the fourth check reads of the page a control sets, since the page alone shows no margin. It
+ * goes before `\begin{document}`, as a control's snippet does; as code the preamble gives the hook
+ * last, it runs after every package's there; and it sets nothing on the page. The log, which every
+ * compile writes, needs no file of its own, and so no output stream a document may have used up.
+ */
+export const LAYOUT_TYPEOUT = `\\AtBeginDocument{${(
+  [
+    ["left", "\\the\\dimexpr1in+\\hoffset+\\oddsidemargin\\relax"],
+    ["top", "\\the\\dimexpr1in+\\voffset+\\topmargin+\\headheight+\\headsep\\relax"],
+    ["width", "\\the\\textwidth"],
+    ["height", "\\the\\textheight"],
+    ["paperWidth", "\\the\\paperwidth"],
+    ["paperHeight", "\\the\\paperheight"],
+    ["size", "\\csname f@size\\endcsname"],
+  ] as const
+)
+  .map(([key, value]) => `\\typeout{rtimport:layout ${key}=${value}}`)
+  .join("")}}`;
+
+/**
+ * The layout a compile's log says (`LAYOUT_TYPEOUT`), the last it says of each value, as a compile
+ * of several passes says it each pass; undefined where it does not say every value.
+ */
+export function layoutOfLog(log: string): Layout | undefined {
+  const values = new Map<string, number>();
+  for (const found of log.matchAll(/^rtimport:layout ([A-Za-z]+)=(-?\d*\.?\d+)(?:pt)?\r?$/gm))
+    values.set(found[1] ?? "", Number(found[2]));
+  const layout: Partial<Record<keyof Layout, number>> = {};
+  for (const key of LAYOUT_KEYS) {
+    const value = values.get(key);
+    if (value === undefined || !Number.isFinite(value)) return undefined;
+    layout[key] = value;
+  }
+  return layout as Layout;
+}
+
 /** A layout's line as `LAYOUT_CODE` writes it, read; undefined for one it did not write whole. */
 export function readLayout(line: string): Layout | undefined {
   const parts = line.split(",").map((each) => each.trim());

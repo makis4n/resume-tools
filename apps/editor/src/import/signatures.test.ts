@@ -23,6 +23,8 @@ import {
   isScratch,
   keyInputs,
   keysOf,
+  LAYOUT_TYPEOUT,
+  layoutOfLog,
   linesOf,
   MAX_CLOSURE_MACROS,
   masked,
@@ -726,6 +728,36 @@ describe("the records a compile writes", () => {
     expect(readLayout("36.135,36.135,542.02501,722.7,614.295,794.96999,\\@xipt")).toBeUndefined();
     expect(readLayout("-7.2,0,1,1,1,1,9")?.left).toBe(-7.2);
     expect(readPrintout("N:cvx\nM:undefined\nE:\n").layout).toBeUndefined();
+  });
+
+  test("reads the layout a compile's log says, the last it says of each value, and none it says in part", () => {
+    // What the fourth check reads of a page a control sets (decision 0040).
+    expect(LAYOUT_TYPEOUT.startsWith("\\AtBeginDocument{\\typeout{rtimport:layout left=")).toBe(
+      true,
+    );
+    const log = [
+      "(./invented.tex",
+      "rtimport:layout left=40.0pt",
+      "rtimport:layout left=36.135pt",
+      "rtimport:layout top=36.135pt",
+      "rtimport:layout width=542.02501pt",
+      "rtimport:layout height=722.7pt",
+      "rtimport:layout paperWidth=614.295pt",
+      "rtimport:layout paperHeight=794.96999pt",
+      "rtimport:layout size=10.95",
+      ")",
+    ].join("\n");
+    expect(layoutOfLog(log)).toEqual({
+      left: 36.135,
+      top: 36.135,
+      width: 542.02501,
+      height: 722.7,
+      paperWidth: 614.295,
+      paperHeight: 794.96999,
+      size: 10.95,
+    });
+    expect(layoutOfLog(log.replace("rtimport:layout size=10.95", ""))).toBeUndefined();
+    expect(layoutOfLog("rtimport:layout left=36.135pt and more")).toBeUndefined();
   });
 });
 

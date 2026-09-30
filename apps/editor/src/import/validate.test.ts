@@ -33,7 +33,7 @@ import { bodyOf, bodyOfText, buildTree, readBody } from "./parse";
 import { probe, probeUses } from "./probe";
 import { type GlyphStream, type Reference, type ReferenceItem, reference } from "./reference";
 import { isRefusal, type Refusal } from "./refusal";
-import { signatures } from "./signatures";
+import { type Layout, signatures } from "./signatures";
 import {
   type Compiled,
   type Compiler,
@@ -58,6 +58,11 @@ interface Behaviour {
   stops?: (field: string, text: string) => boolean;
   /** Controls whose LaTeX the page does not show. */
   blind?: ReadonlySet<"margins" | "pageSize" | "fontSize">;
+  /**
+   * Controls whose LaTeX sets the text block elsewhere than asked, ten points right of it, as a
+   * layout geometry's options cannot say would (decision 0040).
+   */
+  misplaces?: ReadonlySet<"margins" | "pageSize">;
   /** LaTeX that stops any compile it is in, as a control's value can. */
   stopsOn?: RegExp;
   /** Preamble text that moves every glyph, as a redefinition that changes the page does. */
@@ -169,7 +174,7 @@ function fakePage(
   values: ControlValues,
   behaviour: Behaviour,
   fontSize: number,
-): { broke: boolean; stream?: GlyphStream } {
+): { broke: boolean; stream?: GlyphStream; layout?: Layout } {
   if (behaviour.stopsOn?.test(latex)) return { broke: true };
   if (pkg !== undefined && behaviour.stopsOnPreamble?.test(pkg.preamble)) return { broke: true };
   for (const found of latex.matchAll(/\\rtfield\{([^}]*)\}/g)) {
@@ -181,11 +186,12 @@ function fakePage(
   const end = latex.indexOf("\\end{document}");
   const before = latex.slice(0, Math.max(begin, 0));
   const blind = behaviour.blind ?? new Set();
-  const margin = /\\geometry\{margin=([\d.]+)in\}/.exec(before)?.[1];
-  let shift =
-    margin === undefined || blind.has("margins")
-      ? 0
-      : Math.round((Number(margin) - 0.5) * 72.27 * SP);
+  // The margins' snippet sets its value where TeX finds it is not the document's own (`\ifdim`),
+  // as the invented page's own is half an inch; and the page size's names the paper it sets.
+  const asked = /\\ifdim([\d.]+)in=([\d.]+)in /.exec(before);
+  const margined = asked !== null && asked[1] !== asked[2] && !blind.has("margins");
+  const margin = margined ? Number(asked?.[1]) : 0.5;
+  let shift = Math.round((margin - 0.5) * 72.27 * SP);
   const shifted =
     behaviour.shiftsOn?.test(pkg?.preamble ?? "") || behaviour.shifts?.(pkg?.preamble ?? "");
   if (pkg !== undefined && shifted) shift += 10 * SP;
@@ -198,14 +204,29 @@ function fakePage(
   );
   if (behaviour.colour !== undefined)
     items.unshift({ kind: "special", h: 0, v: behaviour.colour, text: "color push gray 0.5" });
-  const a4 = !blind.has("pageSize") && /\\geometry\{a4paper\}/.test(before);
+  const a4 = !blind.has("pageSize") && /a4paper/.test(before);
+  const paper = a4 ? A4 : LETTER;
+  const misplaced =
+    (margined && behaviour.misplaces?.has("margins")) ||
+    (a4 && behaviour.misplaces?.has("pageSize"));
+  const side = margin * 72.27;
+  const left = side + (misplaced ? 10 : 0);
   return {
     broke: false,
     stream: {
       pages: [{ items }],
-      size: a4 ? A4 : LETTER,
+      size: paper,
       fonts: { tex: ["invented"], native: [], shipped: [] },
       specials: [],
+    },
+    layout: {
+      left,
+      top: side,
+      width: paper.width - left - side,
+      height: paper.height - 2 * side,
+      paperWidth: paper.width,
+      paperHeight: paper.height,
+      size,
     },
   };
 }
@@ -232,6 +253,7 @@ class Fake implements Compiler {
     return { body, ...fakePage(latex, pkg, values, this.behaviour, this.fontSize) };
   }
 
+  /** A document compiled by `fakePage`, which says its layout whether asked or not. */
   async document(
     pkg: TemplatePackage,
     resume: Resume,
@@ -365,7 +387,7 @@ describe("the checks", () => {
   test("drop a control that sets the same page at every value, and one that stops", async () => {
     const { result } = await validated(JAKE_LIKE, {
       blind: new Set(["margins"]),
-      stopsOn: /\\geometry\{a4paper\}/,
+      stopsOn: /a4paper/,
     });
     const { checks, package: pkg } = ok(result);
     expect(checks.controls.dropped).toEqual([
@@ -648,6 +670,23 @@ describe("the checks", () => {
     expect(pkg.controls.margins).toBeUndefined();
   });
 
+  test("drop the margins or the page size where a value sets another page than it asks", async () => {
+    // Each changes the page, and sets its text block ten points right of where it asks: that a
+    // glyph moved proves nothing, and the layout the compile says does (decision 0040).
+    const { result } = await validated(JAKE_LIKE, { misplaces: new Set(["margins", "pageSize"]) });
+    const { checks, package: pkg } = ok(result);
+    expect(checks.controls.dropped).toEqual([
+      { control: "pageSize", why: `${DROPPED.layout}pageSize a4` },
+      { control: "margins", why: `${DROPPED.layout}margins 0.4` },
+    ]);
+    expect(checks.controls.proven).toEqual(["fontSize"]);
+    expect(pkg.controls.margins).toBeUndefined();
+    expect(pkg.controls.pageSize).toBeUndefined();
+    // Where they set what they ask, both are proven, their every value's layout read.
+    const fine = ok((await validated(JAKE_LIKE)).result);
+    expect(fine.checks.controls.proven).toEqual(["pageSize", "margins", "fontSize"]);
+  });
+
   test("drop a control whose default moves the original's page, and say why", async () => {
     // The class's options name no size, and the size the engine found is not the one the page
     // sets: the slot at its default moves every glyph, so the first check drops the control, and
@@ -664,8 +703,9 @@ describe("the checks", () => {
 
   test("drop a control the harness finds does not work, a font it cannot draw among them, and run the checks again", async () => {
     // The fourth check proves the margins, and the harness, compiling in the editor's job, finds
-    // them doing nothing there: they go, with the harness's word for why (decision 0040). A date
-    // format finding drops nothing, the date format being the generator's.
+    // them doing nothing there: they go, the reason in the checks' words and none of the finding's,
+    // which may quote TeX's log (decision 0040). A date format finding drops nothing, the date
+    // format being the generator's.
     let rounds = 0;
     const { result } = await validated(JAKE_LIKE, {}, async () => {
       rounds++;
@@ -678,9 +718,7 @@ describe("the checks", () => {
     });
     const { checks, package: pkg } = ok(result);
     expect(rounds).toBe(2);
-    expect(checks.controls.dropped).toEqual([
-      { control: "margins", why: "the harness: an invented margins finding" },
-    ]);
+    expect(checks.controls.dropped).toEqual([{ control: "margins", why: DROPPED.harness }]);
     expect(checks.controls.proven).toEqual(["pageSize", "fontSize"]);
     expect(pkg.controls.margins).toBeUndefined();
     expect(pkg.controls.dateFormat).toBeDefined();
@@ -943,6 +981,37 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     expect(pkg.preamble).toContain("\\documentclass[{{fontSize}}pt,letterpaper]{inventedcv}");
     expect(checks.findings).toEqual([]);
   }, 120_000);
+
+  test("proves the margins and the page size by the page they set, and drops a margin set elsewhere", async () => {
+    // The page placed by TeX's offsets, which geometry would count once more: the margins and the
+    // page size set the page they ask for at every value, as the layout each compile says shows.
+    const offsets = SOURCE.replace(
+      "\\usepackage[margin=0.5in]{geometry}\n",
+      [
+        "\\setlength{\\hoffset}{-0.5in}\\setlength{\\oddsidemargin}{0in}",
+        "\\setlength{\\textwidth}{7.5in}\\setlength{\\voffset}{-0.5in}\\setlength{\\topmargin}{0in}",
+        "\\setlength{\\headheight}{0pt}\\setlength{\\headsep}{0pt}\\setlength{\\textheight}{10in}",
+        "",
+      ].join("\n"),
+    );
+    const placed = ok((await validatedOnEngine(offsets)).result);
+    expect(placed.checks.controls.proven).toEqual(["pageSize", "margins"]);
+    expect(placed.package.controls.margins?.default).toBe(0.5);
+    // A document that moves its text block at \begin{document}, after any control has set it:
+    // every margin changes the page, and none is the margin it asks for, so the margins go, with
+    // why in the checks' words; the page size keeps the margins the document ends up with.
+    const moved = SOURCE.replace(
+      "\\usepackage[margin=0.5in]{geometry}\n",
+      "\\usepackage[margin=0.5in]{geometry}\n\\AtBeginDocument{\\addtolength{\\oddsidemargin}{0.3in}\\addtolength{\\textwidth}{-0.3in}}\n",
+    );
+    const { checks } = ok((await validatedOnEngine(moved)).result);
+    expect(checks.controls.dropped).toContainEqual({
+      control: "margins",
+      why: `${DROPPED.layout}margins 0.4`,
+    });
+    expect(checks.controls.proven).toContain("pageSize");
+    expect(checks.controls.proven).not.toContain("margins");
+  }, 240_000);
 
   test("reads an invented import set in Computer Modern's T1 fonts in Latin Modern, which the page draws", async () => {
     // The Jake-like document in T1 with Computer Modern: the EC fonts it sets have metrics in the

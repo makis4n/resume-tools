@@ -106,7 +106,7 @@ import {
   shippedFont,
 } from "./reference";
 import { type Refusal, refusal } from "./refusal";
-import type { EngineSignatures } from "./signatures";
+import { type EngineSignatures, LAYOUT_TYPEOUT, type Layout, layoutOfLog } from "./signatures";
 import type { XetexRewrite } from "./xetex";
 import { normalized } from "./xetex-check";
 
@@ -165,17 +165,82 @@ export const NOTES = ["stopped", "untested", "unproven"] as const;
 export const UNCHECKED = "unchecked";
 
 /**
- * How the other reasons a control is dropped begin (decision 0040), which the corpus runner reads
- * the kind of a drop from and never the rest: the first check found its default moves the
- * original's page; the fourth found a value stops the compile, or every value sets the same page;
- * or the harness found it does not work.
+ * Why a control is dropped, in the checks' own words and never TeX's, since the report shows it
+ * (decision 0040): the first check found its default moves the original's page; the fourth found a
+ * value stops the compile, every value sets the same page, or a value sets another page than it
+ * asks, the value named after each that begins so; or the harness found it does not work.
  */
 export const DROPPED = {
   moves: "moves the original's page at the document's own value",
   stops: "stops the compile at ",
   same: "sets the same page at every value",
-  harness: "the harness: ",
+  layout: "sets another page than it asks at ",
+  harness: "the harness finds it does not work",
 } as const;
+
+/** TeX's points to the inch. */
+const INCH = 72.27;
+
+/** How far a margin or a paper the fourth check measures may be from what it asks, in points. */
+const LAYOUT_TOLERANCE = 0.5;
+
+/** The papers the page size control offers, in points, as LaTeX's and geometry's options say. */
+const PAPERS = {
+  letter: { width: 614.295, height: 794.96999 },
+  a4: { width: 597.50787, height: 845.04684 },
+} as const;
+
+/** The margins of a layout's text block, in points: left, right, top and bottom. */
+const sidesOf = (layout: Layout) => [
+  layout.left,
+  layout.paperWidth - layout.left - layout.width,
+  layout.top,
+  layout.paperHeight - layout.top - layout.height,
+];
+
+/**
+ * Whether a compile set the page a margins or page size value asks for, by the layout its log says
+ * (decision 0040): at a margin, that margin on every side of the text block, on the document's own
+ * paper; at a paper, that paper, with the document's own margins on every side, as `own`, the
+ * layout at the document's own values, has them. Within half a point of each, as geometry's
+ * arithmetic leaves them; not where either layout went unsaid, since nothing then shows it.
+ */
+export function laidOut(
+  name: "margins" | "pageSize",
+  values: ControlValues,
+  layout: Layout | undefined,
+  own: Layout | undefined,
+): boolean {
+  if (layout === undefined || own === undefined) return false;
+  const near = (a: number, b: number | undefined) =>
+    b !== undefined && Math.abs(a - b) <= LAYOUT_TOLERANCE;
+  if (name === "margins") {
+    const margin = (values.margins ?? Number.NaN) * INCH;
+    return (
+      sidesOf(layout).every((side) => near(side, margin)) &&
+      near(layout.paperWidth, own.paperWidth) &&
+      near(layout.paperHeight, own.paperHeight)
+    );
+  }
+  const paper = values.pageSize === undefined ? undefined : PAPERS[values.pageSize];
+  const kept = sidesOf(own);
+  return (
+    paper !== undefined &&
+    near(layout.paperWidth, paper.width) &&
+    near(layout.paperHeight, paper.height) &&
+    sidesOf(layout).every((side, i) => near(side, kept[i]))
+  );
+}
+
+/**
+ * A body that says in its log the layout it sets (`LAYOUT_TYPEOUT`, decision 0040): the code put
+ * right before its first `\begin{document}`, after every control's snippet, where it sets nothing
+ * on the page; a body with none is as it is.
+ */
+export function withLayout(latex: string): string {
+  const at = latex.indexOf("\\begin{document}");
+  return at < 0 ? latex : `${latex.slice(0, at)}${LAYOUT_TYPEOUT}\n${latex.slice(at)}`;
+}
 
 /** `n` things, as a finding counts them: `1 slot`, `2 slots`. */
 const counted = (n: number, thing: string) => `${n} ${thing}${n === 1 ? "" : "s"}`;
@@ -189,6 +254,8 @@ export interface Compiled {
   stream?: GlyphStream;
   /** It stopped, or its output could not be read. */
   broke: boolean;
+  /** The layout the page was set with, where the compile was asked to say it and said it whole. */
+  layout?: Layout;
 }
 
 /**
@@ -202,8 +269,16 @@ export interface Compiler {
   like(): Promise<{ stream: GlyphStream } | Refusal>;
   /** LaTeX compiled after a package's preamble, from its format where it dumps. */
   latex(pkg: TemplatePackage, values: ControlValues, latex: string): Promise<Compiled>;
-  /** An imported document compiled through its package, as the generator will set it. */
-  document(pkg: TemplatePackage, resume: Resume, values?: ControlValues): Promise<Compiled>;
+  /**
+   * An imported document compiled through its package, as the generator will set it; with
+   * `layout`, saying the layout it sets (`LAYOUT_TYPEOUT`), which changes nothing on the page.
+   */
+  document(
+    pkg: TemplatePackage,
+    resume: Resume,
+    values?: ControlValues,
+    options?: { layout?: boolean },
+  ): Promise<Compiled>;
 }
 
 /**
@@ -284,11 +359,15 @@ class Compiles implements Compiler {
     }
   }
 
-  /** An imported document compiled through its package, as the generator will set it. */
+  /**
+   * An imported document compiled through its package, as the generator will set it; with
+   * `layout`, the layout it sets read from its log (`withLayout`).
+   */
   async document(
     pkg: TemplatePackage,
     resume: Resume,
     values: ControlValues = {},
+    options: { layout?: boolean } = {},
   ): Promise<Compiled> {
     let body: GeneratedBody;
     try {
@@ -296,8 +375,13 @@ class Compiles implements Compiler {
     } catch {
       return { body: { latex: "", texts: new Map(), dropped: [], surplus: [] }, broke: true };
     }
-    const compiled = await this.latex(pkg, values, body.latex);
-    return { ...compiled, body };
+    const latex = options.layout === true ? withLayout(body.latex) : body.latex;
+    const compiled = await this.latex(pkg, values, latex);
+    const layout =
+      options.layout === true && compiled.result !== undefined
+        ? layoutOfLog(compiled.result.log)
+        : undefined;
+    return { ...compiled, body, ...(layout === undefined ? {} : { layout }) };
   }
 
   like() {
@@ -693,7 +777,7 @@ export async function validateWith(
     const control = finding.control;
     if (finding.check === "controls" && control !== undefined && control !== "dateFormat") {
       if (!harnessDrops.some((each) => each.control === control))
-        harnessDrops.push({ control, why: `${DROPPED.harness}${finding.message}` });
+        harnessDrops.push({ control, why: DROPPED.harness });
       continue;
     }
     if (finding.check !== "fields" && finding.check !== "alignment") continue;
@@ -1131,18 +1215,31 @@ async function checks(
   }
 
   // 4. Controls: every value but the document's compiles, and one changes the page at least, or the
-  // control goes: one that stops the compile at any value, or sets the same page at every one.
-  const baseline = await compiles.document(assembled.package, assembled.document.resume);
+  // control goes: one that stops the compile at any value, or sets the same page at every one. The
+  // page size and the margins must set the page they ask for at every value besides, as the layout
+  // each compile says shows (`laidOut`, decision 0040), or go: that a glyph moved proves nothing
+  // of where the margins went.
+  const offered = assembled.checks.controls.offered;
+  const measured = (name: ControlName): name is "margins" | "pageSize" =>
+    name === "margins" || name === "pageSize";
+  const baseline = await compiles.document(
+    assembled.package,
+    assembled.document.resume,
+    {},
+    { layout: offered.some(measured) },
+  );
   const dropped: Round["dropped"] = [];
-  for (const name of assembled.checks.controls.offered) {
+  for (const name of offered) {
     let changes = false;
     let stops: ControlValues | undefined;
+    let elsewhere: ControlValues | undefined;
     const tried = valuesOf(assembled.package, name, {});
     for (const values of tried) {
       const compiled = await compiles.document(
         assembled.package,
         assembled.document.resume,
         values,
+        { layout: measured(name) },
       );
       if (compiled.broke) {
         stops = values;
@@ -1154,10 +1251,14 @@ async function checks(
         difference(baseline.stream, compiled.stream) !== undefined
       )
         changes = true;
+      if (measured(name) && !laidOut(name, values, compiled.layout, baseline.layout))
+        elsewhere ??= values;
     }
     if (stops !== undefined)
       dropped.push({ control: name, why: `${DROPPED.stops}${shownValue(stops, name)}` });
     else if (!changes && tried.length > 0) dropped.push({ control: name, why: DROPPED.same });
+    else if (elsewhere !== undefined)
+      dropped.push({ control: name, why: `${DROPPED.layout}${shownValue(elsewhere, name)}` });
   }
   if (dropped.length > 0) {
     decisions = {
