@@ -1,5 +1,5 @@
 /**
- * What the import screen says of what leaves the browser (milestone 3 item 11, decision 0029), in
+ * What the import screen says of what leaves the browser (milestone 3 item 11, decision 0033), in
  * two plain sentences, which item 12 shows where a resume is imported. The naming request
  * (`naming.ts`) holds the template's command definitions, the names, emails, phone numbers, links
  * and addresses the page shows in them masked; the shape of a few calls, their letters and digits

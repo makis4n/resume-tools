@@ -575,7 +575,7 @@ const METADATA: ReadonlyMap<string, string> = new Map([
 /**
  * The texts of a preamble and of the files it inputs, and theirs, by their paths in the job, each
  * once: `\input`, `\include`, `\subfile` and `\import`'s, a name with `.tex` or without. A
- * storing call in any of them stores the person's text (decision 0029).
+ * storing call in any of them stores the person's text (decision 0033).
  */
 export function preambleTexts(
   preamble: string,
@@ -1483,7 +1483,7 @@ export async function signatures(
   // (`storedTargets`) or known of the tree's (`TREE_STORAGE`), and hyperref's metadata the
   // preamble gives. Each holds the person's text, whoever defines it, and is data though that text
   // names a command, `\position{\small ...}` making `\@position` code, so that no closure follows
-  // or counts it, and its dependents key as they would had the text named none (decision 0029).
+  // or counts it, and its dependents key as they would had the text named none (decision 0033).
   const stored = new Set<string>();
   const storing: ((name: string) => boolean)[] = [];
   for (const name of called) {

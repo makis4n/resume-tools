@@ -1,4 +1,4 @@
-# 0029. What leaves the browser
+# 0033. What leaves the browser
 
 Date: 2026-09-27 · Status: proposed
 

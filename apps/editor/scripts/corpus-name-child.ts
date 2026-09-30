@@ -119,7 +119,7 @@ async function main() {
       // The request as `corpus leak` builds it, the upload's sources and the page's strings among
       // what masks it, and the gate, stricter than the masking, fed the same: a name a preamble's
       // own macro spells out is masked where the page shows it, and the gate refuses the request
-      // where the builder could not mask it (decision 0029). Item 7 finds the header's values,
+      // where the builder could not mask it (decision 0033). Item 7 finds the header's values,
       // which join them when it lands.
       const requested = await gatedRequest(naming, {
         tree: built,

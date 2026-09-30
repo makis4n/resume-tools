@@ -1,0 +1,8 @@
+# GitHub requests a review from the owners of the paths a pull request touches (decision 0034).
+# Only the two apps have owners, so a change to them asks the other person to look; docs,
+# decisions, packages and the root configuration request nobody. Requests only: no review is
+# required to merge (decision 0005). Last matching line wins.
+
+/apps/editor/                    @makis4n
+/apps/editor/src/features/ats/   @makis4n @keaenlim
+/apps/ats/                       @keaenlim

@@ -18,7 +18,7 @@
  * fontspec feature or package the rewrite cannot reproduce (`feature`), or fonts that come out
  * otherwise than the reference's (`difference`); or by the naming request's builder, for a page
  * set in fonts whose glyphs the page names nothing for, which leaves the leak detector blind
- * (`unreadable`, decision 0029).
+ * (`unreadable`, decision 0033).
  */
 export const REFUSAL_REASONS = [
   "intake",

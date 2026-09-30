@@ -1094,7 +1094,7 @@ describe.skipIf(!engineAvailable())("corpus name, on the invented pdfTeX documen
     // Item 9's review: the class hard-codes a name and a word of the person's in macros the body
     // calls, which neither the body's text nor a stored text names. The page shows them: the
     // name's pair masks `\cvcontact`, and the gate, stricter on purpose, finds the word alone in
-    // `\cvsign`, which the builder does not mask by a single word of the page's (decision 0029).
+    // `\cvsign`, which the builder does not mask by a single word of the page's (decision 0033).
     const { request, gate, inputs } = await requested(undefined, "\\cvcontact\n\\cvsign{}\n");
     const contact = request.definitions.find((each) => each.name === "cvcontact");
     expect(contact?.kind === "definition" && contact.text).toBe(

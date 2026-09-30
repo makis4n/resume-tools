@@ -1,5 +1,5 @@
 /**
- * What leaves the browser, over the corpus (milestone 3 item 11, decision 0029): `corpus leak`
+ * What leaves the browser, over the corpus (milestone 3 item 11, decision 0033): `corpus leak`
  * takes each fetched document in as the reference runner does (`corpus-reference.ts`), and for
  * each that compiles to a reference and whose body parses builds its naming request as the import
  * will (`src/import/naming.ts`): with the upload's sources, the page's strings its reference sets

@@ -153,7 +153,7 @@ since a template's closures overlap: every Awesome-CV macro reaches the same sty
   name's words, no definition of the tree's is masked, and the check passes on the builder's
   request for 114: the three it fails on hold the person's text, stored or written raw, in a
   definition the builder does not mask by it: a single word in two of their own, and a stored
-  text in the tree's `\ecv@rfoot`, which europecv's setter filled. Item 11 (decision 0029) adds
+  text in the tree's `\ecv@rfoot`, which europecv's setter filled. Item 11 (decision 0033) adds
   the page, read with the upload's fonts, and the header's address to the builder's and the
   check's sources, reads a definition's control symbols, letter commands and code as the page does,
   holds a macro a storing call filled as data where closures are computed, reads the request's
@@ -493,7 +493,7 @@ document.
   `corpus oracle` and `corpus seed --write`, and review what moved: a key moves with any
   definition in its closure, and `--write` files each answer again under its new key. Items 5 and
   8, which changed the probe and the tree's fonts, moved none.
-- Item 11 finished the masking (decision 0029): the page masks a person's text a definition of
+- Item 11 finished the masking (decision 0033): the page masks a person's text a definition of
   their own writes where the page shows it, as a pair beside another word, glue alone between, a
   number, a letter-spaced word or a word it spells a letter a word; a macro a storing call filled
   goes as data, in closures and keys too, `\@extrainfo`, `\ecv@rfoot` and the kernel's `\@author`
