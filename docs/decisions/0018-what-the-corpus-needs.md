@@ -1,6 +1,6 @@
 # 0018. What the corpus needs
 
-Date: 2026-09-26 · Status: accepted
+Date: 2026-09-26 · Status: accepted; the corpus workflow runs by hand, not nightly (0035)
 
 ## Context
 

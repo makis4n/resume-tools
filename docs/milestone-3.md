@@ -81,10 +81,10 @@ What stands in the way:
 | `apps/editor/src/import/` | The pipeline in the browser and in Node: intake, parse, probe, the naming client, validate, assemble, the report. It runs on the editor's engine session in a job of its own |
 | `packages/naming/` | The naming step's contract and logic: the request and answer schemas, the prompt, `name(request)` on the AI SDK, a cache interface. The Worker and the corpus runner both call it |
 | `apps/editor/functions/` | The naming service, inside the editor's own project: `POST /v1/name` as a Cloudflare Pages Function with a KV cache, or as the app's Worker if milestone 5 hosts the app as a Worker with static assets. In development the dev server answers the same route through a middleware |
-| `apps/editor/corpus/` | The manifest of public resumes (sources and hashes, never content), the reviewed answers, and the baseline the weekly run is held to |
+| `apps/editor/corpus/` | The manifest of public resumes (sources and hashes, never content), the reviewed answers, and the baseline the corpus run is held to |
 | `apps/editor/.corpus/` | Ignored: the fetched documents, the runner's results and the uncommitted answer cache |
 | `apps/editor/scripts/corpus.ts` | The runner: `fetch`, `survey`, `run` and `bench` |
-| `.github/workflows/corpus.yml` | The weekly run, and on demand |
+| `.github/workflows/corpus.yml` | The corpus run, when a person starts it (decision 0035) |
 | `packages/resume-model` | Locked content and the extras the pipeline fills: additions to version 1 |
 
 ## The work, in order
@@ -311,7 +311,7 @@ of each launch template must find editable what the hand-written port marks.
 16. [ ] **Editing locked chunks, decided by the corpus.** Plan section 6.1's edit, a sentence
     typed at a locked chunk that a model rewrites, sends part of the resume to the model, which
     the product rule in AGENTS.md forbids as written. The rule stays absolute until the corpus
-    says what is locked in practice: the weekly run (item 17) reports the share of body words
+    says what is locked in practice: the corpus run (item 17) reports the share of body words
     locked and of what kind. If the share is small, the edit goes to the after-launch list and
     the plan's decision table gets a one-line revision. If it is material, the first form is a
     text substitution with no model: for a locked chunk whose glyphs align to source text, the
@@ -325,19 +325,19 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 8. The corpus loop and closing
 
-17. [ ] **The weekly run.** `corpus.ts run` puts every document through the pipeline in Node,
+17. [ ] **The corpus run.** `corpus.ts run` puts every document through the pipeline in Node,
     on the engine session, from the committed answers and the ignored cache, and calls the model
     only with a key and `--allow-model`. It writes one JSON of results, per document: refused,
     partial or success, the editable rate, locked words, the controls proven, the checks' findings
-    and the times; and a summary. `.github/workflows/corpus.yml` runs it weekly and on demand (a full run takes about an hour on the
-    free runner, so nightly would spend most of the month's Actions minutes on it)
+    and the times; and a summary. `.github/workflows/corpus.yml` runs it when a person starts it,
+    never on a schedule (decision 0035; a full run takes about an hour on the free runner),
     on the cached `.engine/`, fetching the corpus from the manifest, with no key; the summary
     goes to the job summary and the JSON to an artifact; the run fails when the success rate falls
     more than a point under `corpus/baseline.json`, which a pull request raises by hand when the
     rate rises. A reviewed answer is one a person has corrected under `corpus/answers/`, marked
     so, with any redefinitions it needs (item 6); the top twenty templates get that review, as
     plan section 10 asks, and the reviewed set seeds the service's cache in milestone 5. Done
-    when three runs in a row agree, weekly or on demand.
+    when three runs in a row agree.
 18. [ ] **Benchmark the candidates.** `corpus.ts bench --model <id>` runs the naming step over
     the corpus for two or three candidates, Gemini Flash and a Claude model at least, and reports
     the editable rate, the refused and partial shares, and the cost per import; a decision
@@ -413,7 +413,7 @@ pull request that acts on it. The first two the owner settled on 26 September.
   and minipages around fields, headers written as plain text with `\href`, math for separators,
   `\\` inside a field, and macros defined in the body. The success bar keeps a bad import from
   looking like a good one, and the corpus number is the measure: a first rate well under the bar
-  on hand-rolled documents is information, not failure, and the weekly run shows what each
+  on hand-rolled documents is information, not failure, and the corpus run shows what each
   item wins.
 - **A cold first import fetches a lot.** A whole-document compile from the stock format reads
   the 6.5 MB format and the class's packages, one synchronous request at a time (decision 0010),
