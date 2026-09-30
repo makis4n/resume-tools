@@ -63,22 +63,38 @@ export const RUN_OUTCOMES = [
 ] as const;
 export type RunOutcome = (typeof RUN_OUTCOMES)[number];
 
+/** What an outcome is counted by: the words in editable fields, and all the words counted. */
+export interface Counted {
+  editable: number;
+  all: number;
+}
+
+/** The rule `outcomeOf` holds a success to, as the table says it. */
+export const OUTCOME_RULE = `the first check holds, and ${Math.round(SUCCESS_RATE * 100)}% of the words or more are editable`;
+
 /**
- * What an import came to, and its editable rate: the words in editable fields over all the words
- * the assembly counts, editable and locked, as decision 0026's table counts them. For now a success
- * is an import assembled whose first check holds and at least SUCCESS_RATE of whose words are in
- * editable fields, and anything else assembled is partial. The runner reads the outcome and the
- * rate here alone, so that item 13's report replaces this function's body and nothing else.
+ * What an import came to, its editable rate, and what the rate counts: the words in editable
+ * fields over all the words the assembly counts, editable and locked, as decision 0026's table
+ * counts them. For now a success is an import assembled whose first check holds and at least
+ * SUCCESS_RATE of whose words are in editable fields (`OUTCOME_RULE`), and anything else assembled
+ * is partial. The runner reads the outcome here alone, and adds up the counts it gives for the
+ * corpus's rate, in the summary, the headline, the table and the baseline, so that item 13's report
+ * replaces this function's body and nothing else.
  */
 export function outcomeOf(assembled: { checks: Pick<AssemblyChecks, "outcome" | "words"> }): {
   outcome: "success" | "partial";
   rate: number;
+  counted: Counted;
 } {
   const { outcome, words } = assembled.checks;
   const locked = Object.values(words.locked).reduce<number>((sum, n) => sum + (n ?? 0), 0);
-  const total = words.editable + locked;
-  const rate = total === 0 ? 0 : words.editable / total;
-  return { outcome: outcome === "assembled" && rate >= SUCCESS_RATE ? "success" : "partial", rate };
+  const counted = { editable: words.editable, all: words.editable + locked };
+  const rate = counted.all === 0 ? 0 : counted.editable / counted.all;
+  return {
+    outcome: outcome === "assembled" && rate >= SUCCESS_RATE ? "success" : "partial",
+    rate,
+    counted,
+  };
 }
 
 /** A rate as a row keeps it: four decimals, so that the JSON reads, and two runs compare. */
@@ -140,8 +156,9 @@ export interface RunRow {
   font?: string;
   /** For one whose first check differs, the kind of its first difference. */
   difference?: string;
-  /** The words in editable fields over all the words the assembly counts (`outcomeOf`). */
+  /** Its editable rate, and what the rate counts, as `outcomeOf` gives them. */
   rate?: number;
+  counted?: Counted;
   naming?: RunNaming;
   fields?: {
     editable: number;
@@ -179,13 +196,14 @@ export function runRowOf(
   engine: "pdftex" | "xetex",
   more: { naming?: RunNaming; probeCompiles: number; times: RunChildRow["times"] },
 ): RunChildRow {
-  const { outcome, rate } = outcomeOf(assembled);
+  const { outcome, rate, counted } = outcomeOf(assembled);
   const row = assembleRow(assembled.checks, engine, { answered: 0, unanswered: 0 });
   return {
     outcome,
     engine,
     ...(row.difference === undefined ? {} : { difference: row.difference }),
     rate: kept(rate),
+    counted,
     ...(more.naming === undefined ? {} : { naming: more.naming }),
     ...(row.fields === undefined ? {} : { fields: row.fields }),
     ...(row.words === undefined ? {} : { words: row.words }),
@@ -206,20 +224,21 @@ export function runRowOf(
 
 // The summary.
 
-/** Words by reason, added up. */
-const lockedOf = (row: Pick<RunRow, "words">) =>
-  Object.values(row.words?.locked ?? {}).reduce<number>((sum, n) => sum + (n ?? 0), 0);
-
 /** Whether a document was assembled: a success or partial. */
 export const assembled = (row: Pick<RunRow, "outcome">) =>
   row.outcome === "success" || row.outcome === "partial";
 
-/** What a run came to in all: the documents by outcome, the words, and the two rates, in percent. */
+/**
+ * What a run came to in all: the documents by outcome; what `outcomeOf` counted over the documents
+ * assembled, added up, and the words the assembly locked in them, by reason; and the two rates, in
+ * percent.
+ */
 export interface RunSummary {
   documents: number;
   outcomes: Record<RunOutcome, number>;
-  words: { editable: number; locked: Partial<Record<LockReason, number>> };
-  /** The share of the documents that are a success, and of the assembled ones' words that are editable. */
+  counted: Counted;
+  locked: Partial<Record<LockReason, number>>;
+  /** The share of the documents that are a success, and of what `outcomeOf` counted that is editable. */
   rates: { success: number; editable: number };
 }
 
@@ -233,29 +252,30 @@ export function summaryOf(rows: readonly RunRow[]): RunSummary {
     number
   >;
   for (const row of rows) outcomes[row.outcome]++;
+  const counted: Counted = { editable: 0, all: 0 };
   const locked: Partial<Record<LockReason, number>> = {};
-  let editable = 0;
   for (const row of rows.filter(assembled)) {
-    editable += row.words?.editable ?? 0;
+    counted.editable += row.counted?.editable ?? 0;
+    counted.all += row.counted?.all ?? 0;
     for (const [reason, n] of Object.entries(row.words?.locked ?? {}) as [LockReason, number][])
       locked[reason] = (locked[reason] ?? 0) + n;
   }
-  const all = editable + Object.values(locked).reduce<number>((sum, n) => sum + (n ?? 0), 0);
   return {
     documents: rows.length,
     outcomes,
-    words: {
-      editable,
-      locked: Object.fromEntries(
-        LOCK_REASONS.flatMap((each) => (locked[each] ? [[each, locked[each]]] : [])),
-      ),
+    counted,
+    locked: Object.fromEntries(
+      LOCK_REASONS.flatMap((each) => (locked[each] ? [[each, locked[each]]] : [])),
+    ),
+    rates: {
+      success: percent(outcomes.success, rows.length),
+      editable: percent(counted.editable, counted.all),
     },
-    rates: { success: percent(outcomes.success, rows.length), editable: percent(editable, all) },
   };
 }
 
 /** A count and its noun, in the plural where it takes one. */
-const counted = (count: number, noun: string) =>
+const plural = (count: number, noun: string) =>
   `${count.toLocaleString("en-GB")} ${count === 1 ? noun : `${noun}s`}`;
 
 /** A share as the headline shows it. */
@@ -271,14 +291,12 @@ export function runHeadline(rows: readonly RunRow[]): string[] {
   const { outcomes } = summary;
   const rest = n - outcomes.success - outcomes.partial;
   const share = (count: number) => shown(n === 0 ? 0 : (100 * count) / n);
-  const words = summary.words;
-  const lockedWords = Object.values(words.locked).reduce<number>((sum, k) => sum + (k ?? 0), 0);
-  const reasons = (Object.entries(words.locked) as [LockReason, number][])
+  const reasons = (Object.entries(summary.locked) as [LockReason, number][])
     .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1))
     .map(([reason, count]) => `${reason} ${count.toLocaleString("en-GB")}`);
   return [
-    `${counted(n, "document")}: ${outcomes.success} success (${share(outcomes.success)}), ${outcomes.partial} partial (${share(outcomes.partial)}), ${rest} refused or stopped (${share(rest)}): ${outcomes.refused} refused, ${outcomes["no reference"]} with no reference, ${outcomes["not parsed"]} not parsed, ${outcomes.baseline} not probed, ${outcomes["no answer"]} with no answer, ${outcomes.timeout + outcomes.crashed} timed out or died.`,
-    `Words in editable fields: ${shown(summary.rates.editable)} of ${counted(words.editable + lockedWords, "word")} in the ${counted(outcomes.success + outcomes.partial, "document")} assembled${reasons.length === 0 ? "." : `; locked, by reason: ${reasons.join(", ")}.`}`,
+    `${plural(n, "document")}: ${outcomes.success} success (${share(outcomes.success)}), ${outcomes.partial} partial (${share(outcomes.partial)}), ${rest} refused or stopped (${share(rest)}): ${outcomes.refused} refused, ${outcomes["no reference"]} with no reference, ${outcomes["not parsed"]} not parsed, ${outcomes.baseline} not probed, ${outcomes["no answer"]} with no answer, ${outcomes.timeout + outcomes.crashed} timed out or died.`,
+    `Words in editable fields: ${shown(summary.rates.editable)} of ${plural(summary.counted.all, "word")} in the ${plural(outcomes.success + outcomes.partial, "document")} assembled${reasons.length === 0 ? "." : `; locked, by reason: ${reasons.join(", ")}.`}`,
   ].map(printable);
 }
 
@@ -353,7 +371,6 @@ export function runTable(rows: readonly RunRow[]): string {
       `**${label}**`,
       COLUMNS.map(() => ""),
     );
-  const words = (row: RunRow) => (row.words?.editable ?? 0) + lockedOf(row);
   const present = (names: Iterable<string>) =>
     [...new Set(names)].filter((each) => PLAIN.test(each)).sort();
   const refusals = present(
@@ -379,10 +396,7 @@ export function runTable(rows: readonly RunRow[]): string {
     line("", COLUMNS),
     `|---|${COLUMNS.map(() => "--:").join("|")}|`,
     count("Documents", () => true),
-    count(
-      `**Success**: the first check holds, and ${Math.round(SUCCESS_RATE * 100)}% of the words or more are editable`,
-      (row) => row.outcome === "success",
-    ),
+    count(`**Success**: ${OUTCOME_RULE}`, (row) => row.outcome === "success"),
     count("**Partial**: assembled, short of a success", (row) => row.outcome === "partial"),
     count(
       "Partial: the first check differs",
@@ -390,10 +404,6 @@ export function runTable(rows: readonly RunRow[]): string {
     ),
     ...differences.map((kind) =>
       count(`Partial, the first difference: \`${kind}\``, (row) => row.difference === kind),
-    ),
-    count(
-      `Partial: under ${Math.round(SUCCESS_RATE * 100)}% of the words editable`,
-      (row) => row.outcome === "partial" && (row.rate ?? 0) < SUCCESS_RATE,
     ),
     count("**Refused** by a step", (row) => row.outcome === "refused"),
     ...refusals.map((reason) =>
@@ -419,11 +429,11 @@ export function runTable(rows: readonly RunRow[]): string {
     count("Read in Latin Modern", (row) => assembled(row) && row.latinModern === true),
     section("Words, of the documents assembled"),
     share(
-      "In editable fields",
-      (row) => (assembled(row) ? (row.words?.editable ?? 0) : 0),
-      (row) => (assembled(row) ? words(row) : 0),
+      "In editable fields, as `outcomeOf` counts them",
+      (row) => (assembled(row) ? (row.counted?.editable ?? 0) : 0),
+      (row) => (assembled(row) ? (row.counted?.all ?? 0) : 0),
     ),
-    sum("All", (row) => (assembled(row) ? words(row) : 0)),
+    sum("All, as `outcomeOf` counts them", (row) => (assembled(row) ? (row.counted?.all ?? 0) : 0)),
     ...reasons.map((reason) =>
       sum(`Locked: \`${reason}\``, (row) =>
         assembled(row) ? (row.words?.locked[reason] ?? 0) : 0,
@@ -493,13 +503,12 @@ export function runLine(row: RunRow): string {
   const engine = row.engine === undefined ? "" : `${row.engine}, `;
   const why = row.refused !== undefined && PLAIN.test(row.refused) ? ` (${row.refused})` : "";
   if (!assembled(row)) return printable(`${engine}${row.outcome}${why}`);
-  const all = (row.words?.editable ?? 0) + lockedOf(row);
   const difference =
     row.difference !== undefined && PLAIN.test(row.difference)
       ? `, the first check differs (${row.difference})`
       : "";
   return printable(
-    `${engine}${row.outcome}${difference}, ${Math.round(100 * (row.rate ?? 0))}% of ${counted(all, "word")} editable, ${counted(row.fields?.editable ?? 0, "field")} editable, ${row.compiles?.checks ?? 0} compiles, ${Math.round(row.times.wall / 1000)} s`,
+    `${engine}${row.outcome}${difference}, ${Math.round(100 * (row.rate ?? 0))}% of ${plural(row.counted?.all ?? 0, "word")} editable, ${plural(row.fields?.editable ?? 0, "field")} editable, ${row.compiles?.checks ?? 0} compiles, ${Math.round(row.times.wall / 1000)} s`,
   );
 }
 

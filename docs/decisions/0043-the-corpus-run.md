@@ -44,12 +44,15 @@ and filled its cache. Items 12 (the import in the browser), 13 (the report and i
 
 ### The outcome
 
-- `outcomeOf(assembled)`, in `corpus-run.ts`, gives the outcome and the editable rate, and the
-  runner reads them nowhere else, so that item 13 replaces the function's body with its report and
-  nothing more. Until then: a **success** is an import assembled whose first check holds, not
-  partial, and at least 90% of whose words are in editable fields, counted as decision 0026's table
-  counts them, the words of editable fields over those and the locked parts' words; anything else
-  assembled is **partial**; the rate is that share.
+- `outcomeOf(assembled)`, in `corpus-run.ts`, gives the outcome, the editable rate and what the
+  rate counts, `{ editable, all }`, and the runner reads the outcome nowhere else: each row keeps
+  the counts (`counted`), and the summary, the headline, the table and the baseline add them up for
+  the corpus's rate, the table naming the rule as the function's constant says it (`OUTCOME_RULE`),
+  so that item 13 replaces the function's body with its report and nothing more. Until then: a
+  **success** is an import assembled whose first check holds, not partial, and at least 90% of whose
+  words are in editable fields, counted as decision 0026's table counts them, the words of editable
+  fields over those and the locked parts' words; anything else assembled is **partial**; the rate is
+  that share.
 - A document the pipeline does not assemble is **refused**, with the refusal's reason, when a step
   after the parse refuses it: the Latin Modern swap, the request's builder for a page it cannot read
   (`unreadable`) or a request its contract refuses (`invalid`), the XeTeX rewrite or its check, or
@@ -63,12 +66,13 @@ and filled its cache. Items 12 (the import in the browser), 13 (the report and i
   any, every document or some), the summary and a row per document, ids and counts only: the outcome
   and its refusal's reason; the editable rate; the words editable and locked by reason; the fields
   editable, raw, required and locked by reason; the sections mapped and locked; the controls proven
-  and dropped; the redefinitions applied and dropped, counted; the harness's and the checks' own
-  findings, by check; the kinds of unit that stop the compile; the naming step's macros, answered
-  from the committed answers or the model's cache, refused there, missing, asked and stored, the
-  calls and tokens, and whether the gate passes the request; the compiles of the probe and of the
-  checks; and the milliseconds of each step, the reference, the Latin Modern swap, the parse, the
-  probe, the naming, the fonts and the checks, and of the whole (`times`).
+  and dropped; the redefinitions applied and dropped, counted; what `outcomeOf` counted; the
+  harness's and the checks' own findings, by check; the kinds of unit that stop the compile; the
+  naming step's macros, answered from the committed answers or the model's cache, refused there,
+  missing, asked and stored, the calls and tokens, and whether the gate passes the request; the
+  compiles of the probe and of the checks; and the milliseconds of each step, the reference, the
+  Latin Modern swap, the parse, the probe, the naming, the fonts and the checks, and of the whole
+  (`times`).
 - It prints a line a document, then one table, per family and in all, and a headline: the documents,
   the shares of success, partial and refused or stopped, with where the others stopped; the editable
   rate over the documents assembled; and the locked words by reason. Everything goes through

@@ -13,6 +13,7 @@ import {
   changedPaths,
   idsOf,
   nextBaseline,
+  OUTCOME_RULE,
   outcomeOf,
   type RunRow,
   runDifferences,
@@ -49,10 +50,15 @@ const checks = (changes: Partial<AssemblyChecks> = {}): AssemblyChecks => ({
 
 describe("the outcome and the editable rate", () => {
   test("is a success where the first check holds and nine words in ten or more are editable", () => {
-    expect(outcomeOf({ checks: checks() })).toEqual({ outcome: "success", rate: 0.9 });
+    expect(outcomeOf({ checks: checks() })).toEqual({
+      outcome: "success",
+      rate: 0.9,
+      counted: { editable: 90, all: 100 },
+    });
     expect(SUCCESS_RATE).toBe(0.9);
+    expect(OUTCOME_RULE).toBe("the first check holds, and 90% of the words or more are editable");
     const short = outcomeOf({ checks: checks({ words: { editable: 89, locked: { date: 11 } } }) });
-    expect(short).toEqual({ outcome: "partial", rate: 0.89 });
+    expect(short).toEqual({ outcome: "partial", rate: 0.89, counted: { editable: 89, all: 100 } });
   });
 
   test("is partial where the first check differs, however many words are editable", () => {
@@ -60,6 +66,7 @@ describe("the outcome and the editable rate", () => {
     expect(outcomeOf({ checks: checks({ outcome: "partial", words: all }) })).toEqual({
       outcome: "partial",
       rate: 1,
+      counted: { editable: 100, all: 100 },
     });
   });
 
@@ -69,6 +76,7 @@ describe("the outcome and the editable rate", () => {
     expect(outcomeOf({ checks: checks({ words: { editable: 0, locked: {} } }) })).toEqual({
       outcome: "partial",
       rate: 0,
+      counted: { editable: 0, all: 0 },
     });
   });
 
@@ -81,6 +89,7 @@ describe("the outcome and the editable rate", () => {
       outcome: "success",
       engine: "pdftex",
       rate: 0.9,
+      counted: { editable: 90, all: 100 },
       fields: { editable: 9, raw: 1, required: 1, locked: { date: 1 } },
       words: { editable: 90, locked: { date: 10 } },
       controls: { proven: ["pageSize"], dropped: [] },
@@ -106,6 +115,7 @@ const ROWS: RunRow[] = [
     outcome: "success",
     engine: "pdftex",
     rate: 0.95,
+    counted: { editable: 95, all: 100 },
     words: { editable: 95, locked: { date: 5 } },
     fields: { editable: 10, raw: 0, required: 0, locked: { date: 1 } },
     controls: { proven: ["pageSize"], dropped: [] },
@@ -130,6 +140,7 @@ const ROWS: RunRow[] = [
   row("jake-0002", "jake", {
     engine: "pdftex",
     rate: 0.2,
+    counted: { editable: 20, all: 100 },
     difference: "position",
     words: { editable: 20, locked: { unmapped: 70, shape: 10 } },
     findings: { pdf: 2 },
@@ -147,7 +158,7 @@ const ROWS: RunRow[] = [
 ];
 
 describe("the summary, the headline and the table", () => {
-  test("add up the outcomes, and the words of the documents assembled alone", () => {
+  test("add up the outcomes, and what outcomeOf counted of the documents assembled alone", () => {
     const summary = summaryOf(ROWS);
     expect(summary.documents).toBe(6);
     expect(summary.outcomes).toMatchObject({
@@ -157,7 +168,8 @@ describe("the summary, the headline and the table", () => {
       "no reference": 1,
       timeout: 1,
     });
-    expect(summary.words).toEqual({ editable: 115, locked: { date: 5, shape: 10, unmapped: 70 } });
+    expect(summary.counted).toEqual({ editable: 115, all: 200 });
+    expect(summary.locked).toEqual({ date: 5, shape: 10, unmapped: 70 });
     expect(summary.rates).toEqual({ success: 16.67, editable: 57.5 });
   });
 
@@ -185,7 +197,17 @@ describe("the summary, the headline and the table", () => {
     expect(cells("Partial: the first check differs")?.at(-1)).toBe("1");
     expect(cells("Refused: `difference`")?.at(-1)).toBe("1");
     expect(cells("No reference: `package`")?.at(-1)).toBe("1");
-    expect(cells("In editable fields")).toEqual(["58%", "", "", "", "", "", "58%"]);
+    expect(cells("In editable fields, as `outcomeOf` counts them")).toEqual([
+      "58%",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "58%",
+    ]);
+    // The rule is `outcomeOf`'s alone: the table applies no rate of its own.
+    expect(table).not.toContain("under 90%");
     expect(cells("Locked: `unmapped`")?.at(-1)).toBe("70");
     expect(cells("`pdf`")?.at(-1)).toBe("1");
     expect(cells("Answered from the committed answers")?.at(-1)).toBe("8");
