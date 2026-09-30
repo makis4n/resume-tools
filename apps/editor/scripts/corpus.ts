@@ -164,13 +164,16 @@
  *                 privacy gate passed, the answers the cache holds for its macros, and the checks'
  *                 findings reduced to reasons, macro names and counts, every file checked with the
  *                 leak detector against every document of its template (`scripts/corpus-review.ts`,
- *                 `corpus/REVIEW.md`)
+ *                 `corpus/REVIEW.md`). It reads the last run only when that run finished, read the
+ *                 committed answers and the cache of the model `NAMING_MODEL` names, and kept
+ *                 every document it took; else it says why in one line and stops
  *   --top <n>     how many templates, 20 unless given
  *   --out <dir>   the folder, `.review/` unless given, from where pnpm was run
  *   review check  for every reviewed answer under `corpus/answers/` that carries redefinitions,
  *                 run the assembly of every document the last run found holding its key, and say of
- *                 each redefinition whether it is kept or dropped, and why; it exits 1 when one is
- *                 dropped, an answer does not validate, or the last run did not cover the corpus
+ *                 each redefinition whether it is kept, unproven or dropped, and why; it reads the
+ *                 last run as the export does, and only one over every fetched document, and exits
+ *                 1 when a redefinition is dropped or unproven, or an answer does not validate
  *   --dir <dir>   the review's export, whose templates the lines name, `.review/` unless given
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
