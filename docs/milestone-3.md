@@ -341,13 +341,13 @@ of each launch template must find editable what the hand-written port marks.
 18. [ ] **Benchmark the candidates, on SoCLaaS.** The naming step runs on SoCLaaS, the School of
     Computing's OpenAI-compatible gateway for its students and staff, whose calls bill nothing
     (decision 0036): `soclaasModel` in `packages/naming/src/providers.ts`, the key in
-    `SOCLAAS_API_KEY` and the model in `NAMING_MODEL`, `qwen3.8:27b` until this item picks. First,
-    one call to each candidate checks that the gateway holds the answer to its JSON schema, and
-    how a Qwen model's reasoning comes back and how long it takes. Then
+    `SOCLAAS_API_KEY` and the model in `NAMING_MODEL`, `qwen3.8:27b` until this item picks. The
+    gateway holds each candidate's answer to its JSON schema and returns reasoning apart (0036).
     `corpus.ts bench --model <id>` runs the naming step over the corpus for three candidates:
-    `qwen3.8:27b`, the gateway's all-round model and the likely best; `qwen3.6:35b`, described as efficient and priced under it, the
-    likely fastest; and `qwen3-coder-next`, a code model, since naming reads template code; with
-    `gemma4:26b`, another family, as a fourth if the three fail on the same templates. The rest
+    `qwen3.8:27b`, the gateway's all-round model and the likely best; `qwen3.6:35b`, described as
+    efficient and priced under it, the likely fastest; and `qwen3-coder-next`, a code model, since
+    naming reads template code; with `gemma4:26b`, another family, or `qwen3.6:27b`, which the
+    key's catalog lists, as a fourth if the three fail on the same templates. The rest
     are left out: the 8B and 9B models are weak and their 64k context is tight for a full part,
     `qwen3-vl:32b` reads images, and `ornith:35b` is built for agent loops. The benchmark reports
     the editable rate, the refused and partial shares, each part's time, and the cost per import

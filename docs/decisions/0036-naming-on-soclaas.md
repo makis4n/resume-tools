@@ -33,8 +33,12 @@ tell the candidates apart; the naming service gives a call two minutes (decision
 
 - What leaves the browser is unchanged: template code with placeholders, never the resume's text
   (decision 0033). It now goes to the school's servers instead of Google's.
-- Whether the gateway enforces the JSON schema, and how a Qwen model's reasoning comes back, is
-  not yet known: no key has made a call. Item 18 checks both before its benchmark.
+- One call to each candidate on 2026-09-30, with a small invented macro and schema, came back
+  holding to the schema, enums and no extra properties included: `qwen3.8:27b` in 18.7 s, most of
+  its 1,139 tokens out reasoning, which the gateway returns apart from the answer;
+  `qwen3.6:35b` in 5.8 s and `qwen3-coder-next` in 5.2 s, with no reasoning. The 27B model's
+  reasoning is what may press the two-minute limit on a full part. The key's catalog also lists
+  `qwen3.6:27b`, not in the guide's, which item 18 may add.
 - A key belongs to one SoC account, and every import that misses the cache counts against it.
   The public launch (milestone 5) needs the school's leave to run the naming service on it, or
   moves to Gemini's paid tier.
