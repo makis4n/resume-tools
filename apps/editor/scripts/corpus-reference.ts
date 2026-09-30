@@ -240,6 +240,11 @@ export interface PoolOptions {
   limitMs?: number;
   /** Called as each task ends, in the order they end. */
   onResult?: (task: PoolTask, result: PoolResult) => void;
+  /**
+   * Stops the pool when it aborts: every child is killed, and the tasks they hold and those not yet
+   * sent are left undone, never counted as timed out or died; the pool resolves with what ended.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -258,6 +263,16 @@ export function runPool(options: PoolOptions): Promise<Map<string, PoolResult>> 
   return new Promise((resolve, reject) => {
     let alive = 0;
     let failedStarts = 0;
+    const live = new Set<ChildProcess>();
+    const stopped = () => options.signal?.aborted === true;
+    options.signal?.addEventListener(
+      "abort",
+      () => {
+        queue.length = 0;
+        for (const child of live) child.kill("SIGKILL");
+      },
+      { once: true },
+    );
     const finish = (task: PoolTask, result: PoolResult) => {
       results.set(task.id, result);
       options.onResult?.(task, result);
@@ -267,6 +282,7 @@ export function runPool(options: PoolOptions): Promise<Map<string, PoolResult>> 
         serialization: "advanced",
         stdio: ["ignore", "ignore", "inherit", "ipc"],
       });
+      live.add(child);
       alive++;
       let ready = false;
       let task: PoolTask | undefined;
@@ -302,21 +318,23 @@ export function runPool(options: PoolOptions): Promise<Map<string, PoolResult>> 
       });
       child.on("exit", () => {
         clearTimeout(timer);
+        live.delete(child);
         alive--;
         if (task !== undefined) {
-          finish(task, { crashed: true, wall: performance.now() - sent });
+          // A task the pool stopped is left undone, as one never sent is.
+          if (!stopped()) finish(task, { crashed: true, wall: performance.now() - sent });
           task = undefined;
         }
-        if (!ready && ++failedStarts > 2 * size) {
+        if (!ready && !stopped() && ++failedStarts > 2 * size) {
           reject(new Error("the pool's children cannot start"));
           return;
         }
-        if (queue.length > 0) start();
+        if (queue.length > 0 && !stopped()) start();
         else if (alive === 0) resolve(results);
       });
     };
-    if (queue.length === 0) resolve(results);
-    for (let i = 0; i < Math.min(size, queue.length); i++) start();
+    if (queue.length === 0 || stopped()) resolve(results);
+    else for (let i = 0; i < Math.min(size, queue.length); i++) start();
   });
 }
 

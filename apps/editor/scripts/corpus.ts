@@ -148,7 +148,15 @@
  *   --allow-model ask the model for what the cache does not answer, behind the privacy gate, as
  *                 `name --model` asks it; it needs SOCLAAS_API_KEY in the environment. Never in CI
  *   --write-baseline  write `corpus/baseline.json` from a --committed-only run over the whole
- *                 corpus, with the day and the commit, as a pull request raises it by hand
+ *                 corpus, with the day and the commit, as a pull request raises it by hand; never
+ *                 over a baseline the run falls more than a point under, which a person lowers by
+ *                 editing the file
+ *   --from <run.json> with --write-baseline, run nothing, and write the baseline from a finished
+ *                 --committed-only run's JSON over the whole corpus, as CI's run leaves it
+ *                 The run takes as many children as the machine has cores, four at most; it writes
+ *                 its JSON after each document, and on SIGINT or SIGTERM, as a CI step's time
+ *                 running out sends, it stops, prints its table and writes its JSON for what it did,
+ *                 and exits 1. A document that timed out counts in no success rate
  *   compare       say whether runs' JSON agree, times aside, each with the next, and where they do
  *                 not; it exits 1 when they differ
  *   review export write, for each of the top templates of the last run's documents, a folder an
@@ -262,13 +270,16 @@ import {
 } from "./corpus-review.ts";
 import {
   Baseline,
+  baselineFromFile,
   baselineVerdict,
   changedPaths,
   idsOf,
   nextBaseline,
+  poolSize,
   type RefusalStep,
   type RunChildRow,
   type RunFile,
+  type RunMode,
   RunRecord,
   type RunRow,
   runDifferences,
@@ -290,7 +301,7 @@ import {
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>] | leak [--only <id>] [--json <file>] | run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model] [--write-baseline] | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>] | leak [--only <id>] [--json <file>] | run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>]";
 
 /** The editor, whose modules the review's export loads through Vite for the leak detector. */
 const APP = fileURLToPath(new URL("..", import.meta.url));
@@ -1268,6 +1279,32 @@ function corpusUpload(doc: LiveDocument, treeFont: (name: string) => Uint8Array 
   );
 }
 
+/** The commit this checkout is at, or none where git cannot say. */
+function headCommit(): string | null {
+  try {
+    const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: APP,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return /^[0-9a-f]{40}$/.test(commit) ? commit : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `--write-baseline --from <run.json>`: the baseline from a run's file, as CI's run leaves it, and
+ * nothing run (`baselineFromFile`); never over one the run falls under, and exit 1 when none is
+ * written.
+ */
+function adoptBaseline(from: string) {
+  const next = baselineFromFile(JSON.parse(readFileSync(from, "utf8")), readBaseline());
+  if (next.baseline !== undefined) writeAtomically(BASELINE_FILE, formatJson(next.baseline));
+  print([next.line]);
+  if (next.baseline === undefined) process.exitCode = 1;
+}
+
 async function runRun(options: {
   only?: string;
   ids?: string;
@@ -1275,7 +1312,9 @@ async function runRun(options: {
   committedOnly: boolean;
   allowModel: boolean;
   writeBaseline: boolean;
+  from?: string;
 }) {
+  if (options.from !== undefined) return adoptBaseline(options.from);
   const config = namingConfig(process.env);
   if (options.allowModel && options.committedOnly)
     throw new Error(
@@ -1314,15 +1353,18 @@ async function runRun(options: {
     documents = documents.filter((doc) => ids.includes(doc.id));
   }
   const treeFont = treeFonts(engine.files);
+  const mode: RunMode = {
+    answers: options.committedOnly ? "committed" : "cache",
+    cache: options.committedOnly ? null : config.id,
+    asked: options.allowModel ? config.id : null,
+    documents: whole ? "all" : "some",
+  };
   // The record of this run, which the review's export and check read (`RunRecord`): written before
   // any document, unfinished, and again once every document is kept.
   const record: RunRecord = {
     version: 1,
     stamp: `${new Date().toISOString()}-${randomBytes(4).toString("hex")}`,
-    answers: options.committedOnly ? "committed" : "cache",
-    cache: options.committedOnly ? null : config.id,
-    asked: options.allowModel ? config.id : null,
-    documents: whole ? "all" : "some",
+    ...mode,
     ids: documents.map((doc) => doc.id),
     complete: false,
   };
@@ -1346,48 +1388,90 @@ async function runRun(options: {
   const rows: RunRow[] = [];
   const started = performance.now();
   const limitMs = runLimitMs(options.allowModel);
+  const size = poolSize();
+  const at = { date: new Date().toISOString().slice(0, 10), commit: headCommit() };
+  /**
+   * The run's JSON, from the documents ended so far, sorted by id: written after each, so that a
+   * run stopped or killed leaves what it did, and once more, finished, at its end.
+   */
+  const written = (complete: boolean) => {
+    if (options.json === undefined) return;
+    const sorted = [...rows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const file: RunFile = {
+      version: 1,
+      at,
+      tree: { layout: engine.layout, files: Object.keys(engine.files).length },
+      limitMs,
+      mode,
+      complete,
+      summary: summaryOf(sorted),
+      documents: sorted,
+    };
+    writeAtomically(options.json, formatJson(file));
+  };
   print([
-    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${limitMs / 1000} s each at most; ${options.committedOnly ? "the committed answers alone" : `the committed answers and ${config.id}'s cache`}; ${options.allowModel ? `asking ${config.id} for what they do not answer` : "no model asked"}`,
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${size} at a time, ${limitMs / 1000} s each at most; ${options.committedOnly ? "the committed answers alone" : `the committed answers and ${config.id}'s cache`}; ${options.allowModel ? `asking ${config.id} for what they do not answer` : "no model asked"}`,
   ]);
-  await runPool({
-    script: ASSEMBLE_CHILD,
-    tasks,
-    limitMs,
-    onResult: (task, result) => {
-      const reply = result.reply as
-        | { run?: RunChildRow; review?: Partial<RunDocument>; detail?: unknown }
-        | undefined;
-      const { times, ...fields } = reply?.run ?? {
-        outcome: result.timedOut ? ("timeout" as const) : ("crashed" as const),
-        times: {},
-      };
-      const row: RunRow = {
-        id: task.id,
-        family: families.get(task.id) ?? "other",
-        ...fields,
-        times: { ...times, wall: Math.round(result.wall) },
-      };
-      rows.push(row);
-      keepRun(row, reply?.review, reply?.detail, record.stamp);
-      print([`${rows.length}/${documents.length} ${task.id}: ${runLine(row)}`]);
-      if (row.naming?.failed === "provider") failures++;
-      else if ((row.naming?.calls ?? 0) > 0) failures = 0;
-      if (asking && failures >= PROVIDER_FAILURES) {
-        asking = false;
-        print([
-          `The provider failed ${PROVIDER_FAILURES} documents in a row: the documents not yet sent are not asked`,
-        ]);
-      }
-    },
-  });
+  // A signal, as a CI step's time running out sends, stops the pool, and the run ends as it would,
+  // with the table and the JSON of what it did, and exits 1.
+  const controller = new AbortController();
+  const stop = (signal: NodeJS.Signals) => {
+    if (controller.signal.aborted) return;
+    print([`Stopped by ${signal}: the documents not ended are left undone`]);
+    controller.abort();
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  try {
+    await runPool({
+      script: ASSEMBLE_CHILD,
+      tasks,
+      size,
+      limitMs,
+      signal: controller.signal,
+      onResult: (task, result) => {
+        const reply = result.reply as
+          | { run?: RunChildRow; review?: Partial<RunDocument>; detail?: unknown }
+          | undefined;
+        const { times, ...fields } = reply?.run ?? {
+          outcome: result.timedOut ? ("timeout" as const) : ("crashed" as const),
+          times: {},
+        };
+        const row: RunRow = {
+          id: task.id,
+          family: families.get(task.id) ?? "other",
+          ...fields,
+          times: { ...times, wall: Math.round(result.wall) },
+        };
+        rows.push(row);
+        keepRun(row, reply?.review, reply?.detail, record.stamp);
+        written(false);
+        print([`${rows.length}/${documents.length} ${task.id}: ${runLine(row)}`]);
+        if (row.naming?.failed === "provider") failures++;
+        else if ((row.naming?.calls ?? 0) > 0) failures = 0;
+        if (asking && failures >= PROVIDER_FAILURES) {
+          asking = false;
+          print([
+            `The provider failed ${PROVIDER_FAILURES} documents in a row: the documents not yet sent are not asked`,
+          ]);
+        }
+      },
+    });
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+  }
+  const stopped = controller.signal.aborted;
   rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  writeAtomically(RUN_RECORD, formatJson({ ...record, complete: true }));
+  writeAtomically(RUN_RECORD, formatJson({ ...record, complete: !stopped }));
   const minutes = (performance.now() - started) / 60_000;
   const summary = summaryOf(rows);
-  const verdict = baselineVerdict(summary, baseline, {
-    committedOnly: options.committedOnly,
-    whole,
-  });
+  const verdict = stopped
+    ? {
+        failed: false,
+        line: `Not held to corpus/baseline.json: the run stopped after ${rows.length} of ${documents.length} documents.`,
+      }
+    : baselineVerdict(summary, baseline, { committedOnly: options.committedOnly, whole });
   print([
     "",
     ...runTable(rows).trimEnd().split("\n"),
@@ -1397,36 +1481,21 @@ async function runRun(options: {
     "",
     `Took ${minutes.toFixed(1)} min.`,
   ]);
-  if (options.json !== undefined) {
-    const file: RunFile = {
-      version: 1,
-      tree: { layout: engine.layout, files: Object.keys(engine.files).length },
-      limitMs,
-      mode: {
-        answers: options.committedOnly ? "committed" : "cache",
-        cache: options.committedOnly ? null : config.id,
-        asked: options.allowModel ? config.id : null,
-        documents: whole ? "all" : "some",
-      },
-      summary,
-      documents: rows,
-    };
-    writeAtomically(options.json, formatJson(file));
-  }
-  if (origin !== undefined) {
+  written(!stopped);
+  if (origin !== undefined && !stopped) {
     // Never over a baseline the run falls short of: a person lowers one by editing it in a pull
     // request (`nextBaseline`).
     const next = nextBaseline({
       summary,
       baseline,
       scope: { committedOnly: options.committedOnly, whole },
-      date: new Date().toISOString().slice(0, 10),
+      date: at.date,
       commit: origin.commit,
     });
     if (next.baseline !== undefined) writeAtomically(BASELINE_FILE, formatJson(next.baseline));
     print([next.line]);
   }
-  if (verdict.failed) {
+  if (stopped || verdict.failed) {
     console.error(printable(verdict.line));
     process.exitCode = 1;
   }
@@ -1609,7 +1678,7 @@ async function runReviewCheck(dir: string) {
   const documents = fetched.filter((doc) => wanted.has(doc.id));
   const treeFont = treeFonts(engine.files);
   print([
-    `${carriers.length} reviewed ${carriers.length === 1 ? "answer carries" : "answers carry"} redefinitions, and ${others} ${others === 1 ? "carries" : "carry"} none; the last run kept ${kept.length} of ${fetched.length} fetched documents, of which ${documents.length} hold their keys, each assembled again with the committed answers and ${config.id}'s cache, ${POOL_SIZE} at a time`,
+    `${carriers.length} reviewed ${carriers.length === 1 ? "answer carries" : "answers carry"} redefinitions, and ${others} ${others === 1 ? "carries" : "carry"} none; the last run kept ${kept.length} of ${fetched.length} fetched documents, of which ${documents.length} hold their keys, each assembled again with the committed answers and ${config.id}'s cache, ${poolSize()} at a time`,
   ]);
   const results = new Map<string, Checked>();
   await runPool({
@@ -1623,6 +1692,7 @@ async function runReviewCheck(dir: string) {
         review: true,
       }),
     })),
+    size: poolSize(),
     limitMs: runLimitMs(false),
     onResult: (task, result) => {
       const reply = result.reply as
@@ -1694,6 +1764,7 @@ async function main() {
       "committed-only": { type: "boolean" },
       "allow-model": { type: "boolean" },
       "write-baseline": { type: "boolean" },
+      from: { type: "string" },
       top: { type: "string" },
       out: { type: "string" },
       dir: { type: "string" },
@@ -1769,6 +1840,17 @@ async function main() {
   for (const option of ["ids", "committed-only", "allow-model", "write-baseline"] as const)
     if (values[option] !== undefined && command !== "run")
       throw new Error(`--${option} goes with run`);
+  if (values.from !== undefined && (command !== "run" || values["write-baseline"] !== true))
+    throw new Error("--from goes with run --write-baseline");
+  if (
+    values.from !== undefined &&
+    [values.only, values.ids, values.json, values["committed-only"], values["allow-model"]].some(
+      (each) => each !== undefined,
+    )
+  )
+    throw new Error(
+      "run --write-baseline --from <run.json> runs nothing, and takes no other option",
+    );
   if ((values.top !== undefined || values.out !== undefined) && review !== "export")
     throw new Error("--top and --out go with review export");
   if (values.dir !== undefined && review !== "check")
@@ -1786,6 +1868,7 @@ async function main() {
       committedOnly: values["committed-only"] === true,
       allowModel: values["allow-model"] === true,
       writeBaseline: values["write-baseline"] === true,
+      ...(values.from === undefined ? {} : { from: caller(values.from) }),
     });
   if (command === "compare") return runCompare(rest.map((file) => caller(file) ?? file));
   if (review === "export")

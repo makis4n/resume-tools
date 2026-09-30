@@ -25,11 +25,13 @@
 
 // Node runs this file by stripping its types, so it imports values only from files that import
 // nothing Node lacks, and the editor's modules as types alone, with their real extensions.
+import { availableParallelism } from "node:os";
 import { z } from "zod";
 import type { AssemblyChecks, LockReason } from "../src/import/assemble.ts";
 import { ASSEMBLE_LIMIT_MS, assembleRow, LOCK_REASONS } from "./corpus-assemble.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 import { MODEL_LIMIT_MS } from "./corpus-name.ts";
+import { POOL_SIZE } from "./corpus-reference.ts";
 
 /**
  * How long one document may take: its pipeline, its probe and its checks, as `corpus assemble`'s;
@@ -238,7 +240,10 @@ export interface RunSummary {
   outcomes: Record<RunOutcome, number>;
   counted: Counted;
   locked: Partial<Record<LockReason, number>>;
-  /** The share of the documents that are a success, and of what `outcomeOf` counted that is editable. */
+  /**
+   * The share of the documents that are a success, of those that did not time out, which a machine's
+   * speed decides and count in no rate; and of what `outcomeOf` counted that is editable.
+   */
   rates: { success: number; editable: number };
 }
 
@@ -268,7 +273,7 @@ export function summaryOf(rows: readonly RunRow[]): RunSummary {
       LOCK_REASONS.flatMap((each) => (locked[each] ? [[each, locked[each]]] : [])),
     ),
     rates: {
-      success: percent(outcomes.success, rows.length),
+      success: percent(outcomes.success, rows.length - outcomes.timeout),
       editable: percent(counted.editable, counted.all),
     },
   };
@@ -287,15 +292,16 @@ const shown = (value: number) => `${value.toFixed(1)}%`;
  */
 export function runHeadline(rows: readonly RunRow[]): string[] {
   const summary = summaryOf(rows);
-  const n = summary.documents;
   const { outcomes } = summary;
+  // A document that timed out counts in no share: a machine's speed decides it.
+  const n = summary.documents - outcomes.timeout;
   const rest = n - outcomes.success - outcomes.partial;
   const share = (count: number) => shown(n === 0 ? 0 : (100 * count) / n);
   const reasons = (Object.entries(summary.locked) as [LockReason, number][])
     .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1))
     .map(([reason, count]) => `${reason} ${count.toLocaleString("en-GB")}`);
   return [
-    `${plural(n, "document")}: ${outcomes.success} success (${share(outcomes.success)}), ${outcomes.partial} partial (${share(outcomes.partial)}), ${rest} refused or stopped (${share(rest)}): ${outcomes.refused} refused, ${outcomes["no reference"]} with no reference, ${outcomes["not parsed"]} not parsed, ${outcomes.baseline} not probed, ${outcomes["no answer"]} with no answer, ${outcomes.timeout + outcomes.crashed} timed out or died.`,
+    `${plural(summary.documents, "document")}, ${outcomes.timeout} of which timed out and ${outcomes.timeout === 1 ? "counts" : "count"} in no share; of the ${n} others, ${outcomes.success} success (${share(outcomes.success)}), ${outcomes.partial} partial (${share(outcomes.partial)}), ${rest} refused or stopped (${share(rest)}): ${outcomes.refused} refused, ${outcomes["no reference"]} with no reference, ${outcomes["not parsed"]} not parsed, ${outcomes.baseline} not probed, ${outcomes["no answer"]} with no answer, ${outcomes.crashed} died.`,
     `Words in editable fields: ${shown(summary.rates.editable)} of ${plural(summary.counted.all, "word")} in the ${plural(outcomes.success + outcomes.partial, "document")} assembled${reasons.length === 0 ? "." : `; locked, by reason: ${reasons.join(", ")}.`}`,
   ].map(printable);
 }
@@ -425,7 +431,8 @@ export function runTable(rows: readonly RunRow[]): string {
       (row) => row.outcome === "baseline",
     ),
     count("No answer for any macro the body calls", (row) => row.outcome === "no answer"),
-    count("Timed out or died", (row) => row.outcome === "timeout" || row.outcome === "crashed"),
+    count("Timed out: counted in no rate", (row) => row.outcome === "timeout"),
+    count("Died", (row) => row.outcome === "crashed"),
     count("Read in Latin Modern", (row) => assembled(row) && row.latinModern === true),
     section("Words, of the documents assembled"),
     share(
@@ -529,9 +536,13 @@ export interface RunMode {
 /** The run's JSON: its mode, its summary, and a row a document. */
 export interface RunFile {
   version: 1;
+  /** The day it started, and the commit it ran at, which a baseline adopted from the file names. */
+  at: { date: string; commit: string | null };
   tree: { layout: number; files: number };
   limitMs: number;
   mode: RunMode;
+  /** Whether every document it took is in it: a run a signal stopped writes what it did. */
+  complete: boolean;
   summary: RunSummary;
   documents: RunRow[];
 }
@@ -556,6 +567,7 @@ function differences(a: unknown, b: unknown, path: string, out: string[]) {
 
 /** A run's JSON, loosely read: what `runDifferences` compares. */
 const LooseRun = z.looseObject({
+  at: z.unknown().optional(),
   documents: z.array(z.looseObject({ id: z.string(), times: z.unknown().optional() })),
 });
 
@@ -568,8 +580,9 @@ export function runDifferences(first: unknown, second: unknown): string[] {
   const a = LooseRun.parse(first);
   const b = LooseRun.parse(second);
   const out: string[] = [];
-  const { documents: rowsA, ...restA } = a;
-  const { documents: rowsB, ...restB } = b;
+  // When and at which commit a run ran is no result of it, as its times are not.
+  const { documents: rowsA, at: _atA, ...restA } = a;
+  const { documents: rowsB, at: _atB, ...restB } = b;
   differences(restA, restB, "run", out);
   const byId = (rows: typeof rowsA) =>
     new Map(rows.map(({ times: _times, ...row }) => [row.id, row] as const));
@@ -611,6 +624,8 @@ export const Baseline = z.strictObject({
       date: z.iso.date(),
       commit: z.string().regex(/^[0-9a-f]{40}$/),
       documents: z.int().min(1),
+      /** The documents that timed out, which count in neither its success rate nor a run's. */
+      timeouts: z.int().min(0),
       success: z.int().min(0),
       rates: z.strictObject({
         success: z.number().min(0).max(100),
@@ -647,7 +662,9 @@ export function baselineVerdict(
       failed: false,
       line: "No baseline yet: corpus/baseline.json holds no run, so nothing is compared.",
     };
-  const rate = summary.documents === 0 ? 0 : (100 * summary.outcomes.success) / summary.documents;
+  // A document that timed out counts in no rate: a machine's speed decides it.
+  const counted = summary.documents - summary.outcomes.timeout;
+  const rate = counted === 0 ? 0 : (100 * summary.outcomes.success) / counted;
   const of = `the baseline's ${shown(base.rates.success)} (${base.date}, ${base.commit.slice(0, 7)})`;
   if (rate < base.rates.success - BASELINE_SLACK)
     return {
@@ -670,6 +687,7 @@ export function baselineOf(summary: RunSummary, date: string, commit: string): B
       date,
       commit,
       documents: summary.documents,
+      timeouts: summary.outcomes.timeout,
       success: summary.outcomes.success,
       rates: summary.rates,
     },
@@ -703,6 +721,46 @@ export function nextBaseline(input: {
     line: `Wrote corpus/baseline.json from the run, at ${input.commit.slice(0, 7)}.`,
   };
 }
+
+/**
+ * What `--write-baseline --from <run.json>` does with a run's file, as CI's run leaves it: the
+ * baseline it gives, or why none, as `nextBaseline` has it, the run's summary counted again from its
+ * rows, its day and its commit its own; only a file of a finished `--committed-only` run over the
+ * whole corpus, which names its commit, gives one.
+ */
+export function baselineFromFile(
+  file: unknown,
+  baseline: Baseline,
+): { baseline?: Baseline; line: string } {
+  const run = z
+    .looseObject({
+      at: z.strictObject({ date: z.iso.date(), commit: z.string().regex(/^[0-9a-f]{40}$/) }),
+      mode: z.looseObject({ answers: z.string(), documents: z.string() }),
+      complete: z.literal(true),
+      documents: z.array(z.looseObject({ id: z.string(), outcome: z.enum(RUN_OUTCOMES) })),
+    })
+    .safeParse(file);
+  if (!run.success)
+    return {
+      line: "corpus/baseline.json is not written: the file is no finished run's, naming its commit.",
+    };
+  return nextBaseline({
+    summary: summaryOf(run.data.documents as unknown as RunRow[]),
+    baseline,
+    scope: {
+      committedOnly: run.data.mode.answers === "committed",
+      whole: run.data.mode.documents === "all",
+    },
+    date: run.data.at.date,
+    commit: run.data.at.commit,
+  });
+}
+
+/**
+ * How many children a run takes at once: the reference runner's four, or fewer on a machine with
+ * fewer cores, as a private repository's free runner, which has two.
+ */
+export const poolSize = (cores = availableParallelism()) => Math.max(1, Math.min(POOL_SIZE, cores));
 
 /** The baseline's own file, from the repository's top, as `git status` names it. */
 const BASELINE_PATH = "apps/editor/corpus/baseline.json";

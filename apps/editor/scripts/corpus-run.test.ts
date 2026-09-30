@@ -8,6 +8,7 @@ import type { AssemblyChecks } from "../src/import/assemble";
 import {
   BASELINE_SLACK,
   Baseline,
+  baselineFromFile,
   baselineOf,
   baselineVerdict,
   changedPaths,
@@ -15,6 +16,7 @@ import {
   nextBaseline,
   OUTCOME_RULE,
   outcomeOf,
+  poolSize,
   type RunRow,
   runDifferences,
   runHeadline,
@@ -170,13 +172,14 @@ describe("the summary, the headline and the table", () => {
     });
     expect(summary.counted).toEqual({ editable: 115, all: 200 });
     expect(summary.locked).toEqual({ date: 5, shape: 10, unmapped: 70 });
-    expect(summary.rates).toEqual({ success: 16.67, editable: 57.5 });
+    // One success of the five that did not time out: a timeout counts in no rate.
+    expect(summary.rates).toEqual({ success: 20, editable: 57.5 });
   });
 
   test("give the shares, where the others stopped and the locked words by reason", () => {
     const [shares, words] = runHeadline(ROWS);
     expect(shares).toBe(
-      "6 documents: 1 success (16.7%), 1 partial (16.7%), 4 refused or stopped (66.7%): 2 refused, 1 with no reference, 0 not parsed, 0 not probed, 0 with no answer, 1 timed out or died.",
+      "6 documents, 1 of which timed out and counts in no share; of the 5 others, 1 success (20.0%), 1 partial (20.0%), 3 refused or stopped (60.0%): 2 refused, 1 with no reference, 0 not parsed, 0 not probed, 0 with no answer, 0 died.",
     );
     expect(words).toBe(
       "Words in editable fields: 57.5% of 200 words in the 2 documents assembled; locked, by reason: unmapped 70, shape 10, date 5.",
@@ -238,6 +241,13 @@ describe("two runs compared", () => {
     expect(found.some((line) => line.startsWith("jake-0001: {"))).toBe(true);
     expect(found.some((line) => line.startsWith("run.summary.documents: 6 against 5"))).toBe(true);
   });
+
+  test("set aside when and at which commit each ran, as their times", () => {
+    const at = (date: string, commit: string) => ({ ...file(ROWS), at: { date, commit } });
+    expect(
+      runDifferences(at("2026-10-01", "a".repeat(40)), at("2026-10-02", "b".repeat(40))),
+    ).toEqual([]);
+  });
 });
 
 describe("the baseline", () => {
@@ -251,6 +261,7 @@ describe("the baseline", () => {
       date: "2026-10-01",
       commit: "0123456789abcdef0123456789abcdef01234567",
       documents: 200,
+      timeouts: 0,
       success: 20,
       rates: { success: 10, editable: 42.5 },
     },
@@ -350,9 +361,68 @@ describe("the baseline", () => {
       date: "2026-10-02",
       commit: "f".repeat(40),
       documents: 6,
+      timeouts: 1,
       success: 1,
-      rates: { success: 16.67, editable: 57.5 },
+      rates: { success: 20, editable: 57.5 },
     });
+  });
+
+  test("leaves a document that timed out out of the success rate it compares", () => {
+    // 18 of the 180 that did not time out is 10%, the baseline's own rate: that holds, where
+    // counting the 20 timeouts as failures would have made it 9%.
+    const timedOut = {
+      documents: 200,
+      outcomes: { ...summaryOf([]).outcomes, success: 18, timeout: 20 },
+    };
+    expect(baselineVerdict(timedOut, baseline, scope).line).toBe(
+      "The success rate, 10.0%, holds against the baseline's 10.0% (2026-10-01, 0123456).",
+    );
+  });
+
+  test("is adopted from a finished run's file, over the whole corpus from the committed answers", () => {
+    const rows: RunRow[] = Array.from({ length: 10 }, (_, i) =>
+      row(`jake-${String(i + 1).padStart(4, "0")}`, "jake", {
+        outcome: i < 2 ? "success" : "partial",
+      }),
+    );
+    const file = (changes: Record<string, unknown> = {}) => ({
+      version: 1,
+      at: { date: "2026-10-03", commit: "c".repeat(40) },
+      mode: { answers: "committed", cache: null, asked: null, documents: "all" },
+      complete: true,
+      summary: summaryOf(rows),
+      documents: rows,
+      ...changes,
+    });
+    // Two in ten is 20%, over the baseline's 10%.
+    expect(baselineFromFile(file(), baseline).baseline?.run).toMatchObject({
+      date: "2026-10-03",
+      commit: "c".repeat(40),
+      documents: 10,
+      success: 2,
+      rates: { success: 20 },
+    });
+    const refused =
+      "corpus/baseline.json is not written: the file is no finished run's, naming its commit.";
+    expect(baselineFromFile(file({ complete: false }), baseline).line).toBe(refused);
+    expect(
+      baselineFromFile(file({ at: { date: "2026-10-03", commit: null } }), baseline).line,
+    ).toBe(refused);
+    const cache = { answers: "cache", cache: "invented-model", asked: null, documents: "all" };
+    expect(baselineFromFile(file({ mode: cache }), baseline).baseline).toBeUndefined();
+    // A run under the baseline is never adopted over it.
+    const lower = rows.map((each) => ({ ...each, outcome: "partial" as const }));
+    expect(baselineFromFile(file({ documents: lower }), baseline).line).toBe(
+      "corpus/baseline.json is not written: the run falls more than a point under it, and a baseline is lowered only by a pull request that edits it.",
+    );
+  });
+});
+
+describe("the run's pool", () => {
+  test("takes as many children as the machine has cores, four at most and one at least", () => {
+    expect(poolSize(2)).toBe(2);
+    expect(poolSize(12)).toBe(4);
+    expect(poolSize(0)).toBe(1);
   });
 });
 
@@ -413,10 +483,40 @@ describe("the run and compare commands", () => {
       "--top and --out go with review export",
     );
     expect(run({}, "--help").stdout).toContain(
-      "| run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model] [--write-baseline] | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>]",
+      "| run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>]",
     );
     // A dozen spawns of the runner, each loading every command's modules: about a second each on
     // a CI runner, so the test takes the engine tests' timeout, as `corpus.test.ts`'s does.
+  }, 60_000);
+
+  test("adopts a baseline from a run's file alone, and never from one that did not finish", () => {
+    expect(run({}, "run", "--from", "run.json").stderr).toContain(
+      "--from goes with run --write-baseline",
+    );
+    expect(
+      run({}, "run", "--write-baseline", "--from", "run.json", "--only", "jake-0001").stderr,
+    ).toContain("run --write-baseline --from <run.json> runs nothing, and takes no other option");
+    const dir = mkdtempSync(join(tmpdir(), "resume-tools-run-"));
+    made.push(dir);
+    const unfinished = join(dir, "run.json");
+    writeFileSync(
+      unfinished,
+      JSON.stringify({
+        version: 1,
+        at: { date: "2026-10-03", commit: "c".repeat(40) },
+        mode: { answers: "committed", cache: null, asked: null, documents: "all" },
+        complete: false,
+        documents: [],
+      }),
+    );
+    const baselineFile = fileURLToPath(new URL("../corpus/baseline.json", import.meta.url));
+    const before = readFileSync(baselineFile, "utf8");
+    const adopted = run({}, "run", "--write-baseline", "--from", unfinished);
+    expect(adopted.status).toBe(1);
+    expect(adopted.stdout).toContain(
+      "corpus/baseline.json is not written: the file is no finished run's, naming its commit.",
+    );
+    expect(readFileSync(baselineFile, "utf8")).toBe(before);
   }, 60_000);
 
   test("the review's export never writes over a folder that is not an export", () => {

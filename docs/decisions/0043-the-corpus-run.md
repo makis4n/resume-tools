@@ -19,8 +19,12 @@ and filled its cache. Items 12 (the import in the browser), 13 (the report and i
 
 - `corpus run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model]
   [--write-baseline]` takes each fetched document, or those `--only` or a file of ids names, in the
-  reference runner's pool of four children, 900 s a document, a model step's 300 s more with
-  `--allow-model`. The child is `corpus assemble`'s, which `corpus oracle` and `corpus review check`
+  reference runner's pool, as many children as the machine has cores and four at most (`poolSize`:
+  two on a private repository's free runner), 900 s a document, a model step's 300 s more with
+  `--allow-model`. It writes its JSON after each document, and on SIGINT or SIGTERM, as a CI step's
+  time running out sends, the pool kills its children and leaves what they held undone, and the run
+  ends as it would, printing its table and writing its JSON, marked unfinished, for what it did, and
+  exits 1. The child is `corpus assemble`'s, which `corpus oracle` and `corpus review check`
   run too, so the run adds no copy of the pipeline: the intake, the reference compile, the Latin
   Modern swap, the signatures, the parse, the probe, the naming request, its answers, the XeTeX
   rewrite and its check, the assembly, the four checks and the harness.
@@ -71,8 +75,9 @@ and filled its cache. Items 12 (the import in the browser), 13 (the report and i
 
 ### What a run writes
 
-- `--json` writes the mode (the committed answers alone or with a model's cache, the model asked if
-  any, every document or some), the summary and a row per document, ids and counts only: the outcome
+- `--json` writes the day and the commit it ran at (`at`), the mode (the committed answers alone or
+  with a model's cache, the model asked if any, every document or some), whether it finished
+  (`complete`), the summary and a row per document, ids and counts only: the outcome
   and its refusal's reason; the editable rate; the words editable and locked by reason; the fields
   editable, raw, required and locked by reason; the sections mapped and locked; the controls proven
   and dropped; the redefinitions applied and dropped, counted; what `outcomeOf` counted; the
@@ -83,37 +88,47 @@ and filled its cache. Items 12 (the import in the browser), 13 (the report and i
   Latin Modern swap, the parse, the probe, the naming, the fonts and the checks, and of the whole
   (`times`).
 - It prints a line a document, then one table, per family and in all, and a headline: the documents,
-  the shares of success, partial and refused or stopped, with where the others stopped; the editable
-  rate over the documents assembled; and the locked words by reason. Everything goes through
-  `printable`.
+  and those that timed out, which a machine's speed decides and which count in no share and no rate;
+  the shares of the others that are a success, partial and refused or stopped, with where the
+  stopped ones stopped; the editable rate over the documents assembled; and the locked words by
+  reason. Everything goes through `printable`.
 - `corpus compare <run.json> <run.json> [...]` compares each run's JSON with the next, every field
-  but each row's `times`, and prints each path that differs with its two values, which are counts
-  and words of closed lists, exiting 1 when any does: item 17's bar, three runs in a row that agree,
-  is checked with it.
+  but each row's `times` and the file's `at`, and prints each path that differs with its two values,
+  which are counts and words of closed lists, exiting 1 when any does: item 17's bar, three runs in
+  a row that agree, is checked with it.
 
 ### The baseline
 
-- `apps/editor/corpus/baseline.json` holds the date, the commit, the documents, the successes and
-  the two rates, in percent, of a `--committed-only` run over the whole corpus. It is committed as a
-  placeholder, `"run": null`, which is no baseline yet: nothing is compared until the full run of
-  this item's pull request writes it.
-- Only a `--committed-only` run over every fetched document is held to it: it exits 1 when its
-  success rate falls more than one point under the baseline's, saying so in one line; a run with the
-  cache, the model or a subset says it is not held to it. The editable rate is recorded beside, and
-  not compared.
+- `apps/editor/corpus/baseline.json` holds the date, the commit, the documents, those that timed
+  out, the successes and the two rates, in percent, of a `--committed-only` run over the whole
+  corpus, the success rate of the documents that did not time out. It is committed as a placeholder,
+  `"run": null`, which is no baseline yet: nothing is compared until the full run of this item's
+  pull request writes it.
+- Only a finished `--committed-only` run over every fetched document is held to it: it exits 1 when
+  its success rate, a document that timed out counting in neither its rate nor the baseline's, falls
+  more than one point under the baseline's, saying so in one line; a run with the cache, the model
+  or a subset, or one a signal stopped, says it is not held to it. The editable rate is recorded
+  beside, and not compared.
 - A pull request raises it by hand when the rate rises. `--write-baseline` writes it from a
   `--committed-only` run over the whole corpus, with the day and the commit, and never over a
   baseline the run falls more than a point under: a person lowers a baseline by editing it in a
   pull request, where it is read (`nextBaseline`). It refuses a checkout that differs from its
   commit, a file git does not track among them, as an answer not yet committed under
   `corpus/answers/` is, which the run reads though the commit lacks it.
+- `corpus run --write-baseline --from <run.json>` runs nothing, and writes the baseline from a run's
+  JSON, as CI's run leaves it as an artifact, by the same rule, the summary counted again from its
+  rows, the day and the commit its own: only a finished `--committed-only` run over the whole corpus
+  that names its commit gives one (`baselineFromFile`).
 
 ### The workflow
 
 `.github/workflows/corpus.yml`, still started by hand alone (decision 0035), runs `corpus run
 --committed-only --json run.json` after the leak check: the table and its headline to the job's
-summary, `run.json` as an artifact, the step given 120 minutes, the free runner having taken about
-an hour, and the job 170. It holds no key, ever: the run reads the committed answers alone.
+summary, `run.json` as an artifact, whatever the step's end. Its time on the free runner is not yet
+measured, about an hour the estimate with four children where a private repository's runner has two
+cores and takes two: the step is given three hours and the job 230 minutes, and a step stopped short
+still leaves its table and `run.json` for what it did. It holds no key, ever: the run reads the
+committed answers alone.
 
 ### Templates
 

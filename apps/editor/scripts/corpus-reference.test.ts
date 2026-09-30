@@ -313,6 +313,26 @@ describe("the pool", () => {
     expect((results.get("hangs") as PoolResult).wall).toBeGreaterThanOrEqual(900);
   }, 30_000);
 
+  test("stops when told, keeping what ended and leaving the rest undone", async () => {
+    const controller = new AbortController();
+    const tasks = ["a", "hangs", "b", "c", "d"].map((id, i) => ({ id, message: () => i }));
+    let ended = 0;
+    const results = await runPool({
+      script: child,
+      tasks,
+      size: 2,
+      limitMs: 20_000,
+      signal: controller.signal,
+      // Once `a` and `b` are back, while `hangs` holds the other child, stop the pool.
+      onResult: () => {
+        if (++ended === 2) controller.abort();
+      },
+    });
+    // Nothing the pool stopped is counted as timed out or died, and nothing after it was sent.
+    for (const result of results.values()) expect(result).toMatchObject({ reply: {} });
+    expect([...results.keys()].sort()).toEqual(["a", "b"]);
+  }, 30_000);
+
   test("gives up on a child that cannot start", async () => {
     const broken = join(folder, "broken.mjs");
     writeFileSync(broken, "process.exit(1);");
