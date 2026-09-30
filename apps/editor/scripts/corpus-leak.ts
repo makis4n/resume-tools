@@ -2,14 +2,17 @@
  * What leaves the browser, over the corpus (milestone 3 item 11, decision 0033): `corpus leak`
  * takes each fetched document in as the reference runner does (`corpus-reference.ts`), and for
  * each that compiles to a reference and whose body parses builds its naming request as the import
- * will (`src/import/naming.ts`): with the upload's sources, the page's strings its reference sets
- * (`pageStrings`), the texts its preamble stores, and the header's values the finder gives by the
- * seed's answers (`headerOf`). It checks each request with the leak detector, fed all of those
- * (`findLeaks`), and prints how many documents it checked, passed and failed, and for each failure
- * the macro, the kind of place and the kind of text, never the text. A document whose page the
- * detector cannot read is refused, as the import refuses it (`pageReadable`), and counted so, never
- * passed; so is one whose request holds only a single word the builder does not mask by, which the
- * check alone looks for, stricter on purpose (`withheld`): the gate refuses it, and nothing leaves.
+ * sends it, by the import's own function (`importRequest` of `src/import/naming.ts`, decision
+ * 0038): with the upload's sources and the page's strings its reference sets (`pageStrings`), and
+ * without the header's values, which only the answers to the request give. It checks each request
+ * with the leak detector, fed those, the texts its preamble stores and, besides, the header's
+ * values the finder gives by the seed's answers (`headerOf`), so that a header word the request
+ * holds is found (`findLeaks`), and prints how many documents it checked, passed and failed, and
+ * for each failure the macro, the kind of place and the kind of text, never the text. A document
+ * whose page the detector cannot read is refused, as the import refuses it (`pageReadable`), and
+ * counted so, never passed; so is one whose request holds only a single word the builder does not
+ * mask by, which the check alone looks for, stricter on purpose (`withheld`): the gate refuses it,
+ * and nothing leaves.
  * It exits 1 when the proof shrinks or fails (`leakFailures`): a request holds text the builder
  * should have masked, the builder made a request its contract refuses, a document crashed or timed
  * out, or fewer documents were checked or refused than have a reference.

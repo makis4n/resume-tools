@@ -38,7 +38,7 @@ import { type AssemblyChecks, type LockedPart, SIZE_OPTIONS } from "./assemble";
 import type { Tree as TexTree } from "./fonts";
 import { type Intake, intake, type Upload } from "./intake";
 import { inLatinModern } from "./latin-modern";
-import { assertNoText, buildRequest, pageStrings, sourcesOf } from "./naming";
+import { assertNoText, importRequest } from "./naming";
 import { bodyOf, bodyOfText, buildTree, readBody } from "./parse";
 import { extensionOf, nameOf } from "./paths";
 import { probe, probeUses } from "./probe";
@@ -274,23 +274,23 @@ export async function importResume(
     if (probed.baseline !== undefined) return refusal("probe");
 
     enter("request");
-    const sources = sourcesOf(taken);
-    const page = await pageStrings(made, fonts, taken.files);
-    const requested = await buildRequest(built, found, probed, body.preamble, { sources, page });
-    if (isRefusal(requested)) return requested;
-    const { request, names } = requested;
+    // Built as `corpus leak` proves it, by the same function (`importRequest`), with the upload's
+    // sources and the page's strings and without the header's values, which only the answers give.
+    const sent = await importRequest({
+      tree: built,
+      signatures: found,
+      probe: probed,
+      preamble: body.preamble,
+      intake: taken,
+      reference: made,
+      fonts,
+    });
+    if (isRefusal(sent)) return sent;
+    const { request, names } = sent;
     try {
       // Stricter than the masking, fed the same: the request leaves only if it holds none of the
       // resume's text (decision 0033).
-      assertNoText(request, {
-        tree: built,
-        stored: probed.candidates
-          .filter((each) => each.where === "preamble")
-          .map((each) => each.text),
-        sources,
-        page,
-        names,
-      });
+      assertNoText(request, sent.document);
     } catch (error) {
       return refusal("request", undefined, error instanceof Error ? error.message : undefined);
     }

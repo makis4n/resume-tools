@@ -29,8 +29,9 @@ question.
   0033); the naming service; a XeTeX document's fonts declared by file and checked (decision 0023);
   and `validate`. It imports nothing of Node's. The corpus runners' Node parts, the answer folder
   and the header's values found from it, stay in `scripts/`: in the browser the service's reply
-  carries the answers, and the page's strings and the preamble's stored texts already mask what
-  the header shows, so one request goes, not the runner's two.
+  carries the answers, and one request goes, built without the header's values, which only its
+  answers give. It is built by one function (`importRequest`), which `corpus leak` proves as it
+  stands, the header's values given to the check besides (decision 0033's update).
 - It runs where the session is: the worker gains an `import` request, which loads the pipeline,
   the fonts the page's glyphs are read with and the tree's images only when the first import asks,
   and reports progress under the request's id. The worker is built as an ES module

@@ -211,9 +211,10 @@ if (!fetched)
   );
 
 describe.skipIf(!fetched || !engineAvailable())("the corpus's naming requests", () => {
-  // Each document that compiles and parses, its request built as the import builds it and checked
-  // with the detector fed its sources, its page, its stored texts and its header's values, as
-  // `corpus leak` does; what fails is named by its macros and kinds of text alone.
+  // Each document that compiles and parses, its request built as the import sends it, without the
+  // header's values (`importRequest`), and checked with the detector fed its sources, its page, its
+  // stored texts and its header's values besides, as `corpus leak` does; what fails is named by
+  // its macros and kinds of text alone.
   test("hold none of their documents' text", async () => {
     const manifest = parseJson(Manifest, readFileSync(MANIFEST_FILE, "utf8"), MANIFEST_FILE);
     const report = parseJson(

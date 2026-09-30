@@ -285,3 +285,17 @@ characters and no command's name.
   of the seed's 65 keys moved (`corpus seed`, `corpus-seed.test.ts`, whose requests are built with
   the page, and with every corpus page's).
 - Documents in T1's Computer Modern are refused until item 7 rewrites them to Latin Modern.
+
+## Update, 1 October 2026
+
+Decision 0038: the browser builds its request with the upload's sources and the page's strings, and
+without the header's values, which only the answers to that request give, and gates it with
+`assertNoText` fed the tree, the texts the preamble stores, the sources, the page and the names; the
+first consequence above no longer holds for item 12. `corpus leak` and the corpus-wide test proved
+the request built with the header's values, which no browser sends. They now build the request the
+browser sends, through the same function (`importRequest` in `naming.ts`), so that the two cannot
+drift, and check it with the header's values the finder gives besides, so that a header word the
+request holds is found: a three-letter word of the header's in the name of a macro the document
+defines is one such, since the page's words reach a name from four letters (`nameNeedlesOf`). On
+the 20-document sample the check came out the same before and after: 20 checked, 19 passed, 0
+failed, 1 withheld by the gate for a single word, 0 refused.

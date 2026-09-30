@@ -2897,6 +2897,42 @@ export async function buildRequest(
   return { request: parsed.data, names: real };
 }
 
+/** The naming request an import sends, and the document's text the check reads it against. */
+export interface SentRequest extends BuiltRequest {
+  /** What `assertNoText` and `findLeaks` read the request against. */
+  document: DocumentText;
+}
+
+/**
+ * The naming request an import sends (decision 0038), built as the browser builds it and as
+ * `corpus leak` proves it, one function for both so that the two cannot drift: with the upload's
+ * sources and the page's strings its reference sets, read with the upload's fonts first
+ * (`pageStrings`), and never with the header's values, which only the answers to the request give;
+ * with what the check reads it against, the body's tree, the texts the preamble stores, the
+ * sources, the page and the names the request writes as placeholders. A page the detector cannot
+ * read refuses the request, as `buildRequest` does.
+ */
+export async function importRequest(inputs: {
+  tree: Tree;
+  signatures: EngineSignatures;
+  probe: Pick<Probe, "macros" | "candidates">;
+  /** The main file's text before `\begin{document}`. */
+  preamble: string;
+  intake: Pick<Intake, "main" | "files">;
+  reference: GlyphStream;
+  fonts: PageFonts;
+}): Promise<SentRequest | Refusal> {
+  const { tree, signatures, probe, intake } = inputs;
+  const sources = sourcesOf(intake);
+  const page = await pageStrings(inputs.reference, inputs.fonts, intake.files);
+  const built = await buildRequest(tree, signatures, probe, inputs.preamble, { sources, page });
+  if ("refused" in built) return built;
+  const stored = probe.candidates
+    .filter((each) => each.where === "preamble")
+    .map((each) => each.text);
+  return { ...built, document: { tree, stored, sources, page, names: built.names } };
+}
+
 /**
  * A name a request gives back, as the document names it: a placeholder the builder wrote in place
  * of the person's word (`BuiltRequest.names`) read back, its forms as `renamer` writes them, and

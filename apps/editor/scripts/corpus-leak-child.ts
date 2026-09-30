@@ -2,10 +2,12 @@
  * One child of `corpus leak`'s pool (`corpus-leak.ts`, decision 0033): an engine session and fonts
  * of its own, which take one document at a time, as a zip, through the intake, the reference
  * compile, the signatures' two compiles, asked of the body's commands and the preamble's, the parse
- * and the candidates the probe would find, and build its naming request as the import will: with
- * the upload's sources, the page's strings its reference sets, read with the upload's fonts, the
- * texts its preamble stores and the header's values the finder gives by the seed's answers
- * (`headerOf`). It checks the request with the detector, fed all of those (`findLeaks`), and
+ * and the candidates the probe would find, and build its naming request as the import sends it, by
+ * the import's own function (`importRequest`, decision 0038): with the upload's sources and the
+ * page's strings its reference sets, read with the upload's fonts, and without the header's values,
+ * which only the answers to the request give. It checks that request with the detector, fed the
+ * texts its preamble stores and, besides, the header's values the finder gives by the seed's
+ * answers (`headerOf`), so that a header word the request holds is found (`findLeaks`), and
  * answers with the document's row: counts, and for each leak the kind of place, the macro's name
  * when it is plainly one, and the kind of text, never the text. A page the detector cannot read
  * refuses the request, as the import refuses it, and a request the builder made that its contract
@@ -81,6 +83,7 @@ async function main() {
   const {
     buildRequest,
     findLeaks,
+    importRequest,
     InvalidRequest,
     isOwn,
     ownNames,
@@ -162,35 +165,27 @@ async function main() {
         glyphs: page.glyphs,
         readable: page.readable,
       };
-      // The header's values, found by the answers the request without them finds, and the request
-      // again with them, as the import builds it; and once without the page, to count what the
-      // page masked.
-      const plain = await buildRequest(built, found, probed, body.preamble, { sources, page });
-      if ("refused" in plain) return done({ outcome: "refused", engine, page: pageCounts });
+      // The request the import sends, by the import's own function; the header's values, found by
+      // the answers that request finds, which it is built without and which the check is given
+      // besides; and the request once without the page, to count what the page masked.
+      const sent = await importRequest({
+        tree: built,
+        signatures: found,
+        probe: probed,
+        preamble: body.preamble,
+        intake: taken,
+        reference: made,
+        fonts,
+      });
+      if ("refused" in sent) return done({ outcome: "refused", engine, page: pageCounts });
       const header = headerOf(
         candidates,
-        commandAnswers(plain.request, answers, (name) => realName(plain.names, name)),
+        commandAnswers(sent.request, answers, (name) => realName(sent.names, name)),
       );
-      const options = { sources, header };
-      const requested = await buildRequest(built, found, probed, body.preamble, {
-        ...options,
-        page,
-      });
-      const unpaged = await buildRequest(built, found, probed, body.preamble, options);
-      if ("refused" in requested || "refused" in unpaged)
-        return done({ outcome: "refused", engine, page: pageCounts });
-      const request = requested.request;
-      const stored = candidates
-        .filter((each) => each.where === "preamble")
-        .map((each) => each.text);
-      const leaks = findLeaks(request, {
-        tree: built,
-        header,
-        stored,
-        sources,
-        page,
-        names: requested.names,
-      });
+      const unpaged = await buildRequest(built, found, probed, body.preamble, { sources });
+      if ("refused" in unpaged) return done({ outcome: "refused", engine, page: pageCounts });
+      const request = sent.request;
+      const leaks = findLeaks(request, { ...sent.document, header });
       const owned = ownNames(sources);
       const meaning = (name: string) => {
         const macro = Object.hasOwn(found.macros, name) ? found.macros[name] : undefined;
@@ -206,12 +201,12 @@ async function main() {
           (name) => isOwn(name, owned),
           header,
           {
-            request: (name) => realName(requested.names, name),
+            request: (name) => realName(sent.names, name),
             unpaged: (name) => realName(unpaged.names, name),
           },
         ),
         page: pageCounts,
-        names: requested.names.size,
+        names: sent.names.size,
         findings: leakFindings(leaks),
       });
     } catch (error) {
