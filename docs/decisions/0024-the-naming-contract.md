@@ -1,6 +1,6 @@
 # 0024. The naming contract, and the seed answers
 
-Date: 2026-09-27 · Status: proposed
+Date: 2026-09-27 · Status: proposed; reviewed answers may come from Opus (0037)
 
 ## Context
 
