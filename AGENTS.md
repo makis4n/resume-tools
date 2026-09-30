@@ -88,6 +88,27 @@ git ls-files -z 'packages/contracts/*.schema.json' |
 Use `pnpm --filter @resume-tools/editor <script>` to run one package, and `uv run` for anything
 Python. Do not call `npm`, `npx`, `pip` or a bare `python` in this repository.
 
+## The corpus
+
+`.github/workflows/corpus.yml` fetches the public resumes the import is measured on and runs the
+corpus checks over them: the survey, the leak check of every naming request, and, from milestone
+3's item 17, the import run. It runs only when a person starts it (decision 0035).
+
+- When your change touches the import pipeline (`apps/editor/src/import/`), the naming request or
+  its masking (`packages/naming/`), the corpus scripts or manifest (`apps/editor/scripts/corpus*.ts`,
+  `apps/editor/corpus/`), or the engine's TeX Live tree (`apps/editor/scripts/fetch-engine.ts` and
+  the scripts it uses), say in your final message and in the pull request description that a
+  corpus run is worth doing, which check your change could move, and the command:
+
+  ```sh
+  gh workflow run corpus.yml --ref <branch>
+  ```
+
+  Anything that changes what the naming request holds matters most: the leak check is the proof
+  that no resume text leaves the browser.
+- The decision is the person's. Start a run only when they ask, never treat one as a merge
+  requirement, and do not mention it for changes outside those paths.
+
 ## Boundaries you must not cross
 
 - The editor never imports from `apps/ats`. The ATS never imports from `apps/editor`. Sharing
@@ -145,3 +166,5 @@ These come from the plan and are not negotiable in code:
 3. Any new dependency is named in the description.
 4. Any decision is recorded in `docs/decisions/`.
 5. Nothing was pushed to `main`.
+6. If the change touches a path listed under "The corpus", you suggested a corpus run and left it
+   to the person.
