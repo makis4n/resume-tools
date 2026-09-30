@@ -6,6 +6,9 @@ import { serveNaming } from "./scripts/serve-naming.ts";
 
 export default defineConfig({
   plugins: [react(), serveEngine(resolve(import.meta.dirname, ".engine")), serveNaming()],
+  // The compile worker is a module worker, which loads the import's pipeline only when a resume is
+  // imported (decision 0038), so its build is one too, split where it imports.
+  worker: { format: "es" },
   test: {
     environment: "node",
     include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.ts"],

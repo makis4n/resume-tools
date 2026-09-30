@@ -595,7 +595,8 @@ rewrite, the tree of layout 7, the M4 Pro, four children beside other work: 15.4
   and the compile stops: 20 of Jake's forks, which check 3 finds and reports (`repeatable`) for
   item 13. The section and the part that closes its list are one unit, which the assembly is to
   keep together, locked or moved as one, before item 12 stores an import (the milestone's owed
-  table).
+  table). (Decision 0038: the section keeps what stands up to the closer in its extras, `after`,
+  and goes as one.)
 - **The seed answers only the launch templates' own macros.** A fork that redefined a macro, as
   many of Jake's did, has no answer for it until item 9, and what its macros set is kept whole:
   in the corpus, most of what is locked is `unmapped` for want of an answer.

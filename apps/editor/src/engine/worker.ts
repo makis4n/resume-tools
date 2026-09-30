@@ -4,8 +4,16 @@
  * requests, which a worker may make, because TeX asks for a file in the middle of a run. Only the
  * HTTP cache can answer such a request, so every file comes from a URL under the tree's tag, which
  * the dev server marks immutable (`src/engine/urls.ts`).
+ *
+ * An import (milestone 3 item 12, decision 0038) runs here too, on the same session, in a job of
+ * its own, so that one engine is loaded at a time: the pipeline (`src/import/run.ts`) is loaded
+ * only when the first import asks for it, with the fonts the page's glyphs are read with, fetched
+ * as the page fetches them, and the naming service called on the editor's own origin. Its progress
+ * goes to the client as it comes, under the request's id.
  */
 
+import type { Upload } from "../import/intake";
+import type { ImportOutcome, ImportProgress } from "../import/run";
 import type { EngineManifest } from "./manifest";
 import type { EngineReply, EngineRequest } from "./protocol";
 import { EngineSession, type LoadEngine } from "./session";
@@ -20,7 +28,9 @@ function getSync(url: string): Uint8Array {
   return new Uint8Array(request.response as ArrayBuffer);
 }
 
-let starting: ReturnType<typeof EngineSession.start> | undefined;
+let starting:
+  | Promise<Awaited<ReturnType<typeof EngineSession.start>> & { manifest: EngineManifest }>
+  | undefined;
 
 async function start() {
   const response = await fetch(manifestUrl());
@@ -30,17 +40,68 @@ async function start() {
   const { default: load } = (await import(/* @vite-ignore */ engineUrl(tag, "busytex.mjs"))) as {
     default: LoadEngine;
   };
-  return EngineSession.start({
+  const started = await EngineSession.start({
     load,
     manifest,
     read: (path) => getSync(fileUrl(tag, path)),
     locateFile: (name) => engineUrl(tag, name.split("/").pop() ?? name),
   });
+  return { ...started, manifest };
+}
+
+/** What an import runs with beside the session, made at the first import and kept. */
+let importing:
+  | Promise<(files: Upload[], onStep: (step: ImportProgress) => void) => Promise<ImportOutcome>>
+  | undefined;
+
+/**
+ * The import's runner on this worker's session: the pipeline, loaded now, with the fonts the page
+ * reads glyphs with, fetched as the page fetches them into the HTTP cache the engine reads from;
+ * the tree's fonts and images, which the intake and the reference read; and the naming service on
+ * the page's own origin (`nameOnService`).
+ */
+async function importer(session: EngineSession, manifest: EngineManifest) {
+  const [
+    { importResume },
+    { FontLibrary },
+    { TexLiveIndex },
+    { readTree },
+    { treeImages },
+    { nameOnService },
+  ] = await Promise.all([
+    import("../import/run"),
+    import("../page/fonts"),
+    import("../page/texlive"),
+    import("../import/fonts"),
+    import("../import/intake"),
+    import("../import/service"),
+  ]);
+  const tag = engineTag(manifest);
+  const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) => {
+    const response = await fetch(fileUrl(tag, path));
+    if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
+  });
+  const tree = readTree(manifest.files, manifest.fonts);
+  const treeImage = treeImages(manifest.files, (path) => getSync(fileUrl(tag, path)));
+  return (files: Upload[], onStep: (step: ImportProgress) => void) =>
+    importResume(
+      files,
+      {
+        session,
+        fonts,
+        tree,
+        treeImage,
+        name: (request, names, signal) =>
+          nameOnService(request, (input, init) => fetch(input, init), signal, names),
+      },
+      onStep,
+    );
 }
 
 async function handle(request: EngineRequest & { id: number }): Promise<EngineReply> {
   starting ??= start();
-  const { session, result: started } = await starting;
+  const { session, result: started, manifest } = await starting;
   switch (request.type) {
     case "start":
       return { id: request.id, result: started };
@@ -52,6 +113,9 @@ async function handle(request: EngineRequest & { id: number }): Promise<EngineRe
     case "putFormat":
       session.putFormat(request.engine, request.name, request.format);
       return { id: request.id, result: null };
+    case "dropFormat":
+      session.dropFormat(request.engine, request.name);
+      return { id: request.id, result: null };
     case "compile":
       return {
         id: request.id,
@@ -62,6 +126,20 @@ async function handle(request: EngineRequest & { id: number }): Promise<EngineRe
       return { id: request.id, result: null };
     case "pdf":
       return { id: request.id, result: session.pdf(request.job, request.options) };
+    case "import": {
+      // One that failed to load is tried again at the next import.
+      importing ??= importer(session, manifest).catch((error: unknown) => {
+        importing = undefined;
+        throw error;
+      });
+      const run = await importing;
+      const { id } = request;
+      const result = await run(request.files, (progress) => {
+        const reply: EngineReply = { id, progress };
+        self.postMessage(reply);
+      });
+      return { id, result };
+    }
   }
 }
 
