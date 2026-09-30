@@ -1,6 +1,6 @@
 # 0005. No CODEOWNERS and no required reviews
 
-Date: 2026-09-24 · Status: accepted
+Date: 2026-09-24 · Status: accepted; CODEOWNERS is back for the two apps (0034)
 
 ## Context
 
