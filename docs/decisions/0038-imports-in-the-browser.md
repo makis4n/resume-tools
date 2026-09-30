@@ -130,6 +130,15 @@ takes both. What stands after the closer stays a locked part of its own. An engi
 a section from an invented Jake-shaped fork and compiles; without the change it stops.
 
 ### The way in
+The last unit's closer stood past the sections' region, among the template's code the document
+snippet keeps after `{{sections}}`, so the review found the last section, and a last locked part,
+still stopped the compile once removed. The region now runs to the closer of each list its units
+open, so that the last section keeps the closer in its `after`, a last section of entries takes its
+whole list, and a last locked part takes the closer into its LaTeX. Check 3 removes the last unit
+of each kind as well as the first, since the first alone missed a last one that could not go. Engine
+tests on the done-test's fork remove its last section, bullets inside the entries' list and a
+section of entries, and compile.
+
 
 The document list gets "New", which opens a chooser of the three curated templates, each with its
 name, a line on its look and its engine; and "Import a resume", a file picker taking `.tex` and
@@ -142,12 +151,14 @@ starts; a refusal comes back as the list's notice, in its own words; success ope
 ## Done
 
 The engine test `src/import/run.test.ts` imports an invented fork of Jake's Resume, upstream's
-preamble and commands with invented words (`src/test/jake-fork.ts`), through `importResume` on the
-Node session, with the naming service's handler over the committed answers and no model or network:
-the seed answers all 7 of its macros, the import takes 30 compiles and 5.5 s on the M4 Pro under
-other work, 23 fields and 76 words editable, the heading block and the skills list kept; it is
-stored, opened through the compiler, a title edited, saved, its PDF made, and opened again from a
-new store over the same database, the edit on its page. The same fork imports in the dev server
+preamble and commands with invented words (`src/test/jake-fork.ts`), and a picture in its heading
+beside it, through `importResume` on the Node session, with the naming service's handler over the
+committed answers and no model or network: the seed answers all 7 of its macros, the import takes
+33 compiles and 5.5 s on the M4 Pro under other work, 23 fields and 76 words editable, the heading
+block and the skills list kept, and its job holds the picture's stand-in, without which the body
+stops. It is stored, opened through the compiler, a title edited, saved, its PDF made, and opened
+again from a new store over the same database on a new TeX session, the job the store kept the
+import's, the edit on its page and its PDF made. The same fork imports in the dev server
 from the picker, as the brief's manual check asks, and opens, edits, makes its PDF and reopens after
 a reload; a refusal, a cancel and the next import on a fresh worker, two imports sharing one package
 until the last goes, a XeTeX document (9 s) and two dropped files with an image named with a space

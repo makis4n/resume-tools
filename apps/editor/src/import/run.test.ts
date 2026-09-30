@@ -6,7 +6,7 @@ import { Resume } from "@resume-tools/resume-model";
 import { strToU8, unzipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
 import { Compiler, type Engine, type Shown } from "../editor/compiler";
-import { type Document, fieldsOf, History } from "../editor/document";
+import { apply, type Document, fieldsOf, History } from "../editor/document";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
@@ -16,9 +16,11 @@ import { handleName, LIMITS, type NameDeps, type ServiceCache } from "../service
 import { MemoryPreambleCache } from "../service/preamble";
 import { MemoryRateStore } from "../service/rate";
 import { DocumentStore } from "../storage/store";
+import { generateBody, generateFormat } from "../templates/generate";
 import { resolveTemplate, type Template } from "../templates/resolve";
 import { JAKE_FORK } from "../test/jake-fork";
 import { readTree } from "./fonts";
+import { standIn } from "./images";
 import { treeImages } from "./intake";
 import { isRefusal } from "./refusal";
 import {
@@ -39,6 +41,33 @@ const tex = (name: string, text: string) => ({ name, bytes: strToU8(text) });
 
 /** The committed answers, the seed among them, which the naming route reads first. */
 const ANSWERS_DIR = fileURLToPath(new URL("../../corpus/answers/", import.meta.url));
+
+/** The fork's skills, as upstream sets them: an `itemize` of its own, the document's last section. */
+const SKILLS = String.raw`\section{Technical Skills}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+     \textbf{Languages}{: Invented, Words, Other} \\
+     \textbf{Tools}{: Quill, Wren}
+    }}
+ \end{itemize}`;
+
+/** The fork's projects, the section before its skills. */
+const PROJECTS = "%-----------PROJECTS-----------";
+
+/**
+ * The fork with a picture in its heading, a PNG the upload holds beside it, which the job keeps a
+ * stand-in of, so that a document compiled without its job's files stops.
+ */
+const WITH_PHOTO = JAKE_FORK.replace(
+  "\\usepackage{tabularx}\n",
+  "\\usepackage{tabularx}\n\\usepackage{graphicx}\n",
+).replace("\\begin{center}\n", "\\begin{center}\n    \\includegraphics[height=1cm]{photo} \\\\\n");
+
+/** An invented picture of 60 by 60 pixels, blank, as the upload's photo. */
+const PHOTO = {
+  name: "photo.png",
+  bytes: standIn({ kind: "png", width: 60, height: 60, xdpi: 72, ydpi: 72 }),
+};
 
 describe("uploadOf", () => {
   test("takes one file as it is, and packs several into a zip at their names", () => {
@@ -113,24 +142,27 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
       names,
     );
 
-  /** The compile engine the app's worker is, over the Node session, as the compiler takes one. */
-  const engine = (): Engine => ({
+  /** The compile engine the app's worker is, over a Node session, as the compiler takes one. */
+  const engineOf = (on: EngineSession) => (): Engine => ({
     start: async () => {},
-    dump: async (kind, name, preamble, files) => session.dump(kind, name, preamble, files),
-    putFormat: async (kind, name, format) => session.putFormat(kind, name, format),
-    forget: async (job) => session.forget(job),
-    compile: async (kind, format, body, options) => session.compile(kind, format, body, options),
-    pdf: async (job, options) => session.pdf(job, options),
-    dropFormat: async (kind, name) => session.dropFormat(kind, name),
+    dump: async (kind, name, preamble, files) => on.dump(kind, name, preamble, files),
+    putFormat: async (kind, name, format) => on.putFormat(kind, name, format),
+    forget: async (job) => on.forget(job),
+    compile: async (kind, format, body, options) => on.compile(kind, format, body, options),
+    pdf: async (job, options) => on.pdf(job, options),
+    dropFormat: async (kind, name) => on.dropFormat(kind, name),
     terminate: () => {},
   });
 
-  /** A compiler over the session, and the next page it shows, or its message if it shows none. */
-  function editor(store: DocumentStore) {
+  /**
+   * A compiler over a session, the test's by default, and the next page it shows, or its message
+   * if it shows none.
+   */
+  function editor(store: DocumentStore, on: EngineSession = session) {
     let onPage: (shown: Shown) => void = () => {};
     let onError: (error: Error) => void = () => {};
     const compiler = new Compiler(
-      engine,
+      engineOf(on),
       deps.fonts,
       {
         page: (shown) => onPage(shown),
@@ -158,10 +190,47 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
   const spelt = (shown: Shown, field: string) =>
     (shown.page.fields.get(field)?.glyphs ?? []).map((glyph) => glyph.text).join("");
 
+  /** An import of `source` as the fork's main file, which must come through. */
+  async function imported(source: string, ...more: { name: string; bytes: Uint8Array }[]) {
+    const outcome = await importResume([tex("resume.tex", source), ...more], {
+      ...deps,
+      name: naming,
+    });
+    if (isRefusal(outcome)) throw new Error(`refused: ${outcome.message}`);
+    return outcome;
+  }
+
+  /**
+   * Whether a resume compiles through an import's package, from its format, in a job given what the
+   * import keeps for its compiles, as the editor's compiles are given it.
+   */
+  function compiles(done: Imported, resume: Document["resume"]): boolean {
+    const pkg = done.package;
+    const format = generateFormat(pkg, {});
+    const files = {
+      ...done.job.files,
+      ...(done.job.bbl === undefined ? {} : { "check.bbl": done.job.bbl }),
+    };
+    try {
+      if (!session.dump(pkg.engine, format.name, format.preamble, pkg.files).ok) return false;
+      const body = generateBody(pkg, resume, {}).latex;
+      return session.compile(pkg.engine, format.name, body, { job: "check", maxPasses: 3, files })
+        .ok;
+    } finally {
+      session.dropFormat(pkg.engine, format.name);
+      session.forget("check");
+    }
+  }
+
+  /** The resume of an import with the section of the id given removed, as the side panel removes it. */
+  const without = (done: Imported, id: string) =>
+    apply(done.document, { type: "structure", op: { op: "removeSection", id } }).resume;
+
   test("imports a fork of Jake's Resume, which opens, edits, saves, downloads and opens after a reload", async () => {
     const steps: ImportProgress[] = [];
+    // With a picture beside it, which its compiles need: its job keeps a stand-in of it.
     const outcome = await importResume(
-      [tex("resume.tex", JAKE_FORK)],
+      [tex("resume.tex", WITH_PHOTO), PHOTO],
       { ...deps, name: naming },
       (step) => steps.push(step),
     );
@@ -188,9 +257,18 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
     expect(imported.package.id).toMatch(/^import-[0-9a-f]{12}$/);
     expect(imported.document.template).toBe(imported.package.id);
     expect(imported.report.checks.fields.editable).toBeGreaterThan(8);
-    expect(imported.upload).toEqual({ files: [tex("resume.tex", JAKE_FORK)] });
-    // The job's files are the upload's but for the main file, which the body replaces.
+    expect(imported.upload).toEqual({ files: [tex("resume.tex", WITH_PHOTO), PHOTO] });
+    // The job's files are the upload's but for the main file, which the body replaces, the
+    // picture's stand-in among them, which the PDF may show; the body cannot do without them.
     expect(Object.keys(imported.job.files)).not.toContain("resume.tex");
+    expect(Object.keys(imported.job.files)).toEqual(
+      expect.arrayContaining(["photo.png", "photo.xbb"]),
+    );
+    expect(imported.job.images).toEqual(["photo.png"]);
+    expect(compiles(imported, imported.document.resume)).toBe(true);
+    expect(
+      compiles({ ...imported, job: { files: {}, images: [] } }, imported.document.resume),
+    ).toBe(false);
     // The import forgot its jobs.
     expect(session.written("import", "import.tex")).toBeUndefined();
 
@@ -229,7 +307,8 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
     compiler.close();
     await store.close();
 
-    // After a reload: a new store over the same database, and a new compiler.
+    // After a reload: a new store over the same database, a new compiler and a new TeX session,
+    // which holds nothing of the first, so that the page needs what the store kept.
     const reloaded = new DocumentStore({ name });
     expect((await reloaded.list()).map((each) => [each.id, each.templateName])).toEqual([
       [id, imported.package.name],
@@ -238,16 +317,59 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
     if (again === undefined) throw new Error("lost in the reload");
     expect(Resume.parse(again.document.resume)).toEqual(history.present.resume);
     const reopened = await templateOf(reloaded, again.document, id);
-    const later = editor(reloaded);
+    expect(reopened.job).toEqual(imported.job);
+    const later = editor(reloaded, await startNodeSession());
     next = later.nextPage();
     later.compiler.open(reopened.package, again.document, reopened.job);
     const shown = await next;
     expect(spelt(shown, field)).toBe("InventedLead");
     expect(shown.page.unmatched).toBe(0);
+    const reopenedPdf = await later.compiler.pdf();
+    expect(new TextDecoder().decode(reopenedPdf.subarray(0, 5))).toBe("%PDF-");
     later.compiler.close();
     // Its last document gone, the package goes, and its formats with it.
     expect(await reloaded.remove(id)).toBe(imported.package.id);
     await reloaded.close();
+  }, 60_000);
+
+  test("keeps the closer of the list a last section opens with it, which then goes as one", async () => {
+    // The skills as the template's bullets inside the entries' list, the document's last section:
+    // the list's closer comes after it, where the template's own code was read to begin, and the
+    // section keeps it, so that removing the section leaves nothing behind (decision 0038).
+    expect(JAKE_FORK).toContain(SKILLS);
+    const done = await imported(
+      JAKE_FORK.replace(
+        SKILLS,
+        String.raw`\section{Technical Skills}
+ \resumeSubHeadingListStart
+    \resumeItem{\textbf{Languages}{: Invented, Words, Other}}
+    \resumeItem{\textbf{Tools}{: Quill, Wren}}
+ \resumeSubHeadingListEnd`,
+      ),
+    );
+    const skills = done.document.resume.sections.find(
+      (section) => section.title === "Technical Skills",
+    );
+    expect(skills?.kind).toBe("list");
+    expect(skills?.extras?.after).toContain("\\resumeSubHeadingListEnd");
+    expect(done.package.snippets.document).not.toContain("\\resumeSubHeadingListEnd");
+    expect(compiles(done, without(done, skills?.id ?? ""))).toBe(true);
+    // Check 3 removes the last section of a kind as well as the first, and finds nothing now.
+    expect(done.report.checks.repeatable.every((unit) => unit.removed)).toBe(true);
+  }, 60_000);
+
+  test("keeps a last section of entries whole, its list's closer and all, which then goes as one", async () => {
+    // Upstream's skills moved above its projects: the projects last, their list's closer after them.
+    expect(JAKE_FORK).toContain(SKILLS);
+    const done = await imported(
+      JAKE_FORK.replace(SKILLS, "").replace(PROJECTS, `${SKILLS}\n\n${PROJECTS}`),
+    );
+    const projects = done.document.resume.sections.at(-1);
+    expect(projects?.title).toBe("Projects");
+    expect(projects?.extras?.before ?? "").not.toContain("\\resumeSubHeadingListStart");
+    expect(done.package.snippets.document).not.toContain("\\resumeSubHeadingListEnd");
+    expect(compiles(done, without(done, projects?.id ?? ""))).toBe(true);
+    expect(done.report.checks.repeatable.every((unit) => unit.removed)).toBe(true);
   }, 60_000);
 
   test("comes through with no naming service, every macro as the probe left it, and says why", async () => {

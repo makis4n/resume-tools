@@ -2693,7 +2693,7 @@ function sectionAt(
   // which stops the compile. So the section keeps what stands after its content up to that closer
   // as its own, in its extras (`after`), and the two are removed and moved as one (decision 0038).
   let last = end;
-  const closes = contentAt < 0 ? -1 : closerAfter(ctx, nodes.slice(0, next), i + 1, contentAt, end);
+  const closes = contentAt < 0 ? -1 : lastCloser(ctx, nodes.slice(0, next), i + 1, contentAt, end);
   if (closes >= 0) {
     const after = ctx.source.slice((nodes[end - 1] as Node).end, (nodes[closes] as Node).end);
     if (isKept(after)) {
@@ -2722,26 +2722,26 @@ function sectionAt(
 }
 
 /**
- * Where, among a section's nodes, the last closer stands of the lists its nodes from `from` to
- * before `contentAt`, what stands between its head and its content, open and do not close there:
- * a call the answer says opens a list, whose closer comes at or after `end`, where the content
- * ends; or -1 when none does (decision 0038).
+ * Where, among `nodes`, the last closer stands of the lists the nodes from `from` to before
+ * `until` open and do not close before `beyond`: a call the answer says opens a list, whose closer
+ * comes at or after `beyond`; or -1 when none does (decision 0038). What stands between a
+ * section's head and its content, and the sections' region, each ask it of the lists they open.
  */
-function closerAfter(
+function lastCloser(
   ctx: Context,
   nodes: readonly Node[],
   from: number,
-  contentAt: number,
-  end: number,
+  until: number,
+  beyond: number,
 ): number {
   let found = -1;
-  for (let o = from; o < contentAt; o++) {
+  for (let o = from; o < until; o++) {
     const node = nodes[o];
     if (node?.kind !== "call") continue;
     const list = commandAnswer(ctx.answers, node.name)?.list;
     if (list?.does !== "opens") continue;
     const j = closerOf(nodes, o, list.closedBy);
-    if (j >= end) found = Math.max(found, j);
+    if (j >= beyond) found = Math.max(found, j);
   }
   return found;
 }
@@ -2844,6 +2844,13 @@ function bodyOf_(ctx: Context): BodyOut | Refusal {
   let to = inRegion.length - 1;
   while (to >= 0 && isCode(ctx, inRegion[to] as Node)) to--;
   if (from < 0) from = inRegion.length;
+  // A list the region opens and the template's code after it closes, as the entries' list a Jake
+  // fork's last section opens and `\resumeSubHeadingListEnd` after it closes, is the last unit's:
+  // the region runs to its closer, so that the unit keeps the closer and goes with it, as one
+  // before another section does, where the closer left in the document snippet stopped the compile
+  // once the unit was removed (decision 0038).
+  const closes = lastCloser(ctx, inRegion, from, to + 1, to + 1);
+  if (closes >= 0) to = closes;
   const units = inRegion.slice(from, to + 1);
 
   // The sections and the locked parts between them, and the gaps between them all.
