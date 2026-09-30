@@ -47,7 +47,7 @@ import {
 } from "@resume-tools/naming/model";
 import { DEFAULT_MODEL } from "@resume-tools/naming/providers";
 import type { Intake } from "../src/import/intake.ts";
-import type { HeaderValues, PageFonts } from "../src/import/naming.ts";
+import type { DocumentText, HeaderValues, PageFonts } from "../src/import/naming.ts";
 import type { Tree } from "../src/import/parse.ts";
 import type { Probe } from "../src/import/probe.ts";
 import type { Reference } from "../src/import/reference.ts";
@@ -369,13 +369,20 @@ export interface NamingInputs {
  * (`pageStrings`), as `corpus leak` builds it (decision 0033); and the gate, `assertNoText` fed the
  * same, the body's tree and the texts the preamble stores, so that a name a macro of the preamble
  * writes, which no body text names, is masked where the page shows it and refused where it is not.
- * A page the detector cannot read refuses the request (`refused`, the builder's message).
+ * The document's text the gate reads comes with it (`document`), which `corpus run` keeps for the
+ * review's leak check (decision 0043). A page the detector cannot read refuses the request
+ * (`refused`, the builder's message).
  */
 export async function gatedRequest(
   naming: Naming,
   inputs: NamingInputs,
 ): Promise<
-  | { request: NamingRequest; names: ReadonlyMap<string, string>; gate: () => void }
+  | {
+      request: NamingRequest;
+      names: ReadonlyMap<string, string>;
+      gate: () => void;
+      document: DocumentText;
+    }
   | { refused: string }
 > {
   const { tree, found, probed, preamble, taken, made, fonts } = inputs;
@@ -388,7 +395,7 @@ export async function gatedRequest(
     ...header,
   });
   if ("refused" in built) return { refused: built.message };
-  const document = {
+  const document: DocumentText = {
     tree,
     stored: probed.candidates.filter((each) => each.where === "preamble").map((each) => each.text),
     sources,
@@ -396,7 +403,7 @@ export async function gatedRequest(
     names: built.names,
     ...header,
   };
-  return { ...built, gate: () => naming.assertNoText(built.request, document) };
+  return { ...built, gate: () => naming.assertNoText(built.request, document), document };
 }
 
 /**

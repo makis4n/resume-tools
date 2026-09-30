@@ -14,6 +14,11 @@
  *   pnpm --filter @resume-tools/editor corpus name [--only <id>] [--json <file>] [--model]
  *   pnpm --filter @resume-tools/editor corpus assemble [--only <id>] [--json <file>]
  *   pnpm --filter @resume-tools/editor corpus leak [--only <id>] [--json <file>]
+ *   pnpm --filter @resume-tools/editor corpus run [--only <id>] [--ids <file>] [--json <file>]
+ *                 [--committed-only] [--allow-model] [--write-baseline]
+ *   pnpm --filter @resume-tools/editor corpus compare <run.json> <run.json> [<run.json>...]
+ *   pnpm --filter @resume-tools/editor corpus review export [--top <n>] [--out <dir>]
+ *   pnpm --filter @resume-tools/editor corpus review check [--dir <dir>]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
  *                 upstream templates' forks give the candidates, public repositories only, and
@@ -125,6 +130,40 @@
  *                 have a reference, and takes about a minute for the corpus
  *   --only <id>   that document only
  *   --json <file> write each document's row as JSON too, names and numbers only
+ *   run           take every fetched document through the whole import, as `assemble` and in its
+ *                 child, with the naming request built and gated as `name` builds it, its answers
+ *                 from the committed ones first and then the cache of the model `NAMING_MODEL`
+ *                 names; print each document's outcome, success, partial, refused or where it
+ *                 stopped, and one table per family and in all, with a headline of the shares, the
+ *                 editable rate and the locked words by reason, names and counts only; keep each
+ *                 document's assembly, and what the review reads of it, which holds its text, under
+ *                 `.corpus/run/` (`scripts/corpus-run.ts`, decision 0043). A --committed-only run
+ *                 over the whole corpus is held to `corpus/baseline.json`, and exits 1 when its
+ *                 success rate falls more than a point under the baseline's. It takes about an hour
+ *                 for the corpus on CI's runner
+ *   --only <id>   that document only
+ *   --ids <file>  the documents a file names, one id a line, from where pnpm was run
+ *   --json <file> write each document's row as JSON too, ids and counts only, with the summary
+ *   --committed-only  the committed answers alone, as CI runs it: no cache, no model
+ *   --allow-model ask the model for what the cache does not answer, behind the privacy gate, as
+ *                 `name --model` asks it; it needs SOCLAAS_API_KEY in the environment. Never in CI
+ *   --write-baseline  write `corpus/baseline.json` from a --committed-only run over the whole
+ *                 corpus, with the day and the commit, as a pull request raises it by hand
+ *   compare       say whether runs' JSON agree, times aside, each with the next, and where they do
+ *                 not; it exits 1 when they differ
+ *   review export write, for each of the top templates of the last run's documents, a folder an
+ *                 Opus agent reviews the answers from (decision 0037): the naming requests the
+ *                 privacy gate passed, the answers the cache holds for its macros, and the checks'
+ *                 findings reduced to reasons, macro names and counts, every file checked with the
+ *                 leak detector against every document of its template (`scripts/corpus-review.ts`,
+ *                 `corpus/REVIEW.md`)
+ *   --top <n>     how many templates, 20 unless given
+ *   --out <dir>   the folder, `.review/` unless given, from where pnpm was run
+ *   review check  for every reviewed answer under `corpus/answers/` that carries redefinitions,
+ *                 run the assembly of every document the last run found holding its key, and say of
+ *                 each redefinition whether it is kept or dropped, and why; it exits 1 when one is
+ *                 dropped, an answer does not validate, or the last run did not cover the corpus
+ *   --dir <dir>   the review's export, whose templates the lines name, `.review/` unless given
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -132,15 +171,15 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { AnswerSource } from "@resume-tools/naming";
-// Node runs this file by stripping its types, so the type import needs its real extension.
+// Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
 import { readTree } from "../src/import/fonts.ts";
-import { modelCacheDir } from "./answer-cache.ts";
+import { FileAnswerCache, modelCacheDir } from "./answer-cache.ts";
 import {
   ASSEMBLE_LIMIT_MS,
   type AssembleChildRow,
@@ -163,6 +202,7 @@ import {
   FetchReport,
   formatJson,
   isLive,
+  type LiveDocument,
   MANIFEST_FILE,
   Manifest,
   matchingEntries,
@@ -209,6 +249,30 @@ import {
   treeFonts,
   uploadOf,
 } from "./corpus-reference.ts";
+import type { FindLeaks } from "./corpus-review.ts";
+import {
+  type Checked,
+  carriersOf,
+  exportPlan,
+  type RunDocument,
+  redefinitionVerdicts,
+  verdictLine,
+} from "./corpus-review.ts";
+import {
+  Baseline,
+  baselineOf,
+  baselineVerdict,
+  idsOf,
+  type RunChildRow,
+  type RunFile,
+  type RunRow,
+  runDifferences,
+  runHeadline,
+  runLimitMs,
+  runLine,
+  runTable,
+  summaryOf,
+} from "./corpus-run.ts";
 import {
   ANSWERS_DIR,
   answersFolder,
@@ -221,7 +285,25 @@ import {
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>] | leak [--only <id>] [--json <file>]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>] | leak [--only <id>] [--json <file>] | run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model] [--write-baseline] | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>]";
+
+/** The editor, whose modules the review's export loads through Vite for the leak detector. */
+const APP = fileURLToPath(new URL("..", import.meta.url));
+
+/**
+ * Where the run keeps each document's assembly and what the review reads of it, which hold its
+ * text (`RunDocument`): `.corpus/run/<id>/`, a folder of the run's own.
+ */
+const RUN_KEPT = join(CORPUS_DIR, "run");
+
+/** The baseline a `--committed-only` run over the whole corpus is held to. */
+const BASELINE_FILE = fileURLToPath(new URL("../corpus/baseline.json", import.meta.url));
+
+/** Where the review's export goes unless `--out` says, which git ignores. */
+const REVIEW_DIR = fileURLToPath(new URL("../.review", import.meta.url));
+
+/** How many templates the review's export takes unless `--top` says: plan section 10's twenty. */
+const REVIEW_TOP = 20;
 
 /** The engine's manifest, whose file list is the tree the survey checks documents against. */
 const ENGINE_MANIFEST = fileURLToPath(new URL("../.engine/manifest.json", import.meta.url));
@@ -294,6 +376,9 @@ function ghToken(): string | undefined {
 const readManifest = () => parseJson(Manifest, readFileSync(MANIFEST_FILE, "utf8"), MANIFEST_FILE);
 
 const megabytes = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
+
+/** A count and its noun, in the plural where it takes one. */
+const counted = (count: number, noun: string) => `${count} ${count === 1 ? noun : `${noun}s`}`;
 
 /** Print lines as the terminal may be given them (`printable`). */
 const print = (lines: string[]) => console.log(lines.map(printable).join("\n"));
@@ -1106,15 +1191,433 @@ async function runLeak(only: string | undefined, json: string | undefined) {
   }
 }
 
+/** The baseline, which must parse whatever the run; the placeholder's run is null. */
+const readBaseline = () => parseJson(Baseline, readFileSync(BASELINE_FILE, "utf8"), BASELINE_FILE);
+
+/** The commit this checkout is at, and whether a tracked file but the baseline has changed since. */
+function checkout(): { commit: string; changed: boolean } {
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: APP, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  const commit = git("rev-parse", "HEAD").trim();
+  // The porcelain names each path from the repository's top, wherever git runs.
+  const changed = git("status", "--porcelain", "--untracked-files=no")
+    .split("\n")
+    .some((line) => line.trim() !== "" && line.slice(3) !== "apps/editor/corpus/baseline.json");
+  return { commit, changed };
+}
+
+/**
+ * What the run keeps of a document, under `.corpus/run/<id>/`: what the review reads of it, and its
+ * assembly; each document's folder emptied first, so that none keeps an older run's files.
+ */
+function keepRun(row: RunRow, review: Partial<RunDocument> | undefined, detail: unknown) {
+  const dir = join(RUN_KEPT, row.id);
+  rmSync(dir, { recursive: true, force: true });
+  const kept: RunDocument = { ...review, id: row.id, family: row.family, outcome: row.outcome };
+  writeAtomically(join(dir, "review.json"), `${JSON.stringify(kept)}\n`);
+  if (detail !== undefined)
+    writeAtomically(join(dir, "assembly.json"), `${JSON.stringify(detail, null, 1)}\n`);
+}
+
+/** What the last run kept of a document for the review, or none. */
+function keptDocument(id: string): RunDocument | undefined {
+  const file = join(RUN_KEPT, id, "review.json");
+  if (!existsSync(file)) return undefined;
+  try {
+    return JSON.parse(readFileSync(file, "utf8")) as RunDocument;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A document's zip, as a person would upload it, from `.corpus/`. */
+function corpusUpload(doc: LiveDocument, treeFont: (name: string) => Uint8Array | undefined) {
+  return uploadOf(
+    doc,
+    (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
+    treeFont,
+  );
+}
+
+async function runRun(options: {
+  only?: string;
+  ids?: string;
+  json?: string;
+  committedOnly: boolean;
+  allowModel: boolean;
+  writeBaseline: boolean;
+}) {
+  const config = namingConfig(process.env);
+  if (options.allowModel && options.committedOnly)
+    throw new Error(
+      "--allow-model asks the model for what the cache does not answer, and --committed-only reads no cache: pass one or the other",
+    );
+  if (options.allowModel && config.key === undefined)
+    throw new Error(
+      "run --allow-model asks SoCLaaS, which needs a key: set SOCLAAS_API_KEY in the environment",
+    );
+  if (!AnswerSource.safeParse(`model:${config.id}`).success)
+    throw new Error("NAMING_MODEL is not a model's id: letters, digits and ._:/@- only");
+  modelCacheDir(config.id);
+  if (options.only !== undefined && options.ids !== undefined)
+    throw new Error("--only and --ids each name the documents to run: pass one");
+  const whole = options.only === undefined && options.ids === undefined;
+  if (options.writeBaseline && !(options.committedOnly && whole))
+    throw new Error("--write-baseline takes a --committed-only run over the whole corpus");
+  const baseline = readBaseline();
+  const origin = options.writeBaseline ? checkout() : undefined;
+  if (origin?.changed === true)
+    throw new Error(
+      "--write-baseline records the commit the run is of: commit the changes to tracked files first",
+    );
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("run compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  let documents = fetchedDocuments(options.only);
+  if (options.ids !== undefined) {
+    const ids = idsOf(readFileSync(options.ids, "utf8"));
+    const fetched = new Set(documents.map((doc) => doc.id));
+    const unknown = ids.filter((id) => !fetched.has(id));
+    if (unknown.length > 0)
+      throw new Error(
+        `${unknown.join(", ")} ${unknown.length === 1 ? "is no document" : "are no documents"} the last fetch fetched`,
+      );
+    documents = documents.filter((doc) => ids.includes(doc.id));
+  }
+  const treeFont = treeFonts(engine.files);
+  // The parent stops asking once the provider has failed documents in a row, as `name` does: a
+  // spent quota fails every call after it. Each task's message is made as it is sent.
+  let asking = options.allowModel;
+  let failures = 0;
+  const tasks = documents.map((doc) => ({
+    id: doc.id,
+    message: () => ({
+      name: `${doc.id}.zip`,
+      bytes: corpusUpload(doc, treeFont),
+      ...(options.committedOnly
+        ? {}
+        : { answers: { model: config.id, ...(asking ? { ask: true } : {}) } }),
+      review: true,
+    }),
+  }));
+  const families = new Map(documents.map((doc) => [doc.id, doc.family]));
+  const rows: RunRow[] = [];
+  const started = performance.now();
+  const limitMs = runLimitMs(options.allowModel);
+  print([
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${POOL_SIZE} at a time, ${limitMs / 1000} s each at most; ${options.committedOnly ? "the committed answers alone" : `the committed answers and ${config.id}'s cache`}; ${options.allowModel ? `asking ${config.id} for what they do not answer` : "no model asked"}`,
+  ]);
+  await runPool({
+    script: ASSEMBLE_CHILD,
+    tasks,
+    limitMs,
+    onResult: (task, result) => {
+      const reply = result.reply as
+        | { run?: RunChildRow; review?: Partial<RunDocument>; detail?: unknown }
+        | undefined;
+      const { times, ...fields } = reply?.run ?? {
+        outcome: result.timedOut ? ("timeout" as const) : ("crashed" as const),
+        times: {},
+      };
+      const row: RunRow = {
+        id: task.id,
+        family: families.get(task.id) ?? "other",
+        ...fields,
+        times: { ...times, wall: Math.round(result.wall) },
+      };
+      rows.push(row);
+      keepRun(row, reply?.review, reply?.detail);
+      print([`${rows.length}/${documents.length} ${task.id}: ${runLine(row)}`]);
+      if (row.naming?.failed === "provider") failures++;
+      else if ((row.naming?.calls ?? 0) > 0) failures = 0;
+      if (asking && failures >= PROVIDER_FAILURES) {
+        asking = false;
+        print([
+          `The provider failed ${PROVIDER_FAILURES} documents in a row: the documents not yet sent are not asked`,
+        ]);
+      }
+    },
+  });
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const minutes = (performance.now() - started) / 60_000;
+  const summary = summaryOf(rows);
+  const verdict = baselineVerdict(summary, baseline, {
+    committedOnly: options.committedOnly,
+    whole,
+  });
+  print([
+    "",
+    ...runTable(rows).trimEnd().split("\n"),
+    "",
+    ...runHeadline(rows),
+    verdict.line,
+    "",
+    `Took ${minutes.toFixed(1)} min.`,
+  ]);
+  if (options.json !== undefined) {
+    const file: RunFile = {
+      version: 1,
+      tree: { layout: engine.layout, files: Object.keys(engine.files).length },
+      limitMs,
+      mode: {
+        answers: options.committedOnly ? "committed" : "cache",
+        cache: options.committedOnly ? null : config.id,
+        asked: options.allowModel ? config.id : null,
+        documents: whole ? "all" : "some",
+      },
+      summary,
+      documents: rows,
+    };
+    writeAtomically(options.json, formatJson(file));
+  }
+  if (origin !== undefined) {
+    writeAtomically(
+      BASELINE_FILE,
+      formatJson(baselineOf(summary, new Date().toISOString().slice(0, 10), origin.commit)),
+    );
+    print([`Wrote corpus/baseline.json from this run, at ${origin.commit.slice(0, 7)}.`]);
+  }
+  if (verdict.failed) {
+    console.error(printable(verdict.line));
+    process.exitCode = 1;
+  }
+}
+
+function runCompare(files: readonly string[]) {
+  if (files.length < 2) throw new Error("compare takes two runs' JSON or more");
+  const runs = files.map((file) => JSON.parse(readFileSync(file, "utf8")) as unknown);
+  let differ = false;
+  for (let i = 1; i < runs.length; i++) {
+    const found = runDifferences(runs[i - 1], runs[i]);
+    const pair = `Runs ${i} and ${i + 1}`;
+    if (found.length === 0) {
+      const count = (runs[i] as { documents?: unknown[] }).documents?.length ?? 0;
+      print([`${pair} agree on ${count} ${count === 1 ? "document" : "documents"}, times aside.`]);
+      continue;
+    }
+    differ = true;
+    print([
+      `${pair} differ in ${found.length} ${found.length === 1 ? "place" : "places"}, times aside:`,
+      ...found.slice(0, 100).map((line) => `  ${line}`),
+      ...(found.length > 100 ? [`  and ${found.length - 100} more`] : []),
+    ]);
+  }
+  if (differ) process.exitCode = 1;
+}
+
+/**
+ * The editor's modules the review needs, loaded through Vite's module runner with the app's own
+ * config, as the children load them: the leak detector, which needs no engine.
+ */
+async function leakDetector(): Promise<{ findLeaks: FindLeaks; close: () => Promise<void> }> {
+  const { createRunnableDevEnvironment, resolveConfig } = await import("vite");
+  const config = await resolveConfig(
+    { root: APP, logLevel: "silent", ssr: { noExternal: ["opentype.js"] } },
+    "serve",
+  );
+  const environment = createRunnableDevEnvironment("ssr", config, { hot: false });
+  await environment.init();
+  const naming =
+    await environment.runner.import<typeof import("../src/import/naming.ts")>(
+      "/src/import/naming.ts",
+    );
+  return { findLeaks: naming.findLeaks, close: () => environment.close() };
+}
+
+/**
+ * Whether a folder is absent, empty, or an earlier export, which holds its index and template
+ * folders and nothing else: one the export may write over, and no other.
+ */
+function exportFolder(dir: string): boolean {
+  if (!existsSync(dir)) return true;
+  const entries = readdirSync(dir);
+  if (entries.length === 0) return true;
+  if (!entries.every((entry) => entry === "index.json" || /^\d{2,}-[a-z-]+$/.test(entry)))
+    return false;
+  try {
+    const index = JSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as {
+      version?: unknown;
+      rule?: unknown;
+    };
+    return index.version === 1 && typeof index.rule === "string";
+  } catch {
+    return false;
+  }
+}
+
+async function runReviewExport(top: number, out: string) {
+  if (!Number.isInteger(top) || top < 1) throw new Error("--top takes a whole number of templates");
+  if (!exportFolder(out))
+    throw new Error(
+      "--out names a folder that holds files and no review export: name an empty or new one",
+    );
+  const fetched = fetchedDocuments(undefined);
+  const documents = fetched.flatMap((doc) => keptDocument(doc.id) ?? []);
+  if (documents.length === 0)
+    throw new Error("The last run kept no document: run `corpus run` first");
+  const config = namingConfig(process.env);
+  if (!AnswerSource.safeParse(`model:${config.id}`).success)
+    throw new Error("NAMING_MODEL is not a model's id: letters, digits and ._:/@- only");
+  const cache = new FileAnswerCache({ model: config.id });
+  const detector = await leakDetector();
+  let plan: Awaited<ReturnType<typeof exportPlan>>;
+  try {
+    plan = await exportPlan({
+      documents,
+      top,
+      cache: (key) => cache.get(key),
+      findLeaks: detector.findLeaks,
+      fetched: fetched.length,
+    });
+  } finally {
+    await detector.close();
+  }
+  rmSync(out, { recursive: true, force: true });
+  for (const file of plan.files) writeAtomically(join(out, ...file.path.split("/")), file.text);
+  const inFolder = (folder: string, part: string) =>
+    plan.files.filter((file) => file.path.startsWith(`${folder}/${part}/`)).length;
+  print([
+    `${documents.length} of ${fetched.length} fetched documents kept by the last run, ${documents.filter((doc) => doc.request !== undefined).length} with a naming request; the committed answers and ${config.id}'s cache`,
+    ...plan.templates.map(
+      (template) =>
+        `${template.folder}: ${template.documents.length} ${template.documents.length === 1 ? "document" : "documents"}, ${template.keys.length} keys, ${counted(inFolder(template.folder, "requests"), "request")} and ${counted(inFolder(template.folder, "answers"), "answer")} written`,
+    ),
+    ...plan.withheld.map(
+      (each) =>
+        `${each.folder}: not written, ${each.kinds[0] === "unchecked" ? "the run kept no text of a document of it to check against" : `the leak check found a document's text in its summary: ${each.kinds.join("; ")}`}`,
+    ),
+    `Wrote ${plan.files.length} files to ${out}, each checked with the leak detector against every document of its template.`,
+  ]);
+}
+
+/** The export's templates by the keys their summaries list, from the folder `review export` wrote. */
+function exportedTemplates(dir: string): Map<string, string[]> {
+  const byKey = new Map<string, string[]>();
+  let index: { templates?: { folder?: unknown }[] };
+  try {
+    index = JSON.parse(readFileSync(join(dir, "index.json"), "utf8"));
+  } catch {
+    return byKey;
+  }
+  for (const template of index.templates ?? []) {
+    const folder = template.folder;
+    if (typeof folder !== "string" || !/^\d{2,}-[a-z-]+$/.test(folder)) continue;
+    try {
+      const summary = JSON.parse(readFileSync(join(dir, folder, "template.json"), "utf8")) as {
+        macros?: { key?: unknown }[];
+      };
+      for (const macro of summary.macros ?? [])
+        if (typeof macro.key === "string")
+          byKey.set(macro.key, [...(byKey.get(macro.key) ?? []), folder]);
+    } catch {}
+  }
+  return byKey;
+}
+
+async function runReviewCheck(dir: string) {
+  const config = namingConfig(process.env);
+  if (!AnswerSource.safeParse(`model:${config.id}`).success)
+    throw new Error("NAMING_MODEL is not a model's id: letters, digits and ._:/@- only");
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("review check compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const folder = answersFolder();
+  const { carriers, others, invalid } = await carriersOf(
+    folder.keys.map((key) => ({ key, text: folder.read(key) ?? "" })),
+  );
+  const fetched = fetchedDocuments(undefined);
+  const kept = fetched.flatMap((doc) => keptDocument(doc.id) ?? []);
+  const holders = new Map<string, string[]>();
+  for (const doc of kept)
+    for (const macro of doc.request?.macros ?? [])
+      if (macro.key !== undefined)
+        holders.set(macro.key, [...new Set([...(holders.get(macro.key) ?? []), doc.id])]);
+  const wanted = new Set(carriers.flatMap((carrier) => holders.get(carrier.key) ?? []));
+  const documents = fetched.filter((doc) => wanted.has(doc.id));
+  const treeFont = treeFonts(engine.files);
+  print([
+    `${carriers.length} reviewed ${carriers.length === 1 ? "answer carries" : "answers carry"} redefinitions, and ${others} ${others === 1 ? "carries" : "carry"} none; the last run kept ${kept.length} of ${fetched.length} fetched documents, of which ${documents.length} hold their keys, each assembled again with the committed answers and ${config.id}'s cache, ${POOL_SIZE} at a time`,
+  ]);
+  const results = new Map<string, Checked>();
+  await runPool({
+    script: ASSEMBLE_CHILD,
+    tasks: documents.map((doc) => ({
+      id: doc.id,
+      message: () => ({
+        name: `${doc.id}.zip`,
+        bytes: corpusUpload(doc, treeFont),
+        answers: { model: config.id },
+        review: true,
+      }),
+    })),
+    limitMs: runLimitMs(false),
+    onResult: (task, result) => {
+      const reply = result.reply as
+        | { run?: RunChildRow; review?: Partial<RunDocument> }
+        | undefined;
+      const outcome = reply?.run?.outcome ?? (result.timedOut ? "timeout" : "crashed");
+      const notes = reply?.review?.notes;
+      results.set(task.id, {
+        id: task.id,
+        outcome,
+        applied: notes?.redefinitions.applied ?? [],
+        dropped: notes?.redefinitions.dropped ?? [],
+        checks: notes?.checks ?? [],
+      });
+      print([`${results.size}/${documents.length} ${task.id}: ${outcome}`]);
+    },
+  });
+  const verdicts = redefinitionVerdicts({
+    carriers,
+    holders,
+    results,
+    templates: exportedTemplates(dir),
+  });
+  const dropped = verdicts.filter((verdict) => !verdict.kept).length;
+  print(["", ...verdicts.map(verdictLine)]);
+  const problems = [
+    ...(invalid.length > 0
+      ? [
+          `${invalid.length} answer ${invalid.length === 1 ? "file does" : "files do"} not validate, or ${invalid.length === 1 ? "is" : "are"} not filed under ${invalid.length === 1 ? "its" : "their"} key: ${invalid.join(", ")}.`,
+        ]
+      : []),
+    ...(kept.length < fetched.length
+      ? [
+          `The last run kept ${kept.length} of the ${fetched.length} fetched documents: run \`corpus run\` over the whole corpus for a verdict on every document.`,
+        ]
+      : []),
+    ...(dropped > 0
+      ? [
+          `${dropped} ${dropped === 1 ? "redefinition is" : "redefinitions are"} dropped: take ${dropped === 1 ? "it" : "them"} out of the answers, and list ${dropped === 1 ? "it" : "them"} in the pull request.`,
+        ]
+      : []),
+  ];
+  print([
+    "",
+    `${verdicts.length} ${verdicts.length === 1 ? "redefinition" : "redefinitions"}: ${verdicts.length - dropped} kept, ${dropped} dropped.`,
+  ]);
+  if (problems.length > 0) {
+    console.error(problems.map(printable).join("\n"));
+    process.exitCode = 1;
+  }
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
     options: {
       only: { type: "string" },
+      ids: { type: "string" },
       json: { type: "string" },
       tree: { type: "string" },
       model: { type: "boolean" },
       write: { type: "boolean" },
+      "committed-only": { type: "boolean" },
+      "allow-model": { type: "boolean" },
+      "write-baseline": { type: "boolean" },
+      top: { type: "string" },
+      out: { type: "string" },
+      dir: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
@@ -1124,7 +1627,14 @@ async function main() {
     return;
   }
   const [command, ...rest] = positionals;
-  if (rest.length > 0) throw new Error(`${rest.join(" ")} is not an option: ${USAGE}`);
+  // `compare` takes files, and `review` what it does; every other command takes no more.
+  const review = command === "review" ? rest[0] : undefined;
+  if (command === "review" && review !== "export" && review !== "check")
+    throw new Error(`review is followed by export or check: ${USAGE}`);
+  if (command !== "compare" && rest.length > (command === "review" ? 1 : 0))
+    throw new Error(
+      `${rest.slice(command === "review" ? 1 : 0).join(" ")} is not an option: ${USAGE}`,
+    );
   if (
     command !== "collect" &&
     command !== "fetch" &&
@@ -1137,7 +1647,10 @@ async function main() {
     command !== "fonts" &&
     command !== "seed" &&
     command !== "name" &&
-    command !== "leak"
+    command !== "leak" &&
+    command !== "run" &&
+    command !== "compare" &&
+    command !== "review"
   )
     throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
   if (
@@ -1149,10 +1662,11 @@ async function main() {
     command !== "fonts" &&
     command !== "name" &&
     command !== "assemble" &&
-    command !== "leak"
+    command !== "leak" &&
+    command !== "run"
   )
     throw new Error(
-      "--only goes with fetch, reference, parse, probe, fonts, name, assemble or leak",
+      "--only goes with fetch, reference, parse, probe, fonts, name, assemble, leak or run",
     );
   if (
     values.json !== undefined &&
@@ -1164,19 +1678,43 @@ async function main() {
     command !== "seed" &&
     command !== "name" &&
     command !== "assemble" &&
-    command !== "leak"
+    command !== "leak" &&
+    command !== "run"
   )
     throw new Error(
-      "--json goes with survey, reference, parse, probe, fonts, seed, name, assemble or leak",
+      "--json goes with survey, reference, parse, probe, fonts, seed, name, assemble, leak or run",
     );
   if (values.model !== undefined && command !== "name") throw new Error("--model goes with name");
   if (values.tree !== undefined && command !== "survey") throw new Error("--tree goes with survey");
   if (values.write === true && command !== "seed") throw new Error("--write goes with seed");
+  for (const option of ["ids", "committed-only", "allow-model", "write-baseline"] as const)
+    if (values[option] !== undefined && command !== "run")
+      throw new Error(`--${option} goes with run`);
+  if ((values.top !== undefined || values.out !== undefined) && review !== "export")
+    throw new Error("--top and --out go with review export");
+  if (values.dir !== undefined && review !== "check")
+    throw new Error("--dir goes with review check");
   if (command === "fetch") return runFetch(values.only);
   if (command === "collect") return runCollect();
   // pnpm runs the script in the editor's folder; a path is the caller's, from where pnpm was run.
   const caller = (path: string | undefined) =>
     path === undefined ? undefined : resolve(process.env.INIT_CWD ?? ".", path);
+  if (command === "run")
+    return runRun({
+      ...(values.only === undefined ? {} : { only: values.only }),
+      ...(values.ids === undefined ? {} : { ids: caller(values.ids) }),
+      ...(values.json === undefined ? {} : { json: caller(values.json) }),
+      committedOnly: values["committed-only"] === true,
+      allowModel: values["allow-model"] === true,
+      writeBaseline: values["write-baseline"] === true,
+    });
+  if (command === "compare") return runCompare(rest.map((file) => caller(file) ?? file));
+  if (review === "export")
+    return runReviewExport(
+      values.top === undefined ? REVIEW_TOP : Number(values.top),
+      caller(values.out) ?? REVIEW_DIR,
+    );
+  if (review === "check") return runReviewCheck(caller(values.dir) ?? REVIEW_DIR);
   if (command === "reference") return runReference(values.only, caller(values.json));
   if (command === "parse") return runParse(values.only, caller(values.json));
   if (command === "probe") return runProbe(values.only, caller(values.json));

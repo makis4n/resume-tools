@@ -46,7 +46,7 @@ export const LOCK_REASONS: readonly LockReason[] = [
 ];
 
 /** The harness's checks, in the order the table counts their findings. */
-const CHECKS = [
+export const CHECKS = [
   "dump",
   "compile",
   "converges",
