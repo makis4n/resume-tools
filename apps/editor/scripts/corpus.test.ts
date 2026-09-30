@@ -42,6 +42,7 @@ import {
   type LiveDocument,
   Manifest,
   matchingEntries,
+  onlyIds,
   PINNED,
   printable,
   temporaryName,
@@ -1915,6 +1916,12 @@ describe("the command", () => {
     expect(help.stdout).toContain(
       "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>]",
     );
+  });
+
+  test("takes one document with --only, or several a comma separates", () => {
+    expect(onlyIds("jake-0001")).toEqual(["jake-0001"]);
+    expect(onlyIds("jake-0001, altacv-0001,,jake-0001,")).toEqual(["jake-0001", "altacv-0001"]);
+    expect(onlyIds(" , ")).toEqual([]);
   });
 
   test("refuses what it does not know, before it asks GitHub anything", () => {

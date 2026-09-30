@@ -1,14 +1,19 @@
 import { NAMING_VERSION } from "@resume-tools/naming";
 import { describe, expect, test } from "vitest";
 import type { AssemblyChecks } from "../src/import/assemble";
-import { NOTES, UNCHECKED } from "../src/import/validate";
+import { DROPPED, NOTES, UNCHECKED } from "../src/import/validate";
 import {
   type AssembleRow,
   answersFor,
   assembleRow,
   assembleTable,
+  BAR_CONTROLS,
+  barControls,
+  barFailures,
   CHECK_NOTES,
   comparePlaces,
+  DROPPED_WHY,
+  dropKind,
   fieldsFound,
   placesTable,
   portPlaces,
@@ -164,6 +169,123 @@ describe("the checks' own findings in the table", () => {
   test("names the notes and the unchecked controls as the checks do", () => {
     expect(CHECK_NOTES).toEqual(NOTES);
     expect(UNCHECKED_WHY).toBe(UNCHECKED);
+    expect(DROPPED_WHY).toEqual(DROPPED);
+  });
+});
+
+describe("the milestone's bar", () => {
+  // Invented rows: all three proven; margins dropped, every value setting the same page; none
+  // proven; a partial one lacking two; and one refused, which is no import to hold to the bar.
+  const rows: AssembleRow[] = [
+    row("jake-0001", "jake", {
+      controls: { proven: ["pageSize", "margins", "fontSize"], dropped: [] },
+    }),
+    row("jake-0002", "jake", {
+      controls: {
+        proven: ["pageSize", "fontSize", "accent"],
+        dropped: ["margins"],
+        why: { margins: "same" },
+      },
+    }),
+    row("moderncv-0001", "moderncv", {
+      controls: {
+        proven: [],
+        dropped: ["fontSize", "pageSize"],
+        why: { fontSize: "stops", pageSize: "harness" },
+      },
+    }),
+    row("jake-0003", "jake", {
+      outcome: "partial",
+      controls: { proven: ["pageSize"], dropped: [] },
+    }),
+    row("jake-0004", "jake", { outcome: "refused", refused: "font" }),
+  ];
+
+  test("names each successful import lacking page size, margins or font size, by id and control", () => {
+    expect(BAR_CONTROLS).toEqual(["pageSize", "margins", "fontSize"]);
+    expect(barControls(rows[1] as AssembleRow)).toEqual({
+      proven: ["pageSize", "fontSize"],
+      lacking: ["margins"],
+    });
+    // A success is an assembly whose first check holds, until item 13's rule.
+    expect(barFailures(rows)).toEqual([
+      { id: "jake-0002", control: "margins" },
+      { id: "moderncv-0001", control: "pageSize" },
+      { id: "moderncv-0001", control: "margins" },
+      { id: "moderncv-0001", control: "fontSize" },
+    ]);
+    // Item 17's runner passes item 13's rule in its place: here, one that takes the partial too.
+    expect(barFailures(rows, (each) => each.outcome !== "refused")).toContainEqual({
+      id: "jake-0003",
+      control: "fontSize",
+    });
+    expect(barFailures(rows.slice(0, 1))).toEqual([]);
+  });
+
+  test("counts in the table the documents with all three, and the successful ones lacking each, and why", () => {
+    const table = assembleTable(rows);
+    const cells = (label: string) =>
+      table
+        .split("\n")
+        .find((line) => line.startsWith(`| ${label} |`))
+        ?.split("|")
+        .slice(2, -1)
+        .map((cell) => cell.trim());
+    // Columns: jake, awesome-cv, altacv, moderncv, europecv, other, all.
+    expect(cells("The bar: page size, margins and font size all proven")).toEqual([
+      "1",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "1",
+    ]);
+    expect(
+      cells("The bar: a successful import, its first check holding, lacking one")?.at(-1),
+    ).toBe("2");
+    expect(cells("The bar: a successful import lacking `margins`")?.at(-1)).toBe("2");
+    expect(cells("The bar: a successful import lacking `pageSize`")?.at(-1)).toBe("1");
+    expect(cells("`margins` dropped: every value sets the same page")?.at(-1)).toBe("1");
+    expect(cells("`fontSize` dropped: a value stops the compile")?.at(-1)).toBe("1");
+    expect(cells("`pageSize` dropped: the harness finds it does not work")?.at(-1)).toBe("1");
+    // A kind of why no document gives has no line.
+    expect(table).not.toContain("dropped: another reason");
+  });
+
+  test("reads the kind of why a control was dropped, never its words", () => {
+    expect(dropKind(UNCHECKED)).toBe("unchecked");
+    expect(dropKind(DROPPED.moves)).toBe("moves");
+    expect(dropKind(`${DROPPED.stops}margins 0.4`)).toBe("stops");
+    expect(dropKind(DROPPED.same)).toBe("same");
+    expect(dropKind(`${DROPPED.harness}with font charter, ${SECRET}`)).toBe("harness");
+    expect(dropKind(SECRET)).toBe("other");
+    const checks = {
+      outcome: "assembled",
+      fields: { editable: 0, raw: 0, required: 0, locked: {} },
+      words: { editable: 0, locked: {} },
+      sections: { mapped: 0, locked: 0 },
+      required: [],
+      controls: {
+        offered: ["pageSize", "margins", "font"],
+        proven: ["pageSize"],
+        dropped: [
+          { control: "margins", why: DROPPED.same },
+          { control: "font", why: `${DROPPED.harness}with font charter, ${SECRET}` },
+          { control: SECRET, why: DROPPED.same },
+        ],
+      },
+      redefinitions: { applied: [], dropped: [], placement: "class" },
+      repeatable: [],
+      findings: [],
+      compiles: 1,
+      ms: 1,
+      decisions: {},
+      all: [],
+    } satisfies AssemblyChecks;
+    const made = assembleRow(checks, "pdftex", { answered: 1, unanswered: 0 });
+    expect(made.controls?.why).toEqual({ margins: "same", font: "harness" });
+    expect(JSON.stringify(made.controls?.why)).not.toContain(SECRET);
   });
 });
 

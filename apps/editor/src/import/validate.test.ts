@@ -20,6 +20,7 @@ import {
   type Invented,
   inputsOf,
   JAKE_LIKE,
+  LAYOUT,
   PREAMBLE,
   REFERENCE,
 } from "../test/invented-import";
@@ -36,6 +37,7 @@ import { signatures } from "./signatures";
 import {
   type Compiled,
   type Compiler,
+  DROPPED,
   MUTATIONS,
   UNCHECKED,
   type ValidationInputs,
@@ -646,6 +648,45 @@ describe("the checks", () => {
     expect(pkg.controls.margins).toBeUndefined();
   });
 
+  test("drop a control whose default moves the original's page, and say why", async () => {
+    // The class's options name no size, and the size the engine found is not the one the page
+    // sets: the slot at its default moves every glyph, so the first check drops the control, and
+    // the preamble keeps the class's options as the upload wrote them (decision 0040).
+    const source = `${PREAMBLE.replace("[11pt,letterpaper]", "[letterpaper]")}${BODY}`;
+    const { result } = await validated({ ...JAKE_LIKE, source, layout: { ...LAYOUT, size: 10 } });
+    const { checks, package: pkg } = ok(result);
+    expect(checks.outcome).toBe("assembled");
+    expect(checks.controls.dropped).toEqual([{ control: "fontSize", why: DROPPED.moves }]);
+    expect(checks.controls.proven).toEqual(["pageSize", "margins"]);
+    expect(pkg.controls.fontSize).toBeUndefined();
+    expect(pkg.preamble).toContain("\\documentclass[letterpaper]{inventedcv}");
+  });
+
+  test("drop a control the harness finds does not work, a font it cannot draw among them, and run the checks again", async () => {
+    // The fourth check proves the margins, and the harness, compiling in the editor's job, finds
+    // them doing nothing there: they go, with the harness's word for why (decision 0040). A date
+    // format finding drops nothing, the date format being the generator's.
+    let rounds = 0;
+    const { result } = await validated(JAKE_LIKE, {}, async () => {
+      rounds++;
+      return rounds === 1
+        ? [
+            { check: "controls", message: "an invented margins finding", control: "margins" },
+            { check: "controls", message: "an invented date finding", control: "dateFormat" },
+          ]
+        : [];
+    });
+    const { checks, package: pkg } = ok(result);
+    expect(rounds).toBe(2);
+    expect(checks.controls.dropped).toEqual([
+      { control: "margins", why: "the harness: an invented margins finding" },
+    ]);
+    expect(checks.controls.proven).toEqual(["pageSize", "fontSize"]);
+    expect(pkg.controls.margins).toBeUndefined();
+    expect(pkg.controls.dateFormat).toBeDefined();
+    expect(checks.findings).toEqual([]);
+  });
+
   test("prove no control a stopped document never tried, and say the checks stopped", async () => {
     // The original body sets the reference's page, and every document the generator makes stops.
     const { result, fake } = await validated(JAKE_LIKE, { refuses: () => true });
@@ -870,6 +911,37 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     expect(checks.findings).toEqual([]);
     expect(checks.fields.editable).toBeGreaterThan(8);
     expect(checks.compiles).toBeGreaterThan(10);
+  }, 120_000);
+
+  test("proves the page size, the margins and the font size of an import that names neither geometry nor a size", async () => {
+    // The margins set by hand, as Jake's Resume sets them, and no size among the class's options,
+    // which this class passes to article: the page size and the margins load geometry in the body's
+    // preamble region, the page size with the document's own margins, and the size goes first among
+    // the class's options, at the 10 points article sets unasked (decision 0040).
+    const passing = CLASS.replace(
+      "\\LoadClass{article}",
+      "\\DeclareOption*{\\PassOptionsToClass{\\CurrentOption}{article}}\n\\ProcessOptions\\relax\n\\LoadClass{article}",
+    );
+    const source = SOURCE.replace("[11pt,letterpaper]", "[letterpaper]").replace(
+      "\\usepackage[margin=0.5in]{geometry}\n",
+      [
+        "\\usepackage[empty]{fullpage}",
+        "\\addtolength{\\oddsidemargin}{-0.5in}",
+        "\\addtolength{\\textwidth}{1in}",
+        "\\addtolength{\\topmargin}{-.5in}",
+        "\\addtolength{\\textheight}{1.0in}",
+        "",
+      ].join("\n"),
+    );
+    const { result } = await validatedOnEngine(source, ANSWERS, {}, passing);
+    const { checks, package: pkg } = ok(result);
+    expect(checks.outcome).toBe("assembled");
+    expect(checks.controls.proven).toEqual(["pageSize", "margins", "fontSize"]);
+    expect(checks.controls.dropped).toEqual([]);
+    expect(pkg.controls.margins?.default).toBe(0.5);
+    expect(pkg.controls.fontSize).toMatchObject({ default: 10, sizes: [10, 11, 12] });
+    expect(pkg.preamble).toContain("\\documentclass[{{fontSize}}pt,letterpaper]{inventedcv}");
+    expect(checks.findings).toEqual([]);
   }, 120_000);
 
   test("reads an invented import set in Computer Modern's T1 fonts in Latin Modern, which the page draws", async () => {

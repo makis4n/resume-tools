@@ -12,12 +12,15 @@
  * gets the dvipdfmx driver on pdfTeX and no bookmarks, and is loaded with `hidelinks` where the
  * reference compile's log shows the document never loads it, even late, as moderncv's class does at
  * the preamble's end; the reviewed answers' redefinitions go right after `\documentclass`; a class
- * size option becomes the font size control's slot, offering the sizes the class declares
- * (`SIZE_OPTIONS`). An import keeps its fonts, so that the reference check holds glyph for glyph;
- * one set in Computer Modern's T1 or TS1 fonts, which the page cannot draw, comes read with T1 and
- * Latin Modern after its class, as every pdfTeX port takes them (`inLatinModern`, decision 0009),
- * and its preamble keeps the two lines with the rest. Its files are the upload's class and style
- * files, as text, with the configurations the reference compile gave pdfTeX's DVI (decision 0019).
+ * size option becomes the font size control's slot, or the slot goes first among the class's
+ * options where they name none, offering the sizes the class declares (`SIZE_OPTIONS`). The page
+ * size and the margins go through geometry in the body's preamble region, each doing nothing at
+ * the document's own value (decision 0040). An import keeps its fonts, so that the reference check
+ * holds glyph for glyph; one set in Computer Modern's T1 or TS1 fonts, which the page cannot draw,
+ * comes read with T1 and Latin Modern after its class, as every pdfTeX port takes them
+ * (`inLatinModern`, decision 0009), and its preamble keeps the two lines with the rest. Its files
+ * are the upload's class and style files, as text, with the configurations the reference compile
+ * gave pdfTeX's DVI (decision 0019).
  * Its snippets are the template's own code, read from the body where the answer's kinds place the
  * model: a section's head and what frames its content, an entry's call and its bullets' list, which
  * every entry's snippet sets, a list's items, the header's calls; each field an argument of its
@@ -99,7 +102,7 @@ import { extensionOf } from "./paths";
 import type { Probe, ProbeCandidate, Verdict } from "./probe";
 import { COMPATIBILITY, type Reference } from "./reference";
 import { type Refusal, refusal } from "./refusal";
-import type { EngineSignatures } from "./signatures";
+import type { EngineSignatures, Layout } from "./signatures";
 import { classOptions, documentClass } from "./source";
 import {
   asLocked,
@@ -3011,24 +3014,36 @@ interface Edit {
 }
 
 /**
- * The class's size option in `\documentclass`, `11pt` or `10.5pt`, where the font size control
- * takes it: its place in the preamble and its size, when the size is one the control offers.
+ * Where the font size control sets the class's size in `\documentclass` (decision 0040): its size
+ * option, `11pt` or `10.5pt`, whose place the control's slot takes, with the size it names; or,
+ * where its options name no size, the place the slot goes, first among them, in brackets of its own
+ * where the class is given none. Undefined for a preamble with no `\documentclass`.
  */
-function sizeOption(preamble: string): { span: Span; size: number } | undefined {
+function sizePlace(preamble: string): { edit: Edit; named?: number } | undefined {
   const text = settingsText(preamble);
-  const found = /\\documentclass\s*\[([^\]]*)\]/.exec(text);
+  const found = /\\documentclass\s*(?:\[([^\]]*)\])?\s*\{/.exec(text);
   if (found === null) return undefined;
+  const options = found[1];
+  if (options === undefined) {
+    const at = found.index + "\\documentclass".length;
+    return { edit: { start: at, end: at, text: "[{{fontSize}}pt]" } };
+  }
   const optionsAt = found.index + found[0].indexOf("[") + 1;
-  const option = /(^|,)\s*((\d+(?:\.\d+)?)pt)\s*(?=,|$)/.exec(found[1] ?? "");
-  if (option === null) return undefined;
-  const size = Number(option[3]);
-  if (!(size >= 9 && size <= 12 && Number.isInteger(size * 2))) return undefined;
-  const start =
-    optionsAt +
-    option.index +
-    (option[1] ?? "").length +
-    (option[0].length - (option[1] ?? "").length - (option[2] ?? "").length);
-  return { span: { start, end: start + (option[2] ?? "").length }, size };
+  const option = /(^|,)(\s*)((\d+(?:\.\d+)?)pt)\s*(?=,|$)/.exec(options);
+  if (option === null)
+    return {
+      edit: {
+        start: optionsAt,
+        end: optionsAt,
+        text: options.trim() === "" ? "{{fontSize}}pt" : "{{fontSize}}pt,",
+      },
+    };
+  const start = optionsAt + option.index + (option[1] ?? "").length + (option[2] ?? "").length;
+  const named = option[3] ?? "";
+  return {
+    edit: { start, end: start + named.length, text: "{{fontSize}}pt" },
+    named: Number(option[4]),
+  };
 }
 
 /**
@@ -3045,10 +3060,12 @@ export const SIZE_OPTIONS: readonly string[] = Array.from(
 
 /**
  * The sizes the font size control may offer, 9 to 12 points in half points, that the class
- * declares, as the signatures step found `\ds@<size>pt` defined (`SIZE_OPTIONS`): none where the
- * step was not asked of them, since a size the class does not declare sets its own default size.
+ * declares, as the signatures step found `\ds@<size>pt` defined (`SIZE_OPTIONS`), since a size the
+ * class does not declare sets its own default size; and where the step was not asked of them,
+ * `article`'s three, 10, 11 and 12, which the fourth check holds to the page as any (decision 0040).
  */
-function declaredSizes(found: EngineSignatures): number[] {
+function offeredSizes(found: EngineSignatures): number[] {
+  if (!SIZE_OPTIONS.some((name) => Object.hasOwn(found.commands, name))) return [10, 11, 12];
   const sizes: number[] = [];
   for (let size = 9; size <= 12; size += 0.5) {
     const name = `ds@${size}pt`;
@@ -3056,6 +3073,89 @@ function declaredSizes(found: EngineSignatures): number[] {
     if (signature !== undefined && signature.kind !== "undefined") sizes.push(size);
   }
   return sizes;
+}
+
+/**
+ * The document's own size among those the control offers (decision 0040): the size its class
+ * option names, where that is one of them; else the one whose normal size is the one the class set,
+ * within a tenth of a point, as `11pt` sets 10.95 (`Layout.size`), for a class given no size or
+ * one it ignores; none where neither is.
+ */
+function ownSize(
+  named: number | undefined,
+  layout: Layout | undefined,
+  sizes: readonly number[],
+): number | undefined {
+  if (named !== undefined && sizes.includes(named)) return named;
+  if (layout === undefined) return undefined;
+  return sizes.find((size) => Math.abs(size - layout.size) < 0.1);
+}
+
+/** TeX's points to the inch. */
+const POINTS_PER_INCH = 72.27;
+
+/** A margin or a size as the generator renders a control's value: to the tenth, `0.5`, `1`. */
+const shownValue = (value: number) => String(Math.round(value * 10) / 10);
+
+/**
+ * The margins control's default (decision 0040): the document's own left margin, as the engine
+ * found it at `\begin{document}` (`Layout.left`), or where it found none, the one margin geometry's
+ * options give; to the nearest tenth of an inch the control offers, from 0.4 to 1. None where
+ * neither says, as for an import whose signatures were made by hand.
+ */
+function ownMargin(layout: Layout | undefined, preamble: string): number | undefined {
+  const geometry = geometryOptions(preamble);
+  const given =
+    layout === undefined
+      ? (inches(geometry?.get("margin")) ??
+        inches(geometry?.get("left")) ??
+        inches(geometry?.get("lmargin")))
+      : layout.left / POINTS_PER_INCH;
+  if (given === undefined || !Number.isFinite(given)) return undefined;
+  return Math.min(1, Math.max(0.4, Math.round(given * 10) / 10));
+}
+
+/**
+ * The margins control's snippet (decision 0040), in the body's preamble region: nothing at the
+ * document's own value, `own`, which TeX compares the value with, so that the unchanged control is
+ * the original to the byte whatever margins the document has, geometry's or the class's; at any
+ * other, one margin on every side, reissued to geometry where the class or the preamble loaded it,
+ * after the document's own, and geometry loaded with it where nothing did. The space after the
+ * comparison ends its dimension, so that TeX does not expand what follows looking for one, and the
+ * branch taken runs outside the conditional, as a package loaded inside one might not.
+ */
+export function marginsSnippet(own: number): string {
+  return [
+    `\\ifdim{{value}}in=${shownValue(own)}in `,
+    "\\expandafter\\csname @gobble\\expandafter\\endcsname",
+    "\\else\\expandafter\\csname @firstofone\\expandafter\\endcsname\\fi",
+    "{\\csname @ifpackageloaded\\endcsname{geometry}",
+    "{\\geometry{margin={{value}}in}}{\\usepackage[margin={{value}}in]{geometry}}}",
+  ].join("");
+}
+
+/**
+ * The page size control's snippet for the paper the document is not on (decision 0040), in the
+ * body's preamble region: the paper reissued to geometry where the class or the preamble loaded
+ * it, which keeps the margins it was given; and where nothing did, geometry loaded with the paper
+ * and the margins the document has, each side's and its head's and foot's as TeX finds them there,
+ * so that the text keeps its margins on the other paper, where geometry's own would set others.
+ */
+export function pageSizeSnippet(paper: "letter" | "a4"): string {
+  const margins = [
+    "left=\\the\\dimexpr1in+\\hoffset+\\oddsidemargin\\relax",
+    "right=\\the\\dimexpr\\paperwidth-1in-\\hoffset-\\oddsidemargin-\\textwidth\\relax",
+    "top=\\the\\dimexpr1in+\\voffset+\\topmargin+\\headheight+\\headsep\\relax",
+    "bottom=\\the\\dimexpr\\paperheight-1in-\\voffset-\\topmargin-\\headheight-\\headsep-\\textheight\\relax",
+    "headheight=\\the\\headheight",
+    "headsep=\\the\\headsep",
+    "footskip=\\the\\footskip",
+  ].join(",");
+  return [
+    `\\csname @ifpackageloaded\\endcsname{geometry}{\\geometry{${paper}paper}}`,
+    `{\\xdef\\rtimportlayout{${margins}}`,
+    `\\expandafter\\usepackage\\expandafter[\\rtimportlayout,${paper}paper]{geometry}}`,
+  ].join("");
 }
 
 /** The keys and values of a key-value list, as geometry's options give them. */
@@ -3117,12 +3217,19 @@ function paperOf(preamble: string, made: Reference): "letter" | "a4" | undefined
   return undefined;
 }
 
-/** The generic controls and those the answer's preamble parameters give, with their defaults. */
+/**
+ * The generic controls and those the answer's preamble parameters give, with their defaults, and
+ * where the font size control's slot goes in the preamble (decision 0040). The page size and the
+ * margins go through geometry in the body's preamble region, geometry loaded there where nothing
+ * loaded it and reissued where the class or the preamble did, each at the document's own value
+ * setting nothing, so that the unchanged control is the original to the byte; the font size is the
+ * class's option, format-bound (decision 0006), at the sizes the class declares.
+ */
 function controlsOf(
   ctx: Context,
   preamble: string,
   answer: NamingAnswer,
-): { controls: TemplatePackage["controls"]; size?: { span: Span; size: number } } {
+): { controls: TemplatePackage["controls"]; size?: Edit } {
   // The date format, where a date with a month is set from the model: a document whose dates are
   // kept as the upload wrote them, or are years alone, has none the control could change.
   const controls: TemplatePackage["controls"] = ctx.monthly
@@ -3134,55 +3241,24 @@ function controlsOf(
     const other = paper === "letter" ? "a4" : "letter";
     controls.pageSize = {
       default: paper,
-      apply: {
-        [paper]: "",
-        [other]: `\\csname @ifpackageloaded\\endcsname{geometry}{\\geometry{${other}paper}}{\\usepackage[${other}paper]{geometry}}`,
-      } as Record<"letter" | "a4", string>,
+      apply: { [paper]: "", [other]: pageSizeSnippet(other) } as Record<"letter" | "a4", string>,
     };
   }
-  const geometry = geometryOptions(preamble);
-  if (geometry !== undefined && !dropped.has("margins")) {
-    const sides = ["left", "right", "top", "bottom"].map((side) => inches(geometry.get(side)));
-    const margin =
-      inches(geometry.get("margin")) ??
-      (sides.every((side) => side !== undefined && Math.abs(side - (sides[0] ?? 0)) < 1e-6)
-        ? sides[0]
-        : undefined);
-    const tenths = margin === undefined ? undefined : Math.round(margin * 10) / 10;
-    const others = [
-      "hmargin",
-      "vmargin",
-      "left",
-      "right",
-      "top",
-      "bottom",
-      "lmargin",
-      "rmargin",
-      "tmargin",
-      "bmargin",
-    ];
-    const uniform = geometry.has("margin")
-      ? others.every((key) => !geometry.has(key))
-      : sides.every((side) => side !== undefined);
-    if (
-      tenths !== undefined &&
-      margin !== undefined &&
-      uniform &&
-      Math.abs(margin - tenths) < 0.002 &&
-      tenths >= 0.4 &&
-      tenths <= 1
-    )
-      controls.margins = { default: tenths, apply: "\\geometry{margin={{value}}in}" };
-  }
-  // The class's size option, where the class declares it, with every other size it declares: a
-  // class declaring none, or not the document's own, offers no control, since the page would not
-  // follow it; nor does one declaring the document's size alone, which leaves nothing to choose.
-  const option = sizeOption(preamble);
-  const sizes = option === undefined ? [] : declaredSizes(ctx.found);
-  const size =
-    option !== undefined && sizes.length > 1 && sizes.includes(option.size) ? option : undefined;
-  if (size !== undefined && !dropped.has("fontSize"))
-    controls.fontSize = { default: size.size, apply: "", format: true, sizes };
+  // Every document has margins, the class's where nothing else sets them: the control starts at
+  // the document's own, which it leaves as they are, and sets one margin on every side at any other.
+  const margin = ownMargin(ctx.found.layout, preamble);
+  if (margin !== undefined && !dropped.has("margins"))
+    controls.margins = { default: margin, apply: marginsSnippet(margin) };
+  // The class's size option, where it names one the class declares, or the document's own size
+  // among them where it names none, or one the class ignores: with every other size the class
+  // declares. A class declaring none, or not the document's size, offers no control, since the
+  // page would not follow it; nor does one declaring the document's size alone, which leaves
+  // nothing to choose. Whether the page follows the option at all, the fourth check proves.
+  const place = sizePlace(preamble);
+  const sizes = place === undefined ? [] : offeredSizes(ctx.found);
+  const own = place === undefined ? undefined : ownSize(place.named, ctx.found.layout, sizes);
+  if (own !== undefined && sizes.length > 1 && !dropped.has("fontSize"))
+    controls.fontSize = { default: own, apply: "", format: true, sizes };
   for (const parameter of answer.preamble.parameters) {
     if (dropped.has(parameter.parameter as ControlName)) continue;
     const text = settingsText(preamble);
@@ -3232,7 +3308,10 @@ function controlsOf(
         ],
       };
   }
-  return { controls, ...(size === undefined || dropped.has("fontSize") ? {} : { size }) };
+  return {
+    controls,
+    ...(controls.fontSize === undefined || place === undefined ? {} : { size: place.edit }),
+  };
 }
 
 /** A colour the preamble defines, as `#RRGGBB`, from xcolor's HTML, RGB, rgb or gray models. */
@@ -3294,20 +3373,21 @@ export function hyperrefLines(engine: Engine, loaded: boolean): { before: string
 
 /**
  * The package's preamble: the document's, the preamble's header calls taken out, the class's size
- * option the font size control's slot, the redefinitions after `\documentclass`, hyperref's driver
- * and bookmarks passed before it and hyperref loaded with `hidelinks` where nothing loads it, and
- * `@`'s category where the preamble ends kept for the body, which may rely on `\makeatletter`;
- * every other byte as the document has it, but that a `{{` that would begin a tag is broken.
+ * option the font size control's slot, or the slot put first among its options where they name no
+ * size (`sizePlace`), the redefinitions after `\documentclass`, hyperref's driver and bookmarks
+ * passed before it and hyperref loaded with `hidelinks` where nothing loads it, and `@`'s category
+ * where the preamble ends kept for the body, which may rely on `\makeatletter`; every other byte
+ * as the document has it, but that a `{{` that would begin a tag is broken.
  */
 function preambleText(
   ctx: Context,
   removed: readonly Span[],
-  size: { span: Span } | undefined,
+  size: Edit | undefined,
   redefinitions: readonly { name: string; latex: string }[],
 ): { preamble: string; at: boolean } {
   const text = ctx.preamble.text;
   const edits: Edit[] = removed.map((span) => ({ ...span, text: "" }));
-  if (size !== undefined) edits.push({ ...size.span, text: "{{fontSize}}pt" });
+  if (size !== undefined) edits.push(size);
   edits.sort((a, b) => a.start - b.start);
   let out = "";
   let at = 0;

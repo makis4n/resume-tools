@@ -8,7 +8,8 @@
  *
  * It compiles the resume through the package as the editor does, twice, then once more after an
  * edit to every field, then once for each style control set another way, and reads the output
- * back as the page does; and it checks the PDF xdvipdfmx makes from the resume's first output.
+ * back as the page does, the resume's own and each font's the package offers; and it checks the
+ * PDF xdvipdfmx makes from the resume's first output.
  * It reports rather than throws: each check that fails adds a finding, so that CI names every
  * check a package fails and the import step can say what is locked. Only a failed dump or compile
  * stops it, since nothing after either has anything to read. Findings are for developers and CI,
@@ -34,6 +35,7 @@ import {
   ControlValues,
   defaultControls,
   fontFiles,
+  fontSizes,
   shapeFile,
   type TemplatePackage,
 } from "../templates/package";
@@ -69,11 +71,15 @@ export const CHECKS = [
 
 export type Check = (typeof CHECKS)[number];
 
-/** Something a check found wrong, and the field it concerns when it concerns one. */
+/**
+ * Something a check found wrong, the field it concerns when it concerns one, and for the controls
+ * check, the control whose value it found wrong, which an import drops (decision 0040).
+ */
 export interface Finding {
   check: Check;
   message: string;
   field?: string;
+  control?: keyof ControlValues;
 }
 
 /** What the harness found for a package and a resume. */
@@ -100,6 +106,12 @@ export interface Report {
   pages: number;
   /** The fields the page finds. */
   fields: number;
+  /**
+   * The fonts the page drew the resume in, by the font control's choices' ids, the document's own
+   * first, then each other the controls check drew with no finding (decision 0040); absent for a
+   * package that offers no font control.
+   */
+  fonts?: string[];
   /** Empty when the package passes every check. */
   findings: Finding[];
 }
@@ -250,26 +262,33 @@ export async function validatePackage(
       : attempt(findings, "edits", () => compile(editedBody.latex));
   addPasses(report, edited);
 
+  const { fields, undrawable, natives, outside } = await readFields(fonts, output, doc);
+  report.pages = doc.pages.length;
+  report.fields = fields.size;
+  const fieldFindings = checkFields(doc, fields, body.texts);
+  const alignmentFindings = checkAlignment(fields, body.texts, doc.pages.length === 1);
+  // The edit, the fonts the controls draw and the PDF are judged only on the fields these two
+  // checks pass as the resume has them.
+  const reported = new Set(
+    [...fieldFindings, ...alignmentFindings].flatMap((finding) => finding.field ?? []),
+  );
+
   // The controls' compiles come last, after the edit's, though `CHECKS` lists their check before
   // `edits`: each leaves the job as it compiled it, with another format where a value names one,
   // and the edit has to compile in the job as the resume's second compile left it, as an edit does
   // in the editor. So nothing is restored after them. The first reads the auxiliary files the
   // edit's compile wrote, so only a template whose page shows what they hold, which the edits
   // check reports, could pass a control that does nothing.
-  const controls = checkControls(session, pkg, sample, chosen, format.name, output, job, covers);
+  const controls = await checkControls({ session, fonts, job, covers }, pkg, sample, chosen, {
+    format: format.name,
+    output,
+    reported,
+    undrawable,
+  });
   addPasses(report, controls.timing);
   findings.push(...controls.findings);
-
-  const { fields, undrawable, natives, outside } = await readFields(fonts, output, doc);
-  report.pages = doc.pages.length;
-  report.fields = fields.size;
-  const fieldFindings = checkFields(doc, fields, body.texts);
-  const alignmentFindings = checkAlignment(fields, body.texts, doc.pages.length === 1);
-  // The edit and the PDF are judged only on the fields these two checks pass as the resume has
-  // them.
-  const reported = new Set(
-    [...fieldFindings, ...alignmentFindings].flatMap((finding) => finding.field ?? []),
-  );
+  if (pkg.controls.font !== undefined && chosen.font !== undefined)
+    report.fonts = [chosen.font, ...controls.drawn];
   if (editedBody !== undefined && edited !== undefined)
     findings.push(...(await checkEdits(fonts, edited, editedBody.texts, body.texts, reported)));
   findings.push(
@@ -487,26 +506,43 @@ function addPasses(timing: Timing, result: Timing | undefined) {
  * names another format has it dumped first, as the editor dumps it, and the job then starts again
  * as a new document. A finding says that the format did not dump, that the body did not compile
  * or its log has an error, or that the output is the resume's own (`sameOutput`), so the control
- * does nothing. Plan section 5.4 asks as much of an imported template's controls, which appear
- * only where overriding one changes the output without breaking the compile.
+ * does nothing, and names the control (`Finding.control`), which an import drops. Plan section
+ * 5.4 asks as much of an imported template's controls, which appear only where overriding one
+ * changes the output without breaking the compile.
+ *
+ * Each other font the package offers is drawn besides, as decision 0012 asked (decision 0040): its
+ * output read as the page reads it, every field the body marks found on the page, aligned with its
+ * text and set in fonts the page can draw, as the fields, alignment and fonts checks hold the
+ * resume's own output. A field those checks report for the resume as it is (`reported`), and a font
+ * the page cannot draw it in either (`undrawable`), are left to them, so that a finding here is
+ * what the font broke; the fonts drawn with none are returned (`Report.fonts`).
  */
-function checkControls(
-  session: EngineSession,
+async function checkControls(
+  engine: {
+    session: EngineSession;
+    fonts: FontLibrary;
+    job: string;
+    covers: ((char: string) => boolean) | undefined;
+  },
   pkg: TemplatePackage,
   sample: Resume,
   chosen: ControlValues,
-  format: string,
-  output: Uint8Array,
-  job: string,
-  covers: ((char: string) => boolean) | undefined,
-): { findings: Finding[]; timing: Timing } {
+  own: {
+    format: string;
+    output: Uint8Array;
+    reported: ReadonlySet<string>;
+    undrawable: ReadonlyMap<string, string>;
+  },
+): Promise<{ findings: Finding[]; timing: Timing; drawn: string[] }> {
+  const { session, fonts, job, covers } = engine;
   const findings: Finding[] = [];
   const timing: Timing = { passes: [] };
-  const add = (message: string) => findings.push({ check: "controls", message });
-  for (const { values, set, was } of probesOf(pkg, chosen)) {
+  const drawn: string[] = [];
+  for (const { values, control, set, was } of probesOf(pkg, chosen)) {
+    const add = (message: string) => findings.push({ check: "controls", message, control });
     try {
       const probe = generateFormat(pkg, values);
-      if (probe.name !== format) {
+      if (probe.name !== own.format) {
         const dumped = session.dump(pkg.engine, probe.name, probe.preamble, probe.files);
         if (!dumped.ok) {
           add(`with ${set}, the format does not dump: ${dumped.error ?? "no format"}`);
@@ -519,21 +555,51 @@ function checkControls(
       const error = compileError(result);
       if (error !== undefined || result.output === undefined)
         add(`with ${set}, the body does not compile: ${error ?? "no output"}`);
-      else if (sameOutput(output, result.output))
+      else if (sameOutput(own.output, result.output))
         add(`${set} sets the same output as ${was}, so the control does nothing`);
+      else if (control === "font" && values.font !== undefined) {
+        const problems = await drawProblems(fonts, result.output, body.texts, own);
+        for (const problem of problems) add(`with ${set}, ${problem}`);
+        if (problems.length === 0) drawn.push(values.font);
+      }
     } catch (error) {
-      // The generator throws for what it cannot render, and the session for a run the engine
-      // cannot finish.
+      // The generator throws for what it cannot render, the session for a run the engine cannot
+      // finish, and the DVI reader for output it cannot read.
       add(`with ${set}, ${messageOf(error)}`);
     }
   }
-  return { findings, timing };
+  return { findings, timing, drawn };
+}
+
+/**
+ * What drawing a font's output finds wrong (decision 0040): the fields, alignment and fonts checks'
+ * messages on it, as they judge the resume's own output, but for the fields and fonts they found
+ * wrong there already (`reported`, `undrawable`).
+ */
+async function drawProblems(
+  fonts: FontLibrary,
+  output: Uint8Array,
+  texts: ReadonlyMap<string, string>,
+  own: { reported: ReadonlySet<string>; undrawable: ReadonlyMap<string, string> },
+): Promise<string[]> {
+  const doc = readDvi(output);
+  const { fields, undrawable } = await readFields(fonts, output, doc);
+  for (const name of own.undrawable.keys()) undrawable.delete(name);
+  return [
+    ...checkFields(doc, fields, texts),
+    ...checkAlignment(fields, texts, doc.pages.length === 1),
+    ...checkFonts(undrawable),
+  ]
+    .filter((finding) => finding.field === undefined || !own.reported.has(finding.field))
+    .map((finding) => finding.message);
 }
 
 /** One value the controls check tries, and how a finding names it and the document's value. */
 interface Probe {
   /** The document's values, with one control set another way. */
   values: ControlValues;
+  /** The control set another way. */
+  control: keyof ControlValues;
   /** The control and the value it is set to, as `margins 1`. */
   set: string;
   /** The control and the document's value for it, as `margins 0.5`. */
@@ -546,12 +612,14 @@ const PROBE_ACCENT = "#1F4E79";
 /**
  * The values the controls check tries, one control set another way in each, for every control the
  * package offers, in the schema's order: the other page size; margins of an inch, or of 0.4 where
- * they are an inch already; the largest font size, or 11.5 where the size is 12; each font but
- * the document's; a dark blue accent, or black where the accent is that blue; each density but
- * the document's; and the date format that shows only years, or `MMM yyyy` where the document
- * shows only years. `chosen` holds a value for every control the package offers, the package's
- * defaults filled in. The date format is tried only where the package declares it, as Jake's
- * does, since it is the generator's and changes the page only where the template sets a date.
+ * they are an inch already; the largest font size the package offers, or the next below it where
+ * the document's is the largest, 11.5 for a size of 12 where every half point is offered; each
+ * font but the document's; a dark blue accent, or black where the accent is that blue; each
+ * density but the document's; and the date format that shows only years, or `MMM yyyy` where the
+ * document shows only years. `chosen` holds a value for every control the package offers, the
+ * package's defaults filled in. The date format is tried only where the package declares it, as
+ * Jake's does, since it is the generator's and changes the page only where the template sets a
+ * date.
  */
 function probesOf(pkg: TemplatePackage, chosen: ControlValues): Probe[] {
   const { pageSize, margins, fontSize, font, accent, density, dateFormat } = pkg.controls;
@@ -559,6 +627,7 @@ function probesOf(pkg: TemplatePackage, chosen: ControlValues): Probe[] {
   const probe = (values: ControlValues, name: keyof ControlValues) =>
     probes.push({
       values,
+      control: name,
       set: `${name} ${String(values[name])}`,
       was: `${name} ${String(chosen[name])}`,
     });
@@ -568,7 +637,12 @@ function probesOf(pkg: TemplatePackage, chosen: ControlValues): Probe[] {
     const wide = (chosen.margins ?? margins.default) < 1;
     probe({ ...chosen, margins: wide ? 1 : 0.4 }, "margins");
   }
-  if (fontSize) probe({ ...chosen, fontSize: chosen.fontSize === 12 ? 11.5 : 12 }, "fontSize");
+  if (fontSize) {
+    // A class that sets some sizes alone is tried at one of them, as the side panel offers them.
+    const others = fontSizes(pkg).filter((size) => size !== chosen.fontSize);
+    const largest = others.at(-1);
+    if (largest !== undefined) probe({ ...chosen, fontSize: largest }, "fontSize");
+  }
   for (const { id } of font?.choices ?? [])
     if (id !== chosen.font) probe({ ...chosen, font: id }, "font");
   if (accent) {

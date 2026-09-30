@@ -24,6 +24,7 @@ import {
   type Invented,
   inputsOf,
   JAKE_LIKE,
+  LAYOUT,
   MEANINGS,
   PREAMBLE,
   probeOf,
@@ -41,6 +42,8 @@ import {
   kindOfAddress,
   LINKS,
   MAIN_FILE,
+  marginsSnippet,
+  pageSizeSnippet,
   SIZE_OPTIONS,
   takenOut,
 } from "./assemble";
@@ -159,8 +162,8 @@ describe("the package", () => {
     const { controls } = ok((await assembled()).result).package;
     expect(controls.pageSize?.default).toBe("letter");
     expect(controls.pageSize?.apply.letter).toBe("");
-    expect(controls.pageSize?.apply.a4).toContain("\\geometry{a4paper}");
-    expect(controls.margins).toEqual({ default: 0.5, apply: "\\geometry{margin={{value}}in}" });
+    expect(controls.pageSize?.apply.a4).toBe(pageSizeSnippet("a4"));
+    expect(controls.margins).toEqual({ default: 0.5, apply: marginsSnippet(0.5) });
     expect(controls.fontSize).toEqual({
       default: 11,
       apply: "",
@@ -168,6 +171,71 @@ describe("the package", () => {
       sizes: [10, 11, 12],
     });
     expect(controls.dateFormat?.default).toBe("MMM yyyy");
+  });
+
+  test("sets the page size through geometry, reissued where it is loaded and loaded with the margins the document has where not", () => {
+    // Where the class or the preamble loaded geometry, the paper alone, which keeps its margins;
+    // where nothing did, geometry loaded with the paper and the margins TeX finds, side by side.
+    const a4 = pageSizeSnippet("a4");
+    expect(a4).toContain(
+      "\\csname @ifpackageloaded\\endcsname{geometry}{\\geometry{a4paper}}{\\xdef\\rtimportlayout{",
+    );
+    expect(a4).toContain("left=\\the\\dimexpr1in+\\hoffset+\\oddsidemargin\\relax,");
+    expect(a4).toContain("footskip=\\the\\footskip}");
+    expect(a4).toContain(
+      "\\expandafter\\usepackage\\expandafter[\\rtimportlayout,a4paper]{geometry}}",
+    );
+    expect(pageSizeSnippet("letter")).toContain("[\\rtimportlayout,letterpaper]{geometry}");
+    // The snippet language reads it as text: it holds no tag.
+    expect(parseSnippet(a4).every((node) => node.kind === "text")).toBe(true);
+  });
+
+  test("sets the margins through geometry, nothing at the document's own and one margin on every side at any other", () => {
+    const snippet = marginsSnippet(0.8);
+    expect(snippet.startsWith("\\ifdim{{value}}in=0.8in \\expandafter")).toBe(true);
+    expect(snippet).toContain(
+      "{\\csname @ifpackageloaded\\endcsname{geometry}{\\geometry{margin={{value}}in}}{\\usepackage[margin={{value}}in]{geometry}}}",
+    );
+    expect(marginsSnippet(1)).toContain("=1in ");
+    // Its one slot is the value, three times.
+    const slots = parseSnippet(snippet).filter((node) => node.kind === "slot");
+    expect(slots.map((node) => node.kind === "slot" && node.name)).toEqual([
+      "value",
+      "value",
+      "value",
+    ]);
+  });
+
+  test("offers the margins at the document's own left margin, as the engine found it, in tenths from 0.4 to 1", async () => {
+    // What geometry sets the engine reads, in points: three quarters of an inch is 0.8 to the
+    // tenth, two inches the most the control offers and a tenth of one the least.
+    const at = async (inches: number, preamble = PREAMBLE) =>
+      ok(
+        (
+          await assembleInvented({
+            ...JAKE_LIKE,
+            source: `${preamble}${BODY}`,
+            layout: { ...LAYOUT, left: inches * 72.27 },
+          })
+        ).result,
+      ).package.controls.margins;
+    expect(await at(0.75)).toEqual({ default: 0.8, apply: marginsSnippet(0.8) });
+    expect((await at(2))?.default).toBe(1);
+    expect((await at(0.1))?.default).toBe(0.4);
+    // The layout, not the preamble's geometry, which the preamble may change after it.
+    expect((await at(0.6))?.default).toBe(0.6);
+    // Without geometry, as Jake's Resume sets its margins by hand, the layout says what they are.
+    const bare = PREAMBLE.replace("\\usepackage[margin=0.5in]{geometry}\n", "");
+    expect((await at(0.5, bare))?.default).toBe(0.5);
+    // With neither, as for signatures made by hand, the control has no default to start at.
+    const none = await assembleInvented({ ...JAKE_LIKE, source: `${bare}${BODY}` });
+    expect(ok(none.result).package.controls.margins).toBeUndefined();
+    // Without the layout, geometry's margin, or its left one.
+    const left = await assembleInvented({
+      ...JAKE_LIKE,
+      source: `${PREAMBLE.replace("margin=0.5in", "left=1.27cm,top=2cm")}${BODY}`,
+    });
+    expect(ok(left.result).package.controls.margins?.default).toBe(0.5);
   });
 
   test("offers the controls the answer's preamble settings name, from what the preamble sets", async () => {
@@ -1123,14 +1191,28 @@ describe("what the assembly counts and says (decision 0026)", () => {
     expect(article.controls.fontSize?.sizes).toEqual([10, 11, 12]);
     const ext = ok((await withSizes(["ds@9pt", "ds@14pt"])).result).package;
     expect(ext.controls.fontSize?.sizes).toEqual([9, 10, 11, 12]);
-    // A class that declares none, or not the document's size, offers none, and keeps its option.
-    const none = await assembleInvented({
-      ...JAKE_LIKE,
-      commands: COMMANDS,
-    });
-    const bare = ok(none.result).package;
-    expect(bare.controls.fontSize).toBeUndefined();
-    expect(bare.preamble).toContain("\\documentclass[11pt,letterpaper]{inventedcv}");
+    // Signatures not asked of the sizes, as a caller that did not ask gives them, offer article's
+    // three, which the fourth check holds to the page as any (decision 0040).
+    const unasked = ok((await assembleInvented({ ...JAKE_LIKE, commands: COMMANDS })).result);
+    expect(unasked.package.controls.fontSize?.sizes).toEqual([10, 11, 12]);
+    // A class that declares none, asked of each and each undefined, offers none, and keeps its
+    // option.
+    const inputs = inputsOf(JAKE_LIKE);
+    for (const name of SIZE_OPTIONS)
+      inputs.signatures.commands[name] = { kind: "undefined", how: "unresolved", why: "undefined" };
+    const none = ok(
+      await assemble(
+        inputs.intake,
+        REFERENCE,
+        inputs.tree,
+        inputs.signatures,
+        inputs.probe,
+        inputs.answer,
+      ),
+    );
+    expect(none.package.controls.fontSize).toBeUndefined();
+    expect(none.package.preamble).toContain("\\documentclass[11pt,letterpaper]{inventedcv}");
+    // Nor does one that does not declare the document's size.
     const other = await assembleInvented({
       ...JAKE_LIKE,
       commands: { ...COMMANDS, "ds@10pt": "", "ds@12pt": "" },
@@ -1158,6 +1240,52 @@ describe("what the assembly counts and says (decision 0026)", () => {
       "ds@14pt",
     ]);
     expect(ARTICLE_SIZES).toEqual({ "ds@10pt": "", "ds@11pt": "", "ds@12pt": "" });
+  });
+
+  test("puts the font size first among the class's options where they name none, at the size the class set", async () => {
+    // The class's options name no size: the slot goes first among them, at the size the engine
+    // found the class set, whose normal size is its own, 10.95 for 11 points (decision 0040).
+    const sized = (documentclass: string, size = 10) =>
+      assembleInvented({
+        ...JAKE_LIKE,
+        source: `${PREAMBLE.replace("\\documentclass[11pt,letterpaper]{inventedcv}", documentclass)}${BODY}`,
+        layout: { ...LAYOUT, size },
+      });
+    const letter = ok((await sized("\\documentclass[letterpaper]{inventedcv}")).result).package;
+    expect(letter.preamble).toContain("\\documentclass[{{fontSize}}pt,letterpaper]{inventedcv}");
+    expect(letter.controls.fontSize).toEqual({
+      default: 10,
+      apply: "",
+      format: true,
+      sizes: [10, 11, 12],
+    });
+    // The format at the default names the class's own size, which it set without being asked.
+    expect(generateFormat(letter, {}).preamble).toContain(
+      "\\documentclass[10pt,letterpaper]{inventedcv}",
+    );
+    const bare = ok((await sized("\\documentclass{inventedcv}")).result).package;
+    expect(bare.preamble).toContain("\\documentclass[{{fontSize}}pt]{inventedcv}");
+    const empty = ok((await sized("\\documentclass[]{inventedcv}")).result).package;
+    expect(empty.preamble).toContain("\\documentclass[{{fontSize}}pt]{inventedcv}");
+    const eleven = ok((await sized("\\documentclass{inventedcv}", 10.95)).result).package;
+    expect(eleven.controls.fontSize?.default).toBe(11);
+    // A size the class ignores, as article ignores 10.5 points, is the slot's place, at the size
+    // the class set in its stead.
+    const ignored = ok((await sized("\\documentclass[10.5pt,letterpaper]{inventedcv}")).result);
+    expect(ignored.package.preamble).toContain(
+      "\\documentclass[{{fontSize}}pt,letterpaper]{inventedcv}",
+    );
+    expect(ignored.package.controls.fontSize?.default).toBe(10);
+    // A normal size that no size the class declares sets offers none, and the options stay.
+    const odd = ok((await sized("\\documentclass[letterpaper]{inventedcv}", 10.5)).result);
+    expect(odd.package.controls.fontSize).toBeUndefined();
+    expect(odd.package.preamble).toContain("\\documentclass[letterpaper]{inventedcv}");
+    // Nor, without the layout, has the control a size to start at.
+    const unknown = await assembleInvented({
+      ...JAKE_LIKE,
+      source: `${PREAMBLE.replace("[11pt,letterpaper]", "[letterpaper]")}${BODY}`,
+    });
+    expect(ok(unknown.result).package.controls.fontSize).toBeUndefined();
   });
 
   test("marks the kinds of unit that stop the compile, in the package and its id", async () => {

@@ -35,13 +35,17 @@
  *    removed, each compiled; a kind whose new unit stops the compile is one the editor cannot add,
  *    which the package marks (`fixed`).
  * 4. **Controls.** Each control's every value but the document's compiled: one that stops the
- *    compile at a value, or sets the same page at one, is dropped.
+ *    compile at a value, or sets the same page at every one, is dropped. The page size and the
+ *    margins, geometry's, and the font size, the class's option, are the milestone's bar on every
+ *    successful import (decision 0040).
  *
  * Then the harness (`validatePackage`) runs on the package and the document; a `fields` or
- * `alignment` finding on a field locks it, once, and the checks run again; any other finding is
- * recorded for item 13's report. The harness holds the package to the upload's own page count and
- * passes, not a curated sample's one page and two. What is returned reads back under the model's
- * and the package's schemas, or the import is refused (`keep`).
+ * `alignment` finding on a field locks it, once, and a `controls` finding drops the control it
+ * names, a font the harness cannot draw the fields in among them (decision 0040), once, and the
+ * checks run again; any other finding is recorded for item 13's report. The harness holds the
+ * package to the upload's own page count and passes, not a curated sample's one page and two. What
+ * is returned reads back under the model's and the package's schemas, or the import is refused
+ * (`keep`).
  */
 
 import type { NamingAnswer } from "@resume-tools/naming";
@@ -159,6 +163,19 @@ export const NOTES = ["stopped", "untested", "unproven"] as const;
 
 /** Why a control is dropped that the checks never tried, having stopped before the fourth. */
 export const UNCHECKED = "unchecked";
+
+/**
+ * How the other reasons a control is dropped begin (decision 0040), which the corpus runner reads
+ * the kind of a drop from and never the rest: the first check found its default moves the
+ * original's page; the fourth found a value stops the compile, or every value sets the same page;
+ * or the harness found it does not work.
+ */
+export const DROPPED = {
+  moves: "moves the original's page at the document's own value",
+  stops: "stops the compile at ",
+  same: "sets the same page at every value",
+  harness: "the harness: ",
+} as const;
 
 /** `n` things, as a finding counts them: `1 slot`, `2 slots`. */
 const counted = (n: number, thing: string) => `${n} ${thing}${n === 1 ? "" : "s"}`;
@@ -640,9 +657,10 @@ export async function validate(inputs: ValidationInputs): Promise<Assembled | Re
 
 /**
  * The checks' rounds through `compiler`: the four checks and `harness`, then, where the harness
- * finds a field unmarked or misaligned, the field locked and the checks run again, once. The
- * second round takes what the first decided and does not try it again, so the controls the first
- * dropped, with why, and the redefinitions it could not prove are reported with the second's.
+ * finds a field unmarked or misaligned, the field locked, and where it finds a control does not
+ * work, the control dropped, and the checks run again, once. The second round takes what the first
+ * decided and does not try it again, so the controls the first dropped, with why, and the
+ * redefinitions it could not prove are reported with the second's.
  */
 export async function validateWith(
   inputs: Omit<ValidationInputs, "session" | "fonts">,
@@ -665,20 +683,33 @@ export async function validateWith(
   const first = await checks(inputs, compiler, assembleWith, {}, harnessed);
   if ("refused" in first) return first;
   let round = first;
-  // A field the harness finds unmarked or misaligned is locked, once, and the checks run again.
+  // A field the harness finds unmarked or misaligned is locked, once, and a control it finds does
+  // nothing, stops the compile, or, a font, does not draw the fields (decision 0040), is dropped,
+  // once; and the checks run again.
   const lockable = new Map(round.assembled.checks.all.map((field) => [field.field, field]));
   const locks: Record<string, LockReason> = {};
+  const harnessDrops: { control: ControlName; why: string }[] = [];
   for (const finding of round.findings) {
+    const control = finding.control;
+    if (finding.check === "controls" && control !== undefined && control !== "dateFormat") {
+      if (!harnessDrops.some((each) => each.control === control))
+        harnessDrops.push({ control, why: `${DROPPED.harness}${finding.message}` });
+      continue;
+    }
     if (finding.check !== "fields" && finding.check !== "alignment") continue;
     const field = finding.field === undefined ? undefined : lockable.get(finding.field);
     if (field !== undefined && field.mode !== "locked") locks[lockOf(field)] = finding.check;
   }
-  if (Object.keys(locks).length > 0) {
+  if (Object.keys(locks).length > 0 || harnessDrops.length > 0) {
     const again = await checks(
       inputs,
       compiler,
       assembleWith,
-      { ...round.decisions, instances: { ...round.decisions.instances, ...locks } },
+      {
+        ...round.decisions,
+        instances: { ...round.decisions.instances, ...locks },
+        controls: [...round.decisions.controls, ...harnessDrops.map((each) => each.control)],
+      },
       harnessed,
     );
     if ("refused" in again) return again;
@@ -686,7 +717,7 @@ export async function validateWith(
   }
   // What the first round settled, which the second takes as decided and does not try again.
   const settled = round === first ? { dropped: [], notes: [] } : first;
-  const dropped = [...settled.dropped];
+  const dropped = [...settled.dropped, ...harnessDrops];
   for (const each of round.dropped)
     if (!dropped.some((one) => one.control === each.control)) dropped.push(each);
   const notes = [...settled.notes.filter((note) => note.check === "unproven"), ...round.notes];
@@ -774,6 +805,8 @@ async function checks(
     fixed: [...(start.fixed ?? [])],
   };
   const notes: Note[] = [];
+  // The controls the first check drops, whose default moved the original's page.
+  const droppedFirst: Round["dropped"] = [];
   const initial = await assembleWith(decisions);
   if ("refused" in initial) return initial;
   let assembled: Assembled = initial;
@@ -835,9 +868,10 @@ async function checks(
   }
   if (!keeps(target)) {
     const applied = assembled.checks.redefinitions.applied;
-    const offered = assembled.checks.controls.offered.filter(
-      (name) => name === "margins" || name === "accent" || name === "font" || name === "density",
-    );
+    // The controls whose default writes anything: the font size's slot, which may name a size the
+    // class's options did not (decision 0040), and the snippets of the rest but the page size's,
+    // whose default writes nothing.
+    const offered = assembled.checks.controls.offered.filter((name) => name !== "pageSize");
     const switches: Switch[] = [
       ...applied.map((redefinition) => ({ redefinition })),
       ...offered.map((control) => ({ control })),
@@ -879,6 +913,9 @@ async function checks(
         on = on.filter((_, i) => i !== hi - 1);
       }
       decisions = only(on);
+      for (const control of offered)
+        if (!on.some((each) => "control" in each && each.control === control))
+          droppedFirst.push({ control, why: DROPPED.moves });
     } else if (applied.length > 0) {
       // The package without any of them does not keep the page either, so that no compile can show
       // that a redefinition keeps it: none is proven, and every one is dropped (decision 0026).
@@ -997,7 +1034,7 @@ async function checks(
       outcome: "partial",
       difference: differs ?? { kind: "stopped", text: "the document stopped" },
       repeatable: [],
-      dropped: offered.map((control) => ({ control, why: UNCHECKED })),
+      dropped: [...droppedFirst, ...offered.map((control) => ({ control, why: UNCHECKED }))],
       findings: [],
       notes,
     };
@@ -1119,9 +1156,8 @@ async function checks(
         changes = true;
     }
     if (stops !== undefined)
-      dropped.push({ control: name, why: `stops the compile at ${shownValue(stops, name)}` });
-    else if (!changes && tried.length > 0)
-      dropped.push({ control: name, why: "sets the same page at every value" });
+      dropped.push({ control: name, why: `${DROPPED.stops}${shownValue(stops, name)}` });
+    else if (!changes && tried.length > 0) dropped.push({ control: name, why: DROPPED.same });
   }
   if (dropped.length > 0) {
     decisions = {
@@ -1142,7 +1178,7 @@ async function checks(
     outcome,
     ...(differs === undefined ? {} : { difference: differs }),
     repeatable,
-    dropped,
+    dropped: [...droppedFirst, ...dropped],
     findings,
     notes,
   };
