@@ -334,10 +334,14 @@ of each launch template must find editable what the hand-written port marks.
     on the cached `.engine/`, fetching the corpus from the manifest, with no key; the summary
     goes to the job summary and the JSON to an artifact; the run fails when the success rate falls
     more than a point under `corpus/baseline.json`, which a pull request raises by hand when the
-    rate rises. A reviewed answer is one a person has corrected under `corpus/answers/`, marked
-    so, with any redefinitions it needs (item 6); the top twenty templates get that review, as
-    plan section 10 asks, and the reviewed set seeds the service's cache in milestone 5. Done
-    when three runs in a row agree.
+    rate rises. A reviewed answer is one corrected under `corpus/answers/`, marked so, with any
+    redefinitions it needs (item 6); the top twenty templates get that review, as plan section
+    10 asks, from an Opus agent in Claude Code rather than a person (decision 0037). The runner
+    writes each template's masked request, its current answers and the checks' findings to an
+    ignored folder, the agent reads only those, never `.corpus/`, and writes corrected answers;
+    a redefinition is kept only when the reference compile and the four checks pass on every
+    corpus document with its key, and the pull request lists each one. The reviewed set seeds
+    the service's cache in milestone 5. Done when three runs in a row agree.
 18. [ ] **Benchmark the candidates, on SoCLaaS.** The naming step runs on SoCLaaS, the School of
     Computing's OpenAI-compatible gateway for its students and staff, whose calls bill nothing
     (decision 0036): `soclaasModel` in `packages/naming/src/providers.ts`, the key in
