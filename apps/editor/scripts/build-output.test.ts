@@ -27,7 +27,7 @@ describe("the page's build", () => {
     const out = mkdtempSync(join(tmpdir(), "resume-tools-build-"));
     made.push(out);
     const values = {
-      GOOGLE_GENERATIVE_AI_API_KEY: "invented-provider-key-9c2e",
+      SOCLAAS_API_KEY: "invented-provider-key-9c2e",
       NAMING_MODEL: "invented-naming-model",
     };
     const saved = Object.keys(values).map((name) => [name, process.env[name]] as const);

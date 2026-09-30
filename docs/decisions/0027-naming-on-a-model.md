@@ -1,6 +1,6 @@
 # 0027. The naming step on a model
 
-Date: 2026-09-27 · Status: proposed
+Date: 2026-09-27 · Status: proposed; the provider is SoCLaaS, not Gemini (0036)
 
 ## Context
 

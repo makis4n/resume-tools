@@ -6,14 +6,15 @@
  * stream the handler reads no faster than it takes it, and no further than its cap, and converts
  * the `Response` back.
  *
- * The key is read on the server side alone: `GOOGLE_GENERATIVE_AI_API_KEY`, the name the corpus
- * runner reads too, from the editor's `.env` files and environment by Vite's `loadEnv`, never under
- * the `VITE_` prefix, which would put it in the page; `NAMING_MODEL` picks the model. With no key
- * the route answers from the cache alone and names what it could not answer, and the dev server
- * says so in one line when it starts. The cache is item 9's file cache: the committed answers, read
- * first and never written, then the model's folder under `.corpus/cache/`, which the runner files
- * that model's answers in too, and where the route files the model's, never over another answer.
- * The preambles' answers are kept in memory, and asked again once a template after a restart.
+ * The key is read on the server side alone: `SOCLAAS_API_KEY` (decision 0036), the name the
+ * corpus runner reads too, from the editor's `.env` files and environment by Vite's `loadEnv`,
+ * never under the `VITE_` prefix, which would put it in the page; `NAMING_MODEL` picks the model.
+ * With no key the route answers from the cache alone and names what it could not answer, and the
+ * dev server says so in one line when it starts. The cache is item 9's file cache: the committed
+ * answers, read first and never written, then the model's folder under `.corpus/cache/`, which the
+ * runner files that model's answers in too, and where the route files the model's, never over
+ * another answer. The preambles' answers are kept in memory, and asked again once a template after
+ * a restart.
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -32,7 +33,7 @@ import { MemoryRateStore, type RateStore } from "../src/service/rate.ts";
 import { FileAnswerCache } from "./answer-cache.ts";
 
 /** The prefixes of the variables the route reads: its key's, and its model's. */
-const PREFIXES = ["NAMING_", "GOOGLE_GENERATIVE_AI_"];
+const PREFIXES = ["NAMING_", "SOCLAAS_"];
 
 /** What the dev server says when it has no key. */
 export const CACHE_ALONE = `The naming route, /v1/name, serves the cache alone: set ${KEY_VARIABLE} in apps/editor/.env to ask the model for what it does not hold.`;

@@ -7,22 +7,20 @@ import { KEY_VARIABLE, type NamingEnv, namingModel } from "./config";
 describe("the service's model", () => {
   test("is none without a key, so that the route answers from the cache alone", () => {
     expect(namingModel({})).toBeUndefined();
-    expect(
-      namingModel({ GOOGLE_GENERATIVE_AI_API_KEY: "  ", NAMING_MODEL: "gemini-3.7-flash" }),
-    ).toBeUndefined();
+    expect(namingModel({ SOCLAAS_API_KEY: "  ", NAMING_MODEL: "qwen3.6:35b" })).toBeUndefined();
   });
 
-  test("takes its key from GOOGLE_GENERATIVE_AI_API_KEY alone, the runner's name, and its id from NAMING_MODEL", () => {
-    expect(KEY_VARIABLE).toBe("GOOGLE_GENERATIVE_AI_API_KEY");
-    expect(namingModel({ GOOGLE_GENERATIVE_AI_API_KEY: "invented-key" })).toMatchObject({
+  test("takes its key from SOCLAAS_API_KEY alone, the runner's name, and its id from NAMING_MODEL", () => {
+    expect(KEY_VARIABLE).toBe("SOCLAAS_API_KEY");
+    expect(namingModel({ SOCLAAS_API_KEY: "invented-key" })).toMatchObject({
       modelId: DEFAULT_MODEL,
     });
     expect(
       namingModel({
-        GOOGLE_GENERATIVE_AI_API_KEY: "invented-key",
-        NAMING_MODEL: " gemini-3.7-flash ",
+        SOCLAAS_API_KEY: "invented-key",
+        NAMING_MODEL: " qwen3.6:35b ",
       }),
-    ).toMatchObject({ modelId: "gemini-3.7-flash" });
+    ).toMatchObject({ modelId: "qwen3.6:35b" });
     // The service's own name for it is gone: one key, one variable.
     expect(namingModel({ NAMING_API_KEY: "invented-key" } as NamingEnv)).toBeUndefined();
   });
@@ -34,13 +32,11 @@ describe("the service's model", () => {
     for (const key of ["invented key", "invented-\nkey"]) {
       let message = "";
       try {
-        namingModel({ GOOGLE_GENERATIVE_AI_API_KEY: key });
+        namingModel({ SOCLAAS_API_KEY: key });
       } catch (error) {
         message = error instanceof Error ? error.message : "";
       }
-      expect(message).toBe(
-        "GOOGLE_GENERATIVE_AI_API_KEY holds a space or a line break: set it on one line",
-      );
+      expect(message).toBe("SOCLAAS_API_KEY holds a space or a line break: set it on one line");
     }
   });
 });

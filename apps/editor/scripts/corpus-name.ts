@@ -74,15 +74,14 @@ export const MODEL_RETRIES = 4;
  */
 export const PROVIDER_FAILURES = 3;
 
-/** The variables the naming model's key is read from, the first set: ours, then the provider's. */
-const KEY_VARIABLES = ["GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"] as const;
+/** The variable the naming model's key is read from: SoCLaaS's, as the naming service reads it. */
+const KEY_VARIABLES = ["SOCLAAS_API_KEY"] as const;
 
 /**
- * The naming model's configuration from an environment: its key, `GEMINI_API_KEY` or the
- * provider's own name for it, `GOOGLE_GENERATIVE_AI_API_KEY`, and its id, `NAMING_MODEL` or the
- * default. The key is never printed: one of more than one line or with a space in it, as a key
- * file with a comment gives, is refused by the variable's name, since the runtime would quote it
- * whole in the error for a header it cannot send.
+ * The naming model's configuration from an environment: its key, `SOCLAAS_API_KEY` (decision
+ * 0036), and its id, `NAMING_MODEL` or the default. The key is never printed: one of more than one
+ * line or with a space in it, as a key file with a comment gives, is refused by the variable's
+ * name, since the runtime would quote it whole in the error for a header it cannot send.
  */
 export function namingConfig(env: Readonly<Record<string, string | undefined>>): {
   key?: string;
@@ -109,12 +108,18 @@ export interface ListPrice {
 }
 
 /**
- * The list prices the table estimates cost at, by model id: Gemini 3.8 Flash's paid tier, as
- * Google's pricing page gave it on 2026-09-27, which holds through 2026-12-31 and doubles from
- * 2027-01-01. The free tier costs nothing within its limits; the estimate is what the same tokens
- * would cost past them.
+ * The list prices the table estimates cost at, by model id. SoCLaaS bills nothing: its models'
+ * prices are the gateway's reference prices, from its catalog as its guide gave it on 2026-09-27,
+ * which count only toward a key's daily and monthly limits, and it names no cheaper rate for cached
+ * input. Gemini 3.8 Flash's is its paid tier, as Google's pricing page gave it on 2026-09-27, which
+ * holds through 2026-12-31 and doubles from 2027-01-01; its free tier costs nothing within its
+ * limits, and the estimate is what the same tokens would cost past them.
  */
 export const LIST_PRICES: Readonly<Record<string, ListPrice>> = {
+  "qwen3.8:27b": { read: "2026-09-27", input: 0.195, cached: 0.195, output: 0.9 },
+  "qwen3.6:35b": { read: "2026-09-27", input: 0.14, cached: 0.14, output: 0.9 },
+  "qwen3-coder-next": { read: "2026-09-27", input: 0.11, cached: 0.11, output: 0.8 },
+  "gemma4:26b": { read: "2026-09-27", input: 0.06, cached: 0.06, output: 0.3 },
   "gemini-3.8-flash": { read: "2026-09-27", input: 0.75, cached: 0.075, output: 3.75 },
 };
 

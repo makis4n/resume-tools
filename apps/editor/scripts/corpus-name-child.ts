@@ -20,7 +20,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { googleModel } from "@resume-tools/naming/providers";
+import { soclaasModel } from "@resume-tools/naming/providers";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
@@ -139,7 +139,7 @@ async function main() {
         gate,
         ...(id === undefined || key === undefined
           ? {}
-          : { model: { model: googleModel(key, id), id } }),
+          : { model: { model: soclaasModel(key, id), id } }),
         maxRetries: MODEL_RETRIES,
         partTimeoutMs: MODEL_LIMIT_MS,
       });

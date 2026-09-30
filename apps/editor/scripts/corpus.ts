@@ -95,17 +95,18 @@
  *   name          take every document whose body parses, build its naming request as `seed` builds a
  *                 sample's, in the same pool, and answer it macro by macro from the cache: the
  *                 committed answers under `corpus/answers/` first, then the model's own under
- *                 `.corpus/cache/<model id>/`, the model `NAMING_MODEL` names, gemini-3.8-flash
- *                 when unset; print what each document's macros came to and one table of them all,
- *                 names of macros and counts only (`scripts/corpus-name.ts`, decision 0027).
+ *                 `.corpus/cache/<model id>/`, the model `NAMING_MODEL` names, qwen3.8:27b on
+ *                 SoCLaaS when unset; print what each document's macros came to and one table of
+ *                 them all, names of macros and counts only (`scripts/corpus-name.ts`, decision
+ *                 0027).
  *                 Without `--model` the macros the cache does not answer are counted missing
  *   --only <id>   that document only
  *   --json <file> write each document's row as JSON too, macros' names and numbers only
  *   --model       ask the model for them, once a request passes the privacy gate: none of the text
  *                 the builder knows as the document's is in it (`assertNoText`) and its keys hold
  *                 (`checkRequest`); and store its answers, a part at a time as each validates,
- *                 in the model's folder. It needs a Gemini key in the environment, one line with no
- *                 spaces, `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`. Never in CI
+ *                 in the model's folder. It needs a SoCLaaS key in the environment, one line with no
+ *                 spaces, `SOCLAAS_API_KEY` (decision 0036). Never in CI
  *   assemble      take every document whose body parses and whose macros have an answer under
  *                 `corpus/answers/`, probe it, assemble its package and document from the answer,
  *                 and validate them with the four checks and the harness (`src/import/assemble.ts`,
@@ -983,7 +984,7 @@ async function runName(only: string | undefined, json: string | undefined, model
   const config = namingConfig(process.env);
   if (model && config.key === undefined)
     throw new Error(
-      "name --model asks Gemini, which needs a key: set GEMINI_API_KEY, or GOOGLE_GENERATIVE_AI_API_KEY, in the environment",
+      "name --model asks SoCLaaS, which needs a key: set SOCLAAS_API_KEY in the environment",
     );
   // The model's id names its answers' folder, which the run reads whether it asks the model or not.
   if (!AnswerSource.safeParse(`model:${config.id}`).success)

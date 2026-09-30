@@ -14,7 +14,7 @@ import { handleName, LIMITS } from "../../src/service/name.ts";
 /** What the function is bound to. */
 interface Env {
   NAMING_KV: KVNamespace;
-  GOOGLE_GENERATIVE_AI_API_KEY?: string;
+  SOCLAAS_API_KEY?: string;
   NAMING_MODEL?: string;
 }
 

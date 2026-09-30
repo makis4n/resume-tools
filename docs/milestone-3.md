@@ -338,15 +338,14 @@ of each launch template must find editable what the hand-written port marks.
     so, with any redefinitions it needs (item 6); the top twenty templates get that review, as
     plan section 10 asks, and the reviewed set seeds the service's cache in milestone 5. Done
     when three runs in a row agree, weekly or on demand.
-18. [ ] **Benchmark the candidates, on SoCLaaS.** The naming step moves to SoCLaaS, the School of
-    Computing's OpenAI-compatible gateway for its students and staff, whose calls bill nothing: a
-    provider beside Gemini's in `packages/naming/src/providers.ts`, on `@ai-sdk/openai-compatible`
-    at `https://soclaas-api.comp.nus.edu.sg/v1`, with the key in `SOCLAAS_API_KEY`, read wherever
-    `GOOGLE_GENERATIVE_AI_API_KEY` is read today, and the model in `NAMING_MODEL`. First, one call
-    to each candidate checks that the gateway holds the answer to its JSON schema, and how a Qwen
-    model's reasoning comes back and how long it takes. Then `corpus.ts bench --model <id>` runs
-    the naming step over the corpus for three candidates: `qwen3.8:27b`, the gateway's all-round
-    model and the likely best; `qwen3.6:35b`, described as efficient and priced under it, the
+18. [ ] **Benchmark the candidates, on SoCLaaS.** The naming step runs on SoCLaaS, the School of
+    Computing's OpenAI-compatible gateway for its students and staff, whose calls bill nothing
+    (decision 0036): `soclaasModel` in `packages/naming/src/providers.ts`, the key in
+    `SOCLAAS_API_KEY` and the model in `NAMING_MODEL`, `qwen3.8:27b` until this item picks. First,
+    one call to each candidate checks that the gateway holds the answer to its JSON schema, and
+    how a Qwen model's reasoning comes back and how long it takes. Then
+    `corpus.ts bench --model <id>` runs the naming step over the corpus for three candidates:
+    `qwen3.8:27b`, the gateway's all-round model and the likely best; `qwen3.6:35b`, described as efficient and priced under it, the
     likely fastest; and `qwen3-coder-next`, a code model, since naming reads template code; with
     `gemma4:26b`, another family, as a fourth if the three fail on the same templates. The rest
     are left out: the 8B and 9B models are weak and their 64k context is tight for a full part,
@@ -354,8 +353,7 @@ of each launch template must find editable what the hand-written port marks.
     the editable rate, the refused and partial shares, each part's time, and the cost per import
     at the gateway's reference prices, which count only toward its limits. The default becomes
     the highest editable rate whose slowest part stays within the naming service's two minutes
-    (decision 0028), in place of Gemini; a decision record holds the table, amends 0027 and says
-    where the naming request now goes. The key never reaches CI. The gateway serves the school's
+    (decision 0028); a decision record holds the table and amends 0036. The key never reaches CI. The gateway serves the school's
     teaching and projects, so before the public launch milestone 5 asks the school whether the
     naming service may use it, with Gemini's paid tier as the fallback.
 19. [ ] **Measure the import, and close.** `measure` gains an import: a cached pdfTeX template,
@@ -416,8 +414,8 @@ pull request that acts on it. The first two the owner settled on 26 September.
   the worker, which starts afresh.
 - **The 5 s bar is judged on pdfTeX** (item 19), on a cached template with a warm HTTP cache on
   this machine, and XeTeX is reported, as the plan already lets XeTeX feel slower.
-- **The provider is the AI SDK's, Gemini first** (item 9), as plan section 6.4 has it; item 18
-  moves the default to the SoCLaaS model its benchmark picks. New dependencies this milestone
+- **The provider is the AI SDK's, Gemini first** (item 9), as plan section 6.4 has it, then
+  SoCLaaS (decision 0036), whose model item 18 picks. New dependencies this milestone
   expects: unified-latex's parse, arguments, argspec, macros, to-string, visit and ctan packages
   (editor), fflate (editor), `ai` with `@ai-sdk/google` and `@ai-sdk/openai-compatible`
   (naming), and wrangler as a dev dependency of the editor for the function. Each is named in

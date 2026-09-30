@@ -131,6 +131,9 @@ importers:
       '@ai-sdk/google':
         specifier: ^4.0.82
         version: 4.0.82(zod@4.6.2)
+      '@ai-sdk/openai-compatible':
+        specifier: 3.0.57
+        version: 3.0.57(zod@4.6.2)
       '@resume-tools/resume-model':
         specifier: workspace:*
         version: link:../resume-model
@@ -157,6 +160,12 @@ packages:
 
   '@ai-sdk/google@4.0.82':
     resolution: {integrity: sha512-2zPYyBSyIcywLtOEJRxlrtXjBjz4KxEU19Qqg/Dk8I9BrsB08+ghG2jv155dtuDZj8qZMrh6LO8J+Wt5O4xVhg==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/openai-compatible@3.0.57':
+    resolution: {integrity: sha512-TEY5Ng/bTJXrYy9wpdxK70gABdYejYedaKbmPCZLhBkPe21rmLzkGxAGkfPYgAfCKPaoAO9THrEhmwUZ4Xhg2Q==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -1256,6 +1265,12 @@ snapshots:
       zod: 4.6.2
 
   '@ai-sdk/google@4.0.82(zod@4.6.2)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.18
+      '@ai-sdk/provider-utils': 5.0.49(zod@4.6.2)
+      zod: 4.6.2
+
+  '@ai-sdk/openai-compatible@3.0.57(zod@4.6.2)':
     dependencies:
       '@ai-sdk/provider': 4.0.18
       '@ai-sdk/provider-utils': 5.0.49(zod@4.6.2)
