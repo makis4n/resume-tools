@@ -154,6 +154,22 @@ not tried, and stays offered. An engine test imports an invented fork whose skil
 after the section's head, by a macro no answer names, and closed after the list: list sections are
 marked, and no other kind.
 
+The review named ten Jake forks whose list sections still could not go after the fix above
+(jake-0004, 0007, 0020, 0021, 0023, 0025, 0033, 0035, 0043 and 0047). `corpus assemble --only`
+over them, before and after: each still has `section.list` among the kinds whose trial stops the
+compile (jake-0035 `section.paragraph` too), which the row counts, 10 and 10; the package marks it
+in none before and in all ten after. `corpus assemble` now says of each section of such a kind
+what frames it, by structure alone (`removals`): of the 20 list sections removed, the 2 that
+compile keep nothing before their content, and the 18 that stop keep in `before` the opening of
+environments that the parts after their content end. In 16 the macro that opens has no answer,
+since the seed answers only upstream's macros and these forks redefine them, so the pairing above,
+which goes by the answer's names, cannot see it; in jake-0007 the list is closed by another macro
+than its answer names, the named one closing a second list the locked part opens; and in jake-0025
+a `\begin` written out in `before` is ended past the section. The closer stands in the locked part
+right after in 14, in the section's own `after` in one, and in neither in 3, each the last of its
+kind. Pairing by the environments the macros' definitions begin and end would take all 18: a rule
+of its own, left for later, and until then those sections are fixed rather than broken.
+
 ### The way in
 
 The document list gets "New", which opens a chooser of the three curated templates, each with its
@@ -199,3 +215,5 @@ and an accent were tried the same way. Nobody looked at a corpus document.
 - The owed row of the milestone's table is done: `corpus assemble` should find fewer documents whose
   first section of a kind cannot be removed, which a corpus run would show, and the package marks
   each kind that still cannot go, which its row `The editor neither adds nor removes` counts.
+- A user of a Jake fork whose list sections are marked can neither add nor remove one until a
+  pairing by definitions comes; a move, which the check does not try, is still offered.

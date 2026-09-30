@@ -9,6 +9,7 @@ import {
   assembleTable,
   CHECK_NOTES,
   comparePlaces,
+  errorClass,
   fieldsFound,
   placesTable,
   portPlaces,
@@ -382,5 +383,19 @@ describe("a validation's row", () => {
       validateMs: 1235,
     });
     expect(JSON.stringify(made)).not.toContain(SECRET);
+  });
+
+  test("names a removal's error by its class, never in TeX's words, which may quote the document", () => {
+    const quoted = (error: string) => `${error}\nl.42 ${SECRET}`;
+    expect(
+      errorClass(quoted("! LaTeX Error: Lonely \\item--perhaps a missing list environment.")),
+    ).toBe("an item outside a list");
+    expect(errorClass(quoted("! LaTeX Error: \\begin{document} ended by \\end{itemize}."))).toBe(
+      "an environment ended by another's end",
+    );
+    expect(errorClass(quoted("! Undefined control sequence."))).toBe("an undefined command");
+    expect(errorClass(quoted("! Extra \\endgroup."))).toBe("an end with no begin");
+    expect(errorClass(quoted("! Missing number, treated as zero."))).toBe("another error");
+    expect(errorClass(undefined)).toBe("another error");
   });
 });
