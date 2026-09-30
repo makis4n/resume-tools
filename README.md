@@ -19,6 +19,7 @@ apps/
 packages/
   contracts/            JSON Schemas for what crosses between the two   owner: both
   resume-model/         the editor's resume data model (Zod)  owner: @makis4n
+  naming/               the import's naming step: request, prompt, model call   owner: @makis4n
 docs/
   editor-plan.md        the editor plan, converted from the shared page
   ats-prd.md            the ATS product requirements
@@ -30,29 +31,67 @@ docs/
 
 You need Node 24, pnpm 11 and uv. `.node-version` and `apps/ats/.python-version` pin the runtimes. `corepack enable` gives you the right pnpm, and uv fetches its Python by itself. Docker is not needed for development; it comes in later for building the TeX engines and for deploying the ATS service, and any Docker-compatible runtime works, such as Docker Desktop, OrbStack or Colima.
 
-Editor, from the repository root:
+### The editor
+
+From the repository root:
 
 ```sh
 pnpm install
-pnpm --filter @resume-tools/editor fetch-engine   # the TeX engine and TeX Live, 280 MB, once
-pnpm dev            # the editor at http://localhost:5173
+pnpm --filter @resume-tools/editor fetch-engine   # the TeX engine and TeX Live: about 290 MB to download, 850 MB on disk
+cp -n apps/editor/.env.example apps/editor/.env   # settings, all optional; see below
+pnpm dev                                          # the editor at http://localhost:5173
+```
+
+The dev server does more than serve the page. It serves the TeX engine's files from `apps/editor/.engine/` and answers the naming route that imports call, `/v1/name`, so until milestone 5 hosts both, the editor works fully only under `pnpm dev`: a production build keeps documents but cannot draw their pages. `http://localhost:5173/?measure=1` shows the timing page in place of the editor (decision 0016).
+
+Every setting in `apps/editor/.env` is optional, and the editor runs with none:
+
+- `VITE_ATS_SERVICE_URL`: where the ATS panel will send PDFs, `http://localhost:8000` for the ATS service below. Nothing in the editor calls it yet.
+- `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`: for accounts, which come in milestone 4. Leave them empty.
+- The naming model's key and `NAMING_MODEL`, below. Without a key the naming route answers only from the answers already stored, and the dev server says so when it starts.
+
+After you pull, run `pnpm install` and the `fetch-engine` line again, then restart `pnpm dev`. The fetch does nothing when the engine is current and rebuilds it when its layout changed, and a dev server left running does not see new workspace packages: it fails with "Cannot find package '@resume-tools/…'".
+
+Checks, from the repository root:
+
+```sh
 pnpm check          # Biome: formatting and lint for the whole repo
 pnpm format         # the same, fixing what it can
 pnpm typecheck
-pnpm test
+pnpm test           # tests that run TeX skip without the engine
 pnpm build          # the production bundle in apps/editor/dist
 ```
 
-ATS:
+### The naming model
+
+Importing a template asks a language model what each of the template's commands is. Only the template's code goes, with placeholders where the resume's text was, never the text itself (decision 0033). The model runs on SoCLaaS, the School of Computing's free LLM gateway for its students and staff (decision 0036), and `apps/editor/.env.example` names the variables the code reads.
+
+1. Log in at https://soclaas-portal.comp.nus.edu.sg with your SoC account and issue a key, or run `soclaas-portal issue` on an SoC server. It is shown once.
+2. Put it in `apps/editor/.env` as `SOCLAAS_API_KEY=clsk_...`, and, if you want another model than the default `qwen3.8:27b`, its id as `NAMING_MODEL`; milestone 3's item 18 benchmarks the candidates. Never give either the `VITE_` prefix, which would put the key in the page.
+3. Check that the key works, and which models it may use:
+
+   ```sh
+   set -a && source apps/editor/.env && set +a
+   curl -sS https://soclaas-api.comp.nus.edu.sg/v1/models -H "Authorization: Bearer $SOCLAAS_API_KEY" | jq -r '.data[].id'
+   ```
+
+The dev server reads `apps/editor/.env` itself. The corpus scripts read only their environment, so load the file into your shell first with the `set -a` line. CI never has a key.
+
+### The ATS service
 
 ```sh
 cd apps/ats
 uv sync                                          # creates .venv with everything, dev tools included
+uv run ats-serve                                 # the service at http://localhost:8000
 uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
-CI runs exactly these commands. If they pass on your machine they pass there. It also runs three checks on every pull request: `bash .github/scripts/check-repo.sh`, which catches the mistakes listed in AGENTS.md that show in the file list, a check that every schema in `packages/contracts` is a valid schema (the command is in AGENTS.md), and a check that the pull request's title follows the commit convention below (decision 0029).
+It accepts browser calls from `http://localhost:5173` by default, so it runs beside `pnpm dev` in a second terminal. Its settings and the container build are in [apps/ats/README.md](apps/ats/README.md).
+
+### What CI runs
+
+CI runs exactly the checks above, the editor's and the ATS's. If they pass on your machine they pass there. It also runs three checks on every pull request: `bash .github/scripts/check-repo.sh`, which catches the mistakes listed in AGENTS.md that show in the file list, a check that every schema in `packages/contracts` is a valid schema (the command is in AGENTS.md), and a check that the pull request's title follows the commit convention below (decision 0029).
 
 ## Ownership
 
