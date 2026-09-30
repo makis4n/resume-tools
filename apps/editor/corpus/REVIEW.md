@@ -12,9 +12,10 @@ the naming model and filled its cache. This is how.
    your shell and never in CI: `SOCLAAS_API_KEY=… NAMING_MODEL=<id> pnpm --filter
    @resume-tools/editor corpus run --allow-model`. Either asks the model only for what the cache
    misses, behind the privacy gate.
-2. Run the whole import over the corpus with that cache, `NAMING_MODEL` set as before:
-   `pnpm --filter @resume-tools/editor corpus run`. It keeps, for each document, its naming request
-   and what the checks found under `.corpus/run/`.
+2. Run the whole import over the whole corpus with that cache, `NAMING_MODEL` set as before, and
+   neither `--committed-only` nor `--only`: `pnpm --filter @resume-tools/editor corpus run`. The
+   export and the check read what this run kept, and refuse a run of another mode or model, one
+   that did not finish, and, for the check, one over some documents alone.
 3. Export the top templates: `pnpm --filter @resume-tools/editor corpus review export`. It writes
    `apps/editor/.review/`, which git ignores: `index.json`, the templates by rank, and a folder for
    each, `01-jake` and on, holding

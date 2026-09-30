@@ -44,10 +44,11 @@ import {
   type RunDocument,
   redefinitionVerdicts,
   reviewNotesOf,
+  runMismatch,
   templatesOf,
   verdictLine,
 } from "./corpus-review";
-import { outcomeOf } from "./corpus-run";
+import { outcomeOf, type RunRecord } from "./corpus-run";
 
 // Every document, template, key, answer and text here is invented for these tests, and no test
 // reads the corpus: the words of the invented documents stand for the text of a person's, which
@@ -497,6 +498,72 @@ async function keyOfText(text: string): Promise<string> {
   const { keyOf } = await import("@resume-tools/naming");
   return keyOf(NAMING_VERSION, await sha256(text), []);
 }
+
+describe("the last run, as the review reads it", () => {
+  const record = (changes: Partial<RunRecord> = {}): RunRecord => ({
+    version: 1,
+    stamp: "2026-10-01T00:00:00.000Z-0a1b2c3d",
+    answers: "cache",
+    cache: "invented-model",
+    asked: null,
+    documents: "all",
+    ids: ["jake-0001", "jake-0002"],
+    complete: true,
+    ...changes,
+  });
+  const stamped = (stamp = "2026-10-01T00:00:00.000Z-0a1b2c3d") =>
+    new Map([
+      ["jake-0001", stamp],
+      ["jake-0002", stamp],
+    ]);
+  const mismatch = (
+    changes: Partial<RunRecord> | undefined,
+    purpose: "export" | "check" = "export",
+    stamps = stamped(),
+    fetched = ["jake-0001", "jake-0002"],
+  ) =>
+    runMismatch({
+      record: changes === undefined ? undefined : record(changes),
+      purpose,
+      model: "invented-model",
+      fetched,
+      stamps,
+    });
+
+  test("serves the review when it read the review's answers, finished, and kept each document", () => {
+    expect(mismatch({})).toBeUndefined();
+    expect(mismatch({}, "check")).toBeUndefined();
+  });
+
+  test("refuses one that read other answers, did not finish, or left another run's documents", () => {
+    expect(mismatch(undefined)).toBe("No run is recorded: run `corpus run` first.");
+    expect(mismatch({ complete: false })).toBe(
+      "The last run did not finish: run `corpus run` again.",
+    );
+    expect(mismatch({ answers: "committed", cache: null })).toBe(
+      "The last run read the committed answers alone, and the review reads invented-model's cache too: run `corpus run` without --committed-only.",
+    );
+    expect(mismatch({ cache: "another-model" })).toBe(
+      "The last run read another-model's cache, and NAMING_MODEL names invented-model: run `corpus run` with the one model.",
+    );
+    const mixed = new Map([
+      ["jake-0001", "2026-10-01T00:00:00.000Z-0a1b2c3d"],
+      ["jake-0002", "2026-09-30T00:00:00.000Z-99999999"],
+    ]);
+    expect(mismatch({}, "export", mixed)).toBe(
+      "1 of the last run's 2 documents was kept by another run: run `corpus run` again.",
+    );
+  });
+
+  test("lets the export take a run over some documents, and the check only one over all", () => {
+    const some = { documents: "some" as const, ids: ["jake-0001"] };
+    const fetched = ["jake-0001", "jake-0002", "jake-0003"];
+    expect(mismatch(some, "export", stamped(), fetched)).toBeUndefined();
+    expect(mismatch(some, "check", stamped(), fetched)).toBe(
+      "The last run took 1 of the 3 fetched documents, and the check holds a redefinition to every one: run `corpus run` over the whole corpus.",
+    );
+  });
+});
 
 describe("the export, over invented documents", () => {
   const SECRETS = ["quillwort", "larkfield", "wrenfield", "kestrel", "tidal ledger"];

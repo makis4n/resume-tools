@@ -41,6 +41,15 @@ and filled its cache. Items 12 (the import in the browser), 13 (the report and i
   assembly and what the review reads of it (below), the parent keeps under `.corpus/run/<id>/`,
   `assembly.json` and `review.json`, emptying the document's folder first so that no file of an
   older run is left beside a newer.
+- The run records itself beside them, in `.corpus/run/run.json` (`RunRecord`): a stamp of its own,
+  which each `review.json` it writes carries too; the answers it read, the committed alone or with a
+  model's cache, by the model's id; the model it asked, if any; whether it took every fetched
+  document or some, and which; and whether it finished, written unfinished before the first
+  document and finished after the last. The review's export and check read what the last run kept
+  only when it finished, read the answers they read, the committed and the cache of the model
+  `NAMING_MODEL` names, and stamped every document it took, and the check only when it took every
+  fetched document; else each refuses, saying why in one line (`runMismatch`), so that neither mixes
+  the results of runs of another mode or scope.
 
 ### The outcome
 
@@ -121,7 +130,7 @@ no key, or that has no request, is of none.
 ### The review's export
 
 - `corpus review export [--top <n>] [--out <dir>]`, 20 templates and `apps/editor/.review/`, which
-  git ignores, reads what the last run kept of each fetched document (`review.json`: its request as
+  git ignores, reads what the last run kept of each document it took (`review.json`: its request as
   the gate is given it, whether the gate passes it, its macros' fates, and its text as the leak
   check reads it: the tree, the header's values, the stored texts, the sources, the page's strings
   and the placeholders' names), and the answers the cache serves now, committed first and then the
@@ -165,9 +174,10 @@ no key, or that has no request, is of none.
 ### The review's check
 
 `corpus review check [--dir <dir>]` reads every reviewed answer under `corpus/answers/` that carries
-redefinitions, finds from the last run's requests every document whose request holds one of their
-keys, assembles each of those again, in the pool, with the committed answers and the model's cache,
-and gives each redefinition, by name, one of three verdicts over those documents:
+redefinitions, finds from the last run's requests, which must be of every fetched document, every
+document whose request holds one of their keys, assembles each of those again, in the pool, with the
+committed answers and the model's cache, and gives each redefinition, by name, one of three verdicts
+over those documents:
 
 - **dropped** when one drops it, its page moved or no redefinition proven there (`unproven`), when
   the checks stop on one, when the validation refuses one for anything but a font the page cannot
@@ -183,9 +193,9 @@ macro, neither keeps nor drops a redefinition; the child says which step refused
 its rows. Each line names the redefinition, the macros whose answers carry it, the templates the
 export in `--dir` (`.review/`) names for their keys, and the counts. It exits 1 when one is dropped
 or unproven, when an answer file is none the cache would serve under its name (it does not
-validate, or its dependencies do not give its key, as the committed answers' test holds them), or
-when the last run kept fewer documents than the corpus has fetched, so that the review's pull
-request takes the dropped ones out and lists every other for a person to read.
+validate, or its dependencies do not give its key, as the committed answers' test holds them), so
+that the review's pull request takes the dropped ones out and lists every other for a person to
+read.
 
 `apps/editor/corpus/REVIEW.md` says how part B runs, and what the agent must never read.
 

@@ -46,7 +46,7 @@ import type { Aggregate } from "../src/import/probe.ts";
 import { CHECK_NOTES, CHECKS, LOCK_REASONS } from "./corpus-assemble.ts";
 import { FAMILIES, type Family, formatJson, printable } from "./corpus-manifest.ts";
 import { shownMacro } from "./corpus-parse.ts";
-import { type RefusalStep, RUN_OUTCOMES, type RunOutcome } from "./corpus-run.ts";
+import { type RefusalStep, RUN_OUTCOMES, type RunOutcome, type RunRecord } from "./corpus-run.ts";
 
 // What the run keeps of a document.
 
@@ -124,6 +124,38 @@ export interface RunDocument {
   notes?: ReviewNotes;
   /** Its editable rate, where it was assembled. */
   rate?: number;
+  /** The stamp of the run that kept it (`RunRecord`). */
+  run?: string;
+}
+
+/**
+ * Why what the last run kept cannot serve the review's export, or its check, in one line; none when
+ * it can. The review reads the committed answers and `model`'s cache, so the run must have read the
+ * same; it must have finished, and every document it took must carry its stamp, none left by
+ * another run (`stamps`, each document's by its id); and the check, which holds a redefinition to
+ * every corpus document whose request holds its key, needs a run that took every fetched one.
+ */
+export function runMismatch(input: {
+  record: RunRecord | undefined;
+  purpose: "export" | "check";
+  model: string;
+  fetched: readonly string[];
+  stamps: ReadonlyMap<string, string | undefined>;
+}): string | undefined {
+  const { record, model } = input;
+  if (record === undefined) return "No run is recorded: run `corpus run` first.";
+  if (!record.complete) return "The last run did not finish: run `corpus run` again.";
+  if (record.answers !== "cache")
+    return `The last run read the committed answers alone, and the review reads ${model}'s cache too: run \`corpus run\` without --committed-only.`;
+  if (record.cache !== model)
+    return `The last run read ${record.cache === null ? "no model's cache" : `${record.cache}'s cache`}, and NAMING_MODEL names ${model}: run \`corpus run\` with the one model.`;
+  const taken = new Set(record.ids);
+  if (input.purpose === "check" && input.fetched.some((id) => !taken.has(id)))
+    return `The last run took ${record.ids.length} of the ${input.fetched.length} fetched documents, and the check holds a redefinition to every one: run \`corpus run\` over the whole corpus.`;
+  const stale = record.ids.filter((id) => input.stamps.get(id) !== record.stamp).length;
+  if (stale > 0)
+    return `${stale} of the last run's ${record.ids.length} documents ${stale === 1 ? "was" : "were"} kept by another run: run \`corpus run\` again.`;
+  return undefined;
 }
 
 /** The document's text as the leak check takes it, from what the run kept. */

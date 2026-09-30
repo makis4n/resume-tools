@@ -171,6 +171,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -256,6 +257,7 @@ import {
   exportPlan,
   type RunDocument,
   redefinitionVerdicts,
+  runMismatch,
   verdictLine,
 } from "./corpus-review.ts";
 import {
@@ -267,6 +269,7 @@ import {
   type RefusalStep,
   type RunChildRow,
   type RunFile,
+  RunRecord,
   type RunRow,
   runDifferences,
   runHeadline,
@@ -1208,14 +1211,38 @@ function checkout(): { commit: string; changed: string[] } {
   return { commit, changed: changedPaths(git("status", "--porcelain")) };
 }
 
+/** The record of the last run, beside the documents it kept (`RunRecord`). */
+const RUN_RECORD = join(RUN_KEPT, "run.json");
+
+/** The last run's record, or none when there is none, or it is not one. */
+function readRunRecord(): RunRecord | undefined {
+  try {
+    return RunRecord.parse(JSON.parse(readFileSync(RUN_RECORD, "utf8")));
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * What the run keeps of a document, under `.corpus/run/<id>/`: what the review reads of it, and its
- * assembly; each document's folder emptied first, so that none keeps an older run's files.
+ * What the run keeps of a document, under `.corpus/run/<id>/`: what the review reads of it, with the
+ * run's stamp, and its assembly; each document's folder emptied first, so that none keeps an older
+ * run's files.
  */
-function keepRun(row: RunRow, review: Partial<RunDocument> | undefined, detail: unknown) {
+function keepRun(
+  row: RunRow,
+  review: Partial<RunDocument> | undefined,
+  detail: unknown,
+  stamp: string,
+) {
   const dir = join(RUN_KEPT, row.id);
   rmSync(dir, { recursive: true, force: true });
-  const kept: RunDocument = { ...review, id: row.id, family: row.family, outcome: row.outcome };
+  const kept: RunDocument = {
+    ...review,
+    id: row.id,
+    family: row.family,
+    outcome: row.outcome,
+    run: stamp,
+  };
   writeAtomically(join(dir, "review.json"), `${JSON.stringify(kept)}\n`);
   if (detail !== undefined)
     writeAtomically(join(dir, "assembly.json"), `${JSON.stringify(detail, null, 1)}\n`);
@@ -1287,6 +1314,19 @@ async function runRun(options: {
     documents = documents.filter((doc) => ids.includes(doc.id));
   }
   const treeFont = treeFonts(engine.files);
+  // The record of this run, which the review's export and check read (`RunRecord`): written before
+  // any document, unfinished, and again once every document is kept.
+  const record: RunRecord = {
+    version: 1,
+    stamp: `${new Date().toISOString()}-${randomBytes(4).toString("hex")}`,
+    answers: options.committedOnly ? "committed" : "cache",
+    cache: options.committedOnly ? null : config.id,
+    asked: options.allowModel ? config.id : null,
+    documents: whole ? "all" : "some",
+    ids: documents.map((doc) => doc.id),
+    complete: false,
+  };
+  writeAtomically(RUN_RECORD, formatJson(record));
   // The parent stops asking once the provider has failed documents in a row, as `name` does: a
   // spent quota fails every call after it. Each task's message is made as it is sent.
   let asking = options.allowModel;
@@ -1328,7 +1368,7 @@ async function runRun(options: {
         times: { ...times, wall: Math.round(result.wall) },
       };
       rows.push(row);
-      keepRun(row, reply?.review, reply?.detail);
+      keepRun(row, reply?.review, reply?.detail, record.stamp);
       print([`${rows.length}/${documents.length} ${task.id}: ${runLine(row)}`]);
       if (row.naming?.failed === "provider") failures++;
       else if ((row.naming?.calls ?? 0) > 0) failures = 0;
@@ -1341,6 +1381,7 @@ async function runRun(options: {
     },
   });
   rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  writeAtomically(RUN_RECORD, formatJson({ ...record, complete: true }));
   const minutes = (performance.now() - started) / 60_000;
   const summary = summaryOf(rows);
   const verdict = baselineVerdict(summary, baseline, {
@@ -1453,19 +1494,43 @@ function exportFolder(dir: string): boolean {
   }
 }
 
+/**
+ * The documents the last run kept, for the review's export or its check; or, where they cannot serve
+ * it, an error that says why in one line (`runMismatch`): no run recorded, one unfinished, one that
+ * read other answers than the review does, one that took fewer documents than the check needs, or a
+ * document another run kept.
+ */
+function lastRun(
+  purpose: "export" | "check",
+  model: string,
+  fetched: readonly LiveDocument[],
+): RunDocument[] {
+  const record = readRunRecord();
+  const live = new Set(fetched.map((doc) => doc.id));
+  const ids = (record?.ids ?? []).filter((id) => live.has(id));
+  const kept = new Map(ids.map((id) => [id, keptDocument(id)] as const));
+  const mismatch = runMismatch({
+    record: record === undefined ? undefined : { ...record, ids },
+    purpose,
+    model,
+    fetched: [...live],
+    stamps: new Map(ids.map((id) => [id, kept.get(id)?.run] as const)),
+  });
+  if (mismatch !== undefined) throw new Error(mismatch);
+  return ids.flatMap((id) => kept.get(id) ?? []);
+}
+
 async function runReviewExport(top: number, out: string) {
   if (!Number.isInteger(top) || top < 1) throw new Error("--top takes a whole number of templates");
   if (!exportFolder(out))
     throw new Error(
       "--out names a folder that holds files and no review export: name an empty or new one",
     );
-  const fetched = fetchedDocuments(undefined);
-  const documents = fetched.flatMap((doc) => keptDocument(doc.id) ?? []);
-  if (documents.length === 0)
-    throw new Error("The last run kept no document: run `corpus run` first");
   const config = namingConfig(process.env);
   if (!AnswerSource.safeParse(`model:${config.id}`).success)
     throw new Error("NAMING_MODEL is not a model's id: letters, digits and ._:/@- only");
+  const fetched = fetchedDocuments(undefined);
+  const documents = lastRun("export", config.id, fetched);
   const cache = new FileAnswerCache({ model: config.id });
   const detector = await leakDetector();
   let plan: Awaited<ReturnType<typeof exportPlan>>;
@@ -1534,7 +1599,7 @@ async function runReviewCheck(dir: string) {
     folder.keys.map((key) => ({ key, text: folder.read(key) ?? "" })),
   );
   const fetched = fetchedDocuments(undefined);
-  const kept = fetched.flatMap((doc) => keptDocument(doc.id) ?? []);
+  const kept = lastRun("check", config.id, fetched);
   const holders = new Map<string, string[]>();
   for (const doc of kept)
     for (const macro of doc.request?.macros ?? [])
@@ -1593,11 +1658,6 @@ async function runReviewCheck(dir: string) {
     ...(invalid.length > 0
       ? [
           `${invalid.length} answer ${invalid.length === 1 ? "file does" : "files do"} not validate, or ${invalid.length === 1 ? "is" : "are"} not filed under ${invalid.length === 1 ? "its" : "their"} key: ${invalid.join(", ")}.`,
-        ]
-      : []),
-    ...(kept.length < fetched.length
-      ? [
-          `The last run kept ${kept.length} of the ${fetched.length} fetched documents: run \`corpus run\` over the whole corpus for a verdict on every document.`,
         ]
       : []),
     ...(dropped > 0

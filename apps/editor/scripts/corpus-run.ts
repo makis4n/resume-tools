@@ -580,6 +580,26 @@ export function runDifferences(first: unknown, second: unknown): string[] {
   return out.map(printable);
 }
 
+// What `.corpus/run/` holds.
+
+/**
+ * The record of the last run under `.corpus/run/run.json`: a stamp of its own, which each document's
+ * `review.json` it keeps carries too; what answers it read, the committed alone or with a model's
+ * cache, and the model it asked, if any; whether it took every fetched document or some, and which;
+ * and whether it finished. The review's export and check read it (`runMismatch`).
+ */
+export const RunRecord = z.strictObject({
+  version: z.literal(1),
+  stamp: z.string().min(1).max(64),
+  answers: z.enum(["committed", "cache"]),
+  cache: z.string().nullable(),
+  asked: z.string().nullable(),
+  documents: z.enum(["all", "some"]),
+  ids: z.array(z.string()),
+  complete: z.boolean(),
+});
+export type RunRecord = z.infer<typeof RunRecord>;
+
 // The baseline.
 
 /** The baseline a `--committed-only` run over the whole corpus is held to. */
