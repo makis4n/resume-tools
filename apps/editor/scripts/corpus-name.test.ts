@@ -721,26 +721,29 @@ describe("a request asked in parts", () => {
 });
 
 describe("the runner's configuration and prices", () => {
-  test("takes the key under either name and the model's id from NAMING_MODEL", () => {
+  test("takes the key from SOCLAAS_API_KEY alone and the model's id from NAMING_MODEL", () => {
     expect(namingConfig({})).toEqual({ id: DEFAULT_MODEL });
-    expect(DEFAULT_MODEL).toBe("gemini-3.8-flash");
-    expect(namingConfig({ GEMINI_API_KEY: " invented-key " })).toEqual({
+    expect(DEFAULT_MODEL).toBe("qwen3.8:27b");
+    expect(namingConfig({ SOCLAAS_API_KEY: " invented-key " })).toEqual({
       key: "invented-key",
       id: DEFAULT_MODEL,
     });
     expect(
+      namingConfig({ SOCLAAS_API_KEY: "another-invented-key", NAMING_MODEL: "qwen3.6:35b" }),
+    ).toEqual({ key: "another-invented-key", id: "qwen3.6:35b" });
+    // Gemini's names, which the runner read before SoCLaaS, are no longer read (decision 0036).
+    expect(
       namingConfig({
-        GEMINI_API_KEY: "",
-        GOOGLE_GENERATIVE_AI_API_KEY: "another-invented-key",
-        NAMING_MODEL: "gemini-3.7-flash",
+        GEMINI_API_KEY: "invented-key",
+        GOOGLE_GENERATIVE_AI_API_KEY: "invented-key",
       }),
-    ).toEqual({ key: "another-invented-key", id: "gemini-3.7-flash" });
+    ).toEqual({ id: DEFAULT_MODEL });
   });
 
   test("refuses a key that is not one line with no spaces, and never says what it is", () => {
     for (const [name, key] of [
-      ["GEMINI_API_KEY", "INVENTED-KEY-0123456789abcdef\n# rotated 2026-09"],
-      ["GOOGLE_GENERATIVE_AI_API_KEY", "INVENTED KEY"],
+      ["SOCLAAS_API_KEY", "INVENTED-KEY-0123456789abcdef\n# rotated 2026-09"],
+      ["SOCLAAS_API_KEY", "INVENTED KEY"],
     ] as const) {
       const error = (() => {
         try {
@@ -754,15 +757,16 @@ describe("the runner's configuration and prices", () => {
     }
   });
 
-  test("estimates the cost of tokens at the default model's list price, with the day it was read", () => {
-    const price = LIST_PRICES[DEFAULT_MODEL];
-    expect(price?.read).toBe("2026-09-27");
-    if (price === undefined) return;
-    // 800,000 fresh tokens in, 200,000 from the cache, and 100,000 out.
-    expect(costOf({ input: 1_000_000, cached: 200_000, output: 100_000 }, price)).toBeCloseTo(
-      0.6 + 0.015 + 0.375,
-      10,
-    );
+  test("estimates the cost of tokens at the model's list price, with the day it was read", () => {
+    const tokens = { input: 1_000_000, cached: 200_000, output: 100_000 };
+    // SoCLaaS's reference price counts cached input as any other: 1,000,000 in and 100,000 out.
+    const soclaas = LIST_PRICES[DEFAULT_MODEL];
+    expect(soclaas?.read).toBe("2026-09-27");
+    if (soclaas !== undefined) expect(costOf(tokens, soclaas)).toBeCloseTo(0.195 + 0.09, 10);
+    // Gemini's: 800,000 fresh tokens in, 200,000 from the cache, and 100,000 out.
+    const gemini = LIST_PRICES["gemini-3.8-flash"];
+    expect(gemini?.read).toBe("2026-09-27");
+    if (gemini !== undefined) expect(costOf(tokens, gemini)).toBeCloseTo(0.6 + 0.015 + 0.375, 10);
   });
 });
 
@@ -864,7 +868,7 @@ describe("the runner's table", () => {
       LIST_PRICES[DEFAULT_MODEL] ?? { read: "", input: 0, cached: 0, output: 0 },
     );
     expect(table).toContain(
-      `1 of 4 documents named; 14 macros answered, 2 of them by the model now; 3 model calls, 24000 tokens. About $${cost.toFixed(2)} at gemini-3.8-flash's list price, read 2026-09-27.`,
+      `1 of 4 documents named; 14 macros answered, 2 of them by the model now; 3 model calls, 24000 tokens. About $${cost.toFixed(2)} at ${DEFAULT_MODEL}'s list price, read 2026-09-27.`,
     );
     expect(table).toContain("Failed, by reason: invalid 1.");
     expect(table).toContain(
@@ -904,15 +908,15 @@ describe("the name command", () => {
   const run = (env: Record<string, string>, ...args: string[]) =>
     spawnSync(process.execPath, [SCRIPT, ...args], {
       encoding: "utf8",
-      env: { ...process.env, GEMINI_API_KEY: "", GOOGLE_GENERATIVE_AI_API_KEY: "", ...env },
+      env: { ...process.env, SOCLAAS_API_KEY: "", ...env },
     });
 
   test("refuses to ask a model with no key, or one no source can name, before anything else", () => {
     const keyless = run({}, "name", "--model");
     expect(keyless.status).toBe(1);
-    expect(keyless.stderr).toContain("name --model asks Gemini, which needs a key");
+    expect(keyless.stderr).toContain("name --model asks SoCLaaS, which needs a key");
     const badId = run(
-      { GEMINI_API_KEY: "invented-key", NAMING_MODEL: "an id with spaces" },
+      { SOCLAAS_API_KEY: "invented-key", NAMING_MODEL: "an id with spaces" },
       "name",
       "--model",
     );
@@ -921,13 +925,13 @@ describe("the name command", () => {
     // A key of two lines, as a key file with a comment gives, is refused and never printed, before
     // any document is read: no document here is one.
     const twoLines = run(
-      { GEMINI_API_KEY: "invented-key-0123\n# a second line" },
+      { SOCLAAS_API_KEY: "invented-key-0123\n# a second line" },
       "name",
       "--only",
       "invented-0000",
     );
     expect(twoLines.status).toBe(1);
-    expect(twoLines.stderr).toContain("GEMINI_API_KEY is not one line with no spaces");
+    expect(twoLines.stderr).toContain("SOCLAAS_API_KEY is not one line with no spaces");
     expect(twoLines.stderr).not.toContain("invented-key-0123");
     expect(run({}, "probe", "--model").stderr).toContain("--model goes with name");
     expect(run({}, "--help").stdout).toContain("| name [--only <id>] [--json <file>] [--model]");

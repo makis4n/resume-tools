@@ -338,11 +338,25 @@ of each launch template must find editable what the hand-written port marks.
     so, with any redefinitions it needs (item 6); the top twenty templates get that review, as
     plan section 10 asks, and the reviewed set seeds the service's cache in milestone 5. Done
     when three runs in a row agree.
-18. [ ] **Benchmark the candidates.** `corpus.ts bench --model <id>` runs the naming step over
-    the corpus for two or three candidates, Gemini Flash and a Claude model at least, and reports
-    the editable rate, the refused and partial shares, and the cost per import; a decision
-    record holds the table. The choice itself can wait for launch, as the plan defers it, and the
-    default stays Gemini unless the table says otherwise. A few dollars per candidate.
+18. [ ] **Benchmark the candidates, on SoCLaaS.** The naming step runs on SoCLaaS, the School of
+    Computing's OpenAI-compatible gateway for its students and staff, whose calls bill nothing
+    (decision 0036): `soclaasModel` in `packages/naming/src/providers.ts`, the key in
+    `SOCLAAS_API_KEY` and the model in `NAMING_MODEL`, `qwen3.8:27b` until this item picks. The
+    gateway holds each candidate's answer to its JSON schema and returns reasoning apart (0036).
+    `corpus.ts bench --model <id>` runs the naming step over the corpus for three candidates:
+    `qwen3.8:27b`, the gateway's all-round model and the likely best; `qwen3.6:35b`, described as
+    efficient and priced under it, the likely fastest; and `qwen3-coder-next`, a code model, since
+    naming reads template code; with `gemma4:26b`, another family, or `qwen3.6:27b`, which the
+    key's catalog lists, as a fourth if the three fail on the same templates. The rest
+    are left out: the 8B and 9B models are weak and their 64k context is tight for a full part,
+    `qwen3-vl:32b` reads images, and `ornith:35b` is built for agent loops. The benchmark reports
+    the editable rate, the refused and partial shares, each part's time, and the cost per import
+    at the gateway's reference prices, which count only toward its limits. The default becomes
+    the highest editable rate whose slowest part stays within the naming service's two minutes
+    (decision 0028); a decision record holds the table and amends 0036. The key never reaches CI.
+    The gateway serves the school's teaching and projects, so before the public launch milestone 5
+    asks the school whether the naming service may use it, with Gemini's paid tier as the
+    fallback.
 19. [ ] **Measure the import, and close.** `measure` gains an import: a cached pdfTeX template,
     a Jake's Resume fork, from the file to the page, in Node and at `?measure=import` in the
     browser, with a warm HTTP cache; under 5 s on this machine is the bar, and the XeTeX number
@@ -401,11 +415,12 @@ pull request that acts on it. The first two the owner settled on 26 September.
   the worker, which starts afresh.
 - **The 5 s bar is judged on pdfTeX** (item 19), on a cached template with a warm HTTP cache on
   this machine, and XeTeX is reported, as the plan already lets XeTeX feel slower.
-- **The provider is the AI SDK's, Gemini first** (item 9), as plan section 6.4 has it; Claude is
-  a benchmarked candidate (item 18). New dependencies this milestone expects: unified-latex's
-  parse, arguments, argspec, macros, to-string, visit and ctan packages (editor), fflate
-  (editor), `ai` with `@ai-sdk/google` and `@ai-sdk/anthropic` (naming), and wrangler as a dev
-  dependency of the editor for the function. Each is named in the pull request that adds it.
+- **The provider is the AI SDK's, Gemini first** (item 9), as plan section 6.4 has it, then
+  SoCLaaS (decision 0036), whose model item 18 picks. New dependencies this milestone
+  expects: unified-latex's parse, arguments, argspec, macros, to-string, visit and ctan packages
+  (editor), fflate (editor), `ai` with `@ai-sdk/google` and `@ai-sdk/openai-compatible`
+  (naming), and wrangler as a dev dependency of the editor for the function. Each is named in
+  the pull request that adds it.
 
 ## Risks
 
@@ -432,9 +447,12 @@ pull request that acts on it. The first two the owner settled on 26 September.
   imported template adds formats to the store's twenty (decision 0010); dropping a package's
   formats with its last document keeps it bounded. Two engines never load at once.
 - **The model on hand-rolled templates.** Per-macro caching, the locked fallback and the bar
-  bound the damage, as the plan says; the benchmark makes the trade-off visible. Gemini's free
-  tier may train on inputs, which is why only definitions ever leave, and launch moves to the
-  paid tier (plan section 8.3).
+  bound the damage, as the plan says; the benchmark makes the trade-off visible. SoCLaaS's
+  models are open ones of 27 to 35 billion parameters, not frontier models, so the editable rate
+  may come out lower than a larger model's would, and the locked fallback takes what they miss.
+  Only definitions ever leave, whichever provider answers: Gemini's free tier may train on
+  inputs, and SoCLaaS is the school's service, so the launch either has the school's leave or
+  moves to Gemini's paid tier (plan section 8.3).
 - **Licences.** The corpus is never redistributed and the answers name macros only. The shared
   cache keeps, with each answer, the stripped definitions it was given, for the audit plan
   section 6.3 asks for; whether that holds for an unlicensed fork is a launch question, and until

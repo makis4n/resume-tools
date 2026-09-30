@@ -33,7 +33,12 @@ afterAll(async () => {
  * The variables the route reads, and the name it read before, taken out of this process's
  * environment for a test.
  */
-const VARIABLES = ["NAMING_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "NAMING_MODEL"];
+const VARIABLES = [
+  "NAMING_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "SOCLAAS_API_KEY",
+  "NAMING_MODEL",
+];
 const saved = new Map(VARIABLES.map((name) => [name, process.env[name]]));
 afterEach(() => {
   for (const [name, value] of saved)
@@ -163,6 +168,7 @@ describe("the naming route on the dev server", () => {
 
   test("serves the cache alone with no key, and says so in one line", async () => {
     delete process.env.NAMING_API_KEY;
+    delete process.env.SOCLAAS_API_KEY;
     delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     const { origin, lines } = await serve({ cache: freshCache() });
     expect(lines.filter((line) => line.includes("naming route"))).toEqual([CACHE_ALONE]);
@@ -175,12 +181,13 @@ describe("the naming route on the dev server", () => {
 
   test("reads its key from the editor's .env on the server side, under the runner's name alone, never under the VITE_ prefix, and never says it", async () => {
     delete process.env.NAMING_API_KEY;
+    delete process.env.SOCLAAS_API_KEY;
     delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     delete process.env.NAMING_MODEL;
-    expect(CACHE_ALONE).toContain("set GOOGLE_GENERATIVE_AI_API_KEY in apps/editor/.env");
+    expect(CACHE_ALONE).toContain("set SOCLAAS_API_KEY in apps/editor/.env");
     const prefixed = await serve(
       { cache: freshCache() },
-      { ".env": "VITE_GOOGLE_GENERATIVE_AI_API_KEY=invented-key-0001\n" },
+      { ".env": "VITE_SOCLAAS_API_KEY=invented-key-0001\n" },
     );
     expect(prefixed.lines).toContain(CACHE_ALONE);
     // The service's own name for the key is gone: one key, one variable, the runner's.
@@ -189,15 +196,21 @@ describe("the naming route on the dev server", () => {
       { ".env": "NAMING_API_KEY=invented-key-0004\n" },
     );
     expect(dropped.lines).toContain(CACHE_ALONE);
+    // Nor Gemini's, which the route read before SoCLaaS (decision 0036).
+    const gemini = await serve(
+      { cache: freshCache() },
+      { ".env": "GOOGLE_GENERATIVE_AI_API_KEY=invented-key-0005\n" },
+    );
+    expect(gemini.lines).toContain(CACHE_ALONE);
     // A key makes a model, which nothing here asks.
     const keyed = await serve(
       { cache: freshCache() },
       {
-        ".env": "GOOGLE_GENERATIVE_AI_API_KEY=invented-key-0002\nNAMING_MODEL=gemini-3.7-flash\n",
+        ".env": "SOCLAAS_API_KEY=invented-key-0002\nNAMING_MODEL=qwen3.6:35b\n",
       },
     );
     expect(keyed.lines).toContain(
-      "The naming route, /v1/name, asks gemini-3.7-flash for what the cache does not hold.",
+      "The naming route, /v1/name, asks qwen3.6:35b for what the cache does not hold.",
     );
     expect(keyed.lines.join("\n")).not.toContain("invented-key");
   });
@@ -206,7 +219,7 @@ describe("the naming route on the dev server", () => {
     await expect(
       serve({
         env: {
-          GOOGLE_GENERATIVE_AI_API_KEY: "invented-key-0003",
+          SOCLAAS_API_KEY: "invented-key-0003",
           NAMING_MODEL: "an id with spaces",
         },
       }),
