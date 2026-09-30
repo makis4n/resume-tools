@@ -2,12 +2,19 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  BLANKS,
+  CONTACT_FIELDS,
+  HOLDS,
+  MACRO_KINDS,
+  MEANINGS,
   type ModelNaming,
   NAMING_VERSION,
   type NamingRequest,
+  SLOTS_BY_KIND,
   sha256,
   storedAnswersOf,
 } from "@resume-tools/naming";
+import { LINK_KINDS, SECTION_ROLES } from "@resume-tools/resume-model";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import type { EngineManifest } from "../src/engine/manifest";
@@ -498,6 +505,31 @@ async function keyOfText(text: string): Promise<string> {
   const { keyOf } = await import("@resume-tools/naming");
   return keyOf(NAMING_VERSION, await sha256(text), []);
 }
+
+describe("REVIEW.md, which is all the review agent reads besides the export", () => {
+  const text = readFileSync(new URL("../corpus/REVIEW.md", import.meta.url), "utf8");
+
+  test("names every word of the answer's closed lists, so that the agent needs no other file", () => {
+    const words = [
+      ...MACRO_KINDS,
+      ...MEANINGS,
+      ...Object.values(SLOTS_BY_KIND).flat(),
+      ...BLANKS,
+      ...HOLDS,
+      ...CONTACT_FIELDS,
+      ...SECTION_ROLES,
+      ...LINK_KINDS,
+      "opens",
+      "closes",
+    ];
+    for (const word of words) expect(text, word).toContain(`\`${word}\``);
+  });
+
+  test("files the review's answers under the review model, and points at no run's files", () => {
+    expect(text).toContain('"source": "model:claude-opus-5-5"');
+    expect(text).not.toContain(".corpus/run");
+  });
+});
 
 describe("the last run, as the review reads it", () => {
   const record = (changes: Partial<RunRecord> = {}): RunRecord => ({

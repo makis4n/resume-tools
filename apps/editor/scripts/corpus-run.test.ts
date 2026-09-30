@@ -268,14 +268,18 @@ describe("the baseline", () => {
   });
   const scope = { committedOnly: true, whole: true };
 
-  test("is a placeholder, as committed: no baseline yet, and nothing compared", () => {
-    const committed = Baseline.parse(
+  test("as committed, is one the schema takes, the placeholder or a run's", () => {
+    const committed = Baseline.safeParse(
       JSON.parse(
         readFileSync(fileURLToPath(new URL("../corpus/baseline.json", import.meta.url)), "utf8"),
       ),
     );
-    expect(committed.run).toBeNull();
-    expect(baselineVerdict(summary(0), committed, scope)).toEqual({
+    expect(committed.success, committed.error?.issues[0]?.message).toBe(true);
+  });
+
+  test("of no run is none yet, and nothing is compared with it", () => {
+    const none = Baseline.parse({ version: 1, run: null });
+    expect(baselineVerdict(summary(0), none, scope)).toEqual({
       compared: false,
       failed: false,
       line: "No baseline yet: corpus/baseline.json holds no run, so nothing is compared.",

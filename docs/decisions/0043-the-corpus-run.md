@@ -212,7 +212,13 @@ validate, or its dependencies do not give its key, as the committed answers' tes
 that the review's pull request takes the dropped ones out and lists every other for a person to
 read.
 
-`apps/editor/corpus/REVIEW.md` says how part B runs, and what the agent must never read.
+`apps/editor/corpus/REVIEW.md` says how part B runs, and holds the answer's contract, its fields and
+their closed lists, which a test holds it to, so that the agent reads nothing but it and the export
+folder. The agent files each answer it corrects as a stored answer whose `source` is where it came
+from, as decision 0024 defines the field, `model:claude-opus-5-5` for the review model, with
+`reviewed: true` and notes naming the review model and the naming model whose answer it corrects;
+the committed answers' test takes a reviewed answer whose source is the seed or a model. A macro
+only withheld requests hold, which the export names no more than by its key, it leaves alone.
 
 ## The sample
 
