@@ -31,7 +31,10 @@ question.
   and the header's values found from it, stay in `scripts/`: in the browser the service's reply
   carries the answers, and one request goes, built without the header's values, which only its
   answers give. It is built by one function (`importRequest`), which `corpus leak` proves as it
-  stands, the header's values given to the check besides (decision 0033's update).
+  stands, the header's values given to the check besides; and a word a setting keeps as a keyword
+  or a colour's name that the page shows, or a text the preamble stores holds, goes as its
+  placeholder, since the header's values that masked it there are not in the browser's request
+  (decision 0033's update).
 - It runs where the session is: the worker gains an `import` request, which loads the pipeline,
   the fonts the page's glyphs are read with and the tree's images only when the first import asks,
   and reports progress under the request's id. The worker is built as an ES module

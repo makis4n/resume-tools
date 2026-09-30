@@ -299,3 +299,18 @@ request holds is found: a three-letter word of the header's in the name of a mac
 defines is one such, since the page's words reach a name from four letters (`nameNeedlesOf`). On
 the 20-document sample the check came out the same before and after: 20 checked, 19 passed, 0
 failed, 1 withheld by the gate for a single word, 0 refused.
+
+The whole corpus then found one failure the sample did not: in altacv-0019, a word of the header's
+of four letters, which the page shows, stood in a `\colorlet` setting, kept as a keyword or a
+colour's name. The builder masks a setting's words by the header's values, which the browser's
+request is built without, and no other needle reaches a single word in a setting. The rule now: a
+word a setting keeps as it is, a keyword or the name of a colour the preamble defines, that is a
+word the page shows or a text the preamble stores holds, of three letters or more, the header's
+threshold, goes as its placeholder (`maskedSetting`, `personalWords`). Every other word of a
+setting went as its placeholder already, so a setting now keeps no word of the person's that the
+browser can know, and the header's values are among those words; the model still reads which
+settings are controls. The leak runner tells such a failure without the word
+(`explainSettingLeaks`): the setting's command, its key where the key is a keyword, the word's
+length, whether the page shows it and a stored text holds it, and which needles mask it. The whole
+corpus after it: 117 documents with a reference, 110 checked, 104 passed, 0 failed, 6 withheld by
+the gate, 7 refused for pages the detector cannot read.

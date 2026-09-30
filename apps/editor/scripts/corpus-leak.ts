@@ -29,7 +29,14 @@
 // nothing Node lacks, and the editor's modules as types alone, with their real extensions.
 import { fileURLToPath } from "node:url";
 import type { NamingRequest } from "@resume-tools/naming";
-import type { HeaderValues, Leak, LeakKind, Origin, PageStrings } from "../src/import/naming.ts";
+import type {
+  HeaderValues,
+  Leak,
+  LeakKind,
+  Origin,
+  PageStrings,
+  SettingLeak,
+} from "../src/import/naming.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 import { shownMacro } from "./corpus-parse.ts";
 import { runPool } from "./corpus-reference.ts";
@@ -102,6 +109,12 @@ export interface LeakRow {
   names?: number;
   /** What its request holds of its text; none when it passed. */
   findings?: LeakFinding[];
+  /**
+   * For a request whose settings or class hold a word of the header's, why, never the word
+   * (`explainSettingLeaks`): each setting's command, its key where a keyword, the word's length,
+   * whether the page shows it and a stored text holds it, and which needles would mask it.
+   */
+  settings?: SettingLeak[];
   /** Where an invalid request breaks its contract, by kind of place and macro, never what. */
   problems?: { kind: LeakKind | "request"; macro?: string }[];
   /** Milliseconds its child took. */
@@ -309,6 +322,18 @@ function shownProblems(row: LeakRow): string {
   return [...new Set(shown)].join("; ");
 }
 
+/** A word of the header's in a setting as a line says it: no text, its setting, length and rules. */
+export function shownSettingLeak(leak: SettingLeak): string {
+  const where = `\\${leak.command}${leak.key === undefined ? "" : ` (${leak.key}=)`}`;
+  const facts = [
+    `${leak.letters} letters`,
+    leak.onPage ? "on the page" : "not on the page",
+    ...(leak.stored ? ["in a stored text"] : []),
+    leak.kept ? "kept as a keyword or a colour" : "not kept",
+  ];
+  return `${where}: ${facts.join(", ")}; masked by ${leak.caughtBy.join(" or ")}`;
+}
+
 /** A document's row as a line of progress: numbers and names only. */
 export function leakLine(row: LeakRow): string {
   if (row.outcome === "refused")
@@ -319,7 +344,8 @@ export function leakLine(row: LeakRow): string {
   const findings = row.findings ?? [];
   const masked = row.counts === undefined ? "" : `, ${row.counts.masked} own masked`;
   if (findings.length === 0) return `${row.engine}, passes${masked}`;
-  return `${row.engine}, ${failed(row) ? "FAILS" : "withheld by the gate"}: ${findings.map(shownFinding).join("; ")}`;
+  const settings = (row.settings ?? []).map(shownSettingLeak);
+  return `${row.engine}, ${failed(row) ? "FAILS" : "withheld by the gate"}: ${findings.map(shownFinding).join("; ")}${settings.length === 0 ? "" : ` [${settings.join("; ")}]`}`;
 }
 
 /**

@@ -82,6 +82,7 @@ async function main() {
   );
   const {
     buildRequest,
+    explainSettingLeaks,
     findLeaks,
     importRequest,
     InvalidRequest,
@@ -185,7 +186,12 @@ async function main() {
       const unpaged = await buildRequest(built, found, probed, body.preamble, { sources });
       if ("refused" in unpaged) return done({ outcome: "refused", engine, page: pageCounts });
       const request = sent.request;
-      const leaks = findLeaks(request, { ...sent.document, header });
+      const checked = { ...sent.document, header };
+      const leaks = findLeaks(request, checked);
+      // Where a setting or the class holds a word of the header's, why, never the word.
+      const settings = leaks.some((leak) => leak.kind === "setting" || leak.kind === "class")
+        ? explainSettingLeaks(request, checked)
+        : [];
       const owned = ownNames(sources);
       const meaning = (name: string) => {
         const macro = Object.hasOwn(found.macros, name) ? found.macros[name] : undefined;
@@ -208,6 +214,7 @@ async function main() {
         page: pageCounts,
         names: sent.names.size,
         findings: leakFindings(leaks),
+        ...(settings.length === 0 ? {} : { settings }),
       });
     } catch (error) {
       // A request the contract refuses is named by where it breaks it, never what it holds.

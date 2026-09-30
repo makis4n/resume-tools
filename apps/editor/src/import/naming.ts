@@ -2100,14 +2100,22 @@ function coloursOf(preamble: string): Set<string> {
 /**
  * A setting as the request holds it: its emails, links and phone numbers masked by pattern, then
  * every word but a number or a length, a hex colour, a colour the preamble names or a keyword
- * written as its placeholder; commands' names, braces and punctuation as they are.
+ * written as its placeholder; commands' names, braces and punctuation as they are. A keyword or a
+ * colour's name that is a word of the person's, one of `personal`, goes as its placeholder too:
+ * a word the page shows, or a text the preamble stores holds, of MIN_NEEDLE letters or more, as a
+ * last name that is a colour's (decision 0038). The request is built without the header's values,
+ * which only its answers give, and those words hold them.
  */
-function maskedSetting(statement: string, colours: ReadonlySet<string>): string {
+function maskedSetting(
+  statement: string,
+  colours: ReadonlySet<string>,
+  personal: ReadonlySet<string>,
+): string {
   const keep = (word: string) =>
     QUANTITY.test(word) ||
     HEX.test(word) ||
-    KEYWORDS.has(word.toLowerCase()) ||
-    colours.has(word.toLowerCase());
+    ((KEYWORDS.has(word.toLowerCase()) || colours.has(word.toLowerCase())) &&
+      !personal.has(folded(word)));
   let out = "";
   const text = maskDefinition(statement);
   for (let i = 0; i < text.length; ) {
@@ -2136,16 +2144,34 @@ function maskedSetting(statement: string, colours: ReadonlySet<string>): string 
 }
 
 /**
- * The preamble's candidate settings: the class and its options, and each statement of a setting
- * command, in order, its comments gone, each masked as a setting is (`maskedSetting`), then by the
- * document's own values, its words and phrases as whole words and its identifiers of ANYWHERE
- * characters or more anywhere (`settingTake`), and cut at the request's cap.
+ * The words of the person's a setting may not keep as a keyword or a colour's name
+ * (`maskedSetting`): each word the page shows and each word of a text the preamble stores, of
+ * MIN_NEEDLE letters or more, folded. The header's values are among them, whether the request is
+ * built with those or without, as the browser builds it (decision 0038).
  */
-function preambleOf(preamble: string, needles: Needles): RequestPreamble {
+function personalWords(document: Pick<DocumentText, "page" | "stored">): Set<string> {
+  const words = new Set<string>();
+  for (const word of [...(document.page?.words ?? []), ...(document.stored ?? []).flatMap(wordsOf)])
+    if (lettersOf(word) >= MIN_NEEDLE) words.add(folded(word));
+  return words;
+}
+
+/**
+ * The preamble's candidate settings: the class and its options, and each statement of a setting
+ * command, in order, its comments gone, each masked as a setting is (`maskedSetting`), the
+ * person's words given as `personal`, then by the document's own values, its words and phrases as
+ * whole words and its identifiers of ANYWHERE characters or more anywhere (`settingTake`), and
+ * cut at the request's cap.
+ */
+function preambleOf(
+  preamble: string,
+  needles: Needles,
+  personal: ReadonlySet<string>,
+): RequestPreamble {
   const text = withoutComments(preamble);
   const colours = coloursOf(text);
   const mask = (statement: string) => {
-    const masked = maskedSetting(statement.replace(/\s+/g, " ").trim(), colours);
+    const masked = maskedSetting(statement.replace(/\s+/g, " ").trim(), colours, personal);
     const visible = visibleOfSource(masked);
     return cut(
       hidden(masked, visible, found(visible, needles, settingTake).hide),
@@ -2882,7 +2908,7 @@ export async function buildRequest(
     version: NAMING_VERSION,
     engine: signatures.engine,
     ...(family === undefined ? {} : { family }),
-    preamble: preambleOf(preamble, needles),
+    preamble: preambleOf(preamble, needles, personalWords(document)),
     macros,
     definitions: [...definitions.values()],
   };
@@ -3289,6 +3315,88 @@ export function findLeaks(request: NamingRequest, document: DocumentText): Leak[
       leaks.push({ origin: person.origin, kind: "name", where: "a name the request holds" });
   }
   return leaks;
+}
+
+/**
+ * A word of the header's that a setting or the class holds, as `explainSettingLeaks` tells it,
+ * never the word: the setting's command, or `documentclass` for the class; the key it is the value
+ * of, where the key is one of the settings' keywords; how many letters and digits it has; whether
+ * the page shows it as a word, and a stored text holds it as a word; whether the setting keeps it as
+ * it is (a keyword or a colour the preamble names), where every other word goes as its placeholder;
+ * and which needles would mask it there (`caughtBy`): the header's words, of MIN_NEEDLE letters or
+ * more, which the browser's request is built without; the page's words, of MIN_NEEDLE letters or
+ * more, or of NAME_WORD as a macro's name is read; a stored text's word; and none of those but the
+ * header's reached a setting's single word before decision 0038.
+ */
+export interface SettingLeak {
+  command: string;
+  key?: string;
+  letters: number;
+  onPage: boolean;
+  stored: boolean;
+  kept: boolean;
+  caughtBy: string[];
+}
+
+/**
+ * Why a request's settings and class hold words of the header's (`SettingLeak`), for the leak
+ * runner to tell a failure it finds there without the text (decision 0038).
+ */
+export function explainSettingLeaks(request: NamingRequest, document: DocumentText): SettingLeak[] {
+  const needles = needlesOf(document, true);
+  const pageWords = new Set((document.page?.words ?? []).map(folded));
+  const storedWords = new Set((document.stored ?? []).flatMap(wordsOf).map(folded));
+  const kept = new Set(
+    [...KEYWORDS, ...coloursOf(request.preamble.settings.join("\n"))].map(folded),
+  );
+  const header = (needle: Needle): Take =>
+    needle.origin === "header" ? settingTake(needle) : undefined;
+  const places = [
+    ...request.preamble.settings.map((text) => ({
+      text,
+      command: /^\\([A-Za-z@]+)/.exec(text)?.[1] ?? "a setting",
+    })),
+    ...(request.preamble.class === undefined
+      ? []
+      : [request.preamble.class.name, ...request.preamble.class.options].map((text) => ({
+          text,
+          command: "documentclass",
+        }))),
+  ];
+  const told: SettingLeak[] = [];
+  for (const { text, command } of places) {
+    const visible = visibleOfSource(text);
+    const { hide } = found(visible, needles, header);
+    for (let i = 0; i < visible.text.length; ) {
+      if (hide[i] !== 1) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < visible.text.length && hide[j] === 1) j++;
+      const word = visible.text.slice(i, j).join("");
+      const before = text.slice(0, visible.at[i] ?? 0);
+      const key = /([A-Za-z@]+)\s*=\s*\{?\s*$/.exec(before)?.[1];
+      told.push({
+        command,
+        ...(key !== undefined && KEYWORDS.has(key.toLowerCase()) ? { key } : {}),
+        letters: j - i,
+        onPage: pageWords.has(word),
+        stored: storedWords.has(word),
+        kept: kept.has(word),
+        caughtBy: [
+          `the header's words, of ${MIN_NEEDLE} letters or more`,
+          ...(pageWords.has(word) ? [`the page's words, of ${MIN_NEEDLE} letters or more`] : []),
+          ...(pageWords.has(word) && j - i >= NAME_WORD
+            ? [`the page's words, of ${NAME_WORD} letters or more`]
+            : []),
+          ...(storedWords.has(word) ? ["a stored text's words"] : []),
+        ],
+      });
+      i = j;
+    }
+  }
+  return told;
 }
 
 /**

@@ -16,6 +16,7 @@ import {
   leakLine,
   leakTable,
   passed,
+  shownSettingLeak,
   withheld,
 } from "./corpus-leak";
 import {
@@ -87,6 +88,35 @@ describe("the leak runner's counts and findings", () => {
     expect(leakLine({ ...row, engine: "pdftex" })).toBe(
       "pdftex, FAILS: the page's text in the own definition of `\\cvcontact`; a stored text in the tree's definition of `\\ecv@rfoot`; a raw chunk's text in a call site of a macro whose name is not plain; a header value in a setting; the page's text in a macro's name, which is not shown",
     );
+  });
+
+  test("tells a word of the header's in a setting by its setting, length and needles, never the word", () => {
+    expect(
+      shownSettingLeak({
+        command: "colorlet",
+        letters: 4,
+        onPage: true,
+        stored: false,
+        kept: true,
+        caughtBy: [
+          "the header's words, of 3 letters or more",
+          "the page's words, of 3 letters or more",
+        ],
+      }),
+    ).toBe(
+      "\\colorlet: 4 letters, on the page, kept as a keyword or a colour; masked by the header's words, of 3 letters or more or the page's words, of 3 letters or more",
+    );
+    expect(
+      shownSettingLeak({
+        command: "usepackage",
+        key: "linkcolor",
+        letters: 3,
+        onPage: false,
+        stored: true,
+        kept: true,
+        caughtBy: ["the header's words, of 3 letters or more", "a stored text's words"],
+      }),
+    ).toContain("\\usepackage (linkcolor=): 3 letters, not on the page, in a stored text");
   });
 
   test("withholds a request that holds only a single word the builder leaves, and fails any other", () => {

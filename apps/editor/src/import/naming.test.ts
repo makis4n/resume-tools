@@ -27,6 +27,7 @@ import {
   assertNoText,
   buildRequest,
   documentStart,
+  explainSettingLeaks,
   findLeaks,
   type HeaderValues,
   InvalidRequest,
@@ -2321,4 +2322,71 @@ Invented text\xspace here.
       true,
     );
   }, 60_000);
+});
+
+describe("the request the import sends, without the header's values (decision 0038)", () => {
+  test("masks a keyword or a colour a setting keeps that is a word the page shows or a text stored", async () => {
+    // altacv-0019's shape, invented: a word of the person's name that is a colour's, which a
+    // setting keeps as a keyword, and one that names a colour the preamble defines. The browser
+    // builds its request without the header's values, which only the answers give; the check,
+    // given them, found the word, which the page shows.
+    const found = await inventedSignatures();
+    const tree = treeOf(BODY, found);
+    const preamble = String.raw`\documentclass[11pt]{article}
+\colorlet{heading}{Brown}
+\definecolor{Wren}{HTML}{1F4E79}
+`;
+    const header: HeaderValues = { first: "Wren", last: "Brown" };
+    const bare = await requestOf(tree, found, NO_PROBE, preamble, { sources: SOURCES });
+    expect(bare.preamble.settings).toEqual([
+      "\\colorlet{heading}{Brown}",
+      "\\definecolor{Wren}{HTML}{1F4E79}",
+    ]);
+    const page = await pageOf(["Wren Brown", "Invented words of an invented page"]);
+    expect(checked(bare, { tree, header, sources: SOURCES, page })).toMatch(
+      /\(header\) in setting 1/,
+    );
+    // The leak runner tells why, never the word: the setting, the word's length, the page.
+    const told = explainSettingLeaks(bare, { tree, header, sources: SOURCES, page });
+    expect(told).toEqual([
+      {
+        command: "colorlet",
+        letters: 5,
+        onPage: true,
+        stored: false,
+        kept: true,
+        caughtBy: [
+          "the header's words, of 3 letters or more",
+          "the page's words, of 3 letters or more",
+          "the page's words, of 4 letters or more",
+        ],
+      },
+      {
+        command: "definecolor",
+        letters: 4,
+        onPage: true,
+        stored: false,
+        kept: true,
+        caughtBy: [
+          "the header's words, of 3 letters or more",
+          "the page's words, of 3 letters or more",
+          "the page's words, of 4 letters or more",
+        ],
+      },
+    ]);
+    expect(JSON.stringify(told)).not.toMatch(/brown|wren/i);
+    // With the page's words, both go as placeholders, and the check, given the header, passes.
+    const sent = await requestOf(tree, found, NO_PROBE, preamble, { sources: SOURCES, page });
+    expect(sent.preamble.settings).toEqual([
+      "\\colorlet{heading}{Xxxxx}",
+      "\\definecolor{Xxxx}{HTML}{1F4E79}",
+    ]);
+    expect(checked(sent, { tree, header, sources: SOURCES, page })).toBe("passes");
+    // A keyword no word of the person's spells stays: the model reads which settings are controls.
+    const other = await requestOf(tree, found, NO_PROBE, preamble, {
+      sources: SOURCES,
+      page: await pageOf(["Quill Invented", "Invented words of an invented page"]),
+    });
+    expect(other.preamble.settings).toEqual(bare.preamble.settings);
+  });
 });
