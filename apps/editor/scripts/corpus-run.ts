@@ -84,6 +84,13 @@ export function outcomeOf(assembled: { checks: Pick<AssemblyChecks, "outcome" | 
 /** A rate as a row keeps it: four decimals, so that the JSON reads, and two runs compare. */
 const kept = (rate: number) => Math.round(rate * 10_000) / 10_000;
 
+/**
+ * The step that refused a document the pipeline took past its parse: the Latin Modern swap, the
+ * naming request's builder, the XeTeX rewrite of its fonts or its check, or the validation, the
+ * assembly and its checks. The child says it beside its rows, for `corpus review check`.
+ */
+export type RefusalStep = "latinModern" | "request" | "fonts" | "checks";
+
 /** The naming step of a document, in counts: where its macros' answers came from, and the gate's word. */
 export interface RunNaming {
   /** The request's macros and environments with a key: those the naming step answers. */

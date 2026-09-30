@@ -331,7 +331,14 @@ describe("the review's check of redefinitions", () => {
   const results = new Map<string, Checked>([
     ["altacv-0001", checked("altacv-0001", { applied: ["printinfo", "cvevent"] })],
     ["altacv-0002", checked("altacv-0002", { applied: ["printinfo"], dropped: ["cvevent"] })],
-    ["altacv-0003", checked("altacv-0003", { outcome: "refused" })],
+    // Refused before the checks, by item 8's check of its fonts: the redefinition never runs there.
+    [
+      "altacv-0003",
+      checked("altacv-0003", {
+        outcome: "refused",
+        refused: { step: "fonts", reason: "difference" },
+      }),
+    ],
   ]);
   const verdicts = redefinitionVerdicts({
     carriers,
@@ -345,10 +352,10 @@ describe("the review's check of redefinitions", () => {
   });
 
   test("keeps one every document that reaches the checks applies, and drops one that moves a page", () => {
-    expect(verdicts.map((each) => [each.name, each.kept])).toEqual([
-      ["cvevent", false],
-      ["cvskills", true],
-      ["printinfo", true],
+    expect(verdicts.map((each) => [each.name, each.verdict])).toEqual([
+      ["cvevent", "dropped"],
+      ["cvskills", "unproven"],
+      ["printinfo", "kept"],
     ]);
     const [cvevent, cvskills, printinfo] = verdicts;
     expect(printinfo).toMatchObject({ documents: 3, applied: 2, unreached: 1 });
@@ -356,9 +363,9 @@ describe("the review's check of redefinitions", () => {
       "Kept: applied, the page kept and the checks run through, on all 2 documents that reached the checks, of 3 that hold its keys.",
     );
     expect(cvevent?.why).toBe("Dropped: it moves the page of 1.");
-    expect(cvskills?.why).toBe("Kept: no corpus document's request holds its keys.");
+    expect(cvskills?.why).toBe("Unproven: no corpus document's request holds its keys.");
     expect(verdictLine(printinfo as (typeof verdicts)[number])).toBe(
-      "KEPT \\printinfo, carried by the answers of \\email, \\phone (02-altacv): 3 documents hold their keys, 2 applied it, 0 dropped it, 0 unproven, 0 stopped, 0 timed out or died, 1 not reached. Kept: applied, the page kept and the checks run through, on all 2 documents that reached the checks, of 3 that hold its keys.",
+      "KEPT \\printinfo, carried by the answers of \\email, \\phone (02-altacv): 3 documents hold their keys; 2 applied it, 0 had their page moved, 0 proved none, 0 stopped, 0 were refused by the checks, 0 timed out or died, 1 were not reached. Kept: applied, the page kept and the checks run through, on all 2 documents that reached the checks, of 3 that hold its keys.",
     );
   });
 
@@ -373,10 +380,43 @@ describe("the review's check of redefinitions", () => {
       ]),
       templates: new Map(),
     });
-    expect(verdict).toMatchObject({ kept: false, stopped: 1, unproven: 1, died: 1 });
+    expect(verdict).toMatchObject({ verdict: "dropped", stopped: 1, unprovable: 1, died: 1 });
     expect(verdict?.why).toBe(
       "Dropped: the checks could prove no redefinition on 1; the checks stopped on 1; 1 timed out or died.",
     );
+  });
+
+  test("drops one whose documents the validation refuses, which its answer may cause", () => {
+    // The review's repro: every document that holds the key is refused by the assembly or its
+    // reading back (`keep`), with nothing applied or dropped: that proves nothing kept.
+    const refusedBy = (step: "checks" | "fonts", reason: string) =>
+      redefinitionVerdicts({
+        carriers: [{ key: key("k"), of: "command", name: "cvtag", redefinitions: ["cvtag"] }],
+        holders: new Map([[key("k"), ["altacv-0101", "altacv-0102"]]]),
+        results: new Map(
+          ["altacv-0101", "altacv-0102"].map((id) => [
+            id,
+            checked(id, { outcome: "refused", refused: { step, reason } }),
+          ]),
+        ),
+        templates: new Map(),
+      })[0];
+    expect(refusedBy("checks", "keep")).toMatchObject({
+      verdict: "dropped",
+      refused: 2,
+      why: "Dropped: the checks refused 2.",
+    });
+    // A font the page cannot draw refuses a document whatever its answers are, and a refusal
+    // before the checks never runs the redefinition: neither drops it, and neither proves it.
+    for (const [step, reason] of [
+      ["checks", "font"],
+      ["fonts", "difference"],
+    ] as const)
+      expect(refusedBy(step, reason)).toMatchObject({
+        verdict: "unproven",
+        unreached: 2,
+        why: "Unproven: none of the 2 documents that hold its keys reaches the checks.",
+      });
   });
 
   test("reads the reviewed answers that carry redefinitions, and names a file that does not validate", async () => {

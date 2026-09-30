@@ -263,6 +263,7 @@ import {
   baselineOf,
   baselineVerdict,
   idsOf,
+  type RefusalStep,
   type RunChildRow,
   type RunFile,
   type RunRow,
@@ -1553,7 +1554,11 @@ async function runReviewCheck(dir: string) {
     limitMs: runLimitMs(false),
     onResult: (task, result) => {
       const reply = result.reply as
-        | { run?: RunChildRow; review?: Partial<RunDocument> }
+        | {
+            run?: RunChildRow;
+            review?: Partial<RunDocument>;
+            refusal?: { step: RefusalStep; reason: string };
+          }
         | undefined;
       const outcome = reply?.run?.outcome ?? (result.timedOut ? "timeout" : "crashed");
       const notes = reply?.review?.notes;
@@ -1563,6 +1568,7 @@ async function runReviewCheck(dir: string) {
         applied: notes?.redefinitions.applied ?? [],
         dropped: notes?.redefinitions.dropped ?? [],
         checks: notes?.checks ?? [],
+        ...(reply?.refusal === undefined ? {} : { refused: reply.refusal }),
       });
       print([`${results.size}/${documents.length} ${task.id}: ${outcome}`]);
     },
@@ -1573,7 +1579,8 @@ async function runReviewCheck(dir: string) {
     results,
     templates: exportedTemplates(dir),
   });
-  const dropped = verdicts.filter((verdict) => !verdict.kept).length;
+  const dropped = verdicts.filter((verdict) => verdict.verdict === "dropped").length;
+  const unproven = verdicts.filter((verdict) => verdict.verdict === "unproven").length;
   print(["", ...verdicts.map(verdictLine)]);
   const problems = [
     ...(invalid.length > 0
@@ -1591,10 +1598,15 @@ async function runReviewCheck(dir: string) {
           `${dropped} ${dropped === 1 ? "redefinition is" : "redefinitions are"} dropped: take ${dropped === 1 ? "it" : "them"} out of the answers, and list ${dropped === 1 ? "it" : "them"} in the pull request.`,
         ]
       : []),
+    ...(unproven > 0
+      ? [
+          `${unproven} ${unproven === 1 ? "redefinition is" : "redefinitions are"} unproven, no corpus document applying ${unproven === 1 ? "it" : "them"}: list ${unproven === 1 ? "it" : "them"} in the pull request for a person to judge, or take ${unproven === 1 ? "it" : "them"} out.`,
+        ]
+      : []),
   ];
   print([
     "",
-    `${verdicts.length} ${verdicts.length === 1 ? "redefinition" : "redefinitions"}: ${verdicts.length - dropped} kept, ${dropped} dropped.`,
+    `${verdicts.length} ${verdicts.length === 1 ? "redefinition" : "redefinitions"}: ${verdicts.length - dropped - unproven} kept, ${unproven} unproven, ${dropped} dropped.`,
   ]);
   if (problems.length > 0) {
     console.error(problems.map(printable).join("\n"));

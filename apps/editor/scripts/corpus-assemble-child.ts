@@ -46,7 +46,7 @@ import {
 } from "./corpus-name.ts";
 import { probeRow } from "./corpus-probe.ts";
 import { type RunDocument, reviewNotesOf } from "./corpus-review.ts";
-import { type RunChildRow, type RunNaming, runRowOf } from "./corpus-run.ts";
+import { type RefusalStep, type RunChildRow, type RunNaming, runRowOf } from "./corpus-run.ts";
 import { answersFolder, commandAnswers, headerOf } from "./corpus-seed.ts";
 
 type NodeEngine = typeof import("../src/engine/node.ts");
@@ -187,11 +187,13 @@ async function main() {
     };
     /**
      * A refusal's rows: its reason, and for a font the page cannot draw, its name; with what the
-     * steps before it counted (`counted` for `corpus assemble`'s row, `run` for the run's).
+     * steps before it counted (`counted` for `corpus assemble`'s row, `run` for the run's); and,
+     * beside them, the step that refused it, which `corpus review check` reads (`RefusalStep`).
      */
     const refused = (
-      refusal: Refused,
+      refusal: Pick<Refused, "reason" | "name">,
       engine: "pdftex" | "xetex",
+      step: RefusalStep,
       after: {
         counted?: object;
         run?: Partial<Omit<RunChildRow, "times">>;
@@ -203,7 +205,7 @@ async function main() {
       done(
         { outcome: "refused", engine, refused: refusal.reason, ...font, ...after.counted },
         { outcome: "refused", engine, refused: refusal.reason, ...font, ...after.run },
-        after.more,
+        { ...after.more, refusal: { step, reason: refusal.reason } },
       );
     };
     const uploaded = intake(
@@ -224,7 +226,7 @@ async function main() {
     // reads a page it can draw (decision 0026).
     const swap = await inLatinModern(session, fonts, uploaded, first, { treeImage });
     took("latinModern");
-    if (swap !== undefined && "refused" in swap) return refused(swap, first.engine);
+    if (swap !== undefined && "refused" in swap) return refused(swap, first.engine, "latinModern");
     const taken = swap?.intake ?? uploaded;
     const made = swap?.reference ?? first;
     const engine = made.engine;
@@ -268,11 +270,7 @@ async function main() {
       const inputs = { tree: built, found, probed, preamble: body.preamble, taken, made, fonts };
       // The builder refuses a request only for a page the detector cannot read (decision 0033).
       const unreadable = () =>
-        done(
-          { outcome: "refused", engine, refused: "unreadable" },
-          { outcome: "refused", engine, refused: "unreadable" },
-          probedRow,
-        );
+        refused({ reason: "unreadable" }, engine, "request", { more: probedRow });
       const plain = await gatedRequest(naming, inputs);
       if ("refused" in plain) return unreadable();
       const header = headerOf(
@@ -375,7 +373,7 @@ async function main() {
         rewrite = rewriteForXetex(taken, tree);
         if ("refused" in rewrite) {
           took("fonts");
-          return refused(rewrite, engine, {
+          return refused(rewrite, engine, "fonts", {
             counted,
             run: counts,
             more: { ...probedRow, review: { ...kept, notes: await notesOf() } },
@@ -388,7 +386,7 @@ async function main() {
         session.dropFormat("xetex", CHECK_FORMAT);
         took("fonts");
         if ("refused" in checked)
-          return refused(checked, engine, {
+          return refused(checked, engine, "fonts", {
             counted,
             run: counts,
             more: { ...probedRow, review: { ...kept, notes: await notesOf() } },
@@ -413,7 +411,7 @@ async function main() {
       });
       took("checks");
       if ("refused" in validated)
-        return refused(validated, engine, {
+        return refused(validated, engine, "checks", {
           counted,
           run: counts,
           more: { ...probedRow, review: { ...kept, notes: await notesOf() } },
@@ -452,6 +450,7 @@ async function main() {
         return done(
           { outcome: "refused", engine, refused: "invalid" },
           { outcome: "refused", engine, refused: "invalid" },
+          { refusal: { step: "request", reason: "invalid" } },
         );
       done({ outcome: "crashed", engine }, { outcome: "crashed", engine });
     }

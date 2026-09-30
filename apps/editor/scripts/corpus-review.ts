@@ -46,7 +46,7 @@ import type { Aggregate } from "../src/import/probe.ts";
 import { CHECK_NOTES, CHECKS, LOCK_REASONS } from "./corpus-assemble.ts";
 import { FAMILIES, type Family, formatJson, printable } from "./corpus-manifest.ts";
 import { shownMacro } from "./corpus-parse.ts";
-import { RUN_OUTCOMES, type RunOutcome } from "./corpus-run.ts";
+import { type RefusalStep, RUN_OUTCOMES, type RunOutcome } from "./corpus-run.ts";
 
 // What the run keeps of a document.
 
@@ -992,7 +992,15 @@ export interface Checked {
   dropped: readonly string[];
   /** The checks' own notes: `stopped`, `untested`, `unproven`. */
   checks: readonly string[];
+  /** For one the pipeline refused, the step that refused it and why (`RefusalStep`). */
+  refused?: { step: RefusalStep; reason: string };
 }
+
+/**
+ * A redefinition's verdict: kept, proven on the corpus; unproven, since no corpus document applies
+ * it, none holding its keys or none of those reaching the checks; or dropped.
+ */
+export type VerdictKind = "kept" | "unproven" | "dropped";
 
 /** A redefinition's verdict over the corpus, in names and counts. */
 export interface Verdict {
@@ -1001,25 +1009,33 @@ export interface Verdict {
   macros: string[];
   /** The templates whose documents hold one of their keys, as the export names them. */
   templates: string[];
-  /** Documents whose requests hold one of the keys; of them, those whose checks applied it, and so on. */
+  /**
+   * The documents whose requests hold one of the keys; and of them, those whose checks applied it,
+   * whose page it moved, where the checks could prove no redefinition (their note `unproven`), where
+   * they stopped, which they refused, which timed out or died, and which the check never reached:
+   * refused before the checks, or for a font the page cannot draw, or where the answer is not served.
+   */
   documents: number;
   applied: number;
-  dropped: number;
-  unproven: number;
+  moved: number;
+  unprovable: number;
   stopped: number;
+  refused: number;
   died: number;
-  /** Of those, the ones the import refuses before the checks, or where the answer is not served. */
   unreached: number;
-  kept: boolean;
+  verdict: VerdictKind;
   why: string;
 }
 
 /**
- * Each redefinition's verdict (decision 0043): kept when every document whose request holds a key
- * of an answer that carries it, and whose import reaches the checks, applies it, its page kept, and
- * runs the checks through; dropped when one drops it (it moves the page, or the checks could prove
- * none, `unproven`), the checks stop on one, or one times out or dies. A document the import refuses
- * before the checks, or where the answer is not served for the macro, neither keeps nor drops it.
+ * Each redefinition's verdict (decision 0043), over the documents whose requests hold a key of an
+ * answer that carries it: **dropped** when one drops it (it moves the page, or the checks could prove
+ * no redefinition there, `unproven`), when the checks stop on one, when the validation refuses one
+ * for anything but a font the page cannot draw (the assembly, or its reading back, which the
+ * redefinition may cause), or when one times out or dies; else **kept** when one or more apply it,
+ * the page kept and the checks run through; else **unproven**: no document holds its keys, or none of
+ * those reaches the checks, the import refusing it before them. A document refused before the checks,
+ * or for a font, or where the answer is not served for its macro, neither keeps nor drops it.
  */
 export function redefinitionVerdicts(input: {
   carriers: readonly Carrier[];
@@ -1039,36 +1055,53 @@ export function redefinitionVerdicts(input: {
       const ids = [
         ...new Set(carriers.flatMap((carrier) => input.holders.get(carrier.key) ?? [])),
       ].sort();
-      const count = { applied: 0, dropped: 0, unproven: 0, stopped: 0, died: 0, unreached: 0 };
+      const count = {
+        applied: 0,
+        moved: 0,
+        unprovable: 0,
+        stopped: 0,
+        refused: 0,
+        died: 0,
+        unreached: 0,
+      };
       for (const id of ids) {
         const result = input.results.get(id);
         if (result === undefined || result.outcome === "timeout" || result.outcome === "crashed")
           count.died++;
         else if (result.dropped.includes(name)) {
-          if (result.checks.includes("unproven")) count.unproven++;
-          else count.dropped++;
+          if (result.checks.includes("unproven")) count.unprovable++;
+          else count.moved++;
         } else if (result.applied.includes(name)) {
           if (result.checks.includes("stopped")) count.stopped++;
           else count.applied++;
-        } else count.unreached++;
+        } else if (
+          result.outcome === "refused" &&
+          result.refused?.step === "checks" &&
+          result.refused.reason !== "font"
+        )
+          count.refused++;
+        else count.unreached++;
       }
-      const failing = count.dropped + count.unproven + count.stopped + count.died;
+      const failing = count.moved + count.unprovable + count.stopped + count.refused + count.died;
       const reasons = [
-        ...(count.dropped > 0 ? [`it moves the page of ${count.dropped}`] : []),
-        ...(count.unproven > 0
-          ? [`the checks could prove no redefinition on ${count.unproven}`]
+        ...(count.moved > 0 ? [`it moves the page of ${count.moved}`] : []),
+        ...(count.unprovable > 0
+          ? [`the checks could prove no redefinition on ${count.unprovable}`]
           : []),
         ...(count.stopped > 0 ? [`the checks stopped on ${count.stopped}`] : []),
+        ...(count.refused > 0 ? [`the checks refused ${count.refused}`] : []),
         ...(count.died > 0 ? [`${count.died} timed out or died`] : []),
       ];
+      const verdict: VerdictKind =
+        failing > 0 ? "dropped" : count.applied === 0 ? "unproven" : "kept";
       const why =
-        failing > 0
+        verdict === "dropped"
           ? `Dropped: ${reasons.join("; ")}.`
-          : ids.length === 0
-            ? "Kept: no corpus document's request holds its keys."
-            : count.applied === 0
-              ? `Kept, unproven: ${ids.length === 1 ? "the one document that holds its keys did not reach" : `none of the ${ids.length} documents that hold its keys reached`} the checks.`
-              : `Kept: applied, the page kept and the checks run through, on ${count.applied === 1 ? "the one document" : `all ${count.applied} documents`} that reached the checks${count.unreached > 0 ? `, of ${ids.length} that hold its keys` : ""}.`;
+          : verdict === "unproven"
+            ? ids.length === 0
+              ? "Unproven: no corpus document's request holds its keys."
+              : `Unproven: ${ids.length === 1 ? "the one document that holds its keys does not reach" : `none of the ${ids.length} documents that hold its keys reaches`} the checks.`
+            : `Kept: applied, the page kept and the checks run through, on ${count.applied === 1 ? "the one document" : `all ${count.applied} documents`} that reached the checks${count.unreached > 0 ? `, of ${ids.length} that hold its keys` : ""}.`;
       const templates = [
         ...new Set(carriers.flatMap((carrier) => input.templates.get(carrier.key) ?? [])),
       ].sort();
@@ -1078,7 +1111,7 @@ export function redefinitionVerdicts(input: {
         templates,
         documents: ids.length,
         ...count,
-        kept: failing === 0,
+        verdict,
         why,
       };
     });
@@ -1090,6 +1123,6 @@ export function verdictLine(verdict: Verdict): string {
   const templates =
     verdict.templates.length === 0 ? "no template the export names" : verdict.templates.join(", ");
   return printable(
-    `${verdict.kept ? "KEPT" : "DROPPED"} ${shown(verdict.name)}, carried by the answers of ${verdict.macros.map(shown).join(", ")} (${templates}): ${verdict.documents} ${verdict.documents === 1 ? "document holds" : "documents hold"} their keys, ${verdict.applied} applied it, ${verdict.dropped} dropped it, ${verdict.unproven} unproven, ${verdict.stopped} stopped, ${verdict.died} timed out or died, ${verdict.unreached} not reached. ${verdict.why}`,
+    `${verdict.verdict.toUpperCase()} ${shown(verdict.name)}, carried by the answers of ${verdict.macros.map(shown).join(", ")} (${templates}): ${verdict.documents} ${verdict.documents === 1 ? "document holds" : "documents hold"} their keys; ${verdict.applied} applied it, ${verdict.moved} had their page moved, ${verdict.unprovable} proved none, ${verdict.stopped} stopped, ${verdict.refused} were refused by the checks, ${verdict.died} timed out or died, ${verdict.unreached} were not reached. ${verdict.why}`,
   );
 }

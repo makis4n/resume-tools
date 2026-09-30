@@ -160,18 +160,25 @@ no key, or that has no request, is of none.
 `corpus review check [--dir <dir>]` reads every reviewed answer under `corpus/answers/` that carries
 redefinitions, finds from the last run's requests every document whose request holds one of their
 keys, assembles each of those again, in the pool, with the committed answers and the model's cache,
-and gives each redefinition, by name, its verdict: **kept** when every such document whose import
-reaches the checks applies it, its page kept by the first check, and runs the checks through;
-**dropped** when one drops it (it moves the page, or the checks could prove no redefinition there,
-`unproven`), the checks stop on one, or one times out or dies. A document the import refuses before
-the checks, or where the answer is not served for its macro, neither keeps nor drops it; a
-redefinition no corpus document holds a key of is kept, and says so. Each line names the
-redefinition, the macros whose answers carry it, the templates the export in `--dir` (`.review/`)
-names for their keys, and the counts. It exits 1 when one is dropped, when an answer file is none
-the cache would serve under its name (it does not validate, or its dependencies do not give its
-key, as the committed answers' test holds them), or when the last run kept fewer documents than the
-corpus has fetched, so that the review's pull request lists every redefinition and takes the
-dropped ones out.
+and gives each redefinition, by name, one of three verdicts over those documents:
+
+- **dropped** when one drops it, its page moved or no redefinition proven there (`unproven`), when
+  the checks stop on one, when the validation refuses one for anything but a font the page cannot
+  draw (the assembly, or its reading back, `keep`, which a reviewed answer may cause), or when one
+  times out or dies;
+- **kept** when none of those, and one or more apply it, its page kept by the first check and the
+  checks run through;
+- **unproven** when neither: no corpus document holds its keys, or none of those reaches the
+  checks, the import refusing it before them (item 8's check of its fonts, say) or for a font.
+
+A document refused before the checks, or for a font, or where the answer is not served for its
+macro, neither keeps nor drops a redefinition; the child says which step refused a document beside
+its rows. Each line names the redefinition, the macros whose answers carry it, the templates the
+export in `--dir` (`.review/`) names for their keys, and the counts. It exits 1 when one is dropped
+or unproven, when an answer file is none the cache would serve under its name (it does not
+validate, or its dependencies do not give its key, as the committed answers' test holds them), or
+when the last run kept fewer documents than the corpus has fetched, so that the review's pull
+request takes the dropped ones out and lists every other for a person to read.
 
 `apps/editor/corpus/REVIEW.md` says how part B runs, and what the agent must never read.
 
@@ -205,18 +212,18 @@ The child that `corpus assemble` ran before, at `309ebd7`, which built its reque
 page, gives four of the documents, `awesome-cv-0003`, `jake-0007`, `moderncv-0001` and
 `altacv-0015`, the same answers, words and fields as this one.
 
-`corpus review export` over what the runs kept, in two seconds: the 19 documents with a request
-make nine templates, `01-jake` (all six `jake` documents, 29 keys), `02-awesome-cv` (three forks, 26
+`corpus review export` over what the runs kept, in two seconds: the 19 documents with a request make
+nine templates, `01-jake` (all six `jake` documents, 29 keys), `02-awesome-cv` (three forks, 26
 keys), `03-moderncv` (all three), `04-europecv`, two AltaCV forks apart, whose own macros outnumber
 the seed's keys they share, an Awesome-CV fork apart for the same, and two of `other`; 66 files,
 every request, answer and summary passing the leak check against its template's documents, and
 `jake-0021`'s request, which the gate withholds, not written, its template's summary saying so.
 `corpus review check` over the same, which assembles again the four documents that hold the keys of
-the seed's seventeen answers with redefinitions, in 72 s: of eight redefinitions it keeps seven,
-Awesome-CV's `cvskills` applied where it reaches the checks and six for want of a sample document
-that holds their keys and reaches them, and drops AltaCV's `\cvtag`, which moves `altacv-0015`'s
-page, as decision 0026 found it moving AltaCV forks' pages; and it exits 1, too, for the run's
-covering 20 of the 220 documents.
+the seed's seventeen answers with redefinitions, in 72 s: of eight redefinitions it kept
+Awesome-CV's `cvskills`, applied where it reaches the checks, called six more unproven, no sample
+document that holds their keys reaching the checks, which first read as kept and now exit 1, and
+drops AltaCV's `\cvtag`, which moves `altacv-0015`'s page, as decision 0026 found it moving AltaCV
+forks' pages; and it exits 1, too, for the run's covering 20 of the 220 documents.
 
 ## Consequences
 
@@ -229,7 +236,8 @@ covering 20 of the 220 documents.
   document's values did not.
 - The seed's own redefinitions face the check too, as reviewed answers' (decision 0037): AltaCV's
   `\cvevent` and `\cvtag`, which move some forks' pages (decision 0026), are dropped by it unless
-  they keep every page that reaches the checks.
+  they keep every page that reaches the checks, and one no corpus document applies is unproven,
+  which the review's pull request lists for a person to keep or take out.
 - The check reads which documents hold a key from the last run; a reviewed answer that changes what
   the header's values are can change a document's keys, which the next run finds.
 - The export's check leans to leaving out: an answer's notes or a summary's value that a document's

@@ -65,9 +65,11 @@ order, and each macro by how many documents hold it, most first:
 
 - `pnpm --filter @resume-tools/editor corpus review check` assembles again every corpus document
   whose request holds the key of a reviewed answer that carries redefinitions, and says of each
-  redefinition whether it is kept or dropped, and why. A redefinition is kept only when every such
-  document that reaches the checks applies it, its page unchanged, and runs the checks through.
-  Take each dropped one out of its answers, and run the check again until it exits 0.
+  redefinition whether it is kept, unproven or dropped, and why. A redefinition is kept only when a
+  document applies it and every such document that reaches the checks applies it, its page
+  unchanged, and runs the checks through; it is unproven when no corpus document applies it. Take
+  each dropped one out of its answers, and run the check again until it exits 0, or exits 1 for
+  unproven ones alone, which the pull request lists for a person to keep or take out.
 - `pnpm --filter @resume-tools/editor test scripts/corpus-seed.test.ts` checks that every committed
   answer validates, is served under the key its file is named by, is formatted as `corpus seed
   --write` writes it, and pairs each list's opener with its closer.
