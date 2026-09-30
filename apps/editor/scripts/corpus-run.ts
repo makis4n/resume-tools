@@ -647,6 +647,50 @@ export function baselineOf(summary: RunSummary, date: string, commit: string): B
   });
 }
 
+/**
+ * What `--write-baseline` does with a run's summary: the baseline to write, or why none is. Only a
+ * `--committed-only` run over the whole corpus gives one, and never one whose success rate falls more
+ * than BASELINE_SLACK points under the baseline it would replace: a person lowers a baseline by
+ * editing the file in a pull request, where it is read, and never by running the corpus.
+ */
+export function nextBaseline(input: {
+  summary: RunSummary;
+  baseline: Baseline;
+  scope: { committedOnly: boolean; whole: boolean };
+  date: string;
+  commit: string;
+}): { baseline?: Baseline; line: string } {
+  if (!input.scope.committedOnly || !input.scope.whole)
+    return {
+      line: "corpus/baseline.json is not written: only a --committed-only run over the whole corpus gives one.",
+    };
+  const verdict = baselineVerdict(input.summary, input.baseline, input.scope);
+  if (verdict.failed)
+    return {
+      line: "corpus/baseline.json is not written: the run falls more than a point under it, and a baseline is lowered only by a pull request that edits it.",
+    };
+  return {
+    baseline: baselineOf(input.summary, input.date, input.commit),
+    line: `Wrote corpus/baseline.json from the run, at ${input.commit.slice(0, 7)}.`,
+  };
+}
+
+/** The baseline's own file, from the repository's top, as `git status` names it. */
+const BASELINE_PATH = "apps/editor/corpus/baseline.json";
+
+/**
+ * The paths `git status --porcelain` names, the baseline's own aside: tracked files changed, and
+ * files git does not track, as an answer written under `corpus/answers/` and not yet committed is,
+ * which a run reads all the same; what git ignores it names none of.
+ */
+export function changedPaths(porcelain: string): string[] {
+  return porcelain
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => line.slice(3))
+    .filter((path) => path !== BASELINE_PATH);
+}
+
 // The documents a run takes.
 
 /** An id, as the manifest gives them: a family, a dash and four digits. */

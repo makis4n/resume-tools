@@ -10,7 +10,9 @@ import {
   Baseline,
   baselineOf,
   baselineVerdict,
+  changedPaths,
   idsOf,
+  nextBaseline,
   outcomeOf,
   type RunRow,
   runDifferences,
@@ -274,6 +276,50 @@ describe("the baseline", () => {
     expect(baselineVerdict(summary(24), baseline, scope).line).toBe(
       "The success rate, 12.0%, holds against the baseline's 10.0% (2026-10-01, 0123456): a pull request raises the baseline by hand.",
     );
+  });
+
+  test("is never written over by a run that falls more than a point under it", () => {
+    const run = (success: number) => ({ ...summaryOf([]), ...summary(success) });
+    const next = (success: number, scope = { committedOnly: true, whole: true }) =>
+      nextBaseline({
+        summary: run(success),
+        baseline,
+        scope,
+        date: "2026-10-02",
+        commit: "f".repeat(40),
+      });
+    // 17 of 200 is 8.5%, more than a point under the baseline's 10%: nothing is written, and a
+    // person lowers the baseline by editing it in a pull request.
+    expect(next(17)).toEqual({
+      line: "corpus/baseline.json is not written: the run falls more than a point under it, and a baseline is lowered only by a pull request that edits it.",
+    });
+    expect(next(18).baseline?.run?.success).toBe(18);
+    expect(next(24).line).toBe("Wrote corpus/baseline.json from the run, at fffffff.");
+    expect(next(24, { committedOnly: false, whole: true }).baseline).toBeUndefined();
+    expect(next(24, { committedOnly: true, whole: false }).baseline).toBeUndefined();
+    // Over no baseline, any run over the whole corpus from the committed answers gives the first.
+    const first = nextBaseline({
+      summary: run(0),
+      baseline: Baseline.parse({ version: 1, run: null }),
+      scope: { committedOnly: true, whole: true },
+      date: "2026-10-02",
+      commit: "f".repeat(40),
+    });
+    expect(first.baseline?.run?.success).toBe(0);
+  });
+
+  test("counts a file git does not track as a change, an answer not yet committed among them", () => {
+    expect(
+      changedPaths(
+        [
+          "?? apps/editor/corpus/answers/0123.json",
+          " M apps/editor/corpus/baseline.json",
+          " M apps/editor/scripts/corpus.ts",
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual(["apps/editor/corpus/answers/0123.json", "apps/editor/scripts/corpus.ts"]);
+    expect(changedPaths(" M apps/editor/corpus/baseline.json\n")).toEqual([]);
   });
 
   test("is written from a run's summary, with the day and the commit", () => {

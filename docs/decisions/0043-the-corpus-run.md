@@ -89,8 +89,11 @@ and filled its cache. Items 12 (the import in the browser), 13 (the report and i
   cache, the model or a subset says it is not held to it. The editable rate is recorded beside, and
   not compared.
 - A pull request raises it by hand when the rate rises. `--write-baseline` writes it from a
-  `--committed-only` run over the whole corpus, with the day and the commit, and refuses a checkout
-  whose tracked files have changed, since the commit would not be what ran.
+  `--committed-only` run over the whole corpus, with the day and the commit, and never over a
+  baseline the run falls more than a point under: a person lowers a baseline by editing it in a
+  pull request, where it is read (`nextBaseline`). It refuses a checkout that differs from its
+  commit, a file git does not track among them, as an answer not yet committed under
+  `corpus/answers/` is, which the run reads though the commit lacks it.
 
 ### The workflow
 

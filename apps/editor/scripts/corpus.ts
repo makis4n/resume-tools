@@ -260,9 +260,10 @@ import {
 } from "./corpus-review.ts";
 import {
   Baseline,
-  baselineOf,
   baselineVerdict,
+  changedPaths,
   idsOf,
+  nextBaseline,
   type RefusalStep,
   type RunChildRow,
   type RunFile,
@@ -1195,16 +1196,16 @@ async function runLeak(only: string | undefined, json: string | undefined) {
 /** The baseline, which must parse whatever the run; the placeholder's run is null. */
 const readBaseline = () => parseJson(Baseline, readFileSync(BASELINE_FILE, "utf8"), BASELINE_FILE);
 
-/** The commit this checkout is at, and whether a tracked file but the baseline has changed since. */
-function checkout(): { commit: string; changed: boolean } {
+/**
+ * The commit this checkout is at, and the paths that differ from it, the baseline's aside: a tracked
+ * file changed, or a file git does not track, as an answer not yet committed under
+ * `corpus/answers/`, which a run reads though the commit lacks it (`changedPaths`).
+ */
+function checkout(): { commit: string; changed: string[] } {
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: APP, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   const commit = git("rev-parse", "HEAD").trim();
-  // The porcelain names each path from the repository's top, wherever git runs.
-  const changed = git("status", "--porcelain", "--untracked-files=no")
-    .split("\n")
-    .some((line) => line.trim() !== "" && line.slice(3) !== "apps/editor/corpus/baseline.json");
-  return { commit, changed };
+  return { commit, changed: changedPaths(git("status", "--porcelain")) };
 }
 
 /**
@@ -1267,9 +1268,9 @@ async function runRun(options: {
     throw new Error("--write-baseline takes a --committed-only run over the whole corpus");
   const baseline = readBaseline();
   const origin = options.writeBaseline ? checkout() : undefined;
-  if (origin?.changed === true)
+  if (origin !== undefined && origin.changed.length > 0)
     throw new Error(
-      "--write-baseline records the commit the run is of: commit the changes to tracked files first",
+      `--write-baseline records the commit the run is of, and ${origin.changed.length} ${origin.changed.length === 1 ? "file differs" : "files differ"} from it, untracked ones among them: commit or remove them first`,
     );
   if (!existsSync(ENGINE_MANIFEST))
     throw new Error("run compiles on the engine in .engine/: run fetch-engine first");
@@ -1372,11 +1373,17 @@ async function runRun(options: {
     writeAtomically(options.json, formatJson(file));
   }
   if (origin !== undefined) {
-    writeAtomically(
-      BASELINE_FILE,
-      formatJson(baselineOf(summary, new Date().toISOString().slice(0, 10), origin.commit)),
-    );
-    print([`Wrote corpus/baseline.json from this run, at ${origin.commit.slice(0, 7)}.`]);
+    // Never over a baseline the run falls short of: a person lowers one by editing it in a pull
+    // request (`nextBaseline`).
+    const next = nextBaseline({
+      summary,
+      baseline,
+      scope: { committedOnly: options.committedOnly, whole },
+      date: new Date().toISOString().slice(0, 10),
+      commit: origin.commit,
+    });
+    if (next.baseline !== undefined) writeAtomically(BASELINE_FILE, formatJson(next.baseline));
+    print([next.line]);
   }
   if (verdict.failed) {
     console.error(printable(verdict.line));
