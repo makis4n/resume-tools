@@ -153,7 +153,8 @@ export interface LockedPart {
  * compile after the class stops, as it does for a macro a package or the preamble defines, at the
  * preamble's end, right before `\begin{document}` (`preamble`, decision 0024); controls dropped,
  * field instances and whole slots locked with why, the slots that are required, and the kinds of
- * unit a new one of which stops the compile, which the package marks (`fixed`). A field instance
+ * unit a new one of which, or the removal of one, stops the compile, which the package marks
+ * (`fixed`) and the editor neither adds nor removes (decision 0038). A field instance
  * is named by where its content starts (`LockedPart.at` and its slot), a slot by its macro and
  * argument (`slotKey`).
  */
@@ -2624,6 +2625,8 @@ function sectionAt(
   }
   // The content: the first structure that starts after the head, what stands before it kept.
   let content: Content | undefined;
+  /** Where the content starts among the nodes, once it is found. */
+  let contentAt = -1;
   for (let k = nextNonBlank(nodes, i + 1); k < next && content === undefined; k++) {
     content =
       entriesAt(ctx, nodes.slice(0, next), k, role, id) ??
@@ -2633,6 +2636,7 @@ function sectionAt(
       const before = ctx.source.slice(head.end, (nodes[k] as Node).start);
       if (!isKept(before)) content = undefined;
       else if (content !== undefined) {
+        contentAt = k;
         content = { ...content, span: { start: (nodes[k] as Node).start, end: content.span.end } };
         if (before !== "") headTemplate.values.before = before;
         const words = wordsOf(nodes.slice(i + 1, k));
@@ -2687,12 +2691,63 @@ function sectionAt(
     if (kept !== undefined) section.kept = kept as typeof section.kept;
   }
   const end = content === undefined ? i + 1 : content.end;
+  // A list the section opens between its head and its content, as a Jake fork opens its skills'
+  // items with its entries' opener, closes after its content, and its closer would stand in the
+  // locked section that follows: removing the section would take the opener and leave the closer,
+  // which stops the compile. So the section keeps what stands after its content up to that closer
+  // as its own, in its extras (`after`), and the two are removed and moved as one (decision 0038).
+  let last = end;
+  const closes = contentAt < 0 ? -1 : lastCloser(ctx, nodes.slice(0, next), i + 1, contentAt, end);
+  if (closes >= 0) {
+    const after = ctx.source.slice((nodes[end - 1] as Node).end, (nodes[closes] as Node).end);
+    if (isKept(after)) {
+      section.extras = { ...(section.extras ?? {}), after };
+      const run = nodes.slice(end, closes + 1);
+      const words = wordsOf(run);
+      const first = run.find((node) => !isBlankText(node)) ?? (nodes[closes] as Node);
+      if (words > 0)
+        ctx.locked.push({
+          at: `b${first.start}`,
+          node: id,
+          key: "after",
+          kind: "section",
+          reason: "unmapped",
+          words,
+        });
+      last = closes + 1;
+    }
+  }
   return {
     section,
     proposal,
-    end: (nodes[end - 1] as Node).end,
-    rest: nodes.slice(end, next).filter((node) => !isBlankText(node)),
+    end: (nodes[last - 1] as Node).end,
+    rest: nodes.slice(last, next).filter((node) => !isBlankText(node)),
   };
+}
+
+/**
+ * Where, among `nodes`, the last closer stands of the lists the nodes from `from` to before
+ * `until` open and do not close before `beyond`: a call the answer says opens a list, whose closer
+ * comes at or after `beyond`; or -1 when none does (decision 0038). What stands between a
+ * section's head and its content, and the sections' region, each ask it of the lists they open.
+ */
+function lastCloser(
+  ctx: Context,
+  nodes: readonly Node[],
+  from: number,
+  until: number,
+  beyond: number,
+): number {
+  let found = -1;
+  for (let o = from; o < until; o++) {
+    const node = nodes[o];
+    if (node?.kind !== "call") continue;
+    const list = commandAnswer(ctx.answers, node.name)?.list;
+    if (list?.does !== "opens") continue;
+    const j = closerOf(nodes, o, list.closedBy);
+    if (j >= beyond) found = Math.max(found, j);
+  }
+  return found;
 }
 
 // The document.
@@ -2793,6 +2848,13 @@ function bodyOf_(ctx: Context): BodyOut | Refusal {
   let to = inRegion.length - 1;
   while (to >= 0 && isCode(ctx, inRegion[to] as Node)) to--;
   if (from < 0) from = inRegion.length;
+  // A list the region opens and the template's code after it closes, as the entries' list a Jake
+  // fork's last section opens and `\resumeSubHeadingListEnd` after it closes, is the last unit's:
+  // the region runs to its closer, so that the unit keeps the closer and goes with it, as one
+  // before another section does, where the closer left in the document snippet stopped the compile
+  // once the unit was removed (decision 0038).
+  const closes = lastCloser(ctx, inRegion, from, to + 1, to + 1);
+  if (closes >= 0) to = closes;
   const units = inRegion.slice(from, to + 1);
 
   // The sections and the locked parts between them, and the gaps between them all.

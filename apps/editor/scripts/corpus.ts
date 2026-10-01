@@ -117,9 +117,10 @@
  *                 the page size, the margins and the font size, the milestone's bar, and names
  *                 each such document by its id and the control it lacks (decision 0040)
  *   leak          take every document that compiles to a reference and whose body parses, build
- *                 its naming request as the import will, with its sources, its page's strings,
- *                 the texts its preamble stores and the header's values the seed's answers find,
- *                 and check it with the leak detector fed all of those, in the same pool; print
+ *                 its naming request as the import sends it (`importRequest`), with its sources
+ *                 and its page's strings, and check it with the leak detector fed those, the texts
+ *                 its preamble stores and the header's values the seed's answers find, in the
+ *                 same pool; print
  *                 how many were checked, passed and failed, and refused for a page the detector
  *                 cannot read, and for each failure the macro and what kind of text is where,
  *                 never the text (`scripts/corpus-leak.ts`, decision 0033). It exits 1 when a

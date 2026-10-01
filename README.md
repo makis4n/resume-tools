@@ -77,6 +77,8 @@ Importing a template asks a language model what each of the template's commands 
 
 The dev server reads `apps/editor/.env` itself. The corpus scripts read only their environment, so load the file into your shell first with the `set -a` line. CI never has a key.
 
+To import a resume in the dev server, use "Import a resume" in the document list, or drop a `.tex` file or a zip on the list (decision 0038). Without a key the naming route answers from the committed answers and the local cache alone, and whatever they do not answer stays locked in the imported document.
+
 ### The ATS service
 
 ```sh

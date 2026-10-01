@@ -27,7 +27,14 @@ import { NAMING_VERSION } from "@resume-tools/naming";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
-import { type AssembleChildRow, answersFor, assembleRow, fieldsFound } from "./corpus-assemble.ts";
+import {
+  type AssembleChildRow,
+  answersFor,
+  assembleRow,
+  errorClass,
+  fieldsFound,
+  type SectionRemoval,
+} from "./corpus-assemble.ts";
 import { probeRow } from "./corpus-probe.ts";
 import { answersFolder, commandAnswers, headerOf } from "./corpus-seed.ts";
 
@@ -46,6 +53,9 @@ type XetexModule = typeof import("../src/import/xetex.ts");
 type CheckModule = typeof import("../src/import/xetex-check.ts");
 type ValidateModule = typeof import("../src/import/validate.ts");
 type AssembleModule = typeof import("../src/import/assemble.ts");
+type DocumentModule = typeof import("../src/editor/document.ts");
+type GenerateModule = typeof import("../src/templates/generate.ts");
+type PackageModule = typeof import("../src/templates/package.ts");
 type Refused = import("../src/import/refusal.ts").Refusal;
 
 /** The format item 8's check of a XeTeX rewrite dumps, which the child drops after it. */
@@ -86,6 +96,12 @@ async function main() {
   const { checkRewrite } = await runner.import<CheckModule>("/src/import/xetex-check.ts");
   const { validate } = await runner.import<ValidateModule>("/src/import/validate.ts");
   const { SIZE_OPTIONS } = await runner.import<AssembleModule>("/src/import/assemble.ts");
+  const { applyUnder } = await runner.import<DocumentModule>("/src/editor/document.ts");
+  const { generateBody, generateFormat } = await runner.import<GenerateModule>(
+    "/src/templates/generate.ts",
+  );
+  const { referenceFiles } = await runner.import<ReferenceModule>("/src/import/reference.ts");
+  const { forRole } = await runner.import<PackageModule>("/src/templates/package.ts");
 
   const manifest = JSON.parse(
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
@@ -215,10 +231,140 @@ async function main() {
         treeImage,
       });
       if ("refused" in validated) return done(refusedRow(validated, engine, counted), probedRow);
+      // For each section of a kind whose removal stopped the compile, what frames it, by structure:
+      // counts and booleans the request's definitions and the answers give, never the text.
+      const removals: SectionRemoval[] = [];
+      const failing = new Set(
+        validated.checks.repeatable
+          .filter((each) => !each.removed && each.kind.startsWith("section."))
+          .map((each) => each.kind.slice("section.".length)),
+      );
+      if (failing.size > 0) {
+        // The package as though it marked no kind, since it marks these now and the editor would
+        // refuse their removal (decision 0038).
+        const pkg = { ...validated.package, fixed: [] };
+        const doc = validated.document;
+        const format = generateFormat(pkg, {});
+        const files = referenceFiles(taken, made, { job: "removal", treeImage });
+        const opens = new Set<string>();
+        const answered = new Set<string>();
+        /** The closer each list opener's answer names. */
+        const closers = new Map<string, string>();
+        for (const each of answers.found) {
+          answered.add(each.name);
+          if (each.answer.list?.does !== "opens") continue;
+          opens.add(each.name);
+          if (each.answer.list.closedBy !== undefined)
+            closers.set(each.name, each.answer.list.closedBy);
+        }
+        // How many environments each template macro begins and does not end, by its definition.
+        const balance = new Map<string, number>();
+        const occurrences = (latex: string, pattern: RegExp) => (latex.match(pattern) ?? []).length;
+        for (const definition of request.definitions)
+          if (definition.kind === "definition")
+            balance.set(
+              realName(requested.names, definition.name),
+              occurrences(definition.text, /\\begin\s*\{/g) -
+                occurrences(definition.text, /\\end\s*\{/g),
+            );
+        const calls = (latex: string) =>
+          [...latex.matchAll(/\\([A-Za-z@]+)/g)].map((found) => found[1] ?? "");
+        /** How many environments LaTeX begins and does not end, its macros' by their definitions. */
+        const net = (latex: string) =>
+          occurrences(latex, /\\begin\s*\{/g) -
+          occurrences(latex, /\\end\s*\{/g) +
+          calls(latex).reduce((sum, name) => sum + (balance.get(name) ?? 0), 0);
+        const openerIn = (latex: string): SectionRemoval["opener"] => {
+          const openers = calls(latex).filter((name) => (balance.get(name) ?? 0) > 0);
+          if (openers.length === 0) return "none";
+          if (openers.some((name) => opens.has(name))) return "list";
+          return openers.some((name) => answered.has(name)) ? "answered" : "unanswered";
+        };
+        try {
+          if (session.dump(pkg.engine, format.name, format.preamble, pkg.files).ok) {
+            const sections = doc.resume.sections;
+            for (const kind of failing) {
+              const ofKind = sections.filter((section) => section.kind === kind);
+              ofKind.forEach((section, n) => {
+                if (section.kind === "locked") return;
+                const removed = applyUnder(pkg, doc, {
+                  type: "structure",
+                  op: { op: "removeSection", id: section.id },
+                });
+                session.forget("removal");
+                const result = session.compile(
+                  pkg.engine,
+                  format.name,
+                  generateBody(pkg, removed.resume, {}).latex,
+                  { job: "removal", maxPasses: 3, files },
+                );
+                const before = section.extras?.before ?? "";
+                const after = section.extras?.after;
+                const snippet = forRole(pkg.snippets.section[section.kind], section.role);
+                const head = snippet.slice(0, Math.max(snippet.indexOf("{{&x.before}}"), 0));
+                const at = sections.indexOf(section);
+                const next = sections[at + 1];
+                const closer: SectionRemoval["closer"] =
+                  after !== undefined && net(after) < 0
+                    ? "after"
+                    : next?.kind === "locked" && net(next.latex) < 0
+                      ? "locked"
+                      : next !== undefined &&
+                          next.kind !== "locked" &&
+                          net(`${next.extras?.lead ?? ""}${next.extras?.before ?? ""}`) < 0
+                        ? "next"
+                        : "none";
+                const closing =
+                  closer === "after"
+                    ? (after ?? "")
+                    : closer === "locked" && next?.kind === "locked"
+                      ? next.latex
+                      : closer === "next" && next !== undefined && next.kind !== "locked"
+                        ? `${next.extras?.lead ?? ""}${next.extras?.before ?? ""}`
+                        : "";
+                const named = calls(before).flatMap((name) => closers.get(name) ?? []);
+                removals.push({
+                  kind,
+                  of:
+                    ofKind.length === 1
+                      ? "only"
+                      : n === 0
+                        ? "first"
+                        : n === ofKind.length - 1
+                          ? "last"
+                          : "middle",
+                  at,
+                  sections: sections.length,
+                  compiles: result.ok,
+                  ...(result.ok ? {} : { error: errorClass(result.error) }),
+                  before: /\\begin\s*\{/.test(before)
+                    ? "environment"
+                    : calls(before).some((name) => opens.has(name))
+                      ? "list"
+                      : /\\[A-Za-z@]/.test(before)
+                        ? "call"
+                        : "none",
+                  opener: openerIn(before),
+                  headOpens: net(head) > 0,
+                  opens: net(before),
+                  after: after !== undefined,
+                  closer,
+                  closes: -net(closing),
+                  named: calls(closing).some((name) => named.includes(name)),
+                });
+              });
+            }
+          }
+        } finally {
+          session.dropFormat(pkg.engine, format.name);
+          session.forget("removal");
+        }
+      }
       done(
         {
           ...assembleRow(validated.checks, engine, counted),
           probeMs: Math.round(probed.ms),
+          ...(removals.length === 0 ? {} : { removals }),
         },
         {
           ...probedRow,

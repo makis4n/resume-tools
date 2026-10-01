@@ -2,14 +2,17 @@
  * What leaves the browser, over the corpus (milestone 3 item 11, decision 0033): `corpus leak`
  * takes each fetched document in as the reference runner does (`corpus-reference.ts`), and for
  * each that compiles to a reference and whose body parses builds its naming request as the import
- * will (`src/import/naming.ts`): with the upload's sources, the page's strings its reference sets
- * (`pageStrings`), the texts its preamble stores, and the header's values the finder gives by the
- * seed's answers (`headerOf`). It checks each request with the leak detector, fed all of those
- * (`findLeaks`), and prints how many documents it checked, passed and failed, and for each failure
- * the macro, the kind of place and the kind of text, never the text. A document whose page the
- * detector cannot read is refused, as the import refuses it (`pageReadable`), and counted so, never
- * passed; so is one whose request holds only a single word the builder does not mask by, which the
- * check alone looks for, stricter on purpose (`withheld`): the gate refuses it, and nothing leaves.
+ * sends it, by the import's own function (`importRequest` of `src/import/naming.ts`, decision
+ * 0038): with the upload's sources and the page's strings its reference sets (`pageStrings`), and
+ * without the header's values, which only the answers to the request give. It checks each request
+ * with the leak detector, fed those, the texts its preamble stores and, besides, the header's
+ * values the finder gives by the seed's answers (`headerOf`), so that a header word the request
+ * holds is found (`findLeaks`), and prints how many documents it checked, passed and failed, and
+ * for each failure the macro, the kind of place and the kind of text, never the text. A document
+ * whose page the detector cannot read is refused, as the import refuses it (`pageReadable`), and
+ * counted so, never passed; so is one whose request holds only a single word the builder does not
+ * mask by, which the check alone looks for, stricter on purpose (`withheld`): the gate refuses it,
+ * and nothing leaves.
  * It exits 1 when the proof shrinks or fails (`leakFailures`): a request holds text the builder
  * should have masked, the builder made a request its contract refuses, a document crashed or timed
  * out, or fewer documents were checked or refused than have a reference.
@@ -26,7 +29,14 @@
 // nothing Node lacks, and the editor's modules as types alone, with their real extensions.
 import { fileURLToPath } from "node:url";
 import type { NamingRequest } from "@resume-tools/naming";
-import type { HeaderValues, Leak, LeakKind, Origin, PageStrings } from "../src/import/naming.ts";
+import type {
+  HeaderValues,
+  Leak,
+  LeakKind,
+  Origin,
+  PageStrings,
+  SettingLeak,
+} from "../src/import/naming.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 import { shownMacro } from "./corpus-parse.ts";
 import { runPool } from "./corpus-reference.ts";
@@ -99,6 +109,12 @@ export interface LeakRow {
   names?: number;
   /** What its request holds of its text; none when it passed. */
   findings?: LeakFinding[];
+  /**
+   * For a request whose settings or class hold a word of the header's, why, never the word
+   * (`explainSettingLeaks`): each setting's command, its key where a keyword, the word's length,
+   * whether the page shows it and a stored text holds it, and which needles would mask it.
+   */
+  settings?: SettingLeak[];
   /** Where an invalid request breaks its contract, by kind of place and macro, never what. */
   problems?: { kind: LeakKind | "request"; macro?: string }[];
   /** Milliseconds its child took. */
@@ -306,6 +322,18 @@ function shownProblems(row: LeakRow): string {
   return [...new Set(shown)].join("; ");
 }
 
+/** A word of the header's in a setting as a line says it: no text, its setting, length and rules. */
+export function shownSettingLeak(leak: SettingLeak): string {
+  const where = `\\${leak.command}${leak.key === undefined ? "" : ` (${leak.key}=)`}`;
+  const facts = [
+    `${leak.letters} letters`,
+    leak.onPage ? "on the page" : "not on the page",
+    ...(leak.stored ? ["in a stored text"] : []),
+    leak.kept ? "kept as a keyword or a colour" : "not kept",
+  ];
+  return `${where}: ${facts.join(", ")}; masked by ${leak.caughtBy.join(" or ")}`;
+}
+
 /** A document's row as a line of progress: numbers and names only. */
 export function leakLine(row: LeakRow): string {
   if (row.outcome === "refused")
@@ -316,7 +344,8 @@ export function leakLine(row: LeakRow): string {
   const findings = row.findings ?? [];
   const masked = row.counts === undefined ? "" : `, ${row.counts.masked} own masked`;
   if (findings.length === 0) return `${row.engine}, passes${masked}`;
-  return `${row.engine}, ${failed(row) ? "FAILS" : "withheld by the gate"}: ${findings.map(shownFinding).join("; ")}`;
+  const settings = (row.settings ?? []).map(shownSettingLeak);
+  return `${row.engine}, ${failed(row) ? "FAILS" : "withheld by the gate"}: ${findings.map(shownFinding).join("; ")}${settings.length === 0 ? "" : ` [${settings.join("; ")}]`}`;
 }
 
 /**

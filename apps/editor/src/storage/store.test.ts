@@ -2,7 +2,9 @@ import "fake-indexeddb/auto";
 import Dexie from "dexie";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apply, type Document, newDocument } from "../editor/document";
+import type { Imported, ImportReport } from "../import/run";
 import { curated } from "../templates/curated";
+import type { TemplatePackage } from "../templates/package";
 import {
   CANNOT_OPEN,
   canLeave,
@@ -11,6 +13,7 @@ import {
   type Flushed,
   MAX_FORMATS,
   MAX_PATHS,
+  PackageRefused,
   type PageEvents,
   RETRY_DELAY,
   SAVE_DELAY,
@@ -640,5 +643,142 @@ describe("DocumentStore's prefetch", () => {
     expect(await store.prefetch.get("other")).toEqual([]);
     await store.prefetch.add("other", ["/texmf/b.sty"]);
     expect(await store.prefetch.get("other")).toEqual(["/texmf/b.sty"]);
+  });
+});
+
+describe("DocumentStore's imported packages (decision 0038)", () => {
+  const ID = "import-0123456789ab";
+
+  /**
+   * An import as the pipeline gives one, invented: Jake's package under an imported id and name,
+   * the sample set with it, an upload of one invented file, and the job's files; the report is the
+   * store's to keep, not to read.
+   */
+  function imported(first = "Quill", id = ID): Imported {
+    const pkg = { ...curated("jake").package, id, name: "Invented import" } as TemplatePackage;
+    const document = { ...named(newDocument("jake", sample), first), template: id };
+    const bytes = new TextEncoder().encode(`\\documentclass{article} % ${first}`);
+    return {
+      package: pkg,
+      document,
+      report: { compiles: 3 } as unknown as ImportReport,
+      upload: { files: [{ name: "cv.tex", bytes }] },
+      job: { files: { "photo.png": new Uint8Array([1, 2, 3]) }, images: ["photo.png"] },
+    };
+  }
+
+  it("keeps an import: its package, its document set with it, and what the import keeps", async () => {
+    const { store } = storeForTest();
+    const id = await store.importDocument(imported());
+    const { document } = await read(store, id);
+    expect(document.template).toBe(ID);
+    expect(document.resume.header.name.first).toBe("Quill");
+    const template = await store.templateOf(ID, id);
+    expect(template?.package).toEqual({
+      ...curated("jake").package,
+      id: ID,
+      name: "Invented import",
+    });
+    expect(template?.import?.job).toEqual(imported().job);
+    expect(template?.import?.upload).toEqual(imported().upload);
+    expect(template?.import?.report).toEqual({ compiles: 3 });
+    // The list names the template as its package does.
+    expect((await store.list()).map((each) => each.templateName)).toEqual(["Invented import"]);
+    // A package the store does not keep is none.
+    expect(await store.templateOf("import-ba9876543210")).toBeUndefined();
+  });
+
+  it("refuses a package outside the imported prefix, or a curated one's id, and keeps nothing", async () => {
+    const { store, name } = storeForTest();
+    await expect(store.importDocument(imported("Quill", "jake"))).rejects.toBeInstanceOf(
+      PackageRefused,
+    );
+    await expect(store.importDocument(imported("Quill", "invented-1"))).rejects.toBeInstanceOf(
+      PackageRefused,
+    );
+    await expect(store.templateOf("jake")).rejects.toBeInstanceOf(PackageRefused);
+    // A document not set with the package is refused too.
+    const astray = imported();
+    await expect(
+      store.importDocument({ ...astray, document: { ...astray.document, template: "jake" } }),
+    ).rejects.toBeInstanceOf(PackageRefused);
+    expect(await store.list()).toEqual([]);
+    expect(await inDatabase(name, (db) => db.table("packages").count())).toBe(0);
+  });
+
+  it("refuses a stored package the schema refuses, as a newer editor's, and leaves it stored", async () => {
+    const { store, name } = storeForTest();
+    const id = await store.importDocument(imported());
+    await inDatabase(name, (db) => db.table("packages").update(ID, { "package.version": 2 }));
+    await expect(store.templateOf(ID, id)).rejects.toBeInstanceOf(PackageRefused);
+    expect(await inDatabase(name, (db) => db.table("packages").count())).toBe(1);
+  });
+
+  it("marks a package used when a document opens with it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { store, name } = storeForTest();
+    vi.setSystemTime(1_000);
+    const id = await store.importDocument(imported());
+    vi.setSystemTime(5_000);
+    await store.templateOf(ID, id);
+    await eventually(async () => {
+      const row = await inDatabase(name, (db) => db.table("packages").get(ID));
+      return row?.lastUsed === 5_000 && row?.made === 1_000;
+    });
+  });
+
+  it("keeps a package's formats as any template's, and drops them with its last document, the package with them", async () => {
+    const { store, name } = storeForTest();
+    const formats = store.formatsFor("build-1");
+    const first = await store.importDocument(imported("Quill"));
+    // A second upload of the same template shares its package, and keeps its own import.
+    const second = await store.importDocument(imported("Wren"));
+    await formats.put("pdftex", `${ID}-0a1b2c3d`, new Uint8Array([1]));
+    await formats.put("pdftex", `${ID}-4e5f6a7b`, new Uint8Array([2]));
+    await formats.put("pdftex", "jake-0123abcd", new Uint8Array([3]));
+    await store.prefetch.add(ID, ["/texlive/texmf-dist/tex/latex/base/article.cls"]);
+    const formatNames = () =>
+      inDatabase(name, async (db) =>
+        (await db.table("formats").toArray()).map((row: { name: string }) => row.name).sort(),
+      );
+
+    // The first document goes, with its own import; the package, its formats and the second's
+    // import stay.
+    expect(await store.remove(first)).toBeUndefined();
+    expect(await formatNames()).toEqual([`${ID}-0a1b2c3d`, `${ID}-4e5f6a7b`, "jake-0123abcd"]);
+    expect((await store.templateOf(ID, first))?.import).toBeUndefined();
+    expect((await store.templateOf(ID, second))?.import?.upload.files[0]?.name).toBe("cv.tex");
+
+    // The last goes, and the package with it: its formats and the paths its compiles read.
+    expect(await store.remove(second)).toBe(ID);
+    expect(await formatNames()).toEqual(["jake-0123abcd"]);
+    expect(await store.templateOf(ID)).toBeUndefined();
+    expect(await store.prefetch.get(ID)).toEqual([]);
+    expect(await inDatabase(name, (db) => db.table("packages").count())).toBe(0);
+  });
+
+  it("opens a database the editor's first version wrote, with its documents, and keeps imports in it", async () => {
+    const name = `resume-tools-test-${++databases}`;
+    const old = new Dexie(name);
+    old
+      .version(1)
+      .stores({ documents: "id, updatedAt", formats: "key, usedAt, tag", prefetch: "template" });
+    const doc = newDocument("jake", sample);
+    await old.table("documents").add({
+      id: "old-1",
+      title: titleOf(doc.resume),
+      template: "jake",
+      createdAt: 1,
+      updatedAt: 2,
+      revision: 1,
+      document: doc,
+    });
+    old.close();
+    const { store } = anotherTab(name);
+    expect((await store.list()).map((each) => each.id)).toEqual(["old-1"]);
+    const id = await store.importDocument(imported());
+    expect((await store.list()).map((each) => each.id)).toEqual([id, "old-1"]);
+    // Deleting a curated template's document drops no package.
+    expect(await store.remove("old-1")).toBeUndefined();
   });
 });

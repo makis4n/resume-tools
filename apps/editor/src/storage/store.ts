@@ -17,6 +17,13 @@
  * checks: a save made from a document another tab has written since is refused rather than
  * written over it. And each write and delete is announced to the other tabs, which stop editing a
  * document that has changed under them.
+ *
+ * An imported template's package is kept too, in a table of its own (milestone 3 item 12, decision
+ * 0038), with what each document imported onto it keeps: the original upload's files, what its
+ * compiles need beside the package, its report, and when it was made; and when the package was
+ * made and last used. A package's id is under the prefix no curated package takes, and the store
+ * refuses one outside it, or one a curated package has; its formats are kept as any template's,
+ * among the `MAX_FORMATS`, and go with its last document, the package with them.
  */
 
 import type { Resume } from "@resume-tools/resume-model";
@@ -25,6 +32,10 @@ import { z } from "zod";
 import type { FormatStore, PrefetchStore } from "../editor/compiler";
 import { Document, newDocument } from "../editor/document";
 import type { Engine } from "../engine/session";
+import type { Upload } from "../import/intake";
+import type { Imported, ImportJob, ImportReport } from "../import/run";
+import { CURATED } from "../templates/curated";
+import { IMPORTED_PREFIX, TemplatePackage } from "../templates/package";
 
 /** A document as stored: the list's columns beside the document, so listing parses nothing. */
 interface DocumentRow {
@@ -57,7 +68,10 @@ const Summary = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
 });
-export type Summary = z.infer<typeof Summary>;
+export type Summary = z.infer<typeof Summary> & {
+  /** An imported template's name, as its package gives it, which the list shows. */
+  templateName?: string;
+};
 
 /** A stored document as `get` reads it, with the revision that the app's saves of it name. */
 export interface Stored {
@@ -104,10 +118,44 @@ interface PrefetchRow {
   paths: string[];
 }
 
+/** What the store keeps of one document's import (decision 0038). */
+export interface ImportRecord {
+  /** The original upload's files, as the person gave them, so that it can be imported again. */
+  upload: { files: Upload[] };
+  /** What the document's compiles need beside the package's own files. */
+  job: ImportJob;
+  /** What item 13's report is made of. */
+  report: ImportReport;
+  /** When it was imported, in milliseconds since the epoch. */
+  made: number;
+}
+
+/**
+ * An imported template's package as stored: the package, checked when it is read, as a document
+ * is; when it was first stored and last used; and each document imported onto it, by the
+ * document's id, with what its import keeps. Two uploads of one template whose preambles agree
+ * share a package (decision 0026), and each keeps its own upload.
+ */
+interface PackageRow {
+  id: string;
+  package: unknown;
+  made: number;
+  lastUsed: number;
+  imports: Record<string, ImportRecord>;
+}
+
+/** An imported template as the editor opens a document with it (`templateOf`). */
+export interface StoredTemplate {
+  package: TemplatePackage;
+  /** The document's own import, when the store keeps it. */
+  import?: ImportRecord;
+}
+
 type Database = Dexie & {
   documents: EntityTable<DocumentRow, "id">;
   formats: EntityTable<FormatRow, "key">;
   prefetch: EntityTable<PrefetchRow, "template">;
+  packages: EntityTable<PackageRow, "id">;
 };
 
 /** What a tab tells the others once it has written or deleted a document. */
@@ -181,6 +229,33 @@ export class DocumentRefused extends Error {
   }
 }
 
+/**
+ * An imported package the store will not keep, or read back: one whose id is outside the prefix
+ * imported ids take (`IMPORTED_PREFIX`), or is a curated package's, or that the package's schema
+ * refuses, as a newer editor's; or a document that is not set with it. The message is for
+ * developers; a person reads that the document cannot be opened, or could not be kept.
+ */
+export class PackageRefused extends Error {
+  constructor(
+    readonly id: string,
+    why: string,
+    cause?: unknown,
+  ) {
+    super(`the imported package ${id} is refused: ${why}`, { cause });
+    this.name = "PackageRefused";
+  }
+}
+
+/**
+ * Why the store refuses a package by its id, or undefined when it takes it: an imported id is under
+ * the prefix, and no curated package has it (decision 0026; `checkCuratedId` is the curated side).
+ */
+function refusedId(id: string): string | undefined {
+  if (!id.startsWith(IMPORTED_PREFIX)) return `its id is not under ${IMPORTED_PREFIX}`;
+  if (CURATED.has(id)) return "its id is a curated package's";
+  return undefined;
+}
+
 /** A write's read found a revision other than the one its save was made from. */
 class Conflict extends Error {}
 
@@ -235,6 +310,13 @@ export class DocumentStore {
       formats: "key, usedAt, tag",
       prefetch: "template",
     });
+    // Version 2 keeps imported packages, and finds a template's documents by it (decision 0038).
+    this.db.version(2).stores({
+      documents: "id, updatedAt, template",
+      formats: "key, usedAt, tag",
+      prefetch: "template",
+      packages: "id, lastUsed",
+    });
     // A browser without channels still refuses a write over another tab's; it only hears of the
     // change at its next write rather than at once.
     if (typeof BroadcastChannel !== "undefined") {
@@ -269,7 +351,22 @@ export class DocumentStore {
     const unread = rows.length - summaries.length;
     if (unread > 0)
       console.warn(`${unread} stored documents are left out of the list: it cannot read them`);
-    return summaries;
+    // An imported template is named as its package names it, which the curated map does not know.
+    const imported = [
+      ...new Set(
+        summaries.map((each) => each.template).filter((id) => refusedId(id) === undefined),
+      ),
+    ];
+    if (imported.length === 0) return summaries;
+    const names = new Map<string, string>();
+    for (const row of await this.db.packages.bulkGet(imported)) {
+      const name = (row?.package as { name?: unknown } | undefined)?.name;
+      if (row !== undefined && typeof name === "string") names.set(row.id, name);
+    }
+    return summaries.map((each) => {
+      const templateName = names.get(each.template);
+      return templateName === undefined ? each : { ...each, templateName };
+    });
   }
 
   /**
@@ -340,13 +437,119 @@ export class DocumentStore {
     return this.flushAll("caller");
   }
 
-  /** Delete a document, and any save of it not written yet. */
-  async remove(id: string): Promise<void> {
+  /**
+   * Store an import (decision 0038): its package, under the prefix imported ids take, beside any
+   * earlier import of the same template, with what this import keeps (`ImportRecord`); and its
+   * document, as a new one, which is set with the package. Returns the document's id. Throws
+   * `PackageRefused` for a package the store refuses (`refusedId`, the package's schema) or a
+   * document not set with it, and Zod's error for a document the model refuses; nothing is stored
+   * then.
+   */
+  async importDocument(imported: Imported): Promise<string> {
+    const id = imported.package.id;
+    const refused = refusedId(id);
+    if (refused !== undefined) throw new PackageRefused(id, refused);
+    const read = TemplatePackage.safeParse(imported.package);
+    if (!read.success) throw new PackageRefused(id, "the package's schema refuses it", read.error);
+    // Parsed, so the store holds a copy of the document rather than the caller's.
+    const document = Document.parse(imported.document);
+    if (document.template !== id)
+      throw new PackageRefused(id, `the document is set with ${document.template}`);
+    const documentId = crypto.randomUUID();
+    const now = Date.now();
+    const record: ImportRecord = {
+      upload: imported.upload,
+      job: imported.job,
+      report: imported.report,
+      made: now,
+    };
+    const row: DocumentRow = {
+      id: documentId,
+      title: titleOf(document.resume),
+      template: id,
+      createdAt: now,
+      updatedAt: now,
+      revision: 1,
+      document,
+    };
+    const { documents, packages } = this.db;
+    await this.db.transaction("rw", documents, packages, async () => {
+      const kept = await packages.get(id);
+      await packages.put({
+        id,
+        package: read.data,
+        made: kept?.made ?? now,
+        lastUsed: now,
+        imports: { ...(kept?.imports ?? {}), [documentId]: record },
+      });
+      await documents.add(row);
+    });
+    this.held.set(documentId, { opened: 1, revision: 1, issued: 1, createdAt: now, stale: false });
+    this.announce({ type: "changed", id: documentId, revision: 1 });
+    return documentId;
+  }
+
+  /**
+   * An imported template as a document opens with it (`resolveTemplate`): its package, checked as
+   * a document is when it is read, and what `document`'s own import keeps, when the store keeps it;
+   * undefined when there is no such package. Using it marks the package used, in the background.
+   * Throws `PackageRefused` for an id outside the prefix or a curated package's, and for a package
+   * the schema refuses, as a newer editor's, which stays stored.
+   */
+  async templateOf(id: string, document?: string): Promise<StoredTemplate | undefined> {
+    const refused = refusedId(id);
+    if (refused !== undefined) throw new PackageRefused(id, refused);
+    const row = await this.db.packages.get(id);
+    if (row === undefined) return undefined;
+    const read = TemplatePackage.safeParse(row.package);
+    if (!read.success) throw new PackageRefused(id, "the package's schema refuses it", read.error);
+    if (read.data.id !== id) throw new PackageRefused(id, `its package's id is ${read.data.id}`);
+    this.db.packages
+      .update(id, { lastUsed: Date.now() })
+      .catch((error: unknown) => console.warn("A kept package could not be marked used", error));
+    const own = document === undefined ? undefined : row.imports?.[document];
+    return { package: read.data, ...(own === undefined ? {} : { import: own }) };
+  }
+
+  /**
+   * Delete a document, and any save of it not written yet. A document imported onto a package takes
+   * its import with it (`ImportRecord`); the last document of a package takes the package too,
+   * and its formats and the paths its compiles read (decision 0038). Returns the id of the package
+   * that went, so that the compiler lets its formats go too, or undefined.
+   */
+  async remove(id: string): Promise<string | undefined> {
     this.pending.delete(id);
     this.newest.delete(id);
     this.held.delete(id);
-    await this.db.transaction("rw", this.db.documents, () => this.db.documents.delete(id));
+    const { documents, packages, formats, prefetch } = this.db;
+    const dropped = await this.db.transaction(
+      "rw",
+      [documents, packages, formats, prefetch],
+      async () => {
+        const template = (await documents.get(id))?.template;
+        await documents.delete(id);
+        if (template === undefined || refusedId(template) !== undefined) return undefined;
+        const row = await packages.get(template);
+        const left = await documents.where("template").equals(template).count();
+        if (left > 0) {
+          if (row?.imports?.[id] !== undefined) {
+            const { [id]: _gone, ...imports } = row.imports;
+            await packages.put({ ...row, imports });
+          }
+          return undefined;
+        }
+        await packages.delete(template);
+        await prefetch.delete(template);
+        // Every format of a package is named after its id and a hash (`generateFormat`).
+        const named = `${template}-`;
+        await formats.bulkDelete(
+          await formats.filter((format) => format.name.startsWith(named)).primaryKeys(),
+        );
+        return template;
+      },
+    );
     this.announce({ type: "deleted", id });
+    return dropped;
   }
 
   /**

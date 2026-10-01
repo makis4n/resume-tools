@@ -209,8 +209,13 @@ export interface AssembleRow {
   findings?: Partial<Record<string, number>>;
   /** The repeatable kinds whose unit added or removed stopped the compile. */
   unrepeatable?: string[];
-  /** The kinds of unit the package marks the editor cannot add (`fixed`). */
+  /** The kinds of unit the package marks, which the editor neither adds nor removes (`fixed`). */
   fixed?: string[];
+  /**
+   * For each section of a kind whose removal stopped the compile, what frames it, never its text
+   * (`SectionRemoval`, decision 0038).
+   */
+  removals?: SectionRemoval[];
   /**
    * Whether the package sets the document in Latin Modern in T1, its Computer Modern in T1 or TS1
    * being fonts the page cannot draw (`latinModern`, decision 0026).
@@ -226,6 +231,51 @@ export interface AssembleRow {
 
 /** A row as a child sends it, before the parent adds the document's id, family and time. */
 export type AssembleChildRow = Omit<AssembleRow, "id" | "family" | "wall">;
+
+/**
+ * One section of a kind whose removal stopped the compile, as the runner tells it, by structure
+ * alone: its kind; whether it is the first, the last, the only or another of its kind, and where it
+ * stands among the document's sections; whether the document compiles with it alone removed, and
+ * when not, the error's class, never TeX's words; what stands between its head and its content
+ * (`before`: an environment, a list the answer names, another call, or nothing), and of the macros
+ * it calls, whether one begins an environment its definition does not end, and what the answers
+ * say of it (`opener`: a list's opener, another answer, no answer, or no such macro); whether its
+ * head's snippet begins one (`headOpens`); how many environments `before` begins and does not end,
+ * by its macros' definitions (`opens`); whether it keeps anything after its content (`after`);
+ * where what ends such an environment stands (`closer`): in what it keeps after its content, in
+ * the locked section right after it, in what the next section keeps before its head or its
+ * content, or none of those; how many that part ends (`closes`); and whether it calls the closer
+ * an answer names for a list `before` opens (`named`).
+ */
+export interface SectionRemoval {
+  kind: string;
+  of: "only" | "first" | "last" | "middle";
+  at: number;
+  sections: number;
+  compiles: boolean;
+  error?: string;
+  before: "environment" | "list" | "call" | "none";
+  opener: "list" | "answered" | "unanswered" | "none";
+  headOpens: boolean;
+  opens: number;
+  after: boolean;
+  closer: "after" | "locked" | "next" | "none";
+  closes: number;
+  named: boolean;
+}
+
+/** A compile's error as a class, never TeX's words, which may quote the document. */
+export function errorClass(error: string | undefined): string {
+  const text = error ?? "";
+  if (/ended by \\end/.test(text)) return "an environment ended by another's end";
+  if (/Lonely \\item|missing \\item/i.test(text)) return "an item outside a list";
+  if (/Too many \}'s|Extra \}/.test(text)) return "a brace closed twice";
+  if (/Extra \\end|\\begin\{[^}]*\} on input line/.test(text)) return "an end with no begin";
+  if (/alignment tab/.test(text)) return "an alignment tab out of place";
+  if (/Undefined control sequence/.test(text)) return "an undefined command";
+  if (/Emergency stop|File ended/.test(text)) return "the file ended inside something";
+  return "another error";
+}
 
 /** A validation's row: its counts and names, never a field's text. */
 export function assembleRow(
@@ -492,7 +542,9 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
       (row) => (row.unrepeatable ?? []).length > 0,
     ),
     ...fixed.map((kind) =>
-      count(`The editor cannot add: \`${kind}\``, (row) => (row.fixed ?? []).includes(kind)),
+      count(`The editor neither adds nor removes: \`${kind}\``, (row) =>
+        (row.fixed ?? []).includes(kind),
+      ),
     ),
     section("Compiles and time"),
     middle("Compiles, median", (row) => (done(row) ? row.compiles : undefined)),
