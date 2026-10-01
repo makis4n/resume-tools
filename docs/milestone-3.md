@@ -400,9 +400,11 @@ pull request that acts on it. The first two the owner settled on 26 September.
   the slot and the editor refuses to empty it, as a required form field does; a field that
   breaks on ordinary text is locked. Plan section 6's step 5 demotes anything that fails a check
   to locked, and this is the one refinement.
-- **Reviewed answers may carry redefinitions** (items 6 and 17): LaTeX a person wrote, never
-  the model, that redefines or adds macros after the document class, keyed by the macro hash as
-  the answer is, and proven on every document by the reference check, so that a fix a port made
+- **Reviewed answers may carry redefinitions** (items 6 and 17): LaTeX a person or the review
+  model wrote, an Opus agent in Claude Code (decision 0037), never the naming model, that redefines
+  or adds macros after the document class, keyed as the answer is, and kept only when the
+  reference check shows the page unchanged and the four checks pass on every corpus document whose
+  command has the redefined key (`corpus review check`, decision 0043), so that a fix a port made
   by hand reaches every fork with the same macros. The naming step's model never writes LaTeX;
   only item 16's rewrite does, under its own rule.
 - **XeTeX imports resolve fonts to the tree by name** (item 8) and refuse the rest, and carry

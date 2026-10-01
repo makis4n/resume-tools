@@ -9,13 +9,16 @@ import {
   assembleTable,
   BAR_CONTROLS,
   barControls,
+  barFailureLines,
   barFailures,
+  barLine,
   CHECK_NOTES,
   comparePlaces,
   DROPPED_WHY,
   dropKind,
   errorClass,
   fieldsFound,
+  firstCheckHolds,
   placesTable,
   portPlaces,
   UNCHECKED_WHY,
@@ -209,7 +212,7 @@ describe("the milestone's bar", () => {
       lacking: ["margins"],
     });
     // A success is an assembly whose first check holds, until item 13's rule.
-    expect(barFailures(rows)).toEqual([
+    expect(barFailures(rows, firstCheckHolds)).toEqual([
       { id: "jake-0002", control: "margins" },
       { id: "moderncv-0001", control: "pageSize" },
       { id: "moderncv-0001", control: "margins" },
@@ -220,7 +223,23 @@ describe("the milestone's bar", () => {
       id: "jake-0003",
       control: "fontSize",
     });
-    expect(barFailures(rows.slice(0, 1))).toEqual([]);
+    expect(barFailures(rows.slice(0, 1), firstCheckHolds)).toEqual([]);
+  });
+
+  test("says on a document's line which are proven, and why a success lacks each, by kind alone", () => {
+    expect(barLine(rows[0] as AssembleRow, true)).toBe("pageSize margins fontSize proven");
+    expect(barLine(rows[1] as AssembleRow, true)).toBe(
+      "pageSize fontSize proven, lacking margins (every value sets the same page)",
+    );
+    expect(barLine(rows[2] as AssembleRow, true)).toBe(
+      "none proven, lacking pageSize (the harness finds it does not work), margins (not offered), fontSize (a value stops the compile)",
+    );
+    // A partial import is no success, so what it lacks is not the bar's.
+    expect(barLine(rows[3] as AssembleRow, false)).toBe("pageSize proven");
+    expect(barFailureLines(barFailures(rows.slice(0, 2), firstCheckHolds))).toEqual([
+      "The bar: 1 control of successful imports not proven",
+      "jake-0002: margins",
+    ]);
   });
 
   test("counts in the table the documents with all three, and the successful ones lacking each, and why", () => {
