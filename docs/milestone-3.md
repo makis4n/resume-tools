@@ -361,7 +361,7 @@ of each launch template must find editable what the hand-written port marks.
     The gateway serves the school's teaching and projects, so before the public launch milestone 5
     asks the school whether the naming service may use it, with Gemini's paid tier as the
     fallback.
-19. [ ] **Measure the import, and close.** `measure` gains an import: a cached pdfTeX template,
+19. [x] **Measure the import, and close.** `measure` gains an import: a cached pdfTeX template,
     a Jake's Resume fork, from the file to the page, in Node and at `?measure=import` in the
     browser, with a warm HTTP cache; under 5 s on this machine is the bar, and the XeTeX number
     is reported beside it. The numbers go next to decision 0016's, the slow laptop's column
@@ -485,3 +485,6 @@ pull request that acts on it. The first two the owner settled on 26 September.
 | The PDF's text layer showing a hyphen as U+2011 in some XeTeX fonts (decision 0014) | The ATS's reader; not this milestone |
 | The PDF's text layer showing an import's small capitals, set with `+smcp`, as capitals: the Awesome-CV sample's seven entry titles and four Awesome-CV forks (decision 0026) | The ATS's reader, or the PDF driver; not this milestone |
 | An imported section whose head opens its content's list, with the locked part that closes it, kept as one unit: removing the section alone stops the compile in 20 of Jake's forks (decision 0026) | The assembly, before item 12 stores an import |
+
+Item 19 closes the table out in decision 0045: where each row landed, and where the four that stay
+owed go.

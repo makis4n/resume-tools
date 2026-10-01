@@ -48,9 +48,11 @@ export interface Target {
 }
 
 /**
- * The targets of plan section 4.3 that this milestone can measure. The two for import are
- * milestone 3's. A slow laptop is a 2019 machine with integrated graphics; the slow-laptop target
- * is judged here on whatever machine runs the measurement, so it says something only on one.
+ * The targets of plan section 4.3 that the measurements can judge. Of the two for import, milestone
+ * 3 measures the cached template's (`import.ts`, decision 0045); a cache miss's waits on the model,
+ * which no measurement asks. A slow laptop is a 2019 machine with integrated graphics; the
+ * slow-laptop target is judged here on whatever machine runs the measurement, so it says something
+ * only on one.
  */
 export const TARGETS = {
   keystroke: { path: "Keystroke in the overlay", limit: 16, unit: "ms", under: true },
@@ -67,6 +69,7 @@ export const TARGETS = {
     under: true,
   },
   firstLoad: { path: "First load, cached afterwards", limit: 30e6, unit: "bytes", under: true },
+  importCached: { path: "Import, template already cached", limit: 5000, unit: "ms", under: true },
 } as const satisfies Record<string, Target>;
 
 /** Whether a value meets a target. */

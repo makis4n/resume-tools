@@ -42,7 +42,7 @@ cp -n apps/editor/.env.example apps/editor/.env   # settings, all optional; see 
 pnpm dev                                          # the editor at http://localhost:5173
 ```
 
-The dev server does more than serve the page. It serves the TeX engine's files from `apps/editor/.engine/` and answers the naming route that imports call, `/v1/name`, so until milestone 5 hosts both, the editor works fully only under `pnpm dev`: a production build keeps documents but cannot draw their pages. `http://localhost:5173/?measure=1` shows the timing page in place of the editor (decision 0016).
+The dev server does more than serve the page. It serves the TeX engine's files from `apps/editor/.engine/` and answers the naming route that imports call, `/v1/name`, so until milestone 5 hosts both, the editor works fully only under `pnpm dev`: a production build keeps documents but cannot draw their pages. `http://localhost:5173/?measure=1` shows the timing page in place of the editor (decision 0016), and `?measure=import` and `?measure=import-xetex` time an import from the file to the page, once `pnpm --filter @resume-tools/editor corpus oracle` has fetched the upstream samples they import (decision 0045).
 
 Every setting in `apps/editor/.env` is optional, and the editor runs with none:
 
