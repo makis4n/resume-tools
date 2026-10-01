@@ -35,7 +35,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AnswerCache, NAMING_VERSION } from "@resume-tools/naming";
-import { soclaasModel } from "@resume-tools/naming/providers";
+import { soclaasModel, type ThinkingSwitch } from "@resume-tools/naming/providers";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
@@ -96,7 +96,18 @@ interface Task {
   message: {
     name: string;
     bytes: Uint8Array;
-    answers?: { model: string; ask?: boolean; own?: boolean };
+    answers?: {
+      model: string;
+      ask?: boolean;
+      own?: boolean;
+      /**
+       * How the model is asked not to reason first, or `false` to let it reason, where the
+       * benchmark says; the switch the naming step asks it with everywhere otherwise.
+       */
+      thinking?: ThinkingSwitch | false;
+      /** How many times a failed call is tried again, `MODEL_RETRIES` unless given. */
+      retries?: number;
+    };
     review?: boolean;
   };
 }
@@ -370,11 +381,21 @@ async function main() {
       // check, which the header's values are given to besides, as `corpus leak` proves the request.
       const id = task.message.answers?.model;
       const asking = task.message.answers?.ask === true && id !== undefined && key !== undefined;
+      // The benchmark may ask a reasoning model not to reason first (decision 0044), and try a
+      // failed call fewer times; the request, its gate and its prompt are the same either way.
+      const thinking = task.message.answers?.thinking;
       const answered = await answerDocument(request, {
         cache: answers.cache,
         gate: () => naming.assertNoText(request, checked),
-        ...(asking ? { model: { model: soclaasModel(key, id), id } } : {}),
-        maxRetries: MODEL_RETRIES,
+        ...(asking
+          ? {
+              model: {
+                model: soclaasModel(key, id, thinking === undefined ? {} : { thinking }),
+                id,
+              },
+            }
+          : {}),
+        maxRetries: task.message.answers?.retries ?? MODEL_RETRIES,
         partTimeoutMs: MODEL_LIMIT_MS,
       });
       const runNaming: RunNaming = {

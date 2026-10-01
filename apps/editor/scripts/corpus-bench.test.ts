@@ -394,7 +394,7 @@ describe("what the benchmark prints", () => {
     expect(table).toContain("|  | `qwen3.8:27b` | `qwen3.6:35b` |");
     expect(table).toContain("| Documents | 7 | 6 |");
     expect(table).toContain(
-      "| **Editable rate**: words in editable fields, of the documents assembled | 61.25% | 61.25% |",
+      "| **Editable rate**: words editable on the page, of the documents assembled, as `outcomeOf` counts them | 61.25% | 61.25% |",
     );
     expect(table).toContain("| A part, slowest | 300.0 s | 300.0 s |");
     expect(table).toContain(
@@ -509,12 +509,21 @@ describe("the bench command", () => {
       "--committed-only goes with run",
     );
     expect(run({}, "probe", "--ids", "x").stderr).toContain("--ids goes with run or bench");
+    expect(run({}, "bench", "--model", "qwen3.8:27b", "--thinking", "off").stderr).toContain(
+      "--thinking takes one of no-think, template, effort",
+    );
+    expect(run({}, "bench", "--model", "qwen3.8:27b", "--retries", "11").stderr).toContain(
+      "--retries takes a whole number from 0 to 10",
+    );
+    expect(run({}, "run", "--thinking", "template").stderr).toContain(
+      "--thinking goes with bench --model <id>",
+    );
     // `name --model` is still a flag.
     expect(run({}, "name", "--model").stderr).toContain(
       "name --model asks SoCLaaS, which needs a key",
     );
     expect(run({}, "--help").stdout).toContain(
-      "| bench --model <id> [--only <id>] [--ids <file>] [--json <file>] | bench <bench.json> [<bench.json>...]",
+      "| bench --model <id> [--only <id>] [--ids <file>] [--json <file>] [--thinking <switch>] [--retries <n>] | bench <bench.json> [<bench.json>...]",
     );
     // Each spawn loads every command's modules: about a second each on a CI runner, so the test
     // takes the engine tests' timeout, as `corpus-run.test.ts`'s does.
@@ -549,7 +558,7 @@ describe("the bench command", () => {
     expect(compared.status).toBe(0);
     expect(compared.stdout).toContain("|  | `qwen3.8:27b` | `qwen3.6:35b` |");
     expect(compared.stdout).toContain(
-      "| **Editable rate**: words in editable fields, of the documents assembled | 61.25% | 40.00% |",
+      "| **Editable rate**: words editable on the page, of the documents assembled, as `outcomeOf` counts them | 61.25% | 40.00% |",
     );
     expect(compared.stdout).toContain(
       "qwen3.8:27b: its slowest part took 300.0 s (awesome-cv-0001, part 2), over the 120.0 s.",

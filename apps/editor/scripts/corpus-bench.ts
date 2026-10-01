@@ -20,6 +20,7 @@
 
 // Node runs this file by stripping its types, so it imports values only from files that import
 // nothing Node lacks, and the editor's modules as types alone, with their real extensions.
+import { THINKING_SWITCHES, type ThinkingSwitch } from "@resume-tools/naming/providers";
 import { z } from "zod";
 import type { LockReason } from "../src/import/assemble.ts";
 import { LOCK_REASONS } from "./corpus-assemble.ts";
@@ -91,6 +92,8 @@ export function partsOf(rows: readonly RunRow[]): BenchPart[] {
 /** What the benchmark found of a candidate, over the documents it took. */
 export interface BenchSummary {
   model: string;
+  /** How the model was asked not to reason first, where it was (`--thinking`). */
+  thinking?: ThinkingSwitch;
   documents: number;
   outcomes: Record<RunOutcome, number>;
   /** The documents assembled, a success or partial, whose words the editable rate counts. */
@@ -135,7 +138,11 @@ export interface BenchSummary {
 const asked = (row: Pick<RunRow, "times">) => (row.times.parts ?? []).length > 0;
 
 /** A candidate's summary, from the rows of its benchmark. */
-export function benchSummary(model: string, rows: readonly RunRow[]): BenchSummary {
+export function benchSummary(
+  model: string,
+  rows: readonly RunRow[],
+  thinking?: ThinkingSwitch,
+): BenchSummary {
   const run = summaryOf(rows);
   const sum = (pick: (row: RunRow) => number | undefined) =>
     rows.reduce((total, row) => total + (pick(row) ?? 0), 0);
@@ -175,6 +182,7 @@ export function benchSummary(model: string, rows: readonly RunRow[]): BenchSumma
   const requestMedian = median(requests.map((each) => each.ms));
   return {
     model,
+    ...(thinking === undefined ? {} : { thinking }),
     documents: run.documents,
     outcomes: run.outcomes,
     assembled: run.outcomes.success + run.outcomes.partial,
@@ -239,13 +247,13 @@ export function chooseDefault(
     const slowest = each.parts.slowest;
     if (slowest === undefined)
       return {
-        model: each.model,
+        model: nameOf(each),
         within: false,
         why: "no part was asked, so there is no time to judge: its first run's file has them",
       };
     const within = slowest.ms <= limitMs;
     return {
-      model: each.model,
+      model: nameOf(each),
       within,
       why: `its slowest part took ${seconds(slowest.ms)} (${slowest.id}, part ${slowest.part}), ${within ? "within" : "over"} the ${seconds(limitMs)}`,
     };
@@ -253,14 +261,14 @@ export function chooseDefault(
   const within = new Set(verdicts.filter((each) => each.within).map((each) => each.model));
   const order = (value: number | undefined) => value ?? Number.POSITIVE_INFINITY;
   const ranked = candidates
-    .filter((each) => within.has(each.model))
+    .filter((each) => within.has(nameOf(each)))
     .sort(
       (a, b) =>
         b.rates.editable - a.rates.editable ||
         order(a.parts.median) - order(b.parts.median) ||
         order(a.parts.p90) - order(b.parts.p90) ||
         order(a.parts.slowest?.ms) - order(b.parts.slowest?.ms) ||
-        (a.model < b.model ? -1 : a.model > b.model ? 1 : 0),
+        (nameOf(a) < nameOf(b) ? -1 : nameOf(a) > nameOf(b) ? 1 : 0),
     );
   const chosen = ranked[0];
   if (chosen === undefined)
@@ -270,11 +278,15 @@ export function chooseDefault(
     };
   const tied = ranked.filter((each) => each.rates.editable === chosen.rates.editable);
   return {
-    chosen: chosen.model,
+    chosen: nameOf(chosen),
     verdicts,
-    line: `The default, by the rule: ${chosen.model}, ${chosen.rates.editable.toFixed(2)}% of the words editable${tied.length > 1 ? `, tied with ${tied.length - 1} more and the faster, its median part ${seconds(chosen.parts.median ?? 0)}` : ""}, its slowest part ${seconds(chosen.parts.slowest?.ms ?? 0)}, within ${seconds(limitMs)}.`,
+    line: `The default, by the rule: ${nameOf(chosen)}, ${chosen.rates.editable.toFixed(2)}% of the words editable${tied.length > 1 ? `, tied with ${tied.length - 1} more and the faster, its median part ${seconds(chosen.parts.median ?? 0)}` : ""}, its slowest part ${seconds(chosen.parts.slowest?.ms ?? 0)}, within ${seconds(limitMs)}.`,
   };
 }
+
+/** A candidate as the lines name it: its id, and its thinking switch, where it was asked so. */
+export const nameOf = (summary: Pick<BenchSummary, "model" | "thinking">) =>
+  `${summary.model}${summary.thinking === undefined ? "" : ` with thinking off (${summary.thinking})`}`;
 
 // What is printed.
 
@@ -313,7 +325,7 @@ export function benchHeadline(summary: BenchSummary): string[] {
   const { parts, requests, naming, cost } = summary;
   const time =
     parts.slowest === undefined
-      ? `Nothing was asked of ${summary.model}: every macro with an answer came from its own folder, as a second run of the same model answers, so this run has no part's time, no call and no token; the first run's file holds them.`
+      ? `Nothing was asked of ${nameOf(summary)}: every macro with an answer came from its own folder, as a second run of the same model answers, so this run has no part's time, no call and no token; the first run's file holds them.`
       : `${plural(parts.count, "part")} asked: the median ${seconds(parts.median ?? 0)}, the 90th percentile ${seconds(parts.p90 ?? 0)}, the slowest ${seconds(parts.slowest.ms)} (${parts.slowest.id}, part ${parts.slowest.part}${parts.slowest.failed === undefined ? "" : `, ${parts.slowest.failed}`}); a request's parts together, the median ${seconds(requests.median ?? 0)} and the slowest ${seconds(requests.slowest?.ms ?? 0)} (${requests.slowest?.id ?? ""}, ${plural(requests.slowest?.parts ?? 0, "part")}).`;
   const money =
     cost === undefined
@@ -323,7 +335,7 @@ export function benchHeadline(summary: BenchSummary): string[] {
     (kind) => `${kind} ${summary.failures[kind]}`,
   );
   return [
-    `${summary.model}: ${plural(summary.documents, "document")}, ${summary.outcomes.success} success, ${summary.outcomes.partial} partial, ${summary.outcomes.refused} refused; ${summary.rates.editable.toFixed(2)}% of the ${plural(summary.counted.all, "word")} of the ${plural(summary.assembled, "document")} assembled editable.`,
+    `${nameOf(summary)}: ${plural(summary.documents, "document")}, ${summary.outcomes.success} success, ${summary.outcomes.partial} partial, ${summary.outcomes.refused} refused; ${summary.rates.editable.toFixed(2)}% of the ${plural(summary.counted.all, "word")} of the ${plural(summary.assembled, "document")} assembled editable on the page.`,
     `${plural(naming.macros, "macro")} with a key: ${number(naming.cache)} from its own folder, ${number(naming.asked)} asked, ${number(naming.stored)} stored, ${number(naming.invalid)} invalid, ${number(naming.missing)} missing; ${plural(naming.imports, "import")} asked the model, ${plural(summary.calls, "call")}, ${number(summary.tokens.input)} tokens in, ${number(summary.tokens.output)} out, ${number(summary.tokens.reasoning)} of them reasoning.`,
     time,
     failures.length === 0 ? "No part failed." : `Failed, by kind: ${failures.join(", ")}.`,
@@ -359,7 +371,11 @@ export function benchTable(
   const lines = [
     line(
       "",
-      summaries.map((summary) => (PLAIN.test(summary.model) ? `\`${summary.model}\`` : "a model")),
+      summaries.map((summary) =>
+        PLAIN.test(summary.model)
+          ? `\`${summary.model}\`${summary.thinking === undefined ? "" : `, thinking off (${summary.thinking})`}`
+          : "a model",
+      ),
     ),
     `|---|${summaries.map(() => "--:").join("|")}|`,
     each("Documents", (summary) => number(summary.documents)),
@@ -380,7 +396,7 @@ export function benchTable(
       number(summary.outcomes.timeout + summary.outcomes.crashed),
     ),
     each(
-      "**Editable rate**: words in editable fields, of the documents assembled",
+      "**Editable rate**: words editable on the page, of the documents assembled, as `outcomeOf` counts them",
       (summary) => `${summary.rates.editable.toFixed(2)}%`,
     ),
     each("Words counted, of the documents assembled", (summary) => number(summary.counted.all)),
@@ -451,6 +467,12 @@ export interface BenchFile {
   /** The day it started, and the commit it ran at. */
   at: { date: string; commit: string | null };
   model: string;
+  /**
+   * How the model was asked not to reason first, and how many times a failed call was tried
+   * again, where the run said (`--thinking`, `--retries`).
+   */
+  thinking?: ThinkingSwitch;
+  retries?: number;
   tree: { layout: number; files: number };
   limitMs: number;
   /** Every fetched document, or those `--only` or `--ids` name. */
@@ -466,6 +488,7 @@ export interface BenchFile {
 const LooseBench = z.looseObject({
   version: z.literal(1),
   model: z.string().min(1),
+  thinking: z.enum(THINKING_SWITCHES).optional(),
   complete: z.boolean(),
   documents: z.enum(["all", "some"]),
   rows: z.array(
@@ -498,22 +521,25 @@ export function candidatesOf(files: readonly unknown[]): {
     files: typeof read;
     rows: Map<string, RunRow>;
   }
+  // A model asked with its thinking off is a column of its own.
   const columns = new Map<string, Column>();
+  const columnOf = (file: (typeof read)[number]) => `${file.model}|${file.thinking ?? ""}`;
   for (const file of read) {
-    const column: Column = columns.get(file.model) ?? { files: [], rows: new Map() };
+    const column: Column = columns.get(columnOf(file)) ?? { files: [], rows: new Map() };
     column.files.push(file);
     for (const row of file.rows) {
       const before = column.rows.get(row.id);
       if (before === undefined || asked(row) || !asked(before)) column.rows.set(row.id, row);
     }
-    columns.set(file.model, column);
+    columns.set(columnOf(file), column);
   }
   const notes: string[] = [];
   const idsOf = (rows: Iterable<string>) => [...rows].sort().join(",");
   const first = [...columns.values()][0];
   const summaries: BenchSummary[] = [];
-  for (const [model, column] of columns) {
-    const name = PLAIN.test(model) ? model : "a model";
+  for (const column of columns.values()) {
+    const { model, thinking } = column.files[0] ?? { model: "", thinking: undefined };
+    const name = PLAIN.test(model) ? nameOf({ model, thinking }) : "a model";
     if (column.files.length > 1)
       notes.push(
         `${name}'s column joins ${column.files.length} files, each document's row the last that asked the model.`,
@@ -524,7 +550,7 @@ export function candidatesOf(files: readonly unknown[]): {
     if (first !== undefined && idsOf(column.rows.keys()) !== idsOf(first.rows.keys()))
       notes.push(`${name} was measured on other documents than the first candidate.`);
     const rows = [...column.rows.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    summaries.push(benchSummary(model, rows));
+    summaries.push(benchSummary(model, rows, thinking));
   }
   return { summaries, notes: notes.map(printable) };
 }

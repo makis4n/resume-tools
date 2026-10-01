@@ -20,7 +20,7 @@
  *   pnpm --filter @resume-tools/editor corpus review export [--top <n>] [--out <dir>]
  *   pnpm --filter @resume-tools/editor corpus review check [--dir <dir>]
  *   pnpm --filter @resume-tools/editor corpus bench --model <id> [--only <id>] [--ids <file>]
- *                 [--json <file>]
+ *                 [--json <file>] [--thinking <switch>] [--retries <n>]
  *   pnpm --filter @resume-tools/editor corpus bench <bench.json> [<bench.json>...]
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
@@ -103,10 +103,10 @@
  *   name          take every document whose body parses, build its naming request as `seed` builds a
  *                 sample's, in the same pool, and answer it macro by macro from the cache: the
  *                 committed answers under `corpus/answers/` first, then the model's own under
- *                 `.corpus/cache/<model id>/`, the model `NAMING_MODEL` names, the default on
- *                 SoCLaaS when unset (decision 0044); print what each document's macros came to and
- *                 one table of them all, names of macros and counts only (`scripts/corpus-name.ts`,
- *                 decision 0027).
+ *                 `.corpus/cache/<model id>/`, the model `NAMING_MODEL` names, qwen3.8:27b on
+ *                 SoCLaaS with its thinking off when unset (decision 0044); print what each
+ *                 document's macros came to and one table of them all, names of macros and counts
+ *                 only (`scripts/corpus-name.ts`, decision 0027).
  *                 Without `--model` the macros the cache does not answer are counted missing
  *   --only <id>   that document only
  *   --json <file> write each document's row as JSON too, macros' names and numbers only
@@ -207,6 +207,13 @@
  *   --ids <file>  the documents a file names, one id a line, from where pnpm was run
  *   --json <file> write the candidate's summary and each document's row as JSON too, ids and
  *                 counts only
+ *   --thinking <switch>  ask the model not to reason first, by `no-think` (a `/no_think` line
+ *                 after the instructions), `template` (the chat template's `enable_thinking`
+ *                 false) or `effort` (a reasoning effort of none), or let it reason (`on`); the
+ *                 request, its gate, its prompt and the answer's schema stay as they are, and its
+ *                 answers go in the model's folder. Unless given, the model is asked as the naming
+ *                 step asks it everywhere: the default, qwen3.8:27b, with `template`
+ *   --retries <n> how many times a failed call is tried again, 0 to 10, the runner's 4 unless given
  *   bench <bench.json> [<bench.json>...]  run nothing, and set the candidates' files side by side,
  *                 one column each, with the model the rule picks for the default: the highest
  *                 editable rate whose slowest part stays within the naming service's two minutes,
@@ -224,6 +231,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { AnswerSource } from "@resume-tools/naming";
+import { MODEL_THINKING, THINKING_SWITCHES } from "@resume-tools/naming/providers";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
 import { readTree } from "../src/import/fonts.ts";
@@ -357,7 +365,7 @@ import {
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>] | leak [--only <id>] [--json <file>] | run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>] | bench --model <id> [--only <id>] [--ids <file>] [--json <file>] | bench <bench.json> [<bench.json>...]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>] | leak [--only <id>] [--json <file>] | run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>] | bench --model <id> [--only <id>] [--ids <file>] [--json <file>] [--thinking <switch>] [--retries <n>] | bench <bench.json> [<bench.json>...]";
 
 /** The editor, whose modules the review's export loads through Vite for the leak detector. */
 const APP = fileURLToPath(new URL("..", import.meta.url));
@@ -1619,11 +1627,27 @@ const STOPPING: ReadonlySet<string> = new Set(["429", "5xx", "provider"]);
  * only; and with `--json`, its file (`BenchFile`). It stops, its table partial, when a signal comes
  * or the gateway has failed documents in a row, and then exits 1.
  */
-async function runBench(options: { model: string; only?: string; ids?: string; json?: string }) {
+async function runBench(options: {
+  model: string;
+  only?: string;
+  ids?: string;
+  json?: string;
+  thinking?: string;
+  retries?: string;
+}) {
   const id = options.model.trim();
   if (!AnswerSource.safeParse(`model:${id}`).success)
     throw new Error("--model is not a model's id: letters, digits and ._:/@- only");
   modelCacheDir(id);
+  const asked = THINKING_SWITCHES.find((each) => each === options.thinking);
+  if (options.thinking !== undefined && options.thinking !== "on" && asked === undefined)
+    throw new Error(`--thinking takes one of ${THINKING_SWITCHES.join(", ")} or on`);
+  // The switch the model is asked with: the one given, none for `on`, and otherwise the one the
+  // naming step asks it with everywhere (`MODEL_THINKING`), the default's (decision 0044).
+  const thinking = options.thinking === "on" ? undefined : (asked ?? MODEL_THINKING[id]);
+  const retries = options.retries === undefined ? undefined : Number(options.retries);
+  if (retries !== undefined && !(Number.isInteger(retries) && retries >= 0 && retries <= 10))
+    throw new Error("--retries takes a whole number from 0 to 10");
   const config = namingConfig(process.env);
   if (config.key === undefined)
     throw new Error(
@@ -1642,7 +1666,13 @@ async function runBench(options: { model: string; only?: string; ids?: string; j
     message: () => ({
       name: `${doc.id}.zip`,
       bytes: corpusUpload(doc, treeFont),
-      answers: { model: id, ask: true, own: true },
+      answers: {
+        model: id,
+        ask: true,
+        own: true,
+        thinking: thinking ?? false,
+        ...(retries === undefined ? {} : { retries }),
+      },
     }),
   }));
   const families = new Map(documents.map((doc) => [doc.id, doc.family]));
@@ -1663,18 +1693,20 @@ async function runBench(options: { model: string; only?: string; ids?: string; j
       version: 1,
       at,
       model: id,
+      ...(thinking === undefined ? {} : { thinking }),
+      ...(retries === undefined ? {} : { retries }),
       tree: { layout: engine.layout, files: Object.keys(engine.files).length },
       limitMs,
       documents: whole ? "all" : "some",
       complete,
       ...(stopped === undefined ? {} : { stopped }),
-      summary: benchSummary(id, sorted),
+      summary: benchSummary(id, sorted, thinking),
       rows: sorted,
     };
     writeAtomically(options.json, formatJson(file));
   };
   print([
-    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${size} at a time, ${limitMs / 1000} s each at most; ${id}'s own answers alone, the committed answers and every other model's cache left out; asking ${id} for every macro its folder does not answer`,
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${size} at a time, ${limitMs / 1000} s each at most; ${id}'s own answers alone, the committed answers and every other model's cache left out; asking ${id} for every macro its folder does not answer${thinking === undefined ? "" : `, with thinking off (${thinking})`}${retries === undefined ? "" : `, a failed call tried ${retries} more ${retries === 1 ? "time" : "times"}`}`,
   ]);
   const controller = new AbortController();
   const stop = (why: string) => {
@@ -1745,7 +1777,7 @@ async function runBench(options: { model: string; only?: string; ids?: string; j
   }
   rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const minutes = (performance.now() - started) / 60_000;
-  const summary = benchSummary(id, rows);
+  const summary = benchSummary(id, rows, thinking);
   print([
     "",
     ...runTable(rows).trimEnd().split("\n"),
@@ -2031,6 +2063,8 @@ async function main() {
       top: { type: "string" },
       out: { type: "string" },
       dir: { type: "string" },
+      thinking: { type: "string" },
+      retries: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
     allowPositionals: true,
@@ -2107,6 +2141,9 @@ async function main() {
   if (values.write === true && command !== "seed") throw new Error("--write goes with seed");
   if (values.ids !== undefined && command !== "run" && command !== "bench")
     throw new Error("--ids goes with run or bench");
+  for (const option of ["thinking", "retries"] as const)
+    if (values[option] !== undefined && (command !== "bench" || typeof values.model !== "string"))
+      throw new Error(`--${option} goes with bench --model <id>`);
   for (const option of ["committed-only", "allow-model", "write-baseline"] as const)
     if (values[option] !== undefined && command !== "run")
       throw new Error(`--${option} goes with run`);
@@ -2161,6 +2198,8 @@ async function main() {
       ...(values.only === undefined ? {} : { only: values.only }),
       ...(values.ids === undefined ? {} : { ids: caller(values.ids) }),
       ...(values.json === undefined ? {} : { json: caller(values.json) }),
+      ...(values.thinking === undefined ? {} : { thinking: values.thinking }),
+      ...(values.retries === undefined ? {} : { retries: values.retries }),
     });
   }
   if (review === "export")
