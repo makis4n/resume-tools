@@ -494,12 +494,13 @@ function regionsOf(
     let size = RULE_SIZE;
     for (const each of set.items) {
       if (each.page !== pageIndex) continue;
+      const resumes = each.resumes === true;
       if (each.kind === "glyph") {
         const box = keyed.get(glyphKey(each.item, each.glyph));
         if (box === undefined) continue;
         const { left, top, right, bottom } = box;
         size = box.size;
-        placed.push({ left, top, right, bottom, baseline: box.y, size });
+        placed.push({ left, top, right, bottom, baseline: box.y, size, resumes });
         continue;
       }
       const rule = page?.items[each.item];
@@ -512,6 +513,7 @@ function regionsOf(
         bottom,
         baseline: bottom,
         size,
+        resumes,
       });
     }
     regions.set(set.id, { id: set.id, blocks: blocksOf(placed) });
@@ -914,13 +916,12 @@ export async function drawPage(
     fields.set(id, { ...field, layout: layout && folded ? { ...layout, folded } : layout });
   }
 
-  // The locked parts' glyphs on this page, by their keys, and the part each is of.
+  // The locked parts' glyphs and rules on this page, by their keys, and the part each is of.
   const sets = lockedSets(doc);
   const lockedGlyphs = new Map<string, string>();
   for (const set of sets.values())
     for (const each of set.items)
-      if (each.page === pageIndex && each.kind === "glyph")
-        lockedGlyphs.set(glyphKey(each.item, each.glyph), set.id);
+      if (each.page === pageIndex) lockedGlyphs.set(glyphKey(each.item, each.glyph), set.id);
   const keyed = new Map<string, GlyphBox>();
   const glyphs = glyphBoxes(doc, page, loaded, natives, fields, lockedGlyphs, keyed);
   const locked = regionsOf(doc, sets, pageIndex, keyed);

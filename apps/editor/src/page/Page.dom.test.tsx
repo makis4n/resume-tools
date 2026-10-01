@@ -388,5 +388,94 @@ describe("a locked part on the page (decision 0041)", () => {
     expect(tabStops(pageOf())).toEqual([]);
     expect(tabStops().at(0)).toBe(before);
     expect(tabStops().at(-1)).toBe(after);
+    // And the probe can fail: an element of the page given a tab stop would be one.
+    lockedBlock().setAttribute("tabindex", "0");
+    expect(tabStops(pageOf())).toEqual([lockedBlock()]);
+    lockedBlock().removeAttribute("tabindex");
+  });
+
+  it("places the lock where the SVG draws the part, under an open overlay, and within the page", () => {
+    // jsdom lays nothing out: the page, its SVG and the line get the boxes a browser would give
+    // them, the SVG drawn 816 pixels across, and the line 400 wide. A part near the page's right
+    // edge, whose line would run past it at the part's left.
+    const box = (left: number, top: number, width: number, height: number) =>
+      ({
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height,
+        x: left,
+        y: top,
+      }) as DOMRect;
+    const width = 400;
+    const near: Box = { left: 480, top: 300, right: 560, bottom: 320 };
+    const scale = 816 / US_LETTER.width;
+    const measured = Object.getOwnPropertyDescriptor(Element.prototype, "getBoundingClientRect");
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value(this: Element) {
+        if (this.getAttribute("role") === "tooltip") return box(0, 0, width, 18);
+        if (this.tagName.toLowerCase() === "svg") return box(110, 230, 816, 1056);
+        if (this.classList.contains("page")) return box(100, 200, 900, 1100);
+        return box(0, 0, 0, 0);
+      },
+    });
+    try {
+      act(() =>
+        root.render(
+          <Page
+            svg={SVG}
+            size={US_LETTER}
+            locked={new Map([[LOCKED, { id: LOCKED, blocks: [BLOCK, near] }]])}
+          />,
+        ),
+      );
+      point("pointerover", lockedBlock());
+    } finally {
+      if (measured) Object.defineProperty(Element.prototype, "getBoundingClientRect", measured);
+    }
+    // Each block where the SVG draws it, from the SVG's corner, 10 and 30 pixels into the page.
+    const blocks = [...host.querySelectorAll(".locked-block")] as HTMLElement[];
+    expect(blocks).toHaveLength(2);
+    const at = (element: HTMLElement | undefined, side: "left" | "top" | "width") =>
+      Number.parseFloat(element?.style[side] ?? "");
+    expect(at(blocks[0], "left")).toBeCloseTo(10 + BLOCK.left * scale, 3);
+    expect(at(blocks[0], "top")).toBeCloseTo(30 + BLOCK.top * scale, 3);
+    expect(at(blocks[0], "width")).toBeCloseTo((BLOCK.right - BLOCK.left) * scale, 3);
+    // The line: above the first block, under a field's overlay, its bar and its pickers, which come
+    // after the page at the same height, and at the block's left, which keeps it within the page.
+    const line = tip() as HTMLElement;
+    expect(line.style.zIndex).toBe("1");
+    expect(at(line, "left")).toBeCloseTo(10 + BLOCK.left * scale, 3);
+    // Over the part near the right edge, the line moves left as far as it takes to end there.
+    act(() =>
+      root.render(
+        <Page
+          svg={SVG}
+          size={US_LETTER}
+          locked={new Map([[LOCKED, { id: LOCKED, blocks: [near] }]])}
+        />,
+      ),
+    );
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value(this: Element) {
+        if (this.getAttribute("role") === "tooltip") return box(0, 0, width, 18);
+        if (this.tagName.toLowerCase() === "svg") return box(110, 230, 816, 1056);
+        if (this.classList.contains("page")) return box(100, 200, 900, 1100);
+        return box(0, 0, 0, 0);
+      },
+    });
+    try {
+      point("pointerout", lockedBlock(), window.document.body);
+      point("pointerover", lockedBlock());
+    } finally {
+      if (measured) Object.defineProperty(Element.prototype, "getBoundingClientRect", measured);
+    }
+    const moved = tip() as HTMLElement;
+    expect(at(moved, "left") + width).toBeCloseTo(10 + 816, 3);
+    expect(at(moved, "left")).toBeLessThan(10 + near.left * scale);
   });
 });

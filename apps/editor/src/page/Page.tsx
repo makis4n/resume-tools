@@ -82,10 +82,14 @@ interface Frame {
   scale: number;
 }
 
-/** The lock's look: a line of plain words on dark, which takes no pointer and no focus. */
+/**
+ * The lock's look: a line of plain words on dark, which takes no pointer and no focus, and lies
+ * under a field's open overlay, its bar and its pickers, which come after the page at the same
+ * height (`zIndex` 1), so that it never covers what is being edited.
+ */
 const TIP = {
   position: "absolute",
-  zIndex: 2,
+  zIndex: 1,
   transform: "translateY(-100%)",
   display: "flex",
   alignItems: "center",
@@ -109,8 +113,9 @@ const BLOCK = {
 
 /**
  * The lock over a locked part: each of its blocks marked, and above the first a padlock and
- * `LOCKED_TIP`. Placed where the page's SVG is drawn now, read again with each new page: the SVG
- * is scaled to its container, so its box against the page's size in TeX points gives the scale.
+ * `LOCKED_TIP`, moved left as far as it takes to end within the page. Placed where the page's SVG
+ * is drawn now, read again with each new page: the SVG is scaled to its container, so its box
+ * against the page's size in TeX points gives the scale.
  */
 function Lock({
   host,
@@ -124,6 +129,8 @@ function Lock({
   blocks: readonly Box[];
 }) {
   const [frame, setFrame] = useState<Frame>();
+  const tip = useRef<HTMLDivElement>(null);
+  const [overrun, setOverrun] = useState(0);
   // Measured again with each page, whose SVG is drawn anew.
   useLayoutEffect(() => {
     const element = host.current;
@@ -138,21 +145,33 @@ function Lock({
     setFrame({ x: page.left - box.left, y: page.top - box.top, scale });
   }, [host, svg, size]);
   const [first] = blocks;
-  if (frame === undefined || first === undefined) return null;
-  const placed = (block: Box) => ({
-    left: frame.x + block.left * frame.scale,
-    top: frame.y + block.top * frame.scale,
-    width: (block.right - block.left) * frame.scale,
-    height: (block.bottom - block.top) * frame.scale,
+  const placed = (block: Box, at: Frame) => ({
+    left: at.x + block.left * at.scale,
+    top: at.y + block.top * at.scale,
+    width: (block.right - block.left) * at.scale,
+    height: (block.bottom - block.top) * at.scale,
   });
-  const { left, top } = placed(first);
+  const start = frame && first && placed(first, frame);
+  // How far the line, at the first block's left, would run past the page's right edge.
+  useLayoutEffect(() => {
+    const line = tip.current;
+    if (!line || !frame || !start) return;
+    const pageRight = frame.x + size.width * frame.scale;
+    setOverrun(Math.max(0, start.left + line.getBoundingClientRect().width - pageRight));
+  }, [frame, start?.left, size]);
+  if (frame === undefined || start === undefined) return null;
   return (
     <>
       {blocks.map((block, index) => (
         // A part's blocks are its own, in the page's order, and change only with a new page.
-        <div key={index} className="locked-block" style={{ ...BLOCK, ...placed(block) }} />
+        <div key={index} className="locked-block" style={{ ...BLOCK, ...placed(block, frame) }} />
       ))}
-      <div className="locked-tip" role="tooltip" style={{ ...TIP, left, top: top - 2 }}>
+      <div
+        ref={tip}
+        className="locked-tip"
+        role="tooltip"
+        style={{ ...TIP, left: Math.max(frame.x, start.left - overrun), top: start.top - 2 }}
+      >
         <Padlock />
         {LOCKED_TIP}
       </div>

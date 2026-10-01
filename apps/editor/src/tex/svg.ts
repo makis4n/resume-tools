@@ -7,9 +7,10 @@
  * the hole of an "o" still lands on it. Coordinates are in TeX points with the origin at
  * the page's top-left corner; the DVI origin sits one inch in from that.
  *
- * A glyph of a locked part of an imported resume carries the part's id instead (`data-locked`),
- * and so does an unpainted box over each of the part's blocks, under every glyph, so that the
- * pointer between its words and lines is over the part too (decision 0041).
+ * A glyph or a rule of a locked part of an imported resume, a box of colour among its rules, carries
+ * the part's id instead (`data-locked`), and so does an unpainted box over each of the part's
+ * blocks, under every glyph, so that the pointer between its words and lines is over the part too
+ * (decision 0041).
  */
 
 import type { DviDocument, DviPage, NativeFont, PageItem } from "./dvi";
@@ -86,8 +87,8 @@ export interface RenderOptions {
   native?: (font: NativeFont) => NativeOutlines | undefined;
   fields?: Map<string, Field>;
   /**
-   * The page's locked parts (decision 0041): the part each of their glyphs is of, by `glyphKey`,
-   * and each part's blocks, by its id, in TeX points from the page's top-left corner.
+   * The page's locked parts (decision 0041): the part each of their glyphs and rules is of, by
+   * `glyphKey`, and each part's blocks, by its id, in TeX points from the page's top-left corner.
    */
   locked?: {
     glyphs: ReadonlyMap<string, string>;
@@ -262,7 +263,7 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
         const x = INCH + item.h * pt;
         const y = INCH + (item.v - item.height) * pt;
         body.push(
-          `<rect x="${x.toFixed(3)}" y="${y.toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="${(item.height * pt).toFixed(3)}"${fill()}/>`,
+          `<rect x="${x.toFixed(3)}" y="${y.toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="${(item.height * pt).toFixed(3)}"${fill()}${fieldAttrs(index)}/>`,
         );
         return;
       }

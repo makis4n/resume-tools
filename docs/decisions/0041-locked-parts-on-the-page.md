@@ -26,37 +26,49 @@ part, and what a part can and cannot do until item 16 decides how one is edited.
   nothing either, and the same prefix, which the model refuses in kept LaTeX and the import's
   comparison of glyph streams leaves out, as before. Two alike markers could not say which of
   them a part starts with, and the output does not always set them in the source's order (below).
-- **What is a part's.** `lockedSets` walks the output's pages in order. A part's start opens it,
-  its end closes it, and a part a page breaks runs on to its end on the next page. What the
-  output sets while a part is open, its glyphs and its drawn rules, is the part's, but for what a
+- **What is a part's.** `lockedSets` reads each part's start and end where they stand among the
+  output's glyphs and rules. What the output sets between them is the part's, but for what a
   field's markers hold there: a part's LaTeX never holds them (the schema refuses them, decision
   0025), but a macro it calls may typeset a field the class stored, as a header set before
-  `\begin{document}` is, and that stays the field's. Markers are read in any case, their ids
-  lowercased, as a field's are. A part is never a field: `collectFields` reads only a field's
-  markers, so the page aligns no text of a part's, and a click finds no field in it.
+  `\begin{document}` is, and that stays the field's. What the output sets inside a part's span
+  that lies within another part's, as only a reordering can put it, is the inner part's. Markers
+  are read in any case, their ids lowercased, as a field's are. A part is never a field:
+  `collectFields` reads only a field's markers, so the page aligns no text of a part's, and a
+  click finds no field in it.
+- **A part one page holds keeps everything between its markers**, cells side by side, a list in
+  columns of its own and all, though TeX may write its start alone at the foot of the page before.
 - **Where the output sets a part out of the source's order.** Within one run of a page, one column,
   the output keeps the source's order; across runs it need not. paracol sets two columns side by
   side column by column, page by page, and a page's foot and the next page's head come between a
-  part's lines where a page breaks it. So a part whose end comes before its start, as one that
-  runs from one column into the other ends at the top of the second before it starts at the foot
-  of the first, or whose start no end follows, keeps nothing, and the page shows no lock over it.
-  A part that starts on one page and ends on another keeps, on the first, the run of what it sets
-  that goes on down the page from its start, up to where the output goes back up by more than a
-  line, to another column's top, and on the last the run that goes down into its end; what lies
-  past them, another column's sections, is not its. Two parts open at once, which the source never
-  nests, each take what comes, and each that a page breaks keeps its own runs. AltaCV's sample
-  shows both: a part ends there before it starts, and without the rule of runs 62 glyphs of other
-  sections' content read as a part's.
+  part's lines where a page breaks it. So:
+  - a part that starts on one page and ends on another keeps, on the first page that holds any of
+    it, what goes down from its first line until the output goes back up above that line, to the
+    top of another column, where a cell beside the last goes back up no higher than the part's own
+    first line; and on each page after, every line that starts no further left of where the part's
+    own lines start on its first page than three times its size, a list's indent, so not another
+    column's to its left. The markers do not say where the part's column is: TeX writes a start
+    at the end of a paragraph the part follows with no blank line, and an end after its last line;
+  - a part whose end the output sets before its start, as one that runs from the foot of one
+    column into the top of the next, on the page before, ends, keeps the run that goes down into
+    its end, the lines before it on its page, after the last field or part there, that start
+    where the line its end stands on starts; and the run from its start down its column, as above,
+    up to the next part;
+  - a part with no start or no end keeps nothing, and the page shows no lock over it.
+  AltaCV's sample shows both kinds: one of its parts ends before it starts, and without these
+  rules 62 glyphs of other sections' content read as a part's. The reviewers' invented documents
+  show the rest: a skills table of rows of two cells whose heading goes to the next page, or which
+  a page breaks between its rows, and a list in two columns, each keep every glyph they own.
 - **Its blocks**, on the page drawn: the boxes of its glyphs and rules there, in the order the
   page sets them, joined while they go on down the page, and a new block where the part goes back
   up by more than the size of what comes next, a line or more, as to the top of a column or of a
-  table's cell beside the last (`blocksOf`); a superscript, or an accent raised over a capital,
-  goes up less. The SVG draws each block as a box with no paint, under every glyph, that carries
-  the part's id, and each glyph of the part carries it too (`data-locked`), as a field's glyph
-  carries its field's: the pointer between a part's words and lines is over the part, and over
-  a glyph of anything else it is not. `DrawnPage.locked` holds each part, in the order the output
-  first sets it, with its blocks on the page drawn, none where it is on another page or kept
-  nothing.
+  table's cell beside the last, and where a field it holds comes between, so that no block lies
+  over the field (`blocksOf`); a superscript, or an accent raised over a capital, goes up less.
+  The SVG draws each block as a box with no paint, under every glyph, that carries the part's id,
+  and each glyph and rule of the part carries it too (`data-locked`), a box of colour among the
+  rules, as a field's glyph carries its field's: the pointer between a part's words and lines,
+  and over its rules, is over the part, and over a glyph of anything else it is not.
+  `DrawnPage.locked` holds each part, in the order the output first sets it, with its blocks on
+  the page drawn, none where it is on another page or kept nothing.
 
 ### The lock
 
@@ -64,7 +76,9 @@ part, and what a part can and cannot do until item 16 decides how one is edited.
   faint tint, and puts above the first a padlock and one line: "Kept as it was; remove or move it
   from the side panel" (`LOCKED_TIP`). Off the part, over a field's glyph, the page's white or
   off the page, it goes. The lock takes no pointer, so what lies under it is clicked as it would
-  be, and it never looks like a field's overlay, whose outline is solid and green.
+  be, and it never looks like a field's overlay, whose outline is solid and green. It lies under
+  an open field's overlay, its bar and its pickers, which come after the page at the same height,
+  and the line moves left as far as it takes to end within the page.
 - **A click opens nothing**, neither the plain overlay nor the rich editor: the page reports a
   click only on a field's glyph (`fieldAt`), and nothing of a part carries a field. With a field
   open, a click on a part leaves the overlay as it was; in the browser that click also takes the
@@ -141,13 +155,22 @@ it, a redump and no failure (decision 0010).
   glyphs, every one, in one block that holds no field's glyph; and its tests of the markers moving
   nothing, which pass with the end marker as before.
 - **The reading** (`src/page/locked.test.ts`): a part's start and end in any case, a field in a
-  part the field's, a part a page breaks, a native run's `.notdef`, a part whose end comes first or
-  that never ends keeping nothing, and two parts two columns break across pages each keeping its
-  own column's runs.
+  part the field's, a part a page breaks, a native run's `.notdef`, a part nested in another's span,
+  one whose start TeX wrote alone at the foot of the page before, cells side by side on a page a
+  part starts on, a part whose end comes first keeping its own runs and one that never ends
+  keeping nothing, and two parts two columns break across pages each keeping its own column's
+  runs; and on the engine, the reviewers' invented documents, each part keeping every glyph it
+  owns, page by page, and drawn as the part's: a table of rows of two cells whose heading goes to
+  the next page or which a page breaks between its rows, a list in two columns, a part broken
+  in paracol's first column beside the second, and a part paracol sets out of order, its own text
+  set in typewriter so that its glyphs are known; and a field a macro of the part sets between
+  two of its lines, which no block covers, and the part's rule and box of colour, marked.
 - **The DOM** (`src/page/Page.dom.test.tsx`, jsdom), with the page and the overlay put together as
   the app puts them: the lock on hover over a part's glyph and block and none off it; a click on
   either opening nothing with no field open, with the plain overlay open and with the rich editor
-  open, each left on its field as it was; and the tab order passing the part and its lock by.
+  open, each left on its field as it was; the tab order passing the part and its lock by, and a
+  tab stop, given one, found; and the lock placed where the SVG draws the part, under an open
+  overlay, its line moved left to end within the page.
 
 ## What stays open
 
@@ -164,7 +187,9 @@ it, a redump and no failure (decision 0010).
   takes the page's foot and the next page's head, the template's own text, which the report gives
   to no part; its lock shows over them on the page the editor draws. A part paracol switches
   columns in on one page, starting in one and ending in the other, takes what the other column
-  held before it there.
+  held before it there, and what its own first column sets after it from later in the source; a
+  part in paracol's first column that runs over three pages or more takes the second column of
+  each page between its first and its last.
 - **A part past the first page** is named in the panel, and shows its lock once the editor draws
   its page, which it does not yet.
 - **A removal that stops the compile.** A part that holds the closer of a list a section opens can

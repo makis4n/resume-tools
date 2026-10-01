@@ -1,6 +1,16 @@
-import { describe, expect, it } from "vitest";
-import type { DviDocument, PageItem } from "../tex/dvi";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { EngineManifest } from "../engine/manifest";
+import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
+import type { EngineSession } from "../engine/session";
+import { PRELUDE } from "../templates/prelude";
+import { type DviDocument, type PageItem, parseDvi, pointsPerUnit } from "../tex/dvi";
+import { INCH } from "../tex/svg";
+import { drawPage, widthsOf } from "./draw";
+import { FontLibrary, type PageFont } from "./fonts";
 import { blocksOf, type LockedSet, lockedSets, lockMarker, type Placed } from "./locked";
+import { TexLiveIndex } from "./texlive";
 
 // Invented pages, in TeX's units, the scaled point: every glyph a character of cmr10 at 10 pt, 5 pt
 // wide, and each text an invented one.
@@ -22,7 +32,11 @@ function line(text: string, h: number, v: number): PageItem[] {
   return items;
 }
 
-const special = (text: string): PageItem => ({ kind: "special", h: 0, v: 0, text });
+/**
+ * A special at `h` points along: a lock marker stands at the left edge of its column, where TeX
+ * writes it between two sections.
+ */
+const special = (text: string, h = 0): PageItem => ({ kind: "special", h: h * SP, v: 0, text });
 
 /** A document of the pages given, its glyphs in cmr10 and its native runs in an invented font. */
 function documentOf(...pages: PageItem[][]): DviDocument {
@@ -114,6 +128,65 @@ describe("lockedSets", () => {
     const sets = lockedSets(doc);
     expect([...sets.keys()]).toEqual(["lock-head"]);
     expect(spelt(doc, sets.get("lock-head")).pages).toEqual({ 0: "Kepttoo" });
+    // The part resumes after the field, where its blocks part, so that none lies over the field.
+    expect(sets.get("lock-head")?.items.map((each) => each.resumes === true)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+    ]);
+  });
+
+  it("keeps every glyph of a part one page holds, its cells side by side, its start on the page before", () => {
+    // TeX writes the start at the foot of a page and sets the part, a heading and a table of rows
+    // of two cells, the right cell back up beside the left, wholly on the next.
+    const rows = [
+      ...line("Skills", 0, 40),
+      ...line("Left one", 0, 60),
+      ...line("Left two", 0, 72),
+      ...line("Right one", 200, 60),
+      ...line("Right two", 200, 72),
+      ...line("Next row", 0, 100),
+    ];
+    const doc = documentOf(
+      [...line("Before", 0, 690), special("rt:l:lock-skills")],
+      [...rows, special("rt:l:/lock-skills"), ...line("After", 0, 120)],
+    );
+    expect(spelt(doc, lockedSets(doc).get("lock-skills")).pages).toEqual({
+      1: "SkillsLeftoneLefttwoRightoneRighttwoNextrow",
+    });
+  });
+
+  it("keeps, of a part a page breaks, its cells side by side on the first page and its lines after", () => {
+    // The reviewer's case: a cell beside the last goes back up no higher than the part's first
+    // line, so it is no other column's, and the rows after it are the part's too.
+    const doc = documentOf(
+      [
+        ...line("Before", 0, 10),
+        special("rt:l:lock-skills"),
+        ...line("Skills", 0, 600),
+        ...line("Left one", 0, 620),
+        ...line("Left two", 0, 632),
+        ...line("Right one", 200, 620),
+        ...line("Right two", 200, 632),
+        ...line("Next row", 0, 660),
+        ...line("Last row", 0, 690),
+      ],
+      [
+        ...line("Rest", 0, 20),
+        ...line("Left cell", 0, 40),
+        ...line("Right cell", 200, 40),
+        special("rt:l:/lock-skills"),
+        ...line("After", 0, 60),
+      ],
+    );
+    expect(spelt(doc, lockedSets(doc).get("lock-skills")).pages).toEqual({
+      0: "SkillsLeftoneLefttwoRightoneRighttwoNextrowLastrow",
+      1: "RestLeftcellRightcell",
+    });
   });
 
   it("takes each glyph of a native run, but its .notdef, which draws nothing", () => {
@@ -139,28 +212,35 @@ describe("lockedSets", () => {
     ]);
   });
 
-  it("keeps nothing of a part the output sets out of order: its end first, or no end", () => {
-    // As paracol sets two columns, page by page: a part that runs from the first column into the
-    // second ends at the second's top, on the first page, before it starts at the first's foot, on
-    // the next; what lies between is the second column's and the first's, another part among it.
+  it("keeps, of a part the output sets out of order, the run into its end and the run from its start", () => {
+    // As paracol sets two columns, page by page: a part that runs from the foot of the first
+    // column, on the second page, into the top of the second, on the first, ends there before it
+    // starts; between lie the first page's columns and another part. And a part with no end.
     const doc = documentOf(
       [
         ...line("Left", 0, 10),
-        special("rt:l:/lock-switch"),
-        ...line("Right column", 300, 10),
-        special("rt:l:lock-tags"),
-        ...line("Tags", 300, 30),
-        special("rt:l:/lock-tags"),
+        ...line("column", 0, 700),
+        ...line("Mine", 300, 10),
+        special("rt:l:/lock-switch", 300),
+        ...line("Right column", 300, 30),
+        special("rt:l:lock-tags", 300),
+        ...line("Tags", 300, 50),
+        special("rt:l:/lock-tags", 300),
       ],
-      [...line("More left", 0, 10), special("rt:l:lock-switch"), ...line("Tail", 0, 30)],
+      [
+        ...line("More left", 0, 10),
+        special("rt:l:lock-switch"),
+        ...line("Also mine", 0, 600),
+        ...line("Right again", 300, 10),
+      ],
       [special("rt:l:lock-open"), ...line("Never ended", 0, 10)],
     );
     const sets = lockedSets(doc);
-    // Each part where its first marker came, the parts set out of order with nothing of their own.
+    // Each part where its first marker came.
     expect([...sets.keys()]).toEqual(["lock-switch", "lock-tags", "lock-open"]);
-    expect(sets.get("lock-switch")?.items).toEqual([]);
-    expect(sets.get("lock-open")?.items).toEqual([]);
+    expect(spelt(doc, sets.get("lock-switch")).pages).toEqual({ 0: "Mine", 1: "Alsomine" });
     expect(spelt(doc, sets.get("lock-tags")).pages).toEqual({ 0: "Tags" });
+    expect(sets.get("lock-open")?.items).toEqual([]);
   });
 
   it("keeps, of a part two columns break across pages, only its own column's runs", () => {
@@ -174,7 +254,7 @@ describe("lockedSets", () => {
         ...line("Kept", 0, 700),
         ...line("Right", 300, 10),
         ...line("Column", 300, 22),
-        special("rt:l:lock-second"),
+        special("rt:l:lock-second", 300),
         ...line("Also", 300, 700),
       ],
       [
@@ -183,12 +263,29 @@ describe("lockedSets", () => {
         ...line("Swallowed", 0, 30),
         ...line("Too", 0, 42),
         ...line("kept", 300, 10),
-        special("rt:l:/lock-second"),
+        special("rt:l:/lock-second", 300),
       ],
     );
     const sets = lockedSets(doc);
     expect(spelt(doc, sets.get("lock-first")).pages).toEqual({ 0: "Kept", 1: "more" });
     expect(spelt(doc, sets.get("lock-second")).pages).toEqual({ 0: "Also", 1: "kept" });
+  });
+
+  it("gives what a part nested in another's span sets to the inner part", () => {
+    // Two parts the output sets one inside the other's markers, as only a reordering can: each
+    // glyph is the innermost's.
+    const doc = documentOf([
+      special("rt:l:lock-outer"),
+      ...line("Outer", 0, 10),
+      special("rt:l:lock-inner"),
+      ...line("Inner", 0, 22),
+      special("rt:l:/lock-inner"),
+      ...line("Again", 0, 34),
+      special("rt:l:/lock-outer"),
+    ]);
+    const sets = lockedSets(doc);
+    expect(spelt(doc, sets.get("lock-outer")).pages).toEqual({ 0: "OuterAgain" });
+    expect(spelt(doc, sets.get("lock-inner")).pages).toEqual({ 0: "Inner" });
   });
 
   it("finds no part on a page with no lock marker, and keeps parts in the order they come", () => {
@@ -230,7 +327,240 @@ describe("blocksOf", () => {
     ]);
   });
 
+  it("starts another block where a field the part holds comes between, so that none lies over it", () => {
+    // A field a class's header macro sets on its own line, between two lines the part keeps.
+    const placed = [at(50, 200, 100), { ...at(50, 200, 124), resumes: true }];
+    expect(blocksOf(placed)).toEqual([
+      { left: 50, top: 93, right: 200, bottom: 102 },
+      { left: 50, top: 117, right: 200, bottom: 126 },
+    ]);
+  });
+
   it("gives a part with nothing on the page no block", () => {
     expect(blocksOf([])).toEqual([]);
   });
+});
+
+// On the engine: the reviewers' invented documents, compiled with the editor's prelude, in one
+// column and no page's head or foot, or in paracol's two, the part's own text set in typewriter
+// so that its glyphs are known whatever the page breaks.
+
+/** A format of article in 10 pt with an inch's margins, the packages given, and the prelude. */
+const preamble = (...packages: string[]) =>
+  [
+    "\\documentclass[10pt,dvipdfmx]{article}",
+    "\\usepackage[margin=1in]{geometry}",
+    ...packages.map((name) => `\\usepackage{${name}}`),
+    "\\pagestyle{empty}",
+    "\\setlength{\\parindent}{0pt}",
+    PRELUDE,
+  ].join("\n");
+
+const filler = (n: number) =>
+  Array.from({ length: n }, (_, i) => `Filler line ${i} of an invented section.\\par`).join("\n");
+const row = (i: number) =>
+  `\\begin{tabular}{p{2.5in}p{2.5in}}Invented skill ${i} with words that wrap onto a second line here & Other cell ${i} beside it, also wrapping onto its second line\\end{tabular}\\par`;
+const TABLE = Array.from({ length: 8 }, (_, i) => row(i)).join("\n");
+const LIST = `\\begin{multicols}{2}\\begin{itemize}${Array.from({ length: 12 }, (_, i) => `\\item Invented hobby number ${i}`).join("\n")}\\end{itemize}\\end{multicols}`;
+const inPart = (fill: number, content: string) =>
+  [
+    "\\begin{document}",
+    filler(fill),
+    `\\rtlocked{lock-skills}{\\section*{Skills}\n${content}\n}`,
+    "After the part.",
+    "\\end{document}",
+  ].join("\n");
+
+/** Invented words, `n` of them, after `word`, some with an x. */
+const words = (n: number, word: string) =>
+  Array.from({ length: n }, (_, i) => `${word}${i % 7 === 0 ? "" : "x"}`).join(" ");
+
+describe.skipIf(!engineAvailable())("locked parts on the engine's pages", () => {
+  let session: EngineSession;
+  let fonts: FontLibrary;
+  beforeAll(async () => {
+    session = await startNodeSession();
+    for (const [name, packages] of [
+      ["locked-tables", ["multicol"]],
+      ["locked-columns", ["paracol"]],
+      ["locked-marks", ["xcolor"]],
+    ] as const) {
+      const dumped = session.dump("pdftex", name, preamble(...packages), {});
+      if (!dumped.ok) throw new Error(dumped.error);
+    }
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+      readFileSync(join(ENGINE_DIR, "files", path)),
+    );
+  }, 60_000);
+
+  /** A body's output, and the output read as the page reads it, with its fonts' widths. */
+  async function compiled(format: string, body: string, job: string) {
+    const result = session.compile("pdftex", format, body, { job });
+    if (!result.output) throw new Error(result.error);
+    expect(result.log).not.toMatch(/^! /m);
+    const loaded = new Map<string, PageFont>();
+    for (const { name } of parseDvi(result.output, () => undefined).fonts.values()) {
+      const font = await fonts.load(name);
+      if (font !== undefined) loaded.set(name, font);
+    }
+    return { output: result.output, doc: parseDvi(result.output, widthsOf(loaded)) };
+  }
+
+  /** How many of each page's glyphs a test of a glyph, by its font's name, takes. */
+  const glyphsByPage = (doc: DviDocument, test: (font: string) => boolean) =>
+    doc.pages.map(
+      (page) =>
+        page.items.filter(
+          (item) => item.kind === "glyph" && test(doc.fonts.get(item.font)?.name ?? ""),
+        ).length,
+    );
+
+  /** How many glyphs of each page a part keeps. */
+  const keptByPage = (doc: DviDocument, id: string) =>
+    doc.pages.map(
+      (_, number) =>
+        (lockedSets(doc).get(id)?.items ?? []).filter(
+          (each) => each.kind === "glyph" && each.page === number,
+        ).length,
+    );
+
+  /** How many glyphs of each page lie between a part's markers, in the output's order. */
+  const betweenByPage = (doc: DviDocument) => {
+    let open = false;
+    return doc.pages.map((page) => {
+      let count = 0;
+      for (const item of page.items) {
+        const marker = item.kind === "special" ? lockMarker(item.text) : undefined;
+        if (marker !== undefined) open = !marker.end;
+        else if (open && item.kind === "glyph") count++;
+      }
+      return count;
+    });
+  };
+
+  // The reviewers' three cases (decision 0041): a part with what sets side by side, a page's break
+  // before its heading, its start left at the foot of the page before, or within it.
+  for (const [name, body, pages] of [
+    ["a table of rows of two cells, its heading on the next page", inPart(52, TABLE), [0, 1]],
+    ["a table of rows of two cells, broken between its rows", inPart(36, TABLE), [1, 1]],
+    ["a list in two columns, its heading on the next page", inPart(53, LIST), [0, 1]],
+  ] as const)
+    it(`keeps every glyph of ${name}, and the page draws each as the part's`, async () => {
+      const { output, doc } = await compiled("locked-tables", body, "tables");
+      const between = betweenByPage(doc);
+      // The break falls where the case says: which pages hold the part.
+      expect(between.map((count) => (count > 0 ? 1 : 0))).toEqual(pages);
+      expect(keptByPage(doc, "lock-skills")).toEqual(between);
+      // Every kept glyph the page draws, which a font it cannot draw leaves out, is the part's.
+      const pt = pointsPerUnit(doc);
+      for (const number of between.keys()) {
+        const page = await drawPage(output, fonts, new Map(), number);
+        const kept = (lockedSets(doc).get("lock-skills")?.items ?? []).flatMap((each) => {
+          const item = doc.pages[number]?.items[each.item];
+          return each.page === number && item?.kind === "glyph" ? [item] : [];
+        });
+        const drawn = kept.flatMap((item) =>
+          page.glyphs.filter(
+            (glyph) =>
+              Math.abs(glyph.x - (INCH + item.h * pt)) < 0.01 &&
+              Math.abs(glyph.y - (INCH + item.v * pt)) < 0.01,
+          ),
+        );
+        if (kept.length > 0) expect(drawn.length).toBeGreaterThan(kept.length / 2);
+        expect(drawn.filter((glyph) => glyph.locked !== "lock-skills")).toEqual([]);
+        expect(page.glyphs.filter((glyph) => glyph.locked === "lock-skills")).toHaveLength(
+          drawn.length,
+        );
+      }
+    }, 60_000);
+
+  it("keeps, of a part two columns break across pages, its own glyphs and no other column's", async () => {
+    // paracol sets the first column of each page, then the second: between the part's markers lie
+    // the second column of the first page, its sections, a field among them, and its own text.
+    const body = [
+      "\\begin{document}",
+      "\\begin{paracol}{2}",
+      "\\section*{Left One}",
+      words(380, "quill"),
+      `\\rtlocked{lock-break}{\\section*{\\texttt{Broken}}\\texttt{${words(220, "lark")}}\n}`,
+      "\\switchcolumn",
+      "\\section*{Right Side}",
+      "\\rtfield{ent-r.text}{Right column text plover.}",
+      "Template words gannet.",
+      "\\end{paracol}",
+      "\\end{document}",
+    ].join("\n");
+    const { doc } = await compiled("locked-columns", body, "break");
+    const own = glyphsByPage(doc, (font) => font.startsWith("cmtt"));
+    expect(own.filter((count) => count > 0)).toHaveLength(2);
+    expect(keptByPage(doc, "lock-break")).toEqual(own);
+  }, 60_000);
+
+  it("keeps, of a part the output sets out of order, its run into its end and from its start", async () => {
+    // The part runs from the foot of the first column, on the second page, into the top of the
+    // second column, on the first: its end comes before its start.
+    const body = [
+      "\\begin{document}",
+      "\\begin{paracol}{2}",
+      "\\section*{Left One}",
+      words(1100, "quill"),
+      "\\rtlocked{lock-span}{\\section*{\\texttt{Spanning}}\\texttt{Left piece wren.}\\switchcolumn \\texttt{Right piece heron.}\n}",
+      "\\section*{Right Two}",
+      "\\rtfield{ent-b.text}{Right column text plover.}",
+      "\\end{paracol}",
+      "\\end{document}",
+    ].join("\n");
+    const { doc } = await compiled("locked-columns", body, "span");
+    const markers = doc.pages.flatMap((page, number) =>
+      page.items.flatMap((item) => {
+        const marker = item.kind === "special" ? lockMarker(item.text) : undefined;
+        return marker === undefined ? [] : [`${marker.end ? "end" : "start"} ${number}`];
+      }),
+    );
+    // Its end, on the first page, before its start, on a later one.
+    expect(markers).toHaveLength(2);
+    expect(markers[0]).toBe("end 0");
+    expect(markers[1]).toMatch(/^start [1-9]/);
+    expect(keptByPage(doc, "lock-span")).toEqual(
+      glyphsByPage(doc, (font) => font.startsWith("cmtt")),
+    );
+  }, 60_000);
+
+  it("parts its blocks around a field a macro of the part sets, and marks its rules and boxes", async () => {
+    // As a class's header macro, called by a locked part, sets a stored field between two of the
+    // part's own lines; and a rule and a box of colour the part draws.
+    const body = [
+      "\\begin{document}",
+      "\\newcommand{\\inventedheader}{\\begin{center}Kept line above the name\\\\ \\rtfield{header.first}{Quill Invented}\\\\ Kept line below the name\\end{center}}",
+      "\\rtlocked{lock-head}{\\inventedheader}",
+      "\\rtlocked{lock-rule}{\\noindent\\rule{\\linewidth}{2pt}\\par\\noindent\\colorbox{gray}{\\parbox{0.8\\linewidth}{Kept words on a box of colour}}\\par}",
+      "\\end{document}",
+    ].join("\n");
+    const { output } = await compiled("locked-marks", body, "marks");
+    const page = await drawPage(output, fonts, new Map([["header.first", "Quill Invented"]]));
+    const field = page.glyphs.filter((glyph) => glyph.field === "header.first");
+    expect(field.length).toBeGreaterThan(0);
+    const blocks = page.locked.get("lock-head")?.blocks ?? [];
+    expect(blocks).toHaveLength(2);
+    // No block lies over the field, nor over the space between its words.
+    const over = (x: number, y: number) =>
+      blocks.some(
+        (block) => x >= block.left && x <= block.right && y >= block.top && y <= block.bottom,
+      );
+    expect(
+      field.filter((glyph) => over((glyph.left + glyph.right) / 2, (glyph.top + glyph.bottom) / 2)),
+    ).toEqual([]);
+    const [first, last] = [field[0], field.at(-1)];
+    if (first === undefined || last === undefined) throw new Error("no field");
+    expect(over((first.right + last.left) / 2, first.y - 2)).toBe(false);
+    // The rule and the box of colour carry the part, as its glyphs do.
+    const painted = (page.svg.match(/<rect [^>]*>/g) ?? []).filter(
+      (rect) => !rect.includes('fill-opacity="0"') && !rect.includes('fill="white"'),
+    );
+    expect(painted.length).toBeGreaterThanOrEqual(2);
+    for (const rect of painted) expect(rect).toContain('data-locked="lock-rule"');
+  }, 60_000);
 });
