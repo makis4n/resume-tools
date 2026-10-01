@@ -67,7 +67,7 @@ pnpm build          # the production bundle in apps/editor/dist
 Importing a template asks a language model what each of the template's commands is. Only the template's code goes, with placeholders where the resume's text was, never the text itself (decision 0033). The model runs on SoCLaaS, the School of Computing's free LLM gateway for its students and staff (decision 0036), and `apps/editor/.env.example` names the variables the code reads.
 
 1. Log in at https://soclaas-portal.comp.nus.edu.sg with your SoC account and issue a key, or run `soclaas-portal issue` on an SoC server. It is shown once.
-2. Put it in `apps/editor/.env` as `SOCLAAS_API_KEY=clsk_...`, and, if you want another model than the default `qwen3.8:27b`, its id as `NAMING_MODEL`; milestone 3's item 18 benchmarks the candidates. Never give either the `VITE_` prefix, which would put the key in the page.
+2. Put it in `apps/editor/.env` as `SOCLAAS_API_KEY=clsk_...`, and, if you want another model than the default `qwen3.8:27b`, which milestone 3's item 18 picked and asks with its thinking off (decision 0044), its id as `NAMING_MODEL`. Never give either the `VITE_` prefix, which would put the key in the page.
 3. Check that the key works, and which models it may use:
 
    ```sh

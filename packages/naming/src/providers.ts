@@ -6,21 +6,82 @@
  * school's gateway. Each takes the key its caller gives, never one read from the environment, so
  * that its caller, the naming service or the corpus runner, decides where the key comes from. The
  * id comes from `NAMING_MODEL`, and the default otherwise, so that a candidate swaps with a
- * variable, as item 18's benchmark swaps them.
+ * variable, as item 18's benchmark swaps them; the default, `qwen3.8:27b`, is asked with its
+ * thinking off (decision 0044).
  */
 
 import { createGoogle } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { LanguageModel } from "ai";
+import { type LanguageModel, wrapLanguageModel } from "ai";
 
 /** The gateway's OpenAI-compatible routes. */
 export const SOCLAAS_URL = "https://soclaas-api.comp.nus.edu.sg/v1";
 
+/** The provider's name, which the AI SDK reads its options under. */
+const PROVIDER = "soclaas";
+
+/**
+ * The ways a Qwen 3 model on the gateway may be asked not to reason before it answers (item 18's
+ * benchmark, decision 0044), as the model and the servers that host it take one: a `/no_think`
+ * line after the instructions, the model's own switch (`no-think`); the chat template's
+ * `enable_thinking` set false, as vLLM and SGLang take it (`template`); and a reasoning effort of
+ * none, as OpenAI's API names it and Ollama takes it (`effort`). Each leaves the request, its prompt
+ * and the answer's schema as they are.
+ */
+export const THINKING_SWITCHES = ["no-think", "template", "effort"] as const;
+export type ThinkingSwitch = (typeof THINKING_SWITCHES)[number];
+
+/** A model whose every call asks it not to reason first, by the switch given. */
+export function withoutThinking(
+  model: Exclude<LanguageModel, string>,
+  how: ThinkingSwitch,
+): Exclude<LanguageModel, string> {
+  return wrapLanguageModel({
+    model,
+    middleware: {
+      transformParams: async ({ params }) => {
+        if (how === "no-think")
+          return {
+            ...params,
+            prompt: params.prompt.map((message) =>
+              message.role === "system"
+                ? { ...message, content: `${message.content}\n/no_think` }
+                : message,
+            ),
+          };
+        return {
+          ...params,
+          providerOptions: {
+            ...params.providerOptions,
+            [PROVIDER]: {
+              ...params.providerOptions?.[PROVIDER],
+              ...(how === "template"
+                ? { chat_template_kwargs: { enable_thinking: false } }
+                : { reasoningEffort: "none" }),
+            },
+          },
+        };
+      },
+    },
+  });
+}
+
 /**
  * The model the naming step asks when configuration names none: `qwen3.8:27b`, the gateway's
- * all-round model in its catalog of 2026-09-05, until item 18's benchmark picks the default.
+ * all-round model, asked with its thinking off (`MODEL_THINKING`), the highest editable rate whose
+ * slowest part stayed within the naming service's two minutes in item 18's benchmark (decision
+ * 0044).
  */
 export const DEFAULT_MODEL = "qwen3.8:27b";
+
+/**
+ * How a model is asked not to reason first wherever the naming step asks it, by its id (decision
+ * 0044): the default, by its chat template's switch, as item 18's benchmark chose it. Reasoning
+ * first, its every part of the sample outran the runner's 300 s, against the service's 120.
+ */
+export const MODEL_THINKING: Readonly<Record<string, ThinkingSwitch>> = {
+  [DEFAULT_MODEL]: "template",
+};
 
 /** Gemini's model when `googleModel` is given no id: 3.8 Flash, as Google gave it on 2026-09-27. */
 export const GEMINI_MODEL = "gemini-3.8-flash";
@@ -41,18 +102,25 @@ function keyOf(apiKey: string, provider: string): string {
 /**
  * SoCLaaS's model of the id given, over its chat completions route, with `apiKey`, the key the
  * caller read. The answer's schema goes to the gateway as a JSON schema response format, which
- * `name` validates whatever the gateway does with it.
+ * `name` validates whatever the gateway does with it. Every call asks the model not to reason
+ * first by the switch `MODEL_THINKING` gives its id, the default's included, or by `thinking`
+ * where it is given; `thinking: false` leaves the model to reason, as the benchmark measures it so.
+ * `fetch` stands in for the platform's, for a test that reads what would be sent.
  */
 export function soclaasModel(
   apiKey: string,
   id: string = DEFAULT_MODEL,
+  options: { thinking?: ThinkingSwitch | false; fetch?: typeof fetch } = {},
 ): Exclude<LanguageModel, string> {
-  return createOpenAICompatible({
-    name: "soclaas",
+  const model = createOpenAICompatible({
+    name: PROVIDER,
     baseURL: SOCLAAS_URL,
     apiKey: keyOf(apiKey, "SoCLaaS"),
     supportsStructuredOutputs: true,
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   }).chatModel(id);
+  const thinking = options.thinking ?? MODEL_THINKING[id];
+  return thinking === undefined || thinking === false ? model : withoutThinking(model, thinking);
 }
 
 /** Google's model of the id given, which calls Google's API with `apiKey`, the key the caller read. */

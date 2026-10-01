@@ -48,7 +48,7 @@ import {
   LOCK_REASONS,
 } from "./corpus-assemble.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
-import { MODEL_LIMIT_MS } from "./corpus-name.ts";
+import { type FailureKind, MODEL_LIMIT_MS } from "./corpus-name.ts";
 import { POOL_SIZE } from "./corpus-reference.ts";
 
 /**
@@ -159,8 +159,16 @@ export interface RunNaming {
   conflicts: number;
   /** Why the model's answer was not taken, as the naming step's reason. */
   failed?: string;
+  /**
+   * And the kind the benchmark counts it as (`failureKind`, decision 0044), with what the step
+   * says of it, which names a part, macros by plain names, and a provider's status and first line,
+   * never a request's text nor the model's words (decision 0027), and the part that failed, by its
+   * number from 1, where a part did, as `times.parts` numbers them.
+   */
+  failure?: { kind: FailureKind; message: string; part?: number };
   calls: number;
-  tokens: { input: number; cached: number; output: number };
+  /** The calls' tokens, and of those out, the reasoning, where the provider counts it apart. */
+  tokens: { input: number; cached: number; output: number; reasoning?: number };
   /**
    * Whether the request passes the stricter check the model is asked behind, the header's values
    * given to it besides, or is withheld from the model (`assertNoText`): a request the import's own
@@ -178,6 +186,11 @@ export interface RunTimes {
   naming?: number;
   fonts?: number;
   checks?: number;
+  /**
+   * Each part the model was asked, its call and its retries, in the order asked, the last the part
+   * that failed where one did (decision 0044): within `naming`.
+   */
+  parts?: number[];
   /** From the document's being sent to its child to its row coming back. */
   wall: number;
 }
@@ -885,6 +898,15 @@ export function changedPaths(porcelain: string): string[] {
     .map((line) => line.slice(3))
     .filter((path) => path !== BASELINE_PATH);
 }
+
+/**
+ * The commit a run records that it ran at: the commit, or the commit and `+dirty` when a file
+ * differs from it, a file git does not track among them (`changedPaths`), so that a run of an
+ * uncommitted tree never names a commit that lacks what ran (decision 0044); and a baseline is
+ * adopted only from a run that names a commit alone (`baselineFromFile`).
+ */
+export const commitOf = (commit: string, porcelain: string) =>
+  changedPaths(porcelain).length > 0 ? `${commit}+dirty` : commit;
 
 // The documents a run takes.
 

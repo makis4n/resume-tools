@@ -9,10 +9,11 @@
  * import sends it, by its own function (`importRequest`, decision 0038), with the upload's sources
  * and the page's strings and without the header's values, and refused, as the import refuses it,
  * when the privacy check finds the resume's text in it (`request`); its answers, from the committed
- * folder, or from it and the cache of the model the parent names, each as the document's macro
- * (`answerFor`), and, when the parent asks with a key in the environment, from that model for what
- * they miss, behind a stricter check, the header's values the answers find given to it besides, as
- * `corpus leak` proves the request (`answerDocument`, decisions 0027 and 0033); and, where any
+ * folder, or from it and the cache of the model the parent names, or from that cache alone, as
+ * `corpus bench` measures a model (decision 0044), each as the document's macro (`answerFor`), and,
+ * when the parent asks with a key in the environment, from that model for what they miss, behind a
+ * stricter check, the header's values the run's answers find given to it besides, as `corpus leak`
+ * proves the request (`answerDocument`, decisions 0027 and 0033); and, where any
  * macro has an answer, the XeTeX rewrite of its fonts and its check (decision 0023), and its
  * package and document assembled and validated, and read into item 13's report (`reportOf`,
  * decision 0039), which the rows of both runners count.
@@ -34,14 +35,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AnswerCache, NAMING_VERSION } from "@resume-tools/naming";
-import { soclaasModel } from "@resume-tools/naming/providers";
+import { soclaasModel, type ThinkingSwitch } from "@resume-tools/naming/providers";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
 // Item 13's report imports nothing but types, so Node runs it as it is: the same function the
 // browser's import reads its report with (decision 0039).
 import { reportOf } from "../src/import/report.ts";
-import { FileAnswerCache } from "./answer-cache.ts";
+import { modelAnswers, type NamingAnswers } from "./answer-cache.ts";
 import {
   type AssembleChildRow,
   answersFor,
@@ -84,9 +85,10 @@ const APP = fileURLToPath(new URL("..", import.meta.url));
 /**
  * A document, as the parent sends it: its zip and the zip's name; where its answers come from, the
  * committed folder alone when `answers` is absent, as `corpus assemble` and `corpus oracle` read
- * them, or with the cache of the model `answers.model` names, and whether to ask that model for what
- * they miss (`answers.ask`), which the parent sends only with `--allow-model` and a key; and whether
- * to send what the review reads of the document (`review`).
+ * them, or with the cache of the model `answers.model` names, or that cache alone (`answers.own`),
+ * as `corpus bench` measures a candidate on its own answers (decision 0044), and whether to ask that
+ * model for what they miss (`answers.ask`), which the parent sends only with `--allow-model`, or
+ * `bench`, and a key; and whether to send what the review reads of the document (`review`).
  */
 interface Task {
   type: "task";
@@ -94,16 +96,27 @@ interface Task {
   message: {
     name: string;
     bytes: Uint8Array;
-    answers?: { model: string; ask?: boolean };
+    answers?: {
+      model: string;
+      ask?: boolean;
+      own?: boolean;
+      /**
+       * How the model is asked not to reason first, or `false` to let it reason, where the
+       * benchmark says; the switch the naming step asks it with everywhere otherwise.
+       */
+      thinking?: ThinkingSwitch | false;
+      /** How many times a failed call is tried again, `MODEL_RETRIES` unless given. */
+      retries?: number;
+    };
     review?: boolean;
   };
 }
 
-/** A cache the naming step reads, and its text by key, as `commandAnswers` reads one. */
-interface Answers {
-  cache: AnswerCache;
-  read: (key: string) => string | undefined;
-}
+/**
+ * A cache the naming step reads, and the text by key that the header's values are found by, as
+ * `commandAnswers` reads one (`modelAnswers` for a model's cache).
+ */
+type Answers = NamingAnswers;
 
 async function main() {
   const send = (message: unknown) => process.send?.(message);
@@ -149,20 +162,23 @@ async function main() {
   const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
     readFileSync(join(ENGINE_DIR, "files", path)),
   );
-  // The committed answers alone, which nothing files in; and a model's cache over them, by its id.
+  // The committed answers alone, which nothing files in; and a model's cache over them, by its id,
+  // or alone, as the benchmark reads it (decision 0044).
   const folder = answersFolder();
   const committed: Answers = {
     cache: { get: (key) => folder.read(key), put: () => false },
     read: (key) => folder.read(key),
   };
   const caches = new Map<string, Answers>();
-  const answersOf = (model: string | undefined): Answers => {
-    if (model === undefined) return committed;
-    const known = caches.get(model);
+  const answersOf = (answers: Task["message"]["answers"]): Answers => {
+    if (answers === undefined) return committed;
+    // The model's folder, its variant's where the benchmark asks it with another switch, and the
+    // header's values found by the run's answers, the committed first (`modelAnswers`).
+    const id = `${answers.own === true}|${answers.model}|${answers.thinking}`;
+    const known = caches.get(id);
     if (known !== undefined) return known;
-    const cache = new FileAnswerCache({ model });
-    const made = { cache, read: (key: string) => cache.get(key) };
-    caches.set(model, made);
+    const made = modelAnswers(answers);
+    caches.set(id, made);
     return made;
   };
   // The key comes from this process's environment, which the parent's is; the parent checked it.
@@ -174,7 +190,7 @@ async function main() {
     let mark = started;
     const times: RunChildRow["times"] = {};
     /** The time since the last step ended, as the step's. */
-    const took = (step: keyof RunChildRow["times"]) => {
+    const took = (step: Exclude<keyof RunChildRow["times"], "parts">) => {
       const now = performance.now();
       times[step] = Math.round(now - mark);
       mark = now;
@@ -284,7 +300,7 @@ async function main() {
       // header's values, which only the answers give. Those the answers the request finds give, as
       // `corpus leak` finds them (decision 0024), are read besides by the stricter check the model
       // is asked behind and by the review's leak check.
-      const answers = answersOf(task.message.answers?.model);
+      const answers = answersOf(task.message.answers);
       const sent = await naming.importRequest({
         tree: built,
         signatures: found,
@@ -358,11 +374,21 @@ async function main() {
       // check, which the header's values are given to besides, as `corpus leak` proves the request.
       const id = task.message.answers?.model;
       const asking = task.message.answers?.ask === true && id !== undefined && key !== undefined;
+      // The benchmark may ask a reasoning model not to reason first (decision 0044), and try a
+      // failed call fewer times; the request, its gate and its prompt are the same either way.
+      const thinking = task.message.answers?.thinking;
       const answered = await answerDocument(request, {
         cache: answers.cache,
         gate: () => naming.assertNoText(request, checked),
-        ...(asking ? { model: { model: soclaasModel(key, id), id } } : {}),
-        maxRetries: MODEL_RETRIES,
+        ...(asking
+          ? {
+              model: {
+                model: soclaasModel(key, id, thinking === undefined ? {} : { thinking }),
+                id,
+              },
+            }
+          : {}),
+        maxRetries: task.message.answers?.retries ?? MODEL_RETRIES,
         partTimeoutMs: MODEL_LIMIT_MS,
       });
       const runNaming: RunNaming = {
@@ -375,11 +401,30 @@ async function main() {
         stored: answered.stored,
         invalid: answered.invalid,
         conflicts: answered.conflicts,
-        ...(answered.failed === undefined ? {} : { failed: answered.failed.reason }),
+        ...(answered.failed === undefined
+          ? {}
+          : {
+              failed: answered.failed.reason,
+              failure: {
+                kind: answered.failed.kind,
+                message: answered.failed.message,
+                ...(answered.failed.part === undefined ? {} : { part: answered.failed.part }),
+              },
+            }),
         calls: answered.calls,
         tokens: answered.tokens,
         gate,
       };
+      // Each part the model was asked, which the benchmark reads (decision 0044), and said now, so
+      // that the parent keeps the naming step of a document whose checks outrun its limit.
+      if (answered.parts !== undefined) times.parts = answered.parts;
+      if (asking)
+        send({
+          type: "naming",
+          id: task.id,
+          naming: runNaming,
+          ...(answered.parts === undefined ? {} : { parts: answered.parts }),
+        });
       // What the naming step and the probe counted, which every row from here on carries.
       const counts = { naming: runNaming, compiles: { probe: probed.compiles } };
       const asked = request.macros.map((macro) => ({ ...macro, name: realName(macro.name) }));

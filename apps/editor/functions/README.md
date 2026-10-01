@@ -10,7 +10,7 @@ milestone 5's; this says how it is meant to be bound.
 |---|---|---|
 | `NAMING_KV` | KV namespace | The stored answers under `answer:<key>`, a model's for 90 days and a person's reviewed one for good, each with who filed it as its metadata (`filedAt`, `model`, and `by`, the SHA-256 of the filing address's key); the preambles' answers under `preamble:<key>`, for 90 days; and each address's rate buckets under `rate:<address>`, which expire. Nothing is ever filed over what a key holds |
 | `SOCLAAS_API_KEY` | Secret | The naming model's key, a SoCLaaS key (decision 0036), under the name the corpus runner reads too. Without it the route answers from KV alone and names the macros it could not answer, which the editor locks |
-| `NAMING_MODEL` | Variable | The model's SoCLaaS id, `qwen3.8:27b` when unset |
+| `NAMING_MODEL` | Variable | The model's SoCLaaS id, `qwen3.8:27b` when unset, asked with its thinking off (decision 0044) |
 
 Set the key as a secret, never as a plain variable, and never under the `VITE_` prefix, which
 would put the key in the page. The client's address comes from `CF-Connecting-IP`; an IPv6 address
