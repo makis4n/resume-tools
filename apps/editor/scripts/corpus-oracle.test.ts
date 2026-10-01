@@ -1,8 +1,24 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import type { EngineManifest } from "../src/engine/manifest";
+import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/node";
+import { readTree } from "../src/import/fonts";
+import { treeImages } from "../src/import/intake";
+import { isRefusal } from "../src/import/refusal";
+import { reportOfImport, summaryOf } from "../src/import/report";
+import { importResume, type NameRequest } from "../src/import/run";
+import { nameOnService } from "../src/import/service";
+import { FontLibrary } from "../src/page/fonts";
+import { TexLiveIndex } from "../src/page/texlive";
+import { handleName, LIMITS, type NameDeps, type ServiceCache } from "../src/service/name";
+import { MemoryPreambleCache } from "../src/service/preamble";
+import { MemoryRateStore } from "../src/service/rate";
 import { Manifest, parseJson } from "./corpus-manifest";
 import {
   compare,
+  ORACLE_DIR,
   ORACLE_FILE,
   Oracle,
   type OracleDocument,
@@ -11,6 +27,7 @@ import {
   oracleTable,
 } from "./corpus-oracle";
 import type { ProbeRow } from "./corpus-probe";
+import { uploadOf } from "./corpus-reference";
 
 // The sample and the row here are invented for these tests; the oracle's own file names the three
 // upstream samples by their repositories, commits and hashes, never their text.
@@ -179,3 +196,103 @@ describe("the oracle", () => {
     expect(oracleDocument(invented)).not.toHaveProperty("expected");
   });
 });
+
+/** Whether this machine has fetched the oracle's samples, which `corpus oracle` fetches. */
+const fetched = existsSync(join(ORACLE_DIR, "jake-0000", "resume.tex"));
+
+/**
+ * Each upstream sample's words as item 13's report reads them from its page (decision 0039): those
+ * editable on the page, the resume's in all, and the template's own. They are the report's counts
+ * on this commit, through the import the browser runs, and no hand count's: a hand count of each
+ * page is owed (decision 0039), and the owner decides how it is made; until then they hold the
+ * report to what it counts now, within two words.
+ */
+const SAMPLE_COUNTS: Readonly<
+  Record<string, { editable: number; body: number; template: number; outcome: string }>
+> = {
+  "jake-0000": { editable: 323, body: 389, template: 0, outcome: "partial" },
+  "altacv-0000": { editable: 67, body: 232, template: 0, outcome: "partial" },
+  "awesome-cv-0000": { editable: 1023, body: 1269, template: 18, outcome: "partial" },
+};
+
+describe.skipIf(!fetched || !engineAvailable())(
+  "the report on the oracle's samples (decision 0039)",
+  () => {
+    /** The committed answers, which the naming route reads first. */
+    const answers = fileURLToPath(new URL("../corpus/answers/", import.meta.url));
+    const committed: ServiceCache = {
+      get: (key) => {
+        const path = join(answers, `${key}.json`);
+        return /^[0-9a-f]{64}$/.test(key) && existsSync(path)
+          ? readFileSync(path, "utf8")
+          : undefined;
+      },
+      put: () => false,
+    };
+    const service: NameDeps = {
+      cache: committed,
+      preambles: new MemoryPreambleCache(),
+      model: undefined,
+      rates: new MemoryRateStore(),
+      limits: LIMITS,
+      now: Date.now,
+      address: "127.0.0.1",
+    };
+    /** The naming step as the dev server answers it with no key: the committed answers alone. */
+    const naming: NameRequest = (request, names, signal) =>
+      nameOnService(
+        request,
+        (input, init) => handleName(new Request(new URL(input, "http://localhost"), init), service),
+        signal,
+        names,
+      );
+
+    for (const [id, counts] of Object.entries(SAMPLE_COUNTS))
+      test(`reads ${id}'s words within two of its counts, and shows no command`, async () => {
+        const oracle = Oracle.parse(JSON.parse(readFileSync(ORACLE_FILE, "utf8")));
+        const doc = oracle.documents.find((each) => each.id === id);
+        if (doc === undefined) throw new Error(`${id} is no oracle sample`);
+        const manifest = JSON.parse(
+          readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+        ) as EngineManifest;
+        const zip = uploadOf(
+          oracleDocument(doc),
+          (path) => new Uint8Array(readFileSync(join(ORACLE_DIR, doc.id, ...path.split("/")))),
+          () => undefined,
+        );
+        const outcome = await importResume([{ name: `${id}.zip`, bytes: zip }], {
+          session: await startNodeSession(),
+          fonts: new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+            readFileSync(join(ENGINE_DIR, "files", path)),
+          ),
+          tree: readTree(manifest.files, manifest.fonts),
+          treeImage: treeImages(
+            manifest.files,
+            (path) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path))),
+          ),
+          name: naming,
+        });
+        if (isRefusal(outcome)) throw new Error(`${id} refused: ${outcome.reason}`);
+        const report = reportOfImport(outcome);
+        // Numbers alone in what fails: a sample's text never reaches the test's output.
+        expect(Math.abs(report.words.editable - counts.editable), "editable").toBeLessThanOrEqual(
+          2,
+        );
+        expect(Math.abs(report.words.body - counts.body), "the resume's").toBeLessThanOrEqual(2);
+        expect(
+          Math.abs(report.words.template - counts.template),
+          "the template's",
+        ).toBeLessThanOrEqual(2);
+        expect(report.outcome).toBe(counts.outcome);
+        const strings = [
+          summaryOf(report),
+          ...report.locked.flatMap((each) => [each.words, each.why]),
+          ...report.dropped.map((each) => each.text),
+          ...report.notes,
+        ];
+        expect(strings.filter((each) => /[\\{}]/.test(each)).length, "a backslash or a brace").toBe(
+          0,
+        );
+      }, 300_000);
+  },
+);

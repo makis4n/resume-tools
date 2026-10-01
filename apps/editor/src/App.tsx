@@ -17,6 +17,7 @@ import {
 } from "./editor/document";
 import { pdfFileName, savePdf } from "./editor/download";
 import { applyFit, type Fitted, fit } from "./editor/fit";
+import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
 import { Panel, shownFieldsOf } from "./editor/Panel";
 import { holdsTyping, useHistoryKeys, type Way } from "./editor/undo";
@@ -25,7 +26,8 @@ import type { EngineManifest } from "./engine/manifest";
 import { engineTag, fileUrl, manifestUrl } from "./engine/urls";
 import type { Upload } from "./import/intake";
 import { isRefusal } from "./import/refusal";
-import { IMPORT_STEPS, type ImportJob, type ImportOutcome } from "./import/run";
+import { type Report, reportOfImport } from "./import/report";
+import { IMPORT_STEPS, type Imported, type ImportJob, type ImportOutcome } from "./import/run";
 import { FontLibrary } from "./page/fonts";
 import { Page } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
@@ -204,6 +206,13 @@ export function App() {
   const [importing, setImporting] = useState<ImportShown>();
   /** The import under way, which the list's Cancel stops; none once it has landed or stopped. */
   const importRun = useRef<ImportRun | undefined>(undefined);
+  /**
+   * An import that came through partial, with its report, which waits in the list for the person to
+   * continue or stop (decision 0039); nothing of it is kept until they continue.
+   */
+  const [waiting, setWaiting] = useState<{ outcome: Imported; report: Report }>();
+  /** The report of the import the open document came from, shown above its page until it closes. */
+  const [importedReport, setImportedReport] = useState<{ id: string; report: Report }>();
   /** The open document as the latest render has it, for a fit that lands after later renders. */
   const openNow = useRef<Open | undefined>(undefined);
   useLayoutEffect(() => {
@@ -215,6 +224,7 @@ export function App() {
     opening.current++;
     setOpen(undefined);
     setClicked(undefined);
+    setImportedReport(undefined);
     setNotice(reason);
     try {
       setDocuments((await store.current?.list()) ?? []);
@@ -442,14 +452,35 @@ export function App() {
   };
 
   /**
+   * Keep an import that came through, its package and its document, and open the document, its
+   * report's first line above its page (decision 0039).
+   */
+  const keepImport = async (outcome: Imported, report: Report) => {
+    let id: string | undefined;
+    try {
+      id = await store.current?.importDocument(outcome);
+    } catch (error) {
+      console.error("The imported resume could not be kept:", error);
+      setNotice(COULD_NOT_KEEP);
+      return;
+    }
+    if (id === undefined) return;
+    // Before it opens, so that a document that cannot open, which shows the list, takes it away.
+    setImportedReport({ id, report });
+    await openDocument(id);
+  };
+
+  /**
    * Import the files the list was given (decision 0038): on the compiler's engine, while the list
-   * shows its progress line, and the document it comes to kept and opened as any other; a refusal
-   * says why in the list's notice, in its own plain words; a cancel leaves the list as it was.
-   * What went wrong otherwise is for developers, as is a refusal's log, which quotes the source.
+   * shows its progress line; a refusal says why in the list's notice, in its own plain words; a
+   * cancel leaves the list as it was. What went wrong otherwise is for developers, as is a refusal's
+   * log, which quotes the source. One that came through is read into its report (decision 0039):
+   * a success is kept and opened as any document, and a partial one waits in the list, its report
+   * shown, for the person to continue with it or stop.
    */
   const importFiles = async (chosen: File[]) => {
     const owned = compiler.current;
-    if (owned === undefined || importRun.current !== undefined) return;
+    if (owned === undefined || importRun.current !== undefined || waiting !== undefined) return;
     let files: Upload[];
     try {
       files = await Promise.all(
@@ -491,16 +522,24 @@ export function App() {
       setNotice(outcome.message);
       return;
     }
-    let id: string | undefined;
-    try {
-      id = await store.current?.importDocument(outcome);
-    } catch (error) {
-      console.error("The imported resume could not be kept:", error);
-      setNotice(COULD_NOT_KEEP);
-      return;
-    }
-    if (id !== undefined) await openDocument(id);
+    const report = reportOfImport(outcome);
+    if (report.outcome === "partial") setWaiting({ outcome, report });
+    else await keepImport(outcome, report);
   };
+
+  /** Continue with a partial import: kept and opened as it is (decision 0039). */
+  const continueImport = async () => {
+    const pending = waiting;
+    if (pending === undefined) return;
+    setWaiting(undefined);
+    await keepImport(pending.outcome, pending.report);
+  };
+
+  /**
+   * Stop a partial import: nothing of it is kept. Its package was never stored, and the formats its
+   * checks dumped went as they ended (decision 0038), so there is nothing else to drop.
+   */
+  const stopImport = () => setWaiting(undefined);
 
   /** Stop the import under way: its worker is terminated and starts afresh (decision 0038). */
   const cancelImport = () => {
@@ -524,6 +563,15 @@ export function App() {
         {...(library === undefined ? {} : { onImport: (files: File[]) => void importFiles(files) })}
         {...(importing === undefined ? {} : { importing })}
         onCancelImport={cancelImport}
+        {...(waiting === undefined
+          ? {}
+          : {
+              waiting: {
+                report: waiting.report,
+                onContinue: () => void continueImport(),
+                onStop: stopImport,
+              },
+            })}
       />
     );
   }
@@ -765,6 +813,8 @@ export function App() {
       <div style={{ flex: "none" }}>
         {back}
         {saving}
+        {/* The report of the import this document came from: its rate, and what was left out. */}
+        {importedReport?.id === id && <ImportReport report={importedReport.report} />}
         <p>
           {error ?? (slow ? "Compiling…" : took)}{" "}
           {/* A document another tab has changed takes no undo, as it takes no edit. */}

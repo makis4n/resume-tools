@@ -30,7 +30,11 @@
 // nothing Node lacks, and the editor's modules as types alone, with their real extensions.
 import { availableParallelism } from "node:os";
 import { z } from "zod";
-import type { AssemblyChecks, LockReason } from "../src/import/assemble.ts";
+import type { AssemblyChecks, LockedPart, LockReason } from "../src/import/assemble.ts";
+import type { Reference } from "../src/import/reference.ts";
+// Item 13's report imports nothing but types, so Node runs it as it is: the one function the
+// browser's import, `corpus assemble` and this runner read an import's outcome with (decision 0039).
+import { type ReportInputs, reportOf, SUCCESS_RATE } from "../src/import/report.ts";
 import {
   ASSEMBLE_LIMIT_MS,
   type AssembleRow,
@@ -55,9 +59,9 @@ export const runLimitMs = (asking: boolean) => ASSEMBLE_LIMIT_MS + (asking ? MOD
 
 /**
  * The share of a document's words that must be in editable fields for its import to be a success:
- * item 13's bar (plan section 5.7).
+ * item 13's bar (plan section 6.2), the report's own (decision 0039).
  */
-export const SUCCESS_RATE = 0.9;
+export { SUCCESS_RATE };
 
 /**
  * What became of a document: a success or partial, as `outcomeOf` says; refused by a step, as the
@@ -79,37 +83,51 @@ export const RUN_OUTCOMES = [
 ] as const;
 export type RunOutcome = (typeof RUN_OUTCOMES)[number];
 
-/** What an outcome is counted by: the words in editable fields, and all the words counted. */
+/**
+ * What an outcome is counted by: the words in editable fields, all the words counted, and of them
+ * those locked, by reason, as item 13's report reads them from the page (decision 0039). A row of a
+ * run from before the report has no locked words here, and the summary then reads its assembly's.
+ */
 export interface Counted {
   editable: number;
   all: number;
+  locked?: Partial<Record<LockReason, number>>;
 }
 
 /** The rule `outcomeOf` holds a success to, as the table says it. */
-export const OUTCOME_RULE = `the first check holds, and ${Math.round(SUCCESS_RATE * 100)}% of the words or more are editable`;
+export const OUTCOME_RULE = `the first check holds, and ${Math.round(SUCCESS_RATE * 100)}% of the words or more are editable on the page`;
 
 /**
- * What an import came to, its editable rate, and what the rate counts: the words in editable
- * fields over all the words the assembly counts, editable and locked, as decision 0026's table
- * counts them. For now a success is an import assembled whose first check holds and at least
- * SUCCESS_RATE of whose words are in editable fields (`OUTCOME_RULE`), and anything else assembled
- * is partial. The runner reads the outcome here alone, and adds up the counts it gives for the
- * corpus's rate, in the summary, the headline, the table and the baseline, so that item 13's report
- * replaces this function's body and nothing else.
+ * What an import came to, its editable rate, and what the rate counts, as item 13's report says it
+ * (`reportOf`, decision 0039), the one function the browser's import and `corpus assemble` read it
+ * with too: the words of the reference's page, those in editable fields over the resume's, the
+ * template's own aside, and of them those locked, by reason. A success is an import whose first
+ * check holds and at least `SUCCESS_RATE` of whose words are editable (`OUTCOME_RULE`), and
+ * anything else assembled is partial. The runner reads the outcome here alone, and adds up the
+ * counts it gives for the corpus's rate, in the summary, the headline, the table and the baseline.
  */
-export function outcomeOf(assembled: { checks: Pick<AssemblyChecks, "outcome" | "words"> }): {
+export function outcomeOf(
+  assembled: {
+    checks: AssemblyChecks;
+    extras: readonly LockedPart[];
+    document?: { resume: unknown };
+  },
+  reference: Pick<Reference, "pages" | "bibliographyLeftOut" | "images">,
+  inputs: ReportInputs = {},
+): {
   outcome: "success" | "partial";
   rate: number;
   counted: Counted;
 } {
-  const { outcome, words } = assembled.checks;
-  const locked = Object.values(words.locked).reduce<number>((sum, n) => sum + (n ?? 0), 0);
-  const counted = { editable: words.editable, all: words.editable + locked };
-  const rate = counted.all === 0 ? 0 : counted.editable / counted.all;
+  const report = reportOf(assembled, reference, inputs);
   return {
-    outcome: outcome === "assembled" && rate >= SUCCESS_RATE ? "success" : "partial",
-    rate,
-    counted,
+    outcome: report.outcome === "succeeded" ? "success" : "partial",
+    rate: report.rate,
+    counted: {
+      editable: report.words.editable,
+      all: report.words.body,
+      locked: { ...report.words.byReason },
+    },
   };
 }
 
@@ -213,14 +231,21 @@ export type RunChildRow = Omit<RunRow, "id" | "family" | "times"> & {
 
 /**
  * An assembled document's row, as the child sends it: `assembleRow`'s counts, and the outcome and
- * the rate `outcomeOf` gives.
+ * the rate `outcomeOf` gives, from the assembly, its reference and what the intake and the XeTeX
+ * rewrite set aside (`inputs`), as item 13's report reads them.
  */
 export function runRowOf(
-  assembled: { checks: AssemblyChecks },
+  assembled: Parameters<typeof outcomeOf>[0],
   engine: "pdftex" | "xetex",
-  more: { naming?: RunNaming; probeCompiles: number; times: RunChildRow["times"] },
+  more: {
+    naming?: RunNaming;
+    probeCompiles: number;
+    times: RunChildRow["times"];
+    reference: Parameters<typeof outcomeOf>[1];
+    inputs?: ReportInputs;
+  },
 ): RunChildRow {
-  const { outcome, rate, counted } = outcomeOf(assembled);
+  const { outcome, rate, counted } = outcomeOf(assembled, more.reference, more.inputs);
   const row = assembleRow(assembled.checks, engine, { answered: 0, unanswered: 0 });
   return {
     outcome,
@@ -284,6 +309,13 @@ export interface RunSummary {
   bar: { lacking: number; controls: Record<BarControl, number> };
 }
 
+/**
+ * A row's locked words, by reason, as `outcomeOf` counted them (decision 0039); for a row of a run
+ * from before item 13's report, which kept none, as its assembly counted them in the source.
+ */
+const lockedOf = (row: Pick<RunRow, "counted" | "words">) =>
+  row.counted?.locked ?? row.words?.locked ?? {};
+
 /** A percentage as the summary keeps it: two decimals. */
 const percent = (part: number, whole: number) =>
   whole === 0 ? 0 : Math.round((10_000 * part) / whole) / 100;
@@ -299,7 +331,7 @@ export function summaryOf(rows: readonly RunRow[]): RunSummary {
   for (const row of rows.filter(assembled)) {
     counted.editable += row.counted?.editable ?? 0;
     counted.all += row.counted?.all ?? 0;
-    for (const [reason, n] of Object.entries(row.words?.locked ?? {}) as [LockReason, number][])
+    for (const [reason, n] of Object.entries(lockedOf(row)) as [LockReason, number][])
       locked[reason] = (locked[reason] ?? 0) + n;
   }
   const failures = runBar(rows);
@@ -440,7 +472,7 @@ export function runTable(rows: readonly RunRow[]): string {
   );
   const differences = present(rows.flatMap((row) => row.difference ?? []));
   const reasons = LOCK_REASONS.filter((reason) =>
-    rows.some((row) => (row.words?.locked[reason] ?? 0) > 0),
+    rows.some((row) => (lockedOf(row)[reason] ?? 0) > 0),
   );
   const partsLocked = LOCK_REASONS.filter((reason) =>
     rows.some((row) => (row.fields?.locked[reason] ?? 0) > 0),
@@ -500,9 +532,7 @@ export function runTable(rows: readonly RunRow[]): string {
     ),
     sum("All, as `outcomeOf` counts them", (row) => (assembled(row) ? (row.counted?.all ?? 0) : 0)),
     ...reasons.map((reason) =>
-      sum(`Locked: \`${reason}\``, (row) =>
-        assembled(row) ? (row.words?.locked[reason] ?? 0) : 0,
-      ),
+      sum(`Locked: \`${reason}\``, (row) => (assembled(row) ? (lockedOf(row)[reason] ?? 0) : 0)),
     ),
     section("Fields"),
     sum("Editable", (row) => row.fields?.editable ?? 0),

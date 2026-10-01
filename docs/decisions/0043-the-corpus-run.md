@@ -1,6 +1,6 @@
 # 0043. The corpus run, its baseline, and the review's tooling
 
-Date: 2026-10-01 · Status: proposed
+Date: 2026-10-01 · Status: proposed; its interim outcome is replaced by 0039's report
 
 ## Context
 
@@ -77,7 +77,10 @@ runner judges. The code is `apps/editor/scripts/corpus-run.ts`, `corpus-review.t
   **success** is an import assembled whose first check holds, not partial, and at least 90% of whose
   words are in editable fields, counted as decision 0026's table counts them, the words of editable
   fields over those and the locked parts' words; anything else assembled is **partial**; the rate is
-  that share.
+  that share. (Decision 0039: `outcomeOf` reads item 13's report of the document, `reportOf`, from
+  the assembly, its reference and what the intake and the XeTeX rewrite set aside, the words those
+  of the reference's page, the template's own aside, and `counted` keeps its locked words by reason,
+  which the summary and the table add up.)
 - A document the pipeline does not assemble is **refused**, with the refusal's reason, when a step
   after the parse refuses it: the Latin Modern swap, the request's builder for a page it cannot read
   (`unreadable`) or a request its contract refuses (`invalid`), the XeTeX rewrite or its check, or

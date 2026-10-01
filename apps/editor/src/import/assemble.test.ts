@@ -50,10 +50,11 @@ import {
 import { readTree } from "./fonts";
 import { type Intake, intake } from "./intake";
 import { bodyOf, bodyOfText, buildTree, readBody } from "./parse";
-import { probe, probeUses, type Verdict } from "./probe";
+import { probe, probeUses, type UncoveredRun, type Verdict } from "./probe";
 import { type Reference, reference } from "./reference";
 import { isRefusal, type Refusal } from "./refusal";
 import { LAYOUT_TYPEOUT, layoutOfLog, signatures } from "./signatures";
+import type { XetexRewrite } from "./xetex";
 
 // Every document, class, answer and verdict here is invented for these tests
 // (`../test/invented-import.ts`); nothing is taken from a real resume.
@@ -1853,4 +1854,116 @@ describe.skipIf(!engineAvailable())("the geometry snippets, on the engine (decis
     const own = pageOf("letter", headed);
     expect(pageOf("letter", headed, pageSizeSnippet("a4"))).toEqual({ ...own, paper: A4 });
   }, 120_000);
+});
+
+describe("what sets each glyph of the reference (decision 0039)", () => {
+  /** A run of the reference's glyphs on its first page, from `from` to before `to`, set by `by`. */
+  const run = (
+    from: number,
+    to: number,
+    by: Omit<UncoveredRun, "page" | "from" | "to" | "first" | "last">,
+  ) => ({
+    page: 0,
+    from,
+    to,
+    first: { h: 0, v: 0 },
+    last: { h: 0, v: 0 },
+    ...by,
+  });
+
+  /** The invented Jake-like import's candidate for an argument, its `call`th call's. */
+  function argumentOf(inputs: ReturnType<typeof inputsOf>, name: string, index: number, call = 0) {
+    const found = inputs.probe.candidates.filter(
+      (each) => each.kind === "argument" && each.name === name && each.index === index,
+    )[call];
+    if (found === undefined) throw new Error(`no candidate for ${name} #${index}`);
+    return found;
+  }
+
+  test("reads each of the probe's runs through the field or the locked part that holds what sets it", async () => {
+    const inputs = inputsOf(JAKE_LIKE);
+    const name = argumentOf(inputs, "cvname", 1);
+    const title = argumentOf(inputs, "cventry", 1);
+    // "Summer 2017", a date the generator does not write, which the entry keeps (`date`).
+    const dates = argumentOf(inputs, "cventry", 2, 2);
+    const at = inputs.tree.source.indexOf("\\vspace{2pt}");
+    const vspace = {
+      start: at,
+      end: at + "\\vspace{2pt}".length,
+      why: "command" as const,
+      name: "vspace",
+    };
+    const probed = {
+      ...inputs.probe,
+      runs: [
+        run(0, 3, { by: "chrome" }),
+        run(3, 8, { by: "candidate", candidate: name.id }),
+        run(8, 12, { by: "candidate", candidate: title.id }),
+        run(12, 16, { by: "candidate", candidate: title.id }),
+        run(16, 20, { by: "candidate", candidate: dates.id }),
+        run(20, 22, { by: "raw", raw: vspace }),
+      ],
+    };
+    const result = ok(
+      await assemble(
+        inputs.intake,
+        REFERENCE,
+        inputs.tree,
+        inputs.signatures,
+        probed,
+        inputs.answer,
+      ),
+    );
+    const section = sectionOf(result, 0);
+    if (section.kind !== "entries") throw new Error("not a section of entries");
+    const entry = section.entries[0]?.id ?? "";
+    const date = result.extras.findIndex((part) => part.reason === "date");
+    expect(date).toBeGreaterThanOrEqual(0);
+    expect(result.checks.owners).toEqual([
+      // The template's own text has no owner.
+      { page: 0, from: 0, to: 3 },
+      // The header's name, stored by the preamble's call, and an entry's title, its runs one.
+      { page: 0, from: 3, to: 8, field: "header.first" },
+      { page: 0, from: 8, to: 16, field: `${entry}.title` },
+      // The dates the entry keeps as the upload wrote them, by their part.
+      { page: 0, from: 16, to: 20, part: date },
+      // A raw chunk no field and no part holds: kept, and no word of it the template's.
+      { page: 0, from: 20, to: 22, kept: "unmapped" },
+    ]);
+  });
+
+  test("finds the header's field in a rewritten preamble, where what the probe read stands elsewhere", async () => {
+    // A XeTeX import's preamble is item 8's rewrite (decision 0023), which may write more before the
+    // header's storing call than the upload did.
+    const inputs = inputsOf(JAKE_LIKE);
+    const name = argumentOf(inputs, "cvname", 1);
+    const rewrite: XetexRewrite = {
+      preamble: PREAMBLE.replace("\\cvname{", "\\newcommand{\\inventedfonts}{}\n\\cvname{"),
+      body: BODY,
+      files: {},
+      fonts: [],
+      warnings: [],
+      mathFonts: [],
+      deferred: [],
+      features: {},
+    };
+    const probed = { ...inputs.probe, runs: [run(0, 5, { by: "candidate", candidate: name.id })] };
+    const result = ok(
+      await assemble(
+        inputs.intake,
+        REFERENCE,
+        inputs.tree,
+        inputs.signatures,
+        probed,
+        inputs.answer,
+        rewrite,
+      ),
+    );
+    expect(result.checks.owners).toEqual([{ page: 0, from: 0, to: 5, field: "header.first" }]);
+  });
+
+  test("gives no owners for a probe made before its runs were kept", async () => {
+    const result = ok((await assembled()).result);
+    expect(result.checks.owners).toBeUndefined();
+  });
 });
