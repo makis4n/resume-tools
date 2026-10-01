@@ -75,7 +75,7 @@ jobs:
             cat leak.md
           } >> "$GITHUB_STEP_SUMMARY"
       - if: always() && steps.leak.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: leak
           path: leak.json
