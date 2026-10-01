@@ -12,5 +12,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.ts"],
+    // Half the cores: the engine tests each run a TeX engine, and a worker on every core made the
+    // heaviest imports run eight times slower than alone, past their limits. One on CI's two.
+    maxWorkers: "50%",
   },
 });
