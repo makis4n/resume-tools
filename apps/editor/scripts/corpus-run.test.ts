@@ -14,6 +14,7 @@ import {
   baselineOf,
   baselineVerdict,
   changedPaths,
+  commitOf,
   idsOf,
   nextBaseline,
   OUTCOME_RULE,
@@ -479,6 +480,25 @@ describe("the baseline", () => {
       ),
     ).toEqual(["apps/editor/corpus/answers/0123.json", "apps/editor/scripts/corpus.ts"]);
     expect(changedPaths(" M apps/editor/corpus/baseline.json\n")).toEqual([]);
+  });
+
+  test("names a run's commit dirty when a file differs from it, so that no baseline is taken from it", () => {
+    const commit = "c".repeat(40);
+    expect(commitOf(commit, "")).toBe(commit);
+    expect(commitOf(commit, " M apps/editor/corpus/baseline.json\n")).toBe(commit);
+    expect(commitOf(commit, " M packages/naming/src/providers.ts\n")).toBe(`${commit}+dirty`);
+    expect(commitOf(commit, "?? apps/editor/scripts/corpus-bench.ts\n")).toBe(`${commit}+dirty`);
+    // A run whose file names a dirty commit gives no baseline.
+    const run = {
+      version: 1,
+      at: { date: "2026-10-03", commit: `${commit}+dirty` },
+      mode: { answers: "committed", cache: null, asked: null, documents: "all" },
+      complete: true,
+      documents: [],
+    };
+    expect(
+      baselineFromFile(run, Baseline.parse({ version: 1, run: null })).baseline,
+    ).toBeUndefined();
   });
 
   test("is written from a run's summary, with the day and the commit", () => {

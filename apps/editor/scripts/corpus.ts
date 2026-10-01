@@ -335,6 +335,7 @@ import {
   baselineFromFile,
   baselineVerdict,
   changedPaths,
+  commitOf,
   idsOf,
   nextBaseline,
   poolSize,
@@ -1376,15 +1377,21 @@ function takenDocuments(only: string | undefined, idsFile: string | undefined) {
   return documents.filter((doc) => ids.includes(doc.id));
 }
 
-/** The commit this checkout is at, or none where git cannot say. */
+/**
+ * The commit this checkout is at, with `+dirty` after it when a file differs from it, an untracked
+ * one among them (`commitOf`, decision 0044); or none where git cannot say.
+ */
 function headCommit(): string | null {
   try {
-    const commit = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: APP,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return /^[0-9a-f]{40}$/.test(commit) ? commit : null;
+    const git = (...args: string[]) =>
+      execFileSync("git", args, {
+        cwd: APP,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    const commit = git("rev-parse", "HEAD").trim();
+    if (!/^[0-9a-f]{40}$/.test(commit)) return null;
+    return commitOf(commit, git("status", "--porcelain"));
   } catch {
     return null;
   }

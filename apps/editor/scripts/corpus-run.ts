@@ -899,6 +899,15 @@ export function changedPaths(porcelain: string): string[] {
     .filter((path) => path !== BASELINE_PATH);
 }
 
+/**
+ * The commit a run records that it ran at: the commit, or the commit and `+dirty` when a file
+ * differs from it, a file git does not track among them (`changedPaths`), so that a run of an
+ * uncommitted tree never names a commit that lacks what ran (decision 0044); and a baseline is
+ * adopted only from a run that names a commit alone (`baselineFromFile`).
+ */
+export const commitOf = (commit: string, porcelain: string) =>
+  changedPaths(porcelain).length > 0 ? `${commit}+dirty` : commit;
+
 // The documents a run takes.
 
 /** An id, as the manifest gives them: a family, a dash and four digits. */
