@@ -50,7 +50,7 @@ export const LOCK_REASONS: readonly LockReason[] = [
 ];
 
 /** The harness's checks, in the order the table counts their findings. */
-const CHECKS = [
+export const CHECKS = [
   "dump",
   "compile",
   "converges",
@@ -112,8 +112,8 @@ export function dropKind(why: string): DropKind {
   return "other";
 }
 
-/** The style controls, in the order the table counts them. */
-const CONTROLS = ["pageSize", "margins", "fontSize", "font", "accent", "density"] as const;
+/** The style controls, in the order the tables, this one's and item 17's runner's, count them. */
+export const CONTROLS = ["pageSize", "margins", "fontSize", "font", "accent", "density"] as const;
 
 /**
  * The controls the milestone's bar asks of every successful import (decision 0040): the page size,
@@ -189,20 +189,46 @@ export function barControls(row: Pick<AssembleRow, "controls">): {
 }
 
 /**
+ * The bar as a document's line says it (decision 0040): which of the page size, the margins and
+ * the font size its row proves, and for a successful import each it lacks, with the kind of why it
+ * was dropped (`DROP_KINDS`), or "not offered", never the checks' words.
+ */
+export function barLine(row: Pick<AssembleRow, "controls">, successful: boolean): string {
+  const { proven, lacking } = barControls(row);
+  const why = (control: BarControl) => {
+    const kind = row.controls?.why?.[control];
+    return `${control} (${kind === undefined ? "not offered" : DROP_KINDS[kind]})`;
+  };
+  return `${proven.length === 0 ? "none" : proven.join(" ")} proven${lacking.length === 0 || !successful ? "" : `, lacking ${lacking.map(why).join(", ")}`}`;
+}
+
+/**
  * Where the corpus misses the milestone's bar (decision 0040): each successful import, by its
  * document's id, and each of the bar's controls it lacks, a line of each; none when every
- * successful import has all three. `successful` is the rule of what a success is, item 13's report
- * (`reportSucceeded`, decision 0039), which item 17's runner passes as it reads it.
+ * successful import has all three. `successful` is the rule of what a success is, over the
+ * runner's own rows: item 13's report's (decision 0039), as `corpus assemble` reads it from its
+ * rows (`reportSucceeded`) and item 17's runner from `outcomeOf`, which reads the same report.
  */
-export function barFailures(
-  rows: readonly Pick<AssembleRow, "id" | "outcome" | "controls" | "report">[],
-  successful: (
-    row: Pick<AssembleRow, "id" | "outcome" | "controls" | "report">,
-  ) => boolean = reportSucceeded,
+export function barFailures<Row extends Pick<AssembleRow, "id" | "controls">>(
+  rows: readonly Row[],
+  successful: (row: Row) => boolean,
 ): { id: string; control: BarControl }[] {
   return rows
-    .filter(successful)
+    .filter((row) => successful(row))
     .flatMap((row) => barControls(row).lacking.map((control) => ({ id: row.id, control })));
+}
+
+/**
+ * The lines a runner fails with when the corpus misses the bar (decision 0040): how many controls
+ * of successful imports are not proven, and each, by the document's id and the control alone.
+ */
+export function barFailureLines(
+  failures: readonly { id: string; control: BarControl }[],
+): string[] {
+  return [
+    `The bar: ${failures.length} ${failures.length === 1 ? "control" : "controls"} of successful imports not proven`,
+    ...failures.map((failure) => `${failure.id}: ${failure.control}`),
+  ];
 }
 
 /** What became of a document: assembled, partial, refused, or why it never got so far. */

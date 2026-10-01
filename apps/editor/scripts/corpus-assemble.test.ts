@@ -10,7 +10,9 @@ import {
   assembleTable,
   BAR_CONTROLS,
   barControls,
+  barFailureLines,
   barFailures,
+  barLine,
   CHECK_NOTES,
   comparePlaces,
   DROPPED_WHY,
@@ -239,20 +241,40 @@ describe("the milestone's bar", () => {
     });
     // A success is item 13's report's: the first check holding, and nine tenths of the words
     // editable; a document under the bar is no success, whatever its first check.
-    expect(barFailures(rows)).toEqual([
+    expect(barFailures(rows, reportSucceeded)).toEqual([
       { id: "jake-0002", control: "margins" },
       { id: "moderncv-0001", control: "pageSize" },
       { id: "moderncv-0001", control: "margins" },
       { id: "moderncv-0001", control: "fontSize" },
     ]);
-    expect(barFailures(rows, reportSucceeded)).toEqual(barFailures(rows));
+    // Its first check holds, and its report is under the bar: no success, so not the bar's.
     expect(rows.filter(firstCheckHolds).map((each) => each.id)).toContain("moderncv-0002");
+    expect(barFailures(rows, firstCheckHolds)).toContainEqual({
+      id: "moderncv-0002",
+      control: "pageSize",
+    });
     // A runner may pass another rule in its place: here, one that takes the partial too.
     expect(barFailures(rows, (each) => each.outcome !== "refused")).toContainEqual({
       id: "jake-0003",
       control: "fontSize",
     });
-    expect(barFailures(rows.slice(0, 1))).toEqual([]);
+    expect(barFailures(rows.slice(0, 1), reportSucceeded)).toEqual([]);
+  });
+
+  test("says on a document's line which are proven, and why a success lacks each, by kind alone", () => {
+    expect(barLine(rows[0] as AssembleRow, true)).toBe("pageSize margins fontSize proven");
+    expect(barLine(rows[1] as AssembleRow, true)).toBe(
+      "pageSize fontSize proven, lacking margins (every value sets the same page)",
+    );
+    expect(barLine(rows[2] as AssembleRow, true)).toBe(
+      "none proven, lacking pageSize (the harness finds it does not work), margins (not offered), fontSize (a value stops the compile)",
+    );
+    // A partial import is no success, so what it lacks is not the bar's.
+    expect(barLine(rows[4] as AssembleRow, false)).toBe("pageSize proven");
+    expect(barFailureLines(barFailures(rows.slice(0, 2), reportSucceeded))).toEqual([
+      "The bar: 1 control of successful imports not proven",
+      "jake-0002: margins",
+    ]);
   });
 
   test("counts in the table the documents with all three, and the successful ones lacking each, and why", () => {

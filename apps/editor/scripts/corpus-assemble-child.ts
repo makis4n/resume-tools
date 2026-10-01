@@ -1,19 +1,28 @@
 /**
- * One child of `corpus assemble`'s pool (`corpus-assemble.ts`, decision 0026), which `corpus
- * oracle` runs too: an engine session and fonts of its own, which take one document at a time, as a
- * zip, through the intake, the reference compile, read in Latin Modern where the page cannot draw
- * its Computer Modern in T1 or TS1 (`inLatinModern`, decision 0026), the signatures' two compiles,
- * asked of the body's commands, the preamble's and the sizes the class may declare (`SIZE_OPTIONS`,
- * decision 0026), the parse, the probe and the naming request, built as items 7 and 11 build it,
- * with the upload's sources and the header's values (decision 0024); find the answers the committed
- * folder holds for its macros' keys, each as the document's macro (`answerFor`); and, where it
- * holds any, rewrite a XeTeX document's fonts by file and check the rewrite (decision 0023), and
- * assemble the document's package and document and validate them, and read item 13's report of
- * them (`reportOf`, decision 0039). It answers with the document's row, names and numbers only, the
- * report's counts among them; the probe's row and the whole probe, for the oracle; the fields found
- * by the model's place, for the oracle's comparison with the ports; and the whole assembly, which
- * holds the document's text, as the whole probe does, and which the parent keeps under `.corpus/`
- * alone.
+ * One child of the whole pipeline's pool, which `corpus assemble` (`corpus-assemble.ts`, decision
+ * 0026), `corpus oracle`, `corpus run` and `corpus review check` (`corpus-run.ts`, decision 0043)
+ * all run, so that one pipeline serves them: an engine session and fonts of its own, which take one
+ * document at a time, as a zip, through the intake, the reference compile, read in Latin Modern
+ * where the page cannot draw its Computer Modern in T1 or TS1 (`inLatinModern`, decision 0026), the
+ * signatures' two compiles, asked of the body's commands, the preamble's and the sizes the class may
+ * declare (`SIZE_OPTIONS`, decision 0026), the parse, the probe and the naming request, built as the
+ * import sends it, by its own function (`importRequest`, decision 0038), with the upload's sources
+ * and the page's strings and without the header's values, and refused, as the import refuses it,
+ * when the privacy check finds the resume's text in it (`request`); its answers, from the committed
+ * folder, or from it and the cache of the model the parent names, each as the document's macro
+ * (`answerFor`), and, when the parent asks with a key in the environment, from that model for what
+ * they miss, behind a stricter check, the header's values the answers find given to it besides, as
+ * `corpus leak` proves the request (`answerDocument`, decisions 0027 and 0033); and, where any
+ * macro has an answer, the XeTeX rewrite of its fonts and its check (decision 0023), and its
+ * package and document assembled and validated, and read into item 13's report (`reportOf`,
+ * decision 0039), which the rows of both runners count.
+ *
+ * It answers with the document's rows, `corpus assemble`'s and `corpus run`'s, names and numbers
+ * only, the report's counts among them; the probe's row and the whole probe, for the oracle; the
+ * fields found by the model's place, for the oracle's comparison with the ports; the whole
+ * assembly, which holds the document's text, as the whole probe does; and, when the parent asks,
+ * what the review reads of the document (its request, its text and its macros' fates,
+ * `RunDocument`). The parent keeps what holds text under `.corpus/` alone.
  *
  * The editor's modules are written for Vite, so this file, which Node runs as it is, loads them
  * through Vite's module runner with the app's own config, as `corpus-probe-child.ts` does, and
@@ -24,13 +33,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NAMING_VERSION } from "@resume-tools/naming";
+import { type AnswerCache, NAMING_VERSION } from "@resume-tools/naming";
+import { soclaasModel } from "@resume-tools/naming/providers";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
 // Item 13's report imports nothing but types, so Node runs it as it is: the same function the
 // browser's import reads its report with (decision 0039).
 import { reportOf } from "../src/import/report.ts";
+import { FileAnswerCache } from "./answer-cache.ts";
 import {
   type AssembleChildRow,
   answersFor,
@@ -39,7 +50,10 @@ import {
   fieldsFound,
   type SectionRemoval,
 } from "./corpus-assemble.ts";
+import { answerDocument, MODEL_LIMIT_MS, MODEL_RETRIES, namingConfig } from "./corpus-name.ts";
 import { probeRow } from "./corpus-probe.ts";
+import { type RunDocument, reviewNotesOf } from "./corpus-review.ts";
+import { type RefusalStep, type RunChildRow, type RunNaming, runRowOf } from "./corpus-run.ts";
 import { answersFolder, commandAnswers, headerOf } from "./corpus-seed.ts";
 
 type NodeEngine = typeof import("../src/engine/node.ts");
@@ -67,11 +81,28 @@ const CHECK_FORMAT = "importfonts";
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
 
-/** A document, as the parent sends it: its zip and the zip's name. */
+/**
+ * A document, as the parent sends it: its zip and the zip's name; where its answers come from, the
+ * committed folder alone when `answers` is absent, as `corpus assemble` and `corpus oracle` read
+ * them, or with the cache of the model `answers.model` names, and whether to ask that model for what
+ * they miss (`answers.ask`), which the parent sends only with `--allow-model` and a key; and whether
+ * to send what the review reads of the document (`review`).
+ */
 interface Task {
   type: "task";
   id: string;
-  message: { name: string; bytes: Uint8Array };
+  message: {
+    name: string;
+    bytes: Uint8Array;
+    answers?: { model: string; ask?: boolean };
+    review?: boolean;
+  };
+}
+
+/** A cache the naming step reads, and its text by key, as `commandAnswers` reads one. */
+interface Answers {
+  cache: AnswerCache;
+  read: (key: string) => string | undefined;
 }
 
 async function main() {
@@ -94,8 +125,7 @@ async function main() {
     await runner.import<ParseModule>("/src/import/parse.ts");
   const { signatures } = await runner.import<SignaturesModule>("/src/import/signatures.ts");
   const { probe, probeUses } = await runner.import<ProbeModule>("/src/import/probe.ts");
-  const { buildRequest, realName, sourcesOf } =
-    await runner.import<NamingModule>("/src/import/naming.ts");
+  const naming = await runner.import<NamingModule>("/src/import/naming.ts");
   const { rewriteForXetex } = await runner.import<XetexModule>("/src/import/xetex.ts");
   const { checkRewrite } = await runner.import<CheckModule>("/src/import/xetex-check.ts");
   const { validate } = await runner.import<ValidateModule>("/src/import/validate.ts");
@@ -119,40 +149,109 @@ async function main() {
   const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
     readFileSync(join(ENGINE_DIR, "files", path)),
   );
+  // The committed answers alone, which nothing files in; and a model's cache over them, by its id.
   const folder = answersFolder();
-  const cache = { get: (key: string) => folder.read(key) };
+  const committed: Answers = {
+    cache: { get: (key) => folder.read(key), put: () => false },
+    read: (key) => folder.read(key),
+  };
+  const caches = new Map<string, Answers>();
+  const answersOf = (model: string | undefined): Answers => {
+    if (model === undefined) return committed;
+    const known = caches.get(model);
+    if (known !== undefined) return known;
+    const cache = new FileAnswerCache({ model });
+    const made = { cache, read: (key: string) => cache.get(key) };
+    caches.set(model, made);
+    return made;
+  };
+  // The key comes from this process's environment, which the parent's is; the parent checked it.
+  const { key } = namingConfig(process.env);
 
   process.on("message", async (task: Task) => {
     if (task.type !== "task") return;
-    const done = (row: AssembleChildRow, more: Record<string, unknown> = {}) =>
-      send({ type: "done", id: task.id, row, ...more });
-    /** A refusal's row: its reason, and for a font the page cannot draw, its name. */
-    const refusedRow = (refused: Refused, engine: "pdftex" | "xetex", more: object = {}) => ({
-      outcome: "refused" as const,
-      engine,
-      refused: refused.reason,
-      ...(refused.reason === "font" && refused.name !== undefined ? { font: refused.name } : {}),
-      ...more,
-    });
+    const started = performance.now();
+    let mark = started;
+    const times: RunChildRow["times"] = {};
+    /** The time since the last step ended, as the step's. */
+    const took = (step: keyof RunChildRow["times"]) => {
+      const now = performance.now();
+      times[step] = Math.round(now - mark);
+      mark = now;
+    };
+    const wantsReview = task.message.review === true;
+    /**
+     * The document's rows, `corpus assemble`'s and `corpus run`'s, and anything more; the review's
+     * part only when the parent asks for it.
+     */
+    const done = (
+      row: AssembleChildRow,
+      run: Omit<RunChildRow, "times">,
+      more: Record<string, unknown> & {
+        review?: Omit<RunDocument, "id" | "family" | "outcome">;
+      } = {},
+    ) => {
+      const { review, ...rest } = more;
+      send({
+        type: "done",
+        id: task.id,
+        row,
+        run: { ...run, times },
+        ...rest,
+        ...(wantsReview ? { review: { outcome: run.outcome, ...review } } : {}),
+      });
+    };
+    /**
+     * A refusal's rows: its reason, and for a font the page cannot draw, its name; with what the
+     * steps before it counted (`counted` for `corpus assemble`'s row, `run` for the run's); and,
+     * beside them, the step that refused it, which `corpus review check` reads (`RefusalStep`).
+     */
+    const refused = (
+      refusal: Pick<Refused, "reason" | "name">,
+      engine: "pdftex" | "xetex",
+      step: RefusalStep,
+      after: {
+        counted?: object;
+        run?: Partial<Omit<RunChildRow, "times">>;
+        more?: Parameters<typeof done>[2];
+      } = {},
+    ) => {
+      const font =
+        refusal.reason === "font" && refusal.name !== undefined ? { font: refusal.name } : {};
+      done(
+        { outcome: "refused", engine, refused: refusal.reason, ...font, ...after.counted },
+        { outcome: "refused", engine, refused: refusal.reason, ...font, ...after.run },
+        { ...after.more, refusal: { step, reason: refusal.reason } },
+      );
+    };
     const uploaded = intake(
       { name: task.message.name, bytes: new Uint8Array(task.message.bytes) },
       { tree, treeImage },
     );
-    if ("refused" in uploaded) return done({ outcome: "no reference" });
+    if ("refused" in uploaded)
+      return done(
+        { outcome: "no reference" },
+        { outcome: "no reference", refused: uploaded.reason },
+      );
     const first = await reference(session, fonts, uploaded, { treeImage });
-    if ("refused" in first) return done({ outcome: "no reference" });
+    took("reference");
+    if ("refused" in first)
+      return done({ outcome: "no reference" }, { outcome: "no reference", refused: first.reason });
     // A document set in Computer Modern's T1 or TS1 fonts, which the page cannot draw, is read with
     // T1 and Latin Modern after its class from here on, as every pdfTeX port is, so that the probe
     // reads a page it can draw (decision 0026).
     const swap = await inLatinModern(session, fonts, uploaded, first, { treeImage });
-    if (swap !== undefined && "refused" in swap) return done(refusedRow(swap, first.engine));
+    took("latinModern");
+    if (swap !== undefined && "refused" in swap) return refused(swap, first.engine, "latinModern");
     const taken = swap?.intake ?? uploaded;
     const made = swap?.reference ?? first;
     const engine = made.engine;
+    const unparsed = () =>
+      done({ outcome: "not parsed", engine }, { outcome: "not parsed", engine });
     const body = bodyOf(taken);
-    if ("refused" in body) return done({ outcome: "not parsed", engine });
+    if ("refused" in body) return unparsed();
     const read = readBody(body);
-    if ("refused" in read) return done({ outcome: "not parsed", engine });
+    if ("refused" in read) return unparsed();
     const preamble = readBody(bodyOfText(body.preamble));
     const uses = probeUses(read, "refused" in preamble ? undefined : preamble);
     // Asked of the sizes the class may declare too, which the font size control offers alone
@@ -165,61 +264,163 @@ async function main() {
       { ...uses, commands: [...uses.commands, ...SIZE_OPTIONS] },
       { treeImage },
     );
-    if ("refused" in found) return done({ outcome: "not parsed", engine });
+    if ("refused" in found) return unparsed();
     const built = buildTree(read, found);
-    if ("refused" in built) return done({ outcome: "not parsed", engine });
+    if ("refused" in built) return unparsed();
+    took("parse");
     try {
       const probed = await probe(session, fonts, taken, made, built, found, { treeImage });
+      took("probe");
       // The probe leaves a pdfTeX document's format in the session for item 7, whose package has
       // a format of its own, its preamble rewritten: the probe's goes now, as the probe's runner
       // drops it.
       if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
       // The probe's row, and for the oracle the whole probe, which holds the document's text.
       const probedRow = { probe: probeRow(probed), probeDetail: probed };
-      if (probed.baseline !== undefined) return done({ outcome: "baseline", engine }, probedRow);
-      // The request as items 7 and 11 build it: with the upload's sources, so that the macros it
-      // defines are its own, and the header's values, found by the answers the request without them
-      // finds (decision 0024).
-      const options = { sources: sourcesOf(taken) };
-      const plain = await buildRequest(built, found, probed, body.preamble, options);
-      if ("refused" in plain) return done({ outcome: "no answer", engine, answered: 0 }, probedRow);
-      const header = headerOf(
-        probed.candidates,
-        commandAnswers(plain.request, folder.read, (name) => realName(plain.names, name)),
-      );
-      const requested = await buildRequest(built, found, probed, body.preamble, {
-        ...options,
-        header,
+      if (probed.baseline !== undefined)
+        return done({ outcome: "baseline", engine }, { outcome: "baseline", engine }, probedRow);
+      // The request the import sends, by the import's own function (`importRequest`, decision
+      // 0038): the upload's sources and the page's strings among what masks it, and never the
+      // header's values, which only the answers give. Those the answers the request finds give, as
+      // `corpus leak` finds them (decision 0024), are read besides by the stricter check the model
+      // is asked behind and by the review's leak check.
+      const answers = answersOf(task.message.answers?.model);
+      const sent = await naming.importRequest({
+        tree: built,
+        signatures: found,
+        probe: probed,
+        preamble: body.preamble,
+        intake: taken,
+        reference: made,
+        fonts,
       });
-      if ("refused" in requested)
-        return done({ outcome: "no answer", engine, answered: 0 }, probedRow);
+      // The builder refuses a request only for a page the detector cannot read (decision 0033).
+      if ("refused" in sent) return refused(sent, engine, "request", { more: probedRow });
+      const { request, names, document } = sent;
       // The request writes a macro named after a word of the person's as a placeholder (decision
       // 0033); the answers are asked for, and come back, under the document's own names.
-      const request = requested.request;
-      const asked = request.macros.map((macro) => ({
-        ...macro,
-        name: realName(requested.names, macro.name),
-      }));
-      const answers = await answersFor(asked, cache);
-      const counted = {
-        answered: answers.answered,
-        unanswered: answers.unanswered,
-        ...(answers.refused === 0 ? {} : { answersRefused: answers.refused }),
+      const realName = (name: string) => naming.realName(names, name);
+      const header = headerOf(probed.candidates, commandAnswers(request, answers.read, realName));
+      const checked = { ...document, header };
+      const gate = naming.findLeaks(request, checked).length === 0 ? "passes" : "withholds";
+      // What the review reads of the document: its request, the gate's word, and its text, which
+      // the export's leak check reads, never writes; its macros' fates join them below.
+      const kept: Omit<RunDocument, "id" | "family" | "outcome"> = {
+        request,
+        gate,
+        text: {
+          tree: built,
+          header,
+          stored: [...(document.stored ?? [])],
+          sources: [...(document.sources ?? [])],
+          page: document.page ?? {
+            words: [],
+            pairs: [],
+            identifiers: [],
+            numbers: [],
+            runs: [],
+            glyphs: 0,
+            readable: 0,
+          },
+          names: [...names],
+        },
       };
-      if (answers.found.length === 0)
-        return done({ outcome: "no answer", engine, ...counted, answered: 0 }, probedRow);
+      const preambleTree = (text: string) => {
+        const head = readBody(bodyOfText(text));
+        const tree = "refused" in head ? undefined : buildTree(head, found);
+        return tree === undefined || "refused" in tree ? undefined : tree;
+      };
+      const notesOf = (
+        assembled?: Parameters<typeof reviewNotesOf>[0]["assembled"],
+        text = body.preamble,
+      ) =>
+        wantsReview
+          ? reviewNotesOf({
+              request,
+              realName,
+              cache: answers.cache,
+              probe: probed,
+              ...(assembled === undefined ? {} : { assembled }),
+              trees: { body: built, preamble: preambleTree(text) },
+            })
+          : undefined;
+      // The import sends the request only when the privacy check, fed what the browser has, finds
+      // none of the resume's text in it, and refuses the resume otherwise (`request`, decision
+      // 0038): so does the run.
+      try {
+        naming.assertNoText(request, document);
+      } catch {
+        return refused({ reason: "request" }, engine, "request", {
+          more: { ...probedRow, review: { ...kept, notes: await notesOf() } },
+        });
+      }
+      // The model is asked only when the parent says so, with a key, and behind the stricter
+      // check, which the header's values are given to besides, as `corpus leak` proves the request.
+      const id = task.message.answers?.model;
+      const asking = task.message.answers?.ask === true && id !== undefined && key !== undefined;
+      const answered = await answerDocument(request, {
+        cache: answers.cache,
+        gate: () => naming.assertNoText(request, checked),
+        ...(asking ? { model: { model: soclaasModel(key, id), id } } : {}),
+        maxRetries: MODEL_RETRIES,
+        partTimeoutMs: MODEL_LIMIT_MS,
+      });
+      const runNaming: RunNaming = {
+        macros: answered.macros,
+        reviewed: answered.hits.reviewed,
+        model: answered.hits.model,
+        refused: answered.refusedCache,
+        missing: answered.missing.length,
+        asked: answered.asked,
+        stored: answered.stored,
+        invalid: answered.invalid,
+        conflicts: answered.conflicts,
+        ...(answered.failed === undefined ? {} : { failed: answered.failed.reason }),
+        calls: answered.calls,
+        tokens: answered.tokens,
+        gate,
+      };
+      // What the naming step and the probe counted, which every row from here on carries.
+      const counts = { naming: runNaming, compiles: { probe: probed.compiles } };
+      const asked = request.macros.map((macro) => ({ ...macro, name: realName(macro.name) }));
+      const assembling = await answersFor(asked, answers.cache);
+      took("naming");
+      const counted = {
+        answered: assembling.answered,
+        unanswered: assembling.unanswered,
+        ...(assembling.refused === 0 ? {} : { answersRefused: assembling.refused }),
+      };
+      if (assembling.found.length === 0)
+        return done(
+          { outcome: "no answer", engine, ...counted, answered: 0 },
+          { outcome: "no answer", engine, ...counts },
+          { ...probedRow, review: { ...kept, notes: await notesOf() } },
+        );
       // A XeTeX document's fonts declared by file, and the rewrite checked against the reference,
       // which refuses what it cannot reproduce (decision 0023), so that its package's format dumps.
       let rewrite: ReturnType<XetexModule["rewriteForXetex"]> | undefined;
       if (engine === "xetex") {
         rewrite = rewriteForXetex(taken, tree);
-        if ("refused" in rewrite) return done(refusedRow(rewrite, engine, counted), probedRow);
+        if ("refused" in rewrite) {
+          took("fonts");
+          return refused(rewrite, engine, "fonts", {
+            counted,
+            run: counts,
+            more: { ...probedRow, review: { ...kept, notes: await notesOf() } },
+          });
+        }
         const checked = await checkRewrite(session, fonts, taken, made, rewrite, {
           treeImage,
           format: CHECK_FORMAT,
         });
         session.dropFormat("xetex", CHECK_FORMAT);
-        if ("refused" in checked) return done(refusedRow(checked, engine, counted), probedRow);
+        took("fonts");
+        if ("refused" in checked)
+          return refused(checked, engine, "fonts", {
+            counted,
+            run: counts,
+            more: { ...probedRow, review: { ...kept, notes: await notesOf() } },
+          });
       }
       const validated = await validate({
         session,
@@ -229,12 +430,22 @@ async function main() {
         tree: built,
         signatures: found,
         probe: probed,
-        answer: { version: NAMING_VERSION, macros: answers.found, preamble: { parameters: [] } },
+        answer: {
+          version: NAMING_VERSION,
+          macros: assembling.found,
+          preamble: { parameters: [] },
+        },
         ...(rewrite === undefined || "refused" in rewrite ? {} : { rewrite }),
         ...(swap === undefined ? {} : { latinModern: swap.swapped }),
         treeImage,
       });
-      if ("refused" in validated) return done(refusedRow(validated, engine, counted), probedRow);
+      took("checks");
+      if ("refused" in validated)
+        return refused(validated, engine, "checks", {
+          counted,
+          run: counts,
+          more: { ...probedRow, review: { ...kept, notes: await notesOf() } },
+        });
       // For each section of a kind whose removal stopped the compile, what frames it, by structure:
       // counts and booleans the request's definitions and the answers give, never the text.
       const removals: SectionRemoval[] = [];
@@ -254,7 +465,7 @@ async function main() {
         const answered = new Set<string>();
         /** The closer each list opener's answer names. */
         const closers = new Map<string, string>();
-        for (const each of answers.found) {
+        for (const each of assembling.found) {
           answered.add(each.name);
           if (each.answer.list?.does !== "opens") continue;
           opens.add(each.name);
@@ -267,7 +478,7 @@ async function main() {
         for (const definition of request.definitions)
           if (definition.kind === "definition")
             balance.set(
-              realName(requested.names, definition.name),
+              realName(definition.name),
               occurrences(definition.text, /\\begin\s*\{/g) -
                 occurrences(definition.text, /\\end\s*\{/g),
             );
@@ -373,22 +584,44 @@ async function main() {
           ...(rewrite === undefined || "refused" in rewrite ? [] : rewrite.warnings),
         ],
       });
+      const runRow = runRowOf(validated, engine, {
+        naming: runNaming,
+        probeCompiles: probed.compiles,
+        times: {},
+      });
+      const { times: _times, ...runFields } = runRow;
       done(
         {
           ...assembleRow(validated.checks, engine, counted, report),
           probeMs: Math.round(probed.ms),
           ...(removals.length === 0 ? {} : { removals }),
         },
+        runFields,
         {
           ...probedRow,
           fields: fieldsFound(validated.document.resume, validated.checks.all),
           detail: validated,
+          review: {
+            ...kept,
+            ...(runRow.rate === undefined ? {} : { rate: runRow.rate }),
+            notes: await notesOf(
+              validated,
+              rewrite === undefined || "refused" in rewrite ? body.preamble : rewrite.preamble,
+            ),
+          },
         },
       );
-    } catch {
-      // What went wrong may quote the document, so it goes unsaid.
+    } catch (error) {
+      // A request the contract refuses is a builder's fault, named by its kind alone; anything else
+      // may quote the document, so it goes unsaid.
       session.forget("import");
-      done({ outcome: "crashed", engine });
+      if (error instanceof naming.InvalidRequest)
+        return done(
+          { outcome: "refused", engine, refused: "invalid" },
+          { outcome: "refused", engine, refused: "invalid" },
+          { refusal: { step: "request", reason: "invalid" } },
+        );
+      done({ outcome: "crashed", engine }, { outcome: "crashed", engine });
     }
   });
   send({ type: "ready" });

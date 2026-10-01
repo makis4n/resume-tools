@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "run": {
+    "date": "2026-10-01",
+    "commit": "2cb22c396f654d22eb825fc91f483a9fa1e1bdcd",
+    "documents": 220,
+    "timeouts": 1,
+    "success": 0,
+    "rates": {
+      "success": 0,
+      "editable": 19.69
+    }
+  }
+}
