@@ -1,6 +1,7 @@
 import { NAMING_VERSION } from "@resume-tools/naming";
 import { describe, expect, test } from "vitest";
 import type { AssemblyChecks } from "../src/import/assemble";
+import type { Report } from "../src/import/report";
 import { DROPPED, NOTES, UNCHECKED } from "../src/import/validate";
 import {
   type AssembleRow,
@@ -16,8 +17,13 @@ import {
   dropKind,
   errorClass,
   fieldsFound,
+  firstCheckHolds,
   placesTable,
   portPlaces,
+  type ReportRow,
+  reportLine,
+  reportRow,
+  reportSucceeded,
   UNCHECKED_WHY,
 } from "./corpus-assemble";
 
@@ -28,6 +34,20 @@ const SECRET = "Quillwort";
 
 const row = (id: string, family: AssembleRow["family"], changes: Partial<AssembleRow>) =>
   ({ id, family, outcome: "assembled", wall: 1000, ...changes }) as AssembleRow;
+
+/** An invented report's row: its outcome, and its editable words of the resume's, the rest dates. */
+const reported = (
+  outcome: ReportRow["outcome"],
+  editable: number,
+  body: number,
+  template = 0,
+): ReportRow => ({
+  outcome,
+  rate: editable / body,
+  words: { editable, panel: 0, locked: { date: body - editable }, body, template },
+  parts: 1,
+  dropped: 0,
+});
 
 describe("the table", () => {
   const rows: AssembleRow[] = [
@@ -92,7 +112,7 @@ describe("the table", () => {
     expect(cells("Editable")?.at(-1)).toBe("14");
     expect(cells("Raw: set, and edited in the panel alone")?.at(-1)).toBe("2");
     expect(cells("Parts locked: `unmapped`")?.at(-1)).toBe("3");
-    expect(cells("Words in editable fields")?.at(-1)).toBe("57%");
+    expect(cells("Words in editable fields, counted in the source")?.at(-1)).toBe("57%");
     expect(cells("`margins` dropped")?.at(-1)).toBe("1");
     expect(cells("Dropped: `\\cvevent`")?.at(-1)).toBe("1");
     expect(cells("Applied after `\\documentclass`")?.at(-1)).toBe("0");
@@ -176,10 +196,12 @@ describe("the checks' own findings in the table", () => {
 
 describe("the milestone's bar", () => {
   // Invented rows: all three proven; margins dropped, every value setting the same page; none
-  // proven; a partial one lacking two; and one refused, which is no import to hold to the bar.
+  // proven; one whose first check holds whose report is partial, under the bar; a partial one
+  // lacking two; and one refused, which is no import to hold to the bar.
   const rows: AssembleRow[] = [
     row("jake-0001", "jake", {
       controls: { proven: ["pageSize", "margins", "fontSize"], dropped: [] },
+      report: reported("succeeded", 95, 100),
     }),
     row("jake-0002", "jake", {
       controls: {
@@ -187,6 +209,7 @@ describe("the milestone's bar", () => {
         dropped: ["margins"],
         why: { margins: "same" },
       },
+      report: reported("succeeded", 90, 100),
     }),
     row("moderncv-0001", "moderncv", {
       controls: {
@@ -194,10 +217,16 @@ describe("the milestone's bar", () => {
         dropped: ["fontSize", "pageSize"],
         why: { fontSize: "stops", pageSize: "harness" },
       },
+      report: reported("succeeded", 99, 100),
+    }),
+    row("moderncv-0002", "moderncv", {
+      controls: { proven: [], dropped: [] },
+      report: reported("partial", 30, 100),
     }),
     row("jake-0003", "jake", {
       outcome: "partial",
       controls: { proven: ["pageSize"], dropped: [] },
+      report: reported("partial", 100, 100),
     }),
     row("jake-0004", "jake", { outcome: "refused", refused: "font" }),
   ];
@@ -208,14 +237,17 @@ describe("the milestone's bar", () => {
       proven: ["pageSize", "fontSize"],
       lacking: ["margins"],
     });
-    // A success is an assembly whose first check holds, until item 13's rule.
+    // A success is item 13's report's: the first check holding, and nine tenths of the words
+    // editable; a document under the bar is no success, whatever its first check.
     expect(barFailures(rows)).toEqual([
       { id: "jake-0002", control: "margins" },
       { id: "moderncv-0001", control: "pageSize" },
       { id: "moderncv-0001", control: "margins" },
       { id: "moderncv-0001", control: "fontSize" },
     ]);
-    // Item 17's runner passes item 13's rule in its place: here, one that takes the partial too.
+    expect(barFailures(rows, reportSucceeded)).toEqual(barFailures(rows));
+    expect(rows.filter(firstCheckHolds).map((each) => each.id)).toContain("moderncv-0002");
+    // A runner may pass another rule in its place: here, one that takes the partial too.
     expect(barFailures(rows, (each) => each.outcome !== "refused")).toContainEqual({
       id: "jake-0003",
       control: "fontSize",
@@ -242,9 +274,9 @@ describe("the milestone's bar", () => {
       "0",
       "1",
     ]);
-    expect(
-      cells("The bar: a successful import, its first check holding, lacking one")?.at(-1),
-    ).toBe("2");
+    expect(cells("The bar: a successful import, as the report says, lacking one")?.at(-1)).toBe(
+      "2",
+    );
     expect(cells("The bar: a successful import lacking `margins`")?.at(-1)).toBe("2");
     expect(cells("The bar: a successful import lacking `pageSize`")?.at(-1)).toBe("1");
     expect(cells("`margins` dropped: every value sets the same page")?.at(-1)).toBe("1");
@@ -457,7 +489,7 @@ describe("the oracle's places", () => {
       },
     ]);
     expect(table).toContain(
-      "| invented | **outcome** | | assembled; harness: pages 1; 9 compiles |",
+      "| invented | **outcome** | | assembled; report: none; harness: pages 1; 9 compiles |",
     );
     expect(table).toContain("| invented | `link.label` | marks | 1 raw |");
   });
@@ -522,5 +554,97 @@ describe("a validation's row", () => {
     expect(errorClass(quoted("! Extra \\endgroup."))).toBe("an end with no begin");
     expect(errorClass(quoted("! Missing number, treated as zero."))).toBe("another error");
     expect(errorClass(undefined)).toBe("another error");
+  });
+});
+
+describe("item 13's report in the runner (decision 0039)", () => {
+  const rows: AssembleRow[] = [
+    row("jake-0001", "jake", { report: reported("succeeded", 95, 100, 2) }),
+    row("jake-0002", "jake", { report: reported("partial", 50, 100) }),
+    row("altacv-0001", "altacv", { outcome: "partial", report: reported("partial", 10, 10) }),
+    row("other-0001", "other", { outcome: "no answer" }),
+  ];
+  const table = assembleTable(rows);
+  const cells = (label: string) =>
+    table
+      .split("\n")
+      .find((line) => line.startsWith(`| ${label} |`))
+      ?.split("|")
+      .slice(2, -1)
+      .map((cell) => cell.trim());
+
+  test("counts the documents that succeed and the partial ones, and the words read from the page", () => {
+    // Columns: jake, awesome-cv, altacv, moderncv, europecv, other, all.
+    expect(
+      cells("Succeeded: the first check holds, and 90% of the words or more are editable"),
+    ).toEqual(["1", "0", "0", "0", "0", "0", "1"]);
+    expect(cells("Partial: under the bar, or the first check differs")).toEqual([
+      "1",
+      "0",
+      "1",
+      "0",
+      "0",
+      "0",
+      "2",
+    ]);
+    expect(cells("Words in editable fields")).toEqual(["73%", "", "100%", "", "", "", "74%"]);
+    expect(cells("Words of the resume's")?.at(-1)).toBe("210");
+    expect(cells("Words editable")?.at(-1)).toBe("155");
+    expect(cells("Words locked: `date`")?.at(-1)).toBe("55");
+    expect(cells("Words of the template's own")?.at(-1)).toBe("2");
+    // A reason no document's report locks a word for has no line.
+    expect(table).not.toContain("Words locked: `unmapped`");
+  });
+
+  test("keeps a report's counts in the row, never a word of the document's", () => {
+    const report: Report = {
+      outcome: "partial",
+      rate: 0.123456,
+      matched: true,
+      words: {
+        editable: 10,
+        panel: 2,
+        locked: 71,
+        byReason: { unmapped: 71 },
+        body: 81,
+        template: 3,
+      },
+      locked: [{ words: `${SECRET} words`, count: 71, reason: "unmapped", why: "invented" }],
+      dropped: [{ kind: "images", text: `1 image left out: ${SECRET}.png.` }],
+      notes: [`${SECRET} note`],
+    };
+    const made = reportRow(report);
+    expect(made).toEqual({
+      outcome: "partial",
+      rate: 0.1235,
+      words: { editable: 10, panel: 2, locked: { unmapped: 71 }, body: 81, template: 3 },
+      parts: 1,
+      dropped: 1,
+    });
+    expect(JSON.stringify(made)).not.toContain(SECRET);
+    const checks = {
+      outcome: "assembled",
+      fields: { editable: 0, raw: 0, required: 0, locked: {} },
+      words: { editable: 0, locked: {} },
+      sections: { mapped: 0, locked: 0 },
+      required: [],
+      controls: { offered: [], proven: [], dropped: [] },
+      redefinitions: { applied: [], dropped: [], placement: "class" },
+      repeatable: [],
+      findings: [],
+      compiles: 1,
+      ms: 1,
+      decisions: {},
+      all: [],
+    } satisfies AssemblyChecks;
+    expect(assembleRow(checks, "pdftex", { answered: 1, unanswered: 0 }, report).report).toEqual(
+      made,
+    );
+    expect(assembleRow(checks, "pdftex", { answered: 1, unanswered: 0 }).report).toBeUndefined();
+    expect(reportLine(made)).toBe("partial at 12%, 10 of 81 words editable");
+    expect(reportLine(undefined)).toBe("none");
+    expect(reportSucceeded({ report: made })).toBe(false);
+    expect(reportSucceeded({ report: { ...made, outcome: "succeeded" } })).toBe(true);
+    expect(reportSucceeded({})).toBe(false);
   });
 });

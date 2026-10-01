@@ -478,7 +478,7 @@ describe("the glyphs no editable field covers", () => {
     // `\inventedslant` sets `Label:` before its argument and a period after it, which the source
     // does not hold; its argument stopped TeX, so no compile placed its glyphs.
     const source = String.raw`\inventedentry{Alpha}\texttt{Typed}\inventedslant{Beta}\inventedentry{Omega}`;
-    const { runs, covered } = uncoveredRuns(
+    const { runs, covered, all } = uncoveredRuns(
       page(["Alpha", "Typed", "Label:", "Beta", ".", "Omega"]),
       [
         decided("c1-1", "editable", spanOf(source, "Alpha")),
@@ -501,6 +501,12 @@ describe("the glyphs no editable field covers", () => {
     ]);
     expect(runs[0]?.first).toEqual({ h: 5000, v: 100 });
     expect(runs[0]?.last).toEqual({ h: 9000, v: 100 });
+    // Every run, the editable candidates' among them, each its candidate's, for item 13's report.
+    expect(shown(all)).toEqual([
+      { from: 0, to: 5, by: "candidate", id: "c1-1" },
+      ...shown(runs),
+      { from: 21, to: 26, by: "candidate", id: "c3-1" },
+    ]);
   });
 
   test("are a raw chunk's or a locked candidate's whole when their source lies in it", () => {

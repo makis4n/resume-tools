@@ -995,6 +995,13 @@ export interface Probe {
   /** The reference's glyphs, and those editable fields cover. */
   glyphs: { reference: number; covered: number };
   uncovered: UncoveredRun[];
+  /**
+   * Every run of the reference's glyphs and what sets it, as `uncovered` has those no editable
+   * field covers, and those it does, each run of them its editable candidate's: what the assembly
+   * reads, to say which field or locked part of the document sets each glyph, for item 13's report
+   * (decision 0039). Absent from a probe made before it.
+   */
+  runs?: UncoveredRun[];
 }
 
 export interface ProbeOptions extends ReferenceOptions {
@@ -1221,7 +1228,8 @@ export function piecesOf(source: string, start: number, end: number): string[] {
  * separator or an icon (`chrome`). A stretch
  * whose glyphs the page names none of, as a font with no outlines has them, is shared among what
  * overlaps its source in proportion to how much of the source each is. A run ends where what sets
- * it changes, and at a page's end.
+ * it changes, and at a page's end. Beside them come every run of the reference's glyphs, those
+ * editable fields cover among them, each its candidate's (`all`), which item 13's report reads.
  */
 export function uncoveredRuns(
   reference: GlyphStream,
@@ -1229,7 +1237,7 @@ export function uncoveredRuns(
   evidence: ReadonlyMap<string, readonly GlyphPlace[]>,
   raw: readonly RawChunk[],
   sources: Sources,
-): { runs: UncoveredRun[]; covered: number } {
+): { runs: UncoveredRun[]; covered: number; all: UncoveredRun[] } {
   const byId = new Map(candidates.map((each) => [each.id, each]));
   const glyphs = reference.pages.map((page) =>
     page.items.flatMap((item) => (item.kind === "glyph" ? [item] : [])),
@@ -1444,39 +1452,43 @@ export function uncoveredRuns(
     const item = glyphs[glyph.page]?.[glyph.at];
     return { h: item?.h ?? 0, v: item?.v ?? 0 };
   };
-  const runs: UncoveredRun[] = [];
-  let at = 0;
-  while (at < flat.length) {
-    const start = flat[at];
-    if (start === undefined || editable(start.owner)) {
-      at++;
-      continue;
+  /** The glyphs in runs of what sets them, each run on one page, with or without the editable's. */
+  const runsOf = (withEditable: boolean) => {
+    const found: UncoveredRun[] = [];
+    let at = 0;
+    while (at < flat.length) {
+      const start = flat[at];
+      if (start === undefined || (!withEditable && editable(start.owner))) {
+        at++;
+        continue;
+      }
+      const setter = setterAt[at] ?? CHROME;
+      let end = at + 1;
+      while (end < flat.length) {
+        const each = flat[end];
+        if (
+          each === undefined ||
+          each.page !== start.page ||
+          (!withEditable && editable(each.owner)) ||
+          !sameSetter(setterAt[end], setter)
+        )
+          break;
+        end++;
+      }
+      const last = flat[end - 1] ?? start;
+      found.push({
+        page: start.page,
+        from: start.at,
+        to: last.at + 1,
+        first: placeOf(start),
+        last: placeOf(last),
+        ...setter,
+      });
+      at = end;
     }
-    const setter = setterAt[at] ?? CHROME;
-    let end = at + 1;
-    while (end < flat.length) {
-      const each = flat[end];
-      if (
-        each === undefined ||
-        each.page !== start.page ||
-        editable(each.owner) ||
-        !sameSetter(setterAt[end], setter)
-      )
-        break;
-      end++;
-    }
-    const last = flat[end - 1] ?? start;
-    runs.push({
-      page: start.page,
-      from: start.at,
-      to: last.at + 1,
-      first: placeOf(start),
-      last: placeOf(last),
-      ...setter,
-    });
-    at = end;
-  }
-  return { runs, covered };
+    return found;
+  };
+  return { runs: runsOf(false), covered, all: runsOf(true) };
 }
 
 /**
@@ -1675,7 +1687,7 @@ export async function probe(
       return { ...candidate, ...decided };
     });
     const { macros, standard } = aggregate(results);
-    const { runs, covered } = uncoveredRuns(made, results, settlement.evidence, raw, {
+    const { runs, covered, all } = uncoveredRuns(made, results, settlement.evidence, raw, {
       body: tree.source,
       preamble: preamble.tree?.source ?? "",
     });
@@ -1706,6 +1718,7 @@ export async function probe(
         covered,
       },
       uncovered: runs,
+      runs: all,
     };
   } catch (error) {
     // A probe that did not finish leaves no format for item 7.

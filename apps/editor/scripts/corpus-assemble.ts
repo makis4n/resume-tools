@@ -5,9 +5,10 @@
  * rest), probes it, assembles its package and document from the answer (`src/import/assemble.ts`)
  * and validates them with the four checks and the harness (`src/import/validate.ts`); and prints one
  * table, per family and in all: the documents assembled, partial and refused, the fields editable,
- * required and locked by reason, the controls proven and dropped and the milestone's bar, page size,
- * margins and font size proven on every successful import (decision 0040), the harness's findings
- * by check, and the compiles and times.
+ * required and locked by reason, item 13's report of each, its words read from the page, its rate
+ * and whether it succeeds (`reportOf`, decision 0039), the controls proven and dropped and the
+ * milestone's bar, page size, margins and font size proven on every successful import (decision
+ * 0040), the harness's findings by check, and the compiles and times.
  *
  * The documents go to the reference runner's pool of child processes (`runPool`), with a longer
  * time than the probe's, since a document's probe and its checks both compile it, whole on XeTeX
@@ -21,6 +22,8 @@
 // nothing Node lacks, and the editor's modules as types alone, with their real extensions.
 import { type AnswerCache, answerFor, type StoredAnswer } from "@resume-tools/naming";
 import type { AssemblyChecks, LockReason } from "../src/import/assemble.ts";
+// The report imports nothing but types, so Node runs it as it is (decision 0039).
+import { percent, type Report, SUCCESS_RATE } from "../src/import/report.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 
 /** How long one document may take: its pipeline, its probe, its assembly and its checks. */
@@ -122,11 +125,56 @@ export const BAR_CONTROLS = ["pageSize", "margins", "fontSize"] as const;
 export type BarControl = (typeof BAR_CONTROLS)[number];
 
 /**
- * Whether a document is a successful import for the bar, until item 13's rule gives what a
- * success is: an assembly whose first check holds, its reference's glyphs set with the fields it
- * has (`assembled`); a partial one, one refused and one that never got so far are not.
+ * Whether a document's first check holds: an assembly whose regenerated document set its
+ * reference's glyphs (`assembled`); a partial one, one refused and one that never got so far do
+ * not. Until item 13 it was what a success was, for the bar.
  */
 export const firstCheckHolds = (row: Pick<AssembleRow, "outcome">) => row.outcome === "assembled";
+
+/**
+ * Whether a document is a successful import, as item 13's report says (decision 0039): its first
+ * check holds and at least `SUCCESS_RATE` of its words on the page are editable. What the bar
+ * holds to page size, margins and font size (decision 0040).
+ */
+export const reportSucceeded = (row: Pick<AssembleRow, "report">) =>
+  row.report?.outcome === "succeeded";
+
+/**
+ * What item 13's report made of a document (decision 0039), in counts alone: whether it succeeds,
+ * its rate to four places, its words on the page by where they are, editable, of them in the side
+ * panel alone, locked by reason, the body's and the template's own, and how many locked parts and
+ * things left out the person reads; never a part's words, which are the document's.
+ */
+export interface ReportRow {
+  outcome: Report["outcome"];
+  rate: number;
+  words: {
+    editable: number;
+    panel: number;
+    locked: Partial<Record<LockReason, number>>;
+    body: number;
+    template: number;
+  };
+  parts: number;
+  dropped: number;
+}
+
+/** A document's report as its row keeps it (`ReportRow`): counts, never words. */
+export function reportRow(report: Report): ReportRow {
+  return {
+    outcome: report.outcome,
+    rate: Math.round(report.rate * 10_000) / 10_000,
+    words: {
+      editable: report.words.editable,
+      panel: report.words.panel,
+      locked: { ...report.words.byReason },
+      body: report.words.body,
+      template: report.words.template,
+    },
+    parts: report.locked.length,
+    dropped: report.dropped.length,
+  };
+}
 
 /** Which of the bar's controls a document's row proves, and which it lacks, in the bar's order. */
 export function barControls(row: Pick<AssembleRow, "controls">): {
@@ -143,12 +191,14 @@ export function barControls(row: Pick<AssembleRow, "controls">): {
 /**
  * Where the corpus misses the milestone's bar (decision 0040): each successful import, by its
  * document's id, and each of the bar's controls it lacks, a line of each; none when every
- * successful import has all three. `successful` is the rule of what a success is, the first check
- * holding until item 13's lands (`firstCheckHolds`), which item 17's runner passes in its place.
+ * successful import has all three. `successful` is the rule of what a success is, item 13's report
+ * (`reportSucceeded`, decision 0039), which item 17's runner passes as it reads it.
  */
 export function barFailures(
-  rows: readonly Pick<AssembleRow, "id" | "outcome" | "controls">[],
-  successful: (row: Pick<AssembleRow, "id" | "outcome" | "controls">) => boolean = firstCheckHolds,
+  rows: readonly Pick<AssembleRow, "id" | "outcome" | "controls" | "report">[],
+  successful: (
+    row: Pick<AssembleRow, "id" | "outcome" | "controls" | "report">,
+  ) => boolean = reportSucceeded,
 ): { id: string; control: BarControl }[] {
   return rows
     .filter(successful)
@@ -192,7 +242,10 @@ export interface AssembleRow {
     required: number;
     locked: Partial<Record<LockReason, number>>;
   };
+  /** The words in editable fields and locked by reason, as the assembly counts them in the source. */
   words?: { editable: number; locked: Partial<Record<LockReason, number>> };
+  /** Item 13's report: its outcome, its rate and its words read from the page (decision 0039). */
+  report?: ReportRow;
   sections?: { mapped: number; locked: number };
   /**
    * The controls proven and dropped, and of those dropped, those the checks never tried, and the
@@ -277,11 +330,15 @@ export function errorClass(error: string | undefined): string {
   return "another error";
 }
 
-/** A validation's row: its counts and names, never a field's text. */
+/**
+ * A validation's row: its counts and names, never a field's text; with item 13's report of it,
+ * where the caller read one (`reportOf`, decision 0039), in counts alone (`reportRow`).
+ */
 export function assembleRow(
   checks: AssemblyChecks,
   engine: "pdftex" | "xetex",
   answered: { answered: number; unanswered: number; answersRefused?: number },
+  report?: Report,
 ): AssembleChildRow {
   const findings: Partial<Record<string, number>> = {};
   for (const finding of checks.findings)
@@ -293,6 +350,7 @@ export function assembleRow(
     ...answered,
     fields: checks.fields,
     words: checks.words,
+    ...(report === undefined ? {} : { report: reportRow(report) }),
     sections: checks.sections,
     controls: {
       proven: checks.controls.proven,
@@ -345,11 +403,14 @@ const shownName = (name: string) => (/^[A-Za-z@*]{1,63}$/.test(name) ? `\\${name
  * What assembling the corpus came to, as one Markdown table, per family and in all: the documents
  * that reached the assembly and why others did not, those assembled, partial with the kind of the
  * first difference, set in Latin Modern, and refused; the fields editable, raw where the page
- * cannot mark them, required and locked by reason, and their words; the sections mapped and locked;
- * the controls proven and dropped, and the milestone's bar (`barControls`, decision 0040): the
- * documents with the page size, the margins and the font size all proven, and the successful ones
- * lacking any, and which; the redefinitions dropped; the harness's findings by check, and
- * the checks' own; the kinds of unit that stop the compile; and the compiles and times.
+ * cannot mark them, required and locked by reason, and their words, as the source counts them;
+ * item 13's report (decision 0039): the documents that succeed and the partial ones, and the words
+ * read from the page, editable, locked by reason and the template's own; the sections mapped and
+ * locked; the controls proven and dropped, and the milestone's bar (`barControls`, decision 0040):
+ * the documents with the page size, the margins and the font size all proven, and the successful
+ * ones, as the report says, lacking any, and which; the redefinitions dropped; the harness's
+ * findings by check, and the checks' own; the kinds of unit that stop the compile; and the
+ * compiles and times.
  */
 export function assembleTable(rows: readonly AssembleRow[]): string {
   const of = (column: (typeof COLUMNS)[number]) =>
@@ -420,6 +481,10 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
       ),
     ),
   ].sort();
+  // The reasons some document's report locks a word on its page for, in the table's order.
+  const pageReasons = LOCK_REASONS.filter((reason) =>
+    rows.some((row) => (row.report?.words.locked[reason] ?? 0) > 0),
+  );
   // Each control with each kind of why it was dropped that some document gives, in their orders.
   const drops = CONTROLS.flatMap((name) =>
     (Object.keys(DROP_KINDS) as DropKind[])
@@ -470,10 +535,30 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
       sum(`Parts locked: \`${reason}\``, (row) => row.fields?.locked[reason] ?? 0),
     ),
     share(
-      "Words in editable fields",
+      "Words in editable fields, counted in the source",
       (row) => row.words?.editable ?? 0,
       (row) => (row.words?.editable ?? 0) + lockedWords(row),
     ),
+    section("The report, its words read from the page"),
+    count(
+      `Succeeded: the first check holds, and ${percent(SUCCESS_RATE)} of the words or more are editable`,
+      reportSucceeded,
+    ),
+    count("Partial: under the bar, or the first check differs", (row) =>
+      done(row) ? row.report?.outcome === "partial" : false,
+    ),
+    share(
+      "Words in editable fields",
+      (row) => row.report?.words.editable ?? 0,
+      (row) => row.report?.words.body ?? 0,
+    ),
+    sum("Words of the resume's", (row) => row.report?.words.body ?? 0),
+    sum("Words editable", (row) => row.report?.words.editable ?? 0),
+    sum("Words editable in the side panel alone", (row) => row.report?.words.panel ?? 0),
+    ...pageReasons.map((reason) =>
+      sum(`Words locked: \`${reason}\``, (row) => row.report?.words.locked[reason] ?? 0),
+    ),
+    sum("Words of the template's own", (row) => row.report?.words.template ?? 0),
     section("Sections"),
     sum("Mapped onto the model", (row) => row.sections?.mapped ?? 0),
     sum("Locked", (row) => row.sections?.locked ?? 0),
@@ -499,13 +584,13 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
       (row) => done(row) && barControls(row).lacking.length === 0,
     ),
     count(
-      "The bar: a successful import, its first check holding, lacking one",
-      (row) => firstCheckHolds(row) && barControls(row).lacking.length > 0,
+      "The bar: a successful import, as the report says, lacking one",
+      (row) => reportSucceeded(row) && barControls(row).lacking.length > 0,
     ),
     ...BAR_CONTROLS.map((control) =>
       count(
         `The bar: a successful import lacking \`${control}\``,
-        (row) => firstCheckHolds(row) && barControls(row).lacking.includes(control),
+        (row) => reportSucceeded(row) && barControls(row).lacking.includes(control),
       ),
     ),
     section("Redefinitions, documents"),
@@ -771,6 +856,15 @@ export function comparePlaces(
   }));
 }
 
+/**
+ * Item 13's report of a document as a line of the runners says it (decision 0039): succeeded or
+ * partial, its rate, and its editable words of the resume's on the page; or none.
+ */
+export function reportLine(report: ReportRow | undefined): string {
+  if (report === undefined) return "none";
+  return `${report.outcome} at ${percent(report.rate)}, ${report.words.editable} of ${report.words.body} words editable`;
+}
+
 /** The oracle's assemblies as a Markdown table: each sample's outcome, and its fields by place. */
 export function placesTable(
   samples: readonly { template: string; row?: AssembleRow; lines: readonly PlaceLine[] }[],
@@ -782,7 +876,7 @@ export function placesTable(
       .map(([check, n]) => `${check} ${n}`)
       .join(", ");
     rows.push(
-      `| ${sample.template} | **outcome** | | ${row?.outcome ?? "none"}${row?.difference === undefined ? "" : `, the first difference: ${row.difference}`}${row?.refused === undefined ? "" : ` (${row.refused})`}; harness: ${findings === "" ? "no finding" : findings}; ${row?.compiles ?? 0} compiles |`,
+      `| ${sample.template} | **outcome** | | ${row?.outcome ?? "none"}${row?.difference === undefined ? "" : `, the first difference: ${row.difference}`}${row?.refused === undefined ? "" : ` (${row.refused})`}; report: ${reportLine(row?.report)}; harness: ${findings === "" ? "no finding" : findings}; ${row?.compiles ?? 0} compiles |`,
     );
     for (const line of sample.lines)
       rows.push(`| ${line.template} | \`${line.place}\` | ${line.port} | ${line.found} |`);

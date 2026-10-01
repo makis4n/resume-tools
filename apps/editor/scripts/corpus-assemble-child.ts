@@ -8,16 +8,17 @@
  * with the upload's sources and the header's values (decision 0024); find the answers the committed
  * folder holds for its macros' keys, each as the document's macro (`answerFor`); and, where it
  * holds any, rewrite a XeTeX document's fonts by file and check the rewrite (decision 0023), and
- * assemble the document's package and document and validate them. It answers with the document's
- * row, names and numbers only; the probe's row and the whole probe, for the oracle; the fields
- * found by the model's place, for the oracle's comparison with the ports; and the whole assembly,
- * which holds the document's text, as the whole probe does, and which the parent keeps under
- * `.corpus/` alone.
+ * assemble the document's package and document and validate them, and read item 13's report of
+ * them (`reportOf`, decision 0039). It answers with the document's row, names and numbers only, the
+ * report's counts among them; the probe's row and the whole probe, for the oracle; the fields found
+ * by the model's place, for the oracle's comparison with the ports; and the whole assembly, which
+ * holds the document's text, as the whole probe does, and which the parent keeps under `.corpus/`
+ * alone.
  *
  * The editor's modules are written for Vite, so this file, which Node runs as it is, loads them
  * through Vite's module runner with the app's own config, as `corpus-probe-child.ts` does, and
- * imports nothing of the editor itself but types. It prints nothing: a document's text never
- * reaches a terminal.
+ * imports nothing of the editor itself but types, and the report, which imports nothing but types.
+ * It prints nothing: a document's text never reaches a terminal.
  */
 
 import { readFileSync } from "node:fs";
@@ -27,6 +28,9 @@ import { NAMING_VERSION } from "@resume-tools/naming";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
+// Item 13's report imports nothing but types, so Node runs it as it is: the same function the
+// browser's import reads its report with (decision 0039).
+import { reportOf } from "../src/import/report.ts";
 import {
   type AssembleChildRow,
   answersFor,
@@ -360,9 +364,18 @@ async function main() {
           session.forget("removal");
         }
       }
+      // Item 13's report, read as the browser's import reads it (decision 0039): its words from the
+      // reference's page, with what the intake and the XeTeX rewrite set aside.
+      const report = reportOf(validated, made, {
+        images: taken.images,
+        warnings: [
+          ...taken.warnings,
+          ...(rewrite === undefined || "refused" in rewrite ? [] : rewrite.warnings),
+        ],
+      });
       done(
         {
-          ...assembleRow(validated.checks, engine, counted),
+          ...assembleRow(validated.checks, engine, counted, report),
           probeMs: Math.round(probed.ms),
           ...(removals.length === 0 ? {} : { removals }),
         },

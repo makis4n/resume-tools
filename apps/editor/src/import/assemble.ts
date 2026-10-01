@@ -192,6 +192,24 @@ export interface AssembledField {
   reason?: LockReason;
 }
 
+/**
+ * What sets a run of the reference's glyphs in the document the assembly made (decision 0039):
+ * its page, from 0, and its glyphs' places among the page's, from `from` to before `to`, as the
+ * probe's runs have them; and an editable field, by its id (`field`), which the editor edits on
+ * the page or, set raw, in the side panel; a locked part, by its place among the assembly's
+ * (`part`, `Assembled.extras`); what the document keeps as the upload wrote it and no part counts,
+ * with why (`kept`); or, with none of them, the template's own text, which no part of the
+ * document's source sets, as a label, a separator, an icon or a page's number.
+ */
+export interface GlyphOwner {
+  page: number;
+  from: number;
+  to: number;
+  field?: string;
+  part?: number;
+  kept?: LockReason;
+}
+
 /** What the assembly and the checks found, for item 13's report and the corpus runner. */
 export interface AssemblyChecks {
   /** `partial` when the first check's glyph stream differs with every lock it could make. */
@@ -225,6 +243,13 @@ export interface AssemblyChecks {
   latinModern?: string[];
   /** Every field of the document, how it is set, and why where it is locked. */
   all: AssembledField[];
+  /**
+   * What sets each run of the reference's glyphs (`GlyphOwner`): the probe's runs, each read
+   * through the field or the locked part of the document that holds the part of the source that
+   * sets it (`ownersOf`), which item 13's report counts the page's words by. Absent from an
+   * assembly made from a probe that gave no runs.
+   */
+  owners?: GlyphOwner[];
 }
 
 /** An imported resume assembled: the package, the document, what is locked, and the checks. */
@@ -292,8 +317,34 @@ interface Context {
   ids: IdMint;
   locked: LockedPart[];
   fields: AssembledField[];
+  /**
+   * Where each field and each locked part stands in its source, the body's or the preamble's, from
+   * its start to its end: what says which of them sets each glyph the probe found set by a part of
+   * the source (`ownersOf`, item 13's report).
+   */
+  placed: Map<AssembledField | LockedPart, Placement>;
   /** Whether a date set from the model has a month, which the date format control changes. */
   monthly: boolean;
+}
+
+/** Where a field or a locked part stands: in the body's source or the preamble's, a span of it. */
+interface Placement {
+  where: "body" | "preamble";
+  start: number;
+  end: number;
+}
+
+/**
+ * A locked part kept as the upload wrote it and counted (decision 0026), with where it stands in
+ * its source (`Context.placed`), from `span`'s start to its end.
+ */
+function keepPart(ctx: Context, part: LockedPart, span: Span, where: "b" | "p" = "b") {
+  ctx.locked.push(part);
+  ctx.placed.set(part, {
+    where: where === "p" ? "preamble" : "body",
+    start: span.start,
+    end: span.end,
+  });
 }
 
 /** An argument's slot key: its macro, whether a command or an environment, and its place. */
@@ -622,6 +673,11 @@ function putField(
   const raw = reason === undefined && rawMode && options.rawable === true;
   const lockable = holder !== "none";
   const original = options.original ?? span;
+  const placement: Placement = {
+    where: where === "p" ? "preamble" : "body",
+    start: span.start,
+    end: span.end,
+  };
   const wrap = read.ok ? read.wrap : undefined;
   let placed = "";
   if (slotLocked === undefined)
@@ -636,7 +692,7 @@ function putField(
     const month = (date: string | undefined) => date !== undefined && /^\d{4}-\d{2}$/.test(date);
     if (dates !== undefined && (month(dates.start) || month(dates.end))) ctx.monthly = true;
   }
-  ctx.fields.push({
+  const field: AssembledField = {
     at,
     slot: slotName,
     field: options.field,
@@ -647,16 +703,23 @@ function putField(
     words,
     mode: reason !== undefined ? "locked" : raw ? "raw" : "typeset",
     ...(reason === undefined ? {} : { reason }),
-  });
+  };
+  ctx.fields.push(field);
+  ctx.placed.set(field, placement);
   if (reason !== undefined && words > 0 && lockable)
-    ctx.locked.push({
-      at: `${where}${span.start}`,
-      node: options.node,
-      key,
-      kind: holder === "header" ? "header" : "field",
-      reason,
-      words,
-    });
+    keepPart(
+      ctx,
+      {
+        at: `${where}${span.start}`,
+        node: options.node,
+        key,
+        kind: holder === "header" ? "header" : "field",
+        reason,
+        words,
+      },
+      { start: Math.min(span.start, original.start), end: Math.max(span.end, original.end) },
+      where,
+    );
   // A locked instance is kept, not editable: its node names the slot kept, so that the generator
   // sets its extra alone and the editor opens nothing on it (decision 0026).
   if (reason !== undefined && lockable) template.kept.add(slot);
@@ -751,14 +814,19 @@ function putConstant(
   });
   const words = arg.content === undefined ? wordsIn(visibleText(bytes)) : wordsOf(arg.content);
   if (!coded && words > 0)
-    ctx.locked.push({
-      at: `${options.where}${arg.start}`,
-      node: options.node,
-      key: options.key,
-      kind: options.holder === "header" ? "header" : "field",
-      reason: "unmapped",
-      words,
-    });
+    keepPart(
+      ctx,
+      {
+        at: `${options.where}${arg.start}`,
+        node: options.node,
+        key: options.key,
+        kind: options.holder === "header" ? "header" : "field",
+        reason: "unmapped",
+        words,
+      },
+      arg,
+      options.where,
+    );
   return true;
 }
 
@@ -970,14 +1038,19 @@ function putParts(
     });
     const words = wordsOf(content);
     if (words > 0)
-      ctx.locked.push({
-        at: `${options.where}${arg.innerStart}`,
-        node: options.node,
-        key: whole,
-        kind: "field",
-        reason: "shape",
-        words,
-      });
+      keepPart(
+        ctx,
+        {
+          at: `${options.where}${arg.innerStart}`,
+          node: options.node,
+          key: whole,
+          kind: "field",
+          reason: "shape",
+          words,
+        },
+        { start: arg.innerStart, end: arg.innerEnd },
+        options.where,
+      );
     return options.holder !== "none";
   }
   let at = arg.innerStart;
@@ -1311,6 +1384,22 @@ function headerOf(
     const prefix = `c${++counter}-`;
     if (answer === undefined) {
       template.extra(`${prefix}all`, source.slice(at.start, at.end));
+      // Kept as the upload wrote it, so counted as kept, as every part kept is (decision 0026).
+      const words = wordsOf([at]);
+      if (words > 0)
+        keepPart(
+          ctx,
+          {
+            at: `${where}${at.start}`,
+            node,
+            key: `${prefix}all`,
+            kind: "header",
+            reason: "unmapped",
+            words,
+          },
+          at,
+          where,
+        );
       return;
     }
     const slots: Record<string, SlotOf> = {};
@@ -1395,7 +1484,10 @@ function headerOf(
       const first = ctx.fields.at(-1);
       if (split && placed.set && typeof template.values.last === "string" && first !== undefined) {
         first.words = wordsIn(String(template.values.first ?? ""));
-        ctx.fields.push({ ...first, field: "header.last", words: wordsIn(template.values.last) });
+        const last = { ...first, field: "header.last", words: wordsIn(template.values.last) };
+        ctx.fields.push(last);
+        const placement = ctx.placed.get(first);
+        if (placement !== undefined) ctx.placed.set(last, placement);
       }
       template.code(arg.open === "" ? "{" : arg.open);
       template.text(source.slice(arg.innerStart, span.start));
@@ -1526,14 +1618,19 @@ function headerOf(
           template.extra(`n${++counter}`, source.slice(each.start, last.end));
           const words = wordsOf(run);
           if (words > 0)
-            ctx.locked.push({
-              at: `${where}${each.start}`,
-              node,
-              key: `n${counter}`,
-              kind: "header",
-              reason: why,
-              words,
-            });
+            keepPart(
+              ctx,
+              {
+                at: `${where}${each.start}`,
+                node,
+                key: `n${counter}`,
+                kind: "header",
+                reason: why,
+                words,
+              },
+              { start: each.start, end: last.end },
+              where,
+            );
         }
         at = last.end;
         i = j - 1;
@@ -1555,14 +1652,19 @@ function headerOf(
       template.extra(`n${++counter}`, source.slice(each.start, each.end));
       const words = wordsOf([each]);
       if (words > 0)
-        ctx.locked.push({
-          at: `${where}${each.start}`,
-          node,
-          key: `n${counter}`,
-          kind: "header",
-          reason: "unmapped",
-          words,
-        });
+        keepPart(
+          ctx,
+          {
+            at: `${where}${each.start}`,
+            node,
+            key: `n${counter}`,
+            kind: "header",
+            reason: "unmapped",
+            words,
+          },
+          each,
+          where,
+        );
     }
     template.text(source.slice(at, to));
   };
@@ -1578,14 +1680,19 @@ function headerOf(
         template.extra(`n${++counter}`, ctx.preamble.text.slice(setter.start, setter.end));
         const words = wordsOf([setter]);
         if (words > 0)
-          ctx.locked.push({
-            at: `p${setter.start}`,
-            node,
-            key: `n${counter}`,
-            kind: "header",
-            reason: "unmapped",
-            words,
-          });
+          keepPart(
+            ctx,
+            {
+              at: `p${setter.start}`,
+              node,
+              key: `n${counter}`,
+              kind: "header",
+              reason: "unmapped",
+              words,
+            },
+            setter,
+            "p",
+          );
       } else call(setter, "p");
       template.code("\n");
       continue;
@@ -1613,14 +1720,12 @@ function headerOf(
         template.code("\n");
         const words = wordsOf([each]);
         if (words > 0)
-          ctx.locked.push({
-            at: `p${each.start}`,
-            node,
-            key: `n${counter}`,
-            kind: "header",
-            reason: why,
-            words,
-          });
+          keepPart(
+            ctx,
+            { at: `p${each.start}`, node, key: `n${counter}`, kind: "header", reason: why, words },
+            each,
+            "p",
+          );
       }
     template.code("\n");
     i = j;
@@ -1751,6 +1856,8 @@ interface BulletList {
   why?: LockReason;
   /** The bullets' words. */
   words: number;
+  /** Where the list stands in the body's source, from its opener's start to its closer's end. */
+  span: Span;
 }
 
 /**
@@ -1846,6 +1953,7 @@ function bulletListOf(
     ok: kept,
     ...(why === undefined ? {} : { why }),
     words,
+    span: { start: frame.open.start, end: frame.close.end },
   };
 }
 
@@ -2060,14 +2168,18 @@ function entriesAt(
           inner.kept.add("bullets");
           const words = wordsOf(content);
           if (words > 0)
-            ctx.locked.push({
-              at: `b${arg.innerStart}`,
-              node: id,
-              key: "bullets",
-              kind: "list",
-              reason: "unmapped",
-              words,
-            });
+            keepPart(
+              ctx,
+              {
+                at: `b${arg.innerStart}`,
+                node: id,
+                key: "bullets",
+                kind: "list",
+                reason: "unmapped",
+                words,
+              },
+              { start: arg.innerStart, end: arg.innerEnd },
+            );
           return true;
         }
         bullets = bulletListOf(ctx, found.items, found, `b${call.start}.bullets`, role);
@@ -2133,14 +2245,18 @@ function entriesAt(
     } else if (!proposal.has(kind)) proposal.set(kind, snippet);
     const list = bullets as BulletList | undefined;
     if (list !== undefined && !list.ok && list.words > 0)
-      ctx.locked.push({
-        at: `b${call.start}`,
-        node: id,
-        key: "bullets",
-        kind: "list",
-        reason: list.why ?? "shape",
-        words: list.words,
-      });
+      keepPart(
+        ctx,
+        {
+          at: `b${call.start}`,
+          node: id,
+          key: "bullets",
+          kind: "list",
+          reason: list.why ?? "shape",
+          words: list.words,
+        },
+        list.span,
+      );
     if (list !== undefined && list.ok) {
       proposal.set(`bullet:${role}`, list.bullet);
       proposal.set(`sep:bullets:${role}`, list.separator);
@@ -2429,14 +2545,18 @@ function itemsAt(
     const why = decided ?? ctx.fields.slice(snapshot.fields).find((field) => field.reason)?.reason;
     ctx.fields.length = snapshot.fields;
     ctx.locked.length = snapshot.locked;
-    ctx.locked.push({
-      at: `b${node.start}`,
-      node: owner,
-      key: "items",
-      kind: "list",
-      reason: why ?? "shape",
-      words,
-    });
+    keepPart(
+      ctx,
+      {
+        at: `b${node.start}`,
+        node: owner,
+        key: "items",
+        kind: "list",
+        reason: why ?? "shape",
+        words,
+      },
+      span,
+    );
   }
   return {
     kind,
@@ -2641,14 +2761,18 @@ function sectionAt(
         if (before !== "") headTemplate.values.before = before;
         const words = wordsOf(nodes.slice(i + 1, k));
         if (words > 0)
-          ctx.locked.push({
-            at: `b${(nodes[i + 1] as Node).start}`,
-            node: id,
-            key: "before",
-            kind: "section",
-            reason: "unmapped",
-            words,
-          });
+          keepPart(
+            ctx,
+            {
+              at: `b${(nodes[i + 1] as Node).start}`,
+              node: id,
+              key: "before",
+              kind: "section",
+              reason: "unmapped",
+              words,
+            },
+            { start: head.end, end: (nodes[k] as Node).start },
+          );
       }
     }
   }
@@ -2706,14 +2830,18 @@ function sectionAt(
       const words = wordsOf(run);
       const first = run.find((node) => !isBlankText(node)) ?? (nodes[closes] as Node);
       if (words > 0)
-        ctx.locked.push({
-          at: `b${first.start}`,
-          node: id,
-          key: "after",
-          kind: "section",
-          reason: "unmapped",
-          words,
-        });
+        keepPart(
+          ctx,
+          {
+            at: `b${first.start}`,
+            node: id,
+            key: "after",
+            kind: "section",
+            reason: "unmapped",
+            words,
+          },
+          { start: (nodes[end - 1] as Node).end, end: (nodes[closes] as Node).end },
+        );
       last = closes + 1;
     }
   }
@@ -2903,13 +3031,11 @@ function bodyOf_(ctx: Context): BodyOut | Refusal {
       lastEnd = last.end;
       afterWord = word;
       if (words > 0)
-        ctx.locked.push({
-          at: `b${first.start}`,
-          node: id,
-          kind: "section",
-          reason: "unmapped",
-          words,
-        });
+        keepPart(
+          ctx,
+          { at: `b${first.start}`, node: id, kind: "section", reason: "unmapped", words },
+          { start: first.start, end: last.end },
+        );
       return undefined;
     }
     // What `\rtlocked` cannot take stays in the extras of the section before it, where it is
@@ -2923,14 +3049,18 @@ function bodyOf_(ctx: Context): BodyOut | Refusal {
     };
     lastEnd = last.end;
     if (words > 0)
-      ctx.locked.push({
-        at: `b${first.start}`,
-        node: previous.id,
-        key: "after",
-        kind: "section",
-        reason: "unmapped",
-        words,
-      });
+      keepPart(
+        ctx,
+        {
+          at: `b${first.start}`,
+          node: previous.id,
+          key: "after",
+          kind: "section",
+          reason: "unmapped",
+          words,
+        },
+        { start: first.start, end: last.end },
+      );
     return undefined;
   };
   let run: Node[] = [];
@@ -3759,6 +3889,7 @@ export async function assemble(
     ids: new IdMint(),
     locked: [],
     fields: [],
+    placed: new Map(),
     monthly: false,
   };
   ctx.modes = slotModes(
@@ -3996,6 +4127,7 @@ function checksOf(
   const offered = (Object.keys(pkg.controls) as (ControlName | "dateFormat")[]).filter(
     (name): name is ControlName => name !== "dateFormat",
   );
+  const owners = ownersOf(ctx);
   return {
     outcome: "assembled",
     fields: { editable, raw, required: ctx.decisions.required.length, locked },
@@ -4017,6 +4149,122 @@ function checksOf(
     ms: 0,
     decisions: ctx.decisions,
     all: ctx.fields,
+    ...(owners === undefined ? {} : { owners }),
+  };
+}
+
+/**
+ * What sets each run of the reference's glyphs in the document assembled (decision 0039), from the
+ * probe's runs (`Probe.runs`), each set by a candidate, a raw chunk or the template's own text
+ * (decision 0022). A run a part of the source sets is the innermost editable field that holds that
+ * part, as the probe's editable candidate is the field the assembly made of it; else the innermost
+ * locked part that holds it, a field's kept instance, a list kept whole, a header's extra or a
+ * locked section; else the locked field that holds it, which keeps no part; and else something the
+ * document keeps as the upload wrote it and no part counts (`unmapped`), so that no word of the
+ * document's own counts as the template's. A run of the template's own text has no owner. Runs
+ * side by side with one owner are one.
+ */
+function ownersOf(ctx: Context): GlyphOwner[] | undefined {
+  const runs = ctx.probe.runs;
+  if (runs === undefined) return undefined;
+  const candidates = new Map(ctx.probe.candidates.map((each) => [each.id, each]));
+  const inPreamble = preambleSpans(ctx);
+  const fields = ctx.fields.flatMap((field) => {
+    const placement = ctx.placed.get(field);
+    return placement === undefined ? [] : [{ ...placement, field }];
+  });
+  const parts = ctx.locked.flatMap((part, index) => {
+    const placement = ctx.placed.get(part);
+    return placement === undefined ? [] : [{ ...placement, index }];
+  });
+  /** The shortest of `units` that holds all of `span`, if any does. */
+  const innermostOf = <T extends Placement>(units: readonly T[], span: Placement) => {
+    let best: T | undefined;
+    for (const unit of units)
+      if (
+        unit.where === span.where &&
+        unit.start <= span.start &&
+        span.end <= unit.end &&
+        (best === undefined || unit.end - unit.start < best.end - best.start)
+      )
+        best = unit;
+    return best;
+  };
+  const editable = fields.filter(({ field }) => field.mode !== "locked");
+  const locked = fields.filter(({ field }) => field.mode === "locked");
+  const owners: GlyphOwner[] = [];
+  for (const run of runs) {
+    const candidate = run.candidate === undefined ? undefined : candidates.get(run.candidate);
+    const span: Placement | undefined =
+      run.by === "raw" && run.raw !== undefined
+        ? { where: "body", start: run.raw.start, end: run.raw.end }
+        : run.by === "candidate" && candidate !== undefined
+          ? candidate.where === "body"
+            ? { where: "body", start: candidate.start, end: candidate.end }
+            : inPreamble(candidate)
+          : undefined;
+    // The template's own text has no owner; what a part of the document's source sets has one.
+    let owner: Pick<GlyphOwner, "field" | "part" | "kept"> = {};
+    if (span !== undefined) {
+      const field = innermostOf(editable, span);
+      const part = field === undefined ? innermostOf(parts, span) : undefined;
+      const kept =
+        field === undefined && part === undefined ? innermostOf(locked, span) : undefined;
+      owner =
+        field !== undefined
+          ? { field: field.field.field }
+          : part !== undefined
+            ? { part: part.index }
+            : { kept: kept?.field.reason ?? "unmapped" };
+    } else if (run.by !== "chrome") owner = { kept: "unmapped" };
+    const last = owners.at(-1);
+    if (
+      last !== undefined &&
+      last.page === run.page &&
+      last.to === run.from &&
+      last.field === owner.field &&
+      last.part === owner.part &&
+      last.kept === owner.kept
+    )
+      last.to = run.to;
+    else owners.push({ page: run.page, from: run.from, to: run.to, ...owner });
+  }
+  return owners;
+}
+
+/**
+ * Where a span of the upload's own preamble, the probe's, stands in the assembly's: the same, but
+ * for a XeTeX import, whose preamble is the rewrite's (decision 0023), its fonts declared by file,
+ * so that what follows a font's command stands elsewhere. A span inside one of the preamble's
+ * storing calls is moved as far as the call is, the calls taken in turn where the two preambles
+ * write them alike, as the rewrite leaves them; one outside them, or in a call the rewrite
+ * changed, has no place.
+ */
+function preambleSpans(ctx: Context): (span: Span) => Placement | undefined {
+  const own = bodyOf(ctx.intake);
+  const at = (span: Span): Placement => ({ where: "preamble", ...span });
+  if ("refused" in own || own.preamble === ctx.preamble.text) return (span) => at(span);
+  const before = preambleOf(own.preamble, ctx.found).setters;
+  const after = ctx.preamble.setters;
+  const moves: { start: number; end: number; by: number }[] = [];
+  let j = 0;
+  for (const call of before) {
+    const text = own.preamble.slice(call.start, call.end);
+    let k = j;
+    while (k < after.length) {
+      const other = after[k] as CallNode;
+      if (ctx.preamble.text.slice(other.start, other.end) === text) break;
+      k++;
+    }
+    if (k === after.length) continue;
+    moves.push({ start: call.start, end: call.end, by: (after[k] as CallNode).start - call.start });
+    j = k + 1;
+  }
+  return (span) => {
+    const move = moves.find((each) => each.start <= span.start && span.end <= each.end);
+    return move === undefined
+      ? undefined
+      : at({ start: span.start + move.by, end: span.end + move.by });
   };
 }
 

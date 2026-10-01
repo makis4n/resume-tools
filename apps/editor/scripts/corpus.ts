@@ -154,10 +154,11 @@ import {
   barFailures,
   comparePlaces,
   DROP_KINDS,
-  firstCheckHolds,
   type PlaceCount,
   placesTable,
   portPlaces,
+  reportLine,
+  reportSucceeded,
 } from "./corpus-assemble.ts";
 import { collect, REASONS, type Reason } from "./corpus-collect.ts";
 import { fetchCorpus } from "./corpus-fetch.ts";
@@ -711,14 +712,15 @@ function assembleLine(row: AssembleRow): string {
     return `${row.outcome}${row.refused === undefined ? "" : ` (${row.refused})`}`;
   const locked = Object.values(row.fields?.locked ?? {}).reduce((sum, n) => sum + (n ?? 0), 0);
   // The milestone's bar (decision 0040): which of page size, margins and font size are proven, and
-  // for a successful import, why each it lacks is lacking, by the kind of why alone.
+  // for a successful import, as item 13's report says (decision 0039), why each it lacks is
+  // lacking, by the kind of why alone.
   const { proven, lacking } = barControls(row);
   const why = (control: string) => {
     const kind = row.controls?.why?.[control];
     return `${control} (${kind === undefined ? "not offered" : DROP_KINDS[kind]})`;
   };
-  const bar = `${proven.length === 0 ? "none" : proven.join(" ")} proven${lacking.length === 0 || !firstCheckHolds(row) ? "" : `, lacking ${lacking.map(why).join(", ")}`}`;
-  return `${row.engine}, ${row.outcome}${row.difference === undefined ? "" : ` (${row.difference})`}, ${row.fields?.editable ?? 0} editable, ${locked} locked, ${row.compiles ?? 0} compiles, ${row.validateMs ?? 0} ms; the bar: ${bar}`;
+  const bar = `${proven.length === 0 ? "none" : proven.join(" ")} proven${lacking.length === 0 || !reportSucceeded(row) ? "" : `, lacking ${lacking.map(why).join(", ")}`}`;
+  return `${row.engine}, ${row.outcome}${row.difference === undefined ? "" : ` (${row.difference})`}, ${row.fields?.editable ?? 0} editable, ${locked} locked, ${row.compiles ?? 0} compiles, ${row.validateMs ?? 0} ms; the report: ${reportLine(row.report)}; the bar: ${bar}`;
 }
 
 async function runAssemble(only: string | undefined, json: string | undefined) {
@@ -768,9 +770,10 @@ async function runAssemble(only: string | undefined, json: string | undefined) {
         documents: rows,
       }),
     );
-  // The milestone's bar (decision 0040): every successful import has its page size, margins and
-  // font size proven, or the run fails, naming each it misses by the document's id and control.
-  const failures = barFailures(rows);
+  // The milestone's bar (decision 0040): every successful import, as item 13's report says
+  // (decision 0039), has its page size, margins and font size proven, or the run fails, naming each
+  // it misses by the document's id and control.
+  const failures = barFailures(rows, reportSucceeded);
   if (failures.length > 0) {
     console.error(
       [
