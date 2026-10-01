@@ -111,7 +111,9 @@ was left out above its page until the document closes. A partial one is not kept
 holds its report in place of the progress line, the locked parts listed, with **Continue**, which
 keeps it and opens it as it is, and **Stop**, which keeps nothing; nothing else starts meanwhile.
 Its package was never stored and the formats its checks dumped went as they ended (decision 0038),
-so stopping has nothing else to drop.
+so stopping has nothing else to drop. In the dev server, the invented fork below imports from the
+picker and waits in the list, partial at 82%, its two locked parts named; Continue opens it with the
+line above its page, and a second import stopped leaves the list as it was.
 
 ### Two changes on the way
 
@@ -140,9 +142,9 @@ and 8, the section titles 5; the heading 9 (`555-0100` two of them), the skills 
 | The template's own | 0 | 0 | |
 | Rate | 82.6% | 82.6%, partial | |
 
-The report names the two parts "Quill Invented 555-0100 | quill@example.invalid | quill…" (9 words)
-and "Languages: Invented, Words, Other Tools: Quill, Wren" (7). `run.test.ts` holds the report to
-the hand count within two words.
+The report names the two parts "Quill Invented 555-0100 | quill@example.invalid | quill…" (9
+words) and "Languages: Invented, Words, Other Tools: Quill, Wren" (7). `run.test.ts` holds the
+report to the hand count within two words.
 
 ### The three upstream samples
 
@@ -178,34 +180,35 @@ counted above; then write the counts here and in the test, and tick item 13.
 
 ## The sample
 
-`corpus assemble` over the twenty documents of the sample but altacv-0001, which times out at its
-900 s every run (decision 0040), from the committed answers, the M4 Pro, four children beside other
-work: 1.9 minutes. The thirteen assembled are as decision 0040's run left them, twelve whose first
-check holds and one partial by a position; four call no macro the answers name, and item 8's check
-refuses two Awesome-CV forks.
+`corpus run --committed-only` over the twenty documents of the sample, on main with item 17 merged,
+the M4 Pro, four children beside other work: 15.2 minutes, altacv-0001 timing out at its 900 s as
+every run of it does (decision 0040). Beside it, decision 0043's interim rule, the assembly's words
+counted in the source, from its runs before item 12 merged and since.
 
-| | jake | awesome-cv | altacv | moderncv | all |
-|---|--:|--:|--:|--:|--:|
-| Assembled and checked | 6 | 2 | 2 | 3 | 13 |
-| Succeeded, as the report says | 0 | 0 | 0 | 0 | 0 |
-| Partial | 6 | 2 | 2 | 3 | 13 |
-| Words in editable fields, read from the page | 14% | 4% | 2% | 7% | 10% |
-| Words in editable fields, counted in the source (decision 0026) | 15% | 2% | 1% | 7% | 10% |
-| The resume's words on the page | 5099 | 1052 | 1446 | 1219 | 8816 |
-| Editable, of them in the side panel alone | 739, 0 | 39, 21 | 22, 0 | 84, 8 | 884, 29 |
-| Locked `unmapped` | 4108 | 1013 | 1424 | 1133 | 7678 |
-| Locked otherwise (`moved`, `shape`, `date`, `text`) | 252 | 0 | 0 | 2 | 254 |
-| The template's own | 20 | 4 | 46 | 42 | 112 |
+| | The report's rule | The interim rule, before item 12 | The interim rule, since |
+|---|--:|--:|--:|
+| Success | 0 | 0 | 0 |
+| Partial | 12 | 13 | 12 |
+| Refused | 3 | 2 | 3 |
+| No answer, timed out | 4, 1 | 4, 1 | 4, 1 |
+| Words in editable fields | 9.0% of 7,780 | 9.8% of 8,749 | 8.7% of 7,708 |
 
-- **The page and the source agree on what is typeset**: in every one of the thirteen, the words of
-  the fields the page opens are, to the word, those the assembly counts in its source; the report's
-  other editable words are the raw contacts', which the source count leaves out (29). The locked
-  words part by a few in each, 38 of 7,894 in all, as a page and a source each show what the other
-  does not.
+Since item 12, the privacy gate withholds `jake-0021`'s request and the run refuses it
+(`request`, decision 0043), which this item does not move. Over the same twelve, the report reads
+697 words editable of the resume's 7,780 on their pages, 29 of them the side panel's, and locks
+`unmapped` 6,829, `moved` 126, `shape` 118, `date` 8 and `text` 2; their pages set 92 words of
+their templates' own besides. `corpus assemble` over the same documents but altacv-0001, 1.9
+minutes, reads the same words from the same function, document by document.
+
+- **The page and the source agree on what is typeset**: in every one of the twelve, the words of the
+  fields the page opens are, to the word, those the assembly counts in its source; the report's
+  other editable words are the raw contacts', which the source count leaves out. The locked words
+  part by a few in each, 43 of 7,040 in all, as a page and a source each show what the other does
+  not, a hyphen or a word a macro reads and never sets.
 - **No import succeeds yet, as none did before**: the committed answers name the launch templates'
-  own macros, and these forks call macros of their own, so what they set stays `unmapped`, 87% of
+  own macros, and these forks call macros of their own, so what they set stays `unmapped`, 88% of
   the resume's words, until item 18's model answers them (decision 0026's finding). The bar of page
-  size, margins and font size holds over no success, and all thirteen prove the three.
+  size, margins and font size holds over no success, and all twelve prove the three.
 
 ## Consequences
 
