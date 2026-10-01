@@ -24,6 +24,7 @@ import {
   type Invented,
   inputsOf,
   JAKE_LIKE,
+  LAYOUT,
   MEANINGS,
   PREAMBLE,
   probeOf,
@@ -41,6 +42,8 @@ import {
   kindOfAddress,
   LINKS,
   MAIN_FILE,
+  marginsSnippet,
+  pageSizeSnippet,
   SIZE_OPTIONS,
   takenOut,
 } from "./assemble";
@@ -50,7 +53,7 @@ import { bodyOf, bodyOfText, buildTree, readBody } from "./parse";
 import { probe, probeUses, type Verdict } from "./probe";
 import { type Reference, reference } from "./reference";
 import { isRefusal, type Refusal } from "./refusal";
-import { signatures } from "./signatures";
+import { LAYOUT_TYPEOUT, layoutOfLog, signatures } from "./signatures";
 
 // Every document, class, answer and verdict here is invented for these tests
 // (`../test/invented-import.ts`); nothing is taken from a real resume.
@@ -159,8 +162,8 @@ describe("the package", () => {
     const { controls } = ok((await assembled()).result).package;
     expect(controls.pageSize?.default).toBe("letter");
     expect(controls.pageSize?.apply.letter).toBe("");
-    expect(controls.pageSize?.apply.a4).toContain("\\geometry{a4paper}");
-    expect(controls.margins).toEqual({ default: 0.5, apply: "\\geometry{margin={{value}}in}" });
+    expect(controls.pageSize?.apply.a4).toBe(pageSizeSnippet("a4"));
+    expect(controls.margins).toEqual({ default: 0.5, apply: marginsSnippet(0.5) });
     expect(controls.fontSize).toEqual({
       default: 11,
       apply: "",
@@ -168,6 +171,81 @@ describe("the package", () => {
       sizes: [10, 11, 12],
     });
     expect(controls.dateFormat?.default).toBe("MMM yyyy");
+  });
+
+  test("sets the page size through geometry, with the margins the document has, reissued where it is loaded and loaded where not", () => {
+    // The margins TeX finds, side by side, measured first; then given to geometry with the paper,
+    // reissued where the class or the preamble loaded it, and loaded with them where nothing did,
+    // geometry told the offsets are none and the head, foot and notes outside the body (decision
+    // 0040).
+    const a4 = pageSizeSnippet("a4");
+    expect(
+      a4.startsWith(
+        "\\xdef\\rtimportlayout{left=\\the\\dimexpr1in+\\hoffset+\\oddsidemargin\\relax,",
+      ),
+    ).toBe(true);
+    expect(a4).toContain(
+      "footskip=\\the\\footskip,hoffset=0pt,voffset=0pt,ignoreall,bindingoffset=0pt,heightrounded=false}",
+    );
+    expect(a4).toContain(
+      "\\csname @ifpackageloaded\\endcsname{geometry}{\\expandafter\\geometry\\expandafter{\\rtimportlayout,a4paper}}",
+    );
+    expect(a4).toContain(
+      "{\\expandafter\\usepackage\\expandafter[\\rtimportlayout,a4paper]{geometry}}",
+    );
+    expect(pageSizeSnippet("letter")).toContain("[\\rtimportlayout,letterpaper]{geometry}");
+    // The snippet language reads it as text: it holds no tag.
+    expect(parseSnippet(a4).every((node) => node.kind === "text")).toBe(true);
+  });
+
+  test("sets the margins through geometry, nothing at the document's own and one margin on every side at any other", () => {
+    const snippet = marginsSnippet(0.8);
+    expect(snippet.startsWith("\\ifdim{{value}}in=0.8in \\expandafter")).toBe(true);
+    const options =
+      "margin={{value}}in,hoffset=0pt,voffset=0pt,ignoreall,bindingoffset=0pt,heightrounded=false";
+    expect(snippet).toContain(
+      `{\\csname @ifpackageloaded\\endcsname{geometry}{\\geometry{${options}}}{\\usepackage[${options}]{geometry}}}`,
+    );
+    expect(marginsSnippet(1)).toContain("=1in ");
+    // Its one slot is the value, three times.
+    const slots = parseSnippet(snippet).filter((node) => node.kind === "slot");
+    expect(slots.map((node) => node.kind === "slot" && node.name)).toEqual([
+      "value",
+      "value",
+      "value",
+    ]);
+  });
+
+  test("offers the margins at the document's own left margin, as the engine found it, in tenths from 0.4 to 1", async () => {
+    // What geometry sets the engine reads, in points: three quarters of an inch is 0.8 to the
+    // tenth, two inches the most the control offers and a tenth of one the least.
+    const at = async (inches: number, preamble = PREAMBLE) =>
+      ok(
+        (
+          await assembleInvented({
+            ...JAKE_LIKE,
+            source: `${preamble}${BODY}`,
+            layout: { ...LAYOUT, left: inches * 72.27 },
+          })
+        ).result,
+      ).package.controls.margins;
+    expect(await at(0.75)).toEqual({ default: 0.8, apply: marginsSnippet(0.8) });
+    expect((await at(2))?.default).toBe(1);
+    expect((await at(0.1))?.default).toBe(0.4);
+    // The layout, not the preamble's geometry, which the preamble may change after it.
+    expect((await at(0.6))?.default).toBe(0.6);
+    // Without geometry, as Jake's Resume sets its margins by hand, the layout says what they are.
+    const bare = PREAMBLE.replace("\\usepackage[margin=0.5in]{geometry}\n", "");
+    expect((await at(0.5, bare))?.default).toBe(0.5);
+    // With neither, as for signatures made by hand, the control has no default to start at.
+    const none = await assembleInvented({ ...JAKE_LIKE, source: `${bare}${BODY}` });
+    expect(ok(none.result).package.controls.margins).toBeUndefined();
+    // Without the layout, geometry's margin, or its left one.
+    const left = await assembleInvented({
+      ...JAKE_LIKE,
+      source: `${PREAMBLE.replace("margin=0.5in", "left=1.27cm,top=2cm")}${BODY}`,
+    });
+    expect(ok(left.result).package.controls.margins?.default).toBe(0.5);
   });
 
   test("offers the controls the answer's preamble settings name, from what the preamble sets", async () => {
@@ -1123,14 +1201,28 @@ describe("what the assembly counts and says (decision 0026)", () => {
     expect(article.controls.fontSize?.sizes).toEqual([10, 11, 12]);
     const ext = ok((await withSizes(["ds@9pt", "ds@14pt"])).result).package;
     expect(ext.controls.fontSize?.sizes).toEqual([9, 10, 11, 12]);
-    // A class that declares none, or not the document's size, offers none, and keeps its option.
-    const none = await assembleInvented({
-      ...JAKE_LIKE,
-      commands: COMMANDS,
-    });
-    const bare = ok(none.result).package;
-    expect(bare.controls.fontSize).toBeUndefined();
-    expect(bare.preamble).toContain("\\documentclass[11pt,letterpaper]{inventedcv}");
+    // Signatures not asked of the sizes, as a caller that did not ask gives them, offer article's
+    // three, which the fourth check holds to the page as any (decision 0040).
+    const unasked = ok((await assembleInvented({ ...JAKE_LIKE, commands: COMMANDS })).result);
+    expect(unasked.package.controls.fontSize?.sizes).toEqual([10, 11, 12]);
+    // A class that declares none, asked of each and each undefined, offers none, and keeps its
+    // option.
+    const inputs = inputsOf(JAKE_LIKE);
+    for (const name of SIZE_OPTIONS)
+      inputs.signatures.commands[name] = { kind: "undefined", how: "unresolved", why: "undefined" };
+    const none = ok(
+      await assemble(
+        inputs.intake,
+        REFERENCE,
+        inputs.tree,
+        inputs.signatures,
+        inputs.probe,
+        inputs.answer,
+      ),
+    );
+    expect(none.package.controls.fontSize).toBeUndefined();
+    expect(none.package.preamble).toContain("\\documentclass[11pt,letterpaper]{inventedcv}");
+    // Nor does one that does not declare the document's size.
     const other = await assembleInvented({
       ...JAKE_LIKE,
       commands: { ...COMMANDS, "ds@10pt": "", "ds@12pt": "" },
@@ -1158,6 +1250,65 @@ describe("what the assembly counts and says (decision 0026)", () => {
       "ds@14pt",
     ]);
     expect(ARTICLE_SIZES).toEqual({ "ds@10pt": "", "ds@11pt": "", "ds@12pt": "" });
+  });
+
+  test("starts the font size at the size the engine found the class set, where its options name another", async () => {
+    // `[11pt,letterpaper]`, and the class set 12 points, as one that ignores the size it is given
+    // and sets its own would: the control starts at 12, the page's, since 11 would set another
+    // page; and where the class set a size it does not declare, it offers none (decision 0040).
+    const at = async (size: number) =>
+      ok((await assembleInvented({ ...JAKE_LIKE, layout: { ...LAYOUT, size } })).result).package;
+    expect((await at(12)).controls.fontSize?.default).toBe(12);
+    expect((await at(10.95)).controls.fontSize?.default).toBe(11);
+    const odd = await at(10.5);
+    expect(odd.controls.fontSize).toBeUndefined();
+    expect(odd.preamble).toContain("\\documentclass[11pt,letterpaper]{inventedcv}");
+  });
+
+  test("puts the font size first among the class's options where they name none, at the size the class set", async () => {
+    // The class's options name no size: the slot goes first among them, at the size the engine
+    // found the class set, whose normal size is its own, 10.95 for 11 points (decision 0040).
+    const sized = (documentclass: string, size = 10) =>
+      assembleInvented({
+        ...JAKE_LIKE,
+        source: `${PREAMBLE.replace("\\documentclass[11pt,letterpaper]{inventedcv}", documentclass)}${BODY}`,
+        layout: { ...LAYOUT, size },
+      });
+    const letter = ok((await sized("\\documentclass[letterpaper]{inventedcv}")).result).package;
+    expect(letter.preamble).toContain("\\documentclass[{{fontSize}}pt,letterpaper]{inventedcv}");
+    expect(letter.controls.fontSize).toEqual({
+      default: 10,
+      apply: "",
+      format: true,
+      sizes: [10, 11, 12],
+    });
+    // The format at the default names the class's own size, which it set without being asked.
+    expect(generateFormat(letter, {}).preamble).toContain(
+      "\\documentclass[10pt,letterpaper]{inventedcv}",
+    );
+    const bare = ok((await sized("\\documentclass{inventedcv}")).result).package;
+    expect(bare.preamble).toContain("\\documentclass[{{fontSize}}pt]{inventedcv}");
+    const empty = ok((await sized("\\documentclass[]{inventedcv}")).result).package;
+    expect(empty.preamble).toContain("\\documentclass[{{fontSize}}pt]{inventedcv}");
+    const eleven = ok((await sized("\\documentclass{inventedcv}", 10.95)).result).package;
+    expect(eleven.controls.fontSize?.default).toBe(11);
+    // A size the class ignores, as article ignores 10.5 points, is the slot's place, at the size
+    // the class set in its stead.
+    const ignored = ok((await sized("\\documentclass[10.5pt,letterpaper]{inventedcv}")).result);
+    expect(ignored.package.preamble).toContain(
+      "\\documentclass[{{fontSize}}pt,letterpaper]{inventedcv}",
+    );
+    expect(ignored.package.controls.fontSize?.default).toBe(10);
+    // A normal size that no size the class declares sets offers none, and the options stay.
+    const odd = ok((await sized("\\documentclass[letterpaper]{inventedcv}", 10.5)).result);
+    expect(odd.package.controls.fontSize).toBeUndefined();
+    expect(odd.package.preamble).toContain("\\documentclass[letterpaper]{inventedcv}");
+    // Nor, without the layout, has the control a size to start at.
+    const unknown = await assembleInvented({
+      ...JAKE_LIKE,
+      source: `${PREAMBLE.replace("[11pt,letterpaper]", "[letterpaper]")}${BODY}`,
+    });
+    expect(ok(unknown.result).package.controls.fontSize).toBeUndefined();
   });
 
   test("marks the kinds of unit that stop the compile, in the package and its id", async () => {
@@ -1396,5 +1547,115 @@ Invented words of an invented summary.
     expect(await sizesOf(passing("article"))).toEqual([10, 11, 12]);
     expect(await sizesOf(passing("extarticle"))).toEqual([9, 10, 11, 12]);
     expect(await sizesOf("\\LoadClass{minimal}")).toBeUndefined();
+  }, 120_000);
+});
+
+// Needs `.engine/`: the snippets of the page size and the margins, each at a value, on invented
+// documents that lay their page out in each way the corpus shows, read back as TeX sets the page
+// (`LAYOUT_TYPEOUT`, decision 0040).
+describe.skipIf(!engineAvailable())("the geometry snippets, on the engine (decision 0040)", () => {
+  let session: EngineSession;
+  beforeAll(async () => {
+    session = await startNodeSession();
+  }, 60_000);
+
+  /**
+   * The text block's margins an invented document sets on its paper, in inches to the thousandth,
+   * and the paper, with the snippets given before its body, as the generator puts a control's.
+   */
+  const pageOf = (paper: "letter" | "a4", layout: string, ...snippets: string[]) => {
+    session.forget("geometry");
+    const source = [
+      `\\documentclass[${paper}paper,11pt]{article}`,
+      layout,
+      ...snippets,
+      LAYOUT_TYPEOUT,
+      "\\begin{document}",
+      "\\noindent Invented words.\\hfill Invented date.",
+      "\\end{document}",
+      "",
+    ].join("\n");
+    const result = session.compile("pdftex", "stock", source, { job: "geometry", maxPasses: 1 });
+    if (!result.ok) throw new Error(`the invented document stopped: ${result.error}`);
+    const said = layoutOfLog(result.log);
+    if (said === undefined) throw new Error("the log says no layout");
+    const inches = (points: number) => Math.round((points / 72.27) * 1000) / 1000;
+    return {
+      left: inches(said.left),
+      right: inches(said.paperWidth - said.left - said.width),
+      top: inches(said.top),
+      bottom: inches(said.paperHeight - said.top - said.height),
+      paper: [inches(said.paperWidth), inches(said.paperHeight)],
+    };
+  };
+
+  /** The margins' snippet at a value, as the generator renders it, the document's being `own`. */
+  const margins = (value: number, own = 0.5) =>
+    marginsSnippet(own).replaceAll("{{value}}", String(value));
+
+  /** The ways a document lays out its page that the snippets must keep, invented, on US Letter. */
+  const LAYOUTS = {
+    // geometry's own margins.
+    geometry: "\\usepackage[margin=0.5in]{geometry}",
+    // The page placed by TeX's offsets, which geometry would count once more.
+    offsets: String.raw`\setlength{\hoffset}{-0.5in}\setlength{\oddsidemargin}{0in}
+\setlength{\textwidth}{7.5in}\setlength{\voffset}{-0.5in}\setlength{\topmargin}{0in}
+\setlength{\headheight}{0pt}\setlength{\headsep}{0pt}\setlength{\textheight}{10in}`,
+    // geometry, then its margins adjusted by hand, as a fork that kept Jake's lines might: 0.3in.
+    adjusted: String.raw`\usepackage[margin=0.5in]{geometry}
+\addtolength{\oddsidemargin}{-0.2in}\addtolength{\textwidth}{0.4in}
+\addtolength{\topmargin}{-0.2in}\addtolength{\textheight}{0.4in}`,
+    // No geometry, the margins set by hand, as Jake's Resume sets them.
+    byHand: String.raw`\usepackage[empty]{fullpage}
+\addtolength{\oddsidemargin}{-0.5in}\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}\addtolength{\topmargin}{-.5in}\addtolength{\textheight}{1.0in}`,
+  } as const;
+
+  test("keeps the document's own margins at their default, and sets one margin on every side at another", () => {
+    for (const [name, layout] of Object.entries(LAYOUTS)) {
+      const own = pageOf("letter", layout);
+      // At the document's own value the snippet does nothing, whatever its margins are: the
+      // adjusted layout's are 0.3 inch, which the control shows at its least, 0.4.
+      expect(pageOf("letter", layout, margins(0.5)), name).toEqual(own);
+      expect(pageOf("letter", layout, margins(0.4, 0.4)), name).toEqual(own);
+      expect(pageOf("letter", layout, margins(0.8)), name).toEqual({
+        left: 0.8,
+        right: 0.8,
+        top: 0.8,
+        bottom: 0.8,
+        paper: own.paper,
+      });
+    }
+    expect(pageOf("letter", LAYOUTS.adjusted)).toMatchObject({ left: 0.3, right: 0.3, top: 0.3 });
+  }, 120_000);
+
+  test("sets the other paper and keeps the document's own margins on it, loaded or reissued", () => {
+    const A4 = [8.268, 11.693];
+    const LETTER = [8.5, 11];
+    for (const [name, layout] of Object.entries(LAYOUTS)) {
+      const own = pageOf("letter", layout);
+      expect(pageOf("letter", layout, pageSizeSnippet("a4")), name).toEqual({
+        ...own,
+        paper: A4,
+      });
+      // A document on A4 to US Letter the same.
+      const onA4 = pageOf("a4", layout);
+      expect(pageOf("a4", layout, pageSizeSnippet("letter")), name).toEqual({
+        ...onA4,
+        paper: LETTER,
+      });
+      // The paper and a margin chosen together: that margin on the other paper.
+      expect(pageOf("letter", layout, pageSizeSnippet("a4"), margins(0.8)), name).toEqual({
+        left: 0.8,
+        right: 0.8,
+        top: 0.8,
+        bottom: 0.8,
+        paper: A4,
+      });
+    }
+    // A head and a foot geometry was told to count in the margins stay where they were.
+    const headed = "\\usepackage[margin=0.5in,includeheadfoot]{geometry}";
+    const own = pageOf("letter", headed);
+    expect(pageOf("letter", headed, pageSizeSnippet("a4"))).toEqual({ ...own, paper: A4 });
   }, 120_000);
 });

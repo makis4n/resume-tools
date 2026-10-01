@@ -115,6 +115,23 @@ export interface DataMacro {
   length: number;
 }
 
+/**
+ * The page as the document lays it out, at `\begin{document}`, in TeX points (decision 0040): the
+ * text block's left margin, `1in + \hoffset + \oddsidemargin`, and its top, `1in + \voffset +
+ * \topmargin + \headheight + \headsep`, its width and height, and the paper's; and the normal font
+ * size, `\f@size`, the size the class set. The assembly reads the margins control's default from it,
+ * and the font size control's where the class's options name no size.
+ */
+export interface Layout {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  paperWidth: number;
+  paperHeight: number;
+  size: number;
+}
+
 /** What the two compiles said: every name the body uses, and every template macro found. */
 export interface EngineSignatures {
   engine: Engine;
@@ -128,6 +145,8 @@ export interface EngineSignatures {
   truncated: boolean;
   /** The two compiles' passes, in milliseconds. */
   ms: number;
+  /** The document's layout, as the first compile found it; absent where it wrote none. */
+  layout?: Layout;
 }
 
 export interface SignatureOptions extends ReferenceOptions {}
@@ -145,12 +164,89 @@ export const MAX_CLOSURE_BYTES = 65_536;
 const MAX_FOLLOWED = 65_536;
 
 /**
+ * The code that writes the document's layout (`Layout`), in expl3, inside `meaningsCode`'s group,
+ * where `@` is a letter: `L:` and each value in points, in `Layout`'s order.
+ */
+const LAYOUT_CODE = String.raw`\iow_now:Nx \g__rtsig_iow
+  {
+    L:
+    \dim_to_decimal:n { 1in + \hoffset + \oddsidemargin } ,
+    \dim_to_decimal:n { 1in + \voffset + \topmargin + \headheight + \headsep } ,
+    \dim_to_decimal:n { \textwidth } ,
+    \dim_to_decimal:n { \textheight } ,
+    \dim_to_decimal:n { \paperwidth } ,
+    \dim_to_decimal:n { \paperheight } ,
+    \f@size
+  }`;
+
+/** `Layout`'s values in the order `LAYOUT_CODE` and `LAYOUT_TYPEOUT` give them. */
+const LAYOUT_KEYS = [
+  "left",
+  "top",
+  "width",
+  "height",
+  "paperWidth",
+  "paperHeight",
+  "size",
+] as const satisfies readonly (keyof Layout)[];
+
+/**
+ * LaTeX that has the log say the document's layout at `\begin{document}` (`Layout`, decision
+ * 0040), a line for each value, `rtimport:layout left=36.135pt`, which `layoutOfLog` reads back:
+ * what the fourth check reads of the page a control sets, since the page alone shows no margin. It
+ * goes before `\begin{document}`, as a control's snippet does; as code the preamble gives the hook
+ * last, it runs after every package's there; and it sets nothing on the page. The log, which every
+ * compile writes, needs no file of its own, and so no output stream a document may have used up.
+ */
+export const LAYOUT_TYPEOUT = `\\AtBeginDocument{${(
+  [
+    ["left", "\\the\\dimexpr1in+\\hoffset+\\oddsidemargin\\relax"],
+    ["top", "\\the\\dimexpr1in+\\voffset+\\topmargin+\\headheight+\\headsep\\relax"],
+    ["width", "\\the\\textwidth"],
+    ["height", "\\the\\textheight"],
+    ["paperWidth", "\\the\\paperwidth"],
+    ["paperHeight", "\\the\\paperheight"],
+    ["size", "\\csname f@size\\endcsname"],
+  ] as const
+)
+  .map(([key, value]) => `\\typeout{rtimport:layout ${key}=${value}}`)
+  .join("")}}`;
+
+/**
+ * The layout a compile's log says (`LAYOUT_TYPEOUT`), the last it says of each value, as a compile
+ * of several passes says it each pass; undefined where it does not say every value.
+ */
+export function layoutOfLog(log: string): Layout | undefined {
+  const values = new Map<string, number>();
+  for (const found of log.matchAll(/^rtimport:layout ([A-Za-z]+)=(-?\d*\.?\d+)(?:pt)?\r?$/gm))
+    values.set(found[1] ?? "", Number(found[2]));
+  const layout: Partial<Record<keyof Layout, number>> = {};
+  for (const key of LAYOUT_KEYS) {
+    const value = values.get(key);
+    if (value === undefined || !Number.isFinite(value)) return undefined;
+    layout[key] = value;
+  }
+  return layout as Layout;
+}
+
+/** A layout's line as `LAYOUT_CODE` writes it, read; undefined for one it did not write whole. */
+export function readLayout(line: string): Layout | undefined {
+  const parts = line.split(",").map((each) => each.trim());
+  if (parts.length !== 7 || !parts.every((part) => /^-?\d*\.?\d+$/.test(part))) return undefined;
+  const [left = 0, top = 0, width = 0, height = 0, paperWidth = 0, paperHeight = 0, size = 0] =
+    parts.map(Number);
+  return { left, top, width, height, paperWidth, paperHeight, size };
+}
+
+/**
  * The code that prints the records, after `\begin{document}`: in expl3, which LaTeX's kernel
  * holds. It reads the names it is asked about from `<job>.rtn`, and those it passes over from
  * `<job>.rtk`, when there are such files, a line each and a `|` after each, since TeX drops a
  * line's trailing spaces; and it writes `<job>.rtm`: `N:` and a name, `M:` and its meaning or
  * `undefined`, `S:` and an xparse specification, `T:` where it stopped at its cap and `E:` at its
- * end. With `follow` false, as in the kernel's compile, it prints the names it is given alone.
+ * end. With `follow` false, as in the kernel's compile, it prints the names it is given alone;
+ * with `follow` true it writes first `L:` and the document's layout (`Layout`), in points and in
+ * its order, a comma after each but the last.
  *
  * The walk is a queue of names kept in numbered macros, since expl3's sequences copy themselves
  * on every change, and a thousand names made that quadratic. It reads each meaning back as tokens
@@ -295,7 +391,7 @@ export function meaningsCode(follow: boolean): string {
     \fi:
   }
 \iow_open:Nn \g__rtsig_iow { \c_sys_jobname_str .rtm }
-\ior_open:NnT \g__rtsig_ior { \c_sys_jobname_str .rtk }
+${follow ? `${LAYOUT_CODE}\n` : ""}\ior_open:NnT \g__rtsig_ior { \c_sys_jobname_str .rtk }
   {
     \ior_str_map_inline:Nn \g__rtsig_ior { \__rtsig_mark:x { \str_range:nnn {#1} { 1 } { -2 } } }
     \ior_close:N \g__rtsig_ior
@@ -345,13 +441,14 @@ export interface Printed {
   spec?: string;
 }
 
-/** A compile's records, and whether it printed them all. */
+/** A compile's records, whether it printed them all, and the document's layout where it wrote one. */
 export interface Printout {
   records: Map<string, Printed>;
   /** It reached its end. */
   ended: boolean;
   /** It stopped at its cap of MAX_PRINTED names. */
   truncated: boolean;
+  layout?: Layout;
 }
 
 /** The records a compile wrote (`meaningsCode`). */
@@ -360,16 +457,18 @@ export function readPrintout(text: string): Printout {
   let current: Printed | undefined;
   let ended = false;
   let truncated = false;
+  let layout: Layout | undefined;
   for (const line of text.split("\n")) {
     if (line.startsWith("N:")) {
       current = { meaning: "" };
       records.set(line.slice(2), current);
     } else if (line.startsWith("M:") && current !== undefined) current.meaning = line.slice(2);
     else if (line.startsWith("S:") && current !== undefined) current.spec = line.slice(2).trim();
+    else if (line.startsWith("L:") && current === undefined) layout = readLayout(line.slice(2));
     else if (line === "T:") truncated = true;
     else if (line === "E:") ended = true;
   }
-  return { records, ended, truncated };
+  return { records, ended, truncated, ...(layout === undefined ? {} : { layout }) };
 }
 
 /**
@@ -1537,5 +1636,6 @@ export async function signatures(
     macros,
     truncated: document.printout.truncated || !document.printout.ended,
     ms,
+    ...(document.printout.layout === undefined ? {} : { layout: document.printout.layout }),
   };
 }

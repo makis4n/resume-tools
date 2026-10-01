@@ -5,8 +5,9 @@
  * rest), probes it, assembles its package and document from the answer (`src/import/assemble.ts`)
  * and validates them with the four checks and the harness (`src/import/validate.ts`); and prints one
  * table, per family and in all: the documents assembled, partial and refused, the fields editable,
- * required and locked by reason, the controls proven and dropped, the harness's findings by check,
- * and the compiles and times.
+ * required and locked by reason, the controls proven and dropped and the milestone's bar, page size,
+ * margins and font size proven on every successful import (decision 0040), the harness's findings
+ * by check, and the compiles and times.
  *
  * The documents go to the reference runner's pool of child processes (`runPool`), with a longer
  * time than the probe's, since a document's probe and its checks both compile it, whole on XeTeX
@@ -69,8 +70,90 @@ export const CHECK_NOTES = ["stopped", "untested", "unproven"] as const;
 /** Why a control is dropped that the checks never tried, as `validate.ts` says it (`UNCHECKED`). */
 export const UNCHECKED_WHY = "unchecked";
 
+/**
+ * The other reasons a control is dropped, or how they begin, as `validate.ts` says them
+ * (`DROPPED`).
+ */
+export const DROPPED_WHY = {
+  moves: "moves the original's page at the document's own value",
+  stops: "stops the compile at ",
+  same: "sets the same page at every value",
+  layout: "sets another page than it asks at ",
+  harness: "the harness finds it does not work",
+} as const;
+
+/**
+ * Why a control was dropped, as the table and the runner's lines say it (decision 0040): a kind,
+ * read from how the checks' reason begins, never the reason's words, which may quote TeX's log.
+ */
+export const DROP_KINDS = {
+  moves: "its default moves the original's page",
+  stops: "a value stops the compile",
+  same: "every value sets the same page",
+  layout: "a value sets another page than it asks",
+  harness: "the harness finds it does not work",
+  unchecked: "the checks stopped before the fourth",
+  other: "another reason",
+} as const;
+
+export type DropKind = keyof typeof DROP_KINDS;
+
+/** The kind of a control's drop, from the checks' reason (`DROPPED_WHY`, `UNCHECKED_WHY`). */
+export function dropKind(why: string): DropKind {
+  if (why === UNCHECKED_WHY) return "unchecked";
+  if (why === DROPPED_WHY.moves) return "moves";
+  if (why.startsWith(DROPPED_WHY.stops)) return "stops";
+  if (why === DROPPED_WHY.same) return "same";
+  if (why.startsWith(DROPPED_WHY.layout)) return "layout";
+  if (why === DROPPED_WHY.harness) return "harness";
+  return "other";
+}
+
 /** The style controls, in the order the table counts them. */
 const CONTROLS = ["pageSize", "margins", "fontSize", "font", "accent", "density"] as const;
+
+/**
+ * The controls the milestone's bar asks of every successful import (decision 0040): the page size,
+ * the margins and the font size, each proven by the fourth check, which compiled every value it
+ * offers and saw the page change.
+ */
+export const BAR_CONTROLS = ["pageSize", "margins", "fontSize"] as const;
+
+export type BarControl = (typeof BAR_CONTROLS)[number];
+
+/**
+ * Whether a document is a successful import for the bar, until item 13's rule gives what a
+ * success is: an assembly whose first check holds, its reference's glyphs set with the fields it
+ * has (`assembled`); a partial one, one refused and one that never got so far are not.
+ */
+export const firstCheckHolds = (row: Pick<AssembleRow, "outcome">) => row.outcome === "assembled";
+
+/** Which of the bar's controls a document's row proves, and which it lacks, in the bar's order. */
+export function barControls(row: Pick<AssembleRow, "controls">): {
+  proven: BarControl[];
+  lacking: BarControl[];
+} {
+  const proven = new Set(row.controls?.proven ?? []);
+  return {
+    proven: BAR_CONTROLS.filter((control) => proven.has(control)),
+    lacking: BAR_CONTROLS.filter((control) => !proven.has(control)),
+  };
+}
+
+/**
+ * Where the corpus misses the milestone's bar (decision 0040): each successful import, by its
+ * document's id, and each of the bar's controls it lacks, a line of each; none when every
+ * successful import has all three. `successful` is the rule of what a success is, the first check
+ * holding until item 13's lands (`firstCheckHolds`), which item 17's runner passes in its place.
+ */
+export function barFailures(
+  rows: readonly Pick<AssembleRow, "id" | "outcome" | "controls">[],
+  successful: (row: Pick<AssembleRow, "id" | "outcome" | "controls">) => boolean = firstCheckHolds,
+): { id: string; control: BarControl }[] {
+  return rows
+    .filter(successful)
+    .flatMap((row) => barControls(row).lacking.map((control) => ({ id: row.id, control })));
+}
 
 /** What became of a document: assembled, partial, refused, or why it never got so far. */
 export type AssembleOutcome =
@@ -111,8 +194,16 @@ export interface AssembleRow {
   };
   words?: { editable: number; locked: Partial<Record<LockReason, number>> };
   sections?: { mapped: number; locked: number };
-  /** The controls proven and dropped, and of those dropped, those the checks never tried. */
-  controls?: { proven: string[]; dropped: string[]; unchecked?: string[] };
+  /**
+   * The controls proven and dropped, and of those dropped, those the checks never tried, and the
+   * kind of why each was dropped (`dropKind`), never the checks' words.
+   */
+  controls?: {
+    proven: string[];
+    dropped: string[];
+    unchecked?: string[];
+    why?: Partial<Record<string, DropKind>>;
+  };
   redefinitions?: { applied: string[]; dropped: string[]; placement?: "class" | "preamble" };
   /** The harness's findings, by check. */
   findings?: Partial<Record<string, number>>;
@@ -159,6 +250,13 @@ export function assembleRow(
       unchecked: checks.controls.dropped
         .filter((each) => each.why === UNCHECKED_WHY)
         .map((each) => each.control),
+      why: Object.fromEntries(
+        checks.controls.dropped.flatMap((each) =>
+          (CONTROLS as readonly string[]).includes(each.control)
+            ? [[each.control, dropKind(each.why)]]
+            : [],
+        ),
+      ),
     },
     redefinitions: checks.redefinitions,
     findings,
@@ -198,7 +296,9 @@ const shownName = (name: string) => (/^[A-Za-z@*]{1,63}$/.test(name) ? `\\${name
  * that reached the assembly and why others did not, those assembled, partial with the kind of the
  * first difference, set in Latin Modern, and refused; the fields editable, raw where the page
  * cannot mark them, required and locked by reason, and their words; the sections mapped and locked;
- * the controls proven and dropped; the redefinitions dropped; the harness's findings by check, and
+ * the controls proven and dropped, and the milestone's bar (`barControls`, decision 0040): the
+ * documents with the page size, the margins and the font size all proven, and the successful ones
+ * lacking any, and which; the redefinitions dropped; the harness's findings by check, and
  * the checks' own; the kinds of unit that stop the compile; and the compiles and times.
  */
 export function assembleTable(rows: readonly AssembleRow[]): string {
@@ -270,6 +370,12 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
       ),
     ),
   ].sort();
+  // Each control with each kind of why it was dropped that some document gives, in their orders.
+  const drops = CONTROLS.flatMap((name) =>
+    (Object.keys(DROP_KINDS) as DropKind[])
+      .filter((kind) => rows.some((row) => row.controls?.why?.[name] === kind))
+      .map((kind) => [name, kind] as const),
+  );
   const lines = [
     line("", COLUMNS),
     `|---|${COLUMNS.map(() => "--:").join("|")}|`,
@@ -328,9 +434,29 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
     ...CONTROLS.map((name) =>
       count(`\`${name}\` dropped`, (row) => (row.controls?.dropped ?? []).includes(name)),
     ),
+    ...drops.map(([name, kind]) =>
+      count(
+        `\`${name}\` dropped: ${DROP_KINDS[kind]}`,
+        (row) => row.controls?.why?.[name] === kind,
+      ),
+    ),
     count(
       "Dropped unchecked: the checks stopped before the fourth",
       (row) => (row.controls?.unchecked ?? []).length > 0,
+    ),
+    count(
+      "The bar: page size, margins and font size all proven",
+      (row) => done(row) && barControls(row).lacking.length === 0,
+    ),
+    count(
+      "The bar: a successful import, its first check holding, lacking one",
+      (row) => firstCheckHolds(row) && barControls(row).lacking.length > 0,
+    ),
+    ...BAR_CONTROLS.map((control) =>
+      count(
+        `The bar: a successful import lacking \`${control}\``,
+        (row) => firstCheckHolds(row) && barControls(row).lacking.includes(control),
+      ),
     ),
     section("Redefinitions, documents"),
     count(

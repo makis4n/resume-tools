@@ -117,7 +117,10 @@
  *                 and validate them with the four checks and the harness (`src/import/assemble.ts`,
  *                 `validate.ts`), in the same pool, 900 s a document; print one table of what it
  *                 found, per family and in all, names and counts only, and keep each document's
- *                 assembly under `.corpus/assemble/` (`scripts/corpus-assemble.ts`, decision 0026)
+ *                 assembly under `.corpus/assemble/` (`scripts/corpus-assemble.ts`, decision 0026).
+ *                 It exits 1 when a successful import, one whose first check holds, lacks any of
+ *                 the page size, the margins and the font size, the milestone's bar, and names
+ *                 each such document by its id and the control it lacks (decision 0040)
  *   leak          take every document that compiles to a reference and whose body parses, build
  *                 its naming request as the import will, with its sources, its page's strings,
  *                 the texts its preamble stores and the header's values the seed's answers find,
@@ -128,7 +131,7 @@
  *                 request holds its document's text, the builder made one its contract refuses, a
  *                 document crashed or timed out, or fewer documents were checked or refused than
  *                 have a reference, and takes about a minute for the corpus
- *   --only <id>   that document only
+ *   --only <id>   that document only, or the documents a comma separates, `jake-0001,altacv-0001`
  *   --json <file> write each document's row as JSON too, names and numbers only
  *   run           take every fetched document through the whole import, as `assemble` and in its
  *                 child, with the naming request built and gated as `name` builds it, its answers
@@ -197,7 +200,11 @@ import {
   type AssembleChildRow,
   type AssembleRow,
   assembleTable,
+  barControls,
+  barFailures,
   comparePlaces,
+  DROP_KINDS,
+  firstCheckHolds,
   type PlaceCount,
   placesTable,
   portPlaces,
@@ -218,6 +225,7 @@ import {
   MANIFEST_FILE,
   Manifest,
   matchingEntries,
+  onlyIds,
   parseJson,
   printable,
   writeAtomically,
@@ -530,8 +538,8 @@ function runSurvey(json: string | undefined, tree: string | undefined) {
 }
 
 /**
- * The fetched documents, or the one `--only` names, as the reference, parse, probe, fonts and
- * leak runners take them.
+ * The fetched documents, or those `--only` names, one id or several a comma separates, as the
+ * reference, parse, probe, fonts, assemble and leak runners take them.
  */
 function fetchedDocuments(only: string | undefined) {
   const manifest = readManifest();
@@ -542,12 +550,17 @@ function fetchedDocuments(only: string | undefined) {
   const fetched = manifest.documents
     .filter(isLive)
     .filter((doc) => entries.get(doc.id)?.state === "fetched");
-  const documents = only === undefined ? fetched : fetched.filter((doc) => doc.id === only);
-  if (documents.length === 0)
+  if (only === undefined) {
+    if (fetched.length === 0) throw new Error("No document is fetched: run `corpus fetch` first");
+    return fetched;
+  }
+  const wanted = new Set(onlyIds(only));
+  if (wanted.size === 0) throw new Error("--only names no document");
+  const documents = fetched.filter((doc) => wanted.has(doc.id));
+  const missing = [...wanted].filter((id) => !documents.some((doc) => doc.id === id));
+  if (missing.length > 0)
     throw new Error(
-      only === undefined
-        ? "No document is fetched: run `corpus fetch` first"
-        : `${only} is no document the last fetch fetched`,
+      `${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} no document the last fetch fetched`,
     );
   return documents;
 }
@@ -800,7 +813,15 @@ function assembleLine(row: AssembleRow): string {
   if (row.outcome !== "assembled" && row.outcome !== "partial")
     return `${row.outcome}${row.refused === undefined ? "" : ` (${row.refused})`}`;
   const locked = Object.values(row.fields?.locked ?? {}).reduce((sum, n) => sum + (n ?? 0), 0);
-  return `${row.engine}, ${row.outcome}${row.difference === undefined ? "" : ` (${row.difference})`}, ${row.fields?.editable ?? 0} editable, ${locked} locked, ${row.compiles ?? 0} compiles, ${row.validateMs ?? 0} ms`;
+  // The milestone's bar (decision 0040): which of page size, margins and font size are proven, and
+  // for a successful import, why each it lacks is lacking, by the kind of why alone.
+  const { proven, lacking } = barControls(row);
+  const why = (control: string) => {
+    const kind = row.controls?.why?.[control];
+    return `${control} (${kind === undefined ? "not offered" : DROP_KINDS[kind]})`;
+  };
+  const bar = `${proven.length === 0 ? "none" : proven.join(" ")} proven${lacking.length === 0 || !firstCheckHolds(row) ? "" : `, lacking ${lacking.map(why).join(", ")}`}`;
+  return `${row.engine}, ${row.outcome}${row.difference === undefined ? "" : ` (${row.difference})`}, ${row.fields?.editable ?? 0} editable, ${locked} locked, ${row.compiles ?? 0} compiles, ${row.validateMs ?? 0} ms; the bar: ${bar}`;
 }
 
 async function runAssemble(only: string | undefined, json: string | undefined) {
@@ -850,6 +871,20 @@ async function runAssemble(only: string | undefined, json: string | undefined) {
         documents: rows,
       }),
     );
+  // The milestone's bar (decision 0040): every successful import has its page size, margins and
+  // font size proven, or the run fails, naming each it misses by the document's id and control.
+  const failures = barFailures(rows);
+  if (failures.length > 0) {
+    console.error(
+      [
+        `The bar: ${failures.length} ${failures.length === 1 ? "control" : "controls"} of successful imports not proven`,
+        ...failures.map((failure) => `${failure.id}: ${failure.control}`),
+      ]
+        .map(printable)
+        .join("\n"),
+    );
+    process.exitCode = 1;
+  }
 }
 
 /**
