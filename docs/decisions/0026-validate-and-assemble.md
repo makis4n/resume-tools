@@ -1,6 +1,6 @@
 # 0026. Validate and assemble
 
-Date: 2026-09-27 · Status: proposed
+Date: 2026-09-27 · Status: proposed; its generic controls are amended by 0040
 
 ## Context
 

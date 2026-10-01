@@ -202,6 +202,16 @@ export const idNumber = (id: string) => Number(id.slice(id.lastIndexOf("-") + 1)
 export const idOf = (family: Family, number: number) =>
   `${family}-${String(number).padStart(4, "0")}`;
 
+/** The ids `--only` names: one, or several a comma separates, each once, blanks left out. */
+export const onlyIds = (only: string): string[] => [
+  ...new Set(
+    only
+      .split(",")
+      .map((id) => id.trim())
+      .filter((id) => id !== ""),
+  ),
+];
+
 export const Manifest = z
   .strictObject({
     version: z.literal(1),

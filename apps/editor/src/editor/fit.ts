@@ -7,7 +7,9 @@
  * compiled in the worker (`Compiler.tryControls`), and the search stops at the first that sets one
  * page. Each setting is a step further than the one before, so the first that fits is the least
  * change this order allows, and the ranges are fixed, so the search is short: two steps of density
- * at most, six of margins and six of font size.
+ * at most, six of margins and six of font size. A margins step that sets more pages than the
+ * setting before it is not taken (`fit`), since an imported template's margins control sets one
+ * margin on every side, which can widen a side the document had narrower (decision 0040).
  *
  * What it finds becomes one step of the document's history (`applyFit`), a control command for
  * each control it changed, so that one undo takes them all back; nothing else in the document
@@ -74,12 +76,18 @@ function stepBelow({ least, most, perUnit }: Range, value: number): number {
  * the next size smaller the package offers, 0.5 point smaller or, for a class that declares whole
  * sizes alone, a point (`fontSizes`); then each of the three again that has a step left, until
  * every one of them the package offers is at its least. A control the package does not offer is
- * skipped, and every other control stays as it is. Each setting holds a value for every control the
- * package offers. Every value a step makes is one the package takes (`stepBelow`, `fontSizes`); a
- * value a setting keeps from the document is as the document has it.
+ * skipped, and so are the margins where `options.margins` is false; every other control stays as
+ * it is. Each setting holds a value for every control the package offers. Every value a step makes
+ * is one the package takes (`stepBelow`, `fontSizes`); a value a setting keeps from the document
+ * is as the document has it.
  */
-export function fitSteps(pkg: TemplatePackage, values: ControlValues): ControlValues[] {
-  const { density, margins, fontSize } = pkg.controls;
+export function fitSteps(
+  pkg: TemplatePackage,
+  values: ControlValues,
+  options: { margins?: boolean } = {},
+): ControlValues[] {
+  const { density, fontSize } = pkg.controls;
+  const margins = options.margins === false ? undefined : pkg.controls.margins;
   const sizes = fontSizes(pkg);
   const steps: ControlValues[] = [];
   let at: ControlValues = { ...defaultControls(pkg), ...values };
@@ -107,6 +115,14 @@ export function fitSteps(pkg: TemplatePackage, values: ControlValues): ControlVa
  * until an edit, an undo or another document opened replaces it; the search then stops early, with
  * undefined, since what fits the document before says nothing of the one after. A trial that fails
  * fails the fit.
+ *
+ * A margins step never lengthens the document by a page (decision 0040): an imported template's
+ * margins control sets one margin on every side, so a step to less than the document's left margin
+ * can still widen a narrower top one. A margins step that sets more pages than the setting before
+ * it is not taken; the search goes on from that setting, stepping the margins no more. Where no
+ * trial yet says how many pages the setting before a margins step sets, as before a first step of
+ * margins, that setting is tried first, and where it already sets one page, it is what the fit
+ * finds.
  */
 export async function fit(
   compiler: Trier,
@@ -114,12 +130,33 @@ export async function fit(
   doc: Document,
 ): Promise<Fitted | undefined> {
   let tried = 0;
-  for (const values of fitSteps(pkg, doc.controls)) {
+  /** The pages a setting sets, or undefined where the document changed underneath the trial. */
+  const pagesOf = async (values: ControlValues): Promise<number | undefined> => {
     if (compiler.document !== doc) return undefined;
     const pages = await compiler.tryControls(values);
     tried++;
-    if (compiler.document !== doc) return undefined;
+    return compiler.document === doc ? pages : undefined;
+  };
+  let before: ControlValues = { ...defaultControls(pkg), ...doc.controls };
+  let pagesBefore: number | undefined;
+  let steps = fitSteps(pkg, doc.controls);
+  for (let k = 0; k < steps.length; k++) {
+    const values = steps[k] as ControlValues;
+    const narrower = values.margins !== before.margins;
+    if (narrower && pagesBefore === undefined) {
+      pagesBefore = await pagesOf(before);
+      if (pagesBefore === undefined) return undefined;
+      if (pagesBefore === 1) return { values: before, tried };
+    }
+    const pages = await pagesOf(values);
+    if (pages === undefined) return undefined;
     if (pages === 1) return { values, tried };
+    if (narrower && pagesBefore !== undefined && pages > pagesBefore) {
+      steps = [...steps.slice(0, k + 1), ...fitSteps(pkg, before, { margins: false })];
+      continue;
+    }
+    before = values;
+    pagesBefore = pages;
   }
   return undefined;
 }

@@ -1,6 +1,6 @@
 # 0012. Font and font size controls
 
-Date: 2026-09-25 · Status: accepted
+Date: 2026-09-25 · Status: accepted; the harness draws each font a package offers (0040)
 
 ## Context
 
