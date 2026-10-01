@@ -21,6 +21,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type AnswerCache, type StoredAnswer, storable } from "@resume-tools/naming";
+import { MODEL_THINKING, type ThinkingSwitch } from "@resume-tools/naming/providers";
 import { CORPUS_DIR, formatJson, writeAtomically } from "./corpus-manifest.ts";
 import { ANSWERS_DIR } from "./corpus-seed.ts";
 
@@ -102,4 +103,46 @@ export class FileAnswerCache implements AnswerCache {
     writeAtomically(join(this.writable, `${key}.json`), text);
     return true;
   }
+}
+
+/**
+ * The name a model's answers are filed under, by the switch it is asked with not to reason first
+ * (decision 0044): its id, where the switch is the one the naming step asks it with everywhere
+ * (`MODEL_THINKING`), as the default's answers are; and its id and the switch otherwise, after a
+ * `+`, `qwen3.8:27b+no-think`, or `+on` where a model asked with a switch everywhere is let reason,
+ * so that a variant the benchmark measures is asked afresh, never served another's answers.
+ * `thinking` is as the benchmark sends it: a switch, `false` to let the model reason, or none for
+ * the model as the naming step asks it.
+ */
+export function variantOf(id: string, thinking?: ThinkingSwitch | false): string {
+  const own = MODEL_THINKING[id];
+  const asked = thinking === undefined ? own : thinking === false ? undefined : thinking;
+  return asked === own ? id : `${id}+${asked ?? "on"}`;
+}
+
+/** A cache the naming step reads, and the text by key that the header's values are found by. */
+export interface NamingAnswers {
+  cache: AnswerCache;
+  read: (key: string) => string | undefined;
+}
+
+/**
+ * What a document's naming step reads with a model's cache, as `corpus run` and `corpus bench`
+ * read it: the cache over the committed answers and the model's folder, or over that folder alone
+ * (`own`), as the benchmark measures a candidate on its own answers, the folder its variant's
+ * (`variantOf`); and the text by key that the header's values are found by, which the stricter
+ * check the model is asked behind reads: the run's answers, the committed first, even where the
+ * cache leaves them out, so that the gate is the run's (decision 0044). `folders` stand in for the
+ * committed answers and `.corpus/cache/`, as a test gives them.
+ */
+export function modelAnswers(
+  spec: { model: string; own?: boolean; thinking?: ThinkingSwitch | false },
+  folders: { committed?: string; cache?: string } = {},
+): NamingAnswers {
+  const writable = modelCacheDir(variantOf(spec.model, spec.thinking), folders.cache);
+  const committed = folders.committed === undefined ? {} : { committed: folders.committed };
+  const own = spec.own === true;
+  const cache = new FileAnswerCache({ ...committed, writable, ...(own ? { own } : {}) });
+  const run = own ? new FileAnswerCache({ ...committed, writable }) : cache;
+  return { cache, read: (key) => run.get(key) };
 }

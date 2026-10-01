@@ -42,7 +42,7 @@ import type { EngineManifest } from "../src/engine/manifest.ts";
 // Item 13's report imports nothing but types, so Node runs it as it is: the same function the
 // browser's import reads its report with (decision 0039).
 import { reportOf } from "../src/import/report.ts";
-import { FileAnswerCache } from "./answer-cache.ts";
+import { modelAnswers, type NamingAnswers } from "./answer-cache.ts";
 import {
   type AssembleChildRow,
   answersFor,
@@ -114,13 +114,9 @@ interface Task {
 
 /**
  * A cache the naming step reads, and the text by key that the header's values are found by, as
- * `commandAnswers` reads one: the run's answers, the committed first, even where the cache leaves
- * them out (`own`), so that the stricter check the model is asked behind is the run's.
+ * `commandAnswers` reads one (`modelAnswers` for a model's cache).
  */
-interface Answers {
-  cache: AnswerCache;
-  read: (key: string) => string | undefined;
-}
+type Answers = NamingAnswers;
 
 async function main() {
   const send = (message: unknown) => process.send?.(message);
@@ -176,16 +172,13 @@ async function main() {
   const caches = new Map<string, Answers>();
   const answersOf = (answers: Task["message"]["answers"]): Answers => {
     if (answers === undefined) return committed;
-    const { model } = answers;
-    const own = answers.own === true;
-    const known = caches.get(`${own}|${model}`);
+    // The model's folder, its variant's where the benchmark asks it with another switch, and the
+    // header's values found by the run's answers, the committed first (`modelAnswers`).
+    const id = `${answers.own === true}|${answers.model}|${answers.thinking}`;
+    const known = caches.get(id);
     if (known !== undefined) return known;
-    const cache = new FileAnswerCache({ model, ...(own ? { own } : {}) });
-    // The header's values, which the stricter check reads, are found by the run's answers, the
-    // committed first, whatever answers the naming step is measured on: the gate is the run's.
-    const run = own ? new FileAnswerCache({ model }) : cache;
-    const made = { cache, read: (key: string) => run.get(key) };
-    caches.set(`${own}|${model}`, made);
+    const made = modelAnswers(answers);
+    caches.set(id, made);
     return made;
   };
   // The key comes from this process's environment, which the parent's is; the parent checked it.
