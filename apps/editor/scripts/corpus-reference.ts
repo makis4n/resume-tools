@@ -241,6 +241,12 @@ export interface PoolOptions {
   /** Called as each task ends, in the order they end. */
   onResult?: (task: PoolTask, result: PoolResult) => void;
   /**
+   * Called with what a child says of the task it holds before it answers, any message of a type
+   * other than `ready` and `done`, so that what a task did before its child is killed is kept, as
+   * the benchmark keeps a document's naming step (decision 0044).
+   */
+  onMessage?: (task: PoolTask, message: unknown) => void;
+  /**
    * Stops the pool when it aborts: every child is killed, and the tasks they hold and those not yet
    * sent are left undone, never counted as timed out or died; the pool resolves with what ended.
    */
@@ -250,10 +256,11 @@ export interface PoolOptions {
 /**
  * Run tasks in a pool of child processes, one task each at a time. A child says `{ type: "ready" }`
  * once it has started, is sent `{ type: "task", id, message }`, and answers `{ type: "done", id,
- * ... }`, which is the task's reply. A task that has no answer within the limit has its child
- * killed, and one that dies is counted so; another child starts in its place while tasks are left.
- * A child that dies before it is ready is started again, but not past twice the pool's size, which
- * means it cannot start at all.
+ * ... }`, which is the task's reply; any other message it sends of the task before then goes to
+ * `onMessage`. A task that has no answer within the limit has its child killed, and one that dies
+ * is counted so; another child starts in its place while tasks are left. A child that dies before
+ * it is ready is started again, but not past twice the pool's size, which means it cannot start at
+ * all.
  */
 export function runPool(options: PoolOptions): Promise<Map<string, PoolResult>> {
   const size = options.size ?? POOL_SIZE;
@@ -314,6 +321,8 @@ export function runPool(options: PoolOptions): Promise<Map<string, PoolResult>> 
           task = undefined;
           finish(done, { reply: message, wall: performance.now() - sent });
           next();
+        } else if (message.type !== "ready" && task !== undefined && message.id === task.id) {
+          options.onMessage?.(task, message);
         }
       });
       child.on("exit", () => {

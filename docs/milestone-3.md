@@ -342,10 +342,11 @@ of each launch template must find editable what the hand-written port marks.
     a redefinition is kept only when the reference compile and the four checks pass on every
     corpus document with its key, and the pull request lists each one. The reviewed set seeds
     the service's cache in milestone 5. Done when three runs in a row agree.
-18. [ ] **Benchmark the candidates, on SoCLaaS.** The naming step runs on SoCLaaS, the School of
+18. [x] **Benchmark the candidates, on SoCLaaS.** The naming step runs on SoCLaaS, the School of
     Computing's OpenAI-compatible gateway for its students and staff, whose calls bill nothing
     (decision 0036): `soclaasModel` in `packages/naming/src/providers.ts`, the key in
-    `SOCLAAS_API_KEY` and the model in `NAMING_MODEL`, `qwen3.8:27b` until this item picks. The
+    `SOCLAAS_API_KEY` and the model in `NAMING_MODEL`, `qwen3.8:27b` by default, asked with its
+    thinking off, as this item picked it (decision 0044). The
     gateway holds each candidate's answer to its JSON schema and returns reasoning apart (0036).
     `corpus.ts bench --model <id>` runs the naming step over the corpus for three candidates:
     `qwen3.8:27b`, the gateway's all-round model and the likely best; `qwen3.6:35b`, described as
@@ -422,9 +423,9 @@ pull request that acts on it. The first two the owner settled on 26 September.
 - **The 5 s bar is judged on pdfTeX** (item 19), on a cached template with a warm HTTP cache on
   this machine, and XeTeX is reported, as the plan already lets XeTeX feel slower.
 - **The provider is the AI SDK's, Gemini first** (item 9), as plan section 6.4 has it, then
-  SoCLaaS (decision 0036), whose model item 18 picks. New dependencies this milestone
-  expects: unified-latex's parse, arguments, argspec, macros, to-string, visit and ctan packages
-  (editor), fflate (editor), `ai` with `@ai-sdk/google` and `@ai-sdk/openai-compatible`
+  SoCLaaS (decision 0036), whose model item 18 picked (decision 0044). New dependencies this
+  milestone expects: unified-latex's parse, arguments, argspec, macros, to-string, visit and ctan
+  packages (editor), fflate (editor), `ai` with `@ai-sdk/google` and `@ai-sdk/openai-compatible`
   (naming), and wrangler as a dev dependency of the editor for the function. Each is named in
   the pull request that adds it.
 
