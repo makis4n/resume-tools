@@ -27,11 +27,13 @@ import {
   type ImportMeasured,
   type ImportTime,
   importMedians,
+  importMeets,
   importRuns,
   importTable,
   importVerdict,
   isRefused,
   measureImport,
+  notCached,
   outcomeLine,
   type PartTime,
   partsOf,
@@ -241,7 +243,13 @@ describe("measureImport", () => {
       { part: "page", ms: 350, compiles: 1, dumps: 1, engineMs: 320 },
     ]);
     expect(result.ms).toBe(1174);
-    expect(result.page).toEqual({ dumpMs: 200, passes: [70, 50], drawMs: 30, pages: 1 });
+    expect(result.page).toEqual({
+      formatMs: 200,
+      dumped: true,
+      passes: [70, 50],
+      drawMs: 30,
+      pages: 1,
+    });
     expect(result).toMatchObject({
       compiles: 3,
       engine: "pdftex",
@@ -259,6 +267,26 @@ describe("measureImport", () => {
       `compile ${name}`,
     ]);
     expect(calls.at(-1)).toBe("terminate");
+  });
+
+  it("opens on the format the import hands over, put in place, not dumped", async () => {
+    const { name } = generateFormat(jake, IMPORTED.document.controls);
+    const handed: Imported = {
+      ...IMPORTED,
+      formats: [{ name, format: new Uint8Array([7, 7, 7]) }],
+    };
+    const { result, calls } = await measured(handed);
+    if (isRefused(result)) throw new Error("refused");
+    expect(calls.slice(0, 4)).toEqual(["import invented.zip", "start", "put", `compile ${name}`]);
+    // No dump: the page is the compile and the draw.
+    expect(result.parts.at(-1)).toEqual({
+      part: "page",
+      ms: 150,
+      compiles: 1,
+      dumps: 0,
+      engineMs: 120,
+    });
+    expect(result.page).toMatchObject({ formatMs: 0, dumped: false });
   });
 
   it("stops at a refusal, with the parts it got through", async () => {
@@ -296,7 +324,7 @@ function timed(parts: [PartTime["part"], number, number][], startMs = 300): Impo
     naming: { hits: 7, asked: 0, conflicts: 0, missing: 0 },
     outcome: "assembled",
     fields: { editable: 40, locked: 5 },
-    page: { dumpMs: 300, passes: [80, 70], drawMs: 40, pages: 1 },
+    page: { formatMs: 300, dumped: true, passes: [80, 70], drawMs: 40, pages: 1 },
   };
 }
 
@@ -373,13 +401,16 @@ describe("the import's table", () => {
       slowest: 5870,
       startMs: 300,
       withStartMs: 4330,
+      loadMs: 20,
+      // 4200, 4300 and 6760: each whole with its start, less its load.
+      withStartWithoutLoadMs: 4300,
       compiles: 32,
     });
     expect(() => importMedians([])).toThrow("no imports");
   });
 
   it("lays out a row a part, the whole and the start, and judges the whole against the bar", () => {
-    const text = importTable("pdftex", runs);
+    const text = importTable("pdftex", runs, "node");
     const lines = text.split("\n");
     expect(lines[0]).toBe(
       "Jake's Resume's upstream sample (jake-0000), imported on pdftex: the median of 3 imports",
@@ -392,21 +423,55 @@ describe("the import's table", () => {
     expect(text).toMatch(/\nstart +300 ms +The engine's start before the import/);
     expect(text).toContain(`Each import: ${outcomeLine(runs[0] as ImportTime)}.`);
     expect(text).toContain("The page, medians: its format dumped in 300 ms");
+    expect(text).not.toContain("Without load");
     expect(text).toMatch(
-      /Import, template already cached +under 5 s +4\.03 s met; 4\.33 s met with the engine's start$/,
+      /Import, template already cached +under 5 s +4\.03 s met, from the file to the page, without the engine's start$/,
     );
     expect(IMPORT_SAMPLES.xetex.id).toBe("awesome-cv-0000");
   });
 
+  it("judges the browser's with the engine's start and without its load", () => {
+    const text = importTable("pdftex", runs, "browser");
+    expect(text).toContain(
+      "Without load, which the dev server serves module by module where a build serves one chunk, and with the engine's start: 4.30 s.",
+    );
+    expect(text).toMatch(
+      /Import, template already cached +under 5 s +4\.30 s met, with the engine's start, without loading the import's code$/,
+    );
+    // A start that takes the browser's past the bar, where Node's is judged without it.
+    const started = [timed([["validate", 4600, 30]], 600)];
+    expect(importMeets(started, "node")).toEqual({ judged: true, ms: 4600, met: true });
+    expect(importMeets(started, "browser")).toEqual({ judged: true, ms: 5200, met: false });
+  });
+
   it("says when the bar is missed", () => {
     const slow = [timed([["validate", 5200, 30]], 100)];
-    expect(importVerdict(importMedians(slow))).toMatch(
-      /5\.20 s missed; 5\.30 s missed with the engine's start$/,
-    );
+    expect(importVerdict(slow, "node")).toMatch(/5\.20 s missed, from the file to the page/);
     const near = [timed([["validate", 4950, 30]], 100)];
-    expect(importVerdict(importMedians(near))).toMatch(
-      /4\.95 s met; 5\.05 s missed with the engine's start$/,
+    expect(importVerdict(near, "node")).toMatch(/4\.95 s met, from the file to the page/);
+    expect(importVerdict(near, "browser")).toMatch(/5\.05 s missed, with the engine's start/);
+  });
+
+  it("judges only a cache hit: no model asked, no macro unnamed, no failure", () => {
+    const run = timed([["validate", 3000, 30]]);
+    const asked = { ...run, naming: { hits: 2, asked: 5, conflicts: 0, missing: 0 } };
+    const unnamed = { ...run, naming: { hits: 0, asked: 0, conflicts: 0, missing: 7 } };
+    const failed = { ...run, naming: { failed: "Too many naming requests from this address" } };
+    expect(notCached([run, run])).toBeUndefined();
+    expect(notCached([run, asked])).toBe("5 of the template's macros were asked of a model");
+    expect(notCached([unnamed])).toBe("7 of the template's macros were left unnamed");
+    expect(notCached([failed])).toBe(
+      "the naming service failed: Too many naming requests from this address",
     );
+    for (const where of ["node", "browser"] as const) {
+      expect(importMeets([run, unnamed, run], where)).toEqual({
+        judged: false,
+        why: "7 of the template's macros were left unnamed",
+      });
+      expect(importVerdict([asked], where)).toMatch(
+        /under 5 s +not a cache hit, so not judged: 5 of the template's macros were asked of a model$/,
+      );
+    }
   });
 
   it("words what an import came to", () => {
@@ -450,9 +515,11 @@ describe.skipIf(!engineAvailable())("measureImport, on the engine", () => {
     expect(add((part) => part.compiles)).toBe(result.compiles);
     expect(add((part) => part.ms)).toBeCloseTo(result.ms, 6);
     for (const part of result.parts) expect(part.engineMs).toBeLessThanOrEqual(part.ms);
-    // The page: the package's format dumped, one compile of two passes, drawn on one page.
+    // The page: the package's format taken from the checks, not dumped again (decision 0045), one
+    // compile of two passes, drawn on one page.
     const page = result.parts.at(-1);
-    expect(page).toMatchObject({ part: "page", compiles: 1, dumps: 1 });
+    expect(page).toMatchObject({ part: "page", compiles: 1, dumps: 0 });
+    expect(result.page.dumped).toBe(false);
     expect(result.page.passes).toHaveLength(2);
     expect(result.page.pages).toBe(1);
   }, 60_000);

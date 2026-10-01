@@ -29,7 +29,7 @@ function timed(ms: number): ImportTime {
     naming: { hits: 7, asked: 0, conflicts: 0, missing: 0 },
     outcome: "assembled",
     fields: { editable: 40, locked: 5 },
-    page: { dumpMs: 300, passes: [80, 70], drawMs: 40, pages: 1 },
+    page: { formatMs: 30, dumped: false, passes: [80, 70], drawMs: 40, pages: 1 },
   };
 }
 
@@ -86,7 +86,11 @@ describe("the import's measurement page", () => {
     );
     expect(shown).toMatch(/\nreference +400 ms +1 +0 +380 ms +Compiling your resume as it stands/);
     expect(shown).toMatch(/\nwhole +4\.20 s +32 +4 +.*from 4\.00 s to 4\.40 s/);
-    expect(shown).toMatch(/4\.20 s met; 4\.60 s met with the engine's start$/);
+    // Judged with the engine's start, 400 ms, and without the dev server's load, 20 ms.
+    expect(shown).toContain("its format taken from the import's checks in 30 ms");
+    expect(shown).toMatch(
+      /4\.58 s met, with the engine's start, without loading the import's code$/,
+    );
     expect(host.querySelector("h1")?.textContent).toBe("The import, from the file to the page");
   });
 

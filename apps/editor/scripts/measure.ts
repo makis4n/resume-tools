@@ -202,7 +202,7 @@ function importJson(
         engine,
         load,
         medians,
-        target: { ...imports.IMPORT_TARGET, ...imports.importMeets(medians) },
+        target: { ...imports.IMPORT_TARGET, ...imports.importMeets(timed, "node") },
         warm,
         runs: timed,
       };
@@ -315,7 +315,7 @@ async function measureImports(runner: Runner, options: Options) {
     }
     const end = loadavg()[0] ?? 0;
     measured.push({ engine, load: { start, end }, warm: done.warm, runs: done.runs });
-    console.log(`${imports.importTable(engine, done.runs)}`);
+    console.log(`${imports.importTable(engine, done.runs, "node")}`);
     console.log(`The load ${end.toFixed(1)} as the imports ended.\n`);
   }
   console.log(

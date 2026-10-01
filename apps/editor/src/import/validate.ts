@@ -64,7 +64,7 @@ import {
   type StructureOp,
   showsBullets,
 } from "../editor/document";
-import type { CompileResult, EngineSession, JobFiles } from "../engine/session";
+import type { CompileResult, DumpResult, EngineSession, JobFiles } from "../engine/session";
 import type { FontLibrary } from "../page/fonts";
 import { type GeneratedBody, generateBody, generateFormat } from "../templates/generate";
 import {
@@ -75,7 +75,7 @@ import {
   type UnitKind,
 } from "../templates/package";
 import { MARKER_BEGIN, markerId } from "../tex/fields";
-import { type Finding, validatePackage } from "../validate/harness";
+import { compileError, type Finding, type Proven, validatePackage } from "../validate/harness";
 import {
   type Assembled,
   type AssembledField,
@@ -134,6 +134,19 @@ export interface ValidationInputs {
    * the report says; none where it keeps its fonts.
    */
   latinModern?: readonly string[];
+  /**
+   * Where the formats the validation dumped go, by name, as it drops them from the session at the
+   * end: an import hands its document's to the editor, which opens it without dumping it again
+   * (decision 0045).
+   */
+  formats?: Map<string, Uint8Array>;
+  /**
+   * Whether the checks and the harness share what they have done (decision 0045): a format either
+   * has dumped, which neither dumps again, and the controls' values check 4 proved, which the
+   * harness does not compile again. True by default; false has each do its own, as before, and
+   * hands no format over, which the tests use to show that both ways find the same.
+   */
+  share?: boolean;
 }
 
 /** How many compiles one bisection of a check may make, as the probe's budget bounds its own. */
@@ -256,6 +269,8 @@ export interface Compiled {
   broke: boolean;
   /** The layout the page was set with, where the compile was asked to say it and said it whole. */
   layout?: Layout;
+  /** The format it compiled from, by name; none where it compiled whole from the stock format. */
+  format?: string;
 }
 
 /**
@@ -292,12 +307,21 @@ class Compiles implements Compiler {
   private readonly dumped = new Map<string, boolean>();
   /** The formats dumped for the validation, the harness's among them, which it drops when done. */
   readonly formats = new Set<string>();
+  /**
+   * Each format a dump made for the validation, the checks' and the harness's, by name, with what
+   * the dump gave, so that neither dumps a name the other has dumped (decision 0045): a name is a
+   * hash of exactly what is dumped (`generateFormat`), and both dump with the reference's files
+   * beside the package's, so the same name is the same format.
+   */
+  readonly kept = new Map<string, DumpResult>();
 
   constructor(
     private readonly inputs: ValidationInputs,
     readonly job: string,
     readonly files: Record<string, Uint8Array>,
     readonly whole = false,
+    /** Whether the checks and the harness share their dumps and proofs (`ValidationInputs.share`). */
+    readonly share = true,
   ) {}
 
   /** The files of a package as the job takes them, beside the reference's. */
@@ -314,18 +338,27 @@ class Compiles implements Compiler {
     let dumped = this.whole ? false : this.dumped.get(format.name);
     if (dumped === undefined) {
       this.formats.add(format.name);
-      try {
-        const result = session.dump(
-          pkg.engine,
-          format.name,
-          format.preamble,
-          this.withPackage(pkg),
-        );
-        this.ms += result.ms;
-        dumped = result.ok;
-      } catch {
-        dumped = false;
-      }
+      const kept = this.share ? this.kept.get(format.name)?.format : undefined;
+      if (kept !== undefined) {
+        // The harness dumped it already: put back, it starts the jobs compiled with it again, as
+        // a dump does, with no run of TeX.
+        session.putFormat(pkg.engine, format.name, kept);
+        dumped = true;
+      } else
+        try {
+          const result = session.dump(
+            pkg.engine,
+            format.name,
+            format.preamble,
+            this.withPackage(pkg),
+          );
+          this.ms += result.ms;
+          dumped = result.ok;
+          if (this.share && result.ok && result.format !== undefined)
+            this.kept.set(format.name, result);
+        } catch {
+          dumped = false;
+        }
       this.dumped.set(format.name, dumped);
     }
     const body: GeneratedBody = { latex, texts: new Map(), dropped: [], surplus: [] };
@@ -348,14 +381,15 @@ class Compiles implements Compiler {
       return { body, broke: true };
     }
     this.ms += result.passes.reduce((sum, pass) => sum + pass, 0);
-    if (!result.ok || result.output === undefined) return { result, body, broke: true };
+    const from = dumped ? { format: format.name } : {};
+    if (!result.ok || result.output === undefined) return { result, body, broke: true, ...from };
     try {
       const { stream } = await readOutput(fonts, result.output, (path) =>
         shippedFont(this.files, this.job, path),
       );
-      return { result, body, stream, broke: false };
+      return { result, body, stream, broke: false, ...from };
     } catch {
-      return { result, body, broke: true };
+      return { result, body, broke: true, ...from };
     }
   }
 
@@ -642,17 +676,31 @@ const shownValue = (values: ControlValues, name: ControlName) => `${name} ${Stri
  * the harness gives only the package's, and the stand-ins of the upload's images listed for its
  * PDF. The bodies it compiles are the generator's, locked sections and extras among them (decision
  * 0025). The names of the formats it dumps go in `formats`, which the validation drops.
+ *
+ * A format the validation has dumped already (`kept`) is not dumped again (decision 0045): its name
+ * is a hash of exactly what is dumped, and the checks dump with the same files, so it is put back as
+ * it was made, which starts the jobs compiled with it again as new documents, keeping their files,
+ * as a dump that replaces it does, and the dump's own result answers the harness's `dump` check.
+ * What the harness dumps that the validation had not goes in `kept` too.
  */
 function harnessSession(
   session: EngineSession,
   files: Record<string, Uint8Array>,
   images: readonly string[],
   formats: Set<string>,
+  kept: Map<string, DumpResult>,
 ): EngineSession {
   const proxy = Object.create(session) as EngineSession;
   proxy.dump = (engine, name, preamble, own = {}) => {
     formats.add(name);
-    return session.dump(engine, name, preamble, { ...files, ...own });
+    const made = kept.get(name);
+    if (made?.format !== undefined) {
+      session.putFormat(engine, name, made.format);
+      return made;
+    }
+    const dumped = session.dump(engine, name, preamble, { ...files, ...own });
+    if (dumped.ok && dumped.format !== undefined) kept.set(name, dumped);
+    return dumped;
   };
   proxy.compile = (engine, format, body, options = {}) =>
     session.compile(engine, format, body, {
@@ -736,16 +784,25 @@ export async function validate(inputs: ValidationInputs): Promise<Assembled | Re
   });
   // Where the document's own format did not set its reference's glyphs, the probe compiled it
   // whole, and so do the checks: the package's format is the same preamble, rewritten.
-  const compiles = new Compiles(inputs, job, files, inputs.probe.fallback === "baseline");
+  const compiles = new Compiles(
+    inputs,
+    job,
+    files,
+    inputs.probe.fallback === "baseline",
+    inputs.share !== false,
+  );
   session.forget(job);
   try {
-    return await validateWith(inputs, compiles, (assembled) =>
-      harnessOf(inputs, compiles, assembled),
+    return await validateWith(inputs, compiles, (assembled, proven) =>
+      harnessOf(inputs, compiles, assembled, proven),
     );
   } finally {
     session.forget(job);
     // Each format is dropped by the one who dumped it, when done with it (`dropFormat`), so that
-    // a session that validates one import after another does not keep them all, 6 to 9 MB each.
+    // a session that validates one import after another does not keep them all, 6 to 9 MB each;
+    // their bytes go to the caller who asked for them.
+    for (const [name, dumped] of compiles.kept)
+      if (dumped.format !== undefined) inputs.formats?.set(name, dumped.format);
     for (const name of compiles.formats) session.dropFormat(reference.engine, name);
   }
 }
@@ -760,7 +817,7 @@ export async function validate(inputs: ValidationInputs): Promise<Assembled | Re
 export async function validateWith(
   inputs: Omit<ValidationInputs, "session" | "fonts">,
   compiler: Compiler,
-  harness?: (assembled: Assembled) => Promise<Finding[]>,
+  harness?: Harness,
 ): Promise<Assembled | Refusal> {
   const started = performance.now();
   const assembleWith = (decisions: Decisions) =>
@@ -858,24 +915,42 @@ async function harnessOf(
   inputs: ValidationInputs,
   compiles: Compiles,
   assembled: Assembled,
+  proven: Proven,
 ): Promise<Finding[]> {
   const images = [
     ...inputs.intake.images.replaced.map((image) => image.path),
     ...inputs.reference.images.map((image) => image.path),
   ];
   const report = await validatePackage(
-    harnessSession(inputs.session, compiles.files, images, compiles.formats),
+    harnessSession(
+      inputs.session,
+      compiles.files,
+      images,
+      compiles.formats,
+      compiles.share ? compiles.kept : new Map(),
+    ),
     inputs.fonts,
     assembled.package,
     assembled.document.resume,
     {},
     compiles.job,
     { pages: inputs.reference.pages.length, passes: inputs.reference.passes.length },
+    compiles.share ? proven : undefined,
   );
   compiles.count += report.passes.length;
   inputs.session.forget(compiles.job);
   return report.findings;
 }
+
+/**
+ * The harness a round of the checks ends with, on the package and the document as they stand, and
+ * what check 4 proved of the controls' values, which its controls check need not compile again
+ * (decision 0045).
+ */
+export type Harness = (assembled: Assembled, proven: Proven) => Promise<Finding[]>;
+
+/** Check 4's record of a value it proved: the format it compiled from, and the body. */
+const provenKey = (format: string, latex: string) => `${format}\n${latex}`;
 
 /** A switch check 1 turns off to keep the original's page: a redefinition, or a control's default. */
 type Switch = { redefinition: string } | { control: ControlName };
@@ -886,7 +961,7 @@ async function checks(
   compiles: Compiler,
   assembleWith: (decisions: Decisions) => Promise<Assembled | Refusal>,
   start: Decisions,
-  harness: ((assembled: Assembled) => Promise<Finding[]>) | undefined,
+  harness: Harness | undefined,
 ): Promise<Round | Refusal> {
   const budget = inputs.budget ?? CHECK_BUDGET;
   const setters = takenOut(inputs.intake, inputs.signatures, inputs.answer, inputs.rewrite);
@@ -1245,6 +1320,11 @@ async function checks(
     { layout: offered.some(measured) },
   );
   const dropped: Round["dropped"] = [];
+  // Each value that compiled from its format with no error in its log and set other glyphs than the
+  // document's own: what the harness's controls check asks of the value it tries, so it does not
+  // compile that value again (decision 0045). The body is keyed as the generator made it, without
+  // the layout's line, which writes to the log alone.
+  const proven = new Set<string>();
   for (const name of offered) {
     let changes = false;
     let stops: ControlValues | undefined;
@@ -1261,12 +1341,18 @@ async function checks(
         stops = values;
         break;
       }
-      if (
+      const differs =
         compiled.stream !== undefined &&
         baseline.stream !== undefined &&
-        difference(baseline.stream, compiled.stream) !== undefined
+        difference(baseline.stream, compiled.stream) !== undefined;
+      if (differs) changes = true;
+      if (
+        differs &&
+        compiled.format !== undefined &&
+        compiled.result !== undefined &&
+        compileError(compiled.result) === undefined
       )
-        changes = true;
+        proven.add(provenKey(compiled.format, compiled.body.latex));
       if (measured(name) && !laidOut(name, values, compiled.layout, baseline.layout))
         elsewhere ??= values;
     }
@@ -1287,7 +1373,12 @@ async function checks(
   }
 
   // The harness, on the package and the document as they stand.
-  const findings = harness === undefined ? [] : await harness(assembled);
+  const findings =
+    harness === undefined
+      ? []
+      : await harness(assembled, {
+          changes: (format, latex) => proven.has(provenKey(format, latex)),
+        });
 
   return {
     assembled,

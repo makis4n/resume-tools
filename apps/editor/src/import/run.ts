@@ -33,6 +33,7 @@ import type { Document } from "../editor/document";
 import type { Engine, EngineSession } from "../engine/session";
 import type { FontLibrary } from "../page/fonts";
 import type { NamingReply } from "../service/reply";
+import { generateFormat } from "../templates/generate";
 import type { TemplatePackage } from "../templates/package";
 import { type AssemblyChecks, type LockedPart, SIZE_OPTIONS } from "./assemble";
 import type { Tree as TexTree } from "./fonts";
@@ -156,6 +157,12 @@ export interface Imported {
   /** The original upload's files, as the person gave them, so that the import can be made again. */
   upload: { files: Upload[] };
   job: ImportJob;
+  /**
+   * The format the document opens with, by name, as the checks dumped it, which the editor takes
+   * rather than dumping it again (decision 0045); none where they dumped none of that name. The
+   * store does not keep it with the import: the editor keeps it as any format.
+   */
+  formats?: { name: string; format: Uint8Array }[];
 }
 
 export type ImportOutcome = Imported | Refusal;
@@ -337,6 +344,7 @@ export async function importResume(
     }
 
     enter("validate");
+    const dumped = new Map<string, Uint8Array>();
     const validated = await validate({
       session,
       fonts,
@@ -349,8 +357,13 @@ export async function importResume(
       ...(rewrite === undefined || isRefusal(rewrite) ? {} : { rewrite }),
       ...(swap === undefined ? {} : { latinModern: swap.swapped }),
       ...options,
+      formats: dumped,
     });
     if (isRefusal(validated)) return validated;
+    // The format the document opens with, which the checks dumped as the editor would: the editor
+    // takes it rather than dumping it a third time (decision 0045).
+    const opens = generateFormat(validated.package, validated.document.controls).name;
+    const format = dumped.get(opens);
 
     // What the document's compiles need beside the package, as the checks compiled it: the
     // reference compile's files for the editor's job, its bibliography under whatever job reads it.
@@ -378,6 +391,7 @@ export async function importResume(
         ...(bbl === undefined ? {} : { bbl }),
         images: [...taken.images.replaced, ...made.images].map((image) => image.path),
       },
+      ...(format === undefined ? {} : { formats: [{ name: opens, format }] }),
     };
   };
   try {

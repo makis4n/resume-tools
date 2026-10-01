@@ -59,7 +59,7 @@ export type ImportPart = "load" | ImportStep | "page";
 export const PART_LABELS: Readonly<Record<ImportPart, string>> = {
   load: "Loading the import's code and the tree's fonts, at the worker's first import",
   ...IMPORT_STEPS,
-  page: "Opening the document: its format dumped, its body compiled, its page drawn",
+  page: "Opening the document: its format put in place, its body compiled, its page drawn",
 };
 
 /** A part's time, what it asked of the engine, and how much of the time the engine took. */
@@ -88,8 +88,11 @@ export interface ImportTime {
   outcome: AssemblyChecks["outcome"];
   /** The import's fields: editable, whatever their kind, and locked, whatever the reason. */
   fields: { editable: number; locked: number };
-  /** The page: the format's dump, the compile's passes and the draw, and the pages it set. */
-  page: { dumpMs: number; passes: number[]; drawMs: number; pages: number };
+  /**
+   * The page: its format put in place, dumped or taken from the import (decision 0045), and which;
+   * the compile's passes and the draw; and the pages it set.
+   */
+  page: { formatMs: number; dumped: boolean; passes: number[]; drawMs: number; pages: number };
 }
 
 /** An import the pipeline refused: why, as a person reads it, and the parts it got through. */
@@ -280,6 +283,8 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
     const made = requests.slice(requested);
     const compiles = made.filter((each) => each.kind === "compile");
     const others = made.filter((each) => each.kind === "dump" || each.kind === "pdf");
+    // The format the page compiles from: dumped, or handed over by the import (decision 0045).
+    const formats = made.filter((each) => each.kind === "dump" || each.kind === "putFormat");
     parts.push({
       part: "page",
       ms: ended - imported,
@@ -301,7 +306,8 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
         locked: sum(Object.values(checks.fields.locked)),
       },
       page: {
-        dumpMs: sum(made.filter((each) => each.kind === "dump").map((each) => each.ms)),
+        formatMs: sum(formats.map((each) => each.ms)),
+        dumped: formats.some((each) => each.kind === "dump"),
         passes: compiles.flatMap((each) => each.passes ?? []),
         drawMs: sum(draws.slice(drawn)),
         pages: page.pageCount,
@@ -356,6 +362,13 @@ export interface ImportMedians {
   startMs: number;
   /** Each import's whole with its engine's start, the median of those. */
   withStartMs: number;
+  /** The median of the import's `load`, the wait for the worker to load the import's code. */
+  loadMs: number;
+  /**
+   * Each import's whole with its engine's start and without its `load`, the median of those: what
+   * the browser's import is judged on (`importVerdict`).
+   */
+  withStartWithoutLoadMs: number;
   compiles: number;
   dumps: number;
   engineMs: number;
@@ -365,15 +378,15 @@ export interface ImportMedians {
 export function importMedians(runs: readonly ImportTime[]): ImportMedians {
   const [first] = runs;
   if (first === undefined) throw new Error("there are no imports to take the medians of");
+  const partOf = (run: ImportTime, part: ImportPart, pick: (time: PartTime) => number) => {
+    const time = run.parts.find((each) => each.part === part);
+    return time === undefined ? 0 : pick(time);
+  };
   const of = (part: ImportPart, pick: (time: PartTime) => number) =>
-    median(
-      runs.map((run) => {
-        const time = run.parts.find((each) => each.part === part);
-        return time === undefined ? 0 : pick(time);
-      }),
-    );
+    median(runs.map((run) => partOf(run, part, pick)));
   const wholes = runs.map((run) => run.ms);
   const total = (run: ImportTime, pick: (time: PartTime) => number) => sum(run.parts.map(pick));
+  const load = (run: ImportTime) => partOf(run, "load", (time) => time.ms);
   return {
     parts: first.parts.map(({ part }) => ({
       part,
@@ -387,6 +400,8 @@ export function importMedians(runs: readonly ImportTime[]): ImportMedians {
     fastest: Math.min(...wholes),
     startMs: median(runs.map((run) => run.startMs)),
     withStartMs: median(runs.map((run) => run.ms + run.startMs)),
+    loadMs: median(runs.map(load)),
+    withStartWithoutLoadMs: median(runs.map((run) => run.ms + run.startMs - load(run))),
     compiles: median(runs.map((run) => run.compiles)),
     dumps: median(runs.map((run) => total(run, (time) => time.dumps))),
     engineMs: median(runs.map((run) => total(run, (time) => time.engineMs))),
@@ -415,46 +430,86 @@ export function outcomeLine(time: ImportTime): string {
   ].join("; ");
 }
 
+/**
+ * Why some imports were not a template already cached, the bar's case, or undefined when every one
+ * was: the naming service failed, asked a model, or left a macro unnamed in one of them.
+ */
+export function notCached(runs: readonly ImportTime[]): string | undefined {
+  for (const { naming } of runs) {
+    if ("failed" in naming) return `the naming service failed: ${naming.failed}`;
+    if (naming.asked > 0) return `${naming.asked} of the template's macros were asked of a model`;
+    if (naming.missing > 0) return `${naming.missing} of the template's macros were left unnamed`;
+  }
+  return undefined;
+}
+
 /** Plan section 4.3's bar for an import of a template already cached. */
 export const IMPORT_TARGET = TARGETS.importCached;
 
-/** Whether some imports' medians meet the bar, without and with the engine's start. */
-export function importMeets(medians: ImportMedians): { met: boolean; metWithStart: boolean } {
-  return {
-    met: meets(IMPORT_TARGET, medians.ms),
-    metWithStart: meets(IMPORT_TARGET, medians.withStartMs),
-  };
+/**
+ * Where an import was measured, which says what the bar is judged on: in Node, the import from the
+ * file to the page, without the engine's start, which compiles the engine afresh where Chrome keeps
+ * it compiled; in the browser, with the engine's start, which a person whose list shows no document
+ * waits for, since the app starts no engine then, and without `load`, which the dev server makes
+ * slow by serving the pipeline's modules one by one where a build serves one chunk (decision 0045).
+ */
+export type Where = "node" | "browser";
+
+/** What the bar is judged on, and whether it is met; or why it is not judged. */
+export type ImportJudged =
+  | { judged: false; why: string }
+  | { judged: true; ms: number; met: boolean };
+
+/** Some imports against the bar, for where they were measured (`Where`). */
+export function importMeets(runs: readonly ImportTime[], where: Where): ImportJudged {
+  const why = notCached(runs);
+  if (why !== undefined) return { judged: false, why };
+  const medians = importMedians(runs);
+  const ms = where === "node" ? medians.ms : medians.withStartWithoutLoadMs;
+  return { judged: true, ms, met: meets(IMPORT_TARGET, ms) };
 }
 
-/** The import's verdict against plan section 4.3, without and with the engine's start. */
-export function importVerdict(medians: ImportMedians): string {
-  const { met, metWithStart } = importMeets(medians);
-  const judged = (ms: number, ok: boolean) => `${formatTime(ms)} ${ok ? "met" : "missed"}`;
-  return table([
-    [
-      IMPORT_TARGET.path,
-      `under ${IMPORT_TARGET.limit / 1000} s`,
-      `${judged(medians.ms, met)}; ${judged(medians.withStartMs, metWithStart)} with the engine's start`,
-    ],
-  ]);
+/** The import's verdict against plan section 4.3, for where it was measured (`Where`). */
+export function importVerdict(runs: readonly ImportTime[], where: Where): string {
+  const verdict = importMeets(runs, where);
+  const on =
+    where === "node"
+      ? "from the file to the page, without the engine's start"
+      : "with the engine's start, without loading the import's code";
+  const said = verdict.judged
+    ? `${formatTime(verdict.ms)} ${verdict.met ? "met" : "missed"}, ${on}`
+    : `not a cache hit, so not judged: ${verdict.why}`;
+  return table([[IMPORT_TARGET.path, `under ${IMPORT_TARGET.limit / 1000} s`, said]]);
 }
 
 /**
  * The table of an import's parts, each a median of `runs`, then the whole, the engine's start apart,
- * and what each import came to, as the Node command prints it and the browser's page shows it.
+ * what each import came to, and the verdict, as the Node command prints it and the browser's page
+ * shows it.
  */
-export function importTable(engine: Engine, runs: readonly ImportTime[]): string {
+export function importTable(engine: Engine, runs: readonly ImportTime[], where: Where): string {
   const sample = IMPORT_SAMPLES[engine];
   const medians = importMedians(runs);
   const [first] = runs;
   const shared = first === undefined ? "" : outcomeLine(first);
   const differ = runs.some((run) => outcomeLine(run) !== shared);
   const passes = first?.page.passes.length ?? 0;
+  const formatHow = runs.every((run) => !run.page.dumped)
+    ? "taken from the import's checks"
+    : runs.every((run) => run.page.dumped)
+      ? "dumped"
+      : "dumped or taken from the import's checks";
   const page = [
-    `The page, medians: its format dumped in ${formatTime(median(runs.map((run) => run.page.dumpMs)))}`,
+    `The page, medians: its format ${formatHow} in ${formatTime(median(runs.map((run) => run.page.formatMs)))}`,
     `its body compiled in ${formatTime(median(runs.map((run) => sum(run.page.passes))))} over ${passes} ${passes === 1 ? "pass" : "passes"}`,
     `its page drawn in ${formatTime(median(runs.map((run) => run.page.drawMs)))}.`,
   ].join(", ");
+  const loaded =
+    where === "browser"
+      ? [
+          `Without load, which the dev server serves module by module where a build serves one chunk, and with the engine's start: ${formatTime(medians.withStartWithoutLoadMs)}.`,
+        ]
+      : [];
   return [
     `${sample.name}'s upstream sample (${sample.id}), imported on ${engine}: the median of ${runs.length} imports`,
     table([
@@ -487,8 +542,9 @@ export function importTable(engine: Engine, runs: readonly ImportTime[]): string
     "",
     `Each import: ${shared}${differ ? ", and not every import alike" : ""}.`,
     page,
+    ...loaded,
     "",
     "Against plan section 4.3",
-    importVerdict(medians),
+    importVerdict(runs, where),
   ].join("\n");
 }

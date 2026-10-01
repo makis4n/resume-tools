@@ -2,14 +2,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Resume } from "@resume-tools/resume-model";
 import { strToU8, zipSync } from "fflate";
-import { beforeAll, describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test, vi } from "vitest";
 import { applyUnder, CommandError } from "../editor/document";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
-import { generateBody } from "../templates/generate";
+import { generateBody, generateFormat } from "../templates/generate";
 import type { ControlValues, TemplatePackage } from "../templates/package";
 import {
   ANSWERS,
@@ -986,27 +986,31 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     expect(checks.compiles).toBeGreaterThan(10);
   }, 120_000);
 
+  /** The class, passing its options to article, which then takes a size as the document gives it. */
+  const PASSING = CLASS.replace(
+    "\\LoadClass{article}",
+    "\\DeclareOption*{\\PassOptionsToClass{\\CurrentOption}{article}}\n\\ProcessOptions\\relax\n\\LoadClass{article}",
+  );
+
+  /** The document with its margins set by hand, as Jake's Resume sets them, and no size. */
+  const BY_HAND = SOURCE.replace("[11pt,letterpaper]", "[letterpaper]").replace(
+    "\\usepackage[margin=0.5in]{geometry}\n",
+    [
+      "\\usepackage[empty]{fullpage}",
+      "\\addtolength{\\oddsidemargin}{-0.5in}",
+      "\\addtolength{\\textwidth}{1in}",
+      "\\addtolength{\\topmargin}{-.5in}",
+      "\\addtolength{\\textheight}{1.0in}",
+      "",
+    ].join("\n"),
+  );
+
   test("proves the page size, the margins and the font size of an import that names neither geometry nor a size", async () => {
     // The margins set by hand, as Jake's Resume sets them, and no size among the class's options,
     // which this class passes to article: the page size and the margins load geometry in the body's
     // preamble region, the page size with the document's own margins, and the size goes first among
     // the class's options, at the 10 points article sets unasked (decision 0040).
-    const passing = CLASS.replace(
-      "\\LoadClass{article}",
-      "\\DeclareOption*{\\PassOptionsToClass{\\CurrentOption}{article}}\n\\ProcessOptions\\relax\n\\LoadClass{article}",
-    );
-    const source = SOURCE.replace("[11pt,letterpaper]", "[letterpaper]").replace(
-      "\\usepackage[margin=0.5in]{geometry}\n",
-      [
-        "\\usepackage[empty]{fullpage}",
-        "\\addtolength{\\oddsidemargin}{-0.5in}",
-        "\\addtolength{\\textwidth}{1in}",
-        "\\addtolength{\\topmargin}{-.5in}",
-        "\\addtolength{\\textheight}{1.0in}",
-        "",
-      ].join("\n"),
-    );
-    const { result } = await validatedOnEngine(source, ANSWERS, {}, passing);
+    const { result } = await validatedOnEngine(BY_HAND, ANSWERS, {}, PASSING);
     const { checks, package: pkg } = ok(result);
     expect(checks.outcome).toBe("assembled");
     expect(checks.controls.proven).toEqual(["pageSize", "margins", "fontSize"]);
@@ -1015,6 +1019,61 @@ describe.skipIf(!engineAvailable())("validation, on the engine", () => {
     expect(pkg.controls.fontSize).toMatchObject({ default: 10, sizes: [10, 11, 12] });
     expect(pkg.preamble).toContain("\\documentclass[{{fontSize}}pt,letterpaper]{inventedcv}");
     expect(checks.findings).toEqual([]);
+  }, 120_000);
+
+  test("dumps each format once, hands the document's over, and finds what it finds without (decision 0045)", async () => {
+    const dumps = vi.spyOn(session, "dump");
+    const compiles = vi.spyOn(session, "compile");
+    try {
+      // Each check doing its own, as before: the harness dumps again a format the checks dumped.
+      const alone = ok(
+        (await validatedOnEngine(BY_HAND, ANSWERS, { share: false }, PASSING)).result,
+      );
+      const aloneDumps = dumps.mock.calls.map(([, name]) => name);
+      const aloneCompiles = compiles.mock.calls.length;
+      expect(new Set(aloneDumps).size).toBeLessThan(aloneDumps.length);
+      dumps.mockClear();
+      compiles.mockClear();
+      // Sharing: no name is dumped twice, which the harness puts back instead.
+      const formats = new Map<string, Uint8Array>();
+      const shared = ok((await validatedOnEngine(BY_HAND, ANSWERS, { formats }, PASSING)).result);
+      const sharedDumps = dumps.mock.calls.map(([, name]) => name);
+      expect(new Set(sharedDumps).size).toBe(sharedDumps.length);
+      // And fewer compiles: the values check 4 proved are not compiled again by the harness.
+      expect(compiles.mock.calls.length).toBeLessThan(aloneCompiles);
+      // The same package, document, locks and findings: all but the compiles and the time.
+      const found = ({
+        checks: { compiles: _compiles, ms: _ms, ...checks },
+        ...rest
+      }: Assembled) => ({
+        ...rest,
+        checks,
+      });
+      expect(found(shared)).toEqual(found(alone));
+
+      // The format the document opens with is handed over as the checks dumped it, and its body
+      // compiles from it to what it compiles to from a dump of its own, as the editor would make.
+      const format = generateFormat(shared.package, shared.document.controls);
+      const handed = formats.get(format.name);
+      if (handed === undefined) throw new Error("no format handed over");
+      const body = generateBody(shared.package, shared.document.resume, shared.document.controls);
+      const engine = shared.package.engine;
+      session.putFormat(engine, format.name, handed);
+      const put = session.compile(engine, format.name, body.latex, { job: "handed" });
+      expect(session.dump(engine, format.name, format.preamble, format.files).ok).toBe(true);
+      const dumped = session.compile(engine, format.name, body.latex, { job: "dumped" });
+      session.forget("handed");
+      session.forget("dumped");
+      session.dropFormat(engine, format.name);
+      expect(put.ok && dumped.ok).toBe(true);
+      expect(put.passes.length).toBe(dumped.passes.length);
+      // The output but for the comment TeX writes the time in.
+      const after = (output: Uint8Array | undefined) => output?.slice(15 + (output[14] ?? 0));
+      expect(after(put.output)).toEqual(after(dumped.output));
+    } finally {
+      dumps.mockRestore();
+      compiles.mockRestore();
+    }
   }, 120_000);
 
   test("proves the margins and the page size by the page they set, and drops a margin set elsewhere", async () => {

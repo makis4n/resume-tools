@@ -102,7 +102,7 @@ export function importReport(engine: Engine, done: ImportRuns, hidden: number): 
       ? "The tab was in front throughout."
       : `The tab was hidden during ${hidden} of the ${runs} timed imports, which Chrome slows: measure again with the tab in front.`,
   ];
-  return [...how, "", importTable(engine, done.runs)].join("\n");
+  return [...how, "", importTable(engine, done.runs, "browser")].join("\n");
 }
 
 export interface ImportMeasurePageProps {
