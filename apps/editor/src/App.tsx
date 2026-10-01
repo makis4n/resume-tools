@@ -17,9 +17,10 @@ import {
 } from "./editor/document";
 import { pdfFileName, savePdf } from "./editor/download";
 import { applyFit, type Fitted, fit } from "./editor/fit";
+import { StructureGuard } from "./editor/guard";
 import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
-import { Panel, shownFieldsOf } from "./editor/Panel";
+import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
 import { holdsTyping, useHistoryKeys, type Way } from "./editor/undo";
 import { EngineCancelled, EngineClient } from "./engine/client";
 import type { EngineManifest } from "./engine/manifest";
@@ -74,6 +75,12 @@ const DOES_NOT_FIT = "It does not fit on one page at these settings.";
 
 /** What the user reads when a fit to one page could not finish; the details go to the console. */
 const COULD_NOT_FIT = "Fit to one page could not finish.";
+
+/**
+ * What the user reads when a structural step stopped the page's compile, and was taken back: the
+ * document is as it was before it, and nothing of it was saved (decision 0041).
+ */
+const TAKEN_BACK = "That change stopped the page from being made, so it was taken back.";
 
 /** What the user reads when the files chosen to import cannot be read. */
 const COULD_NOT_READ = "The files could not be read.";
@@ -143,6 +150,11 @@ interface Open {
   pkg: TemplatePackage;
   /** An imported document's: what its compiles need beside the package (decision 0038). */
   job: ImportJob | undefined;
+  /**
+   * An imported document's locked parts' first words, by section, as its import's report names
+   * them, which name their rows in the side panel (decision 0041); none for a curated one.
+   */
+  lockedWords: ReadonlyMap<string, string>;
   history: History;
   /** The history's present, as state, so that an edit renders. */
   present: EditorDocument;
@@ -157,6 +169,24 @@ interface Open {
   stale: boolean;
   /** Whether its newest save could not be written; it stays open until one is. */
   unsaved: boolean;
+}
+
+/**
+ * An imported document's locked parts' first words, by section, as its import's report names them
+ * (`lockedWordsOf`, decision 0041): none for a curated document, which keeps no part, nor where the
+ * report cannot be read, when each part's row says it was kept as it was; why goes to the console.
+ */
+function lockedWordsFrom(
+  template: Template,
+  document: EditorDocument,
+): ReadonlyMap<string, string> {
+  if (template.report === undefined) return new Map();
+  try {
+    return lockedWordsOf(reportOfImport({ report: template.report, document }));
+  } catch (error) {
+    console.error("The import's report could not be read:", error);
+    return new Map();
+  }
 }
 
 /**
@@ -213,6 +243,14 @@ export function App() {
   const [waiting, setWaiting] = useState<{ outcome: Imported; report: Report }>();
   /** The report of the import the open document came from, shown above its page until it closes. */
   const [importedReport, setImportedReport] = useState<{ id: string; report: Report }>();
+  /**
+   * The open document's structural step that no page has shown yet, which is not saved until one
+   * does, and is taken back if its compile stops (decision 0041); and whether the last was.
+   */
+  const guard = useRef(new StructureGuard());
+  const [takenBack, setTakenBack] = useState(false);
+  /** Whether the compile that just stopped was a step taken back, whose plain message is said. */
+  const tookBack = useRef(false);
   /** The open document as the latest render has it, for a fit that lands after later renders. */
   const openNow = useRef<Open | undefined>(undefined);
   useLayoutEffect(() => {
@@ -222,6 +260,8 @@ export function App() {
   /** The list, fresh from the store, which writes what waits to be saved before it lists. */
   const showList = async (reason?: string) => {
     opening.current++;
+    guard.current.forget();
+    setTakenBack(false);
     setOpen(undefined);
     setClicked(undefined);
     setImportedReport(undefined);
@@ -279,6 +319,7 @@ export function App() {
       revision,
       pkg,
       job,
+      lockedWords: lockedWordsFrom(template, document),
       history: new History(document, pkg),
       present: document,
       canUndo: false,
@@ -291,6 +332,8 @@ export function App() {
     setError(undefined);
     setPdfError(undefined);
     setClicked(undefined);
+    guard.current.forget();
+    setTakenBack(false);
     compiler.current?.open(pkg, document, job);
   };
 
@@ -314,8 +357,29 @@ export function App() {
       page: (latest) => {
         setShown((before) => ({ latest, opening: before === undefined }));
         setError(undefined);
+        // A page that shows the structural step held lets it be saved, with what came after it.
+        const now = openNow.current;
+        if (now !== undefined && guard.current.paged(latest.document))
+          kept.save(now.id, now.history.present, now.revision);
       },
-      error: setError,
+      error: (message) => {
+        // The step taken back says so itself, and its document compiles again.
+        if (tookBack.current) tookBack.current = false;
+        else setError(message);
+      },
+      stopped: (document) => {
+        // The held step stopped the compile: taken back, never saved, and the page as it was.
+        const now = openNow.current;
+        if (now === undefined || !guard.current.stopped(document)) return;
+        tookBack.current = true;
+        const { history } = now;
+        const { present, canUndo, canRedo } = history;
+        setOpen((current) =>
+          current?.history === history ? { ...current, present, canUndo, canRedo } : current,
+        );
+        owned?.update(present);
+        setTakenBack(true);
+      },
       busy: setBusy,
     };
     const loaded = loadTree().then(
@@ -388,14 +452,18 @@ export function App() {
   };
 
   /**
-   * The history of `doc` has a new present, from a command, an undo or a redo: it is rendered,
-   * compiled and saved, as every change to the document is (decision 0010).
+   * The history of `doc` has a new present, from a command, an undo or a redo, after `before`: it
+   * is rendered, compiled and saved, as every change to the document is (decision 0010); but a
+   * structural step, and what follows it, is saved only once a page shows it (`StructureGuard`,
+   * decision 0041), and taken back if its compile stops.
    */
-  const followPresent = (doc: Open) => {
+  const followPresent = (doc: Open, before: EditorDocument) => {
     followHistory(doc);
     const { present } = doc.history;
+    setTakenBack(false);
     compiler.current?.update(present);
-    store.current?.save(doc.id, present, doc.revision);
+    if (guard.current.changed(doc.history, before))
+      store.current?.save(doc.id, present, doc.revision);
   };
 
   /**
@@ -413,10 +481,11 @@ export function App() {
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && holdsTyping(focused)) focused.blur();
     setClicked(undefined);
+    const before = open.history.present;
     const next = way === "undo" ? open.history.undo() : open.history.redo();
     // With nothing to take back, the step that ended may still have been dropped.
     if (next === undefined) followHistory(open);
-    else followPresent(open);
+    else followPresent(open, before);
     return true;
   };
   // While a document is open, the browser's own undo and redo are refused but in the link
@@ -576,7 +645,7 @@ export function App() {
     );
   }
 
-  const { id, pkg, job, history, present, canUndo, canRedo, stale, unsaved } = open;
+  const { id, pkg, job, lockedWords, history, present, canUndo, canRedo, stale, unsaved } = open;
 
   /**
    * Apply a command to the open document. One of a visit to a field, which the overlay and the
@@ -600,7 +669,7 @@ export function App() {
       console.warn("The template refused an edit:", error.message);
       return;
     }
-    if (after !== before) followPresent(open);
+    if (after !== before) followPresent(open, before);
   };
 
   /**
@@ -710,6 +779,7 @@ export function App() {
         document={present}
         pkg={pkg}
         shownFields={shownFieldsOf(shown?.latest, present, error !== undefined)}
+        lockedWords={lockedWords}
         onCommand={edit}
         onSeal={seal}
       />
@@ -759,7 +829,7 @@ export function App() {
     } else {
       say();
       applyFit(history, pkg, found.values);
-      followPresent(open);
+      followPresent(open, doc);
     }
   };
 
@@ -845,6 +915,7 @@ export function App() {
             Download PDF
           </button>
         </p>
+        {takenBack && <p role="status">{TAKEN_BACK}</p>}
         {pdfError && <p>{pdfError}</p>}
         {/* The fit takes the page on screen to be the present document's, so it waits while a
             page is on its way; it waits while a PDF is being made, whose request would otherwise
@@ -874,7 +945,12 @@ export function App() {
             the group of a visit to the field, which closing it ends, so that undo takes back the
             whole visit however many keystrokes it took (item 12). */}
         <div ref={setSheet} style={SHEET}>
-          <Page svg={shown.latest.page.svg} onField={openField} />
+          <Page
+            svg={shown.latest.page.svg}
+            onField={openField}
+            locked={shown.latest.page.locked}
+            size={shown.latest.page.size}
+          />
           {clicked && sheet && !stale && (
             <Overlay
               key={clicked.click}

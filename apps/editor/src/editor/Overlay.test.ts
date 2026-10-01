@@ -725,6 +725,7 @@ describe("when an open field closes, and where it stays", () => {
     svg: "",
     size: { width: 600, height: 800 },
     fields: new Map(layout ? [["fennel-1.text", { id: "fennel-1.text", glyphs: [], layout }]] : []),
+    locked: new Map(),
     glyphs: layout
       ? [
           { ...box, y: 200, field: "fennel-1.text", offset: 0 },

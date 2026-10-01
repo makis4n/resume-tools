@@ -157,6 +157,7 @@ async function draw(output: Uint8Array): Promise<DrawnPage> {
     svg: `<svg>${which}</svg>`,
     size: US_LETTER,
     fields: new Map(),
+    locked: new Map(),
     glyphs: [],
     pageCount: 1,
     unmatched: 0,
@@ -265,6 +266,7 @@ function scheduler(
   const engines: ImportingEngine[] = [];
   const shown: Shown[] = [];
   const errors: string[] = [];
+  const stopped: Document[] = [];
   const busy: boolean[] = [];
   const compiler = new Compiler(
     () => {
@@ -276,6 +278,7 @@ function scheduler(
     {
       page: (page) => shown.push(page),
       error: (message) => errors.push(message),
+      stopped: (document) => stopped.push(document),
       busy: (pending) => busy.push(pending),
     },
     { draw, ...options },
@@ -286,7 +289,7 @@ function scheduler(
     if (last === undefined) throw new Error("no engine has been made");
     return last;
   };
-  return { compiler, engines, engine, shown, errors, busy };
+  return { compiler, engines, engine, shown, errors, stopped, busy };
 }
 
 /** A format store and a prefetch store in memory, holding what they would between sessions. */
@@ -525,11 +528,15 @@ describe("Compiler", () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const s = scheduler();
     await opened(s);
-    s.compiler.update(titled("Analyst"));
+    const analyst = titled("Analyst");
+    s.compiler.update(analyst);
     await wait(100);
     s.engine().compiles[1]?.resolve(FAILED);
     await settle();
     expect(s.errors).toEqual([COULD_NOT_UPDATE]);
+    // TeX stopped on the document, which the app hears of first, to take a structural step back.
+    expect(s.stopped).toHaveLength(1);
+    expect(s.stopped[0]).toBe(analyst);
     // TeX's words go to the console, the whole log with them.
     expect(logged).toHaveBeenCalledWith(
       expect.stringContaining("Undefined control sequence."),
@@ -542,6 +549,8 @@ describe("Compiler", () => {
     await settle();
     expect(logged).toHaveBeenLastCalledWith(expect.any(String), expect.any(Error));
     expect(s.errors).toEqual([COULD_NOT_UPDATE, COULD_NOT_UPDATE]);
+    // A page that could not be drawn is no stop of TeX's.
+    expect(s.stopped).toHaveLength(1);
     expect(s.shown).toHaveLength(1);
     // The engine answered both times, so it stays.
     expect(s.engines).toHaveLength(1);

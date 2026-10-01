@@ -15,7 +15,9 @@
  * document keeps as its upload had it, which is no field, and disables a button that would add a
  * unit the template cannot take, a bullet to an entry whose snippet shows none, or a unit to a list
  * the document keeps whole as its upload had it, and one that would remove a unit the template
- * cannot lose (decision 0038), saying why. A curated package says none of these.
+ * cannot lose (decision 0038), saying why. A curated package says none of these. A part of an
+ * imported resume kept as its upload had it is a row of its own, named by its first words as the
+ * page shows them, which moves and is removed and nothing else (decision 0041).
  *
  * Plain HTML in plain English, with nothing in it that is LaTeX.
  */
@@ -46,6 +48,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { Report } from "../import/report";
 import { type DrawnPage, fieldsShown } from "../page/draw";
 import { CURATED } from "../templates/curated";
 import { formatDates } from "../templates/dates";
@@ -53,6 +56,7 @@ import { isBlank } from "../templates/escape";
 import {
   type DateFormat,
   defaultControls,
+  type PinStep,
   type TemplatePackage,
   type UnitKind,
 } from "../templates/package";
@@ -63,6 +67,7 @@ import {
   fieldsOf,
   keptOf,
   PLACEHOLDERS,
+  pinnedSteps,
   removable,
   requiredFields,
   SECTION_TITLES,
@@ -165,6 +170,22 @@ export function shownFieldsOf(
   return shown;
 }
 
+/**
+ * Each locked section's first words as the page shows them, by its id (`PanelProps.lockedWords`):
+ * item 13's report's names (decision 0039), read from the original's page by what sets each of its
+ * words, so that a part is named here as the report names it, whatever the editor's page sets
+ * around it, and whether or not a page shows it now (decision 0041). A part that sets no word, and
+ * every part of an import with no report, gets none.
+ */
+export function lockedWordsOf(
+  report: Pick<Report, "locked"> | undefined,
+): ReadonlyMap<string, string> {
+  const words = new Map<string, string>();
+  for (const part of report?.locked ?? [])
+    if (part.section !== undefined && part.words !== "") words.set(part.section, part.words);
+  return words;
+}
+
 /** The month "Add dates" starts an entry's dates at: this one, as the model writes a month. */
 export function thisMonth(now = new Date()): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -243,6 +264,19 @@ const NO_BULLETS = "The template sets no bullets for an entry of this section";
 /** Why the button that would add a unit to a list kept as it was imported is disabled. */
 const KEPT = "These were kept as they were imported, so none can be added here";
 
+/** What a locked part is, which names one that has no name of its own. */
+export const KEPT_AS_IT_WAS = "Kept as it was";
+
+/**
+ * Why a locked part's button is disabled where the template stops after its step (decision 0041):
+ * as a part that closes a list a section above it opens.
+ */
+export const PINNED: Readonly<Record<PinStep, string>> = {
+  remove: "The template stops without this part, so it stays",
+  up: "The template stops if this part moves up",
+  down: "The template stops if this part moves down",
+};
+
 /**
  * What the panel shows of a package's rules for the open document (decision 0026): the fields the
  * document has, which a slot it keeps as its upload had it is not (`fieldsOf`), undefined for
@@ -256,6 +290,7 @@ interface Rules {
   addable: (kind: UnitKind) => boolean;
   removable: (kind: UnitKind) => boolean;
   bullets: (role: SectionRole) => boolean;
+  pinned: (id: string) => ReadonlySet<PinStep>;
 }
 
 /** A package's rules for a document; with no package, none, and every edit taken. */
@@ -266,6 +301,7 @@ function rulesOf(pkg: TemplatePackage | undefined, document: Document): Rules {
     addable: (kind) => addable(pkg, kind),
     removable: (kind) => removable(pkg, kind),
     bullets: (role) => showsBullets(pkg, role),
+    pinned: (id) => pinnedSteps(pkg, id),
   };
 }
 
@@ -275,6 +311,7 @@ const NO_RULES: Rules = {
   addable: () => true,
   removable: () => true,
   bullets: () => true,
+  pinned: () => new Set(),
 };
 
 export interface PanelProps {
@@ -290,6 +327,11 @@ export interface PanelProps {
    * does not show gets an input here; undefined before the first page.
    */
   shownFields?: ReadonlySet<string>;
+  /**
+   * Each locked section's first words as the page shows them, by its id (`lockedWordsOf`), which
+   * name its row; a part with none is named `KEPT_AS_IT_WAS`.
+   */
+  lockedWords?: ReadonlyMap<string, string>;
   /** Where the panel's commands go: the way an edit on the page goes, so the page follows. */
   onCommand: Send;
   /**
@@ -311,7 +353,7 @@ const Seal = createContext<() => void>(() => {});
 /** The package's rules (`Rules`), carried to each `FieldInput` and `AddSection` in the same way. */
 const RulesOf = createContext<Rules>(NO_RULES);
 
-export function Panel({ document, pkg, shownFields, onCommand, onSeal }: PanelProps) {
+export function Panel({ document, pkg, shownFields, lockedWords, onCommand, onSeal }: PanelProps) {
   const { header, sections } = document.resume;
   const known = pkg ?? CURATED.get(document.template)?.package;
   const rules = rulesOf(known, document);
@@ -331,6 +373,7 @@ export function Panel({ document, pkg, shownFields, onCommand, onSeal }: PanelPr
               sections={sections}
               format={dateFormatOf(document, known)}
               rules={rules}
+              lockedWords={lockedWords}
               send={onCommand}
             />
           </div>
@@ -476,11 +519,13 @@ function Sections({
   sections,
   format,
   rules,
+  lockedWords,
   send,
 }: {
   sections: readonly Section[];
   format: DateFormat;
   rules: Rules;
+  lockedWords: ReadonlyMap<string, string> | undefined;
   send: Send;
 }) {
   return (
@@ -493,8 +538,10 @@ function Sections({
               <LockedRow
                 key={section.id}
                 section={section}
+                words={lockedWords?.get(section.id)}
                 index={index}
                 count={sections.length}
+                rules={rules}
                 send={send}
               />
             ) : (
@@ -569,34 +616,46 @@ function SectionRow({
 
 /**
  * A locked section: a part of an imported resume kept as its upload had it, which the page draws
- * and nothing edits, so the panel moves and removes it and shows nothing of what it holds, which
- * is LaTeX. Item 15 names it by the first words the page shows of it; until then it is "Kept as it
- * was" (decision 0025).
+ * and nothing edits, so the panel moves and removes it, which undo takes back as any step, and
+ * shows nothing of what it holds, which is LaTeX. It is named by its first words as the page shows
+ * them (`PanelProps.lockedWords`), marked as kept, or `KEPT_AS_IT_WAS` where it has no name
+ * (decision 0041).
  */
 function LockedRow({
   section,
+  words,
   index,
   count,
+  rules,
   send,
 }: {
   section: LockedSection;
+  words: string | undefined;
   index: number;
   count: number;
+  rules: Rules;
   send: Send;
 }) {
   const { id } = section;
+  const named = words === undefined || words === "" ? undefined : words;
+  const pinned = rules.pinned(id);
   const remove = () => {
-    if (holdsContent(section) && !confirm("Remove this section and everything in it?")) return;
+    const what = named === undefined ? "this section" : `“${named}”`;
+    if (holdsContent(section) && !confirm(`Remove ${what} and everything in it?`)) return;
     send(structural({ op: "removeSection", id }));
   };
   return (
     <li style={STYLE.row}>
-      <span>Kept as it was</span>
+      <span>{named ?? KEPT_AS_IT_WAS}</span>
+      {named !== undefined && <small style={STYLE.mark}>{KEPT_AS_IT_WAS.toLowerCase()}</small>}
       <Reorder
         index={index}
         count={count}
         onMove={(to) => send(structural({ op: "moveSection", id, to }))}
         onRemove={remove}
+        refused={pinned.has("remove") ? PINNED.remove : undefined}
+        up={pinned.has("up") ? PINNED.up : undefined}
+        down={pinned.has("down") ? PINNED.down : undefined}
       />
     </li>
   );
@@ -930,6 +989,8 @@ function Reorder({
   onMove,
   onRemove,
   refused,
+  up,
+  down,
 }: {
   index: number;
   count: number;
@@ -937,23 +998,26 @@ function Reorder({
   onRemove: () => void;
   /** Why the template cannot lose the node, if it cannot. */
   refused?: string | undefined;
+  /** Why the template cannot take the node one place up, or down, if it cannot (decision 0041). */
+  up?: string | undefined;
+  down?: string | undefined;
 }) {
   return (
     <span style={STYLE.row}>
       <button
         type="button"
-        title="Move up"
+        title={up ?? "Move up"}
         aria-label="Move up"
-        disabled={index === 0}
+        disabled={index === 0 || up !== undefined}
         onClick={() => onMove(index - 1)}
       >
         ↑
       </button>
       <button
         type="button"
-        title="Move down"
+        title={down ?? "Move down"}
         aria-label="Move down"
-        disabled={index === count - 1}
+        disabled={index === count - 1 || down !== undefined}
         onClick={() => onMove(index + 1)}
       >
         ↓

@@ -76,6 +76,8 @@ import {
   type ByRole,
   type DateFormat,
   IMPORTED_PREFIX,
+  PIN_STEPS,
+  type PinStep,
   type RequiredPlace,
   type TemplatePackage,
   UNIT_KINDS,
@@ -154,9 +156,10 @@ export interface LockedPart {
  * preamble's end, right before `\begin{document}` (`preamble`, decision 0024); controls dropped,
  * field instances and whole slots locked with why, the slots that are required, and the kinds of
  * unit a new one of which, or the removal of one, stops the compile, which the package marks
- * (`fixed`) and the editor neither adds nor removes (decision 0038). A field instance
- * is named by where its content starts (`LockedPart.at` and its slot), a slot by its macro and
- * argument (`slotKey`).
+ * (`fixed`) and the editor neither adds nor removes (decision 0038); and the locked parts whose
+ * removal, or move one place up or down, stops it, by id, which the package pins (`pinned`,
+ * decision 0041). A field instance is named by where its content starts (`LockedPart.at` and its
+ * slot), a slot by its macro and argument (`slotKey`).
  */
 export interface Decisions {
   dropped?: readonly string[];
@@ -166,6 +169,7 @@ export interface Decisions {
   slots?: Readonly<Record<string, LockReason>>;
   required?: readonly string[];
   fixed?: readonly UnitKind[];
+  pinned?: Readonly<Record<string, readonly PinStep[]>>;
 }
 
 /** The style controls a package offers (decision 0006), but the date format, which is the generator's. */
@@ -3816,6 +3820,26 @@ function sectionSnippets(registry: Registry, kind: SectionKind): ByRole<string> 
 }
 
 /**
+ * The package's `pinned` from the checks' decisions (decision 0041): the locked parts of `resume`
+ * pinned against a step, by id in order, each's steps in the order of `PIN_STEPS`; none at all,
+ * and no field, where none is, so that a package with none hashes as one made before them.
+ */
+function pinnedOf(
+  pinned: Readonly<Record<string, readonly PinStep[]>>,
+  resume: Resume,
+): { pinned?: Record<string, PinStep[]> } {
+  const locked = new Set(
+    resume.sections.flatMap((each) => (each.kind === "locked" ? [each.id] : [])),
+  );
+  const entries = Object.keys(pinned)
+    .filter((id) => locked.has(id))
+    .sort()
+    .map((id): [string, PinStep[]] => [id, PIN_STEPS.filter((step) => pinned[id]?.includes(step))])
+    .filter(([, steps]) => steps.length > 0);
+  return entries.length === 0 ? {} : { pinned: Object.fromEntries(entries) };
+}
+
+/**
  * The package, its id `import-` and twelve hex digits of the SHA-256 of the rest of it as JSON,
  * so that the same template gives the same package, and the same formats, whoever imports it.
  */
@@ -3854,6 +3878,7 @@ export async function assemble(
     slots: options.decisions?.slots ?? {},
     required: options.decisions?.required ?? [],
     fixed: options.decisions?.fixed ?? [],
+    pinned: options.decisions?.pinned ?? {},
   };
   const answers = answersOf(answer);
   const dropped = new Set(decisions.dropped);
@@ -3979,6 +4004,9 @@ export async function assemble(
     ...(decisions.fixed.length === 0
       ? {}
       : { fixed: UNIT_KINDS.filter((kind) => decisions.fixed.includes(kind)) }),
+    // The locked parts the third check pinned, by id in order, each's steps in the editor's
+    // order, of those the document has, so that the same decisions hash the same.
+    ...pinnedOf(decisions.pinned, resume),
   };
   // Every extra, locked part and default is kept LaTeX, as the model and the package take it: one
   // they would refuse, as a list past the cap, is a part this editor cannot keep (decision 0026).

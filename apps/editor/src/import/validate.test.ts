@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Resume } from "@resume-tools/resume-model";
 import { strToU8, zipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
-import { applyUnder, CommandError } from "../editor/document";
+import { applyUnder, CommandError, type StructureOp } from "../editor/document";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
@@ -23,6 +23,7 @@ import {
   LAYOUT,
   PREAMBLE,
   REFERENCE,
+  signaturesOf,
 } from "../test/invented-import";
 import type { Finding } from "../validate/harness";
 import { type Assembled, assemble, SIZE_OPTIONS, takenOut } from "./assemble";
@@ -40,6 +41,7 @@ import {
   DROPPED,
   MUTATIONS,
   UNCHECKED,
+  unbalanced,
   type ValidationInputs,
   validate,
   validateWith,
@@ -326,6 +328,47 @@ describe("the fake compiler", () => {
       stream?.pages[0]?.items.flatMap((item) => (item.kind === "glyph" ? [item.text] : [])) ?? [];
     expect(glyphs(document.stream).join("")).toBe(glyphs(liked.stream).join(""));
     expect(glyphs(liked.stream).join("")).toContain("Jan2020–Present");
+  });
+});
+
+describe("unbalanced", () => {
+  // The document's own macros as the signatures read them: a list's closer and opener, one with an
+  // optional argument and one robust, whose code is the macro beside them, and one that holds data.
+  const macros = signaturesOf(
+    {},
+    {},
+    {
+      skillsEnd: "macro:->\\end {itemize}",
+      skillsStart: "macro:->\\begin {itemize}[leftmargin=0.15in, label={}]",
+      listOf: "macro:->\\@protected@testopt \\listOf \\\\listOf {}",
+      "\\listOf": "macro:[#1]#2->\\begin {itemize}#2\\end {itemize}",
+      closer: "macro:->\\protect \\closer  ",
+      "closer ": "macro:->\\endgroup ",
+      who: "macro:->Quill Invented",
+    },
+  ).macros;
+
+  test("finds a part that ends what it did not begin, or begins what it does not end", () => {
+    expect(unbalanced("\\end{itemize}", macros)).toBe(true);
+    expect(unbalanced("\\section{Skills}\n\\begin{itemize}\n\\item Words", macros)).toBe(true);
+    expect(unbalanced("\\end{itemize}\n\\begin{itemize}", macros)).toBe(true);
+    expect(unbalanced("\\begingroup\\small Words", macros)).toBe(true);
+    expect(unbalanced("Words\\egroup", macros)).toBe(true);
+    // Through the document's macros, one level: the reviewer's closer, and the kernel's wrappers.
+    expect(unbalanced("\n \\skillsEnd\n", macros)).toBe(true);
+    expect(unbalanced("\\skillsStart \\item Words", macros)).toBe(true);
+    expect(unbalanced("\\closer", macros)).toBe(true);
+  });
+
+  test("passes a part that ends whatever it begins, and what its comments and data say", () => {
+    expect(
+      unbalanced("\\section{Skills}\n\\begin{itemize}\\item Words\\end{itemize}", macros),
+    ).toBe(false);
+    expect(unbalanced("\\skillsStart\n\\item Words\n\\skillsEnd", macros)).toBe(false);
+    expect(unbalanced("\\listOf{\\item Words}", macros)).toBe(false);
+    expect(unbalanced("\\begingroup\\small Words\\endgroup \\newpage \\who", macros)).toBe(false);
+    expect(unbalanced("Words % \\end{itemize} a comment\n", macros)).toBe(false);
+    expect(unbalanced("\\begin {center} \\undefinedHere \\end {center}", macros)).toBe(false);
   });
 });
 
@@ -643,6 +686,67 @@ describe("the checks", () => {
     );
     expect(remove(work.id).resume.sections).toHaveLength(document.resume.sections.length - 1);
     expect(checks.compiles).toBe(fake.count);
+  });
+
+  test("pin a locked part against a step that stops, and leave it its other steps", async () => {
+    // A part that closes the list the section before it opens, through the document's own macro,
+    // `\cvskillsEnd`, defined as `\end{itemize}`: a template that stops without it, or with it
+    // above that section, pins it against its removal and its move up, the editor then refuses
+    // both, and it moves down (decision 0041).
+    const closing = (before: string, meanings: Record<string, string> = {}): Invented => ({
+      ...JAKE_LIKE,
+      source: JAKE_LIKE.source.replace("\\section{Summary}", `${before}\n\\section{Summary}`),
+      commands: { ...JAKE_LIKE.commands, cvskillsEnd: "" },
+      meanings: { ...JAKE_LIKE.meanings, ...meanings },
+    });
+    const closer = closing("\\cvskillsEnd\n\\newpage", { cvskillsEnd: "macro:->\\end {itemize}" });
+    /** The import's part between two sections, the section above it, and a template that stops so. */
+    const stopping = async (invented: Invented) => {
+      const { sections } = (await plain(invented)).document.resume;
+      const at = sections.findIndex((section) => section.kind === "locked");
+      const part = sections[at]?.id;
+      const above = sections[at - 1]?.id;
+      const below = sections[at + 1]?.id;
+      if (part === undefined || above === undefined || below === undefined)
+        throw new Error("no part between two sections");
+      // How many compiles took the part away or moved it past a section beside it, as only check
+      // 3's steps with it do.
+      let tried = 0;
+      const refuses = (resume: Resume) => {
+        const ids = resume.sections.map((section) => section.id);
+        const stops = !ids.includes(part) || ids.indexOf(part) < ids.indexOf(above);
+        if (stops || (ids.includes(below) && ids.indexOf(part) > ids.indexOf(below))) tried++;
+        return stops;
+      };
+      return { at, part, refuses, tried: () => tried };
+    };
+    const { at, part, refuses, tried } = await stopping(closer);
+    const { result, fake } = await validated(closer, { refuses });
+    const { checks, package: pkg, document } = ok(result);
+    expect(checks.decisions.pinned).toEqual({ [part]: ["remove", "up"] });
+    expect(pkg.pinned).toEqual({ [part]: ["remove", "up"] });
+    expect(tried()).toBeGreaterThan(0);
+    expect(pkg.id).not.toBe(ok((await validated(closer)).result).package.id);
+    const step = (op: StructureOp) => () => applyUnder(pkg, document, { type: "structure", op });
+    expect(step({ op: "removeSection", id: part })).toThrow(CommandError);
+    expect(step({ op: "moveSection", id: part, to: at - 1 })).toThrow(CommandError);
+    expect(step({ op: "moveSection", id: part, to: at + 1 })).not.toThrow();
+    // Each step tried once, and none of a part the template takes every step of.
+    expect(checks.compiles).toBe(fake.count);
+    expect(ok((await validated(closer)).result).package.pinned).toBeUndefined();
+    // A part that ends whatever it begins, as a page break alone, or a macro of the document's own
+    // that begins and ends a list, is not tried, so not pinned, whatever its steps would do.
+    for (const balanced of [
+      closing("\\newpage"),
+      closing("\\cvskillsEnd\n\\newpage", {
+        cvskillsEnd: "macro:->\\begin {itemize}\\item \\end {itemize}",
+      }),
+    ]) {
+      const each = await stopping(balanced);
+      const { result } = await validated(balanced, { refuses: each.refuses });
+      expect(ok(result).package.pinned).toBeUndefined();
+      expect(each.tried()).toBe(0);
+    }
   });
 
   test("mutate a raw field as a typeset one: locked where text stops it, required where empty does", async () => {

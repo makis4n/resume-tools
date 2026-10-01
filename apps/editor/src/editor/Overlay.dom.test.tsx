@@ -69,6 +69,7 @@ function shownIn(font: PageFont, document: Document, folded?: Fold): Shown {
     svg: "",
     size: { width: 612, height: 792 },
     fields: new Map([[ID, { id: ID, glyphs: [], layout }]]),
+    locked: new Map(),
     glyphs: [...text].map((_, offset) => ({
       ...{ x: 72 + 5 * offset, y: 100, left: 0, top: 0, right: 0, bottom: 0 },
       ...{ font: font.name, size: 10, field: ID, offset },

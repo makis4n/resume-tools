@@ -297,7 +297,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 7. Locked content
 
-15. [ ] **Locked chunks on the page.** The model gains what imports need, additively (decision
+15. [x] **Locked chunks on the page.** The model gains what imports need, additively (decision
     0006's rule): a `locked` section kind holding LaTeX verbatim, and typed extras on sections
     and entries holding a call's non-text arguments and sub-chunks, which snippets re-emit
     through a raw extras slot, `{{&x.name}}`, an addition to the snippet language no curated
