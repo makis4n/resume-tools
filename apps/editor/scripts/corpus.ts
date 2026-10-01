@@ -237,10 +237,11 @@ import {
   barFailures,
   barLine,
   comparePlaces,
-  firstCheckHolds,
   type PlaceCount,
   placesTable,
   portPlaces,
+  reportLine,
+  reportSucceeded,
 } from "./corpus-assemble.ts";
 import {
   type BenchFile,
@@ -858,8 +859,9 @@ function assembleLine(row: AssembleRow): string {
     return `${row.outcome}${row.refused === undefined ? "" : ` (${row.refused})`}`;
   const locked = Object.values(row.fields?.locked ?? {}).reduce((sum, n) => sum + (n ?? 0), 0);
   // The milestone's bar (decision 0040): which of page size, margins and font size are proven, and
-  // for a successful import, why each it lacks is lacking, by the kind of why alone.
-  return `${row.engine}, ${row.outcome}${row.difference === undefined ? "" : ` (${row.difference})`}, ${row.fields?.editable ?? 0} editable, ${locked} locked, ${row.compiles ?? 0} compiles, ${row.validateMs ?? 0} ms; the bar: ${barLine(row, firstCheckHolds(row))}`;
+  // for a successful import, as item 13's report says (decision 0039), why each it lacks is
+  // lacking, by the kind of why alone.
+  return `${row.engine}, ${row.outcome}${row.difference === undefined ? "" : ` (${row.difference})`}, ${row.fields?.editable ?? 0} editable, ${locked} locked, ${row.compiles ?? 0} compiles, ${row.validateMs ?? 0} ms; the report: ${reportLine(row.report)}; the bar: ${barLine(row, reportSucceeded(row))}`;
 }
 
 async function runAssemble(only: string | undefined, json: string | undefined) {
@@ -909,9 +911,10 @@ async function runAssemble(only: string | undefined, json: string | undefined) {
         documents: rows,
       }),
     );
-  // The milestone's bar (decision 0040): every successful import has its page size, margins and
-  // font size proven, or the run fails, naming each it misses by the document's id and control.
-  const failures = barFailures(rows, firstCheckHolds);
+  // The milestone's bar (decision 0040): every successful import, as item 13's report says
+  // (decision 0039), has its page size, margins and font size proven, or the run fails, naming each
+  // it misses by the document's id and control.
+  const failures = barFailures(rows, reportSucceeded);
   if (failures.length > 0) {
     console.error(barFailureLines(failures).map(printable).join("\n"));
     process.exitCode = 1;

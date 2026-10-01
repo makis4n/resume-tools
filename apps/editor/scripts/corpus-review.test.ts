@@ -1096,7 +1096,7 @@ describe.skipIf(!engineAvailable())(
       const doc: RunDocument = {
         id: "other-0001",
         family: "other",
-        outcome: outcomeOf(validated).outcome,
+        outcome: outcomeOf(validated, made_).outcome,
         request,
         gate: "passes",
         text: {

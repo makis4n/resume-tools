@@ -15,19 +15,20 @@
  * stricter check, the header's values the run's answers find given to it besides, as `corpus leak`
  * proves the request (`answerDocument`, decisions 0027 and 0033); and, where any
  * macro has an answer, the XeTeX rewrite of its fonts and its check (decision 0023), and its
- * package and document assembled and validated.
+ * package and document assembled and validated, and read into item 13's report (`reportOf`,
+ * decision 0039), which the rows of both runners count.
  *
  * It answers with the document's rows, `corpus assemble`'s and `corpus run`'s, names and numbers
- * only; the probe's row and the whole probe, for the oracle; the fields found by the model's place,
- * for the oracle's comparison with the ports; the whole assembly, which holds the document's text, as
- * the whole probe does; and, when the parent asks, what the review reads of the document (its
- * request, its text and its macros' fates, `RunDocument`). The parent keeps what holds text under
- * `.corpus/` alone.
+ * only, the report's counts among them; the probe's row and the whole probe, for the oracle; the
+ * fields found by the model's place, for the oracle's comparison with the ports; the whole
+ * assembly, which holds the document's text, as the whole probe does; and, when the parent asks,
+ * what the review reads of the document (its request, its text and its macros' fates,
+ * `RunDocument`). The parent keeps what holds text under `.corpus/` alone.
  *
  * The editor's modules are written for Vite, so this file, which Node runs as it is, loads them
  * through Vite's module runner with the app's own config, as `corpus-probe-child.ts` does, and
- * imports nothing of the editor itself but types. It prints nothing: a document's text never
- * reaches a terminal.
+ * imports nothing of the editor itself but types, and the report, which imports nothing but types.
+ * It prints nothing: a document's text never reaches a terminal.
  */
 
 import { readFileSync } from "node:fs";
@@ -38,6 +39,9 @@ import { soclaasModel } from "@resume-tools/naming/providers";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
+// Item 13's report imports nothing but types, so Node runs it as it is: the same function the
+// browser's import reads its report with (decision 0039).
+import { reportOf } from "../src/import/report.ts";
 import { FileAnswerCache } from "./answer-cache.ts";
 import {
   type AssembleChildRow,
@@ -602,15 +606,28 @@ async function main() {
           session.forget("removal");
         }
       }
+      // Item 13's report, read as the browser's import reads it (decision 0039): its words from the
+      // reference's page, with what the intake and the XeTeX rewrite set aside; `corpus run`'s
+      // outcome reads the same (`outcomeOf`), so that the two runners and the person agree.
+      const inputs = {
+        images: taken.images,
+        warnings: [
+          ...taken.warnings,
+          ...(rewrite === undefined || "refused" in rewrite ? [] : rewrite.warnings),
+        ],
+      };
+      const report = reportOf(validated, made, inputs);
       const runRow = runRowOf(validated, engine, {
         naming: runNaming,
         probeCompiles: probed.compiles,
         times: {},
+        reference: made,
+        inputs,
       });
       const { times: _times, ...runFields } = runRow;
       done(
         {
-          ...assembleRow(validated.checks, engine, counted),
+          ...assembleRow(validated.checks, engine, counted, report),
           probeMs: Math.round(probed.ms),
           ...(removals.length === 0 ? {} : { removals }),
         },

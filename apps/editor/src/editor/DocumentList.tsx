@@ -9,19 +9,32 @@
  * when a resume is imported (`PRIVACY_NOTE`, decision 0033). While an import runs, the list shows
  * the step it is at and the compiles so far, in plain English, with a button that cancels it
  * (decision 0038); a refusal comes back as the list's notice, the refusal's own words, which never
- * show LaTeX.
+ * show LaTeX. An import that came through partial, under the bar or with its page moved, waits on
+ * the person with its report in place of the progress line (milestone 3 item 13, decision 0039):
+ * continue, and the document opens as it is; stop, and nothing of it is kept.
  */
 
 import type { DragEvent } from "react";
 import { useState } from "react";
 import { PRIVACY_NOTE } from "../import/privacy";
+import type { Report } from "../import/report";
 import type { Summary } from "../storage/store";
 import { CURATED } from "../templates/curated";
+import { ImportReport } from "./ImportReport";
 
 /** Where an import is, as the progress line says it: its step's name, and the compiles so far. */
 export interface ImportShown {
   label: string;
   compiles: number;
+}
+
+/** A partial import waiting on the person: its report, and the two ways on. */
+export interface ImportWaiting {
+  report: Report;
+  /** Keep the document and open it as it is. */
+  onContinue(): void;
+  /** Keep nothing of the import. */
+  onStop(): void;
 }
 
 export interface DocumentListProps {
@@ -39,6 +52,8 @@ export interface DocumentListProps {
   importing?: ImportShown;
   /** Stop the import under way. */
   onCancelImport?(): void;
+  /** A partial import waiting on the person, if one is, which nothing else starts beside. */
+  waiting?: ImportWaiting;
 }
 
 const MINUTE = 60_000;
@@ -102,6 +117,7 @@ export function DocumentList({
   onImport,
   importing,
   onCancelImport,
+  waiting,
 }: DocumentListProps) {
   const [choosing, setChoosing] = useState(false);
   const [over, setOver] = useState(false);
@@ -110,7 +126,7 @@ export function DocumentList({
     if (window.confirm(`Delete “${summary.title}”? It cannot be brought back.`))
       onDelete(summary.id);
   };
-  const busy = importing !== undefined;
+  const busy = importing !== undefined || waiting !== undefined;
   const importFiles = (files: File[]) => {
     if (files.length > 0 && !busy) onImport?.(files);
   };
@@ -140,7 +156,13 @@ export function DocumentList({
     >
       <h1>Documents</h1>
       {notice && <p role="alert">{notice}</p>}
-      {importing ? (
+      {waiting ? (
+        <ImportReport
+          report={waiting.report}
+          onContinue={waiting.onContinue}
+          onStop={waiting.onStop}
+        />
+      ) : importing ? (
         <p role="status">
           {importing.label}… {importing.compiles}{" "}
           {importing.compiles === 1 ? "compile" : "compiles"} so far.{" "}

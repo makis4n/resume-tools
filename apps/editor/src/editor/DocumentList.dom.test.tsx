@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PRIVACY_NOTE } from "../import/privacy";
 import { refusal } from "../import/refusal";
+import { LOCK_WHY } from "../import/report";
 import type { Summary } from "../storage/store";
 import { DocumentList, type DocumentListProps, TEMPLATE_LINES } from "./DocumentList";
 
@@ -156,6 +157,38 @@ describe("the document list's way in", () => {
     expect(buttonNamed("Quill Invented").disabled).toBe(true);
     act(() => buttonNamed("Cancel").click());
     expect(calls.cancelled).toBe(1);
+  });
+
+  it("holds a partial import's report in place of the picker until the person continues or stops", () => {
+    let continued = 0;
+    let stopped = 0;
+    rendered({
+      waiting: {
+        report: {
+          outcome: "partial",
+          rate: 0.5,
+          matched: true,
+          words: { editable: 5, panel: 0, locked: 5, byReason: { date: 5 }, body: 10, template: 0 },
+          locked: [{ words: "Invented words", count: 5, reason: "date", why: LOCK_WHY.date }],
+          dropped: [],
+          notes: [],
+        },
+        onContinue: () => continued++,
+        onStop: () => stopped++,
+      },
+    });
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(
+      "Imported in part: 50% of your resume's words are editable on the page, under the 90% this editor aims for.",
+    );
+    // Nothing else starts meanwhile: no picker, no new document, no document to open.
+    expect(picker()).toBeNull();
+    expect(host.textContent).not.toContain("New");
+    expect(buttonNamed("Quill Invented").disabled).toBe(true);
+    expect(dragged("drop", ["Files"], [texFile()]).event.defaultPrevented).toBe(true);
+    expect(calls.imported).toEqual([]);
+    act(() => buttonNamed("Continue").click());
+    act(() => buttonNamed("Stop").click());
+    expect([continued, stopped]).toEqual([1, 1]);
   });
 
   it("says why an import was refused in its own words, and shows the list again", () => {

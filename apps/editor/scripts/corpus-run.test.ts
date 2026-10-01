@@ -54,48 +54,97 @@ const checks = (changes: Partial<AssemblyChecks> = {}): AssemblyChecks => ({
   ...changes,
 });
 
+/** A reference with no page, as an assembly whose words its source counts reads against. */
+const NO_PAGE = { pages: [], bibliographyLeftOut: false, images: [] };
+
+/** The outcome of an assembly whose checks are given and that keeps no part, against no page. */
+const outcomeOfChecks = (given: AssemblyChecks) =>
+  outcomeOf({ checks: given, extras: [] }, NO_PAGE);
+
 describe("the outcome and the editable rate", () => {
   test("is a success where the first check holds and nine words in ten or more are editable", () => {
-    expect(outcomeOf({ checks: checks() })).toEqual({
+    expect(outcomeOfChecks(checks())).toEqual({
       outcome: "success",
       rate: 0.9,
-      counted: { editable: 90, all: 100 },
+      counted: { editable: 90, all: 100, locked: { date: 10 } },
     });
     expect(SUCCESS_RATE).toBe(0.9);
-    expect(OUTCOME_RULE).toBe("the first check holds, and 90% of the words or more are editable");
-    const short = outcomeOf({ checks: checks({ words: { editable: 89, locked: { date: 11 } } }) });
-    expect(short).toEqual({ outcome: "partial", rate: 0.89, counted: { editable: 89, all: 100 } });
+    expect(OUTCOME_RULE).toBe(
+      "the first check holds, and 90% of the words or more are editable on the page",
+    );
+    const short = outcomeOfChecks(checks({ words: { editable: 89, locked: { date: 11 } } }));
+    expect(short).toEqual({
+      outcome: "partial",
+      rate: 0.89,
+      counted: { editable: 89, all: 100, locked: { date: 11 } },
+    });
   });
 
   test("is partial where the first check differs, however many words are editable", () => {
     const all = { editable: 100, locked: {} };
-    expect(outcomeOf({ checks: checks({ outcome: "partial", words: all }) })).toEqual({
+    expect(outcomeOfChecks(checks({ outcome: "partial", words: all }))).toEqual({
       outcome: "partial",
       rate: 1,
-      counted: { editable: 100, all: 100 },
+      counted: { editable: 100, all: 100, locked: {} },
     });
   });
 
   test("counts every locked word, of every reason, and takes a document of no words as none", () => {
     const words = { editable: 60, locked: { unmapped: 30, shape: 5, date: 5 } };
-    expect(outcomeOf({ checks: checks({ words }) }).rate).toBe(0.6);
-    expect(outcomeOf({ checks: checks({ words: { editable: 0, locked: {} } }) })).toEqual({
+    expect(outcomeOfChecks(checks({ words })).rate).toBe(0.6);
+    expect(outcomeOfChecks(checks({ words: { editable: 0, locked: {} } }))).toEqual({
       outcome: "partial",
       rate: 0,
-      counted: { editable: 0, all: 0 },
+      counted: { editable: 0, all: 0, locked: {} },
+    });
+  });
+
+  test("reads the words of the reference's page, as item 13's report does, where the assembly says what sets them", () => {
+    // Ten one-letter words on an invented page: six an entry's title's, three a locked part's, and
+    // one the template's own, which is no word of the resume's.
+    const size = 655_360;
+    const items = Array.from({ length: 10 }, (_, i) => ({
+      kind: "glyph" as const,
+      font: "invented10",
+      size,
+      code: 97 + i,
+      text: String.fromCharCode(97 + i),
+      h: i * size,
+      v: 0,
+      width: size / 2,
+    }));
+    const outcome = outcomeOf(
+      {
+        checks: checks({
+          owners: [
+            { page: 0, from: 0, to: 6, field: "ent-1.title" },
+            { page: 0, from: 6, to: 9, part: 0 },
+            { page: 0, from: 9, to: 10 },
+          ],
+        }),
+        extras: [{ at: "b0", kind: "section", reason: "unmapped", words: 3 }],
+      },
+      { pages: [{ items }], bibliographyLeftOut: false, images: [] },
+    );
+    // The page's count, never the source's ninety words of a hundred.
+    expect(outcome).toEqual({
+      outcome: "partial",
+      rate: 6 / 9,
+      counted: { editable: 6, all: 9, locked: { unmapped: 3 } },
     });
   });
 
   test("goes into a row with the assembly's counts, names of closed lists and numbers only", () => {
-    const row = runRowOf({ checks: checks() }, "pdftex", {
+    const row = runRowOf({ checks: checks(), extras: [] }, "pdftex", {
       probeCompiles: 7,
       times: { probe: 1200, checks: 3400 },
+      reference: NO_PAGE,
     });
     expect(row).toMatchObject({
       outcome: "success",
       engine: "pdftex",
       rate: 0.9,
-      counted: { editable: 90, all: 100 },
+      counted: { editable: 90, all: 100, locked: { date: 10 } },
       fields: { editable: 9, raw: 1, required: 1, locked: { date: 1 } },
       words: { editable: 90, locked: { date: 10 } },
       controls: { proven: ["pageSize"], dropped: [] },
@@ -115,7 +164,11 @@ describe("the outcome and the editable rate", () => {
         dropped: [{ control: "margins", why: DROPPED.same }],
       },
     });
-    const row = runRowOf({ checks: margins }, "pdftex", { probeCompiles: 1, times: {} });
+    const row = runRowOf({ checks: margins, extras: [] }, "pdftex", {
+      probeCompiles: 1,
+      times: {},
+      reference: NO_PAGE,
+    });
     expect(row.controls).toEqual(
       assembleRow(margins, "pdftex", { answered: 0, unanswered: 0 }).controls,
     );
