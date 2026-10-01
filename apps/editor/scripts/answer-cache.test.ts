@@ -98,6 +98,31 @@ describe("the answers cache on disk", () => {
     expect(readdirSync(cache.writable)).toEqual([`${KEY}.json`]);
   });
 
+  test("reads a model's folder alone, the committed answers left out, as the benchmark reads it", async () => {
+    const committed = folder();
+    const reviewed = stored(KEY, {
+      answer: { ...stored().answer, reviewed: true } as StoredAnswer["answer"],
+      reviewed: true,
+      source: "seed",
+    });
+    writeFileSync(join(committed, `${KEY}.json`), JSON.stringify(reviewed));
+    const own = new FileAnswerCache({ committed, writable: folder(), own: true });
+    expect(own.own).toBe(true);
+    expect(own.get(KEY)).toBeUndefined();
+    expect(await answerFor(own, KEY)).toBeUndefined();
+    // The model's answer is filed in its folder though the committed one holds the key, which it
+    // never writes; and never over the model's own.
+    expect(own.put(KEY, stored())).toBe(true);
+    expect(own.put(KEY, stored(KEY, { source: "model:another-model" }))).toBe(false);
+    expect(readdirSync(own.writable)).toEqual([`${KEY}.json`]);
+    expect(await answerFor(own, KEY)).toEqual(stored());
+    expect(JSON.parse(readFileSync(join(committed, `${KEY}.json`), "utf8"))).toEqual(reviewed);
+    // A cache over both folders, as the run reads them, still serves the committed answer first.
+    const both = new FileAnswerCache({ committed, writable: own.writable });
+    expect(both.own).toBe(false);
+    expect(await answerFor(both, KEY)).toMatchObject({ reviewed: true, source: "seed" });
+  });
+
   test("refuses anything but a stored answer under its own key, and a key that is a path", () => {
     const cache = new FileAnswerCache({ committed: folder(), writable: folder() });
     const other = "c".repeat(64);

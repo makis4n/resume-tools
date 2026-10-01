@@ -109,7 +109,19 @@ export interface NamingUsage {
   input: number;
   cached: number;
   output: number;
+  /**
+   * Of those written, the ones the provider counts as the model's reasoning, where it counts them
+   * apart (item 18's benchmark, decision 0044); none where it does not say.
+   */
+  reasoning?: number;
 }
+
+/**
+ * What a call's failure says when it was stopped before the model answered: by its part's limit
+ * (`partTimeoutMs`), by the naming service's, or by its caller. The benchmark counts a part's
+ * failure that says it as a timeout.
+ */
+export const STOPPED = "The call to the model was stopped before it answered";
 
 /** How `name` asks. */
 export interface NameOptions {
@@ -407,12 +419,14 @@ function checked(
   return problems.length > 0 ? { problems } : { naming: parsed.data, problems };
 }
 
-/** A call's tokens, as the AI SDK counts them. */
+/** A call's tokens, as the AI SDK counts them, its reasoning where the provider says. */
 function usageOf(usage: LanguageModelUsage | undefined): NamingUsage {
+  const reasoning = usage?.outputTokenDetails?.reasoningTokens;
   return {
     input: usage?.inputTokens ?? 0,
     cached: usage?.inputTokenDetails?.cacheReadTokens ?? 0,
     output: usage?.outputTokens ?? 0,
+    ...(reasoning === undefined ? {} : { reasoning }),
   };
 }
 
@@ -447,7 +461,7 @@ function providerError(error: unknown): NamingError {
     );
   }
   if (last instanceof Error && (last.name === "AbortError" || last.name === "TimeoutError"))
-    return new NamingError("provider", "The call to the model was stopped before it answered");
+    return new NamingError("provider", STOPPED);
   if (last instanceof TypeError && /header/i.test(last.message))
     return new NamingError(
       "provider",

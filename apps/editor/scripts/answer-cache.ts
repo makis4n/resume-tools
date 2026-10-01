@@ -9,7 +9,8 @@
  * stored answer this naming version reads, under its own key (`storable`), only in the model's
  * folder, and only under a key neither folder holds, never over another answer (decision 0028). A
  * key is 64 hex digits or no key at all, and a model's id names a folder and never a path, so no
- * key or id names a place elsewhere.
+ * key or id names a place elsewhere. `corpus bench` reads a model's folder alone (`own`, decision
+ * 0044), so that a candidate is measured on its own answers, the committed ones left out.
  *
  * It reads and writes files, so it lives with the editor's scripts: the package runs in the browser
  * and in a Worker too, where item 10's service keeps its answers in KV instead.
@@ -50,27 +51,35 @@ export function modelCacheDir(id: string, root: string = CACHE_DIR): string {
 
 /**
  * The folders a cache reads and writes: the committed answers, and the folder it files in, given
- * as a folder, or as the model whose folder under `.corpus/cache/` it is (`modelCacheDir`).
+ * as a folder, or as the model whose folder under `.corpus/cache/` it is (`modelCacheDir`); and
+ * whether it reads the model's folder alone (`own`), the committed answers left out, as `corpus
+ * bench` reads it, so that a candidate is measured on its own answers alone (decision 0044).
  */
-export type CacheFolders = { committed?: string } & (
+export type CacheFolders = { committed?: string; own?: boolean } & (
   | { writable: string; model?: undefined }
   | { model: string; writable?: undefined }
 );
 
-/** The cache over the committed answers, read first and never written, and a model's folder. */
+/**
+ * The cache over the committed answers, read first and never written, and a model's folder; or, as
+ * the benchmark reads it (`own`), over the model's folder alone.
+ */
 export class FileAnswerCache implements AnswerCache {
   readonly committed: string;
   readonly writable: string;
+  /** Whether the committed answers are left out: read never, and no bar to filing. */
+  readonly own: boolean;
 
   constructor(folders: CacheFolders) {
     this.committed = folders.committed ?? ANSWERS_DIR;
     this.writable = folders.writable ?? modelCacheDir(folders.model ?? "");
+    this.own = folders.own === true;
   }
 
-  /** The text of the file under `key`, the committed folder's first, or nothing. */
+  /** The text of the file under `key`, the committed folder's first unless left out, or nothing. */
   get(key: string): string | undefined {
     if (!KEY.test(key)) return undefined;
-    for (const dir of [this.committed, this.writable]) {
+    for (const dir of this.own ? [this.writable] : [this.committed, this.writable]) {
       const path = join(dir, `${key}.json`);
       if (existsSync(path)) return readFileSync(path, "utf8");
     }
@@ -81,7 +90,10 @@ export class FileAnswerCache implements AnswerCache {
    * Files a stored answer under its own key in the model's folder, when neither folder holds a file
    * under the key, and says whether it did: nothing is filed over another answer, a person's
    * reviewed one above all (decision 0028); two filings of one key at once may both write, the
-   * later kept. Throws for anything but a stored answer under its own key.
+   * later kept. A cache that leaves the committed answers out files where the model's folder alone
+   * holds none: the committed folder is never written either way, and where it holds the key, a
+   * cache that reads it reads its answer first. Throws for anything but a stored answer under its
+   * own key.
    */
   put(key: string, answer: StoredAnswer): boolean {
     if (!KEY.test(key)) throw new Error("A stored answer's key is 64 lower-case hex digits");
