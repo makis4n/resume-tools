@@ -46,9 +46,7 @@ invented fork of Jake's Resume in 5.5 s, under other work. The code is
   with what the checks decided (decision 0026), so the two are timed as one, "Checking the imported
   template", and the findings below count its requests one by one.
 - Each import runs on an engine started afresh, as a newly opened editor's worker is, with fonts
-  of its own. The engine's start is timed apart, before the import: a person whose editor opened a
-  document has it started already, and one who imports into an empty list waits for it as well, so
-  the bar is judged on the import, and the start is given beside it.
+  of its own. The engine's start is timed apart, before the import, and `load` is a part of its own.
 - One import first is not counted: it fills the HTTP cache, which the plan's bar assumes warm, and
   in Node the disk's cache and the runtime's compiled code. Then five are timed, and the table gives
   each part's median, the whole's, and the fastest and slowest whole.
@@ -63,99 +61,144 @@ invented fork of Jake's Resume in 5.5 s, under other work. The code is
   server's route. The page gives the same table as text, under its heading and in the console, says
   whether the tab stayed in front, since Chrome slows a hidden tab, and shows nothing of the sample.
 
+### What the bar is judged on
+
+- Only a cache hit: every timed import's naming step answered from the cache, none of the
+  template's macros asked of a model or left unnamed, and the service not failed. Otherwise the
+  table says why it was not one, and gives no verdict: the dev server's rate limit, ten requests a
+  minute, can fail the naming step of a page reloaded in a hurry, and an import whose every macro
+  stays locked is quicker and proves nothing.
+- In Chrome, with the engine's start: a person whose list shows no document waits for it, since the
+  app starts no engine then (`App.tsx` makes the compiler's engine only when a document or an import
+  first needs one). And without `load`, which the dev server makes slow: each new worker loads the
+  pipeline as some seventy modules, each revalidated, where a build loads one chunk from the cache.
+  The page gives `load` on a line of its own.
+- In Node, without the engine's start, which compiles the engine afresh at every start, 3.4 s here,
+  where Chrome keeps it compiled (decision 0016 had it start in 0.4 s).
+
+### Each format dumped once, and each control's value compiled once
+
+The two speedups below change what an import compiles, not what it proves. An engine test imports
+the same invented document with them and without (`ValidationInputs.share`, false only for that),
+and holds the package, the document, the locks and every finding to be the same, but for how many
+compiles it took.
+
+- A format's name is a hash of exactly what is dumped (`generateFormat`), and the checks and the
+  harness dump with the same files, so the same name is the same format: the harness no longer
+  dumps one the checks dumped. It puts the checks' back instead (`harnessSession`), which starts the
+  jobs compiled with it again as new documents, keeping their files, as a dump that replaces it
+  does, and their dump's result answers its `dump` check. The checks take one the harness dumped
+  the same way.
+- The import hands the editor the format its document opens with (`Imported.formats`), as the
+  checks dumped it, and the compiler keeps it as it keeps a format it dumps, in its bytes and in the
+  store: the page puts it in place rather than dumping it a third time. The worker hands its bytes
+  over rather than copying them.
+- The harness's `controls` check does not compile a value check 4 has proven (`Proven`): one that
+  compiled from its format, with the same body, with no error in its log, and set other glyphs than
+  the document's own, which is all the controls check asks of a value. It still compiles the date
+  format, which check 4 does not try, and each font, whose output it draws besides. And it skips
+  only a run of such values that no compile from the same format follows straight after, which
+  would read what theirs wrote; where a skipped value would have moved the job to another format,
+  the next compile starts afresh all the same, as it would have.
+
 ## Findings
 
 This machine is decision 0016's M4 Pro, 12 cores and 24 GB, on macOS with Node 24.15, shared with
-other worktrees' test suites and corpus runs. The pdfTeX numbers are the first run's, at a
-one-minute load average of 1.7 as it began and 2.6 as it ended; a second, at 5.2 to 5.5 while
-another worktree's corpus run kept four cores busy, came out 0.14 s slower in the whole and agreed
-part by part within 0.12 s. The XeTeX numbers are that second run's, at a load of 5.5 to 5.7; its
-six imports, the warm-up's among them, took from 81.2 to 81.9 s. A run while another worktree's
-whole test suite ran, at a load of 16, took 107 s for Awesome-CV's import that warms up, and is not
-used. The browser's cells are for the orchestrator to fill from `?measure=import` before the pull
-request; the slow laptop's are the owner's.
+other worktrees' test suites and corpus runs. The pdfTeX numbers are those of the editor as it now
+stands, the speedups above made, at a one-minute load average of 2.3 as the run began and 2.4 as it
+ended; before them, a run at 1.7 to 2.6 took 6.55 s, and one at 5.2 to 5.5, while another worktree's
+corpus run kept four cores busy, 6.69 s. The XeTeX numbers are of the editor as it now stands too,
+at a load of 2.3 to 1.8; before the speedups, a run at 5.5 to 5.7 took 81.69 s. A run while another
+worktree's whole test suite ran, at a load of 16, took 107 s for Awesome-CV's import that warms up,
+and is not used. The browser's cells are for the orchestrator to fill from `?measure=import` before
+the pull request; the slow laptop's are the owner's.
 
 Jake's Resume's upstream sample on pdfTeX, each part a median of five imports:
 
 | | This machine | Slow laptop |
 |---|---|---|
-| Node: the import, from the file to the page | 6.55 s, from 6.49 to 6.69 s: 41 compiles and 8 dumps or PDFs, 6.34 s of it in TeX | |
+| Node: the import, from the file to the page | 5.41 s, from 5.37 to 5.49 s: 38 compiles and 5 dumps or PDFs, 5.19 s of it in TeX; 6.55 s before the speedups | |
 | Node: loading what the import runs with, at the worker's first import | 15 ms | |
 | Node: the intake | 3 ms | |
-| Node: the reference compile | 362 ms: 1 compile, whole, from the stock format | |
-| Node: the signatures | 287 ms: 2 compiles | |
+| Node: the reference compile | 366 ms: 1 compile, whole, from the stock format | |
+| Node: the signatures | 286 ms: 2 compiles | |
 | Node: the parse | 1 ms | |
-| Node: the probe | 586 ms: the document's own format dumped, 2 compiles | |
+| Node: the probe | 589 ms: the document's own format dumped, 2 compiles | |
 | Node: the naming request, built and checked, and the naming service | 8 ms and 4 ms: 7 macros named from the cache, none asked of a model | |
-| Node: the assembly and its checks, `validate` | 4.81 s: 35 compiles and 6 dumps or PDFs, 4.71 s of it in TeX | |
-| Node: the page | 447 ms: its format dumped in 274 ms, two passes in 148 ms, drawn in 24 ms | |
-| Node: the engine's start, before the import | 3.47 s | |
-| Chrome (`?measure=import`): the import, from the file to the page | TBD (orchestrator) | |
-| Chrome: the parts, as the page's table gives them | TBD (orchestrator) | |
+| Node: the assembly and its checks, `validate` | 3.95 s: 32 compiles and 4 dumps or PDFs, 3.85 s of it in TeX; 4.81 s, 35 compiles and 6, before | |
+| Node: the page | 170 ms: its format put in place as the checks dumped it, two passes in 144 ms, drawn in 24 ms; 447 ms before, its format dumped in 274 ms | |
+| Node: the engine's start, before the import | 3.49 s | |
+| Chrome (`?measure=import`): the import, with the engine's start and without `load` | TBD (orchestrator) | |
+| Chrome: the parts, as the page's table gives them, `load` among them | TBD (orchestrator) | |
 | Chrome: the engine's start, before the import | TBD (orchestrator) | |
 
-What the import came to, every time: assembled, 47 fields editable and 5 locked, the document on
-one page, as `corpus oracle` assembles the sample.
+What the import came to, every time, before the speedups and after: assembled, 47 fields editable
+and 5 locked, the document on one page, as `corpus oracle` assembles the sample.
 
 Awesome-CV's upstream sample on XeTeX, each part a median of five imports:
 
 | | This machine | Slow laptop |
 |---|---|---|
-| Node: the import, from the file to the page | 81.69 s, from 81.19 to 81.86 s: 122 compiles and 12 dumps or PDFs, 79.60 s of it in TeX | |
-| Node: loading, the intake, the parse, the naming request and the naming service | 15 ms, 4 ms, 1 ms, 35 ms and 9 ms: 19 macros named from the cache, none asked of a model | |
-| Node: the reference compile | 2.82 s: 1 compile, whole, fontconfig given the tree's fonts (decision 0019) | |
-| Node: the signatures | 1.57 s: 2 compiles, whole | |
-| Node: the probe | 51.82 s: 37 compiles, each whole from the stock format, 1.38 s apiece (decision 0022) | |
-| Node: the fonts declared by file, and their check (decision 0023) | 1.62 s: its format dumped, 2 compiles | |
-| Node: the assembly and its checks, `validate` | 22.67 s: 79 compiles and 10 dumps or PDFs from the package's formats, 0.24 s apiece | |
-| Node: the page | 907 ms: its format dumped in 581 ms, two passes in 264 ms, drawn in 31 ms | |
-| Node: the engine's start, before the import | 3.52 s | |
-| Chrome (`?measure=import-xetex`): the import, from the file to the page | TBD (orchestrator) | |
+| Node: the import, from the file to the page | 77.39 s, from 76.61 to 79.74 s: 119 compiles and 9 dumps or PDFs, 75.36 s of it in TeX; 81.69 s before the speedups | |
+| Node: loading, the intake, the parse, the naming request and the naming service | 15 ms, 4 ms, 1 ms, 34 ms and 8 ms: 19 macros named from the cache, none asked of a model | |
+| Node: the reference compile | 2.76 s: 1 compile, whole, fontconfig given the tree's fonts (decision 0019) | |
+| Node: the signatures | 1.55 s: 2 compiles, whole | |
+| Node: the probe | 50.59 s: 37 compiles, each whole from the stock format, 1.35 s apiece (decision 0022) | |
+| Node: the fonts declared by file, and their check (decision 0023) | 1.56 s: its format dumped, 2 compiles | |
+| Node: the assembly and its checks, `validate` | 20.35 s: 76 compiles and 8 dumps or PDFs from the package's formats, 0.23 s apiece; 22.67 s, 79 compiles and 10, before | |
+| Node: the page | 332 ms: its format put in place, two passes in 272 ms, drawn in 31 ms; 907 ms before, its format dumped in 581 ms | |
+| Node: the engine's start, before the import | 3.54 s | |
+| Chrome (`?measure=import-xetex`): the import, with the engine's start and without `load` | TBD (orchestrator) | |
 | Chrome: the parts, as the page's table gives them | TBD (orchestrator) | |
 
 What the import came to, every time: assembled, 119 fields editable and 17 locked, the document on
 three pages.
 
-Next to decision 0016's numbers: the page the pdfTeX import opens to, 447 ms, costs less than a
-curated Jake's Resume's first page, 604 ms, since its format dumps in 274 ms against 350 and its
-first draw takes 24 ms against 81; and the import's compiles from the package's format average 85
-ms, an edit's 80, so the import is about eighty edits' worth of TeX. Awesome-CV's import opens to a
-page in 907 ms against the curated Awesome-CV's 796 ms, on a sample of three pages to its one. In
-Node the engine starts in 3.4 to 3.5 s, nearly all of it the engine's own load, its 30 MB of
-WebAssembly compiled afresh at each start, where Chrome started it in 0.4 s in decision 0016, its
-cache warm: Node's start is no guide to a person's.
+Next to decision 0016's numbers, which do not compare like for like: each of 0016's is one run of a
+fresh process at a load of 7.2, and these are medians of five warm imports at a load of about 2.
+With that said, the import's compiles from the package's format average 85 ms, where 0016's edit
+took 80, so an import is some sixty-five edits' worth of TeX; before the speedups, the page an
+import opened to took 447 ms with its format's dump, where 0016's curated Jake's Resume took 604 ms
+to its first page, and Awesome-CV's 907 ms against the curated Awesome-CV's 796 ms, on a sample of
+three pages to its one. In Node the engine starts in 3.4 to 3.5 s, nearly all of it the engine's
+own load, its 30 MB of WebAssembly compiled afresh at each start, where Chrome started it in 0.4 s
+in decision 0016, its cache warm: Node's start is no guide to a person's.
 
 ### Where the time goes
 
-TeX is 97% of the pdfTeX import: the JavaScript between its requests, the intake, the parse, the
-naming request and the reading of each output, comes to about 0.2 s. The checks are three quarters
-of it. Counted request by request, in an import of its own whose session noted each dump, compile
-and PDF with its format and job, at a load of 5.4:
+TeX is 96% of the pdfTeX import: the JavaScript between its requests, the intake, the parse, the
+naming request and the reading of each output, comes to about 0.2 s. The checks are nearly three
+quarters of it. Counted request by request, in imports of their own whose session noted each dump,
+compile and PDF with the check that asked for it, at a load of about 4:
 
-| Where | Requests | TeX |
-|---|---|---|
-| The reference compile, the signatures, the probe | 1 + 2 + 2 compiles, and the probe's format dumped | 1.23 s |
-| Check 1's compile of the original, as the reference was, with the rewrite's hyperref lines | 1 compile, whole, from the stock format | 0.34 s |
-| The package's format, dumped for the checks and again by the harness, whose first check is that it dumps | 2 dumps | 0.56 s |
-| The checks' and the harness's compiles from the package's format | 31 compiles, 85 ms each | 2.62 s |
-| The class's other two font sizes, which are formats of their own (decision 0006), one of them dumped twice | 3 dumps, 3 compiles | 1.32 s |
-| The harness's PDF | 1 | 0.02 s |
-| The page: the package's format dumped a third time, and the body compiled | 1 dump, 1 compile of two passes | 0.42 s |
+| Where | Requests now | TeX now | Before the speedups |
+|---|---|---|---|
+| The reference compile, the signatures, the probe | 1 + 2 + 2 compiles, and the probe's format dumped | 1.23 s | the same |
+| Check 1: the original as the reference was, from the package's format, dumped here, and the body the generator makes | 3 compiles, 1 dump | 0.83 s | the same |
+| Check 2: every field set long, empty and to special characters | 3 compiles | 0.23 s | the same |
+| Check 3: a unit of each kind added, and the first and last removed | 12 compiles | 0.90 s | the same |
+| Check 4: every value of each control, the class's other two sizes formats of their own (decision 0006) | 10 compiles, 2 dumps | 1.51 s | the same |
+| The harness: the package's format put back, its compiles and its PDF | 3 compiles, 1 PDF | 0.32 s | 0.59 s, the format dumped again |
+| The harness's controls: the date format alone, the others proven by check 4 | 1 compile of two passes | 0.15 s | 0.72 s: 4 compiles, one size's format dumped again |
+| The page: the package's format put in place | 1 compile of two passes | 0.15 s | 0.42 s, the format dumped a third time |
 
-On XeTeX, TeX is 97% too, and the probe is 63% of the whole: decision 0022 compiles every probe
+On XeTeX, TeX is 97% too, and the probe is 65% of the whole: decision 0022 compiles every probe
 whole from the stock format on XeTeX, since a preamble that loads fontspec cannot be dumped, and
-each of its 37 compiles takes 1.38 s, where `validate`'s, from the package's formats with the fonts
-declared by file, take 0.24 s. The checks take 22.67 s more, the reference and the signatures 4.39
-s together, and everything else under 3 s.
+each of its 37 compiles takes 1.35 s, where `validate`'s, from the package's formats with the fonts
+declared by file, take 0.23 s. The checks take 20.35 s more, the reference and the signatures 4.31
+s together, and everything else under 2.5 s.
 
 ### Against plan section 4.3
 
 | Target | Limit | Jake's Resume, Node | Jake's Resume, Chrome | Awesome-CV, Node | Awesome-CV, Chrome | Slow laptop |
 |---|---|---|---|---|---|---|
-| Import, template already cached | under 5 s | 6.55 s: missed, by 1.55 s; 10.06 s with Node's start of the engine | TBD (orchestrator) | 81.69 s: missed, reported beside the bar | TBD (orchestrator) | |
+| Import, template already cached | under 5 s | 5.41 s, without the engine's start: missed, by 0.41 s; 6.55 s before the speedups | TBD (orchestrator), with the engine's start and without `load` | 77.39 s: missed, reported beside the bar | TBD (orchestrator) | |
 
-The bar is judged on pdfTeX, and it is missed on this machine in Node. Awesome-CV on XeTeX is
-reported beside it, as the plan lets XeTeX feel slower.
+The bar is judged on pdfTeX, and only on imports that were all cache hits, which these were. It is
+missed on this machine in Node by 0.41 s. Chrome's cell is judged with the engine's start, which a
+person importing into an empty list waits for, so it will come out later than Node's by about that
+start, less what Chrome's compiles save, if any. Awesome-CV on XeTeX is reported beside it, as the
+plan lets XeTeX feel slower.
 
 ### To fill the other columns
 
@@ -191,31 +234,32 @@ laptop's column to the owner, the first load to milestone 5, and the PDF's text 
 
 ## Consequences
 
-- The milestone's bar, a cached template imported in under 5 s, is missed as the editor stands: by
-  1.55 s on pdfTeX in Node on this machine, before the browser's number, which decides it for a
-  person, is in. This record measures and changes nothing in the pipeline. What each candidate
-  would save, from the numbers above, for the item or record that takes the bar up:
-  - The harness's dumps of formats the checks had dumped, 0.56 s: it could take the checks'
-    formats, its own `dump` check answered by theirs.
-  - The page's dump of the package's format, 0.27 s: the checks dumped that format and dropped it;
-    handed to the compiler, as the compiler hands its kept formats to a new worker, it would also
-    reach the store as any format does.
-  - The checks themselves, 31 compiles from the package's format at 85 ms and 1.32 s for the font
-    sizes' formats: what judges the template rather than the document's words, the units it adds
-    and removes and the controls it tries, could be kept with the package, or with the cached
-    answer, and not compiled again for a template seen before. That skips checks on a person's
-    import, which a record of its own would have to accept, as the milestone's risks foresaw.
-  - The first two take the import to about 5.7 s; the bar needs about nine of the checks' compiles
-    besides, or the sizes' formats.
-- The engine's start is apart from the bar, but a person importing into an empty list waits for
-  it: the compiler makes its engine only when a document first needs one, so the list starts none.
-  Starting it as the list shows would take Chrome's start, 0.4 s in decision 0016, out of the wait.
-- A cached XeTeX template takes over a minute and a quarter, about sixteen times the bar, which
-  the plan lets XeTeX miss. Most of it is the probe's whole compiles: decision 0022 compiles whole
-  only until item 8's fonts by file, which now make the preamble dumpable, so probing from that
-  format, as pdfTeX's probe does, would take each of its 37 compiles from 1.38 s to about the
-  checks' 0.24 s and save some 40 s, if the probe's verdicts hold there, which a later item would
-  have to show. The progress line's "slower the first time" undersells a wait of that length.
+- The milestone's bar, a cached template imported in under 5 s, is still missed as the editor
+  stands: by 0.41 s on pdfTeX in Node on this machine, and Chrome's number, which decides it for a
+  person and counts the engine's start, is still to come. The two speedups took 1.14 s off and
+  prove what they proved before. What is left is TeX's, and nothing else as large can go without
+  checking less: check 4's two size formats and their compiles, 0.87 s, and check 3's twelve
+  compiles, 0.90 s, judge the template rather than the document's words, so they could be kept with
+  the package, or with the cached answer, and not compiled again for a template seen before; that
+  skips checks on a person's import, which a record of its own would have to accept, as the
+  milestone's risks foresaw.
+- Opening the document before check 4 finishes, its controls offered once they are proven, would
+  put the page in front of the person sooner by about what check 4 and the harness take, 2 s, but
+  it changes what the person sees, a page whose controls come later, and waits for the owner's
+  decision.
+- The engine's start counts in Chrome's verdict, and a person importing into an empty list waits
+  for it: the compiler makes its engine only when a document first needs one, so the list starts
+  none. Starting it as the list shows would take Chrome's start, 0.4 s in decision 0016, out of the
+  wait.
+- A cached XeTeX template takes well over a minute, which the plan lets XeTeX miss. Most of it is
+  the probe's whole compiles: decision 0022 compiles whole only until item 8's fonts by file, which
+  now make the preamble dumpable, so probing from that format, as pdfTeX's probe does, would take
+  each of its 37 compiles from 1.35 s to about the checks' 0.23 s and save some 40 s, if the probe's
+  verdicts hold there, which a later item would have to show. The progress line's "slower the
+  first time" undersells a wait of that length.
+- The speedups touch the import pipeline, so a corpus run is worth doing: `corpus assemble`'s
+  outcomes and the bar's controls should not move, only their compiles and times, which is what
+  the engine test above shows of one invented import.
 - The measurement keeps nothing and leaves out the store's write and read between the import and
   the page, a few IndexedDB transactions, and what React does with each step's progress line.
 - The browser's page takes its samples from the dev server, which reads them from `.corpus/oracle/`
