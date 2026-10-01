@@ -486,6 +486,113 @@ describe("the document", () => {
     expect(isRefusal(before.result) && (before.result as Refusal).reason).toBe("keep");
   });
 
+  test("keeps the closer of a list a section's head opens with the section, which goes as one", async () => {
+    // A skills section whose items stand between the entries' opener and closer, as many forks of
+    // Jake's Resume write theirs: the opener stands between the head and the items, so the section
+    // keeps it (`before`), and its closer must go with it too, or removing the section leaves the
+    // closer behind and stops the compile (decision 0026's consequence, decision 0038).
+    const body = BODY.replace(
+      "\\begin{itemize}\n  \\item Invented skill\n  \\item Another skill\n\\end{itemize}",
+      "\\cvlistStart\n  \\cvitem{Invented skill}\n  \\cvitem{Another skill}\n\\cvlistEnd",
+    );
+    const result = ok((await assembled({ body })).result);
+    const skills = sectionOf(result, 1);
+    expect(skills.kind).toBe("list");
+    expect(skills.extras?.before).toContain("\\cvlistStart");
+    expect(skills.extras?.after).toBe("\n\\cvlistEnd");
+    // What stands after the closer is a locked part of its own, as before.
+    const locked = sectionOf(result, 2);
+    expect(locked.kind === "locked" && locked.latex).toBe("\n\n\\vspace{2pt}%");
+    const count = (latex: string, name: string) => latex.split(name).length - 1;
+    const balanced = (resume: Resume) => {
+      const { latex } = generateBody(result.package, resume, {});
+      return count(latex, "\\cvlistStart") === count(latex, "\\cvlistEnd");
+    };
+    expect(balanced(result.document.resume)).toBe(true);
+    // Removed, the section takes its closer with it; moved, the closer moves with it.
+    const removed = apply(result.document, {
+      type: "structure",
+      op: { op: "removeSection", id: skills.id },
+    });
+    expect(balanced(removed.resume)).toBe(true);
+    const moved = apply(result.document, {
+      type: "structure",
+      op: { op: "moveSection", id: skills.id, to: 3 },
+    });
+    expect(balanced(moved.resume)).toBe(true);
+    const { latex } = generateBody(result.package, moved.resume, {});
+    expect(latex.indexOf("\\cvlistEnd", latex.indexOf("Invented skill"))).toBeGreaterThan(
+      latex.indexOf("Invented words of an invented summary"),
+    );
+  });
+
+  test("runs the last section to the closer of the list it opens, which the document snippet then lacks", async () => {
+    // The skills last, their items between the entries' opener and closer: the closer comes after
+    // the last section, where the template's own code around the sections was read to begin, so
+    // the document snippet kept it, and removing the section left it behind (decision 0038).
+    const last = String.raw`\begin{document}
+\cvheader
+
+\section{Invented experience}
+\cvlistStart
+  \cventry{Invented role}{Jan 2020 -- Present}{Quill Co}{Harbour City}
+\cvlistEnd
+
+\section{Invented skills}
+\cvlistStart
+  \cvitem{Invented skill}
+  \cvitem{Another skill}
+\cvlistEnd
+\end{document}
+`;
+    const skills = ok((await assembled({ body: last })).result);
+    const section = skills.document.resume.sections.at(-1);
+    expect(section?.kind).toBe("list");
+    expect(section?.extras?.after).toBe("\n\\cvlistEnd");
+    expect(skills.package.snippets.document).not.toContain("\\cvlistEnd");
+    const count = (latex: string, name: string) => latex.split(name).length - 1;
+    const balanced = (result: Assembled, resume: Resume) => {
+      const { latex } = generateBody(result.package, resume, {});
+      return count(latex, "\\cvlistStart") === count(latex, "\\cvlistEnd");
+    };
+    const without = (result: Assembled, id: string) =>
+      apply(result.document, { type: "structure", op: { op: "removeSection", id } }).resume;
+    expect(balanced(skills, without(skills, section?.id ?? ""))).toBe(true);
+
+    // Entries last, the opener theirs: their list is whole in the section, closer and all.
+    const entriesLast = String.raw`\begin{document}
+\cvheader
+
+\section{Invented skills}
+\begin{itemize}
+  \item Invented skill
+\end{itemize}
+
+\section{Invented experience}
+\cvlistStart
+  \cventry{Invented role}{Jan 2020 -- Present}{Quill Co}{Harbour City}
+\cvlistEnd
+\end{document}
+`;
+    const entries = ok((await assembled({ body: entriesLast })).result);
+    const work = entries.document.resume.sections.at(-1);
+    expect(work?.kind).toBe("entries");
+    expect(work?.extras?.before ?? "").not.toContain("\\cvlistStart");
+    expect(entries.package.snippets.document).not.toContain("\\cvlistEnd");
+    expect(balanced(entries, without(entries, work?.id ?? ""))).toBe(true);
+
+    // A last locked part that opens the list keeps its closer too.
+    const lockedLast = BODY.replace(
+      "\\end{document}",
+      "\n\\cvlistStart\n  \\cvunknown{Invented aside}\n\\cvlistEnd\n\\end{document}",
+    );
+    const locked = ok((await assembled({ body: lockedLast, commands: { cvunknown: "m" } })).result);
+    const part = locked.document.resume.sections.at(-1);
+    expect(part?.kind === "locked" && part.latex).toContain("\\cvlistEnd");
+    expect(locked.package.snippets.document).not.toContain("\\cvlistEnd");
+    expect(balanced(locked, without(locked, part?.id ?? ""))).toBe(true);
+  });
+
   test("assembles again with what the checks decide", async () => {
     const decisions: Decisions = {
       instances: {
@@ -1524,6 +1631,94 @@ describe.skipIf(!engineAvailable())("the assembly, on the engine (decision 0026)
     const silent = await assembledOn({ "cv.tex": source, "inventedcv.cls": cls }, [row(), LIST]);
     expect(silent.package.snippets.defaults?.entry?.default).toEqual({ dates: "" });
     expect(JSON.stringify(silent.package)).not.toContain("Jan 2020");
+  }, 120_000);
+
+  test("removes a section whose head opens its content's list, and still compiles", async () => {
+    // A fork shaped like Jake's Resume whose skills stand between the entries' list opener and its
+    // closer: the section keeps the closer with the opener, so that removing it takes both, where
+    // the closer left behind in a locked part stopped the compile (decision 0038).
+    const cls = String.raw`\NeedsTeXFormat{LaTeX2e}
+\ProvidesClass{inventedcv}[2026/09/30 an invented class]
+\LoadClass{article}
+\renewcommand{\labelitemi}{--}
+\newcommand{\cventry}[2]{\item\textbf{#1}\hfill #2}
+\newcommand{\cvlistStart}{\begin{itemize}}
+\newcommand{\cvlistEnd}{\end{itemize}}
+\newcommand{\cvitem}[1]{\item #1}
+`;
+    const source = String.raw`\documentclass[letterpaper]{inventedcv}
+\begin{document}
+\section{Invented experience}
+\cvlistStart
+  \cventry{Invented role}{2020}
+  \cventry{Second role}{2019}
+\cvlistEnd
+
+\section{Invented skills}
+\cvlistStart
+  \cvitem{Invented skill}
+  \cvitem{Another skill}
+\cvlistEnd
+
+\section{Summary}
+Invented words of an invented summary.
+\end{document}
+`;
+    const result = await assembledOn({ "cv.tex": source, "inventedcv.cls": cls }, [
+      [
+        "command",
+        "cventry",
+        {
+          kind: "entry",
+          arguments: [
+            { index: 1, meaning: "title", slot: "title" },
+            { index: 2, meaning: "dates", slot: "dates" },
+          ],
+          repeatable: true,
+        },
+      ],
+      [
+        "command",
+        "cvlistStart",
+        {
+          kind: "layout",
+          arguments: [],
+          repeatable: false,
+          list: { does: "opens", closedBy: "cvlistEnd", holds: "entry" },
+        },
+      ],
+      [
+        "command",
+        "cvlistEnd",
+        {
+          kind: "layout",
+          arguments: [],
+          repeatable: false,
+          list: { does: "closes", openedBy: "cvlistStart" },
+        },
+      ],
+      [
+        "command",
+        "cvitem",
+        {
+          kind: "bullet",
+          arguments: [{ index: 1, meaning: "text", slot: "text" }],
+          repeatable: true,
+        },
+      ],
+    ]);
+    const skills = result.document.resume.sections.find(
+      (section) => section.title === "Invented skills",
+    );
+    expect(skills?.kind).toBe("list");
+    expect(skills?.extras?.after).toContain("\\cvlistEnd");
+    expect(compiles(result.package, result.document.resume)).toBe(true);
+    const removed = apply(result.document, {
+      type: "structure",
+      op: { op: "removeSection", id: skills?.id ?? "" },
+    });
+    expect(removed.resume.sections).toHaveLength(result.document.resume.sections.length - 1);
+    expect(compiles(result.package, removed.resume)).toBe(true);
   }, 120_000);
 
   test("offers the font sizes the engine finds the class declares", async () => {

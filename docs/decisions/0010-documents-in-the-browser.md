@@ -23,6 +23,9 @@ longer offers. Dexie 4 is the one new runtime dependency; the store's tests run 
   | `formats` | `key`, which is `<tag>:<engine>:<name>`; `tag`; `engine`; `name`; `bytes`; `usedAt` | 20, the least recently used dropped as a new one comes in, since a format is 6 to 9 MB |
   | `prefetch` | `template`, and the `paths` its dumps and compiles have read, first read first | 2,000 paths; later ones are not kept |
 
+  (Decision 0038 makes it version 2: a `packages` table for imported templates, and documents
+  indexed by their template.)
+
 - **Saves.** The app saves the whole document after every command. The store writes the newest
   save of each document at most twice a second, and at once on `pagehide` and when the page is
   hidden, the last moments a page can count on running; `flush()` writes at once, and says how

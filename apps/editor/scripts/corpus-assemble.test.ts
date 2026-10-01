@@ -16,6 +16,7 @@ import {
   comparePlaces,
   DROPPED_WHY,
   dropKind,
+  errorClass,
   fieldsFound,
   firstCheckHolds,
   placesTable,
@@ -161,8 +162,8 @@ describe("the checks' own findings in the table", () => {
       "0",
       "1",
     ]);
-    expect(cells("The editor cannot add: `entry`")?.at(-1)).toBe("1");
-    expect(cells("The editor cannot add: `section.paragraph`")?.at(-1)).toBe("1");
+    expect(cells("The editor neither adds nor removes: `entry`")?.at(-1)).toBe("1");
+    expect(cells("The editor neither adds nor removes: `section.paragraph`")?.at(-1)).toBe("1");
     expect(
       cells("Set in Latin Modern: Computer Modern in T1 or TS1, which the page cannot draw"),
     ).toEqual(["0", "0", "1", "0", "0", "0", "1"]);
@@ -526,5 +527,19 @@ describe("a validation's row", () => {
       validateMs: 1235,
     });
     expect(JSON.stringify(made)).not.toContain(SECRET);
+  });
+
+  test("names a removal's error by its class, never in TeX's words, which may quote the document", () => {
+    const quoted = (error: string) => `${error}\nl.42 ${SECRET}`;
+    expect(
+      errorClass(quoted("! LaTeX Error: Lonely \\item--perhaps a missing list environment.")),
+    ).toBe("an item outside a list");
+    expect(errorClass(quoted("! LaTeX Error: \\begin{document} ended by \\end{itemize}."))).toBe(
+      "an environment ended by another's end",
+    );
+    expect(errorClass(quoted("! Undefined control sequence."))).toBe("an undefined command");
+    expect(errorClass(quoted("! Extra \\endgroup."))).toBe("an end with no begin");
+    expect(errorClass(quoted("! Missing number, treated as zero."))).toBe("another error");
+    expect(errorClass(undefined)).toBe("another error");
   });
 });

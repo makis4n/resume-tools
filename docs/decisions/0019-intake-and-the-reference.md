@@ -450,7 +450,8 @@ suite passes on the new tree, 1,226 tests in 64 files.
 - A stand-in whose path holds a character past letters, digits, `.`, `_`, `-` and `/`, a space
   among them, is not shown, so the PDF of a document that shows one is refused: item 12, which
   makes an imported resume's PDF, has to give such a stand-in a plain path, and the document's
-  name for it with it, or leave the image out.
+  name for it with it, or leave the image out. (Decision 0038 copies it to a plain path and
+  rewrites the `\includegraphics` that name it; a name a macro builds is still refused.)
 - The corpus's zips hold the tree's copy of each font the manifest names and none of its images,
   and miss the sidebars AltaCV names through a macro, so the corpus numbers undercount what a
   person's own zip would compile by those documents.

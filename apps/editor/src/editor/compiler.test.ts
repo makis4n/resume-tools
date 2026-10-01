@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Font, Glyph, Path } from "opentype.js";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { EngineCancelled, EngineTimeout } from "../engine/client";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type {
@@ -12,6 +13,9 @@ import type {
   PdfResult,
   Engine as SessionEngine,
 } from "../engine/session";
+import type { Upload } from "../import/intake";
+import { refusal } from "../import/refusal";
+import type { ImportJob, ImportOutcome, ImportProgress } from "../import/run";
 import type { DrawnPage } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
@@ -34,6 +38,7 @@ import {
   type CompilerOptions,
   type Engine,
   type FormatStore,
+  type ImportRun,
   type PrefetchStore,
   type Shown,
 } from "./compiler";
@@ -210,6 +215,45 @@ function inventedFonts(read: (path: string) => Promise<Uint8Array> = async () =>
 }
 
 /**
+ * The fake engine that imports too, as the worker's client does (decision 0038): each import waits
+ * for the test, a cancel fails it as the client's does, and it notes the formats it is asked to
+ * drop and the PDFs' options.
+ */
+class ImportingEngine extends FakeEngine {
+  imports: (Waiting<ImportOutcome> & {
+    files: readonly Upload[];
+    progress: (progress: ImportProgress) => void;
+  })[] = [];
+  cancels = 0;
+  pdfOptions: unknown[] = [];
+
+  importResume(
+    files: readonly Upload[],
+    progress: (progress: ImportProgress) => void,
+  ): Promise<ImportOutcome> {
+    this.calls.push("import");
+    return new Promise((resolve, reject) =>
+      this.imports.push({ files, progress, resolve, reject }),
+    );
+  }
+
+  cancel() {
+    this.cancels++;
+    for (const each of this.imports.splice(0)) each.reject(new EngineCancelled());
+  }
+
+  dropFormat(_engine: SessionEngine, name: string): Promise<void> {
+    this.calls.push(`drop ${name}`);
+    return Promise.resolve();
+  }
+
+  override pdf(job: string, options?: unknown): Promise<PdfResult> {
+    this.pdfOptions.push(options);
+    return super.pdf(job);
+  }
+}
+
+/**
  * A compiler over fake engines, with what it made and emitted. With `slowStart`, every engine
  * starts only when the test settles its start. `fonts` is the library the page's fonts come from,
  * which the fake draw never reads, and which gives a XeTeX package's body what its fonts set.
@@ -218,13 +262,13 @@ function scheduler(
   options: CompilerOptions = {},
   { slowStart = false, fonts = NO_FONTS }: { slowStart?: boolean; fonts?: FontLibrary } = {},
 ) {
-  const engines: FakeEngine[] = [];
+  const engines: ImportingEngine[] = [];
   const shown: Shown[] = [];
   const errors: string[] = [];
   const busy: boolean[] = [];
   const compiler = new Compiler(
     () => {
-      const engine = new FakeEngine(slowStart);
+      const engine = new ImportingEngine(slowStart);
       engines.push(engine);
       return engine;
     },
@@ -1571,6 +1615,155 @@ const leftmost = (page: DrawnPage) => Math.min(...page.glyphs.map((glyph) => gly
 // The scheduler over the real engine, as the app runs it but in Node: the session's methods run
 // TeX synchronously, as the worker does, and the scheduler awaits them all the same. Needs
 // `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
+describe("Compiler's imports (decision 0038)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const ID = "import-0123456789ab";
+  /** Jake's package under an imported id, and the sample set with it. */
+  const imported = { ...jake, id: ID } as TemplatePackage;
+  const importedDoc = Document.parse({ ...opening, template: ID });
+  const JOB: ImportJob = {
+    files: { "photo.png": new Uint8Array([1]) },
+    bbl: new TextEncoder().encode("\\begin{thebibliography}{1}\\end{thebibliography}"),
+    images: ["photo.png"],
+  };
+  const FILES: Upload[] = [{ name: "cv.tex", bytes: new TextEncoder().encode("invented") }];
+  const PROGRESS: ImportProgress = {
+    step: "probe",
+    label: "Finding the parts you can edit",
+    compiles: 4,
+    compiling: false,
+  };
+
+  /** An import started, its progress noted. */
+  function started(s: ReturnType<typeof scheduler>) {
+    const heard: ImportProgress[] = [];
+    const run: ImportRun = s.compiler.importResume(FILES, (each) => heard.push(each));
+    return { run, heard };
+  }
+
+  it("imports once what is in flight lands, and holds the engine until the import does", async () => {
+    const s = scheduler();
+    s.compiler.open(jake, opening);
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    // A compile is in flight: the import waits for it.
+    const { run, heard } = started(s);
+    await settle();
+    expect(s.engine().calls).not.toContain("import");
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    expect(s.engine().calls.at(-1)).toBe("import");
+    expect(s.engine().imports[0]?.files).toEqual(FILES);
+    expect(s.busy.at(-1)).toBe(true);
+    s.engine().imports[0]?.progress(PROGRESS);
+    expect(heard).toEqual([PROGRESS]);
+    // A document changed meanwhile waits for the import, and compiles once it lands.
+    s.compiler.update(titled("Invented title"));
+    await wait(1_000);
+    expect(s.engine().compiles).toHaveLength(1);
+    const outcome = refusal("parse");
+    s.engine().imports[0]?.resolve(outcome);
+    await expect(run.done).resolves.toEqual(outcome);
+    await settle();
+    expect(s.engine().compiles).toHaveLength(2);
+  });
+
+  it("cancels an import: the worker starts afresh, and gets its formats again as they are needed", async () => {
+    const s = scheduler();
+    await opened(s);
+    const name = formatOf(opening);
+    const { run } = started(s);
+    await settle();
+    run.cancel();
+    await expect(run.done).rejects.toBeInstanceOf(EngineCancelled);
+    expect(s.engine().cancels).toBe(1);
+    // The same client, whose new worker holds nothing: started again, the format handed over.
+    expect(s.engines).toHaveLength(1);
+    s.compiler.open(jake, opening);
+    await settle();
+    expect(s.engine().calls.slice(-3)).toEqual(["start", `put ${name}`, `compile ${name}`]);
+    expect(s.engine().terminated).toBe(false);
+  });
+
+  it("refuses an import whose compile hung as having taken too long", async () => {
+    const s = scheduler();
+    const { run } = started(s);
+    await settle();
+    s.engine().imports[0]?.reject(new EngineTimeout(120_000));
+    const outcome = await run.done;
+    expect(outcome).toMatchObject({ refused: true, reason: "timeout" });
+    expect(s.busy.at(-1)).toBe(false);
+  });
+
+  it("gives an imported document's job the upload's files once a format, and its PDF the stand-ins", async () => {
+    const s = scheduler();
+    s.compiler.open(imported, importedDoc, JOB);
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    const bbl = JOB.bbl ?? new Uint8Array();
+    expect(s.engine().compiles[0]?.options).toEqual({
+      job: "doc",
+      maxPasses: 3,
+      files: { "photo.png": JOB.files["photo.png"], "doc.bbl": bbl },
+    });
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    // The job holds them now.
+    s.compiler.update(apply(importedDoc, { type: "text", field: "fennel.title", text: "Other" }));
+    await wait(1_000);
+    expect(s.engine().compiles[1]?.options).toEqual({ job: "doc", maxPasses: 3 });
+    s.engine().compiles[1]?.resolve(compiled(2));
+    await settle();
+    const pdf = s.compiler.pdf();
+    await settle();
+    s.engine().pdfs[0]?.resolve(madePdf);
+    await pdf;
+    expect(s.engine().pdfOptions).toEqual([{ images: ["photo.png"] }]);
+    // Opened again, the job starts afresh, and is given the files again; a trial's job has its own
+    // bibliography.
+    s.compiler.open(imported, importedDoc, JOB);
+    await settle();
+    expect(s.engine().calls.slice(-2)).toEqual([
+      "forget doc",
+      `compile ${formatOf(importedDoc, imported)}`,
+    ]);
+    expect(s.engine().compiles[2]?.options?.files).toBeDefined();
+    s.engine().compiles[2]?.resolve(compiled(3));
+    await settle();
+    const trial = s.compiler.tryControls({ ...defaultControls(imported), density: "compact" });
+    await settle();
+    expect(s.engine().compiles[3]?.options?.files?.["fit.bbl"]).toEqual(bbl);
+    s.engine().compiles[3]?.resolve(compiled(4));
+    await expect(trial).resolves.toBe(1);
+  });
+
+  it("lets an imported template's formats go from its bytes and its engine", async () => {
+    const s = scheduler();
+    s.compiler.open(imported, importedDoc, JOB);
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    s.engine().compiles[0]?.resolve(compiled(1));
+    await settle();
+    const name = formatOf(importedDoc, imported);
+    s.compiler.dropTemplate(ID);
+    expect(s.engine().calls.at(-1)).toBe(`drop ${name}`);
+    // Opened again, its format is dumped again: nothing of it was kept.
+    s.compiler.open(imported, importedDoc, JOB);
+    await settle();
+    expect(s.engine().calls.at(-1)).toBe(`dump ${name}`);
+  });
+});
+
 describe.skipIf(!engineAvailable())("Compiler through the engine", () => {
   let session: EngineSession;
   let fonts: FontLibrary;

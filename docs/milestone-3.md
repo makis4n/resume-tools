@@ -267,7 +267,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 6. The document in the editor
 
-12. [ ] **Imported packages in the store, and the way in.** The store gains a `packages` table:
+12. [x] **Imported packages in the store, and the way in.** The store gains a `packages` table:
     the package, the original upload's files, the report, when it was made and last used; the
     app resolves a document's template from the curated map or the store; a package's formats
     are kept as any template's, and dropped with its last document. The document list gets

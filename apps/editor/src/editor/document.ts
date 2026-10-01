@@ -351,12 +351,22 @@ const UNIT_NAMES: Readonly<Record<UnitKind, string>> = {
 
 /**
  * Whether the editor may add a unit of `kind` under `pkg`: unless the package lists the kind among
- * those it cannot take (`fixed`), which an import's third check finds when a new unit of the kind,
- * as the editor adds it, stops the compile (decision 0026). A package without the list, as every
+ * those whose units it keeps as they are (`fixed`), which an import's third check finds when a new
+ * unit of the kind, as the editor adds it, or the removal of the first or the last of the
+ * document's, stops the compile (decisions 0026 and 0038). A package without the list, as every
  * curated one, takes every kind.
  */
 export function addable(pkg: TemplatePackage | undefined, kind: UnitKind): boolean {
   return !(pkg?.fixed ?? []).includes(kind);
+}
+
+/**
+ * Whether the editor may remove a unit of `kind` under `pkg`: as it may add one (`addable`), since
+ * the package marks a kind whose units it keeps as they are, for a new unit or a removal that stops
+ * the compile alike (decision 0038).
+ */
+export function removable(pkg: TemplatePackage | undefined, kind: UnitKind): boolean {
+  return addable(pkg, kind);
 }
 
 /** Whether a snippet's nodes, however deep, hold the slot `name`. */
@@ -451,10 +461,10 @@ export function mintId(prefix: string, taken: ReadonlySet<string>): string {
  * role can be set. `setHeader` and `setLink` leave a value the op leaves out as it is. A locked
  * section, which only an import makes, is removed and moved like any other, and no other op
  * touches it: it holds no entries or items, keeps the role `other`, and cannot be added
- * (decision 0025). An op that adds a unit the package cannot take (`addable`), a bullet to an
- * entry whose snippet shows none (`showsBullets`), or a unit to a list its node keeps whole as the
- * upload had it (`kept`), is refused, and so is one that empties a field the package requires
- * (`isRequired`, decision 0026).
+ * (decision 0025). An op that adds a unit the package cannot take (`addable`), or removes one it
+ * cannot lose (`removable`, decision 0038), a bullet to an entry whose snippet shows none
+ * (`showsBullets`), or a unit to a list its node keeps whole as the upload had it (`kept`), is
+ * refused, and so is one that empties a field the package requires (`isRequired`, decision 0026).
  */
 export type StructureOp =
   | { op: "addSection"; kind: SectionKind; role: SectionRole; at?: number }
@@ -635,7 +645,15 @@ function refuseKept(
 function refuseUnaddable(pkg: TemplatePackage | undefined, kind: UnitKind): void {
   if (!addable(pkg, kind))
     throw new CommandError(
-      `the template cannot take another ${UNIT_NAMES[kind]}: a new one stops its compile`,
+      `the template cannot take another ${UNIT_NAMES[kind]}: adding or removing one stops its compile`,
+    );
+}
+
+/** A `CommandError` for the removal of a unit of a kind `pkg` cannot lose (`removable`). */
+function refuseUnremovable(pkg: TemplatePackage | undefined, kind: UnitKind): void {
+  if (!removable(pkg, kind))
+    throw new CommandError(
+      `the template cannot lose a ${UNIT_NAMES[kind]}: adding or removing one stops its compile`,
     );
 }
 
@@ -683,7 +701,7 @@ type Located =
   | { kind: "section"; siblings: Siblings; node: Place<Section> }
   | { kind: "entry"; siblings: Siblings; node: Place<Entry>; role: SectionRole }
   | { kind: "bullet"; siblings: Siblings }
-  | { kind: "item"; siblings: Siblings };
+  | { kind: "item"; siblings: Siblings; unit: "item" | "labelledItem" };
 
 /**
  * Every node of a resume by its id, found in one walk, as `fieldsOf` finds fields. Its indexes are
@@ -723,14 +741,16 @@ function nodesOf(resume: Resume): Map<string, Located> {
       case "list": {
         const items = under(ofKind(node, "list"), "items");
         section.items.forEach((item, i) => {
-          nodes.set(item.id, { kind: "item", siblings: siblings(items, i, section.items.length) });
+          const here = siblings(items, i, section.items.length);
+          nodes.set(item.id, { kind: "item", siblings: here, unit: "item" });
         });
         break;
       }
       case "labelled": {
         const items = under(ofKind(node, "labelled"), "items");
         section.items.forEach((item, i) => {
-          nodes.set(item.id, { kind: "item", siblings: siblings(items, i, section.items.length) });
+          const here = siblings(items, i, section.items.length);
+          nodes.set(item.id, { kind: "item", siblings: here, unit: "labelledItem" });
         });
         break;
       }
@@ -794,10 +814,10 @@ function newSection(id: string, kind: SectionKind, role: SectionRole): Section {
  * The resume after a structure op, a new value that shares what the op left alone. Throws a
  * `CommandError` for a node the resume does not have or of another kind than the op's, a section
  * that cannot hold what is added to it, an index outside the list, and a kind, role or text the
- * model refuses; and, by `pkg`, a unit of a kind the package cannot take, a bullet for an entry
- * whose snippet shows none, a unit for a list its node keeps whole, a slot the header keeps as the
- * upload had it, and a field it requires emptied. A new node's id is minted against every id in the
- * resume, so ids stay unique.
+ * model refuses; and, by `pkg`, a unit of a kind the package cannot take or lose, a bullet for an
+ * entry whose snippet shows none, a unit for a list its node keeps whole, a slot the header keeps as
+ * the upload had it, and a field it requires emptied. A new node's id is minted against every id in
+ * the resume, so ids stay unique.
  */
 function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | undefined): Resume {
   const nodes = nodesOf(resume);
@@ -816,8 +836,13 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
       refuseUnaddable(pkg, `section.${kind}`);
       return insertAt(resume, SECTIONS, op.at, newSection(mint("sec"), kind, role));
     }
-    case "removeSection":
-      return find(op.id, "section").siblings.remove(resume);
+    case "removeSection": {
+      const { node, siblings } = find(op.id, "section");
+      const { kind } = node.get(resume);
+      // A locked section is no unit of a kind: the user removes it as any part of the page.
+      if (kind !== "locked") refuseUnremovable(pkg, `section.${kind}`);
+      return siblings.remove(resume);
+    }
     case "moveSection":
       return moveTo(resume, find(op.id, "section"), op.id, op.to);
     case "setSection": {
@@ -841,8 +866,11 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
       const entry: Entry = { id: mint("ent"), title, subtitle, place, bullets: [] };
       return insertAt(resume, under(ofKind(node, "entries"), "entries"), op.at, entry);
     }
-    case "removeEntry":
-      return find(op.id, "entry").siblings.remove(resume);
+    case "removeEntry": {
+      const { siblings } = find(op.id, "entry");
+      refuseUnremovable(pkg, "entry");
+      return siblings.remove(resume);
+    }
     case "moveEntry":
       return moveTo(resume, find(op.id, "entry"), op.id, op.to);
     case "addBullet": {
@@ -859,8 +887,11 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
       const bullet = { id: mint("bul"), text: [{ text: PLACEHOLDERS.bullet }] };
       return insertAt(resume, bullets, op.at, bullet);
     }
-    case "removeBullet":
-      return find(op.id, "bullet").siblings.remove(resume);
+    case "removeBullet": {
+      const { siblings } = find(op.id, "bullet");
+      refuseUnremovable(pkg, "bullet");
+      return siblings.remove(resume);
+    }
     case "moveBullet":
       return moveTo(resume, find(op.id, "bullet"), op.id, op.to);
     case "addItem": {
@@ -881,8 +912,11 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
       }
       throw new CommandError(`the ${kind} section ${op.section} holds no items`);
     }
-    case "removeItem":
-      return find(op.id, "item").siblings.remove(resume);
+    case "removeItem": {
+      const { siblings, unit } = find(op.id, "item");
+      refuseUnremovable(pkg, unit);
+      return siblings.remove(resume);
+    }
     case "moveItem":
       return moveTo(resume, find(op.id, "item"), op.id, op.to);
     case "addLink": {
@@ -892,8 +926,11 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
       const link: Link = { id: mint("lnk"), kind: "website", label, href: "" };
       return insertAt(resume, LINKS, op.at, link);
     }
-    case "removeLink":
-      return find(op.id, "link").siblings.remove(resume);
+    case "removeLink": {
+      const { siblings } = find(op.id, "link");
+      refuseUnremovable(pkg, "link");
+      return siblings.remove(resume);
+    }
     case "moveLink":
       return moveTo(resume, find(op.id, "link"), op.id, op.to);
     case "setLink": {

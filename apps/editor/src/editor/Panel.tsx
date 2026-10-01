@@ -14,7 +14,8 @@
  * the panel marks a field it requires, which cannot be emptied, gives no input to a slot the
  * document keeps as its upload had it, which is no field, and disables a button that would add a
  * unit the template cannot take, a bullet to an entry whose snippet shows none, or a unit to a list
- * the document keeps whole as its upload had it, saying why. A curated package says none of these.
+ * the document keeps whole as its upload had it, and one that would remove a unit the template
+ * cannot lose (decision 0038), saying why. A curated package says none of these.
  *
  * Plain HTML in plain English, with nothing in it that is LaTeX.
  */
@@ -62,6 +63,7 @@ import {
   fieldsOf,
   keptOf,
   PLACEHOLDERS,
+  removable,
   requiredFields,
   SECTION_TITLES,
   type StructureOp,
@@ -229,6 +231,12 @@ export const REQUIRED = "The template needs this filled in, so it cannot be left
 /** Why a button that would add a unit the template cannot take is disabled. */
 const CANNOT_ADD = "The template cannot take another one of these";
 
+/**
+ * Why a button that would remove a unit the template cannot lose is disabled: a kind whose units it
+ * keeps as they are, since a new one or a removal stops its compile (decision 0038).
+ */
+const CANNOT_REMOVE = "The template cannot do without one of these";
+
 /** Why the button that would add a bullet to an entry whose snippet shows none is disabled. */
 const NO_BULLETS = "The template sets no bullets for an entry of this section";
 
@@ -239,12 +247,14 @@ const KEPT = "These were kept as they were imported, so none can be added here";
  * What the panel shows of a package's rules for the open document (decision 0026): the fields the
  * document has, which a slot it keeps as its upload had it is not (`fieldsOf`), undefined for
  * every field; the fields the package requires (`requiredFields`); whether it takes a new unit of
- * a kind (`addable`); and whether an entry of a section of a role shows bullets (`showsBullets`).
+ * a kind (`addable`), and lets one go (`removable`); and whether an entry of a section of a role
+ * shows bullets (`showsBullets`).
  */
 interface Rules {
   fields?: ReadonlySet<string>;
   required: ReadonlySet<string>;
   addable: (kind: UnitKind) => boolean;
+  removable: (kind: UnitKind) => boolean;
   bullets: (role: SectionRole) => boolean;
 }
 
@@ -254,12 +264,18 @@ function rulesOf(pkg: TemplatePackage | undefined, document: Document): Rules {
     fields: new Set(fieldsOf(document.resume).keys()),
     required: requiredFields(pkg, document.resume),
     addable: (kind) => addable(pkg, kind),
+    removable: (kind) => removable(pkg, kind),
     bullets: (role) => showsBullets(pkg, role),
   };
 }
 
 /** A package that says nothing, whose rules take every edit. */
-const NO_RULES: Rules = { required: new Set(), addable: () => true, bullets: () => true };
+const NO_RULES: Rules = {
+  required: new Set(),
+  addable: () => true,
+  removable: () => true,
+  bullets: () => true,
+};
 
 export interface PanelProps {
   document: Document;
@@ -440,6 +456,7 @@ function Links({
                 count={links.length}
                 onMove={(to) => send(structural({ op: "moveLink", id: link.id, to }))}
                 onRemove={() => send(structural({ op: "removeLink", id: link.id }))}
+                refused={rules.removable("link") ? undefined : CANNOT_REMOVE}
               />
             </li>
           ))}
@@ -541,6 +558,7 @@ function SectionRow({
           count={count}
           onMove={(to) => send(structural({ op: "moveSection", id, to }))}
           onRemove={remove}
+          refused={rules.removable(`section.${section.kind}`) ? undefined : CANNOT_REMOVE}
         />
       </div>
       <FieldInput label="Title" text={title} {...textField(`${id}.title`, send)} />
@@ -672,7 +690,14 @@ function SectionContents({
           {items.length > 0 && (
             <ol style={STYLE.list}>
               {items.map((item, index) => (
-                <ItemRow key={item.id} item={item} index={index} count={items.length} send={send} />
+                <ItemRow
+                  key={item.id}
+                  item={item}
+                  index={index}
+                  count={items.length}
+                  refused={rules.removable(kind) ? undefined : CANNOT_REMOVE}
+                  send={send}
+                />
               ))}
             </ol>
           )}
@@ -741,6 +766,7 @@ function EntryRow({
           count={count}
           onMove={(to) => send(structural({ op: "moveEntry", id, to }))}
           onRemove={() => send(structural({ op: "removeEntry", id }))}
+          refused={rules.removable("entry") ? undefined : CANNOT_REMOVE}
         />
       </div>
       <FieldInput
@@ -786,6 +812,7 @@ function EntryRow({
                 count={bullets.length}
                 onMove={(to) => send(structural({ op: "moveBullet", id: bullet.id, to }))}
                 onRemove={() => send(structural({ op: "removeBullet", id: bullet.id }))}
+                refused={rules.removable("bullet") ? undefined : CANNOT_REMOVE}
               />
             </li>
           ))}
@@ -800,11 +827,14 @@ function ItemRow({
   item,
   index,
   count,
+  refused,
   send,
 }: {
   item: Item | LabelledItem;
   index: number;
   count: number;
+  /** Why the template cannot lose the item, if it cannot. */
+  refused: string | undefined;
   send: Send;
 }) {
   const labelled = "label" in item;
@@ -832,6 +862,7 @@ function ItemRow({
         count={count}
         onMove={(to) => send(structural({ op: "moveItem", id: item.id, to }))}
         onRemove={() => send(structural({ op: "removeItem", id: item.id }))}
+        refused={refused}
       />
     </li>
   );
@@ -889,17 +920,23 @@ function RoleSelect({
   );
 }
 
-/** Move up, move down and remove, for the node at `index` of the `count` in its list. */
+/**
+ * Move up, move down and remove, for the node at `index` of the `count` in its list; remove
+ * disabled where the template cannot lose the node, which says why when pointed at.
+ */
 function Reorder({
   index,
   count,
   onMove,
   onRemove,
+  refused,
 }: {
   index: number;
   count: number;
   onMove: (to: number) => void;
   onRemove: () => void;
+  /** Why the template cannot lose the node, if it cannot. */
+  refused?: string | undefined;
 }) {
   return (
     <span style={STYLE.row}>
@@ -921,7 +958,12 @@ function Reorder({
       >
         ↓
       </button>
-      <button type="button" onClick={onRemove}>
+      <button
+        type="button"
+        disabled={refused !== undefined}
+        {...(refused === undefined ? {} : { title: refused })}
+        onClick={onRemove}
+      >
         Remove
       </button>
     </span>

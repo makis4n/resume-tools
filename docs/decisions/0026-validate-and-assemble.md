@@ -271,7 +271,9 @@ bisects it as the probe does (`settle`, decision 0022), 48 compiles a bisection 
    editor, below). A kind whose new unit stops the compile, as a class that takes no more entries
    than it has, is a limit of the template, not a field to lock: the package marks it (`fixed`), the
    editor's commands refuse it and the side panel disables its button (below), and `repeatable`
-   reports it for item 13, as a later round does without trying it again.
+   reports it for item 13, as a later round does without trying it again. (Decision 0038: a kind
+   the removal of whose first or last unit stops the compile is marked too, and the editor neither
+   adds nor removes a unit of a marked kind.)
 4. **Controls.** Each control's every value but the document's compiled, the font size at the
    sizes its package offers: one that stops the compile at any value, or sets the same page at
    every one, is dropped.
@@ -595,7 +597,9 @@ rewrite, the tree of layout 7, the M4 Pro, four children beside other work: 15.4
   and the compile stops: 20 of Jake's forks, which check 3 finds and reports (`repeatable`) for
   item 13. The section and the part that closes its list are one unit, which the assembly is to
   keep together, locked or moved as one, before item 12 stores an import (the milestone's owed
-  table).
+  table). (Decision 0038: the section keeps what stands up to the closer in its extras, `after`,
+  and goes as one, where an answer names the opener; where none does, check 3 marks the kind, which
+  the editor then neither adds nor removes.)
 - **The seed answers only the launch templates' own macros.** A fork that redefined a macro, as
   many of Jake's did, has no answer for it until item 9, and what its macros set is kept whole:
   in the corpus, most of what is locked is `unmapped` for want of an answer.

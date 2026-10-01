@@ -1044,6 +1044,28 @@ export function graphicsNames(tex: string): string[] {
   return names;
 }
 
+/**
+ * Where each file `\includegraphics` names in a source stands, outside its comments: the name as
+ * `graphicsNames` reads it, from `start` to before `end`, spaces around it left out, so that the
+ * name can be rewritten in place (decision 0038). A name built by a macro, or one whose arguments do
+ * not close within WINDOW characters, is left out, as `graphicsNames` leaves it out.
+ */
+export function graphicsArguments(tex: string): { name: string; start: number; end: number }[] {
+  const text = maskComments(tex);
+  const found: { name: string; start: number; end: number }[] = [];
+  for (const match of text.matchAll(INCLUDE_GRAPHICS)) {
+    const after = skipOptional(text, match.index + match[0].length);
+    const braced = after === undefined ? undefined : group(text, after);
+    if (braced === undefined) continue;
+    const name = braced.value.trim();
+    if (name === "" || /[\\#]/.test(name)) continue;
+    const valueAt = braced.end - 1 - braced.value.length;
+    const start = valueAt + braced.value.length - braced.value.trimStart().length;
+    found.push({ name, start, end: start + name.length });
+  }
+  return found;
+}
+
 /** A source with each comment's characters made spaces, so that every index is the source's. */
 export const maskComments = (tex: string) =>
   tex.replace(

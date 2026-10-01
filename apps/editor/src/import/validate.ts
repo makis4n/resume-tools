@@ -32,8 +32,8 @@
  *    (`untested`).
  * 3. **Repeatable units.** An entry, a bullet, an item, a labelled item, a link and a section of
  *    each kind, added as the side panel adds one, through the editor's own commands, and the first
- *    removed, each compiled; a kind whose new unit stops the compile is one the editor cannot add,
- *    which the package marks (`fixed`).
+ *    and the last removed, each compiled; a kind whose new unit, or the removal of either, stops
+ *    the compile is one the editor neither adds nor removes, which the package marks (`fixed`).
  * 4. **Controls.** Each control's every value but the document's compiled: one that stops the
  *    compile at a value, or sets the same page at every one, is dropped. The page size and the
  *    margins, geometry's, and the font size, the class's option, are the milestone's bar on every
@@ -493,57 +493,66 @@ function mutated(resume: Resume, fields: readonly AssembledField[], text: string
 }
 
 /**
- * A kind of unit check 3 tries: the op that adds one, as the side panel adds it, and the op that
- * removes one, when the document has one to remove.
+ * A kind of unit check 3 tries: the op that adds one, as the side panel adds it, and the ops that
+ * remove one, each on its own, the first of the kind and the last, where the document has them.
  */
 interface UnitTrial {
   kind: UnitKind;
   add: StructureOp;
-  remove?: StructureOp;
+  removes: StructureOp[];
 }
 
 /**
  * Where check 3 adds a unit of each kind, as the side panel adds one, and which it removes: an
- * entry in the first section of entries that has any, and the first entry removed; a bullet in the
- * first entry whose snippet shows bullets (`showsBullets`), one with bullets first, and the first
- * bullet removed; an item in the first list and in the first labelled list, and the first item of
- * each removed; a link, where the header has one, and the first removed; and a section of each
- * kind at the end, with the role of the first section of its kind or `other`, and the first of the
- * kind removed. A kind with nowhere to add one is not tried, and nor is a list its node keeps whole
- * as the upload had it (`kept`), whose units are not the model's and which takes none.
+ * entry in the first section of entries that has any, and the first entry and the last removed; a
+ * bullet in the first entry whose snippet shows bullets (`showsBullets`), one with bullets first,
+ * and the first bullet and the last removed; an item in the first list and in the first labelled
+ * list, and the first item of each kind and the last removed; a link, where the header has one, and
+ * the first and the last removed; and a section of each kind at the end, with the role of the first
+ * section of its kind or `other`, and the first of the kind and the last removed. The last of a
+ * kind is tried as well as the first since it is the document's own template code that follows it,
+ * as a list's closer after the last section (decision 0038). A kind with nowhere to add one is not
+ * tried, and nor is a list its node keeps whole as the upload had it (`kept`), whose units are not
+ * the model's and which takes none.
  */
 function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
   const trials: UnitTrial[] = [];
   const sections = resume.sections.filter(
     (section): section is Exclude<Section, { kind: "locked" }> => section.kind !== "locked",
   );
-  const removing = (op: StructureOp | undefined) => (op === undefined ? {} : { remove: op });
+  /** The removal of the first unit and of the last, each once, of those given, as `remove` makes it. */
+  const removing = <T>(units: readonly T[], remove: (unit: T) => StructureOp) => ({
+    removes: [...new Set([units[0], units.at(-1)])].flatMap((unit) =>
+      unit === undefined ? [] : [remove(unit)],
+    ),
+  });
   const entries = sections.flatMap((section) =>
     section.kind === "entries" && !keptOf(section).has("entries") ? [section] : [],
   );
   const withEntries = entries.find((section) => section.entries.length > 0) ?? entries[0];
-  if (withEntries !== undefined) {
-    const first = withEntries.entries[0];
+  if (withEntries !== undefined)
     trials.push({
       kind: "entry",
       add: { op: "addEntry", section: withEntries.id },
-      ...removing(first === undefined ? undefined : { op: "removeEntry", id: first.id }),
+      ...removing(
+        entries.flatMap((section) => section.entries),
+        (entry) => ({ op: "removeEntry", id: entry.id }),
+      ),
     });
-  }
   const shown = entries.flatMap((section) =>
     showsBullets(pkg, section.role)
       ? section.entries.filter((entry) => !keptOf(entry).has("bullets"))
       : [],
   );
   const target = shown.find((entry) => entry.bullets.length > 0) ?? shown[0];
-  const bullet = entries
-    .flatMap((section) => section.entries)
-    .find((entry) => entry.bullets.length > 0)?.bullets[0];
   if (target !== undefined)
     trials.push({
       kind: "bullet",
       add: { op: "addBullet", entry: target.id },
-      ...removing(bullet === undefined ? undefined : { op: "removeBullet", id: bullet.id }),
+      ...removing(
+        entries.flatMap((section) => section.entries.flatMap((entry) => entry.bullets)),
+        (bullet) => ({ op: "removeBullet", id: bullet.id }),
+      ),
     });
   for (const kind of ["item", "labelledItem"] as const) {
     const of = kind === "item" ? "list" : "labelled";
@@ -556,26 +565,28 @@ function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
     );
     const list = lists.find((section) => section.items.length > 0) ?? lists[0];
     if (list === undefined) continue;
-    const first = list.items[0];
     trials.push({
       kind,
       add: { op: "addItem", section: list.id },
-      ...removing(first === undefined ? undefined : { op: "removeItem", id: first.id }),
+      ...removing(
+        lists.flatMap((section) => section.items),
+        (item) => ({ op: "removeItem", id: item.id }),
+      ),
     });
   }
-  const link = keptOf(resume.header).has("links") ? undefined : resume.header.links[0];
-  if (link !== undefined)
+  const links = keptOf(resume.header).has("links") ? [] : resume.header.links;
+  if (links.length > 0)
     trials.push({
       kind: "link",
       add: { op: "addLink" },
-      remove: { op: "removeLink", id: link.id },
+      ...removing(links, (link) => ({ op: "removeLink", id: link.id })),
     });
   for (const kind of SECTION_KINDS) {
-    const first = sections.find((section) => section.kind === kind);
+    const ofKind = sections.filter((section) => section.kind === kind);
     trials.push({
       kind: `section.${kind}`,
-      add: { op: "addSection", kind, role: first?.role ?? "other" },
-      ...removing(first === undefined ? undefined : { op: "removeSection", id: first.id }),
+      add: { op: "addSection", kind, role: ofKind[0]?.role ?? "other" },
+      ...removing(ofKind, (section) => ({ op: "removeSection", id: section.id })),
     });
   }
   return trials;
@@ -1186,26 +1197,31 @@ async function checks(
   }
 
   // 3. Repeatable units: of each kind, one added as the side panel adds it, through the editor's
-  // own commands under the package, and the first removed, each compiled. A kind whose new unit
-  // stops the compile is one the editor cannot add, which the package marks and the editor then
-  // refuses, and which a later round reports as it stands, untried.
+  // own commands under the package, and the first and the last removed, each compiled. A kind whose
+  // new unit stops the compile, or the removal of either, is one whose units the template keeps as
+  // they are: the package marks it, the editor then neither adds nor removes one, and a later round
+  // reports its new unit as it stands, untried (decision 0038). Its removals are tried in every
+  // round, under the package as though it marked no kind, since the editor would refuse them.
   const repeatable: Round["repeatable"] = [];
   const fixed = new Set(decisions.fixed);
-  const compilesAfter = async (op: StructureOp | undefined) => {
+  const compilesAfter = async (op: StructureOp | undefined, pkg = assembled.package) => {
     if (op === undefined) return true;
     let changed: Document;
     try {
-      changed = applyUnder(assembled.package, assembled.document, { type: "structure", op });
+      changed = applyUnder(pkg, assembled.document, { type: "structure", op });
     } catch (error) {
       if (error instanceof CommandError) return false;
       throw error;
     }
     return !(await compiles.document(assembled.package, changed.resume)).broke;
   };
-  for (const { kind, add, remove } of unitTrials(assembled.document.resume, assembled.package)) {
+  const unmarked: TemplatePackage = { ...assembled.package, fixed: [] };
+  for (const { kind, add, removes } of unitTrials(assembled.document.resume, assembled.package)) {
     const added = !fixed.has(kind) && (await compilesAfter(add));
-    if (!added) fixed.add(kind);
-    repeatable.push({ kind, added, removed: await compilesAfter(remove) });
+    let removed = true;
+    for (const remove of removes) removed = (await compilesAfter(remove, unmarked)) && removed;
+    if (!added || !removed) fixed.add(kind);
+    repeatable.push({ kind, added, removed });
   }
   if (fixed.size > decisions.fixed.length) {
     decisions = { ...decisions, fixed: [...fixed] };

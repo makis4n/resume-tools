@@ -45,9 +45,19 @@
  * waiting to, and a document that changes during a trial compiles as soon as the trial lands. The
  * engine is busy while a trial is in flight, as while a document compiles, so a PDF asked for
  * meanwhile waits for it; a PDF request that loses the engine fails the trial it was ahead of.
+ *
+ * An import runs on the same engine (milestone 3 item 12, decision 0038), in the worker's own job,
+ * while the list shows, so that one engine is loaded at a time: it waits for what is in flight,
+ * and whatever is asked meanwhile waits for it. Cancelling it terminates the worker, which starts
+ * afresh for the next request, as a compile of the import that hangs does (decision 0008); what
+ * the old worker held, formats among them, is handed to the new one as its compiles need it. An
+ * imported document compiles with what its import keeps beside the package, the upload's files,
+ * which its job is given whenever it does not hold them, and the stand-ins its PDF may show; and
+ * once its package's last document is gone, its formats go from here and from the engine too.
  */
 
 import { z } from "zod";
+import { EngineCancelled, EngineTimeout } from "../engine/client";
 import type {
   CompileOptions,
   CompileResult,
@@ -58,6 +68,9 @@ import type {
   PdfResult,
   Engine as SessionEngine,
 } from "../engine/session";
+import type { Upload } from "../import/intake";
+import { refusal } from "../import/refusal";
+import type { ImportJob, ImportOutcome, ImportProgress } from "../import/run";
 import { type DrawnPage, drawPage } from "../page/draw";
 import type { FontLibrary, NativeCoverage } from "../page/fonts";
 import {
@@ -71,6 +84,7 @@ import {
   controlValuesFor,
   fontFeatures,
   fontFiles,
+  IMPORTED_PREFIX,
   type TemplatePackage,
 } from "../templates/package";
 import type { Document } from "./document";
@@ -105,6 +119,30 @@ export interface Engine {
   pdf(job: string, options?: PdfOptions): Promise<PdfResult>;
   /** Stop the engine at once, whatever it is doing; what waits on it fails. */
   terminate(): void;
+  /**
+   * Import a resume in the engine's own job (`EngineClient.importResume`), which fails with
+   * `EngineCancelled` when `cancel` stops it and with `EngineTimeout` when a compile of it hangs.
+   * An engine without it, as a test's, cannot import.
+   */
+  importResume?(
+    files: readonly Upload[],
+    onProgress: (progress: ImportProgress) => void,
+  ): Promise<ImportOutcome>;
+  /** Stop the engine at once and start it afresh for the next request (`EngineClient.cancel`). */
+  cancel?(): void;
+  /** Take a format out of the engine, to free what it holds (`EngineClient.dropFormat`). */
+  dropFormat?(engine: SessionEngine, name: string): Promise<void>;
+}
+
+/** An import on the compiler's engine (`Compiler.importResume`): its outcome, and how to stop it. */
+export interface ImportRun {
+  /**
+   * The import's package, document and files, or its refusal, `timeout` for a compile of it that
+   * hung; it fails with `EngineCancelled` once cancelled, and otherwise only when the engine does.
+   */
+  done: Promise<ImportOutcome>;
+  /** Stop the import: the worker is terminated, and starts afresh for the next request. */
+  cancel(): void;
 }
 
 /**
@@ -251,6 +289,8 @@ interface Run {
   generation: number;
   pkg: TemplatePackage;
   document: Document;
+  /** An imported document's: what its compiles need beside the package, and its PDF shows. */
+  job: ImportJob | undefined;
   /**
    * Whether this is the document's second try, after its first lost the engine. It gets no third,
    * so a document that stops every worker it runs on costs two of them, not one after another.
@@ -271,6 +311,8 @@ interface Trial {
   pkg: TemplatePackage;
   /** The open document as it was when the trial was asked for, with the values as its controls. */
   document: Document;
+  /** An imported document's: what its compiles need beside the package. */
+  job: ImportJob | undefined;
   /**
    * Which opening of a document the trial was asked in, as `open` counts them, which tells the
    * trials of one document from those of the next, however they queue.
@@ -298,6 +340,8 @@ interface Made {
   instance: Instance;
   pkg: TemplatePackage;
   document: Document;
+  /** An imported document's: the stand-ins its PDF may show among what its job was given. */
+  job: ImportJob | undefined;
 }
 
 /**
@@ -323,6 +367,11 @@ interface Instance {
    * the files of.
    */
   compiledWith: Set<string>;
+  /**
+   * The format, by engine and name, each job was last given an imported document's files with,
+   * which it holds until it is forgotten or compiled with another format (`CompileOptions.files`).
+   */
+  given: Map<string, string>;
 }
 
 export class Compiler {
@@ -350,6 +399,10 @@ export class Compiler {
    */
   private readonly formats = new Map<string, Uint8Array>();
   private pkg: TemplatePackage | undefined;
+  /** The open document's import's job, for an imported document (`open`). */
+  private job: ImportJob | undefined;
+  /** Whether an import has the engine (`importResume`), which every other request waits for. */
+  private importing = false;
   /** The newest document `open` or `update` gave, whatever has become of its compile. */
   private latest: Document | undefined;
   /** The newest document that has not started compiling. */
@@ -406,12 +459,15 @@ export class Compiler {
    * Open a document set with a package, and compile it at once, dumping its format first if this
    * compiler has not. A compile in flight for what was open before is dropped when it lands, and
    * this document compiles then, starting the job afresh. The files the package is known to read
-   * start on their way now, while the engine starts.
+   * start on their way now, while the engine starts. An imported document comes with what its
+   * import keeps beside the package (`job`): the files its compiles need, and the stand-ins its PDF
+   * may show (decision 0038).
    */
-  open(pkg: TemplatePackage, doc: Document) {
+  open(pkg: TemplatePackage, doc: Document, job?: ImportJob) {
     if (this.closed) return;
     checkTemplate(pkg, doc);
     this.pkg = pkg;
+    this.job = job;
     this.latest = doc;
     this.opened = true;
     this.openings++;
@@ -439,7 +495,7 @@ export class Compiler {
     checkTemplate(pkg, doc);
     this.latest = doc;
     this.pending = doc;
-    if (this.running === undefined && this.trying === undefined) {
+    if (this.running === undefined && this.trying === undefined && !this.importing) {
       clearTimeout(this.debounce);
       this.debounce = setTimeout(() => {
         this.debounce = undefined;
@@ -506,10 +562,104 @@ export class Compiler {
       );
     return new Promise((resolve, reject) => {
       const document = { ...doc, controls: taken.data };
-      this.trials.push({ pkg, document, opened: this.openings, resolve, reject });
+      this.trials.push({ pkg, document, job: this.job, opened: this.openings, resolve, reject });
       // A document waiting for a pause in the edits compiles first, once the pause has passed.
       if (this.debounce === undefined) this.next();
     });
+  }
+
+  /**
+   * Import a resume on this compiler's engine (decision 0038): the files go to the worker, which
+   * runs the whole pipeline in its own job and reports each step and compile to `onProgress`. The
+   * import waits for what is in flight, a document's compile, a trial or a PDF, and holds the engine
+   * until it lands, so that everything asked meanwhile waits for it, as a document opened then does.
+   * `cancel` terminates the worker, which starts afresh for the next request; a compile of the
+   * import that hangs gets the same, and the import is refused as having taken too long
+   * (`timeout`). What the old worker held, formats among them, is handed to the new one as the
+   * compiles need it. The import's own formats are the worker's to drop, which it does, whether it
+   * comes to a document or not; the formats of an imported package it dumped to check are gone
+   * from the engine then, and put back from the compiler's bytes when a document needs them.
+   */
+  importResume(
+    files: readonly Upload[],
+    onProgress: (progress: ImportProgress) => void,
+  ): ImportRun {
+    let cancelled = false;
+    let stop = () => {
+      cancelled = true;
+    };
+    const done = (async (): Promise<ImportOutcome> => {
+      // What is in flight lands first: the engine takes one request at a time, and a request behind
+      // the import's would spend its time limit waiting for it.
+      while (this.busy && !this.closed && !cancelled)
+        await new Promise<void>((wake) => this.settled.push(wake));
+      if (this.closed) throw new Error("the compiler closed before the import could start");
+      if (cancelled) throw new EngineCancelled();
+      const instance = this.currentInstance();
+      const { engine } = instance;
+      if (engine.importResume === undefined || engine.cancel === undefined)
+        throw new Error("this engine cannot import");
+      this.importing = true;
+      this.setBusy();
+      stop = () => engine.cancel?.();
+      try {
+        return await engine.importResume(files, onProgress);
+      } catch (error) {
+        if (this.instance === instance) {
+          // Cancelled, or hung: the worker was terminated and starts afresh, holding nothing. Lost
+          // otherwise: the next request goes to a new engine.
+          this.instance = error instanceof EngineCancelled ? freshInstance(engine) : undefined;
+          if (!(error instanceof EngineCancelled)) engine.terminate();
+        }
+        if (error instanceof EngineTimeout) return refusal("timeout", undefined, error.message);
+        throw error;
+      } finally {
+        stop = () => {};
+        // The import dumped and dropped formats of the imported package it checked, which may be
+        // ones a document of it had installed: those are put back from the kept bytes when needed.
+        const now = this.instance;
+        if (now === instance)
+          for (const key of [...now.installed])
+            if (nameOfKey(key).startsWith(IMPORTED_PREFIX)) {
+              now.installed.delete(key);
+              now.compiledWith.delete(key);
+            }
+        this.importing = false;
+        this.setBusy();
+        this.next();
+      }
+    })();
+    return {
+      done,
+      cancel: () => {
+        stop();
+      },
+    };
+  }
+
+  /**
+   * Let an imported template's formats go, once its last document is gone (decision 0038): the
+   * bytes the compiler keeps of them, and the engine's copies, so that neither holds a format no
+   * document can use. The store drops its own. Nothing is asked of the engine that does not hold
+   * one.
+   */
+  dropTemplate(id: string): void {
+    const named = `${id}-`;
+    for (const key of [...this.formats.keys()])
+      if (nameOfKey(key).startsWith(named)) this.formats.delete(key);
+    this.prefetched.delete(id);
+    const instance = this.instance;
+    if (instance === undefined) return;
+    for (const key of [...instance.installed]) {
+      const name = nameOfKey(key);
+      if (!name.startsWith(named)) continue;
+      instance.installed.delete(key);
+      instance.compiledWith.delete(key);
+      const engine = key.slice(0, key.indexOf(":")) as SessionEngine;
+      instance.engine
+        .dropFormat?.(engine, name)
+        .catch((error: unknown) => console.warn("A format could not be dropped", error));
+    }
   }
 
   /**
@@ -551,8 +701,11 @@ export class Compiler {
     return result.pdf;
   }
 
-  /** Ask the engine that made the page for its PDF, failing past a compile's time limit. */
-  private async requestPdf({ instance, pkg }: Made): Promise<PdfResult> {
+  /**
+   * Ask the engine that made the page for its PDF, failing past a compile's time limit. An imported
+   * document's PDF may show the stand-ins its job was given (decision 0019).
+   */
+  private async requestPdf({ instance, pkg, job }: Made): Promise<PdfResult> {
     const limit = this.limits[pkg.engine];
     let expire: (error: Error) => void = () => {};
     const expired = new Promise<never>((_, reject) => {
@@ -561,7 +714,8 @@ export class Compiler {
     const timer = setTimeout(() => expire(new Error(`took over ${limit} ms`)), limit);
     this.pdfTimer = timer;
     try {
-      return await Promise.race([instance.engine.pdf(JOB), expired]);
+      const options = job === undefined ? undefined : { images: job.images };
+      return await Promise.race([instance.engine.pdf(JOB, options), expired]);
     } finally {
       clearTimeout(timer);
       if (this.pdfTimer === timer) this.pdfTimer = undefined;
@@ -601,12 +755,13 @@ export class Compiler {
    */
   private next() {
     if (this.closed) return;
-    const inFlight = this.running !== undefined || this.trying !== undefined;
+    // An import holds the engine until it lands, and starts what waits then.
+    const inFlight = this.running !== undefined || this.trying !== undefined || this.importing;
     const doc = this.pending;
     const pkg = this.pkg;
     if (!inFlight && doc !== undefined && pkg !== undefined) {
       this.pending = undefined;
-      this.begin(pkg, doc, false);
+      this.begin(pkg, doc, this.job, false);
       return;
     }
     const trial = inFlight || doc !== undefined ? undefined : this.trials.shift();
@@ -618,9 +773,14 @@ export class Compiler {
   }
 
   /** Start a document compiling; `retry` when it is its second try, after it lost the engine. */
-  private begin(pkg: TemplatePackage, document: Document, retry: boolean) {
+  private begin(
+    pkg: TemplatePackage,
+    document: Document,
+    job: ImportJob | undefined,
+    retry: boolean,
+  ) {
     const generation = ++this.generation;
-    const run: Run = { generation, pkg, document, retry, limit: this.limits[pkg.engine] };
+    const run: Run = { generation, pkg, document, job, retry, limit: this.limits[pkg.engine] };
     this.running = run;
     this.setBusy();
     void this.run(run);
@@ -663,6 +823,7 @@ export class Compiler {
       // read. The scheduler knows no document ids, so a document opened on an engine that has
       // compiled starts afresh, which costs one pass when it is the same document again.
       if (this.opened && instance.compiled) {
+        instance.given.delete(JOB);
         await this.request(run, run.limit, () => engine.forget(JOB));
         if (!this.current(run)) return;
       }
@@ -682,8 +843,14 @@ export class Compiler {
       this.warnAboutCrowded(body.surplus);
       this.opened = false;
       instance.compiled = true;
+      // An imported document's job holds the upload's files, given it whenever it does not.
+      const given = jobFiles(instance, JOB, key, run.job);
       const result = await this.request(run, limit, () =>
-        engine.compile(pkg.engine, format.name, body.latex, { job: JOB, maxPasses: MAX_PASSES }),
+        engine.compile(pkg.engine, format.name, body.latex, {
+          job: JOB,
+          maxPasses: MAX_PASSES,
+          ...given,
+        }),
       );
       instance.compiledWith.add(key);
       this.record(pkg, result.fetched);
@@ -701,7 +868,7 @@ export class Compiler {
       );
       if (!this.current(run)) return;
       this.warnAboutFonts(page);
-      this.made = { instance, pkg, document: doc };
+      this.made = { instance, pkg, document: doc, job: run.job };
       this.events.page({ page, body, document: doc, ms: performance.now() - started, startMs });
     } catch (error) {
       // A request that lost the engine was dealt with there, and this run is no longer current:
@@ -797,6 +964,7 @@ export class Compiler {
       // it, and it is the opening each trial notes, not the latest, that says whose files are in
       // the job.
       if (instance.fitOpened !== undefined && instance.fitOpened !== trial.opened) {
+        instance.given.delete(FIT_JOB);
         await work.request(work.limit, () => engine.forget(FIT_JOB));
         if (!work.current()) return;
       }
@@ -805,10 +973,12 @@ export class Compiler {
       // has the start-up's limit here too (see `run`).
       const key = `${pkg.engine}:${format.name}`;
       const limit = instance.compiledWith.has(key) ? work.limit : this.startLimit;
+      const given = jobFiles(instance, FIT_JOB, key, trial.job);
       const result = await work.request(limit, () =>
         engine.compile(pkg.engine, format.name, body.latex, {
           job: FIT_JOB,
           maxPasses: MAX_PASSES,
+          ...given,
         }),
       );
       instance.compiledWith.add(key);
@@ -923,7 +1093,7 @@ export class Compiler {
     this.instance?.engine.terminate();
     this.instance = undefined;
     if (this.pending === undefined && !run.retry) {
-      this.begin(run.pkg, run.document, true);
+      this.begin(run.pkg, run.document, run.job, true);
       return;
     }
     if (this.pending === undefined) this.fail("the engine was lost twice");
@@ -956,14 +1126,7 @@ export class Compiler {
   }
 
   private currentInstance(): Instance {
-    this.instance ??= {
-      engine: this.newEngine(),
-      started: false,
-      installed: new Set(),
-      compiled: false,
-      fitOpened: undefined,
-      compiledWith: new Set(),
-    };
+    this.instance ??= freshInstance(this.newEngine());
     return this.instance;
   }
 
@@ -1095,7 +1258,10 @@ export class Compiler {
    */
   private setBusy() {
     const busy =
-      this.running !== undefined || this.pending !== undefined || this.trying !== undefined;
+      this.running !== undefined ||
+      this.pending !== undefined ||
+      this.trying !== undefined ||
+      this.importing;
     if (busy === this.busy || this.closed) return;
     this.busy = busy;
     this.events.busy(busy);
@@ -1165,6 +1331,41 @@ export class Compiler {
     const fonts = fresh.map(([name, why]) => `${name} (${why})`).join(", ");
     console.warn(`The page leaves out the glyphs of fonts it cannot draw: ${fonts}`);
   }
+}
+
+/** An engine the scheduler knows nothing of yet: not started, holding no format and no job. */
+function freshInstance(engine: Engine): Instance {
+  return {
+    engine,
+    started: false,
+    installed: new Set(),
+    compiled: false,
+    fitOpened: undefined,
+    compiledWith: new Set(),
+    given: new Map(),
+  };
+}
+
+/** A format's name, from its key, `<engine>:<name>`. */
+const nameOfKey = (key: string) => key.slice(key.indexOf(":") + 1);
+
+/**
+ * The files to give a job with its compile for an imported document, and what the job then holds:
+ * none when the job holds them already, having been given them with this format since it was last
+ * forgotten, since the session keeps a job's files until it is forgotten or compiled with another
+ * format (`CompileOptions.files`); the upload's files and the bibliography under the job's name
+ * otherwise. A curated document's job is given nothing.
+ */
+function jobFiles(
+  instance: Instance,
+  job: string,
+  key: string,
+  imported: ImportJob | undefined,
+): { files?: JobFiles } {
+  if (imported === undefined || instance.given.get(job) === key) return {};
+  instance.given.set(job, key);
+  const bbl = imported.bbl === undefined ? {} : { [`${job}.bbl`]: imported.bbl };
+  return { files: { ...imported.files, ...bbl } };
 }
 
 /** A document is set with the package its template names, and no other. */

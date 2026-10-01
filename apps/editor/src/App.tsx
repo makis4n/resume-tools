@@ -1,7 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Controls } from "./editor/Controls";
-import { COULD_NOT_MAKE_PDF, Compiler, type CompilerEvents, type Shown } from "./editor/compiler";
-import { DocumentList } from "./editor/DocumentList";
+import {
+  COULD_NOT_MAKE_PDF,
+  Compiler,
+  type CompilerEvents,
+  type ImportRun,
+  type Shown,
+} from "./editor/compiler";
+import { DocumentList, type ImportShown } from "./editor/DocumentList";
 import {
   type Command,
   CommandError,
@@ -14,9 +20,12 @@ import { applyFit, type Fitted, fit } from "./editor/fit";
 import { Overlay } from "./editor/Overlay";
 import { Panel, shownFieldsOf } from "./editor/Panel";
 import { holdsTyping, useHistoryKeys, type Way } from "./editor/undo";
-import { EngineClient } from "./engine/client";
+import { EngineCancelled, EngineClient } from "./engine/client";
 import type { EngineManifest } from "./engine/manifest";
 import { engineTag, fileUrl, manifestUrl } from "./engine/urls";
+import type { Upload } from "./import/intake";
+import { isRefusal } from "./import/refusal";
+import { IMPORT_STEPS, type ImportJob, type ImportOutcome } from "./import/run";
 import { FontLibrary } from "./page/fonts";
 import { Page } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
@@ -29,23 +38,24 @@ import {
   type Stored,
   type Summary,
 } from "./storage/store";
-import { CURATED, curated } from "./templates/curated";
+import { curated } from "./templates/curated";
 import type { TemplatePackage } from "./templates/package";
+import { resolveTemplate, type Template } from "./templates/resolve";
 
 /**
- * The editor as far as milestone 2 has come: the documents kept in this browser, and one of them
+ * The editor as far as milestone 3 has come: the documents kept in this browser, and one of them
  * open at a time, whose page recompiles as it changes, which is saved after every command
  * (decision 0010), whose fields a click on the page opens in place (item 9), and whose changes
- * undo and redo a step at a time, a visit to a field being one step (item 12). Only the dev
- * server serves `/engine/`; hosting the engine is milestone 5, so a production build keeps
- * documents but shows the failure message for their pages until then.
+ * undo and redo a step at a time, a visit to a field being one step (item 12). A new document
+ * starts from a curated template's sample, chosen in the list, and a resume the person already
+ * has is imported there, on the same engine, while the list shows (milestone 3 item 12, decision
+ * 0038); an imported document opens with its package from the store, as a curated one with its
+ * own. Only the dev server serves `/engine/` and the naming route; hosting them is milestone 5, so
+ * a production build keeps documents but shows the failure message for their pages until then.
  */
 
 /** How long a compile may keep the page waiting before the message line says it is compiling. */
 const MOMENT = 500;
-
-/** The template a new document starts from: Jake's Resume, the one curated so far. */
-const NEW_TEMPLATE = "jake";
 
 /** What the user reads when the browser's storage fails; the details go to the console. */
 const NO_STORAGE = "Documents cannot be read or kept in this browser.";
@@ -62,6 +72,15 @@ const DOES_NOT_FIT = "It does not fit on one page at these settings.";
 
 /** What the user reads when a fit to one page could not finish; the details go to the console. */
 const COULD_NOT_FIT = "Fit to one page could not finish.";
+
+/** What the user reads when the files chosen to import cannot be read. */
+const COULD_NOT_READ = "The files could not be read.";
+
+/** What the user reads when an import fails for a reason of the editor's; the details go to the console. */
+const IMPORT_FAILED = "The import could not finish. Try again.";
+
+/** What the user reads when an import came through but the browser could not keep it. */
+const COULD_NOT_KEEP = "The imported resume could not be kept in this browser.";
 
 async function get(url: string): Promise<Response> {
   const response = await fetch(url);
@@ -120,6 +139,8 @@ interface Open {
    * template requires and cannot take, which the history, the side panel and the controls follow.
    */
   pkg: TemplatePackage;
+  /** An imported document's: what its compiles need beside the package (decision 0038). */
+  job: ImportJob | undefined;
   history: History;
   /** The history's present, as state, so that an edit renders. */
   present: EditorDocument;
@@ -179,6 +200,10 @@ export function App() {
   const [sheet, setSheet] = useState<HTMLDivElement | null>(null);
   /** The TeX Live fonts the pages are drawn from, which a rich field's editor loads fonts from. */
   const [library, setLibrary] = useState<FontLibrary>();
+  /** The import under way, as the list's progress line shows it (decision 0038). */
+  const [importing, setImporting] = useState<ImportShown>();
+  /** The import under way, which the list's Cancel stops; none once it has landed or stopped. */
+  const importRun = useRef<ImportRun | undefined>(undefined);
   /** The open document as the latest render has it, for a fit that lands after later renders. */
   const openNow = useRef<Open | undefined>(undefined);
   useLayoutEffect(() => {
@@ -218,12 +243,20 @@ export function App() {
     if (request !== opening.current) return;
     if (found === undefined) return showList("That document is no longer in this browser.");
     const { revision } = found;
-    const pkg = CURATED.get(found.document.template)?.package;
-    // A template this editor does not have: a newer one wrote the document.
-    if (pkg === undefined) {
-      console.error(`No curated template has the id ${found.document.template}`);
+    // Its template: a curated one, or an import's from the store (decision 0038).
+    let template: Template | undefined;
+    try {
+      template = await resolveTemplate(found.document.template, id, store.current);
+    } catch (error) {
+      console.error("The document's template could not be read:", error);
+    }
+    if (request !== opening.current) return;
+    // A template this editor does not have, or one the store refuses: a newer one wrote it.
+    if (template === undefined) {
+      console.error(`This editor has no template with the id ${found.document.template}`);
       return showList(CANNOT_OPEN);
     }
+    const { package: pkg, job } = template;
     const { document, dropped } = dropRefusedChoices(pkg, found.document);
     if (dropped.length > 0) {
       const choices = dropped.join(" and ");
@@ -235,6 +268,7 @@ export function App() {
       id,
       revision,
       pkg,
+      job,
       history: new History(document, pkg),
       present: document,
       canUndo: false,
@@ -247,7 +281,7 @@ export function App() {
     setError(undefined);
     setPdfError(undefined);
     setClicked(undefined);
-    compiler.current?.open(pkg, document);
+    compiler.current?.open(pkg, document, job);
   };
 
   // The effect owns the store and the compiler, and the compiler its worker, so React's second run
@@ -379,14 +413,11 @@ export function App() {
   // popover, whose typing they take back (`refuseNativeUndo`).
   useHistoryKeys(travel, open !== undefined);
 
-  const startDocument = async () => {
+  /** A new document from the sample of the curated template the list's chooser gives. */
+  const startDocument = async (template: string) => {
     let id: string | undefined;
     try {
-      id = await store.current?.create(
-        NEW_TEMPLATE,
-        curated(NEW_TEMPLATE).sample,
-        navigator.language,
-      );
+      id = await store.current?.create(template, curated(template).sample, navigator.language);
     } catch (error) {
       console.error("A new document could not be kept:", error);
       setNotice(NO_STORAGE);
@@ -394,14 +425,90 @@ export function App() {
     if (id !== undefined) await openDocument(id);
   };
 
+  /**
+   * Delete a document. The last document of an imported template takes its package with it, and
+   * the package's formats go from the compiler and its engine too (decision 0038).
+   */
   const deleteDocument = async (id: string) => {
+    let dropped: string | undefined;
     try {
-      await store.current?.remove(id);
+      dropped = await store.current?.remove(id);
     } catch (error) {
       console.error("The document could not be deleted:", error);
       return showList(NO_STORAGE);
     }
+    if (dropped !== undefined) compiler.current?.dropTemplate(dropped);
     await showList();
+  };
+
+  /**
+   * Import the files the list was given (decision 0038): on the compiler's engine, while the list
+   * shows its progress line, and the document it comes to kept and opened as any other; a refusal
+   * says why in the list's notice, in its own plain words; a cancel leaves the list as it was.
+   * What went wrong otherwise is for developers, as is a refusal's log, which quotes the source.
+   */
+  const importFiles = async (chosen: File[]) => {
+    const owned = compiler.current;
+    if (owned === undefined || importRun.current !== undefined) return;
+    let files: Upload[];
+    try {
+      files = await Promise.all(
+        chosen.map(async (file) => ({
+          name: file.name,
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        })),
+      );
+    } catch (error) {
+      console.error("The files to import could not be read:", error);
+      setNotice(COULD_NOT_READ);
+      return;
+    }
+    if (importRun.current !== undefined) return;
+    setNotice(undefined);
+    setImporting({ label: IMPORT_STEPS.intake, compiles: 0 });
+    const run = owned.importResume(files, ({ label, compiles }) => {
+      if (importRun.current === run) setImporting({ label, compiles });
+    });
+    importRun.current = run;
+    let outcome: ImportOutcome;
+    try {
+      outcome = await run.done;
+    } catch (error) {
+      if (importRun.current !== run) return;
+      importRun.current = undefined;
+      setImporting(undefined);
+      if (error instanceof EngineCancelled) return;
+      console.error("The import could not finish:", error);
+      setNotice(IMPORT_FAILED);
+      return;
+    }
+    // Cancelled as it landed: the list stays as it was.
+    if (importRun.current !== run) return;
+    importRun.current = undefined;
+    setImporting(undefined);
+    if (isRefusal(outcome)) {
+      console.warn(`The import was refused (${outcome.reason})`, outcome.log ?? "");
+      setNotice(outcome.message);
+      return;
+    }
+    let id: string | undefined;
+    try {
+      id = await store.current?.importDocument(outcome);
+    } catch (error) {
+      console.error("The imported resume could not be kept:", error);
+      setNotice(COULD_NOT_KEEP);
+      return;
+    }
+    if (id !== undefined) await openDocument(id);
+  };
+
+  /** Stop the import under way: its worker is terminated and starts afresh (decision 0038). */
+  const cancelImport = () => {
+    const run = importRun.current;
+    if (run === undefined) return;
+    importRun.current = undefined;
+    setImporting(undefined);
+    run.cancel();
   };
 
   if (open === undefined) {
@@ -411,13 +518,17 @@ export function App() {
         documents={documents}
         notice={notice}
         onOpen={(id) => void openDocument(id)}
-        onNew={() => void startDocument()}
+        onNew={(template) => void startDocument(template)}
         onDelete={(id) => void deleteDocument(id)}
+        // Imports run on the compiler's engine, which the tree's fonts come with.
+        {...(library === undefined ? {} : { onImport: (files: File[]) => void importFiles(files) })}
+        {...(importing === undefined ? {} : { importing })}
+        onCancelImport={cancelImport}
       />
     );
   }
 
-  const { id, pkg, history, present, canUndo, canRedo, stale, unsaved } = open;
+  const { id, pkg, job, history, present, canUndo, canRedo, stale, unsaved } = open;
 
   /**
    * Apply a command to the open document. One of a visit to a field, which the overlay and the
@@ -476,7 +587,7 @@ export function App() {
    */
   const tryAgain = () => {
     setError(undefined);
-    compiler.current?.open(pkg, history.present);
+    compiler.current?.open(pkg, history.present, job);
   };
 
   /**
