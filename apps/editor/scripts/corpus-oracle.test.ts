@@ -324,7 +324,9 @@ describe.skipIf(!fetched || !engineAvailable())(
         expect(strings.filter((each) => /[\\{}]/.test(each)).length, "a backslash or a brace").toBe(
           0,
         );
-      }, 300_000);
+        // AltaCV's import takes about 110 s alone, and up to three times that while the whole
+        // suite's engine tests compile beside it on every core: the limit guards a hang, not speed.
+      }, 600_000);
   },
 );
 

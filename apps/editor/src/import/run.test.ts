@@ -369,7 +369,9 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
     // Its last document gone, the package goes, and its formats with it.
     expect(await reloaded.remove(id)).toBe(imported.package.id);
     await reloaded.close();
-  }, 60_000);
+    // About 12 s alone; the whole suite's engine tests compiling beside it on every core have
+    // pushed it past 60 s, so the limit, which guards a hang and not speed, is twice that.
+  }, 120_000);
 
   test("keeps the closer of the list a last section opens with it, which then goes as one", async () => {
     // The skills as the template's bullets inside the entries' list, the document's last section:
