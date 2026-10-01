@@ -33,10 +33,15 @@ function line(text: string, h: number, v: number): PageItem[] {
 }
 
 /**
- * A special at `h` points along: a lock marker stands at the left edge of its column, where TeX
- * writes it between two sections.
+ * A special at `h` points along and `v` down: a lock marker stands at the left edge of its column,
+ * where TeX writes it between two sections, below what comes before it.
  */
-const special = (text: string, h = 0): PageItem => ({ kind: "special", h: h * SP, v: 0, text });
+const special = (text: string, h = 0, v = 0): PageItem => ({
+  kind: "special",
+  h: h * SP,
+  v: v * SP,
+  text,
+});
 
 /** A document of the pages given, its glyphs in cmr10 and its native runs in an invented font. */
 function documentOf(...pages: PageItem[][]): DviDocument {
@@ -269,6 +274,86 @@ describe("lockedSets", () => {
     const sets = lockedSets(doc);
     expect(spelt(doc, sets.get("lock-first")).pages).toEqual({ 0: "Kept", 1: "more" });
     expect(spelt(doc, sets.get("lock-second")).pages).toEqual({ 0: "Also", 1: "kept" });
+  });
+
+  // The oracle's review: AltaCV's parts took the second column's sections beside them.
+  it("keeps none of another column its markers hold, where it sets nothing of its own beside it", () => {
+    // A page break in the first column, in the part: its start at the column's foot, the second
+    // column of the first page between its markers, and its own words at the next page's top.
+    const doc = documentOf(
+      [
+        ...line("Left", 0, 10),
+        ...line("Left foot", 0, 690),
+        special("rt:l:lock-turn", 0, 692),
+        ...line("Right", 300, 10),
+        special("rt:b:ent-r.text", 300, 20),
+        ...line("Field", 300, 22),
+        special("rt:e:ent-r.text", 300, 24),
+        ...line("Template", 300, 34),
+      ],
+      [...line("Own head", 0, 10), special("rt:l:/lock-turn", 40, 10), ...line("Next", 0, 30)],
+    );
+    expect(spelt(doc, lockedSets(doc).get("lock-turn")).pages).toEqual({ 1: "Ownhead" });
+  });
+
+  it("keeps none of the column beside a part that starts at its column's top", () => {
+    // Its first line level with the second column's, which the output sets after its own lines;
+    // and a part that starts with a row of two cells, whose cell beside the first goes back up as
+    // level, and whose next row comes back to its column, which keeps it all.
+    const doc = documentOf(
+      [
+        special("rt:l:lock-top", 0, 0),
+        ...line("Own one", 0, 10),
+        ...line("Own two", 0, 22),
+        ...line("Own three", 0, 700),
+        ...line("Right", 300, 10),
+        ...line("Column", 300, 22),
+      ],
+      [
+        ...line("Own four", 0, 10),
+        special("rt:l:/lock-top", 0, 12),
+        special("rt:l:lock-row", 0, 20),
+        ...line("Cell", 0, 30),
+        ...line("Beside", 150, 30),
+        ...line("Next row", 0, 700),
+      ],
+      [...line("Last", 0, 10), special("rt:l:/lock-row", 0, 12)],
+    );
+    const sets = lockedSets(doc);
+    expect(spelt(doc, sets.get("lock-top")).pages).toEqual({
+      0: "OwnoneOwntwoOwnthree",
+      1: "Ownfour",
+    });
+    expect(spelt(doc, sets.get("lock-row")).pages).toEqual({ 1: "CellBesideNextrow", 2: "Last" });
+  });
+
+  it("keeps none of the column beside the pages between a part's first and its last", () => {
+    // A part in the first column over three pages: the second page's second column is another's.
+    const doc = documentOf(
+      [special("rt:l:lock-long", 0, 600), ...line("Own one", 0, 610), ...line("Right", 300, 10)],
+      [...line("Own two", 0, 10), ...line("Own three", 0, 700), ...line("Beside", 300, 10)],
+      [...line("Own four", 0, 10), special("rt:l:/lock-long", 0, 12)],
+    );
+    expect(spelt(doc, lockedSets(doc).get("lock-long")).pages).toEqual({
+      0: "Ownone",
+      1: "OwntwoOwnthree",
+      2: "Ownfour",
+    });
+  });
+
+  it("keeps none of the column before the end of a part set out of order that ends at a column's top", () => {
+    // Its end between paragraphs, at the second column's top, after the first column's lines,
+    // which are another's; its start at the first column's foot on the next page.
+    const doc = documentOf(
+      [
+        ...line("Left", 0, 10),
+        ...line("Left foot", 0, 700),
+        special("rt:l:/lock-switch", 300, 0),
+        ...line("Right", 300, 10),
+      ],
+      [...line("Left again", 0, 10), special("rt:l:lock-switch", 0, 12)],
+    );
+    expect(lockedSets(doc).get("lock-switch")?.items).toEqual([]);
   });
 
   it("gives what a part nested in another's span sets to the inner part", () => {
@@ -527,6 +612,66 @@ describe.skipIf(!engineAvailable())("locked parts on the engine's pages", () => 
     expect(keptByPage(doc, "lock-span")).toEqual(
       glyphsByPage(doc, (font) => font.startsWith("cmtt")),
     );
+  }, 60_000);
+
+  // The oracle's review (decision 0041): AltaCV's parts took the column beside them, its fields'
+  // sections and entries, in two ways, each invented here with a field and words in sans serif in
+  // the column beside the part, and the part's own words in typewriter.
+  it("keeps nothing of the column beside a part whose markers hold it, as a page break does", async () => {
+    // A `\newpage` in the first column, in the part, as AltaCV's: its start at the first column's
+    // foot, its own words at the next page's top, and between, in the output, the second column
+    // of the first page.
+    const body = [
+      "\\begin{document}",
+      "\\begin{paracol}{2}",
+      "\\section*{Left One}",
+      `\\rtfield{ent-a.text}{${words(120, "quill")}}`,
+      "\\rtlocked{lock-turn}{\\newpage\\texttt{Kept words at the next page's top.}\n}",
+      "\\section*{Left Two}",
+      words(40, "wren"),
+      "\\switchcolumn",
+      "\\section*{Right Side}",
+      "\\rtfield{ent-r.text}{Right column field words plover.}",
+      `\\textsf{${words(150, "gannet")}}`,
+      "\\end{paracol}",
+      "\\end{document}",
+    ].join("\n");
+    const { doc } = await compiled("locked-columns", body, "turn");
+    const own = glyphsByPage(doc, (font) => font.startsWith("cmtt"));
+    expect(own.map((count) => (count > 0 ? 1 : 0))).toEqual([0, 1]);
+    expect(glyphsByPage(doc, (font) => font.startsWith("cmss"))[0]).toBeGreaterThan(0);
+    expect(keptByPage(doc, "lock-turn")).toEqual(own);
+  }, 60_000);
+
+  it("keeps nothing of the column beside a part set out of order from a column's top", async () => {
+    // A part at the top of the first column on the second page, after a `\newpage`, that switches
+    // columns, as AltaCV's publications: its end at the top of the second column, on the first
+    // page, before its start, and the second column runs on beside it on the second.
+    const body = [
+      "\\begin{document}",
+      "\\begin{paracol}{2}",
+      "\\section*{Left One}",
+      words(60, "quill"),
+      "\\newpage",
+      `\\rtlocked{lock-top}{\\texttt{${words(40, "lark")}}\\switchcolumn\n}`,
+      "\\section*{Right Side}",
+      "\\rtfield{ent-r.text}{Right column field words plover.}",
+      `\\textsf{${words(500, "gannet")}}`,
+      "\\end{paracol}",
+      "\\end{document}",
+    ].join("\n");
+    const { doc } = await compiled("locked-columns", body, "top");
+    const markers = doc.pages.flatMap((page, number) =>
+      page.items.flatMap((item) => {
+        const marker = item.kind === "special" ? lockMarker(item.text) : undefined;
+        return marker === undefined ? [] : [`${marker.end ? "end" : "start"} ${number}`];
+      }),
+    );
+    expect(markers).toEqual(["end 0", "start 1"]);
+    const own = glyphsByPage(doc, (font) => font.startsWith("cmtt"));
+    expect(own.map((count) => (count > 0 ? 1 : 0))).toEqual([0, 1]);
+    expect(glyphsByPage(doc, (font) => font.startsWith("cmss"))[1]).toBeGreaterThan(0);
+    expect(keptByPage(doc, "lock-top")).toEqual(own);
   }, 60_000);
 
   it("parts its blocks around a field a macro of the part sets, and marks its rules and boxes", async () => {

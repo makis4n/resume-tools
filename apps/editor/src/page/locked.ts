@@ -75,20 +75,24 @@ interface Drawn extends LockedItem {
   fields: number;
 }
 
-/** Where a marker stands: among the output's glyphs and rules, the number before it; its page; and
- * how many fields' markers hold it. */
+/**
+ * Where a marker stands: among the output's glyphs and rules, the number before it; its page; how
+ * many fields' markers hold it; and its place on the page, in the output's units.
+ */
 interface Marker {
   at: number;
   page: number;
   fields: number;
+  h: number;
+  v: number;
 }
 
 /** The size a rule is taken to be set at before any glyph, 10 pt in scaled points. */
 const RULE_SIZE = 10 * 65536;
 
 /**
- * How far left of where a part starts, in sizes, a line on a later page of it may start and still
- * be its: a list's indent or a hanging label, and never the width of another column.
+ * How far from where a part's column starts, in sizes, a line may start and still be in it: a
+ * list's indent or a hanging label, and never the width of another column.
  */
 const COLUMN_SLACK = 3;
 
@@ -99,23 +103,28 @@ const COLUMN_SLACK = 3;
  * - **A part the output sets in the source's order**, its start before its end, has what the
  *   output sets between them, but for what a field opened since holds: a field's markers, which a
  *   part's LaTeX never holds, may still come from a macro it calls, as a class's header macro sets
- *   a field the class stored, and what they hold is the field's. A part that one page holds keeps
- *   all of it, side-by-side cells, columns of its own and all. Within one run of a page, one
- *   column, the output keeps the source's order, and across runs it need not: paracol sets two
- *   columns side by side, column by column, page by page, and a page's foot and the next page's
- *   head come between a part's lines where a page breaks it. So a part on several pages keeps, on
- *   the first, what goes down from its first line until the output goes back up above that line,
- *   to the top of another column, where a cell beside the last goes no higher than the part's own
- *   first line; and on each page after, every line that starts no further left of where the part's
- *   own lines start on its first page than a list's indent, so not another column's to its left.
- *   Its markers do not say where its column is: TeX writes one at the end of a paragraph the part
- *   follows with no blank line, and the other after the part's last line.
+ *   a field the class stored, and what they hold is the field's. A part whose markers stand on one
+ *   page keeps all of it, side-by-side cells, columns of its own and all. Within one run of a page,
+ *   one column, the output keeps the source's order, and across runs it need not: paracol sets two
+ *   columns side by side, column by column, page by page, so that between the markers of a part a
+ *   page breaks lie the other column's sections, and a page's foot and the next page's head. So a
+ *   part whose markers stand on two pages or more keeps, on its start's page, the run from its
+ *   start down its column (`columnRun`): up to where the output goes back up above its start, to
+ *   another column's top, or to its own first line's height, where the part starts at its column's
+ *   top, unless the output comes back to the part's column after, as a table's next row does after
+ *   a cell beside the last; on the pages after, the lines that start in its column, where its start
+ *   stands or its lines start, give or take a list's indent, so not another column's to its left,
+ *   to its end, and on a page between, up to where another column starts beside it, as above.
  * - **A part whose end the output sets before its start**, as one that runs from the foot of a
  *   column into the next column ends at that column's top, on the page before, has the run that
  *   goes down into its end, the lines before it on its page, after the last field or part there,
- *   that start where the line its end stands on starts; and the run from its start down its
- *   column, as above, up to the next part.
+ *   that start in the column its end stands in; and the run from its start down its column, as
+ *   above, up to the next part.
  * - **A part with no start or no end** keeps nothing, and the page shows no lock over it.
+ *
+ * Where a marker stands says where its column starts (`columnOf`): TeX writes one between
+ * paragraphs at its column's left edge, and one that follows a paragraph with no blank line at
+ * the end of the paragraph's last line, which starts at the column's edge.
  *
  * What the output sets in the span of a part nested in another's, as only a reordering can, is
  * the inner part's. A native run's `.notdef`, which draws nothing, is no glyph of a part's.
@@ -138,7 +147,8 @@ export function lockedSets(doc: DviDocument): Map<string, LockedSet> {
         if (marker !== undefined) {
           if (!order.includes(marker.id)) order.push(marker.id);
           const into = marker.end ? ends : starts;
-          if (!into.has(marker.id)) into.set(marker.id, { at: drawn.length, page: number, fields });
+          if (!into.has(marker.id))
+            into.set(marker.id, { at: drawn.length, page: number, fields, h: item.h, v: item.v });
           fenced.push(drawn.length);
           locks.push(drawn.length);
         } else if (markerId(item.text, MARKER_BEGIN) !== undefined) {
@@ -196,6 +206,20 @@ export function lockedSets(doc: DviDocument): Map<string, LockedSet> {
       if (!another(id, at)) own.push(drawn[at] as Drawn);
     return own;
   };
+  /**
+   * Where the column a marker stands in starts: where the line it ends starts, as TeX writes a
+   * marker at the end of a paragraph's last line, or else where it stands, at its column's left
+   * edge, as TeX writes one between paragraphs.
+   */
+  const columnOf = (marker: Marker): number => {
+    const before = drawn[marker.at - 1];
+    const ends =
+      before !== undefined &&
+      before.page === marker.page &&
+      Math.abs(before.v - marker.v) <= before.size / 2 &&
+      before.h <= marker.h;
+    return ends ? (drawn[lineStart(drawn, marker.at - 1)]?.h ?? marker.h) : marker.h;
+  };
   const sets = new Map<string, LockedSet>();
   for (const id of order) {
     const start = starts.get(id);
@@ -203,19 +227,25 @@ export function lockedSets(doc: DviDocument): Map<string, LockedSet> {
     let kept: Drawn[] = [];
     if (start !== undefined && end !== undefined && start.at <= end.at) {
       const between = outside(ownOf(id, start.at, end.at), start.fields);
-      const pages = [...new Set(between.map((each) => each.page))];
-      const down = downFromFirst(between, pages[0]);
-      // Where the part's own lines start on its first page: its column's left edge, or its indent.
-      const left = Math.min(...between.slice(0, down).map((each) => each.h));
-      kept =
-        pages.length <= 1
-          ? between
-          : between.filter((each, i) =>
-              each.page === pages[0] ? i < down : startsInColumn(between, i, left),
-            );
+      if (start.page === end.page) kept = between;
+      else {
+        // Its start's page: the run from its start down its column; the pages after: the lines in
+        // its column, to its end, or, on a page between, to where another column starts.
+        const onPage = (page: number) => between.filter((each) => each.page === page);
+        const run = onPage(start.page);
+        kept = run.slice(0, columnRun(run, start.v, columnOf(start)));
+        const left = Math.min(columnOf(start), ...kept.map((each) => each.h));
+        for (let page = start.page + 1; page <= end.page; page++) {
+          const on = onPage(page);
+          const column = on.filter((_, i) => startsInColumn(on, i, left));
+          kept.push(
+            ...(page === end.page ? column : column.slice(0, columnRun(column, undefined, left))),
+          );
+        }
+      }
     } else if (start !== undefined && end !== undefined) {
       // The end first: the run that goes down into it, after the last field or part before it on
-      // its page and in its column, and the run from the start down its column to the next part.
+      // its page, in its column, and the run from the start down its column to the next part.
       const from = Math.max(
         ...fenced.filter((at) => at < end.at && drawn[at]?.page === end.page),
         drawn.findIndex((each) => each.page === end.page),
@@ -230,11 +260,10 @@ export function lockedSets(doc: DviDocument): Map<string, LockedSet> {
         ownOf(id, start.at, next).filter((each) => each.page === start.page),
         start.fields,
       );
-      // The end stands at the end of the part's last line, which starts at the part's column.
-      const last = into[lineStart(into, into.length - 1)];
+      const column = columnOf(end);
       kept = [
-        ...into.filter((_, i) => last !== undefined && startsInColumn(into, i, last.h)),
-        ...after.slice(0, downFromFirst(after, start.page)),
+        ...into.filter((_, i) => startsInColumn(into, i, column)),
+        ...after.slice(0, columnRun(after, start.v, columnOf(start))),
       ];
     }
     sets.set(id, {
@@ -270,42 +299,56 @@ function outside(drawn: readonly Drawn[], fields: number): Drawn[] {
 }
 
 /**
- * Where, among `drawn`, a part's run on page `page`, its first, ends: at the first of them past
- * the page, or the first that goes back up the page by more than its size and above the part's
- * first line there, to the top of another column, where a cell beside the last goes back up no
- * higher than the part's own first line.
+ * How many of `run`, what a part sets on one page in the output's order, are its own column's: up
+ * to the first that goes back up the page, to another column's top, above `anchor`, the part's
+ * start on the page it starts on, or to within a size of the part's first line there, as where
+ * the part starts at its own column's top; but not where the output comes back after it to a line
+ * that starts where the part's column starts, `left`, as a table's next row after a cell beside
+ * the last, which went back up. Another column the output sets after the part's own on the page,
+ * as paracol sets its second, never comes back.
  */
-function downFromFirst(drawn: readonly Drawn[], page: number | undefined): number {
-  const first = drawn.find((each) => each.page === page);
-  const end = drawn.findIndex((each, i) => {
-    if (each.page !== page) return i > 0;
-    const before = drawn[i - 1];
-    return (
-      first !== undefined &&
-      before !== undefined &&
-      before.page === page &&
-      each.v < before.v - BACK_UP * each.size &&
-      each.v < first.v - each.size / 2
-    );
-  });
-  return end < 0 ? drawn.length : end;
+function columnRun(run: readonly Drawn[], anchor: number | undefined, left: number): number {
+  let first: Drawn | undefined;
+  for (let i = 0; i < run.length; i++) {
+    const each = run[i] as Drawn;
+    const before = run[i - 1];
+    const above = anchor !== undefined && each.v < anchor - each.size / 2;
+    const up = before === undefined ? above : each.v < before.v - BACK_UP * each.size;
+    const level = first !== undefined && each.v < first.v + each.size;
+    if (up && (above || level) && !returns(run, i, left)) return i;
+    first ??= each;
+  }
+  return run.length;
+}
+
+/** Whether `run` sets, after its glyph or rule `i`, a line that starts where `left` is. */
+function returns(run: readonly Drawn[], i: number, left: number): boolean {
+  for (let j = i + 1; j < run.length; j++) {
+    const each = run[j] as Drawn;
+    if (startsLine(run, j) && Math.abs(each.h - left) <= COLUMN_SLACK * each.size) return true;
+  }
+  return false;
 }
 
 /**
- * Where the line of the glyph or rule `i` of `drawn` starts, among them: a line starts where the
- * output goes to another page or baseline, or back left by more than the size of what comes next.
+ * Whether the glyph or rule `i` of `drawn` starts a line among them: the first, or where the output
+ * goes to another page or baseline, or back left by more than the size of what comes next.
  */
+function startsLine(drawn: readonly Drawn[], i: number): boolean {
+  const [before, here] = [drawn[i - 1], drawn[i]];
+  return (
+    before === undefined ||
+    here === undefined ||
+    before.page !== here.page ||
+    Math.abs(here.v - before.v) > here.size / 2 ||
+    here.h < before.h - here.size
+  );
+}
+
+/** Where the line of the glyph or rule `i` of `drawn` starts, among them (`startsLine`). */
 function lineStart(drawn: readonly Drawn[], i: number): number {
   let first = i;
-  for (; first > 0; first--) {
-    const [before, here] = [drawn[first - 1], drawn[first]];
-    if (before === undefined || here === undefined) break;
-    const turned =
-      before.page !== here.page ||
-      Math.abs(here.v - before.v) > here.size / 2 ||
-      here.h < before.h - here.size;
-    if (turned) break;
-  }
+  while (first > 0 && !startsLine(drawn, first)) first--;
   return first;
 }
 

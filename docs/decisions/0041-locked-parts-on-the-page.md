@@ -40,29 +40,40 @@ stops, check 3 in `src/import/validate.ts`, `pinned` in `src/templates/package.t
   are read in any case, their ids lowercased, as a field's are. A part is never a field:
   `collectFields` reads only a field's markers, so the page aligns no text of a part's, and a
   click finds no field in it.
-- **A part one page holds keeps everything between its markers**, cells side by side, a list in
-  columns of its own and all, though TeX may write its start alone at the foot of the page before.
+- **A part whose markers stand on one page keeps everything between them**, cells side by side, a
+  list in columns of its own and all.
 - **Where the output sets a part out of the source's order.** Within one run of a page, one column,
   the output keeps the source's order; across runs it need not. paracol sets two columns side by
-  side column by column, page by page, and a page's foot and the next page's head come between a
-  part's lines where a page breaks it. So:
-  - a part that starts on one page and ends on another keeps, on the first page that holds any of
-    it, what goes down from its first line until the output goes back up above that line, to the
-    top of another column, where a cell beside the last goes back up no higher than the part's own
-    first line; and on each page after, every line that starts no further left of where the part's
-    own lines start on its first page than three times its size, a list's indent, so not another
-    column's to its left. The markers do not say where the part's column is: TeX writes a start
-    at the end of a paragraph the part follows with no blank line, and an end after its last line;
+  side column by column, page by page, so that between the markers of a part a page breaks lie the
+  other column's sections, and a page's foot and the next page's head. Where a marker stands says
+  where its column starts: TeX writes one between paragraphs at its column's left edge, and one
+  that follows a paragraph with no blank line at the end of the paragraph's last line, which
+  starts at the column's edge. So:
+  - a part whose markers stand on two pages or more keeps, on its start's page, the run from its
+    start down its column: up to where the output goes back up above its start, to another
+    column's top, or to within a size of its own first line, where it starts at its column's top;
+    but not where the output comes back after to a line that starts at the part's column, as a
+    table's next row after a cell beside the last, which went back up. On the pages after, it
+    keeps the lines that start in its column, give or take three times their size, a list's
+    indent, so not another column's to its left: to its end, and on a page between, up to where
+    another column starts beside it, as above. Its start may stand alone at the foot of a page,
+    and its lines all be on the next;
   - a part whose end the output sets before its start, as one that runs from the foot of one
     column into the top of the next, on the page before, ends, keeps the run that goes down into
-    its end, the lines before it on its page, after the last field or part there, that start
-    where the line its end stands on starts; and the run from its start down its column, as above,
-    up to the next part;
+    its end, the lines before it on its page, after the last field or part there, that start in
+    the column its end stands in; and the run from its start down its column, as above, up to the
+    next part;
   - a part with no start or no end keeps nothing, and the page shows no lock over it.
   AltaCV's sample shows both kinds: one of its parts ends before it starts, and without these
-  rules 62 glyphs of other sections' content read as a part's. The reviewers' invented documents
-  show the rest: a skills table of rows of two cells whose heading goes to the next page, or which
-  a page breaks between its rows, and a list in two columns, each keep every glyph they own.
+  rules 62 glyphs of other sections' content read as a part's; and the oracle's review found 199
+  more, of sections and entries in the column beside a part, read as the part's by the first
+  reading of these rules, which went by the part's first line alone and so took the column beside
+  a part that starts at its column's top or sets nothing of its own on its start's page, both of
+  which the rules above leave to the column. The reviewers' invented documents show the rest: a
+  skills table of rows of two cells whose heading goes to the next page, or which a page breaks
+  between its rows, and a list in two columns, each keep every glyph they own; and a part a
+  `\newpage` breaks at its column's foot, and one paracol sets out of order from its column's top,
+  beside the second column's field and words, keep only their own.
 - **Its blocks**, on the page drawn: the boxes of its glyphs and rules there, in the order the
   page sets them, joined while they go on down the page, and a new block where the part goes back
   up by more than the size of what comes next, a line or more, as to the top of a column or of a
@@ -129,7 +140,17 @@ stops, check 3 in `src/import/validate.ts`, `pinned` in `src/templates/package.t
   does. `applyUnder` refuses a pinned step (`CommandError`), so the history makes none, and the
   part's row disables the button, which says why when pointed at, in plain words (`PINNED`): "The
   template stops without this part, so it stays", "The template stops if this part moves up", or
-  "… moves down". A part costs check 3 up to three compiles a round more.
+  "… moves down".
+- **Only a part that may stop the compile is tried** (`unbalanced`): one that ends an environment
+  it did not begin or begins one it does not end, or does so with a group, `\begingroup` or
+  `\bgroup`, once each of the document's own macros it calls is expanded one level through its
+  definition as the signatures read it, through the kernel's wrappers around a command with an
+  optional argument or a robust one, so that a `\skillsEnd` defined as `\end{itemize}` closes a
+  list; its comments are passed over, and its braces balance already. A part that ends whatever
+  it begins cannot stop the compile so and is not tried, so that the trials cost up to three
+  compiles a round for each part that may: the fork of Jake's Resume the editor's test imports,
+  whose two parts each end what they begin, makes 40 compiles again, as before the trials, where
+  it made 44 with them.
 - **Every structural step is saved only once it compiles.** Check 3 tries the document as
   imported, and a step it does not try may stop the compile too, as the list's section moved below
   the part that closes its list. So the app keeps every structural step, one that adds, removes or
@@ -196,12 +217,20 @@ it, a redump and no failure (decision 0010).
   one whose start TeX wrote alone at the foot of the page before, cells side by side on a page a
   part starts on, a part whose end comes first keeping its own runs and one that never ends
   keeping nothing, and two parts two columns break across pages each keeping its own column's
-  runs; and on the engine, the reviewers' invented documents, each part keeping every glyph it
-  owns, page by page, and drawn as the part's: a table of rows of two cells whose heading goes to
-  the next page or which a page breaks between its rows, a list in two columns, a part broken
-  in paracol's first column beside the second, and a part paracol sets out of order, its own text
-  set in typewriter so that its glyphs are known; and a field a macro of the part sets between
-  two of its lines, which no block covers, and the part's rule and box of colour, marked.
+  runs; none of another column a part's markers hold where it sets nothing of its own beside it,
+  nor of the column beside a part that starts at its column's top, while a row of cells at a
+  page's top, whose next row comes back to the column, stays whole; none of the column beside the
+  page between a part's first and its last; and none of the first column before the end of a part
+  set out of order at the second column's top. On the engine, the reviewers' invented documents,
+  each part keeping every glyph it owns, page by page, and drawn as the part's: a table of rows of
+  two cells whose heading goes to the next page or which a page breaks between its rows, a list
+  in two columns, a part broken in paracol's first column beside the second, and a part paracol
+  sets out of order, its own text set in typewriter so that its glyphs are known; the oracle
+  review's two, a `\newpage` in a part at its column's foot and a part paracol sets out of order
+  from its column's top, each beside the second column's field and words in sans serif, which
+  each keeps none of (both kept those columns before the fix, 1,049 glyphs and 1,151 besides 358
+  of the first column's); and a field a macro of the part sets between two of its lines, which no
+  block covers, and the part's rule and box of colour, marked.
 - **The DOM** (`src/page/Page.dom.test.tsx`, jsdom), with the page and the overlay put together as
   the app puts them: the lock on hover over a part's glyph and block and none off it; a click on
   either opening nothing with no field open, with the plain overlay open and with the rich editor
@@ -216,8 +245,11 @@ it, a redump and no failure (decision 0010).
   the store and the guard wired as the app wires them, the list's section moved below the closer
   is never saved, its compile stops, and it is taken back, the page the first's to the byte and
   the store's document the one opened, while the closer moved down is saved once its page comes.
-  With the fake compiler (`src/import/validate.test.ts`), a part pinned against the steps that
-  stop, the package's id changed, and none pinned where every step compiles; the schema
+  With the fake compiler (`src/import/validate.test.ts`), a part that closes a list through the
+  document's own macro pinned against the steps that stop, the package's id changed, and none
+  pinned where every step compiles; a part that ends whatever it begins, a page break alone or a
+  macro that begins and ends a list, never tried; `unbalanced` over closers and openers, groups,
+  the kernel's wrappers, comments and data; the schema
   (`package.test.ts`); `applyUnder` and the history (`document.test.ts`); the part's row, its
   buttons disabled with their reasons and the other sending its step (`Panel.dom.test.tsx`); the
   guard (`guard.test.ts`): a field's edit saved at once, a structural step held with what comes
@@ -241,9 +273,16 @@ it, a redump and no failure (decision 0010).
   takes the page's foot and the next page's head, the template's own text, which the report gives
   to no part; its lock shows over them on the page the editor draws. A part paracol switches
   columns in on one page, starting in one and ending in the other, takes what the other column
-  held before it there, and what its own first column sets after it from later in the source; a
-  part in paracol's first column that runs over three pages or more takes the second column of
-  each page between its first and its last.
+  held before it there, and what its own first column sets after it from later in the source.
+- **Where the geometry cannot tell a column from a cell.** The page reads columns from where the
+  output goes back up and where lines start, not from TeX's boxes, which the reading of the output
+  does not keep. A part whose run on a page is one line at its column's top reads the other
+  column's first line, level with it, as the rest of that line, and keeps it; and a part that
+  starts a page with one row of cells side by side, no row after it there, loses the cell beside,
+  read as another column's top.
+- **A part that ends what it begins may still stop the compile**, as one that defines a macro the
+  sections after it use, when it is removed or moved below them: check 3 does not try it, and the
+  guard takes such a step back.
 - **A part past the first page** is named in the panel, and shows its lock once the editor draws
   its page, which it does not yet.
 - **Steps tried where the import put the part.** Check 3 tries a part's steps in the document as

@@ -107,7 +107,14 @@ import {
   shippedFont,
 } from "./reference";
 import { type Refusal, refusal } from "./refusal";
-import { type EngineSignatures, LAYOUT_TYPEOUT, type Layout, layoutOfLog } from "./signatures";
+import {
+  type EngineSignatures,
+  LAYOUT_TYPEOUT,
+  type Layout,
+  layoutOfLog,
+  readMeaning,
+} from "./signatures";
+import { maskComments } from "./source";
 import type { XetexRewrite } from "./xetex";
 import { normalized } from "./xetex-check";
 
@@ -594,20 +601,80 @@ function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
 }
 
 /**
- * The steps check 3 takes with each locked part of a resume, as the side panel's buttons take
- * them (decision 0041): its removal, and its move one place up and one place down where it has a
- * section above or below it.
+ * The steps check 3 takes with each locked part of a resume that may stop the compile when it is
+ * removed or moved (`unbalanced`, under the document's own macros, `macros`), as the side panel's
+ * buttons take them (decision 0041): its removal, and its move one place up and one place down
+ * where it has a section above or below it. A part that ends whatever it begins is not tried.
  */
-export function pinTrials(resume: Resume): { id: string; steps: [PinStep, StructureOp][] }[] {
+export function pinTrials(
+  resume: Resume,
+  macros: EngineSignatures["macros"],
+): { id: string; steps: [PinStep, StructureOp][] }[] {
   const { sections } = resume;
   return sections.flatMap((section, index) => {
-    if (section.kind !== "locked") return [];
+    if (section.kind !== "locked" || !unbalanced(section.latex, macros)) return [];
     const { id } = section;
     const steps: [PinStep, StructureOp][] = [["remove", { op: "removeSection", id }]];
     if (index > 0) steps.push(["up", { op: "moveSection", id, to: index - 1 }]);
     if (index < sections.length - 1) steps.push(["down", { op: "moveSection", id, to: index + 1 }]);
     return [{ id, steps }];
   });
+}
+
+/** An environment's begin or end, `\begin{x}` or `\end{x}`, or a group's, as source or a meaning. */
+const BEGINS_ENDS =
+  /\\(begin|end)\s*\{([^{}]*)\}|\\(begingroup|endgroup|bgroup|egroup)(?![A-Za-z@])/g;
+
+/**
+ * Whether a locked part's LaTeX may stop the compile when it is removed or moved, so that check 3
+ * tries its steps (decision 0041): it ends an environment it did not begin, or begins one it does
+ * not end, or does so with a group, `\begingroup` or `\bgroup`, once each of the document's own
+ * macros it calls is expanded one level through its definition as the signatures read it
+ * (`macros`), so that a `\skillsEnd` defined as `\end{itemize}` closes a list. Its braces balance
+ * already (`LockedLatex`); its comments are passed over. A part that ends whatever it begins
+ * cannot stop the compile so, and is not tried.
+ */
+export function unbalanced(latex: string, macros: EngineSignatures["macros"]): boolean {
+  const expanded = maskComments(latex).replace(/\\([A-Za-z@]+)/g, (call, name: string) => {
+    const definition = replacementOf(macros, name);
+    return definition === undefined ? call : ` ${definition} `;
+  });
+  const open = new Map<string, number>();
+  for (const [, which, environment, group] of expanded.matchAll(BEGINS_ENDS)) {
+    const key =
+      group === undefined
+        ? `{${environment?.trim()}}`
+        : group.endsWith("ingroup") || group === "endgroup"
+          ? "\\begingroup"
+          : "\\bgroup";
+    const begins =
+      group === undefined ? which === "begin" : group === "begingroup" || group === "bgroup";
+    const now = (open.get(key) ?? 0) + (begins ? 1 : -1);
+    if (now < 0) return true;
+    open.set(key, now);
+  }
+  return [...open.values()].some((count) => count !== 0);
+}
+
+/**
+ * The replacement text of the document's own macro `name`, one level, as the signatures read its
+ * definition; through the kernel's wrapper around a command with an optional argument, whose code
+ * is the macro `\name` (`\@protected@testopt \name \\name {}`), or a robust command's, `name `.
+ * Undefined for a macro that holds data, or one the signatures did not print.
+ */
+function replacementOf(macros: EngineSignatures["macros"], name: string): string | undefined {
+  const macroOf = (each: string) => (Object.hasOwn(macros, each) ? macros[each] : undefined);
+  const textOf = (each: string) => {
+    const macro = macroOf(each);
+    if (macro === undefined || macro.kind === "data") return undefined;
+    const meaning = readMeaning(macro.meaning);
+    return meaning.kind === "macro" ? meaning.replacement : undefined;
+  };
+  const own = textOf(name);
+  if (own === undefined) return undefined;
+  if (/^\\@(?:protected@)?testopt\b/.test(own)) return textOf(`\\${name}`) ?? own;
+  if (/^\\protect\b/.test(own)) return textOf(`${name} `) ?? own;
+  return own;
 }
 
 /** The values check 4 tries of a control: every value but the document's. */
@@ -1251,7 +1318,7 @@ async function checks(
     Object.entries(decisions.pinned).map(([id, steps]) => [id, [...steps]]),
   );
   let pins = 0;
-  for (const { id, steps } of pinTrials(assembled.document.resume))
+  for (const { id, steps } of pinTrials(assembled.document.resume, inputs.signatures.macros))
     for (const [step, op] of steps)
       if (!pinned[id]?.includes(step) && !(await compilesAfter(op, unmarked))) {
         pinned[id] = [...(pinned[id] ?? []), step];
