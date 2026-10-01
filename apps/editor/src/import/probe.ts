@@ -1224,8 +1224,10 @@ export function piecesOf(source: string, start: number, end: number): string[] {
  * among the stretch's glyphs' texts, in the order of the source (`comparable`, `piecesOf`), and
  * holds what lies between the first and the last it finds; then, for what none of them set, the
  * other arguments of the calls either side, since a macro may set its arguments in another order
- * than it takes them. What none of these sets is the template's own text, as a label, a
- * separator or an icon (`chrome`). A stretch
+ * than it takes them; and every part again by its words alone, among the glyphs still unclaimed, as
+ * a macro that parses a list of `value/label` pairs sets each label alone (item 13's review). What
+ * none of these sets is the template's own text, as a label, a separator or an icon (`chrome`). A
+ * stretch
  * whose glyphs the page names none of, as a font with no outlines has them, is shared among what
  * overlaps its source in proportion to how much of the source each is. A run ends where what sets
  * it changes, and at a page's end. Beside them come every run of the reference's glyphs, those
@@ -1416,11 +1418,16 @@ export function uncoveredRuns(
       const claimed = new Set<number>();
       const free = (at: number, length: number) =>
         glyphOf.slice(at, at + length).every((k) => !claimed.has(k));
-      const find = (part: (typeof parts)[number], start: number) => {
+      /** Each piece of a part's source, or with `words`, each run of letters and digits of them. */
+      const piecesOfPart = (part: (typeof parts)[number], words: boolean) => {
+        const pieces = piecesOf(sources[part.placed.where], part.lo, part.hi);
+        return words ? pieces.flatMap((piece) => piece.match(/[\p{L}\p{N}]+/gu) ?? []) : pieces;
+      };
+      const find = (part: (typeof parts)[number], start: number, words = false) => {
         let first: number | undefined;
         let last: number | undefined;
         let at = start;
-        for (const piece of piecesOf(sources[part.placed.where], part.lo, part.hi)) {
+        for (const piece of piecesOfPart(part, words)) {
           const wanted = comparable(piece);
           if (wanted === "") continue;
           let found = text.indexOf(wanted, at);
@@ -1444,6 +1451,13 @@ export function uncoveredRuns(
       };
       for (const part of parts) take(part, find(part, from) ?? find(part, 0));
       for (const part of more) take(part, find(part, 0));
+      // Every part is looked for again by its words alone, in the source's order, among the glyphs
+      // still unclaimed, since a piece the page never shows whole hides the words it holds: a
+      // list of `value/label` pairs a macro parses, setting each label alone (a `\foreach` chart,
+      // decision 0013), whose one braced label may be found and the rest not. What its first and
+      // last words found there hold is its, so that no word of the document's own is left to the
+      // template's text for the shape its source gives it (item 13's review).
+      for (const part of [...parts, ...more]) take(part, find(part, 0, true));
     }
     i = j;
   }

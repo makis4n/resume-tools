@@ -95,7 +95,7 @@ export interface Counted {
 }
 
 /** The rule `outcomeOf` holds a success to, as the table says it. */
-export const OUTCOME_RULE = `the first check holds, and ${Math.round(SUCCESS_RATE * 100)}% of the words or more are editable`;
+export const OUTCOME_RULE = `the first check holds, and ${Math.round(SUCCESS_RATE * 100)}% of the words or more are editable on the page`;
 
 /**
  * What an import came to, its editable rate, and what the rate counts, as item 13's report says it

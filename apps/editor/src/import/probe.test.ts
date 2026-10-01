@@ -509,6 +509,45 @@ describe("the glyphs no editable field covers", () => {
     ]);
   });
 
+  test("are a part's whose pieces the page shows nowhere whole but whose words it shows, as a parsed list's labels", () => {
+    // `\inventedchart` parses `value/label` pairs and sets each label alone, so its one piece, the
+    // values and the commas with the labels, is nowhere on the page, and its labels' words are; and
+    // its argument moved the page when marked, so no compile placed its glyphs (item 13's review).
+    const source = String.raw`\inventedentry{Alpha}\inventedchart{8/Tending bees, 6/Rowing on}`;
+    const chart = spanOf(source, "8/Tending bees, 6/Rowing on");
+    const { runs } = uncoveredRuns(
+      page(["Alpha", "Tending", "bees", "Rowing", "on", "Page"]),
+      [
+        decided("c1-1", "editable", spanOf(source, "Alpha")),
+        decided("c2-1", "moved", { ...chart, name: "inventedchart" }),
+      ],
+      new Map([["c1-1", places(0, 5)]]),
+      [],
+      { body: source, preamble: "" },
+    );
+    // The labels are the chart's; what the source sets nowhere, a page's label, the template's.
+    expect(shown(runs)).toEqual([
+      { from: 5, to: 24, by: "candidate", id: "c2-1" },
+      { from: 24, to: 28, by: "chrome" },
+    ]);
+    // The same where one label is braced, a piece the page shows whole, and the rest are not.
+    const braced = String.raw`\inventedentry{Alpha}\inventedchart{8/{Tending bees}, 6/Rowing on}`;
+    const again = uncoveredRuns(
+      page(["Alpha", "Tending", "bees", "Rowing", "on", "Page"]),
+      [
+        decided("c1-1", "editable", spanOf(braced, "Alpha")),
+        decided("c2-1", "breaks", {
+          ...spanOf(braced, "8/{Tending bees}, 6/Rowing on"),
+          name: "x",
+        }),
+      ],
+      new Map([["c1-1", places(0, 5)]]),
+      [],
+      { body: braced, preamble: "" },
+    );
+    expect(shown(again.runs)).toEqual(shown(runs));
+  });
+
   test("are a raw chunk's or a locked candidate's whole when their source lies in it", () => {
     // A raw chunk with two parts, and a locked argument with two, a separator between each two.
     const source = String.raw`\inventedraw{One $|$ Two}\inventedpair{Three $|$ Four}`;

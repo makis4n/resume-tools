@@ -433,6 +433,45 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
     expect(report.dropped).toEqual([]);
   }, 60_000);
 
+  // Item 13's review: a macro that parses a list of `value/label` pairs and sets each label alone,
+  // as a `\foreach` chart does (decision 0013's AltaCV wheel chart), set words the probe found
+  // nowhere in its source's pieces, which the report then took for the template's own and passed
+  // the bar on. The fork without its heading and skills, its 74 words editable, and an invented
+  // chart in a section of its own: the title's 2 words editable, the chart's 12 locked.
+  test("counts a parsed chart's labels as the resume's, locked, and lists the chart", async () => {
+    const heading = JAKE_FORK.slice(
+      JAKE_FORK.indexOf("\\begin{center}"),
+      JAKE_FORK.indexOf("\\end{center}") + "\\end{center}".length,
+    );
+    const end = "%-------------------------------------------\n\\end{document}";
+    const skills = JAKE_FORK.slice(
+      JAKE_FORK.indexOf("%-----------SKILLS-----------"),
+      JAKE_FORK.indexOf(end),
+    );
+    const chart = String.raw`\usepackage{pgffor}
+\newcommand{\daychart}[1]{\foreach \hours/\what in {#1}{\par\noindent\small\what}\par}
+`;
+    const call = String.raw`\section{Invented Hours}
+\daychart{8/Tending invented bees, 6/Sleeping in late, 4/Writing invented verse, 2/Rowing on lakes}
+
+`;
+    const source = JAKE_FORK.replace(heading, "")
+      .replace(skills, "")
+      .replace("\\usepackage{tabularx}\n", `\\usepackage{tabularx}\n${chart}`)
+      .replace(end, `${call}${end}`);
+    const report = reportOfImport(await imported(source));
+    expect(report.words).toMatchObject({ editable: 76, locked: 12, body: 88, template: 0 });
+    expect(report.outcome).toBe("partial");
+    expect(report.locked).toEqual([
+      {
+        words: "Tending invented bees Sleeping in late Writing invented…",
+        count: 12,
+        reason: "unmapped",
+        why: LOCK_WHY.unmapped,
+      },
+    ]);
+  }, 120_000);
+
   test("stops between compiles when its signal is aborted, and forgets its jobs", async () => {
     const stop = new AbortController();
     const reason = new Error("stopped by the test");

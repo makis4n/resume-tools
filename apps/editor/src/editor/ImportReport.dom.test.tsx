@@ -83,7 +83,7 @@ describe("an import's report", () => {
   it("says a successful import in one line, with the share of the words that are editable", () => {
     rendered({ report: report() });
     expect(host.querySelector('[role="status"]')?.textContent).toBe(
-      "Imported: 95% of your resume's words are editable.",
+      "Imported: 95% of your resume's words are editable on the page.",
     );
     // Nothing to decide, and no list of what is locked.
     expect(buttons()).toEqual([]);
@@ -103,7 +103,7 @@ describe("an import's report", () => {
       onStop: () => calls.stopped++,
     });
     expect(host.querySelector('[role="status"]')?.textContent).toBe(
-      "Imported in part: 82% of your resume's words are editable, under the 90% this editor aims for.",
+      "Imported in part: 82% of your resume's words are editable on the page, under the 90% this editor aims for.",
     );
     expect(listed("Locked")).toEqual([
       `“Quill Invented 555-0100 | quill@example.invalid | quill…”, 9 words: ${LOCK_WHY.unmapped}.`,
@@ -125,7 +125,7 @@ describe("an import's report", () => {
       onStop: () => calls.stopped++,
     });
     expect(host.querySelector('[role="status"]')?.textContent).toBe(
-      "Imported in part: 100% of your resume's words are editable, but the page this editor sets differs from your original's.",
+      "Imported in part: 100% of your resume's words are editable on the page, but the page this editor sets differs from your original's.",
     );
     expect(host.textContent).not.toMatch(/[\\{}]/);
   });

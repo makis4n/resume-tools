@@ -11,10 +11,11 @@
  * line's end; a word a run of letters and digits, as the assembly counts a field's (`wordsIn`), so
  * punctuation parts words as a space does. Each word is set by
  * what sets most of its glyphs, as the assembly read the probe's runs (`AssemblyChecks.owners`):
- * an editable field, typeset or set raw for the side panel; a locked part, with why; or the
- * template's own text, a label, a separator or a page's number, which is no word of the resume's.
- * The body's words are the editable and the locked ones, and the editable rate their editable
- * share.
+ * an editable field, typeset, which the page opens in place, or set raw, which the side panel
+ * alone edits; a locked part, with why; or the template's own text, a label, a separator or a
+ * page's number, which is no word of the resume's. The body's words are all the resume's, and the
+ * editable rate the share of them editable in place, as plan section 6.2 has the bar: the side
+ * panel's are counted apart.
  *
  * **The bar.** An import succeeds when the regenerated document set the reference's glyph stream,
  * its first check holding, and at least `SUCCESS_RATE` of the body's words are editable; anything
@@ -66,13 +67,14 @@ export interface Report {
   /** Whether the regenerated document set the reference's glyph stream: the first check held. */
   matched: boolean;
   words: {
-    /** In fields the editor edits: on the page, and of them set raw, in the side panel alone. */
+    /** In fields the page opens, editable in place, which the rate counts. */
     editable: number;
+    /** In fields set raw, which the side panel alone edits, where the page cannot mark them. */
     panel: number;
     /** Locked, in all and by reason. */
     locked: number;
     byReason: Partial<Record<LockReason, number>>;
-    /** The body's: the editable and the locked ones. */
+    /** The body's: the editable in place, the side panel's and the locked ones. */
     body: number;
     /** The template's own text, which is no word of the resume's. */
     template: number;
@@ -109,9 +111,9 @@ export function outcomeOf(rate: number, matched: boolean): ReportOutcome {
  * their first words, and what was left out. `assembled` is what `validate` returns, or what the
  * store keeps of it (`ImportReport`: the checks, and the locked parts as `locked`); `inputs` the
  * intake's images and warnings and how the naming went. The assembly's document, where it comes,
- * says which hyphens a line ends with are the resume's own (`readPage`). An assembly made before the
- * owners were read, whose words cannot be set down on the page, is counted as the assembly counted
- * its source's words, and names no part.
+ * says which hyphens a line ends with are the resume's own (`readPage`). An assembly made before
+ * the owners were read, whose words cannot be set down on the page, is counted as the assembly
+ * counted its source's words, and names no part.
  */
 export function reportOf(
   assembled: {
@@ -134,7 +136,15 @@ export function reportOf(
     words,
     locked: counted?.locked ?? [],
     dropped: droppedOf(checks, reference, inputs),
-    notes: notesOf(checks, inputs),
+    notes: [
+      ...notesOf(checks, inputs),
+      // The side panel's words, which the rate leaves out, said apart (plan section 6.2).
+      ...(words.panel === 0
+        ? []
+        : [
+            `${words.panel === 1 ? "One more word is" : `${words.panel} more words are`} editable in the side panel, where the page cannot mark ${words.panel === 1 ? "it" : "them"}.`,
+          ]),
+    ],
   };
 }
 
@@ -299,20 +309,7 @@ export function readPage(
       !SMALL_AT_START.test(texts[i + 1] ?? "")
     )
       continue;
-    if (written !== undefined) {
-      // The letters either side of the hyphen, as far as the word goes on its line and the next.
-      let before = "";
-      for (let k = i - 1; k >= 0 && /^\p{L}+$/u.test(texts[k] ?? ""); k--) {
-        before = `${texts[k]}${before}`;
-        if (spaced[k]) break;
-      }
-      let after = "";
-      for (let k = i + 1; k < texts.length && /^\p{L}+$/u.test(texts[k] ?? ""); k++) {
-        if (k > i + 1 && spaced[k]) break;
-        after += texts[k];
-      }
-      if (written(before, after)) continue;
-    }
+    if (written?.(lettersBefore(texts, spaced, i), lettersFrom(texts, spaced, i + 1))) continue;
     texts[i] = "";
     spaced[i + 1] = false;
   }
@@ -336,20 +333,67 @@ export function readPage(
   return { texts, spaced, words };
 }
 
+/** The letters a word holds right before glyph `i`, back to where it starts on its line. */
+function lettersBefore(texts: readonly string[], spaced: readonly boolean[], i: number): string {
+  let before = "";
+  for (let k = i - 1; k >= 0 && /^\p{L}+$/u.test(texts[k] ?? ""); k--) {
+    before = `${texts[k]}${before}`;
+    if (spaced[k]) break;
+  }
+  return before;
+}
+
+/** The letters a word holds from glyph `i` on, as far as it goes before a space. */
+function lettersFrom(texts: readonly string[], spaced: readonly boolean[], i: number): string {
+  let after = "";
+  for (let k = i; k < texts.length && /^\p{L}+$/u.test(texts[k] ?? ""); k++) {
+    if (k > i && spaced[k]) break;
+    after += texts[k];
+  }
+  return after;
+}
+
 /**
  * Every page of a glyph stream read into words (`readPage`), its glyphs alone; `written` says
- * which hyphens a line ends with are the resume's own.
+ * which hyphens a line ends with are the resume's own. A word TeX broke with a hyphen at a page's
+ * end, a letter before it and a small letter starting the next page, goes on there, as on a line's
+ * end (`readPage`): it is one word, counted on the page it begins on, with its glyphs there, and
+ * the next page's first word is no word of its own.
  */
 export function pageWords(
   stream: Pick<GlyphStream, "pages">,
   written?: (before: string, after: string) => boolean,
 ): ReadPage[] {
-  return stream.pages.map((page, number) => {
+  const pages = stream.pages.map((page, number) => {
     const glyphs = page.items.flatMap((item) => (item.kind === "glyph" ? [item] : []));
     const read = readPage(glyphs, written);
     for (const word of read.words) word.page = number;
     return read;
   });
+  pages.forEach((read, number) => {
+    const next = pages[number + 1];
+    const end = read.texts.length - 1;
+    if (
+      next === undefined ||
+      end < 1 ||
+      read.texts[end] !== "-" ||
+      read.spaced[end] ||
+      next.words[0]?.glyphs[0] !== 0 ||
+      !LETTER_AT_END.test(read.texts[end - 1] ?? "") ||
+      !SMALL_AT_START.test(next.texts[0] ?? "")
+    )
+      return;
+    if (
+      written?.(
+        lettersBefore(read.texts, read.spaced, end),
+        lettersFrom(next.texts, next.spaced, 0),
+      )
+    )
+      return;
+    read.texts[end] = "";
+    next.words.shift();
+  });
+  return pages;
 }
 
 /**
@@ -422,8 +466,9 @@ const ownerKey = (owner: Omit<GlyphOwner, "page" | "from" | "to">): OwnerKey =>
 
 /**
  * The page's words, each set down to what sets most of its glyphs (`AssemblyChecks.owners`), the
- * first of them where two set as many: counted editable, typeset or raw, locked by reason, or the
- * template's; and the locked parts that set any, in the page's order, each by its first words.
+ * first of them where two set as many: counted editable in place, editable in the side panel,
+ * locked by reason, or the template's; and the locked parts that set any, in the page's order, each
+ * by its first words.
  * What the document keeps that no part counts is shown as a part of its own for each run of it.
  */
 function countWords(
@@ -486,8 +531,8 @@ function countWords(
       }
       words.body++;
       if (key.startsWith("f:")) {
-        words.editable++;
         if (modes.get(key.slice(2))?.mode === "raw") words.panel++;
+        else words.editable++;
         keptRun = undefined;
         continue;
       }
@@ -520,7 +565,7 @@ function countWords(
   const locked = [...parts.values()].map((part): LockedShown => {
     const read = pages[part.page];
     const row = owners[part.page] ?? [];
-    // Every glyph of the part's where it first shows, its punctuation among them, as the page has it.
+    // Every glyph of the part's where it first shows, its punctuation among them, as on the page.
     const glyphs: number[] = [];
     for (let at = part.from; at < part.to; at++) if (row[at] === part.owner) glyphs.push(at);
     return {
@@ -535,7 +580,7 @@ function countWords(
 
 /**
  * The words as the assembly counted them in the source, for an assembly made before its owners
- * were read: its editable fields' and its locked parts', the template's none.
+ * were read: its typeset fields', its raw fields' and its locked parts', the template's none.
  */
 function sourceWords(checks: AssemblyChecks): Report["words"] {
   const byReason = { ...checks.words.locked };
@@ -543,8 +588,8 @@ function sourceWords(checks: AssemblyChecks): Report["words"] {
   const panel = checks.all
     .filter((field) => field.mode === "raw")
     .reduce((sum, field) => sum + field.words, 0);
-  const editable = checks.words.editable + panel;
-  return { editable, panel, locked, byReason, body: editable + locked, template: 0 };
+  const editable = checks.words.editable;
+  return { editable, panel, locked, byReason, body: editable + panel + locked, template: 0 };
 }
 
 // What the report says.
@@ -691,7 +736,7 @@ export const percent = (rate: number) => `${Math.floor(rate * 100 + 1e-9)}%`;
  * page.
  */
 export function summaryOf(report: Report): string {
-  const share = `${percent(report.rate)} of your resume's words are editable`;
+  const share = `${percent(report.rate)} of your resume's words are editable on the page`;
   if (report.outcome === "succeeded") return `Imported: ${share}.`;
   if (!report.matched)
     return `Imported in part: ${share}, but the page this editor sets differs from your original's.`;

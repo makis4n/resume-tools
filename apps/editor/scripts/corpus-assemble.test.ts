@@ -598,7 +598,9 @@ describe("item 13's report in the runner (decision 0039)", () => {
   test("counts the documents that succeed and the partial ones, and the words read from the page", () => {
     // Columns: jake, awesome-cv, altacv, moderncv, europecv, other, all.
     expect(
-      cells("Succeeded: the first check holds, and 90% of the words or more are editable"),
+      cells(
+        "Succeeded: the first check holds, and 90% of the words or more are editable on the page",
+      ),
     ).toEqual(["1", "0", "0", "0", "0", "0", "1"]);
     expect(cells("Partial: under the bar, or the first check differs")).toEqual([
       "1",
@@ -609,9 +611,9 @@ describe("item 13's report in the runner (decision 0039)", () => {
       "0",
       "2",
     ]);
-    expect(cells("Words in editable fields")).toEqual(["73%", "", "100%", "", "", "", "74%"]);
+    expect(cells("Words editable on the page")).toEqual(["73%", "", "100%", "", "", "", "74%"]);
     expect(cells("Words of the resume's")?.at(-1)).toBe("210");
-    expect(cells("Words editable")?.at(-1)).toBe("155");
+    expect(cells("Words editable on the page, in all")?.at(-1)).toBe("155");
     expect(cells("Words locked: `date`")?.at(-1)).toBe("55");
     expect(cells("Words of the template's own")?.at(-1)).toBe("2");
     // A reason no document's report locks a word for has no line.
@@ -663,7 +665,7 @@ describe("item 13's report in the runner (decision 0039)", () => {
       made,
     );
     expect(assembleRow(checks, "pdftex", { answered: 1, unanswered: 0 }).report).toBeUndefined();
-    expect(reportLine(made)).toBe("partial at 12%, 10 of 81 words editable");
+    expect(reportLine(made)).toBe("partial at 12%, 10 of 81 words editable on the page");
     expect(reportLine(undefined)).toBe("none");
     expect(reportSucceeded({ report: made })).toBe(false);
     expect(reportSucceeded({ report: { ...made, outcome: "succeeded" } })).toBe(true);

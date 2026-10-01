@@ -39,13 +39,21 @@ to be those whose first check holds. The code is `apps/editor/src/import/report.
   as the upload wrote it, whatever their case, when it parts two words as any hyphen does. The
   Awesome-CV sample breaks three words of its fields so, which its source holds whole, and ends a
   line with one hyphen of its own; one moderncv fork of the sample ends a line with one of its own.
+  So does a hyphen that ends a page, a small letter starting the next (item 13's review): the word
+  is one, counted on the page it begins on, and the next page's first word is none of its own.
 
 ### Who sets each word: the attribution, in order
 
 1. **The probe's runs** (decision 0022), now kept whole (`Probe.runs`): every run of the
    reference's glyphs and what sets it, an editable candidate's glyphs a compile showed in place
    among them, besides the uncovered ones the probe already kept, each a locked candidate's, a raw
-   chunk's or the template's own (`chrome`).
+   chunk's or the template's own (`chrome`). Where no compile placed a locked candidate's or a raw
+   chunk's glyphs, the probe finds them by the pieces of text its source sets, and now, among the
+   glyphs those leave unclaimed, by its words alone too (item 13's review): a macro that parses a
+   list of `value/label` pairs and sets each label alone, as a `\foreach` chart does (AltaCV's
+   wheel chart, decision 0013), holds pieces the page never shows whole, values and commas with the
+   labels, so that its labels went to the template's text, left the resume's words, and passed an
+   import over the bar that should not pass it.
 2. **The assembly reads each run through the document it made** (`ownersOf`,
    `AssemblyChecks.owners`): a run a part of the source sets belongs to the innermost editable
    field that holds that part, typeset or set raw for the side panel; else to the innermost locked
@@ -59,16 +67,18 @@ to be those whose first check holds. The code is `apps/editor/src/import/report.
    preambles write them alike (`preambleSpans`). The template's own text has no owner.
 3. **A word is what sets most of its glyphs**, the first where two set as many.
 
-The body's words are the editable and the locked ones; the template's own, a label, a separator,
-an icon's neighbour or a page's number no part of the document's source sets, are no word of the
-resume's and count in neither. **A raw field is editable**: the side panel edits it where the page
-cannot mark it, as a contact whose address is built from its text (decision 0026); the report counts
-its words apart (`panel`). **The editable rate** is the editable words over the body's.
+The body's words are all the resume's; the template's own, a label, a separator, an icon's neighbour
+or a page's number that no part of the document's source sets, are no word of the resume's.
+**The editable rate is the share of the body's words editable in place**, in fields the page opens,
+as plan section 6.2 has the bar ("90% of body words are editable in place"); a raw field's words,
+which the side panel alone edits where the page cannot mark them, as a contact whose address is
+built from its text (decision 0026), are the body's and count apart (`panel`, item 13's review),
+never toward the bar: the report says how many there are.
 
 ### The bar
 
 - **An import succeeds when its first check holds** (the regenerated document set the reference's
-  glyph stream, decision 0026) **and at least 90% of its body's words are editable**
+  glyph stream, decision 0026) **and at least 90% of its body's words are editable in place**
   (`SUCCESS_RATE`, `outcomeOf`); anything else is partial. 90% is the plan's default (plan section
   3, "Import success bar"), which no measurement here argues against: the bar's job is to keep a
   poor import from looking like a good one, and a tenth of a resume locked is about what a person
@@ -88,8 +98,9 @@ All of it in plain words, never a command's name or a line of source: every stri
 `shown`, which takes out a backslash, a brace, a control and the private use area's characters
 whatever the page or a name holds, and a test holds every string to that.
 
-- **Its first line** (`summaryOf`): "Imported: 96% of your resume's words are editable.", or for a
-  partial import why: under the bar, or the page this editor sets differs from the original's.
+- **Its first line** (`summaryOf`): "Imported: 96% of your resume's words are editable on the
+  page.", or for a partial import why: under the bar, or the page this editor sets differs from the
+  original's.
 - **Each locked part that sets a word**, in the page's order, by its first words as the page shows
   them, eight at most and an ellipsis after (`FIRST_WORDS`), with its count and why
   (`LOCK_WHY`, a sentence for each of the probe's, the assembly's and the harness's reasons);
@@ -101,8 +112,8 @@ whatever the page or a name holds, and a test holds every string to that.
   a value or quote TeX; and each file the intake or the XeTeX rewrite left out, in their words
   (`ImportReport.warnings` now holds the rewrite's too).
 - **Notes**: no answer came for the template, in the naming client's words (decision 0038); the
-  fonts were set in Latin Modern (decision 0026); and the kinds of unit the template can neither
-  add nor remove (decision 0038).
+  fonts were set in Latin Modern (decision 0026); the kinds of unit the template can neither add
+  nor remove (decision 0038); and how many more words the side panel alone edits.
 
 ### The screen
 
@@ -146,65 +157,82 @@ The report names the two parts "Quill Invented 555-0100 | quill@example.invalid 
 words) and "Languages: Invented, Words, Other Tools: Quill, Wren" (7). `run.test.ts` holds the
 report to the hand count within two words.
 
+The review's case, also in `run.test.ts`: the fork without its heading and its skills, and with an
+invented `\foreach` chart in a section of its own, whose four labels are 12 words. Before the
+probe looked for a part's words alone, the labels were the template's, and the import passed:
+"Imported: 100% of your resume's words are editable.", none locked. Counted by hand, 76 words are
+editable, the section title's 2 among them, and the chart's 12 locked, 88 in all; the report now
+reads 76 of 88, 86.4%, partial, and names the chart by its first words, "Tending invented bees
+Sleeping in late Writing invented…" (12 words).
+
 ### The three upstream samples
 
-Through the same import, the M4 Pro, the tree of layout 7. The source count is decision 0026's
-(the assembly's own, in the source, raw fields aside).
+Through the same import, the M4 Pro, the tree of layout 7, with the review's fixes. The source
+count is decision 0026's, the assembly's own in the source, its typeset fields' words of all its
+fields' and locked parts'.
 
-| Sample | Editable | The resume's | The template's | Rate | Outcome | Source count |
-|---|--:|--:|--:|--:|---|--:|
-| Jake's Resume | 323 | 389 | 0 | 83.0% | partial | 323 of 389 |
-| AltaCV | 67 | 219 | 13 | 30.6% | partial | 67 of 282 |
-| Awesome-CV | 1032, 9 of them the side panel's | 1269 | 18 | 81.3% | partial | 1023 of 1260 |
+| Sample | Editable on the page | In the side panel | The resume's | The template's | Rate | Outcome | Source count |
+|---|--:|--:|--:|--:|--:|---|--:|
+| Jake's Resume | 323 | 0 | 389 | 0 | 83.0% | partial | 323 of 389 |
+| AltaCV | 67 | 0 | 232 | 0 | 28.9% | partial | 67 of 282 |
+| Awesome-CV | 1023 | 9 | 1269 | 18 | 80.6% | partial | 1023 of 1260 |
 
 - **Jake's sample** reads as its source counts, word for word: its heading block (15 words), its
   skills (40) and three dates written with a stop (11) are locked, as decision 0026 found them.
 - **Awesome-CV's** pages hold its source's words to the word: its typeset fields its 1023, once the
   three words TeX broke with a hyphen read as one each, and its locked parts its 237, reason by
-  reason (`date` 35, `unmapped` 192, `shape` 5, `text` 4, `differs` 1); the side panel edits 9 more,
-  its raw contacts', which the source count leaves out. Its 18 template words are its class's own
-  text, which no source counts.
-- **AltaCV's** pages show 63 fewer locked words than its source counts in its locked parts: words
-  their source holds that set no word on the page, as an argument a macro reads and does not show.
-  The page's count is the report's. Its 13 template words are its class's own text; the report
-  lists its images and its bibliography as left out.
+  reason (`date` 35, `unmapped` 192, `shape` 5, `text` 4, `differs` 1). The side panel edits 9
+  more, its raw contacts', which the source count leaves out and the rate now does too.
+- **AltaCV's** pages showed 13 words the report left to the template: the probe's search by words
+  now gives all 13 to a locked part (`unmapped`, 117 where it was 104), as the review expected of
+  the words its wheel chart sets from a list of `value/label` pairs, and its template words are
+  none. Its source still counts 50 words more than its pages show: words the page never sets, as
+  the review found them, the chart's values and ratings, lengths and widths, colours, the photo's
+  size and file name, and options. The page's count is the report's.
+- **The template's counts are unverified.** No one has read the samples' pages to say which words
+  are the template's own (below): AltaCV's 13 were a parsing macro's, and Awesome-CV's 18, which
+  the search by words does not move, are words no part's source holds where its pages set them,
+  most likely the footer its class sets on each of its three pages from one call, with a date and
+  a page's number that no text of the source spells.
 
-**The hand counts of the three samples are owed.** The permission system of the session that built
-this item refused it a reading of `.corpus/oracle/`, where the samples are fetched, as it guards the
-corpus's documents, so nobody has yet counted their pages by hand. `scripts/corpus-oracle.test.ts`
-holds each sample's report to the counts above within two words (`SAMPLE_COUNTS`), the report's own
-on this commit, as a regression check until a person counts each page: import the sample in the dev
-server, read each page's words, the runs of letters and digits, and set each down to a field the
-page opens, a part the report names by its first words, or the template, the way the fork's are
-counted above; then write the counts here and in the test, and tick item 13.
+**The hand counts of the three samples are owed, and item 13 stays unticked.** The permission
+system of the session that built this item refused it a reading of `.corpus/oracle/`, where the
+samples are fetched, as it guards the corpus's documents, so nobody has counted their pages by hand;
+how they are counted is the owner's to decide. `scripts/corpus-oracle.test.ts` holds each
+sample's report to the counts above within two words (`SAMPLE_COUNTS`), the report's own on this
+commit and no hand count's, as a regression check until then: a count reads each page's words,
+the runs of letters and digits, and sets each down to a field the page opens, a field of the side
+panel's, a part the report names by its first words, or the template, the way the fork's are
+counted above; its numbers then go here and in the test, and item 13 is ticked.
 
 ## The sample
 
 `corpus run --committed-only` over the twenty documents of the sample, on main with item 17 merged,
 the M4 Pro, four children beside other work: 15.2 minutes, altacv-0001 timing out at its 900 s as
-every run of it does (decision 0040). Beside it, decision 0043's interim rule, the assembly's words
-counted in the source, from its runs before item 12 merged and since.
+every run of it does (decision 0040). Beside it, the same run before the review's fixes, and
+decision 0043's interim rule, the assembly's words counted in the source, from its runs before item
+12 merged and since.
 
-| | The report's rule | The interim rule, before item 12 | The interim rule, since |
-|---|--:|--:|--:|
-| Success | 0 | 0 | 0 |
-| Partial | 12 | 13 | 12 |
-| Refused | 3 | 2 | 3 |
-| No answer, timed out | 4, 1 | 4, 1 | 4, 1 |
-| Words in editable fields | 9.0% of 7,780 | 9.8% of 8,749 | 8.7% of 7,708 |
+| | The report's rule | Before the review | The interim rule, before item 12 | The interim rule, since |
+|---|--:|--:|--:|--:|
+| Success | 0 | 0 | 0 | 0 |
+| Partial | 12 | 12 | 13 | 12 |
+| Refused | 3 | 3 | 2 | 3 |
+| No answer, timed out | 4, 1 | 4, 1 | 4, 1 | 4, 1 |
+| Words in editable fields | 8.5% of 7,828 | 9.0% of 7,780 | 9.8% of 8,749 | 8.7% of 7,708 |
 
 Since item 12, the privacy gate withholds `jake-0021`'s request and the run refuses it
 (`request`, decision 0043), which this item does not move. Over the same twelve, the report reads
-697 words editable of the resume's 7,780 on their pages, 29 of them the side panel's, and locks
-`unmapped` 6,829, `moved` 126, `shape` 118, `date` 8 and `text` 2; their pages set 92 words of
-their templates' own besides. `corpus assemble` over the same documents but altacv-0001, 1.9
-minutes, reads the same words from the same function, document by document.
+668 words editable on the page of the resume's 7,828, besides 29 in the side panel, and locks
+`unmapped` 6,873, `moved` 126, `shape` 118, `date` 8 and `text` 6. The review's fixes take the
+29 side-panel words out of the rate and give 48 words the template had to locked parts, 44 of them
+the two AltaCV forks' and 4 a moderncv fork's. `corpus assemble` reads the same words from the
+same function, document by document, as a run of it before the review's fixes showed.
 
 - **The page and the source agree on what is typeset**: in every one of the twelve, the words of the
-  fields the page opens are, to the word, those the assembly counts in its source; the report's
-  other editable words are the raw contacts', which the source count leaves out. The locked words
-  part by a few in each, 43 of 7,040 in all, as a page and a source each show what the other does
-  not, a hyphen or a word a macro reads and never sets.
+  fields the page opens are, to the word, those the assembly counts in its source. The locked words
+  part by a few in each, as a page and a source each show what the other does not: a hyphen, a
+  word a macro reads and never sets, or one it sets that its source holds in another shape.
 - **No import succeeds yet, as none did before**: the committed answers name the launch templates'
   own macros, and these forks call macros of their own, so what they set stays `unmapped`, 88% of
   the resume's words, until item 18's model answers them (decision 0026's finding). The bar of page
@@ -223,10 +251,13 @@ minutes, reads the same words from the same function, document by document.
   at a line's end whose two halves the resume also writes with a hyphen somewhere reads as two; a
   word whose letters a class spaces more than a tenth of their size would read as several, which no
   sample does. A page's number or a date `\today` sets, called from the body, counts as the
-  resume's, locked, since the body's source sets it.
+  resume's, locked, where the probe sets its glyphs down to the call, as it does a stretch whose
+  source lies inside one; where no text of the source finds them, they are the template's.
 - **The template's own text is the probe's `chrome`** (decision 0022): what no part of the
-  document's source sets, read by the pieces of text each part's source holds. A class label the
-  probe sets down to a neighbouring part is counted as that part's, locked.
+  document's source sets, read by the pieces of text each part's source holds and by its words
+  alone. The search errs on the resume's side: a class label whose words a neighbouring part's
+  source holds too is counted as that part's, locked, which can only lower the rate. Text a macro
+  makes that no source spells, a date, a page's number, a counter, stays the template's.
 - **An import kept before this change** has no owners, and its report counts the words as its
   assembly did in the source, naming no part; only development stores hold such imports.
 - **A partial import is not kept until the person continues**: one left waiting when the tab goes

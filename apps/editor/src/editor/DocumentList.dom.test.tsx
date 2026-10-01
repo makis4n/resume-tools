@@ -178,7 +178,7 @@ describe("the document list's way in", () => {
       },
     });
     expect(host.querySelector('[role="status"]')?.textContent).toBe(
-      "Imported in part: 50% of your resume's words are editable, under the 90% this editor aims for.",
+      "Imported in part: 50% of your resume's words are editable on the page, under the 90% this editor aims for.",
     );
     // Nothing else starts meanwhile: no picker, no new document, no document to open.
     expect(picker()).toBeNull();

@@ -69,7 +69,9 @@ describe("the outcome and the editable rate", () => {
       counted: { editable: 90, all: 100, locked: { date: 10 } },
     });
     expect(SUCCESS_RATE).toBe(0.9);
-    expect(OUTCOME_RULE).toBe("the first check holds, and 90% of the words or more are editable");
+    expect(OUTCOME_RULE).toBe(
+      "the first check holds, and 90% of the words or more are editable on the page",
+    );
     const short = outcomeOfChecks(checks({ words: { editable: 89, locked: { date: 11 } } }));
     expect(short).toEqual({
       outcome: "partial",

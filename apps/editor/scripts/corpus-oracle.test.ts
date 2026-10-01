@@ -201,17 +201,18 @@ describe("the oracle", () => {
 const fetched = existsSync(join(ORACLE_DIR, "jake-0000", "resume.tex"));
 
 /**
- * Each upstream sample's words as item 13's report reads them from its page (decision 0039): in
- * editable fields, the resume's in all, and the template's own. They are the report's counts on
- * this commit, through the import the browser runs; the person's hand count of each page, which
- * decision 0039 owes, holds them to within two words.
+ * Each upstream sample's words as item 13's report reads them from its page (decision 0039): those
+ * editable on the page, the resume's in all, and the template's own. They are the report's counts
+ * on this commit, through the import the browser runs, and no hand count's: a hand count of each
+ * page is owed (decision 0039), and the owner decides how it is made; until then they hold the
+ * report to what it counts now, within two words.
  */
 const SAMPLE_COUNTS: Readonly<
   Record<string, { editable: number; body: number; template: number; outcome: string }>
 > = {
   "jake-0000": { editable: 323, body: 389, template: 0, outcome: "partial" },
-  "altacv-0000": { editable: 67, body: 219, template: 13, outcome: "partial" },
-  "awesome-cv-0000": { editable: 1032, body: 1269, template: 18, outcome: "partial" },
+  "altacv-0000": { editable: 67, body: 232, template: 0, outcome: "partial" },
+  "awesome-cv-0000": { editable: 1023, body: 1269, template: 18, outcome: "partial" },
 };
 
 describe.skipIf(!fetched || !engineAvailable())(

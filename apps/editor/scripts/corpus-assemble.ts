@@ -567,19 +567,19 @@ export function assembleTable(rows: readonly AssembleRow[]): string {
     ),
     section("The report, its words read from the page"),
     count(
-      `Succeeded: the first check holds, and ${percent(SUCCESS_RATE)} of the words or more are editable`,
+      `Succeeded: the first check holds, and ${percent(SUCCESS_RATE)} of the words or more are editable on the page`,
       reportSucceeded,
     ),
     count("Partial: under the bar, or the first check differs", (row) =>
       done(row) ? row.report?.outcome === "partial" : false,
     ),
     share(
-      "Words in editable fields",
+      "Words editable on the page",
       (row) => row.report?.words.editable ?? 0,
       (row) => row.report?.words.body ?? 0,
     ),
     sum("Words of the resume's", (row) => row.report?.words.body ?? 0),
-    sum("Words editable", (row) => row.report?.words.editable ?? 0),
+    sum("Words editable on the page, in all", (row) => row.report?.words.editable ?? 0),
     sum("Words editable in the side panel alone", (row) => row.report?.words.panel ?? 0),
     ...pageReasons.map((reason) =>
       sum(`Words locked: \`${reason}\``, (row) => row.report?.words.locked[reason] ?? 0),
@@ -888,7 +888,7 @@ export function comparePlaces(
  */
 export function reportLine(report: ReportRow | undefined): string {
   if (report === undefined) return "none";
-  return `${report.outcome} at ${percent(report.rate)}, ${report.words.editable} of ${report.words.body} words editable`;
+  return `${report.outcome} at ${percent(report.rate)}, ${report.words.editable} of ${report.words.body} words editable on the page`;
 }
 
 /** The oracle's assemblies as a Markdown table: each sample's outcome, and its fields by place. */

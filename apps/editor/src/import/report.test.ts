@@ -150,6 +150,25 @@ describe("reading a page's words", () => {
     expect(report.words.editable).toBe(4);
   });
 
+  test("reads a word TeX broke with a hyphen at a page's end as one, counted on the page it begins on", () => {
+    const broken = {
+      pages: [{ items: line("an inven-", 50 * PT) }, { items: line("ted word", 0) }],
+    };
+    const pages = pageWords(broken);
+    const shownWords = pages.map((read) =>
+      read.words.map((word) => word.glyphs.map((at) => read.texts[at]).join("")),
+    );
+    // One word, `inven` on the first page, whose next page's `ted` is no word of its own.
+    expect(shownWords).toEqual([["an", "inven"], ["word"]]);
+    expect(pages[0]?.texts.at(-1)).toBe("");
+    // A hyphen the resume writes itself parts the two, as on one page; and a capital after a
+    // hyphen at a page's end, as a name joined by one, starts a word of its own.
+    const written = (before: string, after: string) => `${before}-${after}` === "inven-ted";
+    expect(pageWords(broken, written).flatMap((read) => read.words).length).toBe(4);
+    const named = { pages: [{ items: line("Jean-", 50 * PT) }, { items: line("Quill", 0) }] };
+    expect(pageWords(named).flatMap((read) => read.words).length).toBe(2);
+  });
+
   test("reads a glyph the page cannot name as nothing, and only glyphs, page by page", () => {
     // `a`, an icon the page has no text for, and `b`, side by side: two words, the icon neither.
     const [a, icon, b] = line("axb", 0) as [ReferenceGlyph, ReferenceGlyph, ReferenceGlyph];
@@ -259,19 +278,23 @@ function reportOfInvented(changes: Partial<AssemblyChecks> = {}, inputs = {}): R
 }
 
 describe("the report", () => {
-  test("counts the page's words by what sets them, and the editable share of the resume's", () => {
+  test("counts the page's words by what sets them, and the share of the resume's editable in place", () => {
     const report = reportOfInvented();
-    // Quill Invented (2), Invented Engineer (2), quill example invalid (3, the side panel's) are
-    // editable; Jul 2020 Present (3) and the skills (7) locked; Page the template's.
+    // Quill Invented (2) and Invented Engineer (2) are editable in place, and quill example invalid
+    // (3) in the side panel alone, which the rate leaves out, as plan section 6.2 counts the bar;
+    // Jul 2020 Present (3) and the skills (7) locked; Page the template's.
     expect(report.words).toEqual({
-      editable: 7,
+      editable: 4,
       panel: 3,
       locked: 10,
       byReason: { date: 3, unmapped: 7 },
       body: 17,
       template: 1,
     });
-    expect(report.rate).toBeCloseTo(7 / 17, 10);
+    expect(report.rate).toBeCloseTo(4 / 17, 10);
+    expect(report.notes).toEqual([
+      "3 more words are editable in the side panel, where the page cannot mark them.",
+    ]);
     expect(report.outcome).toBe("partial");
     expect(report.matched).toBe(true);
   });
@@ -344,10 +367,12 @@ describe("the report", () => {
       { pages: [{ items: glyphs }], bibliographyLeftOut: false, images: [] },
     );
     expect(editable.outcome).toBe("succeeded");
-    expect(summaryOf(editable)).toBe("Imported: 100% of your resume's words are editable.");
+    expect(summaryOf(editable)).toBe(
+      "Imported: 100% of your resume's words are editable on the page.",
+    );
     // Partial, under the bar, and with the page moved.
     expect(summaryOf(reportOfInvented())).toBe(
-      "Imported in part: 41% of your resume's words are editable, under the 90% this editor aims for.",
+      "Imported in part: 23% of your resume's words are editable on the page, under the 90% this editor aims for.",
     );
     const moved = reportOf(
       {
@@ -358,7 +383,7 @@ describe("the report", () => {
     );
     expect(moved.outcome).toBe("partial");
     expect(summaryOf(moved)).toBe(
-      "Imported in part: 100% of your resume's words are editable, but the page this editor sets differs from your original's.",
+      "Imported in part: 100% of your resume's words are editable on the page, but the page this editor sets differs from your original's.",
     );
   });
 
@@ -448,6 +473,7 @@ describe("the report", () => {
       "No answer came for the template, so its parts stay as your original sets them: The naming service could not be reached. Check the connection and try again.",
       "Its Computer Modern fonts are set in Latin Modern, their successor, which the page can draw.",
       "The template takes no more and no fewer entries and list sections than your original has.",
+      "3 more words are editable in the side panel, where the page cannot mark them.",
     ]);
   });
 
@@ -497,7 +523,7 @@ describe("the report", () => {
       { pages: [{ items: line("Anything", 0) }], bibliographyLeftOut: false, images: [] },
     );
     expect(report.words).toEqual({
-      editable: 62,
+      editable: 60,
       panel: 2,
       locked: 40,
       byReason: { date: 4, unmapped: 36 },
