@@ -34,7 +34,6 @@ import { FontLibrary } from "../src/page/fonts";
 import { TexLiveIndex } from "../src/page/texlive";
 import { FileAnswerCache } from "./answer-cache";
 import { answersFor } from "./corpus-assemble";
-import { gatedRequest } from "./corpus-name";
 import {
   asCallSite,
   type Carrier,
@@ -1042,28 +1041,26 @@ describe.skipIf(!engineAvailable())(
       if (isRefusal(built)) throw new Error(built.message);
       const probed = await probe(session, fonts, taken, made_, built, found);
       if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
-      const inputs = {
+      // The request as the run builds it, the import's own, without the header's values
+      // (`importRequest`, decision 0038), and the answers a model gave, filed in a cache of this
+      // test's own; the check is given the header's values they find besides, as the run gives it.
+      const sent = await naming.importRequest({
         tree: built,
-        found,
-        probed,
+        signatures: found,
+        probe: probed,
         preamble: body.preamble,
-        taken,
-        made: made_,
+        intake: taken,
+        reference: made_,
         fonts,
-      };
-      // The answers a model gave, filed in a cache of this test's own, and the request again with
-      // the header's values they find, as the run builds it.
-      const cache = new FileAnswerCache({ committed: folder(), writable: folder() });
-      const plain = await gatedRequest(naming, inputs);
-      if ("refused" in plain) throw new Error(plain.refused);
-      const filing = await storedAnswersOf(plain.request, NAMING, "model:invented-model");
-      for (const each of filing.answers) cache.put(each.key, each);
-      const requested = await gatedRequest(naming, {
-        ...inputs,
-        header: { first: "Quillwort", last: "Larkfield" },
       });
-      if ("refused" in requested) throw new Error(requested.refused);
-      const { request, names, document } = requested;
+      if ("refused" in sent) throw new Error(sent.message);
+      const cache = new FileAnswerCache({ committed: folder(), writable: folder() });
+      const filing = await storedAnswersOf(sent.request, NAMING, "model:invented-model");
+      for (const each of filing.answers) cache.put(each.key, each);
+      const { request, names } = sent;
+      const header = { first: "Quillwort", last: "Larkfield" };
+      const document = { ...sent.document, header };
+      expect(naming.findLeaks(request, sent.document)).toEqual([]);
       expect(naming.findLeaks(request, document)).toEqual([]);
       const realName = (name: string) => naming.realName(names, name);
       const asked = request.macros.map((macro) => ({ ...macro, name: realName(macro.name) }));
@@ -1104,7 +1101,7 @@ describe.skipIf(!engineAvailable())(
         gate: "passes",
         text: {
           tree: built,
-          header: document.header ?? {},
+          header,
           stored: [...(document.stored ?? [])],
           sources: [...(document.sources ?? [])],
           page: document.page ?? {

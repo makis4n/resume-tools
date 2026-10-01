@@ -6,13 +6,15 @@
  * where the page cannot draw its Computer Modern in T1 or TS1 (`inLatinModern`, decision 0026), the
  * signatures' two compiles, asked of the body's commands, the preamble's and the sizes the class may
  * declare (`SIZE_OPTIONS`, decision 0026), the parse, the probe and the naming request, built as the
- * import builds it, with the upload's sources, the page's strings and the header's values, and
- * gated as `corpus name` gates it (`gatedRequest`, decision 0033); its answers, from the committed
+ * import sends it, by its own function (`importRequest`, decision 0038), with the upload's sources
+ * and the page's strings and without the header's values, and refused, as the import refuses it,
+ * when the privacy check finds the resume's text in it (`request`); its answers, from the committed
  * folder, or from it and the cache of the model the parent names, each as the document's macro
  * (`answerFor`), and, when the parent asks with a key in the environment, from that model for what
- * they miss, behind the privacy gate (`answerDocument`, decision 0027); and, where any macro has an
- * answer, the XeTeX rewrite of its fonts and its check (decision 0023), and its package and
- * document assembled and validated.
+ * they miss, behind a stricter check, the header's values the answers find given to it besides, as
+ * `corpus leak` proves the request (`answerDocument`, decisions 0027 and 0033); and, where any
+ * macro has an answer, the XeTeX rewrite of its fonts and its check (decision 0023), and its
+ * package and document assembled and validated.
  *
  * It answers with the document's rows, `corpus assemble`'s and `corpus run`'s, names and numbers
  * only; the probe's row and the whole probe, for the oracle; the fields found by the model's place,
@@ -44,13 +46,7 @@ import {
   fieldsFound,
   type SectionRemoval,
 } from "./corpus-assemble.ts";
-import {
-  answerDocument,
-  gatedRequest,
-  MODEL_LIMIT_MS,
-  MODEL_RETRIES,
-  namingConfig,
-} from "./corpus-name.ts";
+import { answerDocument, MODEL_LIMIT_MS, MODEL_RETRIES, namingConfig } from "./corpus-name.ts";
 import { probeRow } from "./corpus-probe.ts";
 import { type RunDocument, reviewNotesOf } from "./corpus-review.ts";
 import { type RefusalStep, type RunChildRow, type RunNaming, runRowOf } from "./corpus-run.ts";
@@ -279,62 +275,30 @@ async function main() {
       const probedRow = { probe: probeRow(probed), probeDetail: probed };
       if (probed.baseline !== undefined)
         return done({ outcome: "baseline", engine }, { outcome: "baseline", engine }, probedRow);
-      // The request as the import builds it, and its gate, as `corpus name` and `corpus leak` build
-      // them: the upload's sources and the page's strings among what masks it, and the header's
-      // values, found by the answers the request without them finds (decisions 0024 and 0033).
+      // The request the import sends, by the import's own function (`importRequest`, decision
+      // 0038): the upload's sources and the page's strings among what masks it, and never the
+      // header's values, which only the answers give. Those the answers the request finds give, as
+      // `corpus leak` finds them (decision 0024), are read besides by the stricter check the model
+      // is asked behind and by the review's leak check.
       const answers = answersOf(task.message.answers?.model);
-      const inputs = { tree: built, found, probed, preamble: body.preamble, taken, made, fonts };
-      // The builder refuses a request only for a page the detector cannot read (decision 0033).
-      const unreadable = () =>
-        refused({ reason: "unreadable" }, engine, "request", { more: probedRow });
-      const plain = await gatedRequest(naming, inputs);
-      if ("refused" in plain) return unreadable();
-      const header = headerOf(
-        probed.candidates,
-        commandAnswers(plain.request, answers.read, (name) => naming.realName(plain.names, name)),
-      );
-      const requested = await gatedRequest(naming, { ...inputs, header });
-      if ("refused" in requested) return unreadable();
-      const { request, names, document } = requested;
-      const gate = naming.findLeaks(request, document).length === 0 ? "passes" : "withholds";
-      // The model is asked only when the parent says so, with a key, behind the gate (`corpus name`).
-      const id = task.message.answers?.model;
-      const asking = task.message.answers?.ask === true && id !== undefined && key !== undefined;
-      const answered = await answerDocument(request, {
-        cache: answers.cache,
-        gate: requested.gate,
-        ...(asking ? { model: { model: soclaasModel(key, id), id } } : {}),
-        maxRetries: MODEL_RETRIES,
-        partTimeoutMs: MODEL_LIMIT_MS,
+      const sent = await naming.importRequest({
+        tree: built,
+        signatures: found,
+        probe: probed,
+        preamble: body.preamble,
+        intake: taken,
+        reference: made,
+        fonts,
       });
-      const runNaming: RunNaming = {
-        macros: answered.macros,
-        reviewed: answered.hits.reviewed,
-        model: answered.hits.model,
-        refused: answered.refusedCache,
-        missing: answered.missing.length,
-        asked: answered.asked,
-        stored: answered.stored,
-        invalid: answered.invalid,
-        conflicts: answered.conflicts,
-        ...(answered.failed === undefined ? {} : { failed: answered.failed.reason }),
-        calls: answered.calls,
-        tokens: answered.tokens,
-        gate,
-      };
-      // What the naming step and the probe counted, which every row from here on carries.
-      const counts = { naming: runNaming, compiles: { probe: probed.compiles } };
+      // The builder refuses a request only for a page the detector cannot read (decision 0033).
+      if ("refused" in sent) return refused(sent, engine, "request", { more: probedRow });
+      const { request, names, document } = sent;
       // The request writes a macro named after a word of the person's as a placeholder (decision
       // 0033); the answers are asked for, and come back, under the document's own names.
       const realName = (name: string) => naming.realName(names, name);
-      const asked = request.macros.map((macro) => ({ ...macro, name: realName(macro.name) }));
-      const assembling = await answersFor(asked, answers.cache);
-      took("naming");
-      const counted = {
-        answered: assembling.answered,
-        unanswered: assembling.unanswered,
-        ...(assembling.refused === 0 ? {} : { answersRefused: assembling.refused }),
-      };
+      const header = headerOf(probed.candidates, commandAnswers(request, answers.read, realName));
+      const checked = { ...document, header };
+      const gate = naming.findLeaks(request, checked).length === 0 ? "passes" : "withholds";
       // What the review reads of the document: its request, the gate's word, and its text, which
       // the export's leak check reads, never writes; its macros' fates join them below.
       const kept: Omit<RunDocument, "id" | "family" | "outcome"> = {
@@ -342,7 +306,7 @@ async function main() {
         gate,
         text: {
           tree: built,
-          header: document.header ?? {},
+          header,
           stored: [...(document.stored ?? [])],
           sources: [...(document.sources ?? [])],
           page: document.page ?? {
@@ -376,6 +340,52 @@ async function main() {
               trees: { body: built, preamble: preambleTree(text) },
             })
           : undefined;
+      // The import sends the request only when the privacy check, fed what the browser has, finds
+      // none of the resume's text in it, and refuses the resume otherwise (`request`, decision
+      // 0038): so does the run.
+      try {
+        naming.assertNoText(request, document);
+      } catch {
+        return refused({ reason: "request" }, engine, "request", {
+          more: { ...probedRow, review: { ...kept, notes: await notesOf() } },
+        });
+      }
+      // The model is asked only when the parent says so, with a key, and behind the stricter
+      // check, which the header's values are given to besides, as `corpus leak` proves the request.
+      const id = task.message.answers?.model;
+      const asking = task.message.answers?.ask === true && id !== undefined && key !== undefined;
+      const answered = await answerDocument(request, {
+        cache: answers.cache,
+        gate: () => naming.assertNoText(request, checked),
+        ...(asking ? { model: { model: soclaasModel(key, id), id } } : {}),
+        maxRetries: MODEL_RETRIES,
+        partTimeoutMs: MODEL_LIMIT_MS,
+      });
+      const runNaming: RunNaming = {
+        macros: answered.macros,
+        reviewed: answered.hits.reviewed,
+        model: answered.hits.model,
+        refused: answered.refusedCache,
+        missing: answered.missing.length,
+        asked: answered.asked,
+        stored: answered.stored,
+        invalid: answered.invalid,
+        conflicts: answered.conflicts,
+        ...(answered.failed === undefined ? {} : { failed: answered.failed.reason }),
+        calls: answered.calls,
+        tokens: answered.tokens,
+        gate,
+      };
+      // What the naming step and the probe counted, which every row from here on carries.
+      const counts = { naming: runNaming, compiles: { probe: probed.compiles } };
+      const asked = request.macros.map((macro) => ({ ...macro, name: realName(macro.name) }));
+      const assembling = await answersFor(asked, answers.cache);
+      took("naming");
+      const counted = {
+        answered: assembling.answered,
+        unanswered: assembling.unanswered,
+        ...(assembling.refused === 0 ? {} : { answersRefused: assembling.refused }),
+      };
       if (assembling.found.length === 0)
         return done(
           { outcome: "no answer", engine, ...counted, answered: 0 },

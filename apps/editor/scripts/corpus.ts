@@ -135,19 +135,20 @@
  *   --only <id>   that document only, or the documents a comma separates, `jake-0001,altacv-0001`
  *   --json <file> write each document's row as JSON too, names and numbers only
  *   run           take every fetched document through the whole import, as `assemble` and in its
- *                 child, with the naming request built and gated as `name` builds it, its answers
- *                 from the committed ones first and then the cache of the model `NAMING_MODEL`
- *                 names; print each document's outcome, success, partial, refused or where it
- *                 stopped, and the bar's controls it proves, and one table per family and in all,
- *                 with a headline of the shares, the editable rate, the locked words by reason and
- *                 the bar, names and counts only; keep each document's assembly, and what the
- *                 review reads of it, which holds its text, under `.corpus/run/`
- *                 (`scripts/corpus-run.ts`, decision 0043). It exits 1 when a success lacks any of
- *                 the page size, the margins and the font size, item 14's bar, and names each such
- *                 document by its id and the control (decision 0040). A --committed-only run over
- *                 the whole corpus is held to `corpus/baseline.json`, and exits 1 when its success
- *                 rate falls more than a point under the baseline's. It takes about an hour for the
- *                 corpus on CI's runner
+ *                 child, with the naming request the import sends (`importRequest`), refused where
+ *                 the import's privacy check refuses it, its answers from the committed ones first
+ *                 and then the cache of the model `NAMING_MODEL` names, the model asked behind a
+ *                 check given the header's values besides; print each document's outcome, success,
+ *                 partial, refused or where it stopped, and the bar's controls it proves, and one
+ *                 table per family and in all, with a headline of the shares, the editable rate,
+ *                 the locked words by reason and the bar, names and counts only; keep each
+ *                 document's assembly, and what the review reads of it, which holds its text, under
+ *                 `.corpus/run/` (`scripts/corpus-run.ts`, decision 0043). It exits 1 when a
+ *                 success lacks any of the page size, the margins and the font size, item 14's
+ *                 bar, and names each such document by its id and the control (decision 0040). A
+ *                 --committed-only run over the whole corpus is held to `corpus/baseline.json`, and
+ *                 exits 1 when its success rate falls more than a point under the baseline's. It
+ *                 takes about an hour for the corpus on CI's runner
  *   --only <id>   that document only, or the documents a comma separates
  *   --ids <file>  the documents a file names, one id a line, from where pnpm was run
  *   --json <file> write each document's row as JSON too, ids and counts only, with the summary

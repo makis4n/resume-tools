@@ -115,8 +115,9 @@ export interface RunDocument {
   family: Family;
   outcome: RunOutcome;
   /**
-   * Its naming request as the gate is given it: built with the upload's sources, the page's strings
-   * and the header's values, as the import builds it.
+   * Its naming request as the import sends it (`importRequest`, decision 0038): built with the
+   * upload's sources and the page's strings, and without the header's values, which the check of
+   * it is given besides (`gate`).
    */
   request?: NamingRequest;
   gate?: "passes" | "withholds";

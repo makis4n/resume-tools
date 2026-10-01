@@ -4,11 +4,12 @@
  * pool of children (`runPool`), the child being `corpus assemble`'s (`corpus-assemble-child.ts`), so
  * that the run and the assembly share one pipeline: the intake, the reference compile, read in Latin
  * Modern where the page cannot draw its fonts, the signatures, the parse, the probe, the naming
- * request, built with the upload's sources, the page's strings and the header's values as the
- * import builds it, its answers, from the committed ones first and then the cache of the model
- * `NAMING_MODEL` names, unless `--committed-only`, and from the model only with `--allow-model` and
- * a key, behind the gate `corpus name --model` goes through; then the XeTeX rewrite, the assembly,
- * the four checks and the harness.
+ * request, built as the import sends it (`importRequest`, decision 0038), with the upload's sources
+ * and the page's strings and without the header's values, and refused, as the import refuses it,
+ * when the privacy check finds the resume's text in it; its answers, from the committed ones first
+ * and then the cache of the model `NAMING_MODEL` names, unless `--committed-only`, and from the
+ * model only with `--allow-model` and a key, behind a stricter check, the header's values given to
+ * it besides; then the XeTeX rewrite, the assembly, the four checks and the harness.
  *
  * What became of a document is one row, ids and counts only: its outcome, which `outcomeOf` gives
  * (the one place item 13's report takes over), its editable rate, its words and fields, editable and
@@ -142,7 +143,11 @@ export interface RunNaming {
   failed?: string;
   calls: number;
   tokens: { input: number; cached: number; output: number };
-  /** Whether the privacy gate passes the request, or withholds it (`assertNoText`). */
+  /**
+   * Whether the request passes the stricter check the model is asked behind, the header's values
+   * given to it besides, or is withheld from the model (`assertNoText`): a request the import's own
+   * check refuses refuses the document (`request`), as the import does (decision 0038).
+   */
   gate: "passes" | "withholds";
 }
 
@@ -546,7 +551,10 @@ export function runTable(rows: readonly RunRow[]): string {
     sum("Asked of the model now", (row) => row.naming?.asked ?? 0),
     sum("Stored now", (row) => row.naming?.stored ?? 0),
     sum("Missing: no answer", (row) => row.naming?.missing ?? 0),
-    count("Requests the privacy gate withholds", (row) => row.naming?.gate === "withholds"),
+    count(
+      "Requests withheld from the model, the header's values given to the check",
+      (row) => row.naming?.gate === "withholds",
+    ),
     ...failures.map((reason) =>
       count(`The model's answer failed: \`${reason}\``, (row) => row.naming?.failed === reason),
     ),

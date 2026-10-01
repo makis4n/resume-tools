@@ -31,19 +31,28 @@ runner judges. The code is `apps/editor/scripts/corpus-run.ts`, `corpus-review.t
   copy of the pipeline: the intake, the reference compile, the Latin Modern swap, the signatures,
   the parse, the probe, the naming request, its answers, the XeTeX rewrite and its check, the
   assembly, the four checks and the harness.
-- The naming step is the import's: the request built with the upload's sources, the page's strings
-  and the header's values, and gated as `corpus name` gates it (`gatedRequest`, decision 0033);
-  answered macro by macro (`answerDocument`, decision 0027) from the committed answers first, then,
-  unless `--committed-only`, the cache of the model `NAMING_MODEL` names; and from that model, for
-  what they miss, only with `--allow-model` and `SOCLAAS_API_KEY`, behind the same gate
-  (`assertNoText`, the page's leak check) and `checkRequest`, the parent ceasing to ask once the
-  provider fails three documents in a row, as `corpus name --model` does. `--allow-model` with
-  `--committed-only`, or without a key, stops the run before any document is read.
+- The naming step is the import's, so that the run measures what an import does: the request is the
+  one the browser sends, built by the import's own function (`importRequest`, decision 0038), with
+  the upload's sources and the page's strings and without the header's values, which only the
+  answers give; and a request the import's privacy check refuses (`assertNoText`, fed what the
+  browser has) refuses the document, `request`, as the import refuses it. Until item 12 the run
+  built the request with the header's values as well, as `corpus name` still does, and a request
+  the gate refused only went unasked of the model. The header's values the answers the request finds
+  give, as `corpus leak` finds them, are given besides to a stricter check (`gate`): it passes the
+  request, or withholds it from the model, and the review's export, which reads them too, writes
+  none it withholds.
+- The request is answered macro by macro (`answerDocument`, decision 0027) from the committed
+  answers first, then, unless `--committed-only`, the cache of the model `NAMING_MODEL` names; and
+  from that model, for what they miss, only with `--allow-model` and `SOCLAAS_API_KEY`, behind the
+  stricter check and `checkRequest`, the parent ceasing to ask once the provider fails three
+  documents in a row, as `corpus name --model` does. `--allow-model` with `--committed-only`, or
+  without a key, stops the run before any document is read.
 - `corpus assemble` and `corpus oracle` send the same child the committed answers alone, as they
-  read them before; but their requests are now built with the page and gated as the import's are,
-  where they were built with the sources and the header alone (decision 0033 has item 7 build them
-  with the page): a key a page's strings mask differently moves, as it does in the import, and a
-  page the detector cannot read refuses the document (`unreadable`).
+  read them before; but their requests are now the import's, built with the page and without the
+  header's values, where they were built with the sources and the header alone (decision 0033 has
+  item 7 build them with the page): a key a page's strings mask differently moves, as it does in
+  the import, a page the detector cannot read refuses the document (`unreadable`), and so does a
+  request the import's check refuses (`request`).
 - A child answers with `corpus assemble`'s row and the run's; what holds a document's text, its
   assembly and what the review reads of it (below), the parent keeps under `.corpus/run/<id>/`,
   `assembly.json` and `review.json`, emptying the document's folder first so that no file of an
@@ -101,10 +110,10 @@ runner judges. The code is `apps/editor/scripts/corpus-run.ts`, `corpus-review.t
   checks' words (decision 0040); the redefinitions applied and dropped, counted; what `outcomeOf`
   counted; the harness's and the checks' own findings, by check; the kinds of unit that stop the
   compile; the naming step's macros, answered from the committed answers or the model's cache,
-  refused there, missing, asked and stored, the calls and tokens, and whether the gate passes the
-  request; the compiles of the probe and of the checks; and the milliseconds of each step, the
-  reference, the Latin Modern swap, the parse, the probe, the naming, the fonts and the checks, and
-  of the whole (`times`).
+  refused there, missing, asked and stored, the calls and tokens, and whether the stricter check
+  passes the request or withholds it from the model; the compiles of the probe and of the checks;
+  and the milliseconds of each step, the reference, the Latin Modern swap, the parse, the probe, the
+  naming, the fonts and the checks, and of the whole (`times`).
 - It prints a line a document, with the bar's controls an assembled one proves and, for a success,
   those it lacks and the kind of why; then one table, per family and in all, and a headline: the
   documents, and those that timed out, which a machine's speed decides and which count in no share
@@ -167,10 +176,10 @@ no key, or that has no request, is of none.
 
 - `corpus review export [--top <n>] [--out <dir>]`, 20 templates and `apps/editor/.review/`, which
   git ignores, reads what the last run kept of each document it took (`review.json`: its request as
-  the gate is given it, whether the gate passes it, its macros' fates, and its text as the leak
-  check reads it: the tree, the header's values, the stored texts, the sources, the page's strings
-  and the placeholders' names), and the answers the cache serves now, committed first and then the
-  model's `NAMING_MODEL` names.
+  the import sends it, whether the stricter check passes it, its macros' fates, and its text as the
+  leak check reads it: the tree, the header's values, the stored texts, the sources, the page's
+  strings and the placeholders' names), and the answers the cache serves now, committed first and
+  then the model's `NAMING_MODEL` names.
 - For each of the top templates, one folder: `requests/<id>.json`, the requests of the fewest of its
   documents that together hold every key its passing requests hold, the most first, each written as
   the gate passed it; `answers/<key>.json`, the answer the cache holds for each of its keys, as it
@@ -278,6 +287,16 @@ have the margins proven beside the page size and the font size, as decision 0040
 and none dropped; the checks' compiles rise from 25 to 33 at the median; and the bar holds, the
 sample having no success from the committed answers alone.
 
+Run again once item 12 had merged (decision 0038), the request the import's, in 15.2 minutes:
+`jake-0021`, whose request the gate withheld, is refused, `request`, as the import refuses it, so
+that twelve documents are assembled and 8.7% of their 7,708 words are editable; no other
+document's request, keys or answers moved. With `jake-0021` left out, the summary counted again,
+and what item 12 moves set aside, the checks' compiles (one more in nine documents and three in
+one, check 3 removing each kind's first and last unit) and the kinds fixed or stopping the compile
+(`section.list` in `jake-0007`, `section.paragraph` in `jake-0038`), `corpus compare` finds one
+difference: `jake-0030` has one locked section fewer, its section now keeping the list's closer
+that stood in it, as item 12 has a Jake fork's skills keep it.
+
 `corpus review export` over what the runs kept, in two seconds: the 19 documents with a request make
 nine templates, `01-jake` (all six `jake` documents, 29 keys), `02-awesome-cv` (three forks, 26
 keys), `03-moderncv` (all three), `04-europecv`, two AltaCV forks apart, whose own macros outnumber
@@ -304,8 +323,9 @@ forks' pages; and it exits 1, too, for the run's covering 20 of the 220 document
   `\cvevent` and `\cvtag`, which move some forks' pages (decision 0026), are dropped by it unless
   they keep every page that reaches the checks, and one no corpus document applies is unproven,
   which the review's pull request lists for a person to keep or take out.
-- The check reads which documents hold a key from the last run; a reviewed answer that changes what
-  the header's values are can change a document's keys, which the next run finds.
+- The check reads which documents hold a key from the last run. The request is built without the
+  header's values, as the import sends it, so a reviewed answer that finds other ones moves no
+  document's keys, where it could when the run built the request with them.
 - The export's check leans to leaving out: an answer's notes or a summary's value that a document's
   text matches is not written, whether or not it is that text, and a template whose documents' own
   macros outnumber the keys they share with its other forks, as two of the sample's AltaCV forks',
