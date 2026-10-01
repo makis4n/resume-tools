@@ -576,18 +576,22 @@ async function main() {
         }
       }
       // Item 13's report, read as the browser's import reads it (decision 0039): its words from the
-      // reference's page, with what the intake and the XeTeX rewrite set aside.
-      const report = reportOf(validated, made, {
+      // reference's page, with what the intake and the XeTeX rewrite set aside; `corpus run`'s
+      // outcome reads the same (`outcomeOf`), so that the two runners and the person agree.
+      const inputs = {
         images: taken.images,
         warnings: [
           ...taken.warnings,
           ...(rewrite === undefined || "refused" in rewrite ? [] : rewrite.warnings),
         ],
-      });
+      };
+      const report = reportOf(validated, made, inputs);
       const runRow = runRowOf(validated, engine, {
         naming: runNaming,
         probeCompiles: probed.compiles,
         times: {},
+        reference: made,
+        inputs,
       });
       const { times: _times, ...runFields } = runRow;
       done(

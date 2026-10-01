@@ -1,6 +1,7 @@
 # 0039. The import's report, and its bar at nine tenths
 
-Date: 2026-10-01 · Status: proposed; amends 0040's interim rule of what a successful import is
+Date: 2026-10-01 · Status: proposed; amends 0040's interim rule of what a successful import is,
+and replaces 0043's interim outcome
 
 ## Context
 
@@ -208,11 +209,13 @@ refuses two Awesome-CV forks.
 
 ## Consequences
 
-- **Item 17's runner reads the outcome here** (decision 0043, on its branch): `outcomeOf` in
-  `scripts/corpus-run.ts` is to take the reference beside the assembly and call `reportOf(assembled,
-  reference, { images, warnings })` from `src/import/report.ts`, which Node imports as it is; its
-  success is the report's `succeeded`, its rate the report's, and what it counts the report's
-  editable words and the resume's (`words.editable`, `words.body`); `SUCCESS_RATE` is this one's.
+- **Item 17's runner reads the outcome here** (decision 0043): `outcomeOf` in
+  `scripts/corpus-run.ts` takes the reference and what the intake and the XeTeX rewrite set aside
+  beside the assembly, which the child passes (`runRowOf`), and calls `reportOf`, which Node imports
+  as it is; its success is the report's, its rate the report's, and what it counts the report's
+  editable words, the resume's and the locked ones by reason (`counted`), which the run's summary,
+  headline, table and baseline add up; `SUCCESS_RATE` is this record's. `corpus run`, `corpus
+  assemble` and the person's report read every import alike.
 - **What a page sets that its source does not spell** parts the counts a little: a word TeX breaks
   at a line's end whose two halves the resume also writes with a hyphen somewhere reads as two; a
   word whose letters a class spaces more than a tenth of their size would read as several, which no
