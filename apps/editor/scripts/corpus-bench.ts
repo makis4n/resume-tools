@@ -135,43 +135,58 @@ export interface BenchSummary {
 }
 
 /** Whether a row's naming step asked the model a part: an import that missed the cache. */
-const asked = (row: Pick<RunRow, "times">) => (row.times.parts ?? []).length > 0;
+const asked = (row: Pick<RunRow, "times" | "naming">) =>
+  (row.times.parts ?? []).length > 0 ||
+  (row.naming?.calls ?? 0) > 0 ||
+  row.naming?.failure !== undefined;
 
-/** A candidate's summary, from the rows of its benchmark. */
+/**
+ * A candidate's summary: the outcomes, the rates, the locked words and what is left missing from
+ * each document's final row (`rows`); and its parts, their failures, its calls, its tokens and the
+ * macros asked, stored and invalid from every row that asked the model (`asking`), a document's
+ * in each run that asked it, so that no part a later run's row replaced drops out of the times,
+ * the failures or the rule. A single run's rows are both.
+ */
 export function benchSummary(
   model: string,
   rows: readonly RunRow[],
   thinking?: ThinkingSwitch,
+  asking: readonly RunRow[] = rows.filter(asked),
 ): BenchSummary {
   const run = summaryOf(rows);
-  const sum = (pick: (row: RunRow) => number | undefined) =>
-    rows.reduce((total, row) => total + (pick(row) ?? 0), 0);
-  const parts = partsOf(rows);
+  const sumOf = (of: readonly RunRow[]) => (pick: (row: RunRow) => number | undefined) =>
+    of.reduce((total, row) => total + (pick(row) ?? 0), 0);
+  const sum = sumOf(rows);
+  const sumAsked = sumOf(asking);
+  const parts = partsOf(asking);
   const times = parts.map((each) => each.ms);
   const slowest = parts.reduce<BenchPart | undefined>(
     (most, each) => (most === undefined || each.ms > most.ms ? each : most),
     undefined,
   );
-  const requests = rows.filter(asked).map((row) => {
-    const each = row.times.parts ?? [];
-    return { id: row.id, ms: each.reduce((all, ms) => all + ms, 0), parts: each.length };
-  });
+  const requests = asking
+    .filter((row) => (row.times.parts ?? []).length > 0)
+    .map((row) => {
+      const each = row.times.parts ?? [];
+      return { id: row.id, ms: each.reduce((all, ms) => all + ms, 0), parts: each.length };
+    });
   const slowestRequest = requests.reduce<(typeof requests)[number] | undefined>(
     (most, each) => (most === undefined || each.ms > most.ms ? each : most),
     undefined,
   );
   const tokens = {
-    input: sum((row) => row.naming?.tokens.input),
-    cached: sum((row) => row.naming?.tokens.cached),
-    output: sum((row) => row.naming?.tokens.output),
-    reasoning: sum((row) => row.naming?.tokens.reasoning),
+    input: sumAsked((row) => row.naming?.tokens.input),
+    cached: sumAsked((row) => row.naming?.tokens.cached),
+    output: sumAsked((row) => row.naming?.tokens.output),
+    reasoning: sumAsked((row) => row.naming?.tokens.reasoning),
   };
-  const imports = rows.filter(asked).length;
+  // Each row that asked is an import that missed the cache: a document asked in two runs is two.
+  const imports = asking.length;
   const failures = Object.fromEntries(FAILURE_KINDS.map((kind) => [kind, 0])) as Record<
     FailureKind,
     number
   >;
-  for (const row of rows) {
+  for (const row of asking) {
     const kind = row.naming?.failure?.kind;
     if (kind !== undefined) failures[kind]++;
   }
@@ -192,9 +207,9 @@ export function benchSummary(
     naming: {
       macros: sum((row) => row.naming?.macros),
       cache: sum((row) => row.naming?.model),
-      asked: sum((row) => row.naming?.asked),
-      stored: sum((row) => row.naming?.stored),
-      invalid: sum((row) => row.naming?.invalid),
+      asked: sumAsked((row) => row.naming?.asked),
+      stored: sumAsked((row) => row.naming?.stored),
+      invalid: sumAsked((row) => row.naming?.invalid),
       missing: sum((row) => row.naming?.missing),
       withheld: rows.filter((row) => row.naming?.gate === "withholds").length,
       imports,
@@ -209,7 +224,7 @@ export function benchSummary(
       ...(requestMedian === undefined ? {} : { median: requestMedian }),
       ...(slowestRequest === undefined ? {} : { slowest: slowestRequest }),
     },
-    calls: sum((row) => row.naming?.calls),
+    calls: sumAsked((row) => row.naming?.calls),
     tokens,
     failures,
     ...(price === undefined || total === undefined
@@ -501,12 +516,15 @@ const LooseBench = z.looseObject({
 });
 
 /**
- * The candidates of benchmarks' files, one column a model, each summarised again from its rows;
- * and what to know of them. Files of one model, in the order they ran, make one column: a later
- * run answers from the model's folder what an earlier one asked, the sample's documents in the
- * whole corpus's run, or those a run stopped by the key's daily budget had done before the next
- * day's, so each document's row is the last that asked the model a part, or else its last. A
- * column whose files did not finish, or that took other documents than the first, is said to be.
+ * The candidates of benchmarks' files, one column a model and thinking switch, each summarised
+ * again from its rows; and what to know of them. Files of one column, in the order they ran, are
+ * joined: a later run answers from the model's folder what an earlier one asked, the sample's
+ * documents in the whole corpus's run, or those a run stopped by the key's daily budget had done
+ * before the next day's, and asks again what an earlier run failed. So each document's outcome and
+ * rate are its final row's, the last file's that holds it, and the parts, their failures, the calls
+ * and the tokens are every row's that asked the model, in whichever file (`benchSummary`): a part
+ * that outran the limit in one run and was answered in the next is judged by both. A column whose
+ * files did not finish, or that took other documents than the first, is said to be.
  */
 export function candidatesOf(files: readonly unknown[]): {
   summaries: BenchSummary[];
@@ -519,17 +537,24 @@ export function candidatesOf(files: readonly unknown[]): {
   });
   interface Column {
     files: typeof read;
+    /** Each document's final row, by its id. */
     rows: Map<string, RunRow>;
+    /** Every row of the column's files that asked the model. */
+    asking: RunRow[];
   }
   // A model asked with its thinking off is a column of its own.
   const columns = new Map<string, Column>();
   const columnOf = (file: (typeof read)[number]) => `${file.model}|${file.thinking ?? ""}`;
   for (const file of read) {
-    const column: Column = columns.get(columnOf(file)) ?? { files: [], rows: new Map() };
+    const column: Column = columns.get(columnOf(file)) ?? {
+      files: [],
+      rows: new Map(),
+      asking: [],
+    };
     column.files.push(file);
     for (const row of file.rows) {
-      const before = column.rows.get(row.id);
-      if (before === undefined || asked(row) || !asked(before)) column.rows.set(row.id, row);
+      column.rows.set(row.id, row);
+      if (asked(row)) column.asking.push(row);
     }
     columns.set(columnOf(file), column);
   }
@@ -542,7 +567,7 @@ export function candidatesOf(files: readonly unknown[]): {
     const name = PLAIN.test(model) ? nameOf({ model, thinking }) : "a model";
     if (column.files.length > 1)
       notes.push(
-        `${name}'s column joins ${column.files.length} files, each document's row the last that asked the model.`,
+        `${name}'s column joins ${column.files.length} files: each document's outcome its last row's, and the parts of every row that asked the model.`,
       );
     const whole = column.files.some((file) => file.complete && file.documents === "all");
     if (!column.files.every((file) => file.complete) && !whole)
@@ -550,7 +575,7 @@ export function candidatesOf(files: readonly unknown[]): {
     if (first !== undefined && idsOf(column.rows.keys()) !== idsOf(first.rows.keys()))
       notes.push(`${name} was measured on other documents than the first candidate.`);
     const rows = [...column.rows.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    summaries.push(benchSummary(model, rows, thinking));
+    summaries.push(benchSummary(model, rows, thinking, column.asking));
   }
   return { summaries, notes: notes.map(printable) };
 }

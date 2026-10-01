@@ -439,7 +439,7 @@ describe("what the benchmark prints", () => {
     expect(() => candidatesOf([{ version: 1, rows: [] }])).toThrow("file 1 is no benchmark's file");
   });
 
-  test("join one model's files, each document's row the last that asked the model", () => {
+  test("join one model's files: each document's outcome its last row's, the parts every row's that asked", () => {
     const file = (documents: "all" | "some", complete: boolean, taken: RunRow[]) => ({
       version: 1,
       model: "qwen3.8:27b",
@@ -461,9 +461,13 @@ describe("what the benchmark prints", () => {
       file("all", true, [fromCache, second]),
     ]);
     expect(summaries).toHaveLength(1);
-    expect(summaries[0]).toEqual(benchSummary("qwen3.8:27b", [first, second]));
+    expect(summaries[0]).toEqual(
+      benchSummary("qwen3.8:27b", [fromCache, second], undefined, [first, second]),
+    );
+    // The first document's one part, from the sample, and the second's two.
+    expect(summaries[0]?.parts.count).toBe(3);
     expect(notes).toEqual([
-      "qwen3.8:27b's column joins 2 files, each document's row the last that asked the model.",
+      "qwen3.8:27b's column joins 2 files: each document's outcome its last row's, and the parts of every row that asked the model.",
     ]);
     // A whole run the key's budget stopped, then finished the next day: one column, complete.
     const resumed = candidatesOf([
@@ -473,6 +477,48 @@ describe("what the benchmark prints", () => {
     expect(resumed.notes).not.toContain(
       "qwen3.8:27b's benchmark did not finish: its column is partial.",
     );
+  });
+
+  test("judge a part one run asked and a later run's row replaced, as the review's repro has it", () => {
+    // The sample's run asked a document and its one part outran the limit (130 s, a timeout); the
+    // whole corpus's asked it again, its folder holding no answer, and was answered in 30 s.
+    const slowFailed = row("jake-0001", {
+      outcome: "no answer",
+      rate: undefined,
+      counted: undefined,
+      words: undefined,
+      naming: naming({
+        stored: 0,
+        missing: 10,
+        failed: "provider",
+        failure: { kind: "timeout", message: STOPPED, part: 1 },
+      }),
+      times: { parts: [130_000], wall: 140_000 },
+    });
+    const file = (documents: "all" | "some", taken: RunRow[]) => ({
+      version: 1,
+      model: "qwen3.8:27b",
+      complete: true,
+      documents,
+      rows: taken,
+    });
+    const { summaries } = candidatesOf([
+      file("some", [slowFailed]),
+      file("all", [row("jake-0001"), row("jake-0002")]),
+    ]);
+    const [summary] = summaries;
+    expect(summary?.parts).toMatchObject({
+      count: 3,
+      slowest: { id: "jake-0001", part: 1, ms: 130_000, failed: "timeout" },
+    });
+    expect(summary?.failures.timeout).toBe(1);
+    expect(summary?.calls).toBe(3);
+    expect(summary?.naming.imports).toBe(3);
+    // The outcome and the rate are the final rows': both documents assembled, partial.
+    expect(summary?.outcomes).toMatchObject({ partial: 2, "no answer": 0 });
+    const choice = chooseDefault(summaries);
+    expect(choice.verdicts[0]?.within).toBe(false);
+    expect(choice.chosen).toBeUndefined();
   });
 });
 
