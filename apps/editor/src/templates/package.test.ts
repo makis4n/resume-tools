@@ -429,6 +429,23 @@ describe("what an import's checks found (decision 0026)", () => {
     expect(issues(fixing(["header"])).map((issue) => issue.path)).toEqual(["fixed.0"]);
   });
 
+  it("marks the steps the editor may not take with a locked part, by its id (decision 0041)", () => {
+    const pinning = (pinned: unknown) =>
+      plainWith((pkg) => {
+        (pkg as { pinned?: unknown }).pinned = pinned;
+      });
+    expect(parsePackage(pinning({ "lock-q7w2e9": ["remove", "up"] })).pinned).toEqual({
+      "lock-q7w2e9": ["remove", "up"],
+    });
+    expect(parsePackage(plain).pinned).toBeUndefined();
+    expect(issues(pinning({ "lock-q7w2e9": ["left"] })).map((issue) => issue.path)).toEqual([
+      "pinned.lock-q7w2e9.0",
+    ]);
+    expect(issues(pinning({ "lock-q7w2e9": [] })).map((issue) => issue.path)).toEqual([
+      "pinned.lock-q7w2e9",
+    ]);
+  });
+
   it("takes defaults for an entry's and a section's extras slots as kept LaTeX, by role", () => {
     const defaulting = (defaults: object) =>
       plainWith((pkg) => {

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Resume } from "@resume-tools/resume-model";
 import { strToU8, zipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
-import { applyUnder, CommandError } from "../editor/document";
+import { applyUnder, CommandError, type StructureOp } from "../editor/document";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
@@ -643,6 +643,40 @@ describe("the checks", () => {
     );
     expect(remove(work.id).resume.sections).toHaveLength(document.resume.sections.length - 1);
     expect(checks.compiles).toBe(fake.count);
+  });
+
+  test("pin a locked part against a step that stops, and leave it its other steps", async () => {
+    // A template that stops without a part kept as it was, or with the part above the section
+    // before it, as a part that holds the closer of a list that section opens: check 3 pins the
+    // part against its removal and its move up, the editor then refuses both, and it moves down
+    // (decision 0041).
+    const paged: Invented = {
+      ...JAKE_LIKE,
+      source: JAKE_LIKE.source.replace("\\section{Summary}", "\\newpage\n\\section{Summary}"),
+    };
+    const { sections } = (await plain(paged)).document.resume;
+    const at = sections.findIndex((section) => section.kind === "locked");
+    const part = sections[at]?.id;
+    const above = sections[at - 1]?.id;
+    if (part === undefined || above === undefined || at === sections.length - 1)
+      throw new Error("no part between two sections");
+    const { result, fake } = await validated(paged, {
+      refuses: (resume) => {
+        const ids = resume.sections.map((section) => section.id);
+        return !ids.includes(part) || ids.indexOf(part) < ids.indexOf(above);
+      },
+    });
+    const { checks, package: pkg, document } = ok(result);
+    expect(checks.decisions.pinned).toEqual({ [part]: ["remove", "up"] });
+    expect(pkg.pinned).toEqual({ [part]: ["remove", "up"] });
+    expect(pkg.id).not.toBe(ok((await validated(paged)).result).package.id);
+    const step = (op: StructureOp) => () => applyUnder(pkg, document, { type: "structure", op });
+    expect(step({ op: "removeSection", id: part })).toThrow(CommandError);
+    expect(step({ op: "moveSection", id: part, to: at - 1 })).toThrow(CommandError);
+    expect(step({ op: "moveSection", id: part, to: at + 1 })).not.toThrow();
+    // Each step tried once, and none of a part the template takes every step of.
+    expect(checks.compiles).toBe(fake.count);
+    expect(ok((await validated(paged)).result).package.pinned).toBeUndefined();
   });
 
   test("mutate a raw field as a typeset one: locked where text stops it, required where empty does", async () => {

@@ -56,6 +56,7 @@ import { isBlank } from "../templates/escape";
 import {
   type DateFormat,
   defaultControls,
+  type PinStep,
   type TemplatePackage,
   type UnitKind,
 } from "../templates/package";
@@ -66,6 +67,7 @@ import {
   fieldsOf,
   keptOf,
   PLACEHOLDERS,
+  pinnedSteps,
   removable,
   requiredFields,
   SECTION_TITLES,
@@ -266,6 +268,16 @@ const KEPT = "These were kept as they were imported, so none can be added here";
 export const KEPT_AS_IT_WAS = "Kept as it was";
 
 /**
+ * Why a locked part's button is disabled where the template stops after its step (decision 0041):
+ * as a part that closes a list a section above it opens.
+ */
+export const PINNED: Readonly<Record<PinStep, string>> = {
+  remove: "The template stops without this part, so it stays",
+  up: "The template stops if this part moves up",
+  down: "The template stops if this part moves down",
+};
+
+/**
  * What the panel shows of a package's rules for the open document (decision 0026): the fields the
  * document has, which a slot it keeps as its upload had it is not (`fieldsOf`), undefined for
  * every field; the fields the package requires (`requiredFields`); whether it takes a new unit of
@@ -278,6 +290,7 @@ interface Rules {
   addable: (kind: UnitKind) => boolean;
   removable: (kind: UnitKind) => boolean;
   bullets: (role: SectionRole) => boolean;
+  pinned: (id: string) => ReadonlySet<PinStep>;
 }
 
 /** A package's rules for a document; with no package, none, and every edit taken. */
@@ -288,6 +301,7 @@ function rulesOf(pkg: TemplatePackage | undefined, document: Document): Rules {
     addable: (kind) => addable(pkg, kind),
     removable: (kind) => removable(pkg, kind),
     bullets: (role) => showsBullets(pkg, role),
+    pinned: (id) => pinnedSteps(pkg, id),
   };
 }
 
@@ -297,6 +311,7 @@ const NO_RULES: Rules = {
   addable: () => true,
   removable: () => true,
   bullets: () => true,
+  pinned: () => new Set(),
 };
 
 export interface PanelProps {
@@ -526,6 +541,7 @@ function Sections({
                 words={lockedWords?.get(section.id)}
                 index={index}
                 count={sections.length}
+                rules={rules}
                 send={send}
               />
             ) : (
@@ -610,16 +626,19 @@ function LockedRow({
   words,
   index,
   count,
+  rules,
   send,
 }: {
   section: LockedSection;
   words: string | undefined;
   index: number;
   count: number;
+  rules: Rules;
   send: Send;
 }) {
   const { id } = section;
   const named = words === undefined || words === "" ? undefined : words;
+  const pinned = rules.pinned(id);
   const remove = () => {
     const what = named === undefined ? "this section" : `“${named}”`;
     if (holdsContent(section) && !confirm(`Remove ${what} and everything in it?`)) return;
@@ -634,6 +653,9 @@ function LockedRow({
         count={count}
         onMove={(to) => send(structural({ op: "moveSection", id, to }))}
         onRemove={remove}
+        refused={pinned.has("remove") ? PINNED.remove : undefined}
+        up={pinned.has("up") ? PINNED.up : undefined}
+        down={pinned.has("down") ? PINNED.down : undefined}
       />
     </li>
   );
@@ -967,6 +989,8 @@ function Reorder({
   onMove,
   onRemove,
   refused,
+  up,
+  down,
 }: {
   index: number;
   count: number;
@@ -974,23 +998,26 @@ function Reorder({
   onRemove: () => void;
   /** Why the template cannot lose the node, if it cannot. */
   refused?: string | undefined;
+  /** Why the template cannot take the node one place up, or down, if it cannot (decision 0041). */
+  up?: string | undefined;
+  down?: string | undefined;
 }) {
   return (
     <span style={STYLE.row}>
       <button
         type="button"
-        title="Move up"
+        title={up ?? "Move up"}
         aria-label="Move up"
-        disabled={index === 0}
+        disabled={index === 0 || up !== undefined}
         onClick={() => onMove(index - 1)}
       >
         ↑
       </button>
       <button
         type="button"
-        title="Move down"
+        title={down ?? "Move down"}
         aria-label="Move down"
-        disabled={index === count - 1}
+        disabled={index === count - 1 || down !== undefined}
         onClick={() => onMove(index + 1)}
       >
         ↓

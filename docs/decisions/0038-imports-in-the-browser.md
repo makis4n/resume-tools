@@ -150,9 +150,9 @@ the editor neither adds nor removes, whichever stopped it, so a kind marked for 
 which the editor used to let go, now keeps its units too: `applyUnder` refuses the removal, and the
 side panel disables its Remove, saying why when pointed at. The check tries the removals in every
 round under the package as though it marked nothing, since the editor would refuse them. A move is
-not tried, and stays offered. An engine test imports an invented fork whose skills list is opened,
-after the section's head, by a macro no answer names, and closed after the list: list sections are
-marked, and no other kind.
+not tried, and stays offered; a locked part's removal and moves are, and pin it (decision 0041). An
+engine test imports an invented fork whose skills list is opened, after the section's head, by a
+macro no answer names, and closed after the list: list sections are marked, and no other kind.
 
 The review named ten Jake forks whose list sections still could not go after the fix above
 (jake-0004, 0007, 0020, 0021, 0023, 0025, 0033, 0035, 0043 and 0047). `corpus assemble --only`

@@ -71,6 +71,7 @@ import {
   type ControlValues,
   fontFiles,
   fontSizes,
+  type PinStep,
   TemplatePackage,
   type UnitKind,
 } from "../templates/package";
@@ -592,6 +593,23 @@ function unitTrials(resume: Resume, pkg: TemplatePackage): UnitTrial[] {
   return trials;
 }
 
+/**
+ * The steps check 3 takes with each locked part of a resume, as the side panel's buttons take
+ * them (decision 0041): its removal, and its move one place up and one place down where it has a
+ * section above or below it.
+ */
+export function pinTrials(resume: Resume): { id: string; steps: [PinStep, StructureOp][] }[] {
+  const { sections } = resume;
+  return sections.flatMap((section, index) => {
+    if (section.kind !== "locked") return [];
+    const { id } = section;
+    const steps: [PinStep, StructureOp][] = [["remove", { op: "removeSection", id }]];
+    if (index > 0) steps.push(["up", { op: "moveSection", id, to: index - 1 }]);
+    if (index < sections.length - 1) steps.push(["down", { op: "moveSection", id, to: index + 1 }]);
+    return [{ id, steps }];
+  });
+}
+
 /** The values check 4 tries of a control: every value but the document's. */
 function valuesOf(pkg: TemplatePackage, name: ControlName, chosen: ControlValues): ControlValues[] {
   const control = pkg.controls[name];
@@ -898,6 +916,7 @@ async function checks(
     slots: { ...(start.slots ?? {}) },
     required: [...(start.required ?? [])],
     fixed: [...(start.fixed ?? [])],
+    pinned: { ...(start.pinned ?? {}) },
   };
   const notes: Note[] = [];
   // The controls the first check drops, whose default moved the original's page.
@@ -1215,7 +1234,8 @@ async function checks(
     }
     return !(await compiles.document(assembled.package, changed.resume)).broke;
   };
-  const unmarked: TemplatePackage = { ...assembled.package, fixed: [] };
+  const { pinned: _, ...unpinned } = assembled.package;
+  const unmarked: TemplatePackage = { ...unpinned, fixed: [] };
   for (const { kind, add, removes } of unitTrials(assembled.document.resume, assembled.package)) {
     const added = !fixed.has(kind) && (await compilesAfter(add));
     let removed = true;
@@ -1223,8 +1243,22 @@ async function checks(
     if (!added || !removed) fixed.add(kind);
     repeatable.push({ kind, added, removed });
   }
-  if (fixed.size > decisions.fixed.length) {
-    decisions = { ...decisions, fixed: [...fixed] };
+  // And each locked part, removed and moved one place up and down, as the side panel's buttons
+  // do, under the package as though it pinned none: a step that stops the compile, as one that
+  // takes away a list's closer the part holds, or puts it above the list's opener, pins the part
+  // against that step, and the editor then neither takes it nor offers it (decision 0041).
+  const pinned: Record<string, PinStep[]> = Object.fromEntries(
+    Object.entries(decisions.pinned).map(([id, steps]) => [id, [...steps]]),
+  );
+  let pins = 0;
+  for (const { id, steps } of pinTrials(assembled.document.resume))
+    for (const [step, op] of steps)
+      if (!pinned[id]?.includes(step) && !(await compilesAfter(op, unmarked))) {
+        pinned[id] = [...(pinned[id] ?? []), step];
+        pins++;
+      }
+  if (fixed.size > decisions.fixed.length || pins > 0) {
+    decisions = { ...decisions, fixed: [...fixed], pinned };
     const next = await assembleWith(decisions);
     if ("refused" in next) return next;
     assembled = next;

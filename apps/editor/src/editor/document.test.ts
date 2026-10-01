@@ -983,6 +983,41 @@ describe("structure", () => {
       expect(history.undo()).toBe(kept);
     });
 
+    it("refuses the steps its package pins it against, and takes the others (decision 0041)", () => {
+      // As a part that holds a list's closer: the template stops without it, or with it above.
+      const pkg: TemplatePackage = {
+        ...curated("jake").package,
+        pinned: { [LOCKED]: ["remove", "up"] },
+      };
+      const step = (op: StructureOp) => () => applyUnder(pkg, kept, structural(op));
+      expect(step({ op: "removeSection", id: LOCKED })).toThrow(
+        new CommandError(`the template stops without the locked section ${LOCKED}`),
+      );
+      expect(step({ op: "moveSection", id: LOCKED, to: 0 })).toThrow(
+        new CommandError(`the template stops when the locked section ${LOCKED} moves up`),
+      );
+      expect(ids(step({ op: "moveSection", id: LOCKED, to: 3 })().resume.sections)).toEqual([
+        "edu",
+        "exp",
+        "proj",
+        LOCKED,
+        "skills",
+      ]);
+      // Another section moves past it, as the part stays where it is; and the curated package,
+      // which pins nothing, takes every step.
+      expect(step({ op: "moveSection", id: "skills", to: 0 })).not.toThrow();
+      expect(() =>
+        applyUnder(undefined, kept, structural({ op: "removeSection", id: LOCKED })),
+      ).not.toThrow();
+      // The history keeps the document as it was, and makes no step.
+      const history = new History(kept, pkg);
+      expect(() => history.dispatch(structural({ op: "removeSection", id: LOCKED }))).toThrow(
+        CommandError,
+      );
+      expect(history.present).toBe(kept);
+      expect(history.canUndo).toBe(false);
+    });
+
     it("takes no other op, and no command elsewhere changes it", () => {
       for (const [op, message] of [
         [

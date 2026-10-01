@@ -1,6 +1,7 @@
 # 0041. Locked parts on the page
 
-Date: 2026-10-01 · Status: proposed; amends 0025's second lock marker and its side panel row
+Date: 2026-10-01 · Status: proposed; amends 0025's second lock marker and its side panel row, and
+adds the locked parts' steps to 0038's check 3
 
 ## Context
 
@@ -12,10 +13,14 @@ parts what no snippet can hold, and decision 0039's report names each locked par
 words as the page shows them. The page did nothing with the markers: a part read as the
 template's own text, a click on it opened nothing because no field was there, and nothing said
 why. This record is the page's reading of the markers, the lock it shows, the panel's name for a
-part, and what a part can and cannot do until item 16 decides how one is edited. The code is
+part, what a part can and cannot do until item 16 decides how one is edited, and, after the
+review, how a step that stops the compile is kept from the store. The code is
 `apps/editor/src/page/locked.ts`, `draw.ts` and `Page.tsx`, `src/tex/svg.ts`,
 `src/templates/prelude.ts`, `src/editor/Panel.tsx` with `src/App.tsx` and
-`src/templates/resolve.ts`, and one field more in `src/import/report.ts`.
+`src/templates/resolve.ts`, and one field more in `src/import/report.ts`; and for a step that
+stops, check 3 in `src/import/validate.ts`, `pinned` in `src/templates/package.ts` and
+`src/import/assemble.ts`, `src/editor/document.ts`, and `src/editor/guard.ts` with the compiler's
+`stopped` in `src/editor/compiler.ts`.
 
 ## Decision
 
@@ -108,14 +113,46 @@ part, and what a part can and cannot do until item 16 decides how one is edited.
   person read and in the panel, whatever page shows it, before its page comes and after its
   removal is undone.
 - **Moving and removing are as decision 0025 made them**: each a step that undo takes back, the
-  page recompiled after it as after any command.
+  page recompiled after it as after any command, but for a step the template stops after (below).
+
+### A step that stops the compile
+
+- **Check 3 pins a part against a step that stops it.** The review found a part that holds the
+  closer of a list a section above it opens, which decision 0038 leaves in a locked part where no
+  answer names the list's opener: removing the part, or moving it above that section, stops the
+  compile, and the step was offered, applied and saved, so that after a reload the document no
+  longer opened, and undo was gone with the session. Check 3 now takes each locked part's
+  removal, and its move one place up and one place down where a section stands there, as the
+  panel's buttons take them, under the package as though it pinned none, and compiles each: a
+  step that stops pins the part against it. The package records the steps by the part's id, in
+  the order remove, up, down (`pinned`, additive beside `fixed`), which changes its id as `fixed`
+  does. `applyUnder` refuses a pinned step (`CommandError`), so the history makes none, and the
+  part's row disables the button, which says why when pointed at, in plain words (`PINNED`): "The
+  template stops without this part, so it stays", "The template stops if this part moves up", or
+  "… moves down". A part costs check 3 up to three compiles a round more.
+- **Every structural step is saved only once it compiles.** Check 3 tries the document as
+  imported, and a step it does not try may stop the compile too, as the list's section moved below
+  the part that closes its list. So the app keeps every structural step, one that adds, removes or
+  moves a node or sets a section's role, from the store until a page shows its structure, and what
+  is typed after it with it (`StructureGuard`); an undo or a redo that changes the structure is
+  held alike. An edit of a field's text is saved at once, as before (decision 0010). When the held
+  step's compile stops (`CompilerEvents.stopped`, which comes before the compile's error), the
+  step is taken back, with every edit since, to the last document a page showed, which the store
+  still holds: the page shows that again, and the message line says "That change stopped the page
+  from being made, so it was taken back." (`TAKEN_BACK`) in place of the compile's message. Redo
+  does the step again, held again. So a saved document always has a page, and a reload never opens
+  one that stops.
+- **What the user sees of any other compile that stops**: the page as it was, and the message
+  line's `COULD_NOT_UPDATE`, "The page could not be updated."; TeX's error and its log go to the
+  console alone, for developers, so that the user never sees LaTeX.
 
 ### What a locked part can and cannot do
 
 It is drawn where the original drew it, the real output; is named in the side panel; shows its
-lock on hover; and is moved up and down among the sections, and removed, each step undone. It opens
-no overlay, plain or rich; takes no text command, role, entry, item or bullet (decision 0025);
-takes no focus; and shows nothing of its LaTeX anywhere.
+lock on hover; and is moved up and down among the sections, and removed, each step undone, but
+for a step the template stops after, which the panel does not offer. It opens no overlay, plain or
+rich; takes no text command, role, entry, item or bullet (decision 0025); takes no focus; and shows
+nothing of its LaTeX anywhere.
 
 ### The format hash
 
@@ -171,6 +208,23 @@ it, a redump and no failure (decision 0010).
   open, each left on its field as it was; the tab order passing the part and its lock by, and a
   tab stop, given one, found; and the lock placed where the SVG draws the part, under an open
   overlay, its line moved left to end within the page.
+- **A step that stops the compile.** On the engine (`src/import/run.test.ts`), the review's
+  invented fork of Jake's Resume, its skills list opened after the section's head by a macro of
+  its own that no answer names and closed by another, with a section after it: check 3 pins the
+  part that holds the closer against its removal and its move up, and leaves its move down, and
+  pins nothing else; `applyUnder` refuses both and takes the move down; and through the compiler,
+  the store and the guard wired as the app wires them, the list's section moved below the closer
+  is never saved, its compile stops, and it is taken back, the page the first's to the byte and
+  the store's document the one opened, while the closer moved down is saved once its page comes.
+  With the fake compiler (`src/import/validate.test.ts`), a part pinned against the steps that
+  stop, the package's id changed, and none pinned where every step compiles; the schema
+  (`package.test.ts`); `applyUnder` and the history (`document.test.ts`); the part's row, its
+  buttons disabled with their reasons and the other sending its step (`Panel.dom.test.tsx`); the
+  guard (`guard.test.ts`): a field's edit saved at once, a structural step held with what comes
+  after it until a page shows its structure, taken back to the last page shown when its compile
+  stops, an undo or a redo of structure held alike, and nothing held once another document opens;
+  and the compiler's `stopped`, of the document that stopped and before its error, and none for a
+  page that fails to draw (`compiler.test.ts`).
 
 ## What stays open
 
@@ -192,12 +246,12 @@ it, a redump and no failure (decision 0010).
   each page between its first and its last.
 - **A part past the first page** is named in the panel, and shows its lock once the editor draws
   its page, which it does not yet.
-- **A removal that stops the compile.** A part that holds the closer of a list a section opens can
-  still be removed or moved. Decision 0038 keeps most such closers with their section; where one
-  stays in a part, removing the part stops the compile, the page stays as it was with the
-  compile's message, and undo takes it back. Check 3 tries no part's removal; marking such a part
-  as one the editor keeps in place, as it marks a kind (`fixed`, decision 0038), is left for the
-  corpus to ask for.
+- **Steps tried where the import put the part.** Check 3 tries a part's steps in the document as
+  imported, and the panel moves a part one place at a time. Once other sections have moved around
+  it, a step check 3 let through may stop the compile, which the guard takes back, and one it
+  pinned may compile, which the panel still refuses.
+- **A step whose page has not come** is not saved yet: a tab closed, or the list or another
+  document opened, in the second its compile takes loses it, and what was typed after it.
 - **Touch.** The lock shows while a finger is on a part, and goes when it lifts.
 
 ## Consequences
@@ -206,4 +260,8 @@ it, a redump and no failure (decision 0010).
   `locked`, the part a glyph is of; `LockedShown` gains `section`, and `Template` `report`.
 - The page's element holds its SVG in an element of its own and is positioned, for the lock; a
   field's overlay is placed in the sheet around it, as before.
-- Every format is dumped once more, under its new name (above); no document or package changes.
+- Every format is dumped once more, under its new name (above); no document changes, and no
+  package but one with a part check 3 pins.
+- `TemplatePackage` gains `pinned`, so an import with a pinned part has another package id than
+  before, as a kind marked `fixed` gives it; `CompilerEvents` gains `stopped`. A structural step
+  is saved once its page comes, a compile later than before.

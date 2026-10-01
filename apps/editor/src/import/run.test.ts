@@ -6,7 +6,16 @@ import { Resume } from "@resume-tools/resume-model";
 import { strToU8, unzipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
 import { Compiler, type Engine, type Shown } from "../editor/compiler";
-import { apply, type Document, fieldsOf, History } from "../editor/document";
+import {
+  apply,
+  applyUnder,
+  CommandError,
+  type Document,
+  fieldsOf,
+  History,
+  type StructureOp,
+} from "../editor/document";
+import { StructureGuard } from "../editor/guard";
 import { lockedWordsOf } from "../editor/Panel";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
@@ -57,6 +66,32 @@ const SKILLS = String.raw`\section{Technical Skills}
 
 /** The fork's projects, the section before its skills. */
 const PROJECTS = "%-----------PROJECTS-----------";
+
+/**
+ * The fork as decision 0038 counts it in 14 corpus forks, and decision 0041's review imports it: its
+ * skills a list a macro of its own opens after the section's head, which no committed answer names,
+ * and another closes after it, with a section after that, so that the closer stands in the locked
+ * part between the two sections.
+ */
+const SKILLS_FORK = JAKE_FORK.replace(
+  "\\usepackage{tabularx}\n",
+  "\\usepackage{tabularx}\n\\newcommand{\\skillsStart}{\\begin{itemize}[leftmargin=0.15in, label={}]}\n\\newcommand{\\skillsEnd}{\\end{itemize}}\n",
+).replace(
+  SKILLS,
+  String.raw`\section{Technical Skills}
+ \skillsStart
+    \resumeItem{Invented skill words for testing}
+    \resumeItem{Other invented skill words}
+ \skillsEnd
+
+%-----------AWARDS-----------
+\section{Awards}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {Invented Prize}{Harbour City}
+      {Invented Committee}{May 2019}
+  \resumeSubHeadingListEnd`,
+);
 
 /**
  * The fork with a picture in its heading, a PNG the upload holds beside it, which the job keeps a
@@ -528,6 +563,90 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
     compiler.close();
     await store.close();
   }, 60_000);
+
+  // Decision 0041's review: a locked part whose removal or move stops the compile. Check 3 pins it
+  // against those steps, which the editor refuses; and a structural step it does not pin that stops
+  // the compile, as the list's section moved below the part that closes its list, is never saved,
+  // and is taken back, through the compiler as the app runs it (`StructureGuard`).
+  test("pins a locked part a step of which stops the compile, and takes back a step that stops it", async () => {
+    const done = await imported(SKILLS_FORK);
+    const { sections } = done.document.resume;
+    const at = sections.findIndex(
+      (section) => section.kind === "locked" && section.latex.includes("\\skillsEnd"),
+    );
+    const closer = sections[at];
+    const list = sections[at - 1];
+    if (closer === undefined || list?.title !== "Technical Skills") throw new Error("no closer");
+    // Its removal stops the compile, and its move above the list's opener; down, below the next
+    // section, the list takes that section in and compiles. Nothing else is pinned.
+    expect(done.package.pinned).toEqual({ [closer.id]: ["remove", "up"] });
+    const step = (op: StructureOp) => () =>
+      applyUnder(done.package, done.document, { type: "structure", op });
+    expect(step({ op: "removeSection", id: closer.id })).toThrow(CommandError);
+    expect(step({ op: "moveSection", id: closer.id, to: at - 1 })).toThrow(CommandError);
+    expect(step({ op: "moveSection", id: closer.id, to: at + 1 })).not.toThrow();
+
+    // As the app runs it: a structural step's save held until a page shows it (`StructureGuard`).
+    const store = new DocumentStore({ name: `resume-tools-pinned-${Date.now()}` });
+    const id = await store.importDocument(done);
+    const stored = await store.get(id);
+    if (stored === undefined) throw new Error("not stored");
+    const template = await templateOf(store, stored.document, id);
+    const history = new History(stored.document, template.package);
+    const guard = new StructureGuard();
+    const pages: Shown[] = [];
+    const errors: string[] = [];
+    let landed: () => void = () => {};
+    const next = () =>
+      new Promise<void>((resolve) => {
+        landed = resolve;
+      });
+    const compiler = new Compiler(
+      engineOf(session),
+      deps.fonts,
+      {
+        page: (shown) => {
+          pages.push(shown);
+          if (guard.paged(shown.document)) store.save(id, history.present, stored.revision);
+          landed();
+        },
+        error: (message) => errors.push(message),
+        stopped: (document) => {
+          if (guard.stopped(document)) compiler.update(history.present);
+        },
+        busy: () => {},
+      },
+      { formats: store.formatsFor("test") },
+    );
+    const change = (op: StructureOp) => {
+      const before = history.present;
+      history.dispatch({ type: "structure", op });
+      compiler.update(history.present);
+      return guard.changed(history, before);
+    };
+    let page = next();
+    compiler.open(template.package, history.present, template.job);
+    await page;
+    const first = pages.at(-1);
+    // The list's section moved below the part that closes its list: offered, held, and stopped.
+    page = next();
+    expect(change({ op: "moveSection", id: list.id, to: at })).toBe(false);
+    await page;
+    expect(errors).toHaveLength(1);
+    expect(history.present).toBe(stored.document);
+    expect(pages.at(-1)?.page.svg).toBe(first?.page.svg);
+    await store.flush();
+    expect((await store.get(id))?.document).toEqual(stored.document);
+    // The part moved down, which compiles: held until its page comes, then saved.
+    page = next();
+    expect(change({ op: "moveSection", id: closer.id, to: at + 1 })).toBe(false);
+    await page;
+    await store.flush();
+    const saved = (await store.get(id))?.document.resume.sections.map((section) => section.id);
+    expect(saved?.[at + 1]).toBe(closer.id);
+    compiler.close();
+    await store.close();
+  }, 120_000);
 
   // Item 13's review: a macro that parses a list of `value/label` pairs and sets each label alone,
   // as a `\foreach` chart does (decision 0013's AltaCV wheel chart), set words the probe found

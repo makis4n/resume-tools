@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { Resume } from "@resume-tools/resume-model";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -149,5 +150,40 @@ describe("the side panel, under an imported package's rules", () => {
     expect(buttons(items, "Add item")[0]?.title).toBe(kept);
     act(() => first?.click());
     expect(sent).toEqual([]);
+  });
+
+  it("disables a locked part's steps the template stops after, and says why (decision 0041)", () => {
+    // A part kept as it was, invented, as one that closes the list of the section above it.
+    const id = "lock-q7w2e9";
+    const locked = { kind: "locked", id, title: "", role: "other", latex: "\\section{Hobbies}" };
+    const resume = Resume.parse({
+      ...sample,
+      sections: [...sample.sections.slice(0, 2), locked, ...sample.sections.slice(2)],
+    });
+    const pkg = { ...jake, pinned: { [id]: ["remove", "up"] } } as TemplatePackage;
+    act(() =>
+      root.render(
+        <Panel
+          document={{ ...doc, resume }}
+          pkg={pkg}
+          onCommand={(command) => sent.push(command)}
+          onSeal={() => {}}
+        />,
+      ),
+    );
+    const row = [...host.querySelectorAll("li")].find(
+      (item) => item.firstElementChild?.textContent === "Kept as it was",
+    );
+    if (row === undefined) throw new Error("no row of the part");
+    const [up, down, remove] = [...row.querySelectorAll("button")];
+    expect([up?.disabled, down?.disabled, remove?.disabled]).toEqual([true, false, true]);
+    expect(up?.title).toBe("The template stops if this part moves up");
+    expect(remove?.title).toBe("The template stops without this part, so it stays");
+    expect(down?.title).toBe("Move down");
+    act(() => up?.click());
+    act(() => remove?.click());
+    expect(sent).toEqual([]);
+    act(() => down?.click());
+    expect(sent).toEqual([{ type: "structure", op: { op: "moveSection", id, to: 3 } }]);
   });
 });
