@@ -9,25 +9,28 @@ JSON of what became of each and a summary, holds the run to a baseline in the co
 has the twenty most common templates' answers reviewed by an Opus agent in Claude Code (decision
 0037). This record is part A: the runner, its outcome, the baseline, the workflow's step, and the
 review's export and check. Part B, the review itself, runs once item 18 has picked the naming model
-and filled its cache. Items 12 (the import in the browser), 13 (the report and its 90% bar) and 14
-(the controls proven) are built beside it. The code is `apps/editor/scripts/corpus-run.ts`,
-`corpus-review.ts` and `corpus-assemble-child.ts`, with `corpus.ts`'s commands.
+and filled its cache. Items 12 (the import in the browser) and 13 (the report and its 90% bar) are
+built beside it; item 14 (decision 0040) has given imports the page size, the margins and the font
+size, and the milestone's bar, those three proven on every successful corpus import, which this
+runner judges. The code is `apps/editor/scripts/corpus-run.ts`, `corpus-review.ts` and
+`corpus-assemble-child.ts`, with `corpus.ts`'s commands and item 14's bar in `corpus-assemble.ts`.
 
 ## Decision
 
 ### One pipeline, one child
 
 - `corpus run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model]
-  [--write-baseline]` takes each fetched document, or those `--only` or a file of ids names, in the
-  reference runner's pool, as many children as the machine has cores and four at most (`poolSize`:
-  two on a private repository's free runner), 900 s a document, a model step's 300 s more with
-  `--allow-model`. It writes its JSON after each document, and on SIGINT or SIGTERM, as a CI step's
-  time running out sends, the pool kills its children and leaves what they held undone, and the run
-  ends as it would, printing its table and writing its JSON, marked unfinished, for what it did, and
-  exits 1. The child is `corpus assemble`'s, which `corpus oracle` and `corpus review check`
-  run too, so the run adds no copy of the pipeline: the intake, the reference compile, the Latin
-  Modern swap, the signatures, the parse, the probe, the naming request, its answers, the XeTeX
-  rewrite and its check, the assembly, the four checks and the harness.
+  [--write-baseline]` takes each fetched document, or those `--only` names, one id or several a
+  comma separates, or a file of ids, in the reference runner's pool, as many children as the
+  machine has cores and four at most (`poolSize`: two on a private repository's free runner), 900 s
+  a document, a model step's 300 s more with `--allow-model`. It writes its JSON after each
+  document, and on SIGINT or SIGTERM, as a CI step's time running out sends, the pool kills its
+  children and leaves what they held undone, and the run ends as it would, printing its table and
+  writing its JSON, marked unfinished, for what it did, and exits 1. The child is
+  `corpus assemble`'s, which `corpus oracle` and `corpus review check` run too, so the run adds no
+  copy of the pipeline: the intake, the reference compile, the Latin Modern swap, the signatures,
+  the parse, the probe, the naming request, its answers, the XeTeX rewrite and its check, the
+  assembly, the four checks and the harness.
 - The naming step is the import's: the request built with the upload's sources, the page's strings
   and the header's values, and gated as `corpus name` gates it (`gatedRequest`, decision 0033);
   answered macro by macro (`answerDocument`, decision 0027) from the committed answers first, then,
@@ -73,25 +76,41 @@ and filled its cache. Items 12 (the import in the browser), 13 (the report and i
   the reason kept), **not parsed**, **not probed** (its body unmarked does not set its reference's
   glyphs), **no answer** for any macro its body calls, or **timed out or died**.
 
+### Item 14's bar
+
+- The runner applies item 14's bar (decision 0040): every success, as `outcomeOf` gives it, has the
+  page size, the margins and the font size proven by the fourth check. It judges the bar with item
+  14's functions in `corpus-assemble.ts` and keeps no copy of them: `runBar` is item 14's
+  `barFailures` with the run's successes (`succeeded`) in place of the first check's, which
+  `corpus assemble` passes until item 13 lands; a row's controls are `assembleRow`'s; a document's
+  line says the bar as `barLine` does, and the failures as `barFailureLines` does, for both runners.
+- The summary counts the successes that lack one of the three or more, and how many lack each
+  (`bar`); the table counts, per family, the documents assembled with all three proven, the
+  successes lacking any, and those lacking each; the headline says how many of the successes lack
+  one. A run of any mode and scope exits 1 when a success lacks one, naming each by its id and the
+  control alone, and `--write-baseline` writes no baseline from it.
+
 ### What a run writes
 
 - `--json` writes the day and the commit it ran at (`at`), the mode (the committed answers alone or
   with a model's cache, the model asked if any, every document or some), whether it finished
-  (`complete`), the summary and a row per document, ids and counts only: the outcome
-  and its refusal's reason; the editable rate; the words editable and locked by reason; the fields
-  editable, raw, required and locked by reason; the sections mapped and locked; the controls proven
-  and dropped; the redefinitions applied and dropped, counted; what `outcomeOf` counted; the
-  harness's and the checks' own findings, by check; the kinds of unit that stop the compile; the
-  naming step's macros, answered from the committed answers or the model's cache, refused there,
-  missing, asked and stored, the calls and tokens, and whether the gate passes the request; the
-  compiles of the probe and of the checks; and the milliseconds of each step, the reference, the
-  Latin Modern swap, the parse, the probe, the naming, the fonts and the checks, and of the whole
-  (`times`).
-- It prints a line a document, then one table, per family and in all, and a headline: the documents,
-  and those that timed out, which a machine's speed decides and which count in no share and no rate;
-  the shares of the others that are a success, partial and refused or stopped, with where the
-  stopped ones stopped; the editable rate over the documents assembled; and the locked words by
-  reason. Everything goes through `printable`.
+  (`complete`), the summary with item 14's bar and a row per document, ids and counts only: the
+  outcome and its refusal's reason; the editable rate; the words editable and locked by reason; the
+  fields editable, raw, required and locked by reason; the sections mapped and locked; the controls
+  proven and dropped, those the checks never tried and the kind of why each was dropped, never the
+  checks' words (decision 0040); the redefinitions applied and dropped, counted; what `outcomeOf`
+  counted; the harness's and the checks' own findings, by check; the kinds of unit that stop the
+  compile; the naming step's macros, answered from the committed answers or the model's cache,
+  refused there, missing, asked and stored, the calls and tokens, and whether the gate passes the
+  request; the compiles of the probe and of the checks; and the milliseconds of each step, the
+  reference, the Latin Modern swap, the parse, the probe, the naming, the fonts and the checks, and
+  of the whole (`times`).
+- It prints a line a document, with the bar's controls an assembled one proves and, for a success,
+  those it lacks and the kind of why; then one table, per family and in all, and a headline: the
+  documents, and those that timed out, which a machine's speed decides and which count in no share
+  and no rate; the shares of the others that are a success, partial and refused or stopped, with
+  where the stopped ones stopped; the editable rate over the documents assembled; the locked words
+  by reason; and the bar. Everything goes through `printable`.
 - `corpus compare <run.json> <run.json> [...]` compares each run's JSON with the next, every field
   but each row's `times` and the file's `at`, and prints each path that differs with its two values,
   which are counts and words of closed lists, exiting 1 when any does: item 17's bar, three runs in
@@ -112,9 +131,10 @@ and filled its cache. Items 12 (the import in the browser), 13 (the report and i
 - A pull request raises it by hand when the rate rises. `--write-baseline` writes it from a
   `--committed-only` run over the whole corpus, with the day and the commit, and never over a
   baseline the run falls more than a point under: a person lowers a baseline by editing it in a
-  pull request, where it is read (`nextBaseline`). It refuses a checkout that differs from its
-  commit, a file git does not track among them, as an answer not yet committed under
-  `corpus/answers/` is, which the run reads though the commit lacks it.
+  pull request, where it is read (`nextBaseline`); nor from a run that fails item 14's bar. It
+  refuses a checkout that differs from its commit, a file git does not track among them, as an
+  answer not yet committed under `corpus/answers/` is, which the run reads though the commit lacks
+  it.
 - `corpus run --write-baseline --from <run.json>` runs nothing, and writes the baseline from a run's
   JSON, as CI's run leaves it as an artifact, by the same rule, the summary counted again from its
   rows, the day and the commit its own: only a finished `--committed-only` run over the whole corpus
@@ -124,11 +144,12 @@ and filled its cache. Items 12 (the import in the browser), 13 (the report and i
 
 `.github/workflows/corpus.yml`, still started by hand alone (decision 0035), runs `corpus run
 --committed-only --json run.json` after the leak check: the table and its headline to the job's
-summary, `run.json` as an artifact, whatever the step's end. Its time on the free runner is not yet
-measured, about an hour the estimate with four children where a private repository's runner has two
-cores and takes two: the step is given three hours and the job 230 minutes, and a step stopped short
-still leaves its table and `run.json` for what it did. It holds no key, ever: the run reads the
-committed answers alone.
+summary, `run.json` as an artifact, whatever the step's end; the step fails when the run falls under
+the baseline or a success misses item 14's bar, which no other step of the workflow judges. Its
+time on the free runner is not yet measured, about an hour the estimate with four children where a
+private repository's runner has two cores and takes two: the step is given three hours and the job
+230 minutes, and a step stopped short still leaves its table and `run.json` for what it did. It
+holds no key, ever: the run reads the committed answers alone.
 
 ### Templates
 
@@ -249,6 +270,13 @@ decision 0026 found.
 The child that `corpus assemble` ran before, at `309ebd7`, which built its requests without the
 page, gives four of the documents, `awesome-cv-0003`, `jake-0007`, `moderncv-0001` and
 `altacv-0015`, the same answers, words and fields as this one.
+
+Run again once item 14 had merged, with its bar applied, in 15.2 minutes: `corpus compare` finds
+the run the same as the last before it once the rows' controls, the checks' compiles and the
+summary's bar are set aside, which item 14 moves and this record adds. The thirteen assembled now
+have the margins proven beside the page size and the font size, as decision 0040's sample found,
+and none dropped; the checks' compiles rise from 25 to 33 at the median; and the bar holds, the
+sample having no success from the committed answers alone.
 
 `corpus review export` over what the runs kept, in two seconds: the 19 documents with a request make
 nine templates, `01-jake` (all six `jake` documents, 29 keys), `02-awesome-cv` (three forks, 26

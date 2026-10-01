@@ -137,14 +137,17 @@
  *                 child, with the naming request built and gated as `name` builds it, its answers
  *                 from the committed ones first and then the cache of the model `NAMING_MODEL`
  *                 names; print each document's outcome, success, partial, refused or where it
- *                 stopped, and one table per family and in all, with a headline of the shares, the
- *                 editable rate and the locked words by reason, names and counts only; keep each
- *                 document's assembly, and what the review reads of it, which holds its text, under
- *                 `.corpus/run/` (`scripts/corpus-run.ts`, decision 0043). A --committed-only run
- *                 over the whole corpus is held to `corpus/baseline.json`, and exits 1 when its
- *                 success rate falls more than a point under the baseline's. It takes about an hour
- *                 for the corpus on CI's runner
- *   --only <id>   that document only
+ *                 stopped, and the bar's controls it proves, and one table per family and in all,
+ *                 with a headline of the shares, the editable rate, the locked words by reason and
+ *                 the bar, names and counts only; keep each document's assembly, and what the
+ *                 review reads of it, which holds its text, under `.corpus/run/`
+ *                 (`scripts/corpus-run.ts`, decision 0043). It exits 1 when a success lacks any of
+ *                 the page size, the margins and the font size, item 14's bar, and names each such
+ *                 document by its id and the control (decision 0040). A --committed-only run over
+ *                 the whole corpus is held to `corpus/baseline.json`, and exits 1 when its success
+ *                 rate falls more than a point under the baseline's. It takes about an hour for the
+ *                 corpus on CI's runner
+ *   --only <id>   that document only, or the documents a comma separates
  *   --ids <file>  the documents a file names, one id a line, from where pnpm was run
  *   --json <file> write each document's row as JSON too, ids and counts only, with the summary
  *   --committed-only  the committed answers alone, as CI runs it: no cache, no model
@@ -200,10 +203,10 @@ import {
   type AssembleChildRow,
   type AssembleRow,
   assembleTable,
-  barControls,
+  barFailureLines,
   barFailures,
+  barLine,
   comparePlaces,
-  DROP_KINDS,
   firstCheckHolds,
   type PlaceCount,
   placesTable,
@@ -293,6 +296,7 @@ import {
   type RunMode,
   RunRecord,
   type RunRow,
+  runBar,
   runDifferences,
   runHeadline,
   runLimitMs,
@@ -815,13 +819,7 @@ function assembleLine(row: AssembleRow): string {
   const locked = Object.values(row.fields?.locked ?? {}).reduce((sum, n) => sum + (n ?? 0), 0);
   // The milestone's bar (decision 0040): which of page size, margins and font size are proven, and
   // for a successful import, why each it lacks is lacking, by the kind of why alone.
-  const { proven, lacking } = barControls(row);
-  const why = (control: string) => {
-    const kind = row.controls?.why?.[control];
-    return `${control} (${kind === undefined ? "not offered" : DROP_KINDS[kind]})`;
-  };
-  const bar = `${proven.length === 0 ? "none" : proven.join(" ")} proven${lacking.length === 0 || !firstCheckHolds(row) ? "" : `, lacking ${lacking.map(why).join(", ")}`}`;
-  return `${row.engine}, ${row.outcome}${row.difference === undefined ? "" : ` (${row.difference})`}, ${row.fields?.editable ?? 0} editable, ${locked} locked, ${row.compiles ?? 0} compiles, ${row.validateMs ?? 0} ms; the bar: ${bar}`;
+  return `${row.engine}, ${row.outcome}${row.difference === undefined ? "" : ` (${row.difference})`}, ${row.fields?.editable ?? 0} editable, ${locked} locked, ${row.compiles ?? 0} compiles, ${row.validateMs ?? 0} ms; the bar: ${barLine(row, firstCheckHolds(row))}`;
 }
 
 async function runAssemble(only: string | undefined, json: string | undefined) {
@@ -873,16 +871,9 @@ async function runAssemble(only: string | undefined, json: string | undefined) {
     );
   // The milestone's bar (decision 0040): every successful import has its page size, margins and
   // font size proven, or the run fails, naming each it misses by the document's id and control.
-  const failures = barFailures(rows);
+  const failures = barFailures(rows, firstCheckHolds);
   if (failures.length > 0) {
-    console.error(
-      [
-        `The bar: ${failures.length} ${failures.length === 1 ? "control" : "controls"} of successful imports not proven`,
-        ...failures.map((failure) => `${failure.id}: ${failure.control}`),
-      ]
-        .map(printable)
-        .join("\n"),
-    );
+    console.error(barFailureLines(failures).map(printable).join("\n"));
     process.exitCode = 1;
   }
 }
@@ -1533,10 +1524,12 @@ async function runRun(options: {
     if (next.baseline !== undefined) writeAtomically(BASELINE_FILE, formatJson(next.baseline));
     print([next.line]);
   }
-  if (stopped || verdict.failed) {
-    console.error(printable(verdict.line));
-    process.exitCode = 1;
-  }
+  if (stopped || verdict.failed) console.error(printable(verdict.line));
+  // Item 14's bar, which the run judges over its successes (decision 0040): a success that lacks
+  // the page size, the margins or the font size fails the run, named by its id and the control.
+  const bar = runBar(rows);
+  if (bar.length > 0) console.error(barFailureLines(bar).map(printable).join("\n"));
+  if (stopped || verdict.failed || bar.length > 0) process.exitCode = 1;
 }
 
 function runCompare(files: readonly string[]) {

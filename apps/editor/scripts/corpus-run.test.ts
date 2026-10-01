@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import type { AssemblyChecks } from "../src/import/assemble";
+import { DROPPED } from "../src/import/validate";
+import { assembleRow, barFailures } from "./corpus-assemble";
 import {
   BASELINE_SLACK,
   Baseline,
@@ -18,12 +20,14 @@ import {
   outcomeOf,
   poolSize,
   type RunRow,
+  runBar,
   runDifferences,
   runHeadline,
   runLine,
   runRowOf,
   runTable,
   SUCCESS_RATE,
+  succeeded,
   summaryOf,
 } from "./corpus-run";
 
@@ -102,6 +106,26 @@ describe("the outcome and the editable rate", () => {
     });
     expect(JSON.stringify(row)).not.toContain("Quillwort");
   });
+
+  test("keeps the controls as item 14's row has them, each dropped one's kind of why and no words", () => {
+    const margins = checks({
+      controls: {
+        offered: ["pageSize", "margins", "fontSize"],
+        proven: ["pageSize", "fontSize"],
+        dropped: [{ control: "margins", why: DROPPED.same }],
+      },
+    });
+    const row = runRowOf({ checks: margins }, "pdftex", { probeCompiles: 1, times: {} });
+    expect(row.controls).toEqual(
+      assembleRow(margins, "pdftex", { answered: 0, unanswered: 0 }).controls,
+    );
+    expect(row.controls).toEqual({
+      proven: ["pageSize", "fontSize"],
+      dropped: ["margins"],
+      unchecked: [],
+      why: { margins: "same" },
+    });
+  });
 });
 
 const row = (id: string, family: RunRow["family"], changes: Partial<RunRow>): RunRow => ({
@@ -120,7 +144,7 @@ const ROWS: RunRow[] = [
     counted: { editable: 95, all: 100 },
     words: { editable: 95, locked: { date: 5 } },
     fields: { editable: 10, raw: 0, required: 0, locked: { date: 1 } },
-    controls: { proven: ["pageSize"], dropped: [] },
+    controls: { proven: ["pageSize"], dropped: ["margins"], why: { margins: "same" } },
     findings: {},
     naming: {
       macros: 8,
@@ -145,6 +169,7 @@ const ROWS: RunRow[] = [
     counted: { editable: 20, all: 100 },
     difference: "position",
     words: { editable: 20, locked: { unmapped: 70, shape: 10 } },
+    controls: { proven: ["pageSize", "margins", "fontSize"], dropped: [] },
     findings: { pdf: 2 },
     compiles: { probe: 9, checks: 40 },
     times: { wall: 9000 },
@@ -174,15 +199,41 @@ describe("the summary, the headline and the table", () => {
     expect(summary.locked).toEqual({ date: 5, shape: 10, unmapped: 70 });
     // One success of the five that did not time out: a timeout counts in no rate.
     expect(summary.rates).toEqual({ success: 20, editable: 57.5 });
+    // Item 14's bar over the one success, which lacks the margins and the font size; the partial
+    // one is no success, whatever it proves.
+    expect(summary.bar).toEqual({
+      lacking: 1,
+      controls: { pageSize: 0, margins: 1, fontSize: 1 },
+    });
   });
 
-  test("give the shares, where the others stopped and the locked words by reason", () => {
-    const [shares, words] = runHeadline(ROWS);
+  test("judge item 14's bar with its own function, over the run's successes alone", () => {
+    expect(runBar(ROWS)).toEqual([
+      { id: "jake-0001", control: "margins" },
+      { id: "jake-0001", control: "fontSize" },
+    ]);
+    expect(runBar(ROWS)).toEqual(barFailures(ROWS, succeeded));
+    // A partial import that proves none of the three, or a document never assembled, misses no bar.
+    const none = { proven: [], dropped: [] };
+    expect(runBar([row("jake-0009", "jake", { controls: none }), ROWS[5] as RunRow])).toEqual([]);
+    expect(runBar([row("jake-0009", "jake", { outcome: "success", controls: none })])).toHaveLength(
+      3,
+    );
+  });
+
+  test("give the shares, where the others stopped, the locked words by reason and the bar", () => {
+    const [shares, words, bar] = runHeadline(ROWS);
     expect(shares).toBe(
       "6 documents, 1 of which timed out and counts in no share; of the 5 others, 1 success (20.0%), 1 partial (20.0%), 3 refused or stopped (60.0%): 2 refused, 1 with no reference, 0 not parsed, 0 not probed, 0 with no answer, 0 died.",
     );
     expect(words).toBe(
       "Words in editable fields: 57.5% of 200 words in the 2 documents assembled; locked, by reason: unmapped 70, shape 10, date 5.",
+    );
+    expect(bar).toBe(
+      "The bar: 1 of the 1 success lacks the page size, the margins or the font size: margins 1, fontSize 1.",
+    );
+    expect(runHeadline(ROWS.slice(1))[2]).toBe(
+      "The bar: 0 of the 0 successes lack the page size, the margins or the font size.",
     );
   });
 
@@ -212,6 +263,21 @@ describe("the summary, the headline and the table", () => {
     // The rule is `outcomeOf`'s alone: the table applies no rate of its own.
     expect(table).not.toContain("under 90%");
     expect(cells("Locked: `unmapped`")?.at(-1)).toBe("70");
+    expect(cells("`margins` proven")?.at(-1)).toBe("1");
+    expect(cells("`margins` dropped")?.at(-1)).toBe("1");
+    expect(cells("The bar: page size, margins and font size all proven")).toEqual([
+      "1",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "1",
+    ]);
+    expect(cells("The bar: a success lacking one")?.at(-1)).toBe("1");
+    expect(cells("The bar: a success lacking `pageSize`")?.at(-1)).toBe("0");
+    expect(cells("The bar: a success lacking `margins`")?.at(-1)).toBe("1");
+    expect(cells("The bar: a success lacking `fontSize`")?.at(-1)).toBe("1");
     expect(cells("`pdf`")?.at(-1)).toBe("1");
     expect(cells("Answered from the committed answers")?.at(-1)).toBe("8");
     expect(cells("A document, slowest")?.at(-1)).toBe("9000 ms");
@@ -219,7 +285,10 @@ describe("the summary, the headline and the table", () => {
     expect(table.split("\n").every((line) => !/\p{Cc}/u.test(line))).toBe(true);
     expect(runLine(ROWS[4] as RunRow)).toBe("refused");
     expect(runLine(ROWS[0] as RunRow)).toBe(
-      "pdftex, success, 95% of 100 words editable, 10 fields editable, 20 compiles, 6 s",
+      "pdftex, success, 95% of 100 words editable, 10 fields editable, 20 compiles, 6 s; the bar: pageSize proven, lacking margins (every value sets the same page), fontSize (not offered)",
+    );
+    expect(runLine(ROWS[1] as RunRow)).toBe(
+      "pdftex, partial, the first check differs (position), 20% of 100 words editable, 0 fields editable, 40 compiles, 9 s; the bar: pageSize margins fontSize proven",
     );
   });
 });
@@ -387,6 +456,7 @@ describe("the baseline", () => {
     const rows: RunRow[] = Array.from({ length: 10 }, (_, i) =>
       row(`jake-${String(i + 1).padStart(4, "0")}`, "jake", {
         outcome: i < 2 ? "success" : "partial",
+        controls: { proven: ["pageSize", "margins", "fontSize"], dropped: [] },
       }),
     );
     const file = (changes: Record<string, unknown> = {}) => ({
@@ -419,6 +489,30 @@ describe("the baseline", () => {
     expect(baselineFromFile(file({ documents: lower }), baseline).line).toBe(
       "corpus/baseline.json is not written: the run falls more than a point under it, and a baseline is lowered only by a pull request that edits it.",
     );
+    // Nor one whose successes miss item 14's bar, counted again from the rows.
+    const bare = rows.map(({ controls: _controls, ...each }) => each);
+    expect(baselineFromFile(file({ documents: bare }), baseline).line).toBe(
+      "corpus/baseline.json is not written: 2 successes lack the page size, the margins or the font size, item 14's bar.",
+    );
+  });
+
+  test("is never written from a run that fails item 14's bar, however high its rate", () => {
+    const failing = {
+      ...summaryOf([]),
+      ...summary(24),
+      bar: { lacking: 1, controls: { pageSize: 0, margins: 1, fontSize: 0 } },
+    };
+    expect(
+      nextBaseline({
+        summary: failing,
+        baseline,
+        scope,
+        date: "2026-10-02",
+        commit: "f".repeat(40),
+      }),
+    ).toEqual({
+      line: "corpus/baseline.json is not written: 1 success lacks the page size, the margins or the font size, item 14's bar.",
+    });
   });
 });
 

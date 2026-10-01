@@ -12,11 +12,13 @@
  *
  * What became of a document is one row, ids and counts only: its outcome, which `outcomeOf` gives
  * (the one place item 13's report takes over), its editable rate, its words and fields, editable and
- * locked by reason, its sections, controls, redefinitions, the harness's and the checks' findings,
- * its naming step, its compiles and the time each step took. The table adds them up per family and
- * in all, and the headline gives the shares and the locked words by reason. A `--committed-only` run
- * over the whole corpus is held to `corpus/baseline.json` (`baselineVerdict`); `corpus compare`
- * says whether runs agree, times aside (`runDifferences`).
+ * locked by reason, its sections, its controls as `assembleRow` gives them, its redefinitions, the
+ * harness's and the checks' findings, its naming step, its compiles and the time each step took.
+ * The table adds them up per family and in all, and the headline gives the shares, the locked words
+ * by reason and item 14's bar, which the run judges over its successes with item 14's functions
+ * (`runBar`, decision 0040): a success that lacks the page size, the margins or the font size fails
+ * the run. A `--committed-only` run over the whole corpus is held to `corpus/baseline.json`
+ * (`baselineVerdict`); `corpus compare` says whether runs agree, times aside (`runDifferences`).
  *
  * What is printed and written names documents by id, reasons, checks and controls, and counts,
  * never a document's text; each document's assembly and what the review reads of it (its request,
@@ -28,7 +30,18 @@
 import { availableParallelism } from "node:os";
 import { z } from "zod";
 import type { AssemblyChecks, LockReason } from "../src/import/assemble.ts";
-import { ASSEMBLE_LIMIT_MS, assembleRow, LOCK_REASONS } from "./corpus-assemble.ts";
+import {
+  ASSEMBLE_LIMIT_MS,
+  type AssembleRow,
+  assembleRow,
+  BAR_CONTROLS,
+  type BarControl,
+  barControls,
+  barFailures,
+  barLine,
+  CONTROLS,
+  LOCK_REASONS,
+} from "./corpus-assemble.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 import { MODEL_LIMIT_MS } from "./corpus-name.ts";
 import { POOL_SIZE } from "./corpus-reference.ts";
@@ -170,7 +183,11 @@ export interface RunRow {
   };
   words?: { editable: number; locked: Partial<Record<LockReason, number>> };
   sections?: { mapped: number; locked: number };
-  controls?: { proven: string[]; dropped: string[] };
+  /**
+   * The controls proven and dropped, as `assembleRow` gives them (decision 0040): of those dropped,
+   * those the checks never tried, and the kind of why each was dropped, never the checks' words.
+   */
+  controls?: AssembleRow["controls"];
   redefinitions?: { applied: number; dropped: number };
   /** The harness's findings and the checks' own, by check. */
   findings?: Partial<Record<string, number>>;
@@ -210,7 +227,7 @@ export function runRowOf(
     ...(row.fields === undefined ? {} : { fields: row.fields }),
     ...(row.words === undefined ? {} : { words: row.words }),
     ...(row.sections === undefined ? {} : { sections: row.sections }),
-    controls: { proven: row.controls?.proven ?? [], dropped: row.controls?.dropped ?? [] },
+    ...(row.controls === undefined ? {} : { controls: row.controls }),
     redefinitions: {
       applied: row.redefinitions?.applied.length ?? 0,
       dropped: row.redefinitions?.dropped.length ?? 0,
@@ -230,10 +247,20 @@ export function runRowOf(
 export const assembled = (row: Pick<RunRow, "outcome">) =>
   row.outcome === "success" || row.outcome === "partial";
 
+/** Whether a document is a success, as `outcomeOf` says: the run's successes, item 14's bar's. */
+export const succeeded = (row: Pick<RunRow, "outcome">) => row.outcome === "success";
+
+/**
+ * Where the run misses item 14's bar (decision 0040): each success, by its document's id, and each
+ * of the page size, the margins and the font size it lacks, as item 14's `barFailures` finds them
+ * with the run's successes in place of its first check's; none when every success has all three.
+ */
+export const runBar = (rows: readonly RunRow[]) => barFailures(rows, succeeded);
+
 /**
  * What a run came to in all: the documents by outcome; what `outcomeOf` counted over the documents
- * assembled, added up, and the words the assembly locked in them, by reason; and the two rates, in
- * percent.
+ * assembled, added up, and the words the assembly locked in them, by reason; the two rates, in
+ * percent; and item 14's bar.
  */
 export interface RunSummary {
   documents: number;
@@ -245,6 +272,11 @@ export interface RunSummary {
    * speed decides and count in no rate; and of what `outcomeOf` counted that is editable.
    */
   rates: { success: number; editable: number };
+  /**
+   * Item 14's bar (`runBar`): how many successes lack one or more of the page size, the margins
+   * and the font size, and how many lack each.
+   */
+  bar: { lacking: number; controls: Record<BarControl, number> };
 }
 
 /** A percentage as the summary keeps it: two decimals. */
@@ -265,6 +297,7 @@ export function summaryOf(rows: readonly RunRow[]): RunSummary {
     for (const [reason, n] of Object.entries(row.words?.locked ?? {}) as [LockReason, number][])
       locked[reason] = (locked[reason] ?? 0) + n;
   }
+  const failures = runBar(rows);
   return {
     documents: rows.length,
     outcomes,
@@ -275,6 +308,15 @@ export function summaryOf(rows: readonly RunRow[]): RunSummary {
     rates: {
       success: percent(outcomes.success, rows.length - outcomes.timeout),
       editable: percent(counted.editable, counted.all),
+    },
+    bar: {
+      lacking: new Set(failures.map((failure) => failure.id)).size,
+      controls: Object.fromEntries(
+        BAR_CONTROLS.map((control) => [
+          control,
+          failures.filter((failure) => failure.control === control).length,
+        ]),
+      ) as Record<BarControl, number>,
     },
   };
 }
@@ -288,11 +330,12 @@ const shown = (value: number) => `${value.toFixed(1)}%`;
 
 /**
  * The headline under the table: the documents, the success, partial and other shares, where the
- * others stopped, the editable rate over the documents assembled, and the locked words by reason.
+ * others stopped, the editable rate over the documents assembled, the locked words by reason, and
+ * item 14's bar: how many successes lack the page size, the margins or the font size, and each.
  */
 export function runHeadline(rows: readonly RunRow[]): string[] {
   const summary = summaryOf(rows);
-  const { outcomes } = summary;
+  const { outcomes, bar } = summary;
   // A document that timed out counts in no share: a machine's speed decides it.
   const n = summary.documents - outcomes.timeout;
   const rest = n - outcomes.success - outcomes.partial;
@@ -300,9 +343,13 @@ export function runHeadline(rows: readonly RunRow[]): string[] {
   const reasons = (Object.entries(summary.locked) as [LockReason, number][])
     .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1))
     .map(([reason, count]) => `${reason} ${count.toLocaleString("en-GB")}`);
+  const lacking = BAR_CONTROLS.flatMap((control) =>
+    bar.controls[control] > 0 ? [`${control} ${bar.controls[control]}`] : [],
+  );
   return [
     `${plural(summary.documents, "document")}, ${outcomes.timeout} of which timed out and ${outcomes.timeout === 1 ? "counts" : "count"} in no share; of the ${n} others, ${outcomes.success} success (${share(outcomes.success)}), ${outcomes.partial} partial (${share(outcomes.partial)}), ${rest} refused or stopped (${share(rest)}): ${outcomes.refused} refused, ${outcomes["no reference"]} with no reference, ${outcomes["not parsed"]} not parsed, ${outcomes.baseline} not probed, ${outcomes["no answer"]} with no answer, ${outcomes.crashed} died.`,
     `Words in editable fields: ${shown(summary.rates.editable)} of ${plural(summary.counted.all, "word")} in the ${plural(outcomes.success + outcomes.partial, "document")} assembled${reasons.length === 0 ? "." : `; locked, by reason: ${reasons.join(", ")}.`}`,
+    `The bar: ${bar.lacking} of the ${outcomes.success} ${outcomes.success === 1 ? "success" : "successes"} ${bar.lacking === 1 ? "lacks" : "lack"} the page size, the margins or the font size${lacking.length === 0 ? "." : `: ${lacking.join(", ")}.`}`,
   ].map(printable);
 }
 
@@ -329,8 +376,9 @@ const STEPS = ["reference", "latinModern", "parse", "probe", "naming", "fonts", 
 /**
  * What the run came to, as one Markdown table, per family and in all: the outcomes, and where the
  * others stopped; the words in editable fields and the words locked by reason; the fields, the
- * sections, the controls and the findings; the naming step; and the compiles and times. Names of
- * reasons, checks and controls, and numbers, only.
+ * sections, the controls, item 14's bar (the documents with the page size, the margins and the font
+ * size all proven, and the successes lacking any, and which) and the findings; the naming step; and
+ * the compiles and times. Names of reasons, checks and controls, and numbers, only.
  */
 export function runTable(rows: readonly RunRow[]): string {
   const of = (column: (typeof COLUMNS)[number]) =>
@@ -392,10 +440,15 @@ export function runTable(rows: readonly RunRow[]): string {
   const partsLocked = LOCK_REASONS.filter((reason) =>
     rows.some((row) => (row.fields?.locked[reason] ?? 0) > 0),
   );
-  const controls = ["pageSize", "margins", "fontSize", "font", "accent", "density"];
-  const dropped = controls.filter((name) =>
+  const dropped = CONTROLS.filter((name) =>
     rows.some((row) => row.controls?.dropped.includes(name)),
   );
+  // Item 14's bar over the successes, as `runBar` finds it, the one rule the summary counts too.
+  const misses = runBar(rows);
+  const lacks = (row: RunRow, control?: BarControl) =>
+    misses.some(
+      (miss) => miss.id === row.id && (control === undefined || miss.control === control),
+    );
   const findings = present(rows.flatMap((row) => Object.keys(row.findings ?? {})));
   const failures = present(rows.flatMap((row) => row.naming?.failed ?? []));
   const lines = [
@@ -456,11 +509,19 @@ export function runTable(rows: readonly RunRow[]): string {
     sum("Sections mapped onto the model", (row) => row.sections?.mapped ?? 0),
     sum("Sections locked", (row) => row.sections?.locked ?? 0),
     section("Controls and redefinitions, documents"),
-    ...controls.map((name) =>
+    ...CONTROLS.map((name) =>
       count(`\`${name}\` proven`, (row) => row.controls?.proven.includes(name) === true),
     ),
     ...dropped.map((name) =>
       count(`\`${name}\` dropped`, (row) => row.controls?.dropped.includes(name) === true),
+    ),
+    count(
+      "The bar: page size, margins and font size all proven",
+      (row) => assembled(row) && barControls(row).lacking.length === 0,
+    ),
+    count("The bar: a success lacking one", (row) => lacks(row)),
+    ...BAR_CONTROLS.map((control) =>
+      count(`The bar: a success lacking \`${control}\``, (row) => lacks(row, control)),
     ),
     count("Redefinitions applied", (row) => (row.redefinitions?.applied ?? 0) > 0),
     count("Redefinitions dropped", (row) => (row.redefinitions?.dropped ?? 0) > 0),
@@ -505,7 +566,10 @@ export function runTable(rows: readonly RunRow[]): string {
   return `${lines.map(printable).join("\n")}\n`;
 }
 
-/** A row as a line of progress: its outcome, and numbers, never text. */
+/**
+ * A row as a line of progress: its outcome, numbers, and for a document assembled, the bar's
+ * controls it proves and, for a success, those it lacks and the kind of why (`barLine`); never text.
+ */
 export function runLine(row: RunRow): string {
   const engine = row.engine === undefined ? "" : `${row.engine}, `;
   const why = row.refused !== undefined && PLAIN.test(row.refused) ? ` (${row.refused})` : "";
@@ -515,7 +579,7 @@ export function runLine(row: RunRow): string {
       ? `, the first check differs (${row.difference})`
       : "";
   return printable(
-    `${engine}${row.outcome}${difference}, ${Math.round(100 * (row.rate ?? 0))}% of ${plural(row.counted?.all ?? 0, "word")} editable, ${plural(row.fields?.editable ?? 0, "field")} editable, ${row.compiles?.checks ?? 0} compiles, ${Math.round(row.times.wall / 1000)} s`,
+    `${engine}${row.outcome}${difference}, ${Math.round(100 * (row.rate ?? 0))}% of ${plural(row.counted?.all ?? 0, "word")} editable, ${plural(row.fields?.editable ?? 0, "field")} editable, ${row.compiles?.checks ?? 0} compiles, ${Math.round(row.times.wall / 1000)} s; the bar: ${barLine(row, succeeded(row))}`,
   );
 }
 
@@ -698,7 +762,8 @@ export function baselineOf(summary: RunSummary, date: string, commit: string): B
  * What `--write-baseline` does with a run's summary: the baseline to write, or why none is. Only a
  * `--committed-only` run over the whole corpus gives one, and never one whose success rate falls more
  * than BASELINE_SLACK points under the baseline it would replace: a person lowers a baseline by
- * editing the file in a pull request, where it is read, and never by running the corpus.
+ * editing the file in a pull request, where it is read, and never by running the corpus. Nor one
+ * that fails item 14's bar, a success lacking the page size, the margins or the font size.
  */
 export function nextBaseline(input: {
   summary: RunSummary;
@@ -715,6 +780,11 @@ export function nextBaseline(input: {
   if (verdict.failed)
     return {
       line: "corpus/baseline.json is not written: the run falls more than a point under it, and a baseline is lowered only by a pull request that edits it.",
+    };
+  const { lacking } = input.summary.bar;
+  if (lacking > 0)
+    return {
+      line: `corpus/baseline.json is not written: ${lacking} ${lacking === 1 ? "success lacks" : "successes lack"} the page size, the margins or the font size, item 14's bar.`,
     };
   return {
     baseline: baselineOf(input.summary, input.date, input.commit),
