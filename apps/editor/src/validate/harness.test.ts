@@ -35,7 +35,8 @@ const ENSURES: Record<Check, string> = {
   dump: "dumps its preamble as a format",
   compile: "compiles its sample with no error in the log",
   converges: "converges: two passes as a new document, then one again, to the same output",
-  controls: "compiles with each control it offers set another way, with no error, to other output",
+  controls:
+    "compiles with each control it offers set another way, with no error, to other output, and draws each font",
   edits: "shows every field's new text after an edit, compiled once as the editor does",
   pages: "sets its sample on one page, no field past the page's edges",
   fields: "keeps every field's markers, once each, and the page finds each field with glyphs",
@@ -987,10 +988,13 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
         {
           check: "controls",
           message: "margins 1 sets the same output as margins 0.5, so the control does nothing",
+          control: "margins",
         },
       ]);
       // Two passes as a new document, one again, one for the edit and one for the margins.
       expect(report.passes).toHaveLength(5);
+      // A package that offers no font control reports no fonts drawn.
+      expect(report.fonts).toBeUndefined();
     }, 60_000);
 
     it("reports a control whose value stops the compile, and not the values that work", async () => {
@@ -1011,8 +1015,40 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
         {
           check: "controls",
           message: "with density compact, the body does not compile: Undefined control sequence.",
+          control: "density",
         },
       ]);
+    }, 60_000);
+
+    it("draws the resume in each font it offers, and reports a font the page cannot draw it in", async () => {
+      // Palatino in OT1 draws, a virtual font over its 8r font (decision 0009); Computer Modern in
+      // T1 sets every field in EC fonts, which the tree has metrics for and no outlines, so the
+      // page draws none of their glyphs and no field aligns. Each finding names the font, and the
+      // fonts drawn are the resume's own and Palatino (decision 0040).
+      const fonted = plainOffering("fonted", {
+        font: {
+          default: "cm",
+          choices: [
+            { id: "cm", name: "Computer Modern", apply: "" },
+            { id: "palatino", name: "Palatino", apply: "\\renewcommand{\\rmdefault}{ppl}" },
+            { id: "ec", name: "Computer Modern in T1", apply: "\\usepackage[T1]{fontenc}" },
+          ],
+        },
+      });
+      const report = await validatePackage(session, fonts, fonted, RESUME);
+      expect(report.fonts).toEqual(["cm", "palatino"]);
+      expect(report.findings.length).toBeGreaterThan(1);
+      for (const finding of report.findings) {
+        expect(finding).toMatchObject({ check: "controls", control: "font" });
+        expect(finding.message.startsWith("with font ec, ")).toBe(true);
+      }
+      const messages = report.findings.map((finding) => finding.message);
+      expect(messages).toContainEqual(
+        expect.stringMatching(/^with font ec, the page cannot draw ecrm1000: /),
+      );
+      expect(messages).toContainEqual(
+        expect.stringMatching(/^with font ec, \d+ of the \d+ glyphs of tern\.title match no/),
+      );
     }, 60_000);
 
     it("dumps the format a format-bound value names, and compiles with it", async () => {

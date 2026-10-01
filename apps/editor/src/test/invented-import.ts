@@ -17,7 +17,7 @@ import { bodyOf, bodyOfText, parseBody, type Tree } from "../import/parse";
 import type { Probe, ProbeCandidate, Verdict } from "../import/probe";
 import type { Reference } from "../import/reference";
 import { isRefusal } from "../import/refusal";
-import type { EngineSignatures, Signature } from "../import/signatures";
+import type { EngineSignatures, Layout, Signature } from "../import/signatures";
 
 /** What the engine would say of the invented template's commands and environments. */
 export function signaturesOf(
@@ -171,6 +171,8 @@ export interface Invented {
   /** The answer's preamble settings, none by default. */
   parameters?: NamingAnswer["preamble"]["parameters"];
   verdicts?: Readonly<Record<string, Verdict[]>>;
+  /** The layout the engine would find at `\begin{document}`, none by default (decision 0040). */
+  layout?: Layout;
 }
 
 /** What the assembly takes of an invented import, the reference aside. */
@@ -185,7 +187,10 @@ export interface InventedInputs {
 /** An invented import's inputs: the intake, the tree, the signatures, the probe and the answer. */
 export function inputsOf(invented: Invented): InventedInputs {
   const taken = upload({ "cv.tex": invented.source, "inventedcv.cls": invented.cls ?? CLASS });
-  const signatures = signaturesOf(invented.commands, invented.environments, invented.meanings);
+  const signatures: EngineSignatures = {
+    ...signaturesOf(invented.commands, invented.environments, invented.meanings),
+    ...(invented.layout === undefined ? {} : { layout: invented.layout }),
+  };
   const tree = treeOf(taken, signatures);
   return {
     intake: taken,
@@ -339,6 +344,21 @@ export const ARTICLE_SIZES: Readonly<Record<string, string>> = {
   "ds@10pt": "",
   "ds@11pt": "",
   "ds@12pt": "",
+};
+
+/**
+ * The layout the engine finds of the Jake-like document at `\begin{document}` (decision 0040): US
+ * Letter with half an inch of margin on every side, as its geometry sets it, and the normal size
+ * `article` sets at 11 points, in TeX points.
+ */
+export const LAYOUT: Layout = {
+  left: 36.135,
+  top: 36.135,
+  width: 542.02501,
+  height: 722.7,
+  paperWidth: 614.295,
+  paperHeight: 794.96999,
+  size: 10.95,
 };
 
 /** The template shaped like Jake's Resume, whole. */

@@ -197,6 +197,40 @@ describe("fit", () => {
     const failed = new Error("the trial did not compile");
     await expect(fit(new FakeTrier(doc, [], failed), jake, doc)).rejects.toBe(failed);
   });
+
+  it("takes no margins step that sets more pages than the setting before it (decision 0040)", async () => {
+    // The density to compact sets two pages; the margins a tenth narrower set three, as one margin
+    // on every side can widen a top the document had narrower: the search goes on from compact,
+    // stepping the margins no more.
+    const compiler = new FakeTrier(doc, [2, 3, 2, 1]);
+    const compact = steps[0] as ControlValues;
+    const tail = fitSteps(jake, compact, { margins: false });
+    expect(tail.every((step) => step.margins === compact.margins)).toBe(true);
+    const found = await fit(compiler, jake, doc);
+    expect(compiler.tried).toEqual([steps[0], steps[1], tail[0], tail[1]]);
+    expect(found).toEqual({ values: tail[1], tried: 4 });
+  });
+
+  it("tries the document's own values first where the margins step first, as an import's do", async () => {
+    // A package with no density control, as an imported one: its first step is the margins',
+    // whose pages are held to the document's own.
+    const plain = parsePackage({
+      ...jake,
+      id: "jake-without-density",
+      controls: { ...jake.controls, density: undefined },
+    });
+    const own = { ...defaultControls(plain), ...doc.controls };
+    const first = fitSteps(plain, doc.controls)[0] as ControlValues;
+    expect(first.margins).toBeLessThan(own.margins ?? 0);
+    const tail = fitSteps(plain, own, { margins: false });
+    const refused = new FakeTrier(doc, [2, 3, 1]);
+    expect(await fit(refused, plain, doc)).toEqual({ values: tail[0], tried: 3 });
+    expect(refused.tried).toEqual([own, first, tail[0]]);
+    // A step that sets no more pages than the document's own is taken.
+    const taken = new FakeTrier(doc, [2, 2, 1]);
+    const second = fitSteps(plain, doc.controls)[1];
+    expect(await fit(taken, plain, doc)).toEqual({ values: second, tried: 3 });
+  });
 });
 
 describe("applyFit", () => {

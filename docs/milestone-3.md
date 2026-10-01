@@ -285,7 +285,7 @@ of each launch template must find editable what the hand-written port marks.
     shows them, and what was dropped, images and a bibliography the engine cannot build, and the
     user continues or stops. It never shows a macro name or a line of source. Done when the
     report's rate for each upstream sample matches a hand count within a word or two.
-14. [ ] **Generic controls on imports.** Page size and margins through geometry, in the body's
+14. [x] **Generic controls on imports.** Page size and margins through geometry, in the body's
     preamble region, loaded there when the preamble did not and reissued when it did, proven by
     the fourth check; font size through the class option, format-bound (decision 0006), for a
     class whose sizes follow it, at the sizes it accepts, proven the same way; accent colour where

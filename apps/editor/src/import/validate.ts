@@ -35,13 +35,17 @@
  *    and the last removed, each compiled; a kind whose new unit, or the removal of either, stops
  *    the compile is one the editor neither adds nor removes, which the package marks (`fixed`).
  * 4. **Controls.** Each control's every value but the document's compiled: one that stops the
- *    compile at a value, or sets the same page at one, is dropped.
+ *    compile at a value, or sets the same page at every one, is dropped. The page size and the
+ *    margins, geometry's, and the font size, the class's option, are the milestone's bar on every
+ *    successful import (decision 0040).
  *
  * Then the harness (`validatePackage`) runs on the package and the document; a `fields` or
- * `alignment` finding on a field locks it, once, and the checks run again; any other finding is
- * recorded for item 13's report. The harness holds the package to the upload's own page count and
- * passes, not a curated sample's one page and two. What is returned reads back under the model's
- * and the package's schemas, or the import is refused (`keep`).
+ * `alignment` finding on a field locks it, once, and a `controls` finding drops the control it
+ * names, a font the harness cannot draw the fields in among them (decision 0040), once, and the
+ * checks run again; any other finding is recorded for item 13's report. The harness holds the
+ * package to the upload's own page count and passes, not a curated sample's one page and two. What
+ * is returned reads back under the model's and the package's schemas, or the import is refused
+ * (`keep`).
  */
 
 import type { NamingAnswer } from "@resume-tools/naming";
@@ -102,7 +106,7 @@ import {
   shippedFont,
 } from "./reference";
 import { type Refusal, refusal } from "./refusal";
-import type { EngineSignatures } from "./signatures";
+import { type EngineSignatures, LAYOUT_TYPEOUT, type Layout, layoutOfLog } from "./signatures";
 import type { XetexRewrite } from "./xetex";
 import { normalized } from "./xetex-check";
 
@@ -160,6 +164,84 @@ export const NOTES = ["stopped", "untested", "unproven"] as const;
 /** Why a control is dropped that the checks never tried, having stopped before the fourth. */
 export const UNCHECKED = "unchecked";
 
+/**
+ * Why a control is dropped, in the checks' own words and never TeX's, since the report shows it
+ * (decision 0040): the first check found its default moves the original's page; the fourth found a
+ * value stops the compile, every value sets the same page, or a value sets another page than it
+ * asks, the value named after each that begins so; or the harness found it does not work.
+ */
+export const DROPPED = {
+  moves: "moves the original's page at the document's own value",
+  stops: "stops the compile at ",
+  same: "sets the same page at every value",
+  layout: "sets another page than it asks at ",
+  harness: "the harness finds it does not work",
+} as const;
+
+/** TeX's points to the inch. */
+const INCH = 72.27;
+
+/** How far a margin or a paper the fourth check measures may be from what it asks, in points. */
+const LAYOUT_TOLERANCE = 0.5;
+
+/** The papers the page size control offers, in points, as LaTeX's and geometry's options say. */
+const PAPERS = {
+  letter: { width: 614.295, height: 794.96999 },
+  a4: { width: 597.50787, height: 845.04684 },
+} as const;
+
+/** The margins of a layout's text block, in points: left, right, top and bottom. */
+const sidesOf = (layout: Layout) => [
+  layout.left,
+  layout.paperWidth - layout.left - layout.width,
+  layout.top,
+  layout.paperHeight - layout.top - layout.height,
+];
+
+/**
+ * Whether a compile set the page a margins or page size value asks for, by the layout its log says
+ * (decision 0040): at a margin, that margin on every side of the text block, on the document's own
+ * paper; at a paper, that paper, with the document's own margins on every side, as `own`, the
+ * layout at the document's own values, has them. Within half a point of each, as geometry's
+ * arithmetic leaves them; not where either layout went unsaid, since nothing then shows it.
+ */
+export function laidOut(
+  name: "margins" | "pageSize",
+  values: ControlValues,
+  layout: Layout | undefined,
+  own: Layout | undefined,
+): boolean {
+  if (layout === undefined || own === undefined) return false;
+  const near = (a: number, b: number | undefined) =>
+    b !== undefined && Math.abs(a - b) <= LAYOUT_TOLERANCE;
+  if (name === "margins") {
+    const margin = (values.margins ?? Number.NaN) * INCH;
+    return (
+      sidesOf(layout).every((side) => near(side, margin)) &&
+      near(layout.paperWidth, own.paperWidth) &&
+      near(layout.paperHeight, own.paperHeight)
+    );
+  }
+  const paper = values.pageSize === undefined ? undefined : PAPERS[values.pageSize];
+  const kept = sidesOf(own);
+  return (
+    paper !== undefined &&
+    near(layout.paperWidth, paper.width) &&
+    near(layout.paperHeight, paper.height) &&
+    sidesOf(layout).every((side, i) => near(side, kept[i]))
+  );
+}
+
+/**
+ * A body that says in its log the layout it sets (`LAYOUT_TYPEOUT`, decision 0040): the code put
+ * right before its first `\begin{document}`, after every control's snippet, where it sets nothing
+ * on the page; a body with none is as it is.
+ */
+export function withLayout(latex: string): string {
+  const at = latex.indexOf("\\begin{document}");
+  return at < 0 ? latex : `${latex.slice(0, at)}${LAYOUT_TYPEOUT}\n${latex.slice(at)}`;
+}
+
 /** `n` things, as a finding counts them: `1 slot`, `2 slots`. */
 const counted = (n: number, thing: string) => `${n} ${thing}${n === 1 ? "" : "s"}`;
 
@@ -172,6 +254,8 @@ export interface Compiled {
   stream?: GlyphStream;
   /** It stopped, or its output could not be read. */
   broke: boolean;
+  /** The layout the page was set with, where the compile was asked to say it and said it whole. */
+  layout?: Layout;
 }
 
 /**
@@ -185,8 +269,16 @@ export interface Compiler {
   like(): Promise<{ stream: GlyphStream } | Refusal>;
   /** LaTeX compiled after a package's preamble, from its format where it dumps. */
   latex(pkg: TemplatePackage, values: ControlValues, latex: string): Promise<Compiled>;
-  /** An imported document compiled through its package, as the generator will set it. */
-  document(pkg: TemplatePackage, resume: Resume, values?: ControlValues): Promise<Compiled>;
+  /**
+   * An imported document compiled through its package, as the generator will set it; with
+   * `layout`, saying the layout it sets (`LAYOUT_TYPEOUT`), which changes nothing on the page.
+   */
+  document(
+    pkg: TemplatePackage,
+    resume: Resume,
+    values?: ControlValues,
+    options?: { layout?: boolean },
+  ): Promise<Compiled>;
 }
 
 /**
@@ -267,11 +359,15 @@ class Compiles implements Compiler {
     }
   }
 
-  /** An imported document compiled through its package, as the generator will set it. */
+  /**
+   * An imported document compiled through its package, as the generator will set it; with
+   * `layout`, the layout it sets read from its log (`withLayout`).
+   */
   async document(
     pkg: TemplatePackage,
     resume: Resume,
     values: ControlValues = {},
+    options: { layout?: boolean } = {},
   ): Promise<Compiled> {
     let body: GeneratedBody;
     try {
@@ -279,8 +375,13 @@ class Compiles implements Compiler {
     } catch {
       return { body: { latex: "", texts: new Map(), dropped: [], surplus: [] }, broke: true };
     }
-    const compiled = await this.latex(pkg, values, body.latex);
-    return { ...compiled, body };
+    const latex = options.layout === true ? withLayout(body.latex) : body.latex;
+    const compiled = await this.latex(pkg, values, latex);
+    const layout =
+      options.layout === true && compiled.result !== undefined
+        ? layoutOfLog(compiled.result.log)
+        : undefined;
+    return { ...compiled, body, ...(layout === undefined ? {} : { layout }) };
   }
 
   like() {
@@ -651,9 +752,10 @@ export async function validate(inputs: ValidationInputs): Promise<Assembled | Re
 
 /**
  * The checks' rounds through `compiler`: the four checks and `harness`, then, where the harness
- * finds a field unmarked or misaligned, the field locked and the checks run again, once. The
- * second round takes what the first decided and does not try it again, so the controls the first
- * dropped, with why, and the redefinitions it could not prove are reported with the second's.
+ * finds a field unmarked or misaligned, the field locked, and where it finds a control does not
+ * work, the control dropped, and the checks run again, once. The second round takes what the first
+ * decided and does not try it again, so the controls the first dropped, with why, and the
+ * redefinitions it could not prove are reported with the second's.
  */
 export async function validateWith(
   inputs: Omit<ValidationInputs, "session" | "fonts">,
@@ -676,20 +778,33 @@ export async function validateWith(
   const first = await checks(inputs, compiler, assembleWith, {}, harnessed);
   if ("refused" in first) return first;
   let round = first;
-  // A field the harness finds unmarked or misaligned is locked, once, and the checks run again.
+  // A field the harness finds unmarked or misaligned is locked, once, and a control it finds does
+  // nothing, stops the compile, or, a font, does not draw the fields (decision 0040), is dropped,
+  // once; and the checks run again.
   const lockable = new Map(round.assembled.checks.all.map((field) => [field.field, field]));
   const locks: Record<string, LockReason> = {};
+  const harnessDrops: { control: ControlName; why: string }[] = [];
   for (const finding of round.findings) {
+    const control = finding.control;
+    if (finding.check === "controls" && control !== undefined && control !== "dateFormat") {
+      if (!harnessDrops.some((each) => each.control === control))
+        harnessDrops.push({ control, why: DROPPED.harness });
+      continue;
+    }
     if (finding.check !== "fields" && finding.check !== "alignment") continue;
     const field = finding.field === undefined ? undefined : lockable.get(finding.field);
     if (field !== undefined && field.mode !== "locked") locks[lockOf(field)] = finding.check;
   }
-  if (Object.keys(locks).length > 0) {
+  if (Object.keys(locks).length > 0 || harnessDrops.length > 0) {
     const again = await checks(
       inputs,
       compiler,
       assembleWith,
-      { ...round.decisions, instances: { ...round.decisions.instances, ...locks } },
+      {
+        ...round.decisions,
+        instances: { ...round.decisions.instances, ...locks },
+        controls: [...round.decisions.controls, ...harnessDrops.map((each) => each.control)],
+      },
       harnessed,
     );
     if ("refused" in again) return again;
@@ -697,7 +812,7 @@ export async function validateWith(
   }
   // What the first round settled, which the second takes as decided and does not try again.
   const settled = round === first ? { dropped: [], notes: [] } : first;
-  const dropped = [...settled.dropped];
+  const dropped = [...settled.dropped, ...harnessDrops];
   for (const each of round.dropped)
     if (!dropped.some((one) => one.control === each.control)) dropped.push(each);
   const notes = [...settled.notes.filter((note) => note.check === "unproven"), ...round.notes];
@@ -785,6 +900,8 @@ async function checks(
     fixed: [...(start.fixed ?? [])],
   };
   const notes: Note[] = [];
+  // The controls the first check drops, whose default moved the original's page.
+  const droppedFirst: Round["dropped"] = [];
   const initial = await assembleWith(decisions);
   if ("refused" in initial) return initial;
   let assembled: Assembled = initial;
@@ -846,9 +963,10 @@ async function checks(
   }
   if (!keeps(target)) {
     const applied = assembled.checks.redefinitions.applied;
-    const offered = assembled.checks.controls.offered.filter(
-      (name) => name === "margins" || name === "accent" || name === "font" || name === "density",
-    );
+    // The controls whose default writes anything: the font size's slot, which may name a size the
+    // class's options did not (decision 0040), and the snippets of the rest but the page size's,
+    // whose default writes nothing.
+    const offered = assembled.checks.controls.offered.filter((name) => name !== "pageSize");
     const switches: Switch[] = [
       ...applied.map((redefinition) => ({ redefinition })),
       ...offered.map((control) => ({ control })),
@@ -890,6 +1008,9 @@ async function checks(
         on = on.filter((_, i) => i !== hi - 1);
       }
       decisions = only(on);
+      for (const control of offered)
+        if (!on.some((each) => "control" in each && each.control === control))
+          droppedFirst.push({ control, why: DROPPED.moves });
     } else if (applied.length > 0) {
       // The package without any of them does not keep the page either, so that no compile can show
       // that a redefinition keeps it: none is proven, and every one is dropped (decision 0026).
@@ -1008,7 +1129,7 @@ async function checks(
       outcome: "partial",
       difference: differs ?? { kind: "stopped", text: "the document stopped" },
       repeatable: [],
-      dropped: offered.map((control) => ({ control, why: UNCHECKED })),
+      dropped: [...droppedFirst, ...offered.map((control) => ({ control, why: UNCHECKED }))],
       findings: [],
       notes,
     };
@@ -1110,18 +1231,31 @@ async function checks(
   }
 
   // 4. Controls: every value but the document's compiles, and one changes the page at least, or the
-  // control goes: one that stops the compile at any value, or sets the same page at every one.
-  const baseline = await compiles.document(assembled.package, assembled.document.resume);
+  // control goes: one that stops the compile at any value, or sets the same page at every one. The
+  // page size and the margins must set the page they ask for at every value besides, as the layout
+  // each compile says shows (`laidOut`, decision 0040), or go: that a glyph moved proves nothing
+  // of where the margins went.
+  const offered = assembled.checks.controls.offered;
+  const measured = (name: ControlName): name is "margins" | "pageSize" =>
+    name === "margins" || name === "pageSize";
+  const baseline = await compiles.document(
+    assembled.package,
+    assembled.document.resume,
+    {},
+    { layout: offered.some(measured) },
+  );
   const dropped: Round["dropped"] = [];
-  for (const name of assembled.checks.controls.offered) {
+  for (const name of offered) {
     let changes = false;
     let stops: ControlValues | undefined;
+    let elsewhere: ControlValues | undefined;
     const tried = valuesOf(assembled.package, name, {});
     for (const values of tried) {
       const compiled = await compiles.document(
         assembled.package,
         assembled.document.resume,
         values,
+        { layout: measured(name) },
       );
       if (compiled.broke) {
         stops = values;
@@ -1133,11 +1267,14 @@ async function checks(
         difference(baseline.stream, compiled.stream) !== undefined
       )
         changes = true;
+      if (measured(name) && !laidOut(name, values, compiled.layout, baseline.layout))
+        elsewhere ??= values;
     }
     if (stops !== undefined)
-      dropped.push({ control: name, why: `stops the compile at ${shownValue(stops, name)}` });
-    else if (!changes && tried.length > 0)
-      dropped.push({ control: name, why: "sets the same page at every value" });
+      dropped.push({ control: name, why: `${DROPPED.stops}${shownValue(stops, name)}` });
+    else if (!changes && tried.length > 0) dropped.push({ control: name, why: DROPPED.same });
+    else if (elsewhere !== undefined)
+      dropped.push({ control: name, why: `${DROPPED.layout}${shownValue(elsewhere, name)}` });
   }
   if (dropped.length > 0) {
     decisions = {
@@ -1158,7 +1295,7 @@ async function checks(
     outcome,
     ...(differs === undefined ? {} : { difference: differs }),
     repeatable,
-    dropped,
+    dropped: [...droppedFirst, ...dropped],
     findings,
     notes,
   };

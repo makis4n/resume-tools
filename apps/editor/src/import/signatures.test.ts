@@ -23,6 +23,8 @@ import {
   isScratch,
   keyInputs,
   keysOf,
+  LAYOUT_TYPEOUT,
+  layoutOfLog,
   linesOf,
   MAX_CLOSURE_MACROS,
   masked,
@@ -30,6 +32,7 @@ import {
   nameLines,
   namesIn,
   type Printed,
+  readLayout,
   readMeaning,
   readPrintout,
   resolve,
@@ -698,6 +701,64 @@ describe("the records a compile writes", () => {
     expect(meaningsCode(true)).toContain("\\bool_set_true:N \\l__rtsig_follow_bool");
     expect(meaningsCode(true)).toContain("\\__rtsig_escape:N \\l__rtsig_meaning_str");
   });
+
+  test("reads the document's layout, written first, and none it did not write whole", () => {
+    // The document's compile writes it, and the kernel's does not (decision 0040).
+    expect(meaningsCode(true)).toContain("L:");
+    expect(meaningsCode(false)).not.toContain("L:");
+    const printout = readPrintout(
+      [
+        "L:36.135,36.135,542.02501,722.7,614.295,794.96999,10.95",
+        "N:cvx",
+        "M:undefined",
+        "E:",
+      ].join("\n"),
+    );
+    expect(printout.layout).toEqual({
+      left: 36.135,
+      top: 36.135,
+      width: 542.02501,
+      height: 722.7,
+      paperWidth: 614.295,
+      paperHeight: 794.96999,
+      size: 10.95,
+    });
+    expect([...printout.records.keys()]).toEqual(["cvx"]);
+    expect(readLayout("36.135,36.135,542.02501")).toBeUndefined();
+    expect(readLayout("36.135,36.135,542.02501,722.7,614.295,794.96999,\\@xipt")).toBeUndefined();
+    expect(readLayout("-7.2,0,1,1,1,1,9")?.left).toBe(-7.2);
+    expect(readPrintout("N:cvx\nM:undefined\nE:\n").layout).toBeUndefined();
+  });
+
+  test("reads the layout a compile's log says, the last it says of each value, and none it says in part", () => {
+    // What the fourth check reads of a page a control sets (decision 0040).
+    expect(LAYOUT_TYPEOUT.startsWith("\\AtBeginDocument{\\typeout{rtimport:layout left=")).toBe(
+      true,
+    );
+    const log = [
+      "(./invented.tex",
+      "rtimport:layout left=40.0pt",
+      "rtimport:layout left=36.135pt",
+      "rtimport:layout top=36.135pt",
+      "rtimport:layout width=542.02501pt",
+      "rtimport:layout height=722.7pt",
+      "rtimport:layout paperWidth=614.295pt",
+      "rtimport:layout paperHeight=794.96999pt",
+      "rtimport:layout size=10.95",
+      ")",
+    ].join("\n");
+    expect(layoutOfLog(log)).toEqual({
+      left: 36.135,
+      top: 36.135,
+      width: 542.02501,
+      height: 722.7,
+      paperWidth: 614.295,
+      paperHeight: 794.96999,
+      size: 10.95,
+    });
+    expect(layoutOfLog(log.replace("rtimport:layout size=10.95", ""))).toBeUndefined();
+    expect(layoutOfLog("rtimport:layout left=36.135pt and more")).toBeUndefined();
+  });
 });
 
 describe.skipIf(!engineAvailable())("the signatures from the engine", () => {
@@ -1111,5 +1172,42 @@ ${preamble}
       ["so", "m", "soul"],
     ] as const)
       expect(found.commands[name]).toMatchObject({ kind: "template", spec, package: pkg });
+  }, 60_000);
+
+  test("reads the layout the document sets by hand or through geometry, and the class's size", async () => {
+    // Margins set by hand, as Jake's Resume sets them, half an inch on every side of US Letter; and
+    // geometry's on A4 at 12 points; each in points, as TeX finds them at \begin{document}
+    // (decision 0040).
+    const byHand = await signaturesOf({
+      "cv.tex": String.raw`\documentclass[letterpaper,11pt]{article}
+\usepackage[empty]{fullpage}
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+\begin{document}
+Invented words.
+\end{document}
+`,
+    });
+    const hand = byHand.found.layout;
+    expect(hand?.left).toBeCloseTo(36.135, 3);
+    expect(hand?.top).toBeCloseTo(36.135, 3);
+    expect(hand?.width).toBeCloseTo(542.025, 3);
+    expect(hand?.paperWidth).toBeCloseTo(614.295, 3);
+    expect(hand?.size).toBe(10.95);
+    const geometry = await signaturesOf({
+      "cv.tex": String.raw`\documentclass[a4paper,12pt]{article}
+\usepackage[left=2cm,right=2cm,top=1.5cm,bottom=1.5cm]{geometry}
+\begin{document}
+Invented words.
+\end{document}
+`,
+    });
+    const set = geometry.found.layout;
+    expect(set?.left).toBeCloseTo((2 / 2.54) * 72.27, 2);
+    expect(set?.top).toBeCloseTo((1.5 / 2.54) * 72.27, 2);
+    expect(set?.paperWidth).toBeCloseTo(597.508, 3);
+    expect(set?.size).toBe(12);
   }, 60_000);
 });
