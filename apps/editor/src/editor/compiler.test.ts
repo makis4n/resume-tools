@@ -157,6 +157,7 @@ async function draw(output: Uint8Array): Promise<DrawnPage> {
     svg: `<svg>${which}</svg>`,
     size: US_LETTER,
     fields: new Map(),
+    locked: new Map(),
     glyphs: [],
     pageCount: 1,
     unmatched: 0,

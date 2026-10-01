@@ -51,6 +51,11 @@ export interface LockedShown {
   reason: LockReason;
   /** Why, in plain words (`LOCK_WHY`). */
   why: string;
+  /**
+   * The locked section it is, by id, where it is one, whose row the side panel names by `words`
+   * (decision 0041).
+   */
+  section?: string;
 }
 
 /** Something the import left out, or kept otherwise than the upload had it, in plain words. */
@@ -568,11 +573,16 @@ function countWords(
     // Every glyph of the part's where it first shows, its punctuation among them, as on the page.
     const glyphs: number[] = [];
     for (let at = part.from; at < part.to; at++) if (row[at] === part.owner) glyphs.push(at);
+    // A locked section is a part of the section kind kept under no key of extras, as a section's
+    // `before` and `after` are.
+    const kept = part.owner.startsWith("p:") ? extras[Number(part.owner.slice(2))] : undefined;
+    const section = kept?.kind === "section" && kept.key === undefined ? kept.node : undefined;
     return {
       words: read === undefined ? "" : firstWords(read, glyphs),
       count: part.count,
       reason: part.reason,
       why: LOCK_WHY[part.reason],
+      ...(section === undefined ? {} : { section }),
     };
   });
   return { words, locked };

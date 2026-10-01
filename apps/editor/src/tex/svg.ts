@@ -6,6 +6,10 @@
  * DOM lookup. A glyph's hit area is its bounding box rather than its ink, so a click in
  * the hole of an "o" still lands on it. Coordinates are in TeX points with the origin at
  * the page's top-left corner; the DVI origin sits one inch in from that.
+ *
+ * A glyph of a locked part of an imported resume carries the part's id instead (`data-locked`),
+ * and so does an unpainted box over each of the part's blocks, under every glyph, so that the
+ * pointer between its words and lines is over the part too (decision 0041).
  */
 
 import type { DviDocument, DviPage, NativeFont, PageItem } from "./dvi";
@@ -81,6 +85,17 @@ export interface RenderOptions {
   /** Outlines for XeTeX's native fonts; runs whose font is missing are drawn as boxes. */
   native?: (font: NativeFont) => NativeOutlines | undefined;
   fields?: Map<string, Field>;
+  /**
+   * The page's locked parts (decision 0041): the part each of their glyphs is of, by `glyphKey`,
+   * and each part's blocks, by its id, in TeX points from the page's top-left corner.
+   */
+  locked?: {
+    glyphs: ReadonlyMap<string, string>;
+    blocks: ReadonlyMap<
+      string,
+      readonly { left: number; top: number; right: number; bottom: number }[]
+    >;
+  };
   size?: PageSize;
 }
 
@@ -141,11 +156,26 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
     const c = colors[colors.length - 1];
     return c && c !== "rgb(0,0,0)" ? ` fill="${c}"` : "";
   };
-  /** The data attributes of the page item `index`, or of the glyph `glyph` of a native run. */
+  /**
+   * The data attributes of the page item `index`, or of the glyph `glyph` of a native run: its
+   * field's and offset, or its locked part's.
+   */
   const fieldAttrs = (index: number, glyph?: number) => {
-    const f = fieldOfGlyph.get(glyphKey(index, glyph));
-    return f ? ` data-field="${escape(f.id)}" data-offset="${f.offset}"` : "";
+    const key = glyphKey(index, glyph);
+    const f = fieldOfGlyph.get(key);
+    if (f) return ` data-field="${escape(f.id)}" data-offset="${f.offset}"`;
+    const part = options.locked?.glyphs.get(key);
+    return part === undefined ? "" : ` data-locked="${escape(part)}"`;
   };
+  // Each locked part's blocks, unpainted, under every glyph: what a glyph sets over one is its own.
+  const lockedBlocks = [...(options.locked?.blocks ?? [])].flatMap(([id, blocks]) =>
+    blocks
+      .filter((block) => block.right > block.left && block.bottom > block.top)
+      .map(
+        (block) =>
+          `<rect x="${block.left.toFixed(3)}" y="${block.top.toFixed(3)}" width="${(block.right - block.left).toFixed(3)}" height="${(block.bottom - block.top).toFixed(3)}" fill="#fff" fill-opacity="0" data-locked="${escape(id)}"/>`,
+      ),
+  );
 
   page.items.forEach((item, index) => {
     switch (item.kind) {
@@ -255,6 +285,7 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size.width} ${size.height}" width="${size.width}pt" height="${size.height}pt" pointer-events="bounding-box">`,
     `<defs>${[...defs.values()].join("")}</defs>`,
     `<rect width="${size.width}" height="${size.height}" fill="white"/>`,
+    ...lockedBlocks,
     ...body,
     "</svg>",
   ].join("\n");

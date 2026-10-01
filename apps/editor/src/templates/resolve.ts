@@ -6,7 +6,7 @@
  * has it: a document opens, compiles, edits and makes its PDF through its package alike.
  */
 
-import type { ImportJob } from "../import/run";
+import type { ImportJob, ImportReport } from "../import/run";
 import type { StoredTemplate } from "../storage/store";
 import { CURATED } from "./curated";
 import { IMPORTED_PREFIX, type TemplatePackage } from "./package";
@@ -16,6 +16,11 @@ export interface Template {
   package: TemplatePackage;
   /** An imported document's: what its compiles need beside the package, and what its PDF shows. */
   job?: ImportJob;
+  /**
+   * An imported document's: what its import's report is made of, which names its locked parts in
+   * the side panel (decision 0041).
+   */
+  report?: ImportReport;
 }
 
 /** Where imported templates are kept: the store's side of it. */
@@ -25,8 +30,9 @@ export interface TemplateStore {
 
 /**
  * The template with the id `id` for the document `document`: the curated package of that id, or the
- * imported one the store keeps, with the document's own import's job; undefined when neither has
- * it, as for a document a newer editor wrote. The store's refusals are thrown (`PackageRefused`).
+ * imported one the store keeps, with the document's own import's job and report; undefined when
+ * neither has it, as for a document a newer editor wrote. The store's refusals are thrown
+ * (`PackageRefused`).
  */
 export async function resolveTemplate(
   id: string,
@@ -40,5 +46,10 @@ export async function resolveTemplate(
   const stored = await store?.templateOf(id, document);
   if (stored === undefined) return undefined;
   const job = stored.import?.job;
-  return { package: stored.package, ...(job === undefined ? {} : { job }) };
+  const report = stored.import?.report;
+  return {
+    package: stored.package,
+    ...(job === undefined ? {} : { job }),
+    ...(report === undefined ? {} : { report }),
+  };
 }

@@ -7,6 +7,9 @@
  * TrueType file, placed one by one. Each glyph of a run is drawn from the file's outline, hit-tested
  * by its box, and read as the character the file's character map gives it, so that it belongs to
  * a field, and has an offset in the field's text, as a TeX font's glyph does.
+ *
+ * An imported resume's locked parts are read from their lock markers too (`locked.ts`, decision
+ * 0041): no field, but placed in blocks, for the lock the page shows over them.
  */
 
 import {
@@ -31,6 +34,7 @@ import { accentMark, glyphOf } from "../tex/glyphs";
 import { glyphKey, INCH, type PageSize, paperSizeOf, renderPage, US_LETTER } from "../tex/svg";
 import { scaleTfm } from "../tex/tfm";
 import type { FontLibrary, NativePageFont, PageFont } from "./fonts";
+import { blocksOf, type LockedRegion, type LockedSet, lockedSets, type Placed } from "./locked";
 import { type NativeFontFile, nativeFileName, singleFeaturesOn } from "./native";
 import { paragraphId } from "./paragraph";
 
@@ -58,6 +62,8 @@ export interface GlyphBox {
   /** The field the glyph belongs to and its character offset there, if it is in one. */
   field?: string;
   offset?: number;
+  /** The locked part the glyph belongs to, if it is in one (decision 0041). */
+  locked?: string;
 }
 
 /**
@@ -173,6 +179,12 @@ export interface DrawnPage {
   size: PageSize;
   /** The page's fields, each glyph given its offset in the field's text. */
   fields: Map<string, PageField>;
+  /**
+   * The document's locked parts (decision 0041), by id, in the order its output first sets them,
+   * each placed in blocks on this page, where the page shows its lock, and in none where it is all
+   * on another.
+   */
+  locked: Map<string, LockedRegion>;
   /**
    * Every glyph drawn, a TeX font's or a native font's, in the order the SVG paints them, one for
    * each of its glyphs.
@@ -368,8 +380,9 @@ export function glyphTextOf(
 
 /**
  * The box of every glyph on a page the SVG draws, a TeX font's or a native run's, with its field,
- * in the order the SVG paints them. A native glyph's box is its outline's, scaled to the font's
- * size and stretched and slanted as xdvipdfmx stretches and slants it, as the SVG draws it.
+ * or its locked part from `locked`, by `glyphKey`, in the order the SVG paints them. A native
+ * glyph's box is its outline's, scaled to the font's size and stretched and slanted as xdvipdfmx
+ * stretches and slants it, as the SVG draws it. Each box is put in `keyed` under its glyph's key.
  */
 function glyphBoxes(
   doc: DviDocument,
@@ -377,6 +390,8 @@ function glyphBoxes(
   fonts: ReadonlyMap<string, PageFont>,
   natives: ReadonlyMap<string, NativePageFont>,
   fields: Map<string, Field>,
+  locked: ReadonlyMap<string, string>,
+  keyed: Map<string, GlyphBox>,
 ): GlyphBox[] {
   const pt = pointsPerUnit(doc);
   const fieldOf = new Map<string, { field: string; offset: number }>();
@@ -386,7 +401,18 @@ function glyphBoxes(
       fieldOf.set(glyphKey(g.item, g.glyph), own);
       for (const item of g.items ?? []) fieldOf.set(glyphKey(item), own);
     }
+  /** What a glyph is of: its field and offset, or else its locked part, as the SVG marks it. */
+  const ownerOf = (key: string) => {
+    const field = fieldOf.get(key);
+    if (field !== undefined) return field;
+    const part = locked.get(key);
+    return part === undefined ? undefined : { locked: part };
+  };
   const boxes: GlyphBox[] = [];
+  const push = (key: string, box: GlyphBox) => {
+    boxes.push(box);
+    keyed.set(key, box);
+  };
   page.items.forEach((item, index) => {
     if (item.kind === "native") {
       const def = doc.nativeFonts.get(item.font);
@@ -404,7 +430,8 @@ function glyphBoxes(
         const across = [xMin, xMax].flatMap((x) => [yMin, yMax].map((y) => extend * x + slant * y));
         const x = INCH + (item.h + g.x) * pt;
         const y = INCH + (item.v + g.y) * pt;
-        boxes.push({
+        const key = glyphKey(index, glyph);
+        push(key, {
           x,
           y,
           left: x + Math.min(...across) * s,
@@ -413,7 +440,7 @@ function glyphBoxes(
           bottom: y - yMin * s,
           font: nativeFileName(def.name),
           size: def.size * pt,
-          ...fieldOf.get(glyphKey(index, glyph)),
+          ...ownerOf(key),
         });
       });
       return;
@@ -428,7 +455,8 @@ function glyphBoxes(
     const x = INCH + item.h * pt;
     const y = INCH + item.v * pt;
     const [xMin, yMin, xMax, yMax] = glyph.b ?? [0, 0, 0, 0];
-    boxes.push({
+    const key = glyphKey(index);
+    push(key, {
       x,
       y,
       left: x + xMin * s,
@@ -437,10 +465,58 @@ function glyphBoxes(
       bottom: y - yMin * s,
       font: font.name,
       size: font.scale * pt,
-      ...fieldOf.get(glyphKey(index)),
+      ...ownerOf(key),
     });
   });
   return boxes;
+}
+
+/** The size a rule of a locked part is taken to be set at, in TeX points, before any glyph of it. */
+const RULE_SIZE = 10;
+
+/**
+ * Each locked part of a document (`lockedSets`) as the page `pageIndex` shows it: its blocks there
+ * (`blocksOf`), from the boxes of its glyphs the page draws, `keyed` by `glyphKey`, and of its
+ * rules. A rule is taken to be at the size of the part's glyph before it, as far as how far up it
+ * goes from one to the next.
+ */
+function regionsOf(
+  doc: DviDocument,
+  sets: ReadonlyMap<string, LockedSet>,
+  pageIndex: number,
+  keyed: ReadonlyMap<string, GlyphBox>,
+): Map<string, LockedRegion> {
+  const pt = pointsPerUnit(doc);
+  const page = doc.pages[pageIndex];
+  const regions = new Map<string, LockedRegion>();
+  for (const set of sets.values()) {
+    const placed: Placed[] = [];
+    let size = RULE_SIZE;
+    for (const each of set.items) {
+      if (each.page !== pageIndex) continue;
+      if (each.kind === "glyph") {
+        const box = keyed.get(glyphKey(each.item, each.glyph));
+        if (box === undefined) continue;
+        const { left, top, right, bottom } = box;
+        size = box.size;
+        placed.push({ left, top, right, bottom, baseline: box.y, size });
+        continue;
+      }
+      const rule = page?.items[each.item];
+      if (rule?.kind !== "rule") continue;
+      const bottom = INCH + rule.v * pt;
+      placed.push({
+        left: INCH + rule.h * pt,
+        top: INCH + (rule.v - rule.height) * pt,
+        right: INCH + (rule.h + rule.width) * pt,
+        bottom,
+        baseline: bottom,
+        size,
+      });
+    }
+    regions.set(set.id, { id: set.id, blocks: blocksOf(placed) });
+  }
+  return regions;
 }
 
 /**
@@ -777,8 +853,9 @@ export function letterSpaceOf(features: string | undefined, size: number): numbe
 /**
  * Draw one page of a DVI, or of XeTeX's XDV. `texts` holds each field's text as the model has
  * it; glyphs are matched against it, folded to the page's case where that is not the text's own
- * (`FieldLayout.folded`), so a click can say which character it landed on. A font the
- * page cannot draw, or whose outlines cannot be read this time, is left out and named in
+ * (`FieldLayout.folded`), so a click can say which character it landed on. A locked part is read
+ * from its markers, and placed on this page (`DrawnPage.locked`). A font the page cannot draw, or
+ * whose outlines cannot be read this time, is left out and named in
  * `missingFonts`, while its metrics still place every glyph after its own; the next draw reads it
  * again. A native font the page cannot draw (`nativeProblem`) is drawn as boxes, one for each of
  * its runs, and named there too, by its file's name. It rejects when a font's metrics, the font
@@ -837,18 +914,34 @@ export async function drawPage(
     fields.set(id, { ...field, layout: layout && folded ? { ...layout, folded } : layout });
   }
 
+  // The locked parts' glyphs on this page, by their keys, and the part each is of.
+  const sets = lockedSets(doc);
+  const lockedGlyphs = new Map<string, string>();
+  for (const set of sets.values())
+    for (const each of set.items)
+      if (each.page === pageIndex && each.kind === "glyph")
+        lockedGlyphs.set(glyphKey(each.item, each.glyph), set.id);
+  const keyed = new Map<string, GlyphBox>();
+  const glyphs = glyphBoxes(doc, page, loaded, natives, fields, lockedGlyphs, keyed);
+  const locked = regionsOf(doc, sets, pageIndex, keyed);
+
   const size = sizeOf(doc, pageIndex);
   const svg = renderPage(doc, page, {
     outlines: (name) => loaded.get(name)?.outlines,
     native: (font) => fileOf(font, natives),
     fields,
+    locked: {
+      glyphs: lockedGlyphs,
+      blocks: new Map([...locked.values()].map((region) => [region.id, region.blocks])),
+    },
     size,
   });
   return {
     svg,
     size,
     fields,
-    glyphs: glyphBoxes(doc, page, loaded, natives, fields),
+    locked,
+    glyphs,
     pageCount: doc.pages.length,
     unmatched,
     missingFonts,

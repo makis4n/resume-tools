@@ -312,6 +312,23 @@ describe("the report", () => {
     ]);
   });
 
+  test("gives a locked section's id with its words, which the side panel names its row by", () => {
+    // Decision 0041: the dates an entry's instance kept as written, the skills a locked section;
+    // and then the skills a section's `after`, kept in its extras, which is no locked section.
+    const { glyphs, owners } = invented();
+    const all = [field("header.first"), field("ent-a.title"), field("header.email", "raw")];
+    const reference = { pages: [{ items: glyphs }], bibliographyLeftOut: false, images: [] };
+    const dates: LockedPart = { ...part("date", 3), kind: "field", node: "ent-a", key: "dates" };
+    const sections = (skills: LockedPart) =>
+      reportOf({ checks: checks({ owners, all }), extras: [dates, skills] }, reference).locked;
+    expect(
+      sections({ ...part("unmapped", 7), node: "lock-skills" }).map((each) => each.section),
+    ).toEqual([undefined, "lock-skills"]);
+    const after = sections({ ...part("unmapped", 7), node: "sec-a", key: "after" });
+    expect(after.map((each) => each.section)).toEqual([undefined, undefined]);
+    expect(after.map((each) => Object.hasOwn(each, "section"))).toEqual([false, false]);
+  });
+
   test("cuts a part's words after the eighth, with an ellipsis", () => {
     const glyphs = line("one two three four five six seven eight nine ten", 0);
     const report = reportOf(

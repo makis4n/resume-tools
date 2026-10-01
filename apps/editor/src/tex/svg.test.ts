@@ -175,4 +175,58 @@ describe("renderPage on a hand-built native run", () => {
     });
     expect(svg.match(/<use href="#n/g)?.length).toBe(1);
   });
+
+  it("marks a locked part's glyphs with its id, and draws its blocks unpainted under every glyph", () => {
+    // A run of three glyphs: the first a field's, the other two a locked part's (decision 0041).
+    const { doc: d, page } = doc({}, [
+      { id: 7, x: 0, y: 0 },
+      { id: 7, x: 5 * PT, y: 0 },
+      { id: 7, x: 10 * PT, y: 0 },
+    ]);
+    const fields = new Map([
+      ["f", { id: "f", glyphs: [{ item: 0, glyph: 0, text: "a", offset: 0 }] }],
+    ]);
+    const id = 'lock-"<&';
+    const locked = {
+      glyphs: new Map([
+        ["0:1", id],
+        ["0:2", id],
+      ]),
+      // An empty block, of a glyph with no outline, has nothing to point at.
+      blocks: new Map([
+        [
+          id,
+          [
+            { left: 10, top: 20, right: 30, bottom: 40 },
+            { left: 50, top: 20, right: 50, bottom: 40 },
+          ],
+        ],
+      ]),
+    };
+    const svg = renderPage(d, page, {
+      outlines: () => undefined,
+      native: () => outlines,
+      fields,
+      locked,
+    });
+    const uses = svg.match(/<use [^>]*>/g) ?? [];
+    expect(uses).toHaveLength(3);
+    expect(uses[0]).toContain('data-field="f" data-offset="0"');
+    expect(uses[0]).not.toContain("data-locked");
+    for (const use of uses.slice(1)) {
+      expect(use).toContain('data-locked="lock-&quot;&lt;&amp;"');
+      expect(use).not.toContain("data-field");
+    }
+    const blocks = svg.match(/<rect [^>]*data-locked[^>]*>/g) ?? [];
+    expect(blocks).toEqual([
+      '<rect x="10.000" y="20.000" width="20.000" height="20.000" fill="#fff" fill-opacity="0" data-locked="lock-&quot;&lt;&amp;"/>',
+    ]);
+    // Under every glyph, over the page's white.
+    expect(svg.indexOf(blocks[0] ?? "")).toBeGreaterThan(svg.indexOf('fill="white"/>'));
+    expect(svg.indexOf(blocks[0] ?? "")).toBeLessThan(svg.indexOf("<use"));
+    // A page with no locked part draws no block, as before.
+    expect(
+      renderPage(d, page, { outlines: () => undefined, native: () => outlines }),
+    ).not.toContain("data-locked");
+  });
 });

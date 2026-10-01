@@ -19,7 +19,7 @@ import { pdfFileName, savePdf } from "./editor/download";
 import { applyFit, type Fitted, fit } from "./editor/fit";
 import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
-import { Panel, shownFieldsOf } from "./editor/Panel";
+import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
 import { holdsTyping, useHistoryKeys, type Way } from "./editor/undo";
 import { EngineCancelled, EngineClient } from "./engine/client";
 import type { EngineManifest } from "./engine/manifest";
@@ -143,6 +143,11 @@ interface Open {
   pkg: TemplatePackage;
   /** An imported document's: what its compiles need beside the package (decision 0038). */
   job: ImportJob | undefined;
+  /**
+   * An imported document's locked parts' first words, by section, as its import's report names
+   * them, which name their rows in the side panel (decision 0041); none for a curated one.
+   */
+  lockedWords: ReadonlyMap<string, string>;
   history: History;
   /** The history's present, as state, so that an edit renders. */
   present: EditorDocument;
@@ -157,6 +162,24 @@ interface Open {
   stale: boolean;
   /** Whether its newest save could not be written; it stays open until one is. */
   unsaved: boolean;
+}
+
+/**
+ * An imported document's locked parts' first words, by section, as its import's report names them
+ * (`lockedWordsOf`, decision 0041): none for a curated document, which keeps no part, nor where the
+ * report cannot be read, when each part's row says it was kept as it was; why goes to the console.
+ */
+function lockedWordsFrom(
+  template: Template,
+  document: EditorDocument,
+): ReadonlyMap<string, string> {
+  if (template.report === undefined) return new Map();
+  try {
+    return lockedWordsOf(reportOfImport({ report: template.report, document }));
+  } catch (error) {
+    console.error("The import's report could not be read:", error);
+    return new Map();
+  }
 }
 
 /**
@@ -279,6 +302,7 @@ export function App() {
       revision,
       pkg,
       job,
+      lockedWords: lockedWordsFrom(template, document),
       history: new History(document, pkg),
       present: document,
       canUndo: false,
@@ -576,7 +600,7 @@ export function App() {
     );
   }
 
-  const { id, pkg, job, history, present, canUndo, canRedo, stale, unsaved } = open;
+  const { id, pkg, job, lockedWords, history, present, canUndo, canRedo, stale, unsaved } = open;
 
   /**
    * Apply a command to the open document. One of a visit to a field, which the overlay and the
@@ -710,6 +734,7 @@ export function App() {
         document={present}
         pkg={pkg}
         shownFields={shownFieldsOf(shown?.latest, present, error !== undefined)}
+        lockedWords={lockedWords}
         onCommand={edit}
         onSeal={seal}
       />
@@ -874,7 +899,12 @@ export function App() {
             the group of a visit to the field, which closing it ends, so that undo takes back the
             whole visit however many keystrokes it took (item 12). */}
         <div ref={setSheet} style={SHEET}>
-          <Page svg={shown.latest.page.svg} onField={openField} />
+          <Page
+            svg={shown.latest.page.svg}
+            onField={openField}
+            locked={shown.latest.page.locked}
+            size={shown.latest.page.size}
+          />
           {clicked && sheet && !stale && (
             <Overlay
               key={clicked.click}

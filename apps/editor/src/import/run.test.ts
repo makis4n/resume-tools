@@ -7,9 +7,11 @@ import { strToU8, unzipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
 import { Compiler, type Engine, type Shown } from "../editor/compiler";
 import { apply, type Document, fieldsOf, History } from "../editor/document";
+import { lockedWordsOf } from "../editor/Panel";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
+import type { GlyphBox } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { handleName, LIMITS, type NameDeps, type ServiceCache } from "../service/name";
@@ -19,6 +21,7 @@ import { DocumentStore } from "../storage/store";
 import { generateBody, generateFormat } from "../templates/generate";
 import { resolveTemplate, type Template } from "../templates/resolve";
 import { JAKE_FORK } from "../test/jake-fork";
+import { INCH } from "../tex/svg";
 import { readTree } from "./fonts";
 import { standIn } from "./images";
 import { treeImages } from "./intake";
@@ -409,28 +412,121 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
   // subtitles and dates (12 + 9 + 9 + 7), their bullets (11 + 9 + 6 + 8) and the section titles
   // (5), 76; locked: the heading's 9 words, 555-0100 two of them, and the skills' 7; 92 in all.
   test("reports the fork's words as a hand counts them, partial at 76 of 92 (decision 0039)", async () => {
-    const report = reportOfImport(await imported(JAKE_FORK));
+    const done = await imported(JAKE_FORK);
+    const report = reportOfImport(done);
     expect(Math.abs(report.words.editable - 76)).toBeLessThanOrEqual(2);
     expect(Math.abs(report.words.body - 92)).toBeLessThanOrEqual(2);
     expect(report.words.template).toBe(0);
     expect(report.outcome).toBe("partial");
     expect(report.matched).toBe(true);
-    // Each locked part by its first words as the page shows them, eight at most.
+    // Each locked part by its first words as the page shows them, eight at most, and the locked
+    // section it is, which the side panel names so (decision 0041).
+    const [heading, skills] = done.document.resume.sections.flatMap((section) =>
+      section.kind === "locked" ? [section.id] : [],
+    );
     expect(report.locked).toEqual([
       {
         words: "Quill Invented 555-0100 | quill@example.invalid | quill…",
         count: 9,
         reason: "unmapped",
         why: LOCK_WHY.unmapped,
+        section: heading,
       },
       {
         words: "Languages: Invented, Words, Other Tools: Quill, Wren",
         count: 7,
         reason: "unmapped",
         why: LOCK_WHY.unmapped,
+        section: skills,
       },
     ]);
     expect(report.dropped).toEqual([]);
+  }, 60_000);
+
+  // Decision 0041: the parts the fork keeps as its upload wrote them, its heading block and its
+  // skills' list, kept in the store and opened: named in the side panel by the words the report
+  // names them by; on the editor's page no field, drawn where the reference drew them; and removed,
+  // moved and brought back by undo, each step compiled.
+  test("shows the fork's kept parts as the report names them, and removes, moves and undoes them", async () => {
+    const done = await imported(JAKE_FORK);
+    const [heading, skills] = done.document.resume.sections.flatMap((section) =>
+      section.kind === "locked" ? [section.id] : [],
+    );
+    if (heading === undefined || skills === undefined) throw new Error("the fork keeps two parts");
+    const store = new DocumentStore({ name: `resume-tools-locked-${Date.now()}` });
+    const id = await store.importDocument(done);
+    const stored = await store.get(id);
+    if (stored === undefined) throw new Error("not stored");
+    // The report the store keeps names each part's row, as the app opens the document.
+    const template = await templateOf(store, stored.document, id);
+    if (template.report === undefined) throw new Error("the store keeps no report");
+    const report = reportOfImport({ report: template.report, document: stored.document });
+    expect(lockedWordsOf(report)).toEqual(
+      new Map([
+        [heading, "Quill Invented 555-0100 | quill@example.invalid | quill…"],
+        [skills, "Languages: Invented, Words, Other Tools: Quill, Wren"],
+      ]),
+    );
+    const { compiler, nextPage } = editor(store);
+    const history = new History(stored.document, template.package);
+    let next = nextPage();
+    compiler.open(template.package, history.present, template.job);
+    const first = await next;
+    expect([...first.page.locked.keys()]).toEqual([heading, skills]);
+    // Drawn where the reference drew them, glyph for glyph, and none of it a field.
+    const reference = (done.report.reference.pages[0]?.items ?? []).flatMap((item) =>
+      item.kind === "glyph" ? [item] : [],
+    );
+    const at = (glyph: GlyphBox) =>
+      reference.some(
+        (each) =>
+          each.font === glyph.font &&
+          Math.abs(INCH + each.h / 65536 - glyph.x) < 0.01 &&
+          Math.abs(INCH + each.v / 65536 - glyph.y) < 0.01,
+      );
+    for (const id of [heading, skills]) {
+      const glyphs = first.page.glyphs.filter((glyph) => glyph.locked === id);
+      expect(glyphs.length, id).toBeGreaterThan(10);
+      expect(glyphs.every(at), id).toBe(true);
+      expect(first.page.locked.get(id)?.blocks, id).toHaveLength(1);
+    }
+    expect(first.page.glyphs.filter((glyph) => glyph.locked && glyph.field)).toEqual([]);
+    const fields = [...first.page.fields.keys()];
+
+    // Removed: the heading goes from the page, and every field stays, its glyphs matched.
+    next = nextPage();
+    compiler.update(
+      history.dispatch({ type: "structure", op: { op: "removeSection", id: heading } }),
+    );
+    const removed = await next;
+    expect([...removed.page.locked.keys()]).toEqual([skills]);
+    expect([...removed.page.fields.keys()]).toEqual(fields);
+    expect(removed.page.unmatched).toBe(0);
+    // Moved to the top: the skills' list now stands above the first section's title.
+    next = nextPage();
+    compiler.update(
+      history.dispatch({ type: "structure", op: { op: "moveSection", id: skills, to: 0 } }),
+    );
+    const moved = await next;
+    const [block] = moved.page.locked.get(skills)?.blocks ?? [];
+    const education = done.document.resume.sections.find((each) => each.title === "Education");
+    const title = moved.page.fields.get(`${education?.id}.title`)?.layout;
+    if (block === undefined || title === undefined) throw new Error("the skills or Education gone");
+    expect(block.bottom).toBeLessThan(title.y);
+    expect([...moved.page.fields.keys()].sort()).toEqual([...fields].sort());
+    expect(moved.page.unmatched).toBe(0);
+    // Undone, a step at a time: back to the document opened, and its page, glyph for glyph.
+    next = nextPage();
+    compiler.update(history.undo() ?? history.present);
+    expect([...(await next).page.locked.keys()]).toEqual([skills]);
+    next = nextPage();
+    compiler.update(history.undo() ?? history.present);
+    const restored = await next;
+    expect(history.present).toBe(stored.document);
+    expect(restored.page.svg).toBe(first.page.svg);
+    expect(restored.page.locked).toEqual(first.page.locked);
+    compiler.close();
+    await store.close();
   }, 60_000);
 
   // Item 13's review: a macro that parses a list of `value/label` pairs and sets each label alone,
@@ -459,15 +555,22 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
       .replace(skills, "")
       .replace("\\usepackage{tabularx}\n", `\\usepackage{tabularx}\n${chart}`)
       .replace(end, `${call}${end}`);
-    const report = reportOfImport(await imported(source));
+    const done = await imported(source);
+    const report = reportOfImport(done);
     expect(report.words).toMatchObject({ editable: 76, locked: 12, body: 88, template: 0 });
     expect(report.outcome).toBe("partial");
+    // The chart is a locked section of its own, after its section's title.
+    const [kept] = done.document.resume.sections.flatMap((section) =>
+      section.kind === "locked" ? [section.id] : [],
+    );
+    expect(kept).toBeDefined();
     expect(report.locked).toEqual([
       {
         words: "Tending invented bees Sleeping in late Writing invented…",
         count: 12,
         reason: "unmapped",
         why: LOCK_WHY.unmapped,
+        section: kept,
       },
     ]);
   }, 120_000);

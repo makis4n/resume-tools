@@ -29,7 +29,7 @@ import {
 } from "./generate";
 import { INVENTED_XETEX } from "./invented";
 import { type ControlValues, defaultControls, parsePackage, type TemplatePackage } from "./package";
-import { LOCK_MARKER, PARAGRAPH_MARKER, PRELUDE } from "./prelude";
+import { LOCK_END, LOCK_MARKER, PARAGRAPH_MARKER, PRELUDE } from "./prelude";
 
 type PackageInput = z.input<typeof TemplatePackage>;
 
@@ -2067,17 +2067,21 @@ describe.skipIf(!engineAvailable())("what an import keeps, through the engine", 
     expect(difference(alone.stream, marked.stream)).toBeUndefined();
     expect(marked.locks).toEqual([
       "rt:l:lock-hobbies",
-      "rt:l:lock-hobbies",
+      "rt:l:/lock-hobbies",
       "rt:l:lock-talks",
-      "rt:l:lock-talks",
+      "rt:l:/lock-talks",
     ]);
-    // Each part's glyphs lie between its two markers, and no field's marker does.
+    // Each part's glyphs lie between its start and its end, and no field's marker does.
     const between = (id: string) => {
-      const markers = marked.items.flatMap((item, at) =>
-        item.kind === "special" && item.text === `${LOCK_MARKER}${id}` ? [at] : [],
-      );
-      expect(markers).toHaveLength(2);
-      return marked.items.slice(markers[0], markers[1]);
+      const marker = (text: string) =>
+        marked.items.findIndex((item) => item.kind === "special" && item.text === text);
+      const [start, end] = [
+        marker(`${LOCK_MARKER}${id}`),
+        marker(`${LOCK_MARKER}${LOCK_END}${id}`),
+      ];
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(end).toBeGreaterThan(start);
+      return marked.items.slice(start, end);
     };
     const spelt = (items: typeof marked.items) =>
       items.flatMap((item) => (item.kind === "glyph" ? [item.text] : [])).join("");
@@ -2091,6 +2095,53 @@ describe.skipIf(!engineAvailable())("what an import keeps, through the engine", 
     // The fields are the body's, and the same as the bare LaTeX's.
     expect(marked.fields).toEqual(alone.fields);
     expect([...marked.fields].sort()).toEqual([...body.texts.keys()].sort());
+  }, 60_000);
+
+  it("draws a locked part as no field, its glyphs and its block its own", async () => {
+    // Decision 0041: the page reads the lock markers for the part, never for a field.
+    const body = generateBody(keeping, lockedResume, {});
+    const result = session.compile("pdftex", format.name, body.latex, { job: "drawn" });
+    if (!result.output) throw new Error(result.error);
+    const page = await drawPage(result.output, fonts, body.texts);
+    expect(page.pageCount).toBe(1);
+    expect([...page.locked.keys()]).toEqual(["lock-hobbies", "lock-talks"]);
+    const centre = (box: { left: number; top: number; right: number; bottom: number }) => ({
+      x: (box.left + box.right) / 2,
+      y: (box.top + box.bottom) / 2,
+    });
+    const inside = (box: Parameters<typeof centre>[0], block: Parameters<typeof centre>[0]) => {
+      const { x, y } = centre(box);
+      return x >= block.left && x <= block.right && y >= block.top && y <= block.bottom;
+    };
+    // What the markers hold of each, a glyph a character, as the test above spells them.
+    const spelt = new Map([
+      ["lock-hobbies", "Hobbies•Rowingontheriver"],
+      ["lock-talks", "TalksOnsettingtypebyhand,2019."],
+    ]);
+    for (const { id, blocks } of page.locked.values()) {
+      const glyphs = page.glyphs.filter((glyph) => glyph.locked === id);
+      // Its glyphs, every one drawn, in its one block, and no field's glyph in it.
+      expect(glyphs.length, id).toBe(spelt.get(id)?.length);
+      expect(blocks, id).toHaveLength(1);
+      const [block] = blocks;
+      if (block === undefined) throw new Error(`${id} has no block`);
+      expect(
+        glyphs.every((glyph) => inside(glyph, block)),
+        id,
+      ).toBe(true);
+      expect(
+        page.glyphs.filter((glyph) => glyph.field !== undefined && inside(glyph, block)),
+      ).toEqual([]);
+      // In the SVG, each of its glyphs carries its id, and its block is drawn under them.
+      expect(page.svg.match(new RegExp(`<use [^>]*data-locked="${id}"`, "g")), id).toHaveLength(
+        glyphs.length,
+      );
+      expect(page.svg.match(new RegExp(`<rect [^>]*data-locked="${id}"`, "g")), id).toHaveLength(1);
+    }
+    // No glyph is both a field's and a part's, and the fields are the body's, every glyph matched.
+    expect(page.glyphs.filter((glyph) => glyph.locked && glyph.field)).toEqual([]);
+    expect([...page.fields.keys()].sort()).toEqual([...body.texts.keys()].sort());
+    expect(page.unmatched).toBe(0);
   }, 60_000);
 
   it("breaks a page and a line where the part alone would, its markers adding no breakpoint", async () => {
@@ -2118,13 +2169,13 @@ describe.skipIf(!engineAvailable())("what an import keeps, through the engine", 
     const alone = await compiled(body(false), "breaks-alone");
     expect(marked.locks).toEqual([
       "rt:l:lock-split",
-      "rt:l:lock-split",
+      "rt:l:/lock-split",
       "rt:l:lock-tie",
-      "rt:l:lock-tie",
+      "rt:l:/lock-tie",
       "rt:l:lock-math",
-      "rt:l:lock-math",
+      "rt:l:/lock-math",
       "rt:l:lock-kern",
-      "rt:l:lock-kern",
+      "rt:l:/lock-kern",
     ]);
     expect(difference(alone.stream, marked.stream)).toBeUndefined();
   }, 60_000);
