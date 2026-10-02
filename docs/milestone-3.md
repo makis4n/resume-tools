@@ -308,6 +308,23 @@ of each launch template must find editable what the hand-written port marks.
     click opens nothing. The side panel lists a locked part as a row that can be removed or
     moved, not edited. Done when every locked chunk of the upstream samples draws where the
     reference drew it, and the harness passes on packages that hold them.
+
+<!-- Item 20 was added on 2 October 2026, after the items were numbered. It comes before 16. -->
+
+20. [ ] **Every page on screen.** The editor draws a document's first page only, so a resume of
+    two pages or more shows one: its later pages' fields are editable only as inputs in the side
+    panel, their locked parts are out of sight, and the import's report counts their words as
+    editable on the page. The editor draws every page, one under the other, each with its fields,
+    its locked parts and their lock on hover; a click on a field on any page opens it in place, as
+    on the first, and the side panel gives an input only to a field no page shows. The owner added
+    this on 2 October 2026, after item 13's hand count found 474 of the Awesome-CV sample's words
+    on pages the editor does not draw. It comes before item 16, whose edit acts on a locked chunk
+    wherever it is. Done when every page of each upstream sample draws where the reference drew
+    it, a field on the last page of a multi-page document opens in place, and the report's rate
+    for the Awesome-CV sample matches item 13's hand count with its later pages drawn.
+
+<!-- -->
+
 16. [ ] **Editing locked chunks, decided by the corpus.** Plan section 6.1's edit, a sentence
     typed at a locked chunk that a model rewrites, sends part of the resume to the model, which
     the product rule in AGENTS.md forbids as written. The rule stays absolute until the corpus
