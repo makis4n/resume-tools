@@ -53,6 +53,7 @@ import {
   runMismatch,
   templatesOf,
   verdictLine,
+  WITHHELD_ANSWER_NOTE,
 } from "./corpus-review";
 import { outcomeOf, type RunRecord } from "./corpus-run";
 
@@ -774,7 +775,15 @@ describe("the export, over invented documents", () => {
       hash: await sha256("macro:#1->\\section *{#1}"),
       dependencies: [],
     });
-    expect(byKey.get(entry.key)).toMatchObject({ name: "cventry", answer: "none", documents: 2 });
+    // The entry's answer is served and not written: it is `withheld`, not `none`, so that the
+    // reviewer does not write a second answer under its key.
+    expect(byKey.get(entry.key)).toMatchObject({
+      name: "cventry",
+      answer: "withheld",
+      answerNote: WITHHELD_ANSWER_NOTE,
+      documents: 2,
+    });
+    expect(byKey.get(entry.key)).not.toHaveProperty("file");
     // The pasted entry's key is held by a request not written: it goes without a name.
     const pastedKey = pasted.macros[1]?.key ?? "";
     expect(byKey.get(pastedKey)).toMatchObject({ name: null, documents: 1 });

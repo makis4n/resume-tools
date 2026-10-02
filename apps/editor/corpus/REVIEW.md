@@ -50,6 +50,9 @@ order, and each macro by how many documents hold it, most first:
 - A macro whose `name` is `null` has no `filing` either: only requests the gate withheld hold it,
   and the export shows nothing of it to review. It leaves that macro alone and writes no answer for
   it.
+- A macro whose `answer` is `withheld` has an answer the cache serves, often a committed one, that
+  the export did not write because the leak check found a document's text in it. It leaves that
+  macro alone too: an answer written for it would be filed over the one the cache serves.
 - It writes each answer it corrects, and one for a macro that has none, as
   `apps/editor/corpus/answers/<key>.json`, a stored answer: `"version": 1`, the `key`, `hash`, `of`
   and `name`, the `family` where `filing` gives one, and the `dependencies`, as `answers/<key>.json`
