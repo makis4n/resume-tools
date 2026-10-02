@@ -14,6 +14,7 @@ import {
   sha256,
 } from "@resume-tools/naming";
 import { DEFAULT_MODEL } from "@resume-tools/naming/providers";
+import { APICallError } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
@@ -336,7 +337,9 @@ describe("answering a document's request", () => {
       stored: 1,
       missing: [],
       calls: 1,
-      tokens: { input: 1200, cached: 200, output: 400 },
+      // The output's reasoning, where the provider counts it apart, and the one part's time.
+      tokens: { input: 1200, cached: 200, output: 400, reasoning: 100 },
+      parts: [expect.any(Number)],
     });
     // Only the macro the cache did not answer was asked, and its answer filed under its key.
     const asked = userText(model.doGenerateCalls[0]);
@@ -682,6 +685,9 @@ describe("a request asked in parts", () => {
       failed: { reason: "invalid" },
     });
     expect(answered.failed?.message).toMatch(/^Part 2 of 2: /);
+    // Each part's time, the second the one that failed, by its kind and number (decision 0044).
+    expect(answered.failed).toMatchObject({ kind: "invalid", part: 2 });
+    expect(answered.parts).toHaveLength(2);
     expect(answered.missing).toEqual(names.slice(32).map((name) => `\\${name}`));
     expect(readdirSync(cache.writable)).toHaveLength(32);
     // The next run asks only the part still missing.
@@ -717,6 +723,116 @@ describe("a request asked in parts", () => {
       /budget of 100000 characters is too small for command "cvhuge"/,
     );
     expect(model.doGenerateCalls).toHaveLength(0);
+  });
+});
+
+describe("the benchmark's naming step", () => {
+  test("asks the model for every macro when the committed answers are left out, and files them in its folder", async () => {
+    const request = await inventedRequest();
+    const committed = folder();
+    // A person's reviewed answer for the section, which a run would serve, and the benchmark leaves.
+    const [section] = NAMING.macros;
+    const key = request.macros[0]?.key ?? "";
+    const reviewed = {
+      version: NAMING_VERSION,
+      key,
+      hash: await sha256(TEXTS.cvsection),
+      of: "command",
+      name: "cvsection",
+      answer: { ...section?.answer, reviewed: true },
+      reviewed: true,
+      source: "seed",
+    };
+    writeFileSync(join(committed, `${key}.json`), JSON.stringify(reviewed));
+    const cache = new FileAnswerCache({ committed, writable: folder(), own: true });
+    const model = answering(NAMING);
+    const answered = await answerDocument(request, {
+      cache,
+      gate: passes,
+      model: { model, id: "invented-model" },
+    });
+    expect(answered).toMatchObject({
+      hits: { reviewed: 0, model: 0 },
+      asked: 2,
+      stored: 2,
+      missing: [],
+      calls: 1,
+    });
+    const asked = userText(model.doGenerateCalls[0]);
+    expect(asked).toContain('### command "cvsection"');
+    expect(asked).toContain('### command "cventry"');
+    // Both answers in the model's folder, the section's beside the committed one, left as it was.
+    expect(readdirSync(cache.writable).sort()).toEqual(
+      [`${key}.json`, `${request.macros[1]?.key}.json`].sort(),
+    );
+    expect(
+      StoredAnswer.parse(JSON.parse(readFileSync(join(cache.writable, `${key}.json`), "utf8"))),
+    ).toMatchObject({ reviewed: false, source: "model:invented-model" });
+    expect(JSON.parse(readFileSync(join(committed, `${key}.json`), "utf8"))).toEqual(reviewed);
+    // A second run answers from the model's folder alone, and asks nothing.
+    const again = await answerDocument(request, {
+      cache,
+      gate: passes,
+      model: { model: idle(), id: "invented-model" },
+    });
+    expect(again).toMatchObject({ hits: { reviewed: 0, model: 2 }, asked: 0, calls: 0 });
+    expect(again.parts).toBeUndefined();
+  });
+
+  test("times each part, and tells a part stopped at its limit, a 429 and a 5xx by kind and part", async () => {
+    const request = await inventedRequest();
+    /** A model whose every call throws `error`. */
+    const throwing = (error: unknown) =>
+      new MockLanguageModelV4({
+        doGenerate: async () => {
+          throw error;
+        },
+      });
+    const api = (status: number) =>
+      new APICallError({
+        message: `invented answer of status ${status}`,
+        url: "https://invalid.example/v1/chat/completions",
+        requestBodyValues: {},
+        statusCode: status,
+      });
+    // A model that answers only once its call is stopped: its part runs out of its time.
+    const stuck = new MockLanguageModelV4({
+      doGenerate: async (options) =>
+        new Promise((_, reject) => {
+          options.abortSignal?.addEventListener(
+            "abort",
+            () => reject(options.abortSignal?.reason),
+            {
+              once: true,
+            },
+          );
+        }),
+    });
+    const ask = (model: MockLanguageModelV4, partTimeoutMs?: number) =>
+      answerDocument(request, {
+        cache: freshCache(),
+        gate: passes,
+        model: { model, id: "invented-model" },
+        maxRetries: 0,
+        ...(partTimeoutMs === undefined ? {} : { partTimeoutMs }),
+      });
+    const timedOut = await ask(stuck, 50);
+    expect(timedOut.failed).toMatchObject({ reason: "provider", kind: "timeout", part: 1 });
+    expect(timedOut.parts).toHaveLength(1);
+    expect(await ask(throwing(api(429)))).toMatchObject({
+      failed: { reason: "provider", kind: "429", part: 1 },
+      parts: [expect.any(Number)],
+    });
+    expect((await ask(throwing(api(503)))).failed).toMatchObject({ kind: "5xx", part: 1 });
+    expect((await ask(throwing(api(401)))).failed).toMatchObject({ kind: "provider", part: 1 });
+    // An answer that never validates, after its retry.
+    const invalid = await ask(answering({ ...NAMING, macros: [] }));
+    expect(invalid.failed).toMatchObject({ reason: "invalid", kind: "invalid", part: 1 });
+    expect(invalid.parts).toHaveLength(1);
+    // A part that is answered has its time, and no failure.
+    const answered = await ask(answering(NAMING));
+    expect(answered.failed).toBeUndefined();
+    expect(answered.parts).toEqual([expect.any(Number)]);
   });
 });
 
@@ -822,7 +938,11 @@ describe("the runner's table", () => {
       invalid: 2,
       conflicts: 0,
       missing: ["\\cvevent", "cvlist (environment)"],
-      failed: { reason: "invalid", message: "The model's answer did not validate after a retry" },
+      failed: {
+        reason: "invalid",
+        message: "The model's answer did not validate after a retry",
+        kind: "invalid",
+      },
       calls: 2,
       tokens: { input: 8000, cached: 0, output: 1000 },
     },

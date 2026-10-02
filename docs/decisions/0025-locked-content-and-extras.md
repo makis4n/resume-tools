@@ -1,6 +1,6 @@
 # 0025. Locked content and extras
 
-Date: 2026-09-27 · Status: proposed
+Date: 2026-09-27 · Status: proposed; its end marker and the panel's name for a part are 0041's
 
 ## Context
 
@@ -149,7 +149,8 @@ the generator writes as they are. The schema refuses, so that nothing ever write
   since nothing in the part is edited, and without `\texorpdfstring`'s second copy, since it never
   stands in a PDF string. The page's fields (`collectFields`), the harness's checks and the import's
   comparison of glyph streams, which leaves `rt:[bepl]:` out (decision 0019), read nothing from
-  them; item 15's page will read them for the lock.
+  them; item 15's page will read them for the lock. Its end marker and the panel's name for a part
+  are 0041's: the marker after the part is `rt:l:/<id>`.
 - It is more than `\rtfield` without those two. `\rtfield` starts a paragraph (`\leavevmode`),
   which a locked part, standing between sections in vertical mode, must not: it would set an empty
   line before the part's heading. And a marker is a whatsit, which hides the list's last skip from

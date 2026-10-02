@@ -524,7 +524,10 @@ describe("the committed answers", () => {
       const text = readFileSync(join(ANSWERS_DIR, file), "utf8");
       const parsed = StoredAnswer.safeParse(JSON.parse(text));
       expect(parsed.success, `${file}: ${parsed.error?.issues[0]?.message ?? ""}`).toBe(true);
-      expect(parsed.data?.source, file).toBe("seed");
+      // Every committed answer is reviewed: the seed's, a person's, or the review model's, which
+      // names that model as its source (decision 0037); a naming model's is never committed.
+      expect(parsed.data?.reviewed, file).toBe(true);
+      expect(parsed.data?.source, file).toMatch(/^(?:seed|model:.+)$/);
       expect(
         await answerFor({ get: (asked) => (asked === key ? text : undefined) }, key ?? ""),
         file,

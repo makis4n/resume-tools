@@ -82,6 +82,22 @@ describe("naming a request on a model", () => {
       type: "json",
       name: "naming",
     });
+    // The output's reasoning, where the provider counts it apart (decision 0044).
+    expect(calls).toEqual([{ input: 1000, cached: 200, output: 300, reasoning: 50 }]);
+  });
+
+  test("says no reasoning where the provider counts none apart", async () => {
+    const request = await inventedRequest();
+    const naming = inventedNaming(request);
+    const answered = reply(JSON.stringify(naming));
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        ...answered,
+        usage: { ...answered.usage, outputTokens: { total: 300, text: 300, reasoning: undefined } },
+      }),
+    });
+    const calls: NamingUsage[] = [];
+    await name(request, { model, onCall: (usage) => calls.push(usage) });
     expect(calls).toEqual([{ input: 1000, cached: 200, output: 300 }]);
   });
 

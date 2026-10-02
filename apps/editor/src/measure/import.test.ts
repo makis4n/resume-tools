@@ -124,6 +124,7 @@ const PAGE: DrawnPage = {
   pageCount: 1,
   unmatched: 0,
   missingFonts: new Map(),
+  locked: new Map(),
 };
 
 /** The fake draw never reads fonts. */

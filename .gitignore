@@ -32,6 +32,11 @@ apps/editor/.engine
 # names, and its reports: real people's resumes, never committed (decision 0017)
 apps/editor/.corpus
 
+# The review's export, which `corpus review export` writes for the Opus review of the top
+# templates' answers: masked requests, answers and counts, checked for the documents' text, and
+# never committed (decision 0043)
+apps/editor/.review
+
 # Spike harness inputs and outputs: engine, bundles, fonts, templates (hundreds of MB)
 apps/editor/spike/assets/
 

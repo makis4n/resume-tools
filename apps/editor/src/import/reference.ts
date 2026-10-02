@@ -83,6 +83,13 @@ export interface ReferenceGlyph {
   /** Where it is set, in scaled points right of and below the output's origin, an inch in. */
   h: number;
   v: number;
+  /**
+   * How far it moves the next glyph on, in scaled points: a TeX font's character's width, or a
+   * native glyph's advance in its run, up to the next glyph or the run's end. Item 13's report
+   * reads a space between two words where the next glyph starts further on than that (decision
+   * 0039). Left out of streams read before it, and never compared.
+   */
+  width?: number;
 }
 
 /** A rule of the output, at its bottom left corner, and its size, in scaled points. */
@@ -655,6 +662,7 @@ export async function readOutput(
           ...(text === undefined ? {} : { text }),
           h: at(item.h),
           v: at(item.v),
+          width: at(item.width),
         });
       } else if (item.kind === "native") {
         const font = placed.nativeFonts.get(item.font);
@@ -667,6 +675,8 @@ export async function readOutput(
         };
         item.glyphs.forEach((glyph, index) => {
           const text = textOf(item, index);
+          // A glyph's advance is the way to the next glyph of its run, or to the run's end.
+          const next = item.glyphs[index + 1]?.x ?? item.width;
           items.push({
             kind: "glyph",
             font: nativeFileName(font?.name ?? ""),
@@ -677,6 +687,7 @@ export async function readOutput(
             ...(text === undefined ? {} : { text }),
             h: at(item.h + glyph.x),
             v: at(item.v + glyph.y),
+            width: at(next - glyph.x),
           });
         });
       } else if (item.kind === "rule")

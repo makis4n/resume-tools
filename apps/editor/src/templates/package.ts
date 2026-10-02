@@ -25,9 +25,10 @@
  * class declares, which its font size control offers alone; the slots whose field a document may
  * not empty, since the template stops without them (`required`); what a unit the user adds writes
  * for an argument each unit of the upload keeps in its extras (`snippets.defaults`); and the roles
- * whose entries set no bullets a user adds (`snippets.entryBullets`); and the kinds of unit a new
+ * whose entries set no bullets a user adds (`snippets.entryBullets`); the kinds of unit a new
  * one of which, or the removal of one, stops its compile, which the editor neither adds nor removes
- * (`fixed`). Each is optional, and a curated package needs none.
+ * (`fixed`); and the locked parts of its document whose removal or move one place stops it
+ * (`pinned`). Each is optional, and a curated package needs none.
  */
 
 import {
@@ -330,6 +331,13 @@ export const UNIT_KINDS = [
 export type UnitKind = (typeof UNIT_KINDS)[number];
 
 /**
+ * The steps the side panel takes with a locked part of an imported resume: removing it, and moving
+ * it one place up or down (decision 0041).
+ */
+export const PIN_STEPS = ["remove", "up", "down"] as const;
+export type PinStep = (typeof PIN_STEPS)[number];
+
+/**
  * The shapes of a font family a resume needs most, as `<series>/<shape>` of NFSS's values: the
  * series medium, bold and bold extended, which LaTeX's `\bfseries` asks for, and the shapes
  * upright, italic, slanted and small capitals. A family may declare any other `ShapeKey` too.
@@ -521,6 +529,12 @@ export const TemplatePackage = z
      * which the third check finds (decisions 0026 and 0038).
      */
     fixed: z.array(z.enum(UNIT_KINDS)).optional(),
+    /**
+     * The locked parts of the import's document, by id, and of each the steps the editor does not
+     * take, since the template stops after them: its removal, or a move one place up or down,
+     * which the third check finds, as a list's closer the part holds (decision 0041).
+     */
+    pinned: z.record(Id, z.array(z.enum(PIN_STEPS)).min(1)).optional(),
   })
   .superRefine((pkg, ctx) => {
     // `extras` says whether the snippet's node keeps extras, which its extras slots write back.

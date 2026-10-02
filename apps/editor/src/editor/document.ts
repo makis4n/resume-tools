@@ -41,6 +41,7 @@ import {
   ControlValues,
   controlValuesFor,
   forRole,
+  type PinStep,
   pageSizeFor,
   type RequiredPlace,
   requiredSlots,
@@ -369,6 +370,15 @@ export function removable(pkg: TemplatePackage | undefined, kind: UnitKind): boo
   return addable(pkg, kind);
 }
 
+/**
+ * The steps the editor does not take with the locked part `id` under `pkg`, its removal and its
+ * moves one way or the other, since the template stops after them (`TemplatePackage.pinned`,
+ * decision 0041); none under a curated package.
+ */
+export function pinnedSteps(pkg: TemplatePackage | undefined, id: string): ReadonlySet<PinStep> {
+  return new Set(pkg?.pinned?.[id] ?? []);
+}
+
 /** Whether a snippet's nodes, however deep, hold the slot `name`. */
 function holdsSlot(nodes: readonly SnippetNode[], name: string): boolean {
   return nodes.some((node) =>
@@ -657,6 +667,16 @@ function refuseUnremovable(pkg: TemplatePackage | undefined, kind: UnitKind): vo
     );
 }
 
+/** A `CommandError` for a step the template stops after with the locked part `id` (`pinnedSteps`). */
+function refusePinned(pkg: TemplatePackage | undefined, id: string, step: PinStep): void {
+  if (pinnedSteps(pkg, id).has(step))
+    throw new CommandError(
+      step === "remove"
+        ? `the template stops without the locked section ${id}`
+        : `the template stops when the locked section ${id} moves ${step}`,
+    );
+}
+
 /** The kinds of node that sit in a list, which structure ops add, remove and move. */
 type NodeKind = "link" | "section" | "entry" | "bullet" | "item";
 
@@ -839,12 +859,22 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
     case "removeSection": {
       const { node, siblings } = find(op.id, "section");
       const { kind } = node.get(resume);
-      // A locked section is no unit of a kind: the user removes it as any part of the page.
+      // A locked section is no unit of a kind: the user removes it as any part of the page, but
+      // for one the template stops without (decision 0041).
       if (kind !== "locked") refuseUnremovable(pkg, `section.${kind}`);
+      else refusePinned(pkg, op.id, "remove");
       return siblings.remove(resume);
     }
-    case "moveSection":
-      return moveTo(resume, find(op.id, "section"), op.id, op.to);
+    case "moveSection": {
+      const located = find(op.id, "section");
+      // A locked section the template stops after moving that way stays (decision 0041).
+      if (located.node.get(resume).kind === "locked") {
+        const from = resume.sections.findIndex((section) => section.id === op.id);
+        if (op.to < from) refusePinned(pkg, op.id, "up");
+        else if (op.to > from) refusePinned(pkg, op.id, "down");
+      }
+      return moveTo(resume, located, op.id, op.to);
+    }
     case "setSection": {
       const { node } = find(op.id, "section");
       const section = node.get(resume);

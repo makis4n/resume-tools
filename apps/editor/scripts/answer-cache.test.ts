@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { answerFor, NAMING_VERSION, type StoredAnswer } from "@resume-tools/naming";
 import { afterEach, describe, expect, test } from "vitest";
-import { CACHE_DIR, FileAnswerCache, modelCacheDir } from "./answer-cache";
+import { CACHE_DIR, FileAnswerCache, modelAnswers, modelCacheDir, variantOf } from "./answer-cache";
 import { CORPUS_DIR } from "./corpus-manifest";
 import { ANSWERS_DIR } from "./corpus-seed";
 
@@ -96,6 +96,84 @@ describe("the answers cache on disk", () => {
     writeFileSync(join(committed, `${other}.json`), JSON.stringify(stored(other)));
     expect(cache.put(other, stored(other))).toBe(false);
     expect(readdirSync(cache.writable)).toEqual([`${KEY}.json`]);
+  });
+
+  test("reads a model's folder alone, the committed answers left out, as the benchmark reads it", async () => {
+    const committed = folder();
+    const reviewed = stored(KEY, {
+      answer: { ...stored().answer, reviewed: true } as StoredAnswer["answer"],
+      reviewed: true,
+      source: "seed",
+    });
+    writeFileSync(join(committed, `${KEY}.json`), JSON.stringify(reviewed));
+    const own = new FileAnswerCache({ committed, writable: folder(), own: true });
+    expect(own.own).toBe(true);
+    expect(own.get(KEY)).toBeUndefined();
+    expect(await answerFor(own, KEY)).toBeUndefined();
+    // The model's answer is filed in its folder though the committed one holds the key, which it
+    // never writes; and never over the model's own.
+    expect(own.put(KEY, stored())).toBe(true);
+    expect(own.put(KEY, stored(KEY, { source: "model:another-model" }))).toBe(false);
+    expect(readdirSync(own.writable)).toEqual([`${KEY}.json`]);
+    expect(await answerFor(own, KEY)).toEqual(stored());
+    expect(JSON.parse(readFileSync(join(committed, `${KEY}.json`), "utf8"))).toEqual(reviewed);
+    // A cache over both folders, as the run reads them, still serves the committed answer first.
+    const both = new FileAnswerCache({ committed, writable: own.writable });
+    expect(both.own).toBe(false);
+    expect(await answerFor(both, KEY)).toMatchObject({ reviewed: true, source: "seed" });
+  });
+
+  test("files a variant the benchmark asks with another switch in a folder of its own", () => {
+    // The default as the naming step asks it everywhere, with its chat template's switch, is filed
+    // under its id, as its answers are; any other switch, or its reasoning, under its own name.
+    expect(variantOf("qwen3.8:27b")).toBe("qwen3.8:27b");
+    expect(variantOf("qwen3.8:27b", "template")).toBe("qwen3.8:27b");
+    expect(variantOf("qwen3.8:27b", "no-think")).toBe("qwen3.8:27b+no-think");
+    expect(variantOf("qwen3.8:27b", false)).toBe("qwen3.8:27b+on");
+    // A model asked with no switch everywhere is its id, reasoning or not, and a switch is a variant.
+    expect(variantOf("qwen3.6:35b")).toBe("qwen3.6:35b");
+    expect(variantOf("qwen3.6:35b", false)).toBe("qwen3.6:35b");
+    expect(variantOf("qwen3.6:35b", "effort")).toBe("qwen3.6:35b+effort");
+    expect(modelCacheDir("qwen3.8:27b+no-think", "/invented")).toBe(
+      join("/invented", "qwen3.8%3A27b%2Bno-think"),
+    );
+  });
+
+  test("leaves the committed answers out of what the benchmark answers, never out of what the gate reads", async () => {
+    const committed = folder();
+    const root = folder();
+    const reviewed = stored(KEY, {
+      answer: { ...stored().answer, reviewed: true } as StoredAnswer["answer"],
+      reviewed: true,
+      source: "seed",
+    });
+    writeFileSync(join(committed, `${KEY}.json`), JSON.stringify(reviewed));
+    const own = modelAnswers({ model: "qwen3.6:35b", own: true }, { committed, cache: root });
+    // The benchmark's naming step: the model's folder alone, which holds nothing yet.
+    expect(own.cache.get(KEY)).toBeUndefined();
+    // The header's values, which the stricter check reads, are found by the run's answers, the
+    // committed first: the gate is the run's, whatever the step is measured on.
+    expect(JSON.parse(own.read(KEY) ?? "{}")).toMatchObject({ reviewed: true, source: "seed" });
+    // Its answer filed, the gate still reads the committed one first.
+    const ownCache = own.cache as FileAnswerCache;
+    ownCache.put(KEY, stored());
+    expect(JSON.parse(ownCache.get(KEY) ?? "{}")).toMatchObject({ reviewed: false });
+    expect(JSON.parse(own.read(KEY) ?? "{}")).toMatchObject({ reviewed: true });
+    expect(ownCache.writable).toBe(join(root, "qwen3.6%3A35b"));
+    // A run's: the committed answers first for both.
+    const run = modelAnswers({ model: "qwen3.6:35b" }, { committed, cache: root });
+    expect(JSON.parse((run.cache as FileAnswerCache).get(KEY) ?? "{}")).toMatchObject({
+      reviewed: true,
+    });
+    expect(JSON.parse(run.read(KEY) ?? "{}")).toMatchObject({ reviewed: true });
+    // A variant's folder is its own.
+    const variant = modelAnswers(
+      { model: "qwen3.8:27b", own: true, thinking: "no-think" },
+      { committed, cache: root },
+    );
+    expect((variant.cache as FileAnswerCache).writable).toBe(
+      join(root, "qwen3.8%3A27b%2Bno-think"),
+    );
   });
 
   test("refuses anything but a stored answer under its own key, and a key that is a path", () => {

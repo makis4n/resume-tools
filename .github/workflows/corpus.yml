@@ -1,11 +1,13 @@
 name: corpus
 
 # The corpus of public resumes, fetched from the sources its manifest names, surveyed (decisions
-# 0017 and 0018), and each document's naming request checked for its text (decision 0033). It runs
-# only when a person starts it, from the Actions tab or with `gh workflow run corpus.yml --ref
-# <branch>`, never on a schedule, a push or a pull request (decision 0035): every input is pinned,
-# so a run finds something only after a change, and no pull request downloads real resumes.
-# Milestone 3's item 17 adds the import runner to it.
+# 0017 and 0018), each document's naming request checked for its text (decision 0033), and every
+# document put through the whole import from the committed answers, held to the baseline (decision
+# 0043) and to item 14's bar (decision 0040). It runs only when a person starts it, from the Actions
+# tab or with `gh workflow run corpus.yml --ref <branch>`, never on a schedule, a push or a pull
+# request (decision 0035): every input is pinned, so a run finds something only after a change, and
+# no pull request downloads real resumes. It holds no model key, ever: the run reads the committed
+# answers alone.
 on:
   workflow_dispatch:
 
@@ -15,7 +17,11 @@ permissions:
 jobs:
   survey:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The import run's time on the free runner is not yet measured: about an hour was the estimate
+    # with four children, and a private repository's runner has two cores, so two children run.
+    # The step is given three hours, and a run stopped short still leaves what it did (decision
+    # 0043).
+    timeout-minutes: 230
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,3 +79,27 @@ jobs:
         with:
           name: leak
           path: leak.json
+      # Every document through the whole import, from the committed answers alone, no cache and no
+      # model: the table and its headline name outcomes, reasons, checks and counts, and run.json
+      # each document's row by its id, never a document's text. The run takes as many children as
+      # the runner has cores, writes run.json after each document, and on the signal a step's time
+      # running out sends, stops, prints its table and writes run.json for what it did. The step
+      # fails when the success rate, a document that timed out counting in none, falls more than a
+      # point under corpus/baseline.json, which a pull request raises by hand, or adopts from this
+      # run's run.json with `corpus run --write-baseline --from run.json` (decision 0043); and when
+      # a success lacks the page size, the margins or the font size, item 14's bar (decision 0040).
+      - id: run
+        timeout-minutes: 180
+        run: pnpm --filter @resume-tools/editor corpus run --committed-only --json run.json > run.md
+      - if: always() && steps.run.outcome != 'skipped'
+        run: |
+          {
+            echo "## The import over the corpus"
+            echo
+            cat run.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - if: always() && steps.run.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: run
+          path: run.json

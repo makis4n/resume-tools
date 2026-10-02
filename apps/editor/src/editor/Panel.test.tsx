@@ -2,6 +2,7 @@ import { Resume, type Section, YearMonth } from "@resume-tools/resume-model";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { LOCK_WHY, type Report } from "../import/report";
 import { curated } from "../templates/curated";
 import type { TemplatePackage } from "../templates/package";
 import type { Field } from "../tex/fields";
@@ -10,6 +11,7 @@ import {
   fieldStatus,
   firstWords,
   holdsContent,
+  lockedWordsOf,
   needsInput,
   Panel,
   plainText,
@@ -131,6 +133,39 @@ describe("shownFieldsOf", () => {
     expect(needsInput("header.last", "Quist", undefined, shown)).toBe(true);
     // A page that came before the failure still shows its fields, which it leaves to itself.
     expect(shownFieldsOf(latest, drawnFrom, true)).toEqual(shownFieldsOf(latest, drawnFrom));
+  });
+});
+
+describe("lockedWordsOf", () => {
+  /** A part as item 13's report names it, of the locked section given, if any. */
+  const named = (words: string, section?: string): Report["locked"][number] => ({
+    words,
+    count: 2,
+    reason: "unmapped",
+    why: LOCK_WHY.unmapped,
+    ...(section === undefined ? {} : { section }),
+  });
+
+  it("names each locked section by the words the import's report names it by (decision 0041)", () => {
+    const report = {
+      locked: [
+        named("Jan 2020 – Present"),
+        named("Hobbies • Rowing on the river", "lock-a"),
+        named("Talks On setting type by hand…", "lock-b"),
+      ],
+    };
+    // The dates are an entry's instance kept as written, no locked section, and get no row's name.
+    expect(lockedWordsOf(report)).toEqual(
+      new Map([
+        ["lock-a", "Hobbies • Rowing on the river"],
+        ["lock-b", "Talks On setting type by hand…"],
+      ]),
+    );
+  });
+
+  it("names none for a document with no report, or a part with no words", () => {
+    expect(lockedWordsOf(undefined)).toEqual(new Map());
+    expect(lockedWordsOf({ locked: [named("", "lock-a")] })).toEqual(new Map());
   });
 });
 
@@ -321,6 +356,47 @@ describe("Panel", () => {
       { type: "structure", op: { op: "moveSection", id: "lock-q7w2e9", to: 2 } },
       { type: "structure", op: { op: "removeSection", id: "lock-q7w2e9" } },
     ]);
+  });
+
+  it("names a locked section by its first words as the page shows them, kept, never its LaTeX", () => {
+    // Decision 0041: the words are item 13's report's (`lockedWordsOf`).
+    const latex = "\\section*{Hobbies}\nRowing, chess.";
+    const locked = { kind: "locked", id: "lock-q7w2e9", title: "", role: "other", latex } as const;
+    const sections = [...sample.sections.slice(0, 1), locked, ...sample.sections.slice(1)];
+    const kept = newDocument("jake", Resume.parse({ ...sample, sections }), "en-US");
+    const lockedWords = new Map([["lock-q7w2e9", "Hobbies Rowing, chess."]]);
+    const html = renderToStaticMarkup(
+      <Panel document={kept} lockedWords={lockedWords} onCommand={() => {}} onSeal={() => {}} />,
+    );
+    expect(html).toContain("<span>Hobbies Rowing, chess.</span>");
+    expect(html).toContain(`<small style="color:#9a5b00;font-style:italic">kept as it was</small>`);
+    expect(html).not.toContain("<span>Kept as it was</span>");
+    expect(html).not.toContain("\\");
+    // Asked before it goes, by its name.
+    const asked: string[] = [];
+    vi.stubGlobal("confirm", (question: string) => asked.push(question) < 0);
+    const sent: Command[] = [];
+    try {
+      const tree = Panel({
+        document: kept,
+        lockedWords,
+        onCommand: (command) => sent.push(command),
+        onSeal: () => {},
+      });
+      const row = elementsOf(tree, new Set(["Sections"])).filter(
+        ({ type }) => typeof type === "function" && type.name === "LockedRow",
+      );
+      expect(row.map(({ props }) => props.words)).toEqual(["Hobbies Rowing, chess."]);
+      const [remove] = elementsOf(row, new Set(["LockedRow", "Reorder"])).filter(
+        ({ type, props }) => type === "button" && props.children === "Remove",
+      );
+      (remove?.props.onClick as () => void)();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(asked).toEqual(["Remove “Hobbies Rowing, chess.” and everything in it?"]);
+    // Declined, so nothing is sent.
+    expect(sent).toEqual([]);
   });
 
   it("gives every field an input when the first page could not be made", () => {

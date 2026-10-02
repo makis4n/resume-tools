@@ -240,15 +240,27 @@ export interface PoolOptions {
   limitMs?: number;
   /** Called as each task ends, in the order they end. */
   onResult?: (task: PoolTask, result: PoolResult) => void;
+  /**
+   * Called with what a child says of the task it holds before it answers, any message of a type
+   * other than `ready` and `done`, so that what a task did before its child is killed is kept, as
+   * the benchmark keeps a document's naming step (decision 0044).
+   */
+  onMessage?: (task: PoolTask, message: unknown) => void;
+  /**
+   * Stops the pool when it aborts: every child is killed, and the tasks they hold and those not yet
+   * sent are left undone, never counted as timed out or died; the pool resolves with what ended.
+   */
+  signal?: AbortSignal;
 }
 
 /**
  * Run tasks in a pool of child processes, one task each at a time. A child says `{ type: "ready" }`
  * once it has started, is sent `{ type: "task", id, message }`, and answers `{ type: "done", id,
- * ... }`, which is the task's reply. A task that has no answer within the limit has its child
- * killed, and one that dies is counted so; another child starts in its place while tasks are left.
- * A child that dies before it is ready is started again, but not past twice the pool's size, which
- * means it cannot start at all.
+ * ... }`, which is the task's reply; any other message it sends of the task before then goes to
+ * `onMessage`. A task that has no answer within the limit has its child killed, and one that dies
+ * is counted so; another child starts in its place while tasks are left. A child that dies before
+ * it is ready is started again, but not past twice the pool's size, which means it cannot start at
+ * all.
  */
 export function runPool(options: PoolOptions): Promise<Map<string, PoolResult>> {
   const size = options.size ?? POOL_SIZE;
@@ -258,6 +270,16 @@ export function runPool(options: PoolOptions): Promise<Map<string, PoolResult>> 
   return new Promise((resolve, reject) => {
     let alive = 0;
     let failedStarts = 0;
+    const live = new Set<ChildProcess>();
+    const stopped = () => options.signal?.aborted === true;
+    options.signal?.addEventListener(
+      "abort",
+      () => {
+        queue.length = 0;
+        for (const child of live) child.kill("SIGKILL");
+      },
+      { once: true },
+    );
     const finish = (task: PoolTask, result: PoolResult) => {
       results.set(task.id, result);
       options.onResult?.(task, result);
@@ -267,6 +289,7 @@ export function runPool(options: PoolOptions): Promise<Map<string, PoolResult>> 
         serialization: "advanced",
         stdio: ["ignore", "ignore", "inherit", "ipc"],
       });
+      live.add(child);
       alive++;
       let ready = false;
       let task: PoolTask | undefined;
@@ -298,25 +321,29 @@ export function runPool(options: PoolOptions): Promise<Map<string, PoolResult>> 
           task = undefined;
           finish(done, { reply: message, wall: performance.now() - sent });
           next();
+        } else if (message.type !== "ready" && task !== undefined && message.id === task.id) {
+          options.onMessage?.(task, message);
         }
       });
       child.on("exit", () => {
         clearTimeout(timer);
+        live.delete(child);
         alive--;
         if (task !== undefined) {
-          finish(task, { crashed: true, wall: performance.now() - sent });
+          // A task the pool stopped is left undone, as one never sent is.
+          if (!stopped()) finish(task, { crashed: true, wall: performance.now() - sent });
           task = undefined;
         }
-        if (!ready && ++failedStarts > 2 * size) {
+        if (!ready && !stopped() && ++failedStarts > 2 * size) {
           reject(new Error("the pool's children cannot start"));
           return;
         }
-        if (queue.length > 0) start();
+        if (queue.length > 0 && !stopped()) start();
         else if (alive === 0) resolve(results);
       });
     };
-    if (queue.length === 0) resolve(results);
-    for (let i = 0; i < Math.min(size, queue.length); i++) start();
+    if (queue.length === 0 || stopped()) resolve(results);
+    else for (let i = 0; i < Math.min(size, queue.length); i++) start();
   });
 }
 

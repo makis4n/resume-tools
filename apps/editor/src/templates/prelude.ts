@@ -15,11 +15,18 @@ export const PARAGRAPH_MARKER = "rt:p:";
 
 /**
  * The prefix of the special written before and after a locked part of an imported resume, with
- * its section's id (decision 0025): item 15's page reads it to show a lock over the part, and the
- * import's comparison of glyph streams already leaves it out, as it does the other markers
- * (decision 0019).
+ * its section's id (decision 0025), and before the id a `/` after it (`LOCK_END`, decision 0041):
+ * item 15's page reads them to show a lock over the part, and the import's comparison of glyph
+ * streams already leaves them out, as it does the other markers (decision 0019).
  */
 export const LOCK_MARKER = "rt:l:";
+
+/**
+ * What the special after a locked part writes between `LOCK_MARKER` and the id, so that the page
+ * tells the part's end from its start where the output sets the two out of the source's order, as
+ * two columns set side by side by paracol may (decision 0041).
+ */
+export const LOCK_END = "/";
 
 /**
  * - `\rtfield{<id>}{<content>}` marks a field, as decision 0003 found it must: `\leavevmode` so a
@@ -45,10 +52,11 @@ export const LOCK_MARKER = "rt:l:";
  *   such as a section title bound for the table of contents, writes the command instead of
  *   expanding it: nothing the loop assigns happens in a write, so the loop could run forever.
  * - `\rtlocked{<id>}{<latex>}` writes a locked section (decision 0025): its LaTeX, kept as the
- *   upload had it, between two lock markers, `rt:l:<id>` both. It is `\rtfield` without the
- *   paragraph special, since nothing in it is edited, and without `\texorpdfstring`'s second copy,
- *   since it never stands in a PDF string; and without `\leavevmode`, since a locked part stands
- *   between sections, in vertical mode, where starting a paragraph would set an empty line. A
+ *   upload had it, between two lock markers, `rt:l:<id>` before it and `rt:l:/<id>` after it
+ *   (decision 0041). It is `\rtfield` without the paragraph special, since nothing in it is
+ *   edited, and without `\texorpdfstring`'s second copy, since it never stands in a PDF string;
+ *   and without `\leavevmode`, since a locked part stands between sections, in vertical mode,
+ *   where starting a paragraph would set an empty line. A
  *   marker is a whatsit, which hides the list's last skip from LaTeX's `\addvspace` and
  *   `\addpenalty`: the skip before a section that follows a list would then be added to the
  *   list's own rather than merged with it, 10 pt further down in `article`. So each marker takes
@@ -100,9 +108,10 @@ export const PRELUDE = String.raw`\makeatletter
   \endgroup
 }
 % A locked part of an imported resume, LaTeX kept as the upload had it, between two lock markers
-% the page reads (decision 0025). Each marker takes the list's last skip off and puts it back
-% after itself, so that \addvspace and \addpenalty, which read \lastskip, still find it last.
-\newcommand{\rtlocked}[2]{\rt@lock{#1}#2\rt@lock{#1}}
+% the page reads (decision 0025), the second's id after a / (decision 0041). Each marker takes the
+% list's last skip off and puts it back after itself, so that \addvspace and \addpenalty, which
+% read \lastskip, still find it last.
+\newcommand{\rtlocked}[2]{\rt@lock{#1}#2\rt@lock{${LOCK_END}#1}}
 \protected\def\rt@lock#1{%
   \begingroup
     \skip@\lastskip

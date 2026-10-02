@@ -35,9 +35,10 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    # The job takes about two minutes. A compile that never ends cannot be stopped from inside
+    # The job takes 16 to 20 minutes on the free runner since milestone 3 grew the suite (engine
+    # tests and the import pipeline's). A compile that never ends cannot be stopped from inside
     # the test run, since the engine's call is synchronous, so the job's limit is what stops it.
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

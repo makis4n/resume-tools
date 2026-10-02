@@ -995,6 +995,13 @@ export interface Probe {
   /** The reference's glyphs, and those editable fields cover. */
   glyphs: { reference: number; covered: number };
   uncovered: UncoveredRun[];
+  /**
+   * Every run of the reference's glyphs and what sets it, as `uncovered` has those no editable
+   * field covers, and those it does, each run of them its editable candidate's: what the assembly
+   * reads, to say which field or locked part of the document sets each glyph, for item 13's report
+   * (decision 0039). Absent from a probe made before it.
+   */
+  runs?: UncoveredRun[];
 }
 
 export interface ProbeOptions extends ReferenceOptions {
@@ -1217,11 +1224,14 @@ export function piecesOf(source: string, start: number, end: number): string[] {
  * among the stretch's glyphs' texts, in the order of the source (`comparable`, `piecesOf`), and
  * holds what lies between the first and the last it finds; then, for what none of them set, the
  * other arguments of the calls either side, since a macro may set its arguments in another order
- * than it takes them. What none of these sets is the template's own text, as a label, a
- * separator or an icon (`chrome`). A stretch
+ * than it takes them; and every part again by its words alone, among the glyphs still unclaimed, as
+ * a macro that parses a list of `value/label` pairs sets each label alone (item 13's review). What
+ * none of these sets is the template's own text, as a label, a separator or an icon (`chrome`). A
+ * stretch
  * whose glyphs the page names none of, as a font with no outlines has them, is shared among what
  * overlaps its source in proportion to how much of the source each is. A run ends where what sets
- * it changes, and at a page's end.
+ * it changes, and at a page's end. Beside them come every run of the reference's glyphs, those
+ * editable fields cover among them, each its candidate's (`all`), which item 13's report reads.
  */
 export function uncoveredRuns(
   reference: GlyphStream,
@@ -1229,7 +1239,7 @@ export function uncoveredRuns(
   evidence: ReadonlyMap<string, readonly GlyphPlace[]>,
   raw: readonly RawChunk[],
   sources: Sources,
-): { runs: UncoveredRun[]; covered: number } {
+): { runs: UncoveredRun[]; covered: number; all: UncoveredRun[] } {
   const byId = new Map(candidates.map((each) => [each.id, each]));
   const glyphs = reference.pages.map((page) =>
     page.items.flatMap((item) => (item.kind === "glyph" ? [item] : [])),
@@ -1408,11 +1418,16 @@ export function uncoveredRuns(
       const claimed = new Set<number>();
       const free = (at: number, length: number) =>
         glyphOf.slice(at, at + length).every((k) => !claimed.has(k));
-      const find = (part: (typeof parts)[number], start: number) => {
+      /** Each piece of a part's source, or with `words`, each run of letters and digits of them. */
+      const piecesOfPart = (part: (typeof parts)[number], words: boolean) => {
+        const pieces = piecesOf(sources[part.placed.where], part.lo, part.hi);
+        return words ? pieces.flatMap((piece) => piece.match(/[\p{L}\p{N}]+/gu) ?? []) : pieces;
+      };
+      const find = (part: (typeof parts)[number], start: number, words = false) => {
         let first: number | undefined;
         let last: number | undefined;
         let at = start;
-        for (const piece of piecesOf(sources[part.placed.where], part.lo, part.hi)) {
+        for (const piece of piecesOfPart(part, words)) {
           const wanted = comparable(piece);
           if (wanted === "") continue;
           let found = text.indexOf(wanted, at);
@@ -1436,6 +1451,13 @@ export function uncoveredRuns(
       };
       for (const part of parts) take(part, find(part, from) ?? find(part, 0));
       for (const part of more) take(part, find(part, 0));
+      // Every part is looked for again by its words alone, in the source's order, among the glyphs
+      // still unclaimed, since a piece the page never shows whole hides the words it holds: a
+      // list of `value/label` pairs a macro parses, setting each label alone (a `\foreach` chart,
+      // decision 0013), whose one braced label may be found and the rest not. What its first and
+      // last words found there hold is its, so that no word of the document's own is left to the
+      // template's text for the shape its source gives it (item 13's review).
+      for (const part of [...parts, ...more]) take(part, find(part, 0, true));
     }
     i = j;
   }
@@ -1444,39 +1466,43 @@ export function uncoveredRuns(
     const item = glyphs[glyph.page]?.[glyph.at];
     return { h: item?.h ?? 0, v: item?.v ?? 0 };
   };
-  const runs: UncoveredRun[] = [];
-  let at = 0;
-  while (at < flat.length) {
-    const start = flat[at];
-    if (start === undefined || editable(start.owner)) {
-      at++;
-      continue;
+  /** The glyphs in runs of what sets them, each run on one page, with or without the editable's. */
+  const runsOf = (withEditable: boolean) => {
+    const found: UncoveredRun[] = [];
+    let at = 0;
+    while (at < flat.length) {
+      const start = flat[at];
+      if (start === undefined || (!withEditable && editable(start.owner))) {
+        at++;
+        continue;
+      }
+      const setter = setterAt[at] ?? CHROME;
+      let end = at + 1;
+      while (end < flat.length) {
+        const each = flat[end];
+        if (
+          each === undefined ||
+          each.page !== start.page ||
+          (!withEditable && editable(each.owner)) ||
+          !sameSetter(setterAt[end], setter)
+        )
+          break;
+        end++;
+      }
+      const last = flat[end - 1] ?? start;
+      found.push({
+        page: start.page,
+        from: start.at,
+        to: last.at + 1,
+        first: placeOf(start),
+        last: placeOf(last),
+        ...setter,
+      });
+      at = end;
     }
-    const setter = setterAt[at] ?? CHROME;
-    let end = at + 1;
-    while (end < flat.length) {
-      const each = flat[end];
-      if (
-        each === undefined ||
-        each.page !== start.page ||
-        editable(each.owner) ||
-        !sameSetter(setterAt[end], setter)
-      )
-        break;
-      end++;
-    }
-    const last = flat[end - 1] ?? start;
-    runs.push({
-      page: start.page,
-      from: start.at,
-      to: last.at + 1,
-      first: placeOf(start),
-      last: placeOf(last),
-      ...setter,
-    });
-    at = end;
-  }
-  return { runs, covered };
+    return found;
+  };
+  return { runs: runsOf(false), covered, all: runsOf(true) };
 }
 
 /**
@@ -1675,7 +1701,7 @@ export async function probe(
       return { ...candidate, ...decided };
     });
     const { macros, standard } = aggregate(results);
-    const { runs, covered } = uncoveredRuns(made, results, settlement.evidence, raw, {
+    const { runs, covered, all } = uncoveredRuns(made, results, settlement.evidence, raw, {
       body: tree.source,
       preamble: preamble.tree?.source ?? "",
     });
@@ -1706,6 +1732,7 @@ export async function probe(
         covered,
       },
       uncovered: runs,
+      runs: all,
     };
   } catch (error) {
     // A probe that did not finish leaves no format for item 7.

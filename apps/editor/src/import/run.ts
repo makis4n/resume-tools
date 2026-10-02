@@ -120,8 +120,9 @@ export type NamingOutcome =
  * What item 13's report is made of (decision 0038): the reference, the upload as it compiled, whose
  * glyph stream the body's words are counted in, its log left out since it quotes the source; what
  * the checks found; the locked parts, each with where it stands, why and how many words; the
- * images stood in for and dropped, and the intake's warnings; how the naming went; and the compiles
- * and time the whole import took.
+ * images stood in for and dropped, and the intake's and the XeTeX rewrite's warnings; how the
+ * naming went; and the compiles and time the whole import took. `reportOfImport` reads it into the
+ * report the person sees (decision 0039).
  */
 export interface ImportReport {
   engine: Engine;
@@ -380,7 +381,11 @@ export async function importResume(
         checks: validated.checks,
         locked: validated.extras,
         images: taken.images,
-        warnings: taken.warnings,
+        // What the intake and the XeTeX rewrite set aside, which the report lists (decision 0039).
+        warnings: [
+          ...taken.warnings,
+          ...(rewrite === undefined || isRefusal(rewrite) ? [] : rewrite.warnings),
+        ],
         naming,
         compiles,
         ms: performance.now() - started,

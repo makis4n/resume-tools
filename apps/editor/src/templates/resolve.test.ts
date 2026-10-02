@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { ImportJob } from "../import/run";
+import type { ImportJob, ImportReport } from "../import/run";
 import { PackageRefused, type StoredTemplate } from "../storage/store";
 import { curated } from "./curated";
 import type { TemplatePackage } from "./package";
@@ -10,6 +10,8 @@ import { resolveTemplate, type TemplateStore } from "./resolve";
 const ID = "import-0123456789ab";
 const IMPORTED = { ...curated("jake").package, id: ID } as TemplatePackage;
 const JOB: ImportJob = { files: { "photo.png": new Uint8Array([1]) }, images: ["photo.png"] };
+/** The import's report, which only its identity matters to here. */
+const REPORT = { engine: "pdftex", compiles: 3 } as unknown as ImportReport;
 
 /** A store that keeps the one imported template, with the document `doc-1`'s import, and notes what it is asked. */
 function storeOf(asked: string[]): TemplateStore {
@@ -19,7 +21,7 @@ function storeOf(asked: string[]): TemplateStore {
       if (id !== ID) return undefined;
       const found: StoredTemplate = { package: IMPORTED };
       return document === "doc-1"
-        ? { ...found, import: { upload: { files: [] }, job: JOB, report: {} as never, made: 0 } }
+        ? { ...found, import: { upload: { files: [] }, job: JOB, report: REPORT, made: 0 } }
         : found;
     },
   };
@@ -34,10 +36,13 @@ describe("resolveTemplate", () => {
     expect(asked).toEqual([]);
   });
 
-  test("gives an imported template from the store, with the document's own job", async () => {
+  test("gives an imported template from the store, with the document's own job and report", async () => {
     const asked: string[] = [];
     const store = storeOf(asked);
-    expect(await resolveTemplate(ID, "doc-1", store)).toEqual({ package: IMPORTED, job: JOB });
+    const found = await resolveTemplate(ID, "doc-1", store);
+    expect(found).toEqual({ package: IMPORTED, job: JOB, report: REPORT });
+    // The report as the store keeps it, which names the document's locked parts (decision 0041).
+    expect(found?.report).toBe(REPORT);
     expect(await resolveTemplate(ID, "doc-2", store)).toEqual({ package: IMPORTED });
     expect(asked).toEqual([`${ID} doc-1`, `${ID} doc-2`]);
   });

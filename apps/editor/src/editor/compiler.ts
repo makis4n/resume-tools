@@ -184,6 +184,12 @@ export interface CompilerEvents {
   /** Why no new page came, in words for the user; the details go to the console. */
   error(message: string): void;
   /**
+   * The body of `document` did not compile: TeX stopped on it, as on a structural step the
+   * template cannot take, which the app then takes back (`StructureGuard`, decision 0041). It
+   * comes before the `error` that says so.
+   */
+  stopped?(document: Document): void;
+  /**
    * Whether the engine is busy, with a document compiling or waiting to or a trial of other
    * control values in flight (`Compiler.tryControls`), for a quiet indicator.
    */
@@ -872,6 +878,7 @@ export class Compiler {
       this.record(pkg, result.fetched);
       if (!this.current(run)) return;
       if (!result.ok || result.output === undefined) {
+        this.events.stopped?.(doc);
         this.fail(`the body did not compile: ${result.error}`, result.log);
         return;
       }

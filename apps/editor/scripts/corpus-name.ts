@@ -44,6 +44,7 @@ import {
   type NamingUsage,
   name,
   narrow,
+  STOPPED,
 } from "@resume-tools/naming/model";
 import { DEFAULT_MODEL } from "@resume-tools/naming/providers";
 import type { Intake } from "../src/import/intake.ts";
@@ -129,6 +130,37 @@ export function costOf(tokens: NamingUsage, price: ListPrice): number {
   return (fresh * price.input + tokens.cached * price.cached + tokens.output * price.output) / 1e6;
 }
 
+/**
+ * The kinds of failure the benchmark counts (decision 0044): a part stopped at its limit
+ * (`timeout`); the gateway's 429, its rate or a key's daily budget, and its 5xx, each after the
+ * runner's retries; an answer that did not validate after its own retry (`invalid`); no answer,
+ * or one filtered out (`refused`); an answer cut off at the model's output limit (`cut off`); and
+ * any other failure of the call (`provider`), a wrong key's 401 among them.
+ */
+export const FAILURE_KINDS = [
+  "timeout",
+  "429",
+  "5xx",
+  "invalid",
+  "refused",
+  "cut off",
+  "provider",
+] as const;
+export type FailureKind = (typeof FAILURE_KINDS)[number];
+
+/** A failure of the naming step by its kind, from its reason, its status and what it says. */
+export function failureKind(
+  error: Pick<NamingError, "reason" | "status" | "message">,
+): FailureKind {
+  if (error.reason === "invalid") return "invalid";
+  if (error.reason === "refused") return "refused";
+  if (error.reason === "budget") return "cut off";
+  if (error.status === 429) return "429";
+  if (error.status !== undefined && error.status >= 500) return "5xx";
+  if (error.status === undefined && error.message.endsWith(STOPPED)) return "timeout";
+  return "provider";
+}
+
 /** What became of one document's request: its macros, where their answers came from, and why not. */
 export interface Answered {
   /** The request's macros and environments that have a key: those the naming step answers. */
@@ -162,11 +194,20 @@ export interface Answered {
    * the budget before any call.
    */
   refused?: string;
-  /** Why the model's answer was not taken: the naming step's reason, and its message. */
-  failed?: { reason: NamingErrorReason; message: string };
+  /**
+   * Why the model's answer was not taken: the naming step's reason, its message, the kind the
+   * benchmark counts it as (`failureKind`), and the part that failed, by its number from 1, where
+   * a part did, as `parts` numbers them.
+   */
+  failed?: { reason: NamingErrorReason; message: string; kind: FailureKind; part?: number };
   /** The model calls the answer took, and their tokens. */
   calls: number;
   tokens: NamingUsage;
+  /**
+   * How long each part the model was asked took, in milliseconds, its call and its retries, in the
+   * order asked: the last the part that failed, where one did. None where nothing was asked.
+   */
+  parts?: number[];
 }
 
 /** How a document's request is answered. */
@@ -278,8 +319,14 @@ export async function answerDocument(
   const given = new Map<string, ModelNaming["macros"][number]>();
   const decided = new Set<string>();
   const filed = new Set<string>();
+  // Each part's time: from the step's start, or the last part's filing, to its answer or its
+  // failure, its call and its retries, as the parts are asked one after another.
+  const parts: number[] = [];
+  let mark = performance.now();
+  const lap = () => parts.push(Math.round(performance.now() - mark));
   /** A part's answers, filed as they validate: each key once all its macros are answered. */
   const file = async (macros: ModelNaming["macros"]) => {
+    lap();
     answered.asked += macros.length;
     for (const each of macros) given.set(identity(each), each);
     const ready = [...byKey].filter(
@@ -310,8 +357,10 @@ export async function answerDocument(
       for (const macro of byKey.get(each.key) ?? []) filed.add(identity(macro));
     }
     answered.stored = filed.size;
+    mark = performance.now();
   };
   try {
+    mark = performance.now();
     await name(narrow(request, misses), {
       model: options.model.model,
       partners: [...partners.keys()],
@@ -320,6 +369,8 @@ export async function answerDocument(
         answered.tokens.input += usage.input;
         answered.tokens.cached += usage.cached;
         answered.tokens.output += usage.output;
+        if (usage.reasoning !== undefined)
+          answered.tokens.reasoning = (answered.tokens.reasoning ?? 0) + usage.reasoning;
       },
       onPart: file,
       ...(options.budget === undefined ? {} : { budget: options.budget }),
@@ -333,13 +384,19 @@ export async function answerDocument(
     // A request over the budget is refused before any call; any other failure is a part's.
     if (part === undefined && error.reason === "budget") answered.refused = reasonOf(error.message);
     else {
-      answered.failed = { reason: error.reason, message: reasonOf(error.message) };
+      if (part !== undefined) lap();
+      answered.failed = {
+        reason: error.reason,
+        message: reasonOf(error.message),
+        kind: failureKind(error),
+        ...(part === undefined ? {} : { part: part.index }),
+      };
       answered.asked += part?.macros.length ?? 0;
       if (error.reason === "invalid") answered.invalid += part?.macros.length ?? 0;
     }
   }
   answered.missing = misses.filter((macro) => !filed.has(identity(macro))).map(shownName);
-  return answered;
+  return parts.length === 0 ? answered : { ...answered, parts };
 }
 
 /** The naming module's functions a document's request is built and gated with. */
