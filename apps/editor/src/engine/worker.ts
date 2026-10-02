@@ -143,13 +143,26 @@ async function handle(request: EngineRequest & { id: number }): Promise<EngineRe
   }
 }
 
-/** Bytes a reply can hand over rather than copy. */
+/**
+ * Bytes a reply can hand over rather than copy: a compile's output, a dump's format, a PDF, and the
+ * format an import hands the editor (decision 0045).
+ */
 function transferables(reply: EngineReply): Transferable[] {
   if (!("result" in reply) || !reply.result) return [];
-  const result = reply.result as { output?: Uint8Array; format?: Uint8Array; pdf?: Uint8Array };
-  return [result.output?.buffer, result.format?.buffer, result.pdf?.buffer].filter(
-    (b): b is ArrayBuffer => b instanceof ArrayBuffer,
-  );
+  const result = reply.result as {
+    output?: Uint8Array;
+    format?: Uint8Array;
+    pdf?: Uint8Array;
+    formats?: { format: Uint8Array }[];
+  };
+  const buffers = [
+    result.output?.buffer,
+    result.format?.buffer,
+    result.pdf?.buffer,
+    ...(result.formats ?? []).map((each) => each.format.buffer),
+  ].filter((b): b is ArrayBuffer => b instanceof ArrayBuffer);
+  // A buffer listed twice cannot be handed over: none is, but a reply is never lost for it.
+  return [...new Set(buffers)];
 }
 
 // One request at a time, in the order they came: TeX runs are synchronous and share one heap.

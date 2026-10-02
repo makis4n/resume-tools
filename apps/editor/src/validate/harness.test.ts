@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Resume } from "@resume-tools/resume-model";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
@@ -1063,6 +1063,112 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       expect(report.findings).toEqual([]);
       // Two passes as a new document, one again, one for the edit and two for the new format.
       expect(report.passes).toHaveLength(6);
+    }, 60_000);
+
+    // What an import's check 4 proved already, which the controls check need not compile again
+    // (decision 0045): a value of a size, a margin, an accent or a density that compiles with no
+    // error and sets other glyphs. Here every value is claimed proven, as each one tried here does
+    // change the page; the date format, which check 4 never tries, is checked all the same.
+    const everything = { changes: () => true };
+
+    it("does not compile again a value another check proved, and finds what it found", async () => {
+      // Its size, 12pt, names a format of its own; the resume has no dates, so the date format
+      // changes nothing, which only this check can say.
+      const dated = plainOffering(
+        "sized-dated",
+        {
+          fontSize: { default: 10, apply: "", format: true },
+          dateFormat: { default: "MMM yyyy" },
+        },
+        PLAIN.preamble.replace("{article}", "[{{fontSize}}pt]{article}"),
+      );
+      const plain = await validatePackage(session, fonts, dated, RESUME);
+      const dumps = vi.spyOn(session, "dump");
+      let proven: Awaited<ReturnType<typeof validatePackage>>;
+      try {
+        proven = await validatePackage(session, fonts, dated, RESUME, {}, "doc", undefined, {
+          changes: () => true,
+        });
+        // The size's format is not dumped, nor its body compiled: only the document's format.
+        expect(dumps.mock.calls.map(([, name]) => name)).toEqual([plain.format]);
+      } finally {
+        dumps.mockRestore();
+      }
+      const inert = {
+        check: "controls",
+        message:
+          "dateFormat yyyy sets the same output as dateFormat MMM yyyy, so the control does nothing",
+        control: "dateFormat",
+      };
+      expect(plain.findings).toEqual([inert]);
+      expect(proven.findings).toEqual(plain.findings);
+      // Two passes as a new document, one again, one for the edit, then the size's two and the
+      // date format's two, the job new again with the format it went back to; without the size's,
+      // the date format's compile still starts afresh, as it did after the size's.
+      expect(plain.passes).toHaveLength(8);
+      expect(proven.passes).toHaveLength(6);
+    }, 60_000);
+
+    it("compiles a proven value all the same where the next compile would read what it wrote", async () => {
+      // Both densities change the page, and the date format compiles from the same format straight
+      // after them, reading what the relaxed one's compile wrote, so neither is skipped.
+      const spaced = plainOffering("spaced-dated", {
+        density: {
+          default: "normal",
+          apply: {
+            compact: "\\setlength{\\parskip}{2pt}",
+            normal: "",
+            relaxed: "\\setlength{\\parskip}{6pt}",
+          },
+        },
+        dateFormat: { default: "MMM yyyy" },
+      });
+      const plain = await validatePackage(session, fonts, spaced, RESUME);
+      const proven = await validatePackage(
+        session,
+        fonts,
+        spaced,
+        RESUME,
+        {},
+        "doc",
+        undefined,
+        everything,
+      );
+      expect(proven.findings).toEqual(plain.findings);
+      expect(proven.passes).toHaveLength(plain.passes.length);
+      // Without the date format, nothing compiles after the densities, which are skipped.
+      const undated = plainOffering("spaced", { density: spaced.controls.density });
+      const alone = await validatePackage(session, fonts, undated, RESUME);
+      const skipped = await validatePackage(
+        session,
+        fonts,
+        undated,
+        RESUME,
+        {},
+        "doc",
+        undefined,
+        everything,
+      );
+      expect(skipped.findings).toEqual(alone.findings);
+      expect(alone.passes).toHaveLength(6);
+      expect(skipped.passes).toHaveLength(4);
+    }, 60_000);
+
+    it("still finds a value no other check proved, a margin that never reaches the page", async () => {
+      const inert = plainOffering("inert-margins-proven", {
+        margins: { default: 0.5, apply: "% {{value}}" },
+      });
+      // Check 4 proves only a value that changes the page, which this one does not.
+      const report = await validatePackage(session, fonts, inert, RESUME, {}, "doc", undefined, {
+        changes: () => false,
+      });
+      expect(report.findings).toEqual([
+        {
+          check: "controls",
+          message: "margins 1 sets the same output as margins 0.5, so the control does nothing",
+          control: "margins",
+        },
+      ]);
     }, 60_000);
 
     it("reports a PDF of another size, with no ToUnicode map, or without a field's text", async () => {

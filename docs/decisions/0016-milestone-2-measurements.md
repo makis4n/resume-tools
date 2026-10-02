@@ -112,7 +112,8 @@ To fill the slow laptop's column: set the repository up on it as its README says
 `pnpm install` and `pnpm --filter @resume-tools/editor fetch-engine`; run
 `pnpm --filter @resume-tools/editor measure --json slow-laptop.json`; then run `pnpm dev`, open
 `/?measure=1` and `/?measure=altacv` in Chrome with the tab in front, and read the text under
-the page.
+the page. Decision 0045 adds an import's rows beside these, filled the same way with
+`measure --import` and `/?measure=import`.
 
 ## Consequences
 

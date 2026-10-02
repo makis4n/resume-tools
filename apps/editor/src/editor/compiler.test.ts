@@ -15,7 +15,13 @@ import type {
 } from "../engine/session";
 import type { Upload } from "../import/intake";
 import { refusal } from "../import/refusal";
-import type { ImportJob, ImportOutcome, ImportProgress } from "../import/run";
+import type {
+  Imported,
+  ImportJob,
+  ImportOutcome,
+  ImportProgress,
+  ImportReport,
+} from "../import/run";
 import type { DrawnPage } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
@@ -1700,6 +1706,40 @@ describe("Compiler's imports (decision 0038)", () => {
     await settle();
     expect(s.engine().calls.slice(-3)).toEqual(["start", `put ${name}`, `compile ${name}`]);
     expect(s.engine().terminated).toBe(false);
+  });
+
+  it("opens an import's document on the format it hands over, kept as a dump is (decision 0045)", async () => {
+    const stored = new Map<string, Uint8Array>();
+    const store: FormatStore = {
+      get: async (engine, name) => stored.get(`${engine}:${name}`),
+      put: async (engine, name, format) => {
+        stored.set(`${engine}:${name}`, format);
+      },
+    };
+    const s = scheduler({ formats: store });
+    const { run } = started(s);
+    await settle();
+    const name = formatOf(importedDoc, imported);
+    const bytes = new Uint8Array([9, 8, 7]);
+    const outcome: Imported = {
+      package: imported,
+      document: importedDoc,
+      report: {} as ImportReport,
+      upload: { files: [] },
+      job: JOB,
+      formats: [{ name, format: bytes }],
+    };
+    s.engine().imports[0]?.resolve(outcome);
+    await run.done;
+    await settle();
+    // Kept in the store, as a format the compiler dumps is.
+    expect(stored.get(`pdftex:${name}`)).toEqual(bytes);
+    s.compiler.open(imported, importedDoc, JOB);
+    await settle();
+    // Put in place from the import's bytes, never dumped.
+    expect(s.engine().calls.slice(-3)).toEqual(["start", `put ${name}`, `compile ${name}`]);
+    expect(s.engine().dumps).toHaveLength(0);
+    expect(s.engine().puts.at(-1)?.format).toEqual(bytes);
   });
 
   it("refuses an import whose compile hung as having taken too long", async () => {
