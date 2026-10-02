@@ -13,7 +13,7 @@ report, and the generic style controls on imported templates.
 
 **Done means** a corpus of at least 200 public resumes imports through the pipeline, the
 editable rate is reported and tracked, page size, margins and font size work on every successful
-import, and a cached template imports in under 5 seconds.
+import, and a cached template imports in under 8 seconds, the plan's 5 as decision 0045 raised it.
 
 Not in this milestone: accounts and the private storage of originals (milestone 4), hosting the
 app, the engine and the naming service (milestone 5), the pre-warmed cache beyond what the corpus
@@ -379,11 +379,12 @@ of each launch template must find editable what the hand-written port marks.
     The gateway serves the school's teaching and projects, so before the public launch milestone 5
     asks the school whether the naming service may use it, with Gemini's paid tier as the
     fallback.
-19. [ ] **Measure the import, and close.** `measure` gains an import: a cached pdfTeX template,
+19. [x] **Measure the import, and close.** `measure` gains an import: a cached pdfTeX template,
     a Jake's Resume fork, from the file to the page, in Node and at `?measure=import` in the
-    browser, with a warm HTTP cache; under 5 s on this machine is the bar, and the XeTeX number
-    is reported beside it. The numbers go next to decision 0016's, the slow laptop's column
-    stays the owner's to fill with the same command, and milestone 2's owed table is closed out.
+    browser, with a warm HTTP cache; under 8 s on this machine is the bar, 5 s until decision
+    0045 raised it, and the XeTeX number is reported beside it. The numbers go next to decision
+    0016's, the slow laptop's column stays the owner's to fill with the same command, and
+    milestone 2's owed table is closed out.
 
 ## Decisions this milestone makes
 
@@ -437,8 +438,9 @@ pull request that acts on it. The first two the owner settled on 26 September.
 - **The import runs on the editor's engine** (item 12), in a job of its own while the list
   shows, so one engine is loaded at a time on an old laptop; cancel and a hung compile terminate
   the worker, which starts afresh.
-- **The 5 s bar is judged on pdfTeX** (item 19), on a cached template with a warm HTTP cache on
-  this machine, and XeTeX is reported, as the plan already lets XeTeX feel slower.
+- **The import's bar is judged on pdfTeX** (item 19), on a cached template with a warm HTTP
+  cache on this machine, and XeTeX is reported, as the plan already lets XeTeX feel slower. The
+  bar is under 8 s: the owner raised it from the plan's 5 s on 2 October (decision 0045).
 - **The provider is the AI SDK's, Gemini first** (item 9), as plan section 6.4 has it, then
   SoCLaaS (decision 0036), whose model item 18 picked (decision 0044). New dependencies this
   milestone expects: unified-latex's parse, arguments, argspec, macros, to-string, visit and ctan
@@ -456,13 +458,15 @@ pull request that acts on it. The first two the owner settled on 26 September.
   item wins.
 - **A cold first import fetches a lot.** A whole-document compile from the stock format reads
   the 6.5 MB format and the class's packages, one synchronous request at a time (decision 0010),
-  and the prefetch has no list for an unknown template. The 5 s bar assumes a warm HTTP cache;
-  the first import on a machine takes longer, and the progress line has to say so. Prefetching
-  the stock format and the files the reference compile read, before the dump, is the mitigation.
+  and the prefetch has no list for an unknown template. The import's bar, 8 s since decision 0045
+  raised it from 5, assumes a warm HTTP cache; the first import on a machine takes longer, and
+  the progress line has to say so. Prefetching the stock format and the files the reference
+  compile read, before the dump, is the mitigation.
 - **Compiles add up.** Probes, four checks and their bisections are a few dozen compiles, near
   the logarithm of the field count when few fail and linear when many do; on the M4 Pro that is
   two to three seconds for a Jake fork, on the slow laptop perhaps ten. Plan section 6.4's 60 s
-  for a cache miss is generous; the 5 s for a hit is tight, and item 19 says by how much.
+  for a cache miss is generous; the 5 s for a hit was tight, and item 19 found by how much, after
+  which decision 0045 raised it to 8 s.
 - **XeTeX imports start slow.** fontspec's probing costs 200 to 350 ms a face (decision 0003),
   so the reference compile of an Awesome-CV fork costs seconds before the loop starts. Item 8
   measures it; if it is too much, a template whose rewrite validated once, on a cache hit, could
@@ -505,3 +509,6 @@ pull request that acts on it. The first two the owner settled on 26 September.
 | The PDF's text layer showing a hyphen as U+2011 in some XeTeX fonts (decision 0014) | The ATS's reader; not this milestone |
 | The PDF's text layer showing an import's small capitals, set with `+smcp`, as capitals: the Awesome-CV sample's seven entry titles and four Awesome-CV forks (decision 0026) | The ATS's reader, or the PDF driver; not this milestone |
 | An imported section whose head opens its content's list, with the locked part that closes it, kept as one unit: removing the section alone stops the compile in 20 of Jake's forks (decision 0026) | The assembly, before item 12 stores an import |
+
+Item 19 closes the table out in decision 0045: where each row landed, and where the four that stay
+owed go.

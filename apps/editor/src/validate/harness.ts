@@ -177,6 +177,21 @@ export interface Expected {
 }
 
 /**
+ * What another check of the same package has proven already, which the controls check need not
+ * compile again (decision 0045): an import's check 4 compiles every value of each control but the
+ * date format, from the formats and with the bodies the controls check would, in the same job, and
+ * holds each to more than this check does.
+ */
+export interface Proven {
+  /**
+   * Whether this body, compiled from the format of this name, compiled with no error in its log
+   * and set other glyphs than the document's own, so that the controls check, which asks no more
+   * of a value than that, would find nothing in it.
+   */
+  changes(format: string, latex: string): boolean;
+}
+
+/**
  * Check a package by compiling a resume through it as the editor does, with the document's
  * control values, any left out being the package's defaults, and reading the output back as the
  * page does. The checks run in the order of `CHECKS`, and each that fails adds its findings; a
@@ -188,7 +203,8 @@ export interface Expected {
  * the user has open in that job runs the harness in a session of its own.
  *
  * `expected` holds an imported package to its upload's own page count and passes (`Expected`); a
- * curated one is held to one page and two passes.
+ * curated one is held to one page and two passes. `proven` names the values of the controls check
+ * that another check has proven already (`Proven`), which it does not compile again.
  */
 export async function validatePackage(
   session: EngineSession,
@@ -198,6 +214,7 @@ export async function validatePackage(
   values: ControlValues = {},
   job = EDITOR_JOB,
   expected?: Expected,
+  proven?: Proven,
 ): Promise<Report> {
   const chosen: ControlValues = { ...defaultControls(pkg), ...values };
   const report: Report = {
@@ -279,12 +296,14 @@ export async function validatePackage(
   // in the editor. So nothing is restored after them. The first reads the auxiliary files the
   // edit's compile wrote, so only a template whose page shows what they hold, which the edits
   // check reports, could pass a control that does nothing.
-  const controls = await checkControls({ session, fonts, job, covers }, pkg, sample, chosen, {
-    format: format.name,
-    output,
-    reported,
-    undrawable,
-  });
+  const controls = await checkControls(
+    { session, fonts, job, covers },
+    pkg,
+    sample,
+    chosen,
+    { format: format.name, output, reported, undrawable },
+    proven,
+  );
   addPasses(report, controls.timing);
   findings.push(...controls.findings);
   if (pkg.controls.font !== undefined && chosen.font !== undefined)
@@ -533,13 +552,32 @@ async function checkControls(
     reported: ReadonlySet<string>;
     undrawable: ReadonlyMap<string, string>;
   },
+  proven?: Proven,
 ): Promise<{ findings: Finding[]; timing: Timing; drawn: string[] }> {
   const { session, fonts, job, covers } = engine;
   const findings: Finding[] = [];
   const timing: Timing = { passes: [] };
   const drawn: string[] = [];
-  for (const { values, control, set, was } of probesOf(pkg, chosen)) {
+  const probes = probesOf(pkg, chosen);
+  const skipped = provenProbes(
+    probes,
+    (values) => ({
+      format: generateFormat(pkg, values).name,
+      latex: generateBody(pkg, sample, values, { covers }).latex,
+    }),
+    proven,
+  );
+  // The format the job was last compiled with, and the one it would have been had the probes
+  // skipped been compiled, as the edit's compile left it before the first.
+  let held = own.format;
+  let would = own.format;
+  for (const [index, { values, control, set, was }] of probes.entries()) {
     const add = (message: string) => findings.push({ check: "controls", message, control });
+    const skip = skipped.get(index);
+    if (skip !== undefined) {
+      would = skip;
+      continue;
+    }
     try {
       const probe = generateFormat(pkg, values);
       if (probe.name !== own.format) {
@@ -550,6 +588,12 @@ async function checkControls(
         }
       }
       const body = generateBody(pkg, sample, values, { covers });
+      // A job whose format changes starts again as a new document: where a probe skipped would
+      // have moved it to another format and the compile comes back to the one it holds, it starts
+      // again all the same, as it would have.
+      if (probe.name === held && probe.name !== would) session.forget(job);
+      held = probe.name;
+      would = probe.name;
       const result = session.compile(pkg.engine, probe.name, body.latex, { job, maxPasses: 3 });
       addPasses(timing, result);
       const error = compileError(result);
@@ -569,6 +613,64 @@ async function checkControls(
     }
   }
   return { findings, timing, drawn };
+}
+
+/**
+ * The controls an import's check 4 compiles every value of, which another check may prove: not the
+ * date format, which it does not try, nor a font, whose output this check draws besides.
+ */
+const PROVABLE: ReadonlySet<keyof ControlValues> = new Set([
+  "pageSize",
+  "margins",
+  "fontSize",
+  "accent",
+  "density",
+]);
+
+/**
+ * The probes the controls check need not compile (decision 0045), by their place among `probes`,
+ * with the format each would have compiled from: a value of a control another check compiles
+ * (`PROVABLE`) that it has proven (`Proven`); and only in a run of such probes of one format that no
+ * probe after it compiles from the same format straight after, since that compile would read what
+ * theirs wrote, and so must they have. A probe whose format or body the generator cannot make is
+ * never skipped: it is compiled, and fails as it would have.
+ */
+function provenProbes(
+  probes: readonly Probe[],
+  shape: (values: ControlValues) => { format: string; latex: string },
+  proven: Proven | undefined,
+): Map<number, string> {
+  const skipped = new Map<number, string>();
+  if (proven === undefined) return skipped;
+  const shapes = probes.map(({ values }) => {
+    try {
+      return shape(values);
+    } catch {
+      return undefined;
+    }
+  });
+  let run: number[] = [];
+  let runFormat = "";
+  /** The run so far ends before a probe of `next`'s format, or before none. */
+  const end = (next: string | undefined, known: boolean) => {
+    if (run.length > 0 && known && next !== runFormat)
+      for (const index of run) skipped.set(index, runFormat);
+    run = [];
+  };
+  probes.forEach(({ control }, index) => {
+    const shaped = shapes[index];
+    if (
+      shaped !== undefined &&
+      PROVABLE.has(control) &&
+      proven.changes(shaped.format, shaped.latex)
+    ) {
+      if (run.length > 0 && runFormat !== shaped.format) end(shaped.format, true);
+      run.push(index);
+      runFormat = shaped.format;
+    } else end(shaped?.format, shaped !== undefined);
+  });
+  end(undefined, true);
+  return skipped;
 }
 
 /**
@@ -1250,7 +1352,7 @@ function brokenAcross(joined: string, word: string): boolean {
 }
 
 /** TeX's first error in a compile, or undefined when it compiled with none in the log. */
-function compileError(result: CompileResult): string | undefined {
+export function compileError(result: CompileResult): string | undefined {
   return result.ok ? summariseLog(result.log).error : (result.error ?? "the body did not compile");
 }
 
