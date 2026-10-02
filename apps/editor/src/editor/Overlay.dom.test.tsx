@@ -78,7 +78,8 @@ function shownIn(font: PageFont, document: Document, folded?: Fold): Shown {
     unmatched: 0,
     missingFonts: new Map(),
   };
-  return { page, body: { latex: "", texts: new Map(), dropped: [], surplus: [] }, document, ms: 0 };
+  const body = { latex: "", texts: new Map(), dropped: [], surplus: [] };
+  return { page, pages: [page], body, document, ms: 0 };
 }
 
 /** The runs a document holds for the field. */

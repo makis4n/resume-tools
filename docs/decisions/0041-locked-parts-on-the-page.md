@@ -1,7 +1,7 @@
 # 0041. Locked parts on the page
 
 Date: 2026-10-01 · Status: proposed; amends 0025's second lock marker and its side panel row, and
-adds the locked parts' steps to 0038's check 3
+adds the locked parts' steps to 0038's check 3; a part past the first page shows its lock since 0046
 
 ## Context
 
@@ -284,7 +284,7 @@ it, a redump and no failure (decision 0010).
   sections after it use, when it is removed or moved below them: check 3 does not try it, and the
   guard takes such a step back.
 - **A part past the first page** is named in the panel, and shows its lock once the editor draws
-  its page, which it does not yet.
+  its page, which it does not yet. Decision 0046 draws every page, and with it every part's lock.
 - **Steps tried where the import put the part.** Check 3 tries a part's steps in the document as
   imported, and the panel moves a part one place at a time. Once other sections have moved around
   it, a step check 3 let through may stop the compile, which the guard takes back, and one it

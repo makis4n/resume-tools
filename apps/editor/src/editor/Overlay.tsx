@@ -35,6 +35,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { DrawnPage, FieldFont, FieldLayout, LayoutFont } from "../page/draw";
 import { companionName, variantFontNames } from "../page/fontnames";
 import type { FontLibrary, NativePageFont, PageFont } from "../page/fonts";
+import { pageSvg } from "../page/Page";
 import { breakParams, parseParagraph, startingAt } from "../page/paragraph";
 import {
   nativeWebFontOf,
@@ -316,17 +317,17 @@ export async function namedVariants(
 /**
  * The font each variant of a rich field is set in on a page (`variantFonts`), from the page's
  * glyphs of the field and the resume the page was compiled from, whose runs their offsets count
- * through; undefined when the page does not show the field. A glyph's font is the field's font of
- * the same name and size, and one that did not load leaves its glyphs out.
+ * through; undefined when the page does not show the field, or there is no page. A glyph's font is
+ * the field's font of the same name and size, and one that did not load leaves its glyphs out.
  */
 export function variantFontsOf(
-  page: DrawnPage,
+  page: DrawnPage | undefined,
   resume: Resume,
   id: string,
 ): Map<Variant, FieldFont> | undefined {
-  const layout = page.fields.get(id)?.layout;
+  const layout = page?.fields.get(id)?.layout;
   const field = fieldsOf(resume).get(id);
-  if (layout === undefined || field?.kind !== "rich") return undefined;
+  if (page === undefined || layout === undefined || field?.kind !== "rich") return undefined;
   const name = (font: string, size: number) => `${size} ${font}`;
   const fonts = new Map(layout.fonts.map((each) => [name(each.font.name, each.size), each]));
   const glyphs = page.glyphs.flatMap((glyph) =>
@@ -609,14 +610,30 @@ export function shouldClose(documentHasField: boolean, _pageHasField: boolean): 
 }
 
 /**
- * Where an open field is set: its layout and baselines on the last page that showed it, and that
- * page's width, which a field whose paragraph cannot be read breaks within.
+ * Where an open field is set: its layout and baselines on the last page that showed it, that
+ * page's width, which a field whose paragraph cannot be read breaks within, and which of the
+ * document's pages it is, whose SVG the overlay is placed over (decision 0046).
  */
 export interface Placement {
   layout: FieldLayout;
   /** The baselines the field's lines sit on, down that page, in TeX points. */
   baselines: number[];
   pageWidth: number;
+  /** The page's index among the document's pages (`Shown.pages`). */
+  page: number;
+}
+
+/**
+ * The index of the first of `pages` that shows the field `id` where the overlay can set it, with
+ * its layout: the page a field a page break splits starts on. -1 when none does.
+ */
+export function pageShowing(pages: readonly DrawnPage[], id: string): number {
+  return pages.findIndex((page) => page.fields.get(id)?.layout !== undefined);
+}
+
+/** The page of `shown` that shows the field `id` (`pageShowing`), if one does. */
+function showingOf(shown: Shown, id: string): DrawnPage | undefined {
+  return shown.pages[pageShowing(shown.pages, id)];
 }
 
 /**
@@ -632,20 +649,23 @@ function baselinesOf(page: DrawnPage, id: string): number[] {
 }
 
 /**
- * Where an open field is set once the page `latest` arrives: from `latest` when it shows the
- * field, and otherwise where it was, `previous`, so that the overlay keeps its place and size and
- * stays editable until a page shows the field again, and that page places it anew. The first
+ * Where an open field is set once the pages `latest` arrive: from the first of them that shows the
+ * field (`pageShowing`), on whichever page that is, and otherwise where it was, `previous`, so
+ * that the overlay keeps its place and size and stays editable until a page shows the field again,
+ * and that page places it anew. The first
  * placement is the page the overlay opened on, which the click landed on; it is undefined only
  * while no page since the overlay opened has shown the field with a font that loaded.
  */
 export function placementFor(
   id: string,
-  latest: DrawnPage,
+  latest: readonly DrawnPage[],
   previous: Placement | undefined,
 ): Placement | undefined {
-  const layout = latest.fields.get(id)?.layout;
-  if (layout === undefined) return previous;
-  return { layout, baselines: baselinesOf(latest, id), pageWidth: latest.size.width };
+  const page = pageShowing(latest, id);
+  const showing = latest[page];
+  const layout = showing?.fields.get(id)?.layout;
+  if (showing === undefined || layout === undefined) return previous;
+  return { layout, baselines: baselinesOf(showing, id), pageWidth: showing.size.width, page };
 }
 
 /** An edit of a field's text, and where the caret goes after it. */
@@ -725,14 +745,14 @@ export function Overlay(props: OverlayProps) {
     }
   });
   // Where the field is set: on the page it opened on, then on each later page that shows it.
-  const [placement, setPlacement] = useState(() => placementFor(id, shown.page, undefined));
+  const [placement, setPlacement] = useState(() => placementFor(id, shown.pages, undefined));
   const [placedOn, setPlacedOn] = useState(shown);
   if (placedOn !== shown) {
     setPlacedOn(shown);
-    setPlacement(placementFor(id, shown.page, placement));
+    setPlacement(placementFor(id, shown.pages, placement));
   }
   const inDocument = useMemo(() => fieldsOf(props.document.resume).has(id), [props.document, id]);
-  const onPage = shown.page.fields.get(id)?.layout !== undefined;
+  const onPage = pageShowing(shown.pages, id) >= 0;
   const closing = opened === undefined || shouldClose(inDocument, onPage);
   useEffect(() => {
     if (closing) onClose();
@@ -861,9 +881,9 @@ function frameOf(
   placement: Placement,
   ready: Ready,
 ): Frame | undefined {
-  const ctm = container.querySelector("svg")?.getScreenCTM();
+  const { layout, baselines, pageWidth, page } = placement;
+  const ctm = pageSvg(container, page)?.getScreenCTM();
   if (!ctm) return undefined;
-  const { layout, baselines, pageWidth } = placement;
   const scale = ctm.a;
   const at = new DOMPoint(layout.x, layout.y).matrixTransform(ctm);
   const box = container.getBoundingClientRect();
@@ -1224,12 +1244,14 @@ function RichField(props: OpenProps) {
   const { layout, pageWidth } = placement;
   const runs = useMemo(() => richRunsOf(document, id), [document, id]);
   const [variants, setVariants] = useState(
-    () => variantFontsOf(shown.page, shown.document.resume, id) ?? new Map<Variant, FieldFont>(),
+    () =>
+      variantFontsOf(showingOf(shown, id), shown.document.resume, id) ??
+      new Map<Variant, FieldFont>(),
   );
   const [readFrom, setReadFrom] = useState(shown);
   if (readFrom !== shown) {
     setReadFrom(shown);
-    const next = variantFontsOf(shown.page, shown.document.resume, id);
+    const next = variantFontsOf(showingOf(shown, id), shown.document.resume, id);
     if (next !== undefined) setVariants(next);
   }
   const [named, setNamed] = useState<ReadonlyMap<Variant, SizedFont>>(() => new Map());
@@ -1338,7 +1360,7 @@ function DatePicker({
   // Placed again with each new page, which draws its SVG anew.
   const { layout } = placement;
   useLayoutEffect(() => {
-    const ctm = page.querySelector("svg")?.getScreenCTM();
+    const ctm = pageSvg(page, placement.page)?.getScreenCTM();
     if (!ctm) return;
     const at = new DOMPoint(layout.x, layout.y).matrixTransform(ctm);
     const box = page.getBoundingClientRect();
@@ -1347,7 +1369,7 @@ function DatePicker({
       // Below the baseline by the font's descent and a little more.
       top: at.y + 0.35 * layout.size * ctm.a - box.top - page.clientTop + page.scrollTop,
     });
-  }, [page, shown, layout]);
+  }, [page, shown, layout, placement.page]);
 
   useEffect(() => {
     first.current?.focus({ preventScroll: true });

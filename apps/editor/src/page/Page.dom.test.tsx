@@ -18,7 +18,7 @@ import { parseType1 } from "../tex/type1";
 import type { DrawnPage, FieldLayout } from "./draw";
 import type { PageFont } from "./fonts";
 import type { Box } from "./locked";
-import { LOCKED_TIP, Page } from "./Page";
+import { LOCKED_TIP, Page, Pages, pageSvg } from "./Page";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -138,6 +138,7 @@ const page: DrawnPage = {
 
 const shown: Shown = {
   page,
+  pages: [page],
   body: { latex: "", texts: new Map(), dropped: [], surplus: [] },
   document: document0,
   ms: 0,
@@ -477,5 +478,307 @@ describe("a locked part on the page (decision 0041)", () => {
     const moved = tip() as HTMLElement;
     expect(at(moved, "left") + width).toBeCloseTo(10 + 816, 3);
     expect(at(moved, "left")).toBeLessThan(10 + near.left * scale);
+  });
+});
+
+// An invented document of two pages (decision 0046): on the first, a field and the start of a part
+// a page break splits; on the second, the split part's end, a field and a part of its own.
+
+const SPLIT = "lock-split";
+const LATER_PART = "lock-later";
+const LATER = "header.last";
+
+/** A box around the glyph `row` of an invented page, which sets one glyph a row, 20 pt apart. */
+const rowBox = (row: number): Box => ({
+  left: 72,
+  top: 92 + 20 * row,
+  right: 300,
+  bottom: 104 + 20 * row,
+});
+
+/**
+ * The page `index` of the invented document, drawn as `renderPage` draws one, a page after the
+ * first naming its shapes apart: one glyph a row, each of a field or a part as `rows` says, and
+ * each part's blocks as `blocks` gives them.
+ */
+function inventedPage(
+  index: number,
+  rows: { field?: string; locked?: string }[],
+  blocks: Map<string, Box[]>,
+  fieldLayouts: Map<string, FieldLayout>,
+): DrawnPage {
+  const SP = 65536;
+  const doc: DviDocument = {
+    id: 7,
+    numerator: 25_400_000,
+    denominator: 473_628_672,
+    magnification: 1000,
+    comment: "",
+    fonts: new Map(),
+    nativeFonts: new Map([[1, { id: 1, name: "Invented.otf", index: 0, size: 10 * SP, flags: 0 }]]),
+    pages: [
+      {
+        counters: [],
+        items: [
+          {
+            kind: "native",
+            font: 1,
+            h: 0,
+            v: 30 * SP,
+            width: 20 * SP,
+            glyphs: rows.map((_, row) => ({ id: 7, x: 0, y: 20 * row * SP })),
+          },
+        ],
+      },
+    ],
+  };
+  const fields = new Map(
+    rows.flatMap((row, glyph) =>
+      row.field === undefined
+        ? []
+        : [[row.field, { id: row.field, glyphs: [{ item: 0, glyph, text: "V", offset: 0 }] }]],
+    ),
+  );
+  const svg = renderPage(doc, doc.pages[0] as DviDocument["pages"][0], {
+    outlines: () => undefined,
+    native: () => ({ unitsPerEm: 1000, pathOf: () => "M0 0L500 700Z" }),
+    fields,
+    locked: {
+      glyphs: new Map(
+        rows.flatMap((row, glyph) =>
+          row.locked === undefined ? [] : [[`0:${glyph}`, row.locked]],
+        ),
+      ),
+      blocks,
+    },
+    ids: index === 0 ? "" : `p${index}-`,
+  });
+  return {
+    svg,
+    size: US_LETTER,
+    fields: new Map(
+      [...fields].map(([id, field]) => [
+        id,
+        { ...field, glyphs: [], layout: fieldLayouts.get(id) },
+      ]),
+    ),
+    // Every page holds every part, with no block where it is all on another.
+    locked: new Map([SPLIT, LATER_PART].map((id) => [id, { id, blocks: blocks.get(id) ?? [] }])),
+    glyphs: [],
+    pageCount: 2,
+    unmatched: 0,
+    missingFonts: new Map(),
+  };
+}
+
+const PAGES: DrawnPage[] = [
+  inventedPage(
+    0,
+    [{ field: PLAIN }, { locked: SPLIT }, { locked: SPLIT }],
+    new Map([[SPLIT, [rowBox(1)]]]),
+    new Map([[PLAIN, layoutAt(102)]]),
+  ),
+  inventedPage(
+    1,
+    [{ locked: SPLIT }, { field: LATER }, { locked: LATER_PART }],
+    new Map([
+      [SPLIT, [rowBox(0)]],
+      [LATER_PART, [rowBox(2)]],
+    ]),
+    new Map([[LATER, layoutAt(122)]]),
+  ),
+];
+
+const shownPages: Shown = { ...shown, page: PAGES[0] as DrawnPage, pages: PAGES };
+
+/** Every page and the overlay over them, as the app puts them together, each click noted. */
+function TwoPages({ clicks }: { clicks: string[] }) {
+  const [clicked, setClicked] = useState<{ field: string; offset: number; click: number }>();
+  const [sheet, setSheet] = useState<HTMLDivElement | null>(null);
+  return (
+    <>
+      <button type="button">Before</button>
+      <div ref={setSheet} style={{ position: "relative" }}>
+        <Pages
+          pages={PAGES}
+          onField={(field, offset) => {
+            clicks.push(field);
+            setClicked({ field, offset, click: clicks.length });
+          }}
+        />
+        {clicked && sheet && (
+          <Overlay
+            key={clicked.click}
+            field={clicked.field}
+            offset={clicked.offset}
+            document={document0}
+            shown={shownPages}
+            page={sheet}
+            onCommand={(_: Command) => {}}
+            onClose={() => setClicked(undefined)}
+          />
+        )}
+      </div>
+      <button type="button">After</button>
+    </>
+  );
+}
+
+/** How far down the window the invented second page is drawn, in pixels, the first at its top. */
+const SECOND = 1000;
+
+describe("every page on screen (decision 0046)", () => {
+  let host: HTMLElement;
+  let root: Root;
+  let clicks: string[];
+  const ctm = Object.getOwnPropertyDescriptor(SVGElement.prototype, "getScreenCTM");
+  const point0 = (globalThis as { DOMPoint?: unknown }).DOMPoint;
+
+  beforeAll(() => {
+    Object.assign(globalThis, {
+      FontFace: class {
+        load() {
+          return Promise.resolve(this);
+        }
+      },
+    });
+    if (!("fonts" in window.document))
+      Object.defineProperty(window.document, "fonts", { value: { add: () => {} } });
+    // jsdom lays nothing out: each page's SVG is drawn at one pixel a point, the first at the
+    // window's top and the second `SECOND` pixels down, as a browser stacks them.
+    Object.defineProperty(SVGElement.prototype, "getScreenCTM", {
+      configurable: true,
+      value(this: SVGElement) {
+        const index = Number(this.closest("[data-page]")?.getAttribute("data-page") ?? 0);
+        return { a: 1, b: 0, c: 0, d: 1, e: 0, f: index * SECOND };
+      },
+    });
+    if (point0 === undefined)
+      Object.assign(globalThis, {
+        DOMPoint: class {
+          constructor(
+            readonly x: number,
+            readonly y: number,
+          ) {}
+          matrixTransform(m: { a: number; b: number; c: number; d: number; e: number; f: number }) {
+            return { x: m.a * this.x + m.c * this.y + m.e, y: m.b * this.x + m.d * this.y + m.f };
+          }
+        },
+      });
+  });
+
+  afterAll(() => {
+    if (ctm) Object.defineProperty(SVGElement.prototype, "getScreenCTM", ctm);
+    else delete (SVGElement.prototype as { getScreenCTM?: unknown }).getScreenCTM;
+    if (point0 === undefined) delete (globalThis as { DOMPoint?: unknown }).DOMPoint;
+  });
+
+  beforeEach(() => {
+    host = window.document.createElement("div");
+    window.document.body.append(host);
+    root = createRoot(host);
+    clicks = [];
+    act(() => root.render(<TwoPages clicks={clicks} />));
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  const pageAt = (index: number) => host.querySelector(`[data-page="${index}"]`) as HTMLElement;
+  const fieldGlyph = (id: string) => host.querySelector(`use[data-field="${id}"]`) as SVGUseElement;
+  const partGlyphs = (index: number, id: string) => [
+    ...pageAt(index).querySelectorAll(`use[data-locked="${id}"]`),
+  ];
+  const tips = () => [...host.querySelectorAll('[role="tooltip"]')];
+  const blocksOn = (index: number) => pageAt(index).querySelectorAll(".locked-block").length;
+
+  function over(target: Element | undefined, related?: Element) {
+    if (target === undefined) throw new Error("nothing to point at");
+    act(() => {
+      target.dispatchEvent(
+        new (typeof PointerEvent === "function" ? PointerEvent : MouseEvent)("pointerover", {
+          bubbles: true,
+          relatedTarget: related ?? null,
+        }),
+      );
+    });
+  }
+
+  const click = (target: Element) =>
+    act(() => {
+      target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+  /** The plain overlay's rows, once placed on the page that shows their field. */
+  async function placedRows(): Promise<HTMLElement> {
+    for (let tries = 0; tries < 50; tries++) {
+      const rows = host.querySelector(".overlay[contenteditable]") as HTMLElement | null;
+      if (rows?.style.top) return rows;
+      await act(() => new Promise((done) => setTimeout(done, 10)));
+    }
+    throw new Error("the plain overlay was not placed");
+  }
+
+  it("draws every page, one under the other, each with its own glyphs' shapes", () => {
+    const pages = [...host.querySelectorAll(".page")];
+    expect(pages.map((page) => page.getAttribute("data-page"))).toEqual(["0", "1"]);
+    expect(pages.map((page) => page.querySelectorAll("svg use").length)).toEqual([3, 3]);
+    // The second page's shapes are its own, so that no id stands twice in the document.
+    const ids = [...host.querySelectorAll("svg path[id]")].map((path) => path.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const use of pageAt(1).querySelectorAll("use"))
+      expect(use.getAttribute("href")?.startsWith("#p1-")).toBe(true);
+    expect(pageSvg(host, 1)?.closest("[data-page]")).toBe(pageAt(1));
+    expect(pageSvg(host, 2)).toBeNull();
+  });
+
+  it("opens a field on the second page in place, over that page, as one on the first", async () => {
+    click(fieldGlyph(LATER));
+    expect(clicks).toEqual([LATER]);
+    const later = Number.parseFloat((await placedRows()).style.top);
+    // Its first glyph at 122 pt down its page, which is drawn `SECOND` pixels down.
+    expect(later).toBeGreaterThan(SECOND + 100);
+    expect(later).toBeLessThan(SECOND + 122);
+    act(() => (window.document.activeElement as HTMLElement | null)?.blur());
+    click(fieldGlyph(PLAIN));
+    const first = Number.parseFloat((await placedRows()).style.top);
+    // The two fields' first glyphs are 20 pt apart down their pages, and the pages `SECOND` apart.
+    expect(later - first).toBeCloseTo(SECOND + 20, 3);
+  });
+
+  it("shows the lock of a part on the second page over it, and opens nothing at a click", async () => {
+    const [glyph] = partGlyphs(1, LATER_PART);
+    over(glyph);
+    expect(tips().map((tip) => tip.textContent)).toEqual([LOCKED_TIP]);
+    expect(pageAt(1).querySelector('[role="tooltip"]')).not.toBeNull();
+    expect([blocksOn(0), blocksOn(1)]).toEqual([0, 1]);
+    if (glyph) click(glyph);
+    await act(() => new Promise((done) => setTimeout(done, 50)));
+    expect(clicks).toEqual([]);
+    expect(host.querySelector(".overlay")).toBeNull();
+    // Over the second page's field, it goes.
+    over(fieldGlyph(LATER), glyph);
+    expect(tips()).toEqual([]);
+  });
+
+  it("shows the lock of a part a page break splits on both pages, its line over its start", () => {
+    for (const glyph of [partGlyphs(1, SPLIT)[0], partGlyphs(0, SPLIT)[1]]) {
+      over(glyph);
+      // A block on each page, and one line, on the first page, where the part starts.
+      expect([blocksOn(0), blocksOn(1)]).toEqual([1, 1]);
+      expect(tips()).toHaveLength(1);
+      expect(pageAt(0).querySelector('[role="tooltip"]')?.textContent).toBe(LOCKED_TIP);
+      over(pageAt(1).querySelector('rect[fill="white"]') ?? undefined, glyph);
+      expect([blocksOn(0), blocksOn(1), tips().length]).toEqual([0, 0, 0]);
+    }
+  });
+
+  it("gives the pages no tab stop, however many there are", () => {
+    const stops = [...host.querySelectorAll("*")].filter(
+      (element) => (element as HTMLElement).tabIndex >= 0,
+    );
+    expect(stops.map((element) => element.textContent)).toEqual(["Before", "After"]);
   });
 });

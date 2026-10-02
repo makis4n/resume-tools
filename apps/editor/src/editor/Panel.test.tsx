@@ -100,7 +100,7 @@ describe("shownFieldsOf", () => {
   const page = {
     fields: new Map([field("header.first", 0), field("header.last", 5), field("exp.title", 10)]),
   };
-  const latest = { page, document: drawnFrom };
+  const latest = { pages: [page], document: drawnFrom };
 
   it("counts a field new since the page's document as shown, while its page is to come", () => {
     const present = apply(drawnFrom, {
@@ -411,6 +411,29 @@ describe("Panel", () => {
     ])
       expect(html).toContain(text);
     expect(html).not.toContain("\\");
+  });
+
+  it("gives an input only to a field no page shows, on whatever page the others are (decision 0046)", () => {
+    const doc = newDocument("jake", sample, "en-US");
+    const skills = doc.resume.sections.find((each) => each.title === "Technical Skills");
+    if (!skills) throw new Error("the sample has no skills section");
+    const later = `${skills.id}.title`;
+    /** A page whose fields are `ids`, each with glyphs. */
+    const pageOf = (ids: string[]) => ({
+      fields: new Map<string, Field>(
+        ids.map((id) => [id, { id, glyphs: [{ item: 0, text: "x", offset: 0 }] }]),
+      ),
+    });
+    // A document of two pages: the skills section's title on the second, the last name on none.
+    const ids = [...fieldsOf(doc.resume).keys()];
+    const first = pageOf(ids.filter((id) => id !== later && id !== "header.last"));
+    const html = render([], shownFieldsOf({ pages: [first, pageOf([later])], document: doc }, doc));
+    expect(html).toContain('value="Quist"');
+    expect(html).not.toContain('value="Technical Skills"');
+    expect(html).not.toContain('value="Mara"');
+    // Without its second page, as the editor drew a document before, the title had an input.
+    const firstOnly = render([], shownFieldsOf({ pages: [first], document: doc }, doc));
+    expect(firstOnly).toContain('value="Technical Skills"');
   });
 
   it("marks a field the package requires, saying why, whether it has an input or not", () => {

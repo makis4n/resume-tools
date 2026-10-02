@@ -98,6 +98,12 @@ export interface RenderOptions {
     >;
   };
   size?: PageSize;
+  /**
+   * What the ids of the page's glyph shapes start with, so that pages drawn one under the other in
+   * one document each use their own (decision 0046): none for the first page, which keeps the ids it
+   * always had, and `p<index>-` for a later one (`drawPage`).
+   */
+  ids?: string;
 }
 
 const escape = (s: string) =>
@@ -139,6 +145,7 @@ export function dvipsColor(spec: string): string | undefined {
 
 export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptions): string {
   const size = options.size ?? US_LETTER;
+  const prefix = options.ids ?? "";
   const pt = pointsPerUnit(doc);
   const defs = new Map<string, string>();
   const body: string[] = [];
@@ -186,7 +193,7 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
         if (!font || !outlines) return;
         const glyph = glyphOf(outlines, item.code);
         if (!glyph) return;
-        const id = `g${item.font}-${item.code}`;
+        const id = `${prefix}g${item.font}-${item.code}`;
         if (!defs.has(id)) {
           const s = (font.scale * pt) / 1000;
           defs.set(
@@ -239,7 +246,7 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
           // Glyph 0 is the font's .notdef, which XeTeX sets for a character its font lacks: the
           // page reads it as the character left out and draws nothing (decision 0014).
           if (g.id === 0) return;
-          const id = `n${item.font}-${g.id}`;
+          const id = `${prefix}n${item.font}-${g.id}`;
           if (!defs.has(id)) {
             let d: string | undefined;
             try {

@@ -311,7 +311,7 @@ of each launch template must find editable what the hand-written port marks.
 
 <!-- Item 20 was added on 2 October 2026, after the items were numbered. It comes before 16. -->
 
-20. [ ] **Every page on screen.** The editor draws a document's first page only, so a resume of
+20. [x] **Every page on screen.** The editor draws a document's first page only, so a resume of
     two pages or more shows one: its later pages' fields are editable only as inputs in the side
     panel, their locked parts are out of sight, and the import's report counts their words as
     editable on the page. The editor draws every page, one under the other, each with its fields,
