@@ -282,7 +282,12 @@ so 2 of AltaCV's editable words and 474 of Awesome-CV's stood on pages it did no
 and the pins count a marked field on any page as editable on the page; item 20 (every page on
 screen, PR #78) draws every page, which settles it that way.
 
-CORPUS_RUN
+**The corpus.** `corpus run --committed-only` over the whole corpus with the fix, the M4 Pro, 15.4
+minutes: 0 success, 69 partial, 11 refused, 103 with no reference, 36 with no answer, 1 timed out,
+as before it. The words in editable fields are the same 8,083, of 41,631 resume's words where
+there were 41,499: the 132 more are running lines' words the template had, now locked, and the
+rate reads 19.4% where it read 19.5% (19.42 against the baseline's 19.48). The baseline holds the
+success rate, 0.0%, which holds; it is not raised.
 
 ## The sample
 
