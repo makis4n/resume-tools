@@ -24,6 +24,8 @@ import { JAKE_FORK } from "../test/jake-fork";
 import { US_LETTER } from "../tex/svg";
 import {
   type Heard,
+  IMPORT_BAR,
+  IMPORT_JUDGED_ON,
   IMPORT_SAMPLES,
   IMPORT_TARGET,
   type ImportMeasured,
@@ -444,10 +446,10 @@ describe("the import's table", () => {
     expect(text).toContain(`Each import: ${outcomeLine(runs[0] as ImportTime)}.`);
     expect(text).toContain("The page, medians: its format dumped in 300 ms");
     expect(text).not.toContain("Without load");
-    // The bar is plan section 4.3's as decision 0045 raised it.
+    // The bar is under 8 s, raised by decision 0045 from the plan's 5 s.
     expect(IMPORT_TARGET.limit).toBe(8000);
     expect(text).toContain(
-      "\n\nAgainst the bar: plan section 4.3's under 5 s, as decision 0045 raised it\n",
+      "\n\nAgainst the bar: under 8 s, raised by decision 0045 from the plan's 5 s\n",
     );
     expect(text).toMatch(
       /Import, template already cached +under 8 s +4\.03 s met, from the file to the page, without the engine's start$/,
@@ -481,18 +483,28 @@ describe("the import's table", () => {
     );
     // A start that takes the browser's past the bar, where Node's is judged without it.
     const started = [timed([["validate", 7600, 30]], 600)];
-    expect(importMeets(started, "node")).toEqual({ judged: true, ms: 7600, met: true });
-    expect(importMeets(started, "browser")).toEqual({ judged: true, ms: 8200, met: false });
+    expect(importMeets(started, "node", "pdftex")).toEqual({ judged: true, ms: 7600, met: true });
+    expect(importMeets(started, "browser", "pdftex")).toEqual({
+      judged: true,
+      ms: 8200,
+      met: false,
+    });
   });
 
   it("says when the bar is missed", () => {
     const slow = [timed([["validate", 8200, 30]], 100)];
-    expect(importVerdict(slow, "node")).toMatch(/8\.20 s missed, from the file to the page/);
+    expect(importVerdict(slow, "node", "pdftex")).toMatch(
+      /8\.20 s missed, from the file to the page/,
+    );
     const near = [timed([["validate", 7950, 30]], 100)];
-    expect(importVerdict(near, "node")).toMatch(/7\.95 s met, from the file to the page/);
-    expect(importVerdict(near, "browser")).toMatch(/8\.05 s missed, with the engine's start/);
+    expect(importVerdict(near, "node", "pdftex")).toMatch(/7\.95 s met, from the file to the page/);
+    expect(importVerdict(near, "browser", "pdftex")).toMatch(
+      /8\.05 s missed, with the engine's start/,
+    );
     // Under the bar it was raised from, as decision 0045 has it: 5 s is no longer missed.
-    expect(importVerdict([timed([["validate", 5410, 30]])], "node")).toMatch(/5\.41 s met/);
+    expect(importVerdict([timed([["validate", 5410, 30]])], "node", "pdftex")).toMatch(
+      /5\.41 s met/,
+    );
   });
 
   it("judges only a cache hit: no model asked, no macro unnamed, no failure", () => {
@@ -507,13 +519,51 @@ describe("the import's table", () => {
       "the naming service failed: Too many naming requests from this address",
     );
     for (const where of ["node", "browser"] as const) {
-      expect(importMeets([run, unnamed, run], where)).toEqual({
-        judged: false,
-        why: "7 of the template's macros were left unnamed",
-      });
-      expect(importVerdict([asked], where)).toMatch(
-        /under 8 s +not a cache hit, so not judged: 5 of the template's macros were asked of a model$/,
-      );
+      for (const engine of ["pdftex", "xetex"] as const) {
+        expect(importMeets([run, unnamed, run], where, engine)).toEqual({
+          judged: false,
+          why: "7 of the template's macros were left unnamed",
+        });
+        expect(importVerdict([asked], where, engine)).toMatch(
+          /under 8 s +not a cache hit, so not judged: 5 of the template's macros were asked of a model$/,
+        );
+      }
+    }
+  });
+
+  it("reports XeTeX's import beside the bar, judged on pdfTeX alone", () => {
+    expect(IMPORT_JUDGED_ON).toBe("pdftex");
+    // Over the bar on XeTeX is neither met nor missed: the plan lets XeTeX feel slower.
+    const slow = [
+      timed(
+        [
+          ["probe", 51900, 37],
+          ["validate", 20800, 76],
+        ],
+        300,
+      ),
+    ];
+    expect(importMeets(slow, "node", "xetex")).toEqual({
+      judged: false,
+      reported: true,
+      ms: 72700,
+    });
+    expect(importMeets(slow, "browser", "xetex")).toEqual({
+      judged: false,
+      reported: true,
+      ms: 73000,
+    });
+    expect(importVerdict(slow, "node", "xetex")).toMatch(
+      /under 8 s +72\.70 s reported, not judged, since the bar is judged on pdfTeX; from the file to the page, without the engine's start$/,
+    );
+    expect(importVerdict(slow, "browser", "xetex")).toMatch(
+      /73\.00 s reported, not judged, since the bar is judged on pdfTeX; with the engine's start/,
+    );
+    for (const where of ["node", "browser"] as const) {
+      const text = importTable("xetex", slow, where);
+      expect(text).toContain("Awesome-CV's upstream sample (awesome-cv-0000), imported on xetex");
+      expect(text).toContain(IMPORT_BAR);
+      expect(text).not.toMatch(/\b(met|missed)\b/);
     }
   });
 

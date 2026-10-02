@@ -12,8 +12,9 @@
  * (`measureImport`). Each import is on a new worker, as a newly opened editor's is, with fonts of
  * its own; the first is not counted, since it fills the HTTP cache, and the next five are timed. The
  * table goes under the page's heading as text, and to the console, with the verdict against the
- * import's bar, as decision 0045 raised it (`IMPORT_TARGET`), judged with the engine's start and
- * without `load`. Nothing of the sample is shown, and nothing is kept.
+ * import's bar, under 8 s since decision 0045 raised it (`IMPORT_TARGET`), judged with the engine's
+ * start and without `load`, on pdfTeX; XeTeX's import is reported beside it, not judged. Nothing of
+ * the sample is shown, and nothing is kept.
  */
 
 import { useEffect, useState } from "react";

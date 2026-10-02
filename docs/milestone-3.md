@@ -379,7 +379,7 @@ of each launch template must find editable what the hand-written port marks.
     The gateway serves the school's teaching and projects, so before the public launch milestone 5
     asks the school whether the naming service may use it, with Gemini's paid tier as the
     fallback.
-19. [ ] **Measure the import, and close.** `measure` gains an import: a cached pdfTeX template,
+19. [x] **Measure the import, and close.** `measure` gains an import: a cached pdfTeX template,
     a Jake's Resume fork, from the file to the page, in Node and at `?measure=import` in the
     browser, with a warm HTTP cache; under 8 s on this machine is the bar, 5 s until decision
     0045 raised it, and the XeTeX number is reported beside it. The numbers go next to decision

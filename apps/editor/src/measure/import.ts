@@ -1,7 +1,7 @@
 /**
  * An import measured from the file to the page (milestone 3 item 19, decision 0045), against the
- * bar for a template already cached: plan section 4.3's under 5 s, as decision 0045 raised it, to
- * under 8 s.
+ * bar for a template already cached: under 8 s, raised by decision 0045 from plan section 4.3's
+ * 5 s, and judged on pdfTeX alone; XeTeX's import is reported beside it, not judged.
  *
  * A launch template's upstream sample (`IMPORT_SAMPLES`), whose every macro the committed answers
  * name, goes to the editor's compile scheduler as the document list gives it a person's file
@@ -471,14 +471,19 @@ export function notCached(runs: readonly ImportTime[]): string | undefined {
 }
 
 /**
- * The bar for an import of a template already cached: plan section 4.3's under 5 s, as the owner
- * raised it on 2 October 2026, to under 8 s (decision 0045).
+ * The bar for an import of a template already cached: under 8 s, which the owner raised on
+ * 2 October 2026 from plan section 4.3's 5 s (decision 0045).
  */
 export const IMPORT_TARGET = TARGETS.importCached;
 
-/** The line the import's verdict comes under, which says whose bar it is judged against. */
-export const IMPORT_BAR =
-  "Against the bar: plan section 4.3's under 5 s, as decision 0045 raised it";
+/**
+ * The engine the bar is judged on, as milestone 3's decisions have it; an import on the other is
+ * reported beside the bar, not judged, as the plan lets XeTeX feel slower.
+ */
+export const IMPORT_JUDGED_ON: Engine = "pdftex";
+
+/** The line the import's verdict comes under, which says what the bar is and where it came from. */
+export const IMPORT_BAR = `Against the bar: under ${IMPORT_TARGET.limit / 1000} s, raised by decision 0045 from the plan's 5 s`;
 
 /**
  * Where an import was measured, which says what the bar is judged on: in Node, the import from the
@@ -489,30 +494,44 @@ export const IMPORT_BAR =
  */
 export type Where = "node" | "browser";
 
-/** What the bar is judged on, and whether it is met; or why it is not judged. */
+/**
+ * What the bar is judged on, and whether it is met; or why it is not judged: not a cache hit, or
+ * an engine the bar is not judged on (`IMPORT_JUDGED_ON`), whose time is then reported.
+ */
 export type ImportJudged =
   | { judged: false; why: string }
+  | { judged: false; reported: true; ms: number }
   | { judged: true; ms: number; met: boolean };
 
-/** Some imports against the bar, for where they were measured (`Where`). */
-export function importMeets(runs: readonly ImportTime[], where: Where): ImportJudged {
+/** Some imports on an engine against the bar, for where they were measured (`Where`). */
+export function importMeets(
+  runs: readonly ImportTime[],
+  where: Where,
+  engine: Engine,
+): ImportJudged {
   const why = notCached(runs);
   if (why !== undefined) return { judged: false, why };
   const medians = importMedians(runs);
   const ms = where === "node" ? medians.ms : medians.withStartWithoutLoadMs;
+  if (engine !== IMPORT_JUDGED_ON) return { judged: false, reported: true, ms };
   return { judged: true, ms, met: meets(IMPORT_TARGET, ms) };
 }
 
-/** The import's verdict against its bar (`IMPORT_TARGET`), for where it was measured (`Where`). */
-export function importVerdict(runs: readonly ImportTime[], where: Where): string {
-  const verdict = importMeets(runs, where);
+/**
+ * The import's verdict against its bar (`IMPORT_TARGET`), for the engine it ran on and where it
+ * was measured (`Where`): met or missed on pdfTeX, reported and not judged on XeTeX.
+ */
+export function importVerdict(runs: readonly ImportTime[], where: Where, engine: Engine): string {
+  const verdict = importMeets(runs, where, engine);
   const on =
     where === "node"
       ? "from the file to the page, without the engine's start"
       : "with the engine's start, without loading the import's code";
   const said = verdict.judged
     ? `${formatTime(verdict.ms)} ${verdict.met ? "met" : "missed"}, ${on}`
-    : `not a cache hit, so not judged: ${verdict.why}`;
+    : "reported" in verdict
+      ? `${formatTime(verdict.ms)} reported, not judged, since the bar is judged on pdfTeX; ${on}`
+      : `not a cache hit, so not judged: ${verdict.why}`;
   return table([[IMPORT_TARGET.path, `under ${IMPORT_TARGET.limit / 1000} s`, said]]);
 }
 
@@ -586,6 +605,6 @@ export function importTable(engine: Engine, runs: readonly ImportTime[], where: 
     ...loaded,
     "",
     IMPORT_BAR,
-    importVerdict(runs, where),
+    importVerdict(runs, where, engine),
   ].join("\n");
 }

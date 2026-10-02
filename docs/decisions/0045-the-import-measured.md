@@ -62,8 +62,9 @@ between its outcome and the page. The code is `apps/editor/src/measure/import.ts
   say whether the import succeeded, and holds a partial one in the list, its report shown, until
   the person clicks Continue, and only then keeps and opens the document. The measurement goes
   straight on to the page, partial or not, so its whole is the machine's time and leaves the
-  person's out. Jake's Resume's sample comes out partial, about 83% of its words editable, so a
-  person importing it sees the report once `report` ends, clicks Continue, and waits for `page`.
+  person's out. Jake's Resume's sample comes out partial, 83.0% of its words editable, 323 of 389,
+  so a person importing it sees the report once `report` ends, clicks Continue, and waits for
+  `page`.
   The app reads the report a second time as it opens an imported document, for the names its side
   panel gives the locked parts (decision 0041), which is in `page`.
 - The parts come from what the import says as it goes (`ImportProgress`): each step from its first
@@ -135,66 +136,67 @@ compiles it took.
 
 ## Findings
 
-This machine is decision 0016's M4 Pro, 12 cores and 24 GB, on macOS with Node 24.15, shared with
-other worktrees' test suites and corpus runs. The Node numbers below were taken before this branch
-took in main's items 13, 15 and 18 (the report, check 3's tries of the locked parts, the naming
-model), so without the report's part: the orchestrator measures the branch again as it now stands,
-on an idle machine, and that run's numbers replace them, the cells marked TBD among them. Of these,
-the pdfTeX numbers are those of the editor with the speedups above made, at a one-minute load
-average of 2.3 as the run began and 2.4 as it ended; before them, a run at 1.7 to 2.6 took 6.55 s,
-and one at 5.2 to 5.5, while another worktree's corpus run kept four cores busy, 6.69 s. The XeTeX
-numbers are with the speedups too, at a load of 2.3 to 1.8; before them, a run at 5.5 to 5.7 took
-81.69 s. A run while another worktree's whole test suite ran, at a load of 16, took 107 s for
-Awesome-CV's import that warms up, and is not used. The browser's cells are for the orchestrator
-to fill from `?measure=import` before the pull request; the slow laptop's are the owner's.
+This machine is decision 0016's M4 Pro, 12 cores and 24 GB, on macOS with Node 24.15. The numbers
+below are the branch's as it stands, with main's items 13, 15 and 18 taken in (the report, check
+3's tries of the locked parts, the naming model) and the speedups above made, measured on
+3 October 2026 on an otherwise idle machine, each a median of five: in Node at a one-minute load
+average of 2.6 as the pdfTeX imports began and 3.0 as they ended, and 3.0 to 3.4 for XeTeX's; in
+Chrome, the owner's own, at `?measure=import` and `?measure=import-xetex` on this branch's dev
+server, the tab in front throughout. Where a cell says "before the merge", that is the same
+measurement in Node before main's items were taken in, at a load of 2.3 to 2.4 for pdfTeX and 2.3
+to 1.8 for XeTeX, with the machine shared with other worktrees. Before the speedups, a pdfTeX run
+at 1.7 to 2.6 took 6.55 s, and one at 5.2 to 5.5, while another worktree's corpus run kept four
+cores busy, 6.69 s; a XeTeX run at 5.5 to 5.7 took 81.69 s. A run while another worktree's whole
+test suite ran, at a load of 16, took 107 s for Awesome-CV's import that warms up, and is not used.
+The slow laptop's cells are the owner's.
 
 Jake's Resume's upstream sample on pdfTeX, each part a median of five imports:
 
 | | This machine | Slow laptop |
 |---|---|---|
-| Node: the import, from the file to the page | 5.41 s, from 5.37 to 5.49 s: 38 compiles and 5 dumps or PDFs, 5.19 s of it in TeX; 6.55 s before the speedups | |
+| Node: the import, from the file to the page | 5.38 s, from 5.33 to 5.47 s: 38 compiles and 5 dumps or PDFs, 5.17 s of it in TeX; 5.41 s before the merge, 6.55 s before the speedups | |
 | Node: loading what the import runs with, at the worker's first import | 15 ms | |
 | Node: the intake | 3 ms | |
-| Node: the reference compile | 366 ms: 1 compile, whole, from the stock format | |
-| Node: the signatures | 286 ms: 2 compiles | |
+| Node: the reference compile | 375 ms: 1 compile, whole, from the stock format | |
+| Node: the signatures | 288 ms: 2 compiles | |
 | Node: the parse | 1 ms | |
-| Node: the probe | 589 ms: the document's own format dumped, 2 compiles | |
-| Node: the naming request, built and checked, and the naming service | 8 ms and 4 ms: 7 macros named from the cache, none asked of a model | |
-| Node: the assembly and its checks, `validate` | 3.95 s: 32 compiles and 4 dumps or PDFs, 3.85 s of it in TeX; 4.81 s, 35 compiles and 6, before | |
-| Node: the report, read as the app reads it | TBD (orchestrator) | |
-| Node: the page | 170 ms: its format put in place as the checks dumped it, two passes in 144 ms, drawn in 24 ms; 447 ms before, its format dumped in 274 ms | |
+| Node: the probe | 599 ms: the document's own format dumped, 2 compiles | |
+| Node: the naming request, built and checked, and the naming service | 9 ms and 3 ms: 7 macros named from the cache, none asked of a model | |
+| Node: the assembly and its checks, `validate` | 3.92 s: 32 compiles and 4 dumps or PDFs, 3.82 s of it in TeX; 3.95 s before the merge; 4.81 s, 35 compiles and 6, before the speedups | |
+| Node: the report, read as the app reads it | 1 ms: no request, the reference's glyph stream read | |
+| Node: the page | 171 ms: its format put in place as the checks dumped it, two passes in 142 ms, drawn in 26 ms; 447 ms before the speedups, its format dumped in 274 ms | |
 | Node: the engine's start, before the import | 3.49 s | |
-| Chrome (`?measure=import`): the import, with the engine's start and without `load` | TBD (orchestrator) | |
-| Chrome: the parts, as the page's table gives them, `load` among them | TBD (orchestrator) | |
-| Chrome: the engine's start, before the import | TBD (orchestrator) | |
+| Chrome (`?measure=import`): the import, with the engine's start and without `load` | 5.39 s; 5.50 s in a first run | |
+| Chrome: the parts, as the page's table gives them, `load` among them | the whole 5.11 s, from 5.09 to 5.23 s (5.21 s in the first run); `load` 60 ms; `validate` 3.63 s, 32 compiles | |
+| Chrome: the engine's start, before the import | 340 ms | |
 
 What the import came to, every time, before the speedups and after: assembled, 47 fields editable
 and 5 locked, the document on one page, as `corpus oracle` assembles the sample. Its report, which
-item 13 added, comes out partial at about 83% of its words editable; the run after the merge gives
-the share exactly: TBD (orchestrator).
+item 13 added, comes out partial: 83.0% of its words editable, 323 of the reference's 389, which a
+count by hand agrees with exactly.
 
 Awesome-CV's upstream sample on XeTeX, each part a median of five imports:
 
 | | This machine | Slow laptop |
 |---|---|---|
-| Node: the import, from the file to the page | 77.39 s, from 76.61 to 79.74 s: 119 compiles and 9 dumps or PDFs, 75.36 s of it in TeX; 81.69 s before the speedups | |
-| Node: loading, the intake, the parse, the naming request and the naming service | 15 ms, 4 ms, 1 ms, 34 ms and 8 ms: 19 macros named from the cache, none asked of a model | |
-| Node: the reference compile | 2.76 s: 1 compile, whole, fontconfig given the tree's fonts (decision 0019) | |
-| Node: the signatures | 1.55 s: 2 compiles, whole | |
-| Node: the probe | 50.59 s: 37 compiles, each whole from the stock format, 1.35 s apiece (decision 0022) | |
-| Node: the fonts declared by file, and their check (decision 0023) | 1.56 s: its format dumped, 2 compiles | |
-| Node: the assembly and its checks, `validate` | 20.35 s: 76 compiles and 8 dumps or PDFs from the package's formats, 0.23 s apiece; 22.67 s, 79 compiles and 10, before | |
-| Node: the report, read as the app reads it | TBD (orchestrator) | |
-| Node: the page | 332 ms: its format put in place, two passes in 272 ms, drawn in 31 ms; 907 ms before, its format dumped in 581 ms | |
-| Node: the engine's start, before the import | 3.54 s | |
-| Chrome (`?measure=import-xetex`): the import, with the engine's start and without `load` | TBD (orchestrator) | |
-| Chrome: the parts, as the page's table gives them | TBD (orchestrator) | |
+| Node: the import, from the file to the page | 79.12 s, from 77.36 to 79.29 s: 119 compiles and 9 dumps or PDFs, 76.88 s of it in TeX; 77.39 s before the merge, 81.69 s before the speedups | |
+| Node: loading, the intake, the parse, the naming request and the naming service | 14 ms, 4 ms, 1 ms, 35 ms and 11 ms: 19 macros named from the cache, none asked of a model | |
+| Node: the reference compile | 2.88 s: 1 compile, whole, fontconfig given the tree's fonts (decision 0019) | |
+| Node: the signatures | 1.54 s: 2 compiles, whole | |
+| Node: the probe | 51.91 s: 37 compiles, each whole from the stock format, 1.40 s apiece (decision 0022) | |
+| Node: the fonts declared by file, and their check (decision 0023) | 1.60 s: its format dumped, 2 compiles | |
+| Node: the assembly and its checks, `validate` | 20.80 s: 76 compiles and 8 dumps or PDFs from the package's formats, 19.42 s of it in TeX, 0.23 s apiece; 20.35 s before the merge; 22.67 s, 79 compiles and 10, before the speedups | |
+| Node: the report, read as the app reads it | 2 ms | |
+| Node: the page | 337 ms: its format put in place, two passes in 268 ms, drawn in 35 ms; 907 ms before the speedups, its format dumped in 581 ms | |
+| Node: the engine's start, before the import | 3.53 s | |
+| Chrome (`?measure=import-xetex`): the import, with the engine's start and without `load` | 74.55 s | |
+| Chrome: the parts, as the page's table gives them | the whole 74.25 s, from 73.90 to 77.27 s: 119 compiles; `load` 59 ms; the probe 48.8 s, 37 compiles; `validate` 18.9 s, 76 compiles; the engine's start 351 ms. The import that warmed up, not counted, took 191 s | |
 
 What the import came to, every time: assembled, 119 fields editable and 17 locked, the document on
-three pages. Its report, from the run after the merge: TBD (orchestrator).
+three pages. Its report comes out partial: 80% of its words editable, as it says, a rate of 80.6%.
 
 Next to decision 0016's numbers, which do not compare like for like: each of 0016's is one run of a
-fresh process at a load of 7.2, and these are medians of five warm imports at a load of about 2.
+fresh process at a load of 7.2, and these are medians of five warm imports at a load of about 3.
 With that said, the import's compiles from the package's format average 85 ms, where 0016's edit
 took 80, so an import is some sixty-five edits' worth of TeX; before the speedups, the page an
 import opened to took 447 ms with its format's dump, where 0016's curated Jake's Resume took 604 ms
@@ -225,29 +227,33 @@ The table was counted before the merge of items 13, 15 and 18. Since then check 
 locked part that may stop the compile, one that ends an environment it did not begin or begins one
 it does not end, removed and moved one place up and down, up to three compiles a part (decision
 0041); a part that ends what it begins is not tried, as neither of the two parts of the invented
-fork of Jake's Resume that the editor's tests import is. Whether the sample has a part that is
-tried shows in `validate`'s compiles in the run after the merge, against the 32 above. The report
-adds no request: it reads the reference's glyph stream, in the app's thread rather than the
-worker's, twice (`report` and `page`).
+fork of Jake's Resume that the editor's tests import is. The sample has no part that is tried
+either: `validate` compiles 32 times after the merge, as before it. The report adds no request: it
+reads the reference's glyph stream, in the app's thread rather than the worker's, twice (`report`,
+1 ms, and `page`).
 
-On XeTeX, TeX is 97% too, and the probe is 65% of the whole: decision 0022 compiles every probe
+On XeTeX, TeX is 97% too, and the probe is 66% of the whole: decision 0022 compiles every probe
 whole from the stock format on XeTeX, since a preamble that loads fontspec cannot be dumped, and
-each of its 37 compiles takes 1.35 s, where `validate`'s, from the package's formats with the fonts
-declared by file, take 0.23 s. The checks take 20.35 s more, the reference and the signatures 4.31
-s together, and everything else under 2.5 s.
+each of its 37 compiles takes 1.4 s, where `validate`'s, from the package's formats with the fonts
+declared by file, take 0.23 s. The checks take 20.80 s more, the reference and the signatures 4.42
+s together, and everything else under 2.5 s. Chrome is quicker at both: 48.8 s for the probe and
+18.9 s for the checks.
 
 ### Against the bar
 
 | Target | Limit | Jake's Resume, Node | Jake's Resume, Chrome | Awesome-CV, Node | Awesome-CV, Chrome | Slow laptop |
 |---|---|---|---|---|---|---|
-| Import, template already cached | under 8 s, plan section 4.3's 5 s as this record raised it | TBD (orchestrator), without the engine's start; before the merge 5.41 s, under 8 s by 2.59 s and over 5 s by 0.41 s; 6.55 s before the speedups | TBD (orchestrator), with the engine's start and without `load` | TBD (orchestrator); before the merge 77.39 s, missed, reported beside the bar | TBD (orchestrator) | |
+| Import, template already cached | under 8 s, raised by this record from plan section 4.3's 5 s | 5.38 s, met, under 8 s by 2.62 s and over 5 s by 0.38 s, without the engine's start; 5.41 s before the merge, 6.55 s before the speedups | 5.39 s, met, under 8 s by 2.61 s and over 5 s by 0.39 s, with the engine's start and without `load`; 5.50 s in a first run | 79.12 s, reported, not judged | 74.55 s, reported, not judged | |
 
-The bar is judged on pdfTeX, and only on imports that were all cache hits, which these were.
-Before the merge, the import met the raised bar on this machine in Node by 2.59 s, where it missed
-the plan's 5 s by 0.41 s; the run after the merge decides it. Chrome's cell is judged with the
-engine's start, which a person importing into an empty list waits for, so it will come out later
-than Node's by about that start, less what Chrome's compiles save, if any. Awesome-CV on XeTeX is
-reported beside it, as the plan lets XeTeX feel slower.
+The bar is judged on pdfTeX, and only on imports that were all cache hits, which these were. The
+import meets the raised bar on this machine, in Node by 2.62 s and in Chrome, which decides it for
+a person, by 2.61 s, where it misses the plan's 5 s by 0.38 s and 0.39 s. Chrome's cell counts the
+engine's start, which a person importing into an empty list waits for, and still comes out level
+with Node's, which leaves it out: Chrome's engine starts in 340 ms where Node's takes 3.49 s, and
+its import, 5.11 s without the start, is quicker than Node's 5.38 s, its checks 3.63 s to Node's
+3.92 s. A first run in Chrome took 5.50 s with the start, 5.21 s without. Awesome-CV on XeTeX is
+reported beside the bar and not judged, as the plan lets XeTeX feel slower, and the measurement
+says so: its verdict line reads "reported, not judged" where pdfTeX's reads "met" or "missed".
 
 ### To fill the other columns
 
@@ -258,7 +264,7 @@ The slow laptop's: set the repository up as decision 0016 says, then
 `pnpm dev`, open `/?measure=import` and then `/?measure=import-xetex` in Chrome with the tab in
 front, and read the table under the heading once it replaces the line that says which import is
 under way. The page says whether the tab stayed in front; numbers from a hidden tab are not the
-machine's. Chrome's on this machine are read the same way, from the dev server of this branch.
+machine's. Chrome's on this machine were read the same way, from the dev server of this branch.
 
 ## Milestone 2's owed table, closed out
 
@@ -283,9 +289,9 @@ laptop's column to the owner, the first load to milestone 5, and the PDF's text 
 
 ## Consequences
 
-- The milestone's bar is now under 8 s (above). Before the merge, the pdfTeX import met it in Node
-  on this machine by 2.59 s, where it missed the plan's 5 s by 0.41 s; the run after the merge, and
-  Chrome's number, which decides it for a person and counts the engine's start, are to come. The
+- The milestone's bar is now under 8 s (above), and the pdfTeX import meets it on this machine: in
+  Node by 2.62 s, and in Chrome, which decides it for a person and counts the engine's start, by
+  2.61 s; it misses the plan's 5 s by 0.38 s and 0.39 s. Item 19 is done on these numbers. The
   two speedups took 1.14 s off and prove what they proved before. What is left is TeX's, and
   nothing else as large can go without checking less: check 4's two size formats and their
   compiles, 0.87 s before the merge, and check 3's compiles, twelve in 0.90 s then, judge the
@@ -303,14 +309,15 @@ laptop's column to the owner, the first load to milestone 5, and the PDF's text 
   decision.
 - The engine's start counts in Chrome's verdict, and a person importing into an empty list waits
   for it: the compiler makes its engine only when a document first needs one, so the list starts
-  none. Starting it as the list shows would take Chrome's start, 0.4 s in decision 0016, out of the
-  wait.
+  none. Starting it as the list shows would take Chrome's start, 340 ms here and 0.4 s in decision
+  0016, out of the wait.
 - A cached XeTeX template takes well over a minute, which the plan lets XeTeX miss. Most of it is
   the probe's whole compiles: decision 0022 compiles whole only until item 8's fonts by file, which
   now make the preamble dumpable, so probing from that format, as pdfTeX's probe does, would take
   each of its 37 compiles from 1.35 s to about the checks' 0.23 s and save some 40 s, if the probe's
   verdicts hold there, which a later item would have to show. The progress line's "slower the
-  first time" undersells a wait of that length.
+  first time" undersells a wait of that length: the first import in Chrome, its HTTP cache cold,
+  took 191 s.
 - The speedups touch the import pipeline, so a corpus run is worth doing: `corpus run`'s share of
   successful imports, held to `baseline.json`, the page size, margins and font size on each
   (decisions 0040 and 0043), and `corpus assemble`'s outcomes should not move, only their compiles
