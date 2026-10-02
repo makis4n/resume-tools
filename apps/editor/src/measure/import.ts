@@ -1,11 +1,14 @@
 /**
- * An import measured from the file to the page (milestone 3 item 19, decision 0045), against plan
- * section 4.3's bar for a template already cached: under 5 s.
+ * An import measured from the file to the page (milestone 3 item 19, decision 0045), against the
+ * bar for a template already cached: plan section 4.3's under 5 s, as decision 0045 raised it, to
+ * under 8 s.
  *
  * A launch template's upstream sample (`IMPORT_SAMPLES`), whose every macro the committed answers
  * name, goes to the editor's compile scheduler as the document list gives it a person's file
- * (`Compiler.importResume`), and the document it comes to opens as the app opens it, to its first
- * drawn page. The same measurement runs in two places, as the editor's does (`measure.ts`):
+ * (`Compiler.importResume`), its report is read as the app reads it (`reportOfImport`), and the
+ * document it comes to opens as the app opens it, to its first drawn page. A partial import, which
+ * the app holds in the list for the person's Continue (decision 0039), goes straight on to its page
+ * here. The same measurement runs in two places, as the editor's does (`measure.ts`):
  * `scripts/measure.ts --import` in Node, on a session of the engine in its own thread
  * (`node.ts`), and the app's `?measure=import` page (`ImportMeasurePage.tsx`), on the worker. Each
  * import gets an engine started afresh, as a newly opened editor's worker is, and fonts of its own,
@@ -16,8 +19,9 @@
  * dump and PDF as it begins and ends (`ImportProgress`), and from the scheduler's requests and draw
  * for the page, so that they are the pipeline's own steps, whatever it gains later, and nothing here
  * repeats one. This module reaches for neither Node nor the browser, and takes nothing of the
- * pipeline but its types, its steps' names and its test for a refusal, as the app does, so that the
- * page's bundle stays without it: the pipeline runs in the worker, or in Node (`node.ts`).
+ * pipeline but its types, its steps' names, its test for a refusal and its report, which imports
+ * nothing but types, as the app does, so that the page's bundle stays without it: the pipeline runs
+ * in the worker, or in Node (`node.ts`).
  */
 
 import { Compiler, type Engine as CompilerEngine, type Shown } from "../editor/compiler";
@@ -26,6 +30,7 @@ import type { CompileResult, Engine } from "../engine/session";
 import type { AssemblyChecks } from "../import/assemble";
 import type { Upload } from "../import/intake";
 import { isRefusal, type Refusal } from "../import/refusal";
+import { percent, type ReportOutcome, reportOfImport } from "../import/report";
 import {
   IMPORT_STEPS,
   type ImportProgress,
@@ -51,15 +56,17 @@ export const IMPORT_RUNS = 5;
 
 /**
  * A part of an import: loading what it runs with, at the worker's first import (`load`); each of
- * the pipeline's steps; and the document opened to its first drawn page (`page`).
+ * the pipeline's steps; its report read, which says whether it waits for the person (`report`); and
+ * the document opened to its first drawn page (`page`).
  */
-export type ImportPart = "load" | ImportStep | "page";
+export type ImportPart = "load" | ImportStep | "report" | "page";
 
 /** What each part is, in the words of the import's progress line where it has one. */
 export const PART_LABELS: Readonly<Record<ImportPart, string>> = {
   load: "Loading the import's code and the tree's fonts, at the worker's first import",
   ...IMPORT_STEPS,
-  page: "Opening the document: its format put in place, its body compiled, its page drawn",
+  report: "Reading the import's report: its words' editable share, and whether it is partial",
+  page: "Opening the document: its report read again for its locked parts' names, its format put in place, its body compiled, its page drawn",
 };
 
 /** A part's time, what it asked of the engine, and how much of the time the engine took. */
@@ -88,6 +95,11 @@ export interface ImportTime {
   outcome: AssemblyChecks["outcome"];
   /** The import's fields: editable, whatever their kind, and locked, whatever the reason. */
   fields: { editable: number; locked: number };
+  /**
+   * Its report, as the app reads it (decision 0039): its body's words' editable share, and whether
+   * it succeeded, or is partial, which the app holds in the list for the person's Continue.
+   */
+  report: { outcome: ReportOutcome; rate: number };
   /**
    * The page: its format put in place, dumped or taken from the import (decision 0045), and which;
    * the compile's passes and the draw; and the pages it set.
@@ -219,12 +231,13 @@ const sum = (values: readonly number[]) => values.reduce((total, value) => total
 
 /**
  * Import the files on an engine started afresh, through the editor's compile scheduler, as the
- * document list does, and open the document they come to, as the app opens it, to its first drawn
- * page; or stop at the import's refusal. The engine's start is timed apart, before the import is
- * asked for; the import by its own progress (`partsOf`); and the page from the import's outcome to
- * the page drawn, with the scheduler's requests and draw for it. Nothing is kept: the scheduler, and
- * the engine with it, are closed at the end. Throws when the page cannot be made, with the
- * scheduler's message, and when the engine fails.
+ * document list does, read the import's report, and open the document they come to, as the app
+ * opens it, to its first drawn page, whether the report is partial or not; or stop at the import's
+ * refusal. The engine's start is timed apart, before the import is asked for; the import by its own
+ * progress (`partsOf`); the report from the import's outcome; and the page from there to the page
+ * drawn, with the scheduler's requests and draw for it. Nothing is kept: the scheduler, and the
+ * engine with it, are closed at the end. Throws when the page cannot be made, with the scheduler's
+ * message, and when the engine fails.
  */
 export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
   const now = how.now ?? (() => performance.now());
@@ -272,11 +285,22 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
     const parts = partsOf(began, heard, imported);
     if (isRefusal(outcome)) return { refused: outcome, startMs, parts };
 
+    // Its report, as the app reads it between the import's outcome and the page (decision 0039):
+    // whether it succeeded, or is partial, which the app holds in the list for the person's
+    // Continue before it keeps and opens the document. The measurement goes straight on: what the
+    // person takes to read the report and continue is theirs, not the machine's.
+    const report = reportOfImport(outcome);
+    const reported = now();
+    parts.push({ part: "report", ms: reported - imported, compiles: 0, dumps: 0, engineMs: 0 });
+
     const [requested, drawn] = [requests.length, draws.length];
     const document = outcome.document;
     const shown = new Promise<Shown>((resolve, reject) => {
       waiting = { doc: document, resolve, reject };
     });
+    // The app reads the report again as it opens an imported document, for the names its side panel
+    // gives the locked parts (`lockedWordsFrom`, decision 0041), and then opens it.
+    reportOfImport(outcome);
     compiler.open(outcome.package, document, outcome.job);
     const { page } = await shown;
     const ended = now();
@@ -287,7 +311,7 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
     const formats = made.filter((each) => each.kind === "dump" || each.kind === "putFormat");
     parts.push({
       part: "page",
-      ms: ended - imported,
+      ms: ended - reported,
       compiles: compiles.length,
       dumps: others.length,
       engineMs: sum([...compiles, ...others].map((each) => each.ms)),
@@ -305,6 +329,7 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
         editable: checks.fields.editable,
         locked: sum(Object.values(checks.fields.locked)),
       },
+      report: { outcome: report.outcome, rate: report.rate },
       page: {
         formatMs: sum(formats.map((each) => each.ms)),
         dumped: formats.some((each) => each.kind === "dump"),
@@ -423,8 +448,10 @@ function namingLine(naming: NamingOutcome): string {
 /** What an import came to, which every timed import should share, in a sentence. */
 export function outcomeLine(time: ImportTime): string {
   const pages = `${time.page.pages} ${time.page.pages === 1 ? "page" : "pages"}`;
+  const { outcome, rate } = time.report;
   return [
     `${time.outcome}: ${time.fields.editable} fields editable and ${time.fields.locked} locked`,
+    `reported ${outcome}, ${percent(rate)} of the words editable on the page`,
     namingLine(time.naming),
     `the document opened on ${pages}`,
   ].join("; ");
@@ -443,8 +470,15 @@ export function notCached(runs: readonly ImportTime[]): string | undefined {
   return undefined;
 }
 
-/** Plan section 4.3's bar for an import of a template already cached. */
+/**
+ * The bar for an import of a template already cached: plan section 4.3's under 5 s, as the owner
+ * raised it on 2 October 2026, to under 8 s (decision 0045).
+ */
 export const IMPORT_TARGET = TARGETS.importCached;
+
+/** The line the import's verdict comes under, which says whose bar it is judged against. */
+export const IMPORT_BAR =
+  "Against the bar: plan section 4.3's under 5 s, as decision 0045 raised it";
 
 /**
  * Where an import was measured, which says what the bar is judged on: in Node, the import from the
@@ -469,7 +503,7 @@ export function importMeets(runs: readonly ImportTime[], where: Where): ImportJu
   return { judged: true, ms, met: meets(IMPORT_TARGET, ms) };
 }
 
-/** The import's verdict against plan section 4.3, for where it was measured (`Where`). */
+/** The import's verdict against its bar (`IMPORT_TARGET`), for where it was measured (`Where`). */
 export function importVerdict(runs: readonly ImportTime[], where: Where): string {
   const verdict = importMeets(runs, where);
   const on =
@@ -484,8 +518,8 @@ export function importVerdict(runs: readonly ImportTime[], where: Where): string
 
 /**
  * The table of an import's parts, each a median of `runs`, then the whole, the engine's start apart,
- * what each import came to, and the verdict, as the Node command prints it and the browser's page
- * shows it.
+ * what each import came to, whether its report holds it for the person's Continue in the app, and
+ * the verdict, as the Node command prints it and the browser's page shows it.
  */
 export function importTable(engine: Engine, runs: readonly ImportTime[], where: Where): string {
   const sample = IMPORT_SAMPLES[engine];
@@ -510,6 +544,12 @@ export function importTable(engine: Engine, runs: readonly ImportTime[], where: 
           `Without load, which the dev server serves module by module where a build serves one chunk, and with the engine's start: ${formatTime(medians.withStartWithoutLoadMs)}.`,
         ]
       : [];
+  // A partial import waits in the app's list for the person's Continue (decision 0039).
+  const waits = runs.some((run) => run.report.outcome === "partial")
+    ? [
+        "The report is partial: in the app the person reads it after the report part and clicks Continue before the page part; the measurement goes straight on, so the whole leaves their time out.",
+      ]
+    : [];
   return [
     `${sample.name}'s upstream sample (${sample.id}), imported on ${engine}: the median of ${runs.length} imports`,
     table([
@@ -541,10 +581,11 @@ export function importTable(engine: Engine, runs: readonly ImportTime[], where: 
     ]),
     "",
     `Each import: ${shared}${differ ? ", and not every import alike" : ""}.`,
+    ...waits,
     page,
     ...loaded,
     "",
-    "Against plan section 4.3",
+    IMPORT_BAR,
     importVerdict(runs, where),
   ].join("\n");
 }

@@ -5,19 +5,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Engine } from "../engine/session";
 import { refusal } from "../import/refusal";
 import { ImportMeasurePage, measuredImport, sampleUrl } from "./ImportMeasurePage";
-import type { ImportMeasured, ImportTime } from "./import";
+import { IMPORT_BAR, type ImportMeasured, type ImportTime } from "./import";
 import { measuredTemplate } from "./MeasurePage";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 // The import's measurement page, its imports invented: no engine, worker or sample runs here.
 
-/** An invented import, `ms` long in all: its validation is what is left past the rest. */
+/**
+ * An invented import, `ms` long in all: its validation is what is left past the rest. Its report is
+ * partial, as Jake's Resume's sample's is, which the app would hold for the person's Continue.
+ */
 function timed(ms: number): ImportTime {
   const parts = [
     { part: "load" as const, ms: 20, compiles: 0, dumps: 0, engineMs: 0 },
     { part: "reference" as const, ms: 400, compiles: 1, dumps: 0, engineMs: 380 },
-    { part: "validate" as const, ms: ms - 920, compiles: 30, dumps: 3, engineMs: ms - 1000 },
+    { part: "validate" as const, ms: ms - 925, compiles: 30, dumps: 3, engineMs: ms - 1000 },
+    { part: "report" as const, ms: 5, compiles: 0, dumps: 0, engineMs: 0 },
     { part: "page" as const, ms: 500, compiles: 1, dumps: 1, engineMs: 420 },
   ];
   return {
@@ -29,6 +33,7 @@ function timed(ms: number): ImportTime {
     naming: { hits: 7, asked: 0, conflicts: 0, missing: 0 },
     outcome: "assembled",
     fields: { editable: 40, locked: 5 },
+    report: { outcome: "partial", rate: 0.83 },
     page: { formatMs: 30, dumped: false, passes: [80, 70], drawMs: 40, pages: 1 },
   };
 }
@@ -74,7 +79,7 @@ describe("the import's measurement page", () => {
     const asked = rendered((index) =>
       timed(index === 0 ? 9000 : ([4200, 4000, 4400][index - 1] ?? 0)),
     );
-    await vi.waitFor(() => expect(text()).toContain("Against plan section 4.3"));
+    await vi.waitFor(() => expect(text()).toContain(IMPORT_BAR));
     expect(asked).toEqual(["pdftex"]);
     const shown = text();
     expect(shown).toContain(
@@ -85,11 +90,18 @@ describe("the import's measurement page", () => {
       "Jake's Resume's upstream sample (jake-0000), imported on pdftex: the median of 3 imports",
     );
     expect(shown).toMatch(/\nreference +400 ms +1 +0 +380 ms +Compiling your resume as it stands/);
+    expect(shown).toMatch(/\nreport +5\.00 ms +0 +0 +0\.00 ms +Reading the import's report/);
     expect(shown).toMatch(/\nwhole +4\.20 s +32 +4 +.*from 4\.00 s to 4\.40 s/);
-    // Judged with the engine's start, 400 ms, and without the dev server's load, 20 ms.
+    // Partial, which the app would hold for the person's Continue, and the measurement does not.
+    expect(shown).toContain("reported partial, 83% of the words editable on the page");
+    expect(shown).toContain(
+      "clicks Continue before the page part; the measurement goes straight on",
+    );
+    // Judged with the engine's start, 400 ms, and without the dev server's load, 20 ms, against the
+    // bar decision 0045 raised.
     expect(shown).toContain("its format taken from the import's checks in 30 ms");
     expect(shown).toMatch(
-      /4\.58 s met, with the engine's start, without loading the import's code$/,
+      /under 8 s +4\.58 s met, with the engine's start, without loading the import's code$/,
     );
     expect(host.querySelector("h1")?.textContent).toBe("The import, from the file to the page");
   });
@@ -111,7 +123,7 @@ describe("the import's measurement page", () => {
       expect(text()).toBe("Timing import 2 of 2… The warm-up took 9.00 s. So far: 4.20 s."),
     );
     await act(async () => release());
-    await vi.waitFor(() => expect(text()).toContain("Against plan section 4.3"));
+    await vi.waitFor(() => expect(text()).toContain(IMPORT_BAR));
   });
 
   it("says when the tab was hidden during a timed import", async () => {
@@ -124,7 +136,7 @@ describe("the import's measurement page", () => {
       }
       return timed(4000);
     }, 2);
-    await vi.waitFor(() => expect(text()).toContain("Against plan section 4.3"));
+    await vi.waitFor(() => expect(text()).toContain(IMPORT_BAR));
     expect(text()).toContain(
       "The tab was hidden during 1 of the 2 timed imports, which Chrome slows: measure again with the tab in front.",
     );

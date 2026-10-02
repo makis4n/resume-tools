@@ -37,7 +37,7 @@ import { FontLibrary, type ReadFile } from "../page/fonts";
 import type { TexLiveIndex } from "../page/texlive";
 import type { ControlValues, TemplatePackage } from "../templates/package";
 
-/** One of the targets of plan section 4.3, as the plan states it. */
+/** One of the targets of plan section 4.3, as the plan states it or a decision has raised it. */
 export interface Target {
   /** The path the target is for, in the plan's words. */
   path: string;
@@ -50,9 +50,10 @@ export interface Target {
 /**
  * The targets of plan section 4.3 that the measurements can judge. Of the two for import, milestone
  * 3 measures the cached template's (`import.ts`, decision 0045); a cache miss's waits on the model,
- * which no measurement asks. A slow laptop is a 2019 machine with integrated graphics; the
- * slow-laptop target is judged here on whatever machine runs the measurement, so it says something
- * only on one.
+ * which no measurement asks. The cached template's is the plan's under 5 s as the owner raised it on
+ * 2 October 2026, to under 8 s (decision 0045); the plan's own row is the owner's to revise. A slow
+ * laptop is a 2019 machine with integrated graphics; the slow-laptop target is judged here on
+ * whatever machine runs the measurement, so it says something only on one.
  */
 export const TARGETS = {
   keystroke: { path: "Keystroke in the overlay", limit: 16, unit: "ms", under: true },
@@ -69,7 +70,7 @@ export const TARGETS = {
     under: true,
   },
   firstLoad: { path: "First load, cached afterwards", limit: 30e6, unit: "bytes", under: true },
-  importCached: { path: "Import, template already cached", limit: 5000, unit: "ms", under: true },
+  importCached: { path: "Import, template already cached", limit: 8000, unit: "ms", under: true },
 } as const satisfies Record<string, Target>;
 
 /** Whether a value meets a target. */

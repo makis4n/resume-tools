@@ -7,11 +7,13 @@
  * It takes the upstream sample `import.ts` names for the engine, Jake's Resume for pdfTeX and
  * Awesome-CV for XeTeX, as the dev server serves it (`scripts/serve-samples.ts`, once `corpus
  * oracle` has fetched it), and imports it as the document list imports a file, through the editor's
- * compile scheduler and the worker, then opens what it comes to, to its first drawn page
- * (`measureImport`). Each import is on a new worker, as a newly opened editor's is, with fonts of its
- * own; the first is not counted, since it fills the HTTP cache, and the next five are timed. The
- * table goes under the page's heading as text, and to the console. Nothing of the sample is shown,
- * and nothing is kept.
+ * compile scheduler and the worker, reads its report as the app does, then opens what it comes to,
+ * to its first drawn page, without waiting for a Continue where the report is partial
+ * (`measureImport`). Each import is on a new worker, as a newly opened editor's is, with fonts of
+ * its own; the first is not counted, since it fills the HTTP cache, and the next five are timed. The
+ * table goes under the page's heading as text, and to the console, with the verdict against the
+ * import's bar, as decision 0045 raised it (`IMPORT_TARGET`), judged with the engine's start and
+ * without `load`. Nothing of the sample is shown, and nothing is kept.
  */
 
 import { useEffect, useState } from "react";

@@ -1,21 +1,41 @@
 # 0045. The import measured, and milestone 2's owed table closed
 
-Date: 2026-10-01 · Status: proposed
+Date: 2026-10-01 · Status: proposed; raises milestone 3's import bar to under 8 s (2026-10-02)
 
 ## Context
 
 Milestone 3 is done, among other things, when "a cached template imports in under 5 seconds",
-plan section 4.3's target for an import whose template is already cached. Item 19 measures it as
-decision 0016 measured the editor: a cached pdfTeX template, a fork of Jake's Resume, from the file
-to the page, in Node and in the browser with a warm HTTP cache, with the XeTeX number beside it, the
-numbers next to decision 0016's, and the slow laptop's column left for the owner to fill with the
-same command; and it closes out the milestone's table of what milestone 2 owed. Item 12 (decision
-0038) runs the import in the compile worker, on the editor's own engine; its test imported an
-invented fork of Jake's Resume in 5.5 s, under other work. The code is
-`apps/editor/src/measure/import.ts`, `node.ts` and `ImportMeasurePage.tsx`, and
-`apps/editor/scripts/measure.ts` and `serve-samples.ts`.
+plan section 4.3's target for an import whose template is already cached, which the owner raised
+for the milestone to under 8 s on 2 October 2026 (below). Item 19 measures it as decision 0016
+measured the editor: a cached pdfTeX template, a fork of Jake's Resume, from the file to the page,
+in Node and in the browser with a warm HTTP cache, with the XeTeX number beside it, the numbers
+next to decision 0016's, and the slow laptop's column left for the owner to fill with the same
+command; and it closes out the milestone's table of what milestone 2 owed. Item 12 (decision 0038)
+runs the import in the compile worker, on the editor's own engine; its test imported an invented
+fork of Jake's Resume in 5.5 s, under other work. Item 13 (decision 0039) reads the import's report
+between its outcome and the page. The code is `apps/editor/src/measure/import.ts`, `node.ts` and
+`ImportMeasurePage.tsx`, and `apps/editor/scripts/measure.ts` and `serve-samples.ts`.
 
 ## Decision
+
+### The bar: under 8 s, raised from 5 s
+
+- On 2 October 2026 the owner raised the bar for an import of a template already cached, the
+  milestone's, from under 5 s to under 8 s, after the measurement below had the pdfTeX import
+  0.41 s over 5 s in Node, the rest of its time TeX's: "raise the limit, I don't mind even if it
+  takes a few more seconds." Eight seconds is this record's reading of "a few more seconds"; the
+  owner may set another number, and the measurement (`TARGETS.importCached`) and this record
+  follow it.
+- It amends the milestone's Done means, "a cached template imports in under 5 seconds", and item
+  19's bar, "under 5 s on this machine": `docs/milestone-3.md` gives both as under 8 s, citing this
+  record, as do its decision on the bar and the two risks that cited 5 s.
+- It does not amend the plan. Plan section 4.3's row, "Import, template already cached: under
+  5 s", and milestone 3's Done means in its section 9 are the owner's to revise on the shared page
+  that `docs/editor-plan.md` mirrors; until then the plan says 5 s, and the milestone is judged at
+  8 s. Decisions 0020 and 0023, which weigh their costs against item 19's 5 s, were written to the
+  bar as it then stood.
+- What the bar is judged on is as before (below): pdfTeX, a cache hit, in Chrome with the engine's
+  start and without `load`, and in Node without the engine's start.
 
 ### What is imported
 
@@ -33,21 +53,31 @@ invented fork of Jake's Resume in 5.5 s, under other work. The code is
 ### From the file to the page
 
 - The upload goes to the editor's compile scheduler, `Compiler.importResume`, as the document list
-  gives it a person's files, and the document it comes to opens with its package and job,
-  `Compiler.open`, as the app opens it, to its first drawn page (`measureImport`). The store's write
-  and read between the two, in IndexedDB, are left out: the measurement keeps nothing.
+  gives it a person's files, its report is read, and the document it comes to opens with its
+  package and job, `Compiler.open`, as the app opens it, to its first drawn page
+  (`measureImport`). The store's write and read between the import and the open, in IndexedDB,
+  are left out: the measurement keeps nothing.
+- The report is read as the app reads it between the import's outcome and the page
+  (`reportOfImport`, decision 0039), and timed as a part of its own, `report`. The app reads it to
+  say whether the import succeeded, and holds a partial one in the list, its report shown, until
+  the person clicks Continue, and only then keeps and opens the document. The measurement goes
+  straight on to the page, partial or not, so its whole is the machine's time and leaves the
+  person's out. Jake's Resume's sample comes out partial, about 83% of its words editable, so a
+  person importing it sees the report once `report` ends, clicks Continue, and waits for `page`.
+  The app reads the report a second time as it opens an imported document, for the names its side
+  panel gives the locked parts (decision 0041), which is in `page`.
 - The parts come from what the import says as it goes (`ImportProgress`): each step from its first
   word to the next step's, with the compiles and the dumps or PDFs it began, and the time TeX took,
   from each request's first word to its last; before them the wait for the first word, while the
   worker loads the import's code and the tree's fonts at its first import (`load`); and after them
-  the page, from the import's outcome to the page drawn, with the scheduler's dump, compile and
-  draw. The steps are the pipeline's own, whatever it gains later, and the parts add up to the
+  the report, and the page, from the report to the page drawn, with the scheduler's dump, compile
+  and draw. The steps are the pipeline's own, whatever it gains later, and the parts add up to the
   whole. The assembly is not a step of its own: `validate` assembles, checks, and assembles again
   with what the checks decided (decision 0026), so the two are timed as one, "Checking the imported
   template", and the findings below count its requests one by one.
 - Each import runs on an engine started afresh, as a newly opened editor's worker is, with fonts
   of its own. The engine's start is timed apart, before the import, and `load` is a part of its own.
-- One import first is not counted: it fills the HTTP cache, which the plan's bar assumes warm, and
+- One import first is not counted: it fills the HTTP cache, which the bar assumes warm, and
   in Node the disk's cache and the runtime's compiled code. Then five are timed, and the table gives
   each part's median, the whole's, and the fastest and slowest whole.
 - In Node: `pnpm --filter @resume-tools/editor measure --import [--engine pdftex|xetex] [--runs
@@ -75,6 +105,8 @@ invented fork of Jake's Resume in 5.5 s, under other work. The code is
   The page gives `load` on a line of its own.
 - In Node, without the engine's start, which compiles the engine afresh at every start, 3.4 s here,
   where Chrome keeps it compiled (decision 0016 had it start in 0.4 s).
+- Either way, the machine's time alone: a partial import goes straight on to its page, its
+  report's wait for the person's Continue left out (above).
 
 ### Each format dumped once, and each control's value compiled once
 
@@ -104,14 +136,17 @@ compiles it took.
 ## Findings
 
 This machine is decision 0016's M4 Pro, 12 cores and 24 GB, on macOS with Node 24.15, shared with
-other worktrees' test suites and corpus runs. The pdfTeX numbers are those of the editor as it now
-stands, the speedups above made, at a one-minute load average of 2.3 as the run began and 2.4 as it
-ended; before them, a run at 1.7 to 2.6 took 6.55 s, and one at 5.2 to 5.5, while another worktree's
-corpus run kept four cores busy, 6.69 s. The XeTeX numbers are of the editor as it now stands too,
-at a load of 2.3 to 1.8; before the speedups, a run at 5.5 to 5.7 took 81.69 s. A run while another
-worktree's whole test suite ran, at a load of 16, took 107 s for Awesome-CV's import that warms up,
-and is not used. The browser's cells are for the orchestrator to fill from `?measure=import` before
-the pull request; the slow laptop's are the owner's.
+other worktrees' test suites and corpus runs. The Node numbers below were taken before this branch
+took in main's items 13, 15 and 18 (the report, check 3's tries of the locked parts, the naming
+model), so without the report's part: the orchestrator measures the branch again as it now stands,
+on an idle machine, and that run's numbers replace them, the cells marked TBD among them. Of these,
+the pdfTeX numbers are those of the editor with the speedups above made, at a one-minute load
+average of 2.3 as the run began and 2.4 as it ended; before them, a run at 1.7 to 2.6 took 6.55 s,
+and one at 5.2 to 5.5, while another worktree's corpus run kept four cores busy, 6.69 s. The XeTeX
+numbers are with the speedups too, at a load of 2.3 to 1.8; before them, a run at 5.5 to 5.7 took
+81.69 s. A run while another worktree's whole test suite ran, at a load of 16, took 107 s for
+Awesome-CV's import that warms up, and is not used. The browser's cells are for the orchestrator
+to fill from `?measure=import` before the pull request; the slow laptop's are the owner's.
 
 Jake's Resume's upstream sample on pdfTeX, each part a median of five imports:
 
@@ -126,6 +161,7 @@ Jake's Resume's upstream sample on pdfTeX, each part a median of five imports:
 | Node: the probe | 589 ms: the document's own format dumped, 2 compiles | |
 | Node: the naming request, built and checked, and the naming service | 8 ms and 4 ms: 7 macros named from the cache, none asked of a model | |
 | Node: the assembly and its checks, `validate` | 3.95 s: 32 compiles and 4 dumps or PDFs, 3.85 s of it in TeX; 4.81 s, 35 compiles and 6, before | |
+| Node: the report, read as the app reads it | TBD (orchestrator) | |
 | Node: the page | 170 ms: its format put in place as the checks dumped it, two passes in 144 ms, drawn in 24 ms; 447 ms before, its format dumped in 274 ms | |
 | Node: the engine's start, before the import | 3.49 s | |
 | Chrome (`?measure=import`): the import, with the engine's start and without `load` | TBD (orchestrator) | |
@@ -133,7 +169,9 @@ Jake's Resume's upstream sample on pdfTeX, each part a median of five imports:
 | Chrome: the engine's start, before the import | TBD (orchestrator) | |
 
 What the import came to, every time, before the speedups and after: assembled, 47 fields editable
-and 5 locked, the document on one page, as `corpus oracle` assembles the sample.
+and 5 locked, the document on one page, as `corpus oracle` assembles the sample. Its report, which
+item 13 added, comes out partial at about 83% of its words editable; the run after the merge gives
+the share exactly: TBD (orchestrator).
 
 Awesome-CV's upstream sample on XeTeX, each part a median of five imports:
 
@@ -146,13 +184,14 @@ Awesome-CV's upstream sample on XeTeX, each part a median of five imports:
 | Node: the probe | 50.59 s: 37 compiles, each whole from the stock format, 1.35 s apiece (decision 0022) | |
 | Node: the fonts declared by file, and their check (decision 0023) | 1.56 s: its format dumped, 2 compiles | |
 | Node: the assembly and its checks, `validate` | 20.35 s: 76 compiles and 8 dumps or PDFs from the package's formats, 0.23 s apiece; 22.67 s, 79 compiles and 10, before | |
+| Node: the report, read as the app reads it | TBD (orchestrator) | |
 | Node: the page | 332 ms: its format put in place, two passes in 272 ms, drawn in 31 ms; 907 ms before, its format dumped in 581 ms | |
 | Node: the engine's start, before the import | 3.54 s | |
 | Chrome (`?measure=import-xetex`): the import, with the engine's start and without `load` | TBD (orchestrator) | |
 | Chrome: the parts, as the page's table gives them | TBD (orchestrator) | |
 
 What the import came to, every time: assembled, 119 fields editable and 17 locked, the document on
-three pages.
+three pages. Its report, from the run after the merge: TBD (orchestrator).
 
 Next to decision 0016's numbers, which do not compare like for like: each of 0016's is one run of a
 fresh process at a load of 7.2, and these are medians of five warm imports at a load of about 2.
@@ -182,29 +221,39 @@ compile and PDF with the check that asked for it, at a load of about 4:
 | The harness's controls: the date format alone, the others proven by check 4 | 1 compile of two passes | 0.15 s | 0.72 s: 4 compiles, one size's format dumped again |
 | The page: the package's format put in place | 1 compile of two passes | 0.15 s | 0.42 s, the format dumped a third time |
 
+The table was counted before the merge of items 13, 15 and 18. Since then check 3 also takes each
+locked part that may stop the compile, one that ends an environment it did not begin or begins one
+it does not end, removed and moved one place up and down, up to three compiles a part (decision
+0041); a part that ends what it begins is not tried, as neither of the two parts of the invented
+fork of Jake's Resume that the editor's tests import is. Whether the sample has a part that is
+tried shows in `validate`'s compiles in the run after the merge, against the 32 above. The report
+adds no request: it reads the reference's glyph stream, in the app's thread rather than the
+worker's, twice (`report` and `page`).
+
 On XeTeX, TeX is 97% too, and the probe is 65% of the whole: decision 0022 compiles every probe
 whole from the stock format on XeTeX, since a preamble that loads fontspec cannot be dumped, and
 each of its 37 compiles takes 1.35 s, where `validate`'s, from the package's formats with the fonts
 declared by file, take 0.23 s. The checks take 20.35 s more, the reference and the signatures 4.31
 s together, and everything else under 2.5 s.
 
-### Against plan section 4.3
+### Against the bar
 
 | Target | Limit | Jake's Resume, Node | Jake's Resume, Chrome | Awesome-CV, Node | Awesome-CV, Chrome | Slow laptop |
 |---|---|---|---|---|---|---|
-| Import, template already cached | under 5 s | 5.41 s, without the engine's start: missed, by 0.41 s; 6.55 s before the speedups | TBD (orchestrator), with the engine's start and without `load` | 77.39 s: missed, reported beside the bar | TBD (orchestrator) | |
+| Import, template already cached | under 8 s, plan section 4.3's 5 s as this record raised it | TBD (orchestrator), without the engine's start; before the merge 5.41 s, under 8 s by 2.59 s and over 5 s by 0.41 s; 6.55 s before the speedups | TBD (orchestrator), with the engine's start and without `load` | TBD (orchestrator); before the merge 77.39 s, missed, reported beside the bar | TBD (orchestrator) | |
 
-The bar is judged on pdfTeX, and only on imports that were all cache hits, which these were. It is
-missed on this machine in Node by 0.41 s. Chrome's cell is judged with the engine's start, which a
-person importing into an empty list waits for, so it will come out later than Node's by about that
-start, less what Chrome's compiles save, if any. Awesome-CV on XeTeX is reported beside it, as the
-plan lets XeTeX feel slower.
+The bar is judged on pdfTeX, and only on imports that were all cache hits, which these were.
+Before the merge, the import met the raised bar on this machine in Node by 2.59 s, where it missed
+the plan's 5 s by 0.41 s; the run after the merge decides it. Chrome's cell is judged with the
+engine's start, which a person importing into an empty list waits for, so it will come out later
+than Node's by about that start, less what Chrome's compiles save, if any. Awesome-CV on XeTeX is
+reported beside it, as the plan lets XeTeX feel slower.
 
 ### To fill the other columns
 
 The slow laptop's: set the repository up as decision 0016 says, then
 `pnpm --filter @resume-tools/editor corpus oracle` once, which fetches the upstream samples into
-`.corpus/oracle/` (and probes them); run
+`.corpus/oracle/` (and probes and assembles them); run
 `pnpm --filter @resume-tools/editor measure --import --json slow-laptop-import.json`; then run
 `pnpm dev`, open `/?measure=import` and then `/?measure=import-xetex` in Chrome with the tab in
 front, and read the table under the heading once it replaces the line that says which import is
@@ -227,22 +276,27 @@ Each row of `docs/milestone-3.md`'s "Owed from milestone 2", where it landed, or
 | The first load at 42 to 44 MB uncompressed | Stays owed, to milestone 5: the CDN's compression, the per-engine build and a template's format from the cache (decision 0016's consequences) |
 | The PDF's text layer showing a hyphen as U+2011 in some XeTeX fonts (decision 0014) | Stays owed, to the ATS's reader, outside the editor |
 | The PDF's text layer showing an import's small capitals as capitals (decision 0026) | Stays owed, to the ATS's reader or the PDF driver, outside the editor |
-| An imported section whose head opens its content's list kept as one unit with the locked part that closes it (decision 0026) | Landed in item 12 (decision 0038), with a section's `after` and a region that runs to its lists' closers. What that left, the list sections of ten Jake forks, fixed until an opener and its closer are paired by the environments the macros' definitions begin and end, is decision 0038's own to take up, not milestone 2's |
+| An imported section whose head opens its content's list kept as one unit with the locked part that closes it (decision 0026) | Landed in item 12 (decision 0038), with a section's `after` and a region that runs to its lists' closers. What that left, the list sections of ten Jake forks, fixed until an opener and its closer are paired by the environments the macros' definitions begin and end, is decision 0038's own to take up, not milestone 2's. Item 15 (decision 0041) has check 3 pin a locked part that holds a list's closer against a removal or move that would stop the compile, and the app takes back any structural step that does |
 
 So seven rows landed in milestone 3, and four stay owed, none of them to this milestone: the slow
 laptop's column to the owner, the first load to milestone 5, and the PDF's text layer to the ATS.
 
 ## Consequences
 
-- The milestone's bar, a cached template imported in under 5 s, is still missed as the editor
-  stands: by 0.41 s on pdfTeX in Node on this machine, and Chrome's number, which decides it for a
-  person and counts the engine's start, is still to come. The two speedups took 1.14 s off and
-  prove what they proved before. What is left is TeX's, and nothing else as large can go without
-  checking less: check 4's two size formats and their compiles, 0.87 s, and check 3's twelve
-  compiles, 0.90 s, judge the template rather than the document's words, so they could be kept with
-  the package, or with the cached answer, and not compiled again for a template seen before; that
-  skips checks on a person's import, which a record of its own would have to accept, as the
-  milestone's risks foresaw.
+- The milestone's bar is now under 8 s (above). Before the merge, the pdfTeX import met it in Node
+  on this machine by 2.59 s, where it missed the plan's 5 s by 0.41 s; the run after the merge, and
+  Chrome's number, which decides it for a person and counts the engine's start, are to come. The
+  two speedups took 1.14 s off and prove what they proved before. What is left is TeX's, and
+  nothing else as large can go without checking less: check 4's two size formats and their
+  compiles, 0.87 s before the merge, and check 3's compiles, twelve in 0.90 s then, judge the
+  template rather than the document's words, so they could be kept with the package, or with the
+  cached answer, and not compiled again for a template seen before; that skips checks on a
+  person's import, which a record of its own would have to accept, as the milestone's risks
+  foresaw. The raised bar does not ask for it; the slow laptop's column, or a person's wait, may.
+- A person whose import is partial, as Jake's Resume's sample is, waits twice: until its report
+  shows, at the end of `report`, and from their Continue until the page, `page`. The bar's whole
+  adds the two and leaves their reading of the report out; an import that succeeds goes straight
+  on to its page in the app, as here.
 - Opening the document before check 4 finishes, its controls offered once they are proven, would
   put the page in front of the person sooner by about what check 4 and the harness take, 2 s, but
   it changes what the person sees, a page whose controls come later, and waits for the owner's
@@ -257,11 +311,14 @@ laptop's column to the owner, the first load to milestone 5, and the PDF's text 
   each of its 37 compiles from 1.35 s to about the checks' 0.23 s and save some 40 s, if the probe's
   verdicts hold there, which a later item would have to show. The progress line's "slower the
   first time" undersells a wait of that length.
-- The speedups touch the import pipeline, so a corpus run is worth doing: `corpus assemble`'s
-  outcomes and the bar's controls should not move, only their compiles and times, which is what
-  the engine test above shows of one invented import.
+- The speedups touch the import pipeline, so a corpus run is worth doing: `corpus run`'s share of
+  successful imports, held to `baseline.json`, the page size, margins and font size on each
+  (decisions 0040 and 0043), and `corpus assemble`'s outcomes should not move, only their compiles
+  and times, which is what the engine test above shows of one invented import. Reading the report
+  and raising the bar change nothing a corpus run reads.
 - The measurement keeps nothing and leaves out the store's write and read between the import and
-  the page, a few IndexedDB transactions, and what React does with each step's progress line.
+  the page, a few IndexedDB transactions, a partial import's wait for the person's Continue, and
+  what React does with each step's progress line, the report and the page.
 - The browser's page takes its samples from the dev server, which reads them from `.corpus/oracle/`
   only as the oracle names them; without `corpus oracle` it answers 404 and says to run it.
 - Node's numbers are not a person's for the engine's start, and its imports run in a runtime that

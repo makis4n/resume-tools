@@ -24,12 +24,14 @@
  *
  * With `--import`, the upstream samples of Jake's Resume on pdfTeX and of Awesome-CV on XeTeX,
  * which `corpus oracle` fetches into `.corpus/oracle/` and whose every macro the committed answers
- * name, are each imported through the editor's compile scheduler and opened to their first drawn
- * page, the naming step answered from the committed answers alone, as the dev server answers with
- * no key, so that no model is asked (`src/measure/import.ts`, `src/measure/node.ts`). Each import
- * is on an engine started afresh, as a newly opened editor's worker is; one is imported first and
- * not counted, then `--runs` are timed. It prints, for each sample, its parts' medians, from the
- * file to the page, and the verdict against the bar, under 5 s, which is judged on pdfTeX.
+ * name, are each imported through the editor's compile scheduler, their report read as the app
+ * reads it, and opened to their first drawn page, a partial one without waiting for a Continue, the
+ * naming step answered from the committed answers alone, as the dev server answers with no key, so
+ * that no model is asked (`src/measure/import.ts`, `src/measure/node.ts`). Each import is on an
+ * engine started afresh, as a newly opened editor's worker is; one is imported first and not
+ * counted, then `--runs` are timed. It prints, for each sample, its parts' medians, from the file to
+ * the page, and the verdict against the bar, judged on pdfTeX: plan section 4.3's under 5 s, which
+ * decision 0045 raised to under 8 s.
  *
  * The editor's modules are written for Vite, with extensionless imports, JSX, and JSON and `?raw`
  * imports, which Node cannot load. So this file, which Node runs as it is, loads them through
@@ -321,7 +323,8 @@ async function measureImports(runner: Runner, options: Options) {
   console.log(
     [
       "The naming step answered from the committed answers alone, as the dev server does with no",
-      "key, and asked no model. The bar is judged on pdfTeX; XeTeX is reported beside it.",
+      "key, and asked no model. The bar is judged on pdfTeX, and XeTeX is reported beside it; it",
+      `is under ${imports.IMPORT_TARGET.limit / 1000} s, plan section 4.3's 5 s as decision 0045 raised it.`,
     ].join("\n"),
   );
   if (options.json !== undefined) {
