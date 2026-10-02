@@ -212,17 +212,19 @@ const fetched = existsSync(join(ORACLE_DIR, "jake-0000", "resume.tex"));
 
 /**
  * Each upstream sample's words as item 13's report reads them from its page (decision 0039): those
- * editable on the page, the resume's in all, and the template's own. They are the report's counts
- * on this commit, through the import the browser runs, and no hand count's: a hand count of each
- * page is owed (decision 0039), and the owner decides how it is made; until then they hold the
- * report to what it counts now, within two words.
+ * editable on the page, those the side panel alone edits, the resume's in all, and the template's
+ * own. They are the hand counts of each page (decision 0039, 2026-10-03), two routes reconciled,
+ * which the report matches; the test holds it to them within two words.
  */
 const SAMPLE_COUNTS: Readonly<
-  Record<string, { editable: number; body: number; template: number; outcome: string }>
+  Record<
+    string,
+    { editable: number; panel: number; body: number; template: number; outcome: string }
+  >
 > = {
-  "jake-0000": { editable: 323, body: 389, template: 0, outcome: "partial" },
-  "altacv-0000": { editable: 67, body: 232, template: 0, outcome: "partial" },
-  "awesome-cv-0000": { editable: 1023, body: 1269, template: 18, outcome: "partial" },
+  "jake-0000": { editable: 323, panel: 0, body: 389, template: 0, outcome: "partial" },
+  "altacv-0000": { editable: 67, panel: 0, body: 232, template: 0, outcome: "partial" },
+  "awesome-cv-0000": { editable: 1023, panel: 9, body: 1287, template: 0, outcome: "partial" },
 };
 
 /** The committed answers, which the naming route reads first. */
@@ -307,6 +309,9 @@ describe.skipIf(!fetched || !engineAvailable())(
         const report = reportOfImport(await importedSample(id));
         // Numbers alone in what fails: a sample's text never reaches the test's output.
         expect(Math.abs(report.words.editable - counts.editable), "editable").toBeLessThanOrEqual(
+          2,
+        );
+        expect(Math.abs(report.words.panel - counts.panel), "the side panel's").toBeLessThanOrEqual(
           2,
         );
         expect(Math.abs(report.words.body - counts.body), "the resume's").toBeLessThanOrEqual(2);
