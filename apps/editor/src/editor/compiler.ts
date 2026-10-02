@@ -70,8 +70,8 @@ import type {
   Engine as SessionEngine,
 } from "../engine/session";
 import type { Upload } from "../import/intake";
-import { refusal } from "../import/refusal";
-import type { ImportJob, ImportOutcome, ImportProgress } from "../import/run";
+import { isRefusal, refusal } from "../import/refusal";
+import type { Imported, ImportJob, ImportOutcome, ImportProgress } from "../import/run";
 import { type DrawnPage, type DrawOptions, drawEach, drawPage, drawPages } from "../page/draw";
 import type { FontLibrary, NativeCoverage } from "../page/fonts";
 import {
@@ -628,7 +628,9 @@ export class Compiler {
       this.setBusy();
       stop = () => engine.cancel?.();
       try {
-        return await engine.importResume(files, onProgress);
+        const outcome = await engine.importResume(files, onProgress);
+        if (!isRefusal(outcome)) this.takeFormats(outcome);
+        return outcome;
       } catch (error) {
         if (this.instance === instance) {
           // Cancelled, or hung: the worker was terminated and starts afresh, holding nothing. Lost
@@ -660,6 +662,20 @@ export class Compiler {
         stop();
       },
     };
+  }
+
+  /**
+   * Keep the formats an import hands over (decision 0045), the one its document opens with as the
+   * checks dumped it, as this compiler keeps a format it dumps: its bytes here, which `open` hands
+   * the engine rather than dumping it again, and a copy in the store.
+   */
+  private takeFormats(imported: Imported) {
+    const engine = imported.package.engine;
+    for (const { name, format } of imported.formats ?? []) {
+      this.formats.set(`${engine}:${name}`, format);
+      const store = this.formatStore;
+      if (store) this.keep("keep a format", () => store.put(engine, name, format));
+    }
   }
 
   /**
