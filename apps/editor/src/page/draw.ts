@@ -64,6 +64,12 @@ export interface GlyphBox {
   offset?: number;
   /** The locked part the glyph belongs to, if it is in one (decision 0041). */
   locked?: string;
+  /**
+   * What the glyph stands for, as its font names it (`glyphTextOf`), a ligature its letters; left
+   * out where the font does not say. A locked part's retype aligns its text with these, and checks
+   * the page outside the part with them too (milestone 3 item 16, decision 0042).
+   */
+  text?: string;
 }
 
 /**
@@ -394,6 +400,7 @@ function glyphBoxes(
   fields: Map<string, Field>,
   locked: ReadonlyMap<string, string>,
   keyed: Map<string, GlyphBox>,
+  textOf: GlyphTextOf,
 ): GlyphBox[] {
   const pt = pointsPerUnit(doc);
   const fieldOf = new Map<string, { field: string; offset: number }>();
@@ -443,6 +450,7 @@ function glyphBoxes(
           font: nativeFileName(def.name),
           size: def.size * pt,
           ...ownerOf(key),
+          ...textField(textOf(item, glyph)),
         });
       });
       return;
@@ -468,10 +476,14 @@ function glyphBoxes(
       font: font.name,
       size: font.scale * pt,
       ...ownerOf(key),
+      ...textField(textOf(item)),
     });
   });
   return boxes;
 }
+
+/** A glyph box's `text`, left out where the font names no text for the glyph. */
+const textField = (text: string | undefined) => (text === undefined ? {} : { text });
 
 /** The size a rule of a locked part is taken to be set at, in TeX points, before any glyph of it. */
 const RULE_SIZE = 10;
@@ -938,7 +950,16 @@ function drawPrepared(
     for (const each of set.items)
       if (each.page === pageIndex) lockedGlyphs.set(glyphKey(each.item, each.glyph), set.id);
   const keyed = new Map<string, GlyphBox>();
-  const glyphs = glyphBoxes(doc, page, loaded, natives, fields, lockedGlyphs, keyed);
+  const glyphs = glyphBoxes(
+    doc,
+    page,
+    loaded,
+    natives,
+    fields,
+    lockedGlyphs,
+    keyed,
+    prepared.textOf,
+  );
   const locked = regionsOf(doc, sets, pageIndex, keyed);
 
   const size = sizeOf(doc, pageIndex);

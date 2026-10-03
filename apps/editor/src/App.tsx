@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Controls } from "./editor/Controls";
 import {
   COULD_NOT_MAKE_PDF,
@@ -21,6 +21,15 @@ import { StructureGuard } from "./editor/guard";
 import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
 import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
+import { RetypeEditor, retypeEditorKey } from "./editor/RetypeEditor";
+import {
+  isRetype,
+  namesOnPage,
+  RETYPE_REFUSED,
+  RetypeGuard,
+  type RetypeVerdict,
+  retypesOf,
+} from "./editor/retype";
 import { holdsTyping, useHistoryKeys, type Way } from "./editor/undo";
 import { EngineCancelled, EngineClient } from "./engine/client";
 import type { EngineManifest } from "./engine/manifest";
@@ -53,7 +62,9 @@ import { resolveTemplate, type Template } from "./templates/resolve";
  * starts from a curated template's sample, chosen in the list, and a resume the person already
  * has is imported there, on the same engine, while the list shows (milestone 3 item 12, decision
  * 0038); an imported document opens with its package from the store, as a curated one with its
- * own. Only the dev server serves `/engine/` and the naming route; hosting them is milestone 5, so
+ * own; and a locked part's words, where they are plain text, are retyped on its page and kept only
+ * once the page outside it is as it was (milestone 3 item 16, decision 0042). Only the dev server
+ * serves `/engine/` and the naming route; hosting them is milestone 5, so
  * a production build keeps documents but shows the failure message for their pages until then.
  */
 
@@ -261,6 +272,26 @@ export function App() {
   const [takenBack, setTakenBack] = useState(false);
   /** Whether the compile that just stopped was a step taken back, whose plain message is said. */
   const tookBack = useRef(false);
+  /** The fonts the pages are drawn with, which a retype's check reads the outputs with. */
+  const fontsFor = useRef<FontLibrary | undefined>(undefined);
+  /**
+   * The retype of a locked part's words waiting for its page (milestone 3 item 16, decision 0042),
+   * which is kept only once the page outside the part is as it was and the part shows what was
+   * typed; the comparison loads with the import's reading of an output, on the first retype.
+   */
+  const retypeGuard = useRef(
+    new RetypeGuard(async (before, after, part) => {
+      const fonts = fontsFor.current;
+      if (fonts === undefined) throw new Error("the page's fonts are not loaded");
+      const { outsideCheck } = await import("./editor/retype-check");
+      return outsideCheck(fonts)(before, after, part);
+    }),
+  );
+  /**
+   * The locked part whose words are being retyped, by its section's id: whether what was typed is
+   * being checked, and why the last words were taken back, if they were.
+   */
+  const [retyping, setRetyping] = useState<{ part: string; checking: boolean; message?: string }>();
   /** The open document as the latest render has it, for a fit that lands after later renders. */
   const openNow = useRef<Open | undefined>(undefined);
   useLayoutEffect(() => {
@@ -271,6 +302,8 @@ export function App() {
   const showList = async (reason?: string) => {
     opening.current++;
     guard.current.forget();
+    retypeGuard.current.forget();
+    setRetyping(undefined);
     setTakenBack(false);
     setOpen(undefined);
     setClicked(undefined);
@@ -343,6 +376,8 @@ export function App() {
     setPdfError(undefined);
     setClicked(undefined);
     guard.current.forget();
+    retypeGuard.current.forget();
+    setRetyping(undefined);
     setTakenBack(false);
     compiler.current?.open(pkg, document, job);
   };
@@ -363,8 +398,44 @@ export function App() {
       ),
     );
     let owned: Compiler | undefined;
+    /**
+     * What became of a retype of a locked part's words (decision 0042): kept, its page shown and
+     * the document saved, and its editor closed; or taken back, the document before it compiled
+     * again, never saved, and the editor saying why in plain words.
+     */
+    const settleRetype = (verdict: RetypeVerdict, latest?: Shown) => {
+      const now = openNow.current;
+      if (now === undefined) return;
+      const { history } = now;
+      if (verdict.kept) {
+        if (latest !== undefined) {
+          setShown((before) => ({ latest, opening: before === undefined }));
+          setError(undefined);
+        }
+        kept.save(now.id, history.present, now.revision);
+        setRetyping(undefined);
+        return;
+      }
+      const { present, canUndo, canRedo } = history;
+      setOpen((current) =>
+        current?.history === history ? { ...current, present, canUndo, canRedo } : current,
+      );
+      owned?.update(present);
+      const message = RETYPE_REFUSED[verdict.why];
+      setRetyping((current) => current && { part: current.part, checking: false, message });
+    };
     const events: CompilerEvents = {
       page: (latest) => {
+        // A retype cancelled while it compiled: its page is never shown.
+        if (retypeGuard.current.discards(latest.document)) return;
+        // A retype's page is shown only once it passes, which its check says.
+        const retypes = retypeGuard.current;
+        if (retypes.waitsFor(latest.document)) {
+          void retypes.paged(latest).then((verdict) => {
+            if (verdict !== undefined) settleRetype(verdict, latest);
+          });
+          return;
+        }
         setShown((before) => ({ latest, opening: before === undefined }));
         setError(undefined);
         // A page that shows the structural step held lets it be saved, with what came after it.
@@ -373,11 +444,28 @@ export function App() {
           kept.save(now.id, now.history.present, now.revision);
       },
       error: (message) => {
-        // The step taken back says so itself, and its document compiles again.
+        // The step taken back says so itself, and its document compiles again; and so does a
+        // retype whose page did not come, which is taken back with it.
         if (tookBack.current) tookBack.current = false;
-        else setError(message);
+        else {
+          const retyped = retypeGuard.current.failed();
+          if (retyped === undefined) setError(message);
+          else settleRetype(retyped);
+        }
       },
       stopped: (document) => {
+        // A cancelled retype's compile that stopped says nothing: the document before it compiles.
+        if (retypeGuard.current.discards(document)) {
+          tookBack.current = true;
+          return;
+        }
+        // A retype that stopped the compile: taken back, never saved, and the page as it was.
+        const retyped = retypeGuard.current.stopped(document);
+        if (retyped !== undefined) {
+          tookBack.current = true;
+          settleRetype(retyped);
+          return;
+        }
         // The held step stopped the compile: taken back, never saved, and the page as it was.
         const now = openNow.current;
         if (now === undefined || !guard.current.stopped(document)) return;
@@ -396,6 +484,7 @@ export function App() {
       ({ tag, fonts, known }) => {
         if (!live) return;
         setLibrary(fonts);
+        fontsFor.current = fonts;
         owned = new Compiler(() => new EngineClient(), fonts, events, {
           formats: kept.formatsFor(tag),
           prefetch: kept.prefetch,
@@ -488,9 +577,13 @@ export function App() {
    */
   const travel = (way: Way): boolean => {
     if (open === undefined || open.stale) return false;
+    // A retype waiting for its page takes no undo or redo: the key does nothing until it is done.
+    if (retypeGuard.current.holds()) return true;
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && holdsTyping(focused)) focused.blur();
     setClicked(undefined);
+    // A part's editor open closes: its runs may change under it (decision 0042).
+    setRetyping(undefined);
     const before = open.history.present;
     const next = way === "undo" ? open.history.undo() : open.history.redo();
     // With nothing to take back, the step that ended may still have been dropped.
@@ -501,6 +594,14 @@ export function App() {
   // While a document is open, the browser's own undo and redo are refused but in the link
   // popover, whose typing they take back (`refuseNativeUndo`).
   useHistoryKeys(travel, open !== undefined);
+
+  // What each locked part of the document the page shows offers to retype (decision 0042), read
+  // from the page and the document it was drawn from, which a retype is checked against.
+  const latest = shown?.latest;
+  const retypes = useMemo(
+    () => (latest === undefined ? undefined : retypesOf(latest.document, latest.pages)),
+    [latest],
+  );
 
   /** A new document from the sample of the curated template the list's chooser gives. */
   const startDocument = async (template: string) => {
@@ -668,8 +769,9 @@ export function App() {
    */
   const edit = (command: Command, group?: string) => {
     // A document another tab has changed takes no edit until it is read again: one made here
-    // could not be saved over the other tab's, and would be lost on the reload.
-    if (stale) return;
+    // could not be saved over the other tab's, and would be lost on the reload. Nor does one
+    // whose retype waits for its page, which is then the retype's alone (decision 0042).
+    if (stale || retypeGuard.current.holds()) return;
     const before = history.present;
     let after: EditorDocument;
     try {
@@ -696,7 +798,9 @@ export function App() {
    * the field that was open went without closing.
    */
   const openField = (field: string, offset: number) => {
+    if (retypeGuard.current.holds()) return;
     seal();
+    setRetyping(undefined);
     setClicked({ field, offset, click: ++clicks.current });
   };
 
@@ -704,6 +808,59 @@ export function App() {
   const closeField = () => {
     seal();
     setClicked(undefined);
+  };
+
+  /**
+   * Open the small editor of a locked part's words, clicked on the page or opened from its row in
+   * the side panel (decision 0042), by its section's id in any case, as the page reads ids; the
+   * field open closes first, its visit ending, as a click on another field ends it.
+   */
+  const openRetype = (part: string) => {
+    if (stale || retypeGuard.current.holds()) return;
+    const section = present.resume.sections.find(
+      (each) => each.kind === "locked" && each.id.toLowerCase() === part.toLowerCase(),
+    );
+    const retype = section === undefined ? undefined : retypes?.get(section.id);
+    if (section === undefined || retype === undefined || !isRetype(retype)) return;
+    seal();
+    setClicked(undefined);
+    setRetyping({ part: section.id, checking: false });
+  };
+
+  /**
+   * Retype the open part's words (decision 0042): the change is one step of the history, compiled
+   * as any edit and kept only once its page passes (`RetypeGuard`, whose verdict the compiler's
+   * events give); until then it is not saved, and no other edit is taken. Words that change
+   * nothing close the editor; ones the part cannot keep say so there.
+   */
+  const keepRetype = (texts: string[]) => {
+    const part = retyping?.part;
+    const retype = part === undefined ? undefined : retypes?.get(part);
+    if (part === undefined || retype === undefined || !isRetype(retype) || shown === undefined)
+      return;
+    if (stale) return;
+    const started = retypeGuard.current.start(history, retype, texts, shown.latest);
+    if (started === "unchanged") {
+      setRetyping(undefined);
+      return;
+    }
+    if ("why" in started) {
+      setRetyping({ part, checking: false, message: RETYPE_REFUSED[started.why] });
+      return;
+    }
+    followHistory(open);
+    setTakenBack(false);
+    setRetyping({ part, checking: true });
+    compiler.current?.update(started);
+  };
+
+  /** Close the part's editor; a retype still being checked is taken back, and nothing saved. */
+  const cancelRetype = () => {
+    if (retypeGuard.current.cancel()) {
+      followHistory(open);
+      compiler.current?.update(history.present);
+    }
+    setRetyping(undefined);
   };
 
   /**
@@ -762,6 +919,8 @@ export function App() {
   const download = async () => {
     const owned = compiler.current;
     if (owned === undefined) return;
+    // A retype's page is the compiler's output while it is checked: never in a PDF (decision 0042).
+    if (retypeGuard.current.holds()) return;
     setDownloading(true);
     setPdfError(undefined);
     try {
@@ -783,13 +942,27 @@ export function App() {
   // compile (decision 0013): with no page to click, the panel gives each field an input
   // (`shownFieldsOf`), bar a rich one it would strip of its marks, so the edit that stopped the
   // compile can be taken back, or its item removed, and the page that edit makes then shows.
+  // Each locked part's row offers to retype its words, or says why not, and is named by its words as
+  // the page shows them now, the report's until a retype replaces them (decision 0042).
+  const rowNames =
+    latest === undefined || retypes === undefined
+      ? lockedWords
+      : namesOnPage(lockedWords, latest.pages, retypes);
+  const retypeRows =
+    retypes === undefined
+      ? undefined
+      : new Map(
+          [...retypes].map(([part, found]) => [part, isRetype(found) ? undefined : found.reason]),
+        );
   const side = (
     <aside inert={stale} style={{ flex: "none", width: "24rem" }}>
       <Panel
         document={present}
         pkg={pkg}
         shownFields={shownFieldsOf(shown?.latest, present, error !== undefined)}
-        lockedWords={lockedWords}
+        lockedWords={rowNames}
+        retypes={retypeRows}
+        onRetype={openRetype}
         onCommand={edit}
         onSeal={seal}
       />
@@ -888,6 +1061,30 @@ export function App() {
   const fitShown = fitting?.document === present ? fitting : undefined;
   // A fit runs, and has the engine, until it says what it came to, whatever document it began on.
   const fitRuns = fitting !== undefined && fitting.note === undefined;
+  // The locked parts a click on the page opens the small editor of, by id as the page reads them,
+  // and that editor, under the part's first block, while one is open (decision 0042). It checks a
+  // retype against the page on screen, so it takes one only while that page is the document's.
+  const retypable = new Set(
+    [...(retypes ?? [])].flatMap(([part, found]) => (isRetype(found) ? [part.toLowerCase()] : [])),
+  );
+  const retype = retyping === undefined ? undefined : retypes?.get(retyping.part);
+  const editing =
+    retyping === undefined || retype === undefined || !isRetype(retype) || stale
+      ? undefined
+      : {
+          part: retyping.part.toLowerCase(),
+          editor: (
+            <RetypeEditor
+              key={retypeEditorKey(retyping.part, shown.latest.document)}
+              pieces={retype.pieces}
+              ready={shown.latest.document === present && !busy}
+              checking={retyping.checking}
+              {...(retyping.message === undefined ? {} : { message: retyping.message })}
+              onKeep={keepRetype}
+              onCancel={cancelRetype}
+            />
+          ),
+        };
   return (
     <main style={{ display: "flex", alignItems: "flex-start", gap: "1.5rem" }}>
       <div style={{ flex: "none" }}>
@@ -920,7 +1117,7 @@ export function App() {
           <button
             type="button"
             onClick={() => void download()}
-            disabled={busy || downloading || stale || fitRuns}
+            disabled={busy || downloading || stale || fitRuns || retyping?.checking === true}
           >
             Download PDF
           </button>
@@ -956,7 +1153,13 @@ export function App() {
             the group of a visit to the field, which closing it ends, so that undo takes back the
             whole visit however many keystrokes it took (item 12). */}
         <div ref={setSheet} style={SHEET}>
-          <Pages pages={shown.latest.pages} onField={openField} />
+          <Pages
+            pages={shown.latest.pages}
+            onField={openField}
+            retypable={retypable}
+            onLocked={openRetype}
+            {...(editing === undefined ? {} : { editing })}
+          />
           {clicked && sheet && !stale && (
             <Overlay
               key={clicked.click}

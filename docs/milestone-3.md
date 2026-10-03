@@ -325,7 +325,7 @@ of each launch template must find editable what the hand-written port marks.
 
 <!-- -->
 
-16. [ ] **Editing locked chunks, decided by the corpus.** Plan section 6.1's edit, a sentence
+16. [x] **Editing locked chunks, decided by the corpus.** Plan section 6.1's edit, a sentence
     typed at a locked chunk that a model rewrites, sends part of the resume to the model, which
     the product rule in AGENTS.md forbids as written. The rule stays absolute until the corpus
     says what is locked in practice: the corpus run (item 17) reports the share of body words
@@ -397,6 +397,8 @@ pull request that acts on it. The first two the owner settled on 26 September.
   stays absolute, and the corpus's locked share decides: nothing if it is small, a text
   substitution with no model if it is material, and the model rewrite under per-edit consent
   only if that is not enough. Locked chunks render and can be removed or moved either way.
+  The owner found the share material on 2 October 2026, so the substitution, the retype, is built
+  and the rewrite waits (decision 0042).
 - **The naming service lives inside the editor's project** (item 10), not in an app of its own:
   one handler on the fetch API, served by the dev server's middleware in development and by a
   Pages Function or the app's Worker in production, with the logic in `packages/naming` so that

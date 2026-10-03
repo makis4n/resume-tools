@@ -1,7 +1,8 @@
 # 0041. Locked parts on the page
 
 Date: 2026-10-01 · Status: proposed; amends 0025's second lock marker and its side panel row, and
-adds the locked parts' steps to 0038's check 3; a part past the first page shows its lock since 0046
+adds the locked parts' steps to 0038's check 3; a part past the first page shows its lock since 0046;
+a click on a part whose words can be retyped opens its editor, and its lock says so, since 0042
 
 ## Context
 

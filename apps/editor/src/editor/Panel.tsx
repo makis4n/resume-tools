@@ -207,7 +207,7 @@ export function holdsContent(section: Section): boolean {
   }
 }
 
-/** Any section but a locked one, which nothing edits and the panel only moves and removes. */
+/** Any section but a locked one, which no field edits and the panel moves and removes. */
 type EditableSection = Exclude<Section, LockedSection>;
 
 /** Each kind of section in plain English. */
@@ -267,6 +267,9 @@ const KEPT = "These were kept as they were imported, so none can be added here";
 
 /** What a locked part is, which names one that has no name of its own. */
 export const KEPT_AS_IT_WAS = "Kept as it was";
+
+/** Why a locked part's "Change words" is disabled before a page shows the document (0042). */
+export const NOT_YET = "Wait for the page to show it";
 
 /**
  * Why a locked part's button is disabled where the template stops after its step (decision 0041):
@@ -333,6 +336,15 @@ export interface PanelProps {
    * name its row; a part with none is named `KEPT_AS_IT_WAS`.
    */
   lockedWords?: ReadonlyMap<string, string>;
+  /**
+   * What each locked section's row offers of a retype of its words (milestone 3 item 16, decision
+   * 0042), by its id: undefined where it can be retyped, which its "Change words" button opens on
+   * the page (`onRetype`), and else why not, in plain words, which the disabled button says when
+   * pointed at. A section it does not name, before a page shows the document, gets the button
+   * disabled with `NOT_YET`. Without `onRetype`, no row has the button.
+   */
+  retypes?: ReadonlyMap<string, string | undefined>;
+  onRetype?: (section: string) => void;
   /** Where the panel's commands go: the way an edit on the page goes, so the page follows. */
   onCommand: Send;
   /**
@@ -354,7 +366,16 @@ const Seal = createContext<() => void>(() => {});
 /** The package's rules (`Rules`), carried to each `FieldInput` and `AddSection` in the same way. */
 const RulesOf = createContext<Rules>(NO_RULES);
 
-export function Panel({ document, pkg, shownFields, lockedWords, onCommand, onSeal }: PanelProps) {
+export function Panel({
+  document,
+  pkg,
+  shownFields,
+  lockedWords,
+  retypes,
+  onRetype,
+  onCommand,
+  onSeal,
+}: PanelProps) {
   const { header, sections } = document.resume;
   const known = pkg ?? CURATED.get(document.template)?.package;
   const rules = rulesOf(known, document);
@@ -375,6 +396,8 @@ export function Panel({ document, pkg, shownFields, lockedWords, onCommand, onSe
               format={dateFormatOf(document, known)}
               rules={rules}
               lockedWords={lockedWords}
+              retypes={retypes}
+              onRetype={onRetype}
               send={onCommand}
             />
           </div>
@@ -521,12 +544,16 @@ function Sections({
   format,
   rules,
   lockedWords,
+  retypes,
+  onRetype,
   send,
 }: {
   sections: readonly Section[];
   format: DateFormat;
   rules: Rules;
   lockedWords: ReadonlyMap<string, string> | undefined;
+  retypes: PanelProps["retypes"];
+  onRetype: PanelProps["onRetype"];
   send: Send;
 }) {
   return (
@@ -540,6 +567,14 @@ function Sections({
                 key={section.id}
                 section={section}
                 words={lockedWords?.get(section.id)}
+                {...(onRetype === undefined
+                  ? {}
+                  : {
+                      retype: {
+                        open: () => onRetype(section.id),
+                        refused: retypes?.has(section.id) ? retypes.get(section.id) : NOT_YET,
+                      },
+                    })}
                 index={index}
                 count={sections.length}
                 rules={rules}
@@ -617,14 +652,16 @@ function SectionRow({
 
 /**
  * A locked section: a part of an imported resume kept as its upload had it, which the page draws
- * and nothing edits, so the panel moves and removes it, which undo takes back as any step, and
+ * and no field edits, so the panel moves and removes it, which undo takes back as any step, and
  * shows nothing of what it holds, which is LaTeX. It is named by its first words as the page shows
  * them (`PanelProps.lockedWords`), marked as kept, or `KEPT_AS_IT_WAS` where it has no name
- * (decision 0041).
+ * (decision 0041); and its "Change words" opens the editor of its runs of plain text on the page,
+ * the keyboard's way to it, or says why it has none (decision 0042).
  */
 function LockedRow({
   section,
   words,
+  retype,
   index,
   count,
   rules,
@@ -632,6 +669,8 @@ function LockedRow({
 }: {
   section: LockedSection;
   words: string | undefined;
+  /** Its "Change words" button: what it opens, and why it is disabled, if it is (decision 0042). */
+  retype?: { open: () => void; refused: string | undefined };
   index: number;
   count: number;
   rules: Rules;
@@ -649,6 +688,11 @@ function LockedRow({
     <li style={STYLE.row}>
       <span>{named ?? KEPT_AS_IT_WAS}</span>
       {named !== undefined && <small style={STYLE.mark}>{KEPT_AS_IT_WAS.toLowerCase()}</small>}
+      {retype !== undefined && (
+        <AddButton refused={retype.refused} onClick={retype.open}>
+          Change words
+        </AddButton>
+      )}
       <Reorder
         index={index}
         count={count}

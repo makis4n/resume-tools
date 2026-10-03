@@ -28,6 +28,7 @@ import {
   Id,
   type Link,
   LinkKind,
+  LockedLatex,
   Resume,
   RichText,
   type Section,
@@ -507,6 +508,7 @@ export type Command =
   | { type: "rich"; field: string; runs: RichText }
   | { type: "dates"; field: string; dates: Dates | undefined }
   | { type: "structure"; op: StructureOp }
+  | { type: "retype"; section: string; latex: string }
   | ControlCommand;
 
 /**
@@ -618,6 +620,8 @@ export function applyUnder(
     }
     case "structure":
       return { ...doc, resume: restructure(doc.resume, command.op, rules) };
+    case "retype":
+      return { ...doc, resume: retypeSection(doc.resume, command.section, command.latex) };
     case "control": {
       const controlled = pkg ?? curated(doc.template).package;
       const next: Record<string, unknown> = { ...doc.controls };
@@ -633,6 +637,28 @@ export function applyUnder(
       return { ...doc, controls: controls.data };
     }
   }
+}
+
+/**
+ * The resume with the locked section `id`'s LaTeX replaced by `latex`, a retype of its words
+ * (milestone 3 item 16, decision 0042): the section's runs of plain text, retyped and escaped by
+ * `retyped` in `retype.ts`, the rest of its bytes as the upload wrote them. Throws a
+ * `CommandError` for a section that is not a locked one, and for LaTeX a locked section may not
+ * hold (`LockedLatex`): one that holds the editor's markers' texts, as typed text might, or whose
+ * braces do not balance, which escaped text never unbalances. Nothing else of the section changes,
+ * so its structure is the same (`structureOf`), and the app checks its page before it keeps it
+ * (`RetypeGuard`).
+ */
+function retypeSection(resume: Resume, id: string, latex: string): Resume {
+  const index = resume.sections.findIndex((section) => section.id === id);
+  const section = resume.sections[index];
+  if (section?.kind !== "locked") throw new CommandError(`the document has no locked part ${id}`);
+  const parsed = LockedLatex.safeParse(latex);
+  if (!parsed.success)
+    throw new CommandError(`the locked part ${id} cannot keep that text: ${parsed.error.message}`);
+  const sections = [...resume.sections];
+  sections[index] = { ...section, latex: parsed.data };
+  return { ...resume, sections };
 }
 
 /**
@@ -1048,6 +1074,12 @@ export class History {
    * it began. Undefined for a step of one command, and once the step has ended.
    */
   private open: { group: string; future: Document[] } | undefined;
+  /**
+   * The oldest steps the last step of one command let go past `HISTORY_LIMIT` (`bound`), which
+   * `takeBack` gives back with it, so that a step taken back for good costs no other; none once
+   * anything else has changed the history.
+   */
+  private shed: Document[] = [];
 
   constructor(
     private current: Document,
@@ -1070,12 +1102,13 @@ export class History {
   dispatch(command: Command, group?: string): Document {
     const next = applyUnder(this.pkg, this.current, command);
     if (sameValue(next, this.current)) return this.current;
+    this.shed = [];
     if (group === undefined || group !== this.open?.group) {
       this.end();
       this.past.push(this.current);
       this.open = group === undefined ? undefined : { group, future: this.future };
       // A step of one command is a change, so it stays; an open one is bound once it has ended.
-      if (this.open === undefined) this.bound();
+      if (this.open === undefined) this.shed = this.bound();
     }
     this.future = [];
     this.current = next;
@@ -1088,6 +1121,7 @@ export class History {
    * what was typed has been deleted again, is dropped, and gives back what could be redone.
    */
   seal(): void {
+    this.shed = [];
     this.end();
   }
 
@@ -1096,6 +1130,7 @@ export class History {
    * open step ends first (`seal`), and is undone whole, so a command after it begins a new one.
    */
   undo(): Document | undefined {
+    this.shed = [];
     this.end();
     const previous = this.past.pop();
     if (previous === undefined) return undefined;
@@ -1110,12 +1145,30 @@ export class History {
    * of its own, as after an undo.
    */
   redo(): Document | undefined {
+    this.shed = [];
     this.end();
     const next = this.future.pop();
     if (next === undefined) return undefined;
     this.past.push(this.current);
     this.current = next;
     return next;
+  }
+
+  /**
+   * Take the present step back for good: the document before it becomes the present, as with
+   * `undo`, but the step is not kept to redo, and what the step cleared to redo stays cleared. A
+   * retype whose page did not pass is taken back so (`RetypeGuard`, decision 0042), so that no redo
+   * brings back a change that was refused; a step it let go past `HISTORY_LIMIT` comes back.
+   * Undefined at the start.
+   */
+  takeBack(): Document | undefined {
+    this.open = undefined;
+    const previous = this.past.pop();
+    if (previous === undefined) return undefined;
+    this.past.unshift(...this.shed);
+    this.shed = [];
+    this.current = previous;
+    return previous;
   }
 
   /** End the open step: dropped, with the future it cleared given back, if it changed nothing. */
@@ -1134,8 +1187,10 @@ export class History {
    * Let the oldest steps go past `HISTORY_LIMIT`. An open step is bound only once it has ended, so
    * that a step that is then dropped has not pushed out one that changed something.
    */
-  private bound(): void {
-    while (this.past.length > HISTORY_LIMIT) this.past.shift();
+  private bound(): Document[] {
+    const shed: Document[] = [];
+    while (this.past.length > HISTORY_LIMIT) shed.push(this.past.shift() as Document);
+    return shed;
   }
 
   get canUndo(): boolean {

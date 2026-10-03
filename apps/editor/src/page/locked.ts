@@ -6,10 +6,11 @@
  * and 0041), which move nothing on the page. The page reads them as it reads a field's markers,
  * and never as a field: what the output sets between a part's two markers, its glyphs and its
  * rules, is the part's, but for what a field's markers hold there, which is the field's, and for
- * what the output sets there out of the source's order (`lockedSets`). Nothing of a part is
- * edited, so the page aligns no text with it: it says where the part is on the page drawn, in
+ * what the output sets there out of the source's order (`lockedSets`). The page aligns no text
+ * with a part, as it does a field's: it says where the part is on the page drawn, in
  * blocks, which the page's lock shows over on hover (`Page.tsx`). The side panel names a part as
- * item 13's report does, from the import's own reading of the original's page (decision 0039).
+ * item 13's report does, from the import's own reading of the original's page (decision 0039). A
+ * retype of a part's words reads its glyphs' texts from the page (`retype.ts`, decision 0042).
  */
 
 import { LOCK_END, LOCK_MARKER } from "../templates/prelude";
