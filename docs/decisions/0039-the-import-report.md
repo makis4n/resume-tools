@@ -1,7 +1,8 @@
 # 0039. The import's report, and its bar at nine tenths
 
 Date: 2026-10-01 · Status: proposed; amends 0040's interim rule of what a successful import is,
-and replaces 0043's interim outcome
+and replaces 0043's interim outcome · Amended 2026-10-03: the hand counts, and a running footer
+counted on every page (below)
 
 ## Context
 
@@ -66,6 +67,13 @@ to be those whose first check holds. The code is `apps/editor/src/import/report.
    preamble spans are moved as far as the call that holds them, the calls taken in turn where both
    preambles write them alike (`preambleSpans`). The template's own text has no owner.
 3. **A word is what sets most of its glyphs**, the first where two set as many.
+4. **A running line is the locked part's on every page** (2026-10-03, `ownRunningLines`, below):
+   a stretch of a page's glyphs on one line that another page sets at the same height, at least
+   half the longer's glyphs the same character at the same place, is one running header or footer
+   in copies. Where every owned glyph of its copies has one and the same locked owner, that part
+   sets the whole line on every page, the date or the page's number its call passes among it;
+   otherwise each copy's glyph the template has takes the locked owner of a copy's same glyph at
+   the same place. A running line none of the source sets stays the template's.
 
 The body's words are all the resume's; the template's own, a label, a separator, an icon's neighbour
 or a page's number that no part of the document's source sets, are no word of the resume's.
@@ -189,7 +197,7 @@ fields' and locked parts'.
   none. Its source still counts 50 words more than its pages show: words the page never sets, as
   the review found them, the chart's values and ratings, lengths and widths, colours, the photo's
   size and file name, and options. The page's count is the report's.
-- **The template's counts are unverified.** No one has read the samples' pages to say which words
+- **The template's counts are unverified** (settled 2026-10-03, below). No one has read the samples' pages to say which words
   are the template's own (below): AltaCV's 13 were a parsing macro's, and Awesome-CV's 18, which
   the search by words does not move, are words no part's source holds where its pages set them,
   most likely the footer its class sets on each of its three pages from one call, with a date and
@@ -203,7 +211,83 @@ sample's report to the counts above within two words (`SAMPLE_COUNTS`), the repo
 commit and no hand count's, as a regression check until then: a count reads each page's words,
 the runs of letters and digits, and sets each down to a field the page opens, a field of the side
 panel's, a part the report names by its first words, or the template, the way the fork's are
-counted above; its numbers then go here and in the test, and item 13 is ticked.
+counted above; its numbers then go here and in the test, and item 13 is ticked. (Done on
+2026-10-03, below.)
+
+### The hand counts, 2026-10-03
+
+By the owner's decision of 2 October 2026, an agent read the three upstream samples, and no other
+document of the corpus, to count their pages by hand. Each sample was imported once through
+`importResume` with the committed answers, as `corpus-oracle.test.ts` imports it, on main at
+7dd0042; nothing of `report.ts` was called, and the counts were written down before
+`SAMPLE_COUNTS` or this record's counts above were opened.
+
+**The method.**
+
+- **The page** is the reference compile, made again in a job of its own and read as image strips
+  of 200 to 250 dpi, line by line, AltaCV's columns apart.
+- **A word** is this record's: a run of letters and digits, punctuation, an icon and a hyphen the
+  source writes parting words, a hyphen TeX adds at a line's end joining one.
+- **Editable on the page** is the editor's own marking: the document compiled as the editor
+  compiles it, then drawn page by page, giving the fields that hold glyphs.
+- **Two routes, reconciled.** The first transcribes and classifies every line, counted by hand and
+  then tallied; the second works field by field through the imported document, each locked part's
+  source read for the words it sets and the raw header fields added. The two agree in every
+  category for all three samples. Poppler's `pdftotext`, split the same way, served only as a
+  check on the transcription: it differs only by the icons it spells as letters (AltaCV 10,
+  Awesome-CV 3) and by the three words TeX hyphenated in Awesome-CV.
+
+**The counts.**
+
+| | Jake | AltaCV | Awesome-CV |
+|---|--:|--:|--:|
+| Pages | 1 | 2 | 3 |
+| The resume's words, by hand | 389 | 232 | 1287 |
+| Editable on the page, by hand | 323 | 67 (65 on page 1, 2 on page 2) | 1023 (549, 441 and 33 by page) |
+| In the side panel only, by hand | 0 | 0 | 9 |
+| Locked, by hand | 66 | 165 | 255 |
+| The template's, by hand | 0 | 0 | 0 |
+| The report before the fix: editable, resume's, template's | 323, 389, 0 | 67, 232, 0 | 1023, 1269, 18 |
+| Rate, by hand | 83.0% | 28.9% | 79.5% |
+
+Jake's and AltaCV's match the report word for word, Jake's locked words its heading block (15),
+three dates kept as written (11) and its skills (40), AltaCV's its wheel chart's 16 labels among
+them; AltaCV's bibliography is left out with no built copy, and its icons set no word.
+Awesome-CV's editable words and its side panel's match, and so do its locked parts, the footer
+aside.
+
+**The fault: a running footer counted on its first page alone.** Awesome-CV's class sets a
+running footer on each of the three pages from one call in the body, `\makecvfooter`, which passes
+it a date (`\today`), a centre text of three words, and the page's number (`\thepage`): seven words
+a page, 21 in all. The probe set the centre text down to the call where a compile showed it, on
+page 1, and no further; the date and the number spell no text of the source, so no search found
+them. The report gave the locked part 3 words and the template 18: page 1's date and number, and
+the whole footer on pages 2 and 3, the call's own literal text among it. The owner's reading: all
+21 are the resume's, locked, since the call is in the document's source and no word of the source
+is the template's.
+
+**The fix** is the fourth step of the attribution above, in `report.ts` (`ownRunningLines`), and
+general: any running header or footer a locked part of the source sets, on any number of pages,
+is that part's whole on every page. The report now reads the Awesome-CV sample as the hand count
+does, word for word: 1023 editable on the page, 9 in the side panel, 255 locked (`unmapped` 210,
+`date` 35, `shape` 5, `text` 4, `differs` 1), 1287 the resume's and none the template's, 79.5%,
+partial; Jake's and AltaCV's are unchanged. `SAMPLE_COUNTS` now holds each sample's report to
+the hand counts, the side panel's among them, within two words, and `report.test.ts` holds an
+invented two-page document whose footer repeats. Its limits: a footer on one page alone has no
+copy to find it by, so its date and number stay the template's; and a class's own label on such a
+line counts as the part's.
+
+**Later pages are editable on the page.** The editor drew page 1 alone when the counts were made,
+so 2 of AltaCV's editable words and 474 of Awesome-CV's stood on pages it did not draw. The report
+and the pins count a marked field on any page as editable on the page; item 20 (every page on
+screen, PR #78) draws every page, which settles it that way.
+
+**The corpus.** `corpus run --committed-only` over the whole corpus with the fix, the M4 Pro, 15.4
+minutes: 0 success, 69 partial, 11 refused, 103 with no reference, 36 with no answer, 1 timed out,
+as before it. The words in editable fields are the same 8,083, of 41,631 resume's words where
+there were 41,499: the 132 more are running lines' words the template had, now locked, and the
+rate reads 19.4% where it read 19.5% (19.42 against the baseline's 19.48). The baseline holds the
+success rate, 0.0%, which holds; it is not raised.
 
 ## The sample
 
@@ -252,12 +336,15 @@ same function, document by document, as a run of it before the review's fixes sh
   word whose letters a class spaces more than a tenth of their size would read as several, which no
   sample does. A page's number or a date `\today` sets, called from the body, counts as the
   resume's, locked, where the probe sets its glyphs down to the call, as it does a stretch whose
-  source lies inside one; where no text of the source finds them, they are the template's.
+  source lies inside one, or where it stands on a running line a locked part sets (2026-10-03);
+  elsewhere, where no text of the source finds them, they are the template's.
 - **The template's own text is the probe's `chrome`** (decision 0022): what no part of the
   document's source sets, read by the pieces of text each part's source holds and by its words
   alone. The search errs on the resume's side: a class label whose words a neighbouring part's
   source holds too is counted as that part's, locked, which can only lower the rate. Text a macro
-  makes that no source spells, a date, a page's number, a counter, stays the template's.
+  makes that no source spells, a date, a page's number, a counter, stays the template's, but on a
+  running line a locked part of the source sets (2026-10-03). A class's own label on such a line
+  is counted as the part's too, locked, which can only lower the rate.
 - **An import kept before this change** has no owners, and its report counts the words as its
   assembly did in the source, naming no part; only development stores hold such imports.
 - **A partial import is not kept until the person continues**: one left waiting when the tab goes

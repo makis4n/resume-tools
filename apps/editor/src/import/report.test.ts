@@ -550,6 +550,64 @@ describe("the report", () => {
     expect(report.locked).toEqual([]);
   });
 
+  test("gives a running footer to the locked part that sets it on every page, its date and number with it", () => {
+    // Two invented pages, each under a running header the template sets alone and over a running
+    // footer one call of the source sets: a date and a page's number it passes, and its text in
+    // the middle, which the probe reads on page 1 alone, as the part's (item 13's hand count).
+    const header = () => line("Invented Template", -20 * PT);
+    const footer = (number: string) => [
+      ...line("Oct 3, 2026", 100 * PT),
+      ...line("Quill Invented · Resume", 100 * PT, 20 * SIZE),
+      ...line(number, 100 * PT, 40 * SIZE),
+    ];
+    const date = line("Oct 3, 2026", 0).length;
+    const centre = line("Quill Invented · Resume", 0).length;
+    const top = header().length;
+    const first = [...header(), ...line("Invented Engineer", 0), ...footer("1")];
+    const second = [...header(), ...line("Wren Quill", 0), ...footer("2")];
+    const body1 = first.length - top - date - centre - 1;
+    const body2 = second.length - top - date - centre - 1;
+    const owners: GlyphOwner[] = [
+      { page: 0, from: top, to: top + body1, field: "ent-a.title" },
+      { page: 0, from: top + body1 + date, to: top + body1 + date + centre, part: 0 },
+      { page: 1, from: top, to: top + body2, field: "ent-b.title" },
+    ];
+    const report = reportOf(
+      {
+        checks: checks({ owners, all: [field("ent-a.title"), field("ent-b.title")] }),
+        extras: [part("raw", 3)],
+      },
+      { pages: [{ items: first }, { items: second }], bibliographyLeftOut: false, images: [] },
+    );
+    // Oct 3 2026, Quill Invented Resume and the page's number: 7 words a page, all the part's; the
+    // header's 2 a page the template's.
+    expect(report.words).toEqual({
+      editable: 4,
+      panel: 0,
+      locked: 14,
+      byReason: { raw: 14 },
+      body: 18,
+      template: 4,
+    });
+    expect(report.locked).toEqual([
+      {
+        words: "Oct 3, 2026 Quill Invented · Resume 1",
+        count: 14,
+        reason: "raw",
+        why: LOCK_WHY.raw,
+      },
+    ]);
+    // A line on one page alone is no running line: the template keeps its date and number.
+    const alone = reportOf(
+      {
+        checks: checks({ owners: owners.slice(0, 2), all: [field("ent-a.title")] }),
+        extras: [part("raw", 3)],
+      },
+      { pages: [{ items: first }], bibliographyLeftOut: false, images: [] },
+    );
+    expect(alone.words).toMatchObject({ locked: 3, template: 6 });
+  });
+
   test("imports nothing but types, so that Node runs it as it is for the corpus's runners", () => {
     const source = readFileSync(new URL("./report.ts", import.meta.url), "utf8");
     const imports = source.split("\n").filter((each) => /^import\b/.test(each));
