@@ -28,6 +28,7 @@ import {
   Id,
   type Link,
   LinkKind,
+  LockedLatex,
   Resume,
   RichText,
   type Section,
@@ -507,6 +508,7 @@ export type Command =
   | { type: "rich"; field: string; runs: RichText }
   | { type: "dates"; field: string; dates: Dates | undefined }
   | { type: "structure"; op: StructureOp }
+  | { type: "retype"; section: string; latex: string }
   | ControlCommand;
 
 /**
@@ -618,6 +620,8 @@ export function applyUnder(
     }
     case "structure":
       return { ...doc, resume: restructure(doc.resume, command.op, rules) };
+    case "retype":
+      return { ...doc, resume: retypeSection(doc.resume, command.section, command.latex) };
     case "control": {
       const controlled = pkg ?? curated(doc.template).package;
       const next: Record<string, unknown> = { ...doc.controls };
@@ -633,6 +637,28 @@ export function applyUnder(
       return { ...doc, controls: controls.data };
     }
   }
+}
+
+/**
+ * The resume with the locked section `id`'s LaTeX replaced by `latex`, a retype of its words
+ * (milestone 3 item 16, decision 0042): the section's runs of plain text, retyped and escaped by
+ * `retyped` in `retype.ts`, the rest of its bytes as the upload wrote them. Throws a
+ * `CommandError` for a section that is not a locked one, and for LaTeX a locked section may not
+ * hold (`LockedLatex`): one that holds the editor's markers' texts, as typed text might, or whose
+ * braces do not balance, which escaped text never unbalances. Nothing else of the section changes,
+ * so its structure is the same (`structureOf`), and the app checks its page before it keeps it
+ * (`RetypeGuard`).
+ */
+function retypeSection(resume: Resume, id: string, latex: string): Resume {
+  const index = resume.sections.findIndex((section) => section.id === id);
+  const section = resume.sections[index];
+  if (section?.kind !== "locked") throw new CommandError(`the document has no locked part ${id}`);
+  const parsed = LockedLatex.safeParse(latex);
+  if (!parsed.success)
+    throw new CommandError(`the locked part ${id} cannot keep that text: ${parsed.error.message}`);
+  const sections = [...resume.sections];
+  sections[index] = { ...section, latex: parsed.data };
+  return { ...resume, sections };
 }
 
 /**
@@ -1116,6 +1142,20 @@ export class History {
     this.past.push(this.current);
     this.current = next;
     return next;
+  }
+
+  /**
+   * Take the present step back for good: the document before it becomes the present, as with
+   * `undo`, but the step is not kept to redo, and what the step cleared to redo stays cleared. A
+   * retype whose page did not pass is taken back so (`RetypeGuard`, decision 0042), so that no redo
+   * brings back a change that was refused. Undefined at the start.
+   */
+  takeBack(): Document | undefined {
+    this.open = undefined;
+    const previous = this.past.pop();
+    if (previous === undefined) return undefined;
+    this.current = previous;
+    return previous;
   }
 
   /** End the open step: dropped, with the future it cleared given back, if it changed nothing. */

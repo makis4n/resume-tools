@@ -7,16 +7,25 @@
  * click on it reports nothing, so that neither the plain overlay nor the rich editor opens there;
  * the pointer over it shows a lock, and one line that says what the part is and where it is
  * changed, over the part's blocks, on every page it is on; and nothing of it, or of its lock, takes
- * the focus, so that the keyboard passes it by.
+ * the focus, so that the keyboard passes it by. A part whose words can be retyped (milestone 3 item
+ * 16, decision 0042) says so in its lock's line, and a click on it reports it, so that the app opens
+ * its small editor, which the page places under the part's first block.
  */
 
-import { type RefObject, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import type { PageSize } from "../tex/svg";
 import type { DrawnPage } from "./draw";
 import type { Box, LockedRegion } from "./locked";
 
 /** What the lock over a locked part says. */
 export const LOCKED_TIP = "Kept as it was; remove or move it from the side panel";
+
+/**
+ * What the lock over a locked part says when its words can be retyped (decision 0042): a click on
+ * it opens its small editor.
+ */
+export const RETYPE_TIP =
+  "Kept as it was; click to change its words, or remove or move it from the side panel";
 
 export interface PageProps {
   svg: string;
@@ -36,6 +45,17 @@ export interface PageProps {
   onOver?: (part: string | undefined) => void;
   /** Whether the page shows the lock's line over its first block of the part; it does by default. */
   tip?: boolean;
+  /**
+   * The locked parts whose words can be retyped (decision 0042), whose lock's line says so
+   * (`RETYPE_TIP`), and a click on which reports the part (`onLocked`).
+   */
+  retypable?: ReadonlySet<string>;
+  onLocked?: (part: string) => void;
+  /**
+   * The small editor of the part being retyped, by its id, which this page places under the part's
+   * first block; given only to the page where the part starts.
+   */
+  editing?: { part: string; editor: ReactNode };
 }
 
 /** The field and character offset of the glyph a click landed on, from its data attributes. */
@@ -56,11 +76,24 @@ export function lockedAt(target: Element | null): string | undefined {
   return target.closest("[data-locked]")?.getAttribute("data-locked") || undefined;
 }
 
-/** What a click on the page does: report the field and character under it, if there is one. */
-export function onPageClick(onField?: PageProps["onField"]) {
+/**
+ * What a click on the page does: report the field and character under it, if there is one; else
+ * the locked part under it, where its words can be retyped (`retypable`), so that its editor opens.
+ */
+export function onPageClick(
+  onField?: PageProps["onField"],
+  onLocked?: PageProps["onLocked"],
+  retypable?: ReadonlySet<string>,
+) {
   return (event: { target: EventTarget | null }) => {
-    const hit = fieldAt(event.target as Element | null);
-    if (hit) onField?.(hit.field, hit.offset);
+    const target = event.target as Element | null;
+    const hit = fieldAt(target);
+    if (hit) {
+      onField?.(hit.field, hit.offset);
+      return;
+    }
+    const part = lockedAt(target);
+    if (part !== undefined && retypable?.has(part)) onLocked?.(part);
   };
 }
 
@@ -69,7 +102,19 @@ const HOST = { position: "relative" } as const;
 /** The SVG's own element, which sets no line around it, so that the page ends where the SVG does. */
 const DRAWN = { lineHeight: 0 } as const;
 
-export function Page({ svg, onField, locked, size, index, over, onOver, tip = true }: PageProps) {
+export function Page({
+  svg,
+  onField,
+  locked,
+  size,
+  index,
+  over,
+  onOver,
+  tip = true,
+  retypable,
+  onLocked,
+  editing,
+}: PageProps) {
   const host = useRef<HTMLDivElement>(null);
   // The locked part the pointer is over, by id, when no `Pages` keeps it for every page.
   const [own, setOwn] = useState<string>();
@@ -77,20 +122,35 @@ export function Page({ svg, onField, locked, size, index, over, onOver, tip = tr
   const hovered = shared ? over : own;
   const setOver = shared ? onOver : setOwn;
   const part = hovered === undefined ? undefined : locked?.get(hovered);
+  const edited = editing === undefined ? undefined : locked?.get(editing.part)?.blocks[0];
+  // A part whose words can be retyped takes a click, as a field does.
+  const clickable = hovered !== undefined && retypable?.has(hovered) === true;
   return (
     <div
       ref={host}
       className="page"
       data-page={index}
-      style={HOST}
-      onClick={onPageClick(onField)}
+      style={clickable ? { ...HOST, cursor: "pointer" } : HOST}
+      onClick={onPageClick(onField, onLocked, retypable)}
       onPointerOver={(event) => setOver(lockedAt(event.target as Element | null))}
       onPointerLeave={() => setOver(undefined)}
     >
       {/* The SVG is built by src/tex/svg.ts from the engine's output, with every string escaped. */}
       <div style={DRAWN} dangerouslySetInnerHTML={{ __html: svg }} />
       {part && size && part.blocks.length > 0 && (
-        <Lock host={host} svg={svg} size={size} blocks={part.blocks} tip={tip} />
+        <Lock
+          host={host}
+          svg={svg}
+          size={size}
+          blocks={part.blocks}
+          tip={tip}
+          line={hovered !== undefined && retypable?.has(hovered) ? RETYPE_TIP : LOCKED_TIP}
+        />
+      )}
+      {editing && edited && size && (
+        <Below host={host} svg={svg} size={size} block={edited}>
+          {editing.editor}
+        </Below>
       )}
     </div>
   );
@@ -109,6 +169,11 @@ export interface PagesProps {
   /** Every page of the document, in order (`Shown.pages`). */
   pages: readonly Pick<DrawnPage, "svg" | "locked" | "size">[];
   onField?: PageProps["onField"];
+  /** The locked parts whose words can be retyped, and what a click on one does (`Page`). */
+  retypable?: PageProps["retypable"];
+  onLocked?: PageProps["onLocked"];
+  /** The small editor of the part being retyped, placed on the page where the part starts. */
+  editing?: PageProps["editing"];
 }
 
 /**
@@ -118,13 +183,15 @@ export interface PagesProps {
  * field's glyph, on any page, reports the field as on the first. A page whose SVG is the one it had
  * is not drawn again: React leaves its element as it is.
  */
-export function Pages({ pages, onField }: PagesProps) {
+export function Pages({ pages, onField, retypable, onLocked, editing }: PagesProps) {
   const [over, setOver] = useState<string>();
-  // The first page that holds a block of the part the pointer is over shows the lock's line.
-  const first =
-    over === undefined
+  /** The first page that holds a block of a part, which shows its lock's line and its editor. */
+  const startOf = (part: string | undefined) =>
+    part === undefined
       ? -1
-      : pages.findIndex((page) => (page.locked.get(over)?.blocks.length ?? 0) > 0);
+      : pages.findIndex((page) => (page.locked.get(part)?.blocks.length ?? 0) > 0);
+  const first = startOf(over);
+  const edited = startOf(editing?.part);
   return (
     <div className="pages" style={STACK}>
       {pages.map((page, index) => (
@@ -139,6 +206,9 @@ export function Pages({ pages, onField }: PagesProps) {
             over={over}
             onOver={setOver}
             tip={index === first}
+            retypable={retypable}
+            onLocked={onLocked}
+            {...(index === edited && editing !== undefined ? { editing } : {})}
           />
         </div>
       ))}
@@ -206,36 +276,20 @@ function Lock({
   size,
   blocks,
   tip: line,
+  line: words,
 }: {
   host: RefObject<HTMLDivElement | null>;
   svg: string;
   size: PageSize;
   blocks: readonly Box[];
   tip: boolean;
+  /** What the line says: `LOCKED_TIP`, or `RETYPE_TIP` for a part whose words can be retyped. */
+  line: string;
 }) {
-  const [frame, setFrame] = useState<Frame>();
+  const frame = useFrame(host, svg, size);
   const tip = useRef<HTMLDivElement>(null);
   const [overrun, setOverrun] = useState(0);
-  // Measured again with each page, whose SVG is drawn anew.
-  useLayoutEffect(() => {
-    const element = host.current;
-    const drawn = element?.querySelector("svg");
-    if (!element || !drawn) {
-      setFrame(undefined);
-      return;
-    }
-    const page = drawn.getBoundingClientRect();
-    const box = element.getBoundingClientRect();
-    const scale = size.width > 0 ? page.width / size.width : 0;
-    setFrame({ x: page.left - box.left, y: page.top - box.top, scale });
-  }, [host, svg, size]);
   const [first] = blocks;
-  const placed = (block: Box, at: Frame) => ({
-    left: at.x + block.left * at.scale,
-    top: at.y + block.top * at.scale,
-    width: (block.right - block.left) * at.scale,
-    height: (block.bottom - block.top) * at.scale,
-  });
   const start = frame && first && placed(first, frame);
   // How far the line, at the first block's left, would run past the page's right edge.
   useLayoutEffect(() => {
@@ -259,10 +313,74 @@ function Lock({
           style={{ ...TIP, left: Math.max(frame.x, start.left - overrun), top: start.top - 2 }}
         >
           <Padlock />
-          {LOCKED_TIP}
+          {words}
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Where the page's SVG is drawn in its host, read again with each new page: the SVG is scaled to
+ * its container, so its box against the page's size in TeX points gives the scale.
+ */
+function useFrame(
+  host: RefObject<HTMLDivElement | null>,
+  svg: string,
+  size: PageSize,
+): Frame | undefined {
+  const [frame, setFrame] = useState<Frame>();
+  // Measured again with each page, whose SVG is drawn anew.
+  useLayoutEffect(() => {
+    const element = host.current;
+    const drawn = element?.querySelector("svg");
+    if (!element || !drawn) {
+      setFrame(undefined);
+      return;
+    }
+    const page = drawn.getBoundingClientRect();
+    const box = element.getBoundingClientRect();
+    const scale = size.width > 0 ? page.width / size.width : 0;
+    setFrame({ x: page.left - box.left, y: page.top - box.top, scale });
+  }, [host, svg, size]);
+  return frame;
+}
+
+/** A box on the page where the SVG draws it, in CSS pixels from the host's corner. */
+const placed = (block: Box, at: Frame) => ({
+  left: at.x + block.left * at.scale,
+  top: at.y + block.top * at.scale,
+  width: (block.right - block.left) * at.scale,
+  height: (block.bottom - block.top) * at.scale,
+});
+
+/**
+ * The retype editor's place: under a part's first block, from its left edge, over what follows it
+ * on the page and over the lock's line, as a field's overlay lies over the page.
+ */
+const BELOW = { position: "absolute", zIndex: 2 } as const;
+
+/** What is given, placed under `block` where the page's SVG draws it (`useFrame`). */
+function Below({
+  host,
+  svg,
+  size,
+  block,
+  children,
+}: {
+  host: RefObject<HTMLDivElement | null>;
+  svg: string;
+  size: PageSize;
+  block: Box;
+  children: ReactNode;
+}) {
+  const frame = useFrame(host, svg, size);
+  if (frame === undefined) return null;
+  const at = placed(block, frame);
+  return (
+    <div className="retype-place" style={{ ...BELOW, left: at.left, top: at.top + at.height + 4 }}>
+      {children}
+    </div>
   );
 }
 

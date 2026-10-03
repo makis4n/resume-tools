@@ -275,7 +275,8 @@ const sectionBase = { id: Id, title: z.string(), role: SectionRole, extras: Extr
  * A part of an imported resume the model has no place for, kept as the user's own upload had it:
  * LaTeX the generator writes where the section sits, between two lock markers the page reads, and
  * never escapes (decision 0025). Nothing in it is a field, so it has no title and its role is
- * `other`, which it keeps; the side panel moves and removes it, and nothing else changes it.
+ * `other`, which it keeps; the side panel moves and removes it, and nothing else changes it but a
+ * retype of its runs of plain text, escaped as a field's text is (decision 0042).
  */
 export const LockedSection = z.strictObject({
   kind: z.literal("locked"),

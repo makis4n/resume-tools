@@ -185,6 +185,11 @@ export type Shown = {
    * first page's, and the first after a worker was replaced.
    */
   startMs?: number;
+  /**
+   * The output the pages were drawn from, the DVI or XeTeX's XDV, which a retype of a locked part
+   * compares with the output after it (`RetypeGuard`, decision 0042).
+   */
+  output?: Uint8Array;
 };
 
 export interface CompilerEvents {
@@ -914,7 +919,7 @@ export class Compiler {
       for (const each of pages) this.warnAboutFonts(each);
       this.made = { instance, pkg, document: doc, job: run.job };
       const ms = performance.now() - started;
-      this.events.page({ page, pages, body, document: doc, ms, startMs });
+      this.events.page({ page, pages, body, document: doc, ms, startMs, output });
     } catch (error) {
       // A request that lost the engine was dealt with there, and this run is no longer current:
       // what it throws is the terminated or failed worker's error, and the console has heard why.

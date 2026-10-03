@@ -61,3 +61,24 @@ describe("onPageClick", () => {
     expect(clicks).toEqual([["name", 7]]);
   });
 });
+
+describe("onPageClick on a locked part (decision 0042)", () => {
+  /** An element under a part's glyph: `closest` finds the part, and no field. */
+  const part = (id: string) =>
+    ({
+      closest: (selector: string) =>
+        selector === "[data-locked]" ? { getAttribute: () => id } : null,
+    }) as unknown as Element;
+
+  it("reports a part whose words can be retyped, and no other", () => {
+    const parts: string[] = [];
+    const click = onPageClick(
+      () => parts.push("a field"),
+      (id) => parts.push(id),
+      new Set(["lock-heading"]),
+    );
+    click({ target: part("lock-heading") });
+    click({ target: part("lock-chart") });
+    expect(parts).toEqual(["lock-heading"]);
+  });
+});
