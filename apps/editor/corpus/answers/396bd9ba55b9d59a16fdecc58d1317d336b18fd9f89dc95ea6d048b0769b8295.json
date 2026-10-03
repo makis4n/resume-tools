@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "key": "396bd9ba55b9d59a16fdecc58d1317d336b18fd9f89dc95ea6d048b0769b8295",
+  "hash": "3c9451ee7ec48cc9746d7e347858a825dd0fa9073df99982d862af065efa5245",
+  "of": "command",
+  "name": "resumeItem",
+  "family": "jake",
+  "answer": {
+    "kind": "bullet",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "label",
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": []
+}

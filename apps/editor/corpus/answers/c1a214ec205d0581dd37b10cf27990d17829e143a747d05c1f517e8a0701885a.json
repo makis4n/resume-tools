@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "key": "c1a214ec205d0581dd37b10cf27990d17829e143a747d05c1f517e8a0701885a",
+  "hash": "563a049e1898f174333d97e05e188bf03d86c9543d1d244344c293ffd2596923",
+  "of": "command",
+  "name": "makecvheader",
+  "family": "altacv",
+  "answer": {
+    "kind": "header",
+    "arguments": [],
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["namefont", "3a6481a341151f805df99e5742bbd0242cd5cb8642d188b8c2cac8128aaaa2ca"],
+    ["taglinefont", "c4e4430d34278660ba305b5f93bfa356c552ff885bb2f31cd5a71ab0776e8f8d"],
+    ["personalinfofont", "11eda7225637d5d9645581cced03aa56a7b5fe225f687d93662dbc9c82ae15ac"]
+  ]
+}

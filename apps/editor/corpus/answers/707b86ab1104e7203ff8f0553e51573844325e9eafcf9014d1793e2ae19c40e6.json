@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "key": "707b86ab1104e7203ff8f0553e51573844325e9eafcf9014d1793e2ae19c40e6",
+  "hash": "e3dea0975ad921dc46f3d7a114f234a1fc9dbaa66e694df9b222e1545da81f13",
+  "of": "command",
+  "name": "faTelegram",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other",
+        "blank": "absent"
+      },
+      {
+        "index": 2,
+        "meaning": "other",
+        "blank": "absent"
+      }
+    ],
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["faPreselectedIcon", "2a5dc986644c577dd65165934349664a897bcbc1519a613553442f9152b728ab"],
+    ["faPreselectedIcon code", "c4eafe31a9176f2026a2227ac57ac4a66df889337614500d5d36d20137b7efe8"]
+  ]
+}

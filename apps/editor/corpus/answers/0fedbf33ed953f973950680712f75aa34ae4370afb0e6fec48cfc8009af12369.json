@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "key": "0fedbf33ed953f973950680712f75aa34ae4370afb0e6fec48cfc8009af12369",
+  "hash": "085291934779e143a999bffcff11b56cf3caa80404724739339ab0ade30e1d52",
+  "of": "command",
+  "name": "cvsubsection",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title"
+      }
+    ],
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["cvsubsectionfont", "1e8b070fd28efb11fd289c57247cdec2cea6df4961be4167107eedca5fd766ba"]
+  ]
+}

@@ -546,17 +546,33 @@ describe("the committed answers", () => {
     const answers = files.map((file) =>
       StoredAnswer.parse(JSON.parse(readFileSync(join(ANSWERS_DIR, file), "utf8"))),
     );
+    const byKey = new Map(answers.map((each) => [each.key, each]));
     for (const opener of answers) {
       const closedBy = opener.answer.list?.closedBy;
       if (opener.of !== "command" || opener.answer.list?.does !== "opens") continue;
-      const closer = answers.find(
-        (each) => each.family === opener.family && each.of === "command" && each.name === closedBy,
-      );
-      expect(closer?.key, opener.name).toBe(opener.partnerKeys?.closedBy);
+      // The closer is found by the key the opener holds for it, not by its name: one family can
+      // commit several definitions of a list's two macros under the same names (Jake's forks).
+      const closer = byKey.get(opener.partnerKeys?.closedBy ?? "");
+      expect(closer, `${opener.name} ${opener.key}`).toBeDefined();
+      expect(closer?.of, closedBy).toBe("command");
+      expect(closer?.name, closedBy).toBe(closedBy);
       expect(closer?.answer.list, closedBy).toEqual({ does: "closes", openedBy: opener.name });
-      expect(closer?.partnerKeys?.openedBy, closedBy).toBe(opener.key);
+      // A closer holds one opener's key. Where several openers of one name share its definition,
+      // it names one of them, an opener of the same name that holds the closer's key back; the
+      // others pair with it by name, as `answerFor` pairs a partner the request has no key of.
+      const back = byKey.get(closer?.partnerKeys?.openedBy ?? "");
+      expect(back?.name, `${closedBy} ${closer?.key}`).toBe(opener.name);
+      expect(back?.of, `${closedBy} ${closer?.key}`).toBe("command");
+      expect(back?.partnerKeys?.closedBy, `${closedBy} ${closer?.key}`).toBe(closer?.key);
       // A closer is of its opener's kind.
       expect(closer?.answer.kind, closedBy).toBe(opener.answer.kind);
+    }
+    // And every closer is named back by the opener it holds the key of.
+    for (const closer of answers) {
+      if (closer.of !== "command" || closer.answer.list?.does !== "closes") continue;
+      const opener = byKey.get(closer.partnerKeys?.openedBy ?? "");
+      expect(opener?.name, `${closer.name} ${closer.key}`).toBe(closer.answer.list.openedBy);
+      expect(opener?.partnerKeys?.closedBy, `${closer.name} ${closer.key}`).toBe(closer.key);
     }
   });
 });

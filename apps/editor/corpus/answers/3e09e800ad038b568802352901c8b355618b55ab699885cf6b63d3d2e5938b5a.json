@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "key": "3e09e800ad038b568802352901c8b355618b55ab699885cf6b63d3d2e5938b5a",
+  "hash": "b2c500028703feff11496d18024b03379be0f99564bd1bf7e0cd2e44922507d9",
+  "of": "command",
+  "name": "cvsection",
+  "family": "altacv",
+  "answer": {
+    "kind": "section",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other",
+        "blank": "absent"
+      },
+      {
+        "index": 2,
+        "meaning": "title",
+        "slot": "title",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["\\cvsection", "0e9faa88359970d76d72c971dad54268f155b130ac26933777857f08f95b8a24"],
+    ["ifstrequal", "040b4a4e03d57060a3226b5e7141f2689d4b026dc9940993f19186494f8fa78f"],
+    ["cvsectionfont", "da22b00bcafba1171c9990dae1dc4960adfa3902ba9b04beb7004737ad949433"]
+  ]
+}

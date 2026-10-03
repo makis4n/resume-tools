@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "key": "1e05bebacbbbface8196df9bafbad1819e3f1d40321fd86df62e17f9cc86de5d",
+  "hash": "1c4c611175fced59141a4502ef4970111fa151d790eb02be32e3ade32724a9b8",
+  "of": "command",
+  "name": "cvref",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title"
+      },
+      {
+        "index": 2,
+        "meaning": "text"
+      },
+      {
+        "index": 3,
+        "meaning": "place"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["emailsymbol", "d71f02d9ba1584c36564f7f8f9841719ae061317c11e4587accb957190b3efd5"],
+    ["mailsymbol", "ea5303e0b47018c63fae7b6ac70bdbf2b2e8f6fc2f8a13e2dc0b0733118170fb"]
+  ]
+}

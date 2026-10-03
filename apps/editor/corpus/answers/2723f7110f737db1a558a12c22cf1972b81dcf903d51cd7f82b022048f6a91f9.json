@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "key": "2723f7110f737db1a558a12c22cf1972b81dcf903d51cd7f82b022048f6a91f9",
+  "hash": "32faf6f0032421050489a1c0cd049b33439ab32fd5d73af324cb72a54b5e0b18",
+  "of": "command",
+  "name": "github",
+  "family": "altacv",
+  "answer": {
+    "kind": "link",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "label",
+        "blank": "empty"
+      }
+    ],
+    "link": "github",
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["printinfo", "42b26d608298b3fc9836d25d70328b16ea0c2933cd71ca9c09db4320b2006e2f"],
+    ["csuse", "208b56aad4c25b2942c1fc0a38026c3de2c58f7e233fee6a4c0fd4c3499c779f"],
+    ["printinfo code", "26d870ad4e67be6efb574a525534dea4272ebda45624e337a0c1a6d1f72548c7"],
+    ["BeginAccSupp", "2b60e442c5d7558284ab77202929e814f52679472c418eb4678dbd6032099501"],
+    ["utffriendlydetokenize", "03209602147929d701369223361aabc1edccbdf412f9d13f9f4c2910401dd163"],
+    ["EndAccSupp", "7a2ee46aae6b7c3a16d1b41b3a7e286a648e842f2cb9509271b13bf18ca60d3b"],
+    ["setkeys", "d7ade1f2a00faf375d936da9c0ed7cbfeb74d82f0f9df1e49d440fc20c901788"],
+    ["ACCSUPP@bdc", "f5ecb9852d34ba4f13143b65b87b236ae4ee3744a2c75beb720459de26a3ec6a"],
+    ["ACCSUPP@space", "ba763f5d94d1c405463f881c98e7b52913a9844aff2f7e65444adec328dcdabd"],
+    ["ACCSUPP@emc", "4e99a7c323d1f734a0b56a5587f92484d13bd69f6b0abecb995467f698006121"]
+  ]
+}

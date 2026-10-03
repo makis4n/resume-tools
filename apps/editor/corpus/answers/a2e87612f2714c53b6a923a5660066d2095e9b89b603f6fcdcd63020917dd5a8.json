@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "key": "a2e87612f2714c53b6a923a5660066d2095e9b89b603f6fcdcd63020917dd5a8",
+  "hash": "a338955f2ba66e44dbdaf033fee5af7c58ef899e99849dd9565b91141e22f2c1",
+  "of": "command",
+  "name": "cvitemwithcomment",
+  "family": "moderncv",
+  "answer": {
+    "kind": "labelledItem",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "length",
+        "blank": "absent"
+      },
+      {
+        "index": 2,
+        "meaning": "label",
+        "slot": "label",
+        "blank": "empty"
+      },
+      {
+        "index": 3,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      },
+      {
+        "index": 4,
+        "meaning": "text",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["\\cvitemwithcomment", "7b8abe346b518a495fdb716fbccf762d307d56d99819804f2e8fb846d3fed333"],
+    ["cvitem", "46f99b20b11400ccd90ec463ab9fb07c10a9c3e11544b727b8b6c89a1e4ddc79"],
+    ["\\cvitem", "f6e9c094430a8dafb6427cd09171d6c0c8832c55017f69e1651ac98d6b7aab40"],
+    ["hintstyle", "951e2e11ec84f5938da97a02b8f7e210d11d9b75a65f3872b0d4f8f5528cdd56"]
+  ]
+}

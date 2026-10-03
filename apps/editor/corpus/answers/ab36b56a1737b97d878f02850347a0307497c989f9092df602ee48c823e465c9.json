@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "key": "ab36b56a1737b97d878f02850347a0307497c989f9092df602ee48c823e465c9",
+  "hash": "19fab11d7bf6a7f3827572cdcdfbd8a96d616eaf0d42923e3a3b2857412ceae7",
+  "of": "command",
+  "name": "cvmail",
+  "answer": {
+    "kind": "contact",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "contact": "email",
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [["before", "634427fb94099569c62991df4f7e673ff6fb427f4c80e68e49fbe9158cdcb7ad"]]
+}

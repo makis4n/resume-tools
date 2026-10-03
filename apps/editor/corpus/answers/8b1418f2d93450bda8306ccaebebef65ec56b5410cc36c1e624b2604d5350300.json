@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "key": "8b1418f2d93450bda8306ccaebebef65ec56b5410cc36c1e624b2604d5350300",
+  "hash": "90d317c626602b428503a4343e89a7e7586be93905bd4075e9333376bae01b02",
+  "of": "command",
+  "name": "profile",
+  "family": "altacv",
+  "answer": {
+    "kind": "paragraph",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "role": "summary",
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": []
+}

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "key": "51baf11a7ff3216221d9c3583f73d46ce0ebaa04a738a4ba6d6ff5a270428bec",
+  "hash": "4a1325b1b42fc808e1cc2a1e5fe820a9c02193ac9156d20f8555781744246798",
+  "of": "command",
+  "name": "cvevent",
+  "family": "altacv",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "slot": "title",
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "subtitle",
+        "slot": "subtitle",
+        "blank": "empty"
+      },
+      {
+        "index": 3,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "empty"
+      },
+      {
+        "index": 4,
+        "meaning": "place",
+        "slot": "place",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["ifstrequal", "040b4a4e03d57060a3226b5e7141f2689d4b026dc9940993f19186494f8fa78f"],
+    ["faCalendar", "3365e577f0b686b3dcf6631972f76d9d01f56630b516897ea23ea246c19b3347"],
+    ["faMapMarker", "8a07c857dc62ef089b511852b73ab3b0762f337a7b37ad004102ef97d1c2bb20"],
+    ["faPreselectedIcon", "2a5dc986644c577dd65165934349664a897bcbc1519a613553442f9152b728ab"],
+    ["faPreselectedIcon code", "c4eafe31a9176f2026a2227ac57ac4a66df889337614500d5d36d20137b7efe8"]
+  ]
+}

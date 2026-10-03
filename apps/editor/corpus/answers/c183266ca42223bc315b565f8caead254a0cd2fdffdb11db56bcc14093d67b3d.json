@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "key": "c183266ca42223bc315b565f8caead254a0cd2fdffdb11db56bcc14093d67b3d",
+  "hash": "b3976b89526a6f0d2947b034423565b7fc392210ce6584d3647e8295568e406d",
+  "of": "command",
+  "name": "degree",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "slot": "title",
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "subtitle",
+        "slot": "subtitle",
+        "blank": "empty"
+      },
+      {
+        "index": 3,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "empty"
+      },
+      {
+        "index": 4,
+        "meaning": "other",
+        "slot": "bullets",
+        "blank": "empty"
+      }
+    ],
+    "role": "education",
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [["tenure", "561ba4831c1940745a942bbbf277d10f4e831fa11197eb442dcaaf49fa210757"]]
+}

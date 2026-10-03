@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "key": "2aa1cf04eabdc93f94e1ecf56fcd5a80c7fa675ecf631bb63f03dbe7bfc93228",
+  "hash": "845b2627eed8fe7ea36ffa72c3258c1735e7a5fc0daf97a1a82de90d2d342c4f",
+  "of": "command",
+  "name": "orcid",
+  "family": "altacv",
+  "answer": {
+    "kind": "link",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "label",
+        "blank": "empty"
+      }
+    ],
+    "link": "orcid",
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["printinfo", "42b26d608298b3fc9836d25d70328b16ea0c2933cd71ca9c09db4320b2006e2f"],
+    ["csuse", "208b56aad4c25b2942c1fc0a38026c3de2c58f7e233fee6a4c0fd4c3499c779f"],
+    ["printinfo code", "0373e76af7b9d3d93bb03f20d1e86454cb149873cdf4b8037116c7c65e835528"],
+    ["BeginAccSupp", "2b60e442c5d7558284ab77202929e814f52679472c418eb4678dbd6032099501"],
+    ["EndAccSupp", "7a2ee46aae6b7c3a16d1b41b3a7e286a648e842f2cb9509271b13bf18ca60d3b"],
+    ["utffriendlydetokenize", "03209602147929d701369223361aabc1edccbdf412f9d13f9f4c2910401dd163"],
+    ["setkeys", "d7ade1f2a00faf375d936da9c0ed7cbfeb74d82f0f9df1e49d440fc20c901788"],
+    ["ACCSUPP@bdc", "f5ecb9852d34ba4f13143b65b87b236ae4ee3744a2c75beb720459de26a3ec6a"],
+    ["ACCSUPP@space", "ba763f5d94d1c405463f881c98e7b52913a9844aff2f7e65444adec328dcdabd"],
+    ["ACCSUPP@emc", "4e99a7c323d1f734a0b56a5587f92484d13bd69f6b0abecb995467f698006121"]
+  ]
+}

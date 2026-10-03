@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "key": "698b0d0c610f81beb2c2ba02b27c16d96134242c3acfc20639bb346b0ee3fedd",
+  "hash": "ecc94fcbbe07bb71f63d08e894e1c35903750117a16f50b97dff1a0e5934f7fa",
+  "of": "command",
+  "name": "makecvfooter",
+  "family": "awesome-cv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other"
+      },
+      {
+        "index": 2,
+        "meaning": "text"
+      },
+      {
+        "index": 3,
+        "meaning": "other"
+      }
+    ],
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["fancyfoot", "214d5584d263a21492c216802e99cb5c22d89ba076ce5d8fdbfb47ee514a3a51"],
+    ["footerstyle", "7c1896f8b7afc1a071f6458aa0a6851885d886463fe6236472388b6bb1e374a0"],
+    ["\\fancyfoot", "8f7ec01046c74ded65a385aeaffaca1e145d63f4699ef0ea8155d8355670dad1"],
+    ["footerfont", "3e4a88af7a235d3add52e74bd656eb6ce7d3d0f9a0fb5b7a5bb8f6d69eb3644c"],
+    ["f@nch@fancyhf", "4fd4342c06945102c9e24a27014710c4868fb57432aba1ed74a15108e61ac5a7"],
+    ["temp@c", "394756dfba1831e21fda0c9d90f9feb3f64546ce5617a3e4b1db6b5761715b71"],
+    ["f@nch@forc", "39bd401387fa2a28c72e769cd15b043e90ad671171f80b6d2508f9cbc3d84da3"],
+    ["f@nch@ifin", "0157d44d931fceb3f81d219617308718420ea987f08d87cabf18b8193886e3c0"],
+    ["f@nch@errmsg", "f2afa17abc6cf4007976f4e917bedaf39585de6fd1a3282c0e1c4d3e6e6a440d"],
+    ["f@nch@for", "3c68aa944de5322ab42b62b6ba1025fb3ee1fd31780fd434d6808f8b51b807fb"],
+    ["f@nch@default", "bc4c4c9628671c7dcea3e5b10479cb800b3f83de48438aabf05619b225306544"],
+    ["f@nch@fancyhf@Echeck", "afaec7010540906304f04fa213f0f80a348fa04efb05b3bcd3cf4b0c51f293ac"],
+    ["f@nch@def", "cbf48e7ad569dcb999d0e68c7ffe068676894cb42ffdab5465d27de778f12967"],
+    ["f@nchf@rc", "21789424e204743bf7a3c5d2493360dfb39c142b492a35e85ec9a48890d6d1b2"],
+    ["f@nch@ifundefined", "21b057637f6ad3851736ea2ae8a34e4351941ddff1d998b7999138160fadfd2f"],
+    ["f@nch@warning", "079169737488e7fd243ed57a689a848d2d9a3b902a5dd27792205893d490faf9"],
+    ["if@nch@mpty", "c29bc9ab9bfcdebf7cfb7e9454fb31817dd54df825924892e12dddd45e2b85fe"],
+    ["f@nch@rc", "39274c7b24f308f68dd9ac0a0fafbc1dc1229cee010d80e03227e2505927e423"]
+  ]
+}

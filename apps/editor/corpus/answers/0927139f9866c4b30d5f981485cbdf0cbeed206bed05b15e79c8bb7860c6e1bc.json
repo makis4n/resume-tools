@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "key": "0927139f9866c4b30d5f981485cbdf0cbeed206bed05b15e79c8bb7860c6e1bc",
+  "hash": "c5923628ed11d423230470ded84f03fc8a879ec5859ad0d80ca42384a2ee55bd",
+  "of": "command",
+  "name": "mycomment",
+  "family": "moderncv",
+  "answer": {
+    "kind": "layout",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "other"
+      }
+    ],
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": []
+}

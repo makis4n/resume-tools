@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "key": "82a346ef722d5ba1c1a84ebb1ff1a11dd388880e8c5d35860eea7f82e2c99e50",
+  "hash": "bddcb616781abdf52bebfa0f8340b20acfa101c4d21d0df282bbb73bf28ca8b3",
+  "of": "command",
+  "name": "cvref",
+  "family": "altacv",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title"
+      },
+      {
+        "index": 2,
+        "meaning": "text"
+      },
+      {
+        "index": 3,
+        "meaning": "address"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["emailsymbol", "0d9ead8e642ffec280657998ef1d0a26c6fd0b60fcc03b39854193e4521c4044"],
+    ["mailaddresssymbol", "0d9ead8e642ffec280657998ef1d0a26c6fd0b60fcc03b39854193e4521c4044"],
+    ["faEnvelope", "ae6c73405e98df4b35cd14635cc165751fcc7a8b1b5d7295896dceb0bda40818"],
+    ["faPreselectedIcon", "2a5dc986644c577dd65165934349664a897bcbc1519a613553442f9152b728ab"],
+    ["faPreselectedIcon code", "c4eafe31a9176f2026a2227ac57ac4a66df889337614500d5d36d20137b7efe8"]
+  ]
+}

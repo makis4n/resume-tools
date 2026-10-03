@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "key": "b792ed4b8b090d3dc429150c701bae234529e1ed336c8970eb6fb2a020e788ca",
+  "hash": "e79b54f86a50e66b04f0291e6aad312d4c803dc02e16a886be84b9d8fbbd210f",
+  "of": "command",
+  "name": "phone",
+  "family": "altacv",
+  "answer": {
+    "kind": "contact",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "contact": "phone",
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["printinfo", "f966a1aba89e7c41cd0db8dcfcd9bfe2ab788bb61b3b3337dfddacdd89578805"],
+    ["phonesymbol", "fa4cc187529e93986ef3c0d092856177fe9f7e49f415a4564a9f67e98c303d8f"]
+  ]
+}

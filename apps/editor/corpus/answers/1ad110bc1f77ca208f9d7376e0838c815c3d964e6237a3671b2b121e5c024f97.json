@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "key": "1ad110bc1f77ca208f9d7376e0838c815c3d964e6237a3671b2b121e5c024f97",
+  "hash": "90aae6ef78d034bf7e5bdc929a9922a1e97c3b900e2ef3113c1439d4622d12d1",
+  "of": "command",
+  "name": "mailaddress",
+  "family": "altacv",
+  "answer": {
+    "kind": "contact",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "place",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "contact": "location",
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["printinfo", "f966a1aba89e7c41cd0db8dcfcd9bfe2ab788bb61b3b3337dfddacdd89578805"],
+    ["mailsymbol", "ea5303e0b47018c63fae7b6ac70bdbf2b2e8f6fc2f8a13e2dc0b0733118170fb"]
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "key": "24d152cd9011041507061e0c58312de20b1cf61028fca1a98fc1d1cb686da4e7",
+  "hash": "d3ad22cc7b974ae4a69219c839137ffff03aae792ceed6e6af892b4cca7bb76a",
+  "of": "command",
+  "name": "sub",
+  "family": "jake",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "subtitle"
+      },
+      {
+        "index": 2,
+        "meaning": "dates"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": []
+}
