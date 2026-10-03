@@ -1,10 +1,10 @@
 # LaTeX Resume Editor Plan
 
-> Converted on 2026-09-13 from the shared page at https://claude.ai/code/artifact/c9403706-378d-475b-8599-48f4b0c6f569. The page stays the shareable version; this file is the copy that lives with the code.
+> This file is the plan (decision 0048). It was converted on 2026-09-13 from a shared page, which is no longer kept up.
 
 *A browser editor for one-page LaTeX resumes, where you edit the typeset page itself and never see a line of TeX.*
 
-Version one plan · revised 17 September 2026 · spike done, follow-ups merged
+Version one plan · revised 3 October 2026 · spike done, follow-ups merged
 
 ## 1. Key terms
 
@@ -75,7 +75,7 @@ BaKoMa TeX Word did direct page editing on real TeX in the 2000s for any LaTeX d
 
 ## 3. Decisions
 
-Everything settled so far, including the defaults chosen on 12 September the two revisions of 13 September, the revision of 16 September that moved template switching out of version one, and the revision of 17 September that records what the spike measured. Rows carrying the default tag were recommendations accepted without discussion, so they are the first to revisit if something feels wrong in practice.
+Everything settled so far, including the defaults chosen on 12 September the two revisions of 13 September, the revision of 16 September that moved template switching out of version one, the revision of 17 September that records what the spike measured, and the revision of 3 October that restates the privacy rule as one sentence. Rows carrying the default tag were recommendations accepted without discussion, so they are the first to revisit if something feels wrong in practice.
 
 | Question | Decision | What it changes |
 |---|---|---|
@@ -99,6 +99,7 @@ Everything settled so far, including the defaults chosen on 12 September the two
 | Locked content | Shown locked, with a describe-in-words edit *(default)* | The model rewrites the chunk, the compiler checks it |
 | Import success bar | Identical output and 90% of body words editable *(default)* | Below the bar an import is labelled partial |
 | Shared cache | Yes, with personal data stripped *(default)* | Originals stay in the owner's account only |
+| What leaves the browser | Resume content, only when the person asks for something that needs it and is told what is sent; the receiver keeps only what the person asked to be kept (decision 0047) | Saving to an account and sending a PDF to the checker are such requests; a later feature that sends resume content asks once, remembers the answer and says each time that it sends |
 | Launch templates | Jake's Resume, AltaCV, Awesome-CV *(default)* | Covers pdfTeX, icons, two columns and XeTeX |
 | Tech stack | TypeScript throughout, React, TeX engines built to WebAssembly from TeX Live sources *(default)* | Four parts are written from scratch; everything else is assembled, see section 8 |
 | Hosting | Cloudflare for files and the model endpoint, Supabase for sign-in and saved resumes *(default)* | Downloads are free on one, accounts are nearly free to build on the other |
@@ -230,6 +231,8 @@ Locked chunks render exactly as they did in the original and show a lock when ho
 An import succeeds when the regenerated document produces the same glyph stream as the original, markers stripped, and at least 90% of body words are editable in place. Below that, the report labels the import partial, lists the locked parts, and lets the user continue or stop. The corpus measures both conditions across real documents.
 
 ### 6.3 Shared cache and privacy
+
+The rule, since 3 October 2026 (decision 0047): resume content leaves the browser only when the person asks for something that needs it and is told what is sent, and whoever receives it keeps only what the person asked to be kept. A feature that sends resume content asks the first time, remembers the answer in that browser with a setting to change it, and says each time that it sends. The naming step sits well inside the rule, because it sends none of the resume's content at all.
 
 What the model works out about a template is saved once and reused for everyone who imports a template with the same macros, keyed by a hash of each normalised definition and its dependencies. Caching per macro rather than per file matters because forks of popular templates change one macro's spacing and leave the other nine alone. Only definitions and placeholdered call sites are sent or stored. Names, addresses, emails, phone numbers and links found inside definitions are stripped before anything leaves the browser, and cache entries are audited on a schedule. The original upload is stored in its owner's account and nowhere else.
 
@@ -372,4 +375,4 @@ Parked on purpose. None of them blocks version one, and each is cheaper to decid
 
 ---
 
-*Written on 12 September 2026 from a design conversation and revised on 13 September to bring style controls into version one, leave the model choice open, and add the stack and hosting choices, and on 16 September to move template switching out of version one. Decisions carrying the default tag were proposed and accepted without further discussion, and are the first to revisit if practice disagrees.*
+*Written on 12 September 2026 from a design conversation and revised on 13 September to bring style controls into version one, leave the model choice open, and add the stack and hosting choices, on 16 September to move template switching out of version one, and on 3 October to restate the privacy rule as one sentence (decision 0047) and to make this file the plan itself (decision 0048). Decisions carrying the default tag were proposed and accepted without further discussion, and are the first to revisit if practice disagrees.*

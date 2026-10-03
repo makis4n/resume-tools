@@ -124,9 +124,11 @@ corpus checks over them: the survey, the leak check of every naming request, and
 These come from the plan and are not negotiable in code:
 
 - A user never sees LaTeX. No error, panel, tooltip or fallback shows source.
-- Resume content stays in the browser, except when the user saves it to their account or sends
-  a PDF to the ATS. The template-import pipeline sends only macro definitions and placeholdered
-  call sites to the language model, never the resume's text.
+- Resume content leaves the browser only when the person asks for something that needs it and is
+  told what is sent, and whoever receives it keeps only what the person asked to be kept
+  (decision 0047). Saving to an account and sending a PDF to the ATS are such requests. The
+  template-import pipeline sends only macro definitions and placeholdered call sites to the
+  language model, never the resume's text.
 - The page the user edits is the real TeX output. Do not replace it with an approximation.
 
 ## Code conventions
@@ -156,8 +158,9 @@ These come from the plan and are not negotiable in code:
 - Changing the Node or Python version pins without a decision record.
 - Using Docker for development. It is for building the TeX engines and for deploying the ATS,
   nothing else.
-- Editing `docs/editor-plan.md` beyond fixing a typo. It mirrors a shared page; substantive
-  changes go through the owner.
+- Editing `docs/editor-plan.md` beyond fixing a typo, unless the owner asked for the change. It
+  is the plan (decision 0048), and substantive changes to it are the owner's to make or to ask
+  for.
 
 ## Before you say you are done
 

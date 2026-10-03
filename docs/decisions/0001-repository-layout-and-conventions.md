@@ -1,6 +1,6 @@
 # 0001. Repository layout and working conventions
 
-Date: 2026-09-13 · Status: accepted; the review rule is superseded by 0005
+Date: 2026-09-13 · Status: accepted; the review rule is superseded by 0005; the line on the editor plan is amended by 0048
 
 ## Context
 

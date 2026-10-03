@@ -1,6 +1,6 @@
 # 0033. What leaves the browser
 
-Date: 2026-09-27 · Status: proposed; the leak check runs when the corpus workflow is started by hand, not nightly (0035)
+Date: 2026-09-27 · Status: proposed; the leak check runs when the corpus workflow is started by hand, not nightly (0035); the rule it serves is restated as one sentence by 0047
 
 ## Context
 
