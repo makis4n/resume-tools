@@ -131,10 +131,11 @@ export function fieldStatus(
  * be filled in or cleared, and while it holds its placeholder, shown or not, so that the input can
  * mark it. An empty field is never on the page (decision 0007). A filled one is off it when it is
  * not in `shownFields` (`shownFieldsOf`): its template's variant may have no slot for it, as
- * Jake's projects entry has no place, no character of its text may set a glyph, or it may be on a
- * page after the first, which the editor does not draw. Before the first page `shownFields` is
- * undefined, and every field counts as shown, so that the panel does not fill with inputs while
- * the document opens; once the first page could not be made it is empty, and every field needs one.
+ * Jake's projects entry has no place, or no character of its text may set a glyph; a field on any
+ * page counts as shown, since the editor draws every page (decision 0046). Before the first page
+ * `shownFields` is undefined, and every field counts as shown, so that the panel does not fill with
+ * inputs while the document opens; once the first page could not be made it is empty, and every
+ * field needs one.
  */
 export function needsInput(
   field: string,
@@ -147,11 +148,11 @@ export function needsInput(
 }
 
 /**
- * The fields `needsInput` counts as shown, from `latest`, the latest page with the document it was
- * drawn from (the compiler's `Shown`), and `present`, the document the panel shows: those with a
- * glyph on the page (`fieldsShown`), and those the page's document did not have. The page can be
- * a compile behind, and a field added since has had no page to be on yet, so it counts as shown
- * until one comes, as every field does before the first page. Otherwise a new section's title,
+ * The fields `needsInput` counts as shown, from `latest`, the latest pages with the document they
+ * were drawn from (the compiler's `Shown`), and `present`, the document the panel shows: those with
+ * a glyph on any of the pages (`fieldsShown`, decision 0046), and those the pages' document did not
+ * have. The pages can be a compile behind, and a field added since has had no page to be on yet,
+ * so it counts as shown until one comes, as every field does before the first page. Otherwise a new section's title,
  * which is not a placeholder, would get an input for as long as the compile takes and lose it when
  * the page arrives. Undefined while there is no page, unless the first page could not be made
  * (`failed`): then no field is shown, and none will be until an edit compiles, so the set is empty
@@ -159,12 +160,12 @@ export function needsInput(
  * back. A page that came before a failure still shows its fields, and goes on counting them.
  */
 export function shownFieldsOf(
-  latest: { page: Pick<DrawnPage, "fields">; document: Document } | undefined,
+  latest: { pages: readonly Pick<DrawnPage, "fields">[]; document: Document } | undefined,
   present: Document,
   failed = false,
 ): Set<string> | undefined {
   if (latest === undefined) return failed ? new Set() : undefined;
-  const shown = fieldsShown(latest.page);
+  const shown = fieldsShown(...latest.pages);
   const drawn = fieldsOf(latest.document.resume);
   for (const id of fieldsOf(present.resume).keys()) if (!drawn.has(id)) shown.add(id);
   return shown;

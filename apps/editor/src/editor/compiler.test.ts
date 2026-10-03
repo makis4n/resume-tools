@@ -1084,6 +1084,26 @@ describe("Compiler", () => {
     expect(warned).toHaveBeenCalledWith(expect.stringContaining("cmex10 (no outlines)"));
   });
 
+  it("shows every page of the output, the first as its page (decision 0046)", async () => {
+    const drawn: number[] = [];
+    // An output of three pages, each drawn by its index.
+    const s = scheduler({
+      draw: async (output, _fonts, _texts, index = 0) => {
+        drawn.push(index);
+        return { ...(await draw(output)), svg: `<svg>${index}</svg>`, pageCount: 3 };
+      },
+    });
+    await opened(s);
+    const [shown] = s.shown;
+    expect(shown?.pages.map((page) => page.svg)).toEqual([
+      "<svg>0</svg>",
+      "<svg>1</svg>",
+      "<svg>2</svg>",
+    ]);
+    expect(shown?.page).toBe(shown?.pages[0]);
+    expect(drawn).toEqual([0, 1, 2]);
+  });
+
   it("puts a format the store kept, rather than dumping it", async () => {
     const stores = new MemoryStores();
     const name = formatOf(opening);

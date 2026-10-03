@@ -28,8 +28,9 @@
  * load when the body selects them (decision 0014). On a slow machine or network any of these can
  * take many seconds, and a worker that replaces a lost one pays for them again, so they have a
  * longer limit of their own and the compile limit times only what TeX does with an edit. Drawing
- * the page waits on fonts from the network, so it has the compile's limit too; past it the page is
- * dropped, but the worker, which did its part, stays.
+ * the pages waits on fonts from the network, so it has the compile's limit too; past it the pages
+ * are dropped, but the worker, which did its part, stays. Every page of the output is drawn, for the
+ * editor to show one under the other (decision 0046), from one reading of the output and its fonts.
  *
  * Given the app's stores (`src/storage/store.ts`), formats and the TeX Live files each template
  * reads outlive the session: a format the store holds is handed to the engine rather than dumped,
@@ -71,7 +72,7 @@ import type {
 import type { Upload } from "../import/intake";
 import { isRefusal, refusal } from "../import/refusal";
 import type { Imported, ImportJob, ImportOutcome, ImportProgress } from "../import/run";
-import { type DrawnPage, drawPage } from "../page/draw";
+import { type DrawnPage, type DrawOptions, drawEach, drawPage, drawPages } from "../page/draw";
 import type { FontLibrary, NativeCoverage } from "../page/fonts";
 import {
   type GeneratedBody,
@@ -160,9 +161,17 @@ export interface PrefetchStore {
   add(template: string, paths: string[]): Promise<void>;
 }
 
-/** A page from one compile, whole: the page, the body and texts it was drawn from, the document. */
+/**
+ * A page from one compile, whole: its pages, the body and texts they were drawn from, the document.
+ */
 export type Shown = {
+  /** The first page, which says how many the document sets (`DrawnPage.pageCount`). */
   page: DrawnPage;
+  /**
+   * Every page of the output, in order, the first among them (decision 0046): the editor draws
+   * them one under the other, each with its fields and its locked parts.
+   */
+  pages: readonly DrawnPage[];
   body: GeneratedBody;
   document: Document;
   /**
@@ -208,7 +217,10 @@ export interface CompilerOptions {
    * How long a worker may take to start, or a format to dump, before the worker is stopped, in ms.
    */
   startLimit?: number;
-  /** How a page is drawn from the output; tests draw without fonts. */
+  /**
+   * How a page is drawn from the output, by its index, each page in turn (`drawEach`); tests draw
+   * without fonts. Without it, every page is drawn from one reading of the output (`drawPages`).
+   */
   draw?: typeof drawPage;
   /** Where formats are kept for later sessions, and looked for before a dump. */
   formats?: FormatStore;
@@ -384,7 +396,13 @@ export class Compiler {
   private readonly delays: Record<SessionEngine, number>;
   private readonly limits: Record<SessionEngine, number>;
   private readonly startLimit: number;
-  private readonly draw: typeof drawPage;
+  /** Every page of an output, drawn (`drawPages`, or `drawEach` with the draw given). */
+  private readonly draw: (
+    dvi: Uint8Array,
+    fonts: FontLibrary,
+    texts: ReadonlyMap<string, string>,
+    options: DrawOptions,
+  ) => Promise<DrawnPage[]>;
   private readonly formatStore: FormatStore | undefined;
   private readonly prefetchStore: PrefetchStore | undefined;
   private readonly fetchFile: ((path: string) => Promise<unknown>) | undefined;
@@ -454,7 +472,8 @@ export class Compiler {
     this.delays = { ...DELAYS, ...options.delays };
     this.limits = { ...LIMITS, ...options.limits };
     this.startLimit = options.startLimit ?? START_LIMIT;
-    this.draw = options.draw ?? drawPage;
+    const draw = options.draw;
+    this.draw = draw === undefined ? drawPages : (...args) => drawEach(draw, ...args);
     this.formatStore = options.formats;
     this.prefetchStore = options.prefetch;
     this.fetchFile = options.fetchFile;
@@ -883,16 +902,19 @@ export class Compiler {
         return;
       }
       const output = result.output;
-      const page = await this.within(
+      const pages = await this.within(
         run,
         run.limit,
-        () => this.draw(output, this.fonts, body.texts, 0, { features: fontFeatures(pkg) }),
+        () => this.draw(output, this.fonts, body.texts, { features: fontFeatures(pkg) }),
         () => this.drop(run),
       );
       if (!this.current(run)) return;
-      this.warnAboutFonts(page);
+      const [page] = pages;
+      if (page === undefined) throw new Error("the output has no page");
+      for (const each of pages) this.warnAboutFonts(each);
       this.made = { instance, pkg, document: doc, job: run.job };
-      this.events.page({ page, body, document: doc, ms: performance.now() - started, startMs });
+      const ms = performance.now() - started;
+      this.events.page({ page, pages, body, document: doc, ms, startMs });
     } catch (error) {
       // A request that lost the engine was dealt with there, and this run is no longer current:
       // what it throws is the terminated or failed worker's error, and the console has heard why.

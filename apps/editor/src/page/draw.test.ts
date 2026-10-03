@@ -17,6 +17,7 @@ import { parseType1 } from "../tex/type1";
 import {
   type DrawnPage,
   drawPage,
+  drawPages,
   fieldsShown,
   type GlyphBox,
   glyphAt,
@@ -1033,5 +1034,73 @@ describe.skipIf(!engineAvailable())("drawPage", () => {
     expect(first.pageCount).toBe(2);
     expect(first.size.width).toBeCloseTo(597.51, 2);
     expect(second.size).toEqual(first.size);
+  }, 30_000);
+
+  it("draws every page, each with its fields and the part a page break splits (decision 0046)", async () => {
+    const lines = (n: number, what: string) =>
+      Array.from({ length: n }, (_, i) => `${what} line ${i} of an invented page.\\par`).join("\n");
+    const texts = new Map([
+      ["first.text", "Fennel on the opening page"],
+      ["later.text", "Quillwort on the last page"],
+    ]);
+    const body = [
+      "\\documentclass[10pt]{article}\\usepackage[margin=1in]{geometry}",
+      "\\pagestyle{empty}\\setlength{\\parindent}{0pt}",
+      PRELUDE,
+      "\\begin{document}",
+      `\\rtfield{first.text}{${texts.get("first.text")}}\\par`,
+      lines(46, "Filler"),
+      `\\rtlocked{lock-split}{${lines(12, "Kept")}}`,
+      lines(20, "Filler"),
+      `\\rtfield{later.text}{${texts.get("later.text")}}\\par`,
+      "\\end{document}",
+    ].join("\n");
+    const compiled = session.compile("pdftex", "stock", body, { job: "pages", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const pages = await drawPages(compiled.output, fonts, texts);
+    expect(pages).toHaveLength(2);
+    // Each page as `drawPage` draws it alone, the second naming its shapes apart from the first's.
+    for (const [index, page] of pages.entries()) {
+      const alone = await drawPage(compiled.output, fonts, texts, index);
+      expect(page.svg).toBe(alone.svg);
+      expect([...page.fields.keys()]).toEqual([...alone.fields.keys()]);
+      expect(page.glyphs).toEqual(alone.glyphs);
+      expect(page.unmatched).toBe(0);
+    }
+    const ids = (svg: string) => [...svg.matchAll(/ id="([^"]+)"/g)].map((match) => match[1] ?? "");
+    const [first, last] = pages as [DrawnPage, DrawnPage];
+    expect(ids(first.svg).filter((id) => id.startsWith("p")).length).toBe(0);
+    expect(ids(last.svg).length).toBeGreaterThan(0);
+    expect(ids(last.svg).every((id) => id.startsWith("p1-"))).toBe(true);
+    // The field on the last page is there to be opened in place, as the first page's is.
+    for (const [page, id] of [
+      [first, "first.text"],
+      [last, "later.text"],
+    ] as const) {
+      expect(page.fields.get(id)?.layout, id).toBeDefined();
+      expect(page.glyphs.filter((glyph) => glyph.field === id).length, id).toBe(
+        texts.get(id)?.replace(/ /g, "").length,
+      );
+    }
+    expect(first.fields.has("later.text")).toBe(false);
+    expect(fieldsShown(...pages)).toEqual(new Set(texts.keys()));
+    // The part a page break splits is drawn on both pages, in blocks on each, every glyph its own.
+    const kept = (page: DrawnPage) =>
+      page.glyphs.filter((glyph) => glyph.locked === "lock-split").length;
+    for (const page of pages) {
+      expect(page.locked.get("lock-split")?.blocks.length).toBeGreaterThan(0);
+      expect(kept(page)).toBeGreaterThan(0);
+    }
+    expect(kept(first) + kept(last)).toBe(lines(12, "Kept").replace(/\\par|\s/g, "").length);
+  }, 60_000);
+
+  it("draws a one-page document as `drawPage` draws its page, and no more", async () => {
+    const body =
+      "\\documentclass{article}\\pagestyle{empty}\\begin{document}One page\\end{document}";
+    const compiled = session.compile("pdftex", "stock", body, { job: "one", maxPasses: 1 });
+    if (!compiled.output) throw new Error(compiled.error);
+    const pages = await drawPages(compiled.output, fonts, new Map());
+    expect(pages).toHaveLength(1);
+    expect(pages[0]?.svg).toBe((await drawPage(compiled.output, fonts, new Map())).svg);
   }, 30_000);
 });

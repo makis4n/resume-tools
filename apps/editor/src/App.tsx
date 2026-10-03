@@ -30,7 +30,7 @@ import { isRefusal } from "./import/refusal";
 import { type Report, reportOfImport } from "./import/report";
 import { IMPORT_STEPS, type Imported, type ImportJob, type ImportOutcome } from "./import/run";
 import { FontLibrary } from "./page/fonts";
-import { Page } from "./page/Page";
+import { Pages } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
 import {
   CANNOT_OPEN,
@@ -72,6 +72,16 @@ const CHANGED_ELSEWHERE = "This document was changed in another tab.";
 /** What the user reads while a fit to one page runs, and when no setting it tries fits. */
 const FITTING = "Fitting…";
 const DOES_NOT_FIT = "It does not fit on one page at these settings.";
+
+/**
+ * What the user reads above the pages when a resume runs past one, with the fit to one page beside
+ * it: every page is on screen (decision 0046), and the line says how many there are.
+ */
+function runsOnto(pages: number): string {
+  return pages === 2
+    ? "This resume runs onto a second page."
+    : `This resume runs onto ${pages} pages.`;
+}
 
 /** What the user reads when a fit to one page could not finish; the details go to the console. */
 const COULD_NOT_FIT = "Fit to one page could not finish.";
@@ -923,7 +933,7 @@ export function App() {
             as it takes no edit (item 18). */}
         {shown.latest.page.pageCount > 1 && (
           <p>
-            This resume runs onto a second page.{" "}
+            {runsOnto(shown.latest.page.pageCount)}{" "}
             <button
               type="button"
               onClick={() => void fitToPage()}
@@ -939,18 +949,14 @@ export function App() {
             {fitShown && ` ${fitShown.note ?? FITTING}`}
           </p>
         )}
-        {/* The overlay, or the date picker, over the field clicked, which the latest page places
-            and its commands edit. A document another tab has changed takes no edits, so it closes
+        {/* Every page, one under the other (decision 0046), and the overlay, or the date picker,
+            over the field clicked, on whichever page shows it, which the latest pages place and
+            its commands edit. A document another tab has changed takes no edits, so it closes
             then, and showing the list or opening a document forgets the click. Its commands go in
             the group of a visit to the field, which closing it ends, so that undo takes back the
             whole visit however many keystrokes it took (item 12). */}
         <div ref={setSheet} style={SHEET}>
-          <Page
-            svg={shown.latest.page.svg}
-            onField={openField}
-            locked={shown.latest.page.locked}
-            size={shown.latest.page.size}
-          />
+          <Pages pages={shown.latest.pages} onField={openField} />
           {clicked && sheet && !stale && (
             <Overlay
               key={clicked.click}

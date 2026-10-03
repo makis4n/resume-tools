@@ -44,6 +44,7 @@ import {
   layoutRows,
   lineStartOf,
   namedVariants,
+  pageShowing,
   placementFor,
   type RichFaces,
   type Row,
@@ -738,13 +739,28 @@ describe("when an open field closes, and where it stays", () => {
   });
 
   it("keeps its place from the last page that showed the field, until one shows it again", () => {
-    const first = placementFor("fennel-1.text", pageOf(layoutAt(72)), undefined);
-    expect(first).toMatchObject({ baselines: [200, 212], pageWidth: 600 });
+    const first = placementFor("fennel-1.text", [pageOf(layoutAt(72))], undefined);
+    expect(first).toMatchObject({ baselines: [200, 212], pageWidth: 600, page: 0 });
     expect(first?.layout.x).toBe(72);
     const empty = pageOf(undefined);
-    expect(placementFor("fennel-1.text", empty, first)).toBe(first);
-    expect(placementFor("fennel-1.text", empty, undefined)).toBeUndefined();
-    expect(placementFor("fennel-1.text", pageOf(layoutAt(80)), first)?.layout.x).toBe(80);
+    expect(placementFor("fennel-1.text", [empty], first)).toBe(first);
+    expect(placementFor("fennel-1.text", [empty, empty], undefined)).toBeUndefined();
+    expect(placementFor("fennel-1.text", [pageOf(layoutAt(80))], first)?.layout.x).toBe(80);
+  });
+
+  it("is placed on whichever page shows the field, the first of them that does (decision 0046)", () => {
+    const placed = placementFor(
+      "fennel-1.text",
+      [pageOf(undefined), pageOf(layoutAt(90))],
+      undefined,
+    );
+    expect(placed).toMatchObject({ page: 1, baselines: [200, 212] });
+    expect(placed?.layout.x).toBe(90);
+    expect(pageShowing([pageOf(undefined), pageOf(layoutAt(90))], "fennel-1.text")).toBe(1);
+    expect(pageShowing([pageOf(undefined)], "fennel-1.text")).toBe(-1);
+    // A field a page break splits is placed where it starts, on the earlier page.
+    const split = [pageOf(layoutAt(70)), pageOf(layoutAt(90))];
+    expect(placementFor("fennel-1.text", split, placed)).toMatchObject({ page: 0 });
   });
 });
 
@@ -1357,9 +1373,9 @@ describe.skipIf(!engineAvailable())("the overlay's lines against TeX's", () => {
       const emptied = field.set(sample, [{ text: "" }]);
       const after = await jake(emptied, "overlay-emptied");
       expect(after.page.fields.has(id)).toBe(false);
-      const placed = placementFor(id, before.page, undefined);
+      const placed = placementFor(id, [before.page], undefined);
       expect(placed?.layout).toBe(before.page.fields.get(id)?.layout);
-      expect(placementFor(id, after.page, placed)).toBe(placed);
+      expect(placementFor(id, [after.page], placed)).toBe(placed);
       expect(shouldClose(fieldsOf(emptied).has(id), after.page.fields.has(id))).toBe(false);
     }, 60_000);
   });

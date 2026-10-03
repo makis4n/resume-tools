@@ -284,15 +284,17 @@ export function ruleCrossings(
 }
 
 /**
- * The ids of the fields a page shows: those with a glyph on it, which a click can land on. A field
- * whose text sets no glyph, such as a name in a script the fonts lack, still has its markers on
- * the page with nothing between them, so it is in `fields` but not here; a field on a later page,
- * which the editor does not draw, is in neither. The side panel gives an input to a filled field
- * the page leaves out, since the page offers no way to edit it.
+ * The ids of the fields the pages show: those with a glyph on one of them, which a click can land
+ * on. A field whose text sets no glyph, such as a name in a script the fonts lack, still has its
+ * markers on its page with nothing between them, so it is in that page's `fields` but not here.
+ * The editor draws every page (decision 0046), so a field on a later page is shown as one on the
+ * first is. The side panel gives an input to a filled field the pages leave out, since they offer
+ * no way to edit it.
  */
-export function fieldsShown(page: Pick<DrawnPage, "fields">): Set<string> {
+export function fieldsShown(...pages: Pick<DrawnPage, "fields">[]): Set<string> {
   const shown = new Set<string>();
-  for (const field of page.fields.values()) if (field.glyphs.length > 0) shown.add(field.id);
+  for (const page of pages)
+    for (const field of page.fields.values()) if (field.glyphs.length > 0) shown.add(field.id);
   return shown;
 }
 
@@ -853,25 +855,27 @@ export function letterSpaceOf(features: string | undefined, size: number): numbe
 }
 
 /**
- * Draw one page of a DVI, or of XeTeX's XDV. `texts` holds each field's text as the model has
- * it; glyphs are matched against it, folded to the page's case where that is not the text's own
- * (`FieldLayout.folded`), so a click can say which character it landed on. A locked part is read
- * from its markers, and placed on this page (`DrawnPage.locked`). A font the page cannot draw, or
- * whose outlines cannot be read this time, is left out and named in
- * `missingFonts`, while its metrics still place every glyph after its own; the next draw reads it
- * again. A native font the page cannot draw (`nativeProblem`) is drawn as boxes, one for each of
- * its runs, and named there too, by its file's name. It rejects when a font's metrics, the font
- * map or the glyph list cannot be read, since a page drawn without them would put glyphs in the
- * wrong places or name them wrongly with no error, and the caller keeps the page it had.
+ * A DVI read once for all its pages: its fonts loaded, those the page cannot draw named, its
+ * locked parts read (`lockedSets`), and what each glyph stands for, which drawing each page shares.
  */
-export async function drawPage(
+interface Prepared {
+  doc: DviDocument;
+  loaded: Map<string, PageFont>;
+  natives: Map<string, NativePageFont>;
+  missingFonts: Map<string, string>;
+  sets: Map<string, LockedSet>;
+  textOf: GlyphTextOf;
+}
+
+/**
+ * Read a DVI as `drawPage` draws it: its fonts loaded, which a first pass without widths names,
+ * since a DVI defines them at its end too, and the document parsed again with their widths.
+ */
+async function prepare(
   dvi: Uint8Array,
   fonts: FontLibrary,
-  texts: ReadonlyMap<string, string>,
-  pageIndex = 0,
-  options: DrawOptions = {},
-): Promise<DrawnPage> {
-  // Fonts are defined at the end of a DVI too; a first pass without widths finds their names.
+  options: DrawOptions,
+): Promise<Prepared> {
   const defined = parseDvi(dvi, () => undefined);
   const names = [...new Set([...defined.fonts.values()].map((f) => f.name))];
   const files = [...new Set([...defined.nativeFonts.values()].map((f) => nativeFileName(f.name)))];
@@ -897,10 +901,22 @@ export async function drawPage(
     if (problem !== undefined) missingFonts.set(nativeFileName(def.name), problem);
   }
   const doc: DviDocument = parseDvi(dvi, widthsOf(loaded));
+  const textOf = glyphTextOf(doc, loaded, natives, options.features);
+  return { doc, loaded, natives, missingFonts, sets: lockedSets(doc), textOf };
+}
+
+/** Draw the page `pageIndex` of a prepared DVI (`prepare`), as `drawPage` describes. */
+function drawPrepared(
+  prepared: Prepared,
+  texts: ReadonlyMap<string, string>,
+  pageIndex: number,
+  options: DrawOptions,
+): DrawnPage {
+  const { doc, loaded, natives, sets } = prepared;
   const page = doc.pages[pageIndex];
   if (!page) throw new Error(`the document has ${doc.pages.length} pages, not ${pageIndex + 1}`);
 
-  const found = collectFields(page, glyphTextOf(doc, loaded, natives, options.features));
+  const found = collectFields(page, prepared.textOf);
   let unmatched = 0;
   const folds = new Map<string, Fold>();
   for (const field of found.values()) {
@@ -917,7 +933,6 @@ export async function drawPage(
   }
 
   // The locked parts' glyphs and rules on this page, by their keys, and the part each is of.
-  const sets = lockedSets(doc);
   const lockedGlyphs = new Map<string, string>();
   for (const set of sets.values())
     for (const each of set.items)
@@ -936,6 +951,7 @@ export async function drawPage(
       blocks: new Map([...locked.values()].map((region) => [region.id, region.blocks])),
     },
     size,
+    ids: pageIndex === 0 ? "" : `p${pageIndex}-`,
   });
   return {
     svg,
@@ -945,6 +961,64 @@ export async function drawPage(
     glyphs,
     pageCount: doc.pages.length,
     unmatched,
-    missingFonts,
+    missingFonts: new Map(prepared.missingFonts),
   };
+}
+
+/**
+ * Draw one page of a DVI, or of XeTeX's XDV. `texts` holds each field's text as the model has
+ * it; glyphs are matched against it, folded to the page's case where that is not the text's own
+ * (`FieldLayout.folded`), so a click can say which character it landed on. A locked part is read
+ * from its markers, and placed on this page (`DrawnPage.locked`). A font the page cannot draw, or
+ * whose outlines cannot be read this time, is left out and named in
+ * `missingFonts`, while its metrics still place every glyph after its own; the next draw reads it
+ * again. A native font the page cannot draw (`nativeProblem`) is drawn as boxes, one for each of
+ * its runs, and named there too, by its file's name. It rejects when a font's metrics, the font
+ * map or the glyph list cannot be read, since a page drawn without them would put glyphs in the
+ * wrong places or name them wrongly with no error, and the caller keeps the page it had. A page
+ * after the first names its glyphs' shapes apart (`RenderOptions.ids`), so that every page can
+ * stand in one document (decision 0046).
+ */
+export async function drawPage(
+  dvi: Uint8Array,
+  fonts: FontLibrary,
+  texts: ReadonlyMap<string, string>,
+  pageIndex = 0,
+  options: DrawOptions = {},
+): Promise<DrawnPage> {
+  return drawPrepared(await prepare(dvi, fonts, options), texts, pageIndex, options);
+}
+
+/**
+ * Draw every page of a DVI, in order, each as `drawPage` draws it (decision 0046): the editor shows
+ * them one under the other. The DVI is read, and its fonts loaded, once for all of them, so that a
+ * one-page document costs what `drawPage` costs, and each page after it only its own drawing.
+ */
+export async function drawPages(
+  dvi: Uint8Array,
+  fonts: FontLibrary,
+  texts: ReadonlyMap<string, string>,
+  options: DrawOptions = {},
+): Promise<DrawnPage[]> {
+  const prepared = await prepare(dvi, fonts, options);
+  return prepared.doc.pages.map((_, index) => drawPrepared(prepared, texts, index, options));
+}
+
+/**
+ * Every page of a DVI drawn with `draw`, one page at a time, as `drawPages` draws them: the first,
+ * which says how many there are, then the rest. For a draw given in the place of `drawPage`, as a
+ * test's or a measurement's, which takes a page's index.
+ */
+export async function drawEach(
+  draw: typeof drawPage,
+  dvi: Uint8Array,
+  fonts: FontLibrary,
+  texts: ReadonlyMap<string, string>,
+  options: DrawOptions = {},
+): Promise<DrawnPage[]> {
+  const first = await draw(dvi, fonts, texts, 0, options);
+  const rest = Array.from({ length: Math.max(0, first.pageCount - 1) }, (_, index) =>
+    draw(dvi, fonts, texts, index + 1, options),
+  );
+  return [first, ...(await Promise.all(rest))];
 }

@@ -14,7 +14,7 @@ import { isRefusal } from "../src/import/refusal";
 import { reportOfImport, summaryOf } from "../src/import/report";
 import { type Imported, importResume, type NameRequest } from "../src/import/run";
 import { nameOnService } from "../src/import/service";
-import { drawPage } from "../src/page/draw";
+import { drawPages, type GlyphBox } from "../src/page/draw";
 import { FontLibrary } from "../src/page/fonts";
 import { lockedSets, lockMarker } from "../src/page/locked";
 import { TexLiveIndex } from "../src/page/texlive";
@@ -493,33 +493,48 @@ describe.skipIf(!fetched || !engineAvailable())(
           }
         expect(foreign, "kept glyphs the import gives to a section's or an entry's").toBe(0);
 
-        // The editor's page, as the compiler draws it: each kept glyph on it drawn where the
-        // reference set a glyph of its font, every part a region of its own, shown in blocks where
-        // it has a glyph.
-        const page = await drawPage(output, fonts, body.texts, 0, { features: fontFeatures(pkg) });
-        const first = glyphsOf(reference.pages[0]);
-        const drawn = page.glyphs.filter((glyph) => glyph.locked !== undefined);
-        const onFirst = (part: string) => glyphsOfPart(part).filter((each) => each.page === 0);
-        expect(drawn.length, "kept glyphs the page draws").toBe(
-          parts.reduce((sum, part) => sum + onFirst(part).length, 0),
-        );
-        const drawnAway = drawn.filter(
-          (glyph) =>
-            !first.some(
-              (each) =>
-                each.font === glyph.font &&
-                Math.abs(INCH + each.h / 65536 - glyph.x) < 0.01 &&
-                Math.abs(INCH + each.v / 65536 - glyph.y) < 0.01,
-            ),
-        );
-        expect(drawnAway.length, "kept glyphs drawn away from the reference's").toBe(0);
-        expect([...page.locked.keys()].sort(), "the page's parts").toEqual([...parts].sort());
+        // The editor's pages, as the compiler draws them, every one of them (decision 0046): as
+        // many as the reference's; each glyph on each page drawn where the reference set a glyph
+        // of its font on that page; each kept glyph the part's; every part a region of its own on
+        // each page, shown in blocks where it has a glyph there; and on the last page a field the
+        // overlay opens in place, as on the first.
+        const pages = await drawPages(output, fonts, body.texts, { features: fontFeatures(pkg) });
+        expect(pages.length, "pages drawn").toBe(reference.pages.length);
+        const sameAt = (each: { h: number; v: number }, glyph: GlyphBox) =>
+          Math.abs(INCH + each.h / 65536 - glyph.x) < 0.01 &&
+          Math.abs(INCH + each.v / 65536 - glyph.y) < 0.01;
+        for (const [index, page] of pages.entries()) {
+          const theirs = glyphsOf(reference.pages[index]);
+          const onPage = (part: string) => glyphsOfPart(part).filter((each) => each.page === index);
+          const drawnAway = page.glyphs.filter(
+            (glyph) => !theirs.some((each) => each.font === glyph.font && sameAt(each, glyph)),
+          );
+          expect(
+            drawnAway.length,
+            `page ${index + 1}'s glyphs drawn away from the reference's`,
+          ).toBe(0);
+          expect(page.glyphs.length, `page ${index + 1}'s glyphs drawn`).toBeGreaterThan(
+            theirs.length * 0.95,
+          );
+          const drawn = page.glyphs.filter((glyph) => glyph.locked !== undefined);
+          expect(drawn.length, `kept glyphs page ${index + 1} draws`).toBe(
+            parts.reduce((sum, part) => sum + onPage(part).length, 0),
+          );
+          expect([...page.locked.keys()].sort(), "the page's parts").toEqual([...parts].sort());
+          expect(
+            [...page.locked.values()].filter(
+              (region) => onPage(region.id).length > 0 && region.blocks.length === 0,
+            ).length,
+            `parts on page ${index + 1} with no block`,
+          ).toBe(0);
+        }
+        const last = pages.at(-1);
         expect(
-          [...page.locked.values()].filter(
-            (region) => onFirst(region.id).length > 0 && region.blocks.length === 0,
+          [...(last?.fields.values() ?? [])].filter(
+            (field) => field.glyphs.length > 0 && field.layout !== undefined,
           ).length,
-          "parts on the page with no block",
-        ).toBe(0);
+          "fields the last page opens in place",
+        ).toBeGreaterThan(0);
 
         // The side panel names each part that sets a word, as the report does (`lockedWordsOf`).
         const names = lockedWordsOf(reportOfImport(done));

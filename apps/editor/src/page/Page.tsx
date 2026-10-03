@@ -1,16 +1,18 @@
 /**
- * The typeset page, as SVG, with every glyph clickable. A click on a glyph that belongs to a
- * field reports the field and the character the click landed on.
+ * The typeset pages, as SVG, one under the other, with every glyph clickable. A click on a glyph
+ * that belongs to a field reports the field and the character the click landed on, whatever page
+ * it is on (decision 0046).
  *
  * A locked part of an imported resume, kept as the upload had it, is no field (decision 0041): a
  * click on it reports nothing, so that neither the plain overlay nor the rich editor opens there;
  * the pointer over it shows a lock, and one line that says what the part is and where it is
- * changed, over the part's blocks; and nothing of it, or of its lock, takes the focus, so that the
- * keyboard passes it by.
+ * changed, over the part's blocks, on every page it is on; and nothing of it, or of its lock, takes
+ * the focus, so that the keyboard passes it by.
  */
 
 import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import type { PageSize } from "../tex/svg";
+import type { DrawnPage } from "./draw";
 import type { Box, LockedRegion } from "./locked";
 
 /** What the lock over a locked part says. */
@@ -23,6 +25,17 @@ export interface PageProps {
   locked?: ReadonlyMap<string, Pick<LockedRegion, "blocks">>;
   /** The page's size, in TeX points, which places the lock where the SVG draws the part. */
   size?: PageSize;
+  /** The page's index among the document's, which its element carries (`pageSvg`). */
+  index?: number;
+  /**
+   * The locked part the pointer is over, by id, on this page or another, and what the page says
+   * when the pointer comes over a part of its own or leaves it: given by `Pages`, which shows a
+   * part's lock on every page it is on. Without them the page keeps its own.
+   */
+  over?: string;
+  onOver?: (part: string | undefined) => void;
+  /** Whether the page shows the lock's line over its first block of the part; it does by default. */
+  tip?: boolean;
 }
 
 /** The field and character offset of the glyph a click landed on, from its data attributes. */
@@ -53,26 +66,95 @@ export function onPageClick(onField?: PageProps["onField"]) {
 
 /** The page's own element, which the lock is placed in. */
 const HOST = { position: "relative" } as const;
+/** The SVG's own element, which sets no line around it, so that the page ends where the SVG does. */
+const DRAWN = { lineHeight: 0 } as const;
 
-export function Page({ svg, onField, locked, size }: PageProps) {
+export function Page({ svg, onField, locked, size, index, over, onOver, tip = true }: PageProps) {
   const host = useRef<HTMLDivElement>(null);
-  // The locked part the pointer is over, by id.
-  const [over, setOver] = useState<string>();
-  const part = over === undefined ? undefined : locked?.get(over);
+  // The locked part the pointer is over, by id, when no `Pages` keeps it for every page.
+  const [own, setOwn] = useState<string>();
+  const shared = onOver !== undefined;
+  const hovered = shared ? over : own;
+  const setOver = shared ? onOver : setOwn;
+  const part = hovered === undefined ? undefined : locked?.get(hovered);
   return (
     <div
       ref={host}
       className="page"
+      data-page={index}
       style={HOST}
       onClick={onPageClick(onField)}
       onPointerOver={(event) => setOver(lockedAt(event.target as Element | null))}
       onPointerLeave={() => setOver(undefined)}
     >
       {/* The SVG is built by src/tex/svg.ts from the engine's output, with every string escaped. */}
-      <div dangerouslySetInnerHTML={{ __html: svg }} />
-      {part && size && <Lock host={host} svg={svg} size={size} blocks={part.blocks} />}
+      <div style={DRAWN} dangerouslySetInnerHTML={{ __html: svg }} />
+      {part && size && part.blocks.length > 0 && (
+        <Lock host={host} svg={svg} size={size} blocks={part.blocks} tip={tip} />
+      )}
     </div>
   );
+}
+
+/** Pages one under the other, apart by this much, each with an edge, so that a page break shows. */
+const STACK = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "flex-start",
+  gap: "16px",
+} as const;
+const SHEET = { boxShadow: "0 0 0 1px #ddd" } as const;
+
+export interface PagesProps {
+  /** Every page of the document, in order (`Shown.pages`). */
+  pages: readonly Pick<DrawnPage, "svg" | "locked" | "size">[];
+  onField?: PageProps["onField"];
+}
+
+/**
+ * Every page of a document, one under the other (decision 0046), each drawn as `Page` draws one.
+ * The pointer over a locked part shows its lock over its blocks on every page that holds them, so
+ * that a part a page breaks shows whole, and the lock's line over the first of them. A click on a
+ * field's glyph, on any page, reports the field as on the first. A page whose SVG is the one it had
+ * is not drawn again: React leaves its element as it is.
+ */
+export function Pages({ pages, onField }: PagesProps) {
+  const [over, setOver] = useState<string>();
+  // The first page that holds a block of the part the pointer is over shows the lock's line.
+  const first =
+    over === undefined
+      ? -1
+      : pages.findIndex((page) => (page.locked.get(over)?.blocks.length ?? 0) > 0);
+  return (
+    <div className="pages" style={STACK}>
+      {pages.map((page, index) => (
+        // A page is the document's page at its index, whatever compile drew it.
+        <div key={index} style={SHEET}>
+          <Page
+            svg={page.svg}
+            locked={page.locked}
+            size={page.size}
+            index={index}
+            onField={onField}
+            over={over}
+            onOver={setOver}
+            tip={index === first}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The SVG of the page `index` among those drawn in `container` (`Pages`), which a field opened on
+ * that page is placed over; the container's first SVG for the first page where its pages carry no
+ * index, as a lone `Page` does not.
+ */
+export function pageSvg(container: ParentNode, index: number): SVGSVGElement | null {
+  const drawn = container.querySelector<SVGSVGElement>(`[data-page="${index}"] svg`);
+  if (drawn !== null || index !== 0) return drawn;
+  return container.querySelector<SVGSVGElement>("svg");
 }
 
 /** Where the page's SVG is drawn in its host: its top-left corner, and CSS pixels per TeX point. */
@@ -113,7 +195,8 @@ const BLOCK = {
 
 /**
  * The lock over a locked part: each of its blocks marked, and above the first a padlock and
- * `LOCKED_TIP`, moved left as far as it takes to end within the page. Placed where the page's SVG
+ * `LOCKED_TIP`, moved left as far as it takes to end within the page, unless the line is another
+ * page's to show (`tip`), where the part starts on an earlier one. Placed where the page's SVG
  * is drawn now, read again with each new page: the SVG is scaled to its container, so its box
  * against the page's size in TeX points gives the scale.
  */
@@ -122,11 +205,13 @@ function Lock({
   svg,
   size,
   blocks,
+  tip: line,
 }: {
   host: RefObject<HTMLDivElement | null>;
   svg: string;
   size: PageSize;
   blocks: readonly Box[];
+  tip: boolean;
 }) {
   const [frame, setFrame] = useState<Frame>();
   const tip = useRef<HTMLDivElement>(null);
@@ -166,15 +251,17 @@ function Lock({
         // A part's blocks are its own, in the page's order, and change only with a new page.
         <div key={index} className="locked-block" style={{ ...BLOCK, ...placed(block, frame) }} />
       ))}
-      <div
-        ref={tip}
-        className="locked-tip"
-        role="tooltip"
-        style={{ ...TIP, left: Math.max(frame.x, start.left - overrun), top: start.top - 2 }}
-      >
-        <Padlock />
-        {LOCKED_TIP}
-      </div>
+      {line && (
+        <div
+          ref={tip}
+          className="locked-tip"
+          role="tooltip"
+          style={{ ...TIP, left: Math.max(frame.x, start.left - overrun), top: start.top - 2 }}
+        >
+          <Padlock />
+          {LOCKED_TIP}
+        </div>
+      )}
     </>
   );
 }
