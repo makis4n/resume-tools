@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "key": "22fa49ef12317bcc0356fb9dc884614133c7466c50086ceb30413bc117b83ea7",
+  "hash": "9f6d53e2aed5d3989cbf12477b39784c814b448c717fbd9245dc979b11917d68",
+  "of": "command",
+  "name": "homepage",
+  "family": "altacv",
+  "answer": {
+    "kind": "link",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "label",
+        "blank": "empty"
+      }
+    ],
+    "link": "website",
+    "repeatable": true,
+    "redefinitions": [
+      {
+        "name": "printinfo",
+        "latex": "\\makeatletter\n\\ExplSyntaxOn\n\\cs_set_protected:Npn \\rt_info_text:n #1\n  { \\tl_if_head_eq_meaning:nNTF {#1} \\rtfield { {#1} ~ } { \\utffriendlydetokenize {#1} } }\n\\RenewDocumentCommand{\\printinfo}{o m m o}{%\n  \\IfNoValueTF{#4}{%\n    \\mbox{\\textcolor{accent}%\n    {\\BeginAccSupp{method=escape,ActualText={\\IfNoValueTF{#1}{\\detokenize{#2}}{#1}:\\space}}\\normalfont #2\\EndAccSupp{}}%\n    ~\\rt_info_text:n {#3}\\hspace{2em}}%\n  }{%\n    \\iftoggle{withhyper}{%\n      \\mbox{\\textcolor{accent}%\n      {\\BeginAccSupp{method=escape,ActualText={\\IfNoValueTF{#1}{\\detokenize{#2}}{#1}:\\space}}\\normalfont #2\\EndAccSupp{}}%\n      ~%\n      \\group_begin:\n      \\cs_set_eq:NN \\rt@keptfield \\rtfield\n      \\cs_set_eq:NN \\rtfield \\use_ii:nn\n      \\BeginAccSupp{method=escape,ActualText={#4}}%\n      \\href{#4}{\\cs_set_eq:NN \\rtfield \\rt@keptfield \\rt_info_text:n {#3}}%\n      \\EndAccSupp{}%\n      \\group_end:\n      \\hspace{2em}}%\n     }{%\n       \\ClassWarning{Please specify [withhyper] option to enable hyperlinks. Printing out full hyperlink prefix #1 for now.}%\n      \\mbox{\\textcolor{accent}\n      {\\BeginAccSupp{method=escape,ActualText={\\IfNoValueTF{#1}{\\detokenize{#2}}{#1}:\\space}}\\normalfont #2\\EndAccSupp{}}%\n      ~{\\utffriendlydetokenize{#4}}\\hspace{2em}}%\n    }%\n  }%\n}%\n\\ExplSyntaxOff\n\\makeatother"
+      }
+    ],
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037. The LaTeX is adapted from the port's rt-altacv.cls, a modified version of altacv.cls v1.7.4, under the LPPL 1.3c.",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["printinfo", "4e01e8dcb449222bc7a32c028a9dc19af577e71b8e3fd8f66a84ccd17d5061f9"],
+    ["csuse", "208b56aad4c25b2942c1fc0a38026c3de2c58f7e233fee6a4c0fd4c3499c779f"],
+    ["printinfo code", "8ebc68e535d886f70540b91c0dfd511a091a6aa83661f6c0aee2540bb6deb109"],
+    ["BeginAccSupp", "2b60e442c5d7558284ab77202929e814f52679472c418eb4678dbd6032099501"],
+    ["EndAccSupp", "7a2ee46aae6b7c3a16d1b41b3a7e286a648e842f2cb9509271b13bf18ca60d3b"],
+    ["utffriendlydetokenize", "03209602147929d701369223361aabc1edccbdf412f9d13f9f4c2910401dd163"],
+    ["iftoggle", "daa29944761dbb4a40f7c993d984b10e4d2568777349512219b74f65955aa9ac"],
+    ["setkeys", "d7ade1f2a00faf375d936da9c0ed7cbfeb74d82f0f9df1e49d440fc20c901788"],
+    ["ACCSUPP@bdc", "40223c6a27a94d8149da8ac8e4296b074c54b42978994fd407bcbb4f6ab82f8d"],
+    ["ACCSUPP@space", "ba763f5d94d1c405463f881c98e7b52913a9844aff2f7e65444adec328dcdabd"],
+    ["ACCSUPP@emc", "8eb0dbe12ae4c493cdd288e4b0a896346d21fefefb8e2278a97c0975aad26377"],
+    ["ifcsdef", "262d62fbc194c834c36e02a79830a0aad5c095fb69e4be7e4254bacc9b63d787"],
+    ["etb@err@notoggle", "15b1205e0021bac4b062dd819591e9422ee5ac92d4fcb41e2224a63b60162fe6"],
+    ["etb@error", "3c5e3e9a017b60816b8f16ef95ed7bc844891fce8e2300521a7583907c18a369"]
+  ]
+}

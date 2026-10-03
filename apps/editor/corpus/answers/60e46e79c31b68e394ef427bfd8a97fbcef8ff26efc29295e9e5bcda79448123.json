@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "key": "60e46e79c31b68e394ef427bfd8a97fbcef8ff26efc29295e9e5bcda79448123",
+  "hash": "464e6bb270891e01384775b5030598891ff0b7a530503e5829de6e172afa52e9",
+  "of": "environment",
+  "name": "europecv",
+  "family": "europecv",
+  "answer": {
+    "kind": "layout",
+    "arguments": [],
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["endeuropecv", "078eb35f0030eaad77f3f6a882a5f68aa3857b83b0174811cbab01793148112c"],
+    ["ecvLeftColumnWidth", "066533b800120e9aa1e44c2c794ef4bc3744c855d45ecd42e7761e8ea03c2723"],
+    ["ecv@hrule", "cd7a17d4431b6d7d13ab0233cfda2765d339dbe234e017f5390d59286dd6fef3"]
+  ]
+}

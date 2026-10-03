@@ -50,15 +50,20 @@ order, and each macro by how many documents hold it, most first:
 - A macro whose `name` is `null` has no `filing` either: only requests the gate withheld hold it,
   and the export shows nothing of it to review. It leaves that macro alone and writes no answer for
   it.
+- A macro whose `answer` is `withheld` has an answer the cache serves, often a committed one, that
+  the export did not write because the leak check found a document's text in it. It leaves that
+  macro alone too: an answer written for it would be filed over the one the cache serves.
 - It writes each answer it corrects, and one for a macro that has none, as
   `apps/editor/corpus/answers/<key>.json`, a stored answer: `"version": 1`, the `key`, `hash`, `of`
   and `name`, the `family` where `filing` gives one, and the `dependencies`, as `answers/<key>.json`
   or `filing` gives them; `"reviewed": true`; `"source": "model:claude-opus-5-5"`, the review
   model's id; the answer itself, with `"reviewed": true` and `notes` naming the review model and
   the naming model whose answer it corrects, as "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from
-  qwen3.8:27b's answer, decision 0037"; and, for a list, `partnerKeys` with the keys `template.json`
-  gives the partner macros. An answer that opens a list is committed with its closer's, each naming
-  the other, since the committed answers' test pairs them.
+  qwen3.8:27b's answer, decision 0037", or, where `template.json` gives the macro's `answer` as
+  `none`, as "Written by Claude Opus 5.5 (claude-opus-5-5) in the review, decision 0037, with no
+  answer of qwen3.8:27b's in the export to correct"; and, for a list, `partnerKeys` with the keys
+  `template.json` gives the partner macros. An answer that opens a list is committed with its
+  closer's, each naming the other, since the committed answers' test pairs them.
 - It adds a redefinition, `{ "name": ..., "latex": ... }` in the answer's `redefinitions`, only
   where a macro defeats the editor's markers, as a port of a launch template patches its class, and
   only LaTeX that keeps the template's output as it is. The naming model never writes one.

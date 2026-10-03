@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "key": "96abde47c819f6429eb1eaf21baf575f169cb71610c89941926552fde0f0d395",
+  "hash": "d7dde8d5956e6385b568fad8937482b62b9add892cc3aebfdbe9fa0cc7161a91",
+  "of": "command",
+  "name": "resumeItemListStart",
+  "family": "jake",
+  "answer": {
+    "kind": "bulletList",
+    "arguments": [],
+    "repeatable": false,
+    "list": {
+      "does": "opens",
+      "closedBy": "resumeItemListEnd",
+      "holds": "bullet"
+    },
+    "notes": "Written by Claude Opus 5.5 (claude-opus-5-5) in the review, decision 0037, with no answer of qwen3.8:27b's in the export to correct",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [],
+  "partnerKeys": {
+    "closedBy": "73245eaa1b9a0ade7b1991d10eb0d300128fac1eaa5e24546c5fcb43b201a887"
+  }
+}

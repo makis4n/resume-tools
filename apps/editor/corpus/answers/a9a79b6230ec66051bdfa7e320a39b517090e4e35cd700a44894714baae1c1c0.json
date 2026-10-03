@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "key": "a9a79b6230ec66051bdfa7e320a39b517090e4e35cd700a44894714baae1c1c0",
+  "hash": "4f25c49a02f73cd53e0895f1089284b0ceb82668ef8feb616b14787abbf04ffc",
+  "of": "command",
+  "name": "role",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "slot": "title",
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "empty"
+      },
+      {
+        "index": 3,
+        "meaning": "other",
+        "slot": "bullets",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["roletitle", "561ba4831c1940745a942bbbf277d10f4e831fa11197eb442dcaaf49fa210757"],
+    ["tenure", "561ba4831c1940745a942bbbf277d10f4e831fa11197eb442dcaaf49fa210757"]
+  ]
+}

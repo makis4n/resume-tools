@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "key": "4804b834276fde595da3f6ad04d781e5e92bc39e7312c1003a59d92c367b80cc",
+  "hash": "a2ef0ed57961edbd484264e42796c0cbbd5d3e8f8ee7179c802a90d7d4337ad7",
+  "of": "command",
+  "name": "email",
+  "family": "altacv",
+  "answer": {
+    "kind": "contact",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "contact": "email",
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["printinfo", "f966a1aba89e7c41cd0db8dcfcd9bfe2ab788bb61b3b3337dfddacdd89578805"],
+    ["emailsymbol", "d71f02d9ba1584c36564f7f8f9841719ae061317c11e4587accb957190b3efd5"]
+  ]
+}

@@ -342,7 +342,7 @@ of each launch template must find editable what the hand-written port marks.
 
 ### Stage 8. The corpus loop and closing
 
-17. [ ] **The corpus run.** `corpus.ts run` puts every document through the pipeline in Node,
+17. [x] **The corpus run.** `corpus.ts run` puts every document through the pipeline in Node,
     on the engine session, from the committed answers and the ignored cache, and calls the model
     only with a key and `--allow-model`. It writes one JSON of results, per document: refused,
     partial or success, the editable rate, locked words, the controls proven, the checks' findings

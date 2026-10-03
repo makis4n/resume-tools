@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "key": "e59a1962242af57313fcd643be0ef5b35b443a3212b98f0a8dcf4b429466dcf4",
+  "hash": "96d6a89f9a97ee34f039277509848241737ac0da9ba2661d520f0251541bd911",
+  "of": "command",
+  "name": "resumeProjectHeading",
+  "family": "jake",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "parts": [
+          {
+            "meaning": "title",
+            "slot": "title"
+          },
+          {
+            "meaning": "subtitle",
+            "slot": "subtitle"
+          }
+        ],
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "empty"
+      }
+    ],
+    "role": "projects",
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": []
+}

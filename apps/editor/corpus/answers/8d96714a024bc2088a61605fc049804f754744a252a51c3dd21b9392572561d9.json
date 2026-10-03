@@ -14,13 +14,7 @@
       "does": "opens",
       "holds": "entry"
     },
-    "redefinitions": [
-      {
-        "name": "cvhonors",
-        "latex": "\\makeatletter\n\\@ifundefined{rt@datewidth}{\\newlength\\rt@datewidth}{}\n\\long\\def\\rt@honordates#1{%\n  \\global\\rt@datewidth 1.5cm\\relax\n  \\setbox\\z@\\hbox{%\n    \\def\\cvhonor##1##2##3##4{%\n      \\settowidth\\dimen@{\\honordatestyle{##4\\hskip2em}}%\n      \\ifdim\\dimen@>\\rt@datewidth \\global\\rt@datewidth\\dimen@ \\fi}%\n    \\def\\multicolumn##1##2##3{}%\n    \\let\\\\\\relax\n    #1}}\n\\RenewDocumentEnvironment{cvhonors}{+b}{%\n  \\vspace{\\acvSectionContentTopSkip}\n  \\vspace{-2mm}\n  \\begin{center}\n    \\setlength\\tabcolsep{0pt}\n    \\setlength{\\extrarowheight}{0pt}\n    \\rt@honordates{#1}%\n    \\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}} C{\\rt@datewidth} L{\\textwidth - 4.0cm + 1.5cm - \\rt@datewidth} R{2.5cm}}\n      #1\n    \\end{tabular*}\n  \\end{center}\n}{}\n\\makeatother"
-      }
-    ],
-    "notes": "Upstream sets an award's date in a column 1.5 cm wide, which a range wraps in; the redefinition makes the column as wide as the widest date, as the port does, never narrower than upstream's. The LaTeX is adapted from the port's rt-awesome-cv.cls, a modified version of awesome-cv.cls, under the LPPL 1.3c.",
+    "notes": "Upstream sets an award's date in a column 1.5 cm wide, which a range wraps in. A redefinition that made the column as wide as the widest date, as the port does, was dropped by the review's check: it moved the page of one of the four corpus documents that hold its key (decision 0037).",
     "reviewed": true
   },
   "reviewed": true,

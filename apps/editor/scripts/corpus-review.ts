@@ -494,6 +494,8 @@ const NAMED_KEYS: ReadonlySet<string> = new Set(["applied", "dropped"]);
 export const NO_REQUEST_NOTE =
   "No request of this template is written: the privacy gate withholds every one, or it holds another document's text.";
 export const UNWRITTEN_NOTE = "Only requests not written hold it.";
+export const WITHHELD_ANSWER_NOTE =
+  "The cache serves an answer for it, not written: the leak check found a document's text in it.";
 const WHY_UNCHECKED =
   "The run kept no text of one of its documents, to check what it would write against.";
 const WHY_LEAK = "The leak check found a document's text in its summary.";
@@ -518,6 +520,7 @@ const SUMMARY_FIELDS = [
   "macros",
   "of",
   "answer",
+  "answerNote",
   "file",
   "filing",
   "calls",
@@ -560,8 +563,15 @@ const OWN_WORDS: ReadonlySet<string> = new Set([
   ...CHECKS,
   ...CHECK_NOTES,
   ...VERDICTS,
-  ...["passes", "withholds", "none", "reviewed", "model", "command", "environment"],
-  ...[NO_REQUEST_NOTE, UNWRITTEN_NOTE, TEMPLATE_RULE, WHY_UNCHECKED, WHY_LEAK],
+  ...["passes", "withholds", "none", "reviewed", "model", "withheld", "command", "environment"],
+  ...[
+    NO_REQUEST_NOTE,
+    UNWRITTEN_NOTE,
+    WITHHELD_ANSWER_NOTE,
+    TEMPLATE_RULE,
+    WHY_UNCHECKED,
+    WHY_LEAK,
+  ],
 ]);
 
 /**
@@ -844,14 +854,19 @@ export async function exportPlan(input: {
       for (const macro of each.request.macros)
         if (macro.key !== undefined && !macroOf.has(macro.key))
           macroOf.set(macro.key, { request: each.request, macro });
-    // The answers the cache serves now, as it holds them.
-    const answers = new Map<string, "reviewed" | "model">();
+    // The answers the cache serves now, as it holds them. One the leak check finds a document's
+    // text in is not written, and is `withheld`, not `none`: the cache serves it, and a reviewer
+    // who read it as missing would write a second answer under its key.
+    const answers = new Map<string, "reviewed" | "model" | "withheld">();
     for (const key of template.keys) {
       const text = input.cache(key);
       if (text === undefined) continue;
       const stored = await answerFor({ get: () => text }, key);
       if (stored === undefined) continue;
-      if (leaksIn({ text, kind: "answer" }, texts, input.findLeaks).length > 0) continue;
+      if (leaksIn({ text, kind: "answer" }, texts, input.findLeaks).length > 0) {
+        answers.set(key, "withheld");
+        continue;
+      }
       answers.set(key, stored.reviewed ? "reviewed" : "model");
       folderFiles.push({ path: `${template.folder}/answers/${key}.json`, text });
     }
@@ -915,7 +930,11 @@ export async function exportPlan(input: {
             (doc) => doc.request !== undefined && keysOfRequest(doc.request).includes(key),
           ).length,
           answer: answers.get(key) ?? "none",
-          ...(answers.has(key) ? { file: `answers/${key}.json` } : {}),
+          ...(answers.get(key) === "withheld"
+            ? { answerNote: WITHHELD_ANSWER_NOTE }
+            : answers.has(key)
+              ? { file: `answers/${key}.json` }
+              : {}),
           ...(filing === undefined ? {} : { filing }),
           ...fate,
         };

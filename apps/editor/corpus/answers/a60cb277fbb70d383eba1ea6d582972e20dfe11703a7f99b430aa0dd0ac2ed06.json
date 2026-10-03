@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "key": "a60cb277fbb70d383eba1ea6d582972e20dfe11703a7f99b430aa0dd0ac2ed06",
+  "hash": "7f77582be471178e4552c23e497739452f2c073ee7c4303f8205826617af873b",
+  "of": "command",
+  "name": "cvscale",
+  "answer": {
+    "kind": "other",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "label"
+      },
+      {
+        "index": 2,
+        "meaning": "key"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["cvnote", "14cff01d2baadd672421457e7b062296e963a2a3c99fd96a2438a2d3f6a2963e"],
+    ["cvswitch", "b0ce7f88560988cbd201e908e0d2adc86da10357d49e6cd7a1538440fa614ab6"],
+    ["before", "634427fb94099569c62991df4f7e673ff6fb427f4c80e68e49fbe9158cdcb7ad"]
+  ]
+}

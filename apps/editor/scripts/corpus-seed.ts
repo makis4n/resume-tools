@@ -437,21 +437,26 @@ function jsonOf(text: string | undefined): Record<string, unknown> | undefined {
 
 /**
  * What `corpus seed --write` writes to the answers folder: for each sample's macro that has a key,
- * its answer's file, found under the key it is filed under now, or under its request's key, or by
- * its family, kind and name, rewritten with this naming version, that key, its hash, its
+ * its answer's file, found under the key it is filed under now, or under its request's key, or, of
+ * the seed's own answers alone, by its family, kind and name, rewritten with this naming version, that key, its hash, its
  * dependencies and its list's partners' keys, where any differs from the file, so that an answer
  * of an older version is filed again when it validates as this version's; and what it cannot
- * write, a macro with no file, an answer that does not validate so, or one whose partner the
- * sample has no key for, naming macros only.
+ * write, a macro with no file, one whose name two seed answers share, an answer that does not
+ * validate so, or one whose partner the sample has no key for, naming macros only.
  */
 export async function seedPlan(
   rows: readonly SeedRow[],
   folder: { read: (key: string) => string | undefined; keys: readonly string[] },
 ): Promise<{ writes: SeedWrite[]; problems: string[] }> {
-  const byName = new Map<string, string>();
+  // The seed's own answers by family, kind and name, for a sample's macro whose file is under no
+  // key it has. Only the seed's: a reviewed fork's answer may share an upstream macro's name and
+  // never stands for it. Two seed answers of one name stand for neither (`null`).
+  const byName = new Map<string, string | null>();
   for (const key of folder.keys) {
     const json = jsonOf(folder.read(key));
-    if (json !== undefined) byName.set(`${json.family}|${json.of}|${json.name}`, key);
+    if (json === undefined || json.source !== "seed") continue;
+    const name = `${json.family}|${json.of}|${json.name}`;
+    byName.set(name, byName.has(name) ? null : key);
   }
   const writes: SeedWrite[] = [];
   const problems: string[] = [];
@@ -461,11 +466,16 @@ export async function seedPlan(
       const filed = macro.filed;
       if (filed === undefined) continue;
       const shown = `${row.family} ${shownName(macro)}`;
-      const from = [
-        filed.key,
-        macro.key,
-        byName.get(`${row.family}|${macro.of}|${macro.name}`),
-      ].find((key) => key !== undefined && folder.read(key) !== undefined);
+      const named = byName.get(`${row.family}|${macro.of}|${macro.name}`);
+      const from = [filed.key, macro.key, named ?? undefined].find(
+        (key) => key !== undefined && folder.read(key) !== undefined,
+      );
+      if (from === undefined && named === null) {
+        problems.push(
+          `${shown}: more than one seed answer of its family and name, none under its key`,
+        );
+        continue;
+      }
       const text = from === undefined ? undefined : folder.read(from);
       const json = jsonOf(text);
       if (from === undefined || text === undefined || json === undefined) {

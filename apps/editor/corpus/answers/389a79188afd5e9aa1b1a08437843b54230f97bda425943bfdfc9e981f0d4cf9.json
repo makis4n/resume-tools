@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "key": "389a79188afd5e9aa1b1a08437843b54230f97bda425943bfdfc9e981f0d4cf9",
+  "hash": "e374633781bbff8af2d25c9a5b01d6aa483438b54e113066b2e73ac2f6a3ef2f",
+  "of": "command",
+  "name": "ecvmothertongue",
+  "family": "europecv",
+  "answer": {
+    "kind": "labelledItem",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "length",
+        "blank": "absent"
+      },
+      {
+        "index": 2,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "role": "languages",
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["\\ecvmothertongue", "d923e485a31bfca8bba3c94d88413cd85b2bb60ad2dae505658efbb8a53006e5"]
+  ]
+}
