@@ -26,6 +26,7 @@
  */
 
 import type { LockedSection } from "@resume-tools/resume-model";
+import { FIRST_WORDS } from "../import/report";
 import type { DrawnPage, GlyphBox } from "../page/draw";
 import { escapeText } from "../templates/escape";
 import { INVISIBLE } from "../tex/fields";
@@ -140,6 +141,9 @@ const ESCAPED = new Set(["&", "%", "$", "#", "_", "{", "}"]);
 /** The control symbols that put an accent over what follows. */
 const ACCENTS = new Set(["'", "`", "^", '"', "~", "=", "."]);
 
+/** The commands of one letter that put an accent over what follows, as `\c{c}` and `\v r`. */
+const LETTER_ACCENTS = new Set(["H", "c", "v", "u", "r", "d", "b", "t", "k"]);
+
 const LETTER = /[A-Za-z@]/;
 const BLANK = /[ \t\r\n]/;
 
@@ -205,6 +209,19 @@ export function piecesOf(latex: string): Piece[] {
     }
     return at;
   };
+  /**
+   * Past what an accent at `from` goes over: a brace group, as `\"{u}` or `\c{c}`, which is no run,
+   * or else, past spaces, as an accent's argument skips them, the letter it goes over, where the run
+   * that starts is then joined to the accent and never offered, as `\"u` and `\v r`. Either way the
+   * accent's glyph stands apart from every run offered, so that no retype moves it.
+   */
+  const pastAccented = (from: number): number => {
+    let next = from;
+    while (next < n && BLANK.test(latex[next] ?? "")) next++;
+    if (latex[next] !== "{") return next;
+    const close = groupEnd(latex, next, "{", "}");
+    return close < 0 ? n : close + 1;
+  };
   let at = 0;
   while (at < n) {
     const char = latex[at] as string;
@@ -242,6 +259,11 @@ export function piecesOf(latex: string): Piece[] {
             continue;
           }
         }
+        if (LETTER_ACCENTS.has(name)) {
+          at = pastAccented(end);
+          commandEnd = at;
+          continue;
+        }
         const skipped = SKIPPED_ARGUMENTS[name];
         at =
           skipped === undefined ? (latex[end] === "*" ? end + 1 : end) : pastGroups(end, skipped);
@@ -267,6 +289,7 @@ export function piecesOf(latex: string): Piece[] {
       }
       at += 2;
       if (next === "\\") at = pastOptionsAfterName(latex, at);
+      if (ACCENTS.has(next)) at = pastAccented(at);
       commandEnd = ACCENTS.has(next) ? at : -1;
       continue;
     }
@@ -555,6 +578,45 @@ export function retypesOf(
   return found;
 }
 
+/** Letters and digits alone, as a part's name and its glyphs are compared (`namesOnPage`). */
+const lettersOf = (text: string) => canonical(text).replace(/[^\p{L}\p{N}]/gu, "");
+
+/**
+ * The side panel's names of a document's locked parts (`lockedWordsOf`, decision 0041), as the page
+ * shows each now: the import report's name for a part while its words are still on the page, and
+ * once a retype has replaced them, as decision 0042 lets it, the first words of its runs offered
+ * (`FIRST_WORDS` of them, and an ellipsis after), or none, which the panel shows as kept as it was.
+ * A part no page draws keeps the report's name. No name holds a backslash or a brace.
+ */
+export function namesOnPage(
+  names: ReadonlyMap<string, string>,
+  pages: readonly Pick<DrawnPage, "glyphs">[],
+  retypes: ReadonlyMap<string, Retype | { reason: string }>,
+): Map<string, string> {
+  const shown = new Map<string, string>();
+  for (const [part, name] of names) {
+    const drawn = partGlyphs(pages, part);
+    const wanted = lettersOf(name);
+    const letters = lettersOf(drawn.map((glyph) => glyph.text ?? "").join(""));
+    if (drawn.length === 0 || wanted === "" || letters.includes(wanted)) {
+      shown.set(part, name);
+      continue;
+    }
+    const found = retypes.get(part);
+    if (found === undefined || !isRetype(found)) continue;
+    const words = found.pieces
+      .map((piece) => piece.text)
+      .join(" ")
+      .replace(/[\\{}]/g, " ")
+      .split(/\s+/)
+      .filter((word) => word !== "");
+    if (words.length === 0) continue;
+    const first = words.slice(0, FIRST_WORDS).join(" ");
+    shown.set(part, words.length > FIRST_WORDS ? `${first}…` : first);
+  }
+  return shown;
+}
+
 /**
  * What the person typed as LaTeX: its whitespace one space and none at its ends, and escaped as a
  * field's text is (`escapeText`, decision 0007), so that every character either sets as itself or
@@ -583,7 +645,10 @@ export function retyped(
     const piece = retype.pieces[index] as RetypePiece;
     const text = texts[index];
     if (text === undefined || typed(text) === typed(piece.text)) continue;
-    changed = changed.slice(0, piece.start) + escapeTyped(text) + changed.slice(piece.end);
+    // Typed otherwise but written the same, as with a character escaping drops or composes.
+    const escaped = escapeTyped(text);
+    if (escaped === latex.slice(piece.start, piece.end)) continue;
+    changed = changed.slice(0, piece.start) + escaped + changed.slice(piece.end);
     any = true;
   }
   return any ? changed : undefined;
@@ -678,6 +743,11 @@ export type RetypeVerdict = { kept: true } | { kept: false; why: RetypeRefusal }
  */
 export class RetypeGuard {
   private pending: Pending | undefined;
+  /**
+   * The document of a retype cancelled while it compiled, whose page, or whose stop, may still
+   * land: it is dropped (`discards`), so that a cancelled retype's page is never shown either.
+   */
+  private cancelled: Document | undefined;
 
   constructor(private readonly outside: OutsideCheck) {}
 
@@ -720,6 +790,9 @@ export class RetypeGuard {
       if (error instanceof CommandError) return { why: "refused" };
       throw error;
     }
+    // A document the same as before is no step of the history, and nothing to check or take back.
+    if (after === before) return "unchanged";
+    this.cancelled = undefined;
     this.pending = { history, before, after, retype, texts, output: shown.output };
     return after;
   }
@@ -769,12 +842,22 @@ export class RetypeGuard {
     const pending = this.pending;
     if (pending === undefined) return false;
     this.takeBack(pending, "failed");
+    this.cancelled = pending.after;
     return true;
+  }
+
+  /**
+   * Whether a page, a stop or a failure of `document` is a cancelled retype's, which the app drops:
+   * its compile was in flight when it was cancelled, and lands all the same.
+   */
+  discards(document: Document): boolean {
+    return this.cancelled !== undefined && document === this.cancelled;
   }
 
   /** Let go of the waiting retype, as when another document opens: nothing of it is saved. */
   forget(): void {
     this.pending = undefined;
+    this.cancelled = undefined;
   }
 
   private takeBack(pending: Pending, why: RetypeRefusal): RetypeVerdict {

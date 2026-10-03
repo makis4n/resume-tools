@@ -2,13 +2,14 @@ import { LockedLatex } from "@resume-tools/resume-model";
 import { describe, expect, test } from "vitest";
 import type { GlyphBox } from "../page/draw";
 import { curated } from "../templates/curated";
-import { type Document, History, newDocument } from "./document";
+import { type Document, HISTORY_LIMIT, History, newDocument } from "./document";
 import {
   alignPieces,
   canonical,
   escapeTyped,
   isRetype,
   NOT_RETYPED,
+  namesOnPage,
   piecesOf,
   RETYPE_REFUSED,
   type Retype,
@@ -462,5 +463,140 @@ describe("the retype command and taking a step back", () => {
     expect(history.canRedo).toBe(false);
     expect(history.canUndo).toBe(false);
     expect(history.takeBack()).toBeUndefined();
+  });
+});
+
+describe("the review's findings (decision 0042)", () => {
+  const output = new Uint8Array([1]);
+  /** A guard over the heading's document whose check passes, after `outside` resolves. */
+  function setUp(outside: Promise<boolean> = Promise.resolve(true)) {
+    const start = documentWith(HEADING);
+    const history = new History(start);
+    // An earlier step of the person's own, which nothing of a retype may take away.
+    history.dispatch({ type: "retype", section: "lock-heading", latex: HEADING });
+    const earlier = history.dispatch({
+      type: "retype",
+      section: "lock-heading",
+      latex: HEADING.replace("555-0100", "555-0109"),
+    });
+    const guard = new RetypeGuard(() => outside);
+    const found = retypeOf({ id: "lock-heading", latex: HEADING }, HEADING_PAGE);
+    if (!isRetype(found)) throw new Error(found.reason);
+    return { start, history, earlier, guard, found };
+  }
+
+  test("a run typed otherwise but written the same is no retype: nothing applied, nothing popped", () => {
+    const { history, earlier, guard, found } = setUp();
+    // The page's document, with the phone the earlier step left; its runs read from the same bytes.
+    const shown = { document: earlier, pages: HEADING_PAGE, output };
+    const section = earlier.resume.sections[0];
+    if (section?.kind !== "locked") throw new Error("no part");
+    const runs = retypeOf(section, HEADING_PAGE);
+    if (!isRetype(runs)) throw new Error(runs.reason);
+    const texts = runs.pieces.map((piece) => piece.text);
+    // A soft hyphen, which escaping drops, and an accent pasted decomposed over a plain run.
+    for (const typed of ["Quill In­vented", "Quill Inve​nted"]) {
+      expect(retyped(section.latex, runs, [typed, ...texts.slice(1)])).toBeUndefined();
+      expect(guard.start(history, runs, [typed, ...texts.slice(1)], shown)).toBe("unchanged");
+    }
+    expect(escapeTyped("Café")).toBe(escapeTyped("Café"));
+    expect(history.present).toBe(earlier);
+    expect(guard.holds()).toBe(false);
+    expect(guard.cancel()).toBe(false);
+    expect(history.present).toBe(earlier);
+    expect(history.canUndo).toBe(true);
+    expect(found.pieces).toHaveLength(4);
+  });
+
+  test("never offers an accent's braced letter, nor the run after it, which the accent goes over", () => {
+    for (const [latex, runs] of [
+      [String.raw`Z\"{u}rich`, ["Z"]],
+      [String.raw`Z\" {u}rich`, ["Z"]],
+      [String.raw`Caf\'{e} au lait`, ["Caf", "au lait"]],
+      [String.raw`Fa\c{c}ade`, ["Fa"]],
+      [String.raw`Fa\c cade`, ["Fa"]],
+      [String.raw`Dvo\v{r}ak`, ["Dvo"]],
+      [String.raw`Erd\H{o}s and \k{a}`, ["Erd"]],
+    ] as const) {
+      const offered = piecesOf(latex).filter((piece) => !piece.joined);
+      expect(
+        offered.map((piece) => piece.text),
+        latex,
+      ).toEqual(runs);
+    }
+  });
+
+  test("gives back the step the history let go past its limit when a retype is taken back", () => {
+    const history = new History(documentWith(HEADING));
+    for (let k = 0; k < HISTORY_LIMIT; k++)
+      history.dispatch({ type: "retype", section: "lock-heading", latex: `Words ${k}` });
+    let undone = 0;
+    const before = history.present;
+    history.dispatch({ type: "retype", section: "lock-heading", latex: "Taken back" });
+    expect(history.takeBack()).toBe(before);
+    while (history.undo() !== undefined) undone++;
+    expect(undone).toBe(HISTORY_LIMIT);
+    expect(history.present.resume.sections[0]).toMatchObject({ latex: HEADING });
+  });
+
+  test("holds while its page is checked, and drops what a cancelled retype's compile brings", async () => {
+    let pass: (unchanged: boolean) => void = () => {};
+    const { history, guard, found, earlier } = setUp(
+      new Promise<boolean>((resolve) => {
+        pass = resolve;
+      }),
+    );
+    const shown = { document: earlier, pages: HEADING_PAGE, output };
+    const section = earlier.resume.sections[0];
+    if (section?.kind !== "locked") throw new Error("no part");
+    const runs = retypeOf(section, HEADING_PAGE);
+    if (!isRetype(runs)) throw new Error(runs.reason);
+    const texts = ["Wren Invented", ...runs.pieces.slice(1).map((piece) => piece.text)];
+    const after = guard.start(history, runs, texts, shown);
+    if (after === "unchanged" || "why" in after) throw new Error("not started");
+    // The page landed and its check runs: the app makes no PDF meanwhile, since the guard holds.
+    const checking = guard.paged({ document: after, pages: HEADING_PAGE, output });
+    expect(guard.holds()).toBe(true);
+    pass(true);
+    await checking;
+    expect(guard.holds()).toBe(false);
+    // Cancelled while it compiles: what its compile brings is dropped, and nothing else.
+    const again = guard.start(history, runs, texts, {
+      document: earlier,
+      pages: HEADING_PAGE,
+      output,
+    });
+    if (again === "unchanged" || "why" in again) throw new Error("not started");
+    expect(guard.cancel()).toBe(true);
+    expect(history.present).toBe(earlier);
+    expect(guard.discards(again)).toBe(true);
+    expect(guard.discards(earlier)).toBe(false);
+    guard.forget();
+    expect(guard.discards(again)).toBe(false);
+    expect(found.pieces.length).toBeGreaterThan(0);
+  });
+
+  test("names a part in the side panel by the report while its words show, and by its runs after", () => {
+    const retypes = retypesOf(documentWith(HEADING), HEADING_PAGE);
+    const names = new Map([["lock-heading", "Quill Invented 555-0100 | quill…"]]);
+    expect(namesOnPage(names, HEADING_PAGE, retypes)).toEqual(names);
+    const retypedPage = [
+      {
+        glyphs: glyphs("lock-heading", [
+          ...spelled("WREN INVENTED"),
+          ...spelled("555-0100"),
+          undefined,
+          ...spelled("quill@example.invalid"),
+        ]),
+      },
+    ];
+    const latex = HEADING.replace("Quill Invented", "Wren Invented");
+    const after = retypesOf(documentWith(latex), retypedPage);
+    expect(namesOnPage(names, retypedPage, after).get("lock-heading")).toBe(
+      "Wren Invented 555-0100 quill@example.invalid",
+    );
+    // A part with nothing to retype whose words changed has no name, and shows as kept as it was.
+    const none = new Map([["lock-heading", { reason: NOT_RETYPED.notPlain }]]);
+    expect(namesOnPage(names, retypedPage, none).has("lock-heading")).toBe(false);
   });
 });

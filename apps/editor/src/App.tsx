@@ -21,9 +21,10 @@ import { StructureGuard } from "./editor/guard";
 import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
 import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
-import { RetypeEditor } from "./editor/RetypeEditor";
+import { RetypeEditor, retypeEditorKey } from "./editor/RetypeEditor";
 import {
   isRetype,
+  namesOnPage,
   RETYPE_REFUSED,
   RetypeGuard,
   type RetypeVerdict,
@@ -425,6 +426,8 @@ export function App() {
     };
     const events: CompilerEvents = {
       page: (latest) => {
+        // A retype cancelled while it compiled: its page is never shown.
+        if (retypeGuard.current.discards(latest.document)) return;
         // A retype's page is shown only once it passes, which its check says.
         const retypes = retypeGuard.current;
         if (retypes.waitsFor(latest.document)) {
@@ -451,6 +454,11 @@ export function App() {
         }
       },
       stopped: (document) => {
+        // A cancelled retype's compile that stopped says nothing: the document before it compiles.
+        if (retypeGuard.current.discards(document)) {
+          tookBack.current = true;
+          return;
+        }
         // A retype that stopped the compile: taken back, never saved, and the page as it was.
         const retyped = retypeGuard.current.stopped(document);
         if (retyped !== undefined) {
@@ -574,6 +582,8 @@ export function App() {
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && holdsTyping(focused)) focused.blur();
     setClicked(undefined);
+    // A part's editor open closes: its runs may change under it (decision 0042).
+    setRetyping(undefined);
     const before = open.history.present;
     const next = way === "undo" ? open.history.undo() : open.history.redo();
     // With nothing to take back, the step that ended may still have been dropped.
@@ -909,6 +919,8 @@ export function App() {
   const download = async () => {
     const owned = compiler.current;
     if (owned === undefined) return;
+    // A retype's page is the compiler's output while it is checked: never in a PDF (decision 0042).
+    if (retypeGuard.current.holds()) return;
     setDownloading(true);
     setPdfError(undefined);
     try {
@@ -930,7 +942,12 @@ export function App() {
   // compile (decision 0013): with no page to click, the panel gives each field an input
   // (`shownFieldsOf`), bar a rich one it would strip of its marks, so the edit that stopped the
   // compile can be taken back, or its item removed, and the page that edit makes then shows.
-  // Each locked part's row offers to retype its words, or says why not (decision 0042).
+  // Each locked part's row offers to retype its words, or says why not, and is named by its words as
+  // the page shows them now, the report's until a retype replaces them (decision 0042).
+  const rowNames =
+    latest === undefined || retypes === undefined
+      ? lockedWords
+      : namesOnPage(lockedWords, latest.pages, retypes);
   const retypeRows =
     retypes === undefined
       ? undefined
@@ -943,7 +960,7 @@ export function App() {
         document={present}
         pkg={pkg}
         shownFields={shownFieldsOf(shown?.latest, present, error !== undefined)}
-        lockedWords={lockedWords}
+        lockedWords={rowNames}
         retypes={retypeRows}
         onRetype={openRetype}
         onCommand={edit}
@@ -1058,7 +1075,7 @@ export function App() {
           part: retyping.part.toLowerCase(),
           editor: (
             <RetypeEditor
-              key={retyping.part}
+              key={retypeEditorKey(retyping.part, shown.latest.document)}
               pieces={retype.pieces}
               ready={shown.latest.document === present && !busy}
               checking={retyping.checking}
@@ -1100,7 +1117,7 @@ export function App() {
           <button
             type="button"
             onClick={() => void download()}
-            disabled={busy || downloading || stale || fitRuns}
+            disabled={busy || downloading || stale || fitRuns || retyping?.checking === true}
           >
             Download PDF
           </button>

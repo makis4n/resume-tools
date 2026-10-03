@@ -16,19 +16,24 @@ every case (decisions 0025 and 0041).
 
 ### The corpus's number
 
-- **The committed answers alone** (decision 0043's run, `corpus run --committed-only`): about four
-  in five of the body's words locked, 19.42% editable.
-- **The saved answers and the SoCLaaS model's cache, 2 October 2026** (decision 0044's model,
-  the run over every assembled document with the answers saved by then): 21.3% editable of 61,511
-  body words. The locked words by kind: `unmapped` 38,611, `shape` 6,452, `moved` 938, `untested`
-  765, `differs` 561, `date` 518, `misaligned` 318, `text` 48, `breaks` 5.
-- **The live seed and model run (`corpus run --allow-model`, main after item 17's review):
-  TO FILL before the pull request, with its editable rate, its body words and its locked words by
-  kind.**
+- **The recorded number: the saved answers and the SoCLaaS model, live, 3 October 2026** (`corpus
+  run --allow-model` over the whole corpus, decision 0044's model `qwen3.8:27b` with thinking off,
+  on the branch with item 17's 144 reviewed answers, 20.7 minutes): 220 documents, 1 timed out; of
+  the 219 others, 0 succeeded, 92 partial (42.0%), 127 refused or stopped (12 refused, 103 with no
+  reference, 12 with no answer). Of 989 macros, 648 were answered from the committed answers, 314
+  from the model's cache and 27 by the model then (17 calls, 9 answers stored, 6 invalid), and 18
+  were missing. **22.3% of the 66,453 body words of the 92 documents assembled are editable; 51,452
+  words, 77.4%, are locked**, by kind: `unmapped` 39,992, `shape` 7,562, `moved` 1,253, `untested`
+  765, `date` 625, `differs` 565, `misaligned` 336, `vanished` 306, `text` 48.
+- **The saved answers and the model's cache alone, 2 October 2026**, the run the owner decided on:
+  21.3% editable of 61,511 body words; locked by kind `unmapped` 38,611, `shape` 6,452, `moved`
+  938, `untested` 765, `differs` 561, `date` 518, `misaligned` 318, `text` 48, `breaks` 5.
+- **The committed answers alone** (decision 0043's run, `corpus run --committed-only`): 19.42% of
+  41,631 words editable.
 
-The owner decided on 2 October 2026 that the share is **material**: with four words in five locked,
-a resume imported is mostly words its owner cannot change. So the first form follows, the
-substitution with no model; the rewrite does not.
+The owner decided on 2 October 2026 that the share is **material**, and the live run bears it out:
+with more than three words in four locked, a resume imported is mostly words its owner cannot
+change. So the first form follows, the substitution with no model; the rewrite does not.
 
 ## Decision
 
@@ -51,7 +56,10 @@ substitution with no model; the rewrite does not.
   it stands, `\url`, `\path`, `\nolinkurl` and `\verb`; an environment's name and a table's columns;
   and math and verbatim environments whole. A run right after a command's name or an accent, with no
   space between, as `\small555` or `\'e`, is never offered: what is typed there would run into the
-  name.
+  name. Nor is what an accent goes over, braced or not, `\"{u}`, `\c{c}`, `\v r` (the review's
+  finding): in OT1, the encoding most imports set, the accent is a glyph of its own, outside every
+  run, so that a run under it retyped printed the accent over another letter or over nothing, and
+  was kept; the run after a braced accent is joined to it, and the one before it is offered.
 - **Lined up with the page** (`alignPieces`): the part's glyphs, every page's, in the order the
   pages paint them, are read as the aligner reads a field's (`canonical`: case folded, as a class
   that sets a part in capitals or small capitals shows it; TeX's dashes and quotes and the
@@ -76,21 +84,25 @@ substitution with no model; the rewrite does not.
   command, open or close a group, start a comment or enter math, whatever the part does with it.
 - **Replaces the run's bytes alone** (`retyped`): each changed run's bytes, its whitespace around it
   kept, become what was typed, escaped; every other byte of the part stays the upload's. A run typed
-  as it was changes nothing.
+  as it was, or typed otherwise but escaped to its own bytes, as with a soft hyphen or a
+  zero-width space escaping drops, or an accent pasted decomposed, changes nothing: no step, no
+  check, and the editor closes (the review found such a retype once took back an earlier step).
 - **One step of the history** (`Command` `retype`, `applyUnder`): the locked section's LaTeX
   replaced, refused (`CommandError`) for any other section and for LaTeX a locked part may not keep
   (`LockedLatex`, decision 0025): escaped text never unbalances the braces, but a run typed as the
   page's own marker texts, `rt:l:` and the like, is refused with "That text cannot be kept in this
   part." Undo takes the step back and redo does it again, as any step; both are documents the page
-  showed and the check passed.
+  showed and the check passed. A step taken back for good gives back the oldest step the history
+  let go past its limit for it (`HISTORY_LIMIT`), so that no other step is lost.
 
 ### The check: kept only when nothing outside the part moved
 
 - **The document's own compile path.** The retyped document compiles as any edit's does, through
   the compiler, in the document's job with the import's files (decision 0038), in the worker: in
   the job the import keeps for the document's compiles, never a job of its own. While it does, the
-  document takes no other edit and no undo (the page that comes is the retype's alone), and the
-  editor's "Cancel" takes it back.
+  document takes no other edit, no undo and no PDF (the page that comes is the retype's alone, and
+  the compiler's output is the retype's until it passes), and the editor's "Cancel" takes it back:
+  what its compile, in flight then, brings, a page or a stop, is dropped (`discards`).
 - **Kept only when, all three** (`RetypeGuard`):
   - the document compiles: a compile that stops takes the retype back (`stopped`), as item 15's
     guard takes back a structural step, and so does one that brings no page for another reason
@@ -128,12 +140,18 @@ substitution with no model; the rewrite does not.
 - **A click on it opens its small editor** (`RetypeEditor.tsx`), placed under the part's first block
   on the page where the part starts, over what follows it, as a field's overlay lies over the page:
   one line for each run offered, as the page shows it, never its LaTeX; "Keep" and "Cancel", and
-  Escape. Its lines keep the browser's own undo while one is typed in (`NATIVE_UNDO`). A click on a
+  Escape. Its lines keep the browser's own undo while one is typed in (`NATIVE_UNDO`). It is mounted
+  afresh whenever the part's LaTeX on the page changes (`retypeEditorKey`), and an undo or a redo
+  closes it, so that what was typed is never sent over runs it was not typed over. A click on a
   part with nothing to retype still opens nothing (decision 0041).
 - **The keyboard's way in.** The page still holds no tab stop (decision 0041): each locked part's row
   in the side panel gets "Change words", in the tab order, which opens the same editor and moves
   the focus to its first line; it is disabled, saying why when pointed at, for a part with nothing
   to retype, and before a page shows the document ("Wait for the page to show it").
+- **The row's name follows the page.** The report names a part by its first words on the original
+  page (decision 0041); once a kept retype has replaced them, the row is named by the first words of
+  its runs as they are now (`namesOnPage`), and a part with no runs to name it by shows as kept as
+  it was, before and after a reload.
 - **Removing and moving stay** as decisions 0025 and 0041 made them, on every page.
 
 ### Nothing new leaves the browser
@@ -189,6 +207,14 @@ model, and the model writes no LaTeX.
   and undone; words that move the page taken back with the plain reason, what was typed kept; a
   compile that stops taken back; Escape; and the editor waiting while the page is not the
   document's.
+
+- **The review's findings**, each with its test: a soft hyphen and a zero-width space typed into a
+  run, no step and nothing popped by a cancel after; the braced and unbraced accents never offered,
+  and on the engine the fork's heading with an accented name offering the run before the accent
+  alone (`retype-leak.test.ts`); a retype taken back at the history's limit giving back the step
+  let go; the guard holding while the page is checked, which keeps the PDF waiting, and dropping a
+  cancelled retype's page; the row named by the runs after a kept retype; and the editor closing at
+  an undo and opening again on the runs as they are (`RetypeEditor.dom.test.tsx`).
 
 ## What stays open
 

@@ -7,7 +7,7 @@ import { LOCKED_TIP, Pages, RETYPE_TIP } from "../page/Page";
 import { curated } from "../templates/curated";
 import { type Document, History, newDocument } from "./document";
 import { NOT_YET, Panel } from "./Panel";
-import { CHECKING, RetypeEditor, WAITING } from "./RetypeEditor";
+import { CHECKING, RetypeEditor, retypeEditorKey, WAITING } from "./RetypeEditor";
 import { isRetype, RETYPE_REFUSED, RetypeGuard, type RetypeVerdict, retypesOf } from "./retype";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -82,6 +82,12 @@ function pageOf(name: string): DrawnPage {
   };
 }
 
+/** The heading's name a document's LaTeX sets, which its page shows. */
+const nameIn = (document: Document) => {
+  const section = document.resume.sections[0];
+  return /\\textbf\{([^}]*)\}/.exec(section?.kind === "locked" ? section.latex : "")?.[1] ?? "";
+};
+
 /** What the test's compile of a retyped document comes to: its page, or the compile stopping. */
 type Compiled = { page: DrawnPage; output: Uint8Array } | "stopped";
 
@@ -151,8 +157,15 @@ function Editor({
         type="button"
         onClick={() => {
           history.undo();
+          // As the app's undo, which closes a part's editor open.
+          setRetyping(undefined);
           setPresent(history.present);
-          setShown((current) => ({ ...current, document: history.present }));
+          // And the page the compiler brings of the document before.
+          setShown((current) => ({
+            ...current,
+            document: history.present,
+            pages: [pageOf(nameIn(history.present))],
+          }));
         }}
       >
         Undo
@@ -167,7 +180,7 @@ function Editor({
                 part: retyping.part,
                 editor: (
                   <RetypeEditor
-                    key={retyping.part}
+                    key={retypeEditorKey(retyping.part, shown.document)}
                     pieces={found.pieces}
                     ready={shown.document === present}
                     checking={retyping.checking}
@@ -348,6 +361,41 @@ describe("retyping a locked part's words (decision 0042)", () => {
       editor()?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     expect(editor()).toBeNull();
+  });
+
+  it("closes on an undo while open, and opens again on the part's runs as they are now", async () => {
+    click(part("lock-heading"));
+    const [name] = inputs();
+    if (name === undefined) throw new Error("no input");
+    type(name, "Wren Invented");
+    click(button("Keep"));
+    await landed({ page: pageOf("Wren Invented"), output: new Uint8Array([1]) });
+    click(part("lock-heading"));
+    expect(inputs().map((input) => input.value)).toEqual(["Wren Invented", "555-0100"]);
+    const [, phone] = inputs();
+    if (phone === undefined) throw new Error("no input");
+    type(phone, "555-0199");
+    // Undo takes the retype back under the open editor: the editor closes, what was typed with it.
+    click(button("Undo"));
+    expect(editor()).toBeNull();
+    expect(latex()).toContain("Quill Invented");
+    click(part("lock-heading"));
+    expect(inputs().map((input) => input.value)).toEqual(["Quill Invented", "555-0100"]);
+    // The editor's key follows the part's LaTeX, so that new runs mount it afresh.
+    const before = documentOf();
+    const section = before.resume.sections[0];
+    if (section?.kind !== "locked") throw new Error("no part");
+    const changed = {
+      ...before,
+      resume: {
+        ...before.resume,
+        sections: [{ ...section, latex: section.latex.replace("Quill", "Wren") }],
+      },
+    };
+    expect(retypeEditorKey("lock-heading", before)).not.toBe(
+      retypeEditorKey("lock-heading", changed),
+    );
+    expect(retypeEditorKey("lock-heading", before)).toBe(retypeEditorKey("lock-heading", before));
   });
 
   it("waits while the page is not the document's", () => {

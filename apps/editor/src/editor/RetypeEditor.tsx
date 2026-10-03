@@ -21,6 +21,20 @@ export const CHECKING = "Checking the page with your words…";
 /** What the editor says while the page has not caught up with the document yet. */
 export const WAITING = "Waiting for the page to be updated…";
 
+/**
+ * The key the editor of a part is mounted under: the part, and its LaTeX in the document the page
+ * shows, so that the editor starts afresh, its lines the part's runs as they are now, whenever
+ * those change under it, as an undo, a redo or a kept retype changes them; what was typed is kept
+ * only while the runs it was typed over stay as they are.
+ */
+export function retypeEditorKey(
+  part: string,
+  document: { resume: { sections: readonly { id: string; kind: string; latex?: string }[] } },
+): string {
+  const section = document.resume.sections.find((each) => each.id === part);
+  return `${part}\n${section?.kind === "locked" ? (section.latex ?? "") : ""}`;
+}
+
 export interface RetypeEditorProps {
   /** The part's runs, each as the page shows it, in order. */
   pieces: readonly { text: string }[];

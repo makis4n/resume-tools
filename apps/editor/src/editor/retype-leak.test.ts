@@ -12,12 +12,14 @@ import { treeImages } from "../import/intake";
 import { isRefusal } from "../import/refusal";
 import { type ImportDeps, importResume, type NameRequest } from "../import/run";
 import { nameOnService } from "../import/service";
+import { drawPages } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { handleName, LIMITS, type NameDeps, type ServiceCache } from "../service/name";
 import { MemoryPreambleCache } from "../service/preamble";
 import { MemoryRateStore } from "../service/rate";
 import { DocumentStore } from "../storage/store";
+import { generateBody, generateFormat } from "../templates/generate";
 import { resolveTemplate } from "../templates/resolve";
 import { JAKE_FORK } from "../test/jake-fork";
 import { Compiler, type Engine, type Shown } from "./compiler";
@@ -175,5 +177,47 @@ describe.skipIf(!engineAvailable())("a retype and what leaves the browser (decis
     if (isRefusal(again)) throw new Error(`refused: ${again.reason}`);
     expect(sent).toHaveLength(2);
     for (const word of TYPED.toLowerCase().split(" ")) expect(sent[1]).not.toContain(word);
+  }, 300_000);
+
+  test("offers no accent's braced letter, nor the run the accent joins, on the engine", async () => {
+    // The heading's invented name with an accent written as an OT1 document writes one.
+    const accented = JAKE_FORK.replace("Quill Invented", String.raw`Quill M\"{u}ller`);
+    expect(accented).not.toBe(JAKE_FORK);
+    const naming: NameRequest = (request, names, signal) =>
+      nameOnService(
+        request,
+        (input, init) => handleName(new Request(new URL(input, "http://localhost"), init), service),
+        signal,
+        names,
+      );
+    const imported = await importResume([tex("resume.tex", accented)], { ...deps, name: naming });
+    if (isRefusal(imported)) throw new Error(`refused: ${imported.reason}`);
+    const { package: pkg, document, job } = imported;
+    const format = generateFormat(pkg, document.controls);
+    expect(session.dump(pkg.engine, format.name, format.preamble, format.files).ok).toBe(true);
+    const body = generateBody(pkg, document.resume, document.controls);
+    const result = session.compile(pkg.engine, format.name, body.latex, {
+      job: "accent",
+      maxPasses: 3,
+      files: job.files,
+    });
+    session.forget("accent");
+    session.dropFormat(pkg.engine, format.name);
+    if (!result.ok || result.output === undefined) throw new Error("the document did not compile");
+    const pages = await drawPages(result.output, deps.fonts, body.texts);
+    const heading = document.resume.sections.find(
+      (section): section is LockedSection =>
+        section.kind === "locked" && section.latex.includes("\\begin{center}"),
+    );
+    if (heading === undefined) throw new Error("the heading is not kept as a part");
+    const found = retypesOf(document, pages).get(heading.id);
+    if (found === undefined || !isRetype(found)) throw new Error("the heading offers nothing");
+    // The run before the accent is offered; the accented letter and the run it joins are not.
+    expect(found.pieces.map((piece) => piece.text)).toEqual([
+      "Quill M",
+      "555-0100",
+      "quill@example.invalid",
+      "quill.example",
+    ]);
   }, 300_000);
 });
