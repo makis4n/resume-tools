@@ -13,7 +13,9 @@
  * what sets most of its glyphs, as the assembly read the probe's runs (`AssemblyChecks.owners`):
  * an editable field, typeset, which the page opens in place, or set raw, which the side panel
  * alone edits; a locked part, with why; or the template's own text, a label, a separator or a
- * page's number, which is no word of the resume's. The body's words are all the resume's, and the
+ * page's number, which is no word of the resume's; but a running header or footer a locked part of
+ * the source sets is that part's whole on every page, what its call passes among it, a date or a
+ * page's number (`ownRunningLines`). The body's words are all the resume's, and the
  * editable rate the share of them editable in place, as plan section 6.2 has the bar: the side
  * panel's are counted apart.
  *
@@ -469,11 +471,120 @@ const ownerKey = (owner: Omit<GlyphOwner, "page" | "from" | "to">): OwnerKey =>
         ? `k:${owner.kept}`
         : "t";
 
+/** A locked owner: a part, or what the document keeps that no part counts. */
+const lockedKey = (key: OwnerKey) => key.startsWith("p:") || key.startsWith("k:");
+
+/**
+ * Gives a running line's glyphs to the locked part of the source that sets it (item 13's hand
+ * count, decision 0039): a header or a footer the template sets on every page, which the probe
+ * reads where it first comes and no further, leaving its copies on later pages, and what the call
+ * passes it that no text of the source spells, a date or a page's number, to the template's text.
+ *
+ * A running line is a stretch of a page's glyphs one after the other on one line that another page
+ * sets at the same height, at least half the longer's glyphs the same character at the same place:
+ * the copies of one line, the page's number in it changing from page to page. Where every glyph
+ * of a running line's copies that has an owner has one and the same locked one, that part sets the
+ * whole line on every page, as one call sets a running footer; else each copy's glyph the template
+ * has takes the locked owner a copy's same glyph at the same place has, and nothing more. A line
+ * none of the source sets stays the template's: its own running line is its own. A field's glyphs
+ * are never given on: a field the template sets on every page is locked (`twice`) by the probe.
+ */
+function ownRunningLines(pages: readonly (readonly Glyph[])[], owners: OwnerKey[][]): void {
+  /** Each page's lines: stretches of its glyphs one after the other, each on one line. */
+  const lines: { page: number; from: number; to: number; v: number; size: number }[] = [];
+  pages.forEach((glyphs, page) => {
+    let from = 0;
+    for (let at = 1; at <= glyphs.length; at++) {
+      const first = glyphs[from] as Glyph;
+      const each = glyphs[at];
+      if (
+        each !== undefined &&
+        Math.abs(each.v - first.v) <= LINE * Math.max(each.size, first.size, 1)
+      )
+        continue;
+      if (at - from >= 2) lines.push({ page, from, to: at, v: first.v, size: first.size });
+      from = at;
+    }
+  });
+  /** Where each glyph of line `b` the same as one of line `a` at its place is, by `a`'s glyph. */
+  const same = (a: (typeof lines)[number], b: (typeof lines)[number]) => {
+    const near = SPACE * Math.max(a.size, b.size, 1);
+    const pairs = new Map<number, number>();
+    const theirs = pages[b.page] ?? [];
+    for (let at = a.from; at < a.to; at++) {
+      const glyph = pages[a.page]?.[at] as Glyph;
+      for (let other = b.from; other < b.to; other++) {
+        const each = theirs[other] as Glyph;
+        if (each.text === glyph.text && Math.abs(each.h - glyph.h) <= near) {
+          pairs.set(at, other);
+          break;
+        }
+      }
+    }
+    return pairs;
+  };
+  // The copies of each running line, joined across the pages, and their glyphs' pairs.
+  const group = lines.map((_, i) => i);
+  const root = (i: number): number => {
+    while (group[i] !== i) i = group[i] as number;
+    return i;
+  };
+  const pairs: { a: number; b: number; glyphs: Map<number, number> }[] = [];
+  lines.forEach((a, i) => {
+    for (let j = i + 1; j < lines.length; j++) {
+      const b = lines[j] as (typeof lines)[number];
+      if (b.page === a.page || Math.abs(b.v - a.v) > SPACE * Math.max(a.size, b.size, 1)) continue;
+      const glyphs = same(a, b);
+      if (2 * glyphs.size < Math.max(a.to - a.from, b.to - b.from)) continue;
+      pairs.push({ a: i, b: j, glyphs });
+      group[root(j)] = root(i);
+    }
+  });
+  const groups = new Map<number, number[]>();
+  lines.forEach((_, i) => {
+    if (pairs.some((pair) => pair.a === i || pair.b === i))
+      groups.set(root(i), [...(groups.get(root(i)) ?? []), i]);
+  });
+  for (const copies of groups.values()) {
+    const keys = new Set<OwnerKey>();
+    for (const i of copies) {
+      const { page, from, to } = lines[i] as (typeof lines)[number];
+      for (let at = from; at < to; at++) {
+        const key = owners[page]?.[at] ?? "t";
+        if (key !== "t") keys.add(key);
+      }
+    }
+    const [only] = keys;
+    if (keys.size === 1 && only !== undefined && lockedKey(only)) {
+      for (const i of copies) {
+        const { page, from, to } = lines[i] as (typeof lines)[number];
+        const row = owners[page] ?? [];
+        for (let at = from; at < to; at++) if (row[at] === "t") row[at] = only;
+      }
+      continue;
+    }
+    // Several owners: each glyph the template has takes a copy's same glyph's locked owner.
+    for (const pair of pairs) {
+      if (!copies.includes(pair.a)) continue;
+      const a = lines[pair.a] as (typeof lines)[number];
+      const b = lines[pair.b] as (typeof lines)[number];
+      for (const [at, other] of pair.glyphs) {
+        const mine = owners[a.page] ?? [];
+        const theirs = owners[b.page] ?? [];
+        const key = mine[at] ?? "t";
+        const their = theirs[other] ?? "t";
+        if (key === "t" && lockedKey(their)) mine[at] = their;
+        else if (their === "t" && lockedKey(key)) theirs[other] = key;
+      }
+    }
+  }
+}
+
 /**
  * The page's words, each set down to what sets most of its glyphs (`AssemblyChecks.owners`), the
  * first of them where two set as many: counted editable in place, editable in the side panel,
  * locked by reason, or the template's; and the locked parts that set any, in the page's order, each
- * by its first words.
+ * by its first words. A running line a locked part sets is its on every page (`ownRunningLines`).
  * What the document keeps that no part counts is shown as a part of its own for each run of it.
  */
 function countWords(
@@ -494,6 +605,12 @@ function countWords(
     const key = ownerKey(run);
     for (let at = Math.max(0, run.from); at < Math.min(run.to, row.length); at++) row[at] = key;
   }
+  ownRunningLines(
+    reference.pages.map((page) =>
+      page.items.flatMap((item) => (item.kind === "glyph" ? [item] : [])),
+    ),
+    owners,
+  );
   const modes = new Map(checks.all.map((field) => [field.field, field]));
   const words: Report["words"] = {
     editable: 0,

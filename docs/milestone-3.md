@@ -278,7 +278,7 @@ of each launch template must find editable what the hand-written port marks.
     and starts it afresh, which is also what a hung compile gets (decision 0008), and a plain
     message on refusal. Done when a Jake's Resume fork imports in the browser and opens, edits,
     saves, downloads, and opens again after a reload.
-13. [ ] **The report and the success bar.** Body words are the reference's, read from its glyph
+13. [x] **The report and the success bar.** Body words are the reference's, read from its glyph
     stream as the aligner reads a field's; the editable rate is the share inside editable fields.
     At 90% and with the reference's glyph stream matched the import succeeds; below, it is
     partial: the report lists what is locked, each part named by its first words as the page
