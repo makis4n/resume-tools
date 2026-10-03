@@ -1,6 +1,6 @@
 # 0037. Opus reviews the top templates' answers
 
-Date: 2026-09-30 · Status: accepted; amends 0024
+Date: 2026-09-30 · Status: accepted; amends 0024; superseded by 0049: the naming step leaves the import, and the reviewed answers go with it
 
 ## Context
 

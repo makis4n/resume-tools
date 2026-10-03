@@ -176,7 +176,7 @@ closes.
 
 ### Stage 0. Decide, then measure before building
 
-1. [ ] **The decision.** One record says: an imported `.tex` keeps its own shape as an outline; the
+1. [x] **The decision.** One record says: an imported `.tex` keeps its own shape as an outline; the
    shared structure stays for the built-in templates and is what a PDF import fills; the naming
    step leaves the import; importing from a PDF comes into scope; and a PDF's text may be sent to
    be read once the person has agreed, under the privacy rule as decision 0047 restates it. It

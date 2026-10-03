@@ -1,6 +1,6 @@
 # 0044. The naming model, chosen by a benchmark
 
-Date: 2026-10-01 · Status: proposed; amends 0036
+Date: 2026-10-01 · Status: proposed; amends 0036; superseded by 0049 in its choice for naming, from which the PDF reading starts
 
 ## Context
 

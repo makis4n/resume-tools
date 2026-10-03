@@ -1,6 +1,6 @@
 # 0028. The naming service, inside the editor's own project
 
-Date: 2026-09-27 · Status: proposed; the key is SOCLAAS_API_KEY (0036)
+Date: 2026-09-27 · Status: proposed; the key is SOCLAAS_API_KEY (0036); amended by 0049: the service gains a route that labels a PDF's lines, and loses its naming route
 
 ## Context
 

@@ -1,6 +1,6 @@
 # 0027. The naming step on a model
 
-Date: 2026-09-27 · Status: proposed; the provider is SoCLaaS, not Gemini (0036)
+Date: 2026-09-27 · Status: proposed; the provider is SoCLaaS, not Gemini (0036); superseded by 0049: the naming step leaves the import, and only its provider code stays, for the PDF reading
 
 ## Context
 
