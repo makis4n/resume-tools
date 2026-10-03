@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "key": "2ac25d71c76d4092d5eee3410eae2d90622dd9c397a0bec07994c53e442dcb4a",
+  "hash": "9f30a1073dc031620904595d00a9bae90a54b3a84c4d54322413f1ce89a69f5a",
+  "of": "command",
+  "name": "email",
+  "family": "altacv",
+  "answer": {
+    "kind": "contact",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "text",
+        "blank": "empty"
+      }
+    ],
+    "contact": "email",
+    "repeatable": false,
+    "notes": "Written by Claude Opus 5.5 (claude-opus-5-5) in the review, decision 0037, with no answer of qwen3.8:27b's in the export to correct",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["printinfo", "42b26d608298b3fc9836d25d70328b16ea0c2933cd71ca9c09db4320b2006e2f"],
+    ["csuse", "208b56aad4c25b2942c1fc0a38026c3de2c58f7e233fee6a4c0fd4c3499c779f"],
+    ["printinfo code", "26d870ad4e67be6efb574a525534dea4272ebda45624e337a0c1a6d1f72548c7"],
+    ["BeginAccSupp", "2b60e442c5d7558284ab77202929e814f52679472c418eb4678dbd6032099501"],
+    ["utffriendlydetokenize", "03209602147929d701369223361aabc1edccbdf412f9d13f9f4c2910401dd163"],
+    ["EndAccSupp", "7a2ee46aae6b7c3a16d1b41b3a7e286a648e842f2cb9509271b13bf18ca60d3b"],
+    ["setkeys", "d7ade1f2a00faf375d936da9c0ed7cbfeb74d82f0f9df1e49d440fc20c901788"],
+    ["ACCSUPP@bdc", "f5ecb9852d34ba4f13143b65b87b236ae4ee3744a2c75beb720459de26a3ec6a"],
+    ["ACCSUPP@space", "ba763f5d94d1c405463f881c98e7b52913a9844aff2f7e65444adec328dcdabd"],
+    ["ACCSUPP@emc", "4e99a7c323d1f734a0b56a5587f92484d13bd69f6b0abecb995467f698006121"]
+  ]
+}

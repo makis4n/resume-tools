@@ -215,7 +215,8 @@ no key, or that has no request, is of none.
   and definitions are code there, as the gate reads them in a request, by its own rule for names;
   and the export's own words are set aside because the detector finds a link's identifiers anywhere,
   even inside a word, so that a fork's link to its owner's `awesome-cv` repository would match the
-  folder `02-awesome-cv`, which is no text of theirs. An answer that fails is left out; a template
+  folder `02-awesome-cv`, which is no text of theirs. An answer that fails is left out, and its
+  macro's answer reads `withheld` with a note, not `none`, since the cache serves it; a template
   whose summary fails is left out whole, and the index says so.
 - The export writes over `--out` only when it is empty, absent, or an earlier export's.
 
@@ -335,3 +336,66 @@ forks' pages; and it exits 1, too, for the run's covering 20 of the 220 document
   is a template of its own, reviewed apart.
 - `.corpus/run/` keeps each document's text a second time, beside `.corpus/<id>/`, where
   `.corpus/assemble/` and `.corpus/probe/` keep theirs; it is ignored, and never leaves the machine.
+
+## The review, 2026-10-03
+
+Part B ran as `corpus/REVIEW.md` says. Run (step 2): the whole corpus with qwen3.8:27b's cache of
+311 answers (decision 0044), no model asked, 16.3 minutes: 0 success, 89 partial, 12 refused, 103
+with no reference, 15 with no answer and 1 timed out (`altacv-0001`), 21.3% of 61,511 words
+editable. The export (step 3) wrote the top twenty templates' 403 files.
+
+- **The review.** Claude Opus 5.5 reviewed 267 macros. It left 120 answers as they were, corrected
+  72 and wrote 62 where there was none. Ten more, the list openers and closers of Jake's forks,
+  were held back at first: the committed answers' test found a list's closer by its family and
+  name, so a family could commit one opener per closer's name. The test now finds the closer by the
+  key its opener holds, and requires the closer to name back an opener of the same name that holds
+  its key. A closer that several openers of one name share holds one of their keys, and the others
+  pair with it by name, as the cache's `answerFor` pairs a partner the request has no key for. The
+  ten are committed with the rest, 144 new answer files in all. The 68 whose macro the export
+  showed with no answer say in their notes that the review wrote them, with no answer of
+  qwen3.8:27b's in the export to correct. The other 76 name the answer they correct.
+- **The seed keeps to its own answers.** The review commits answers of forks that share a family,
+  a kind and a name with an upstream sample's macro: 27 such names. `corpus seed --write`, which
+  files the samples' answers again when their keys move (a tree's upgrade, a naming version's bump),
+  found a file by its family, kind and name when no file had its keys, the last of the folder's
+  files of that name. It could have filed a fork's answer under the sample's key and removed the
+  fork's file. It now looks among the seed's own answers alone, and says so where two of them
+  share a name, rather than pick one.
+- **Two templates were withheld whole.** `02-awesome-cv`, 18 documents, and `08-other`, one: the
+  gate withheld every request of them, so the export names none of their macros and the review
+  wrote nothing for them. Their answers stay the seed's and the model's.
+- **Three committed answers read as missing.** The export showed the seed's answers for Jake's
+  `\resumeSubheading` and two templates' `\name` as `none`: the leak check had kept them out of
+  the folder. The cache serves them, and an answer written for them would be filed over them. The
+  export now says `withheld`, with a note, and `REVIEW.md` says to leave such a macro alone. The
+  review had left all three unchanged.
+- **Redefinitions.** `corpus review check`, over the 24 documents that hold the keys of the 24
+  answers carrying redefinitions, kept five and dropped three, and left none unproven:
+
+  | Redefinition | Answers of | Templates | Verdict |
+  |---|---|---|---|
+  | `\@sectioncolor` | `\cvsection` | 02-awesome-cv | kept, applied on all 9 of 11 that reach the checks |
+  | `\cvskills` | `\cvskills` | 02-awesome-cv | kept, 9 of 11 |
+  | `\makecvheader` | `\makecvheader` | 02-awesome-cv, 12-awesome-cv | kept, 1 of 2 |
+  | `\mobile` | `\mobile` | 02-awesome-cv, 12-awesome-cv | kept, 5 of 6 |
+  | `\printinfo` | `\printinfo` and the nine header macros that hand it their work | 06-altacv, 13-altacv | kept, 3 of 3 |
+  | `\cvevent` | `\cvevent`, the seed's and the review's | 05-, 06-, 13-altacv | dropped: it moves the page of all 4 |
+  | `\cvtag` | `\cvtag` | 05-altacv, 10-altacv | dropped: it moves the page of all 4 |
+  | `\cvhonors` | `\cvhonors` | 02-awesome-cv | dropped: it moves the page of 1 of 4 |
+
+  The dropped three are taken out of their answers, whose notes now say so. The answers are kept.
+  `\cvevent` and `\cvtag` were already dropped on the upstream sample (decision 0026), so no
+  sample's count moves. Run again, the check exits 0: 5 kept, 0 unproven, 0 dropped.
+- **The committed answers alone.** On the review's commit, with item 13's report merged, three
+  `--committed-only` runs over the whole corpus agree on every document, times aside
+  (`corpus compare`): 0 success, 79 partial, 11 refused, 103 with no reference, 26 with no answer,
+  1 timed out, and 18.6% of 48,597 words editable. Main had 69 partial and 36 with no answer, at
+  19.4% of 41,631 words. On the 69 documents both assemble, the words in editable fields rise from
+  8,084 to 8,916, from 19.7% to 21.7%: 22 documents gain and 2 of Jake's forks lose, where the
+  reviewed answers map fields that the checks then lock for their shape or their dates. Ten more
+  documents assemble, six of them EuropeCV forks, at 1.3% editable between them, which brings the
+  rate over the corpus down. One document moves from no answer to refused, for a feature the
+  import refuses.
+- **The baseline is not raised.** It tracks the success rate, which stays 0.0%, so
+  `corpus/baseline.json` keeps main's run of 2026-10-01 (19.48% editable). The runner's
+  `--write-baseline` would have written 18.61%, a lower editable rate, on the same success rate.

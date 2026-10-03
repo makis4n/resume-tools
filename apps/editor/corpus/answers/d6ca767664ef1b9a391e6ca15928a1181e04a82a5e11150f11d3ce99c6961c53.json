@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "key": "d6ca767664ef1b9a391e6ca15928a1181e04a82a5e11150f11d3ce99c6961c53",
+  "hash": "37fd6061e2a448515ce14a4e6aa9d9da160c10906c656c40e7aca9cd418b09a5",
+  "of": "command",
+  "name": "author",
+  "answer": {
+    "kind": "header",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "parts": [
+          {
+            "meaning": "title",
+            "slot": "first"
+          },
+          {
+            "meaning": "title",
+            "slot": "last"
+          }
+        ],
+        "blank": "empty"
+      }
+    ],
+    "repeatable": false,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["thanksmark", "f856327b70c39ca2099631b67d9105b10355f9b98489a58a1fa4f8f8334980f1"],
+    ["thanksgap", "9cfadfb6661fcb841ebeb5174a70ee0850889c845adf410e5c7fba1ec4a75571"],
+    ["thanksmark ", "1c629fb972886ee323a4e4e8994f1d5ce56c8bcc42cac57ab30559d22aa3aed0"]
+  ]
+}

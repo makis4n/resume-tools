@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "key": "130ad17e6cda70e275b9fe1591e25dd4da477d7f6db4e81d7c1cbf657da92a65",
+  "hash": "e39a4a25e6403bc0a08bbe2d7b26958c360e6bc5c940cf3efd37a933df7a5705",
+  "of": "command",
+  "name": "resumeSubheadingSingleLine",
+  "family": "jake",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "title",
+        "slot": "title",
+        "blank": "empty"
+      },
+      {
+        "index": 2,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Written by Claude Opus 5.5 (claude-opus-5-5) in the review, decision 0037, with no answer of qwen3.8:27b's in the export to correct",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": []
+}

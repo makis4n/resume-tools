@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "key": "71e03462f25ce559e93881a75b2e77686ba097b1c493d8477753efc7c2f4ff0c",
+  "hash": "87991373a2791e29b7b8785c408358d754863f61a450978728b2354cc022d411",
+  "of": "command",
+  "name": "resumeSubHeadingListStart",
+  "answer": {
+    "kind": "layout",
+    "arguments": [],
+    "repeatable": false,
+    "list": {
+      "does": "opens",
+      "closedBy": "resumeSubHeadingListEnd",
+      "holds": "entry"
+    },
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [],
+  "partnerKeys": {
+    "closedBy": "46916ae7b9078ff689fcad85f5c0d35396c8ee735cccee47bbc1497e1abf8ba0"
+  }
+}

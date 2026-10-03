@@ -476,6 +476,49 @@ describe("what `corpus seed --write` writes", () => {
     });
   });
 
+  test("finds a moved key's answer among the seed's alone, never a reviewed fork's of its name", async () => {
+    // What a tree's upgrade or a naming version's bump leaves: the sample's macro under a key no
+    // file has. A fork's reviewed answer of the same family and name, filed after the seed's, is
+    // another definition's, and is neither moved nor left out of the folder.
+    const now = await filing("c".repeat(64), [["cvrow", "d".repeat(64)]]);
+    const seed = "0".repeat(64);
+    const fork = "1".repeat(64);
+    const files: Record<string, string> = {
+      [seed]: stored({ key: seed, hash: now.hash, name: "cvrole" }),
+      [fork]: stored(
+        { key: fork, hash: "e".repeat(64), name: "cvrole", source: "model:claude-opus-5-5" },
+        { arguments: [{ index: 1, meaning: "title", slot: "title" }] },
+      ),
+    };
+    const rows: SeedRow[] = [
+      {
+        id: "jake-0000",
+        family: "jake",
+        outcome: "requested",
+        macros: [macro({ name: "cvrole", key: now.key, hash: now.hash, filed: now })],
+      },
+    ];
+    const { writes, problems } = await seedPlan(rows, {
+      read: (key) => files[key],
+      keys: Object.keys(files),
+    });
+    expect(problems).toEqual([]);
+    expect(writes.map((each) => [each.from, each.to])).toEqual([[seed, now.key]]);
+    expect(JSON.parse(writes[0]?.text ?? "{}").answer.arguments).toHaveLength(2);
+    // Two seed answers of one name stand for neither: it says so, and writes nothing.
+    const twice = { ...files, [fork]: stored({ key: fork, hash: "e".repeat(64), name: "cvrole" }) };
+    const ambiguous = await seedPlan(rows, {
+      read: (key) => twice[key],
+      keys: Object.keys(twice),
+    });
+    expect(ambiguous).toEqual({
+      writes: [],
+      problems: [
+        "jake `\\cvrole`: more than one seed answer of its family and name, none under its key",
+      ],
+    });
+  });
+
   test("says what it cannot write: a macro with no answer, or a partner the sample has not", async () => {
     const opener = await filing("c".repeat(64));
     const files: Record<string, string> = {
@@ -546,17 +589,33 @@ describe("the committed answers", () => {
     const answers = files.map((file) =>
       StoredAnswer.parse(JSON.parse(readFileSync(join(ANSWERS_DIR, file), "utf8"))),
     );
+    const byKey = new Map(answers.map((each) => [each.key, each]));
     for (const opener of answers) {
       const closedBy = opener.answer.list?.closedBy;
       if (opener.of !== "command" || opener.answer.list?.does !== "opens") continue;
-      const closer = answers.find(
-        (each) => each.family === opener.family && each.of === "command" && each.name === closedBy,
-      );
-      expect(closer?.key, opener.name).toBe(opener.partnerKeys?.closedBy);
+      // The closer is found by the key the opener holds for it, not by its name: one family can
+      // commit several definitions of a list's two macros under the same names (Jake's forks).
+      const closer = byKey.get(opener.partnerKeys?.closedBy ?? "");
+      expect(closer, `${opener.name} ${opener.key}`).toBeDefined();
+      expect(closer?.of, closedBy).toBe("command");
+      expect(closer?.name, closedBy).toBe(closedBy);
       expect(closer?.answer.list, closedBy).toEqual({ does: "closes", openedBy: opener.name });
-      expect(closer?.partnerKeys?.openedBy, closedBy).toBe(opener.key);
+      // A closer holds one opener's key. Where several openers of one name share its definition,
+      // it names one of them, an opener of the same name that holds the closer's key back; the
+      // others pair with it by name, as `answerFor` pairs a partner the request has no key of.
+      const back = byKey.get(closer?.partnerKeys?.openedBy ?? "");
+      expect(back?.name, `${closedBy} ${closer?.key}`).toBe(opener.name);
+      expect(back?.of, `${closedBy} ${closer?.key}`).toBe("command");
+      expect(back?.partnerKeys?.closedBy, `${closedBy} ${closer?.key}`).toBe(closer?.key);
       // A closer is of its opener's kind.
       expect(closer?.answer.kind, closedBy).toBe(opener.answer.kind);
+    }
+    // And every closer is named back by the opener it holds the key of.
+    for (const closer of answers) {
+      if (closer.of !== "command" || closer.answer.list?.does !== "closes") continue;
+      const opener = byKey.get(closer.partnerKeys?.openedBy ?? "");
+      expect(opener?.name, `${closer.name} ${closer.key}`).toBe(closer.answer.list.openedBy);
+      expect(opener?.partnerKeys?.closedBy, `${closer.name} ${closer.key}`).toBe(closer.key);
     }
   });
 });

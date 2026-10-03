@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "key": "8150d18cd79f2487d03e84eb6ad631b948b54b89c02a1cc2269187672dc392e5",
+  "hash": "6b7db04a17ede66ef1b166a25560f0c69111eb49977d701557739523d10dc604",
+  "of": "command",
+  "name": "cvitem",
+  "answer": {
+    "kind": "entry",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "dates",
+        "slot": "dates",
+        "blank": "absent"
+      },
+      {
+        "index": 2,
+        "meaning": "subtitle",
+        "slot": "subtitle",
+        "blank": "absent"
+      },
+      {
+        "index": 3,
+        "meaning": "title",
+        "slot": "title",
+        "blank": "empty"
+      }
+    ],
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["\\cvitem", "815c32581c15f7897f82ba805df4401dd2f593d9128795bea011f91ebf839db9"],
+    ["to@ScanSecondOptArg", "a582d14e35f1e3e6e092ba6b638b084ef5267efa6c1796bc58304c0c58e329fb"],
+    ["2\\cvitem", "65e192c03587223dcdd9f6fdd08088b34df14a84e3488d52f9487d935978da80"],
+    ["to@ArgOptToArgArg", "ffb53caf5153dd7bf184125405f224a3bcfafa134bcf8dae773f1c09127714a4"],
+    ["cvnote", "14cff01d2baadd672421457e7b062296e963a2a3c99fd96a2438a2d3f6a2963e"],
+    ["before", "634427fb94099569c62991df4f7e673ff6fb427f4c80e68e49fbe9158cdcb7ad"]
+  ]
+}

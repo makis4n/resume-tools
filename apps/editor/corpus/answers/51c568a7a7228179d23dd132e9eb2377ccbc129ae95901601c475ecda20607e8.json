@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "key": "51c568a7a7228179d23dd132e9eb2377ccbc129ae95901601c475ecda20607e8",
+  "hash": "c5d3a60b6f2d75caebc2242f1acc5771e778b3691d9ba437db9faff6c3326eb7",
+  "of": "command",
+  "name": "linkedin",
+  "family": "altacv",
+  "answer": {
+    "kind": "link",
+    "arguments": [
+      {
+        "index": 1,
+        "meaning": "text",
+        "slot": "label",
+        "blank": "empty"
+      }
+    ],
+    "link": "linkedin",
+    "repeatable": true,
+    "notes": "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from qwen3.8:27b's answer, decision 0037",
+    "reviewed": true
+  },
+  "reviewed": true,
+  "source": "model:claude-opus-5-5",
+  "dependencies": [
+    ["printinfo", "f966a1aba89e7c41cd0db8dcfcd9bfe2ab788bb61b3b3337dfddacdd89578805"],
+    ["linkedinsymbol", "7ee9f796bb622605de051c4a993d3358a8b89bbc58afd441dcbfc8442d7ba06c"]
+  ]
+}
