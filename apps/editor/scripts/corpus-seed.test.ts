@@ -476,6 +476,49 @@ describe("what `corpus seed --write` writes", () => {
     });
   });
 
+  test("finds a moved key's answer among the seed's alone, never a reviewed fork's of its name", async () => {
+    // What a tree's upgrade or a naming version's bump leaves: the sample's macro under a key no
+    // file has. A fork's reviewed answer of the same family and name, filed after the seed's, is
+    // another definition's, and is neither moved nor left out of the folder.
+    const now = await filing("c".repeat(64), [["cvrow", "d".repeat(64)]]);
+    const seed = "0".repeat(64);
+    const fork = "1".repeat(64);
+    const files: Record<string, string> = {
+      [seed]: stored({ key: seed, hash: now.hash, name: "cvrole" }),
+      [fork]: stored(
+        { key: fork, hash: "e".repeat(64), name: "cvrole", source: "model:claude-opus-5-5" },
+        { arguments: [{ index: 1, meaning: "title", slot: "title" }] },
+      ),
+    };
+    const rows: SeedRow[] = [
+      {
+        id: "jake-0000",
+        family: "jake",
+        outcome: "requested",
+        macros: [macro({ name: "cvrole", key: now.key, hash: now.hash, filed: now })],
+      },
+    ];
+    const { writes, problems } = await seedPlan(rows, {
+      read: (key) => files[key],
+      keys: Object.keys(files),
+    });
+    expect(problems).toEqual([]);
+    expect(writes.map((each) => [each.from, each.to])).toEqual([[seed, now.key]]);
+    expect(JSON.parse(writes[0]?.text ?? "{}").answer.arguments).toHaveLength(2);
+    // Two seed answers of one name stand for neither: it says so, and writes nothing.
+    const twice = { ...files, [fork]: stored({ key: fork, hash: "e".repeat(64), name: "cvrole" }) };
+    const ambiguous = await seedPlan(rows, {
+      read: (key) => twice[key],
+      keys: Object.keys(twice),
+    });
+    expect(ambiguous).toEqual({
+      writes: [],
+      problems: [
+        "jake `\\cvrole`: more than one seed answer of its family and name, none under its key",
+      ],
+    });
+  });
+
   test("says what it cannot write: a macro with no answer, or a partner the sample has not", async () => {
     const opener = await filing("c".repeat(64));
     const files: Record<string, string> = {

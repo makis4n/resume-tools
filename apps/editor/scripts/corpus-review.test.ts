@@ -883,10 +883,22 @@ describe("the export, over invented documents", () => {
       family: "awesome-cv",
       documents: [{ id: "awesome-cv-0003", outcome: "partial", gate: "passes" }],
       requests: { written: 0, withheld: 1, note: NO_REQUEST_NOTE },
-      macros: [{ key: key("a"), of: "command", name: "cventry", calls: 3 }],
+      macros: [
+        { key: key("a"), of: "command", name: "cventry", calls: 3 },
+        // An answer the leak check kept out, its note the export's own words, which a document
+        // whose body holds a short run of them does not make a leak.
+        {
+          key: key("b"),
+          of: "command",
+          name: "cventry",
+          answer: "withheld",
+          answerNote: WITHHELD_ANSWER_NOTE,
+        },
+      ],
       redefinitions: { applied: { makecvheader: 1 }, dropped: {} },
     };
-    expect(leaksIn(summary(own), [document], naming.findLeaks)).toEqual([]);
+    const noted = textOf("the cache", "Quillwort", "Larkfield");
+    expect(leaksIn(summary(own), [document, noted], naming.findLeaks)).toEqual([]);
     // Anything else is read: a value the export does not write is found.
     expect(
       leaksIn(

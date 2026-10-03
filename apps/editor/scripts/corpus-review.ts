@@ -520,6 +520,7 @@ const SUMMARY_FIELDS = [
   "macros",
   "of",
   "answer",
+  "answerNote",
   "file",
   "filing",
   "calls",
@@ -562,8 +563,15 @@ const OWN_WORDS: ReadonlySet<string> = new Set([
   ...CHECKS,
   ...CHECK_NOTES,
   ...VERDICTS,
-  ...["passes", "withholds", "none", "reviewed", "model", "command", "environment"],
-  ...[NO_REQUEST_NOTE, UNWRITTEN_NOTE, TEMPLATE_RULE, WHY_UNCHECKED, WHY_LEAK],
+  ...["passes", "withholds", "none", "reviewed", "model", "withheld", "command", "environment"],
+  ...[
+    NO_REQUEST_NOTE,
+    UNWRITTEN_NOTE,
+    WITHHELD_ANSWER_NOTE,
+    TEMPLATE_RULE,
+    WHY_UNCHECKED,
+    WHY_LEAK,
+  ],
 ]);
 
 /**

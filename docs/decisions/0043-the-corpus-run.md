@@ -339,10 +339,10 @@ forks' pages; and it exits 1, too, for the run's covering 20 of the 220 document
 
 ## The review, 2026-10-03
 
-Part B ran as `corpus/REVIEW.md` says. Run (step 2): the whole corpus with qwen3.8:27b's cache of 311
-answers (decision 0044), no model asked, 16.3 minutes: 0 success, 89 partial, 12 refused, 103 with
-no reference, 15 with no answer and 1 timed out (`altacv-0001`), 21.3% of 61,511 words editable.
-The export (step 3) wrote the top twenty templates' 403 files.
+Part B ran as `corpus/REVIEW.md` says. Run (step 2): the whole corpus with qwen3.8:27b's cache of
+311 answers (decision 0044), no model asked, 16.3 minutes: 0 success, 89 partial, 12 refused, 103
+with no reference, 15 with no answer and 1 timed out (`altacv-0001`), 21.3% of 61,511 words
+editable. The export (step 3) wrote the top twenty templates' 403 files.
 
 - **The review.** Claude Opus 5.5 reviewed 267 macros. It left 120 answers as they were, corrected
   72 and wrote 62 where there was none. Ten more, the list openers and closers of Jake's forks,
@@ -351,10 +351,19 @@ The export (step 3) wrote the top twenty templates' 403 files.
   key its opener holds, and requires the closer to name back an opener of the same name that holds
   its key. A closer that several openers of one name share holds one of their keys, and the others
   pair with it by name, as the cache's `answerFor` pairs a partner the request has no key for. The
-  ten are committed with the rest, 144 new answer files in all.
-- **Two templates were withheld whole.** `02-awesome-cv`, 18 documents, and `08-other`, one: the gate
-  withheld every request of them, so the export names none of their macros and the review wrote
-  nothing for them. Their answers stay the seed's and the model's.
+  ten are committed with the rest, 144 new answer files in all. The 68 whose macro the export
+  showed with no answer say in their notes that the review wrote them, with no answer of
+  qwen3.8:27b's in the export to correct. The other 76 name the answer they correct.
+- **The seed keeps to its own answers.** The review commits answers of forks that share a family,
+  a kind and a name with an upstream sample's macro: 27 such names. `corpus seed --write`, which
+  files the samples' answers again when their keys move (a tree's upgrade, a naming version's bump),
+  found a file by its family, kind and name when no file had its keys, the last of the folder's
+  files of that name. It could have filed a fork's answer under the sample's key and removed the
+  fork's file. It now looks among the seed's own answers alone, and says so where two of them
+  share a name, rather than pick one.
+- **Two templates were withheld whole.** `02-awesome-cv`, 18 documents, and `08-other`, one: the
+  gate withheld every request of them, so the export names none of their macros and the review
+  wrote nothing for them. Their answers stay the seed's and the model's.
 - **Three committed answers read as missing.** The export showed the seed's answers for Jake's
   `\resumeSubheading` and two templates' `\name` as `none`: the leak check had kept them out of
   the folder. The cache serves them, and an answer written for them would be filed over them. The
@@ -387,6 +396,6 @@ The export (step 3) wrote the top twenty templates' 403 files.
   documents assemble, six of them EuropeCV forks, at 1.3% editable between them, which brings the
   rate over the corpus down. One document moves from no answer to refused, for a feature the
   import refuses.
-- **The baseline is not raised.** It holds the success rate, which stays 0.0%, so
+- **The baseline is not raised.** It tracks the success rate, which stays 0.0%, so
   `corpus/baseline.json` keeps main's run of 2026-10-01 (19.48% editable). The runner's
   `--write-baseline` would have written 18.61%, a lower editable rate, on the same success rate.

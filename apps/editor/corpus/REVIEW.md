@@ -59,9 +59,11 @@ order, and each macro by how many documents hold it, most first:
   or `filing` gives them; `"reviewed": true`; `"source": "model:claude-opus-5-5"`, the review
   model's id; the answer itself, with `"reviewed": true` and `notes` naming the review model and
   the naming model whose answer it corrects, as "Reviewed by Claude Opus 5.5 (claude-opus-5-5) from
-  qwen3.8:27b's answer, decision 0037"; and, for a list, `partnerKeys` with the keys `template.json`
-  gives the partner macros. An answer that opens a list is committed with its closer's, each naming
-  the other, since the committed answers' test pairs them.
+  qwen3.8:27b's answer, decision 0037", or, where `template.json` gives the macro's `answer` as
+  `none`, as "Written by Claude Opus 5.5 (claude-opus-5-5) in the review, decision 0037, with no
+  answer of qwen3.8:27b's in the export to correct"; and, for a list, `partnerKeys` with the keys
+  `template.json` gives the partner macros. An answer that opens a list is committed with its
+  closer's, each naming the other, since the committed answers' test pairs them.
 - It adds a redefinition, `{ "name": ..., "latex": ... }` in the answer's `redefinitions`, only
   where a macro defeats the editor's markers, as a port of a launch template patches its class, and
   only LaTeX that keeps the template's output as it is. The naming model never writes one.
