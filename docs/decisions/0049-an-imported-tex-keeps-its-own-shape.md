@@ -1,6 +1,7 @@
 # 0049. An imported `.tex` keeps its own shape, and a PDF lands on a built-in template
 
-Date: 2026-10-04 · Status: accepted, the owner's decision of 3 October 2026 (approved with docs/milestone-3-overhaul.md)
+Date: 2026-10-04 · Status: accepted, the owner's decision of 3 October 2026 (approved with
+docs/milestone-3-overhaul.md)
 
 ## Context
 
@@ -100,7 +101,9 @@ approved it on 3 October 2026.
   filled the shared structure from the answers; and the answer modes of 0043, which leave the
   corpus run one mode.
 - **Amended:** 0028, whose service gains a route that labels a PDF's lines and loses its naming
-  route; and 0033, whose gate and leak check go with the naming step.
+  route; 0033, whose gate and leak check go with the naming step; and 0002, whose promise that
+  every template package keeps a mapping onto the canonical model no longer holds for an imported
+  `.tex`.
 - Each of these records' status lines says so.
 
 ## Consequences
