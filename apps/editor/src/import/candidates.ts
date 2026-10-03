@@ -484,7 +484,7 @@ const LETTER = /[A-Za-z@]/;
  * and the one line's end after it, which TeX skipped, so that none of them is set after the
  * field's end marker; never past `limit`.
  */
-function wrapEnd(source: string, end: number, limit: number): number {
+export function wrapEnd(source: string, end: number, limit: number): number {
   let start = end;
   while (start > 0 && LETTER.test(source[start - 1] ?? "")) start--;
   if (start === end || source[start - 1] !== "\\") return end;

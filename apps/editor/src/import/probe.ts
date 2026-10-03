@@ -782,7 +782,7 @@ export function suspectsIn(log: string, ids: ReadonlySet<string>): string[] {
 export const PROBE_PRELUDE = `\\expandafter\\chardef\\csname rt@probe@at\\endcsname=\\catcode\`\\@\n${PRELUDE}\\catcode\`\\@=\\csname rt@probe@at\\endcsname\n`;
 
 /** The auxiliary files the baseline writes that later compiles read, by extension. */
-const AUXILIARY = ["aux", "toc", "lof", "lot", "out", "nav", "snm", "loa"];
+export const AUXILIARY = ["aux", "toc", "lof", "lot", "out", "nav", "snm", "loa"];
 
 /** FNV-1a, 32 bits, over UTF-8: a format's name, not a secret. */
 function fnv1a(text: string): string {
@@ -793,7 +793,7 @@ function fnv1a(text: string): string {
 }
 
 /** Whether a compile failed as a whole: it stopped, or asked for a pass after its last. */
-const failed = (result: CompileResult, maxPasses: number) =>
+export const failed = (result: CompileResult, maxPasses: number) =>
   !result.ok ||
   result.output === undefined ||
   (result.passes.length >= maxPasses && asksForRerun(result.log));
@@ -810,7 +810,7 @@ export interface Path {
 }
 
 /** Everything a compile of the document needs, and what the probe measures of it. */
-interface Setup {
+export interface Setup {
   session: EngineSession;
   engine: Engine;
   intake: Intake;
@@ -851,7 +851,7 @@ function dumpFormat(setup: Setup): { name: string; ms: number; ok: boolean } {
  * The format path: every compile a body compile from the document's format, `name`, the
  * preamble's calls issued again before `\begin{document}`.
  */
-function formatPath(setup: Setup, name: string): Path {
+export function formatPath(setup: Setup, name: string): Path {
   const { session, intake, body, job, files } = setup;
   const begin = body.before.slice(body.preamble.length);
   return {
@@ -871,7 +871,7 @@ function formatPath(setup: Setup, name: string): Path {
  * engine, fontconfig given the tree's fonts on XeTeX, with the prelude and the preamble's calls
  * issued again before `\begin{document}`.
  */
-function wholePath(setup: Setup): Path {
+export function wholePath(setup: Setup): Path {
   const { session, engine, intake, body, job, files } = setup;
   const begin = body.before.slice(body.preamble.length);
   return {

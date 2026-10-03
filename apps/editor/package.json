@@ -8,6 +8,7 @@
     "fetch-engine": "node scripts/fetch-engine.ts",
     "measure": "node scripts/measure.ts",
     "corpus": "node scripts/corpus.ts",
+    "spike-outline": "node scripts/spike-outline.ts",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc --noEmit -p functions",
