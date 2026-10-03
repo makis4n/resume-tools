@@ -1,6 +1,6 @@
 # 0002. Template switching leaves version one
 
-Date: 2026-09-16 · Status: accepted
+Date: 2026-09-16 · Status: accepted; amended by 0049, since an imported `.tex` keeps its own shape and has no mapping onto the canonical model
 
 ## Context
 

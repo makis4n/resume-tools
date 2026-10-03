@@ -1,6 +1,6 @@
 # 0026. Validate and assemble
 
-Date: 2026-09-27 · Status: proposed; its generic controls are amended by 0040
+Date: 2026-09-27 · Status: proposed; its generic controls are amended by 0040; superseded by 0049 in its assembly, which the outline's builder replaces; its four checks stay, without answers
 
 ## Context
 

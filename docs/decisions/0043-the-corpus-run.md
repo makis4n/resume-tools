@@ -1,6 +1,6 @@
 # 0043. The corpus run, its baseline, and the review's tooling
 
-Date: 2026-10-01 · Status: proposed; its interim outcome is replaced by 0039's report
+Date: 2026-10-01 · Status: proposed; its interim outcome is replaced by 0039's report; superseded by 0049 in its answer modes: the corpus run keeps one mode
 
 ## Context
 

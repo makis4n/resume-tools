@@ -4,7 +4,7 @@
 
 *A browser editor for one-page LaTeX resumes, where you edit the typeset page itself and never see a line of TeX.*
 
-Version one plan · revised 3 October 2026 · spike done, follow-ups merged
+Version one plan · revised 4 October 2026 · spike done, follow-ups merged
 
 ## 1. Key terms
 
@@ -36,7 +36,7 @@ An engine is the program that does the compiling. LaTeX has three in common use,
 ### 1.3 Inside this plan
 
 - **Template package**: Everything the editor needs to know about one template: its preamble, its macros, where markers go, and how its fields map onto the canonical model. Curated and imported templates both end up as one of these.
-- **Canonical model**: The one structure every resume is stored in, whatever template it uses: contact details, then sections of entries and lists. It is also what will make switching templates possible later without a migration.
+- **Canonical model**: The one structure the built-in templates and PDF imports store a resume in: contact details, then sections of entries and lists, which is what will let those documents switch templates later without a migration. An imported `.tex` keeps its own shape instead, as an outline of its own LaTeX kept as it is, the fields the probe proves, and the bullets and entries that repeat.
 - **Style control**: A setting the user can change without touching the template, such as margins or font size. Each one is a parameter the template package declares, with a fixed range.
 - **Marker**: An invisible note the template writes into the output before and after each editable field. It is how the page knows which glyphs belong to which field.
 - **Overlay**: The editable box that appears over a field while it is being typed into, set in the same font as the page. It makes typing feel instant while the real compile catches up.
@@ -92,7 +92,7 @@ Everything settled so far, including the defaults chosen on 12 September the two
 | Languages | English first | Latin fonts only; pdfTeX suffices for curated templates |
 | Storage | Browser storage plus accounts with cloud save | A document store, not a live sync engine |
 | Collaboration | None in real time | No shared editing state, no presence, no merging |
-| Template switching | Later. Version one keeps one template per document | The canonical model stays, so switching can be added later without a migration |
+| Template switching | Later. Version one keeps one template per document | The canonical model stays for the built-in templates and PDF imports, so switching can be added for them later without a migration; an imported `.tex` keeps its own shape as an outline and cannot switch (decision 0049) |
 | LaTeX or Typst | LaTeX, because importing LaTeX templates is the point | Settled and not raised again |
 | Engines at launch | pdfTeX and XeTeX *(default)* | LuaTeX imports are refused with a clear message |
 | Import intake | A single `.tex` or a zip *(default)* | Overleaf links later; Overleaf exports a zip anyway |
@@ -112,6 +112,7 @@ Everything settled so far, including the defaults chosen on 12 September the two
 
 - Three curated templates, each a hand-written template package.
 - Import of a single `.tex` file, or a zip holding the document with its class files, style files and images.
+- Import from a PDF: its content, not its look, lands on a built-in template the person picks, and a hosted model helps read it only once the person agrees.
 - Text editing in place on the typeset page, with instant feedback in an overlay and the true page following within the target time.
 - Adding, removing and reordering entries and sections from a side panel.
 - Style controls: page size, margins, font size, font, accent colour, density and date format, plus a fit-to-one-page action.
@@ -128,7 +129,7 @@ Everything settled so far, including the defaults chosen on 12 September the two
 - Non-Latin scripts.
 - Real-time collaboration.
 - Exporting `.tex`.
-- LuaTeX templates, Overleaf links, and importing from a PDF alone.
+- LuaTeX templates, Overleaf links, and keeping a PDF's own look or reading a scanned PDF.
 
 ### 4.3 Targets
 
@@ -155,7 +156,9 @@ A template package is the one artefact everything else consumes. It holds the pr
 
 ### 5.2 The canonical model
 
-Every document is stored in one model regardless of template: a header with contact fields, then sections, each holding either entries with a title, subtitle, place, date range and bullets, or a plain list such as skills. Each package maps its macros onto that model, and the generator walks the model to emit the template's LaTeX. Fields an imported template has and the model lacks are kept as template-specific extras, so nothing is lost on import. Template switching is not in version one, but because every document already lives in this model, adding it later is a feature rather than a migration.
+The built-in templates store a document in one model: a header with contact fields, then sections, each holding either entries with a title, subtitle, place, date range and bullets, or a plain list such as skills. Each built-in package maps its macros onto that model, and the generator walks the model to emit the template's LaTeX. A PDF import fills the same model, since a PDF has no source to keep: its text is read into the header, the sections, the entries and the bullets, and the built-in template the person picks sets it. Template switching is not in version one, but because these documents already live in this model, adding it later is a feature rather than a migration.
+
+An imported `.tex` keeps its own shape instead (decision 0049). It is stored as an outline: kept text, the upload's own LaTeX written back byte for byte, which only the retype changes; fields, the pieces the probe proves a person can type into, where they stand in that LaTeX; and groups of units, the bullets and entries that repeat, found from the source itself, which can be copied, removed and moved. The outline is a kind of section the same model holds, so one definition still covers every document, and nothing is lost on import. Nothing in an outline says which text is a company and which a date, so an imported `.tex` cannot switch templates or take the date format control, and its side panel lists the outline's parts by their first words instead of a labelled form.
 
 > **Note.** RenderCV is an open-source tool that renders a YAML resume through LaTeX themes. It is the closest existing example of a canonical model with a mapping per template, and worth reading before designing ours.
 
@@ -214,8 +217,8 @@ Six steps, in order. Everything except step four runs in the user's browser, bec
 2. **Parse.** A fault-tolerant parser turns the body into a tree. Standard LaTeX becomes rich text: bold, italic, links, lists. Calls to macros the template defines become typed calls. Anything the parser cannot place becomes a raw chunk that is preserved byte for byte.
 3. **Probe.** Every argument of every custom macro call is wrapped in markers and the document is compiled. Arguments whose markers come out intact around exactly their text are editable prose. Arguments that break the compile or vanish are lengths, colours, icon names or keys, and are found by re-running with one probe at a time. Text in the output that no marker covers is locked.
    > **Note.** Probing is what keeps the model honest: it only ever names what the engine has already shown to be editable.
-4. **Name and structure.** The macro definitions, with personal data stripped, and a few call sites with their text replaced by placeholders of the same length go to the server. The server checks the cache by macro hash first. On a miss it asks the language model, with a structured output schema so the reply is valid by construction, for the meaning of each argument, which macros are repeatable entries, headers or bullets, which pairs open and close lists, what a blank entry looks like, how the fields map onto the canonical model, and which preamble settings are style parameters such as geometry, base font size, fonts and colours. Large class files are analysed macro by macro with the class text reused across calls. Which model answers is an open choice, covered in section 6.4.
-5. **Validate.** Four checks, each a compile. The body regenerated from the tree must produce the same glyph stream as the reference, markers stripped. Every field mutated with long, empty and special-character text must still compile. Adding and removing an entry of every repeatable type must still compile. Every style parameter the model identified is overridden and compiled, and becomes a control only if the output changes and nothing breaks. Anything that fails a check is demoted to locked, or dropped in the case of a style parameter.
+4. **Build the outline.** The import walks the body's tree with the probe's verdicts. Each piece the probe judged editable is a field, where it stands in the person's own LaTeX, and the rest of a call, an environment or a paragraph is kept text, written back byte for byte. What repeats is found from the source itself: a list's items are a group of units, and so is a run of calls to the same command. A new unit is a copy of the one beside it with its fields emptied, so no command needs to be named: no language model is asked, and a `.tex` import sends nothing at all (decision 0049).
+5. **Validate.** Four checks, each a compile, with no answers to check. The outline compiled must produce the same glyph stream as the reference, markers stripped, and a field whose rewriting moves it becomes kept text. Every field set to long, empty and special-character text must still compile: one that breaks only when empty is required, and one that breaks on text becomes kept text. Every group must take a copy of its last unit and lose its first and its last; a group that cannot is fixed, and the editor neither adds to it nor removes from it. Page size, margins and font size are each overridden and compiled, and become controls only if the output changes and nothing breaks.
 6. **Package and report.** The package is assembled, the document opens in the editor, and the import report states the share of body words that are editable and lists what is locked. Below the bar in section 6.2 the report says partial and the user decides whether to continue.
 
 ![Figure 2](figures/import-pipeline.svg)
@@ -224,23 +227,27 @@ Six steps, in order. Everything except step four runs in the user's browser, bec
 
 ### 6.1 Locked content
 
-Locked chunks render exactly as they did in the original and show a lock when hovered. Their edit box takes a sentence such as "change the phone number to the new one" rather than a cursor. The model rewrites only that chunk, the compiler checks that the document still compiles and that nothing outside the chunk moved, and the user sees either the new page or a plain refusal. The user never sees the LaTeX in either case.
+Words on the page that no field holds are kept text: they render exactly as they did in the original and show a lock when hovered. They change only through the retype (decision 0042). Where they are plain text in the upload that lines up with the page, a click opens them for typing, and the compiler checks that the document still compiles, that the words come out as typed and that nothing outside the part moved. The user sees either the new page or a plain refusal, and never the LaTeX in either case. No model is asked: a sentence typed at a chunk for a model to rewrite would send the resume's text out, and the retype needs none.
 
 ### 6.2 Success bar
 
-An import succeeds when the regenerated document produces the same glyph stream as the original, markers stripped, and at least 90% of body words are editable in place. Below that, the report labels the import partial, lists the locked parts, and lets the user continue or stop. The corpus measures both conditions across real documents.
+An import succeeds when its outline compiled produces the same glyph stream as the original, markers stripped, and at least 90% of body words are editable in place. The report counts three shares, the words editable in place, those the retype can change and those locked, with each locked part's reason in plain words; the retype's words are reported beside the bar and do not count toward it. Below the bar, the report labels the import partial, lists the locked parts, and lets the user continue or stop. The corpus measures both conditions across real documents.
 
-### 6.3 Shared cache and privacy
+### 6.3 Privacy
 
 The rule, since 3 October 2026 (decision 0047): resume content leaves the browser only when the person asks for something that needs it and is told what is sent, and whoever receives it keeps only what the person asked to be kept. A feature that sends resume content asks the first time, remembers the answer in that browser with a setting to change it, and says each time that it sends. The naming step sits well inside the rule, because it sends none of the resume's content at all.
 
-What the model works out about a template is saved once and reused for everyone who imports a template with the same macros, keyed by a hash of each normalised definition and its dependencies. Caching per macro rather than per file matters because forks of popular templates change one macro's spacing and leave the other nine alone. Only definitions and placeholdered call sites are sent or stored. Names, addresses, emails, phone numbers and links found inside definitions are stripped before anything leaves the browser, and cache entries are audited on a schedule. The original upload is stored in its owner's account and nowhere else.
+With the second pass of milestone 3 (decision 0049), the naming step leaves the import, and a `.tex` import sends nothing at all, not even its template's code. The shared cache of what the model worked out about each template's macros goes with it, so there is no shared store left to keep personal data out of. The original upload is stored in its owner's account and nowhere else.
+
+Of the two ways in, only a PDF import sends resume content, and only once the person agrees. The first time a person imports a PDF, they are asked whether PDFs' text may be sent to be read, in plain words that say what is sent and that nothing is kept. The answer is remembered in that browser, a setting changes it, and every later import says in one line that the text is being sent. The service keeps no text, in a cache or in a log, and for a person who says no the PDF is read by rules in the browser, with nothing sent.
 
 ### 6.4 Model choice, cost and time
 
-The model is not chosen yet. The first version will probably use a cheap or free model such as Gemini, and the design keeps that choice cheap to change: the model is called in exactly one place, it is asked for a structured answer against a fixed schema that any serious provider can produce, and every answer is checked by compiling before a user sees it. A weaker model lowers the share of imports that come out fully editable and raises how much ends up locked. It never makes something unsafe look editable. The corpus is the benchmark: run each candidate over the same few hundred resumes, compare the editable rate against the cost per import, and standardise on whichever wins.
+A `.tex` import asks no model. A language model now has one job: once the person has agreed, it says what each line of a PDF is, a name, a contact, a section's heading, an entry's head, a date, a place, a bullet or running text, as one role from a closed list so that a reply is valid by construction. Rules always do the geometry before it, the lines, columns, bullets and reading order, and rules give the roles instead for a person who has not agreed, or whenever the service fails, replies in the wrong form or runs past its time budget. The review says which read the PDF, and everything stays editable afterwards.
 
-A cache miss costs one model call and a few dozen probe and validation compiles, which lands inside the 60 second target with a progress display that names each step. A cache hit costs only the compiles. The top templates get analysed ahead of launch through the provider's discounted batch processing, so the first users hit a warm cache.
+The model is the school's during development, served free through the School of Computing's gateway for its students and staff, starting from the one chosen for naming (decision 0044). Who provides it at launch stays open, as section 8.3 has it, and is settled before launch: the school's service needs the school's leave before it reads real people's resumes, and a paid service, which costs money for each import, must have terms that rule out training on what it is sent. No model is called in continuous integration, and no resume of the corpus is given to one.
+
+A `.tex` import costs only compiles, the probe's and the checks', with a progress display that names each step; on pdfTeX it stays under 8 seconds. A PDF read by rules takes a few seconds, and the model's reading finishes inside a time budget, after which the rules answer. The second pass's plan, docs/milestone-3-overhaul.md, holds the targets, and the owner sets those it marks provisional once its two spikes have measured them.
 
 ## 7. Launch templates
 
@@ -267,7 +274,7 @@ Everything is written in one language, TypeScript, and runs in three places: the
 | Language | TypeScript everywhere | One language for the app, the background thread, the import pipeline and the server; the engines are driven through JavaScript anyway |
 | App | React with Vite | A commodity choice; none of the hard parts live in the framework |
 | Typing in fields | ProseMirror through Tiptap, with only bold, italic and link | A predictable document model that maps one-to-one onto the LaTeX equivalents |
-| Document state | The canonical model as plain JSON, checked with Zod, with a command stack for undo | Simple, and it saves and syncs as one blob |
+| Document state | The canonical model as plain JSON, checked with Zod, with a command stack for undo, for the built-in templates and PDF imports; an imported `.tex` keeps its own shape as an outline, a kind of section the same model holds (decision 0049) | Simple, and it saves and syncs as one blob |
 | Local storage | IndexedDB through Dexie for documents and formats; the browser's Cache API for TeX Live files | Immutable files suit ordinary HTTP caching; documents need lookups |
 | TeX engines | pdfTeX and XeTeX built to WebAssembly with Emscripten from TeX Live sources, starting from BusyTeX's build scripts | An own build keeps licensing to TeX's own terms and leaves room for an engine patch later |
 | Engine host | One Web Worker, one engine loaded at a time, files fed on demand | Keeps memory down on old laptops |
@@ -333,8 +340,8 @@ Built in this order because each step removes the biggest remaining unknown befo
    - [x] First load is about 14 MB compressed with TeX Live fetched on demand, two thirds of it the engine binary.
 2. **Curated editor.** The package format, the three ported templates, page plus side-panel editing, the style controls and fit to one page, browser storage, PDF export, and a warning when content spills onto a second page.
    *Done means:* All three templates edit end to end within the targets, every style control works on all three, and the validation harness runs on every change.
-3. **Import.** Intake, parser, probes, model step, validation, locked chunks, cache, the import report, and the generic style controls on imported templates.
-   *Done means:* A corpus of at least 200 public resumes imports through the pipeline, the editable rate is reported and tracked, page size, margins and font size work on every successful import, and a cached template imports in under 5 seconds.
+3. **Import.** Intake, parser, probes, the outline an imported `.tex` keeps, validation, kept text with the retype, the import report, the generic style controls on imports, and import from a PDF onto a built-in template. The second pass, docs/milestone-3-overhaul.md, plans them in place of the first pass's naming step (decision 0049).
+   *Done means:* What docs/milestone-3-overhaul.md sets, its provisional numbers fixed once its two spikes have measured. Every corpus resume that compiles and is probed imports as an outline, making no network request and taking under 8 seconds on pdfTeX, with at least 60% of their body words editable in place and bullets that add and remove; and a PDF import lands every word it reads on a built-in template, sending nothing until the person agrees.
 4. **Accounts and cloud save.** Sign-in, the document store, sync from the local store, and private storage of originals.
    *Done means:* A document saved on one device opens on another, and an original upload is visible only to its owner.
 5. **Launch.** Polish, the pre-warmed cache for the top templates, and the corpus number published internally as the import quality metric.
@@ -375,4 +382,4 @@ Parked on purpose. None of them blocks version one, and each is cheaper to decid
 
 ---
 
-*Written on 12 September 2026 from a design conversation and revised on 13 September to bring style controls into version one, leave the model choice open, and add the stack and hosting choices, on 16 September to move template switching out of version one, and on 3 October to restate the privacy rule as one sentence (decision 0047) and to make this file the plan itself (decision 0048). Decisions carrying the default tag were proposed and accepted without further discussion, and are the first to revisit if practice disagrees.*
+*Written on 12 September 2026 from a design conversation and revised on 13 September to bring style controls into version one, leave the model choice open, and add the stack and hosting choices, on 16 September to move template switching out of version one, on 3 October to restate the privacy rule as one sentence (decision 0047) and to make this file the plan itself (decision 0048), and on 4 October to take in the second pass of milestone 3 (decision 0049). Decisions carrying the default tag were proposed and accepted without further discussion, and are the first to revisit if practice disagrees.*

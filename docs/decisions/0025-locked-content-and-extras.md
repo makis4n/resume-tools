@@ -1,7 +1,7 @@
 # 0025. Locked content and extras
 
 Date: 2026-09-27 · Status: proposed; its end marker and the panel's name for a part are 0041's; a
-locked part's runs of plain text may hold what the person retyped, escaped, since 0042
+locked part's runs of plain text may hold what the person retyped, escaped, since 0042; superseded by 0049 as far as the assembly fills it: an import becomes an outline
 
 ## Context
 
