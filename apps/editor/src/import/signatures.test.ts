@@ -10,6 +10,7 @@ import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { readTree } from "./fonts";
 import { encodeLike, type Intake, intake } from "./intake";
+import { environmentKeysOf, keyInputs, keysOf } from "./keys";
 import { buildRequest } from "./naming";
 import { bodyOf, bodyOfText, buildTree, parseBody, readBody, type Uses, usesOf } from "./parse";
 import { print } from "./print";
@@ -18,11 +19,8 @@ import { isRefusal } from "./refusal";
 import {
   closure,
   type EngineSignatures,
-  environmentKeysOf,
   isData,
   isScratch,
-  keyInputs,
-  keysOf,
   LAYOUT_TYPEOUT,
   layoutOfLog,
   linesOf,

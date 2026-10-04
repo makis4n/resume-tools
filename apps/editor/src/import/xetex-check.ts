@@ -45,6 +45,12 @@ export interface FontsCheck {
   bodyMs: number;
   /** A difference in mathematics alone, which the check lets pass. */
   warnings: string[];
+  /**
+   * The rewritten document's glyph stream, compiled whole: the reference's, glyph for glyph, each
+   * native font by the tree's file of its name, or but for mathematics where `warnings` says so.
+   * What the import probes and checks the rewritten document against (the second pass's item 5).
+   */
+  stream: GlyphStream;
 }
 
 export interface CheckOptions {
@@ -132,7 +138,14 @@ export async function checkRewrite(
       `from the format against the whole document: ${again}`,
       body.log,
     );
-  return { wholeMs, dumpMs: dumped.ms, formatBytes: dumped.format.length, bodyMs, warnings };
+  return {
+    wholeMs,
+    dumpMs: dumped.ms,
+    formatBytes: dumped.format.length,
+    bodyMs,
+    warnings,
+    stream: ours,
+  };
 }
 
 /**

@@ -20,10 +20,10 @@
 import type { EngineSession } from "../engine/session";
 import type { FontLibrary } from "../page/fonts";
 import { encodeLike, type Intake } from "./intake";
-import { classEnd } from "./naming";
 import { bodyOf } from "./parse";
 import { type Reference, type ReferenceFonts, type ReferenceOptions, reference } from "./reference";
 import { type Refusal, refusal } from "./refusal";
+import { classEnd } from "./source";
 
 /**
  * The lines a pdfTeX port loads right after its class (decision 0009), which an import set in

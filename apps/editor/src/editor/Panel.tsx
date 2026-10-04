@@ -391,18 +391,24 @@ export function Panel({
   const { header, sections } = document.resume;
   const known = pkg ?? CURATED.get(document.template)?.package;
   const rules = rulesOf(known, document);
+  // An imported `.tex` keeps its own shape (decision 0049): no header's field or link of the shared
+  // structure reaches its page, so none is offered; its outline's row stands for it, until the
+  // second pass's item 7 lists the outline's parts here.
+  const outline = sections.some((section) => section.kind === "outline");
   return (
     <ShownFields value={shownFields}>
       <Seal value={onSeal}>
         <RulesOf value={rules}>
           <div style={STYLE.panel}>
-            <HeaderFields header={header} rules={rules} send={onCommand} />
-            <Links
-              links={header.links}
-              kept={keptOf(header).has("links")}
-              rules={rules}
-              send={onCommand}
-            />
+            {!outline && <HeaderFields header={header} rules={rules} send={onCommand} />}
+            {!outline && (
+              <Links
+                links={header.links}
+                kept={keptOf(header).has("links")}
+                rules={rules}
+                send={onCommand}
+              />
+            )}
             <Sections
               sections={sections}
               format={dateFormatOf(document, known)}

@@ -30,7 +30,18 @@
 import type { AssemblyChecks, GlyphOwner, LockedPart, LockReason } from "./assemble";
 import type { Intake } from "./intake";
 import type { GlyphStream, Reference, ReferenceGlyph } from "./reference";
-import type { ImportReport, NamingOutcome } from "./run";
+import type { ImportReport } from "./run";
+
+/**
+ * What the first pass's naming step came to (decision 0038), which the report still reads from an
+ * assembly of the corpus's runner: how many of the request's macros the service's cache answered,
+ * how many it asked its model, how many keys were left unfiled because their answers disagree, and
+ * how many macros it left with no answer; or, when no answer came at all, why. A `.tex` import of
+ * the second pass names nothing (decision 0049), and the naming step goes with item 17.
+ */
+export type NamingOutcome =
+  | { hits: number; asked: number; conflicts: number; missing: number }
+  | { failed: string };
 
 /**
  * The share of the body's words that must be editable for an import to succeed, with its first
@@ -160,14 +171,14 @@ export function reportOf(
  * them (`ImportReport`, decision 0038), and its document.
  */
 export function reportOfImport(imported: {
-  report: Pick<ImportReport, "checks" | "locked" | "reference" | "images" | "warnings" | "naming">;
+  report: Pick<ImportReport, "checks" | "locked" | "reference" | "images" | "warnings">;
   document: { resume: unknown };
 }): Report {
   const { report } = imported;
   return reportOf(
     { checks: report.checks, extras: report.locked, document: imported.document },
     report.reference,
-    { images: report.images, warnings: report.warnings, naming: report.naming },
+    { images: report.images, warnings: report.warnings },
   );
 }
 
@@ -742,6 +753,7 @@ export const LOCK_WHY: Readonly<Record<LockReason, string>> = {
   text: "the template stops on some text typed there",
   fields: "this editor could not find it on the page",
   alignment: "the page does not show it as it is written",
+  compile: "this part could not be made editable without changing the page",
 };
 
 /** The style controls as the report names them. */

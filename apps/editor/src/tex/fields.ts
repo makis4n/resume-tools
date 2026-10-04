@@ -122,6 +122,12 @@ const LETTER = /^\p{L}$/u;
  * with the text as a TeX font's glyph is. Native fonts set accented letters whole, so none of their
  * glyphs is paired with another. A run's glyph 0, the font's `.notdef`, is collected as a character
  * left out (`FieldGlyph.dropped`).
+ *
+ * TODO(the second pass's item 7): an imported outline's kept text and preamble are the upload's
+ * own LaTeX, which can make the editor's markers in ways no check of their spelling sees, as
+ * `\csname rtfield\endcsname` or `^^5c` (decision 0049; the model's `EDITOR_MACRO`). When item 7
+ * opens an outline's fields from the page, take a marker for a field only where its id is one the
+ * outline holds, and of each id only its first begin and its first end after it.
  */
 export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, Field> {
   const fields = new Map<string, Field>();

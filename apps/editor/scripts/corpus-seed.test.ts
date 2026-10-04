@@ -13,6 +13,7 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/nod
 import { type Candidate, candidatesOf, isSetter } from "../src/import/candidates";
 import { readTree } from "../src/import/fonts";
 import { type Intake, intake } from "../src/import/intake";
+import * as keysModule from "../src/import/keys";
 import {
   buildRequest,
   type HeaderValues,
@@ -31,7 +32,7 @@ import {
   reference,
 } from "../src/import/reference";
 import { isRefusal } from "../src/import/refusal";
-import * as signaturesModule from "../src/import/signatures";
+import { signatures } from "../src/import/signatures";
 import { FontLibrary } from "../src/page/fonts";
 import { TexLiveIndex } from "../src/page/texlive";
 import { MARKER_BEGIN, MARKER_END } from "../src/tex/fields";
@@ -681,7 +682,7 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
     const head = readBody(bodyOfText(body.preamble));
     const extras = SEED_EXTRAS[doc.family];
     const uses = probeUses(read, isRefusal(head) ? undefined : head);
-    const found = await signaturesModule.signatures(session, taken, made, body, {
+    const found = await signatures(session, taken, made, body, {
       commands: [...new Set([...uses.commands, ...(extras?.commands ?? [])])].sort(),
       environments: [...new Set([...uses.environments, ...(extras?.environments ?? [])])].sort(),
     });
@@ -748,7 +749,7 @@ describe.skipIf(!fetched || !engineAvailable())("the seed, on the oracle's sampl
       if ("refused" in result) throw new Error(result.message);
       return result.request;
     };
-    const filed = await filingOf(found, signaturesModule);
+    const filed = await filingOf(found, keysModule);
     return { doc, session, fonts, taken, made, candidates, extras, request, filed, found };
   }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   Extras,
+  endsInComment,
   KeptLatex,
   LockedLatex,
   MAX_KEPT_LATEX,
@@ -585,5 +586,22 @@ describe("Resume, with an outline (decision 0049)", () => {
     expect(messages(Resume.safeParse(withOutline(nested(MAX_OUTLINE_DEPTH + 1))))).toEqual([
       `an outline's groups nest at most ${MAX_OUTLINE_DEPTH} deep`,
     ]);
+  });
+});
+
+describe("endsInComment", () => {
+  it("reads a comment where TeX would, and an address's `%` as a character of it", () => {
+    expect(endsInComment("Invented % a comment")).toBe(true);
+    expect(endsInComment("Invented % a comment\n")).toBe(false);
+    expect(endsInComment("% a comment\nInvented")).toBe(false);
+    expect(endsInComment("50\\% of it")).toBe(false);
+    expect(endsInComment("50\\\\% a comment after a line break")).toBe(true);
+    // The address of `\href` or `\url` keeps its `%`, whatever comes before it on the line.
+    expect(endsInComment("$|$ \\href{https://quill.example/in/jos%C3%A9}{\\underline{")).toBe(
+      false,
+    );
+    expect(endsInComment("}{\\url{https://quill.example/a%20b}} and")).toBe(false);
+    expect(endsInComment("\\url|https://quill.example/a%20b| and")).toBe(false);
+    expect(endsInComment("\\href{https://quill.example/a%20b}{x} % a comment")).toBe(true);
   });
 });

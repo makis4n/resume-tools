@@ -47,6 +47,7 @@ type ReferenceModule = typeof import("../src/import/reference.ts");
 type ImportFonts = typeof import("../src/import/fonts.ts");
 type ParseModule = typeof import("../src/import/parse.ts");
 type SignaturesModule = typeof import("../src/import/signatures.ts");
+type KeysModule = typeof import("../src/import/keys.ts");
 type ProbeModule = typeof import("../src/import/probe.ts");
 type NamingModule = typeof import("../src/import/naming.ts");
 type PrintModule = typeof import("../src/import/print.ts");
@@ -81,8 +82,8 @@ async function main() {
   const { readTree } = await runner.import<ImportFonts>("/src/import/fonts.ts");
   const { bodyOf, bodyOfText, buildTree, readBody } =
     await runner.import<ParseModule>("/src/import/parse.ts");
-  const signaturesModule = await runner.import<SignaturesModule>("/src/import/signatures.ts");
-  const { signatures } = signaturesModule;
+  const { signatures } = await runner.import<SignaturesModule>("/src/import/signatures.ts");
+  const keysModule = await runner.import<KeysModule>("/src/import/keys.ts");
   const { probe, probeUses } = await runner.import<ProbeModule>("/src/import/probe.ts");
   const { buildRequest, pageStrings, realName, sourcesOf, withRedefinitions } =
     await runner.import<NamingModule>("/src/import/naming.ts");
@@ -247,7 +248,7 @@ async function main() {
       done({
         outcome: "requested",
         engine,
-        macros: seedMacros(request, await filingOf(found, signaturesModule), extras),
+        macros: seedMacros(request, await filingOf(found, keysModule), extras),
         ...(redefined === undefined ? {} : { redefinitions: redefined }),
       });
     } catch {

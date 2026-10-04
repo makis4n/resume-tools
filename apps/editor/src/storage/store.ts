@@ -23,10 +23,13 @@
  * compiles need beside the package, its report, and when it was made; and when the package was
  * made and last used. A package's id is under the prefix no curated package takes, and the store
  * refuses one outside it, or one a curated package has; its formats are kept as any template's,
- * among the `MAX_FORMATS`, and go with its last document, the package with them.
+ * among the `MAX_FORMATS`, and go with its last document, the package with them. An import the
+ * first pass of milestone 3 made, a document fitted into the shared structure rather than an
+ * outline, is not migrated (decision 0049): the store refuses to open or keep one, with a message
+ * that says to import it again (`IMPORT_AGAIN`), and leaves it stored.
  */
 
-import type { Resume } from "@resume-tools/resume-model";
+import { type OutlinePart, outlineNodes, type Resume } from "@resume-tools/resume-model";
 import Dexie, { type EntityTable } from "dexie";
 import { z } from "zod";
 import type { FormatStore, PrefetchStore } from "../editor/compiler";
@@ -218,16 +221,35 @@ export const MAX_PATHS = 2_000;
 /** What the user reads when a stored document cannot be opened. */
 export const CANNOT_OPEN = "This document cannot be opened by this version of the editor.";
 
-/** A stored document the model refuses, as it would one a newer editor wrote. */
+/**
+ * What the user reads when a stored document was imported by the first pass of milestone 3, which
+ * this editor does not migrate (decision 0049).
+ */
+export const IMPORT_AGAIN =
+  "This resume was imported by an earlier version of the editor, which this one cannot open. Import it again to edit it.";
+
+/**
+ * A stored document the model refuses, as it would one a newer editor wrote; or one an earlier
+ * editor imported, which this one does not migrate. Its message is what the user reads.
+ */
 export class DocumentRefused extends Error {
   constructor(
     readonly id: string,
     cause: unknown,
+    message: string = CANNOT_OPEN,
   ) {
-    super(CANNOT_OPEN, { cause });
+    super(message, { cause });
     this.name = "DocumentRefused";
   }
 }
+
+/**
+ * Whether a document is an import the first pass of milestone 3 made (decision 0049): set with an
+ * imported package, and holding no outline, the one section a `.tex` import now makes.
+ */
+export const madeByFirstPass = (document: Pick<Document, "template" | "resume">) =>
+  document.template.startsWith(IMPORTED_PREFIX) &&
+  !document.resume.sections.some((section) => section.kind === "outline");
 
 /**
  * An imported package the store will not keep, or read back: one whose id is outside the prefix
@@ -275,10 +297,47 @@ export interface StoreOptions {
   page?: PageEvents;
 }
 
-/** The title a document is listed under: the name in its header, or "Untitled". */
+/** The most characters of an imported resume's first line its title takes. */
+export const MAX_TITLE = 60;
+
+/**
+ * The title a document is listed under: the name in its header; for an imported `.tex`, whose
+ * header holds no name (decision 0049), the words of its outline's first fields on one line, which
+ * are its name on nearly every resume, as Jake's heading's or Awesome-CV's `\name{...}{...}`, cut at
+ * `MAX_TITLE` characters; or "Untitled".
+ */
 export function titleOf(resume: Resume): string {
   const { first, last } = resume.header.name;
-  return `${first} ${last}`.replace(/\s+/g, " ").trim() || "Untitled";
+  const named = `${first} ${last}`.replace(/\s+/g, " ").trim();
+  if (named !== "") return named;
+  const outline = resume.sections.find((section) => section.kind === "outline");
+  const line = outline === undefined ? "" : firstLine(outline.parts);
+  return line === ""
+    ? "Untitled"
+    : line.length > MAX_TITLE
+      ? `${line.slice(0, MAX_TITLE - 1).trimEnd()}…`
+      : line;
+}
+
+/**
+ * The text of an outline's first fields on one line: from its first field that holds text, each
+ * field's text in turn, until kept text that ends the line.
+ */
+function firstLine(parts: readonly OutlinePart[]): string {
+  const words: string[] = [];
+  for (const step of outlineNodes(parts)) {
+    if (step.kind === "unit") continue;
+    const { part } = step;
+    if (part.kind === "kept") {
+      if (words.length > 0 && /[\n\r]/.test(part.latex)) break;
+      continue;
+    }
+    if (part.kind === "group") continue;
+    const text =
+      typeof part.text === "string" ? part.text : part.text.map((run) => run.text).join("");
+    if (text.trim() !== "") words.push(text);
+  }
+  return words.join(" ").replace(/\s+/g, " ").trim();
 }
 
 export class DocumentStore {
@@ -371,7 +430,8 @@ export class DocumentStore {
 
   /**
    * A document as stored, after writing what waits to be; undefined when there is none with this
-   * id. Throws `DocumentRefused` for a document the model refuses, and leaves it stored. Reading a
+   * id. Throws `DocumentRefused` for a document the model refuses, or one the first pass of
+   * milestone 3 imported (`madeByFirstPass`), and leaves it stored. Reading a
    * document starts a new reading of it, which the app's saves then name by its revision.
    */
   async get(id: string): Promise<Stored | undefined> {
@@ -380,6 +440,8 @@ export class DocumentStore {
     if (row === undefined) return undefined;
     const read = Document.safeParse(row.document);
     if (!read.success) throw new DocumentRefused(id, read.error);
+    if (madeByFirstPass(read.data))
+      throw new DocumentRefused(id, "imported by the first pass", IMPORT_AGAIN);
     const revision = revisionOf(row) ?? 0;
     this.held.set(id, {
       opened: revision,
@@ -441,8 +503,8 @@ export class DocumentStore {
    * Store an import (decision 0038): its package, under the prefix imported ids take, beside any
    * earlier import of the same template, with what this import keeps (`ImportRecord`); and its
    * document, as a new one, which is set with the package. Returns the document's id. Throws
-   * `PackageRefused` for a package the store refuses (`refusedId`, the package's schema) or a
-   * document not set with it, and Zod's error for a document the model refuses; nothing is stored
+   * `PackageRefused` for a package the store refuses (`refusedId`, the package's schema), a
+   * document not set with it, or one that holds no outline (`madeByFirstPass`), and Zod's error for a document the model refuses; nothing is stored
    * then.
    */
   async importDocument(imported: Imported): Promise<string> {
@@ -455,6 +517,8 @@ export class DocumentStore {
     const document = Document.parse(imported.document);
     if (document.template !== id)
       throw new PackageRefused(id, `the document is set with ${document.template}`);
+    if (madeByFirstPass(document))
+      throw new PackageRefused(id, "its document is no outline, as the first pass imported one");
     const documentId = crypto.randomUUID();
     const now = Date.now();
     const record: ImportRecord = {

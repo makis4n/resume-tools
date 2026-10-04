@@ -30,7 +30,6 @@ function timed(ms: number): ImportTime {
     ms,
     compiles: 32,
     engine: "pdftex",
-    naming: { hits: 7, asked: 0, conflicts: 0, missing: 0 },
     outcome: "assembled",
     fields: { editable: 40, locked: 5 },
     report: { outcome: "partial", rate: 0.83 },

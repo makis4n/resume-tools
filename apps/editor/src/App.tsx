@@ -343,7 +343,7 @@ export function App() {
     } catch (error) {
       console.error("The document could not be read:", error);
       if (request === opening.current)
-        await showList(error instanceof DocumentRefused ? CANNOT_OPEN : NO_STORAGE);
+        await showList(error instanceof DocumentRefused ? error.message : NO_STORAGE);
       return;
     }
     if (request !== opening.current) return;

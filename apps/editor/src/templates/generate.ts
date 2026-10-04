@@ -34,7 +34,7 @@ import type {
   Section,
   SectionRole,
 } from "@resume-tools/resume-model";
-import { outlineNodes } from "@resume-tools/resume-model";
+import { endsInComment, outlineNodes } from "@resume-tools/resume-model";
 import { INVISIBLE } from "../tex/fields";
 import { type RunBreaks, runBreaks, runBreaksWithin, UNBROKEN_RUN } from "../tex/runs";
 import { formatDates } from "./dates";
@@ -829,16 +829,13 @@ function extra(frame: Extract<Frame, { kind: "nodes" }>, key: string): string | 
 
 /**
  * LaTeX kept from the upload as the generator writes it, as it is, with a line's end after it when
- * its last line holds a comment, which would otherwise run on over what the snippet sets after the
+ * it ends inside a comment, which would otherwise run on over what the snippet sets after the
  * slot: the comment takes the line's end, so TeX reads nothing that the upload did not have there.
+ * A `%` in an address, as `\href{https://quill.example/jos%C3%A9}` holds one, is a character of it
+ * and no comment, as the model reads it (`endsInComment`): a line's end after it would be a space.
  */
 function kept(latex: string): string {
-  const last = latex.slice(Math.max(latex.lastIndexOf("\n"), latex.lastIndexOf("\r")) + 1);
-  for (let at = 0; at < last.length; at++) {
-    if (last[at] === "\\") at++;
-    else if (last[at] === "%") return `${latex}\n`;
-  }
-  return latex;
+  return endsInComment(latex) ? `${latex}\n` : latex;
 }
 
 /**

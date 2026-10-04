@@ -3,8 +3,9 @@
  * bar for a template already cached: under 8 s, raised by decision 0045 from plan section 4.3's
  * 5 s, and judged on pdfTeX alone; XeTeX's import is reported beside it, not judged.
  *
- * A launch template's upstream sample (`IMPORT_SAMPLES`), whose every macro the committed answers
- * name, goes to the editor's compile scheduler as the document list gives it a person's file
+ * A launch template's upstream sample (`IMPORT_SAMPLES`), which an import builds the outline of with
+ * no naming step (decision 0049), so that every import is the bar's case, goes to the editor's
+ * compile scheduler as the document list gives it a person's file
  * (`Compiler.importResume`), its report is read as the app reads it (`reportOfImport`), and the
  * document it comes to opens as the app opens it, to its first drawn page. A partial import, which
  * the app holds in the list for the person's Continue (decision 0039), goes straight on to its page
@@ -31,12 +32,7 @@ import type { AssemblyChecks } from "../import/assemble";
 import type { Upload } from "../import/intake";
 import { isRefusal, type Refusal } from "../import/refusal";
 import { percent, type ReportOutcome, reportOfImport } from "../import/report";
-import {
-  IMPORT_STEPS,
-  type ImportProgress,
-  type ImportStep,
-  type NamingOutcome,
-} from "../import/run";
+import { IMPORT_STEPS, type ImportProgress, type ImportStep } from "../import/run";
 import { drawPage } from "../page/draw";
 import type { FontLibrary } from "../page/fonts";
 import { formatMs, median, meets, TARGETS, table } from "./measure";
@@ -91,7 +87,6 @@ export interface ImportTime {
   /** The import's compiles and the page's. */
   compiles: number;
   engine: Engine;
-  naming: NamingOutcome;
   outcome: AssemblyChecks["outcome"];
   /** The import's fields: editable, whatever their kind, and locked, whatever the reason. */
   fields: { editable: number; locked: number };
@@ -316,14 +311,13 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
       dumps: others.length,
       engineMs: sum([...compiles, ...others].map((each) => each.ms)),
     });
-    const { checks, naming } = outcome.report;
+    const { checks } = outcome.report;
     return {
       startMs,
       parts,
       ms: ended - began,
       compiles: outcome.report.compiles + compiles.length,
       engine: outcome.package.engine,
-      naming,
       outcome: checks.outcome,
       fields: {
         editable: checks.fields.editable,
@@ -438,13 +432,6 @@ export function formatTime(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : formatMs(ms);
 }
 
-/** What the naming step came to, in a few words. */
-function namingLine(naming: NamingOutcome): string {
-  if ("failed" in naming) return `the naming service failed (${naming.failed})`;
-  const { hits, asked, missing } = naming;
-  return `${hits} of the template's macros named from the cache, ${asked} asked of a model, ${missing} left unnamed`;
-}
-
 /** What an import came to, which every timed import should share, in a sentence. */
 export function outcomeLine(time: ImportTime): string {
   const pages = `${time.page.pages} ${time.page.pages === 1 ? "page" : "pages"}`;
@@ -452,22 +439,8 @@ export function outcomeLine(time: ImportTime): string {
   return [
     `${time.outcome}: ${time.fields.editable} fields editable and ${time.fields.locked} locked`,
     `reported ${outcome}, ${percent(rate)} of the words editable on the page`,
-    namingLine(time.naming),
     `the document opened on ${pages}`,
   ].join("; ");
-}
-
-/**
- * Why some imports were not a template already cached, the bar's case, or undefined when every one
- * was: the naming service failed, asked a model, or left a macro unnamed in one of them.
- */
-export function notCached(runs: readonly ImportTime[]): string | undefined {
-  for (const { naming } of runs) {
-    if ("failed" in naming) return `the naming service failed: ${naming.failed}`;
-    if (naming.asked > 0) return `${naming.asked} of the template's macros were asked of a model`;
-    if (naming.missing > 0) return `${naming.missing} of the template's macros were left unnamed`;
-  }
-  return undefined;
 }
 
 /**
@@ -495,11 +468,11 @@ export const IMPORT_BAR = `Against the bar: under ${IMPORT_TARGET.limit / 1000} 
 export type Where = "node" | "browser";
 
 /**
- * What the bar is judged on, and whether it is met; or why it is not judged: not a cache hit, or
- * an engine the bar is not judged on (`IMPORT_JUDGED_ON`), whose time is then reported.
+ * What the bar is judged on, and whether it is met; or, on an engine the bar is not judged on
+ * (`IMPORT_JUDGED_ON`), the time reported. A `.tex` import names nothing, so every one is the
+ * bar's case, a template whose answers need no service (decision 0049).
  */
 export type ImportJudged =
-  | { judged: false; why: string }
   | { judged: false; reported: true; ms: number }
   | { judged: true; ms: number; met: boolean };
 
@@ -509,8 +482,6 @@ export function importMeets(
   where: Where,
   engine: Engine,
 ): ImportJudged {
-  const why = notCached(runs);
-  if (why !== undefined) return { judged: false, why };
   const medians = importMedians(runs);
   const ms = where === "node" ? medians.ms : medians.withStartWithoutLoadMs;
   if (engine !== IMPORT_JUDGED_ON) return { judged: false, reported: true, ms };
@@ -529,9 +500,7 @@ export function importVerdict(runs: readonly ImportTime[], where: Where, engine:
       : "with the engine's start, without loading the import's code";
   const said = verdict.judged
     ? `${formatTime(verdict.ms)} ${verdict.met ? "met" : "missed"}, ${on}`
-    : "reported" in verdict
-      ? `${formatTime(verdict.ms)} reported, not judged, since the bar is judged on pdfTeX; ${on}`
-      : `not a cache hit, so not judged: ${verdict.why}`;
+    : `${formatTime(verdict.ms)} reported, not judged, since the bar is judged on pdfTeX; ${on}`;
   return table([[IMPORT_TARGET.path, `under ${IMPORT_TARGET.limit / 1000} s`, said]]);
 }
 

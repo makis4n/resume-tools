@@ -48,6 +48,7 @@ type ImportFonts = typeof import("../src/import/fonts.ts");
 type ParseModule = typeof import("../src/import/parse.ts");
 type PrintModule = typeof import("../src/import/print.ts");
 type SignaturesModule = typeof import("../src/import/signatures.ts");
+type KeysModule = typeof import("../src/import/keys.ts");
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
 
@@ -126,7 +127,8 @@ async function main() {
   const { bodyOf, buildTree, PARSE_REFUSALS, readBody, usesOf } =
     await runner.import<ParseModule>("/src/import/parse.ts");
   const { print, regenerate } = await runner.import<PrintModule>("/src/import/print.ts");
-  const { keysOf, signatures } = await runner.import<SignaturesModule>("/src/import/signatures.ts");
+  const { signatures } = await runner.import<SignaturesModule>("/src/import/signatures.ts");
+  const { keysOf } = await runner.import<KeysModule>("/src/import/keys.ts");
 
   const manifest = JSON.parse(
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
