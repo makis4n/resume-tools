@@ -97,6 +97,13 @@ export const MAX_KEPT_LATEX = 65_536;
  * The editor's own LaTeX, which only the generator writes: the macros of its prelude, `\rtfield`,
  * `\rtlocked` and those under `\rt@`, and the texts of the specials the page reads as its markers, a
  * field's begin, end and paragraph markers and a locked part's, in any case, as the page reads them.
+ *
+ * The check matches them as they are spelt, and it is no security boundary: kept text, and the
+ * preamble the upload brings, can still make them some other way, through `\csname`, `^^5c` or a
+ * macro of its own, as TeX lets any document. What that can do is set markers on the uploader's own
+ * page, so the page must not trust a marker for what it says: the reader that takes an outline's
+ * field from the page accepts only the ids the outline holds, and of each only its first begin and
+ * end (`collectFields`, the second pass's item 7).
  */
 const EDITOR_MACRO = /\\rt(?:field|locked)(?![A-Za-z])|\\rt@/;
 const EDITOR_MARKER = /rt:[bepl]:/i;
@@ -119,11 +126,36 @@ const ADDRESS_COMMAND = /\\(href|url|path|nolinkurl)(?![A-Za-z@])/y;
  * text's length.
  */
 function balanced(latex: string, addresses: boolean): boolean {
+  const read = scan(latex, addresses);
+  return !read.under && read.depth === 0 && !read.delimited;
+}
+
+/**
+ * Whether LaTeX ends inside a comment, as TeX reads it where it stands outside any argument
+ * (`balanced`'s reading with `addresses`): its last line holds a `%` that no backslash escapes and
+ * that is no character of an address, as `\href{https://quill.example/jos%C3%A9}` holds one. Text
+ * written right after such LaTeX would be read as the comment; the generator ends its line first.
+ */
+export function endsInComment(latex: string): boolean {
+  return scan(latex, true).comment;
+}
+
+/**
+ * LaTeX read as TeX reads its braces and comments (`balanced`): the depth it ends at, whether it
+ * went below 0 on the way, whether it ends inside an address `\url|...|` opened, and whether it
+ * ends inside a comment. One pass, so it costs the text's length.
+ */
+function scan(
+  latex: string,
+  addresses: boolean,
+): { depth: number; under: boolean; delimited: boolean; comment: boolean } {
   const lineEnd = (char: string | undefined) => char === "\n" || char === "\r";
   let depth = 0;
+  let under = false;
+  let comment = false;
   // The depth an address's braces close back to, while one is open; and the character that closes
   // one `\url|...|` opened.
-  let address = -1;
+  let address: number | undefined;
   let delimiter: string | undefined;
   for (let at = 0; at < latex.length; at++) {
     const char = latex[at];
@@ -133,7 +165,7 @@ function balanced(latex: string, addresses: boolean): boolean {
     }
     if (char === "\\") {
       ADDRESS_COMMAND.lastIndex = at;
-      const command = addresses && address < 0 ? ADDRESS_COMMAND.exec(latex) : null;
+      const command = addresses && address === undefined ? ADDRESS_COMMAND.exec(latex) : null;
       if (command === null) {
         at++;
         continue;
@@ -155,15 +187,16 @@ function balanced(latex: string, addresses: boolean): boolean {
         delimiter = opens;
         at = next;
       } else at = next - 1;
-    } else if (char === "%" && address < 0) {
+    } else if (char === "%" && address === undefined) {
       while (at + 1 < latex.length && !lineEnd(latex[at + 1])) at++;
+      if (at + 1 >= latex.length) comment = true;
     } else if (char === "{") depth++;
     else if (char === "}") {
-      if (--depth < 0) return false;
-      if (depth === address) address = -1;
+      if (--depth < 0) under = true;
+      if (depth === address) address = undefined;
     }
   }
-  return depth === 0 && delimiter === undefined;
+  return { depth, under, delimited: delimiter !== undefined, comment };
 }
 
 /**

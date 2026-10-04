@@ -5,11 +5,12 @@ import {
   outlineNodes,
   type RichText,
 } from "@resume-tools/resume-model";
-import { describe, expect, test } from "vitest";
+import { beforeAll, describe, expect, test } from "vitest";
 import { escapeText } from "../templates/escape";
 import { generateBody } from "../templates/generate";
 import { TemplatePackage } from "../templates/package";
 import { signaturesOf } from "../test/invented-import";
+import { bound, cpuMs, fastest } from "../test/timing";
 import { candidatesOf } from "./candidates";
 import {
   buildOutline,
@@ -103,25 +104,27 @@ function outlineOf(
   });
 }
 
+/** An outline's package, invented, which the generator writes the tests' outlines through. */
+let PACKAGE: TemplatePackage;
+beforeAll(async () => {
+  PACKAGE = await outlinePackage({
+    engine: "pdftex",
+    preamble: "\\documentclass{article}\n",
+    files: {},
+    reference: { log: "(hyperref.sty)" },
+  });
+});
+
 /**
- * An outline's parts written out as the generator writes them, each field as `field` gives it, and
- * a group's units each after its gap but the first.
+ * An outline's parts as the generator writes them (`generateBody`), its kept text as it is, every
+ * unit after its gap but a group's first, and each field in its marker, the marker then taken off:
+ * a field of plain words reads as its text.
  */
-function written(
-  parts: readonly OutlinePart[],
-  field: (part: OutlineText | OutlineRich) => string,
-): string {
-  let out = "";
-  for (const step of outlineNodes(parts)) {
-    if (step.kind === "unit") {
-      if (!step.first) out += step.unit.gap;
-      continue;
-    }
-    const { part } = step;
-    if (part.kind === "kept") out += part.latex;
-    else if (part.kind === "text" || part.kind === "rich") out += field(part);
-  }
-  return out;
+function written(parts: OutlinePart[]): string {
+  const resume = outlineResume(parts);
+  if (resume === undefined) throw new Error("the model refuses the outline");
+  const { latex } = generateBody(PACKAGE, resume, {});
+  return latex.replace(/\\rtfield\{[a-z0-9-]+\.text\}\{([^{}]*)\}/g, "$1").replace(/\n$/, "");
 }
 
 /** Parts with the rich field `id`, wherever it stands, given `text`. */
@@ -156,7 +159,7 @@ describe("the outline (decision 0049)", () => {
     const { parts, counts } = outlineOf(BODY);
     // Each field written back as the text it holds gives the body back, byte for byte, between
     // `\begin{document}` and `\end{document}`: nothing kept moved, nothing was added.
-    expect(written(parts, textOf)).toBe(`\\begin{document}${BODY}\\end{document}`);
+    expect(written(parts)).toBe(`\\begin{document}${BODY}\\end{document}`);
     expect(fieldsOf(parts)).toEqual({
       s1: "Invented Studies",
       "c2-1": "Quill Academy",
@@ -194,6 +197,18 @@ describe("the outline (decision 0049)", () => {
     });
   });
 
+  test("ends no line after an address's `%`, which is no comment, before a field", () => {
+    // A link whose address holds a `%`, right before a field on its line: the generator writes no
+    // line's end after the kept text, which TeX would read as a space.
+    const body = String.raw`\href{https://quill.example/in/jos%C3%A9}{\underline{Invented link}} more
+% a comment, whose line's end is its own
+\section{Invented}
+`;
+    const { parts } = outlineOf(body);
+    expect(Object.values(fieldsOf(parts))).toEqual(["Invented link", "more", "Invented"]);
+    expect(written(parts)).toBe(`\\begin{document}${body}\\end{document}`);
+  });
+
   test("makes groups of the sections, the entries, the bullets and the list's items", () => {
     const { parts } = outlineOf(BODY);
     const groups = [...outlineNodes(parts)].flatMap((step) =>
@@ -220,7 +235,7 @@ describe("the outline (decision 0049)", () => {
 \inventedentry{Heron College}{Lark Bay}
 `;
     const { parts } = outlineOf(body, FLAT, (id) => (id === "c2-1" ? "moved" : "editable"));
-    expect(written(parts, textOf)).toBe(`\\begin{document}${body}\\end{document}`);
+    expect(written(parts)).toBe(`\\begin{document}${body}\\end{document}`);
     // The second call's first argument moved the page; the first's second breaks its line, which a
     // field, one paragraph, would set on one.
     expect(Object.keys(fieldsOf(parts))).toEqual(["c1-1", "c2-2"]);
@@ -270,9 +285,37 @@ describe("the outline (decision 0049)", () => {
 `;
     const { parts, counts } = outlineOf(body, signatures);
     expect(counts.groups).toBe(0);
-    expect(written(parts, textOf)).toBe(`\\begin{document}${body}\\end{document}`);
+    expect(written(parts)).toBe(`\\begin{document}${body}\\end{document}`);
     expect(outlineResume(parts)).toBeDefined();
   });
+
+  test("writes a group the model refuses from its units as they were written, however deep", () => {
+    // Groups nested 30 deep, the innermost holding what the model refuses, which refuses every group
+    // around it: each is written once, its units' parts with no group, in linear time.
+    const signatures = signaturesOf({ inventedpart: "m" }, {}, { inventedpart: "macro:#1->#1" });
+    const nested = (depth: number) => {
+      let text = "Invented %rt:p: a comment\n";
+      for (let at = 0; at < depth; at++) text = `\\inventedpart{${text}}\\inventedpart{Wren}`;
+      return `${text}\n`;
+    };
+    const deep = outlineOf(nested(30), signatures);
+    expect(deep.counts.groups).toBe(0);
+    // Every byte of it still there, kept text and fields where they stand.
+    const joined = deep.parts
+      .map((part) =>
+        part.kind === "kept" ? part.latex : part.kind === "group" ? "" : textOf(part),
+      )
+      .join("");
+    expect(joined).toBe(`\\begin{document}${nested(30)}\\end{document}`);
+    // Three times as deep is at most some twenty times the work, where each group written again
+    // inside each refused one around it doubled it at every level: 2^20 times.
+    const [shallow = 0, deeper = 0] = fastest(
+      [() => outlineOf(nested(10), signatures), () => outlineOf(nested(30), signatures)],
+      3,
+    );
+    expect(deeper).toBeLessThan(bound(20, shallow));
+    expect(cpuMs(() => outlineOf(nested(30), signatures))).toBeLessThan(2_000);
+  }, 60_000);
 
   test("is refused by the model where the upload's own LaTeX holds the editor's markers", () => {
     for (const forged of [

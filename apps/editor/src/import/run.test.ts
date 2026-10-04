@@ -292,6 +292,19 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decisions 0038 an
     expect(report.locked.every((each) => !/[\\{}]/.test(each.words))).toBe(true);
   }, 60_000);
 
+  test("keeps a link whose address holds a `%` as the fork wrote it, its page the original's", async () => {
+    // An encoded letter in the address, on the line of a field the outline marks after it: no
+    // line's end is written after the kept text, which TeX would set as a space (decision 0049).
+    const encoded = JAKE_FORK.replace(
+      "\\href{https://quill.example}",
+      "\\href{https://quill.example/in/jos%C3%A9}",
+    );
+    expect(encoded).not.toBe(JAKE_FORK);
+    const done = await imported(encoded);
+    expect(done.report.checks.outcome).toBe("assembled");
+    expect(done.report.checks.difference).toBeUndefined();
+  }, 60_000);
+
   test("imports a resume on XeTeX from a saved format, its name a field through the preamble", async () => {
     const steps: ImportProgress[] = [];
     const outcome = await importResume([tex("resume.tex", XETEX_RESUME)], deps, (step) =>

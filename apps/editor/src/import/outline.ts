@@ -486,8 +486,6 @@ function partsIn(
     const { group } = step;
     if (group.start < at) continue;
     keep(group.start);
-    const before = new Map(writer.written);
-    const made = { ...writer.made };
     const n = ++writer.count.groups;
     const id = `g${n}`;
     const within = new Set([...skip, group]);
@@ -510,15 +508,17 @@ function partsIn(
       at = group.end;
       continue;
     }
-    // The model refuses it: its parts are written with no group, whatever its units held.
-    writer.written.clear();
-    for (const [key, value] of before) writer.written.set(key, value);
-    writer.made.groups = made.groups;
-    writer.made.units = made.units;
-    for (const each of partsIn(writer, group, within)) {
+    // The model refuses it: its units' parts, as they were just written, stand with no group, each
+    // after the kept text that parted it from the one before, so that nothing is written twice and
+    // a refusal deep in nested groups costs no more than the groups themselves.
+    const flat: OutlinePart[] = units.flatMap((unit, i) => [
+      ...(i === 0 || unit.gap === "" ? [] : [{ kind: "kept" as const, latex: unit.gap }]),
+      ...unit.parts,
+    ]);
+    for (const each of flat) {
       const last = parts.at(-1);
       if (each.kind === "kept" && last?.kind === "kept") last.latex += each.latex;
-      else parts.push(each);
+      else parts.push(each.kind === "kept" ? { ...each } : each);
     }
     at = group.end;
   }
