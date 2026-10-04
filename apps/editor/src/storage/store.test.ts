@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import type { Section } from "@resume-tools/resume-model";
+import type { OutlinePart, Section } from "@resume-tools/resume-model";
 import Dexie from "dexie";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apply, type Document, newDocument } from "../editor/document";
@@ -15,6 +15,7 @@ import {
   IMPORT_AGAIN,
   MAX_FORMATS,
   MAX_PATHS,
+  MAX_TITLE,
   PackageRefused,
   type PageEvents,
   RETRY_DELAY,
@@ -167,6 +168,43 @@ describe("DocumentStore", () => {
     expect(withName(" Mara ", "")).toBe("Mara");
     expect(withName("Jo\nAnn", " Lee ")).toBe("Jo Ann Lee");
     expect(withName(" ", "")).toBe("Untitled");
+  });
+
+  it("titles an imported outline after its first line of fields, as its name is (decision 0049)", () => {
+    const outline = (...parts: OutlinePart[]) =>
+      titleOf({
+        ...sample,
+        header: { ...sample.header, name: { first: "", last: "" } },
+        sections: [{ kind: "outline", id: "outline", title: "", role: "other", parts }],
+      });
+    const kept = (latex: string): OutlinePart => ({ kind: "kept", latex });
+    const field = (id: string, text: string): OutlinePart => ({
+      kind: "rich",
+      id,
+      text: [{ text }],
+    });
+    // A heading's name, the line's end after it, then the rest.
+    expect(
+      outline(
+        kept("\\begin{document}\n\\textbf{"),
+        field("t1", "Quill Invented"),
+        kept("} \\\\\n"),
+        field("t2", "555-0100"),
+      ),
+    ).toBe("Quill Invented");
+    // A name the preamble stores, issued again on one line before the document begins.
+    expect(
+      outline(
+        kept("\\name{"),
+        field("h1-1", "Quill"),
+        kept("}{"),
+        field("h1-2", "Wren"),
+        kept("}\n\\begin{document}\n"),
+        field("s1", "Experience"),
+      ),
+    ).toBe("Quill Wren");
+    expect(outline(field("t1", "Invented ".repeat(10)))).toHaveLength(MAX_TITLE);
+    expect(outline(kept("\\begin{document}\n\\end{document}"))).toBe("Untitled");
   });
 
   it("lists documents most recently edited first", async () => {
@@ -707,6 +745,15 @@ describe("DocumentStore's imported packages (decision 0038)", () => {
     expect((await store.list()).map((each) => each.templateName)).toEqual(["Invented import"]);
     // A package the store does not keep is none.
     expect(await store.templateOf("import-ba9876543210")).toBeUndefined();
+  });
+
+  it("lists an import whose header holds no name by its outline's first line", async () => {
+    const { store } = storeForTest();
+    const made = imported();
+    const resume = { ...made.document.resume, header: { ...made.document.resume.header } };
+    resume.header.name = { first: "", last: "" };
+    await store.importDocument({ ...made, document: { ...made.document, resume } });
+    expect((await store.list()).map((each) => each.title)).toEqual(["Invented heading"]);
   });
 
   it("refuses a package outside the imported prefix, or a curated one's id, and keeps nothing", async () => {

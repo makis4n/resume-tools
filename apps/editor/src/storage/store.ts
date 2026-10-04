@@ -29,7 +29,7 @@
  * that says to import it again (`IMPORT_AGAIN`), and leaves it stored.
  */
 
-import type { Resume } from "@resume-tools/resume-model";
+import { type OutlinePart, outlineNodes, type Resume } from "@resume-tools/resume-model";
 import Dexie, { type EntityTable } from "dexie";
 import { z } from "zod";
 import type { FormatStore, PrefetchStore } from "../editor/compiler";
@@ -297,10 +297,47 @@ export interface StoreOptions {
   page?: PageEvents;
 }
 
-/** The title a document is listed under: the name in its header, or "Untitled". */
+/** The most characters of an imported resume's first line its title takes. */
+export const MAX_TITLE = 60;
+
+/**
+ * The title a document is listed under: the name in its header; for an imported `.tex`, whose
+ * header holds no name (decision 0049), the words of its outline's first fields on one line, which
+ * are its name on nearly every resume, as Jake's heading's or Awesome-CV's `\name{...}{...}`, cut at
+ * `MAX_TITLE` characters; or "Untitled".
+ */
 export function titleOf(resume: Resume): string {
   const { first, last } = resume.header.name;
-  return `${first} ${last}`.replace(/\s+/g, " ").trim() || "Untitled";
+  const named = `${first} ${last}`.replace(/\s+/g, " ").trim();
+  if (named !== "") return named;
+  const outline = resume.sections.find((section) => section.kind === "outline");
+  const line = outline === undefined ? "" : firstLine(outline.parts);
+  return line === ""
+    ? "Untitled"
+    : line.length > MAX_TITLE
+      ? `${line.slice(0, MAX_TITLE - 1).trimEnd()}…`
+      : line;
+}
+
+/**
+ * The text of an outline's first fields on one line: from its first field that holds text, each
+ * field's text in turn, until kept text that ends the line.
+ */
+function firstLine(parts: readonly OutlinePart[]): string {
+  const words: string[] = [];
+  for (const step of outlineNodes(parts)) {
+    if (step.kind === "unit") continue;
+    const { part } = step;
+    if (part.kind === "kept") {
+      if (words.length > 0 && /[\n\r]/.test(part.latex)) break;
+      continue;
+    }
+    if (part.kind === "group") continue;
+    const text =
+      typeof part.text === "string" ? part.text : part.text.map((run) => run.text).join("");
+    if (text.trim() !== "") words.push(text);
+  }
+  return words.join(" ").replace(/\s+/g, " ").trim();
 }
 
 export class DocumentStore {
