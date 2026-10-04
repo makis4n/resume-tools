@@ -9,6 +9,8 @@
  */
 
 import type { Layout, Line } from "./layout.ts";
+import type { Features, Role } from "./roles.ts";
+import { ROLES } from "./roles.ts";
 import {
   countWords,
   hasEmail,
@@ -22,49 +24,9 @@ import {
   phoneIn,
 } from "./text.ts";
 
-/** The roles a line may have: a closed list, which a model is given as an enum. */
-export const ROLES = [
-  "name",
-  "contact",
-  "section heading",
-  "entry head",
-  "date",
-  "place",
-  "bullet",
-  "running text",
-] as const;
-export type Role = (typeof ROLES)[number];
-
-/** What the rules and the model see of a line: its text and its features, by its id. */
-export interface Features {
-  id: number;
-  text: string;
-  page: number;
-  /** Its column among how many, where it stands. */
-  column: number;
-  columns: number;
-  /** Its left edge from its column's, and its width, in points. */
-  indent: number;
-  width: number;
-  /** Its size against the body's, to two places: 1 is the body's size. */
-  size: number;
-  bold: boolean;
-  italic: boolean;
-  /** Whether its letters are all capitals. */
-  caps: boolean;
-  bullet: boolean;
-  /** Its place among the lines of its row in its column, from the left, and how many there are. */
-  rowIndex: number;
-  rowSize: number;
-  /** Whether a long rule runs by it, as under a heading. */
-  rule: boolean;
-  /** The gap above it, in body sizes, to one place; none for the first in its column. */
-  gapAbove?: number;
-  /** How many links it carries. */
-  links: number;
-  /** The rows of text it joins. */
-  rows: number;
-}
+// The closed list of roles and what a line's features are live in `roles.ts`, which the reading
+// service takes too without the layout's code.
+export { type Features, ROLES, type Role } from "./roles.ts";
 
 /** Whether a text's letters are all capitals, three or more of them. */
 export function allCaps(text: string): boolean {
@@ -322,8 +284,28 @@ export interface Labeller {
 /** The rules, as a labeller: always there, and always an answer. */
 export const rulesLabeller: Labeller = { by: "rules", label: (input) => labelByRules(input) };
 
-/** Why a labeller's answer was not taken, and the rules answered in its place. */
-export type LabelFallback = "failed" | "wrong form";
+/**
+ * Why a labeller's answer was not taken, and the rules answered in its place: the person has not
+ * agreed to send the PDF's text (`no consent`), the labeller failed or could not reach its service
+ * (`failed`), it answered past its time budget (`timeout`), or in a form other than one role from
+ * the list for each line (`wrong form`).
+ */
+export const LABEL_FALLBACKS = ["no consent", "failed", "timeout", "wrong form"] as const;
+export type LabelFallback = (typeof LABEL_FALLBACKS)[number];
+
+/**
+ * What a labeller throws to say why it gives no answer, so that the rules answer with that reason
+ * kept. Anything else it throws is `failed`.
+ */
+export class LabellerFallback extends Error {
+  readonly reason: LabelFallback;
+
+  constructor(reason: LabelFallback) {
+    super(`The labeller gave no answer: ${reason}.`);
+    this.name = "LabellerFallback";
+    this.reason = reason;
+  }
+}
 
 /** The lines' roles, who said them, and, when the rules stood in, why. */
 export interface Labels {
@@ -344,7 +326,8 @@ export function rolesFit(lines: readonly Line[], roles: unknown): roles is reado
 /**
  * Label the lines with a labeller, the rules by default. An answer that fails, or that does not
  * give one role from the list for each line, is set aside whole, and the rules answer, with the
- * reason kept. Stopping by `signal` is the caller's, and is not caught.
+ * reason kept: the one a `LabellerFallback` names, or `failed`. Stopping by `signal` is the
+ * caller's, and is not caught.
  */
 export async function labelLines(
   input: LabelInput,
@@ -357,7 +340,8 @@ export async function labelLines(
     answer = await labeller.label(input, options);
   } catch (error) {
     if (options.signal?.aborted) throw error;
-    return { roles: labelByRules(input), by: "rules", fallback: "failed" };
+    const fallback = error instanceof LabellerFallback ? error.reason : "failed";
+    return { roles: labelByRules(input), by: "rules", fallback };
   }
   if (!rolesFit(input.lines, answer))
     return { roles: labelByRules(input), by: "rules", fallback: "wrong form" };

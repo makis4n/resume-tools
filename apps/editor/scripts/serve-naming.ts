@@ -17,7 +17,6 @@
  * a restart.
  */
 
-import type { IncomingMessage, ServerResponse } from "node:http";
 import { loadEnv, type Plugin } from "vite";
 import { KEY_VARIABLE, modelIdOf, type NamingEnv, namingModel } from "../src/service/config.ts";
 import {
@@ -31,6 +30,7 @@ import {
 import { MemoryPreambleCache, type PreambleCache } from "../src/service/preamble.ts";
 import { MemoryRateStore, type RateStore } from "../src/service/rate.ts";
 import { FileAnswerCache } from "./answer-cache.ts";
+import { type Incoming, send, toRequest } from "./serve-fetch.ts";
 
 /** The prefixes of the variables the route reads: its key's, and its model's. */
 const PREFIXES = ["NAMING_", "SOCLAAS_"];
@@ -49,82 +49,6 @@ export interface ServeNamingOptions {
   rates?: RateStore;
   limits?: ServiceLimits;
   now?: () => number;
-}
-
-/** A request as connect hands it on: with the URL it came with, before any route was taken off. */
-type Incoming = IncomingMessage & { originalUrl?: string };
-
-/**
- * Node's request body as a stream: each chunk handed on as it comes, Node's stream paused while
- * one waits to be read, and, once the reader stops, what is left drained and dropped, so that the
- * connection can still carry the answer.
- */
-function bodyOf(req: IncomingMessage): ReadableStream<Uint8Array> {
-  let open = true;
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      req.on("data", (chunk: Buffer) => {
-        if (!open) return;
-        controller.enqueue(chunk);
-        if ((controller.desiredSize ?? 0) <= 0) req.pause();
-      });
-      req.on("end", () => {
-        if (!open) return;
-        open = false;
-        controller.close();
-      });
-      req.on("error", (error) => {
-        if (!open) return;
-        open = false;
-        controller.error(error);
-      });
-    },
-    pull() {
-      req.resume();
-    },
-    cancel() {
-      open = false;
-      req.resume();
-    },
-  });
-}
-
-/**
- * Node's request as the fetch API's: its method, its URL on the dev server's own origin, its
- * headers, and a body for any method that has one.
- */
-export function toRequest(req: Incoming): Request {
-  const headers = new Headers();
-  for (const [header, value] of Object.entries(req.headers)) {
-    // HTTP/2's pseudo-headers are no header's name.
-    if (value === undefined || header.startsWith(":")) continue;
-    for (const each of Array.isArray(value) ? value : [value]) headers.append(header, each);
-  }
-  const method = req.method ?? "GET";
-  const path = req.originalUrl ?? req.url ?? "/";
-  let url: URL;
-  try {
-    url = new URL(path, `http://${req.headers.host ?? "localhost"}`);
-  } catch {
-    url = new URL(ROUTE, "http://localhost");
-  }
-  const init: RequestInit & { duplex?: "half" } = { method, headers };
-  if (method !== "GET" && method !== "HEAD") {
-    init.body = bodyOf(req);
-    init.duplex = "half";
-  }
-  return new Request(url, init);
-}
-
-/** A `Response` written to Node's response: its status, its headers and its body. */
-export async function send(res: ServerResponse, response: Response): Promise<void> {
-  const body = new Uint8Array(await response.arrayBuffer());
-  res.statusCode = response.status;
-  response.headers.forEach((value, header) => {
-    res.setHeader(header, value);
-  });
-  res.setHeader("Content-Length", body.byteLength);
-  res.end(body);
 }
 
 /**
@@ -162,7 +86,10 @@ export function serveNaming(options: ServeNamingOptions = {}): Plugin {
           try {
             await send(
               res,
-              await handleName(toRequest(req), { ...deps, address: req.socket.remoteAddress }),
+              await handleName(toRequest(req, ROUTE), {
+                ...deps,
+                address: req.socket.remoteAddress,
+              }),
             );
           } catch {
             logger.warn("The naming route could not convert a request or its answer.");

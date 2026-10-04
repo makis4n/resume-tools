@@ -1,4 +1,11 @@
-# The naming service on Cloudflare Pages
+# The service on Cloudflare Pages
+
+`v1/label.ts` is `POST /v1/label` as a Pages Function: the reading service's handler that labels an
+imported PDF's lines (`../src/service/label.ts`, milestone 3 second pass, item 13). The page sends
+it the lines' text and features only once the person has agreed (decision 0047); it asks the model
+and answers one role a line, and it keeps nothing: no cache is bound, and it logs fixed lines alone.
+Its rate limit's buckets are kept in `NAMING_KV` under `label-rate:<address>`, apart from the
+naming route's. In development the dev server answers the same route (`../scripts/serve-label.ts`).
 
 `v1/name.ts` is `POST /v1/name` as a Pages Function: the naming service's handler
 (`../src/service/name.ts`) with its caches and its rate limit in KV. In development the dev server
@@ -8,8 +15,9 @@ milestone 5's; this says how it is meant to be bound.
 
 | Name | Kind | What it is |
 |---|---|---|
-| `NAMING_KV` | KV namespace | The stored answers under `answer:<key>`, a model's for 90 days and a person's reviewed one for good, each with who filed it as its metadata (`filedAt`, `model`, and `by`, the SHA-256 of the filing address's key); the preambles' answers under `preamble:<key>`, for 90 days; and each address's rate buckets under `rate:<address>`, which expire. Nothing is ever filed over what a key holds |
+| `NAMING_KV` | KV namespace | The label route's rate buckets under `label-rate:<address>`, which expire and hold counts alone. The stored answers under `answer:<key>`, a model's for 90 days and a person's reviewed one for good, each with who filed it as its metadata (`filedAt`, `model`, and `by`, the SHA-256 of the filing address's key); the preambles' answers under `preamble:<key>`, for 90 days; and each address's rate buckets under `rate:<address>`, which expire. Nothing is ever filed over what a key holds |
 | `SOCLAAS_API_KEY` | Secret | The naming model's key, a SoCLaaS key (decision 0036), under the name the corpus runner reads too. Without it the route answers from KV alone and names the macros it could not answer, which the editor locks |
+| `PDF_LABEL_MODEL` | Variable | The label route's model's SoCLaaS id, `qwen3.8:27b` when unset. Without `SOCLAAS_API_KEY` the label route refuses with 503 and the page's rules read the PDF |
 | `NAMING_MODEL` | Variable | The model's SoCLaaS id, `qwen3.8:27b` when unset, asked with its thinking off (decision 0044) |
 
 Set the key as a secret, never as a plain variable, and never under the `VITE_` prefix, which

@@ -21,6 +21,7 @@ import { StructureGuard } from "./editor/guard";
 import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
 import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
+import { usePdfConsent } from "./editor/PdfReading";
 import { RetypeEditor, retypeEditorKey } from "./editor/RetypeEditor";
 import {
   isRetype,
@@ -42,6 +43,7 @@ import { FontLibrary } from "./page/fonts";
 import { Pages } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
 import { isPdfFile, isPdfRefusal, readPdfFile, refusedBySize } from "./pdf";
+import { browserConsent } from "./pdf/consent";
 import {
   CANNOT_OPEN,
   canLeave,
@@ -270,6 +272,12 @@ export function App() {
   const importRun = useRef<ImportRun | undefined>(undefined);
   /** The PDF being read, which the list's Cancel stops: an import run as a `.tex` one is. */
   const pdfRun = useRef<AbortController | undefined>(undefined);
+  /**
+   * Whether a PDF's text may be sent to the reading service, kept in this browser, and the
+   * documents screen's setting that changes it (milestone 3 second pass, item 13, decision 0047).
+   */
+  const consentStore = useMemo(() => browserConsent(), []);
+  const [pdfConsent, setPdfConsent] = usePdfConsent(consentStore);
   /**
    * An import that came through partial, with its report, which waits in the list for the person to
    * continue or stop (decision 0039); nothing of it is kept until they continue.
@@ -812,6 +820,7 @@ export function App() {
         {...(library === undefined ? {} : { onImport: (files: File[]) => void importFiles(files) })}
         {...(importing === undefined ? {} : { importing })}
         onCancelImport={cancelImport}
+        pdfReading={{ consent: pdfConsent, onChange: setPdfConsent }}
         {...(waiting === undefined
           ? {}
           : {

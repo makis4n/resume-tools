@@ -35,3 +35,29 @@ export function namingModel(env: NamingEnv): NameOptions["model"] | undefined {
     throw new Error(`${KEY_VARIABLE} holds a space or a line break: set it on one line`);
   return soclaasModel(key, id);
 }
+
+/** The variable the label route's model id is read from (milestone 3 second pass, item 13). */
+export const LABEL_MODEL_VARIABLE = "PDF_LABEL_MODEL";
+
+/** The variables the label route reads: the one key, and its model's id. */
+export type LabelEnv = Partial<Record<typeof KEY_VARIABLE | typeof LABEL_MODEL_VARIABLE, string>>;
+
+/** The id of the model the label route asks: `PDF_LABEL_MODEL`, or the default. */
+export const labelModelIdOf = (env: LabelEnv) => env[LABEL_MODEL_VARIABLE]?.trim() || DEFAULT_MODEL;
+
+/**
+ * The model the route that labels a PDF's lines asks, or none when no key is set, so that the
+ * route refuses and the page's rules read the PDF. The same key as the naming service's, read the
+ * same way, on the server side alone. Throws, naming the variable and never its value, for an id
+ * that is not plainly one, or a key that is not one line.
+ */
+export function labelModel(env: LabelEnv): ReturnType<typeof soclaasModel> | undefined {
+  const id = labelModelIdOf(env);
+  if (!/^[A-Za-z0-9._:/@-]{1,128}$/.test(id))
+    throw new Error(`${LABEL_MODEL_VARIABLE} is not a model's id: letters, digits and ._:/@- only`);
+  const key = env[KEY_VARIABLE]?.trim() ?? "";
+  if (key === "") return undefined;
+  if (/\s/.test(key))
+    throw new Error(`${KEY_VARIABLE} holds a space or a line break: set it on one line`);
+  return soclaasModel(key, id);
+}
