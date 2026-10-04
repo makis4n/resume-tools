@@ -291,7 +291,7 @@ Everything is written in one language, TypeScript, and runs in three places: the
 | Model endpoint | A small HTTP function on the Vercel AI SDK's provider layer that labels a PDF's lines, one role a line from a closed list | It holds the key, limits the rate and keeps no text; the provider at launch is open, and switching is a one-line change |
 | Sign-in and saved resumes | Supabase: its sign-in, database and file storage, used directly from the browser | The least code that gets accounts working |
 | Files and the server | Cloudflare: Pages for the app, R2 for the engine, fonts, TeX Live files and uploads, a Worker for the model endpoint, KV for its rate limit | Downloads are not metered, and the free tier never sleeps |
-| Testing | The same WebAssembly engines run headless in Node; Vitest for units, Playwright for click-and-type flows, GitHub Actions running the corpus nightly | One pipeline in the browser and in continuous integration, as the plan requires |
+| Testing | The same WebAssembly engines run headless in Node; Vitest for units, Playwright for click-and-type flows, GitHub Actions running the corpus when a person starts it (decision 0035) | One pipeline in the browser and in continuous integration, as the plan requires |
 | Repository | A pnpm monorepo with packages for the engines, the converter, the template packages, the pipeline, the app and the API | Clean lines between the four parts written from scratch |
 | Containers | Docker for two jobs only: building the TeX engines and the TeX Live bundle, and deploying the ATS service later. Everyday development runs natively. Any Docker-compatible runtime works, such as Docker Desktop or OrbStack | Pinned Node, pnpm, uv and Python already make both laptops and CI match; the Emscripten build is the one thing they cannot pin, and a Python host takes a container anyway |
 
@@ -320,7 +320,7 @@ As a personal project, nothing until there are real users. Every part is open so
 | Supabase, sign-in and saved resumes | Small database and storage, 5 GB of downloads a month; a project pauses after a week idle | $25 a month to stop the pausing or grow |
 | The school's model gateway, during development | Free to its students and staff, within each key's daily limits | Never; reading real people's resumes on it needs the school's leave |
 | A paid model service, if the launch takes one | None that fits: a free tier may train on what it is sent | For each PDF it reads, at 1,100 to 3,400 tokens in and 120 to 580 out (decision 0051) |
-| GitHub Actions, nightly corpus runs | 2,000 minutes a month on private repos, unlimited on public | Not at this scale |
+| GitHub Actions, corpus runs started by hand | 2,000 minutes a month on private repos, unlimited on public | Not at this scale |
 | A custom domain | None; a free subdomain is provided | About $10 a year, optional |
 | React, ProseMirror, unified-latex, the engines, the fonts | Open source | Never |
 
