@@ -72,6 +72,8 @@ export const LABEL_SAYS = {
   method: "The label route takes a POST.",
   type: "The label route takes a request sent as application/json.",
   rate: "Too many requests to read a PDF from this address: try again after the seconds Retry-After gives.",
+  uncounted:
+    "The reading service could not count this request: try again after the seconds Retry-After gives.",
   large: "The request is larger than the label route takes.",
   text: "The request is not UTF-8 text.",
   json: "The request is not JSON.",
@@ -168,14 +170,19 @@ async function readCapped(request: Request, cap: number): Promise<Uint8Array | u
   return bytes;
 }
 
-/** Whether this process has said that the rate limit's store failed: said once, by class. */
+/**
+ * Whether this process has said that the rate limit's store failed: said once, by class. Unlike the
+ * naming route's, the label route fails closed: a request it cannot count is refused with 429 and
+ * the model is not asked, since on KV a write refused within a second would otherwise let a burst
+ * through uncounted (item 13's review).
+ */
 let rateStoreFailed = false;
 
 function rateFailed(deps: LabelDeps, failed: string) {
   if (rateStoreFailed) return;
   rateStoreFailed = true;
   deps.log?.(
-    `The label route's rate limit could not use its store (${failed}): requests go on uncounted.`,
+    `The label route's rate limit could not use its store (${failed}): requests it cannot count are refused.`,
     "warn",
   );
 }
@@ -183,6 +190,9 @@ function rateFailed(deps: LabelDeps, failed: string) {
 /** A refusal for an address past its limits, with the seconds it may try again after. */
 const tooMany = (retryAfter: number) =>
   refuse(429, LABEL_SAYS.rate, undefined, { "Retry-After": String(retryAfter) });
+
+/** A refusal for a request the rate limit could not count: try again in a second. */
+const uncounted = () => refuse(429, LABEL_SAYS.uncounted, undefined, { "Retry-After": "1" });
 
 /** A checked request asked of the model: its roles, or a refusal that says why there are none. */
 async function answer(
@@ -205,12 +215,16 @@ async function answer(
  * bucket, and, for a request the model will be asked, the characters its prompt will send. One
  * write a request, since KV refuses a second write to a key within a second, which once left the
  * characters uncounted (item 13's review). A refused request is counted too, with no characters.
+ * A request the store cannot count is refused with 429, and the model is not asked: fail closed.
  */
 async function received(request: Request, deps: LabelDeps): Promise<Response> {
   const address = addressKey(deps.address);
   const before = await peek(deps.rates, address, deps.now(), deps.limits);
   if (!before.allowed) return tooMany(before.retryAfter);
-  if (before.failed !== undefined) rateFailed(deps, before.failed);
+  if (before.failed !== undefined) {
+    rateFailed(deps, before.failed);
+    return uncounted();
+  }
   const count = async (chars: number) => {
     const decision = await take(deps.rates, address, deps.now(), deps.limits, chars);
     if (decision.allowed && decision.failed !== undefined) rateFailed(deps, decision.failed);
@@ -241,6 +255,8 @@ async function received(request: Request, deps: LabelDeps): Promise<Response> {
   // What the call sends, taken from the address's day before it is sent, in the request's one write.
   const decision = await count(INSTRUCTIONS.length + promptOf(lines).length);
   if (!decision.allowed) return tooMany(decision.retryAfter);
+  // Not counted, so not asked: a burst that the store refuses to write gets no model calls.
+  if (decision.failed !== undefined) return uncounted();
   return answer(lines, deps.model, deps);
 }
 

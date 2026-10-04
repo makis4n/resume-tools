@@ -295,16 +295,64 @@ describe("the label route's rate limit", () => {
     expect(buckets.chars).toBeLessThan(1);
   });
 
-  test("lets a request through uncounted when its store fails, and says so once, by class", async () => {
-    const failing: RateStore = {
+  test("fails closed: a request its store cannot count is refused with 429, and the model is not asked", async () => {
+    const unreadable: RateStore = {
       get: () => {
         throw new TypeError(`store failure quoting ${TEXTS[1]}`);
       },
       put: () => undefined,
     };
-    const { deps, logged } = depsOf({ rates: failing });
-    expect((await handleLabel(asked(), deps)).status).toBe(200);
-    for (const text of TEXTS) expect(logged.join("\n")).not.toContain(text);
+    const unwritable: RateStore = {
+      get: () => undefined,
+      put: () => {
+        throw new RangeError(`put failure quoting ${TEXTS[2]}`);
+      },
+    };
+    for (const rates of [unreadable, unwritable]) {
+      const model = answering();
+      const { deps, logged } = depsOf({ model, rates });
+      const response = await handleLabel(asked(), deps);
+      expect(response.status).toBe(429);
+      expect(response.headers.get("retry-after")).toBe("1");
+      expect(await response.json()).toEqual({ error: LABEL_SAYS.uncounted });
+      expect(model.doGenerateCalls).toHaveLength(0);
+      for (const text of TEXTS) expect(logged.join("\n")).not.toContain(text);
+    }
+  });
+
+  test("on KV, a burst within a second gets what the limits allow, the rest 429 and no model call", async () => {
+    // KV's rule, as kv.test.ts's FakeKv holds it: a second write to a key within a second fails.
+    const written = new Map<string, number>();
+    const values = new Map<string, string>();
+    let now = 1_800_000_000_000;
+    const kv: KeyValue = {
+      get: async (key) => values.get(key) ?? null,
+      put: async (key, value) => {
+        const last = written.get(key);
+        if (last !== undefined && now - last < 1000)
+          throw new Error("KV PUT failed: 429 Too Many Requests");
+        written.set(key, now);
+        values.set(key, value);
+      },
+    };
+    const model = answering();
+    const { deps } = depsOf({ model, rates: new KvRateStore(kv, "label-rate:"), now: () => now });
+    const statuses: number[] = [];
+    // Three seconds, each a junk request that writes the key, then twenty valid ones within it.
+    for (let second = 0; second < 3; second++) {
+      statuses.push((await handleLabel(post("{junk"), deps)).status);
+      for (let at = 0; at < 20; at++) {
+        now += 10;
+        statuses.push((await handleLabel(asked(), deps)).status);
+      }
+      now += 1_000;
+    }
+    const served = statuses.filter((status) => status === 200).length;
+    // At most one counted write a second, and never past the minute's ten.
+    expect(served).toBeLessThanOrEqual(3);
+    expect(served).toBeLessThanOrEqual(LABEL_LIMITS.perMinute);
+    expect(statuses.filter((status) => status === 429).length).toBe(60 - served);
+    expect(model.doGenerateCalls).toHaveLength(served);
   });
 });
 
@@ -382,15 +430,17 @@ describe("the label route keeps no text", () => {
         throw new RangeError(`put failure quoting ${TEXTS[4]}`);
       },
     };
+    const failedModel = answering();
     const failed = await handleLabel(asked(), {
-      model: answering(),
+      model: failedModel,
       address: "203.0.113.7",
       rates: throwing,
       limits: LABEL_LIMITS,
       now: () => 1_000_000,
       log,
     });
-    expect(failed.status).toBe(200);
+    expect(failed.status).toBe(429);
+    expect(failedModel.doGenerateCalls).toHaveLength(0);
     expect(logged.length).toBeGreaterThan(0);
     const everything = [...logged, ...consoleLines, ...bodies].join("\n");
     for (const text of TEXTS) expect(everything).not.toContain(text);
