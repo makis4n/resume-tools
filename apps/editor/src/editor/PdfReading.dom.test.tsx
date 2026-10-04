@@ -181,6 +181,38 @@ describe("asking, remembering and changing whether a PDF's text is sent", () => 
     expect(calls).toHaveLength(2);
   });
 
+  it("follows a change another tab makes, as the labeller does", async () => {
+    act(() => root.render(<Screen store={browserConsent()} />));
+    expect(setting().checked).toBe(false);
+    const { fetch, calls } = counting();
+    const labeller = modelLabeller({ consent: browserConsent(), fetch });
+    // Another tab says yes: the storage changes, and the browser tells this tab.
+    act(() => {
+      localStorage.setItem(CONSENT_KEY, "yes");
+      window.dispatchEvent(new StorageEvent("storage", { key: CONSENT_KEY, newValue: "yes" }));
+    });
+    expect(setting().checked).toBe(true);
+    expect((await labelLines(layout, labeller)).by).toBe("model");
+    // And turns it off again: this tab shows it off, and sends nothing.
+    act(() => {
+      localStorage.setItem(CONSENT_KEY, "no");
+      window.dispatchEvent(new StorageEvent("storage", { key: CONSENT_KEY, newValue: "no" }));
+    });
+    expect(setting().checked).toBe(false);
+    expect((await labelLines(layout, labeller)).fallback).toBe("no consent");
+    // A cleared storage is no answer.
+    act(() => {
+      localStorage.setItem(CONSENT_KEY, "yes");
+      window.dispatchEvent(new StorageEvent("storage", { key: CONSENT_KEY, newValue: "yes" }));
+    });
+    act(() => {
+      localStorage.clear();
+      window.dispatchEvent(new StorageEvent("storage", { key: null }));
+    });
+    expect(setting().checked).toBe(false);
+    expect(calls).toHaveLength(1);
+  });
+
   it("shows the setting off while no answer is kept, and says in one line that an import sends", () => {
     act(() => root.render(<Screen store={browserConsent()} />));
     expect(setting().checked).toBe(false);

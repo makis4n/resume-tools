@@ -81,7 +81,9 @@ describe("what the person is told", () => {
     expect(CONSENT_DETAIL).toMatch(/text of each line/);
     // Who receives it: the editor's service, and the hosted model it passes the lines to.
     expect(CONSENT_DETAIL).toMatch(/passes the lines to a hosted language model/);
-    expect(CONSENT_DETAIL).toMatch(/The editor's service keeps none of your text, in a store or in a log/);
+    expect(CONSENT_DETAIL).toMatch(
+      /The editor's service keeps none of your text, in a store or in a log/,
+    );
     // What is promised of keeping is the editor's service's alone, not the model's host's.
     for (const words of [CONSENT_DETAIL, SENDING_NOTICE, SETTING_LABEL]) {
       expect(words).not.toMatch(/(?:model|its host)\S* keeps? none/i);

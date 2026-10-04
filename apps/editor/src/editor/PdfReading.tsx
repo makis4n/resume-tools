@@ -6,9 +6,10 @@
  * import's flow; the answer is kept by a `ConsentStore`, which `usePdfConsent` reads and writes.
  */
 
-import { useCallback, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import {
   CONSENT_DETAIL,
+  CONSENT_KEY,
   CONSENT_NO,
   CONSENT_QUESTION,
   CONSENT_YES,
@@ -18,11 +19,25 @@ import {
   SETTING_LABEL,
 } from "../pdf/consent";
 
-/** The answer as kept in `store`, and a way to change it that keeps it there first. */
+/**
+ * The answer as kept in `store`, and a way to change it that keeps it there first. Another tab of
+ * the same browser that changes the answer is heard through the `storage` event, so this tab's
+ * setting shows what the labeller, which reads the store afresh, will do.
+ */
 export function usePdfConsent(
   store: ConsentStore,
 ): [PdfConsent | undefined, (answer: PdfConsent) => void] {
   const [answer, setAnswer] = useState(() => store.get());
+  useEffect(() => {
+    // The store may have changed between the first render and now.
+    setAnswer(store.get());
+    const heard = (event: StorageEvent) => {
+      // A key of null is the storage cleared.
+      if (event.key === null || event.key === CONSENT_KEY) setAnswer(store.get());
+    };
+    window.addEventListener("storage", heard);
+    return () => window.removeEventListener("storage", heard);
+  }, [store]);
   const change = useCallback(
     (next: PdfConsent) => {
       store.set(next);
