@@ -5,8 +5,6 @@
  *
  *   pnpm --filter @resume-tools/editor spike-pdf builtin [--model] [--again]
  *   pnpm --filter @resume-tools/editor spike-pdf other [--model] [--again] [--print]
- *   pnpm --filter @resume-tools/editor spike-pdf corpus [--only <ids>] [--ids <file>]
- *                 [--limit <n>] [--again] [--out <folder>]
  *   pnpm --filter @resume-tools/editor spike-pdf reader
  *   pnpm --filter @resume-tools/editor spike-pdf --report
  *
@@ -22,47 +20,27 @@
  *             `SOCLAAS_API_KEY` in the environment, and reads only the invented sets' folders
  *             (`spike-pdf/model.ts`). A PDF the model has answered is not asked again; it stops
  *             asking after three gateway failures in a row
- *   --again   ask the model again, each call kept, as a further pass; or read a corpus document
- *             again, though it has its counts
- *   corpus    the corpus's documents that compile, made PDFs by the engine as the editor would and
- *             read by the rules alone, in a pool of four child processes, 120 s a document; each
- *             document's counts, ids and numbers only, under `.corpus/spike-pdf/`; documents that
- *             have them are skipped, so a run picks up where the last one stopped
- *   --only    those documents, a comma between ids; --ids, those a file names one a line
- *   --limit   read at most this many documents not yet read, for a run in chunks
- *   --out     keep the per-document counts in `.corpus/<folder>/` instead, a run of its own, and
- *             print its tables without writing them into `results.json`, which keeps the spike's
- *             own run (item 11 counted the columns, lines and blocks this way)
+ *   --again   ask the model again, each call kept, as a further pass
  *   reader    pdf.js's version, its browser build's size, and how it loads
  *   --report  print the tables again from `spike-pdf/fixtures/results.json`, reading nothing else
  *
  * Every run writes its set's part of `spike-pdf/fixtures/results.json` and prints the tables. The
- * corpus's part holds counts summed over its documents, never a document's text.
+ * corpus's part, counts summed over its documents and never a document's text, is the spike's own
+ * run, kept for `--report`. Item 15 promoted what the spike measured: the corpus set is read by
+ * `pdf-corpus` (`scripts/pdf-corpus.ts`), the model's reading of the invented sets by `pdf-model`,
+ * and the rules' targets on the invented sets are the suite's thresholds
+ * (`src/pdf/round-trip.test.ts`); the spike's `corpus` command is retired.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { brotliCompressSync, gzipSync, constants as zlib } from "node:zlib";
 import { Resume } from "@resume-tools/resume-model";
-import {
-  CORPUS_DIR,
-  FETCH_REPORT_FILE,
-  FetchReport,
-  isLive,
-  MANIFEST_FILE,
-  Manifest,
-  matchingEntries,
-  onlyIds,
-  parseJson,
-  writeAtomically,
-} from "./corpus-manifest.ts";
-import { runPool, treeFonts, uploadOf } from "./corpus-reference.ts";
-import { BUILTIN_DIR, makeBuiltinPdfs } from "./spike-pdf/builtin.ts";
-import type { CorpusCounts } from "./spike-pdf/counts.ts";
+import { makeBuiltinPdfs } from "./spike-pdf/builtin.ts";
 import { fileLines } from "./spike-pdf/file.ts";
 import { layOut } from "./spike-pdf/layout.ts";
 import { labelByModel, MODEL, truthPathOf } from "./spike-pdf/model.ts";
@@ -75,7 +53,6 @@ import {
   type ReaderInfo,
   type Reading,
   type Results,
-  summariseCorpus,
   summaryOf,
   tables,
 } from "./spike-pdf/report.ts";
@@ -89,21 +66,6 @@ export const RESULTS_FILE = fileURLToPath(
   new URL("./spike-pdf/fixtures/results.json", import.meta.url),
 );
 
-/** Where the corpus's per-document counts go: ids and numbers only. */
-const CORPUS_OUT = join(CORPUS_DIR, "spike-pdf");
-
-/** The folder `--out` names under `.corpus/`: a plain name, so that it stays there. */
-function corpusOut(options: Options): string {
-  if (options.out === undefined) return CORPUS_OUT;
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(options.out))
-    throw new Error(
-      `--out takes a folder's name of small letters, digits and dashes, not ${options.out}`,
-    );
-  return join(CORPUS_DIR, options.out);
-}
-
-const CHILD = fileURLToPath(new URL("./spike-pdf/corpus-child.ts", import.meta.url));
-
 /**
  * The third set's resumes held out: written, printed and scored once after the rules were set,
  * never used to tune them, so that their score says how the rules read a layout they have not
@@ -111,13 +73,9 @@ const CHILD = fileURLToPath(new URL("./spike-pdf/corpus-child.ts", import.meta.u
  */
 const HELD_OUT_FIXTURES = new Set(["chrome-right-sidebar", "textutil-table"]);
 
-/** How long a corpus document may take, its compile, its PDF and its reading together. */
-const CORPUS_LIMIT_MS = 120_000;
-
 const USAGE = [
   "pnpm --filter @resume-tools/editor spike-pdf builtin [--model] [--again]",
   "pnpm --filter @resume-tools/editor spike-pdf other [--model] [--again] [--print]",
-  "pnpm --filter @resume-tools/editor spike-pdf corpus [--only <ids>] [--ids <file>] [--limit <n>] [--again] [--out <folder>]",
   "pnpm --filter @resume-tools/editor spike-pdf reader",
   "pnpm --filter @resume-tools/editor spike-pdf --report",
 ].join("\n");
@@ -326,103 +284,6 @@ async function runInvented(set: "builtin" | "other", options: Options) {
   console.log(`\n${tables(written)}`);
 }
 
-// The corpus.
-
-/** The fetched documents, or those `--only` or `--ids` names. */
-function corpusDocuments(options: Options) {
-  const manifest = parseJson(Manifest, readFileSync(MANIFEST_FILE, "utf8"), MANIFEST_FILE);
-  const report = existsSync(FETCH_REPORT_FILE)
-    ? parseJson(FetchReport, readFileSync(FETCH_REPORT_FILE, "utf8"), FETCH_REPORT_FILE)
-    : undefined;
-  const entries = matchingEntries(manifest, report);
-  const fetched = manifest.documents
-    .filter(isLive)
-    .filter((doc) => entries.get(doc.id)?.state === "fetched");
-  const wanted = new Set([
-    ...(options.only === undefined ? [] : onlyIds(options.only)),
-    ...(options.ids === undefined
-      ? []
-      : readFileSync(options.ids, "utf8")
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter((line) => line !== "" && !line.startsWith("#"))),
-  ]);
-  return wanted.size === 0 ? fetched : fetched.filter((doc) => wanted.has(doc.id));
-}
-
-async function runCorpus(options: Options) {
-  const engineManifest = join(APP, ".engine", "manifest.json");
-  if (!existsSync(engineManifest)) throw new Error("There is no .engine/: run fetch-engine first.");
-  const engine = JSON.parse(readFileSync(engineManifest, "utf8")) as {
-    files: Record<string, number>;
-  };
-  const documents = corpusDocuments(options);
-  if (documents.length === 0) throw new Error("No fetched document to read: run `corpus fetch`.");
-  const out = corpusOut(options);
-  mkdirSync(out, { recursive: true });
-  const done = (id: string) => existsSync(join(out, `${id}.json`));
-  let todo = documents.filter((doc) => options.again || !done(doc.id));
-  if (options.limit !== undefined) todo = todo.slice(0, options.limit);
-  const treeFont = treeFonts(engine.files);
-  const families = new Map(documents.map((doc) => [doc.id, doc.family]));
-  console.log(
-    `${documents.length} documents, ${documents.length - documents.filter((doc) => !done(doc.id)).length} read before; reading ${todo.length}, four at a time, ${CORPUS_LIMIT_MS / 1000} s each at most`,
-  );
-  let count = 0;
-  await runPool({
-    script: CHILD,
-    tasks: todo.map((doc) => ({
-      id: doc.id,
-      message: () => ({
-        name: `${doc.id}.zip`,
-        bytes: uploadOf(
-          doc,
-          (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
-          treeFont,
-        ),
-      }),
-    })),
-    limitMs: CORPUS_LIMIT_MS,
-    onResult: (task, result) => {
-      const reply = result.reply as { counts?: CorpusCounts } | undefined;
-      const counts: CorpusCounts = reply?.counts ?? {
-        outcome: result.timedOut ? "timeout" : "crashed",
-      };
-      writeAtomically(
-        join(out, `${task.id}.json`),
-        `${JSON.stringify({ id: task.id, family: families.get(task.id) ?? "other", counts }, null, 2)}\n`,
-      );
-      count++;
-      const words = counts.words;
-      const what =
-        counts.outcome === "read"
-          ? `read, ${counts.pages} pages, ${counts.columns} columns, ${counts.lines} lines, ${counts.blocks} blocks, ${counts.sections} sections, ${words?.landed}/${words?.read} words land, ${words?.recognised} recognised`
-          : `not read: ${counts.outcome}${counts.failure === undefined ? "" : ` (${counts.failure})`}`;
-      console.log(`${count}/${todo.length} ${task.id}: ${what}`);
-    },
-  });
-  // The summary, of every document read so far.
-  const all = documents.flatMap((doc) => {
-    const file = join(out, `${doc.id}.json`);
-    if (!existsSync(file)) return [];
-    const kept = JSON.parse(readFileSync(file, "utf8")) as {
-      id: string;
-      family: string;
-      counts: CorpusCounts;
-    };
-    return [kept];
-  });
-  const part = { at: new Date().toISOString(), commit: commitOf(), summary: summariseCorpus(all) };
-  const written =
-    options.out === undefined
-      ? writePart("corpus", part)
-      : ({ version: 1, corpus: part } satisfies Results);
-  const left = documents.filter((doc) => !done(doc.id)).length;
-  console.log(`\n${tables(written)}`);
-  if (left > 0)
-    console.log(`\n${left} documents are not read yet: run the command again to go on.`);
-}
-
 // The reader.
 
 function runReader() {
@@ -493,10 +354,6 @@ interface Options {
   model: boolean;
   again: boolean;
   print: boolean;
-  only?: string;
-  ids?: string;
-  limit?: number;
-  out?: string;
   report: boolean;
 }
 
@@ -508,10 +365,6 @@ function optionsOf(args: string[]): Options {
       model: { type: "boolean" },
       again: { type: "boolean" },
       print: { type: "boolean" },
-      only: { type: "string" },
-      ids: { type: "string" },
-      limit: { type: "string" },
-      out: { type: "string" },
       report: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
@@ -520,21 +373,11 @@ function optionsOf(args: string[]): Options {
     console.log(USAGE);
     process.exit(0);
   }
-  const limit = values.limit === undefined ? undefined : Number(values.limit);
-  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1))
-    throw new Error(`--limit takes a whole number from 1, not ${values.limit}`);
-  // pnpm runs the script in the editor's folder; a path is the caller's, from where pnpm was run.
-  const ids =
-    values.ids === undefined ? undefined : resolve(process.env.INIT_CWD ?? ".", values.ids);
   return {
     ...(positionals[0] === undefined ? {} : { command: positionals[0] }),
     model: values.model ?? false,
     again: values.again ?? false,
     print: values.print ?? false,
-    ...(values.only === undefined ? {} : { only: values.only }),
-    ...(ids === undefined ? {} : { ids }),
-    ...(limit === undefined ? {} : { limit }),
-    ...(values.out === undefined ? {} : { out: values.out }),
     report: values.report ?? false,
   };
 }
@@ -552,8 +395,9 @@ async function main() {
       await runInvented(options.command, options);
       return;
     case "corpus":
-      await runCorpus(options);
-      return;
+      throw new Error(
+        "The spike's corpus command is retired: run `pnpm --filter @resume-tools/editor pdf-corpus`.",
+      );
     case "reader":
       runReader();
       return;

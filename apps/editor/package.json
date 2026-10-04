@@ -15,7 +15,8 @@
     "test": "vitest run",
     "spike-pdf": "node scripts/spike-pdf.ts",
     "pdf-model": "node scripts/pdf-model.ts",
-    "builtin-pdfs": "node scripts/builtin-pdfs.ts"
+    "builtin-pdfs": "node scripts/builtin-pdfs.ts",
+    "pdf-corpus": "node scripts/pdf-corpus.ts"
   },
   "dependencies": {
     "@resume-tools/contracts": "workspace:*",

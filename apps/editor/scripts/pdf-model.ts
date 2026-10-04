@@ -12,14 +12,17 @@
  *   other     the eight invented resumes printed by other tools (`spike-pdf/fixtures/other/`)
  *   builtin   the nine PDFs the engine makes from the built-in templates and the curated samples
  *   --passes  how many passes over the set, a call a PDF each (3 by default)
- *   --record  write the model's reply for `chrome-table`, its raw content, to the suite's recorded
- *             reply (`src/pdf/fixtures/model-reply.chrome-table.json`); no other text is written
+ *   --record  write the model's replies on the other tools' PDFs, their raw content, the roles by
+ *             line id and no text, to the suite's recorded replies
+ *             (`src/pdf/fixtures/model-replies.json`), from the last pass
  *
  * It reads only a PDF of the invented sets' own folders with its truth beside it: each path goes
  * through the spike's guard (`assertInvented`) before the file is read, so no corpus resume, and
  * nothing made from one, is ever sent. It prints, a PDF a pass, the fields right, the call's time
- * and who read the PDF, and never a line's text; the key reaches it only through its environment
- * and is never printed. It is never run in CI.
+ * and who read the PDF, and never a line's text; then, a pass, the fields right and the call's
+ * median and slowest time, and the owner's targets for the model (docs/milestone-3-overhaul.md,
+ * "For a PDF import"), each met or not. The key reaches it only through its environment and is
+ * never printed. It is never run in CI.
  */
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -32,6 +35,8 @@ import { fileLines } from "../src/pdf/file.ts";
 import { labelLines } from "../src/pdf/label.ts";
 import { layOut } from "../src/pdf/layout.ts";
 import { MODEL_BUDGET_MS, modelLabeller } from "../src/pdf/model-labeller.ts";
+import { readPdf } from "../src/pdf/node.ts";
+import { isPdfRefusal } from "../src/pdf/refusals.ts";
 import { scoreResume } from "../src/pdf/score.ts";
 import { LABEL_MODEL_VARIABLE } from "../src/service/config.ts";
 import { handleLabel, LABEL_LIMITS } from "../src/service/label.ts";
@@ -39,15 +44,14 @@ import { MemoryRateStore } from "../src/service/rate.ts";
 import { makeBuiltinPdfs } from "./spike-pdf/builtin.ts";
 import { assertInvented, truthPathOf } from "./spike-pdf/model.ts";
 import { OTHER_DIR } from "./spike-pdf/print.ts";
-import { readPdf } from "./spike-pdf/read.ts";
 
-/** The suite's recorded reply: the model's raw content for one invented PDF. */
-export const RECORDED_REPLY = fileURLToPath(
-  new URL("../src/pdf/fixtures/model-reply.chrome-table.json", import.meta.url),
+/** The suite's recorded replies: the model's raw content for each invented PDF of other tools. */
+const RECORDED_REPLIES = fileURLToPath(
+  new URL("../src/pdf/fixtures/model-replies.json", import.meta.url),
 );
 
-/** The PDF whose reply `--record` keeps. */
-const RECORDED_ID = "chrome-table";
+/** The share of fields the model must get right on the other tools' PDFs. */
+const MODEL_TARGET = 0.9;
 
 interface Doc {
   id: string;
@@ -118,11 +122,13 @@ async function main() {
     string,
     { right: number; total: number; ms: number[]; fallbacks: string[] }
   >();
+  /** The last pass's raw replies on the other tools' PDFs, kept in memory for `--record`. */
+  const replies = new Map<string, string>();
   for (let pass = 1; pass <= passes; pass++) {
     for (const doc of docs) {
       const real = assertInvented(doc.pdf);
       const read = await readPdf(new Uint8Array(readFileSync(real)));
-      if ("refused" in read) throw new Error(`the invented PDF ${doc.id} was refused`);
+      if (isPdfRefusal(read)) throw new Error(`the invented PDF ${doc.id} was refused`);
       const truth = Resume.parse(JSON.parse(readFileSync(truthPathOf(real), "utf8")));
       const layout = layOut(read);
       lastContent = undefined;
@@ -140,14 +146,19 @@ async function main() {
       console.log(
         `  pass ${pass} ${doc.id}: ${layout.lines.length} lines, ${(ms / 1000).toFixed(1)} s, ${labels.by}${labels.fallback === undefined ? "" : ` (${labels.fallback})`}, fields right ${score.all.right}/${score.all.total}`,
       );
-      if (values.record && doc.id === RECORDED_ID && labels.by === "model" && lastContent) {
-        writeFileSync(
-          RECORDED_REPLY,
-          `${JSON.stringify({ model: id, at: new Date().toISOString(), content: lastContent }, null, 2)}\n`,
-        );
-        console.log(`  recorded ${doc.id}'s reply`);
-      }
+      if (doc.set === "other" && labels.by === "model" && lastContent !== undefined)
+        replies.set(doc.id, lastContent);
     }
+  }
+  if (values.record && replies.size === 0)
+    console.log("  nothing to record: no PDF of other tools was read by the model");
+  else if (values.record) {
+    const recorded = Object.fromEntries([...replies].sort(([a], [b]) => a.localeCompare(b)));
+    writeFileSync(
+      RECORDED_REPLIES,
+      `${JSON.stringify({ model: id, at: new Date().toISOString(), replies: recorded }, null, 2)}\n`,
+    );
+    console.log(`  recorded the replies for ${replies.size} PDFs of other tools`);
   }
   console.log("\nFields right, a pass:");
   for (const [key, total] of totals) {
@@ -158,6 +169,19 @@ async function main() {
       `  ${key}: ${total.right}/${total.total} (${((100 * total.right) / Math.max(1, total.total)).toFixed(1)}%), call median ${(median / 1000).toFixed(1)} s, max ${(max / 1000).toFixed(1)} s, fallbacks ${total.fallbacks.length === 0 ? "none" : total.fallbacks.join(", ")}`,
     );
   }
+  const met = (yes: boolean) => (yes ? "met" : "NOT met");
+  const all = [...totals.values()];
+  const slowest = Math.max(0, ...all.flatMap((total) => total.ms));
+  const fallbacks = all.flatMap((total) => total.fallbacks);
+  console.log('\nTargets, the model (docs/milestone-3-overhaul.md, "For a PDF import"):');
+  for (const [key, total] of totals)
+    if (key.startsWith("other"))
+      console.log(
+        `  At least ${100 * MODEL_TARGET}% of fields right on the other tools' PDFs, ${key}: ${((100 * total.right) / Math.max(1, total.total)).toFixed(1)}%: ${met(total.right >= MODEL_TARGET * total.total)}`,
+      );
+  console.log(
+    `  Every call inside the ${MODEL_BUDGET_MS / 1000} s budget, none falling back: slowest ${(slowest / 1000).toFixed(1)} s, ${fallbacks.length} fallbacks: ${met(slowest < MODEL_BUDGET_MS && fallbacks.length === 0)}`,
+  );
 }
 
 await main();

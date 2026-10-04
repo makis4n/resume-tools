@@ -310,7 +310,7 @@ closes.
     template to open it in and its page as that template sets it. The person corrects, picks, and
     creates the document, which is then an ordinary one of that template. Done when the flow works
     in the browser on a PDF of each built-in template, with a yes and with a no.
-15. [ ] **How well it reads, tracked.** Item 3's three sets become tests of the rules: the built-in
+15. [x] **How well it reads, tracked.** Item 3's three sets become tests of the rules: the built-in
     templates' round trip and the invented resumes from other tools with the targets as their
     thresholds, and the corpus set as a command that reports counts and never text, run by hand as
     the corpus run is. The model's reading is measured by a command run by hand with the key, on

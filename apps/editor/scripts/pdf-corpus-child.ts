@@ -1,38 +1,39 @@
 /**
- * One child of the PDF spike's corpus pool (item 3, its second set): an engine session and fonts
+ * One child of `pdf-corpus`'s pool (milestone 3 second pass, item 15): an engine session and fonts
  * of its own, which take one corpus document at a time, as a zip, through the intake and the
  * reference compile, as `corpus reference` does; then make its PDF as the editor would, read the
- * PDF with pdf.js, and lay it out, label its lines and file them by the rules. It answers with
- * counts only (`CorpusCounts`): never a line, a word or a field of the document. It prints nothing,
- * and its failures say only their kind, since an error's message may quote the document.
+ * PDF through the editor's reader (`src/pdf/node.ts`), and lay it out, label its lines and file
+ * them by the rules (`resumeOfPdf`), as a person who says no to the hosted model gets. It answers
+ * with counts only (`CorpusCounts`): never a line, a word or a field of the document. It prints
+ * nothing, and its failures say only their kind, since an error's message may quote the document.
  *
- * The editor's modules are written for Vite, so the intake and the reference load through Vite's
- * module runner with the app's own config, as `corpus-reference-child.ts` does.
+ * The editor's import modules are written for Vite, so the intake and the reference load through
+ * Vite's module runner with the app's own config, as `corpus-reference-child.ts` does; the PDF's
+ * reading is plain modules, loaded as they are.
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
-// Node runs this file by stripping its types, so the type imports need their real extensions.
-import type { EngineManifest } from "../../src/engine/manifest.ts";
-import type { Intake } from "../../src/import/intake.ts";
-import type { Reference } from "../../src/import/reference.ts";
-import type { Refusal } from "../../src/import/refusal.ts";
-import { type CorpusCounts, countsOf, pdfErrorKind } from "./counts.ts";
-import { fileLines } from "./file.ts";
-import { layOut } from "./layout.ts";
-import { readPdf } from "./read.ts";
-import { labelByRules } from "./roles.ts";
+// Node runs this file by stripping its types, so the imports need their real extensions.
+import type { EngineManifest } from "../src/engine/manifest.ts";
+import type { Intake } from "../src/import/intake.ts";
+import type { Reference } from "../src/import/reference.ts";
+import type { Refusal } from "../src/import/refusal.ts";
+import { readPdf } from "../src/pdf/node.ts";
+import { isPdfRefusal } from "../src/pdf/refusals.ts";
+import { resumeOfPdf } from "../src/pdf/resume.ts";
+import { type CorpusCounts, countsOf, pdfErrorKind } from "./pdf-counts.ts";
 
-type NodeEngine = typeof import("../../src/engine/node.ts");
-type Fonts = typeof import("../../src/page/fonts.ts");
-type TexLive = typeof import("../../src/page/texlive.ts");
-type IntakeModule = typeof import("../../src/import/intake.ts");
-type ReferenceModule = typeof import("../../src/import/reference.ts");
-type ImportFonts = typeof import("../../src/import/fonts.ts");
+type NodeEngine = typeof import("../src/engine/node.ts");
+type Fonts = typeof import("../src/page/fonts.ts");
+type TexLive = typeof import("../src/page/texlive.ts");
+type IntakeModule = typeof import("../src/import/intake.ts");
+type ReferenceModule = typeof import("../src/import/reference.ts");
+type ImportFonts = typeof import("../src/import/fonts.ts");
 
-const APP = fileURLToPath(new URL("../..", import.meta.url));
+const APP = fileURLToPath(new URL("..", import.meta.url));
 
 interface Task {
   type: "task";
@@ -97,16 +98,14 @@ async function main() {
           else {
             const pdfBytes = made.pdf.length;
             const read = await readPdf(made.pdf);
-            if ("refused" in read)
-              counts = { outcome: read.refused, engine: result.engine, compileMs, pdfBytes };
+            if (isPdfRefusal(read))
+              counts = { outcome: read.reason, engine: result.engine, compileMs, pdfBytes };
             else {
               const rulesStarted = performance.now();
-              const layout = layOut(read);
-              const roles = labelByRules(layout);
-              const filed = fileLines(layout, roles);
+              const reading = await resumeOfPdf(read);
               const rulesMs = performance.now() - rulesStarted;
               counts = {
-                ...countsOf(layout, roles, filed),
+                ...countsOf(reading),
                 engine: result.engine,
                 compileMs,
                 pdfBytes,
