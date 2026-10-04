@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { assemblePdf, minimalPdf, type PdfRect } from "../test/minimal-pdf";
 import { cpuMsAsync } from "../test/timing";
+import { guardStreams } from "./guard";
 import { readPdf } from "./node";
 import type { PdfReading, ReadPdf } from "./read";
 import { DOCUMENT_CAPS, isPdfRefusal, PAGE_CAPS, PDF_REFUSAL_MESSAGES } from "./refusals";
@@ -31,12 +32,14 @@ describe("the PDF reader's bounds", () => {
   });
 
   it("refuses a small PDF that draws millions of times, quickly, keeping none of it", async () => {
-    // Two million filled squares in one compressed stream: under 100 KB of file, which pdf.js
-    // turns into two million operations, gigabytes had the reader gathered them.
-    const pdf = minimalPdf([{ texts: [NAME], operators: "0 0 3 3 re f\n".repeat(2_000_000) }], {
+    // A million filled squares in one compressed stream: under 100 KB of file, under the guard's
+    // budget for a stream's decoding (`guard.ts`), which pdf.js turns into a million operations,
+    // gigabytes had the reader gathered them. The caps stop it.
+    const pdf = minimalPdf([{ texts: [NAME], operators: "0 0 3 3 re f\n".repeat(1_000_000) }], {
       deflate: true,
     });
-    expect(pdf.length).toBeLessThan(200_000);
+    expect(pdf.length).toBeLessThan(100_000);
+    expect(guardStreams(pdf)).toBeUndefined();
     let result: PdfReading | undefined;
     const ms = await cpuMsAsync(async () => {
       result = await readPdf(pdf, UNTIMED);
@@ -56,6 +59,7 @@ describe("the PDF reader's bounds", () => {
       { deflate: true },
     );
     expect(pdf.length).toBeLessThan(50_000);
+    expect(guardStreams(pdf)).toBeUndefined();
     expect(await readPdf(pdf, UNTIMED)).toMatchObject({ reason: "too-complex" });
   }, 60_000);
 

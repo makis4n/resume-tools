@@ -21,7 +21,7 @@ pdf.js is loaded and what it is allowed to do are decisions, as are the caps.
 - **Loaded on demand.** `src/pdf/index.ts`, which the page loads, holds only the checks that need
   no reader, the size cap and the `%PDF-` header, and a dynamic import of `src/pdf/browser.ts`, a
   chunk of its own of 1 KB, which starts the reader's worker, `src/pdf/reader-worker.ts`. Vite makes
-  the worker a file of its own (1,736 KB, 531 KB gzipped), the editor's own copy of pdf.js, from a
+  the worker a file of its own (1,744 KB, 535 KB gzipped), the editor's own copy of pdf.js, from a
   `?worker` import. A file over the cap, or one that is plainly not a PDF, is refused before either
   is fetched, and the documents list checks a PDF's size before it reads the file into memory.
   `scripts/build-output.test.ts` holds that what the first load fetches contains no pdf.js: the
@@ -60,6 +60,27 @@ pdf.js is loaded and what it is allowed to do are decisions, as are the caps.
   removed the code that compiled a PDF's functions to JavaScript, and neither build holds a
   `new Function` or an `eval` of the file's content (the polyfills' `Function('return this')` is a
   fallback for an old global object).
+- **A guard on what pdf.js would decode, before it decodes any of it** (`src/pdf/guard.ts`). The
+  caps above count only what pdf.js has built, and pdf.js decodes a stream whole first: a 78 KB
+  file holding one compressed Tj of 80 million letters took a tab's renderer to 3.3 GB, and 2 GB of
+  compressed spaces, which build nothing to count, read to the end at 4.2 GB. So the reader's
+  worker, and the Node path with it, first measures every stream of the file and refuses the PDF as
+  too complex when one stream would decode past 16 MB or all of them together past 48 MB; the
+  fixtures' largest stream decodes to 81 KB and their largest total to 234 KB. A Flate stream is
+  inflated with fflate, a kilobyte of input at a time, counting the output and keeping none of it,
+  from where its data starts to where the compressed data itself ends, whatever its `/Length` or a
+  stray `endstream` says, and never past the budget; its end is read from fflate's inflater's state,
+  which a newer fflate without it fails closed on. A RunLength stream is sized from its run headers,
+  a JPEG from its frame header (64 million samples a picture, 192 million in all, since pdf.js would
+  decode one used as a page's content), ASCIIHex as its length and ASCII85 as four times it.
+  Filters are read under `/Filter` and pdf.js's `/F`, with names' `#xx` escapes decoded. The guard
+  is not a parser: it takes every `stream` token in the bytes as a stream, its dictionary from the
+  `obj` before it, and fails closed. LZW, JPX, JBIG2, CCITT fax, Brotli, Crypt, any other filter, a
+  chain of two or more, a filter given by reference or past a comment, a dictionary it cannot find,
+  and more than 50,000 streams are refused, as unreadable or too complex; and so is any encrypted
+  file, even one that opens without a password, as locked, since its streams cannot be measured
+  without decrypting them. These are rare in a resume; a scanned page's JBIG2 or fax image is the
+  likeliest loss, and such a page has no text to read anyway.
 - **The file's caps stay the spike's.** 5 MB, the checker's upload cap (decision 0032), checked
   before parsing; 10 pages, checked once pdf.js has counted them; and 20 letters or digits, short
   of which a PDF has no text and is a scan or a picture.
@@ -87,8 +108,18 @@ pdf.js is loaded and what it is allowed to do are decisions, as are the caps.
 - A hostile page now stops at the caps: six million operations are refused in 266 ms in Node, at
   470 MB of the process's memory at its peak, most of it pdf.js's decoded stream, and in 117 ms in
   Chrome, where it costs the page nothing, the worker holding it until it ends; ten pages of a
-  10-million-character text in 676 ms and 630 MB in Node. A stream's decompression is pdf.js's, and
-  only the time limit and the worker's end bound what it takes before the first piece is counted.
+  10-million-character text in 676 ms and 630 MB in Node. With the guard, the review's second round
+  of files, an 80-million-letter Tj, 2 GB of spaces, a path of 20 million lines, a TJ of 5 million
+  parts and a 30-million-letter Tj, are each refused before pdf.js parses them, in 150 to 190 ms
+  in Node, pdf.js's loading included, at 194 to 199 MB of the process's peak memory, against 187 MB
+  for a fixture that reads. Within the budgets pdf.js still builds what a stream holds before the
+  caps can count it, at up to about ninety times the stream's size: just under 16 MB of one Tj
+  peaked at 1.4 GB for a second in Node, a TJ of 3.9 million parts at 0.76 GB, a path of 2.6
+  million lines at 0.61 GB, each then refused by the caps, in the worker, which its end frees. A
+  lower budget would halve that and refuse more real files: a guard cannot tell a stream that is a
+  picture from one a page draws as content, and a 2,000-pixel photograph compressed with Flate, as
+  Chrome prints a PNG, decodes to 12 MB. The budgets are constants in `guard.ts`, for the owner to
+  lower if that trade is wanted.
   The links of a page come from pdf.js all at once, bounded by the file's 5 MB rather than streamed.
 - A PDF whose fonts need one of Adobe's predefined CMaps, as some CJK documents do, reads with no
   text from those fonts and may be refused as having none. A standard font that is not embedded

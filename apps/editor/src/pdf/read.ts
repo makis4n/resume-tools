@@ -25,6 +25,7 @@
 
 import type * as PdfJsModule from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { DocumentInitParameters } from "pdfjs-dist/types/src/display/api";
+import { guardStreams } from "./guard.ts";
 import {
   type Caps,
   DOCUMENT_CAPS,
@@ -260,8 +261,8 @@ type Count = ReturnType<typeof both>;
  * Read a PDF with the pdf.js given: every page's runs of text, links and marks, or a refusal in
  * plain words. It refuses before it parses a file past the size cap, or one that does not begin as
  * a PDF; then one pdf.js cannot open, one locked with a password, one past the page cap, one past
- * the caps on what a page holds or past its time, and one with no text to read. It never throws for
- * anything in the file.
+ * the caps on what a page holds or past its time, or one whose streams the guard refuses, and one
+ * with no text to read. It never throws for anything in the file.
  */
 export async function readPdfWith(
   pdf: PdfJs,
@@ -271,6 +272,9 @@ export async function readPdfWith(
   const started = performance.now();
   const before = refusedBeforeReading(bytes);
   if (before) return before;
+  // What pdf.js would decode is measured before it decodes any of it (`guard.ts`).
+  const guarded = guardStreams(bytes);
+  if (guarded) return guarded;
   let task: ReturnType<PdfJs["getDocument"]>;
   try {
     // pdf.js takes the buffer over, so it gets a copy.
