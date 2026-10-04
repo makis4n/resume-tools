@@ -1,4 +1,4 @@
-# 00XX. The corpus on the new import
+# 0060. The corpus on the new import
 
 Date: 2026-10-05 · Status: accepted; resets the baseline of decision 0043 for the outline's import
 
