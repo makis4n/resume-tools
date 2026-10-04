@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Saoirse", "last": "Delahunt" },
+    "headline": "Marine ecologist",
+    "email": "saoirse.delahunt@example.com",
+    "phone": "+353 555 0148 220",
+    "location": "Galway, Ireland",
+    "links": [
+      {
+        "id": "site",
+        "kind": "website",
+        "label": "delahunt.example.net",
+        "href": "https://delahunt.example.net"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "positions",
+      "kind": "entries",
+      "role": "experience",
+      "title": "Research Positions",
+      "entries": [
+        {
+          "id": "botany",
+          "title": "Postdoctoral Researcher",
+          "subtitle": "Institute of Marine Botany",
+          "place": "Galway, Ireland",
+          "dates": { "start": "2021", "end": "present" },
+          "bullets": [
+            {
+              "id": "botany-1",
+              "text": [
+                {
+                  "text": "Lead a survey of kelp forest recovery at nine sites after two marine heatwaves."
+                }
+              ]
+            },
+            {
+              "id": "botany-2",
+              "text": [
+                {
+                  "text": "Built the open dataset of canopy counts that three partner labs now add to each season."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "observatory",
+          "title": "Research Assistant",
+          "subtitle": "Kilbrack Coastal Observatory",
+          "place": "Kilbrack, Ireland",
+          "dates": { "start": "2019", "end": "2021" },
+          "bullets": [
+            {
+              "id": "observatory-1",
+              "text": [
+                {
+                  "text": "Ran the observatory's diving programme and trained eight volunteer divers."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "kind": "entries",
+      "role": "education",
+      "title": "Education",
+      "entries": [
+        {
+          "id": "phd",
+          "title": "PhD in Marine Ecology",
+          "subtitle": "University of Kilbrack",
+          "dates": { "start": "2015", "end": "2019" },
+          "bullets": []
+        },
+        {
+          "id": "bsc",
+          "title": "BSc in Biology",
+          "subtitle": "Dunmore College",
+          "dates": { "start": "2011", "end": "2015" },
+          "bullets": []
+        }
+      ]
+    },
+    {
+      "id": "publications",
+      "kind": "list",
+      "role": "publications",
+      "title": "Selected Publications",
+      "items": [
+        {
+          "id": "kelp",
+          "text": [
+            {
+              "text": "2023 Delahunt, S. and Moran, T. Kelp canopy recovery after marine heatwaves. Journal of Coastal Ecology 12: 44–58."
+            }
+          ]
+        },
+        {
+          "id": "holdfasts",
+          "text": [
+            {
+              "text": "2021 Delahunt, S. Counting holdfasts from photographs. Methods in Field Biology 7: 101–109."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "awards",
+      "kind": "entries",
+      "role": "awards",
+      "title": "Awards",
+      "entries": [
+        {
+          "id": "early-career",
+          "title": "Early Career Award",
+          "subtitle": "Coastal Science Society",
+          "dates": { "start": "2022" },
+          "bullets": []
+        },
+        {
+          "id": "travel",
+          "title": "Travel Grant",
+          "subtitle": "North Atlantic Ecology Meeting",
+          "dates": { "start": "2018" },
+          "bullets": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Bram", "last": "Oyelaran" },
+    "email": "bram.oyelaran@example.com",
+    "phone": "+44 555 0187 330",
+    "location": "Manchester, UK",
+    "links": []
+  },
+  "sections": [
+    {
+      "id": "profile",
+      "kind": "paragraph",
+      "role": "summary",
+      "title": "PROFILE",
+      "text": [
+        {
+          "text": "Operations manager with eleven years in food distribution, used to running a warehouse floor of sixty people and to leaving a site safer and calmer than I found it."
+        }
+      ]
+    },
+    {
+      "id": "work",
+      "kind": "entries",
+      "role": "experience",
+      "title": "WORK HISTORY",
+      "entries": [
+        {
+          "id": "kettleby",
+          "title": "Operations Manager",
+          "subtitle": "Kettleby Foods",
+          "place": "Manchester, UK",
+          "dates": { "start": "2020-03", "end": "present" },
+          "bullets": [
+            {
+              "id": "kettleby-1",
+              "text": [
+                {
+                  "text": "Run two chilled warehouses and the fleet of fourteen lorries that serves them."
+                }
+              ]
+            },
+            {
+              "id": "kettleby-2",
+              "text": [
+                {
+                  "text": "Cut spoiled stock by a third by moving goods in on the days stores order them."
+                }
+              ]
+            },
+            {
+              "id": "kettleby-3",
+              "text": [
+                {
+                  "text": "Brought lost-time injuries down to none in 2023, the site's first such year."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "calder",
+          "title": "Shift Supervisor",
+          "subtitle": "Calder Valley Wholesale",
+          "place": "Huddersfield, UK",
+          "dates": { "start": "2015-06", "end": "2020-02" },
+          "bullets": [
+            {
+              "id": "calder-1",
+              "text": [{ "text": "Supervised the night shift of twenty pickers and drivers." }]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "kind": "entries",
+      "role": "education",
+      "title": "EDUCATION",
+      "entries": [
+        {
+          "id": "pennine",
+          "title": "BA (Hons) Business Management",
+          "subtitle": "University of Pennine Vale",
+          "place": "Leeds, UK",
+          "dates": { "start": "2011", "end": "2014" },
+          "bullets": []
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "kind": "list",
+      "role": "skills",
+      "title": "KEY SKILLS",
+      "items": [
+        { "id": "planning", "text": [{ "text": "Warehouse and fleet planning" }] },
+        { "id": "suppliers", "text": [{ "text": "Supplier negotiation" }] },
+        { "id": "safety", "text": [{ "text": "Health and safety leadership" }] }
+      ]
+    }
+  ]
+}

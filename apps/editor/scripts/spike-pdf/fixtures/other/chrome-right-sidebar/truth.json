@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Ines", "last": "Kowalczyk-Brandt" },
+    "headline": "Civil engineer, bridges and tunnels",
+    "email": "ines.kb@example.com",
+    "phone": "+49 555 0177 2024",
+    "location": "Hamburg, Germany",
+    "links": [
+      {
+        "id": "site",
+        "kind": "website",
+        "label": "kowalczyk-brandt.example.de",
+        "href": "https://kowalczyk-brandt.example.de"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "profile",
+      "kind": "paragraph",
+      "role": "summary",
+      "title": "Profile",
+      "text": [
+        {
+          "text": "Structural engineer with eleven years on road and rail crossings, from the first load model to the handover inspection, with a habit of writing down why each decision was made."
+        }
+      ]
+    },
+    {
+      "id": "experience",
+      "kind": "entries",
+      "role": "experience",
+      "title": "Experience",
+      "entries": [
+        {
+          "id": "nordkanal",
+          "title": "Nordkanal Engineering",
+          "subtitle": "Senior Structural Engineer",
+          "place": "Hamburg",
+          "dates": { "start": "2019-04", "end": "present" },
+          "bullets": [
+            {
+              "id": "nordkanal-1",
+              "text": [
+                {
+                  "text": "Led the design of a 240-metre cable-stayed footbridge, delivered three weeks early."
+                }
+              ]
+            },
+            {
+              "id": "nordkanal-2",
+              "text": [
+                {
+                  "text": "Set up the firm's checking procedure for temporary works, now used on every site."
+                }
+              ]
+            },
+            {
+              "id": "nordkanal-3",
+              "text": [
+                {
+                  "text": "Supervise four graduate engineers and review their calculations each week."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "weserbruck",
+          "title": "Weserbrück Consulting",
+          "subtitle": "Structural Engineer",
+          "place": "Bremen",
+          "dates": { "start": "2014-09", "end": "2019-03" },
+          "bullets": [
+            {
+              "id": "weserbruck-1",
+              "text": [{ "text": "Assessed forty ageing road bridges and ranked them for repair." }]
+            },
+            {
+              "id": "weserbruck-2",
+              "text": [{ "text": "Modelled tunnel linings for a new tram line under the old town." }]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "kind": "entries",
+      "role": "education",
+      "title": "Education",
+      "entries": [
+        {
+          "id": "altmark",
+          "title": "MSc Structural Engineering",
+          "subtitle": "Technical University of Altmark",
+          "dates": { "start": "2012", "end": "2014" },
+          "bullets": []
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "kind": "paragraph",
+      "role": "skills",
+      "title": "Skills",
+      "text": [
+        {
+          "text": "Finite element analysis, bridge assessment, steel and concrete design, site supervision"
+        }
+      ]
+    },
+    {
+      "id": "languages",
+      "kind": "paragraph",
+      "role": "languages",
+      "title": "Languages",
+      "text": [{ "text": "German, Polish, English" }]
+    }
+  ]
+}

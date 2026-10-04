@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Kwabena", "last": "Ostrander" },
+    "headline": "Registered Nurse, Paediatrics",
+    "email": "kwabena.ostrander@example.com",
+    "phone": "0555 014 7731",
+    "location": "Leeds, UK",
+    "links": [
+      {
+        "id": "site",
+        "kind": "website",
+        "label": "ostrander.example.org",
+        "href": "https://ostrander.example.org"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "profile",
+      "kind": "paragraph",
+      "role": "summary",
+      "title": "Profile",
+      "text": [
+        {
+          "text": "Paediatric nurse with nine years on busy wards, calm in emergencies and patient with worried families, now leading a team of twelve on nights."
+        }
+      ]
+    },
+    {
+      "id": "clinical",
+      "kind": "entries",
+      "role": "experience",
+      "title": "Clinical Experience",
+      "entries": [
+        {
+          "id": "westfold",
+          "title": "Charge Nurse",
+          "subtitle": "Westfold General Hospital",
+          "place": "Leeds, UK",
+          "dates": { "start": "2020-04", "end": "present" },
+          "bullets": [
+            {
+              "id": "westfold-1",
+              "text": [
+                {
+                  "text": "Lead a night team of twelve nurses and two healthcare assistants on a 28-bed children's ward."
+                }
+              ]
+            },
+            {
+              "id": "westfold-2",
+              "text": [
+                {
+                  "text": "Introduced a handover checklist that cut missed medication rounds to none in its first year."
+                }
+              ]
+            },
+            {
+              "id": "westfold-3",
+              "text": [
+                {
+                  "text": "Mentor student nurses through their final placement and sign off their competencies."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ashby",
+          "title": "Staff Nurse",
+          "subtitle": "Ashby Children's Clinic",
+          "place": "Bradford, UK",
+          "dates": { "start": "2016-09", "end": "2020-03" },
+          "bullets": [
+            {
+              "id": "ashby-1",
+              "text": [
+                {
+                  "text": "Cared for children recovering from surgery, from admission to discharge planning."
+                }
+              ]
+            },
+            {
+              "id": "ashby-2",
+              "text": [{ "text": "Trained parents to manage feeding tubes at home before discharge." }]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "kind": "entries",
+      "role": "education",
+      "title": "Education",
+      "entries": [
+        {
+          "id": "harrowgate",
+          "title": "BSc (Hons) Adult Nursing",
+          "subtitle": "University of Harrowgate",
+          "place": "Harrowgate, UK",
+          "dates": { "start": "2013", "end": "2016" },
+          "bullets": []
+        }
+      ]
+    },
+    {
+      "id": "training",
+      "kind": "list",
+      "role": "other",
+      "title": "Registrations and Training",
+      "items": [
+        { "id": "council", "text": [{ "text": "Registered with the national nursing council since 2016" }] },
+        { "id": "pils", "text": [{ "text": "Paediatric Immediate Life Support, renewed 2024" }] },
+        { "id": "safeguarding", "text": [{ "text": "Safeguarding Children, Level 3" }] }
+      ]
+    }
+  ]
+}

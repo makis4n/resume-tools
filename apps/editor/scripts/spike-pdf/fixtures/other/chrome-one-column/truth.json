@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Teodor", "last": "Amsel" },
+    "email": "teodor.amsel@example.com",
+    "phone": "(555) 014-2271",
+    "location": "Chicago, IL",
+    "links": [
+      {
+        "id": "people",
+        "kind": "website",
+        "label": "people.example.com/teodor-amsel",
+        "href": "https://people.example.com/teodor-amsel"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "summary",
+      "kind": "paragraph",
+      "role": "summary",
+      "title": "Summary",
+      "text": [
+        {
+          "text": "Data engineer who builds pipelines that analysts trust, with six years of moving freight and sales data from messy sources into tested, documented tables."
+        }
+      ]
+    },
+    {
+      "id": "experience",
+      "kind": "entries",
+      "role": "experience",
+      "title": "Work Experience",
+      "entries": [
+        {
+          "id": "pinecrest",
+          "title": "Data Engineer",
+          "subtitle": "Pinecrest Logistics",
+          "place": "Chicago, IL",
+          "dates": { "start": "2021-03", "end": "present" },
+          "bullets": [
+            {
+              "id": "pinecrest-1",
+              "text": [
+                {
+                  "text": "Rebuilt the nightly freight pipeline on Airflow, cutting late reports from twice a week to twice a quarter."
+                }
+              ]
+            },
+            {
+              "id": "pinecrest-2",
+              "text": [
+                {
+                  "text": "Wrote the data contracts that four upstream teams now publish against, with checks that run before every load."
+                }
+              ]
+            },
+            {
+              "id": "pinecrest-3",
+              "text": [
+                {
+                  "text": "Moved 140 dashboards onto modelled tables and retired the spreadsheets behind them."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "harrow",
+          "title": "Junior Data Analyst",
+          "subtitle": "Harrow & Finch",
+          "place": "Evanston, IL",
+          "dates": { "start": "2018-02", "end": "2021-02" },
+          "bullets": [
+            {
+              "id": "harrow-1",
+              "text": [
+                {
+                  "text": "Automated the weekly sales report, saving the team a day of copying each week."
+                }
+              ]
+            },
+            {
+              "id": "harrow-2",
+              "text": [
+                {
+                  "text": "Built the first customer churn model the company used to plan renewals."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "kind": "entries",
+      "role": "education",
+      "title": "Education",
+      "entries": [
+        {
+          "id": "westmarch",
+          "title": "University of Westmarch",
+          "subtitle": "B.S. in Statistics, minor in Economics",
+          "place": "Westmarch, OH",
+          "dates": { "start": "2014", "end": "2018" },
+          "bullets": [
+            {
+              "id": "westmarch-1",
+              "text": [{ "text": "Senior thesis on forecasting grain shipments from river levels." }]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "kind": "labelled",
+      "role": "skills",
+      "title": "Skills",
+      "items": [
+        { "id": "languages", "label": "Languages", "text": [{ "text": "Python, SQL, Scala" }] },
+        { "id": "tools", "label": "Tools", "text": [{ "text": "Airflow, dbt, Spark, Postgres" }] }
+      ]
+    },
+    {
+      "id": "certifications",
+      "kind": "list",
+      "role": "other",
+      "title": "Certifications",
+      "items": [
+        { "id": "cloud", "text": [{ "text": "Cloud Data Engineer, Associate (2022)" }] },
+        { "id": "statistics", "text": [{ "text": "Applied Statistics Certificate (2019)" }] }
+      ]
+    }
+  ]
+}

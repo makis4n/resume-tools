@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Marisol", "last": "Quenby" },
+    "headline": "Product Designer",
+    "email": "marisol.quenby@example.com",
+    "phone": "+351 555 0193 412",
+    "location": "Lisbon, Portugal",
+    "links": [
+      {
+        "id": "site",
+        "kind": "website",
+        "label": "quenby.example.com",
+        "href": "https://quenby.example.com"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "skills",
+      "kind": "list",
+      "role": "skills",
+      "title": "Skills",
+      "items": [
+        { "id": "interaction", "text": [{ "text": "Interaction design" }] },
+        { "id": "systems", "text": [{ "text": "Design systems" }] },
+        { "id": "testing", "text": [{ "text": "Usability testing" }] },
+        { "id": "prototyping", "text": [{ "text": "Prototyping in code" }] }
+      ]
+    },
+    {
+      "id": "languages",
+      "kind": "labelled",
+      "role": "languages",
+      "title": "Languages",
+      "items": [
+        { "id": "spanish", "label": "Spanish", "text": [{ "text": "native" }] },
+        { "id": "english", "label": "English", "text": [{ "text": "fluent" }] },
+        { "id": "portuguese", "label": "Portuguese", "text": [{ "text": "conversational" }] }
+      ]
+    },
+    {
+      "id": "profile",
+      "kind": "paragraph",
+      "role": "summary",
+      "title": "Profile",
+      "text": [
+        {
+          "text": "Product designer with eight years of shaping booking and payment flows for travel companies, comfortable carrying a feature from interviews and wireframes to the accessibility review before release, and happiest when a complicated journey becomes unremarkable for the people who take it."
+        }
+      ]
+    },
+    {
+      "id": "experience",
+      "kind": "entries",
+      "role": "experience",
+      "title": "Experience",
+      "entries": [
+        {
+          "id": "lumen",
+          "title": "Senior Product Designer",
+          "subtitle": "Lumen Grove Studio",
+          "place": "Lisbon, Portugal",
+          "dates": { "start": "2022-01", "end": "present" },
+          "bullets": [
+            {
+              "id": "lumen-1",
+              "text": [
+                {
+                  "text": "Redesigned the checkout for a regional rail operator, which lifted completed bookings by nine percent within a quarter."
+                }
+              ]
+            },
+            {
+              "id": "lumen-2",
+              "text": [
+                {
+                  "text": "Started the studio's design system and the documentation that keeps its components consistent across products."
+                }
+              ]
+            },
+            {
+              "id": "lumen-3",
+              "text": [
+                {
+                  "text": "Ran fortnightly usability sessions with travellers who rely on screen readers."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ferrous",
+          "title": "Product Designer",
+          "subtitle": "Ferrous & Vale",
+          "place": "Madrid, Spain",
+          "dates": { "start": "2018-06", "end": "2021-12" },
+          "bullets": [
+            {
+              "id": "ferrous-1",
+              "text": [
+                {
+                  "text": "Designed the refund flow that halved the support tickets about cancelled journeys."
+                }
+              ]
+            },
+            {
+              "id": "ferrous-2",
+              "text": [
+                {
+                  "text": "Paired with engineers to ship an internationalisation framework for eleven markets."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "kind": "entries",
+      "role": "education",
+      "title": "Education",
+      "entries": [
+        {
+          "id": "calder",
+          "title": "MA Interaction Design",
+          "subtitle": "Calder School of Art",
+          "place": "Glasgow, UK",
+          "dates": { "start": "2016", "end": "2018" },
+          "bullets": []
+        }
+      ]
+    },
+    {
+      "id": "projects",
+      "kind": "entries",
+      "role": "projects",
+      "title": "Projects",
+      "entries": [
+        {
+          "id": "wayfinding",
+          "title": "Wayfinding Kit",
+          "subtitle": "Open-source signage toolkit",
+          "dates": { "start": "2023" },
+          "bullets": [
+            {
+              "id": "wayfinding-1",
+              "text": [
+                {
+                  "text": "A set of pictograms and layout rules for station signage, used by two volunteer transit groups."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

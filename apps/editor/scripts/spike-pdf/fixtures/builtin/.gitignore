@@ -1,0 +1,3 @@
+# The first set's PDFs and truths, which `spike-pdf builtin` makes again on every run.
+*.pdf
+*.truth.json

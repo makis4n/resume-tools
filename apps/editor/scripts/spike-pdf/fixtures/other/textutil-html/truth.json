@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Henrike", "last": "Solvang" },
+    "headline": "Mathematics teacher",
+    "email": "henrike.solvang@example.com",
+    "phone": "+47 555 01 864",
+    "location": "Bergen, Norway",
+    "links": []
+  },
+  "sections": [
+    {
+      "id": "teaching",
+      "kind": "entries",
+      "role": "experience",
+      "title": "Teaching Experience",
+      "entries": [
+        {
+          "id": "fjordside",
+          "title": "Mathematics Teacher",
+          "subtitle": "Fjordside Upper School",
+          "place": "Bergen",
+          "dates": { "start": "2016", "end": "2024" },
+          "bullets": [
+            {
+              "id": "fjordside-1",
+              "text": [
+                {
+                  "text": "Taught algebra and statistics to classes of up to thirty pupils aged sixteen to nineteen."
+                }
+              ]
+            },
+            {
+              "id": "fjordside-2",
+              "text": [
+                {
+                  "text": "Wrote the school's first course on data literacy, now taught in all three year groups."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "nordhavn",
+          "title": "Teaching Assistant",
+          "subtitle": "Nordhavn Lower Secondary",
+          "place": "Stavanger",
+          "dates": { "start": "2013", "end": "2016" },
+          "bullets": [
+            {
+              "id": "nordhavn-1",
+              "text": [
+                {
+                  "text": "Ran small-group lessons for pupils who had fallen behind in arithmetic."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "kind": "entries",
+      "role": "education",
+      "title": "Education",
+      "entries": [
+        {
+          "id": "med",
+          "title": "Master of Education in Mathematics",
+          "subtitle": "University of Vestland",
+          "dates": { "start": "2011", "end": "2013" },
+          "bullets": []
+        },
+        {
+          "id": "bsc",
+          "title": "BSc Mathematics",
+          "subtitle": "University of Vestland",
+          "dates": { "start": "2008", "end": "2011" },
+          "bullets": []
+        }
+      ]
+    },
+    {
+      "id": "other",
+      "kind": "paragraph",
+      "role": "other",
+      "title": "Other",
+      "text": [
+        {
+          "text": "Coach of the school's chess club since 2018, and a volunteer at the city's summer mathematics camp."
+        }
+      ]
+    }
+  ]
+}
