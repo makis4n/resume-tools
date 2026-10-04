@@ -6,14 +6,16 @@
  *
  * "Import a resume" takes a `.tex` file or a zip, or the `.tex` with the files beside it, from a
  * file picker or dropped anywhere on the list, and says under the picker what leaves the browser
- * when a resume is imported (`PRIVACY_NOTE`, decision 0033). While an import runs, the list shows
+ * and when (`PRIVACY_NOTE`, decision 0047). While an import runs, the list shows
  * the step it is at and the compiles so far, in plain English, with a button that cancels it
  * (decision 0038); a refusal comes back as the list's notice, the refusal's own words, which never
  * show LaTeX. An import that came through partial, under the bar or with its page moved, waits on
  * the person with its report in place of the progress line (milestone 3 item 13, decision 0039):
  * continue, and the document opens as it is; stop, and nothing of it is kept. Beside the way in
  * sits the setting that says whether a PDF's text may be sent to the reading service (milestone 3
- * second pass, item 13, decision 0047).
+ * second pass, item 13, decision 0047). The picker and a drop take a PDF too (item 14): the first
+ * time, the question whether its text may be sent stands in place of the progress line, and while
+ * the answer is yes, the line under the progress line says it is being sent.
  */
 
 import type { DragEvent } from "react";
@@ -24,7 +26,7 @@ import type { PdfConsent } from "../pdf/consent";
 import type { Summary } from "../storage/store";
 import { CURATED } from "../templates/curated";
 import { ImportReport } from "./ImportReport";
-import { PdfReadingSetting } from "./PdfReading";
+import { PdfReadingQuestion, PdfReadingSetting, PdfSendingNotice } from "./PdfReading";
 
 /**
  * Where an import is, as the progress line says it: its step's name, and the compiles so far, for
@@ -33,6 +35,8 @@ import { PdfReadingSetting } from "./PdfReading";
 export interface ImportShown {
   label: string;
   compiles?: number;
+  /** Whether a PDF's text is being sent to the reading service, which the line under it says. */
+  sending?: boolean;
 }
 
 /** A partial import waiting on the person: its report, and the two ways on. */
@@ -66,6 +70,11 @@ export interface DocumentListProps {
    * (milestone 3 second pass, item 13).
    */
   pdfReading?: { consent: PdfConsent | undefined; onChange(answer: PdfConsent): void };
+  /**
+   * The question whether a PDF's text may be sent, asked the first time a person imports a PDF,
+   * in place of the progress line (milestone 3 second pass, item 14); Cancel keeps no answer.
+   */
+  pdfQuestion?: { onAnswer(answer: PdfConsent): void; onCancel(): void };
 }
 
 const MINUTE = 60_000;
@@ -114,8 +123,12 @@ export const TEMPLATE_LINES: Readonly<Record<string, string>> = {
 /** An engine as the chooser names it. */
 const ENGINE_NAMES = { pdftex: "pdfTeX", xetex: "XeTeX" } as const;
 
-/** What the file picker takes: a `.tex` file or a zip. */
-const TAKES = ".tex,.zip";
+/** What the file picker takes: a `.tex` file or a zip, or a PDF (item 14). */
+export const TAKES = ".tex,.zip,.pdf";
+
+/** What the documents screen says of a PDF import: what it keeps; `PRIVACY_NOTE` says what is sent. */
+export const PDF_NOTE =
+  "From a PDF, the editor reads your resume's text and sets it on a template you pick: it keeps your content, not your PDF's look.";
 
 /** Whether something dragged over the list holds files, which a drop imports. */
 const holdsFiles = (event: DragEvent) => [...(event.dataTransfer?.types ?? [])].includes("Files");
@@ -131,6 +144,7 @@ export function DocumentList({
   onCancelImport,
   waiting,
   pdfReading,
+  pdfQuestion,
 }: DocumentListProps) {
   const [choosing, setChoosing] = useState(false);
   const [over, setOver] = useState(false);
@@ -139,7 +153,7 @@ export function DocumentList({
     if (window.confirm(`Delete “${summary.title}”? It cannot be brought back.`))
       onDelete(summary.id);
   };
-  const busy = importing !== undefined || waiting !== undefined;
+  const busy = importing !== undefined || waiting !== undefined || pdfQuestion !== undefined;
   const importFiles = (files: File[]) => {
     if (files.length > 0 && !busy) onImport?.(files);
   };
@@ -169,22 +183,27 @@ export function DocumentList({
     >
       <h1>Documents</h1>
       {notice && <p role="alert">{notice}</p>}
-      {waiting ? (
+      {pdfQuestion ? (
+        <PdfReadingQuestion onAnswer={pdfQuestion.onAnswer} onCancel={pdfQuestion.onCancel} />
+      ) : waiting ? (
         <ImportReport
           report={waiting.report}
           onContinue={waiting.onContinue}
           onStop={waiting.onStop}
         />
       ) : importing ? (
-        <p role="status">
-          {importing.label}…
-          {importing.compiles === undefined
-            ? ""
-            : ` ${importing.compiles} ${importing.compiles === 1 ? "compile" : "compiles"} so far.`}{" "}
-          <button type="button" onClick={() => onCancelImport?.()}>
-            Cancel
-          </button>
-        </p>
+        <>
+          <p role="status">
+            {importing.label}…
+            {importing.compiles === undefined
+              ? ""
+              : ` ${importing.compiles} ${importing.compiles === 1 ? "compile" : "compiles"} so far.`}{" "}
+            <button type="button" onClick={() => onCancelImport?.()}>
+              Cancel
+            </button>
+          </p>
+          {importing.sending && <PdfSendingNotice />}
+        </>
       ) : (
         <>
           <p>
@@ -214,11 +233,12 @@ export function DocumentList({
           {onImport && (
             <p>
               {over
-                ? "Drop your .tex file or zip to import it."
-                : "Or drop your .tex file or zip anywhere here."}{" "}
+                ? "Drop your .tex file, zip or PDF to import it."
+                : "Or drop your .tex file, zip or PDF anywhere here."}{" "}
               {PRIVACY_NOTE}
             </p>
           )}
+          {onImport && <p>{PDF_NOTE}</p>}
           {pdfReading && (
             <PdfReadingSetting consent={pdfReading.consent} onChange={pdfReading.onChange} />
           )}

@@ -26,12 +26,12 @@ export const isPdfFile = (file: { name: string; type?: string }) =>
 
 /**
  * Read a PDF in the browser: every page's runs of text, links and marks, or why it was not read,
- * in plain words. Rejects only when the reader itself cannot be loaded or fails, which is the
+ * in plain words, and each page drawn as a picture when `drawScale` asks for it. Rejects only when the reader itself cannot be loaded or fails, which is the
  * editor's failure and not the file's, or when `signal` stops it.
  */
 export async function readPdfFile(
   bytes: Uint8Array,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; drawScale?: number } = {},
 ): Promise<PdfReading> {
   const before = refusedBeforeReading(bytes);
   if (before) return before;

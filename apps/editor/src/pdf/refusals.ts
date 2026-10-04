@@ -26,6 +26,13 @@ export const MIN_TEXT_CHARS = 20;
 export const READ_TIME_LIMIT_MS = 20_000;
 
 /**
+ * How long drawing a PDF's pages as pictures may take, after its reading (item 14): past it the
+ * review shows the resume read without the PDF's pages. Drawing reads only what the reading has
+ * already counted within its caps, so this bounds the time, not the memory.
+ */
+export const DRAW_TIME_LIMIT_MS = 10_000;
+
+/**
  * The most a PDF may hold, on one page and in all, past which it is refused as too complex: a
  * hostile file of a few kilobytes can make pdf.js produce millions of operations, so the caps bound
  * the memory a reading takes, and not only its time. `drawing` counts each operation a page draws

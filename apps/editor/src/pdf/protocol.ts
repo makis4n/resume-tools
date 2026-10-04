@@ -11,6 +11,11 @@ import { pdfRefusal } from "./refusals.ts";
 export interface ReadRequest {
   kind: "read-pdf";
   bytes: Uint8Array;
+  /**
+   * Draw each page as a picture too, at this many pixels a point, for the review (item 14); the
+   * pictures come back with the reading.
+   */
+  draw?: { scale: number };
 }
 
 export interface ReadReply {
@@ -23,6 +28,12 @@ const kindOf = (data: unknown) =>
 
 export const isReadRequest = (data: unknown): data is ReadRequest =>
   kindOf(data) === "read-pdf" && (data as { bytes?: unknown }).bytes instanceof Uint8Array;
+
+/** The scale a request asks its pages to be drawn at, when it is a sane one: 0.25 to 4. */
+export function drawScaleOf(request: ReadRequest): number | undefined {
+  const scale = request.draw?.scale;
+  return typeof scale === "number" && scale >= 0.25 && scale <= 4 ? scale : undefined;
+}
 
 export const isReadReply = (data: unknown): data is ReadReply =>
   kindOf(data) === "pdf-reading" &&
@@ -38,11 +49,11 @@ export interface ReaderScope {
 /** Answer each request on `scope` with its reading; a failure of the reader's own is unreadable. */
 export function serveReadings(
   scope: ReaderScope,
-  read: (bytes: Uint8Array) => Promise<PdfReading>,
+  read: (bytes: Uint8Array, request: ReadRequest) => Promise<PdfReading>,
 ): void {
   scope.addEventListener("message", (event) => {
     if (!isReadRequest(event.data)) return;
-    void read(event.data.bytes)
+    void read(event.data.bytes, event.data)
       .catch(() => pdfRefusal("unreadable"))
       .then((reading) => scope.postMessage({ kind: "pdf-reading", reading }));
   });

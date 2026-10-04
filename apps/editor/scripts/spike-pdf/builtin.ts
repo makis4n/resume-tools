@@ -45,11 +45,13 @@ export interface BuiltinPdf {
 
 /**
  * Compile every built-in template with every curated sample resume, and write each PDF and its
- * truth under `BUILTIN_DIR`. Throws when the engine is missing or a compile fails, since a failed
+ * truth under `BUILTIN_DIR`, or under `dir`; with `ownOnly`, each template with its own sample
+ * alone (`builtin-pdfs.ts`). Throws when the engine is missing or a compile fails, since a failed
  * compile of a curated template is a bug the suite would catch.
  */
 export async function makeBuiltinPdfs(
   say: (line: string) => void = () => undefined,
+  { dir = BUILTIN_DIR, ownOnly = false }: { dir?: string; ownOnly?: boolean } = {},
 ): Promise<BuiltinPdf[]> {
   const config = await resolveConfig(
     { root: APP, logLevel: "warn", ssr: { noExternal: ["opentype.js"] } },
@@ -78,7 +80,7 @@ export async function makeBuiltinPdfs(
       readFileSync(join(ENGINE_DIR, "files", path)),
     );
     const session = await startNodeSession();
-    mkdirSync(BUILTIN_DIR, { recursive: true });
+    mkdirSync(dir, { recursive: true });
     const samples = [...CURATED.values()].map(({ package: pkg, sample }) => ({
       id: pkg.id,
       sample,
@@ -92,6 +94,7 @@ export async function makeBuiltinPdfs(
       const dumped = session.dump(pkg.engine, format.name, format.preamble, format.files);
       if (!dumped.ok) throw new Error(`${pkg.id}'s format did not dump`);
       for (const { id: resumeId, sample } of samples) {
+        if (ownOnly && resumeId !== pkg.id) continue;
         const started = performance.now();
         const id = `${pkg.id}--${resumeId}`;
         const job = `spike-${pkg.id}`;
@@ -104,8 +107,8 @@ export async function makeBuiltinPdfs(
         if (!result.ok) throw new Error(`${id} did not compile`);
         const pdf = session.pdf(job);
         if (!pdf.ok || pdf.pdf === undefined) throw new Error(`${id} made no PDF: ${pdf.error}`);
-        const pdfPath = join(BUILTIN_DIR, `${id}.pdf`);
-        const truthPath = join(BUILTIN_DIR, `${id}.truth.json`);
+        const pdfPath = join(dir, `${id}.pdf`);
+        const truthPath = join(dir, `${id}.truth.json`);
         writeFileSync(pdfPath, pdf.pdf);
         writeFileSync(truthPath, `${JSON.stringify(sample, null, 2)}\n`);
         const ms = performance.now() - started;

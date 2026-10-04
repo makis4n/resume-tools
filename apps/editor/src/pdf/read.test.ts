@@ -404,3 +404,61 @@ describe.skipIf(!engineAvailable())("reading the PDFs the built-in templates mak
     60_000,
   );
 });
+
+describe("drawing the pages for the review (item 14)", () => {
+  const twoPages = () =>
+    minimalPdf([
+      { texts: [{ x: 72, y: 80, size: 12, text: "Invented first page, to be drawn" }] },
+      { texts: [{ x: 72, y: 80, size: 12, text: "Invented second page, to be drawn" }] },
+    ]);
+
+  it("draws each page once the reading has passed, with every operation the page holds", async () => {
+    const drawn: number[] = [];
+    const reading = await readPdf(twoPages(), {
+      draw: {
+        factories: {},
+        async draw(page) {
+          // The reading's own way of taking the page's pieces is gone: a drawing gets them all.
+          drawn.push((await page.getOperatorList()).fnArray.length);
+          return new Blob([`page ${page.pageNumber}`]);
+        },
+      },
+    });
+    const read = reading as ReadPdf;
+    expect(isPdfRefusal(reading)).toBe(false);
+    expect(read.pages).toHaveLength(2);
+    expect(read.pictures).toHaveLength(2);
+    expect(await read.pictures?.[1]?.text()).toBe("page 2");
+    expect(drawn.every((count) => count > 0)).toBe(true);
+  }, 60_000);
+
+  it("gives no pictures, and the reading whole, when a page cannot be drawn or in time", async () => {
+    const failing = await readPdf(twoPages(), {
+      draw: { factories: {}, draw: async () => Promise.reject(new Error("no canvas")) },
+    });
+    expect(isPdfRefusal(failing)).toBe(false);
+    expect((failing as ReadPdf).pictures).toBeUndefined();
+    expect((failing as ReadPdf).pages).toHaveLength(2);
+    const slow = await readPdf(twoPages(), {
+      drawTimeLimitMs: 50,
+      draw: { factories: {}, draw: () => new Promise<Blob>(() => undefined) },
+    });
+    expect((slow as ReadPdf).pictures).toBeUndefined();
+    expect((slow as ReadPdf).pages).toHaveLength(2);
+  }, 60_000);
+
+  it("draws nothing for a PDF it refuses", async () => {
+    let asked = 0;
+    const reading = await readPdf(new TextEncoder().encode("Invented, not a PDF"), {
+      draw: {
+        factories: {},
+        draw: async () => {
+          asked++;
+          return new Blob([]);
+        },
+      },
+    });
+    expect(isPdfRefusal(reading)).toBe(true);
+    expect(asked).toBe(0);
+  });
+});

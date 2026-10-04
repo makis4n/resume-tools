@@ -11,6 +11,10 @@
  * text of the document's in (`assertNoText`).
  */
 
-/** What the import screen says: plain English, no LaTeX, and no command named. */
+/**
+ * What the documents screen says, under the way in: the privacy rule of decision 0047, that a
+ * resume stays in the browser unless the person asks for something that needs to send it and is
+ * told what is sent, and the three things that send. Plain English, no LaTeX, and no command named.
+ */
 export const PRIVACY_NOTE =
-  "To learn your template, the editor sends only its command definitions, with the names, emails, phone numbers, links and addresses your page shows replaced, the shape of a few places that use them, with their letters and digits replaced and the template's command names kept, and the page's style settings; your resume's text and your header never leave your browser, and its PDF leaves only when you send it to the checker. Text that never reaches your page, such as the author and title a document keeps in its details, cannot be checked, so the editor replaces it rather than sending it.";
+  "Your resume stays in this browser unless you ask for something that needs to send it, and you are told what is sent. Reading a PDF with the reading service sends its text, and only once you agree, with the setting below; checking a resume sends its PDF to the checker; importing a .tex file sends nothing.";
