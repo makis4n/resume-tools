@@ -89,6 +89,7 @@ import {
   type TemplatePackage,
 } from "../templates/package";
 import type { Document } from "./document";
+import { outlineOf, writtenFields } from "./outline";
 
 /**
  * What the scheduler needs of an engine: `EngineClient` in the app, a wrapped Node session in
@@ -243,6 +244,19 @@ export interface CompilerOptions {
    * ahead.
    */
   knownPath?: (path: string) => boolean;
+}
+
+/**
+ * How a document's pages are drawn: with its package's fonts' features, and an imported outline's
+ * read as an outline's (`DrawOptions.outline`), its fields only those it writes, by the first begin
+ * and end of each, and its kept text in segments between them (the second pass's item 7).
+ */
+export function drawOptions(pkg: TemplatePackage, doc: Document): DrawOptions {
+  const outline = outlineOf(doc.resume);
+  return {
+    features: fontFeatures(pkg),
+    ...(outline === undefined ? {} : { outline: writtenFields(outline) }),
+  };
 }
 
 /** What the user reads when a page cannot be made, whatever the reason; never TeX's words. */
@@ -910,7 +924,7 @@ export class Compiler {
       const pages = await this.within(
         run,
         run.limit,
-        () => this.draw(output, this.fonts, body.texts, { features: fontFeatures(pkg) }),
+        () => this.draw(output, this.fonts, body.texts, drawOptions(pkg, doc)),
         () => this.drop(run),
       );
       if (!this.current(run)) return;

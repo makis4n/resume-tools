@@ -27,6 +27,24 @@ export const LOCKED_TIP = "Kept as it was; remove or move it from the side panel
 export const RETYPE_TIP =
   "Kept as it was; click to change its words, or remove or move it from the side panel";
 
+/** What a lock's line says, over a part with no words to retype and over one with some. */
+export interface LockTips {
+  locked: string;
+  retype: string;
+}
+
+/** A locked part's lines (decisions 0041 and 0042). */
+export const LOCK_TIPS: LockTips = { locked: LOCKED_TIP, retype: RETYPE_TIP };
+
+/**
+ * The lines over an imported outline's kept text (the second pass's item 7), which the side panel
+ * neither moves nor removes: it is the person's own LaTeX, around the fields.
+ */
+export const KEPT_TIPS: LockTips = {
+  locked: "Kept as your file wrote it",
+  retype: "Kept as your file wrote it; click to change its words",
+};
+
 export interface PageProps {
   svg: string;
   onField?: (field: string, offset: number) => void;
@@ -56,6 +74,8 @@ export interface PageProps {
    * first block; given only to the page where the part starts.
    */
   editing?: { part: string; editor: ReactNode };
+  /** What the lock's line says (`LOCK_TIPS` by default, `KEPT_TIPS` for an outline's kept text). */
+  tips?: LockTips;
 }
 
 /** The field and character offset of the glyph a click landed on, from its data attributes. */
@@ -114,6 +134,7 @@ export function Page({
   retypable,
   onLocked,
   editing,
+  tips = LOCK_TIPS,
 }: PageProps) {
   const host = useRef<HTMLDivElement>(null);
   // The locked part the pointer is over, by id, when no `Pages` keeps it for every page.
@@ -144,7 +165,7 @@ export function Page({
           size={size}
           blocks={part.blocks}
           tip={tip}
-          line={hovered !== undefined && retypable?.has(hovered) ? RETYPE_TIP : LOCKED_TIP}
+          line={hovered !== undefined && retypable?.has(hovered) ? tips.retype : tips.locked}
         />
       )}
       {editing && edited && size && (
@@ -174,6 +195,8 @@ export interface PagesProps {
   onLocked?: PageProps["onLocked"];
   /** The small editor of the part being retyped, placed on the page where the part starts. */
   editing?: PageProps["editing"];
+  /** What each lock's line says (`Page`). */
+  tips?: LockTips;
 }
 
 /**
@@ -183,7 +206,7 @@ export interface PagesProps {
  * field's glyph, on any page, reports the field as on the first. A page whose SVG is the one it had
  * is not drawn again: React leaves its element as it is.
  */
-export function Pages({ pages, onField, retypable, onLocked, editing }: PagesProps) {
+export function Pages({ pages, onField, retypable, onLocked, editing, tips }: PagesProps) {
   const [over, setOver] = useState<string>();
   /** The first page that holds a block of a part, which shows its lock's line and its editor. */
   const startOf = (part: string | undefined) =>
@@ -208,6 +231,7 @@ export function Pages({ pages, onField, retypable, onLocked, editing }: PagesPro
             tip={index === first}
             retypable={retypable}
             onLocked={onLocked}
+            {...(tips === undefined ? {} : { tips })}
             {...(index === edited && editing !== undefined ? { editing } : {})}
           />
         </div>
@@ -283,7 +307,7 @@ function Lock({
   size: PageSize;
   blocks: readonly Box[];
   tip: boolean;
-  /** What the line says: `LOCKED_TIP`, or `RETYPE_TIP` for a part whose words can be retyped. */
+  /** What the line says: `LockTips.locked`, or `LockTips.retype` for a part with words to retype. */
   line: string;
 }) {
   const frame = useFrame(host, svg, size);

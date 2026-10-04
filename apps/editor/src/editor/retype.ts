@@ -28,9 +28,11 @@
 import type { LockedSection } from "@resume-tools/resume-model";
 import { FIRST_WORDS } from "../import/report";
 import type { DrawnPage, GlyphBox } from "../page/draw";
+import { isKeptId } from "../page/kept";
 import { escapeText } from "../templates/escape";
 import { INVISIBLE } from "../tex/fields";
 import { type Command, CommandError, type Document, type History } from "./document";
+import { type KeptEdit, type KeptSegment, keptSegments, outlineOf, writtenFields } from "./outline";
 
 /** A run of plain text in a part's LaTeX. */
 export interface Piece {
@@ -549,25 +551,92 @@ export function retypeOf(
   section: Pick<LockedSection, "id" | "latex">,
   pages: readonly Pick<DrawnPage, "glyphs">[],
 ): Retype | { reason: string } {
-  const drawn = partGlyphs(pages, section.id);
+  return retypeOn(section.id, section.latex, partGlyphs(pages, section.id));
+}
+
+/**
+ * What a part offers to retype (`retypeOf`), from its LaTeX and its glyphs drawn, in the order the
+ * pages paint them; with `within`, only a run that lies within one of the ranges it gives of the
+ * LaTeX, which a segment of an outline's kept text gives as its pieces of kept text (`KeptSegment`).
+ */
+function retypeOn(
+  part: string,
+  latex: string,
+  drawn: readonly Pick<GlyphBox, "text">[],
+  within?: (start: number, end: number) => boolean,
+): Retype | { reason: string } {
   if (drawn.length === 0) return { reason: NOT_RETYPED.notShown };
   const glyphs = drawn.map((glyph) => glyphCanonical(glyph.text));
-  const pieces = piecesOf(section.latex);
+  const pieces = piecesOf(latex);
   const spans = alignPieces(pieces, glyphs);
   const offered: RetypePiece[] = [];
   pieces.forEach((piece, index) => {
     const span = spans[index];
-    if (span !== undefined && !piece.joined && WORDS.test(piece.text))
+    if (
+      span !== undefined &&
+      !piece.joined &&
+      WORDS.test(piece.text) &&
+      (within === undefined || within(piece.start, piece.end))
+    )
       offered.push({ ...piece, ...span });
   });
   if (offered.length === 0) return { reason: NOT_RETYPED.notPlain };
-  return { part: section.id, pieces: offered, glyphs };
+  return { part, pieces: offered, glyphs };
+}
+
+/**
+ * The piece of kept text of `segment` a run from `start` to `end` of its LaTeX lies within, by its
+ * index, or undefined where the run crosses from one piece to the next, or lies in what the
+ * generator writes beside kept text, as a field's braces: such a run is not offered, since a retype
+ * changes one piece of kept text and nothing else.
+ */
+function keptPieceOf(segment: KeptSegment, start: number, end: number): number | undefined {
+  for (const [index, piece] of segment.pieces.entries()) {
+    const from = segment.starts[index] ?? 0;
+    if (start >= from && end <= from + piece.latex.length)
+      return piece.at === undefined ? undefined : index;
+  }
+  return undefined;
+}
+
+/**
+ * What a segment of an outline's kept text offers to retype on the pages drawn of its document
+ * (the second pass's item 7): as a locked part, from its LaTeX and its glyphs (`retypeOf`), a run
+ * offered only where it lies within one piece of kept text (`keptPieceOf`). `drawn` holds every
+ * segment's glyphs, by its id, in the order the pages paint them (`keptGlyphs`).
+ */
+export function retypeKeptOf(
+  segment: KeptSegment,
+  drawn: ReadonlyMap<string, readonly GlyphBox[]>,
+): Retype | { reason: string } {
+  return retypeOn(
+    segment.id,
+    segment.latex,
+    drawn.get(segment.id) ?? [],
+    (start, end) => keptPieceOf(segment, start, end) !== undefined,
+  );
+}
+
+/** The glyphs of every segment of kept text drawn on `pages`, by its id, as `partGlyphs` reads one. */
+export function keptGlyphs(pages: readonly Pick<DrawnPage, "glyphs">[]): Map<string, GlyphBox[]> {
+  const found = new Map<string, GlyphBox[]>();
+  for (const page of pages)
+    for (const glyph of page.glyphs)
+      if (glyph.locked !== undefined && isKeptId(glyph.locked)) {
+        const list = found.get(glyph.locked) ?? [];
+        list.push(glyph);
+        found.set(glyph.locked, list);
+      }
+  return found;
 }
 
 /** Whether `retypeOf` found something to retype. */
 export const isRetype = (found: Retype | { reason: string }): found is Retype => "pieces" in found;
 
-/** What each locked section of a document offers to retype on its pages (`retypeOf`), by id. */
+/**
+ * What each locked section of a document offers to retype on its pages (`retypeOf`), by id; and
+ * for an outline, what each segment of its kept text offers (`retypeKeptOf`), by the segment's id.
+ */
 export function retypesOf(
   document: Document,
   pages: readonly Pick<DrawnPage, "glyphs">[],
@@ -575,6 +644,11 @@ export function retypesOf(
   const found = new Map<string, Retype | { reason: string }>();
   for (const section of document.resume.sections)
     if (section.kind === "locked") found.set(section.id, retypeOf(section, pages));
+    else if (section.kind === "outline") {
+      const drawn = keptGlyphs(pages);
+      for (const segment of keptSegments(section))
+        found.set(segment.id, retypeKeptOf(segment, drawn));
+    }
   return found;
 }
 
@@ -655,6 +729,37 @@ export function retyped(
 }
 
 /**
+ * The edits of an outline's kept text that retype `segment`'s runs as `texts` (one for each of
+ * `retype`'s pieces, in order), as `retyped` retypes a locked part's LaTeX: each changed run's bytes,
+ * in the piece of kept text it lies within, become what was typed, escaped. Undefined when nothing
+ * changed.
+ */
+export function retypedKept(
+  segment: KeptSegment,
+  retype: Retype,
+  texts: readonly string[],
+): KeptEdit[] | undefined {
+  const changed = new Map<number, string>();
+  for (let index = retype.pieces.length - 1; index >= 0; index--) {
+    const piece = retype.pieces[index] as RetypePiece;
+    const text = texts[index];
+    if (text === undefined || typed(text) === typed(piece.text)) continue;
+    const escaped = escapeTyped(text);
+    if (escaped === segment.latex.slice(piece.start, piece.end)) continue;
+    const at = keptPieceOf(segment, piece.start, piece.end);
+    if (at === undefined) continue;
+    const from = segment.starts[at] ?? 0;
+    const latex = changed.get(at) ?? segment.pieces[at]?.latex ?? "";
+    changed.set(at, latex.slice(0, piece.start - from) + escaped + latex.slice(piece.end - from));
+  }
+  if (changed.size === 0) return undefined;
+  return [...changed].flatMap(([at, latex]) => {
+    const where = segment.pieces[at]?.at;
+    return where === undefined ? [] : [{ at: where, latex }];
+  });
+}
+
+/**
  * Whether the part's glyphs on the pages after a retype spell what the person asked for: its glyphs
  * before, each retyped run's replaced by what was typed (`canonical`), hyphens aside, since TeX may
  * break a word of the part at another place now.
@@ -708,6 +813,7 @@ export type OutsideCheck = (
   before: Uint8Array,
   after: Uint8Array,
   part: string,
+  outline?: readonly string[],
 ) => Promise<boolean>;
 
 /** A page as the guard reads it: its document, its pages, and the output they were drawn from. */
@@ -727,6 +833,42 @@ interface Pending {
   texts: readonly string[];
   /** The output the page before it was drawn from, which the page after it is compared with. */
   output: Uint8Array;
+  /**
+   * For a segment of an outline's kept text, the outline's fields the generator writes, which the
+   * outputs' segments are read by (`writtenFields`, `keptSets`).
+   */
+  outline?: readonly string[];
+}
+
+/**
+ * The command that retypes `retype`'s runs as `texts` in `document`: of a locked section's LaTeX,
+ * or of a segment of an outline's kept text, with the outline's fields the generator writes, which
+ * its check reads the outputs by; `unchanged` where nothing would change, and undefined where the
+ * document has no such part.
+ */
+function commandOf(
+  document: Document,
+  retype: Retype,
+  texts: readonly string[],
+): { command: Command; outline?: readonly string[] } | "unchanged" | undefined {
+  if (isKeptId(retype.part)) {
+    const outline = outlineOf(document.resume);
+    const segment = outline && keptSegments(outline).find((each) => each.id === retype.part);
+    if (outline === undefined || segment === undefined) return undefined;
+    const kept = retypedKept(segment, retype, texts);
+    if (kept === undefined) return "unchanged";
+    return {
+      command: { type: "retypeKept", section: outline.id, kept },
+      outline: writtenFields(outline),
+    };
+  }
+  const section = document.resume.sections.find(
+    (each) => each.kind === "locked" && each.id === retype.part,
+  );
+  if (section?.kind !== "locked") return undefined;
+  const latex = retyped(section.latex, retype, texts);
+  if (latex === undefined) return "unchanged";
+  return { command: { type: "retype", section: retype.part, latex } };
 }
 
 /** What became of a retype once its page came, or did not. */
@@ -776,13 +918,10 @@ export class RetypeGuard {
     const before = history.present;
     if (this.pending !== undefined || shown.document !== before || shown.output === undefined)
       return { why: "failed" };
-    const section = before.resume.sections.find(
-      (each) => each.kind === "locked" && each.id === retype.part,
-    );
-    if (section?.kind !== "locked") return { why: "failed" };
-    const latex = retyped(section.latex, retype, texts);
-    if (latex === undefined) return "unchanged";
-    const command: Command = { type: "retype", section: retype.part, latex };
+    const found = commandOf(before, retype, texts);
+    if (found === undefined) return { why: "failed" };
+    if (found === "unchanged") return "unchanged";
+    const { command, outline } = found;
     let after: Document;
     try {
       after = history.dispatch(command);
@@ -793,7 +932,15 @@ export class RetypeGuard {
     // A document the same as before is no step of the history, and nothing to check or take back.
     if (after === before) return "unchanged";
     this.cancelled = undefined;
-    this.pending = { history, before, after, retype, texts, output: shown.output };
+    this.pending = {
+      history,
+      before,
+      after,
+      retype,
+      texts,
+      output: shown.output,
+      ...(outline === undefined ? {} : { outline }),
+    };
     return after;
   }
 
@@ -809,7 +956,7 @@ export class RetypeGuard {
     try {
       unchanged =
         shown.output !== undefined &&
-        (await this.outside(pending.output, shown.output, pending.retype.part));
+        (await this.outside(pending.output, shown.output, pending.retype.part, pending.outline));
     } catch (error) {
       console.error("The page outside the part could not be compared:", error);
       if (this.pending !== pending) return undefined;

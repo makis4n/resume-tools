@@ -19,6 +19,13 @@
  * imported resume kept as its upload had it is a row of its own, named by its first words as the
  * page shows them, which moves and is removed and nothing else (decision 0041).
  *
+ * An imported `.tex` resume keeps its own shape (decision 0049), and the panel shows its outline in
+ * place of the labelled form (the second pass's item 7): its parts in order, each named by its first
+ * words, a field's as it holds them and kept text's as its runs of plain text read, never its
+ * LaTeX; a group's units one under the other, each opening to show its own parts; a field with an
+ * input where the page does not show it, as any field; and kept text with words to retype with
+ * "Change words", the keyboard's way to its editor on the page, as a locked part's (decision 0042).
+ *
  * Plain HTML in plain English, with nothing in it that is LaTeX.
  */
 
@@ -31,7 +38,10 @@ import {
   type Link,
   LinkKind,
   type LockedSection,
+  OUTLINE_PLACEHOLDER,
+  type OutlinePart,
   type OutlineSection,
+  type OutlineUnit,
   type RichText,
   SECTION_KINDS,
   SECTION_ROLES,
@@ -75,6 +85,8 @@ import {
   type StructureOp,
   showsBullets,
 } from "./document";
+import { type KeptAt, keptSegments, markerOf } from "./outline";
+import { piecesOf } from "./retype";
 
 /** How long typing in the panel waits for a pause before it becomes a command, in milliseconds. */
 export const PAUSE = 300;
@@ -211,10 +223,13 @@ export function holdsContent(section: Section): boolean {
 }
 
 /**
- * What the panel says of an outline, an imported resume in its own shape, whose parts the page
- * edits; the panel lists them with the second pass's item 7.
+ * What the panel calls an outline, an imported resume in its own shape, whose parts it lists (the
+ * second pass's item 7).
  */
-const OUTLINE = "Your resume as you imported it";
+export const OUTLINE = "Your resume as you imported it";
+
+/** What kept text is, beside its first words. */
+export const KEPT_AS_WRITTEN = "kept as your file wrote it";
 
 /**
  * Any section but a locked one, which no field edits and the panel moves and removes, and an
@@ -392,9 +407,8 @@ export function Panel({
   const known = pkg ?? CURATED.get(document.template)?.package;
   const rules = rulesOf(known, document);
   // An imported `.tex` keeps its own shape (decision 0049): no header's field or link of the shared
-  // structure reaches its page, so none is offered; its outline's row stands for it, until the
-  // second pass's item 7 lists the outline's parts here.
-  const outline = sections.some((section) => section.kind === "outline");
+  // structure reaches its page, so none is offered, and its outline stands in place of the sections.
+  const outline = sections.find((section) => section.kind === "outline");
   return (
     <ShownFields value={shownFields}>
       <Seal value={onSeal}>
@@ -409,15 +423,24 @@ export function Panel({
                 send={onCommand}
               />
             )}
-            <Sections
-              sections={sections}
-              format={dateFormatOf(document, known)}
-              rules={rules}
-              lockedWords={lockedWords}
-              retypes={retypes}
-              onRetype={onRetype}
-              send={onCommand}
-            />
+            {outline === undefined ? (
+              <Sections
+                sections={sections}
+                format={dateFormatOf(document, known)}
+                rules={rules}
+                lockedWords={lockedWords}
+                retypes={retypes}
+                onRetype={onRetype}
+                send={onCommand}
+              />
+            ) : (
+              <OutlineRows
+                section={outline}
+                retypes={retypes}
+                onRetype={onRetype}
+                send={onCommand}
+              />
+            )}
           </div>
         </RulesOf>
       </Seal>
@@ -724,6 +747,254 @@ function LockedRow({
         up={pinned.has("up") ? PINNED.up : undefined}
         down={pinned.has("down") ? PINNED.down : undefined}
       />
+    </li>
+  );
+}
+
+/**
+ * A required field's placeholder, which a new unit's copy of it holds until a person types in it
+ * (`OUTLINE_PLACEHOLDER`, decision 0055), so that its input marks it while it does.
+ */
+const placeholderOf = (part: OutlinePart) =>
+  (part.kind === "text" || part.kind === "rich") && part.required === true
+    ? { placeholder: OUTLINE_PLACEHOLDER }
+    : {};
+
+/** A piece of kept text's place, as a key. */
+const keptKey = (at: KeptAt) => `${at.path.join(".")}${at.gap ? "g" : ""}`;
+
+/** Kept text's words, its runs of plain text as the person reads them, never its LaTeX. */
+const keptWords = (latex: string) =>
+  piecesOf(latex)
+    .map((piece) => piece.text)
+    .join(" ");
+
+/** The words of an outline's parts, its fields' text and its kept text's, in order. */
+function partsWords(parts: readonly OutlinePart[]): string {
+  return parts
+    .map((part) => {
+      switch (part.kind) {
+        case "kept":
+          return keptWords(part.latex);
+        case "text":
+          return part.text;
+        case "rich":
+          return plainText(part.text);
+        case "group":
+          return part.units.map((unit) => partsWords(unit.parts)).join(" ");
+      }
+    })
+    .join(" ");
+}
+
+/** What a unit of an outline is called when it has no words. */
+export const NO_WORDS = "No words";
+
+/**
+ * What an outline's rows need besides their parts: the segment of kept text each piece of it is in,
+ * by its place (`keptKey`), and what each segment offers to retype (`PanelProps.retypes`).
+ */
+interface OutlineContext {
+  segments: ReadonlyMap<string, string>;
+  retypes: PanelProps["retypes"];
+  onRetype: PanelProps["onRetype"];
+  send: Send;
+}
+
+/**
+ * An imported outline in place of the labelled form (the module's comment): its parts in order,
+ * each named by its first words.
+ */
+function OutlineRows({
+  section,
+  retypes,
+  onRetype,
+  send,
+}: {
+  section: OutlineSection;
+  retypes: PanelProps["retypes"];
+  onRetype: PanelProps["onRetype"];
+  send: Send;
+}) {
+  const segments = new Map<string, string>();
+  for (const segment of keptSegments(section))
+    for (const piece of segment.pieces)
+      if (piece.at !== undefined) segments.set(keptKey(piece.at), segment.id);
+  const context: OutlineContext = { segments, retypes, onRetype, send };
+  return (
+    <fieldset>
+      <legend>{OUTLINE}</legend>
+      <OutlineParts parts={section.parts} path={[]} context={context} />
+    </fieldset>
+  );
+}
+
+/** An outline's parts, or a unit's, as rows: those that set words or hold a field. */
+function OutlineParts({
+  parts,
+  path,
+  context,
+}: {
+  parts: readonly OutlinePart[];
+  path: readonly number[];
+  context: OutlineContext;
+}) {
+  const rows = parts.flatMap((part, index) => {
+    const at = [...path, index];
+    const key = at.join(".");
+    switch (part.kind) {
+      case "kept": {
+        const words = firstWords(keptWords(part.latex));
+        if (words === "") return [];
+        const segment = context.segments.get(keptKey({ path: at }));
+        return [<KeptRow key={key} words={words} segment={segment} context={context} />];
+      }
+      case "text":
+        return [
+          <li key={key} style={STYLE.row}>
+            <FieldInput
+              label="Text"
+              {...textField(markerOf(part.id), context.send)}
+              text={part.text}
+              {...placeholderOf(part)}
+            >
+              <span>{firstWords(part.text)}</span>
+            </FieldInput>
+          </li>,
+        ];
+      case "rich":
+        return [
+          <li key={key} style={STYLE.row}>
+            <RichField
+              label="Text"
+              field={markerOf(part.id)}
+              runs={part.text}
+              send={context.send}
+              {...placeholderOf(part)}
+            />
+          </li>,
+        ];
+      case "group":
+        return [
+          <li key={key}>
+            <ol style={STYLE.list}>
+              {part.units.map((unit, u) => (
+                <UnitRow key={unit.id} unit={unit} path={[...at, u]} context={context} />
+              ))}
+            </ol>
+          </li>,
+        ];
+    }
+  });
+  if (rows.length === 0) return null;
+  return <ol style={STYLE.list}>{rows}</ol>;
+}
+
+/**
+ * A unit of an outline's group, a bullet or an entry: named by its first words, and opening to show
+ * its parts; closed, it still gives an input to each of its fields that needs one.
+ */
+function UnitRow({
+  unit,
+  path,
+  context,
+}: {
+  unit: OutlineUnit;
+  path: readonly number[];
+  context: OutlineContext;
+}) {
+  const [open, setOpen] = useState(false);
+  const words = firstWords(partsWords(unit.parts));
+  return (
+    <li>
+      <div style={STYLE.row}>
+        <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {words === "" ? NO_WORDS : words}
+        </button>
+      </div>
+      {open ? (
+        <OutlineParts parts={unit.parts} path={path} context={context} />
+      ) : (
+        <UnitInputs parts={unit.parts} send={context.send} />
+      )}
+    </li>
+  );
+}
+
+/** The inputs a closed unit's fields need (`needsInput`), and nothing for the rest. */
+function UnitInputs({ parts, send }: { parts: readonly OutlinePart[]; send: Send }) {
+  return (
+    <>
+      {parts.map((part) => {
+        switch (part.kind) {
+          case "kept":
+            return null;
+          case "text":
+            return (
+              <FieldInput
+                key={part.id}
+                label="Text"
+                {...textField(markerOf(part.id), send)}
+                text={part.text}
+                {...placeholderOf(part)}
+              />
+            );
+          case "rich":
+            return (
+              <FieldInput
+                key={part.id}
+                label="Text"
+                field={markerOf(part.id)}
+                text={plainText(part.text)}
+                {...placeholderOf(part)}
+                locked={
+                  part.text.some((run) => run.bold || run.italic || run.href !== undefined) &&
+                  !isBlank(plainText(part.text))
+                }
+                onChange={(typed) =>
+                  send(
+                    { type: "rich", field: markerOf(part.id), runs: [{ text: typed }] },
+                    `field:${markerOf(part.id)}`,
+                  )
+                }
+              />
+            );
+          case "group":
+            return part.units.map((unit) => (
+              <UnitInputs key={unit.id} parts={unit.parts} send={send} />
+            ));
+        }
+      })}
+    </>
+  );
+}
+
+/**
+ * Kept text of an outline that sets words: its first words, marked as kept, and "Change words",
+ * which opens the editor of its segment's runs on the page (decision 0042), or says why it cannot.
+ */
+function KeptRow({
+  words,
+  segment,
+  context,
+}: {
+  words: string;
+  segment: string | undefined;
+  context: OutlineContext;
+}) {
+  const { retypes, onRetype } = context;
+  return (
+    <li style={STYLE.row}>
+      <span>{words}</span>
+      <small style={STYLE.mark}>{KEPT_AS_WRITTEN}</small>
+      {onRetype !== undefined && segment !== undefined && (
+        <AddButton
+          refused={retypes?.has(segment) ? retypes.get(segment) : NOT_YET}
+          onClick={() => onRetype(segment)}
+        >
+          Change words
+        </AddButton>
+      )}
     </li>
   );
 }

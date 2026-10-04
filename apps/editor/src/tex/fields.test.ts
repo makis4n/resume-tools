@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { bound, fastest } from "../test/timing";
 import { type DviPage, type PageItem, parseDvi } from "./dvi";
 import {
+  acceptedMarkers,
   alignField,
   alignGlyphs,
   collectFields,
@@ -152,6 +153,80 @@ describe("collectFields", () => {
         .join(""),
     ).toBe("EXP");
     expect(fields.get("b_0.text")?.glyphs).toHaveLength(1);
+  });
+});
+
+describe("collectFields on an outline's page, through the markers it accepts", () => {
+  // An outline's kept text can set the editor's markers by another spelling than the model refuses
+  // (`^^72t:b:`, decision 0049): the page reads only the outline's own ids, each by its first begin
+  // and the first end after it (the second pass's item 7). Every word is invented.
+  const read = (pages: DviPage[], ids: string[]) => {
+    const accepted = acceptedMarkers(pages, new Set(ids));
+    return pages.map((each, index) => collectFields(each, textOf, accepted[index]));
+  };
+  const spelt = (fields: Map<string, { glyphs: FieldGlyph[] }>, id: string) =>
+    fields
+      .get(id)
+      ?.glyphs.map((g) => g.text)
+      .join("");
+
+  it("reads no field the outline does not hold", () => {
+    const [fields] = read(
+      [
+        page([
+          special("rt:b:forged.text"),
+          ...word("Wren"),
+          special("rt:e:forged.text"),
+          special("rt:b:f1.text"),
+          ...word("Quill"),
+          special("rt:e:f1.text"),
+        ]),
+      ],
+      ["f1.text"],
+    );
+    expect([...(fields?.keys() ?? [])]).toEqual(["f1.text"]);
+    expect(spelt(fields ?? new Map(), "f1.text")).toBe("Quill");
+  });
+
+  it("reads a field by its first begin and end, and a later pair for its id as none", () => {
+    const [fields] = read(
+      [
+        page([
+          special("rt:b:f1.text"),
+          ...word("Quill"),
+          special("rt:e:f1.text"),
+          // Kept text after it forges the field's markers around words of its own.
+          special("rt:b:f1.text"),
+          ...word("Forged"),
+          special("rt:e:f1.text"),
+          special("rt:e:f1.text"),
+          special("rt:b:f2.text"),
+          ...word("Wren"),
+          special("rt:e:f2.text"),
+        ]),
+      ],
+      ["f1.text", "f2.text"],
+    );
+    expect([...(fields?.keys() ?? [])]).toEqual(["f1.text", "f2.text"]);
+    expect(spelt(fields ?? new Map(), "f1.text")).toBe("Quill");
+    expect(spelt(fields ?? new Map(), "f2.text")).toBe("Wren");
+  });
+
+  it("ends a field no sooner than its first end after its begin, on any page", () => {
+    const pages = read(
+      [
+        // A forged end before the field begins is no end of it.
+        page([special("rt:e:f1.text"), special("rt:b:f1.text"), ...word("Qu")]),
+        page([...word("ill"), special("rt:e:f1.text"), special("rt:b:f1.text"), ...word("x")]),
+      ],
+      ["f1.text"],
+    );
+    expect(spelt(pages[0] ?? new Map(), "f1.text")).toBe("Qu");
+    // The next page reads no second begin: its field is the page before's.
+    expect([...(pages[1]?.keys() ?? [])]).toEqual([]);
+    expect(acceptedMarkers([page([special("rt:e:f1.text")])], new Set(["f1.text"]))).toEqual([
+      new Set(),
+    ]);
   });
 });
 

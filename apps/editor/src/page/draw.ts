@@ -22,6 +22,7 @@ import {
   type WidthProvider,
 } from "../tex/dvi";
 import {
+  acceptedMarkers,
   alignField,
   collectFields,
   type Field,
@@ -34,6 +35,7 @@ import { accentMark, glyphOf } from "../tex/glyphs";
 import { glyphKey, INCH, type PageSize, paperSizeOf, renderPage, US_LETTER } from "../tex/svg";
 import { scaleTfm } from "../tex/tfm";
 import type { FontLibrary, NativePageFont, PageFont } from "./fonts";
+import { keptSets } from "./kept";
 import { blocksOf, type LockedRegion, type LockedSet, lockedSets, type Placed } from "./locked";
 import { type NativeFontFile, nativeFileName, singleFeaturesOn } from "./native";
 import { paragraphId } from "./paragraph";
@@ -627,6 +629,7 @@ function layoutsOf(
   natives: ReadonlyMap<string, NativePageFont>,
   fields: ReadonlyMap<string, Field>,
   features: ReadonlyMap<string, readonly string[]>,
+  accepted?: ReadonlySet<number>,
 ): Map<string, FieldLayout | undefined> {
   const pt = pointsPerUnit(doc);
   const loadedWith = nativeFeatures(doc, page, natives, features);
@@ -649,8 +652,10 @@ function layoutsOf(
     const startsHere = firsts.get(index) ?? [];
     for (const { id } of startsHere) waiting.delete(id);
     if (item.kind === "special") {
+      // An outline's page reads only the markers it accepts (`acceptedMarkers`).
+      const marker = accepted === undefined || accepted.has(index);
       const begin = markerId(item.text, MARKER_BEGIN);
-      if (begin !== undefined && !begun.has(begin)) {
+      if (begin !== undefined && marker && !begun.has(begin)) {
         begun.add(begin);
         waiting.add(begin);
       }
@@ -854,6 +859,14 @@ export interface DrawOptions {
    * none. Left out, every feature counts.
    */
   features?: ReadonlyMap<string, readonly string[]>;
+  /**
+   * An imported outline's fields the generator writes, by their marker ids, in the order it writes
+   * them (`writtenFields`, the second pass's item 7): the page is read as an outline's, its fields
+   * only those ids by their first begin and end (`acceptedMarkers`), and its kept text between them
+   * as locked parts are, by segment (`keptSets`), where no lock marker is read. Left out for any
+   * other document.
+   */
+  outline?: readonly string[];
 }
 
 /**
@@ -876,6 +889,8 @@ interface Prepared {
   natives: Map<string, NativePageFont>;
   missingFonts: Map<string, string>;
   sets: Map<string, LockedSet>;
+  /** For an outline, each page's markers its fields are read by (`acceptedMarkers`). */
+  accepted?: Set<number>[];
   textOf: GlyphTextOf;
 }
 
@@ -914,7 +929,12 @@ async function prepare(
   }
   const doc: DviDocument = parseDvi(dvi, widthsOf(loaded));
   const textOf = glyphTextOf(doc, loaded, natives, options.features);
-  return { doc, loaded, natives, missingFonts, sets: lockedSets(doc), textOf };
+  if (options.outline === undefined)
+    return { doc, loaded, natives, missingFonts, sets: lockedSets(doc), textOf };
+  // An outline's page holds no lock marker of the editor's: one its kept text sets is none.
+  const accepted = acceptedMarkers(doc.pages, new Set(options.outline));
+  const sets = keptSets(doc, options.outline, accepted);
+  return { doc, loaded, natives, missingFonts, sets, accepted, textOf };
 }
 
 /** Draw the page `pageIndex` of a prepared DVI (`prepare`), as `drawPage` describes. */
@@ -928,7 +948,8 @@ function drawPrepared(
   const page = doc.pages[pageIndex];
   if (!page) throw new Error(`the document has ${doc.pages.length} pages, not ${pageIndex + 1}`);
 
-  const found = collectFields(page, prepared.textOf);
+  const accepted = prepared.accepted?.[pageIndex];
+  const found = collectFields(page, prepared.textOf, accepted);
   let unmatched = 0;
   const folds = new Map<string, Fold>();
   for (const field of found.values()) {
@@ -936,7 +957,8 @@ function drawPrepared(
     unmatched += alignment.unmatched;
     if (alignment.folded !== undefined) folds.set(field.id, alignment.folded);
   }
-  const layouts = layoutsOf(doc, page, loaded, natives, found, options.features ?? new Map());
+  const features = options.features ?? new Map();
+  const layouts = layoutsOf(doc, page, loaded, natives, found, features, accepted);
   const fields = new Map<string, PageField>();
   for (const [id, field] of found) {
     const layout = layouts.get(id);

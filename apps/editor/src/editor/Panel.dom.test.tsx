@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { outlinePackage, outlineResume } from "../import/outline";
 import { curated } from "../templates/curated";
 import type { TemplatePackage } from "../templates/package";
-import { type Command, type Document, newDocument } from "./document";
-import { Panel } from "./Panel";
+import { inventedOutline, outlineParts } from "../test/invented-outline";
+import { type Command, type Document, fieldsOf, newDocument } from "./document";
+import { keptSegments, outlineOf } from "./outline";
+import { KEPT_AS_WRITTEN, NO_WORDS, OUTLINE, Panel } from "./Panel";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -221,5 +223,78 @@ describe("the side panel, under an imported package's rules", () => {
     expect(host.querySelectorAll("input, select, textarea")).toHaveLength(0);
     expect(host.textContent).toContain("Your resume as you imported it");
     expect(sent).toEqual([]);
+  });
+
+  it("shows an imported outline's parts in order, by their first words, in place of the form", async () => {
+    // The invented outline (the second pass's item 7): its heading kept whole, a section's title,
+    // its roles and their bullets, a paragraph kept whole, and a second section.
+    const parts = outlineParts();
+    // The last bullet emptied: the page shows nothing of it, so the panel gives it an input.
+    parts[7] = { kind: "rich", id: "orrery", text: [] };
+    const { pkg, document: imported } = await inventedOutline(parts);
+    const outline = outlineOf(imported.resume);
+    if (outline === undefined) throw new Error("no outline");
+    const [heading] = keptSegments(outline);
+    if (heading === undefined) throw new Error("no kept text");
+    const opened: string[] = [];
+    act(() =>
+      root.render(
+        <Panel
+          document={imported}
+          pkg={pkg}
+          shownFields={
+            new Set([...fieldsOf(imported.resume).keys()].filter((id) => id !== "orrery.text"))
+          }
+          retypes={new Map([[heading.id, undefined]])}
+          onRetype={(part) => opened.push(part)}
+          onCommand={(command, group) => sent.push(command) && group !== undefined}
+          onSeal={() => {}}
+        />,
+      ),
+    );
+    expect(host.querySelector("legend")?.textContent).toBe(OUTLINE);
+    const rows = [...host.querySelectorAll("fieldset > ol > li")].map((row) =>
+      (row.textContent ?? "").replace(/\s+/g, " ").trim(),
+    );
+    expect(rows[0]).toBe(`Quill Wrenfield Harbour City, Eastmere${KEPT_AS_WRITTEN}Change words`);
+    expect(rows[1]).toBe("Experience");
+    // The roles, each a unit named by its first words.
+    expect(rows[2]).toBe("Lantern Works 2021 -- 2024 Set…Mill and Sons 2019 Cut half…");
+    expect(rows[3]).toBe(`Hobbies Rowing on the river most…${KEPT_AS_WRITTEN}Change words`);
+    expect(rows[4]).toBe("Projects");
+    // No form of the shared structure, and nothing of the LaTeX.
+    expect(host.textContent).not.toMatch(/[\\{}]/);
+    expect([...host.querySelectorAll("label")].map((label) => label.textContent)).toEqual(["Text"]);
+    // The heading's kept text opens its editor on the page; the paragraph's, which the page has
+    // not offered, waits for it.
+    const buttons = [...host.querySelectorAll("button")];
+    const change = buttons.filter((button) => button.textContent === "Change words");
+    expect(change.map((button) => button.disabled)).toEqual([false, true]);
+    act(() => change[0]?.click());
+    expect(opened).toEqual([heading.id]);
+    // A unit opens to show its parts: its fields, and its bullets, by their first words.
+    const lantern = buttons.find((button) => button.textContent?.startsWith("Lantern Works"));
+    act(() => lantern?.click());
+    expect(lantern?.getAttribute("aria-expanded")).toBe("true");
+    expect(host.textContent).toContain(
+      "Lantern Works2021 -- 2024Set careful type for forty journals",
+    );
+    // The emptied bullet's input sends what is typed into it as its field's text.
+    const input = host.querySelector("input");
+    if (input === null) throw new Error("no input");
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    act(() => {
+      set?.call(input, "Built a brass orrery");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      input.blur();
+    });
+    expect(sent).toEqual([
+      { type: "rich", field: "orrery.text", runs: [{ text: "Built a brass orrery" }] },
+    ]);
+    // A unit with no words is named so.
+    expect(NO_WORDS).toBe("No words");
   });
 });

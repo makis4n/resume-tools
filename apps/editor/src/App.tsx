@@ -13,13 +13,16 @@ import {
   CommandError,
   dropRefusedChoices,
   type Document as EditorDocument,
+  FieldTooLong,
   History,
+  TOO_LONG,
 } from "./editor/document";
 import { pdfFileName, savePdf } from "./editor/download";
 import { applyFit, type Fitted, fit } from "./editor/fit";
 import { StructureGuard } from "./editor/guard";
 import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
+import { outlineOf } from "./editor/outline";
 import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
 import { usePdfConsent } from "./editor/PdfReading";
 import { RetypeEditor, retypeEditorKey } from "./editor/RetypeEditor";
@@ -40,7 +43,7 @@ import { isRefusal } from "./import/refusal";
 import { type Report, reportOfImport } from "./import/report";
 import { IMPORT_STEPS, type Imported, type ImportJob, type ImportOutcome } from "./import/run";
 import { FontLibrary } from "./page/fonts";
-import { Pages } from "./page/Page";
+import { KEPT_TIPS, Pages } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
 import { isPdfFile, isPdfRefusal, readPdfFile, refusedBySize } from "./pdf";
 import { browserConsent } from "./pdf/consent";
@@ -291,6 +294,8 @@ export function App() {
    */
   const guard = useRef(new StructureGuard());
   const [takenBack, setTakenBack] = useState(false);
+  /** Whether the last edit was refused for making a field longer than one may be (`MAX_FIELD`). */
+  const [tooLong, setTooLong] = useState(false);
   /** Whether the compile that just stopped was a step taken back, whose plain message is said. */
   const tookBack = useRef(false);
   /** The fonts the pages are drawn with, which a retype's check reads the outputs with. */
@@ -326,6 +331,7 @@ export function App() {
     retypeGuard.current.forget();
     setRetyping(undefined);
     setTakenBack(false);
+    setTooLong(false);
     setOpen(undefined);
     setClicked(undefined);
     setImportedReport(undefined);
@@ -400,6 +406,7 @@ export function App() {
     retypeGuard.current.forget();
     setRetyping(undefined);
     setTakenBack(false);
+    setTooLong(false);
     compiler.current?.open(pkg, document, job);
   };
 
@@ -497,6 +504,8 @@ export function App() {
           current?.history === history ? { ...current, present, canUndo, canRedo } : current,
         );
         owned?.update(present);
+        // A field open on what was taken back closes: what it shows is no longer the document's.
+        setClicked(undefined);
         setTakenBack(true);
       },
       busy: setBusy,
@@ -582,7 +591,9 @@ export function App() {
     const { present } = doc.history;
     setTakenBack(false);
     compiler.current?.update(present);
-    if (guard.current.changed(doc.history, before))
+    // An imported outline's every change waits for its page (`StructureGuard`).
+    const every = outlineOf(present.resume) !== undefined;
+    if (guard.current.changed(doc.history, before, every))
       store.current?.save(doc.id, present, doc.revision);
   };
 
@@ -857,8 +868,14 @@ export function App() {
     } catch (error) {
       if (!(error instanceof CommandError)) throw error;
       console.warn("The template refused an edit:", error.message);
+      // Typed past what a field holds: the field open closes, showing the document's text again.
+      if (error instanceof FieldTooLong) {
+        setTooLong(true);
+        setClicked(undefined);
+      }
       return;
     }
+    setTooLong(false);
     if (after !== before) followPresent(open, before);
   };
 
@@ -890,19 +907,20 @@ export function App() {
 
   /**
    * Open the small editor of a locked part's words, clicked on the page or opened from its row in
-   * the side panel (decision 0042), by its section's id in any case, as the page reads ids; the
-   * field open closes first, its visit ending, as a click on another field ends it.
+   * the side panel (decision 0042), by its section's id in any case, as the page reads ids; or of a
+   * segment of an outline's kept text, by its id (the second pass's item 7). The field open closes
+   * first, its visit ending, as a click on another field ends it.
    */
   const openRetype = (part: string) => {
     if (stale || retypeGuard.current.holds()) return;
-    const section = present.resume.sections.find(
-      (each) => each.kind === "locked" && each.id.toLowerCase() === part.toLowerCase(),
+    const key = [...(retypes?.keys() ?? [])].find(
+      (each) => each.toLowerCase() === part.toLowerCase(),
     );
-    const retype = section === undefined ? undefined : retypes?.get(section.id);
-    if (section === undefined || retype === undefined || !isRetype(retype)) return;
+    const retype = key === undefined ? undefined : retypes?.get(key);
+    if (key === undefined || retype === undefined || !isRetype(retype)) return;
     seal();
     setClicked(undefined);
-    setRetyping({ part: section.id, checking: false });
+    setRetyping({ part: key, checking: false });
   };
 
   /**
@@ -1201,6 +1219,7 @@ export function App() {
           </button>
         </p>
         {takenBack && <p role="status">{TAKEN_BACK}</p>}
+        {tooLong && <p role="status">{TOO_LONG}</p>}
         {pdfError && <p>{pdfError}</p>}
         {/* The fit takes the page on screen to be the present document's, so it waits while a
             page is on its way; it waits while a PDF is being made, whose request would otherwise
@@ -1236,6 +1255,7 @@ export function App() {
             onField={openField}
             retypable={retypable}
             onLocked={openRetype}
+            {...(outlineOf(present.resume) === undefined ? {} : { tips: KEPT_TIPS })}
             {...(editing === undefined ? {} : { editing })}
           />
           {clicked && sheet && !stale && (
