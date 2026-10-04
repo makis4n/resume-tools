@@ -7,9 +7,9 @@ import { describe, expect, it } from "vitest";
 import { handleLabel, LABEL_LIMITS } from "../service/label";
 import { LABEL_ROUTE, LabelRequest } from "../service/label-contract";
 import { MemoryRateStore } from "../service/rate";
-import { browserConsent, memoryConsent, type StorageLike } from "./consent";
+import { browserConsent, memoryConsent, type StorageLike, whoRead } from "./consent";
 import { fileLines } from "./file";
-import { featuresOf, labelByRules, labelLines } from "./label";
+import { featuresOf, LABEL_TEXT_CHARS, labelByRules, labelLines, labelText } from "./label";
 import { layOut } from "./layout";
 import { type FetchLike, MODEL_BUDGET_MS, modelLabeller } from "./model-labeller";
 import { readPdf } from "./node";
@@ -154,20 +154,86 @@ describe("the rules answer in the model's place, for each cause", () => {
   const yes = memoryConsent("yes");
   const rulesFor = (fallback: string) => ({ roles: RULES, by: "rules", fallback });
 
-  it("a request that fails: no network, or a refusal from the service", async () => {
+  it("a request that reaches nothing, and each refusal of the service, by its own cause", async () => {
     const offline = service(() => {
       throw new TypeError("Failed to fetch");
     });
-    expect(await labelLines(layout, modelLabeller({ consent: yes, fetch: offline.fetch }))).toEqual(
-      rulesFor("failed"),
+    const offlineLabels = await labelLines(
+      layout,
+      modelLabeller({ consent: yes, fetch: offline.fetch }),
     );
-    for (const status of [400, 413, 429, 500, 502, 503]) {
+    expect(offlineLabels).toEqual(rulesFor("unreachable"));
+    expect(whoRead(offlineLabels)).toMatch(/could not be reached/);
+    const causes = [
+      [400, "too long", /more text than the reading service takes/],
+      [413, "too long", /more text than the reading service takes/],
+      [429, "busy", /busy/],
+      [503, "not set up", /not set up/],
+      [500, "failed", /reading service failed/],
+      [502, "failed", /reading service failed/],
+    ] as const;
+    for (const [status, cause, says] of causes) {
       const refusing = service(() => new Response('{"error":"refused"}', { status }));
-      expect(
-        await labelLines(layout, modelLabeller({ consent: yes, fetch: refusing.fetch })),
-        String(status),
-      ).toEqual(rulesFor("failed"));
+      const labels = await labelLines(
+        layout,
+        modelLabeller({ consent: yes, fetch: refusing.fetch }),
+      );
+      expect(labels, String(status)).toEqual(rulesFor(cause));
+      expect(whoRead(labels), String(status)).toMatch(says);
     }
+  });
+
+  it("sends a long joined line's start alone, so one paragraph cannot make the request too long", async () => {
+    // An invented paragraph joined from many rows, longer than the service takes of one line.
+    const paragraph = Array.from({ length: 600 }, (_, at) => `word${at}`).join(" ");
+    expect(paragraph.length).toBeGreaterThan(LABEL_TEXT_CHARS);
+    const long: ReadPdf = {
+      ...read,
+      pages: read.pages.map((page) => ({
+        ...page,
+        runs: [...page.runs, run(paragraph, 50, 200, { width: 500 })],
+      })),
+    };
+    const longLayout = layOut(long);
+    const features = featuresOf(longLayout);
+    expect(features.some((line) => line.text === paragraph.slice(0, LABEL_TEXT_CHARS))).toBe(true);
+    expect(features.every((line) => line.text.length <= LABEL_TEXT_CHARS)).toBe(true);
+    expect(labelText("\u{1F600}".repeat(LABEL_TEXT_CHARS))).toHaveLength(LABEL_TEXT_CHARS);
+    // Through the route itself, which takes it whole and asks the model.
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              Object.fromEntries(features.map((line) => [`L${line.id}`, "running text"])),
+            ),
+          },
+        ],
+        finishReason: { unified: "stop", raw: undefined },
+        usage: {
+          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: undefined },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        },
+        warnings: [],
+      }),
+    });
+    const deps = {
+      model,
+      address: "127.0.0.1",
+      rates: new MemoryRateStore(),
+      limits: LABEL_LIMITS,
+      now: () => 0,
+    };
+    const labels = await labelLines(
+      longLayout,
+      modelLabeller({
+        consent: yes,
+        fetch: (url, init) =>
+          handleLabel(new Request(new URL(url, "http://localhost"), init), deps),
+      }),
+    );
+    expect(labels.by).toBe("model");
   });
 
   it("a reply of the wrong form", async () => {

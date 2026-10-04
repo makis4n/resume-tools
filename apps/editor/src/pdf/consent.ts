@@ -120,8 +120,16 @@ export function whoRead(labels: Pick<Labels, "by" | "fallback">): string {
       return "The editor read this PDF in your browser: its text was not sent.";
     case "timeout":
       return "The editor read this PDF in your browser: the reading service did not answer in time.";
-    case "failed":
+    case "unreachable":
       return "The editor read this PDF in your browser: the reading service could not be reached.";
+    case "busy":
+      return "The editor read this PDF in your browser: the reading service was busy. Try again in a few minutes.";
+    case "not set up":
+      return "The editor read this PDF in your browser: the reading service is not set up here.";
+    case "too long":
+      return "The editor read this PDF in your browser: it has more text than the reading service takes.";
+    case "failed":
+      return "The editor read this PDF in your browser: the reading service failed.";
     case "wrong form":
       return "The editor read this PDF in your browser: the reading service's answer could not be used.";
     default:

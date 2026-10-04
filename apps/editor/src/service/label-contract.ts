@@ -11,7 +11,7 @@
  */
 
 import { z } from "zod";
-import { ROLES } from "../pdf/roles.ts";
+import { LABEL_TEXT_CHARS, ROLES } from "../pdf/roles.ts";
 
 /** The route, relative to the page. */
 export const LABEL_ROUTE = "/v1/label";
@@ -20,7 +20,7 @@ export const LABEL_ROUTE = "/v1/label";
 export const MAX_LINES = 2_000;
 
 /** The most characters one line's text may hold. */
-export const MAX_LINE_TEXT = 2_000;
+export const MAX_LINE_TEXT = LABEL_TEXT_CHARS;
 
 /** A count or a place on the page, as `featuresOf` rounds them. */
 const count = z.number().int().min(0).max(100_000);

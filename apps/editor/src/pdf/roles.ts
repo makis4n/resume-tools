@@ -6,6 +6,12 @@
  * takes it without the layout's code.
  */
 
+/**
+ * The most characters of a line's text sent to be labelled, and the most the service takes: a role
+ * needs the line's start, not all of a long paragraph.
+ */
+export const LABEL_TEXT_CHARS = 2_000;
+
 /** The roles a line may have: a closed list, which a model is given as an enum. */
 export const ROLES = [
   "name",

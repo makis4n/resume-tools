@@ -10,7 +10,7 @@
 
 import type { Layout, Line } from "./layout.ts";
 import type { Features, Role } from "./roles.ts";
-import { ROLES } from "./roles.ts";
+import { LABEL_TEXT_CHARS, ROLES } from "./roles.ts";
 import {
   countWords,
   hasEmail,
@@ -26,7 +26,7 @@ import {
 
 // The closed list of roles and what a line's features are live in `roles.ts`, which the reading
 // service takes too without the layout's code.
-export { type Features, ROLES, type Role } from "./roles.ts";
+export { type Features, LABEL_TEXT_CHARS, ROLES, type Role } from "./roles.ts";
 
 /** Whether a text's letters are all capitals, three or more of them. */
 export function allCaps(text: string): boolean {
@@ -34,11 +34,21 @@ export function allCaps(text: string): boolean {
   return letters.length >= 3 && letters === letters.toUpperCase() && /\p{Lu}/u.test(letters);
 }
 
+/**
+ * A line's text as it is sent to be labelled: its first `LABEL_TEXT_CHARS` characters, which say
+ * what it is, so that one long paragraph joined from many rows cannot make the whole request too
+ * long for the service; never half of a character.
+ */
+export function labelText(text: string): string {
+  if (text.length <= LABEL_TEXT_CHARS) return text;
+  return text.slice(0, LABEL_TEXT_CHARS).replace(/[\uD800-\uDBFF]$/u, "");
+}
+
 /** Each line's features, as a table of plain values: what a model is told of the lines. */
 export function featuresOf(layout: LabelInput): Features[] {
   return layout.lines.map((line) => ({
     id: line.id,
-    text: line.text,
+    text: labelText(line.text),
     page: line.page,
     column: line.column,
     columns: line.columns,
@@ -286,11 +296,21 @@ export const rulesLabeller: Labeller = { by: "rules", label: (input) => labelByR
 
 /**
  * Why a labeller's answer was not taken, and the rules answered in its place: the person has not
- * agreed to send the PDF's text (`no consent`), the labeller failed or could not reach its service
- * (`failed`), it answered past its time budget (`timeout`), or in a form other than one role from
- * the list for each line (`wrong form`).
+ * agreed to send the PDF's text (`no consent`); its service could not be reached (`unreachable`),
+ * was busy with this address's requests (`busy`), has no model set up (`not set up`), took less
+ * text than the PDF has (`too long`), or failed otherwise (`failed`); it answered past its time
+ * budget (`timeout`), or in a form other than one role from the list for each line (`wrong form`).
  */
-export const LABEL_FALLBACKS = ["no consent", "failed", "timeout", "wrong form"] as const;
+export const LABEL_FALLBACKS = [
+  "no consent",
+  "unreachable",
+  "busy",
+  "not set up",
+  "too long",
+  "failed",
+  "timeout",
+  "wrong form",
+] as const;
 export type LabelFallback = (typeof LABEL_FALLBACKS)[number];
 
 /**

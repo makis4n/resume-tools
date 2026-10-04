@@ -11,6 +11,7 @@ import {
   type StorageLike,
   whoRead,
 } from "./consent";
+import { LABEL_FALLBACKS } from "./label";
 
 /** A storage in memory, as the browser's local storage behaves. */
 function storage(): StorageLike & { items: Map<string, string> } {
@@ -103,7 +104,14 @@ describe("what the person is told", () => {
     expect(whoRead({ by: "model" })).toMatch(/model/);
     expect(whoRead({ by: "rules", fallback: "no consent" })).toMatch(/not sent/);
     expect(whoRead({ by: "rules", fallback: "timeout" })).toMatch(/in time/);
-    expect(whoRead({ by: "rules", fallback: "failed" })).toMatch(/could not be reached/);
+    expect(whoRead({ by: "rules", fallback: "unreachable" })).toMatch(/could not be reached/);
+    expect(whoRead({ by: "rules", fallback: "busy" })).toMatch(/busy/);
+    expect(whoRead({ by: "rules", fallback: "not set up" })).toMatch(/not set up/);
+    expect(whoRead({ by: "rules", fallback: "too long" })).toMatch(/more text than/);
+    expect(whoRead({ by: "rules", fallback: "failed" })).toMatch(/reading service failed/);
+    // Each cause has a sentence of its own.
+    const said = LABEL_FALLBACKS.map((fallback) => whoRead({ by: "rules", fallback }));
+    expect(new Set(said).size).toBe(LABEL_FALLBACKS.length);
     expect(whoRead({ by: "rules", fallback: "wrong form" })).toMatch(/could not be used/);
     expect(whoRead({ by: "rules" })).toMatch(/in your browser/);
   });

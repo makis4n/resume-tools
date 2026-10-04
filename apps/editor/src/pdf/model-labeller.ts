@@ -7,9 +7,12 @@
  *
  * It falls back to the rules, through `labelLines`, for each cause, with the cause kept for the
  * review: no yes on record, read afresh before anything is sent (`no consent`); a request that
- * fails or a refusal from the service (`failed`); no answer within the time budget, 15 s from the
- * start, the owner's (`timeout`); and a reply that is not one role from the list for each line
- * (`wrong form`). A stop the caller asks for is the caller's, and is not a fallback.
+ * reaches nothing (`unreachable`); the service's refusals, by their status: too many requests
+ * (429, `busy`), no model set up (503, `not set up`), a request it will not take (400 or 413,
+ * `too long`), and any other (`failed`); no answer within the time budget, 15 s from the start,
+ * the owner's, or the service's own 504 (`timeout`); and a reply that is not one role from the
+ * list for each line (422, `wrong form`). A stop the caller asks for is the caller's, and is not a
+ * fallback. A line's text is sent cut to its first `LABEL_TEXT_CHARS` characters (`featuresOf`).
  */
 
 import { LABEL_ROUTE, LabelReply } from "../service/label-contract.ts";
@@ -73,7 +76,7 @@ export function modelLabeller(options: ModelLabellerOptions): Labeller {
         }
       } catch (error) {
         if (signal?.aborted) throw error;
-        throw new LabellerFallback(timedOut ? "timeout" : "failed");
+        throw new LabellerFallback(timedOut ? "timeout" : "unreachable");
       } finally {
         clearTimeout(timer);
         signal?.removeEventListener("abort", stop);
@@ -81,6 +84,9 @@ export function modelLabeller(options: ModelLabellerOptions): Labeller {
       if (signal?.aborted) throw signal.reason;
       if (status === 422) throw new LabellerFallback("wrong form");
       if (status === 504) throw new LabellerFallback("timeout");
+      if (status === 400 || status === 413) throw new LabellerFallback("too long");
+      if (status === 429) throw new LabellerFallback("busy");
+      if (status === 503) throw new LabellerFallback("not set up");
       if (status !== 200) throw new LabellerFallback("failed");
       const parsed = LabelReply.safeParse(reply);
       if (!parsed.success || parsed.data.roles.length !== input.lines.length)

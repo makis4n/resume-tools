@@ -41,13 +41,15 @@ first pass's provider code and service shell (decisions 0028, 0036, 0044).
   posts `{ lines: featuresOf(layout) }` to the editor's own origin, `POST /v1/label`, with
   `cache: "no-store"`, and takes the reply only when it is one role from the list for each line.
 - **The rules answer for each cause**, through `labelLines`, which keeps the cause: `no consent`
-  (no yes on record: nothing sent), `failed` (no network, or a refusal from the service: 4xx, 5xx),
-  `timeout` (no reply read within 15 s from the call's start, the owner's budget, or the service's
+  (no yes on record: nothing sent), `unreachable` (no network), `busy` (429), `not set up` (503, no
+  model), `too long` (400 or 413), `failed` (any other refusal, 500 or 502 among them), `timeout` (no reply read within 15 s from the call's start, the owner's budget, or the service's
   own 504), and `wrong form` (a 422 from the service, a reply that is not JSON, or not one role from
   the list for each line). A stop the caller asks for is the caller's, and not a fallback. A
   labeller says why it gives no answer by throwing `LabellerFallback(reason)`; anything else it
   throws is `failed`. `whoRead(labels)` says in one sentence, for item 14's review, which read the
-  PDF and why the rules did.
+  PDF and why the rules did, a sentence a cause. A line's text is sent cut to its first 2,000
+  characters (`labelText`, the contract's most), since a role needs a line's start and one long
+  paragraph joined from many rows would otherwise make the whole request refused.
 
 ### The service
 
