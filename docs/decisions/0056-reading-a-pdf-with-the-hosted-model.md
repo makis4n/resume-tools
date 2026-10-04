@@ -1,4 +1,4 @@
-# 00XX. Reading a PDF with the hosted model, with consent
+# 0056. Reading a PDF with the hosted model, with consent
 
 Date: 2026-10-04 · Status: accepted
 
