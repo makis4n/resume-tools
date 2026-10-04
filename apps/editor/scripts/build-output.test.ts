@@ -1,6 +1,6 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, type Manifest } from "vite";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -77,48 +77,87 @@ describe("the page's build", () => {
     const manifest = JSON.parse(
       readFileSync(join(out, ".vite", "manifest.json"), "utf8"),
     ) as Manifest;
-    // The main bundle: the page's entry and every chunk it imports statically, what the first
-    // load fetches; a dynamic import is fetched only when it runs.
-    const main = new Set<string>();
+    // What the first load fetches: the page's entry and every chunk it imports statically, and
+    // every worker one of those starts, the compile worker among them, with what each of those
+    // imports statically. A dynamic import is fetched only when it runs.
+    const firstLoad = new Set<string>();
     const visit = (key: string) => {
       const chunk = manifest[key];
-      if (chunk === undefined || main.has(chunk.file)) return;
-      main.add(chunk.file);
-      for (const css of chunk.css ?? []) main.add(css);
+      if (chunk === undefined || firstLoad.has(chunk.file)) return;
+      firstLoad.add(chunk.file);
+      for (const css of chunk.css ?? []) firstLoad.add(css);
       for (const imported of chunk.imports ?? []) visit(imported);
     };
     visit("index.html");
-    expect(main.size).toBeGreaterThan(0);
+    const entry = new Set(firstLoad);
+    for (const file of [...firstLoad])
+      for (const named of startsOrImports(out, file)) {
+        if (firstLoad.has(named)) continue;
+        firstLoad.add(named);
+        for (const more of closure(out, named)) firstLoad.add(more);
+      }
+    const workersAtStart = [...firstLoad].filter((file) => !entry.has(file));
+    expect(workersAtStart.some((file) => /worker/.test(file))).toBe(true);
     const holdsPdfJs = (path: string) => {
       const text = readFileSync(join(out, path), "latin1");
       return PDFJS_MARKS.filter((mark) => text.includes(mark));
     };
-    for (const file of main) expect(holdsPdfJs(file), `pdf.js in ${file}`).toEqual([]);
-    // The reader is a chunk of its own, loaded by a dynamic import, which holds pdf.js...
+    for (const file of firstLoad) expect(holdsPdfJs(file), `pdf.js in ${file}`).toEqual([]);
+    // The reader is a chunk of its own, loaded by a dynamic import...
     const reader = manifest["src/pdf/browser.ts"];
     expect(reader?.isDynamicEntry).toBe(true);
-    expect(main.has(reader?.file ?? "")).toBe(false);
-    const readerFiles = new Set<string>();
-    const gather = (key: string) => {
-      const chunk = manifest[key];
-      if (chunk === undefined || readerFiles.has(chunk.file)) return;
-      readerFiles.add(chunk.file);
-      for (const imported of chunk.imports ?? []) gather(imported);
-    };
-    gather("src/pdf/browser.ts");
-    const readerOwn = [...readerFiles].filter((file) => !main.has(file));
+    const readerFile = reader?.file ?? "";
+    expect(firstLoad.has(readerFile)).toBe(false);
+    // ...which starts a worker of its own, which holds pdf.js, its worker code with it, and is the
+    // editor's own file, not a CDN's.
+    const readerWorkers = workersOf(out, readerFile);
+    expect(readerWorkers).toHaveLength(1);
+    const [readerWorker = ""] = readerWorkers;
+    expect(readerWorker).toMatch(/reader-worker/);
+    const readerOwn = closure(out, readerWorker).filter((file) => !firstLoad.has(file));
+    expect(readerOwn).toContain(readerWorker);
     expect(readerOwn.flatMap(holdsPdfJs)).toEqual(expect.arrayContaining(PDFJS_MARKS));
-    // ...and pdf.js's worker is a file of its own beside it, the editor's own copy, not a CDN's.
-    const workers = filesUnder(out)
-      .map((file) => relative(out, file))
-      .filter((path) => /pdf\.worker/.test(path) && path.endsWith(".js"));
-    expect(workers).toHaveLength(1);
-    const [worker = ""] = workers;
-    expect(main.has(worker)).toBe(false);
-    expect(holdsPdfJs(worker)).toContain("GetDocRequest");
-    const readerText = readerOwn.map((file) => readFileSync(join(out, file), "latin1")).join("");
-    expect(readerText).toContain(worker.split("/").pop());
-    for (const file of [...readerOwn, worker])
+    for (const file of [readerFile, ...readerOwn])
       expect(readFileSync(join(out, file), "latin1"), file).not.toMatch(/cdn\.|unpkg|jsdelivr/i);
   });
 });
+
+/** A path a built file names, `./x.js` beside it or `/assets/x.js`, as the build's own path. */
+const builtPath = (from: string, named: string) =>
+  named.startsWith("/") ? named.slice(1) : join(dirname(from), named);
+
+/** The workers a built file starts: each `new Worker(...)` with the build's own file in it. */
+function workersOf(out: string, file: string): string[] {
+  const text = readFileSync(join(out, file), "latin1");
+  return [...text.matchAll(/new Worker\(\s*(?:new URL\(\s*)?["'`]([^"'`]+\.js)["'`]/g)].map(
+    ([, named = ""]) => builtPath(file, named),
+  );
+}
+
+/** The chunks a built file imports or exports from statically; a dynamic `import(` is not one. */
+function importsOf(out: string, file: string): string[] {
+  const text = readFileSync(join(out, file), "latin1");
+  return [
+    ...text.matchAll(
+      /\b(?:import|export)\s*(?:[^"'`;()]*?\bfrom\s*)?["'`](\.{1,2}\/[^"'`]+\.js)["'`]/g,
+    ),
+  ].map(([, named = ""]) => builtPath(file, named));
+}
+
+/** What a built file starts or imports statically. */
+const startsOrImports = (out: string, file: string) => [
+  ...workersOf(out, file),
+  ...importsOf(out, file),
+];
+
+/** A built file and every file it starts or imports statically, and theirs in turn. */
+function closure(out: string, file: string): string[] {
+  const seen = new Set<string>();
+  const visit = (path: string) => {
+    if (seen.has(path)) return;
+    seen.add(path);
+    for (const named of startsOrImports(out, path)) visit(named);
+  };
+  visit(file);
+  return [...seen];
+}

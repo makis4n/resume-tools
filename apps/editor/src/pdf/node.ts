@@ -5,7 +5,7 @@
  * installs beside it, which reading text does not need (decision 0051).
  */
 
-import { type PdfJs, type PdfReading, readPdfWith } from "./read.ts";
+import { type PdfJs, type PdfReading, type ReadOptions, readPdfWith } from "./read.ts";
 import { refusedBeforeReading } from "./refusals.ts";
 
 let loaded: Promise<PdfJs> | undefined;
@@ -16,9 +16,12 @@ export function pdfjsInNode(): Promise<PdfJs> {
   return loaded;
 }
 
-/** Read a PDF in this thread: the PDF read, or why it was not, in plain words. */
-export async function readPdf(bytes: Uint8Array): Promise<PdfReading> {
+/**
+ * Read a PDF in this thread: the PDF read, or why it was not, in plain words, within the same caps
+ * and time limit as the page's reading.
+ */
+export async function readPdf(bytes: Uint8Array, options: ReadOptions = {}): Promise<PdfReading> {
   const before = refusedBeforeReading(bytes);
   if (before) return before;
-  return readPdfWith(await pdfjsInNode(), bytes);
+  return readPdfWith(await pdfjsInNode(), bytes, options);
 }

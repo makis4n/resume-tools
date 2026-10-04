@@ -6,8 +6,9 @@
  *
  * The reading is pdf.js's, Mozilla's, from `pdfjs-dist`'s legacy build, which reaches older
  * browsers than its modern one does. This module never loads pdf.js itself: it is given the module,
- * by `browser.ts` in the page, where pdf.js parses in a worker of its own, and by `node.ts` in tests
- * and scripts, where it parses in the same thread. Both read through this one code.
+ * by `reader-worker.ts` in the page, where all of it, pdf.js and this code, runs in a worker of its
+ * own, and by `node.ts` in tests and scripts, where it runs in the same thread. Both read through
+ * this one code.
  *
  * Positions are in PDF points with the origin at the page's top left, y growing down, as a person
  * reads the page: a run's `x` is where its text starts and `baseline` the line it sits on.
@@ -16,15 +17,23 @@
  * to decode no image and to run no form; see `READ_OPTIONS`. It holds nothing of a file but what it
  * returns, and logs nothing: pdf.js's own messages are errors only, since a warning may quote a
  * font's or a link's name.
+ *
+ * What pdf.js makes of a page is taken as it streams, and kept only as runs, links and marks: a page
+ * past the caps (`PAGE_CAPS`, `DOCUMENT_CAPS`) or a reading past its time stops there, and the PDF
+ * is refused as too complex, so that a small hostile file cannot make the reading take all memory.
  */
 
 import type * as PdfJsModule from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { DocumentInitParameters } from "pdfjs-dist/types/src/display/api";
 import {
+  type Caps,
+  DOCUMENT_CAPS,
   MAX_PAGES,
   MIN_TEXT_CHARS,
+  PAGE_CAPS,
   type PdfRefusal,
   pdfRefusal,
+  READ_TIME_LIMIT_MS,
   refusedBeforeReading,
 } from "./refusals.ts";
 
@@ -210,15 +219,49 @@ const RULE_MIN = 36;
 
 /** What `readPdfWith` is given beside the bytes. */
 export interface ReadOptions {
-  /** The worker pdf.js parses in; without one, pdf.js makes its own, or reads in this thread. */
-  worker?: InstanceType<PdfJs["PDFWorker"]>;
+  /** How long the reading may take before the PDF is refused as too complex. */
+  timeLimitMs?: number;
 }
+
+/** A PDF past a cap, or past its time: what stops a reading and refuses the PDF as too complex. */
+class TooComplex extends Error {}
+
+/** What a reading has used of its caps, a page's or the document's. */
+class Tally {
+  readonly used = { drawing: 0, runs: 0, chars: 0, marks: 0, links: 0 };
+  private readonly caps: Caps;
+  // Fields set by hand, not as the constructor's parameters: Node runs the spike's scripts, which
+  // read through this module, by stripping its types, and it strips no more than types.
+  constructor(caps: Caps) {
+    this.caps = caps;
+  }
+  /** Count `amount` more of `what`; past its cap, the reading stops. */
+  add(what: keyof Caps, amount: number) {
+    this.used[what] += amount;
+    if (this.used[what] > this.caps[what]) throw new TooComplex(what);
+  }
+}
+
+/**
+ * One page's tally and the document's together, and the reading's clock: past `deadline` the
+ * reading stops wherever it is counting, since in one thread a timer may not fire until pdf.js
+ * lets it.
+ */
+const both =
+  (page: Tally, document: Tally, deadline: number) => (what: keyof Caps, amount: number) => {
+    if (performance.now() > deadline) throw new TooComplex("time");
+    page.add(what, amount);
+    document.add(what, amount);
+  };
+
+type Count = ReturnType<typeof both>;
 
 /**
  * Read a PDF with the pdf.js given: every page's runs of text, links and marks, or a refusal in
  * plain words. It refuses before it parses a file past the size cap, or one that does not begin as
- * a PDF; then one pdf.js cannot open, one locked with a password, one past the page cap, and one
- * with no text to read. It never throws for anything in the file.
+ * a PDF; then one pdf.js cannot open, one locked with a password, one past the page cap, one past
+ * the caps on what a page holds or past its time, and one with no text to read. It never throws for
+ * anything in the file.
  */
 export async function readPdfWith(
   pdf: PdfJs,
@@ -230,20 +273,35 @@ export async function readPdfWith(
   if (before) return before;
   let task: ReturnType<PdfJs["getDocument"]>;
   try {
-    task = pdf.getDocument({
-      ...READ_OPTIONS,
-      // pdf.js takes the buffer over, so it gets a copy.
-      data: new Uint8Array(bytes),
-      ...(options.worker === undefined ? {} : { worker: options.worker }),
-    });
+    // pdf.js takes the buffer over, so it gets a copy.
+    task = pdf.getDocument({ ...READ_OPTIONS, data: new Uint8Array(bytes) });
   } catch {
     return pdfRefusal("unreadable");
   }
+  const limit = options.timeLimitMs ?? READ_TIME_LIMIT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<PdfReading>((resolve) => {
+    timer = setTimeout(() => resolve(pdfRefusal("too-complex")), limit);
+  });
+  try {
+    return await Promise.race([readDocument(pdf, task, started, started + limit), late]);
+  } finally {
+    clearTimeout(timer);
+    // Stops whatever pdf.js is still doing for this file, and lets go of all of it.
+    void task.destroy().catch(() => undefined);
+  }
+}
+
+async function readDocument(
+  pdf: PdfJs,
+  task: ReturnType<PdfJs["getDocument"]>,
+  started: number,
+  deadline: number,
+): Promise<PdfReading> {
   let doc: Awaited<ReturnType<PdfJs["getDocument"]>["promise"]>;
   try {
     doc = await task.promise;
   } catch (error) {
-    await task.destroy().catch(() => undefined);
     const name = error instanceof Error ? error.name : "";
     if (name === "PasswordException") return pdfRefusal("password");
     if (name === "InvalidPDFException") return pdfRefusal("not-pdf");
@@ -251,32 +309,103 @@ export async function readPdfWith(
   }
   try {
     if (doc.numPages > MAX_PAGES) return pdfRefusal("too-large");
+    const document = new Tally(DOCUMENT_CAPS);
     const pages: PdfPage[] = [];
-    for (let number = 1; number <= doc.numPages; number++)
-      pages.push(await readPage(pdf, await doc.getPage(number), number));
-    const chars = pages
-      .flatMap((page) => page.runs)
-      .reduce((sum, run) => sum + (run.text.match(/[\p{L}\p{N}]/gu)?.length ?? 0), 0);
-    if (chars < MIN_TEXT_CHARS) return pdfRefusal("no-text");
+    for (let number = 1; number <= doc.numPages; number++) {
+      const page = await doc.getPage(number);
+      pages.push(await readPage(pdf, page, number, both(new Tally(PAGE_CAPS), document, deadline)));
+      // What pdf.js keeps of the page, its fonts' objects and its lists, goes with it.
+      page.cleanup();
+    }
+    if (!hasText(pages)) return pdfRefusal("no-text");
     return { pages, ms: performance.now() - started };
-  } catch {
-    return pdfRefusal("unreadable");
-  } finally {
-    await task.destroy().catch(() => undefined);
+  } catch (error) {
+    return pdfRefusal(error instanceof TooComplex ? "too-complex" : "unreadable");
   }
+}
+
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+
+/** Whether the pages hold at least `MIN_TEXT_CHARS` letters and digits, counted until they do. */
+function hasText(pages: PdfPage[]): boolean {
+  let found = 0;
+  for (const page of pages)
+    for (const run of page.runs)
+      for (const char of run.text)
+        if (LETTER_OR_DIGIT.test(char) && ++found >= MIN_TEXT_CHARS) return true;
+  return false;
 }
 
 type PdfPageProxy = Awaited<
   ReturnType<Awaited<ReturnType<PdfJs["getDocument"]>["promise"]>["getPage"]>
 >;
 
-async function readPage(pdf: PdfJs, page: PdfPageProxy, number: number): Promise<PdfPage> {
+/** A piece of a page's operator list, as pdf.js streams it from its worker. */
+interface OperatorChunk {
+  fnArray: number[];
+  argsArray: unknown[];
+  length: number;
+  lastChunk: boolean;
+}
+
+/**
+ * Stream a page's operator list into `take`, a piece at a time, keeping none of it: pdf.js's
+ * `getOperatorList` gathers the whole list before it answers, which a hostile page makes millions
+ * of operations long, so each piece is handed to `take` as it arrives and then passed on to pdf.js
+ * empty, which still learns from it when the list ends. The piece arrives through the page's
+ * `_renderPageChunk`, pdf.js's own and not its public API: a pdf.js without it is refused as
+ * unreadable rather than read whole, and the reader's tests fail on it.
+ */
+function streamOperators(page: PdfPageProxy, take: (chunk: OperatorChunk) => void) {
+  const proxy = page as unknown as {
+    _renderPageChunk?: (chunk: OperatorChunk, state: unknown) => void;
+  };
+  const deliver = proxy._renderPageChunk;
+  if (typeof deliver !== "function")
+    return Promise.reject(new Error("pdf.js no longer streams a page's operators."));
+  return new Promise<void>((resolve, reject) => {
+    let failed = false;
+    proxy._renderPageChunk = function (chunk, state) {
+      if (!failed)
+        try {
+          take(chunk);
+        } catch (error) {
+          failed = true;
+          reject(error);
+        }
+      deliver.call(this, { ...chunk, fnArray: [], argsArray: [], length: 0 }, state);
+    };
+    page.getOperatorList().then(() => resolve(), reject);
+  });
+}
+
+/** How much an operation's arguments hold: each array's and typed array's length, three deep. */
+function weight(value: unknown, depth = 0): number {
+  if (depth > 2 || typeof value !== "object" || value === null) return 0;
+  if (ArrayBuffer.isView(value)) return (value as unknown as ArrayLike<unknown>).length ?? 0;
+  if (!Array.isArray(value)) return 0;
+  let sum = value.length;
+  for (const item of value) sum += weight(item, depth + 1);
+  return sum;
+}
+
+async function readPage(
+  pdf: PdfJs,
+  page: PdfPageProxy,
+  number: number,
+  count: Count,
+): Promise<PdfPage> {
   const viewport = page.getViewport({ scale: 1 });
   const toPage = (x: number, y: number) => viewport.convertToViewportPoint(x, y) as number[];
   // The operator list loads the page's fonts, whose names the text's items then find, and holds
   // what the page draws.
-  const operators = await page.getOperatorList();
-  const content = await page.getTextContent({ includeMarkedContent: false });
+  const marks = new MarkReader(pdf, viewport.transform as Matrix, count);
+  await streamOperators(page, (chunk) => {
+    let drawing = chunk.length;
+    for (let i = 0; i < chunk.length; i++) drawing += weight(chunk.argsArray[i]);
+    count("drawing", drawing);
+    marks.take(chunk.fnArray, chunk.argsArray, chunk.length);
+  });
   const fonts = new Map<string, { name: string; bold: boolean; italic: boolean }>();
   const fontOf = (id: string) => {
     let font = fonts.get(id);
@@ -298,30 +427,23 @@ async function readPage(pdf: PdfJs, page: PdfPageProxy, number: number): Promise
     return font;
   };
   const runs: TextRun[] = [];
-  for (const item of content.items) {
-    if (!("str" in item) || item.str.trim() === "") continue;
-    const [a, b, c, d, e, f] = item.transform as Matrix;
-    // Text set upright: a rotated run, as a sidebar's vertical label, is read as it stands.
-    const size = Math.hypot(c, d) || Math.hypot(a, b);
-    if (!(size > 0) || !Number.isFinite(size)) continue;
-    const [x, baseline] = toPage(e, f) as [number, number];
-    if (!Number.isFinite(x) || !Number.isFinite(baseline)) continue;
-    const font = fontOf(item.fontName);
-    // pdf.js keeps a run's spaces; the run is trimmed, and its start and width with it, a
-    // character's share of the width a character.
-    const lead = item.str.length - item.str.trimStart().length;
-    const trail = item.str.length - item.str.trimEnd().length;
-    const each = item.str.length === 0 ? 0 : item.width / item.str.length;
-    runs.push({
-      text: item.str.trim(),
-      x: x + lead * each,
-      width: Math.max(0, item.width - (lead + trail) * each),
-      baseline,
-      size,
-      font: font.name,
-      bold: font.bold,
-      italic: font.italic,
-    });
+  const reader = page.streamTextContent({ includeMarkedContent: false }).getReader();
+  // A reading stopped part way leaves the stream as it is: the document's end, which follows at
+  // once, ends it, where cancelling it races pdf.js's own close of it.
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    for (const item of (value as { items: unknown[] }).items) {
+      if (typeof item !== "object" || item === null || !("str" in item)) continue;
+      const { str, transform, width, fontName: id } = item as TextItem;
+      if (typeof str !== "string") continue;
+      count("chars", str.length);
+      if (str.trim() === "") continue;
+      const run = runOf(str, transform, width, toPage, fontOf(String(id)));
+      if (run === undefined) continue;
+      count("runs", 1);
+      runs.push(run);
+    }
   }
   const links: PdfLink[] = [];
   for (const annotation of await page.getAnnotations({ intent: "display" })) {
@@ -334,6 +456,7 @@ async function readPage(pdf: PdfJs, page: PdfPageProxy, number: number): Promise
     if (![x0, y0, x1, y1].every(Number.isFinite)) continue;
     const [ax, ay] = toPage(x0 as number, y0 as number) as [number, number];
     const [bx, by] = toPage(x1 as number, y1 as number) as [number, number];
+    count("links", 1);
     links.push({
       x0: Math.min(ax, bx),
       y0: Math.min(ay, by),
@@ -348,84 +471,166 @@ async function readPage(pdf: PdfJs, page: PdfPageProxy, number: number): Promise
     height: viewport.height,
     runs,
     links,
-    marks: marksOf(pdf, operators, viewport.transform as Matrix),
+    marks: marks.marks,
+  };
+}
+
+/** A text item as pdf.js streams it. */
+interface TextItem {
+  str: unknown;
+  transform: unknown;
+  width: unknown;
+  fontName: unknown;
+}
+
+/** A text item as a run, on the page's top-left points; undefined for one that cannot be placed. */
+function runOf(
+  str: string,
+  transform: unknown,
+  width: unknown,
+  toPage: (x: number, y: number) => number[],
+  font: { name: string; bold: boolean; italic: boolean },
+): TextRun | undefined {
+  if (!Array.isArray(transform) || transform.length < 6) return undefined;
+  const [a, b, c, d, e, f] = transform.map(Number) as Matrix;
+  // Text set upright: a rotated run, as a sidebar's vertical label, is read as it stands.
+  const size = Math.hypot(c, d) || Math.hypot(a, b);
+  if (!(size > 0) || !Number.isFinite(size)) return undefined;
+  const [x, baseline] = toPage(e, f) as [number, number];
+  if (!Number.isFinite(x) || !Number.isFinite(baseline)) return undefined;
+  const wide = Number(width);
+  const total = Number.isFinite(wide) ? wide : 0;
+  // pdf.js keeps a run's spaces; the run is trimmed, and its start and width with it, a
+  // character's share of the width a character.
+  const lead = str.length - str.trimStart().length;
+  const trail = str.length - str.trimEnd().length;
+  const each = str.length === 0 ? 0 : total / str.length;
+  return {
+    text: str.trim(),
+    x: x + lead * each,
+    width: Math.max(0, total - (lead + trail) * each),
+    baseline,
+    size,
+    font: font.name,
+    bold: font.bold,
+    italic: font.italic,
   };
 }
 
 /**
- * The dots and rules a page draws, from its operator list: each path painted, its box taken through
- * the transformation in force and then the page's own, to the page's top-left points.
+ * The dots and rules a page draws, from its operator list as it streams: each path painted, its
+ * box taken through the transformation in force, a form's own among them, and then the page's
+ * own, to the page's top-left points.
  */
-function marksOf(
-  pdf: PdfJs,
-  operators: { fnArray: number[]; argsArray: unknown[] },
-  page: Matrix,
-): Mark[] {
-  const { OPS } = pdf;
-  const painting = new Set<number>([
-    OPS.fill,
-    OPS.eoFill,
-    OPS.fillStroke,
-    OPS.eoFillStroke,
-    OPS.closeFillStroke,
-    OPS.closeEOFillStroke,
-    OPS.stroke,
-    OPS.closeStroke,
-  ]);
-  const strokes = new Set<number>([OPS.stroke, OPS.closeStroke]);
-  const marks: Mark[] = [];
-  let matrix: Matrix = [1, 0, 0, 1, 0, 0];
-  let lineWidth = 1;
-  const stack: { matrix: Matrix; lineWidth: number }[] = [];
-  for (let i = 0; i < operators.fnArray.length; i++) {
-    const fn = operators.fnArray[i];
-    const args = operators.argsArray[i] as unknown[] | null;
-    if (fn === OPS.save) stack.push({ matrix, lineWidth });
-    else if (fn === OPS.restore) ({ matrix, lineWidth } = stack.pop() ?? { matrix, lineWidth });
-    else if (fn === OPS.transform && args) matrix = multiply(matrix, args as Matrix);
-    else if (fn === OPS.setLineWidth && args) lineWidth = Number(args[0]) || 0;
-    else if (fn === OPS.constructPath && args) {
-      const op = Number(args[0]);
-      const box = args[2] as ArrayLike<number> | null | undefined;
-      if (!painting.has(op) || !box || box.length < 4) continue;
-      const whole = multiply(page, matrix);
-      const corners = [
-        apply(whole, Number(box[0]), Number(box[1])),
-        apply(whole, Number(box[2]), Number(box[3])),
-        apply(whole, Number(box[0]), Number(box[3])),
-        apply(whole, Number(box[2]), Number(box[1])),
-      ];
-      let x0 = Math.min(...corners.map(([x]) => x));
-      let x1 = Math.max(...corners.map(([x]) => x));
-      let y0 = Math.min(...corners.map(([, y]) => y));
-      let y1 = Math.max(...corners.map(([, y]) => y));
-      if (![x0, x1, y0, y1].every(Number.isFinite)) continue;
-      if (strokes.has(op)) {
-        // A stroked line is as thick as its pen, in the page's points.
-        const pen = (lineWidth || 1) * Math.hypot(whole[0], whole[1]);
-        if (y1 - y0 < pen) {
-          y0 -= pen / 2;
-          y1 += pen / 2;
-        }
-        if (x1 - x0 < pen) {
-          x0 -= pen / 2;
-          x1 += pen / 2;
-        }
-      }
-      const width = x1 - x0;
-      const height = y1 - y0;
-      if (
-        width <= DOT_MAX &&
-        height <= DOT_MAX &&
-        Math.min(width, height) >= DOT_MIN &&
-        width / height < 2 &&
-        height / width < 2 &&
-        !strokes.has(op)
-      )
-        marks.push({ kind: "dot", x0, y0, x1, y1 });
-      else if (height <= RULE_MAX && width >= RULE_MIN)
-        marks.push({ kind: "rule", x0, y0, x1, y1 });
+class MarkReader {
+  readonly marks: Mark[] = [];
+  private matrix: Matrix = [1, 0, 0, 1, 0, 0];
+  private lineWidth = 1;
+  private readonly stack: { matrix: Matrix; lineWidth: number }[] = [];
+  private readonly painting: Set<number>;
+  private readonly strokes: Set<number>;
+
+  private readonly pdf: PdfJs;
+  private readonly page: Matrix;
+  private readonly count: Count;
+
+  constructor(pdf: PdfJs, page: Matrix, count: Count) {
+    this.pdf = pdf;
+    this.page = page;
+    this.count = count;
+    const { OPS } = pdf;
+    this.painting = new Set<number>([
+      OPS.fill,
+      OPS.eoFill,
+      OPS.fillStroke,
+      OPS.eoFillStroke,
+      OPS.closeFillStroke,
+      OPS.closeEOFillStroke,
+      OPS.stroke,
+      OPS.closeStroke,
+    ]);
+    this.strokes = new Set<number>([OPS.stroke, OPS.closeStroke]);
+  }
+
+  private save() {
+    this.stack.push({ matrix: this.matrix, lineWidth: this.lineWidth });
+  }
+
+  private restore() {
+    const saved = this.stack.pop();
+    if (saved === undefined) return;
+    this.matrix = saved.matrix;
+    this.lineWidth = saved.lineWidth;
+  }
+
+  take(fnArray: number[], argsArray: unknown[], length: number) {
+    const { OPS } = this.pdf;
+    for (let i = 0; i < length; i++) {
+      const fn = fnArray[i];
+      const args = argsArray[i] as unknown[] | null;
+      if (fn === OPS.save) this.save();
+      else if (fn === OPS.restore) this.restore();
+      else if (fn === OPS.transform && args) this.matrix = multiply(this.matrix, args as Matrix);
+      else if (fn === OPS.paintFormXObjectBegin) {
+        // A form draws inside a state of its own, through its own matrix, as pdf.js paints it.
+        this.save();
+        const form = Array.isArray(args) ? args[0] : undefined;
+        if (isMatrix(form)) this.matrix = multiply(this.matrix, form);
+      } else if (fn === OPS.paintFormXObjectEnd) this.restore();
+      else if (fn === OPS.setLineWidth && args) this.lineWidth = Number(args[0]) || 0;
+      else if (fn === OPS.constructPath && args) this.path(args);
     }
   }
-  return marks;
+
+  private path(args: unknown[]) {
+    const op = Number(args[0]);
+    const box = args[2] as ArrayLike<number> | null | undefined;
+    if (!this.painting.has(op) || !box || box.length < 4) return;
+    const whole = multiply(this.page, this.matrix);
+    const corners = [
+      apply(whole, Number(box[0]), Number(box[1])),
+      apply(whole, Number(box[2]), Number(box[3])),
+      apply(whole, Number(box[0]), Number(box[3])),
+      apply(whole, Number(box[2]), Number(box[1])),
+    ];
+    let x0 = Math.min(...corners.map(([x]) => x));
+    let x1 = Math.max(...corners.map(([x]) => x));
+    let y0 = Math.min(...corners.map(([, y]) => y));
+    let y1 = Math.max(...corners.map(([, y]) => y));
+    if (![x0, x1, y0, y1].every(Number.isFinite)) return;
+    const stroked = this.strokes.has(op);
+    if (stroked) {
+      // A stroked line is as thick as its pen, in the page's points.
+      const pen = (this.lineWidth || 1) * Math.hypot(whole[0], whole[1]);
+      if (y1 - y0 < pen) {
+        y0 -= pen / 2;
+        y1 += pen / 2;
+      }
+      if (x1 - x0 < pen) {
+        x0 -= pen / 2;
+        x1 += pen / 2;
+      }
+    }
+    const width = x1 - x0;
+    const height = y1 - y0;
+    let kind: Mark["kind"] | undefined;
+    if (
+      width <= DOT_MAX &&
+      height <= DOT_MAX &&
+      Math.min(width, height) >= DOT_MIN &&
+      width / height < 2 &&
+      height / width < 2 &&
+      !stroked
+    )
+      kind = "dot";
+    else if (height <= RULE_MAX && width >= RULE_MIN) kind = "rule";
+    if (kind === undefined) return;
+    this.count("marks", 1);
+    this.marks.push({ kind, x0, y0, x1, y1 });
+  }
 }
+
+const isMatrix = (value: unknown): value is Matrix =>
+  (Array.isArray(value) || ArrayBuffer.isView(value)) &&
+  (value as ArrayLike<unknown>).length === 6 &&
+  Array.from(value as ArrayLike<unknown>).every((n) => typeof n === "number" && Number.isFinite(n));
