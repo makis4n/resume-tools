@@ -87,7 +87,11 @@ first pass's provider code and service shell (decisions 0028, 0036, 0044).
 - **The rate limit** is decision 0028's (`rate.ts`): ten requests a minute, a hundred a day and two
   million characters of prompts a day an address, IPv6 by its /48; the prompt's characters are
   taken before the call. Its buckets are kept apart from the naming route's: in memory in the dev
-  server, and in `NAMING_KV` under `label-rate:<address>` on Pages. It fails open, as 0028's does.
+  server, and in `NAMING_KV` under `label-rate:<address>` on Pages. Each request is counted in one
+  write of its address's buckets, its prompt's characters with it, since KV takes one write a key a
+  second. Unlike 0028's, it fails closed: a request the store cannot count, a write KV refuses
+  within a second among them, is refused with 429 and the model is not asked, so a burst cannot
+  outrun the limit. A PDF with no lines sends nothing.
 
 ### The privacy rule, applied
 

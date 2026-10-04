@@ -268,6 +268,17 @@ describe("the rules answer in the model's place, for each cause", () => {
     );
   });
 
+  it("a PDF with no lines sends nothing, and the rules answer with no cause", async () => {
+    const { fetch, calls } = service(() => new Response('{"error":"refused"}', { status: 400 }));
+    const empty = { ...layout, lines: [] };
+    expect(await labelLines(empty, modelLabeller({ consent: yes, fetch }))).toEqual({
+      roles: [],
+      by: "rules",
+    });
+    expect(await modelLabeller({ consent: yes, fetch }).label(empty, {})).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
   it("a stop the caller asks for is the caller's, and no fallback", async () => {
     const { fetch } = hanging();
     const stop = new AbortController();

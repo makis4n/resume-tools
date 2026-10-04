@@ -354,7 +354,9 @@ export async function labelLines(
   labeller: Labeller = rulesLabeller,
   options: { signal?: AbortSignal } = {},
 ): Promise<Labels> {
-  if (labeller === rulesLabeller) return { roles: labelByRules(input), by: "rules" };
+  // With no lines there is nothing to ask anyone: the rules answer, and nothing is sent.
+  if (labeller === rulesLabeller || input.lines.length === 0)
+    return { roles: labelByRules(input), by: "rules" };
   let answer: unknown;
   try {
     answer = await labeller.label(input, options);

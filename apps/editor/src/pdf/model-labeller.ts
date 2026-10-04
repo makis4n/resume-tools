@@ -42,6 +42,8 @@ export function modelLabeller(options: ModelLabellerOptions): Labeller {
     async label(input, { signal }) {
       // Nothing is made, let alone sent, before a yes.
       if (options.consent.get() !== "yes") throw new LabellerFallback("no consent");
+      // No lines, nothing to send: the service takes a request of one line at least.
+      if (input.lines.length === 0) return [];
       const send = options.fetch ?? ((url, init) => globalThis.fetch(url, init));
       const body = JSON.stringify({ lines: featuresOf(input) });
       const controller = new AbortController();
