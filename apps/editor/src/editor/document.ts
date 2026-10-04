@@ -29,6 +29,8 @@ import {
   type Link,
   LinkKind,
   LockedLatex,
+  type OutlineField,
+  type OutlinePart,
   Resume,
   RichText,
   type Section,
@@ -50,6 +52,7 @@ import {
   type UnitKind,
 } from "../templates/package";
 import { parseSnippet, SnippetError, type SnippetNode } from "../templates/snippet";
+import { type KeptEdit, markerOf, outlineFields, partAt, withKept, withPartAt } from "./outline";
 
 export const Document = z.strictObject({
   version: z.literal(1),
@@ -119,10 +122,11 @@ export type FieldRef = (
  * Where a field sits among a package's snippets: the snippet that sets it, as the package's
  * required slots name it (`RequiredPlace`), and the name of its slot there. A labelled item's field
  * is `labelledItem`'s, an item's `item`'s, and a paragraph's text, like any section's title,
- * `section`'s.
+ * `section`'s. An outline's field is set by no snippet but where it stands in the outline
+ * (`outline`, named by its own id).
  */
 export interface FieldSlot {
-  snippet: RequiredPlace;
+  snippet: RequiredPlace | "outline";
   name: string;
 }
 
@@ -168,13 +172,13 @@ function at<T extends { id: string }>(list: Place<T[]>, index: number, id: strin
   };
 }
 
-type SectionOf<K extends SectionKind> = Extract<Section, { kind: K }>;
+type SectionOf<K extends Section["kind"]> = Extract<Section, { kind: K }>;
 
 /**
  * The section at `place` as the kind the walk found. A section's kind never changes under its id
  * (decision 0006); the check is what lets the type say which kind it is.
  */
-function ofKind<K extends SectionKind>(place: Place<Section>, kind: K): Place<SectionOf<K>> {
+function ofKind<K extends Section["kind"]>(place: Place<Section>, kind: K): Place<SectionOf<K>> {
   return {
     get: (resume) => {
       const section = place.get(resume);
@@ -244,7 +248,8 @@ export function keptOf(node: { kept?: readonly string[] | undefined }): Readonly
  * and nothing a body never marks, such as a link's address or a section's role. A locked section
  * has none: it is LaTeX an import kept, which the page draws and nothing edits (decision 0025);
  * and nor has a slot its node keeps as the upload had it, or a list it keeps whole (`kept`,
- * decision 0026).
+ * decision 0026). An outline's fields are each `<id>.text`, where it stands in the outline, and a
+ * document that holds one has no header's field or link's (the second pass's item 7).
  */
 export function fieldsOf(resume: Resume): Map<string, FieldRef> {
   const fields = new Map<string, FieldRef>();
@@ -254,7 +259,11 @@ export function fieldsOf(resume: Resume): Map<string, FieldRef> {
   };
   const slot = (snippet: RequiredPlace, name: string): FieldSlot => ({ snippet, name });
   const { header } = resume;
-  const keeps = keptOf(header);
+  // An imported outline's header is the shared structure's, which never reaches its page: its
+  // fields are the outline's alone (decision 0049).
+  const keeps = resume.sections.some((section) => section.kind === "outline")
+    ? new Set(["first", "last", ...HEADER_TEXTS, "links"])
+    : keptOf(header);
   add("header.first", text(under(NAME, "first"), slot("header", "first")), keeps);
   add("header.last", text(under(NAME, "last"), slot("header", "last")), keeps);
   for (const key of HEADER_TEXTS)
@@ -265,9 +274,23 @@ export function fieldsOf(resume: Resume): Map<string, FieldRef> {
       add(`${link.id}.label`, text(label, slot("link", "label")));
     });
   resume.sections.forEach((section, s) => {
-    // An outline's fields come with the second pass's item 7, which opens them in place.
-    if (section.kind === "locked" || section.kind === "outline") return;
+    if (section.kind === "locked") return;
     const place = at(SECTIONS, s, section.id);
+    if (section.kind === "outline") {
+      // Each field where it stands in the outline, a text or a rich text (the second pass's item 7).
+      const parts = under(ofKind(place, "outline"), "parts");
+      for (const { part, path } of outlineFields(section.parts)) {
+        const field = outlinePart(parts, path, part.id);
+        const slot: FieldSlot = { snippet: "outline", name: part.id };
+        add(
+          markerOf(part.id),
+          part.kind === "text"
+            ? text(outlineText<string>(field), slot)
+            : rich(outlineText<RichText>(field), slot),
+        );
+      }
+      return;
+    }
     const kept = keptOf(section);
     add(`${section.id}.title`, text(under(place, "title"), slot("section", "title")), kept);
     switch (section.kind) {
@@ -321,6 +344,43 @@ export function fieldsOf(resume: Resume): Map<string, FieldRef> {
 }
 
 /**
+ * The field `id` of an outline, at `path` among its parts (`partAt`), which must still be that
+ * field: a structure edit moves an outline's units, so a stale path throws rather than write into
+ * another field, as `at` does.
+ */
+function outlinePart(
+  parts: Place<OutlinePart[]>,
+  path: readonly number[],
+  id: string,
+): Place<OutlineField> {
+  const get = (resume: Resume): OutlineField => {
+    const part = partAt(parts.get(resume), path);
+    if ((part?.kind !== "text" && part?.kind !== "rich") || part.id !== id)
+      throw new Error(`${id} has moved since the outline's fields were found`);
+    return part;
+  };
+  return {
+    get,
+    put: (resume, field) => {
+      get(resume); // The same check before a write, so a stale path cannot write elsewhere.
+      const next = withPartAt(parts.get(resume), path, field);
+      if (next === undefined)
+        throw new Error(`${id} has moved since the outline's fields were found`);
+      return parts.put(resume, next);
+    },
+  };
+}
+
+/** An outline's field's text, of a plain text field or of a rich one, as `kind` is. */
+function outlineText<T extends string | RichText>(field: Place<OutlineField>): Place<T> {
+  return {
+    get: (resume) => field.get(resume).text as T,
+    put: (resume, value) =>
+      field.put(resume, { ...field.get(resume), text: value } as OutlineField),
+  };
+}
+
+/**
  * Whether `pkg` requires the field at `slot`: whether the package lists its slot among those of
  * the snippet that sets it which an import's checks found stop the compile when empty (`required`,
  * decision 0026), which the editor refuses to empty, as a required form field is refused, since
@@ -328,6 +388,7 @@ export function fieldsOf(resume: Resume): Map<string, FieldRef> {
  * one, requires nothing.
  */
 export function isRequired(pkg: TemplatePackage | undefined, slot: FieldSlot): boolean {
+  if (slot.snippet === "outline") return false;
   return pkg !== undefined && requiredSlots(pkg, slot.snippet).has(slot.name);
 }
 
@@ -510,6 +571,7 @@ export type Command =
   | { type: "dates"; field: string; dates: Dates | undefined }
   | { type: "structure"; op: StructureOp }
   | { type: "retype"; section: string; latex: string }
+  | { type: "retypeKept"; section: string; kept: readonly KeptEdit[] }
   | ControlCommand;
 
 /**
@@ -522,6 +584,26 @@ export class CommandError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CommandError";
+  }
+}
+
+/**
+ * The most characters a field holds, a rich field's runs' texts and their links' addresses together:
+ * far more than any resume's field, and far below what TeX can take in one, whose main memory one
+ * field of about 199,000 characters fills on pdfTeX, and whose line buffer one of about 201,000
+ * overflows (the second pass's item 6). A field typed past it would stop the compile, and the
+ * document saved so would never open again; the edit is refused instead (`FieldTooLong`).
+ */
+export const MAX_FIELD = 20_000;
+
+/** What the person reads when an edit would make a field longer than `MAX_FIELD`. */
+export const TOO_LONG = "That text is too long for one field, so the last of it was not kept.";
+
+/** A `CommandError` for an edit that would make a field longer than `MAX_FIELD`. */
+export class FieldTooLong extends CommandError {
+  constructor(field: string) {
+    super(`${field} holds at most ${MAX_FIELD} characters`);
+    this.name = "FieldTooLong";
   }
 }
 
@@ -590,6 +672,11 @@ export function applyUnder(
       const field = fieldOf(doc, command.field, "text");
       if (typeof command.text !== "string")
         throw new CommandError(`${command.field} takes text, not ${typeof command.text}`);
+      if (
+        command.text.length > MAX_FIELD &&
+        command.text.length > (field.get(doc.resume) ?? "").length
+      )
+        throw new FieldTooLong(command.field);
       refuseEmptied(rules, field.slot, command.field, field.get(doc.resume), command.text);
       return { ...doc, resume: field.set(doc.resume, command.text) };
     }
@@ -599,6 +686,10 @@ export function applyUnder(
       if (!runs.success)
         throw new CommandError(`${command.field} refuses the runs: ${z.prettifyError(runs.error)}`);
       const before = joined(field.get(doc.resume));
+      const size = (each: RichText) =>
+        each.reduce((sum, run) => sum + run.text.length + (run.href?.length ?? 0), 0);
+      if (size(runs.data) > MAX_FIELD && size(runs.data) > size(field.get(doc.resume)))
+        throw new FieldTooLong(command.field);
       refuseEmptied(rules, field.slot, command.field, before, joined(runs.data));
       return { ...doc, resume: field.set(doc.resume, runs.data) };
     }
@@ -623,6 +714,8 @@ export function applyUnder(
       return { ...doc, resume: restructure(doc.resume, command.op, rules) };
     case "retype":
       return { ...doc, resume: retypeSection(doc.resume, command.section, command.latex) };
+    case "retypeKept":
+      return { ...doc, resume: retypeKept(doc.resume, command.section, command.kept) };
     case "control": {
       const controlled = pkg ?? curated(doc.template).package;
       const next: Record<string, unknown> = { ...doc.controls };
@@ -667,6 +760,26 @@ function retypeSection(resume: Resume, id: string, latex: string): Resume {
  * the generator sets that list from the node's extras alone, so a new unit would be in the
  * document and never on the page (decision 0026).
  */
+/**
+ * The resume with pieces of the outline `id`'s kept text replaced (`edits`), a retype of their
+ * words (the second pass's item 7, decision 0042): each piece's runs of plain text retyped and
+ * escaped, the rest of its bytes as the upload wrote them. Throws a `CommandError` for a section
+ * that is not an outline, a piece that is not its kept text, and kept text the outline may not hold
+ * (`OutlineSection`), as one that holds the editor's markers' texts, as typed text might. Nothing
+ * else of the outline changes, so neither its fields nor its structure do.
+ */
+function retypeKept(resume: Resume, id: string, edits: readonly KeptEdit[]): Resume {
+  const index = resume.sections.findIndex((section) => section.id === id);
+  const section = resume.sections[index];
+  if (section?.kind !== "outline") throw new CommandError(`the document has no outline ${id}`);
+  const changed = withKept(section, edits);
+  if ("refused" in changed)
+    throw new CommandError(`the outline ${id} cannot keep that text: ${changed.refused}`);
+  const sections = [...resume.sections];
+  sections[index] = changed;
+  return { ...resume, sections };
+}
+
 function refuseKept(
   node: { kept?: readonly string[] | undefined },
   list: "bullets" | "entries" | "items" | "links",
@@ -1174,6 +1287,23 @@ export class History {
     this.shed = [];
     this.current = previous;
     return previous;
+  }
+
+  /**
+   * Make `document`, one this history's present has been, the present again for good: what came
+   * after it is dropped, with nothing to redo, and what came before it stays to undo. An edit of an
+   * imported outline whose compile stopped is taken back so, to the last document a page showed
+   * (`StructureGuard`, the second pass's item 7), whether that was where a step began or within
+   * one, as a visit to a field is one step however many keystrokes it took.
+   */
+  restore(document: Document): Document {
+    this.shed = [];
+    this.open = undefined;
+    this.future = [];
+    const at = this.past.lastIndexOf(document);
+    if (at >= 0) this.past.length = at;
+    this.current = document;
+    return document;
   }
 
   /** End the open step: dropped, with the future it cleared given back, if it changed nothing. */

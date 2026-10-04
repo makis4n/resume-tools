@@ -10,6 +10,11 @@
  * stops on it instead, the step is taken back, with every edit made since, and the document is
  * as it was before it, which the store still holds. So a saved document always has a page, and a
  * reload never opens one that does not compile.
+ *
+ * An imported outline's every change is held so (the second pass's item 7): its fields' text is set
+ * in the person's own LaTeX and fonts, which a character typed can stop, and what is taken back on
+ * a stop goes to the last document a page showed, within a visit to a field or not
+ * (`History.restore`).
  */
 
 import type { Resume } from "@resume-tools/resume-model";
@@ -35,11 +40,15 @@ export function structureOf(resume: Resume): string {
   ]);
 }
 
-/** What the guard holds: the history, its last document a page showed, and the step's structure. */
+/**
+ * What the guard holds: the history, its last document a page showed, and the step's structure;
+ * and where every change is held, the history's present, whose page lets go of it (`every`).
+ */
 interface Held {
   history: History;
   shown: Document;
   structure: string;
+  every?: { latest: Document };
 }
 
 /**
@@ -51,16 +60,26 @@ export class StructureGuard {
 
   /**
    * The history `history` went from `before` to its present: whether to save the present now. A
-   * structural step is held, and so is every change after it until a page shows it.
+   * structural step is held, and so is every change after it until a page shows it. With `every`,
+   * so is every change, a field's text among them, until a page shows the history's present: an
+   * imported outline's fields are the person's own LaTeX's, set in fonts that may lack a letter
+   * typed, which stops the compile, as a Cyrillic letter does where the fonts have none (the second
+   * pass's item 7).
    */
-  changed(history: History, before: Document): boolean {
+  changed(history: History, before: Document, every = false): boolean {
     const structure = structureOf(history.present.resume);
     if (this.held?.history === history) {
       this.held.structure = structure;
+      if (this.held.every !== undefined) this.held.every.latest = history.present;
       return false;
     }
-    if (structure === structureOf(before.resume)) return true;
-    this.held = { history, shown: before, structure };
+    if (!every && structure === structureOf(before.resume)) return true;
+    this.held = {
+      history,
+      shown: before,
+      structure,
+      ...(every ? { every: { latest: history.present } } : {}),
+    };
     return false;
   }
 
@@ -74,8 +93,17 @@ export class StructureGuard {
    * that the app saves the history's present.
    */
   paged(document: Document): boolean {
-    if (this.held === undefined || structureOf(document.resume) !== this.held.structure)
-      return false;
+    const held = this.held;
+    if (held?.every !== undefined) {
+      // A page of an earlier document than the present: what a stop now takes back goes to it.
+      if (document !== held.every.latest) {
+        held.shown = document;
+        return false;
+      }
+      this.held = undefined;
+      return true;
+    }
+    if (held === undefined || structureOf(document.resume) !== held.structure) return false;
     this.held = undefined;
     return true;
   }
@@ -87,6 +115,13 @@ export class StructureGuard {
    */
   stopped(document: Document): boolean {
     const held = this.held;
+    if (held?.every !== undefined) {
+      // An earlier document's stop: the present compiles next, and says for itself.
+      if (document !== held.every.latest) return false;
+      this.held = undefined;
+      held.history.restore(held.shown);
+      return true;
+    }
     if (held === undefined || structureOf(document.resume) !== held.structure) return false;
     this.held = undefined;
     while (held.history.present !== held.shown && held.history.undo() !== undefined);

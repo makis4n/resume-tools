@@ -97,3 +97,64 @@ describe("StructureGuard", () => {
     expect(guard.stopped(history.present)).toBe(false);
   });
 });
+
+describe("StructureGuard, holding every change of an imported outline", () => {
+  // What `every` holds: an outline's field's text may stop the compile, as a letter its fonts lack
+  // does (the second pass's item 7). The guard is told of each change, each page and each stop as
+  // the app tells it; the documents here are Jake's invented sample's, the guard's rule the same.
+  const type = (history: History, text: string) =>
+    history.dispatch({ type: "text", field: "exp.title", text }, "field:exp.title");
+
+  it("holds a field's edit until a page of the present shows it", () => {
+    const guard = new StructureGuard();
+    const history = new History(opened);
+    type(history, "W");
+    expect(guard.changed(history, opened, true)).toBe(false);
+    const first = history.present;
+    type(history, "Wo");
+    expect(guard.changed(history, first, true)).toBe(false);
+    // A page of an earlier document lets go of nothing.
+    expect(guard.paged(first)).toBe(false);
+    expect(guard.holds(history)).toBe(true);
+    expect(guard.paged(history.present)).toBe(true);
+    expect(guard.holds(history)).toBe(false);
+  });
+
+  it("takes a stop back to the last document a page showed, within one visit, with nothing to redo", () => {
+    const guard = new StructureGuard();
+    const history = new History(opened);
+    history.dispatch(typed);
+    history.seal();
+    const saved = history.present;
+    type(history, "W");
+    guard.changed(history, saved, true);
+    const shown = history.present;
+    type(history, "Wo");
+    guard.changed(history, shown, true);
+    // The page of the first keystroke came: a stop now takes back to it, inside the visit.
+    expect(guard.paged(shown)).toBe(false);
+    type(history, "Wor");
+    guard.changed(history, history.present, true);
+    // An earlier document's stop says nothing: the present compiles next.
+    expect(guard.stopped(shown)).toBe(false);
+    expect(guard.stopped(history.present)).toBe(true);
+    expect(history.present).toBe(shown);
+    expect(history.canRedo).toBe(false);
+    // Undo still takes back the visit as one step, to the document saved before it.
+    expect(history.undo()).toBe(saved);
+    expect(guard.holds(history)).toBe(false);
+  });
+
+  it("takes a stop back to where a step began, dropping the step", () => {
+    const guard = new StructureGuard();
+    const history = new History(opened);
+    history.dispatch(typed);
+    const saved = history.present;
+    history.dispatch(moved);
+    guard.changed(history, saved, true);
+    expect(guard.stopped(history.present)).toBe(true);
+    expect(history.present).toBe(saved);
+    expect(history.canRedo).toBe(false);
+    expect(history.undo()).toBe(opened);
+  });
+});

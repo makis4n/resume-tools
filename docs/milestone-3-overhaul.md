@@ -247,7 +247,7 @@ closes.
    three shares, editable in place, changeable through the retype, and locked, with each locked
    part's reason in plain words. `corpus run` has one mode. Done when the twenty-resume sample runs
    through and the report's shares on the three samples are pinned.
-7. [ ] **Typing in an imported resume.** A field of an outline opens in place on any page, as a
+7. [x] **Typing in an imported resume.** A field of an outline opens in place on any page, as a
    built-in template's does: the typing box, undo and redo, and bold, italic and links where the
    field is rich text. Kept text that lines up with the page keeps the retype. The side panel shows
    the outline, its parts in order by their first words, in place of the labelled form. Done when,

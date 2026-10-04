@@ -123,13 +123,18 @@ const LETTER = /^\p{L}$/u;
  * glyphs is paired with another. A run's glyph 0, the font's `.notdef`, is collected as a character
  * left out (`FieldGlyph.dropped`).
  *
- * TODO(the second pass's item 7): an imported outline's kept text and preamble are the upload's
- * own LaTeX, which can make the editor's markers in ways no check of their spelling sees, as
- * `\csname rtfield\endcsname` or `^^5c` (decision 0049; the model's `EDITOR_MACRO`). When item 7
- * opens an outline's fields from the page, take a marker for a field only where its id is one the
- * outline holds, and of each id only its first begin and its first end after it.
+ * An imported outline's kept text and preamble are the upload's own LaTeX, which can make the
+ * editor's markers in ways no check of their spelling sees, as `\csname rtfield\endcsname` or
+ * `^^72t:b:` (decision 0049; the model's `EDITOR_MACRO`). So an outline's page is read through
+ * `accepted`, its markers the outline's own reading accepts (`acceptedMarkers`): every other special
+ * is no marker at all, so that no field is read whose id the outline does not hold, and none is
+ * begun or ended a second time (the second pass's item 7).
  */
-export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, Field> {
+export function collectFields(
+  page: DviPage,
+  textOf: GlyphTextOf,
+  accepted?: ReadonlySet<number>,
+): Map<string, Field> {
   const fields = new Map<string, Field>();
   // The copies open where the walk stands, the innermost last. A later copy of a field already
   // found has no field, so what it sets goes nowhere.
@@ -138,6 +143,7 @@ export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, F
   const accents = new Map<Field, string>();
   page.items.forEach((item, index) => {
     if (item.kind === "special") {
+      if (accepted !== undefined && !accepted.has(index)) return;
       const begun = markerId(item.text, MARKER_BEGIN);
       const ended = begun === undefined ? markerId(item.text, MARKER_END) : undefined;
       if (begun !== undefined) {
@@ -196,6 +202,44 @@ export function collectFields(page: DviPage, textOf: GlyphTextOf): Map<string, F
     if (own !== undefined) accents.set(field, own);
   });
   return fields;
+}
+
+/**
+ * The field markers of a document's pages an outline's page is read by (`collectFields`), by page,
+ * each a set of the items' indexes on its page: of each id among `ids`, the fields the outline
+ * holds, its first begin marker in the pages' order, and its first end marker after it. A marker
+ * for any other id, and any other marker of an id, is no marker: the kept text and the preamble
+ * around an outline's fields are the upload's own LaTeX, which can set the editor's markers by
+ * other spellings than the model refuses, as `^^72t:b:` (decision 0049), and what it sets so
+ * stays on the uploader's own page, read as none of the outline's fields, or as the field it
+ * names at most once. A paragraph special is read for a field only after its accepted begin.
+ */
+export function acceptedMarkers(
+  pages: readonly Pick<DviPage, "items">[],
+  ids: ReadonlySet<string>,
+): Set<number>[] {
+  const begun = new Set<string>();
+  const ended = new Set<string>();
+  return pages.map((page) => {
+    const accepted = new Set<number>();
+    page.items.forEach((item, index) => {
+      if (item.kind !== "special") return;
+      const begin = markerId(item.text, MARKER_BEGIN);
+      if (begin !== undefined) {
+        if (ids.has(begin) && !begun.has(begin)) {
+          begun.add(begin);
+          accepted.add(index);
+        }
+        return;
+      }
+      const end = markerId(item.text, MARKER_END);
+      if (end !== undefined && begun.has(end) && !ended.has(end)) {
+        ended.add(end);
+        accepted.add(index);
+      }
+    });
+    return accepted;
+  });
 }
 
 /**

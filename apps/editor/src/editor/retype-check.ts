@@ -8,20 +8,33 @@
  * sets, are left out of both outputs, so that only what the part sets may change: a line of it
  * broken elsewhere is the part's, and one line more or fewer moves what follows it, which is not.
  *
+ * A segment of an imported outline's kept text (the second pass's item 7) is read from the fields'
+ * markers around it (`keptSets`), and so are the specials between them, which are left out as a
+ * locked part's are.
+ *
  * It reads each output as the import reads one (`readOutput`), so the app loads it, with the
  * import's reading, only when the first retype is checked.
  */
 
 import { type Difference, difference, type GlyphStream, readOutput } from "../import/reference";
 import type { FontLibrary } from "../page/fonts";
+import { keptSets } from "../page/kept";
 import { lockedSets, lockMarker } from "../page/locked";
 import type { DviDocument } from "../tex/dvi";
 
 /**
  * A glyph stream with a part's own items left out: the glyphs and rules `lockedSets` gives it, and
- * where the output sets its start before its end, every special between the two.
+ * where the output sets its start before its end, every special between the two. With `outline`,
+ * the outline's fields the generator writes (`DrawOptions.outline`), the part is a segment of its
+ * kept text, whose glyphs, rules and specials `keptSets` gives.
  */
-export function streamWithout(stream: GlyphStream, doc: DviDocument, part: string): GlyphStream {
+export function streamWithout(
+  stream: GlyphStream,
+  doc: DviDocument,
+  part: string,
+  outline?: readonly string[],
+): GlyphStream {
+  if (outline !== undefined) return keptWithout(stream, doc, part, outline);
   const id = part.toLowerCase();
   const own = new Set(
     (lockedSets(doc).get(id)?.items ?? []).map(
@@ -64,25 +77,63 @@ export function streamWithout(stream: GlyphStream, doc: DviDocument, part: strin
   return { ...stream, pages };
 }
 
+/** A glyph stream with a segment of an outline's kept text left out (`streamWithout`). */
+function keptWithout(
+  stream: GlyphStream,
+  doc: DviDocument,
+  part: string,
+  outline: readonly string[],
+): GlyphStream {
+  const set = keptSets(doc, outline).get(part);
+  const own = new Set(
+    [...(set?.items ?? []), ...(set?.specials ?? [])].map(
+      (each) => `${each.page}:${each.item}:${"glyph" in each ? (each.glyph ?? -1) : -1}`,
+    ),
+  );
+  const pages = stream.pages.map((page, index) => {
+    const items = doc.pages[index]?.items ?? [];
+    const kept: GlyphStream["pages"][number]["items"] = [];
+    let at = 0;
+    items.forEach((item, itemIndex) => {
+      const count = item.kind === "native" ? item.glyphs.length : 1;
+      for (let glyph = 0; glyph < count; glyph++) {
+        const each = page.items[at + glyph];
+        const key = `${index}:${itemIndex}:${item.kind === "native" ? glyph : -1}`;
+        if (each !== undefined && !own.has(key)) kept.push(each);
+      }
+      at += count;
+    });
+    return { items: kept };
+  });
+  return { ...stream, pages };
+}
+
 /**
  * Where the page outside the locked part `part` first differs between the output before a retype
- * of it and the output after, or undefined when it does not (the module's comment).
+ * of it and the output after, or undefined when it does not (the module's comment); with
+ * `outline`, of the segment of an outline's kept text `part` (`streamWithout`).
  */
 export async function outsideDifference(
   fonts: FontLibrary,
   before: Uint8Array,
   after: Uint8Array,
   part: string,
+  outline?: readonly string[],
 ): Promise<Difference | undefined> {
   const [was, now] = await Promise.all([readOutput(fonts, before), readOutput(fonts, after)]);
   return difference(
-    streamWithout(was.stream, was.doc, part),
-    streamWithout(now.stream, now.doc, part),
+    streamWithout(was.stream, was.doc, part, outline),
+    streamWithout(now.stream, now.doc, part, outline),
   );
 }
 
 /** `outsideDifference` as the guard asks it (`OutsideCheck`): true when nothing outside changed. */
 export const outsideCheck =
   (fonts: FontLibrary) =>
-  async (before: Uint8Array, after: Uint8Array, part: string): Promise<boolean> =>
-    (await outsideDifference(fonts, before, after, part)) === undefined;
+  async (
+    before: Uint8Array,
+    after: Uint8Array,
+    part: string,
+    outline?: readonly string[],
+  ): Promise<boolean> =>
+    (await outsideDifference(fonts, before, after, part, outline)) === undefined;

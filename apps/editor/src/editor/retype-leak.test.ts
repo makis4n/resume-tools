@@ -1,7 +1,6 @@
 import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { LockedSection } from "@resume-tools/resume-model";
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, startNodeSession } from "../engine/node";
@@ -17,26 +16,24 @@ import { DocumentStore } from "../storage/store";
 import { generateBody, generateFormat } from "../templates/generate";
 import { resolveTemplate } from "../templates/resolve";
 import { JAKE_FORK } from "../test/jake-fork";
-import { Compiler, type Engine, type Shown } from "./compiler";
+import { Compiler, drawOptions, type Engine, type Shown } from "./compiler";
 import { History } from "./document";
+import { keptSegments, outlineOf } from "./outline";
 import { isRetype, RetypeGuard, retypesOf, showsTyped } from "./retype";
 import { outsideCheck } from "./retype-check";
 
-// Decision 0042's rule that nothing new leaves the browser: a locked part's words retyped, through
-// the compiler and the store as the app wires them, make no request of any kind. Every word is
-// invented.
-//
-// TODO(the second pass's item 7): a `.tex` import is an outline now (decision 0049), which keeps
-// no locked section, so there is nothing here to retype until item 7 gives kept text the retype.
-// The import itself sends nothing, which `src/import/no-network.test.ts` holds; the naming request
-// these tests also read is gone from it.
+// Decision 0042's rule that nothing new leaves the browser, for an imported outline's kept text (the
+// second pass's item 7): the invented fork of Jake's Resume imported as an outline, its kept text's
+// words retyped through the compiler and the store as the app wires them, with no request of any
+// kind. Every word is invented. The import itself sends nothing, which
+// `src/import/no-network.test.ts` holds.
 
-/** The words typed over the heading's name: invented, and found nowhere in the fork. */
+/** The words typed: invented, and found nowhere in the fork. */
 const TYPED = "Zephyrine Quokkamaw";
 
 const tex = (name: string, text: string) => ({ name, bytes: new TextEncoder().encode(text) });
 
-describe.skip("a retype and what leaves the browser (decision 0042)", () => {
+describe("a retype of an outline's kept text, and what leaves the browser (decision 0042)", () => {
   let session: EngineSession;
   let deps: ImportDeps;
   beforeAll(async () => {
@@ -72,9 +69,43 @@ describe.skip("a retype and what leaves the browser (decision 0042)", () => {
     terminate: () => {},
   });
 
-  test("a retype makes no request", async () => {
-    const imported = await importResume([tex("resume.tex", JAKE_FORK)], deps);
+  /** The fork's outline drawn as the editor draws it, and what each segment offers to retype. */
+  async function drawnFork(source: string) {
+    const imported = await importResume([tex("resume.tex", source)], deps);
     if (isRefusal(imported)) throw new Error(`refused: ${imported.reason}`);
+    const { package: pkg, document, job } = imported;
+    const format = generateFormat(pkg, document.controls);
+    expect(session.dump(pkg.engine, format.name, format.preamble, format.files).ok).toBe(true);
+    const body = generateBody(pkg, document.resume, document.controls);
+    const result = session.compile(pkg.engine, format.name, body.latex, {
+      job: "fork",
+      maxPasses: 3,
+      files: job.files,
+    });
+    session.forget("fork");
+    session.dropFormat(pkg.engine, format.name);
+    if (!result.ok || result.output === undefined) throw new Error("the document did not compile");
+    const pages = await drawPages(
+      result.output,
+      deps.fonts,
+      body.texts,
+      drawOptions(pkg, document),
+    );
+    const outline = outlineOf(document.resume);
+    if (outline === undefined) throw new Error("no outline");
+    const retypes = retypesOf(document, pages);
+    const offered = keptSegments(outline).flatMap((segment) => {
+      const found = retypes.get(segment.id);
+      return found !== undefined && isRetype(found) ? [{ segment, found }] : [];
+    });
+    return { imported, offered };
+  }
+
+  test("a retype of kept text makes no request", async () => {
+    const { imported, offered } = await drawnFork(JAKE_FORK);
+    // The skills list, kept text whose lines the outline's fields cannot hold.
+    const skills = offered.find(({ segment }) => segment.latex.includes("\\textbf{Languages}"));
+    if (skills === undefined) throw new Error("the skills offer nothing");
 
     // Kept and opened as the app opens it, through the compiler, in the document's own job.
     const store = new DocumentStore({ name: `resume-tools-retype-leak-${Date.now()}` });
@@ -98,17 +129,11 @@ describe.skip("a retype and what leaves the browser (decision 0042)", () => {
     const opening = next();
     compiler.open(template.package, history.present, template.job);
     const first = await opening;
-    const heading = history.present.resume.sections.find(
-      (section): section is LockedSection =>
-        section.kind === "locked" && section.latex.includes("\\begin{center}"),
-    );
-    if (heading === undefined) throw new Error("the heading is not kept as a part");
-    const found = retypesOf(history.present, first.pages).get(heading.id);
-    if (found === undefined || !isRetype(found)) throw new Error("the heading offers nothing");
-    const name = found.pieces[0]?.text ?? "";
-    expect(name.length).toBeGreaterThan(0);
+    const found = retypesOf(history.present, first.pages).get(skills.segment.id);
+    if (found === undefined || !isRetype(found)) throw new Error("the skills offer nothing");
     const texts = found.pieces.map((piece) => piece.text);
-    texts[0] = TYPED;
+    const index = texts.findIndex((text) => /Invented/.test(text));
+    texts[index] = (texts[index] ?? "").replace("Invented", TYPED.split(" ")[0] ?? "");
 
     // The retype, its page, its check and its save, with every request of the page watched.
     const fetches = vi.spyOn(globalThis, "fetch");
@@ -120,6 +145,7 @@ describe.skip("a retype and what leaves the browser (decision 0042)", () => {
     const page = await landing;
     expect(await guard.paged(page)).toEqual({ kept: true });
     expect(showsTyped(found, texts, page.pages)).toBe(true);
+    expect(JSON.stringify(history.present.resume)).toContain("Zephyrine");
     store.save(id, history.present, stored.revision);
     expect((await store.flush()).written).toBe(1);
     expect(fetches).not.toHaveBeenCalled();
@@ -128,37 +154,13 @@ describe.skip("a retype and what leaves the browser (decision 0042)", () => {
   }, 300_000);
 
   test("offers no accent's braced letter, nor the run the accent joins, on the engine", async () => {
-    // The heading's invented name with an accent written as an OT1 document writes one.
-    const accented = JAKE_FORK.replace("Quill Invented", String.raw`Quill M\"{u}ller`);
+    // A skills line's invented word with an accent written as an OT1 document writes one.
+    const accented = JAKE_FORK.replace("{: Invented, Words", String.raw`{: M\"{u}ller, Words`);
     expect(accented).not.toBe(JAKE_FORK);
-    const imported = await importResume([tex("resume.tex", accented)], deps);
-    if (isRefusal(imported)) throw new Error(`refused: ${imported.reason}`);
-    const { package: pkg, document, job } = imported;
-    const format = generateFormat(pkg, document.controls);
-    expect(session.dump(pkg.engine, format.name, format.preamble, format.files).ok).toBe(true);
-    const body = generateBody(pkg, document.resume, document.controls);
-    const result = session.compile(pkg.engine, format.name, body.latex, {
-      job: "accent",
-      maxPasses: 3,
-      files: job.files,
-    });
-    session.forget("accent");
-    session.dropFormat(pkg.engine, format.name);
-    if (!result.ok || result.output === undefined) throw new Error("the document did not compile");
-    const pages = await drawPages(result.output, deps.fonts, body.texts);
-    const heading = document.resume.sections.find(
-      (section): section is LockedSection =>
-        section.kind === "locked" && section.latex.includes("\\begin{center}"),
-    );
-    if (heading === undefined) throw new Error("the heading is not kept as a part");
-    const found = retypesOf(document, pages).get(heading.id);
-    if (found === undefined || !isRetype(found)) throw new Error("the heading offers nothing");
+    const { offered } = await drawnFork(accented);
+    const texts = offered.flatMap(({ found }) => found.pieces.map((piece) => piece.text));
     // The run before the accent is offered; the accented letter and the run it joins are not.
-    expect(found.pieces.map((piece) => piece.text)).toEqual([
-      "Quill M",
-      "555-0100",
-      "quill@example.invalid",
-      "quill.example",
-    ]);
+    expect(texts).toContain(": M");
+    expect(texts.some((text) => /ller/.test(text))).toBe(false);
   }, 300_000);
 });
