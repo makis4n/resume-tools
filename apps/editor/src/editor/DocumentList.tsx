@@ -6,7 +6,7 @@
  *
  * "Import a resume" takes a `.tex` file or a zip, or the `.tex` with the files beside it, from a
  * file picker or dropped anywhere on the list, and says under the picker what leaves the browser
- * when a resume is imported (`PRIVACY_NOTE`, decision 0033). While an import runs, the list shows
+ * and when (`PRIVACY_NOTE`, decision 0047). While an import runs, the list shows
  * the step it is at and the compiles so far, in plain English, with a button that cancels it
  * (decision 0038); a refusal comes back as the list's notice, the refusal's own words, which never
  * show LaTeX. An import that came through partial, under the bar or with its page moved, waits on
@@ -126,9 +126,9 @@ const ENGINE_NAMES = { pdftex: "pdfTeX", xetex: "XeTeX" } as const;
 /** What the file picker takes: a `.tex` file or a zip, or a PDF (item 14). */
 export const TAKES = ".tex,.zip,.pdf";
 
-/** What the documents screen says of a PDF import: what it keeps, and when its text leaves. */
+/** What the documents screen says of a PDF import: what it keeps; `PRIVACY_NOTE` says what is sent. */
 export const PDF_NOTE =
-  "From a PDF, the editor reads your resume's text and sets it on a template you pick: it keeps your content, not your PDF's look. The PDF's text leaves your browser only if you agree.";
+  "From a PDF, the editor reads your resume's text and sets it on a template you pick: it keeps your content, not your PDF's look.";
 
 /** Whether something dragged over the list holds files, which a drop imports. */
 const holdsFiles = (event: DragEvent) => [...(event.dataTransfer?.types ?? [])].includes("Files");
