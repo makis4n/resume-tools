@@ -22,10 +22,13 @@ import type { Summary } from "../storage/store";
 import { CURATED } from "../templates/curated";
 import { ImportReport } from "./ImportReport";
 
-/** Where an import is, as the progress line says it: its step's name, and the compiles so far. */
+/**
+ * Where an import is, as the progress line says it: its step's name, and the compiles so far, for
+ * an import that compiles; a PDF's reading has none.
+ */
 export interface ImportShown {
   label: string;
-  compiles: number;
+  compiles?: number;
 }
 
 /** A partial import waiting on the person: its report, and the two ways on. */
@@ -164,8 +167,10 @@ export function DocumentList({
         />
       ) : importing ? (
         <p role="status">
-          {importing.label}… {importing.compiles}{" "}
-          {importing.compiles === 1 ? "compile" : "compiles"} so far.{" "}
+          {importing.label}…
+          {importing.compiles === undefined
+            ? ""
+            : ` ${importing.compiles} ${importing.compiles === 1 ? "compile" : "compiles"} so far.`}{" "}
           <button type="button" onClick={() => onCancelImport?.()}>
             Cancel
           </button>
