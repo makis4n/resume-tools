@@ -20,7 +20,7 @@
  *    takes any text (the plan's "fields are proven once, at import, and then trusted"). Letters
  *    of other scripts, Greek and Cyrillic, are tried once each in every field together: where one
  *    stops the compile, the document's fonts lack that script whatever field holds it, which the
- *    report says by its name, and no field is kept for it (decision 00XX).
+ *    report says by its name, and no field is kept for it (decision 0055).
  * 3. **Groups.** Every group gains a copy of its last unit, its fields emptied, a required one
  *    holding `OUTLINE_PLACEHOLDER`, and loses its first unit and its last, each kind of trial in
  *    batches whose changes do not overlap, compiled together, and halved where a batch breaks the

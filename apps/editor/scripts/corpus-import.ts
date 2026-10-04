@@ -5,7 +5,7 @@
  * being `corpus-import-child.ts`: the intake, the reference compile, the fonts, the signatures, the
  * parse, the probe, the outline and its four checks. Nothing is named, no answer is read and no
  * model is asked, so there is no mode to choose: the first pass's committed answers and its model
- * leave the run (decision 00XX).
+ * leave the run (decision 0055).
  *
  * What became of a document is one row, ids and counts only: its outcome, success or partial as
  * item 13's report says (`reportOfImport`, decision 0039), or where it stopped; its words in the

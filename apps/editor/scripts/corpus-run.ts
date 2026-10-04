@@ -5,7 +5,7 @@
  * whole corpus is held to (`baselineVerdict`), `corpus compare`'s differences (`runDifferences`),
  * the run's commit, its pool's size and the ids a file names. `corpus run` itself takes each
  * document through the outline's import in one mode since the second pass's item 6
- * (`corpus-import.ts`, decision 00XX): no answers, no model.
+ * (`corpus-import.ts`, decision 0055): no answers, no model.
  *
  * The first pass's row of a document: its outcome, which `outcomeOf` gives (the one place item
  * 13's report takes over), its editable rate, its words and fields, editable and locked by reason,
