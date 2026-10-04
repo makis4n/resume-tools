@@ -1,4 +1,4 @@
-# 00XX. How well a PDF reads, tracked
+# 0059. How well a PDF reads, tracked
 
 Date: 2026-10-04 · Status: accepted
 
