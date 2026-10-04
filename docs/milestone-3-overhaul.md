@@ -305,7 +305,7 @@ closes.
     model's labels on the invented sets meet the target item 3 set, the fall back to rules is
     tested for each cause, and a test proves nothing is sent before a yes or after the setting is
     turned off.
-14. [ ] **The review, and the way in.** The documents screen takes a PDF as it takes a `.tex`. The
+14. [x] **The review, and the way in.** The documents screen takes a PDF as it takes a `.tex`. The
     review shows the PDF's pages beside the resume as read, the flagged items first, with the
     template to open it in and its page as that template sets it. The person corrects, picks, and
     creates the document, which is then an ordinary one of that template. Done when the flow works

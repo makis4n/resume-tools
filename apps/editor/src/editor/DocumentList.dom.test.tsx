@@ -91,10 +91,10 @@ describe("the document list's way in", () => {
     return { event, transfer };
   };
 
-  it("imports the files chosen in the picker, which takes a .tex or a zip, and says what leaves", () => {
+  it("imports the files chosen in the picker, which takes a .tex, a zip or a PDF, and says what leaves", () => {
     rendered();
     const input = picker();
-    expect(input?.accept).toBe(".tex,.zip");
+    expect(input?.accept).toBe(".tex,.zip,.pdf");
     expect(input?.closest("label")?.textContent).toContain("Import a resume");
     // The privacy sentence stands under the picker before any import starts.
     expect(host.textContent).toContain(PRIVACY_NOTE);
@@ -111,7 +111,7 @@ describe("the document list's way in", () => {
     rendered();
     expect(dragged("dragover", ["text/plain"]).event.defaultPrevented).toBe(false);
     expect(dragged("dragover", ["Files"]).event.defaultPrevented).toBe(true);
-    expect(host.textContent).toContain("Drop your .tex file or zip to import it.");
+    expect(host.textContent).toContain("Drop your .tex file, zip or PDF to import it.");
     const file = texFile();
     expect(dragged("drop", ["Files"], [file]).event.defaultPrevented).toBe(true);
     expect(calls.imported).toEqual([[file]]);

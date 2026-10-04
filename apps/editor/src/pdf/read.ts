@@ -29,6 +29,7 @@ import { guardStreams } from "./guard.ts";
 import {
   type Caps,
   DOCUMENT_CAPS,
+  DRAW_TIME_LIMIT_MS,
   MAX_PAGES,
   MIN_TEXT_CHARS,
   PAGE_CAPS,
@@ -94,6 +95,12 @@ export interface ReadPdf {
   pages: PdfPage[];
   /** Milliseconds the reading took, pdf.js's parse and every page's text, links and marks. */
   ms: number;
+  /**
+   * Each page drawn as a picture, in order, for the review to show beside the resume read (item
+   * 14): only when the reading was asked to draw them (`ReadOptions.draw`), and none at all when
+   * any could not be drawn in time.
+   */
+  pictures?: Blob[];
 }
 
 /** What reading a PDF gives: the PDF read, or why it was not. */
@@ -222,6 +229,22 @@ const RULE_MIN = 36;
 export interface ReadOptions {
   /** How long the reading may take before the PDF is refused as too complex. */
   timeLimitMs?: number;
+  /**
+   * Draw each page as a picture once the reading has passed its caps (`ReadPdf.pictures`): the
+   * reader's worker in the page draws on an `OffscreenCanvas`, so the file never leaves it.
+   */
+  draw?: PageDrawer;
+  /** How long drawing every page may take, after the reading, before no picture is given. */
+  drawTimeLimitMs?: number;
+}
+
+/**
+ * How the pages are drawn as pictures (item 14): the factories pdf.js makes its scratch canvases
+ * and filters with, since a worker has no document to make them from, and the drawing of one page.
+ */
+export interface PageDrawer {
+  factories: Pick<DocumentInitParameters, "CanvasFactory" | "FilterFactory">;
+  draw(page: PdfPageProxy): Promise<Blob>;
 }
 
 /** A PDF past a cap, or past its time: what stops a reading and refuses the PDF as too complex. */
@@ -278,7 +301,11 @@ export async function readPdfWith(
   let task: ReturnType<PdfJs["getDocument"]>;
   try {
     // pdf.js takes the buffer over, so it gets a copy.
-    task = pdf.getDocument({ ...READ_OPTIONS, data: new Uint8Array(bytes) });
+    task = pdf.getDocument({
+      ...READ_OPTIONS,
+      ...options.draw?.factories,
+      data: new Uint8Array(bytes),
+    });
   } catch {
     return pdfRefusal("unreadable");
   }
@@ -288,11 +315,51 @@ export async function readPdfWith(
     timer = setTimeout(() => resolve(pdfRefusal("too-complex")), limit);
   });
   try {
-    return await Promise.race([readDocument(pdf, task, started, started + limit), late]);
+    const reading = await Promise.race([readDocument(pdf, task, started, started + limit), late]);
+    clearTimeout(timer);
+    if (options.draw === undefined || "refused" in reading) return reading;
+    const pictures = await drawPages(
+      task,
+      reading.pages.length,
+      options.draw,
+      options.drawTimeLimitMs ?? DRAW_TIME_LIMIT_MS,
+    );
+    return pictures === undefined ? reading : { ...reading, pictures };
   } finally {
     clearTimeout(timer);
     // Stops whatever pdf.js is still doing for this file, and lets go of all of it.
     void task.destroy().catch(() => undefined);
+  }
+}
+
+/**
+ * Draw each page of a PDF read as a picture, in order, within `limit` ms: none at all when one
+ * fails or the time runs out, since the review shows the PDF's pages whole or not at all.
+ */
+async function drawPages(
+  task: ReturnType<PdfJs["getDocument"]>,
+  count: number,
+  drawer: PageDrawer,
+  limit: number,
+): Promise<Blob[] | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), limit);
+  });
+  const drawAll = async () => {
+    const doc = await task.promise;
+    const pictures: Blob[] = [];
+    for (let number = 1; number <= count; number++) {
+      const page = await doc.getPage(number);
+      pictures.push(await drawer.draw(page));
+      page.cleanup();
+    }
+    return pictures;
+  };
+  try {
+    return await Promise.race([drawAll().catch(() => undefined), late]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -340,7 +407,7 @@ function hasText(pages: PdfPage[]): boolean {
   return false;
 }
 
-type PdfPageProxy = Awaited<
+export type PdfPageProxy = Awaited<
   ReturnType<Awaited<ReturnType<PdfJs["getDocument"]>["promise"]>["getPage"]>
 >;
 
@@ -379,7 +446,18 @@ function streamOperators(page: PdfPageProxy, take: (chunk: OperatorChunk) => voi
         }
       deliver.call(this, { ...chunk, fnArray: [], argsArray: [], length: 0 }, state);
     };
-    page.getOperatorList().then(() => resolve(), reject);
+    // The page's own way of taking its pieces comes back once the list is in, so that a page
+    // drawn afterwards (`drawPages`) draws all of them.
+    page.getOperatorList().then(
+      () => {
+        delete proxy._renderPageChunk;
+        resolve();
+      },
+      (error: unknown) => {
+        delete proxy._renderPageChunk;
+        reject(error);
+      },
+    );
   });
 }
 

@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p functions",
     "test": "vitest run",
     "spike-pdf": "node scripts/spike-pdf.ts",
-    "pdf-model": "node scripts/pdf-model.ts"
+    "pdf-model": "node scripts/pdf-model.ts",
+    "builtin-pdfs": "node scripts/builtin-pdfs.ts"
   },
   "dependencies": {
     "@resume-tools/contracts": "workspace:*",

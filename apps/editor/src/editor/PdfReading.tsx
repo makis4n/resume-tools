@@ -3,7 +3,7 @@
  * the question asked the first time they import a PDF, the setting on the documents screen that
  * changes the answer, and the one line each import says while the answer is yes. The words are
  * `consent.ts`'s, plain English with no LaTeX. Item 14 places the question and the line in the
- * import's flow; the answer is kept by a `ConsentStore`, which `usePdfConsent` reads and writes.
+ * import's flow (`DocumentList`); the answer is kept by a `ConsentStore`, which `usePdfConsent` reads and writes.
  */
 
 import { useCallback, useEffect, useId, useState } from "react";
@@ -48,8 +48,17 @@ export function usePdfConsent(
   return [answer, change];
 }
 
-/** The question, asked once: what is sent, what is kept, and the two answers. */
-export function PdfReadingQuestion({ onAnswer }: { onAnswer(answer: PdfConsent): void }) {
+/**
+ * The question, asked once: what is sent, what is kept, and the two answers; and, in the import's
+ * flow (item 14), a way to stop the import without answering, which keeps no answer.
+ */
+export function PdfReadingQuestion({
+  onAnswer,
+  onCancel,
+}: {
+  onAnswer(answer: PdfConsent): void;
+  onCancel?(): void;
+}) {
   const title = useId();
   const detail = useId();
   return (
@@ -63,6 +72,14 @@ export function PdfReadingQuestion({ onAnswer }: { onAnswer(answer: PdfConsent):
         <button type="button" onClick={() => onAnswer("no")}>
           {CONSENT_NO}
         </button>
+        {onCancel && (
+          <>
+            {" "}
+            <button type="button" onClick={onCancel}>
+              Cancel
+            </button>
+          </>
+        )}
       </p>
     </section>
   );

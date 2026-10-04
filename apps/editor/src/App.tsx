@@ -22,6 +22,8 @@ import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
 import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
 import { usePdfConsent } from "./editor/PdfReading";
+import { PdfReview } from "./editor/PdfReview";
+import { usePdfImport } from "./editor/pdf-import";
 import { RetypeEditor, retypeEditorKey } from "./editor/RetypeEditor";
 import {
   isRetype,
@@ -42,7 +44,7 @@ import { IMPORT_STEPS, type Imported, type ImportJob, type ImportOutcome } from 
 import { FontLibrary } from "./page/fonts";
 import { Pages } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
-import { isPdfFile, isPdfRefusal, readPdfFile, refusedBySize } from "./pdf";
+import { isPdfFile, readPdfFile } from "./pdf";
 import { browserConsent } from "./pdf/consent";
 import {
   CANNOT_OPEN,
@@ -111,16 +113,6 @@ const COULD_NOT_READ = "The files could not be read.";
 
 /** What the user reads when an import fails for a reason of the editor's; the details go to the console. */
 const IMPORT_FAILED = "The import could not finish. Try again.";
-
-/**
- * What the user reads when a PDF they imported was read: the reader is built (milestone 3 second
- * pass, item 10), and what files its content into a resume comes with items 11 to 14.
- */
-/** What the progress line says while a PDF is read. */
-const PDF_READING = "Reading the PDF";
-
-const PDF_NOT_YET =
-  "This PDF can be read, but importing a resume from a PDF is not ready yet. Import its .tex file, or start from a template.";
 
 /** What the user reads when an import came through but the browser could not keep it. */
 const COULD_NOT_KEEP = "The imported resume could not be kept in this browser.";
@@ -270,14 +262,37 @@ export function App() {
   const [importing, setImporting] = useState<ImportShown>();
   /** The import under way, which the list's Cancel stops; none once it has landed or stopped. */
   const importRun = useRef<ImportRun | undefined>(undefined);
-  /** The PDF being read, which the list's Cancel stops: an import run as a `.tex` one is. */
-  const pdfRun = useRef<AbortController | undefined>(undefined);
   /**
    * Whether a PDF's text may be sent to the reading service, kept in this browser, and the
    * documents screen's setting that changes it (milestone 3 second pass, item 13, decision 0047).
    */
   const consentStore = useMemo(() => browserConsent(), []);
   const [pdfConsent, setPdfConsent] = usePdfConsent(consentStore);
+  /**
+   * A PDF's import (milestone 3 second pass, item 14): the question the first time, the reading in
+   * its worker, and the review, whose draft the compiler sets on the template picked while the list
+   * is down. Nothing of it is stored until the person creates the document, which then opens as
+   * any document does.
+   */
+  const pdfImport = usePdfImport({
+    consent: consentStore,
+    answer: setPdfConsent,
+    read: (bytes, options) => readPdfFile(bytes, options),
+    open: (pkg, doc) => {
+      setShown(undefined);
+      setError(undefined);
+      compiler.current?.open(pkg, doc);
+    },
+    update: (doc) => compiler.current?.update(doc),
+    create: async (template, resume) => {
+      const id = await store.current?.create(template, resume, navigator.language);
+      if (id === undefined) throw new Error("the store is closed");
+      return id;
+    },
+    created: (id) => void openDocument(id),
+    notice: setNotice,
+    locale: navigator.language,
+  });
   /**
    * An import that came through partial, with its report, which waits in the list for the person to
    * continue or stop (decision 0039); nothing of it is kept until they continue.
@@ -681,12 +696,12 @@ export function App() {
    */
   const importFiles = async (chosen: File[]) => {
     const owned = compiler.current;
-    const running = () => importRun.current !== undefined || pdfRun.current !== undefined;
+    const running = () => importRun.current !== undefined || pdfImport.busy;
     if (owned === undefined || running() || waiting !== undefined) return;
-    // A PDF is read in the browser, by a reader loaded only now, and sends nothing.
+    // A PDF is read in the browser, by a reader loaded only now, and goes to the review.
     const [only] = chosen;
     if (chosen.length === 1 && only !== undefined && isPdfFile(only)) {
-      await importPdf(only);
+      pdfImport.start(only);
       return;
     }
     let files: Upload[];
@@ -735,48 +750,6 @@ export function App() {
     else await keepImport(outcome, report);
   };
 
-  /**
-   * Read a PDF the person imported (milestone 3 second pass, item 10) as an import run: the list
-   * shows its progress line, with a Cancel that stops it, and takes no other import meanwhile; a
-   * refusal says why in the list's notice, in its own plain words. A file past the size cap is
-   * refused by its size, before it is read into memory. A reading that was cancelled says nothing,
-   * so it never overwrites a later import's notice. The reader that loads here is the one items 11
-   * to 14 file a resume from; until then a PDF that reads says so, and nothing is kept.
-   */
-  const importPdf = async (file: File) => {
-    setNotice(undefined);
-    const tooLarge = refusedBySize(file.size);
-    if (tooLarge) {
-      setNotice(tooLarge.message);
-      return;
-    }
-    const run = new AbortController();
-    pdfRun.current = run;
-    setImporting({ label: PDF_READING });
-    const finish = (notice: string) => {
-      if (pdfRun.current !== run) return;
-      pdfRun.current = undefined;
-      setImporting(undefined);
-      setNotice(notice);
-    };
-    let bytes: Uint8Array;
-    try {
-      bytes = new Uint8Array(await file.arrayBuffer());
-    } catch (error) {
-      console.error("The PDF to import could not be read:", error);
-      finish(COULD_NOT_READ);
-      return;
-    }
-    try {
-      const reading = await readPdfFile(bytes, { signal: run.signal });
-      finish(isPdfRefusal(reading) ? reading.message : PDF_NOT_YET);
-    } catch (error) {
-      if (pdfRun.current !== run) return;
-      console.error("The PDF reader failed:", error);
-      finish(IMPORT_FAILED);
-    }
-  };
-
   /** Continue with a partial import: kept and opened as it is (decision 0039). */
   const continueImport = async () => {
     const pending = waiting;
@@ -793,11 +766,8 @@ export function App() {
 
   /** Stop the import under way: its worker is terminated and starts afresh (decision 0038). */
   const cancelImport = () => {
-    const reading = pdfRun.current;
-    if (reading !== undefined) {
-      pdfRun.current = undefined;
-      setImporting(undefined);
-      reading.abort();
+    if (pdfImport.busy) {
+      pdfImport.cancel();
       return;
     }
     const run = importRun.current;
@@ -809,6 +779,22 @@ export function App() {
 
   if (open === undefined) {
     if (documents === undefined) return <p>Loading…</p>;
+    const pdf = pdfImport.state;
+    if (pdf.step === "review")
+      return (
+        <PdfReview
+          review={pdf.review}
+          {...(shown === undefined ? {} : { shown: shown.latest })}
+          {...(error === undefined ? {} : { error })}
+          {...(library === undefined ? {} : { fonts: library })}
+          onTemplate={pdfImport.pickTemplate}
+          onCommand={pdfImport.command}
+          onSeal={pdfImport.seal}
+          onCreate={pdfImport.create}
+          onCancel={pdfImport.cancel}
+        />
+      );
+    const importShown = pdfImport.importing ?? importing;
     return (
       <DocumentList
         documents={documents}
@@ -818,9 +804,12 @@ export function App() {
         onDelete={(id) => void deleteDocument(id)}
         // Imports run on the compiler's engine, which the tree's fonts come with.
         {...(library === undefined ? {} : { onImport: (files: File[]) => void importFiles(files) })}
-        {...(importing === undefined ? {} : { importing })}
+        {...(importShown === undefined ? {} : { importing: importShown })}
         onCancelImport={cancelImport}
         pdfReading={{ consent: pdfConsent, onChange: setPdfConsent }}
+        {...(pdf.step === "asking"
+          ? { pdfQuestion: { onAnswer: pdfImport.answerQuestion, onCancel: pdfImport.cancel } }
+          : {})}
         {...(waiting === undefined
           ? {}
           : {
