@@ -23,6 +23,8 @@ export interface Part {
   text: string;
   x0: number;
   x1: number;
+  /** The baseline of the row it stands on, which tells a wrapped line's rows apart. */
+  baseline: number;
   size: number;
   font: string;
   bold: boolean;
@@ -235,6 +237,7 @@ function piecesOf(
       text: text.trim(),
       x0: run.x,
       x1: run.x + run.width,
+      baseline: run.baseline,
       size: run.size,
       font: run.font,
       bold: run.bold,

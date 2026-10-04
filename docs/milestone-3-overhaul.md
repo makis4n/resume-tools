@@ -279,7 +279,7 @@ closes.
     glyph marks a bullet. An icon is dropped and its drop noted. A hyphen at a line's end joins its
     word only where the next line carries on in small letters. Done when AltaCV's two-column PDF
     reads in the order a person reads it, and the corpus set's column counts are recorded.
-12. [ ] **From layout to the resume, by rules.** Two steps with a seam between them. The first says
+12. [x] **From layout to the resume, by rules.** Two steps with a seam between them. The first says
     what each line is: the name, a contact, a section's heading, an entry's head, a date, a place,
     a bullet, or running text. It is given each line's text and its features, its size, its weight,
     where it sits and what stands around it, and gives back one role from a closed list. Rules do

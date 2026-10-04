@@ -1,12 +1,26 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Resume } from "@resume-tools/resume-model";
 import { describe, expect, it } from "vitest";
-import { fileLines, splitHead, trailingPlace, UNFILED_ID, wordsIn } from "./file.ts";
+import {
+  everyWordLands,
+  fileLines,
+  splitHead,
+  trailingPlace,
+  UNFILED_ID,
+  wordsIn,
+} from "./file.ts";
+import { labelByRules, type Role, trailingDate } from "./label.ts";
 import { layOut } from "./layout.ts";
-import { OTHER_DIR } from "./print.ts";
-import { type ReadPdf, readPdf, type TextRun } from "./read.ts";
-import { labelByRules, type Role, trailingDate } from "./roles.ts";
+import { readPdf } from "./node.ts";
+import type { PdfLink, ReadPdf, TextRun } from "./read.ts";
+import { isPdfRefusal } from "./refusals.ts";
+
+/** The PDFs the spike made in other tools: Chrome's print and macOS's text system (decision 0051). */
+const OTHER_DIR = fileURLToPath(
+  new URL("../../scripts/spike-pdf/fixtures/other/", import.meta.url),
+);
 
 function run(text: string, x: number, baseline: number, options: Partial<TextRun> = {}): TextRun {
   const size = options.size ?? 10;
@@ -22,8 +36,8 @@ function run(text: string, x: number, baseline: number, options: Partial<TextRun
   };
 }
 
-const pdf = (runs: TextRun[]): ReadPdf => ({
-  pages: [{ number: 1, width: 612, height: 792, runs, links: [], marks: [] }],
+const pdf = (runs: TextRun[], links: PdfLink[] = []): ReadPdf => ({
+  pages: [{ number: 1, width: 612, height: 792, runs, links, marks: [] }],
   ms: 0,
 });
 
@@ -89,13 +103,21 @@ describe("filing", () => {
     });
     // A date the model cannot hold stays as text in its entry, and is flagged.
     expect(experience.entries[1]?.subtitle).toBe("Summer 2018");
-    expect(flags.map((flag) => flag.kind)).toEqual(["date-as-text"]);
+    expect(flags).toEqual([
+      {
+        kind: "date-as-text",
+        line: layout.lines.findIndex((line) => line.text === "Summer 2018"),
+        node: experience.entries[1]?.id,
+        text: "Summer 2018",
+      },
+    ]);
     expect(skills).toMatchObject({
       kind: "labelled",
       role: "skills",
       items: [{ label: "Tools", text: [{ text: "presses, kerning" }] }],
     });
     expect(words).toMatchObject({ read: words.landed, unfiled: 0 });
+    expect(everyWordLands(words)).toBe(true);
     expect(words.chars).toEqual({
       read: words.chars.landed,
       landed: words.chars.landed,
@@ -112,7 +134,14 @@ describe("filing", () => {
     const { resume, flags, words } = fileLines(layout, twice);
     const last = resume.sections.at(-1);
     expect(last).toMatchObject({ id: UNFILED_ID, items: [{ text: [{ text: "Lantern Press" }] }] });
-    expect(flags.some((flag) => flag.kind === "unfiled")).toBe(true);
+    // The flag names the line, and the item of the last section it landed in.
+    const unfiled = flags.find((flag) => flag.kind === "unfiled");
+    expect(unfiled).toEqual({
+      kind: "unfiled",
+      line: layout.lines.findIndex((line) => line.text === "Lantern Press"),
+      node: last?.kind === "list" ? last.items[0]?.id : undefined,
+      text: "Lantern Press",
+    });
     expect(words.unfiled).toBe(2);
     expect(words.landed).toBe(words.read);
     expect(wordsIn(resume) > 0).toBe(true);
@@ -206,7 +235,7 @@ describe("an invented resume from another tool", () => {
   it("reads the RTF TextEdit-style fixture into its truth's fields", async () => {
     const folder = join(OTHER_DIR, "textedit-rtf");
     const read = await readPdf(new Uint8Array(readFileSync(join(folder, "resume.pdf"))));
-    if ("refused" in read) throw new Error("refused");
+    if (isPdfRefusal(read)) throw new Error("refused");
     const layout = layOut(read);
     const { resume, words } = fileLines(layout, labelByRules(layout));
     const truth = Resume.parse(JSON.parse(readFileSync(join(folder, "truth.json"), "utf8")));
@@ -217,4 +246,69 @@ describe("an invented resume from another tool", () => {
     );
     expect(words.landed).toBe(words.read);
   }, 60_000);
+});
+
+describe("bold, italic and links inside a text", () => {
+  it("keeps a bold word and a link inside a bullet, and not a style over the whole text", () => {
+    const layout = layOut(
+      pdf(
+        [
+          run("Wren Halloway", 200, 60, { size: 22, bold: true }),
+          run("EXPERIENCE", 50, 120, { size: 12, bold: true }),
+          run("Compositor", 50, 140, { bold: true }),
+          run("Mar 2019 – Present", 480, 140),
+          run("•", 55, 160),
+          run("Set", 65, 160),
+          run("forty", 83, 160, { bold: true }),
+          run("books at lantern.example.com a year.", 111, 160),
+          run("•", 55, 176),
+          run("Kept every case in order.", 65, 176, { italic: true }),
+        ],
+        // Over `lantern.example.com`: the run's characters 9 to 28, 5 points each from x 111.
+        [{ x0: 155, y0: 151, x1: 256, y1: 163, url: "https://lantern.example.com" }],
+      ),
+    );
+    const { resume, words } = fileLines(layout, labelByRules(layout));
+    const [experience] = resume.sections;
+    if (experience?.kind !== "entries") throw new Error("not entries");
+    const [first, second] = experience.entries[0]?.bullets ?? [];
+    expect(first?.text).toEqual([
+      { text: "Set " },
+      { text: "forty", bold: true },
+      { text: " books at " },
+      { text: "lantern.example.com", href: "https://lantern.example.com" },
+      { text: " a year." },
+    ]);
+    // Italic over the whole bullet is the template's style, not the writer's.
+    expect(second?.text).toEqual([{ text: "Kept every case in order." }]);
+    expect(everyWordLands(words)).toBe(true);
+  });
+
+  it("keeps the marks of a labelled item's text, after its label", () => {
+    const layout = layOut(
+      pdf([
+        run("Wren Halloway", 200, 60, { size: 22, bold: true }),
+        run("SKILLS", 50, 120, { size: 12, bold: true }),
+        run("Tools:", 50, 140, { bold: true }),
+        run("presses,", 85, 140),
+        run("kerning", 127, 140, { italic: true }),
+      ]),
+    );
+    const { resume } = fileLines(layout, labelByRules(layout));
+    expect(resume.sections[0]).toMatchObject({
+      kind: "labelled",
+      items: [
+        {
+          label: "Tools",
+          text: [{ text: "presses, " }, { text: "kerning", italic: true }],
+        },
+      ],
+    });
+  });
+
+  it("finds no word lost when nothing is: fewer letters landed than read fails the check", () => {
+    const words = { read: 3, landed: 3, unfiled: 0, chars: { read: 12, landed: 11, unfiled: 0 } };
+    expect(everyWordLands(words)).toBe(false);
+    expect(everyWordLands({ ...words, chars: { ...words.chars, landed: 12 } })).toBe(true);
+  });
 });
