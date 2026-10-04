@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "header": {
+    "name": { "first": "Dagny", "last": "Thorsby" },
+    "headline": "Head gardener",
+    "email": "dagny.thorsby@example.com",
+    "phone": "555-0161",
+    "links": [
+      {
+        "id": "site",
+        "kind": "website",
+        "label": "thorsby.example.net",
+        "href": "https://thorsby.example.net"
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "experience",
+      "kind": "entries",
+      "role": "experience",
+      "title": "Experience",
+      "entries": [
+        {
+          "id": "larchmont",
+          "title": "Head Gardener",
+          "subtitle": "Larchmont Estate",
+          "place": "Kent",
+          "dates": { "start": "2018", "end": "present" },
+          "bullets": [
+            {
+              "id": "larchmont-1",
+              "text": [
+                {
+                  "text": "Run the kitchen garden, two glasshouses and a team of three gardeners and six volunteers."
+                }
+              ]
+            },
+            {
+              "id": "larchmont-2",
+              "text": [
+                {
+                  "text": "Brought the orchard's forty old apple trees back into cropping within three seasons."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "ashcombe",
+          "title": "Gardener",
+          "subtitle": "Ashcombe Walled Garden",
+          "place": "Dorset",
+          "dates": { "start": "2013", "end": "2018" },
+          "bullets": [
+            {
+              "id": "ashcombe-1",
+              "text": [
+                { "text": "Grew the cut flowers for the estate's weddings, from seed to the vase." }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "training",
+      "kind": "entries",
+      "role": "education",
+      "title": "Training",
+      "entries": [
+        {
+          "id": "brookfield",
+          "title": "Certificate in Horticulture, Level 3",
+          "subtitle": "Brookfield College",
+          "dates": { "start": "2012", "end": "2013" },
+          "bullets": []
+        }
+      ]
+    },
+    {
+      "id": "skills",
+      "kind": "paragraph",
+      "role": "skills",
+      "title": "Skills",
+      "text": [
+        {
+          "text": "Glasshouse management, pruning fruit trees, soil testing, training volunteers"
+        }
+      ]
+    }
+  ]
+}
