@@ -16,6 +16,8 @@ import {
   endsInComment,
   isOutlineField,
   OUTLINE_PLACEHOLDER,
+  type OutlineField,
+  type OutlineFixed,
   type OutlineGroup,
   type OutlinePart,
   OutlineSection,
@@ -311,35 +313,91 @@ export function outlineIds(parts: readonly OutlinePart[]): string[] {
 
 /**
  * The unit a field ends, as Enter at the field's end adds a unit after (the second pass's item 8):
- * the innermost unit that holds the field `id`, where no field of the unit the generator writes
- * comes after it, so that the end of the field is the end of what the unit sets in words; or
- * undefined, for a field in no unit or one with a written field after it.
+ * the unit whose own parts, outside the groups within it, hold the field `id`, where no field of
+ * its own parts the generator writes comes after it, so that the end of the field is the end of
+ * what the unit sets in words of its own: a bullet's text ends its bullet, and an entry's last
+ * field before its bullets ends its entry. Undefined for a field in no unit, or one with a written
+ * field of its unit's own after it.
  */
 export function unitEnding(parts: readonly OutlinePart[], id: string): UnitPlace | undefined {
+  /** Whether `list` holds the field as a part of its own, and where it ends a unit within, if so. */
   const within = (
     list: readonly OutlinePart[],
     path: readonly number[],
-  ): { found: boolean; place?: UnitPlace } => {
+  ): { own: boolean; place?: UnitPlace } | undefined => {
     for (const [index, part] of list.entries()) {
       if (isOutlineField(part)) {
-        if (part.id === id) return { found: true };
+        if (part.id === id) return { own: true };
         continue;
       }
       if (part.kind !== "group") continue;
       for (const [u, unit] of part.units.entries()) {
         const inner = within(unit.parts, [...path, index, u]);
-        if (!inner.found) continue;
-        if (inner.place !== undefined) return inner;
-        // The field is in this unit, in no unit within it: the unit ends with it, unless a field
-        // it writes comes after.
-        const fields = [...outlineFields(unit.parts)].filter((each) => written(each.part));
-        const last = fields.at(-1);
-        return last?.part.id === id
-          ? { found: true, place: { path: [...path, index], group: part, index: u } }
-          : { found: true };
+        if (inner === undefined) continue;
+        if (!inner.own) return { own: false, ...(inner.place ? { place: inner.place } : {}) };
+        const own = unit.parts.filter(
+          (each): each is OutlineField => isOutlineField(each) && written(each),
+        );
+        return own.at(-1)?.id === id
+          ? { own: false, place: { path: [...path, index], group: part, index: u } }
+          : { own: false };
       }
     }
-    return { found: false };
+    return undefined;
   };
-  return within(parts, []).place;
+  return within(parts, [])?.place;
 }
+
+/**
+ * A unit's shape: its own parts, outside the groups within it, as the generator writes them with
+ * every field emptied, its kept text byte for byte, each field by its kind, and a group within it
+ * by its place alone. Two units of one shape set the same around their fields.
+ */
+export function unitShape(unit: OutlineUnit): string {
+  return JSON.stringify(
+    unit.parts.map((part) =>
+      part.kind === "kept"
+        ? ["kept", part.latex]
+        : part.kind === "group"
+          ? ["group"]
+          : [part.kind, part.bare === true, part.required === true],
+    ),
+  );
+}
+
+/**
+ * Whether a group's units are all of one shape (`unitShape`), so that what parts one from the next
+ * is in their gaps and the last holds nothing the others lack: then a unit moves among them, and a
+ * copy of the last goes in after any of them, as it went in after the last when the import's checks
+ * tried it.
+ */
+export function alike(group: OutlineGroup): boolean {
+  const last = group.units.at(-1);
+  if (last === undefined) return true;
+  const shape = unitShape(last);
+  return group.units.every((unit) => unitShape(unit) === shape);
+}
+
+/**
+ * Why a group's buttons are disabled where the import's checks found it fixed (decision 0055),
+ * which they say when pointed at: it takes no unit more or fewer, and none of its units moves.
+ */
+export const FIXED_WHY: Readonly<Record<OutlineFixed, string>> = {
+  copy: "Adding one here changed the rest of the page when your resume was imported, so these stay as they are",
+  removal:
+    "Removing one here changed the rest of the page when your resume was imported, so these stay as they are",
+  untried: "These could not be tried when your resume was imported, so they stay as they are",
+  stops:
+    "A change here stopped the page from being made when your resume was imported, so these stay as they are",
+};
+
+/** Why the Remove of a group's only unit is disabled: a list needs at least one (decision 0050). */
+export const ONLY_UNIT = "This is the only one here, and there must be at least one";
+
+/**
+ * Why a group's units take no move, and a new one only after the last (`alike`): they are not all
+ * written alike in the person's file, so what parts them may be in them, and the last may hold
+ * what follows the group (the second pass's item 8).
+ */
+export const NOT_ALIKE =
+  "These are not all written alike in your file, so they keep their order, and a new one goes after the last";

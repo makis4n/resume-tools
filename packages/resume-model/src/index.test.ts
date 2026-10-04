@@ -521,7 +521,7 @@ describe("Resume, with an outline (decision 0049)", () => {
     expect(Resume.parse(resume)).toEqual(resume);
     for (const fixed of OUTLINE_FIXED)
       expect(accepts(withOutline([{ kind: "group", id: "g", fixed, units: [] }]))).toBe(true);
-    expect(accepts(withOutline([{ kind: "group", id: "g", fixed: "stops", units: [] }]))).toBe(
+    expect(accepts(withOutline([{ kind: "group", id: "g", fixed: "moved", units: [] }]))).toBe(
       false,
     );
     expect(accepts(withOutline([{ kind: "group", id: "g", fixed: true, units: [] }]))).toBe(false);

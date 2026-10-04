@@ -98,3 +98,47 @@ export async function inventedOutline(
   });
   return { pkg, document: { version: 1, template: pkg.id, resume, controls: {} } };
 }
+
+/**
+ * Outlines whose units are not all of one shape (the second pass's item 8), as the builder makes
+ * them from what the review of the item imported: a run of awards each but the last ending in a line break, the last
+ * holding the closing paragraph; and a run of skills, each ending in its own comma or stop.
+ */
+export const AWARDS: OutlinePart[] = [
+  kept("\\begin{document}\n\\section*{Quill Wrenfield}\n"),
+  {
+    kind: "group",
+    id: "awards",
+    units: [
+      ["alpha", "Alpha Prize", "2020", "} \\\\"],
+      ["beta", "Beta Medal", "2019", "} \\\\"],
+      ["gamma", "Gamma Ribbon", "2018", "}\n\n"],
+    ].map(([id, name, year, end]) => ({
+      id: id as string,
+      gap: "\n",
+      parts: [
+        kept("\\award{"),
+        plain(`${id}-name`, name as string),
+        kept("}{"),
+        plain(`${id}-year`, year as string),
+        kept(end as string),
+        ...(id === "gamma" ? [plain("closing", "Closing words here.")] : []),
+      ],
+    })),
+  },
+  kept("\n\\end{document}"),
+];
+export const SKILLS: OutlinePart[] = [
+  kept("\\begin{document}\nSkills: "),
+  {
+    kind: "group",
+    id: "skills",
+    units: ["\\skill{Lantern},", "\\skill{Quill},", "\\skill{Mill}.\n\n"].map((latex, u) => ({
+      id: `skill-${u + 1}`,
+      gap: " ",
+      parts: [kept(latex), ...(u === 2 ? [plain("after", "Closing words here.")] : [])],
+    })),
+  },
+  kept("\n\\end{document}"),
+];
+export const AWARD_PREAMBLE = `${OUTLINE_PREAMBLE}\n\\newcommand{\\award}[2]{\\textbf{#1} \\hfill #2}\n\\newcommand{\\skill}[1]{\\emph{#1}}`;

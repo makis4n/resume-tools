@@ -42,7 +42,7 @@ import {
   LinkKind,
   type LockedSection,
   OUTLINE_PLACEHOLDER,
-  type OutlineFixed,
+  type OutlineGroup,
   type OutlinePart,
   type OutlineSection,
   type OutlineUnit,
@@ -60,6 +60,7 @@ import {
   type ReactNode,
   useContext,
   useEffect,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -89,7 +90,16 @@ import {
   type StructureOp,
   showsBullets,
 } from "./document";
-import { type KeptAt, keptSegments, markerOf } from "./outline";
+import {
+  alike,
+  FIXED_WHY,
+  type KeptAt,
+  keptSegments,
+  markerOf,
+  NOT_ALIKE,
+  ONLY_UNIT,
+  unitShape,
+} from "./outline";
 import { piecesOf } from "./retype";
 
 /** How long typing in the panel waits for a pause before it becomes a command, in milliseconds. */
@@ -808,19 +818,10 @@ export const NO_WORDS = "No words";
 /** The button that adds a copy of a group's last unit, its fields emptied (the second pass's item 8). */
 export const ADD_UNIT = "Add another";
 
-/**
- * Why a group's buttons are disabled where the import's checks found it fixed (decision 0055),
- * which they say when pointed at: it takes no unit more or fewer, and none of its units moves.
- */
-export const FIXED_WHY: Readonly<Record<OutlineFixed, string>> = {
-  copy: "Adding one here changed the rest of the page when your resume was imported, so these stay as they are",
-  removal:
-    "Removing one here changed the rest of the page when your resume was imported, so these stay as they are",
-  untried: "These could not be tried when your resume was imported, so they stay as they are",
-};
+/** A unit's button that adds a copy of its group's last unit after it (the second pass's item 8). */
+export const ADD_AFTER = "Add after";
 
-/** Why the Remove of a group's only unit is disabled: a list needs at least one (decision 0050). */
-export const ONLY_UNIT = "This is the only one here, and there must be at least one";
+export { FIXED_WHY, NOT_ALIKE, ONLY_UNIT };
 
 /**
  * What an outline's rows need besides their parts: the segment of kept text each piece of it is in,
@@ -906,35 +907,8 @@ function OutlineParts({
             />
           </li>,
         ];
-      case "group": {
-        const fixed = part.fixed === undefined ? undefined : FIXED_WHY[part.fixed];
-        const last = part.units.at(-1);
-        return [
-          <li key={key}>
-            <ol style={STYLE.list}>
-              {part.units.map((unit, u) => (
-                <UnitRow
-                  key={unit.id}
-                  unit={unit}
-                  path={[...at, u]}
-                  index={u}
-                  count={part.units.length}
-                  fixed={fixed}
-                  context={context}
-                />
-              ))}
-            </ol>
-            {last !== undefined && (
-              <AddButton
-                refused={fixed}
-                onClick={() => context.send(structural({ op: "addUnit", after: last.id }))}
-              >
-                {ADD_UNIT}
-              </AddButton>
-            )}
-          </li>,
-        ];
-      }
+      case "group":
+        return [<GroupRow key={key} group={part} path={at} context={context} />];
     }
   });
   if (rows.length === 0) return null;
@@ -942,15 +916,80 @@ function OutlineParts({
 }
 
 /**
+ * A group of an outline's units, one under the other, and "Add another", which adds a copy of its
+ * last unit after it (the second pass's item 8). What its disabled buttons would do and why not is
+ * said under it, in plain words the buttons name as their description (`FIXED_WHY`, `NOT_ALIKE`,
+ * `ONLY_UNIT`), so that it is read without a pointer.
+ */
+function GroupRow({
+  group,
+  path,
+  context,
+}: {
+  group: OutlineGroup;
+  path: readonly number[];
+  context: OutlineContext;
+}) {
+  const note = useId();
+  const fixed = group.fixed === undefined ? undefined : FIXED_WHY[group.fixed];
+  const count = group.units.length;
+  const last = group.units.at(-1);
+  const same = alike(group);
+  const shape = last === undefined ? "" : unitShape(last);
+  const reasons =
+    fixed !== undefined
+      ? [fixed]
+      : [...(same ? [] : [NOT_ALIKE]), ...(count <= 1 ? [ONLY_UNIT] : [])];
+  return (
+    <li>
+      <ol style={STYLE.list}>
+        {group.units.map((unit, u) => (
+          <UnitRow
+            key={unit.id}
+            unit={unit}
+            path={[...path, u]}
+            refused={{
+              add: fixed ?? (u === count - 1 || unitShape(unit) === shape ? undefined : NOT_ALIKE),
+              move: fixed ?? (same ? undefined : NOT_ALIKE),
+              remove: fixed ?? (count <= 1 ? ONLY_UNIT : undefined),
+            }}
+            index={u}
+            count={count}
+            note={note}
+            context={context}
+          />
+        ))}
+      </ol>
+      {last !== undefined && (
+        <AddButton
+          refused={fixed}
+          describedBy={note}
+          onClick={() => context.send(structural({ op: "addUnit", after: last.id }))}
+        >
+          {ADD_UNIT}
+        </AddButton>
+      )}
+      {reasons.length > 0 && (
+        <small id={note} role="note" style={STYLE.mark}>
+          {` ${reasons.join(". ")}.`}
+        </small>
+      )}
+    </li>
+  );
+}
+
+/**
  * A unit of an outline's group, a bullet or an entry: named by its first words, and opening to show
- * its parts; closed, it still gives an input to each of its fields that needs one.
+ * its parts; closed, it still gives an input to each of its fields that needs one. Beside its name,
+ * ↑, ↓, Remove, and "Add after", which adds a copy of its group's last unit after it.
  */
 function UnitRow({
   unit,
   path,
   index,
   count,
-  fixed,
+  refused,
+  note,
   context,
 }: {
   unit: OutlineUnit;
@@ -958,8 +997,10 @@ function UnitRow({
   /** Where it is among its group's units, and how many they are. */
   index: number;
   count: number;
-  /** Why its group stays as it was imported, if it does (`FIXED_WHY`). */
-  fixed: string | undefined;
+  /** Why it takes no unit after it, no move, or no removal, where it does not. */
+  refused: { add: string | undefined; move: string | undefined; remove: string | undefined };
+  /** The id of its group's note, which says why in words its disabled buttons name. */
+  note: string;
   context: OutlineContext;
 }) {
   const [open, setOpen] = useState(false);
@@ -976,10 +1017,18 @@ function UnitRow({
           count={count}
           onMove={(to) => send(structural({ op: "moveUnit", id: unit.id, to }))}
           onRemove={() => send(structural({ op: "removeUnit", id: unit.id }))}
-          refused={fixed ?? (count <= 1 ? ONLY_UNIT : undefined)}
-          up={fixed}
-          down={fixed}
+          refused={refused.remove}
+          up={refused.move}
+          down={refused.move}
+          describedBy={note}
         />
+        <AddButton
+          refused={refused.add}
+          describedBy={note}
+          onClick={() => send(structural({ op: "addUnit", after: unit.id }))}
+        >
+          {ADD_AFTER}
+        </AddButton>
       </div>
       {open ? (
         <OutlineParts parts={unit.parts} path={path} context={context} />
@@ -1074,11 +1123,14 @@ function KeptRow({
  */
 function AddButton({
   refused,
+  describedBy,
   onClick,
   children,
 }: {
   /** Why the template takes no unit here, if it takes none. */
   refused: string | undefined;
+  /** The id of words on the panel that say why, which a disabled button names as its description. */
+  describedBy?: string;
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -1087,6 +1139,9 @@ function AddButton({
       type="button"
       disabled={refused !== undefined}
       {...(refused === undefined ? {} : { title: refused })}
+      {...(refused === undefined || describedBy === undefined
+        ? {}
+        : { "aria-describedby": describedBy })}
       onClick={onClick}
     >
       {children}
@@ -1398,6 +1453,7 @@ function Reorder({
   refused,
   up,
   down,
+  describedBy,
 }: {
   index: number;
   count: number;
@@ -1408,13 +1464,18 @@ function Reorder({
   /** Why the template cannot take the node one place up, or down, if it cannot (decision 0041). */
   up?: string | undefined;
   down?: string | undefined;
+  /** The id of words on the panel that say why, which a disabled button names as its description. */
+  describedBy?: string | undefined;
 }) {
+  const described = (why: string | undefined) =>
+    why === undefined || describedBy === undefined ? {} : { "aria-describedby": describedBy };
   return (
     <span style={STYLE.row}>
       <button
         type="button"
         title={up ?? "Move up"}
         aria-label="Move up"
+        {...described(up)}
         disabled={index === 0 || up !== undefined}
         onClick={() => onMove(index - 1)}
       >
@@ -1424,6 +1485,7 @@ function Reorder({
         type="button"
         title={down ?? "Move down"}
         aria-label="Move down"
+        {...described(down)}
         disabled={index === count - 1 || down !== undefined}
         onClick={() => onMove(index + 1)}
       >
@@ -1433,6 +1495,7 @@ function Reorder({
         type="button"
         disabled={refused !== undefined}
         {...(refused === undefined ? {} : { title: refused })}
+        {...described(refused)}
         onClick={onRemove}
       >
         Remove

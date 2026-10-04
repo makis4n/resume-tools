@@ -901,9 +901,10 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
         (removals && (found.first === undefined || found.last === undefined))
       )
         fixed.set(id, "untried");
-      else if (!keepsPage(found.copy)) fixed.set(id, "copy");
+      // A trial that stopped the compile says so (`stops`), apart from one that changed the page.
+      else if (!keepsPage(found.copy)) fixed.set(id, found.copy === "stops" ? "stops" : "copy");
       else if (removals && !(keepsPage(found.first) && keepsPage(found.last)))
-        fixed.set(id, "removal");
+        fixed.set(id, found.first === "stops" || found.last === "stops" ? "stops" : "removal");
     }
     const left = [...fixed.values()].filter((why) => why === "untried").length;
     if (left > 0)

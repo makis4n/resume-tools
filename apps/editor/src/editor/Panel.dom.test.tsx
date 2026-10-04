@@ -6,10 +6,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { outlinePackage, outlineResume } from "../import/outline";
 import { curated } from "../templates/curated";
 import type { TemplatePackage } from "../templates/package";
-import { inventedOutline, outlineParts } from "../test/invented-outline";
+import { AWARD_PREAMBLE, AWARDS, inventedOutline, outlineParts } from "../test/invented-outline";
 import { type Command, type Document, fieldsOf, newDocument } from "./document";
 import { keptSegments, outlineOf } from "./outline";
-import { ADD_UNIT, FIXED_WHY, KEPT_AS_WRITTEN, NO_WORDS, ONLY_UNIT, OUTLINE, Panel } from "./Panel";
+import {
+  ADD_AFTER,
+  ADD_UNIT,
+  FIXED_WHY,
+  KEPT_AS_WRITTEN,
+  NO_WORDS,
+  NOT_ALIKE,
+  ONLY_UNIT,
+  OUTLINE,
+  Panel,
+} from "./Panel";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -260,7 +270,7 @@ describe("the side panel, under an imported package's rules", () => {
     expect(rows[1]).toBe("Experience");
     // The roles, each a unit named by its first words.
     expect(rows[2]).toBe(
-      "Lantern Works 2021 -- 2024 Set…↑↓RemoveMill and Sons 2019 Cut half…↑↓RemoveAdd another",
+      "Lantern Works 2021 -- 2024 Set…↑↓RemoveAdd afterMill and Sons 2019 Cut half…↑↓RemoveAdd afterAdd another",
     );
     expect(rows[3]).toBe(`Hobbies Rowing on the river most…${KEPT_AS_WRITTEN}Change words`);
     expect(rows[4]).toBe("Projects");
@@ -335,6 +345,14 @@ describe("the side panel, under an imported package's rules", () => {
       FIXED_WHY.copy,
       FIXED_WHY.copy,
     ]);
+    // Its Add after too; and why is written under the group, which each disabled button names.
+    const after = row.querySelector(":scope > div > button:last-child") as HTMLButtonElement;
+    expect([after.textContent, after.disabled]).toEqual([ADD_AFTER, true]);
+    for (const button of [...own, after, rolesAdd as HTMLButtonElement]) {
+      const note = document.getElementById(button.getAttribute("aria-describedby") ?? "");
+      expect(note?.getAttribute("role")).toBe("note");
+      expect(note?.textContent?.trim()).toBe(`${FIXED_WHY.copy}.`);
+    }
     // A role opened: its bullets take a copy of the last, a move, and a removal.
     act(() => lantern.click());
     const bulletsAdd = adds().find((button) => !button.disabled);
@@ -346,11 +364,16 @@ describe("the side panel, under an imported package's rules", () => {
       ...(setRow?.querySelectorAll(":scope > div > span > button") ?? []),
     ] as HTMLButtonElement[];
     expect([up?.disabled, down?.disabled, remove?.disabled]).toEqual([true, false, false]);
+    expect(remove?.hasAttribute("aria-describedby")).toBe(false);
     act(() => down?.click());
     act(() => remove?.click());
+    const addAfter = setRow?.querySelector(":scope > div > button:last-child") as HTMLButtonElement;
+    expect(addAfter.disabled).toBe(false);
+    act(() => addAfter.click());
     expect(sent.slice(1)).toEqual([
       { type: "structure", op: { op: "moveUnit", id: "lantern-1", to: 1 } },
       { type: "structure", op: { op: "removeUnit", id: "lantern-1" } },
+      { type: "structure", op: { op: "addUnit", after: "lantern-1" } },
     ]);
     // The mill's only bullet is never removed, which its Remove says.
     const mill = buttons().find((button) => button.textContent?.startsWith("Mill and Sons"));
@@ -361,6 +384,37 @@ describe("the side panel, under an imported package's rules", () => {
     ] as HTMLButtonElement[];
     expect(only.map((button) => button.disabled)).toEqual([true, true, true]);
     expect(only[2]?.title).toBe(ONLY_UNIT);
+    const why = document.getElementById(only[2]?.getAttribute("aria-describedby") ?? "");
+    expect(why?.textContent?.trim()).toBe(`${ONLY_UNIT}.`);
+  });
+
+  it("disables the moves of units not all of one shape, and an Add after not after the last", async () => {
+    const { pkg, document: imported } = await inventedOutline([...AWARDS], AWARD_PREAMBLE);
+    act(() =>
+      root.render(
+        <Panel
+          document={imported}
+          pkg={pkg}
+          onCommand={(command) => sent.push(command)}
+          onSeal={() => {}}
+        />,
+      ),
+    );
+    const rows = [...host.querySelectorAll("fieldset li li")] as HTMLLIElement[];
+    const buttonsOf = (row: HTMLLIElement) =>
+      [
+        ...row.querySelectorAll(":scope > div > span > button, :scope > div > button:last-child"),
+      ] as HTMLButtonElement[];
+    expect(rows.map((row) => buttonsOf(row).map((button) => button.disabled))).toEqual([
+      [true, true, false, true],
+      [true, true, false, true],
+      [true, true, false, false],
+    ]);
+    const note = host.querySelector("[role=note]");
+    expect(note?.textContent?.trim()).toBe(`${NOT_ALIKE}.`);
+    const [up] = buttonsOf(rows[1] as HTMLLIElement);
+    expect(up?.getAttribute("aria-describedby")).toBe(note?.id);
+    expect(note?.textContent).not.toMatch(/[\\{}]/);
   });
 
   it("puts the focus in the input of the field it is asked to", async () => {

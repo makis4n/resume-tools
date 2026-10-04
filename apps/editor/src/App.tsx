@@ -15,7 +15,9 @@ import {
   type Document as EditorDocument,
   FieldTooLong,
   History,
+  REFUSED_STEP,
   TOO_LONG,
+  UnitRefused,
 } from "./editor/document";
 import { pdfFileName, savePdf } from "./editor/download";
 import { applyFit, type Fitted, fit } from "./editor/fit";
@@ -23,7 +25,7 @@ import { StructureGuard } from "./editor/guard";
 import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
 import { markerOf, outlineFields, outlineOf, unitEnding, unitPlace } from "./editor/outline";
-import { FIXED_WHY, lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
+import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
 import { usePdfConsent } from "./editor/PdfReading";
 import { PdfReview } from "./editor/PdfReview";
 import { usePdfImport } from "./editor/pdf-import";
@@ -876,6 +878,9 @@ export function App() {
         setTooLong(true);
         setClicked(undefined);
       }
+      // A structural step refused says why in plain words, an outline's unit's its own.
+      if (error instanceof UnitRefused) setUnitNote(error.plain);
+      else if (command.type === "structure") setUnitNote(REFUSED_STEP);
       return;
     }
     setTooLong(false);
@@ -912,11 +917,12 @@ export function App() {
 
   /**
    * Enter at the end of an outline's field (the second pass's item 8): where the field ends a unit,
-   * a copy of the unit, its fields emptied, goes in after it, as a step of its own after the visit
-   * to the field, held until its page shows as every change to an outline is; the field closes, and
-   * the new unit's first field takes the focus in the side panel, since the page shows no empty
-   * field to open. A unit of a group that stays as it was imported takes none, and the message
-   * line says why.
+   * a bullet by its text or an entry by its last field before its bullets, a copy of its group's
+   * last unit, its fields emptied, goes in after it (`addUnit`), as a step of its own after the
+   * visit to the field, held until its page shows as every change to an outline is; the field
+   * closes, and the new unit's first field takes the focus in the side panel, since the page shows
+   * no empty field to open. A step the outline refuses, in a group that stays as it was imported or
+   * after a unit not of the last's shape, adds nothing, and the message line says why.
    */
   const endField = (field: string, click: number) => {
     // A key held down repeats before the field closes: one visit adds one unit.
@@ -924,19 +930,16 @@ export function App() {
     const outline = outlineOf(history.present.resume);
     const id = field.endsWith(".text") ? field.slice(0, -".text".length) : undefined;
     const place = outline && id !== undefined ? unitEnding(outline.parts, id) : undefined;
-    if (place === undefined) return;
-    if (place.group.fixed !== undefined) {
-      setUnitNote(FIXED_WHY[place.group.fixed]);
-      return;
-    }
-    const unit = place.group.units[place.index];
+    const unit = place?.group.units[place.index];
     if (unit === undefined) return;
-    ended.current = click;
-    closeField();
+    // The add is a step of its own, after the visit: one the outline refuses says why, and the
+    // field stays open.
     const before = history.present;
     edit({ type: "structure", op: { op: "addUnit", after: unit.id } });
     const after = outlineOf(history.present.resume);
     if (history.present === before || after === undefined) return;
+    ended.current = click;
+    closeField();
     const now = unitPlace(after.parts, unit.id);
     const added = now?.group.units[now.index + 1];
     const first = added === undefined ? undefined : outlineFields(added.parts).next().value;

@@ -376,9 +376,10 @@ export interface OutlineRich {
  * Why the import's checks found a group fixed, which the editor then neither adds a unit to nor
  * removes one from (the second pass's item 6): a copy of its last unit did not keep the rest of
  * the page (`copy`), the removal of its first or its last unit did not (`removal`), or the checks
- * could not try it, their budget spent or the page not the original's to judge by (`untried`).
+ * could not try it, their budget spent or the page not the original's to judge by (`untried`); or
+ * one of the copy and the removals stopped the compile (`stops`, the second pass's item 8).
  */
-export const OUTLINE_FIXED = ["copy", "removal", "untried"] as const;
+export const OUTLINE_FIXED = ["copy", "removal", "untried", "stops"] as const;
 export type OutlineFixed = (typeof OUTLINE_FIXED)[number];
 
 /** What a new unit's copy of a required field holds until a person types in it. */

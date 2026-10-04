@@ -55,14 +55,19 @@ import {
 } from "../templates/package";
 import { parseSnippet, SnippetError, type SnippetNode } from "../templates/snippet";
 import {
+  alike,
   emptiedCopy,
+  FIXED_WHY,
   type KeptEdit,
   markerOf,
+  NOT_ALIKE,
+  ONLY_UNIT,
   outlineFields,
   outlineIds,
   partAt,
   type UnitPlace,
   unitPlace,
+  unitShape,
   withKept,
   withPartAt,
 } from "./outline";
@@ -559,8 +564,8 @@ export function mintId(prefix: string, taken: ReadonlySet<string>): string {
  * refused, and so is one that empties a field the package requires (`isRequired`, decision 0026).
  * An imported outline's units, a bullet or an entry found by shape (decision 0049), are added,
  * removed and moved by their own ops (`restructureUnits`, the second pass's item 8): `addUnit` puts
- * a copy of the unit `after` in after it, and `removeUnit` and `moveUnit` name the unit by its id,
- * which never leaves its group.
+ * a copy of its group's last unit in after the unit `after`, and `removeUnit` and `moveUnit` name
+ * the unit by its id, which never leaves its group.
  */
 export type StructureOp =
   | { op: "addSection"; kind: SectionKind; role: SectionRole; at?: number }
@@ -1189,25 +1194,46 @@ function idsOf(resume: Resume): Set<string> {
 }
 
 /**
+ * A `CommandError` for a step on an outline's unit the editor does not take, with why in plain
+ * words (`plain`), which the app shows the person (the second pass's item 8).
+ */
+export class UnitRefused extends CommandError {
+  constructor(
+    message: string,
+    readonly plain: string,
+  ) {
+    super(message);
+    this.name = "UnitRefused";
+  }
+}
+
+/** What the person reads when any other structural step is refused. */
+export const REFUSED_STEP = "That change cannot be made here, so nothing changed.";
+
+/**
  * Why the editor takes a step on a unit of no group the import's checks found fixed (decision
  * 0055): such a group takes no unit more and none fewer, and none of its units moves, since its
  * units were found not to stand apart from the page around them, or were not tried.
  */
 function refuseFixed({ group }: UnitPlace, step: string): void {
   if (group.fixed !== undefined)
-    throw new CommandError(
+    throw new UnitRefused(
       `the group ${group.id} stays as it was imported (${group.fixed}), and takes no ${step}`,
+      FIXED_WHY[group.fixed],
     );
 }
 
 /**
  * The resume after an op on a unit of its outline (the second pass's item 8), a new value that
- * shares what the op left alone: a copy of the unit `after` put in after it, its fields emptied or
- * holding the placeholder where they are required (`emptiedCopy`), each id in it minted against
- * every id in the resume; the unit `id` removed, but never its group's only one (decision 0050's
- * first rule); or the unit `id` moved to `to` among its group's units, with its gap, as a unit
- * carries it (`OutlineUnit`). A unit of a fixed group takes none of them (`refuseFixed`). The
- * outline after it must be one the model takes (`OutlineSection`), as within its size.
+ * shares what the op left alone: a copy of its group's last unit, the very copy the import's
+ * checks tried, put in after the unit `after`, which must be the last or of the last's shape
+ * (`unitShape`), its fields emptied or holding the placeholder where they are required
+ * (`emptiedCopy`), each id in it minted against every id in the resume; the unit `id` removed, but
+ * never its group's only one (decision 0050's first rule); or the unit `id` moved to `to` among its
+ * group's units, with its gap, as a unit carries it (`OutlineUnit`), where they are all of one
+ * shape (`alike`). A unit of a fixed group takes none of them (`refuseFixed`). A step refused so
+ * says why in plain words (`UnitRefused`). The outline after it must be one the model takes
+ * (`OutlineSection`), as within its size.
  */
 function restructureUnits(
   resume: Resume,
@@ -1225,7 +1251,13 @@ function restructureUnits(
   switch (op.op) {
     case "addUnit": {
       refuseFixed(place, "unit more");
-      const unit = group.units[index] as OutlineUnit;
+      // A copy of the last unit, as the import's checks tried it, after any unit of its shape.
+      const last = group.units.at(-1) as OutlineUnit;
+      if (
+        index !== group.units.length - 1 &&
+        unitShape(group.units[index] as OutlineUnit) !== unitShape(last)
+      )
+        throw new UnitRefused(`${id} is not of the shape of its group's last unit`, NOT_ALIKE);
       const taken = idsOf(resume);
       const mint = () => {
         const minted = mintId("copy", taken);
@@ -1233,22 +1265,25 @@ function restructureUnits(
         return minted;
       };
       const required = new Set(
-        [...outlineFields(unit.parts)].flatMap(({ part }) =>
+        [...outlineFields(last.parts)].flatMap(({ part }) =>
           part.required === true ? [part.id] : [],
         ),
       );
-      const copy = emptiedCopy(unit, mint, (field) => required.has(field));
+      const copy = emptiedCopy(last, mint, (field) => required.has(field));
       units = [...group.units.slice(0, index + 1), copy, ...group.units.slice(index + 1)];
       break;
     }
     case "removeUnit":
       refuseFixed(place, "unit fewer");
       if (group.units.length <= 1)
-        throw new CommandError(`${id} is its group's only unit, which stays`);
+        throw new UnitRefused(`${id} is its group's only unit, which stays`, ONLY_UNIT);
       units = group.units.filter((_, u) => u !== index);
       break;
     case "moveUnit":
       refuseFixed(place, "move");
+      // Units not all of one shape may hold what parts them, or what follows the group.
+      if (!alike(group))
+        throw new UnitRefused(`the units of ${group.id} are not all of one shape`, NOT_ALIKE);
       if (!isIndex(op.to, group.units.length))
         throw new CommandError(`${id} cannot move to ${op.to} in a group of ${group.units.length}`);
       units = [...group.units];

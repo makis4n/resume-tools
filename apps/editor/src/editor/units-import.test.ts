@@ -10,8 +10,8 @@ import { isRefusal } from "../import/refusal";
 import { type ImportDeps, importResume } from "../import/run";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
-import { applyUnder, CommandError, type StructureOp } from "./document";
-import { outlineOf, unitEnding } from "./outline";
+import { applyUnder, CommandError, type StructureOp, UnitRefused } from "./document";
+import { alike, NOT_ALIKE, outlineOf, unitEnding } from "./outline";
 import { FIXED_WHY } from "./Panel";
 
 // The invented upload of the second pass's item 8 (`src/test/invented-fixed-group.tex`), imported
@@ -52,10 +52,10 @@ describe.skipIf(!engineAvailable())("a fixed group of an imported resume, on the
       node.kind === "part" && node.part.kind === "group" ? [node.part] : [],
     );
     const fixed = groups.filter((group) => group.fixed !== undefined);
-    // The roles, fixed for their copy; the two lists of bullets, which take anything.
-    expect(fixed.map((group) => [group.units.length, group.fixed])).toEqual([[2, "copy"]]);
+    // The roles, fixed since a copy of one stopped the compile; the two lists of bullets, which take anything.
+    expect(fixed.map((group) => [group.units.length, group.fixed])).toEqual([[2, "stops"]]);
     const roles = fixed[0] as OutlineGroup;
-    const reason = FIXED_WHY[roles.fixed ?? "copy"];
+    const reason = FIXED_WHY[roles.fixed ?? "stops"];
     expect(reason).not.toMatch(/[\\{}]/);
     const [lantern, mill] = roles.units;
     if (lantern === undefined || mill === undefined) throw new Error("no roles");
@@ -81,5 +81,49 @@ describe.skipIf(!engineAvailable())("a fixed group of an imported resume, on the
       (node) => node.kind === "part" && node.part.kind === "group" && node.part.id === lists[0]?.id,
     );
     expect(list?.kind === "part" && list.part.kind === "group" && list.part.units.length).toBe(3);
+  }, 120_000);
+
+  it("refuses a move among units the builder found not of one shape, saying why", async () => {
+    // The review's invented bodies: a run whose units but the last end in a line break, the last
+    // holding the closing paragraph; and a run of skills each ending in its comma or its stop.
+    const preamble =
+      "\\documentclass[11pt]{article}\n\\usepackage[margin=0.8in]{geometry}\n\\pagestyle{empty}\n\\setlength{\\parindent}{0pt}\n";
+    const bodies = [
+      "\\newcommand{\\award}[2]{\\textbf{#1} \\hfill #2}\n\\begin{document}\n\\section*{Quill Wrenfield}\n\\award{Alpha Prize}{2020} \\\\\n\\award{Beta Medal}{2019} \\\\\n\\award{Gamma Ribbon}{2018}\n\nClosing words here.\n\\end{document}\n",
+      "\\newcommand{\\skill}[1]{\\emph{#1}}\n\\begin{document}\n\\section*{Quill Wrenfield}\nSkills: \\skill{Lantern}, \\skill{Quill}, \\skill{Mill}.\n\nClosing words here.\n\\end{document}\n",
+    ];
+    for (const body of bodies) {
+      const outcome = await importResume(
+        [{ name: "invented.tex", bytes: new TextEncoder().encode(preamble + body) }],
+        deps,
+      );
+      if (isRefusal(outcome)) throw new Error(`refused: ${outcome.reason}`);
+      const { package: pkg, document } = outcome;
+      const parts = outlineOf(document.resume)?.parts ?? [];
+      const run = [...outlineNodes(parts)].flatMap((node) =>
+        node.kind === "part" && node.part.kind === "group" && node.part.units.length === 3
+          ? [node.part]
+          : [],
+      )[0];
+      if (run === undefined) throw new Error("no run of three");
+      expect(run.fixed).toBeUndefined();
+      expect(alike(run)).toBe(false);
+      const [first, , last] = run.units;
+      if (first === undefined || last === undefined) throw new Error("no units");
+      for (const op of [
+        { op: "moveUnit", id: last.id, to: 0 },
+        { op: "addUnit", after: first.id },
+      ] as const) {
+        let plain: string | undefined;
+        try {
+          applyUnder(pkg, document, { type: "structure", op });
+        } catch (error) {
+          if (error instanceof UnitRefused) plain = error.plain;
+        }
+        expect(plain).toBe(NOT_ALIKE);
+      }
+      // After the last, the copy the checks tried is taken.
+      applyUnder(pkg, document, { type: "structure", op: { op: "addUnit", after: last.id } });
+    }
   }, 120_000);
 });

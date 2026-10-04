@@ -44,33 +44,44 @@ const same = (a: Placed, b: Placed) =>
 const still = (a: Placed, b: Placed) =>
   same(a, b) && a.page === b.page && Math.abs(a.y - b.y) < NEAR;
 
-/** Whether a glyph now stands higher than it stood, on its page or an earlier one. */
-const up = (was: Placed, now: Placed) =>
-  now.page < was.page || (now.page === was.page && now.y < was.y - NEAR);
+/**
+ * Whether a glyph now stands higher than it stood, on its page or an earlier one, by more than
+ * `shrink` points: TeX may shrink a full page's glue to take what was added, and set what stood
+ * above it a point or so higher.
+ */
+const up = (was: Placed, now: Placed, shrink = 0) =>
+  now.page < was.page || (now.page === was.page && now.y < was.y - NEAR - shrink);
 
 /** Whether a glyph sets a letter or a digit, which no emptied unit sets. */
 const wordy = (glyph: Placed) => /[\p{L}\p{N}]/u.test(glyph.text ?? "");
 
 /** Whether a glyph after can be one before: the same glyph, where it stood or lower or later. */
-const fits = (was: Placed, now: Placed) => same(was, now) && !up(was, now);
+const fits = (was: Placed, now: Placed, shrink: number) => same(was, now) && !up(was, now, shrink);
 
 /**
  * The pairs of a longest run of glyphs `before` and `after` share in order (`fits`), by their
  * indexes, found by the usual table of common runs.
  */
-function common(before: readonly Placed[], after: readonly Placed[]): [number, number][] {
+function common(
+  before: readonly Placed[],
+  after: readonly Placed[],
+  shrink: number,
+): [number, number][] {
   const n = before.length;
   const m = after.length;
   const table = new Uint32Array((n + 1) * (m + 1));
   const cell = (i: number, j: number) => table[i * (m + 1) + j] as number;
   for (let i = n - 1; i >= 0; i--)
     for (let j = m - 1; j >= 0; j--)
-      table[i * (m + 1) + j] = fits(before[i] as Placed, after[j] as Placed)
+      table[i * (m + 1) + j] = fits(before[i] as Placed, after[j] as Placed, shrink)
         ? cell(i + 1, j + 1) + 1
         : Math.max(cell(i + 1, j), cell(i, j + 1));
   const pairs: [number, number][] = [];
   for (let i = 0, j = 0; i < n && j < m; )
-    if (fits(before[i] as Placed, after[j] as Placed) && cell(i, j) === cell(i + 1, j + 1) + 1)
+    if (
+      fits(before[i] as Placed, after[j] as Placed, shrink) &&
+      cell(i, j) === cell(i + 1, j + 1) + 1
+    )
       pairs.push([i++, j++]);
     else if (cell(i + 1, j) >= cell(i, j + 1)) i++;
     else j++;
@@ -78,16 +89,37 @@ function common(before: readonly Placed[], after: readonly Placed[]): [number, n
 }
 
 /**
- * What differs between `before` and `after` but for added glyphs that set no letter or digit and
- * glyphs moved down (the module's comment): the first problem found, or undefined where there is
- * none; and how many glyphs were added. The glyphs are paired as the longest run in order the two
+ * What differs between `before` and `after` but for added glyphs that set no letter or digit, or
+ * any with `words`, as a new entry's kept text may set, and glyphs moved down, or up by `shrink`
+ * points at most, as a full page's glue shrinks (the module's
+ * comment): the first problem found, or undefined where there is none; how many glyphs were added;
+ * in how many runs of glyphs one after the other in `after`; and how far up, in points, a glyph
+ * went on its page at most (`rise`). The glyphs are paired as the longest run in order the two
  * share; those it leaves, as a page's foot that a line moved onto the next page passes, pair where
  * they stand where they stood, and then in order, each lower or later.
  */
 export function movedDown(
   before: readonly Placed[],
   after: readonly Placed[],
-): { problem?: string; added: number } {
+  options: { words?: boolean; shrink?: number } = {},
+): { problem?: string; added: number; runs: number; rise: number } {
+  const result = compared(before, after, options.words === true, options.shrink ?? 0);
+  const runs = result.at.filter((j, k) => k === 0 || j !== (result.at[k - 1] as number) + 1).length;
+  return {
+    ...(result.problem === undefined ? {} : { problem: result.problem }),
+    added: result.at.length,
+    runs,
+    rise: result.rise,
+  };
+}
+
+/** `movedDown`'s comparison: the first problem, and the indexes in `after` of the glyphs added. */
+function compared(
+  before: readonly Placed[],
+  after: readonly Placed[],
+  words: boolean,
+  shrink: number,
+): { problem?: string; at: number[]; rise: number } {
   let start = 0;
   while (
     start < before.length &&
@@ -107,12 +139,18 @@ export function movedDown(
   const middle = common(
     before.slice(start, before.length - end),
     after.slice(start, after.length - end),
+    shrink,
   );
   for (const [i, j] of middle) pairs.push([start + i, start + j]);
   for (let k = end; k > 0; k--) pairs.push([before.length - k, after.length - k]);
-  for (const [i, j] of pairs)
-    if (up(before[i] as Placed, after[j] as Placed))
-      return { problem: `glyph ${i} moved up`, added: 0 };
+  // How far up the glyphs paired went on their pages, at most, which `shrink` bounds.
+  let rise = 0;
+  for (const [i, j] of pairs) {
+    const was = before[i] as Placed;
+    const now = after[j] as Placed;
+    if (up(was, now, shrink)) return { problem: `glyph ${i} moved up`, at: [], rise };
+    if (now.page === was.page) rise = Math.max(rise, was.y - now.y);
+  }
   const paired = new Set(pairs.map(([i]) => i));
   const taken = new Set(pairs.map(([, j]) => j));
   const left = before.flatMap((glyph, i) => (paired.has(i) ? [] : [{ glyph, i }]));
@@ -125,26 +163,28 @@ export function movedDown(
     return false;
   });
   let at = 0;
-  let added = 0;
+  const added: number[] = [];
+  const allowed = (glyph: Placed) => words || !wordy(glyph);
   for (const { glyph, i } of unplaced) {
     while (
       at < rest.length &&
       !(
         same(glyph, (rest[at] as { glyph: Placed }).glyph) &&
-        !up(glyph, (rest[at] as { glyph: Placed }).glyph)
+        !up(glyph, (rest[at] as { glyph: Placed }).glyph, shrink)
       )
     ) {
-      if (wordy((rest[at] as { glyph: Placed }).glyph))
-        return { problem: `glyph ${i} is missing, or a letter was added`, added };
-      added++;
+      const extra = rest[at] as { glyph: Placed; j: number };
+      if (!allowed(extra.glyph))
+        return { problem: `glyph ${i} is missing, or a letter was added`, at: added, rise };
+      added.push(extra.j);
       at++;
     }
-    if (at >= rest.length) return { problem: `glyph ${i} is missing`, added };
+    if (at >= rest.length) return { problem: `glyph ${i} is missing`, at: added, rise };
     at++;
   }
-  for (const { glyph } of rest.slice(at)) {
-    if (wordy(glyph)) return { problem: "a letter was added", added };
-    added++;
+  for (const { glyph, j } of rest.slice(at)) {
+    if (!allowed(glyph)) return { problem: "a letter was added", at: added, rise };
+    added.push(j);
   }
-  return { added };
+  return { at: added.sort((a, b) => a - b), rise };
 }

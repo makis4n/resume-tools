@@ -9,11 +9,35 @@ import {
 import { describe, expect, it } from "vitest";
 import { generateBody } from "../templates/generate";
 import type { TemplatePackage } from "../templates/package";
-import { inventedOutline, outlineParts } from "../test/invented-outline";
+import {
+  AWARD_PREAMBLE,
+  AWARDS,
+  inventedOutline,
+  outlineParts,
+  SKILLS,
+} from "../test/invented-outline";
 import { movedDown, type Placed } from "../test/moved-down";
-import { applyUnder, CommandError, type Document, History, type StructureOp } from "./document";
+import {
+  applyUnder,
+  CommandError,
+  type Document,
+  History,
+  type StructureOp,
+  UnitRefused,
+} from "./document";
 import { endsField } from "./Overlay";
-import { outlineFields, outlineIds, outlineOf, unitEnding, unitPlace } from "./outline";
+import {
+  alike,
+  FIXED_WHY,
+  NOT_ALIKE,
+  ONLY_UNIT,
+  outlineFields,
+  outlineIds,
+  outlineOf,
+  unitEnding,
+  unitPlace,
+  unitShape,
+} from "./outline";
 
 // Adding, removing and moving an outline's units (the second pass's item 8). Every word is
 // invented.
@@ -58,7 +82,8 @@ describe("an outline's units", () => {
       "lantern-1",
       "lantern-2",
     ]);
-    const [original, copy] = [units[0], units[1]];
+    // A copy of the last bullet, as the import's checks tried it, after the first, of its shape.
+    const [original, copy] = [units[2], units[1]];
     if (original === undefined || copy === undefined) throw new Error("no copy");
     // Its kept text and its gap are the very strings of the unit it copies.
     expect(copy.gap).toBe(original.gap);
@@ -267,15 +292,16 @@ describe("an outline's units", () => {
 });
 
 describe("the unit a field ends", () => {
-  it("is a bullet's, at its text; an entry's last written field's; and none elsewhere", async () => {
+  it("is a bullet's at its text, an entry's at its last field before its bullets, and none elsewhere", async () => {
     const { document } = await inventedOutline();
     const parts = outlineOf(document.resume)?.parts ?? [];
     const place = unitEnding(parts, "lantern-2-text");
     expect(place?.group.id).toBe("lantern-bullets");
     expect(place?.index).toBe(1);
-    // An entry's company and dates come before its bullets: no unit ends with them.
+    // An entry's last field before its bullets ends the entry; its company, before it, nothing.
     expect(unitEnding(parts, "lantern-company")).toBeUndefined();
-    expect(unitEnding(parts, "lantern-dates")).toBeUndefined();
+    const entry = unitEnding(parts, "lantern-dates");
+    expect([entry?.group.id, entry?.index]).toEqual(["roles", 0]);
     // A field in no group, and one the outline has not.
     expect(unitEnding(parts, "work")).toBeUndefined();
     expect(unitEnding(parts, "nobody")).toBeUndefined();
@@ -348,11 +374,14 @@ describe("a page after a unit was added, read against the page before", () => {
     const before = [...line("Head", 10), ...line("•One", 20), ...line("•Two", 30)];
     // A bullet between the two, whose own glyph stands higher than the next one's did.
     const after = [...line("Head", 10), ...line("•One", 20), ...line("•", 28), ...line("•Two", 40)];
-    expect(movedDown(before, after)).toEqual({ added: 1 });
+    expect(movedDown(before, after)).toMatchObject({ added: 1, runs: 1 });
     // A line moved onto the next page, past the foot of its own, which stands where it stood.
     const footed = [...before, ...line("Foot", 90)];
     const moved = [...line("Head", 10), ...line("•One", 20), ...line("•", 30), ...line("Foot", 90)];
-    expect(movedDown(footed, [...moved, ...line("•Two", 5, 1)])).toEqual({ added: 1 });
+    expect(movedDown(footed, [...moved, ...line("•Two", 5, 1)])).toMatchObject({
+      added: 1,
+      runs: 1,
+    });
   });
 
   it("is not where a letter is added, a glyph goes, or one moves up", () => {
@@ -360,6 +389,82 @@ describe("a page after a unit was added, read against the page before", () => {
     expect(movedDown(before, [...line("Head", 10), ...line("•Ones", 20)]).problem).toBeDefined();
     expect(movedDown(before, [...line("Head", 10), ...line("•On", 20)]).problem).toBeDefined();
     expect(movedDown(before, [...line("Head", 10), ...line("•One", 15)]).problem).toBeDefined();
-    expect(movedDown(before, before)).toEqual({ added: 0 });
+    expect(movedDown(before, before)).toEqual({ added: 0, runs: 0, rise: 0 });
+    // A new entry's kept text may set words, where they are asked for, in one run.
+    const words = [...line("Head", 10), ...line("New", 15), ...line("•One", 25)];
+    expect(movedDown(before, words).problem).toBeDefined();
+    expect(movedDown(before, words, { words: true })).toMatchObject({ added: 3, runs: 1 });
+  });
+});
+
+describe("units not all of one shape", () => {
+  it("take no move, and a copy only after the last, saying why in plain words", async () => {
+    for (const [parts, group, first, last] of [
+      [AWARDS, "awards", "alpha", "gamma"],
+      [SKILLS, "skills", "skill-1", "skill-3"],
+    ] as const) {
+      const { pkg, document } = await inventedOutline([...parts], AWARD_PREAMBLE);
+      expect(alike(groupOf(document, group))).toBe(false);
+      const refused = (op: StructureOp) => {
+        try {
+          applyUnder(pkg, document, step(op));
+        } catch (error) {
+          return error instanceof UnitRefused ? error.plain : "another error";
+        }
+        return "taken";
+      };
+      // A move would carry a line break or a comma, or the closing paragraph, where it is not.
+      expect(refused({ op: "moveUnit", id: last, to: 0 })).toBe(NOT_ALIKE);
+      expect(refused({ op: "moveUnit", id: first, to: 1 })).toBe(NOT_ALIKE);
+      // After the first, a copy of the last would bring its closing paragraph's place with it.
+      expect(refused({ op: "addUnit", after: first })).toBe(NOT_ALIKE);
+      // After the last, it is the copy the checks tried.
+      expect(refused({ op: "addUnit", after: last })).toBe("taken");
+      expect(refused({ op: "removeUnit", id: first })).toBe("taken");
+    }
+  });
+
+  it("is told apart from units of one shape, whatever their bullets", async () => {
+    const { document } = await inventedOutline();
+    // The roles: one with two bullets, one with one, of one shape outside them.
+    expect(alike(groupOf(document, "roles"))).toBe(true);
+    expect(alike(groupOf(document, "lantern-bullets"))).toBe(true);
+    const [lantern, mill] = groupOf(document, "roles").units;
+    if (lantern === undefined || mill === undefined) throw new Error("no roles");
+    expect(unitShape(lantern)).toBe(unitShape(mill));
+    expect(unitShape(lantern)).not.toMatch(/Lantern|Set careful/);
+  });
+
+  it("an entry with bullets takes a copy of the last entry after it, from Enter at its dates", async () => {
+    const { pkg, document } = await inventedOutline();
+    const parts = outlineOf(document.resume)?.parts ?? [];
+    const place = unitEnding(parts, "lantern-dates");
+    const unit = place?.group.units[place.index];
+    if (unit === undefined) throw new Error("no entry");
+    const after = applyUnder(pkg, document, step({ op: "addUnit", after: unit.id }));
+    const roles = groupOf(after, "roles").units;
+    expect(roles.map((each) => each.id).filter((id) => id !== roles[1]?.id)).toEqual([
+      "lantern",
+      "mill",
+    ]);
+    // The mill's shape: one bullet, every field emptied.
+    expect(unmarked(body(pkg, after).latex)).toContain(
+      "\\end{itemize}\n\n\\role{}{}\n\\begin{itemize}\n  \\item \n\\end{itemize}\n\n\\role{Mill and Sons}",
+    );
+  });
+
+  it("refuse with why in plain words: a fixed group's and an only unit's", async () => {
+    const { pkg, document } = await inventedOutline(withFixed(outlineParts(), "roles", "stops"));
+    const why = (op: StructureOp) => {
+      try {
+        applyUnder(pkg, document, step(op));
+      } catch (error) {
+        return error instanceof UnitRefused ? error.plain : undefined;
+      }
+    };
+    expect(why({ op: "addUnit", after: "mill" })).toBe(FIXED_WHY.stops);
+    expect(why({ op: "removeUnit", id: "mill-1" })).toBe(ONLY_UNIT);
+    for (const text of Object.values(FIXED_WHY)) expect(text).not.toMatch(/[\\{}]/);
+    expect(FIXED_WHY.stops).not.toBe(FIXED_WHY.copy);
   });
 });

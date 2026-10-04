@@ -35,7 +35,7 @@ export const IMPORT_LIMIT_MS = 900_000;
 export const LOCK_REASONS = Object.keys(LOCK_WHY) as LockReason[];
 
 /** Why the checks found a group fixed, in the order the table counts them. */
-export const FIXED = ["copy", "removal", "untried"] as const;
+export const FIXED = ["copy", "removal", "untried", "stops"] as const;
 
 /**
  * What became of a document: a success or partial, as item 13's report says; refused by a step
