@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Resume } from "@resume-tools/resume-model";
+import { Resume, type Section } from "@resume-tools/resume-model";
 import { strToU8, unzipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
 import { Compiler, type Engine, type Shown } from "../editor/compiler";
@@ -46,6 +46,10 @@ import {
   uploadOf,
 } from "./run";
 import { NamingServiceError, nameOnService } from "./service";
+
+/** A section's extras: an outline, which the assembly never makes, keeps none. */
+const extrasOf = (section: Section | undefined) =>
+  section === undefined || section.kind === "outline" ? undefined : section.extras;
 
 // Every file here is invented for these tests: the fork of Jake's Resume holds invented words in
 // the template's own shape (`../test/jake-fork.ts`); nothing is a real person's resume.
@@ -390,7 +394,7 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
       (section) => section.title === "Technical Skills",
     );
     expect(skills?.kind).toBe("list");
-    expect(skills?.extras?.after).toContain("\\resumeSubHeadingListEnd");
+    expect(extrasOf(skills)?.after).toContain("\\resumeSubHeadingListEnd");
     expect(done.package.snippets.document).not.toContain("\\resumeSubHeadingListEnd");
     expect(compiles(done, without(done, skills?.id ?? ""))).toBe(true);
     // Check 3 removes the last section of a kind as well as the first, and finds nothing now.
@@ -405,7 +409,7 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decision 0038)", 
     );
     const projects = done.document.resume.sections.at(-1);
     expect(projects?.title).toBe("Projects");
-    expect(projects?.extras?.before ?? "").not.toContain("\\resumeSubHeadingListStart");
+    expect(extrasOf(projects)?.before ?? "").not.toContain("\\resumeSubHeadingListStart");
     expect(done.package.snippets.document).not.toContain("\\resumeSubHeadingListEnd");
     expect(compiles(done, without(done, projects?.id ?? ""))).toBe(true);
     expect(done.report.checks.repeatable.every((unit) => unit.removed)).toBe(true);

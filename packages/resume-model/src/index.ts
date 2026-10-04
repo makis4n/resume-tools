@@ -22,6 +22,11 @@ import { z } from "zod";
  * writes where the section sits. Neither is typed by the user, and neither is a field (decision
  * 0025). `kept` on the same nodes names the slots whose value an import keeps in the extras as the
  * upload had it, which are no fields either (decision 0026).
+ *
+ * An `outline` section holds an imported `.tex` resume in its own shape instead (decision 0049):
+ * kept text, the upload's LaTeX written back byte for byte; fields of plain or rich text where they
+ * stand in it, each named `<id>.text`; and groups whose units repeat. Its fields, groups and units
+ * carry ids unique across the document, as every node does.
  */
 
 /**
@@ -249,7 +254,8 @@ export type Entry = z.infer<typeof Entry>;
  * Its role says what the section is about, and is only a hint a package may use to pick a variant
  * snippet: Jake's Resume sets projects with `\resumeProjectHeading` and every other entry with
  * `\resumeSubheading`, on the same entry shape. These are the kinds a package sets through a
- * snippet of its own and a user can add; the fifth, `locked`, only an import makes (`LockedSection`).
+ * snippet of its own and a user can add; the fifth and the sixth, `locked` and `outline`, only an
+ * import makes (`LockedSection`, `OutlineSection`).
  */
 export const SECTION_KINDS = ["entries", "list", "labelled", "paragraph"] as const;
 export const SectionKind = z.enum(SECTION_KINDS);
@@ -288,6 +294,227 @@ export const LockedSection = z.strictObject({
 });
 export type LockedSection = z.infer<typeof LockedSection>;
 
+// The outline (decision 0049).
+
+/**
+ * A part of an outline: kept text, a field of plain text, a field of rich text, or a group of units
+ * that repeat. The generator writes the parts one after the other, in order.
+ */
+export type OutlinePart = OutlineKept | OutlineText | OutlineRich | OutlineGroup;
+
+/**
+ * Kept text: the upload's own LaTeX, written back byte for byte and never escaped, which nothing
+ * but the retype edits. A piece of it is a fragment of the person's LaTeX, such as a command and
+ * the brace that opens its argument, so it need not balance on its own; the outline as a whole
+ * does (`OutlineSection`).
+ */
+export interface OutlineKept {
+  kind: "kept";
+  latex: string;
+}
+
+/**
+ * A field of plain text, as a date the upload spelt: text a person types into, where it stands in
+ * their own LaTeX, which the generator escapes and writes in the editor's marker, named
+ * `<id>.text`, as it writes a slot. `bare` is for an argument the upload gave as one token, without
+ * braces, whose field the generator writes in braces of its own, so that the command still takes
+ * one argument, empty or not.
+ */
+export interface OutlineText {
+  kind: "text";
+  id: Id;
+  text: string;
+  bare?: boolean;
+}
+
+/** A field of rich text: as a field of plain text, with bold, italic and links kept. */
+export interface OutlineRich {
+  kind: "rich";
+  id: Id;
+  text: RichText;
+  bare?: boolean;
+}
+
+/**
+ * Something that repeats: a list's items, or a run of calls to the same command, each with what
+ * follows it up to the next (decision 0049). Its units are copied, removed and moved as wholes.
+ */
+export interface OutlineGroup {
+  kind: "group";
+  id: Id;
+  units: OutlineUnit[];
+}
+
+/**
+ * A unit of a group, a bullet or an entry: its parts, and `gap`, the kept text that parts it from
+ * the unit before it, as the upload had it, which the generator writes before it unless it is its
+ * group's first. A unit carries its gap when it is moved, and a copy of it carries it too, so that
+ * a copy of the last unit put in after it is parted from it as it is from the unit before, and the
+ * removal of the first or of the last unit takes the gap the upload had beside it.
+ */
+export interface OutlineUnit {
+  id: Id;
+  gap: string;
+  parts: OutlinePart[];
+}
+
+/** The most characters an outline may hold, kept text and fields' text together. */
+export const MAX_OUTLINE = 1_048_576;
+
+/** How deep groups may nest in an outline, units within units, as the parser's tree nests. */
+export const MAX_OUTLINE_DEPTH = 64;
+
+export const OutlinePart: z.ZodType<OutlinePart> = z.lazy(() =>
+  z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("kept"), latex: z.string() }),
+    z.strictObject({
+      kind: z.literal("text"),
+      id: Id,
+      text: z.string(),
+      bare: z.boolean().optional(),
+    }),
+    z.strictObject({
+      kind: z.literal("rich"),
+      id: Id,
+      text: RichText,
+      bare: z.boolean().optional(),
+    }),
+    z.strictObject({ kind: z.literal("group"), id: Id, units: z.array(OutlineUnit) }),
+  ]),
+);
+
+export const OutlineUnit: z.ZodType<OutlineUnit> = z.lazy(() =>
+  z.strictObject({ id: Id, gap: z.string(), parts: z.array(OutlinePart) }),
+);
+
+/** A field of an outline. */
+export type OutlineField = OutlineText | OutlineRich;
+
+/** Whether a part of an outline is a field. */
+export const isOutlineField = (part: OutlinePart): part is OutlineField =>
+  part.kind === "text" || part.kind === "rich";
+
+/**
+ * Every field, group and unit of an outline's parts, in the order the generator writes them, each
+ * with how deep it is: 0 at the outline's own level, 1 inside a unit of a group there, and so on.
+ * The walk keeps a stack of its own, so a deep outline costs no deep recursion.
+ */
+export function* outlineNodes(
+  parts: readonly OutlinePart[],
+): Generator<
+  | { kind: "part"; part: OutlinePart; depth: number }
+  | { kind: "unit"; unit: OutlineUnit; group: OutlineGroup; first: boolean; depth: number }
+> {
+  type Step =
+    | { kind: "part"; part: OutlinePart; depth: number }
+    | { kind: "unit"; unit: OutlineUnit; group: OutlineGroup; first: boolean; depth: number };
+  const stack: Step[] = [...parts].reverse().map((part) => ({ kind: "part", part, depth: 0 }));
+  for (let step = stack.pop(); step !== undefined; step = stack.pop()) {
+    yield step;
+    if (step.kind === "part" && step.part.kind === "group") {
+      const group = step.part;
+      const depth = step.depth + 1;
+      for (let u = group.units.length - 1; u >= 0; u--)
+        stack.push({
+          kind: "unit",
+          unit: group.units[u] as OutlineUnit,
+          group,
+          first: u === 0,
+          depth,
+        });
+    } else if (step.kind === "unit")
+      for (let p = step.unit.parts.length - 1; p >= 0; p--)
+        stack.push({ kind: "part", part: step.unit.parts[p] as OutlinePart, depth: step.depth });
+  }
+}
+
+/**
+ * The text an outline's kept parts and the gaps between its units make as the generator writes
+ * them, each field as `field` gives it, and how many characters it holds with every field's text.
+ */
+function outlineText(
+  parts: readonly OutlinePart[],
+  field: (part: OutlineField) => string,
+): { text: string; size: number } {
+  let text = "";
+  let size = 0;
+  for (const step of outlineNodes(parts)) {
+    if (step.kind === "unit") {
+      if (!step.first) text += step.unit.gap;
+      size += step.unit.gap.length;
+      continue;
+    }
+    const { part } = step;
+    if (part.kind === "kept") {
+      text += part.latex;
+      size += part.latex.length;
+    } else if (isOutlineField(part)) {
+      text += field(part);
+      size +=
+        typeof part.text === "string"
+          ? part.text.length
+          : part.text.reduce((sum, run) => sum + run.text.length + (run.href?.length ?? 0), 0);
+    }
+  }
+  return { text, size };
+}
+
+const EDITORS =
+  "an outline's kept text holds the editor's own macros or markers, which only the generator writes";
+
+/** Whether a piece of LaTeX ends in a backslash no backslash escapes, which would take what follows. */
+const endsEscaping = (latex: string) => (/\\+$/.exec(latex)?.[0].length ?? 0) % 2 === 1;
+
+/**
+ * An imported `.tex` resume in its own shape (decision 0049): its parts in order, kept text, fields
+ * and groups of units, which the generator writes where the section sits, and which is what holds
+ * the whole of the person's LaTeX after its preamble, `\begin{document}` and a call the preamble
+ * stores a value with, issued again before it, among them. Its title is empty and its role
+ * `other`, as a locked section's, since nothing says what it is about.
+ *
+ * Its kept text never holds the editor's own macros or marker texts, however its parts and the gaps
+ * between its units meet, with each field empty; no piece of it ends in a backslash that would
+ * escape what the generator writes next; and its braces balance as TeX reads it where it stands
+ * outside any argument (`balanced`), every field a group. It holds at most `MAX_OUTLINE`
+ * characters, and its groups nest at most `MAX_OUTLINE_DEPTH` deep.
+ */
+export const OutlineSection = z
+  .strictObject({
+    kind: z.literal("outline"),
+    id: Id,
+    title: z.literal(""),
+    role: z.literal("other"),
+    parts: z.array(OutlinePart),
+  })
+  .superRefine((section, ctx) => {
+    const refuse = (message: string) => ctx.addIssue({ code: "custom", message, path: ["parts"] });
+    const empty = outlineText(section.parts, () => "");
+    if (empty.size > MAX_OUTLINE)
+      return refuse(`an outline holds at most ${MAX_OUTLINE} characters`);
+    const editors = (latex: string) => EDITOR_MACRO.test(latex) || EDITOR_MARKER.test(latex);
+    const grouped = () => "{}";
+    for (const step of outlineNodes(section.parts)) {
+      if (step.depth > MAX_OUTLINE_DEPTH)
+        return refuse(`an outline's groups nest at most ${MAX_OUTLINE_DEPTH} deep`);
+      const latex =
+        step.kind === "unit" ? step.unit.gap : step.part.kind === "kept" ? step.part.latex : "";
+      if (endsEscaping(latex))
+        return refuse("a piece of an outline's kept text ends in a backslash that would escape");
+      if (editors(latex)) return refuse(EDITORS);
+      // A unit is copied, removed and moved whole, its gap with it, so each balances on its own.
+      if (
+        step.kind === "unit" &&
+        (!balanced(step.unit.gap, true) ||
+          !balanced(outlineText(step.unit.parts, grouped).text, true))
+      )
+        return refuse("a unit of an outline, or its gap, does not balance as TeX reads it");
+    }
+    if (editors(empty.text)) return refuse(EDITORS);
+    if (!balanced(outlineText(section.parts, grouped).text, true))
+      refuse("an outline's braces do not balance as TeX reads them");
+  });
+export type OutlineSection = z.infer<typeof OutlineSection>;
+
 export const Section = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("entries"),
@@ -314,6 +541,7 @@ export const Section = z.discriminatedUnion("kind", [
     kept: keptSlots(SECTION_KEPT.paragraph),
   }),
   LockedSection,
+  OutlineSection,
 ]);
 export type Section = z.infer<typeof Section>;
 
@@ -374,6 +602,12 @@ export const Resume = z
         });
       } else if (section.kind === "list" || section.kind === "labelled") {
         section.items.forEach((item, i) => visit(item.id, ["sections", s, "items", i]));
+      } else if (section.kind === "outline") {
+        // Its fields, groups and units, each named by its id as any node is.
+        for (const step of outlineNodes(section.parts)) {
+          if (step.kind === "unit") visit(step.unit.id, ["sections", s, "parts"]);
+          else if (step.part.kind !== "kept") visit(step.part.id, ["sections", s, "parts"]);
+        }
       }
     });
   });

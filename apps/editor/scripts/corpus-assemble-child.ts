@@ -546,7 +546,7 @@ async function main() {
             for (const kind of failing) {
               const ofKind = sections.filter((section) => section.kind === kind);
               ofKind.forEach((section, n) => {
-                if (section.kind === "locked") return;
+                if (section.kind === "locked" || section.kind === "outline") return;
                 const removed = applyUnder(pkg, doc, {
                   type: "structure",
                   op: { op: "removeSection", id: section.id },
@@ -571,6 +571,7 @@ async function main() {
                       ? "locked"
                       : next !== undefined &&
                           next.kind !== "locked" &&
+                          next.kind !== "outline" &&
                           net(`${next.extras?.lead ?? ""}${next.extras?.before ?? ""}`) < 0
                         ? "next"
                         : "none";
@@ -579,7 +580,10 @@ async function main() {
                     ? (after ?? "")
                     : closer === "locked" && next?.kind === "locked"
                       ? next.latex
-                      : closer === "next" && next !== undefined && next.kind !== "locked"
+                      : closer === "next" &&
+                          next !== undefined &&
+                          next.kind !== "locked" &&
+                          next.kind !== "outline"
                         ? `${next.extras?.lead ?? ""}${next.extras?.before ?? ""}`
                         : "";
                 const named = calls(before).flatMap((name) => closers.get(name) ?? []);

@@ -60,11 +60,11 @@ import {
   type Link,
   type LinkKind,
   LockedLatex,
+  type Section as ModelSection,
   type Resume,
   type RichText,
   type Run,
   SECTION_KEPT,
-  type Section,
   type SectionKind,
   type SectionRole,
 } from "@resume-tools/resume-model";
@@ -117,6 +117,9 @@ import {
   wordsIn,
 } from "./templating";
 import type { XetexRewrite } from "./xetex";
+
+/** A section the assembly makes: any kind but an outline, which a `.tex` import's outline holds. */
+type Section = Exclude<ModelSection, { kind: "outline" }>;
 
 // What assembly makes.
 
@@ -4035,6 +4038,7 @@ function keptEverywhere(resume: Resume, pkg: Omit<TemplatePackage, "id">): boole
     Object.values(extras ?? {}).every(isKept);
   if (!kept(resume.header.extras)) return false;
   for (const section of resume.sections) {
+    if (section.kind === "outline") continue;
     if (!kept(section.extras)) return false;
     if (section.kind === "locked" && !LockedLatex.safeParse(section.latex).success) return false;
     if (section.kind === "entries" && !section.entries.every((entry) => kept(entry.extras)))
