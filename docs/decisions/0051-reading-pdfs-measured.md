@@ -1,4 +1,4 @@
-# 00XX. Reading PDFs, measured
+# 0051. Reading PDFs, measured
 
 Date: 2026-10-04 · Status: accepted; the targets and the model's time budget are the owner's to set
 
