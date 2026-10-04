@@ -1,6 +1,7 @@
 # 0051. Reading PDFs, measured
 
-Date: 2026-10-04 · Status: accepted; the targets and the model's time budget are the owner's to set
+Date: 2026-10-04 · Status: accepted; the targets and the model's time budget were set by the
+owner on 4 October 2026
 
 ## Context
 
@@ -232,7 +233,13 @@ its cap.
   the median, so 30 s leaves about four times the slowest; 15 s would have kept every answer too.
   The budget is what the gateway's failures cost before the rules answer: one failed after 70.3 s.
 
-Targets: set by the owner on
+Targets: set by the owner on 2026-10-04. The model: at least 90% of fields right on invented
+resumes from other tools, inside a time budget of 15 s, after which the rules answer. The rules: on
+the built-in templates, every word lands, the header, section titles, roles and bullets come back
+exactly, and at least 95% of entries are right, counting an entry's title and subtitle as a pair;
+on the corpus, every word lands and at least 95% of words land in a recognised place; on invented
+resumes from other tools, at least 80% of fields, kept there because the two held out read 68.8%;
+and under 1 s a PDF. `docs/milestone-3-overhaul.md` carries them under "Done means".
 
 ## Consequences
 

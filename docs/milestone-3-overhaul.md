@@ -119,36 +119,45 @@ of it leaves the repository.
 
 ## Done means
 
-The numbers marked provisional are replaced by what item 2 and item 3 measure, before stage 1 and
-stage 2 begin.
+The owner set these targets on 4 October 2026 from what item 2 and item 3 measured (decisions
+0050 and 0051), in place of the provisional numbers this plan was approved with. Each figure in
+brackets is the spike's.
 
 **For a `.tex` import**
 
 - Every corpus resume that compiles and is probed imports. The outcome "no answer" no longer
   exists.
-- At least 60% of body words are editable in place over those resumes, and at least 80% on Jake's,
-  Awesome-CV's and AltaCV's forks (provisional; the first pass reached 22%).
-- At least 25 resumes reach the 90% bar (provisional; the first pass reached none).
+- At least 60% of body words are editable in place over those resumes, and at least 90% on Jake's,
+  Awesome-CV's and AltaCV's forks (67.7% and 95.3% on the twenty, before check 2; the first pass
+  reached 22%). The targets leave room for check 2, which the spike did not run.
+- At least 45 resumes reach the 90% bar (12 of the twenty, about 58 to 70 scaled to the 117 that
+  compile; the first pass reached none).
 - On each upstream sample, a bullet can be added to a list and removed from it, and a field on the
   last page opens in place.
 - A `.tex` import makes no network request, which a test proves.
-- A pdfTeX import stays under 8 s on this machine. A XeTeX import is reported, with 30 s as the
-  aim (provisional; it is about 75 s on the Awesome-CV sample today).
+- A pdfTeX import stays under 8 s on this machine, judged on Jake's sample; the other families'
+  times are reported (Jake's forks 2.7 to 7.1 s before checks 2 and 4, AltaCV's and moderncv's
+  6.5 to 23 s). A XeTeX import is reported, with 20 s as the aim (an estimate of 11 to 18 s from a
+  saved format, not yet measured; about 75 s on the Awesome-CV sample today).
 
 **For a PDF import**
 
 - Once the person has agreed to send PDFs' text, on invented resumes made in other tools: at least
-  90% of fields are right against their hand-written truth (provisional).
+  90% of fields are right against their hand-written truth (92.4% to 94.3% over three passes).
 - With rules alone, which is what a person who says no gets:
   - on PDFs the editor's own engine makes from the three built-in templates with invented resumes,
     every word read lands in the resume; the name, email, phone, links, section titles and roles
-    come back exactly; at least 95% of entries have the right title, place and dates; bullets come
-    back exactly (provisional);
+    come back exactly; at least 95% of entries have the right title, place and dates, counting an
+    entry's title and subtitle as a pair, since Awesome-CV sets the employer above the role (100%
+    so counted, 73.3% otherwise); bullets come back exactly (all met);
   - on PDFs of the corpus's resumes that compile, every word read lands in the resume, and at
-    least 85% of words land in a recognised place and not in the catch-all section (provisional);
-  - on invented resumes made in other tools, at least 80% of fields are right (provisional).
-- With rules a PDF import takes under 3 s. With the model it finishes inside a time budget of 30 s,
-  after which the rules answer (provisional).
+    least 95% of words land in a recognised place and not in the catch-all section (97.6% of the
+    73 read);
+  - on invented resumes made in other tools, at least 80% of fields are right (91.9% over eight,
+    68.8% on the two the rules were not tuned on, which is why this one stays at 80%).
+- With rules a PDF import takes under 1 s (232 ms at most). With the model it finishes inside a
+  time budget of 15 s, after which the rules answer (every answered call took 8.1 s at most; one
+  failed call hung for 70.3 s).
 - Nothing is sent unless the person has agreed, which a test proves. The question is asked once
   and the answer remembered, with a setting to change it. The service keeps no text, in a cache or
   in a log.
@@ -186,13 +195,13 @@ closes.
    step). Its pull request revises the plan page, docs/editor-plan.md, in the places listed under
    "What the owner does", since the plan now lives in the repository (decision 0048). Done when the
    record and the revised plan page are merged.
-2. [ ] **Spike: the outline on the samples.** A script and no editor work. For the three upstream
+2. [x] **Spike: the outline on the samples.** A script and no editor work. For the three upstream
    samples and a twenty-resume sample of the corpus, it builds the outline from the tree and the
    probe's verdicts, compiles it, and counts: words in fields, words in kept text the retype
    reaches, words locked, the groups of units found, and how many take a copy and a removal. It
    prints the table by template family beside the first pass's. Done when the table is recorded and
    the owner has set this plan's `.tex` targets from it.
-3. [ ] **Spike: reading PDFs, by rules and by the hosted model.** With the reader named below, a
+3. [x] **Spike: reading PDFs, by rules and by the hosted model.** With the reader named below, a
    script reads three sets and reports on each:
    - PDFs the editor's engine makes from the three built-in templates and invented resumes, where
      the truth is known exactly: words, header fields, section titles, entries, bullets.
@@ -442,7 +451,7 @@ nine with this plan on 3 October 2026, having given the fourth and the fifth ear
 - Approved the first nine decisions above with this plan, on 3 October 2026.
 - May add a few PDFs made in other tools, from invented resumes, with their truth written down;
   item 3's agent makes the first ones.
-- After items 2 and 3: sets the targets and the model's time budget.
+- After items 2 and 3: set the targets and the model's time budget, on 4 October 2026.
 - Reviews item 1's revision of the plan page: the canonical model's row and section 5.2, which say
   every document is stored in one model; section 6's steps 4 and 5 and sections 6.1 to 6.4, on
   naming, locked content, the cache and the model; the scope line that leaves importing from a PDF
