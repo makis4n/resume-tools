@@ -1,4 +1,4 @@
-# 00XX. Typing in an imported outline
+# 0058. Typing in an imported outline
 
 Date: 2026-10-05 · Status: accepted; the second pass's item 7, under decision 0049; amends 0042's
 retype for an outline's kept text, and 0041's guard for an outline's every change
