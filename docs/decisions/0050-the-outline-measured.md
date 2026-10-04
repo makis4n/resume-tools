@@ -1,8 +1,12 @@
 # 0050. The outline measured
 
-Date: 2026-10-04 · Status: accepted; the targets are the owner's to set
+Date: 2026-10-04 · Status: accepted; the targets were set by the owner on 4 October 2026
 
-Targets: set by the owner on
+Targets: set by the owner on 2026-10-04, leaving room for check 2, which this spike did not run.
+At least 60% of body words editable in place over the resumes that compile, and at least 90% on
+Jake's, Awesome-CV's and AltaCV's forks; at least 45 resumes at the 90% bar; a pdfTeX import under
+8 s, judged on Jake's sample, with the other families' times reported; a XeTeX import reported,
+with 20 s as the aim. `docs/milestone-3-overhaul.md` carries them under "Done means".
 
 ## Context
 
