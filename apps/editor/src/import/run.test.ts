@@ -305,6 +305,35 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decisions 0038 an
     expect(done.report.checks.difference).toBeUndefined();
   }, 60_000);
 
+  test("keeps every field as kept text, with a plain reason, when its marked outline stops", async () => {
+    // A session on which the outline's compile with its fields stops, as one would whose regenerated
+    // text a template cannot take: every compile of a body that holds a field's marker as the
+    // generator writes it, `\rtfield{<id>.text}`, fails, and every other compile is the engine's.
+    const stopping = Object.create(session) as EngineSession;
+    stopping.compile = (engine, format, body, options) => {
+      const result = session.compile(engine, format, body, options);
+      const text = typeof body === "string" ? body : new TextDecoder().decode(body);
+      return /\\rtfield\{[a-z0-9-]+\.text\}/.test(text) ? { ...result, ok: false } : result;
+    };
+    const outcome = await importResume([tex("resume.tex", JAKE_FORK)], {
+      ...deps,
+      session: stopping,
+    });
+    if (isRefusal(outcome)) throw new Error(`refused: ${outcome.message}`);
+    // No field, and the page the original's, every word kept as the upload wrote it.
+    expect(outcome.report.outline.fields).toBe(0);
+    expect(outcome.report.checks.outcome).toBe("assembled");
+    const proven = outcome.report.checks.fields.locked.compile ?? 0;
+    expect(proven).toBeGreaterThan(20);
+    expect(outcome.report.checks.fields.editable).toBe(0);
+    const report = reportOfImport(outcome);
+    expect(report.words.editable).toBe(0);
+    expect(report.words.byReason.compile).toBeGreaterThan(0);
+    expect(report.locked.map((part) => part.why)).toContain(
+      "this part could not be made editable without changing the page",
+    );
+  }, 60_000);
+
   test("imports a resume on XeTeX from a saved format, its name a field through the preamble", async () => {
     const steps: ImportProgress[] = [];
     const outcome = await importResume([tex("resume.tex", XETEX_RESUME)], deps, (step) =>

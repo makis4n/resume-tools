@@ -866,13 +866,15 @@ export async function compileOutline(input: {
 /**
  * What sets each run of the reference's glyphs, as the report reads it (`GlyphOwner`): the probe's
  * runs, each a field's where its candidate is one (`Outline.fields`), by the field's name; kept
- * text where it is not, with the probe's reason, `shape` for an editable candidate the outline
- * could not make a field, and `raw` for a raw chunk; and the template's own text otherwise.
+ * text where it is not, with the probe's reason, `unmade` for an editable candidate the outline did
+ * not make a field (`shape`, or `compile` where the outline with its fields stopped the compile),
+ * and `raw` for a raw chunk; and the template's own text otherwise.
  */
 export function ownersOf(
   runs: readonly UncoveredRun[],
   candidates: readonly ProbeCandidate[],
   fields: ReadonlyMap<string, string>,
+  unmade: LockReason = "shape",
 ): GlyphOwner[] {
   const byId = new Map(candidates.map((each) => [each.id, each]));
   return runs.flatMap((run): GlyphOwner[] => {
@@ -883,9 +885,11 @@ export function ownersOf(
     if (field !== undefined) return [{ ...at, field: `${field}.text` }];
     const verdict = byId.get(run.candidate)?.verdict;
     const reason: LockReason =
-      verdict === undefined || verdict === "editable" || verdict === "container"
-        ? "shape"
-        : verdict;
+      verdict === "editable"
+        ? unmade
+        : verdict === undefined || verdict === "container"
+          ? "shape"
+          : verdict;
     return [{ ...at, kept: reason }];
   });
 }

@@ -361,8 +361,10 @@ export async function importResume(
     if (resume === undefined) return refusal("keep");
     let compiled = await compile(resume);
     // TODO(the second pass's item 6): check 1 finds the fields that stop the compile. Until then,
-    // an outline that does not compile keeps every field as kept text, as the probe's baseline.
-    if ("stopped" in compiled && outline.counts.fields > 0) {
+    // an outline that does not compile keeps every field as kept text, as the probe's baseline,
+    // each with the plain reason `compile` (`LOCK_WHY`).
+    const fallen = "stopped" in compiled && outline.counts.fields > 0;
+    if (fallen) {
       outline = outlineOf([]);
       resume = outlineResume(outline.parts);
       if (resume === undefined) return refusal("keep");
@@ -391,7 +393,7 @@ export async function importResume(
       report: {
         engine,
         reference: shown,
-        checks: checksOf(outline, compiled, probed, words, swap?.swapped),
+        checks: checksOf(outline, compiled, probed, words, swap?.swapped, fallen),
         locked: [],
         images: taken.images,
         // What the intake and the XeTeX rewrite set aside, which the report lists (decision 0039).
@@ -459,7 +461,8 @@ function preambleOf(
 
 /**
  * What the checks found, as item 13's report reads them (`AssemblyChecks`): the outline's fields,
- * and the probe's other candidates by why they are kept text; the page's words set down to what
+ * and the probe's other candidates by why they are kept text, each it proved among them where the
+ * outline with its fields stopped the compile (`fallen`); the page's words set down to what
  * sets them (`ownersOf`); whether the outline compiled sets the reference's page, and how it first
  * differs where it does not; and its compiles and time. What the first pass's checks decided, the
  * controls, the redefinitions, the units and the harness's findings, an outline has none of yet.
@@ -471,11 +474,14 @@ function checksOf(
   probed: Probe,
   words: Words,
   latinModern: readonly string[] | undefined,
+  fallen: boolean,
 ): AssemblyChecks {
   const locked: AssemblyChecks["fields"]["locked"] = {};
   for (const each of probed.candidates) {
-    if (each.verdict === "editable" || each.verdict === "container") continue;
-    locked[each.verdict] = (locked[each.verdict] ?? 0) + 1;
+    if (each.verdict === "container" || (each.verdict === "editable" && !fallen)) continue;
+    // An editable candidate kept since the outline with its fields stopped the compile.
+    const reason = each.verdict === "editable" ? "compile" : each.verdict;
+    locked[reason] = (locked[reason] ?? 0) + 1;
   }
   const { difference } = compiled;
   return {
@@ -491,12 +497,17 @@ function checksOf(
     redefinitions: { applied: [], dropped: [], placement: "class" },
     repeatable: [],
     findings: [],
-    compiles: compiled.compiles,
+    compiles: compiled.compiles + (fallen ? 1 : 0),
     ms: compiled.ms,
     decisions: {},
     ...(latinModern === undefined ? {} : { latinModern: [...latinModern] }),
     all: [],
-    owners: ownersOf(probed.runs ?? [], probed.candidates, outline.fields),
+    owners: ownersOf(
+      probed.runs ?? [],
+      probed.candidates,
+      outline.fields,
+      fallen ? "compile" : "shape",
+    ),
   };
 }
 

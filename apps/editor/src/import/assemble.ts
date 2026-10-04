@@ -139,7 +139,8 @@ export type LockReason =
   | "differs"
   | "text"
   | "fields"
-  | "alignment";
+  | "alignment"
+  | "compile";
 
 /** A locked part of the document: where it stands in the source, its node, and how many words. */
 export interface LockedPart {

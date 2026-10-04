@@ -753,6 +753,7 @@ export const LOCK_WHY: Readonly<Record<LockReason, string>> = {
   text: "the template stops on some text typed there",
   fields: "this editor could not find it on the page",
   alignment: "the page does not show it as it is written",
+  compile: "this part could not be made editable without changing the page",
 };
 
 /** The style controls as the report names them. */
