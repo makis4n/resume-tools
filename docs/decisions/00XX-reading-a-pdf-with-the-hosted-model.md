@@ -19,8 +19,10 @@ first pass's provider code and service shell (decisions 0028, 0036, 0044).
 - **The question** (`src/pdf/consent.ts`, `src/editor/PdfReading.tsx`). Asked the first time a
   person imports a PDF: "Send your PDF's text to the editor's reading service?", with what is sent
   (the text of each line, with its size and place on the page, not the file), what is done with it
-  (a language model says what each line is, and only that comes back), what is kept (none of it,
-  in a store or a log), what a no means (the editor reads it in the browser, less accurately on
+  (the editor's reading service passes the lines to a hosted language model, which says what each
+  line is, and only that comes back), what is kept (the editor's service keeps none of it, in a
+  store or a log, and asks the model to label the lines and nothing more; nothing is promised of
+  the model's host, whose keeping the repository does not establish), what a no means (the editor reads it in the browser, less accurately on
   some layouts, and nothing leaves), and where to change it. Two answers, yes or no. Item 14 places
   the question and the one-line notice in the import's flow; this item builds them.
 - **The answer is remembered in that browser**, under one key of local storage
@@ -31,7 +33,8 @@ first pass's provider code and service shell (decisions 0028, 0036, 0044).
   off for no or none. The editor has no settings screen yet, and this is where a person importing
   looks.
 - **Each later import says so in one line** while the answer is yes: "This PDF's text is being sent
-  to the reading service, which keeps none of it. You can turn this off under Documents."
+  to the editor's reading service, which asks a language model to label its lines and keeps none
+  of it. You can turn this off under Documents."
 - **The labeller** (`src/pdf/model-labeller.ts`) is a `Labeller` for item 12's seam, `by: "model"`.
   It reads the answer afresh on every call, before it builds or sends anything, so turning the
   setting off stops the next import from sending, even with a labeller made earlier. With a yes it
@@ -92,7 +95,8 @@ first pass's provider code and service shell (decisions 0028, 0036, 0044).
 | What they are told | the question above, once; the one line, each import while yes |
 | What is sent | each line's text and its features, as `featuresOf` gives them; not the file, not its links' addresses, not the document |
 | To whom | the editor's own service, which sends the same table to the hosted model and nothing else |
-| What the receiver keeps | nothing |
+| What the editor's service keeps | nothing |
+| What the model's host keeps | not established here: the launch provider's question (plan section 8.3), so the person is told only that the text goes to a hosted language model |
 
 - **Nothing before a yes.** The labeller reads the answer before it builds the request; with no
   answer, a no, a value that is not an answer, or a storage that refuses, it throws `no consent`
@@ -110,7 +114,10 @@ first pass's provider code and service shell (decisions 0028, 0036, 0044).
   finds none of the invented lines' text in any of them, nor in any refusal's body.
 - **The model's provider**: the school's gateway during development (decision 0044), on which
   SoCLaaS is billed nothing; who provides it at launch, and on what terms of keeping, stays the
-  plan's question (section 8.3), as the overhaul's decisions say.
+  plan's question (section 8.3), as the overhaul's decisions say. What the model's host keeps of
+  what it is sent is part of that question; until it is settled, the words the person reads promise
+  only what the editor's own service does, and name the hosted model as a receiver (item 13's
+  review).
 
 ### The model's numbers
 

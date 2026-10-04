@@ -89,9 +89,13 @@ export const needsAsking = (store: ConsentStore) => store.get() === undefined;
 /** The question, asked once, the first time a person imports a PDF. */
 export const CONSENT_QUESTION = "Send your PDF's text to the editor's reading service?";
 
-/** What the question says is sent, what is done with it and what is kept: plain words, no LaTeX. */
+/**
+ * What the question says is sent, to whom, and what is kept: plain words, no LaTeX. It promises
+ * what the editor's own service does, which keeps nothing, and no more of the model's host, whose
+ * keeping is the launch provider's question (plan section 8.3, item 13's review).
+ */
 export const CONSENT_DETAIL =
-  "To tell your name, headings, jobs, dates and bullets apart, the editor can send the text of each line of a PDF you import, with its size and its place on the page, to its reading service, which asks a language model what each line is and sends back only that. The PDF file itself is not sent. The service and its model keep none of your text, in a store or in a log. If you say no, the editor works it out in your browser, which is less accurate on some layouts, and nothing leaves your browser. The editor remembers your answer in this browser, and you can change it at any time under Documents.";
+  "To tell your name, headings, jobs, dates and bullets apart, the editor can send the text of each line of a PDF you import, with its size and its place on the page, to the editor's reading service. The service passes the lines to a hosted language model, which says what each line is, and sends back only that. The PDF file itself is not sent. The editor's service keeps none of your text, in a store or in a log; it asks the model to label the lines and nothing more. If you say no, the editor works it out in your browser, which is less accurate on some layouts, and nothing leaves your browser. The editor remembers your answer in this browser, and you can change it at any time under Documents.";
 
 /** The two answers' buttons. */
 export const CONSENT_YES = "Yes, send the text";
@@ -99,11 +103,11 @@ export const CONSENT_NO = "No, read it in my browser";
 
 /** The one line each import says while the answer is yes. */
 export const SENDING_NOTICE =
-  "This PDF's text is being sent to the reading service, which keeps none of it. You can turn this off under Documents.";
+  "This PDF's text is being sent to the editor's reading service, which asks a language model to label its lines and keeps none of it. You can turn this off under Documents.";
 
 /** The setting that changes the answer, on the documents screen. */
 export const SETTING_LABEL =
-  "When I import a PDF, send its text to the reading service, which keeps none of it";
+  "When I import a PDF, send its text to the editor's reading service, which asks a language model to label its lines and keeps none of it";
 
 /**
  * Who read a PDF's lines, in one plain sentence for the review (item 14): the model, or the rules

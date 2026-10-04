@@ -138,6 +138,9 @@ describe("asking, remembering and changing whether a PDF's text is sent", () => 
     const dialog = host.querySelector('[role="dialog"]');
     expect(dialog?.textContent).toContain(CONSENT_QUESTION);
     expect(dialog?.textContent).toContain(CONSENT_DETAIL);
+    // What the person reads names who receives the text, and what the editor's service keeps.
+    expect(dialog?.textContent).toContain("passes the lines to a hosted language model");
+    expect(dialog?.textContent).toContain("The editor's service keeps none of your text");
     const { fetch, calls } = counting();
     const labeller = modelLabeller({ consent: store, fetch });
     // Asked, not yet answered: nothing is sent.
