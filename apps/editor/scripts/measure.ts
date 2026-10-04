@@ -23,11 +23,10 @@
  * `fetch-engine` builds.
  *
  * With `--import`, the upstream samples of Jake's Resume on pdfTeX and of Awesome-CV on XeTeX,
- * which `corpus oracle` fetches into `.corpus/oracle/` and whose every macro the committed answers
- * name, are each imported through the editor's compile scheduler, their report read as the app
- * reads it, and opened to their first drawn page, a partial one without waiting for a Continue, the
- * naming step answered from the committed answers alone, as the dev server answers with no key, so
- * that no model is asked (`src/measure/import.ts`, `src/measure/node.ts`). Each import is on an
+ * which `corpus oracle` fetches into `.corpus/oracle/`, are each imported through the editor's
+ * compile scheduler as an outline, which names nothing and sends nothing (decision 0049), their
+ * report read as the app reads it, and opened to their first drawn page, a partial one without
+ * waiting for a Continue (`src/measure/import.ts`, `src/measure/node.ts`). Each import is on an
  * engine started afresh, as a newly opened editor's worker is; one is imported first and not
  * counted, then `--runs` are timed. It prints, for each sample, its parts' medians, from the file to
  * the page, and the verdict against the bar, under 8 s, raised by decision 0045 from plan section
@@ -322,9 +321,9 @@ async function measureImports(runner: Runner, options: Options) {
   }
   console.log(
     [
-      "The naming step answered from the committed answers alone, as the dev server does with no",
-      "key, and asked no model. The bar is judged on pdfTeX, and XeTeX is reported beside it, not",
-      `judged; it is under ${imports.IMPORT_TARGET.limit / 1000} s, raised by decision 0045 from the plan's 5 s.`,
+      "Each import built its outline with no naming step and sent nothing. The bar is judged on",
+      "pdfTeX, and XeTeX is reported beside it, not judged; it is under",
+      `${imports.IMPORT_TARGET.limit / 1000} s, raised by decision 0045 from the plan's 5 s.`,
     ].join("\n"),
   );
   if (options.json !== undefined) {

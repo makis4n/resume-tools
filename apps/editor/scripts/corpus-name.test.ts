@@ -23,13 +23,14 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/nod
 import type { EngineSession } from "../src/engine/session";
 import { readTree } from "../src/import/fonts";
 import { type Intake, intake } from "../src/import/intake";
+import { keysOf } from "../src/import/keys";
 import type { HeaderValues } from "../src/import/naming";
 import * as naming from "../src/import/naming";
 import { bodyOf, bodyOfText, buildTree, readBody } from "../src/import/parse";
 import { probe, probeUses } from "../src/import/probe";
 import { reference } from "../src/import/reference";
 import { isRefusal } from "../src/import/refusal";
-import { keysOf, signatures } from "../src/import/signatures";
+import { signatures } from "../src/import/signatures";
 import { FontLibrary } from "../src/page/fonts";
 import { TexLiveIndex } from "../src/page/texlive";
 import { FileAnswerCache, modelCacheDir } from "./answer-cache";

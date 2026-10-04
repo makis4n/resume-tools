@@ -8,8 +8,8 @@
  * An import (milestone 3 item 12, decision 0038) runs here too, on the same session, in a job of
  * its own, so that one engine is loaded at a time: the pipeline (`src/import/run.ts`) is loaded
  * only when the first import asks for it, with the fonts the page's glyphs are read with, fetched
- * as the page fetches them, and the naming service called on the editor's own origin. Its progress
- * goes to the client as it comes, under the request's id.
+ * as the page fetches them, the engine's own files. An import sends nothing anywhere (decision
+ * 0049). Its progress goes to the client as it comes, under the request's id.
  */
 
 import type { Upload } from "../import/intake";
@@ -57,25 +57,17 @@ let importing:
 /**
  * The import's runner on this worker's session: the pipeline, loaded now, with the fonts the page
  * reads glyphs with, fetched as the page fetches them into the HTTP cache the engine reads from;
- * the tree's fonts and images, which the intake and the reference read; and the naming service on
- * the page's own origin (`nameOnService`).
+ * and the tree's fonts and images, which the intake and the reference read.
  */
 async function importer(session: EngineSession, manifest: EngineManifest) {
-  const [
-    { importResume },
-    { FontLibrary },
-    { TexLiveIndex },
-    { readTree },
-    { treeImages },
-    { nameOnService },
-  ] = await Promise.all([
-    import("../import/run"),
-    import("../page/fonts"),
-    import("../page/texlive"),
-    import("../import/fonts"),
-    import("../import/intake"),
-    import("../import/service"),
-  ]);
+  const [{ importResume }, { FontLibrary }, { TexLiveIndex }, { readTree }, { treeImages }] =
+    await Promise.all([
+      import("../import/run"),
+      import("../page/fonts"),
+      import("../page/texlive"),
+      import("../import/fonts"),
+      import("../import/intake"),
+    ]);
   const tag = engineTag(manifest);
   const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) => {
     const response = await fetch(fileUrl(tag, path));
@@ -85,18 +77,7 @@ async function importer(session: EngineSession, manifest: EngineManifest) {
   const tree = readTree(manifest.files, manifest.fonts);
   const treeImage = treeImages(manifest.files, (path) => getSync(fileUrl(tag, path)));
   return (files: Upload[], onStep: (step: ImportProgress) => void) =>
-    importResume(
-      files,
-      {
-        session,
-        fonts,
-        tree,
-        treeImage,
-        name: (request, names, signal) =>
-          nameOnService(request, (input, init) => fetch(input, init), signal, names),
-      },
-      onStep,
-    );
+    importResume(files, { session, fonts, tree, treeImage }, onStep);
 }
 
 async function handle(request: EngineRequest & { id: number }): Promise<EngineReply> {

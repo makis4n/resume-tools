@@ -86,6 +86,7 @@ import {
 import { isSetter, maySetText, tightened } from "./candidates";
 import { decodeText, type Intake } from "./intake";
 import { withRedefinitions } from "./naming";
+import { hyperrefLines, loadsHyperref } from "./outline";
 import {
   type Argument,
   bodyOf,
@@ -3561,30 +3562,8 @@ function colourOf(preamble: string, name: string): string | undefined {
   return undefined;
 }
 
-/**
- * Whether the document loads hyperref itself, as its reference compile's log shows: in its
- * preamble, or later, as moderncv's class does at the preamble's end, where hyperref loaded by the
- * rewrite first would clash with the options it asks for.
- */
-export const loadsHyperref = (made: Pick<Reference, "log">) => /hyperref\.sty/.test(made.log);
-
-/**
- * What the preamble's rewrite does to hyperref, a line before `\documentclass` and one after the
- * preamble: its dvipdfmx driver on pdfTeX, so that xdvipdfmx makes the PDF's links from the DVI
- * (decision 0008), and no bookmarks, whose cost grows with a title's square; and hyperref loaded
- * with `hidelinks` where the document does not load it (`loaded`), so that a link a user types
- * links. The checks compile the original with the same two lines, to tell what they change from
- * what the rest of the rewrite does.
- */
-export function hyperrefLines(engine: Engine, loaded: boolean): { before: string; after: string } {
-  const options = engine === "pdftex" ? "dvipdfmx,bookmarks=false" : "bookmarks=false";
-  return {
-    before: `\\PassOptionsToPackage{${options}}{hyperref}`,
-    after: loaded
-      ? ""
-      : "\\csname @ifpackageloaded\\endcsname{hyperref}{}{\\usepackage[hidelinks]{hyperref}}",
-  };
-}
+// Where the outline's package and the checks read them from (the second pass's item 5).
+export { hyperrefLines, loadsHyperref };
 
 /**
  * The package's preamble: the document's, the preamble's header calls taken out, the class's size

@@ -23,6 +23,7 @@ import { bound, fastestAsync } from "../test/timing";
 import type { Tfm } from "../tex/tfm";
 import { readTree } from "./fonts";
 import { type Intake, intake } from "./intake";
+import { keysOf } from "./keys";
 import {
   assertNoText,
   buildRequest,
@@ -51,7 +52,6 @@ import { isRefusal } from "./refusal";
 import {
   closure,
   type EngineSignatures,
-  keysOf,
   masked,
   namesIn,
   type Signature,

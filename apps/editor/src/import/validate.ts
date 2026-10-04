@@ -113,10 +113,14 @@ import {
   type Layout,
   layoutOfLog,
   readMeaning,
+  replacementOf,
 } from "./signatures";
 import { maskComments } from "./source";
 import type { XetexRewrite } from "./xetex";
 import { normalized } from "./xetex-check";
+
+/** Where the spike and the checks have read it from; it now lives with the signatures. */
+export { replacementOf };
 
 /** What validation takes: the import's inputs, and the session and fonts to compile and read with. */
 export interface ValidationInputs {
@@ -688,30 +692,6 @@ export function unbalanced(latex: string, macros: EngineSignatures["macros"]): b
     open.set(key, now);
   }
   return [...open.values()].some((count) => count !== 0);
-}
-
-/**
- * The replacement text of the document's own macro `name`, one level, as the signatures read its
- * definition; through the kernel's wrapper around a command with an optional argument, whose code
- * is the macro `\name` (`\@protected@testopt \name \\name {}`), or a robust command's, `name `.
- * Undefined for a macro that holds data, or one the signatures did not print.
- */
-export function replacementOf(
-  macros: EngineSignatures["macros"],
-  name: string,
-): string | undefined {
-  const macroOf = (each: string) => (Object.hasOwn(macros, each) ? macros[each] : undefined);
-  const textOf = (each: string) => {
-    const macro = macroOf(each);
-    if (macro === undefined || macro.kind === "data") return undefined;
-    const meaning = readMeaning(macro.meaning);
-    return meaning.kind === "macro" ? meaning.replacement : undefined;
-  };
-  const own = textOf(name);
-  if (own === undefined) return undefined;
-  if (/^\\@(?:protected@)?testopt\b/.test(own)) return textOf(`\\${name}`) ?? own;
-  if (/^\\protect\b/.test(own)) return textOf(`${name} `) ?? own;
-  return own;
 }
 
 /** The values check 4 tries of a control: every value but the document's. */

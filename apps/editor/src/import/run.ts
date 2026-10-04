@@ -1,19 +1,26 @@
 /**
  * An import, from the person's files to a package and a document (milestone 3 item 12, decision
- * 0038): the pipeline in the order `scripts/corpus-assemble-child.ts` runs it in Node, on the
- * editor's own engine session in the browser's worker, in the jobs its steps compile in (`import`,
- * and item 8's `fonts` for a XeTeX document), which it forgets when it ends.
+ * 0038; the second pass's item 5, decision 0049): the pipeline, on the editor's own engine session
+ * in the browser's worker, in the jobs its steps compile in (`import`, and item 8's `fonts` for a
+ * XeTeX document), which it forgets when it ends. `corpus run`'s child still runs the first pass's
+ * own pipeline, with answers, until the second pass's item 6 gives it one mode.
  *
  * The steps: the intake (decision 0019), each stand-in the PDF could not show copied to a plain path
  * (`plainStandIns`); the reference compile, read in Latin Modern where the page cannot draw its
- * Computer Modern in T1 or TS1 (`inLatinModern`, decision 0026); the engine's signatures, asked of
- * the sizes the class may declare too (`SIZE_OPTIONS`); the parse; the probe (decision 0022), whose
- * format goes as soon as it is done; the naming request, built with the upload's sources and the
- * page's strings and checked for the resume's text before it leaves (decision 0033); the naming
- * service (`nameOnService`, decision 0028), whose failure leaves every macro as the probe left it
- * and the report saying so, since the browser has no answers of its own; a XeTeX document's fonts
- * declared by file and checked (decision 0023); and the assembly and its checks (`validate`,
- * decision 0026), which drop the formats they dump.
+ * Computer Modern in T1 or TS1 (`inLatinModern`, decision 0026); on XeTeX, the fonts rewritten to
+ * files and checked (decision 0023), after which the document is the rewritten one, so that its
+ * preamble dumps and the probe compiles from a saved format; the engine's signatures; the parse;
+ * the probe (decision 0022), whose format goes as soon as it is done; the outline, built from the
+ * body's tree and the probe's verdicts (`buildOutline`), with its package (`outlinePackage`); and
+ * the outline compiled as the editor will compile it, against the reference's page
+ * (`compileOutline`), whose format the editor takes rather than dumping it again (decision 0045).
+ * No request is built and no service is called: a `.tex` import sends nothing (decision 0049).
+ *
+ * TODO(the second pass's item 6): the checks without answers. Here the outline is compiled once:
+ * where the page it sets differs from the reference's, the import is partial and says so; where it
+ * does not compile, its fields become kept text and it is compiled again. Item 6 bisects check 1
+ * to the fields that move the page, adds check 2's mutations, check 3's trials of each group and
+ * check 4's controls, and the report's three shares.
  *
  * Each step, and each compile as it begins and ends, is reported through `onStep`, with the step's
  * name in plain English, as plan section 6.4's progress display names it, and the compiles so far;
@@ -22,35 +29,42 @@
  * comes back as the pipeline gives it, in plain English that never shows LaTeX, as do the few this
  * module adds; an unexpected failure is one of those, its details for developers alone.
  *
- * Nothing here reaches for Node: it runs in the browser's worker, and in Node's tests on the same
- * session class, `startNodeSession`.
+ * Nothing here reaches for Node or the network: it runs in the browser's worker, and in Node's
+ * tests on the same session class, `startNodeSession`.
  */
 
-import type { NamingAnswer, NamingRequest } from "@resume-tools/naming";
-import { NAMING_VERSION } from "@resume-tools/naming";
+import type { Resume } from "@resume-tools/resume-model";
 import { zipSync } from "fflate";
 import type { Document } from "../editor/document";
 import type { Engine, EngineSession } from "../engine/session";
 import type { FontLibrary } from "../page/fonts";
-import type { NamingReply } from "../service/reply";
-import { generateFormat } from "../templates/generate";
-import type { TemplatePackage } from "../templates/package";
-import { type AssemblyChecks, type LockedPart, SIZE_OPTIONS } from "./assemble";
+import { fontDeclarations } from "../templates/generate";
+import type { FontFamily, TemplatePackage } from "../templates/package";
+import type { AssemblyChecks, LockedPart } from "./assemble";
+import { candidatesOf, isSetter } from "./candidates";
 import type { Tree as TexTree } from "./fonts";
-import { type Intake, intake, type Upload } from "./intake";
-import { inLatinModern } from "./latin-modern";
-import { assertNoText, importRequest } from "./naming";
-import { bodyOf, bodyOfText, buildTree, readBody } from "./parse";
+import { encodeLike, type Intake, intake, type Upload } from "./intake";
+import { inLatinModern, undrawableFonts } from "./latin-modern";
+import {
+  buildOutline,
+  compileOutline,
+  type Outline,
+  type OutlineCompiled,
+  outlinePackage,
+  outlineResume,
+  ownersOf,
+  type Words,
+  wordsOf,
+} from "./outline";
+import { type Body, bodyOf, bodyOfText, buildTree, readBody, type Span, type Tree } from "./parse";
 import { extensionOf, nameOf } from "./paths";
-import { probe, probeUses } from "./probe";
+import { type Probe, probe, probeUses } from "./probe";
 import { IMPORT_JOB, type Reference, reference, referenceFiles } from "./reference";
 import { isRefusal, type Refusal, refusal, refusedAtIntake, shownInMessage } from "./refusal";
-import { NamingServiceError } from "./service";
 import { signatures } from "./signatures";
 import { plainStandIns } from "./standins";
-import { validate } from "./validate";
 import { rewriteForXetex } from "./xetex";
-import { checkRewrite } from "./xetex-check";
+import { checkRewrite, jobFiles } from "./xetex-check";
 
 /**
  * The steps of an import, in order, as the progress line names them (plan section 6.4): plain
@@ -60,13 +74,12 @@ export const IMPORT_STEPS = {
   intake: "Reading your files",
   reference: "Compiling your resume as it stands, slower the first time",
   fonts: "Matching its fonts to ones the page can draw",
+  rewrite: "Setting up the template's fonts",
   signatures: "Reading the template's commands",
   parse: "Reading your resume's parts",
   probe: "Finding the parts you can edit",
-  request: "Preparing what is sent to learn the template",
-  naming: "Asking the naming service about the template",
-  rewrite: "Setting up the template's fonts",
-  validate: "Checking the imported template",
+  outline: "Laying out the parts you can edit",
+  validate: "Checking the imported resume",
 } as const;
 export type ImportStep = keyof typeof IMPORT_STEPS;
 
@@ -81,19 +94,7 @@ export interface ImportProgress {
   compiling: boolean;
 }
 
-/**
- * Names a request: the naming service's client in the browser (`nameOnService`), with the builder's
- * map of the names it wrote as placeholders, which reads the reply back under the document's own;
- * a stand-in in tests. It throws a `NamingServiceError`, whose message a person may read, when no
- * answer comes.
- */
-export type NameRequest = (
-  request: NamingRequest,
-  names: ReadonlyMap<string, string>,
-  signal?: AbortSignal,
-) => Promise<NamingReply>;
-
-/** What an import runs with. */
+/** What an import runs with: nothing that reaches a service. */
 export interface ImportDeps {
   /** The engine's session, the worker's, which every step compiles on. */
   session: EngineSession;
@@ -103,26 +104,27 @@ export interface ImportDeps {
   tree: TexTree;
   /** The tree's images by name (`treeImages`), which a stand-in of the same size takes the place of. */
   treeImage?: (name: string) => Uint8Array | undefined;
-  name: NameRequest;
 }
 
 /**
- * What the naming step came to: how many of the request's macros the service's cache answered, how
- * many it asked its model, how many keys were left unfiled because their answers disagree, and how
- * many macros it left with no answer; or, when no answer came at all, why, in the service client's
- * plain words, every macro then left as the probe left it.
+ * What the outline holds, for the report and the corpus: its fields, groups and units, and the
+ * page's words, each set down to a field, to kept text the retype reaches, or to kept text it does
+ * not (`wordsOf`), as the spike counted them (decision 0050).
  */
-export type NamingOutcome =
-  | { hits: number; asked: number; conflicts: number; missing: number }
-  | { failed: string };
+export interface OutlineSummary {
+  fields: number;
+  groups: number;
+  units: number;
+  words: Words;
+}
 
 /**
  * What item 13's report is made of (decision 0038): the reference, the upload as it compiled, whose
  * glyph stream the body's words are counted in, its log left out since it quotes the source; what
- * the checks found; the locked parts, each with where it stands, why and how many words; the
- * images stood in for and dropped, and the intake's and the XeTeX rewrite's warnings; how the
- * naming went; and the compiles and time the whole import took. `reportOfImport` reads it into the
- * report the person sees (decision 0039).
+ * the checks found; the locked parts, each with where it stands, why and how many words, none for
+ * an outline, whose kept text the checks' owners name; the images stood in for and dropped, and the
+ * intake's and the XeTeX rewrite's warnings; what the outline holds; and the compiles and time the
+ * whole import took. `reportOfImport` reads it into the report the person sees (decision 0039).
  */
 export interface ImportReport {
   engine: Engine;
@@ -131,7 +133,7 @@ export interface ImportReport {
   locked: LockedPart[];
   images: Intake["images"];
   warnings: string[];
-  naming: NamingOutcome;
+  outline: OutlineSummary;
   compiles: number;
   ms: number;
 }
@@ -152,16 +154,16 @@ export interface ImportJob {
 /** An import that came through: what the store keeps of it (decision 0038). */
 export interface Imported {
   package: TemplatePackage;
-  /** The model's resume, locked sections and extras among it, and the controls' choices. */
+  /** The model's resume, its outline its one section, and the controls' choices. */
   document: Document;
   report: ImportReport;
   /** The original upload's files, as the person gave them, so that the import can be made again. */
   upload: { files: Upload[] };
   job: ImportJob;
   /**
-   * The format the document opens with, by name, as the checks dumped it, which the editor takes
-   * rather than dumping it again (decision 0045); none where they dumped none of that name. The
-   * store does not keep it with the import: the editor keeps it as any format.
+   * The format the document opens with, by name, as the import dumped it, which the editor takes
+   * rather than dumping it again (decision 0045). The store does not keep it with the import: the
+   * editor keeps it as any format.
    */
   formats?: { name: string; format: Uint8Array }[];
 }
@@ -249,9 +251,44 @@ export async function importResume(
     enter("fonts");
     const swap = await inLatinModern(session, fonts, uploaded, first, options);
     if (swap !== undefined && isRefusal(swap)) return swap;
-    const taken = swap?.intake ?? uploaded;
-    const made = swap?.reference ?? first;
+    let taken = swap?.intake ?? uploaded;
+    let made = swap?.reference ?? first;
     const engine = made.engine;
+
+    // On XeTeX the fonts go by file first, so that the preamble dumps and the probe compiles from
+    // a saved format (decision 0023): from here on the document is the rewritten one, and what it
+    // must set is its own whole compile's glyphs, the reference's with each font by the tree's file.
+    let rewritten: { fonts: FontFamily[]; warnings: string[] } | undefined;
+    if (engine === "xetex") {
+      enter("rewrite");
+      const rewrite = rewriteForXetex(taken, tree);
+      if (isRefusal(rewrite)) return rewrite;
+      formats.push(["xetex", CHECK_FORMAT]);
+      const checked = await checkRewrite(session, fonts, taken, made, rewrite, {
+        ...options,
+        format: CHECK_FORMAT,
+      });
+      if (isRefusal(checked)) return checked;
+      session.dropFormat("xetex", CHECK_FORMAT);
+      const text = `${rewrite.preamble}${rewrite.body}`;
+      taken = {
+        ...taken,
+        main: {
+          ...taken.main,
+          text,
+          bytes: encodeLike(taken.main.bytes, text) ?? new TextEncoder().encode(text),
+        },
+        files: jobFiles(taken, made, rewrite, treeImage),
+        fonts: [],
+      };
+      const { pages, size, fonts: used, specials } = checked.stream;
+      made = { ...made, pages, size, fonts: used, specials };
+      rewritten = { fonts: rewrite.fonts, warnings: rewrite.warnings };
+    }
+    // A font the page cannot draw: an import keeps its fonts, so the document is refused, naming
+    // it. Computer Modern's in T1 and TS1 are swapped for Latin Modern where they could be.
+    const [cannot] = await undrawableFonts(fonts, made.fonts);
+    if (cannot !== undefined) return refusal("font", cannot);
 
     enter("signatures");
     const body = bodyOf(taken);
@@ -260,14 +297,7 @@ export async function importResume(
     if (isRefusal(read)) return read;
     const preamble = readBody(bodyOfText(body.preamble));
     const uses = probeUses(read, isRefusal(preamble) ? undefined : preamble);
-    const found = await signatures(
-      session,
-      taken,
-      made,
-      body,
-      { ...uses, commands: [...uses.commands, ...SIZE_OPTIONS] },
-      options,
-    );
+    const found = await signatures(session, taken, made, body, uses, options);
     if (isRefusal(found)) return found;
 
     enter("parse");
@@ -275,128 +305,108 @@ export async function importResume(
     if (isRefusal(built)) return built;
 
     enter("probe");
-    const probed = await probe(session, fonts, taken, made, built, found, options);
-    // The probe leaves a pdfTeX document's format in the session; the package has one of its own,
-    // its preamble rewritten, which the checks dump, so the probe's goes now (decision 0022).
-    if (probed.format !== undefined) session.dropFormat("pdftex", probed.format);
+    const probed = await probe(session, fonts, taken, made, built, found, {
+      ...options,
+      ...(rewritten === undefined ? {} : { declarations: fontDeclarations(rewritten.fonts) }),
+    });
+    // The probe leaves the document's format in the session; the package has one of its own,
+    // which the last step dumps, so the probe's goes now (decision 0022).
+    if (probed.format !== undefined) session.dropFormat(engine, probed.format);
     if (probed.baseline !== undefined) return refusal("probe");
 
-    enter("request");
-    // Built as `corpus leak` proves it, by the same function (`importRequest`), with the upload's
-    // sources and the page's strings and without the header's values, which only the answers give.
-    const sent = await importRequest({
-      tree: built,
-      signatures: found,
-      probe: probed,
-      preamble: body.preamble,
-      intake: taken,
-      reference: made,
-      fonts,
-    });
-    if (isRefusal(sent)) return sent;
-    const { request, names } = sent;
-    try {
-      // Stricter than the masking, fed the same: the request leaves only if it holds none of the
-      // resume's text (decision 0033).
-      assertNoText(request, sent.document);
-    } catch (error) {
-      return refusal("request", undefined, error instanceof Error ? error.message : undefined);
-    }
-
-    enter("naming");
-    let naming: NamingOutcome;
-    let answer: NamingAnswer = {
-      version: NAMING_VERSION,
-      macros: [],
-      preamble: { parameters: [] },
+    enter("outline");
+    const head = preambleOf(body, built, probed);
+    const ends = {
+      begin: body.before.slice(body.preamble.length),
+      end: /^\\end\s*\{document\}/.exec(body.after)?.[0] ?? "\\end{document}",
     };
-    try {
-      const reply = await deps.name(request, names, signal);
-      answer = { version: reply.version, macros: reply.macros, preamble: reply.preamble };
-      naming = {
-        hits: reply.hits,
-        asked: reply.asked,
-        conflicts: reply.conflicts,
-        missing: reply.missing.length,
-      };
-    } catch (error) {
-      if (isAbort(signal, error)) throw error;
-      // The browser holds no answers of its own: the macros stay as the probe left them, and the
-      // report says why (decision 0038).
-      naming = {
-        failed:
-          error instanceof NamingServiceError
-            ? error.message
-            : "The naming service could not be reached. Check the connection and try again.",
-      };
-    }
-
-    let rewrite: ReturnType<typeof rewriteForXetex> | undefined;
-    if (engine === "xetex") {
-      enter("rewrite");
-      rewrite = rewriteForXetex(taken, tree);
-      if (isRefusal(rewrite)) return rewrite;
-      formats.push(["xetex", CHECK_FORMAT]);
-      const checked = await checkRewrite(session, fonts, taken, made, rewrite, {
-        ...options,
-        format: CHECK_FORMAT,
+    const outlineOf = (candidates: Probe["candidates"]) =>
+      buildOutline({
+        tree: built,
+        ...(head === undefined ? {} : { preamble: head }),
+        candidates,
+        macros: probed.signatures.macros,
+        ...ends,
       });
-      if (isRefusal(checked)) return checked;
-    }
+    let outline = outlineOf(probed.candidates);
+    const pkg = await outlinePackage({
+      engine,
+      preamble: body.preamble,
+      files: taken.files,
+      ...(rewritten === undefined ? {} : { fonts: rewritten.fonts }),
+      reference: made,
+    });
+    const documentOf = (resume: Resume): Document => ({
+      version: 1,
+      template: pkg.id,
+      resume,
+      controls: {},
+    });
 
     enter("validate");
-    const dumped = new Map<string, Uint8Array>();
-    const validated = await validate({
-      session,
-      fonts,
-      intake: taken,
-      reference: made,
-      tree: built,
-      signatures: found,
-      probe: probed,
-      answer,
-      ...(rewrite === undefined || isRefusal(rewrite) ? {} : { rewrite }),
-      ...(swap === undefined ? {} : { latinModern: swap.swapped }),
-      ...options,
-      formats: dumped,
-    });
-    if (isRefusal(validated)) return validated;
-    // The format the document opens with, which the checks dumped as the editor would: the editor
-    // takes it rather than dumping it a third time (decision 0045).
-    const opens = generateFormat(validated.package, validated.document.controls).name;
-    const format = dumped.get(opens);
+    const checkFiles = referenceFiles(taken, made, { job: IMPORT_JOB, ...options });
+    const compile = (resume: Resume) =>
+      compileOutline({
+        session,
+        fonts,
+        pkg,
+        document: documentOf(resume),
+        reference: made,
+        job: IMPORT_JOB,
+        files: checkFiles,
+      });
+    let resume = outlineResume(outline.parts);
+    // An upload whose kept text the model refuses, as one that holds the editor's own macros, or
+    // whose braces do not balance, cannot be kept as it was written.
+    if (resume === undefined) return refusal("keep");
+    let compiled = await compile(resume);
+    // TODO(the second pass's item 6): check 1 finds the fields that stop the compile. Until then,
+    // an outline that does not compile keeps every field as kept text, as the probe's baseline.
+    if ("stopped" in compiled && outline.counts.fields > 0) {
+      outline = outlineOf([]);
+      resume = outlineResume(outline.parts);
+      if (resume === undefined) return refusal("keep");
+      compiled = await compile(resume);
+    }
+    if ("stopped" in compiled) return refusal("stopped", undefined, compiled.log);
+    const document = documentOf(resume);
 
-    // What the document's compiles need beside the package, as the checks compiled it: the
+    // What the document's compiles need beside the package, as the outline compiled: the
     // reference compile's files for the editor's job, its bibliography under whatever job reads it.
-    const jobFiles = referenceFiles(taken, made, { job: EDITOR_JOB, ...options });
-    const bbl = jobFiles[`${EDITOR_JOB}.bbl`];
-    delete jobFiles[`${EDITOR_JOB}.bbl`];
+    const editorFiles = referenceFiles(taken, made, { job: EDITOR_JOB, ...options });
+    const bbl = editorFiles[`${EDITOR_JOB}.bbl`];
+    delete editorFiles[`${EDITOR_JOB}.bbl`];
     const { log: _log, ...shown } = made;
+    const runs = probed.runs ?? [];
+    const words = wordsOf({
+      reference: made,
+      runs,
+      candidates: probed.candidates,
+      fields: new Set(outline.fields.keys()),
+      sources: { body: built.source, preamble: head?.tree.source ?? "" },
+    });
     return {
-      package: validated.package,
-      document: validated.document,
+      package: pkg,
+      document,
       report: {
         engine,
         reference: shown,
-        checks: validated.checks,
-        locked: validated.extras,
+        checks: checksOf(outline, compiled, probed, words, swap?.swapped),
+        locked: [],
         images: taken.images,
         // What the intake and the XeTeX rewrite set aside, which the report lists (decision 0039).
-        warnings: [
-          ...taken.warnings,
-          ...(rewrite === undefined || isRefusal(rewrite) ? [] : rewrite.warnings),
-        ],
-        naming,
+        warnings: [...taken.warnings, ...(rewritten?.warnings ?? [])],
+        outline: { ...outline.counts, words },
         compiles,
         ms: performance.now() - started,
       },
       upload: { files: files.map((file) => ({ name: file.name, bytes: file.bytes })) },
       job: {
-        files: jobFiles,
+        files: editorFiles,
         ...(bbl === undefined ? {} : { bbl }),
         images: [...taken.images.replaced, ...made.images].map((image) => image.path),
       },
-      ...(format === undefined ? {} : { formats: [{ name: opens, format }] }),
+      formats: [{ name: compiled.format.name, format: compiled.format.bytes }],
     };
   };
   try {
@@ -413,6 +423,81 @@ export async function importResume(
     for (const [engine, name] of formats) deps.session.dropFormat(engine, name);
     for (const job of JOBS) deps.session.forget(job);
   }
+}
+
+/**
+ * The preamble's tree and its calls that store a header's text, as the probe found them: the
+ * preamble read again, since a text read once builds one tree, with the template macros the
+ * engine's signatures say store their arguments (`isSetter`); undefined where the preamble holds
+ * none, or where its candidates are not the probe's, which then are no fields.
+ */
+function preambleOf(
+  body: Body,
+  built: Tree,
+  probed: Probe,
+): { tree: Tree; setters: Span[] } | undefined {
+  if (!probed.candidates.some((each) => each.where === "preamble")) return undefined;
+  const { commands, macros } = probed.signatures;
+  const setters = new Set(
+    Object.entries(commands)
+      .filter(([name, signature]) => signature.kind === "template" && isSetter(macros[name]))
+      .map(([name]) => name),
+  );
+  const read = readBody(bodyOfText(body.preamble));
+  if (isRefusal(read)) return undefined;
+  const tree = buildTree(read, probed.signatures);
+  if (isRefusal(tree) || tree.source !== body.preamble) return undefined;
+  const again = candidatesOf(built, { preamble: tree, setters });
+  const ours = (list: readonly { where: string; id: string; start: number; end: number }[]) =>
+    list
+      .filter((each) => each.where === "preamble")
+      .map((each) => `${each.id}:${each.start}:${each.end}`)
+      .join();
+  if (ours(again.candidates) !== ours(probed.candidates)) return undefined;
+  return { tree, setters: again.setters };
+}
+
+/**
+ * What the checks found, as item 13's report reads them (`AssemblyChecks`): the outline's fields,
+ * and the probe's other candidates by why they are kept text; the page's words set down to what
+ * sets them (`ownersOf`); whether the outline compiled sets the reference's page, and how it first
+ * differs where it does not; and its compiles and time. What the first pass's checks decided, the
+ * controls, the redefinitions, the units and the harness's findings, an outline has none of yet.
+ * TODO(the second pass's item 6): the checks without answers fill these.
+ */
+function checksOf(
+  outline: Outline,
+  compiled: OutlineCompiled,
+  probed: Probe,
+  words: Words,
+  latinModern: readonly string[] | undefined,
+): AssemblyChecks {
+  const locked: AssemblyChecks["fields"]["locked"] = {};
+  for (const each of probed.candidates) {
+    if (each.verdict === "editable" || each.verdict === "container") continue;
+    locked[each.verdict] = (locked[each.verdict] ?? 0) + 1;
+  }
+  const { difference } = compiled;
+  return {
+    outcome: difference === undefined ? "assembled" : "partial",
+    ...(difference === undefined
+      ? {}
+      : { difference: { kind: difference.kind, text: difference.text } }),
+    fields: { editable: outline.counts.fields, raw: 0, required: 0, locked },
+    words: { editable: words.fields, locked: {} },
+    sections: { mapped: 0, locked: 0 },
+    required: [],
+    controls: { offered: [], proven: [], dropped: [] },
+    redefinitions: { applied: [], dropped: [], placement: "class" },
+    repeatable: [],
+    findings: [],
+    compiles: compiled.compiles,
+    ms: compiled.ms,
+    decisions: {},
+    ...(latinModern === undefined ? {} : { latinModern: [...latinModern] }),
+    all: [],
+    owners: ownersOf(probed.runs ?? [], probed.candidates, outline.fields),
+  };
 }
 
 /**

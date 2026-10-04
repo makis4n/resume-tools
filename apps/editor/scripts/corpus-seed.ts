@@ -96,7 +96,7 @@ export interface SeedMacro {
 }
 
 /** The signatures module's functions an answer's filing is read with. */
-type Signatures = typeof import("../src/import/signatures.ts");
+type Keys = typeof import("../src/import/keys.ts");
 
 /**
  * What each of a sample's macros and environments is filed under (`Filed`): a command's key from
@@ -104,7 +104,7 @@ type Signatures = typeof import("../src/import/signatures.ts");
  */
 export async function filingOf(
   found: Pick<EngineSignatures, "macros" | "environments">,
-  signatures: Pick<Signatures, "keysOf" | "environmentKeysOf" | "keyInputs">,
+  signatures: Pick<Keys, "keysOf" | "environmentKeysOf" | "keyInputs">,
 ): Promise<(of: SeedMacro["of"], name: string) => Filed | undefined> {
   const commands = await signatures.keysOf({ macros: found.macros });
   const environments = await signatures.environmentKeysOf(found);

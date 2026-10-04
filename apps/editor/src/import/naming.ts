@@ -84,7 +84,7 @@ import type { Probe } from "./probe";
 import type { GlyphStream, ReferenceGlyph } from "./reference";
 import { type Refusal, refusal } from "./refusal";
 import type { EngineSignatures, Signature } from "./signatures";
-import { maskComments } from "./source";
+import { classEnd, closing, commentAt, maskComments } from "./source";
 import { STANDARD } from "./standard";
 
 // The document's own values.
@@ -2969,56 +2969,6 @@ export function realName(names: ReadonlyMap<string, string>, name: string): stri
 }
 
 // Redefinitions.
-
-/** Where a statement's argument in `open` and `close` that starts at `at` ends, past its close. */
-function closing(text: string, at: number, open: string, close: string): number {
-  let depth = 0;
-  for (let i = at; i < text.length; i++) {
-    const char = text[i];
-    if (char === "\\") i++;
-    else if (char === open) depth++;
-    else if (char === close && --depth === 0) return i + 1;
-  }
-  return -1;
-}
-
-/** Where a line's comment starts, a `%` after an even run of backslashes, or the line's end. */
-function commentAt(line: string): number {
-  for (let i = 0; i < line.length; i++) {
-    if (line[i] !== "%") continue;
-    let backslashes = 0;
-    for (let j = i - 1; j >= 0 && line[j] === "\\"; j--) backslashes++;
-    if (backslashes % 2 === 0) return i;
-  }
-  return line.length;
-}
-
-/**
- * Where a main file's `\documentclass` statement ends, its options and its class's name read: the
- * first outside a comment; or -1 when it has none.
- */
-export function classEnd(text: string): number {
-  let offset = 0;
-  for (const line of text.split("\n")) {
-    const found = /\\documentclass(?![A-Za-z@])/.exec(line.slice(0, commentAt(line)));
-    if (found !== null) {
-      let at = offset + found.index + found[0].length;
-      const skip = () => {
-        while (/\s/.test(text[at] ?? "")) at++;
-      };
-      skip();
-      if (text[at] === "[") {
-        at = closing(text, at, "[", "]");
-        if (at < 0) return -1;
-        skip();
-      }
-      if (text[at] !== "{") return -1;
-      return closing(text, at, "{", "}");
-    }
-    offset += line.length + 1;
-  }
-  return -1;
-}
 
 /** Where a main file's `\begin{document}` starts, the first outside a comment; or -1. */
 export function documentStart(text: string): number {

@@ -37,7 +37,6 @@ import {
   importVerdict,
   isRefused,
   measureImport,
-  notCached,
   outcomeLine,
   type PartTime,
   partsOf,
@@ -84,13 +83,13 @@ describe("partsOf", () => {
   it("adds a step named again to its first, and gives the whole to the wait when nothing is said", () => {
     const heard: Heard[] = [
       { at: 0, progress: said("probe", 0, false) },
-      { at: 5, progress: said("request", 0, false) },
+      { at: 5, progress: said("outline", 0, false) },
       { at: 7, progress: said("probe", 0, false) },
     ];
     expect(partsOf(0, heard, 10).map(({ part, ms }) => [part, ms])).toEqual([
       ["load", 0],
       ["probe", 8],
-      ["request", 2],
+      ["outline", 2],
     ]);
     expect(partsOf(0, [], 25)).toEqual([
       { part: "load", ms: 25, compiles: 0, dumps: 0, engineMs: 0 },
@@ -121,7 +120,6 @@ const IMPORTED: Imported = {
     locked: [],
     images: { replaced: [], dropped: [] },
     warnings: [],
-    naming: { hits: 7, asked: 0, conflicts: 0, missing: 0 },
     compiles: 2,
   } as unknown as ImportReport,
   upload: { files: [] },
@@ -276,7 +274,6 @@ describe("measureImport", () => {
       engine: "pdftex",
       outcome: "assembled",
       fields: { editable: 40, locked: 5 },
-      naming: { hits: 7, asked: 0 },
     });
     // The scheduler imported the files, then opened the document it came to, as the app does, and
     // the engine was stopped at the end.
@@ -342,7 +339,6 @@ function timed(parts: [PartTime["part"], number, number][], startMs = 300): Impo
     ms: all.reduce((sum, part) => sum + part.ms, 0),
     compiles: all.reduce((sum, part) => sum + part.compiles, 0),
     engine: "pdftex",
-    naming: { hits: 7, asked: 0, conflicts: 0, missing: 0 },
     outcome: "assembled",
     fields: { editable: 40, locked: 5 },
     report: { outcome: "succeeded", rate: 0.95 },
@@ -438,7 +434,7 @@ describe("the import's table", () => {
       "Jake's Resume's upstream sample (jake-0000), imported on pdftex: the median of 3 imports",
     );
     expect(lines[1]).toMatch(/^Part +Median +Compiles +Dumps, PDFs +In the engine +What$/);
-    expect(text).toMatch(/\nvalidate +3\.10 s +30 +0 +1\.55 s +Checking the imported template\n/);
+    expect(text).toMatch(/\nvalidate +3\.10 s +30 +0 +1\.55 s +Checking the imported resume\n/);
     expect(text).toMatch(
       /\nwhole +4\.03 s +32 .*From the file to the page; from 3\.92 s to 5\.87 s\n/,
     );
@@ -507,30 +503,6 @@ describe("the import's table", () => {
     );
   });
 
-  it("judges only a cache hit: no model asked, no macro unnamed, no failure", () => {
-    const run = timed([["validate", 3000, 30]]);
-    const asked = { ...run, naming: { hits: 2, asked: 5, conflicts: 0, missing: 0 } };
-    const unnamed = { ...run, naming: { hits: 0, asked: 0, conflicts: 0, missing: 7 } };
-    const failed = { ...run, naming: { failed: "Too many naming requests from this address" } };
-    expect(notCached([run, run])).toBeUndefined();
-    expect(notCached([run, asked])).toBe("5 of the template's macros were asked of a model");
-    expect(notCached([unnamed])).toBe("7 of the template's macros were left unnamed");
-    expect(notCached([failed])).toBe(
-      "the naming service failed: Too many naming requests from this address",
-    );
-    for (const where of ["node", "browser"] as const) {
-      for (const engine of ["pdftex", "xetex"] as const) {
-        expect(importMeets([run, unnamed, run], where, engine)).toEqual({
-          judged: false,
-          why: "7 of the template's macros were left unnamed",
-        });
-        expect(importVerdict([asked], where, engine)).toMatch(
-          /under 8 s +not a cache hit, so not judged: 5 of the template's macros were asked of a model$/,
-        );
-      }
-    }
-  });
-
   it("reports XeTeX's import beside the bar, judged on pdfTeX alone", () => {
     expect(IMPORT_JUDGED_ON).toBe("pdftex");
     // Over the bar on XeTeX is neither met nor missed: the plan lets XeTeX feel slower.
@@ -569,10 +541,8 @@ describe("the import's table", () => {
 
   it("words what an import came to", () => {
     expect(outcomeLine(runs[0] as ImportTime)).toBe(
-      "assembled: 40 fields editable and 5 locked; reported succeeded, 95% of the words editable on the page; 7 of the template's macros named from the cache, 0 asked of a model, 0 left unnamed; the document opened on 1 page",
+      "assembled: 40 fields editable and 5 locked; reported succeeded, 95% of the words editable on the page; the document opened on 1 page",
     );
-    const failed = { ...(runs[0] as ImportTime), naming: { failed: "It could not be reached." } };
-    expect(outcomeLine(failed)).toContain("the naming service failed (It could not be reached.)");
   });
 });
 
@@ -595,14 +565,11 @@ describe.skipIf(!engineAvailable())("measureImport, on the engine", () => {
       "signatures",
       "parse",
       "probe",
-      "request",
-      "naming",
+      "outline",
       "validate",
       "report",
       "page",
     ]);
-    // The seed names every macro of the fork, and no model is asked.
-    expect(result.naming).toMatchObject({ asked: 0, missing: 0 });
     expect(result.outcome).toBe("assembled");
     // The report's outcome is its own bar's verdict on its rate, as the app reads it.
     expect(result.report.rate).toBeGreaterThan(0);

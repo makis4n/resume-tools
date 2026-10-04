@@ -230,7 +230,7 @@ closes.
    for the same thing is added elsewhere. Done when a hand-written outline of an invented resume
    goes through the store and the generator, compiles, and the page marks every field, with the
    existing suite green.
-5. [ ] **Building the outline, in place of naming and assembly.** After the probe, the import walks
+5. [x] **Building the outline, in place of naming and assembly.** After the probe, the import walks
    the body's tree. Each piece the probe judged editable is a field. The rest of a call, an
    environment or a paragraph is kept text. A list's items are a group of units, and so is a run of
    calls to the same command, each with what follows it up to the next. A value the preamble

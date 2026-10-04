@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto";
+import type { Section } from "@resume-tools/resume-model";
 import Dexie from "dexie";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apply, type Document, newDocument } from "../editor/document";
@@ -11,6 +12,7 @@ import {
   DocumentRefused,
   DocumentStore,
   type Flushed,
+  IMPORT_AGAIN,
   MAX_FORMATS,
   MAX_PATHS,
   PackageRefused,
@@ -649,14 +651,33 @@ describe("DocumentStore's prefetch", () => {
 describe("DocumentStore's imported packages (decision 0038)", () => {
   const ID = "import-0123456789ab";
 
+  /** An invented outline, the one section a `.tex` import makes (decision 0049). */
+  const OUTLINE: Section = {
+    kind: "outline",
+    id: "outline",
+    title: "",
+    role: "other",
+    parts: [
+      { kind: "kept", latex: "\\begin{document}\n\\section*{" },
+      { kind: "rich", id: "s1", text: [{ text: "Invented heading" }] },
+      { kind: "kept", latex: "}\n\\end{document}" },
+    ],
+  };
+
+  /** A document as the first pass of milestone 3 imported one: the sample's sections, no outline. */
+  function firstPass(first = "Quill", id = ID): Document {
+    return { ...named(newDocument("jake", sample), first), template: id };
+  }
+
   /**
    * An import as the pipeline gives one, invented: Jake's package under an imported id and name,
-   * the sample set with it, an upload of one invented file, and the job's files; the report is the
-   * store's to keep, not to read.
+   * the sample's header set with it and an outline, an upload of one invented file, and the job's
+   * files; the report is the store's to keep, not to read.
    */
   function imported(first = "Quill", id = ID): Imported {
     const pkg = { ...curated("jake").package, id, name: "Invented import" } as TemplatePackage;
-    const document = { ...named(newDocument("jake", sample), first), template: id };
+    const made = firstPass(first, id);
+    const document = { ...made, resume: { ...made.resume, sections: [OUTLINE] } };
     const bytes = new TextEncoder().encode(`\\documentclass{article} % ${first}`);
     return {
       package: pkg,
@@ -704,6 +725,27 @@ describe("DocumentStore's imported packages (decision 0038)", () => {
     ).rejects.toBeInstanceOf(PackageRefused);
     expect(await store.list()).toEqual([]);
     expect(await inDatabase(name, (db) => db.table("packages").count())).toBe(0);
+  });
+
+  it("refuses to keep or to open what the first pass imported, and leaves it stored (decision 0049)", async () => {
+    const { store, name } = storeForTest();
+    const id = await store.importDocument(imported());
+    // An import of the first pass is refused as it is kept, and nothing more is stored.
+    await expect(
+      store.importDocument({ ...imported(), document: firstPass() }),
+    ).rejects.toBeInstanceOf(PackageRefused);
+    expect(await inDatabase(name, (db) => db.table("documents").count())).toBe(1);
+    // One a developer's browser kept from the first pass opens with a plain message that says to
+    // import it again, and stays where it was.
+    await inDatabase(name, (db) => db.table("documents").update(id, { document: firstPass() }));
+    const refused = await store.get(id).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(DocumentRefused);
+    expect((refused as Error).message).toBe(IMPORT_AGAIN);
+    expect(IMPORT_AGAIN).not.toMatch(/[\\{}]/);
+    expect((await store.list()).map((each) => each.id)).toEqual([id]);
+    // A curated template's document never was an import, and opens as it did.
+    const curatedId = await store.create("jake", sample);
+    expect((await read(store, curatedId)).document.template).toBe("jake");
   });
 
   it("refuses a stored package the schema refuses, as a newer editor's, and leaves it stored", async () => {

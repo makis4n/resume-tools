@@ -11,10 +11,13 @@
  * On pdfTeX the document's own preamble, with the prelude after it as `generateFormat` puts it
  * after a package's, is dumped once as a format in the `import` job, and every probe compile is a
  * body compile from it. On XeTeX a preamble that loads fontspec cannot be dumped (decision 0003),
- * so until item 8 rewrites XeTeX's fonts every probe compile is a whole compile from the stock
+ * so the import rewrites its fonts to files first (decision 0023, the second pass's item 5) and
+ * gives the probe the families' declarations (`ProbeOptions.declarations`): the rewritten preamble
+ * is dumped with them after it, as `generateFormat` dumps a XeTeX package's, and the probe compiles
+ * from that format as it does on pdfTeX. A XeTeX document probed without them, or a preamble that
+ * does not dump, or whose format does not set the reference's glyphs, compiles whole from the stock
  * format, as the reference was, fontconfig given the tree's fonts, with the prelude before
- * `\begin{document}`; a pdfTeX preamble that does not dump, or whose format does not set the
- * reference's glyphs, takes that path too. `Path` hides the difference, and the result says which
+ * `\begin{document}`. `Path` hides the difference, and the result says which
  * a document took. Either way the unmarked body compiles first, the baseline, which must set the
  * reference's glyphs, and whose auxiliary files every probe compile starts from, so that no compile
  * reads what another's markers wrote. A probe compile takes two passes at most, the second when
@@ -84,6 +87,7 @@ import {
   shippedFont,
 } from "./reference";
 import { signatures as askSignatures, type EngineSignatures } from "./signatures";
+import { dumpFiles } from "./xetex-check";
 
 /** How many compiles a document's probe may make, the baseline and the dump aside. */
 export const PROBE_BUDGET = 64;
@@ -817,6 +821,11 @@ export interface Setup {
   body: Body;
   job: string;
   files: Record<string, Uint8Array>;
+  /**
+   * What goes right after the preamble, before the prelude: a XeTeX rewrite's font declarations
+   * (`ProbeOptions.declarations`), with a line's end after them; nothing otherwise.
+   */
+  declarations?: string;
 }
 
 /** Text in the encoding of the main file, with its byte-order mark or without. */
@@ -832,15 +841,17 @@ function encoded(intake: Intake, text: string, mark: boolean): Uint8Array {
  * dump.
  */
 function dumpFormat(setup: Setup): { name: string; ms: number; ok: boolean } {
-  const { session, intake, body, files } = setup;
-  const dumped = `${body.preamble}\n${PROBE_PRELUDE}`;
+  const { session, engine, intake, body, files } = setup;
+  const dumped = `${body.preamble}\n${setup.declarations ?? ""}${PROBE_PRELUDE}`;
   const listed = Object.entries(files)
     .map(([path, bytes]) => `${path}:${bytes.length}`)
     .sort()
     .join("\n");
   const name = `import-${fnv1a(`${dumped}\n${listed}`)}`;
   try {
-    const result = session.dump("pdftex", name, encoded(intake, dumped, true), files);
+    // A XeTeX dump takes the job's text files alone, as the rewrite's check dumps its format.
+    const given = engine === "xetex" ? dumpFiles(files) : files;
+    const result = session.dump(engine, name, encoded(intake, dumped, true), given);
     return { name, ms: result.ms, ok: result.ok };
   } catch {
     return { name, ms: 0, ok: false };
@@ -848,17 +859,17 @@ function dumpFormat(setup: Setup): { name: string; ms: number; ok: boolean } {
 }
 
 /**
- * The format path: every compile a body compile from the document's format, `name`, the
- * preamble's calls issued again before `\begin{document}`.
+ * The format path: every compile a body compile from the document's format, `name`, on its engine,
+ * the preamble's calls issued again before `\begin{document}`.
  */
 export function formatPath(setup: Setup, name: string): Path {
-  const { session, intake, body, job, files } = setup;
+  const { session, engine, intake, body, job, files } = setup;
   const begin = body.before.slice(body.preamble.length);
   return {
     kind: "format",
     compile: (text, setters, maxPasses, settled = false) =>
       session.compile(
-        "pdftex",
+        engine,
         name,
         encoded(intake, `${setters}${begin}${text}${body.after}`, false),
         { job, maxPasses, files, ...(settled ? { rerunOnChange: true } : {}) },
@@ -868,12 +879,13 @@ export function formatPath(setup: Setup, name: string): Path {
 
 /**
  * The whole path: the document compiled whole from the stock format, as the reference was, on its
- * engine, fontconfig given the tree's fonts on XeTeX, with the prelude and the preamble's calls
- * issued again before `\begin{document}`.
+ * engine, fontconfig given the tree's fonts on XeTeX, with the declarations, the prelude and the
+ * preamble's calls issued again before `\begin{document}`.
  */
 export function wholePath(setup: Setup): Path {
   const { session, engine, intake, body, job, files } = setup;
   const begin = body.before.slice(body.preamble.length);
+  const declarations = setup.declarations ?? "";
   return {
     kind: "whole",
     compile: (text, setters, maxPasses, settled = false) =>
@@ -882,7 +894,7 @@ export function wholePath(setup: Setup): Path {
         "stock",
         encoded(
           intake,
-          `${body.preamble}\n${PROBE_PRELUDE}${setters}${begin}${text}${body.after}`,
+          `${body.preamble}\n${declarations}${PROBE_PRELUDE}${setters}${begin}${text}${body.after}`,
           true,
         ),
         {
@@ -956,8 +968,9 @@ export interface Probe {
    */
   formatDifference?: "stopped" | DifferenceKind;
   /**
-   * The format's name, when it dumped, which the probe leaves in the session for item 7 and its
-   * caller drops (`EngineSession.dropFormat`); and how long the dump took, in milliseconds.
+   * The format's name, when it dumped, on the document's engine, which the probe leaves in the
+   * session and its caller drops (`EngineSession.dropFormat`); and how long the dump took, in
+   * milliseconds.
    */
   format?: string;
   dumpMs?: number;
@@ -1007,6 +1020,13 @@ export interface Probe {
 export interface ProbeOptions extends ReferenceOptions {
   /** How many compiles the candidates may take; PROBE_BUDGET by default. */
   budget?: number;
+  /**
+   * For a XeTeX document whose fonts the import rewrote to files (decision 0023): the families'
+   * declarations (`fontDeclarations`), which go after its preamble, so that the preamble dumps as
+   * a format and every probe compile is a body compile from it, as on pdfTeX. Without them, a
+   * XeTeX document compiles whole.
+   */
+  declarations?: string;
 }
 
 const FAILURES: ReadonlySet<Verdict> = new Set([
@@ -1571,10 +1591,9 @@ async function preambleOf(
  * Probe a document: which of its body's candidates, and of its preamble's calls that store a
  * header's text, the editor may mark (`Probe`). `tree` is the tree of the intake's body, parsed
  * with `found`, the engine's signatures of it (`signatures`); the reference is the original's, and
- * the job, `import` by default, is forgotten before and after. A pdfTeX document's format stays
- * in the session, since item 7 compiles the assembled package's first check from it; whoever
- * asked for the probe drops it when done (`EngineSession.dropFormat`), and a probe that throws
- * drops it itself.
+ * the job, `import` by default, is forgotten before and after. The document's format, where it
+ * dumped, stays in the session; whoever asked for the probe drops it when done
+ * (`EngineSession.dropFormat`), and a probe that throws drops it itself.
  */
 export async function probe(
   session: EngineSession,
@@ -1597,13 +1616,18 @@ export async function probe(
     setters: preamble.setters,
   });
   const files: Record<string, Uint8Array> = referenceFiles(intake, made, options);
-  const setup: Setup = { session, engine: made.engine, intake, body, job, files };
+  const declarations =
+    options.declarations === undefined || options.declarations === ""
+      ? ""
+      : `${options.declarations}\n`;
+  const setup: Setup = { session, engine: made.engine, intake, body, job, files, declarations };
   const probed = candidates.filter((each) => each.unprobed === undefined);
   const owners = new Map(candidates.map((each) => [each.id, each]));
   const shipped = (path: string) => shippedFont(files, job, path);
 
   // The baseline: the unmarked body, which must set the reference's glyphs, on the format path
-  // where the engine is pdfTeX and the preamble dumps, and the whole path otherwise.
+  // where the engine is pdfTeX, or XeTeX with its fonts declared by file, and the preamble dumps,
+  // and the whole path otherwise.
   const unmarked = tree.source;
   let fallback: Probe["fallback"];
   let formatDifference: Probe["formatDifference"];
@@ -1624,7 +1648,7 @@ export async function probe(
     const { stream } = await readOutput(fonts, result.output, shipped);
     return difference(made, stream)?.kind;
   };
-  if (made.engine === "pdftex") {
+  if (made.engine === "pdftex" || options.declarations !== undefined) {
     const dumped = dumpFormat(setup);
     format = { name: dumped.name, ms: dumped.ms };
     if (!dumped.ok) fallback = "dump";
@@ -1735,9 +1759,9 @@ export async function probe(
       runs: all,
     };
   } catch (error) {
-    // A probe that did not finish leaves no format for item 7.
+    // A probe that did not finish leaves no format behind.
     session.forget(job);
-    if (format !== undefined && fallback !== "dump") session.dropFormat("pdftex", format.name);
+    if (format !== undefined && fallback !== "dump") session.dropFormat(made.engine, format.name);
     throw error;
   }
 }
