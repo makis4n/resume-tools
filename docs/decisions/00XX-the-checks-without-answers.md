@@ -27,11 +27,13 @@ outline needs.
   stops only when empty is marked `required`. Two changes from the first pass:
   - A field the bisection's budget leaves untried becomes kept text (`untested`), where the first
     pass left it editable: nothing proved it takes any text.
-  - Greek and Cyrillic letters are tried once, in every field together, and not field by field. On
-    the twenty they stop TeX in two documents whatever field holds them, since the document's fonts
-    lack them (`europecv-0002`, `other-0001`), which as one more special character locked every
-    field of both: 50 and 56 fields, 86% and 77% of their words. The report says the fonts cannot
-    set them instead. The special text is the first pass's less `ω` and `Ж`.
+  - Greek and Cyrillic letters are each tried once, in every field together, and not field by
+    field: Greek in one compile, Cyrillic in another, so that a document whose fonts set one script
+    is never said to lack it. On the twenty they stop TeX in two documents whatever field holds
+    them, since the document's fonts lack them (`europecv-0002`, `other-0001`), which as one more
+    special character locked every field of both: 50 and 56 fields, 86% and 77% of their words.
+    The report names the script the fonts cannot set instead. The special text is the first pass's
+    less `ω` and `Ж`.
 - **Check 3, with decision 0050's three rules.** Every group gains a copy of its last unit, its
   fields emptied and a required field holding `OUTLINE_PLACEHOLDER`, and loses its first and its
   last, batched where the changes do not overlap and halved where a batch breaks the page.
@@ -54,14 +56,26 @@ outline needs.
 - **The report has three shares** of the resume's words, for an outline: editable in place,
   changeable through the retype, and locked. Kept text the retype reaches is its own share and no
   locked part, and each locked part keeps its reason in plain words (`LOCK_WHY`). The success bar
-  still reads the first share.
+  still reads the first share. The summary shows the three in whole per cent adding up to 100
+  (`wholeShares`): the editable share rounded down, as the rate always is, so that it never reads
+  as more than it is or as the bar when it is under it; the points that leaves go to the retype's
+  and the locked share, the larger remainder first. AltaCV's sample, 168, 51 and 13 of 232 words,
+  shows 72%, 22% and 6%.
 - **`corpus run` has one mode** (`scripts/corpus-import.ts`, `corpus-import-child.ts`): every
   document through `importResume`, as a browser imports it. `--committed-only` and `--allow-model`
   are gone, with the run's naming columns and item 14's bar on controls, which an outline cannot
   meet since it offers none. Each document's row, counts only, goes to `.corpus/import-run/`. A
   run over the whole corpus is held to `corpus/baseline.json`, and the corpus workflow runs
-  `corpus run --json run.json`. `bench`, `review`, `assemble` and the other first-pass commands
-  stay until item 17.
+  `corpus run --json run.json`. Its JSON is version 2; `--write-baseline --from` takes only a file
+  of that version, and refuses a first pass's, version 1, in plain words. `bench`, `assemble` and
+  the other first-pass commands stay until item 17.
+- **`corpus review export` and `review check` stay, reading what is there.** They read what the
+  first pass's run kept under `.corpus/run/`, which nothing writes since `corpus run` took the
+  outline's import, so it cannot be refreshed. Removing them now would take the naming step's
+  review, its tests and `corpus/REVIEW.md` with them, which is item 17's retirement. Until then
+  each says, before anything and in every refusal, that it reads the first pass's run as it stands
+  and that it cannot be refreshed, and none sends the person to a `corpus run` that would not help
+  (`REVIEW_FIRST_PASS`).
 
 ## Consequences
 
@@ -89,9 +103,16 @@ outline needs.
   - Times under heavy load from the other lanes: 4.5 to 160 s, Jake's forks 4.5 to 39 s; on a
     lighter machine an hour before, Jake's forks took 2.9 to 5.6 s. Item 9 times the import
     against the 8 s bar.
-- **Fields are proven once at import and then trusted**, as the plan has it, but for letters a
-  document's fonts lack, which the report names. Typing one then stops the compile, and the editor
-  takes the step back with its plain message.
+- **Fields are proven once at import and then trusted**, as the plan has it, with two limits:
+  - Letters of a script a document's fonts lack, which the report names. A field holding one does
+    not compile.
+  - TeX's own limits on length. Check 2 proves a field takes a 300-character text, and "any length"
+    holds only up to them: about 199,000 characters in one field stop pdfTeX for main memory, and
+    then its 200,000-character line buffer, well under an outline's 1 MiB. Item 7 caps a field's
+    length below that.
 - **The editor (items 7 and 8) must keep** a required field non-empty, and put the placeholder in a
   new unit's required field. It must not add to or remove from a fixed group, and must not remove
-  a group's only unit.
+  a group's only unit. Item 7 must guard a field's typed text as a structural step is guarded,
+  taking the step back with a plain message when its compile stops, as typing a script the fonts
+  lack, or past the length cap, would: today an edit of a field's text is not guarded, and the
+  document saved would no longer compile.

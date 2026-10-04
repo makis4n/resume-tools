@@ -324,7 +324,7 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decisions 0038 an
     });
     if (isRefusal(outcome)) throw new Error(`refused: ${outcome.message}`);
     // No field, and the page the original's, every word kept as the upload wrote it: check 1 finds
-    // each field stops the compile, `compile`, and those its budget leaves untried are `untested`.
+    // each field stops the compile, `compile`, its budget enough for every one.
     expect(outcome.report.outline.fields).toBe(0);
     expect(outcome.report.checks.outcome).toBe("assembled");
     const { locked } = outcome.report.checks.fields;
@@ -337,6 +337,30 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decisions 0038 an
     expect(report.words.retype + report.words.locked).toBe(report.words.body);
     expect(report.words.retype).toBeGreaterThan(0);
     expect(LOCK_WHY.compile).toBe("this part could not be made editable without changing the page");
+    // The reasons reach the report's count: read without the retype, every kept word is locked,
+    // and the parts the checks kept are named with their plain reasons.
+    const { retype: _retype, ...checks } = outcome.report.checks;
+    const unreached = reportOfImport({ ...outcome, report: { ...outcome.report, checks } });
+    expect(unreached.words.byReason.compile ?? 0).toBeGreaterThan(0);
+    expect(unreached.locked.map((part) => part.why)).toContain(LOCK_WHY.compile);
+    expect(locked.untested).toBeUndefined();
+    // With a budget of 4 compiles, check 1 settles some fields and leaves the rest untried, kept as
+    // text with their own reason, which the report names in plain words too.
+    const short = await importResume([tex("resume.tex", JAKE_FORK)], {
+      ...deps,
+      session: stopping,
+      checkBudget: 4,
+    });
+    if (isRefusal(short)) throw new Error(`refused: ${short.message}`);
+    expect(short.report.outline.fields).toBe(0);
+    const tight = short.report.checks.fields.locked;
+    expect(tight.untested ?? 0).toBeGreaterThan(0);
+    expect((tight.untested ?? 0) + (tight.compile ?? 0)).toBe(locked.compile);
+    expect(short.report.checks.findings.map((each) => each.check)).toContain("untested");
+    const { retype: _short, ...bare } = short.report.checks;
+    const untried = reportOfImport({ ...short, report: { ...short.report, checks: bare } });
+    expect(untried.words.byReason.untested ?? 0).toBeGreaterThan(0);
+    expect(untried.locked.map((part) => part.why)).toContain(LOCK_WHY.untested);
   }, 60_000);
 
   test("imports a resume on XeTeX from a saved format, its name a field through the preamble", async () => {

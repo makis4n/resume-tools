@@ -100,6 +100,8 @@ export interface ImportDeps {
   tree: TexTree;
   /** The tree's images by name (`treeImages`), which a stand-in of the same size takes the place of. */
   treeImage?: (name: string) => Uint8Array | undefined;
+  /** How many compiles each bisection of the checks may make (`CHECK_BUDGET` unless given). */
+  checkBudget?: number;
 }
 
 /**
@@ -121,7 +123,7 @@ export interface OutlineSummary {
   /** How many of the probe's editable candidates each of check 2's texts stopped the compile with. */
   stops: { long: number; special: number; empty: number };
   /** Whether its fields take letters of other scripts, Greek and Cyrillic, which its fonts may lack. */
-  scripts: boolean;
+  scripts: { greek: boolean; cyrillic: boolean };
 }
 
 /**
@@ -362,6 +364,7 @@ export async function importResume(
         build: outlineOf,
         candidates: probed.candidates,
         runs: probed.runs ?? [],
+        ...(deps.checkBudget === undefined ? {} : { budget: deps.checkBudget }),
       });
     } finally {
       compiler.close();
@@ -542,7 +545,7 @@ function summaryOf(checked: Checked, words: Words): OutlineSummary {
     fixed,
     trials,
     stops: { ...checked.stops },
-    scripts: checked.scripts,
+    scripts: { ...checked.scripts },
   };
 }
 

@@ -14,6 +14,7 @@ import {
   SUCCESS_RATE,
   shown,
   summaryOf,
+  wholeShares,
 } from "./report";
 import { DROPPED, UNCHECKED } from "./validate";
 
@@ -620,6 +621,43 @@ describe("the report", () => {
 });
 
 describe("an outline's report (the second pass's item 6)", () => {
+  test("shows its three shares in whole per cent adding up to 100, the editable one never rounded up", () => {
+    // AltaCV's upstream sample: 168, 51 and 13 of 232 words, 72.4%, 22.0% and 5.6%, which rounded
+    // down each would show as 98%.
+    expect(wholeShares({ editable: 168 / 232, retype: 51 / 232, locked: 13 / 232 })).toEqual({
+      editable: 72,
+      retype: 22,
+      locked: 6,
+    });
+    // 89.96% editable stays 89%, under the bar, and its left points go to the other two.
+    expect(wholeShares({ editable: 0.8996, retype: 0.0904, locked: 0.01 })).toEqual({
+      editable: 89,
+      retype: 10,
+      locked: 1,
+    });
+    expect(wholeShares({ editable: 1, retype: 0, locked: 0 })).toEqual({
+      editable: 100,
+      retype: 0,
+      locked: 0,
+    });
+    expect(wholeShares({ editable: 0, retype: 0, locked: 0 })).toEqual({
+      editable: 0,
+      retype: 0,
+      locked: 0,
+    });
+    for (const [a, b, c] of [
+      [1, 1, 1],
+      [2, 1, 4],
+      [349, 40, 0],
+      [1246, 23, 18],
+    ] as const) {
+      const sum = a + b + c;
+      const whole = wholeShares({ editable: a / sum, retype: b / sum, locked: c / sum });
+      expect(whole.editable + whole.retype + whole.locked).toBe(100);
+      expect(whole.editable).toBeLessThanOrEqual((100 * a) / sum);
+    }
+  });
+
   test("counts three shares, editable in place, through the retype and locked, each locked part with why", () => {
     const { glyphs, owners } = invented();
     // An outline's owners: the dates kept by check 1, the skills kept as the probe found them, a
@@ -648,7 +686,7 @@ describe("an outline's report (the second pass's item 6)", () => {
         extras: [],
       },
       { pages: [{ items: glyphs }], bibliographyLeftOut: false, images: [] },
-      { outline: { groups: 4, fixed: 1, scripts: false } },
+      { outline: { groups: 4, fixed: 1, scripts: { greek: true, cyrillic: false } } },
     );
     // Quill Invented, Invented Engineer and the email (7) in fields; the skills (7) retyped; the
     // dates (3) locked; Page the template's.
@@ -666,11 +704,12 @@ describe("an outline's report (the second pass's item 6)", () => {
     expect(report.locked).toEqual([
       { words: "Jul 2020 – Present", count: 3, reason: "differs", why: LOCK_WHY.differs },
     ]);
+    // 41.2%, 41.2% and 17.6%: the point rounding down left goes to the locked share's larger part.
     expect(summaryOf(report)).toBe(
-      "Imported in part: 41% of your resume's words are editable on the page, 41% can be retyped where they stand, and 17% are locked, under the 90% this editor aims for.",
+      "Imported in part: 41% of your resume's words are editable on the page, 41% can be retyped where they stand, and 18% are locked, under the 90% this editor aims for.",
     );
     expect(report.notes).toEqual([
-      "Your template's fonts cannot set Greek or Cyrillic letters, so typing them stops the page.",
+      "Your template's fonts cannot set Cyrillic letters, so typing them stops the page.",
       "1 of your resume's 4 lists and runs of entries keeps as many items as your original has: adding or removing one there would change the rest of the page, or could not be tried.",
     ]);
     // An assembly's report has no shares, and reads as it did.

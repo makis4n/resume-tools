@@ -18,9 +18,9 @@
  *    kept text (`text`), one that stops it only when empty is required (`OutlineText.required`),
  *    and one the bisection leaves untried becomes kept text (`untested`), since nothing proved it
  *    takes any text (the plan's "fields are proven once, at import, and then trusted"). Letters
- *    of other scripts, Greek and Cyrillic, are tried once in every field together: where they stop
- *    the compile, the document's fonts lack them whatever field holds them, which the report says,
- *    and no field is kept for it (decision 00XX).
+ *    of other scripts, Greek and Cyrillic, are tried once each in every field together: where one
+ *    stops the compile, the document's fonts lack that script whatever field holds it, which the
+ *    report says by its name, and no field is kept for it (decision 00XX).
  * 3. **Groups.** Every group gains a copy of its last unit, its fields emptied, a required one
  *    holding `OUTLINE_PLACEHOLDER`, and loses its first unit and its last, each kind of trial in
  *    batches whose changes do not overlap, compiled together, and halved where a batch breaks the
@@ -91,13 +91,13 @@ export const UNITS_BUDGET = 64;
 /**
  * The texts check 2 sets every field to: long, empty, and characters TeX reads, Latin letters with
  * accents among them; and letters of other scripts, Greek and Cyrillic, which a document's fonts
- * may lack whatever field holds them, and which are tried once for the whole document.
+ * may lack whatever field holds them, and which are each tried once for the whole document.
  */
 export const MUTATIONS = {
   long: "Invented words for a long field ".repeat(10).slice(0, 300),
   empty: "",
   special: "\\ { } $ & # ^ _ % ~ < > | [ ] * -- ' \" é ß ø ğ",
-  scripts: "ω Ж",
+  scripts: { greek: "ω α", cyrillic: "Ж д" },
 } as const;
 
 // Compiling.
@@ -644,8 +644,8 @@ export interface Checked {
   trials: ReadonlyMap<string, GroupTrials>;
   /** How many candidates each of check 2's texts stopped the compile with. */
   stops: { long: number; special: number; empty: number };
-  /** Whether the document sets letters of other scripts, Greek and Cyrillic, in its fields. */
-  scripts: boolean;
+  /** Whether the document's fields take letters of other scripts, each tried apart. */
+  scripts: { greek: boolean; cyrillic: boolean };
   /** `partial` when the outline with no field sets another page than the reference's. */
   outcome: "assembled" | "partial";
   difference?: Difference;
@@ -834,9 +834,14 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
   // Letters of other scripts, in every field at once: where they stop the compile, they stop it
   // whatever field holds them, since the document's fonts lack them, and no field is the cause.
   const remaining = fields.filter((each) => !onText.has(each.id) && !untried.has(each.id));
-  const scripts =
+  const sets = async (text: string) =>
     remaining.length === 0 ||
-    !(await mutate(MUTATIONS.scripts, new Set(remaining.map((each) => each.id)))).broke;
+    !(await mutate(text, new Set(remaining.map((each) => each.id)))).broke;
+  // Each script apart, so that a document whose fonts set one is never said to lack it.
+  const scripts = {
+    greek: await sets(MUTATIONS.scripts.greek),
+    cyrillic: await sets(MUTATIONS.scripts.cyrillic),
+  };
   for (const id of onText) kept.set(id, "text");
   for (const id of untried) if (!kept.has(id)) kept.set(id, "untested");
   if (onText.size > 0 || untried.size > 0) current = build(new Set(kept.keys()));

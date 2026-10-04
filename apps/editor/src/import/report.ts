@@ -130,7 +130,11 @@ export interface ReportInputs {
    * An outline's groups of units, and those the checks fixed, which the notes count; and whether
    * its fields take letters of other scripts, which a note says they do not.
    */
-  outline?: { groups: number; fixed: number; scripts?: boolean };
+  outline?: {
+    groups: number;
+    fixed: number;
+    scripts?: { greek: boolean; cyrillic: boolean };
+  };
 }
 
 /**
@@ -928,9 +932,14 @@ function notesOf(checks: AssemblyChecks, inputs: ReportInputs): string[] {
   if (fixed.length > 0)
     notes.push(`The template takes no more and no fewer ${listed(fixed)} than your original has.`);
   const outline = inputs.outline;
-  if (outline?.scripts === false)
+  // Only a script the checks found the fonts lack is named: one they set is never said to fail.
+  const lacking = [
+    ...(outline?.scripts?.greek === false ? ["Greek"] : []),
+    ...(outline?.scripts?.cyrillic === false ? ["Cyrillic"] : []),
+  ];
+  if (lacking.length > 0)
     notes.push(
-      "Your template's fonts cannot set Greek or Cyrillic letters, so typing them stops the page.",
+      `Your template's fonts cannot set ${lacking.join(" or ")} letters, so typing them stops the page.`,
     );
   if (outline !== undefined && outline.fixed > 0)
     notes.push(
@@ -945,15 +954,46 @@ function notesOf(checks: AssemblyChecks, inputs: ReportInputs): string[] {
 export const percent = (rate: number) => `${Math.floor(rate * 100 + 1e-9)}%`;
 
 /**
+ * An outline's three shares in whole per cent, adding up to 100 (the second pass's item 6): the
+ * editable share down, as `percent` shows the rate, so that it never reads as more than it is nor
+ * as the bar when it is under it; and the points that rounding down left over given to the retype's
+ * and the locked share, the one with the larger part of a point left first (largest remainder).
+ * With no word, all three are 0.
+ */
+export function wholeShares(shares: NonNullable<Report["shares"]>): {
+  editable: number;
+  retype: number;
+  locked: number;
+} {
+  const down = (rate: number) => Math.floor(rate * 100 + 1e-9);
+  const shown = {
+    editable: down(shares.editable),
+    retype: down(shares.retype),
+    locked: down(shares.locked),
+  };
+  if (shares.editable + shares.retype + shares.locked === 0) return shown;
+  let left = 100 - shown.editable - shown.retype - shown.locked;
+  const rest = (["retype", "locked"] as const)
+    .map((key) => ({ key, part: shares[key] * 100 - shown[key] }))
+    .sort((a, b) => b.part - a.part);
+  for (const { key } of rest)
+    if (left > 0) {
+      shown[key]++;
+      left--;
+    }
+  return shown;
+}
+
+/**
  * The report's first line: the rate, or an outline's three shares, editable in place, retyped
  * where they stand and locked; and for a partial import, why it is partial, the bar or the page.
  */
 export function summaryOf(report: Report): string {
-  const { shares } = report;
+  const whole = report.shares === undefined ? undefined : wholeShares(report.shares);
   const share =
-    shares === undefined
+    whole === undefined
       ? `${percent(report.rate)} of your resume's words are editable on the page`
-      : `${percent(shares.editable)} of your resume's words are editable on the page, ${percent(shares.retype)} can be retyped where they stand, and ${percent(shares.locked)} are locked`;
+      : `${whole.editable}% of your resume's words are editable on the page, ${whole.retype}% can be retyped where they stand, and ${whole.locked}% are locked`;
   if (report.outcome === "succeeded") return `Imported: ${share}.`;
   if (!report.matched)
     return `Imported in part: ${share}, but the page this editor sets differs from your original's.`;
