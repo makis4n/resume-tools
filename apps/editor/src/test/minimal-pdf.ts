@@ -1,7 +1,7 @@
 /**
- * Small PDFs made by hand, for the PDF spike's tests (item 3): pages of text in the standard 14
- * fonts, filled rectangles and links, and, for the reader's refusals, a PDF locked with a password
- * nobody knows. Every text in them is the test's own.
+ * Small PDFs made by hand, for the PDF reader's tests (item 10) and the spike's (item 3): pages of
+ * text in the standard 14 fonts, filled rectangles and links, and, for the reader's refusals, a PDF
+ * locked with a password nobody knows. Every text in them is the test's own.
  */
 
 /** A run of text at a point, its baseline `y` from the page's top. */

@@ -268,7 +268,7 @@ closes.
 
 ### Stage 2. A PDF onto a built-in template
 
-10. [ ] **Reading a PDF in the browser.** The reader loads only when a person imports a PDF, in a
+10. [x] **Reading a PDF in the browser.** The reader loads only when a person imports a PDF, in a
     chunk and a worker of its own, and fetches nothing. It gives each page's runs of text with
     their position, size, font and weight, and each link's rectangle and address. It refuses, in
     plain English, a file that is not a PDF, one with a password, one with no text, and one past a

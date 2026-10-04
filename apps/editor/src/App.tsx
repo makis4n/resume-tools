@@ -41,6 +41,7 @@ import { IMPORT_STEPS, type Imported, type ImportJob, type ImportOutcome } from 
 import { FontLibrary } from "./page/fonts";
 import { Pages } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
+import { isPdfFile, isPdfRefusal, readPdfFile } from "./pdf";
 import {
   CANNOT_OPEN,
   canLeave,
@@ -108,6 +109,13 @@ const COULD_NOT_READ = "The files could not be read.";
 
 /** What the user reads when an import fails for a reason of the editor's; the details go to the console. */
 const IMPORT_FAILED = "The import could not finish. Try again.";
+
+/**
+ * What the user reads when a PDF they imported was read: the reader is built (milestone 3 second
+ * pass, item 10), and what files its content into a resume comes with items 11 to 14.
+ */
+const PDF_NOT_YET =
+  "This PDF can be read, but importing a resume from a PDF is not ready yet. Import its .tex file, or start from a template.";
 
 /** What the user reads when an import came through but the browser could not keep it. */
 const COULD_NOT_KEEP = "The imported resume could not be kept in this browser.";
@@ -676,6 +684,12 @@ export function App() {
     }
     if (importRun.current !== undefined) return;
     setNotice(undefined);
+    // A PDF is read in the browser, by a reader loaded only now, and sends nothing.
+    const [only] = chosen;
+    if (only !== undefined && files.length === 1 && isPdfFile(only)) {
+      await importPdf(files[0]?.bytes ?? new Uint8Array());
+      return;
+    }
     setImporting({ label: IMPORT_STEPS.intake, compiles: 0 });
     const run = owned.importResume(files, ({ label, compiles }) => {
       if (importRun.current === run) setImporting({ label, compiles });
@@ -705,6 +719,21 @@ export function App() {
     const report = reportOfImport(outcome);
     if (report.outcome === "partial") setWaiting({ outcome, report });
     else await keepImport(outcome, report);
+  };
+
+  /**
+   * Read a PDF the person imported (milestone 3 second pass, item 10): a refusal says why in the
+   * list's notice, in its own plain words. The reader that loads here is the one items 11 to 14
+   * file a resume from; until then a PDF that reads says so, and nothing is kept.
+   */
+  const importPdf = async (bytes: Uint8Array) => {
+    try {
+      const reading = await readPdfFile(bytes);
+      setNotice(isPdfRefusal(reading) ? reading.message : PDF_NOT_YET);
+    } catch (error) {
+      console.error("The PDF reader could not load:", error);
+      setNotice(IMPORT_FAILED);
+    }
   };
 
   /** Continue with a partial import: kept and opened as it is (decision 0039). */

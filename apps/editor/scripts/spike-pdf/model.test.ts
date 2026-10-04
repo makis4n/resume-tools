@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { minimalPdf } from "../../src/test/minimal-pdf.ts";
 import { CORPUS_DIR } from "../corpus-manifest.ts";
 import { layOut } from "./layout.ts";
-import { minimalPdf } from "./minimal-pdf.ts";
 import {
   assertInvented,
   failureOf,
