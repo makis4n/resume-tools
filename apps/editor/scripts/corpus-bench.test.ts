@@ -551,8 +551,8 @@ describe("the bench command", () => {
     expect(run({}, "bench", "x.json", "--json", "y.json").stderr).toContain(
       "bench <bench.json>... runs nothing, and takes no other option",
     );
-    expect(run({}, "bench", "--model", "qwen3.8:27b", "--committed-only").stderr).toContain(
-      "--committed-only goes with run",
+    expect(run({}, "bench", "--model", "qwen3.8:27b", "--write-baseline").stderr).toContain(
+      "--write-baseline goes with run",
     );
     expect(run({}, "probe", "--ids", "x").stderr).toContain("--ids goes with run or bench");
     expect(run({}, "bench", "--model", "qwen3.8:27b", "--thinking", "off").stderr).toContain(

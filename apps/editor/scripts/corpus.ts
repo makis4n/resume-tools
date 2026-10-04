@@ -15,7 +15,7 @@
  *   pnpm --filter @resume-tools/editor corpus assemble [--only <id>] [--json <file>]
  *   pnpm --filter @resume-tools/editor corpus leak [--only <id>] [--json <file>]
  *   pnpm --filter @resume-tools/editor corpus run [--only <id>] [--ids <file>] [--json <file>]
- *                 [--committed-only] [--allow-model] [--write-baseline]
+ *                 [--write-baseline]
  *   pnpm --filter @resume-tools/editor corpus compare <run.json> <run.json> [<run.json>...]
  *   pnpm --filter @resume-tools/editor corpus review export [--top <n>] [--out <dir>]
  *   pnpm --filter @resume-tools/editor corpus review check [--dir <dir>]
@@ -137,33 +137,24 @@
  *                 have a reference, and takes about a minute for the corpus
  *   --only <id>   that document only, or the documents a comma separates, `jake-0001,altacv-0001`
  *   --json <file> write each document's row as JSON too, names and numbers only
- *   run           take every fetched document through the whole import, as `assemble` and in its
- *                 child, with the naming request the import sends (`importRequest`), refused where
- *                 the import's privacy check refuses it, its answers from the committed ones first
- *                 and then the cache of the model `NAMING_MODEL` names, the model asked behind a
- *                 check given the header's values besides; print each document's outcome, success,
- *                 partial, refused or where it stopped, and the bar's controls it proves, and one
- *                 table per family and in all, with a headline of the shares, the editable rate,
- *                 the locked words by reason and the bar, names and counts only; keep each
- *                 document's assembly, and what the review reads of it, which holds its text, under
- *                 `.corpus/run/` (`scripts/corpus-run.ts`, decision 0043). It exits 1 when a
- *                 success lacks any of the page size, the margins and the font size, item 14's
- *                 bar, and names each such document by its id and the control (decision 0040). A
- *                 --committed-only run over the whole corpus is held to `corpus/baseline.json`, and
- *                 exits 1 when its success rate falls more than a point under the baseline's. It
- *                 takes about an hour for the corpus on CI's runner
+ *   run           take every fetched document through the import a person's browser runs
+ *                 (`importResume`), in one mode: no answer is read and no model is asked, since a
+ *                 `.tex` import names nothing (decision 0049); print each document's outcome,
+ *                 success, partial, refused or where it stopped, its words in the report's three
+ *                 shares, editable in place, through the retype and locked, its fields and its
+ *                 groups, and one table per family and in all, with a headline of the shares and
+ *                 the locked words by reason, names and counts only; keep each document's row,
+ *                 counts only, under `.corpus/import-run/` (`scripts/corpus-import.ts`, the second
+ *                 pass's item 6). A run over the whole corpus is held to `corpus/baseline.json`,
+ *                 and exits 1 when its success rate falls more than a point under the baseline's
  *   --only <id>   that document only, or the documents a comma separates
  *   --ids <file>  the documents a file names, one id a line, from where pnpm was run
  *   --json <file> write each document's row as JSON too, ids and counts only, with the summary
- *   --committed-only  the committed answers alone, as CI runs it: no cache, no model
- *   --allow-model ask the model for what the cache does not answer, behind the privacy gate, as
- *                 `name --model` asks it; it needs SOCLAAS_API_KEY in the environment. Never in CI
- *   --write-baseline  write `corpus/baseline.json` from a --committed-only run over the whole
- *                 corpus, with the day and the commit, as a pull request raises it by hand; never
- *                 over a baseline the run falls more than a point under, which a person lowers by
- *                 editing the file
+ *   --write-baseline  write `corpus/baseline.json` from a run over the whole corpus, with the day
+ *                 and the commit, as a pull request raises it by hand; never over a baseline the
+ *                 run falls more than a point under, which a person lowers by editing the file
  *   --from <run.json> with --write-baseline, run nothing, and write the baseline from a finished
- *                 --committed-only run's JSON over the whole corpus, as CI's run leaves it
+ *                 run's JSON over the whole corpus, as CI's run leaves it
  *                 The run takes as many children as the machine has cores, four at most; it writes
  *                 its JSON after each document, and on SIGINT or SIGTERM, as a CI step's time
  *                 running out sends, it stops, prints its table and writes its JSON for what it did,
@@ -187,12 +178,13 @@
  *                 1 when a redefinition is dropped or unproven, or an answer does not validate
  *   --dir <dir>   the review's export, whose templates the lines name, `.review/` unless given
  *   bench         measure a naming model on SoCLaaS (`scripts/corpus-bench.ts`, decision 0044):
- *                 take every fetched document through the whole import, as `run` and in its child,
+ *                 take every fetched document through the first pass's whole import, in its child,
  *                 with the naming request the import sends, refused where the import's privacy
  *                 check refuses it, its macros answered from the model's own folder of
  *                 `.corpus/cache/` alone, the committed answers and every other model's cache left
  *                 out, and the model asked for every macro its folder does not answer, behind the
- *                 check `run --allow-model` asks it behind, its answers filed in its folder; print
+ *                 stricter check the first pass's run asked it behind, its answers filed in its
+ *                 folder; print
  *                 each document's outcome and naming step, the run's table, and the candidate's:
  *                 the outcomes, the editable rate, the locked words by reason, each part's time
  *                 (the median, the 90th percentile and the slowest, with its document and number),
@@ -225,7 +217,6 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -264,6 +255,16 @@ import { collect, REASONS, type Reason } from "./corpus-collect.ts";
 import { fetchCorpus } from "./corpus-fetch.ts";
 import { type FontsChildRow, type FontsRow, fontsTable } from "./corpus-fonts.ts";
 import { environmentToken, GitHub } from "./corpus-github.ts";
+import {
+  IMPORT_LIMIT_MS,
+  type ImportChildRow,
+  type ImportFile,
+  type ImportRow,
+  importHeadline,
+  importLine,
+  importSummary,
+  importTable,
+} from "./corpus-import.ts";
 import { checkCorpus, leakFailures, leakLine, leakTable } from "./corpus-leak.ts";
 import {
   CORPUS_DIR,
@@ -341,18 +342,14 @@ import {
   poolSize,
   type RefusalStep,
   type RunChildRow,
-  type RunFile,
-  type RunMode,
   type RunNaming,
   RunRecord,
   type RunRow,
-  runBar,
   runDifferences,
   runHeadline,
   runLimitMs,
   runLine,
   runTable,
-  summaryOf,
 } from "./corpus-run.ts";
 import {
   ANSWERS_DIR,
@@ -366,18 +363,19 @@ import {
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>] | leak [--only <id>] [--json <file>] | run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>] | bench --model <id> [--only <id>] [--ids <file>] [--json <file>] [--thinking <switch>] [--retries <n>] | bench <bench.json> [<bench.json>...]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | seed [--json <file>] [--write] | name [--only <id>] [--json <file>] [--model] | assemble [--only <id>] [--json <file>] | leak [--only <id>] [--json <file>] | run [--only <id>] [--ids <file>] [--json <file>] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>] | bench --model <id> [--only <id>] [--ids <file>] [--json <file>] [--thinking <switch>] [--retries <n>] | bench <bench.json> [<bench.json>...]";
 
 /** The editor, whose modules the review's export loads through Vite for the leak detector. */
 const APP = fileURLToPath(new URL("..", import.meta.url));
 
 /**
- * Where the run keeps each document's assembly and what the review reads of it, which hold its
- * text (`RunDocument`): `.corpus/run/<id>/`, a folder of the run's own.
+ * Where the first pass's run kept each document's assembly and what the review reads of it, which
+ * hold its text (`RunDocument`): `.corpus/run/<id>/`, which the review still reads until the second
+ * pass's item 17; `corpus run` keeps its rows under `.corpus/import-run/` since item 6.
  */
 const RUN_KEPT = join(CORPUS_DIR, "run");
 
-/** The baseline a `--committed-only` run over the whole corpus is held to. */
+/** The baseline a run over the whole corpus is held to. */
 const BASELINE_FILE = fileURLToPath(new URL("../corpus/baseline.json", import.meta.url));
 
 /** Where the review's export goes unless `--out` says, which git ignores. */
@@ -421,6 +419,12 @@ const FONTS_CHILD = fileURLToPath(new URL("./corpus-fonts-child.ts", import.meta
 
 /** Where the fonts runner keeps each document's logs, which quote its source. */
 const FONTS_LOGS = join(CORPUS_DIR, "fonts");
+
+/** The run's child, which takes each document through the import a browser runs. */
+const IMPORT_CHILD = fileURLToPath(new URL("./corpus-import-child.ts", import.meta.url));
+
+/** Where the run keeps each document's row, counts only: a folder of its own. */
+const IMPORT_KEPT = join(CORPUS_DIR, "import-run");
 
 /** The assembly runner's child, which Node runs in each process of its pool, and the oracle's. */
 const ASSEMBLE_CHILD = fileURLToPath(new URL("./corpus-assemble-child.ts", import.meta.url));
@@ -1315,31 +1319,6 @@ function readRunRecord(): RunRecord | undefined {
   }
 }
 
-/**
- * What the run keeps of a document, under `.corpus/run/<id>/`: what the review reads of it, with the
- * run's stamp, and its assembly; each document's folder emptied first, so that none keeps an older
- * run's files.
- */
-function keepRun(
-  row: RunRow,
-  review: Partial<RunDocument> | undefined,
-  detail: unknown,
-  stamp: string,
-) {
-  const dir = join(RUN_KEPT, row.id);
-  rmSync(dir, { recursive: true, force: true });
-  const kept: RunDocument = {
-    ...review,
-    id: row.id,
-    family: row.family,
-    outcome: row.outcome,
-    run: stamp,
-  };
-  writeAtomically(join(dir, "review.json"), `${JSON.stringify(kept)}\n`);
-  if (detail !== undefined)
-    writeAtomically(join(dir, "assembly.json"), `${JSON.stringify(detail, null, 1)}\n`);
-}
-
 /** What the last run kept of a document for the review, or none. */
 function keptDocument(id: string): RunDocument | undefined {
   const file = join(RUN_KEPT, id, "review.json");
@@ -1403,7 +1382,11 @@ function headCommit(): string | null {
  * written.
  */
 function adoptBaseline(from: string) {
-  const next = baselineFromFile(JSON.parse(readFileSync(from, "utf8")), readBaseline());
+  const next = baselineFromFile(
+    JSON.parse(readFileSync(from, "utf8")),
+    readBaseline(),
+    importSummary,
+  );
   if (next.baseline !== undefined) writeAtomically(BASELINE_FILE, formatJson(next.baseline));
   print([next.line]);
   if (next.baseline === undefined) process.exitCode = 1;
@@ -1413,29 +1396,15 @@ async function runRun(options: {
   only?: string;
   ids?: string;
   json?: string;
-  committedOnly: boolean;
-  allowModel: boolean;
   writeBaseline: boolean;
   from?: string;
 }) {
   if (options.from !== undefined) return adoptBaseline(options.from);
-  const config = namingConfig(process.env);
-  if (options.allowModel && options.committedOnly)
-    throw new Error(
-      "--allow-model asks the model for what the cache does not answer, and --committed-only reads no cache: pass one or the other",
-    );
-  if (options.allowModel && config.key === undefined)
-    throw new Error(
-      "run --allow-model asks SoCLaaS, which needs a key: set SOCLAAS_API_KEY in the environment",
-    );
-  if (!AnswerSource.safeParse(`model:${config.id}`).success)
-    throw new Error("NAMING_MODEL is not a model's id: letters, digits and ._:/@- only");
-  modelCacheDir(config.id);
   if (options.only !== undefined && options.ids !== undefined)
     throw new Error("--only and --ids each name the documents to run: pass one");
   const whole = options.only === undefined && options.ids === undefined;
-  if (options.writeBaseline && !(options.committedOnly && whole))
-    throw new Error("--write-baseline takes a --committed-only run over the whole corpus");
+  if (options.writeBaseline && !whole)
+    throw new Error("--write-baseline takes a run over the whole corpus");
   const baseline = readBaseline();
   const origin = options.writeBaseline ? checkout() : undefined;
   if (origin !== undefined && origin.changed.length > 0)
@@ -1447,41 +1416,13 @@ async function runRun(options: {
   const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
   const documents = takenDocuments(options.only, options.ids);
   const treeFont = treeFonts(engine.files);
-  const mode: RunMode = {
-    answers: options.committedOnly ? "committed" : "cache",
-    cache: options.committedOnly ? null : config.id,
-    asked: options.allowModel ? config.id : null,
-    documents: whole ? "all" : "some",
-  };
-  // The record of this run, which the review's export and check read (`RunRecord`): written before
-  // any document, unfinished, and again once every document is kept.
-  const record: RunRecord = {
-    version: 1,
-    stamp: `${new Date().toISOString()}-${randomBytes(4).toString("hex")}`,
-    ...mode,
-    ids: documents.map((doc) => doc.id),
-    complete: false,
-  };
-  writeAtomically(RUN_RECORD, formatJson(record));
-  // The parent stops asking once the provider has failed documents in a row, as `name` does: a
-  // spent quota fails every call after it. Each task's message is made as it is sent.
-  let asking = options.allowModel;
-  let failures = 0;
   const tasks = documents.map((doc) => ({
     id: doc.id,
-    message: () => ({
-      name: `${doc.id}.zip`,
-      bytes: corpusUpload(doc, treeFont),
-      ...(options.committedOnly
-        ? {}
-        : { answers: { model: config.id, ...(asking ? { ask: true } : {}) } }),
-      review: true,
-    }),
+    message: () => ({ name: `${doc.id}.zip`, bytes: corpusUpload(doc, treeFont) }),
   }));
   const families = new Map(documents.map((doc) => [doc.id, doc.family]));
-  const rows: RunRow[] = [];
+  const rows: ImportRow[] = [];
   const started = performance.now();
-  const limitMs = runLimitMs(options.allowModel);
   const size = poolSize();
   const at = { date: new Date().toISOString().slice(0, 10), commit: headCommit() };
   /**
@@ -1491,20 +1432,20 @@ async function runRun(options: {
   const written = (complete: boolean) => {
     if (options.json === undefined) return;
     const sorted = [...rows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const file: RunFile = {
-      version: 1,
+    const file: ImportFile = {
+      version: 2,
       at,
       tree: { layout: engine.layout, files: Object.keys(engine.files).length },
-      limitMs,
-      mode,
+      limitMs: IMPORT_LIMIT_MS,
+      mode: { documents: whole ? "all" : "some" },
       complete,
-      summary: summaryOf(sorted),
+      summary: importSummary(sorted),
       documents: sorted,
     };
     writeAtomically(options.json, formatJson(file));
   };
   print([
-    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${size} at a time, ${limitMs / 1000} s each at most; ${options.committedOnly ? "the committed answers alone" : `the committed answers and ${config.id}'s cache`}; ${options.allowModel ? `asking ${config.id} for what they do not answer` : "no model asked"}`,
+    `${documents.length} ${documents.length === 1 ? "document" : "documents"}, ${size} at a time, ${IMPORT_LIMIT_MS / 1000} s each at most; the import a browser runs, which names nothing and asks no model`,
   ]);
   // A signal, as a CI step's time running out sends, stops the pool, and the run ends as it would,
   // with the table and the JSON of what it did, and exits 1.
@@ -1518,37 +1459,28 @@ async function runRun(options: {
   process.once("SIGTERM", stop);
   try {
     await runPool({
-      script: ASSEMBLE_CHILD,
+      script: IMPORT_CHILD,
       tasks,
       size,
-      limitMs,
+      limitMs: IMPORT_LIMIT_MS,
       signal: controller.signal,
       onResult: (task, result) => {
-        const reply = result.reply as
-          | { run?: RunChildRow; review?: Partial<RunDocument>; detail?: unknown }
-          | undefined;
-        const { times, ...fields } = reply?.run ?? {
+        const reply = result.reply as { row?: ImportChildRow } | undefined;
+        const { times, ...fields } = reply?.row ?? {
           outcome: result.timedOut ? ("timeout" as const) : ("crashed" as const),
           times: {},
         };
-        const row: RunRow = {
+        const row: ImportRow = {
           id: task.id,
           family: families.get(task.id) ?? "other",
           ...fields,
           times: { ...times, wall: Math.round(result.wall) },
         };
         rows.push(row);
-        keepRun(row, reply?.review, reply?.detail, record.stamp);
+        // Each document's row, counts only, in a folder of the run's own.
+        writeAtomically(join(IMPORT_KEPT, `${row.id}.json`), formatJson(row));
         written(false);
-        print([`${rows.length}/${documents.length} ${task.id}: ${runLine(row)}`]);
-        if (row.naming?.failed === "provider") failures++;
-        else if ((row.naming?.calls ?? 0) > 0) failures = 0;
-        if (asking && failures >= PROVIDER_FAILURES) {
-          asking = false;
-          print([
-            `The provider failed ${PROVIDER_FAILURES} documents in a row: the documents not yet sent are not asked`,
-          ]);
-        }
+        print([`${rows.length}/${documents.length} ${task.id}: ${importLine(row)}`]);
       },
     });
   } finally {
@@ -1557,20 +1489,19 @@ async function runRun(options: {
   }
   const stopped = controller.signal.aborted;
   rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  writeAtomically(RUN_RECORD, formatJson({ ...record, complete: !stopped }));
   const minutes = (performance.now() - started) / 60_000;
-  const summary = summaryOf(rows);
+  const summary = importSummary(rows);
   const verdict = stopped
     ? {
         failed: false,
         line: `Not held to corpus/baseline.json: the run stopped after ${rows.length} of ${documents.length} documents.`,
       }
-    : baselineVerdict(summary, baseline, { committedOnly: options.committedOnly, whole });
+    : baselineVerdict(summary, baseline, { whole });
   print([
     "",
-    ...runTable(rows).trimEnd().split("\n"),
+    ...importTable(rows).trimEnd().split("\n"),
     "",
-    ...runHeadline(rows),
+    ...importHeadline(rows),
     verdict.line,
     "",
     `Took ${minutes.toFixed(1)} min.`,
@@ -1582,19 +1513,17 @@ async function runRun(options: {
     const next = nextBaseline({
       summary,
       baseline,
-      scope: { committedOnly: options.committedOnly, whole },
+      scope: { whole },
       date: at.date,
       commit: origin.commit,
     });
     if (next.baseline !== undefined) writeAtomically(BASELINE_FILE, formatJson(next.baseline));
     print([next.line]);
   }
-  if (stopped || verdict.failed) console.error(printable(verdict.line));
-  // Item 14's bar, which the run judges over its successes (decision 0040): a success that lacks
-  // the page size, the margins or the font size fails the run, named by its id and the control.
-  const bar = runBar(rows);
-  if (bar.length > 0) console.error(barFailureLines(bar).map(printable).join("\n"));
-  if (stopped || verdict.failed || bar.length > 0) process.exitCode = 1;
+  if (stopped || verdict.failed) {
+    console.error(printable(verdict.line));
+    process.exitCode = 1;
+  }
 }
 
 function runCompare(files: readonly string[]) {
@@ -2063,8 +1992,6 @@ async function main() {
       tree: { type: "string" },
       model: benching ? { type: "string" } : { type: "boolean" },
       write: { type: "boolean" },
-      "committed-only": { type: "boolean" },
-      "allow-model": { type: "boolean" },
       "write-baseline": { type: "boolean" },
       from: { type: "string" },
       top: { type: "string" },
@@ -2151,16 +2078,13 @@ async function main() {
   for (const option of ["thinking", "retries"] as const)
     if (values[option] !== undefined && (command !== "bench" || typeof values.model !== "string"))
       throw new Error(`--${option} goes with bench --model <id>`);
-  for (const option of ["committed-only", "allow-model", "write-baseline"] as const)
-    if (values[option] !== undefined && command !== "run")
-      throw new Error(`--${option} goes with run`);
+  if (values["write-baseline"] !== undefined && command !== "run")
+    throw new Error("--write-baseline goes with run");
   if (values.from !== undefined && (command !== "run" || values["write-baseline"] !== true))
     throw new Error("--from goes with run --write-baseline");
   if (
     values.from !== undefined &&
-    [values.only, values.ids, values.json, values["committed-only"], values["allow-model"]].some(
-      (each) => each !== undefined,
-    )
+    [values.only, values.ids, values.json].some((each) => each !== undefined)
   )
     throw new Error(
       "run --write-baseline --from <run.json> runs nothing, and takes no other option",
@@ -2179,8 +2103,6 @@ async function main() {
       ...(values.only === undefined ? {} : { only: values.only }),
       ...(values.ids === undefined ? {} : { ids: caller(values.ids) }),
       ...(values.json === undefined ? {} : { json: caller(values.json) }),
-      committedOnly: values["committed-only"] === true,
-      allowModel: values["allow-model"] === true,
       writeBaseline: values["write-baseline"] === true,
       ...(values.from === undefined ? {} : { from: caller(values.from) }),
     });

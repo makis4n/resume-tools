@@ -17,7 +17,10 @@
  * the source sets is that part's whole on every page, what its call passes among it, a date or a
  * page's number (`ownRunningLines`). The body's words are all the resume's, and the
  * editable rate the share of them editable in place, as plan section 6.2 has the bar: the side
- * panel's are counted apart.
+ * panel's are counted apart, and so are an outline's words of kept text the retype reaches
+ * (`AssemblyChecks.retype`, decision 0042), most of whose glyphs it reaches, which are no locked
+ * part's (the second pass's item 6): an outline's report has three shares, editable in place,
+ * changeable through the retype, and locked, each locked part with why in plain words.
  *
  * **The bar.** An import succeeds when the regenerated document set the reference's glyph stream,
  * its first check holding, and at least `SUCCESS_RATE` of the body's words are editable; anything
@@ -89,14 +92,24 @@ export interface Report {
     editable: number;
     /** In fields set raw, which the side panel alone edits, where the page cannot mark them. */
     panel: number;
-    /** Locked, in all and by reason. */
+    /**
+     * In kept text the retype reaches (decision 0042), which a person changes by retyping it where
+     * it stands, and which the rate does not count: an outline's (the second pass's item 6).
+     */
+    retype: number;
+    /** Locked, in all and by reason: kept text the retype does not reach either. */
     locked: number;
     byReason: Partial<Record<LockReason, number>>;
-    /** The body's: the editable in place, the side panel's and the locked ones. */
+    /** The body's: the editable in place, the side panel's, the retyped and the locked ones. */
     body: number;
     /** The template's own text, which is no word of the resume's. */
     template: number;
   };
+  /**
+   * An imported outline's three shares of the body's words, from 0 to 1 (the second pass's item
+   * 6): editable in place, changeable through the retype, and locked. Absent for an assembly.
+   */
+  shares?: { editable: number; retype: number; locked: number };
   /** Each locked part that sets a word on the page, in the page's order. */
   locked: LockedShown[];
   /** What the import left out: images, a bibliography, a control, a file. */
@@ -113,6 +126,11 @@ export interface ReportInputs {
   warnings?: readonly string[];
   /** How the naming step went; a failure is why every macro stayed as the probe left it. */
   naming?: NamingOutcome;
+  /**
+   * An outline's groups of units, and those the checks fixed, which the notes count; and whether
+   * its fields take letters of other scripts, which a note says they do not.
+   */
+  outline?: { groups: number; fixed: number; scripts?: boolean };
 }
 
 /**
@@ -146,12 +164,18 @@ export function reportOf(
   const matched = checks.outcome === "assembled";
   const counted = checks.owners === undefined ? undefined : countWords(assembled, reference);
   const words = counted?.words ?? sourceWords(checks);
-  const rate = words.body === 0 ? 0 : words.editable / words.body;
+  const share = (n: number) => (words.body === 0 ? 0 : n / words.body);
+  const rate = share(words.editable);
   return {
     outcome: outcomeOf(rate, matched),
     rate,
     matched,
     words,
+    ...(checks.retype === undefined
+      ? {}
+      : {
+          shares: { editable: rate, retype: share(words.retype), locked: share(words.locked) },
+        }),
     locked: counted?.locked ?? [],
     dropped: droppedOf(checks, reference, inputs),
     notes: [
@@ -171,14 +195,30 @@ export function reportOf(
  * them (`ImportReport`, decision 0038), and its document.
  */
 export function reportOfImport(imported: {
-  report: Pick<ImportReport, "checks" | "locked" | "reference" | "images" | "warnings">;
+  report: Pick<ImportReport, "checks" | "locked" | "reference" | "images" | "warnings"> & {
+    outline?: Pick<ImportReport["outline"], "groups" | "fixed"> &
+      Partial<Pick<ImportReport["outline"], "scripts">>;
+  };
   document: { resume: unknown };
 }): Report {
   const { report } = imported;
+  const { outline } = report;
   return reportOf(
     { checks: report.checks, extras: report.locked, document: imported.document },
     report.reference,
-    { images: report.images, warnings: report.warnings },
+    {
+      images: report.images,
+      warnings: report.warnings,
+      ...(outline === undefined
+        ? {}
+        : {
+            outline: {
+              groups: outline.groups,
+              fixed: Object.values(outline.fixed ?? {}).reduce((sum, n) => sum + (n ?? 0), 0),
+              ...(outline.scripts === undefined ? {} : { scripts: outline.scripts }),
+            },
+          }),
+    },
   );
 }
 
@@ -623,9 +663,17 @@ function countWords(
     owners,
   );
   const modes = new Map(checks.all.map((field) => [field.field, field]));
+  // The glyphs of kept text the retype reaches, which an outline's checks found (decision 0042).
+  const reached = owners.map((row) => new Array<boolean>(row.length).fill(false));
+  for (const run of checks.retype ?? []) {
+    const row = reached[run.page];
+    if (row === undefined) continue;
+    for (let at = Math.max(0, run.from); at < Math.min(run.to, row.length); at++) row[at] = true;
+  }
   const words: Report["words"] = {
     editable: 0,
     panel: 0,
+    retype: 0,
     locked: 0,
     byReason: {},
     body: 0,
@@ -666,6 +714,13 @@ function countWords(
       if (key.startsWith("f:")) {
         if (modes.get(key.slice(2))?.mode === "raw") words.panel++;
         else words.editable++;
+        keptRun = undefined;
+        continue;
+      }
+      // A word of kept text most of whose glyphs the retype reaches is changed where it stands.
+      const hit = word.glyphs.filter((at) => reached[page]?.[at] === true).length;
+      if (2 * hit > word.glyphs.length) {
+        words.retype++;
         keptRun = undefined;
         continue;
       }
@@ -727,7 +782,15 @@ function sourceWords(checks: AssemblyChecks): Report["words"] {
     .filter((field) => field.mode === "raw")
     .reduce((sum, field) => sum + field.words, 0);
   const editable = checks.words.editable;
-  return { editable, panel, locked, byReason, body: editable + panel + locked, template: 0 };
+  return {
+    editable,
+    panel,
+    retype: 0,
+    locked,
+    byReason,
+    body: editable + panel + locked,
+    template: 0,
+  };
 }
 
 // What the report says.
@@ -864,6 +927,17 @@ function notesOf(checks: AssemblyChecks, inputs: ReportInputs): string[] {
   const fixed = (checks.decisions.fixed ?? []).flatMap((kind) => UNIT_NAMES[kind] ?? []);
   if (fixed.length > 0)
     notes.push(`The template takes no more and no fewer ${listed(fixed)} than your original has.`);
+  const outline = inputs.outline;
+  if (outline?.scripts === false)
+    notes.push(
+      "Your template's fonts cannot set Greek or Cyrillic letters, so typing them stops the page.",
+    );
+  if (outline !== undefined && outline.fixed > 0)
+    notes.push(
+      outline.fixed === outline.groups
+        ? `Your resume's ${outline.groups === 1 ? "list keeps" : `${outline.groups} lists and runs of entries keep`} as many items as your original has: adding or removing one there would change the rest of the page, or could not be tried.`
+        : `${outline.fixed} of your resume's ${outline.groups} lists and runs of entries ${outline.fixed === 1 ? "keeps" : "keep"} as many items as your original has: adding or removing one there would change the rest of the page, or could not be tried.`,
+    );
   return notes;
 }
 
@@ -871,11 +945,15 @@ function notesOf(checks: AssemblyChecks, inputs: ReportInputs): string[] {
 export const percent = (rate: number) => `${Math.floor(rate * 100 + 1e-9)}%`;
 
 /**
- * The report's first line: the rate, and for a partial import, why it is partial, the bar or the
- * page.
+ * The report's first line: the rate, or an outline's three shares, editable in place, retyped
+ * where they stand and locked; and for a partial import, why it is partial, the bar or the page.
  */
 export function summaryOf(report: Report): string {
-  const share = `${percent(report.rate)} of your resume's words are editable on the page`;
+  const { shares } = report;
+  const share =
+    shares === undefined
+      ? `${percent(report.rate)} of your resume's words are editable on the page`
+      : `${percent(shares.editable)} of your resume's words are editable on the page, ${percent(shares.retype)} can be retyped where they stand, and ${percent(shares.locked)} are locked`;
   if (report.outcome === "succeeded") return `Imported: ${share}.`;
   if (!report.matched)
     return `Imported in part: ${share}, but the page this editor sets differs from your original's.`;

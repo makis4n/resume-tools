@@ -16,17 +16,17 @@
  * taken again unless `--again` says so, so that a run stopped short goes on where it stopped. It
  * prints a line a document, then the tables (`spike-outline-table.ts`): each document's, and the
  * words and the units by template family, with a row for each upstream sample and a total, beside
- * the first pass's editable share of the same documents. That comes from the JSON of
- * `corpus run --committed-only --ids <file> --json <run.json>` over the same list (`--first`,
- * `.corpus/spike-outline/first-pass.json` unless given) and, for the samples, from item 13's
- * report pinned to their hand counts (decision 0039).
+ * the first pass's editable share of the same documents. That comes from the JSON of the first
+ * pass's `corpus run --committed-only --ids <file> --json <run.json>` over the same list, a mode
+ * the run has no more (`--first`, `.corpus/spike-outline/first-pass.json` unless given) and, for
+ * the samples, from item 13's report pinned to their hand counts (decision 0039).
  *
  *   --ids <file>    the corpus's documents a file names, one id a line, beside the samples
  *   --only <id>     that document alone, a sample or the corpus's, or those a comma separates
  *   --again         take a document again although its row is there
  *   --children <n>  how many children, 2 unless given: fewer than the corpus runners' four, since
  *                   the rows' times are what the import's time targets are set from
- *   --first <file>  the first pass's run, `corpus run --committed-only`'s JSON
+ *   --first <file>  the first pass's run, its `corpus run --committed-only`'s JSON
  *   --report        run nothing, and print the tables again from the rows there are
  *
  * The documents are real people's resumes, so what it prints and writes is ids and counts, never a

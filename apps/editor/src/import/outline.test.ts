@@ -241,6 +241,40 @@ describe("the outline (decision 0049)", () => {
     expect(Object.keys(fieldsOf(parts))).toEqual(["c1-1", "c2-2"]);
   });
 
+  test("keeps as text the candidates the checks name, and says each field's candidate and each group's spans", () => {
+    const body = String.raw`\inventedentry{Quill Academy}{Wrenford}
+\inventedentry{Heron College}{Lark Bay}
+`;
+    const tree = treeOf(body, FLAT);
+    const input = {
+      tree,
+      candidates: probed(tree),
+      macros: FLAT.macros,
+      begin: "\\begin{document}",
+      end: "\\end{document}",
+    };
+    const all = buildOutline(input);
+    expect([...all.owners]).toEqual([
+      ["c1-1", "c1-1"],
+      ["c1-2", "c1-2"],
+      ["c2-1", "c2-1"],
+      ["c2-2", "c2-2"],
+    ]);
+    // The checks keep the second call's place as the upload wrote it: the same bytes, one field
+    // fewer, and the group of the two calls as it was, its units' spans in the body's source.
+    const checked = buildOutline({ ...input, kept: new Set(["c2-2"]) });
+    expect(written(checked.parts)).toBe(written(all.parts));
+    expect(written(checked.parts)).toBe(`\\begin{document}${body}\\end{document}`);
+    expect([...checked.owners.keys()]).toEqual(["c1-1", "c1-2", "c2-1"]);
+    expect([...checked.fields.keys()]).toEqual(["c1-1", "c1-2", "c2-1"]);
+    const [[id, units] = []] = [...checked.groups];
+    expect(id).toBe("g1");
+    expect((units ?? []).map((unit) => body.slice(unit.start, unit.end).trim())).toEqual([
+      "\\inventedentry{Quill Academy}{Wrenford}",
+      "\\inventedentry{Heron College}{Lark Bay}",
+    ]);
+  });
+
   test("gives a field the spaces TeX skipped after a control word its leaf ends in", () => {
     const signatures = signaturesOf({ inventedrole: "m m" });
     const body = "Invented words \\ldots\n  \\inventedrole{Invented \\LaTeX}{Wrenford}\n";

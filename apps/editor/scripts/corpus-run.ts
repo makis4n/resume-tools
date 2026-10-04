@@ -1,29 +1,21 @@
 /**
- * The whole import over the corpus (milestone 3 item 17, decision 0043): `corpus run` takes each
- * fetched document through every step in Node, on the engine session, in the reference runner's
- * pool of children (`runPool`), the child being `corpus assemble`'s (`corpus-assemble-child.ts`), so
- * that the run and the assembly share one pipeline: the intake, the reference compile, read in Latin
- * Modern where the page cannot draw its fonts, the signatures, the parse, the probe, the naming
- * request, built as the import sends it (`importRequest`, decision 0038), with the upload's sources
- * and the page's strings and without the header's values, and refused, as the import refuses it,
- * when the privacy check finds the resume's text in it; its answers, from the committed ones first
- * and then the cache of the model `NAMING_MODEL` names, unless `--committed-only`, and from the
- * model only with `--allow-model` and a key, behind a stricter check, the header's values given to
- * it besides; then the XeTeX rewrite, the assembly, the four checks and the harness.
+ * The first pass's whole import over the corpus (milestone 3 item 17, decision 0043), whose rows,
+ * summary and table `corpus bench` still reads, with `corpus-assemble-child.ts`, until the second
+ * pass's item 17 retires the naming step; and what every run shares: the baseline a run over the
+ * whole corpus is held to (`baselineVerdict`), `corpus compare`'s differences (`runDifferences`),
+ * the run's commit, its pool's size and the ids a file names. `corpus run` itself takes each
+ * document through the outline's import in one mode since the second pass's item 6
+ * (`corpus-import.ts`, decision 00XX): no answers, no model.
  *
- * What became of a document is one row, ids and counts only: its outcome, which `outcomeOf` gives
- * (the one place item 13's report takes over), its editable rate, its words and fields, editable and
- * locked by reason, its sections, its controls as `assembleRow` gives them, its redefinitions, the
- * harness's and the checks' findings, its naming step, its compiles and the time each step took.
- * The table adds them up per family and in all, and the headline gives the shares, the locked words
- * by reason and item 14's bar, which the run judges over its successes with item 14's functions
- * (`runBar`, decision 0040): a success that lacks the page size, the margins or the font size fails
- * the run. A `--committed-only` run over the whole corpus is held to `corpus/baseline.json`
- * (`baselineVerdict`); `corpus compare` says whether runs agree, times aside (`runDifferences`).
+ * The first pass's row of a document: its outcome, which `outcomeOf` gives (the one place item
+ * 13's report takes over), its editable rate, its words and fields, editable and locked by reason,
+ * its sections, its controls as `assembleRow` gives them, its redefinitions, the harness's and the
+ * checks' findings, its naming step, its compiles and the time each step took. The table adds them
+ * up per family and in all, and the headline gives the shares, the locked words by reason and item
+ * 14's bar (`runBar`, decision 0040).
  *
  * What is printed and written names documents by id, reasons, checks and controls, and counts,
- * never a document's text; each document's assembly and what the review reads of it (its request,
- * and its text for the export's leak check) stay under `.corpus/run/` alone.
+ * never a document's text.
  */
 
 // Node runs this file by stripping its types, so it imports values only from files that import
@@ -730,7 +722,7 @@ export type RunRecord = z.infer<typeof RunRecord>;
 
 // The baseline.
 
-/** The baseline a `--committed-only` run over the whole corpus is held to. */
+/** The baseline a run over the whole corpus is held to. */
 export const Baseline = z.strictObject({
   version: z.literal(1),
   /** None yet: the placeholder, which nothing is compared with. */
@@ -755,20 +747,33 @@ export type Baseline = z.infer<typeof Baseline>;
 export const BASELINE_SLACK = 1;
 
 /**
+ * What a baseline reads of a run's summary, the first pass's (`RunSummary`) or the outline's
+ * (`ImportSummary`, `corpus-import.ts`): its documents, its successes and those that timed out, its
+ * rates, and item 14's bar where the run judged one.
+ */
+export interface BaselineSummary {
+  documents: number;
+  outcomes: { success: number; timeout: number };
+  rates: { success: number; editable: number };
+  bar?: { lacking: number };
+}
+
+/**
  * What a run's summary says against the baseline, in one line, and whether the run fails: only a
- * `--committed-only` run over the whole corpus is compared, and it fails when its success rate falls
- * more than BASELINE_SLACK points under the baseline's; a baseline with no run is none yet.
+ * run over the whole corpus is compared, and it fails when its success rate falls more than
+ * BASELINE_SLACK points under the baseline's; a baseline with no run is none yet. `corpus run` has
+ * one mode since the second pass's item 6, which reads no answers and asks no model.
  */
 export function baselineVerdict(
-  summary: Pick<RunSummary, "documents" | "outcomes">,
+  summary: Pick<BaselineSummary, "documents" | "outcomes">,
   baseline: Baseline,
-  scope: { committedOnly: boolean; whole: boolean },
+  scope: { whole: boolean },
 ): { compared: boolean; failed: boolean; line: string } {
-  if (!scope.committedOnly || !scope.whole)
+  if (!scope.whole)
     return {
       compared: false,
       failed: false,
-      line: "Not held to corpus/baseline.json: only a --committed-only run over the whole corpus is.",
+      line: "Not held to corpus/baseline.json: only a run over the whole corpus is.",
     };
   const base = baseline.run;
   if (base === null)
@@ -794,8 +799,8 @@ export function baselineVerdict(
   };
 }
 
-/** The baseline a run gives: its summary's rates, the day and the commit. */
-export function baselineOf(summary: RunSummary, date: string, commit: string): Baseline {
+/** The baseline a run gives: its summary's two rates, the day and the commit. */
+export function baselineOf(summary: BaselineSummary, date: string, commit: string): Baseline {
   return Baseline.parse({
     version: 1,
     run: {
@@ -804,35 +809,36 @@ export function baselineOf(summary: RunSummary, date: string, commit: string): B
       documents: summary.documents,
       timeouts: summary.outcomes.timeout,
       success: summary.outcomes.success,
-      rates: summary.rates,
+      rates: { success: summary.rates.success, editable: summary.rates.editable },
     },
   });
 }
 
 /**
  * What `--write-baseline` does with a run's summary: the baseline to write, or why none is. Only a
- * `--committed-only` run over the whole corpus gives one, and never one whose success rate falls more
- * than BASELINE_SLACK points under the baseline it would replace: a person lowers a baseline by
- * editing the file in a pull request, where it is read, and never by running the corpus. Nor one
- * that fails item 14's bar, a success lacking the page size, the margins or the font size.
+ * run over the whole corpus gives one, and never one whose success rate falls more than
+ * BASELINE_SLACK points under the baseline it would replace: a person lowers a baseline by editing
+ * the file in a pull request, where it is read, and never by running the corpus. Nor one that fails
+ * item 14's bar, where the run judged one, a success lacking the page size, the margins or the font
+ * size.
  */
 export function nextBaseline(input: {
-  summary: RunSummary;
+  summary: BaselineSummary;
   baseline: Baseline;
-  scope: { committedOnly: boolean; whole: boolean };
+  scope: { whole: boolean };
   date: string;
   commit: string;
 }): { baseline?: Baseline; line: string } {
-  if (!input.scope.committedOnly || !input.scope.whole)
+  if (!input.scope.whole)
     return {
-      line: "corpus/baseline.json is not written: only a --committed-only run over the whole corpus gives one.",
+      line: "corpus/baseline.json is not written: only a run over the whole corpus gives one.",
     };
   const verdict = baselineVerdict(input.summary, input.baseline, input.scope);
   if (verdict.failed)
     return {
       line: "corpus/baseline.json is not written: the run falls more than a point under it, and a baseline is lowered only by a pull request that edits it.",
     };
-  const { lacking } = input.summary.bar;
+  const lacking = input.summary.bar?.lacking ?? 0;
   if (lacking > 0)
     return {
       line: `corpus/baseline.json is not written: ${lacking} ${lacking === 1 ? "success lacks" : "successes lack"} the page size, the margins or the font size, item 14's bar.`,
@@ -846,17 +852,18 @@ export function nextBaseline(input: {
 /**
  * What `--write-baseline --from <run.json>` does with a run's file, as CI's run leaves it: the
  * baseline it gives, or why none, as `nextBaseline` has it, the run's summary counted again from its
- * rows, its day and its commit its own; only a file of a finished `--committed-only` run over the
- * whole corpus, which names its commit, gives one.
+ * rows by `summarize` (`importSummary` for `corpus run`'s), its day and its commit its own; only a
+ * file of a finished run over the whole corpus, which names its commit, gives one.
  */
-export function baselineFromFile(
+export function baselineFromFile<Row>(
   file: unknown,
   baseline: Baseline,
+  summarize: (rows: Row[]) => BaselineSummary,
 ): { baseline?: Baseline; line: string } {
   const run = z
     .looseObject({
       at: z.strictObject({ date: z.iso.date(), commit: z.string().regex(/^[0-9a-f]{40}$/) }),
-      mode: z.looseObject({ answers: z.string(), documents: z.string() }),
+      mode: z.looseObject({ documents: z.string() }),
       complete: z.literal(true),
       documents: z.array(z.looseObject({ id: z.string(), outcome: z.enum(RUN_OUTCOMES) })),
     })
@@ -866,12 +873,9 @@ export function baselineFromFile(
       line: "corpus/baseline.json is not written: the file is no finished run's, naming its commit.",
     };
   return nextBaseline({
-    summary: summaryOf(run.data.documents as unknown as RunRow[]),
+    summary: summarize(run.data.documents as unknown as Row[]),
     baseline,
-    scope: {
-      committedOnly: run.data.mode.answers === "committed",
-      whole: run.data.mode.documents === "all",
-    },
+    scope: { whole: run.data.mode.documents === "all" },
     date: run.data.at.date,
     commit: run.data.at.commit,
   });

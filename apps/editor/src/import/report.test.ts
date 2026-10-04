@@ -286,6 +286,7 @@ describe("the report", () => {
     expect(report.words).toEqual({
       editable: 4,
       panel: 3,
+      retype: 0,
       locked: 10,
       byReason: { date: 3, unmapped: 7 },
       body: 17,
@@ -542,6 +543,7 @@ describe("the report", () => {
     expect(report.words).toEqual({
       editable: 60,
       panel: 2,
+      retype: 0,
       locked: 40,
       byReason: { date: 4, unmapped: 36 },
       body: 102,
@@ -584,6 +586,7 @@ describe("the report", () => {
     expect(report.words).toEqual({
       editable: 4,
       panel: 0,
+      retype: 0,
       locked: 14,
       byReason: { raw: 14 },
       body: 18,
@@ -613,5 +616,65 @@ describe("the report", () => {
     const imports = source.split("\n").filter((each) => /^import\b/.test(each));
     expect(imports.length).toBeGreaterThan(0);
     for (const each of imports) expect(each).toMatch(/^import type /);
+  });
+});
+
+describe("an outline's report (the second pass's item 6)", () => {
+  test("counts three shares, editable in place, through the retype and locked, each locked part with why", () => {
+    const { glyphs, owners } = invented();
+    // An outline's owners: the dates kept by check 1, the skills kept as the probe found them, a
+    // shape no field holds, which the retype reaches; the rest fields, the email typed in place.
+    const [, , , dates, skills] = owners as [
+      GlyphOwner,
+      GlyphOwner,
+      GlyphOwner,
+      GlyphOwner,
+      GlyphOwner,
+    ];
+    const outline = owners.map((owner): GlyphOwner => {
+      const { part: _part, ...at } = owner;
+      return owner === dates
+        ? { ...at, kept: "differs" }
+        : owner === skills
+          ? { ...at, kept: "shape" }
+          : owner;
+    });
+    const report = reportOf(
+      {
+        checks: checks({
+          owners: outline,
+          retype: [{ page: 0, from: skills.from, to: skills.to }],
+        }),
+        extras: [],
+      },
+      { pages: [{ items: glyphs }], bibliographyLeftOut: false, images: [] },
+      { outline: { groups: 4, fixed: 1, scripts: false } },
+    );
+    // Quill Invented, Invented Engineer and the email (7) in fields; the skills (7) retyped; the
+    // dates (3) locked; Page the template's.
+    expect(report.words).toEqual({
+      editable: 7,
+      panel: 0,
+      retype: 7,
+      locked: 3,
+      byReason: { differs: 3 },
+      body: 17,
+      template: 1,
+    });
+    expect(report.shares).toEqual({ editable: 7 / 17, retype: 7 / 17, locked: 3 / 17 });
+    // Only the part the retype does not reach is listed as locked, with why in plain words.
+    expect(report.locked).toEqual([
+      { words: "Jul 2020 – Present", count: 3, reason: "differs", why: LOCK_WHY.differs },
+    ]);
+    expect(summaryOf(report)).toBe(
+      "Imported in part: 41% of your resume's words are editable on the page, 41% can be retyped where they stand, and 17% are locked, under the 90% this editor aims for.",
+    );
+    expect(report.notes).toEqual([
+      "Your template's fonts cannot set Greek or Cyrillic letters, so typing them stops the page.",
+      "1 of your resume's 4 lists and runs of entries keeps as many items as your original has: adding or removing one there would change the rest of the page, or could not be tried.",
+    ]);
+    // An assembly's report has no shares, and reads as it did.
+    expect(reportOfInvented().shares).toBeUndefined();
+    expect(reportOfInvented().words.retype).toBe(0);
   });
 });

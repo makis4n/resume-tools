@@ -351,13 +351,16 @@ export interface OutlineKept {
  * their own LaTeX, which the generator escapes and writes in the editor's marker, named
  * `<id>.text`, as it writes a slot. `bare` is for an argument the upload gave as one token, without
  * braces, whose field the generator writes in braces of its own, so that the command still takes
- * one argument, empty or not.
+ * one argument, empty or not. `required` is for a field the import's checks found the template
+ * cannot set empty: the editor never leaves it empty, and a new unit's copy of it holds
+ * `OUTLINE_PLACEHOLDER` until a person types in it.
  */
 export interface OutlineText {
   kind: "text";
   id: Id;
   text: string;
   bare?: boolean;
+  required?: boolean;
 }
 
 /** A field of rich text: as a field of plain text, with bold, italic and links kept. */
@@ -366,16 +369,33 @@ export interface OutlineRich {
   id: Id;
   text: RichText;
   bare?: boolean;
+  required?: boolean;
 }
 
 /**
+ * Why the import's checks found a group fixed, which the editor then neither adds a unit to nor
+ * removes one from (the second pass's item 6): a copy of its last unit did not keep the rest of
+ * the page (`copy`), the removal of its first or its last unit did not (`removal`), or the checks
+ * could not try it, their budget spent or the page not the original's to judge by (`untried`).
+ */
+export const OUTLINE_FIXED = ["copy", "removal", "untried"] as const;
+export type OutlineFixed = (typeof OUTLINE_FIXED)[number];
+
+/** What a new unit's copy of a required field holds until a person types in it. */
+export const OUTLINE_PLACEHOLDER = "New text";
+
+/**
  * Something that repeats: a list's items, or a run of calls to the same command, each with what
- * follows it up to the next (decision 0049). Its units are copied, removed and moved as wholes.
+ * follows it up to the next (decision 0049). Its units are copied, removed and moved as wholes. A
+ * group the import's checks found `fixed` takes no unit more and none fewer, and says why; any
+ * other takes a copy of a unit and the removal of one, but never of its only unit, whose removal
+ * would leave a list with no item, which LaTeX refuses (decision 0050's first rule for check 3).
  */
 export interface OutlineGroup {
   kind: "group";
   id: Id;
   units: OutlineUnit[];
+  fixed?: OutlineFixed;
 }
 
 /**
@@ -405,14 +425,21 @@ export const OutlinePart: z.ZodType<OutlinePart> = z.lazy(() =>
       id: Id,
       text: z.string(),
       bare: z.boolean().optional(),
+      required: z.boolean().optional(),
     }),
     z.strictObject({
       kind: z.literal("rich"),
       id: Id,
       text: RichText,
       bare: z.boolean().optional(),
+      required: z.boolean().optional(),
     }),
-    z.strictObject({ kind: z.literal("group"), id: Id, units: z.array(OutlineUnit) }),
+    z.strictObject({
+      kind: z.literal("group"),
+      id: Id,
+      units: z.array(OutlineUnit),
+      fixed: z.enum(OUTLINE_FIXED).optional(),
+    }),
   ]),
 );
 

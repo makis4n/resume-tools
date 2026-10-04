@@ -29,26 +29,23 @@
  * piece that ends in an escaping backslash, and braces that do not balance (decision 0049): an
  * upload that makes one is refused (`keep`).
  *
- * Nothing here compiles, but `compileOutline`, which the caller gives a session. Nothing here
- * reaches the naming step, the assembly or the network.
+ * Nothing here compiles: the checks compile the outline (`checks.ts`). Nothing here reaches the
+ * naming step, the assembly or the network.
  */
 
 import {
   type OutlinePart,
   OutlineSection,
   type OutlineUnit,
+  outlineNodes,
   Resume,
   type RichText,
 } from "@resume-tools/resume-model";
-import type { Document } from "../editor/document";
 import { isRetype, retypeOf } from "../editor/retype";
-import type { CompileResult, Engine, EngineSession } from "../engine/session";
+import type { Engine } from "../engine/session";
 import type { GlyphBox } from "../page/draw";
-import type { FontLibrary } from "../page/fonts";
-import { generateBody, generateFormat } from "../templates/generate";
 import {
   type FontFamily,
-  fontFiles,
   IMPORTED_PREFIX,
   TemplatePackage,
   UNIT_KINDS,
@@ -58,20 +55,11 @@ import { type Candidate, wrapEnd } from "./candidates";
 import { decodeText } from "./intake";
 import type { Argument, Node, Span, Tree } from "./parse";
 import { extensionOf } from "./paths";
-import { failed, type ProbeCandidate, type UncoveredRun } from "./probe";
-import {
-  COMPATIBILITY,
-  type Difference,
-  difference,
-  type GlyphStream,
-  type Reference,
-  readOutput,
-  shippedFont,
-} from "./reference";
+import type { ProbeCandidate, UncoveredRun } from "./probe";
+import { COMPATIBILITY, type GlyphStream, type Reference } from "./reference";
 import { ownRunningLines, pageWords } from "./report";
 import { type EngineSignatures, replacementOf } from "./signatures";
 import { snippetText } from "./templating";
-import { dumpFiles } from "./xetex-check";
 
 // The tree.
 
@@ -425,6 +413,8 @@ interface Writer {
   written: Map<string, string>;
   /** How many groups and units were written. */
   made: { groups: number; units: number };
+  /** Each group written, by its id, and its units' spans in the source. */
+  placed: Map<string, readonly Unit[]>;
 }
 
 /**
@@ -509,6 +499,7 @@ function partsIn(
     const part: OutlinePart = { kind: "group", id, units };
     if (groupTaken(part)) {
       parts.push(part);
+      writer.placed.set(id, group.units);
       writer.made.groups++;
       writer.made.units += units.length;
       at = group.end;
@@ -543,6 +534,11 @@ export interface OutlineInput {
   preamble?: { tree: Tree; setters: readonly Span[] };
   /** The probe's candidates, with their verdicts. */
   candidates: readonly ProbeCandidate[];
+  /**
+   * The candidates the import's checks keep as text though the probe found them editable, by id:
+   * their bytes are kept as the upload wrote them, as any other kept text's.
+   */
+  kept?: ReadonlySet<string>;
   /** The engine's signatures' macros, which say which template macros open and close a list. */
   macros: EngineSignatures["macros"];
   /** `\begin{document}` and `\end{document}`, as the main file writes them. */
@@ -555,6 +551,13 @@ export interface Outline {
   parts: OutlinePart[];
   /** Each candidate that is a field, by its id, and its first field's id. */
   fields: ReadonlyMap<string, string>;
+  /** Each field, by its id, and the candidate it is a field of. */
+  owners: ReadonlyMap<string, string>;
+  /**
+   * Each group of the body, by its id, and its units' spans in the body's source, which say what a
+   * unit's removal takes out of the page (the second pass's item 6).
+   */
+  groups: ReadonlyMap<string, readonly Unit[]>;
   /** How many fields, groups and units it holds. */
   counts: { fields: number; groups: number; units: number };
 }
@@ -577,10 +580,14 @@ function fieldCount(parts: readonly OutlinePart[]): number {
  * `\end{document}`.
  */
 export function buildOutline(input: OutlineInput): Outline {
-  const editable = input.candidates.filter((each) => each.verdict === "editable");
+  const editable = input.candidates.filter(
+    (each) => each.verdict === "editable" && input.kept?.has(each.id) !== true,
+  );
   const written = new Map<string, string>();
   const made = { groups: 0, units: 0 };
   const count = { groups: 0 };
+  const placed = new Map<string, readonly Unit[]>();
+  const spotted = new Map<string, string>();
   const parts: OutlinePart[] = [];
   const add = (more: readonly OutlinePart[]) => {
     for (const part of more) {
@@ -599,7 +606,9 @@ export function buildOutline(input: OutlineInput): Outline {
       count,
       written,
       made,
+      placed,
     };
+    for (const spot of writer.spots) spotted.set(spot.id, spot.candidate);
     for (const call of preamble.setters) {
       add(partsIn(writer, call));
       add([{ kind: "kept", latex: "\n" }]);
@@ -625,12 +634,31 @@ export function buildOutline(input: OutlineInput): Outline {
     count,
     written,
     made,
+    placed,
   };
+  for (const spot of writer.spots) spotted.set(spot.id, spot.candidate);
   add(partsIn(writer, { start: 0, end: tree.source.length }));
   add([{ kind: "kept", latex: input.end }]);
+  // The fields and groups the parts hold: a group the model refused is written as its parts, and
+  // what was placed inside it before is not there.
+  const owners = new Map<string, string>();
+  const spans = new Map<string, readonly Unit[]>();
+  for (const step of outlineNodes(parts)) {
+    if (step.kind !== "part") continue;
+    const { part } = step;
+    if (part.kind === "group") {
+      const units = placed.get(part.id);
+      if (units !== undefined) spans.set(part.id, units);
+    } else if (part.kind === "text" || part.kind === "rich") {
+      const candidate = spotted.get(part.id);
+      if (candidate !== undefined) owners.set(part.id, candidate);
+    }
+  }
   return {
     parts,
     fields: written,
+    owners,
+    groups: spans,
     counts: { fields: fieldCount(parts), groups: made.groups, units: made.units },
   };
 }
@@ -778,103 +806,20 @@ export async function outlinePackage(input: OutlinePackageInput): Promise<Templa
   return TemplatePackage.parse({ id: `${IMPORTED_PREFIX}${hash.slice(0, 12)}`, ...fields });
 }
 
-// Compiling.
-
-/** What `compileOutline` found. */
-export interface OutlineCompiled {
-  /** The format it compiled from, by name, and its bytes, which the editor takes. */
-  format: { name: string; bytes: Uint8Array };
-  /** Whether the page sets the reference's glyphs and rules; how it first differs where not. */
-  difference?: Difference;
-  compiles: number;
-  ms: number;
-}
-
-/**
- * A glyph stream's glyphs and rules alone: its specials, which hyperref's driver writes otherwise
- * and the editor's markers add, left aside.
- */
-const glyphsOnly = (stream: GlyphStream): GlyphStream => ({
-  ...stream,
-  pages: stream.pages.map((page) => ({
-    items: page.items.filter((item) => item.kind !== "special"),
-  })),
-});
-
-/**
- * An outline compiled as the editor will compile it: its package's format dumped, with the job's
- * files beside the package's, a XeTeX format with their text files alone (`dumpFiles`), and the
- * generator's body compiled from it in `job`, given `files`,
- * three passes at most; its output read as the reference's was and compared with `reference`, its
- * glyphs and rules, the specials aside. Undefined, with the log, where the dump or the compile
- * stops: the editor could not open it either.
- */
-export async function compileOutline(input: {
-  session: EngineSession;
-  fonts: FontLibrary;
-  pkg: TemplatePackage;
-  document: Document;
-  reference: GlyphStream;
-  job: string;
-  files: Record<string, Uint8Array>;
-}): Promise<OutlineCompiled | { stopped: true; log: string }> {
-  const { session, fonts, pkg, document, job, files } = input;
-  const format = generateFormat(pkg, document.controls);
-  const withPackage: Record<string, Uint8Array> = { ...files };
-  for (const [name, text] of Object.entries(pkg.files))
-    withPackage[name] = new TextEncoder().encode(text);
-  session.forget(job);
-  // A XeTeX dump takes the job's text files alone, as the rewrite's check dumps its format.
-  const given = pkg.engine === "xetex" ? dumpFiles(withPackage) : withPackage;
-  const dumped = session.dump(pkg.engine, format.name, format.preamble, given);
-  if (!dumped.ok || dumped.format === undefined) return { stopped: true, log: dumped.log };
-  const bytes = dumped.format;
-  try {
-    const covering = fontFiles(pkg);
-    const covers = covering.length === 0 ? {} : { covers: (await fonts.coverage(covering)).covers };
-    const body = generateBody(pkg, document.resume, document.controls, covers);
-    let result: CompileResult;
-    try {
-      result = session.compile(pkg.engine, format.name, body.latex, {
-        job,
-        maxPasses: 3,
-        files,
-      });
-    } catch (error) {
-      return { stopped: true, log: error instanceof Error ? error.message : String(error) };
-    }
-    const ms = dumped.ms + result.passes.reduce((sum, pass) => sum + pass, 0);
-    if (failed(result, 3) || result.output === undefined) return { stopped: true, log: result.log };
-    const { stream } = await readOutput(fonts, result.output, (path) =>
-      shippedFont(files, job, path),
-    );
-    const differs = difference(glyphsOnly(input.reference), glyphsOnly(stream));
-    return {
-      format: { name: format.name, bytes },
-      ...(differs === undefined ? {} : { difference: differs }),
-      compiles: 1,
-      ms,
-    };
-  } finally {
-    session.forget(job);
-    session.dropFormat(pkg.engine, format.name);
-  }
-}
-
 // What the report counts.
 
 /**
  * What sets each run of the reference's glyphs, as the report reads it (`GlyphOwner`): the probe's
  * runs, each a field's where its candidate is one (`Outline.fields`), by the field's name; kept
- * text where it is not, with the probe's reason, `unmade` for an editable candidate the outline did
- * not make a field (`shape`, or `compile` where the outline with its fields stopped the compile),
- * and `raw` for a raw chunk; and the template's own text otherwise.
+ * text where it is not, with the reason the import's checks kept it for (`checked`), or the probe's,
+ * `shape` for an editable candidate the outline could not make a field, and `raw` for a raw chunk;
+ * and the template's own text otherwise.
  */
 export function ownersOf(
   runs: readonly UncoveredRun[],
   candidates: readonly ProbeCandidate[],
   fields: ReadonlyMap<string, string>,
-  unmade: LockReason = "shape",
+  checked: ReadonlyMap<string, LockReason> = new Map(),
 ): GlyphOwner[] {
   const byId = new Map(candidates.map((each) => [each.id, each]));
   return runs.flatMap((run): GlyphOwner[] => {
@@ -885,11 +830,10 @@ export function ownersOf(
     if (field !== undefined) return [{ ...at, field: `${field}.text` }];
     const verdict = byId.get(run.candidate)?.verdict;
     const reason: LockReason =
-      verdict === "editable"
-        ? unmade
-        : verdict === undefined || verdict === "container"
-          ? "shape"
-          : verdict;
+      checked.get(run.candidate) ??
+      (verdict === undefined || verdict === "editable" || verdict === "container"
+        ? "shape"
+        : verdict);
     return [{ ...at, kept: reason }];
   });
 }
@@ -910,22 +854,28 @@ export interface Words {
   template: number;
 }
 
-/**
- * The page's words (`pageWords`, decision 0039), each set down to what sets most of its glyphs, as
- * the probe's runs say (`Probe.runs`): a field of the outline (`fields`, by candidate's id); kept
- * text, a locked candidate, an editable one the outline keeps, or a raw chunk; or the template's
- * own text. A running line a kept part sets is that part's on every page (`ownRunningLines`). Kept
- * text is retyped as decision 0042 retypes a locked part: its LaTeX's runs of plain text lined up
- * with its glyphs in the order the pages paint them (`retypeOf`), and a word whose glyphs are most
- * of them in a run it offers is one the retype reaches. As the spike counted them (decision 0050).
- */
-export function wordsOf(input: {
+/** What `reachOf` and `wordsOf` read the page's words from. */
+export interface WordsInput {
   reference: Pick<GlyphStream, "pages">;
   runs: readonly UncoveredRun[];
   candidates: readonly Pick<ProbeCandidate, "id" | "where" | "start" | "end" | "verdict">[];
   fields: ReadonlySet<string>;
   sources: { body: string; preamble: string };
-}): Words {
+}
+
+/**
+ * The page's words, and what sets each glyph, as `wordsOf` counts them: each page's words
+ * (`pageWords`); each glyph's owner by a key, a field's (`f:`, by its candidate), a kept part's
+ * (`p:`, a candidate's or a raw chunk's) or the template's (`t`), a running line a kept part sets
+ * that part's on every page (`ownRunningLines`); and which glyphs of kept text the retype reaches
+ * (`reached`): a kept part's LaTeX's runs of plain text lined up with its glyphs in the order the
+ * pages paint them (`retypeOf`, decision 0042).
+ */
+export function reachOf(input: WordsInput): {
+  pages: ReturnType<typeof pageWords>;
+  owners: string[][];
+  reached: boolean[][];
+} {
   const { reference, runs, fields, sources } = input;
   const byId = new Map(input.candidates.map((each) => [each.id, each]));
   const lowered = `${sources.body}\n${sources.preamble}`.toLowerCase();
@@ -987,6 +937,42 @@ export function wordsOf(input: {
         if (place !== undefined && row !== undefined) row[place.at] = true;
       }
   }
+  return { pages, owners, reached };
+}
+
+/**
+ * The glyphs of kept text the retype reaches (`reachOf`), as runs of them on each page, which the
+ * report counts the words the retype reaches by (`AssemblyChecks.retype`).
+ */
+export function reachedRuns(
+  reached: readonly (readonly boolean[])[],
+): { page: number; from: number; to: number }[] {
+  const found: { page: number; from: number; to: number }[] = [];
+  reached.forEach((row, page) => {
+    let from = -1;
+    for (let at = 0; at <= row.length; at++) {
+      if (row[at] === true) {
+        if (from < 0) from = at;
+      } else if (from >= 0) {
+        found.push({ page, from, to: at });
+        from = -1;
+      }
+    }
+  });
+  return found;
+}
+
+/**
+ * The page's words (`pageWords`, decision 0039), each set down to what sets most of its glyphs, as
+ * the probe's runs say (`Probe.runs`): a field of the outline (`fields`, by candidate's id); kept
+ * text, a locked candidate, an editable one the outline keeps, or a raw chunk; or the template's
+ * own text (`reachOf`, which `reach` is where the caller has read it already). A word of kept text
+ * whose glyphs are most of them in a run the retype offers is one the retype reaches. As the spike
+ * counted them (decision 0050).
+ */
+export function wordsOf(input: WordsInput, reach = reachOf(input)): Words {
+  const byId = new Map(input.candidates.map((each) => [each.id, each]));
+  const { pages, owners, reached } = reach;
   const words: Words = { body: 0, probe: 0, fields: 0, retype: 0, locked: 0, template: 0 };
   pages.forEach((read, page) => {
     const row = owners[page] ?? [];
