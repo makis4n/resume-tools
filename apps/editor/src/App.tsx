@@ -41,6 +41,7 @@ import { IMPORT_STEPS, type Imported, type ImportJob, type ImportOutcome } from 
 import { FontLibrary } from "./page/fonts";
 import { Pages } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
+import { isPdfFile, isPdfRefusal, readPdfFile, refusedBySize } from "./pdf";
 import {
   CANNOT_OPEN,
   canLeave,
@@ -108,6 +109,16 @@ const COULD_NOT_READ = "The files could not be read.";
 
 /** What the user reads when an import fails for a reason of the editor's; the details go to the console. */
 const IMPORT_FAILED = "The import could not finish. Try again.";
+
+/**
+ * What the user reads when a PDF they imported was read: the reader is built (milestone 3 second
+ * pass, item 10), and what files its content into a resume comes with items 11 to 14.
+ */
+/** What the progress line says while a PDF is read. */
+const PDF_READING = "Reading the PDF";
+
+const PDF_NOT_YET =
+  "This PDF can be read, but importing a resume from a PDF is not ready yet. Import its .tex file, or start from a template.";
 
 /** What the user reads when an import came through but the browser could not keep it. */
 const COULD_NOT_KEEP = "The imported resume could not be kept in this browser.";
@@ -257,6 +268,8 @@ export function App() {
   const [importing, setImporting] = useState<ImportShown>();
   /** The import under way, which the list's Cancel stops; none once it has landed or stopped. */
   const importRun = useRef<ImportRun | undefined>(undefined);
+  /** The PDF being read, which the list's Cancel stops: an import run as a `.tex` one is. */
+  const pdfRun = useRef<AbortController | undefined>(undefined);
   /**
    * An import that came through partial, with its report, which waits in the list for the person to
    * continue or stop (decision 0039); nothing of it is kept until they continue.
@@ -660,7 +673,14 @@ export function App() {
    */
   const importFiles = async (chosen: File[]) => {
     const owned = compiler.current;
-    if (owned === undefined || importRun.current !== undefined || waiting !== undefined) return;
+    const running = () => importRun.current !== undefined || pdfRun.current !== undefined;
+    if (owned === undefined || running() || waiting !== undefined) return;
+    // A PDF is read in the browser, by a reader loaded only now, and sends nothing.
+    const [only] = chosen;
+    if (chosen.length === 1 && only !== undefined && isPdfFile(only)) {
+      await importPdf(only);
+      return;
+    }
     let files: Upload[];
     try {
       files = await Promise.all(
@@ -674,7 +694,7 @@ export function App() {
       setNotice(COULD_NOT_READ);
       return;
     }
-    if (importRun.current !== undefined) return;
+    if (running()) return;
     setNotice(undefined);
     setImporting({ label: IMPORT_STEPS.intake, compiles: 0 });
     const run = owned.importResume(files, ({ label, compiles }) => {
@@ -707,6 +727,48 @@ export function App() {
     else await keepImport(outcome, report);
   };
 
+  /**
+   * Read a PDF the person imported (milestone 3 second pass, item 10) as an import run: the list
+   * shows its progress line, with a Cancel that stops it, and takes no other import meanwhile; a
+   * refusal says why in the list's notice, in its own plain words. A file past the size cap is
+   * refused by its size, before it is read into memory. A reading that was cancelled says nothing,
+   * so it never overwrites a later import's notice. The reader that loads here is the one items 11
+   * to 14 file a resume from; until then a PDF that reads says so, and nothing is kept.
+   */
+  const importPdf = async (file: File) => {
+    setNotice(undefined);
+    const tooLarge = refusedBySize(file.size);
+    if (tooLarge) {
+      setNotice(tooLarge.message);
+      return;
+    }
+    const run = new AbortController();
+    pdfRun.current = run;
+    setImporting({ label: PDF_READING });
+    const finish = (notice: string) => {
+      if (pdfRun.current !== run) return;
+      pdfRun.current = undefined;
+      setImporting(undefined);
+      setNotice(notice);
+    };
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await file.arrayBuffer());
+    } catch (error) {
+      console.error("The PDF to import could not be read:", error);
+      finish(COULD_NOT_READ);
+      return;
+    }
+    try {
+      const reading = await readPdfFile(bytes, { signal: run.signal });
+      finish(isPdfRefusal(reading) ? reading.message : PDF_NOT_YET);
+    } catch (error) {
+      if (pdfRun.current !== run) return;
+      console.error("The PDF reader failed:", error);
+      finish(IMPORT_FAILED);
+    }
+  };
+
   /** Continue with a partial import: kept and opened as it is (decision 0039). */
   const continueImport = async () => {
     const pending = waiting;
@@ -723,6 +785,13 @@ export function App() {
 
   /** Stop the import under way: its worker is terminated and starts afresh (decision 0038). */
   const cancelImport = () => {
+    const reading = pdfRun.current;
+    if (reading !== undefined) {
+      pdfRun.current = undefined;
+      setImporting(undefined);
+      reading.abort();
+      return;
+    }
     const run = importRun.current;
     if (run === undefined) return;
     importRun.current = undefined;

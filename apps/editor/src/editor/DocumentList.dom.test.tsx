@@ -159,6 +159,15 @@ describe("the document list's way in", () => {
     expect(calls.cancelled).toBe(1);
   });
 
+  it("shows a step that compiles nothing, as a PDF's reading, without a count", () => {
+    rendered({ importing: { label: "Reading the PDF" } });
+    const status = host.querySelector('[role="status"]');
+    expect(status?.textContent).toBe("Reading the PDF… Cancel");
+    expect(picker()).toBeNull();
+    act(() => buttonNamed("Cancel").click());
+    expect(calls.cancelled).toBe(1);
+  });
+
   it("holds a partial import's report in place of the picker until the person continues or stops", () => {
     let continued = 0;
     let stopped = 0;
