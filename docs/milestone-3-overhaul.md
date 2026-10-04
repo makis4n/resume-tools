@@ -274,7 +274,7 @@ closes.
     plain English, a file that is not a PDF, one with a password, one with no text, and one past a
     size cap. Done when PDFs from the three built-in templates and from a browser's print are read,
     a build test shows the main bundle holds no reader, and a test proves no network request.
-11. [ ] **Lines, columns and reading order.** Rules, always. Runs become lines and lines become
+11. [x] **Lines, columns and reading order.** Rules, always. Runs become lines and lines become
     blocks. Columns are found from the gaps between them and read one after the other. A bullet's
     glyph marks a bullet. An icon is dropped and its drop noted. A hyphen at a line's end joins its
     word only where the next line carries on in small letters. Done when AltaCV's two-column PDF

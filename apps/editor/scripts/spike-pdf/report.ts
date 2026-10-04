@@ -96,6 +96,9 @@ export interface CorpusSummary {
   pages: number;
   columns: Record<string, number>;
   multiColumnPages: number;
+  /** The lines and blocks laid out, in all; absent from a run before item 11 counted blocks. */
+  lines?: number;
+  blocks?: number;
   sections: { total: number; median: number; none: number };
   sectionRoles: Record<string, number>;
   entries: number;
@@ -221,6 +224,8 @@ export function summariseCorpus(
     pages: sum((counts) => counts.pages ?? 0),
     columns,
     multiColumnPages: sum((counts) => counts.multiColumnPages ?? 0),
+    lines: sum((counts) => counts.lines ?? 0),
+    blocks: sum((counts) => counts.blocks ?? 0),
     sections: {
       total: sum((counts) => counts.sections ?? 0),
       median: median(read.map((doc) => doc.counts.sections ?? 0)),
@@ -519,6 +524,8 @@ function corpusTable(summary: CorpusSummary): string[] {
     .join(", ");
   line("Columns found, the most on a page: documents", columns);
   line("Pages with more than one column", String(summary.multiColumnPages));
+  if (summary.blocks !== undefined && summary.blocks > 0)
+    line("Lines; blocks", `${summary.lines}; ${summary.blocks}`);
   line(
     "Sections found: in all; median a document; documents with none",
     `${summary.sections.total}; ${summary.sections.median}; ${summary.sections.none}`,

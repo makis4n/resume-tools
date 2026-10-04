@@ -30,6 +30,8 @@ export interface CorpusCounts {
   columns?: number;
   multiColumnPages?: number;
   lines?: number;
+  /** The blocks the lines stand in (`src/pdf/layout.ts`). */
+  blocks?: number;
   roles?: Record<Role, number>;
   /** The sections the filing made, the catch-all not among them, and by their role. */
   sections?: number;
@@ -93,6 +95,7 @@ export function countsOf(layout: Layout, roles: readonly Role[], filed: Filed): 
     columns: Math.max(1, ...layout.pages.map((page) => page.columns)),
     multiColumnPages: layout.pages.filter((page) => page.columns > 1).length,
     lines: layout.lines.length,
+    blocks: layout.blocks.length,
     roles: roleCounts,
     sections: sections.length,
     sectionRoles,
