@@ -2,6 +2,7 @@ import { APICallError } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { type Features, ROLES } from "../pdf/roles";
+import { type KeyValue, KvRateStore } from "./kv";
 import { handleLabel, LABEL_LIMITS, LABEL_ROUTE, LABEL_SAYS, type LabelDeps } from "./label";
 import { LabelReply, MAX_LINES } from "./label-contract";
 import { schemaOf } from "./label-model";
@@ -251,6 +252,47 @@ describe("the label route's rate limit", () => {
     expect((await handleLabel(asked(), deps)).status).toBe(200);
     expect((await handleLabel(asked(), deps)).status).toBe(429);
     expect(model.doGenerateCalls).toHaveLength(1);
+  });
+
+  test("on KV, which takes one write a key a second, charges the characters and refuses once they are spent", async () => {
+    // KV's own rule, as kv.test.ts's FakeKv holds it: a second write to a key within a second fails.
+    const written = new Map<string, number>();
+    const values = new Map<string, string>();
+    let now = 1_800_000_000_000;
+    let refusedWrites = 0;
+    const kv: KeyValue = {
+      get: async (key) => values.get(key) ?? null,
+      put: async (key, value) => {
+        const last = written.get(key);
+        if (last !== undefined && now - last < 1000) {
+          refusedWrites++;
+          throw new Error("KV PUT failed: 429 Too Many Requests");
+        }
+        written.set(key, now);
+        values.set(key, value);
+      },
+    };
+    const model = answering();
+    const { deps } = depsOf({
+      model,
+      rates: new KvRateStore(kv, "label-rate:"),
+      limits: { ...LABEL_LIMITS, charsPerDay: 3_000 },
+      now: () => now,
+    });
+    const statuses: number[] = [];
+    for (let at = 0; at < 5; at++) {
+      statuses.push((await handleLabel(asked(), deps)).status);
+      // One request every ten seconds, well inside the minute's ten.
+      now += 10_000;
+    }
+    expect(statuses.slice(0, 1)).toEqual([200]);
+    expect(statuses).toContain(429);
+    expect(statuses.filter((status) => status === 200).length).toBeLessThan(5);
+    expect(model.doGenerateCalls.length).toBe(statuses.filter((status) => status === 200).length);
+    // KV never refused a write: one write a request.
+    expect(refusedWrites).toBe(0);
+    const buckets = JSON.parse(values.get("label-rate:203.0.113.7") ?? "{}") as Buckets;
+    expect(buckets.chars).toBeLessThan(1);
   });
 
   test("lets a request through uncounted when its store fails, and says so once, by class", async () => {

@@ -6,10 +6,11 @@
  * runtime: its host hands it the model or none, the client's address, a store for the rate limit's
  * buckets, the limits, a clock and a log.
  *
- * A request is taken in this order: its method and its content type; its address's rate limit; its
- * body, read no further than the cap; the contract's schema (`LabelRequest`); the characters its
- * prompt will send, taken from the address's day; then one call to the model, stopped at
- * `limits.modelMs`, whose reply is checked (`rolesOf`) before it is given back as `LabelReply`.
+ * A request is taken in this order: its method and its content type; its address's rate limit,
+ * looked at; its body, read no further than the cap; the contract's schema (`LabelRequest`); the
+ * request counted, with the characters its prompt will send, in one write; then one call to the
+ * model, stopped at `limits.modelMs`, whose reply is checked (`rolesOf`) before it is given back as
+ * `LabelReply`.
  *
  * It is the first route built under the privacy rule of decision 0047: the person agreed to send
  * the lines, and the service keeps none of them. It has no cache, so nothing it is sent or the
@@ -23,7 +24,7 @@ import type { LanguageModel } from "ai";
 import type { Features } from "../pdf/roles.ts";
 import { type LabelRefusal, type LabelReply, LabelRequest } from "./label-contract.ts";
 import { askRoles, INSTRUCTIONS, promptOf } from "./label-model.ts";
-import { addressKey, classOf, type RateLimits, type RateStore, spend, take } from "./rate.ts";
+import { addressKey, classOf, peek, type RateLimits, type RateStore, take } from "./rate.ts";
 
 export { LABEL_ROUTE } from "./label-contract.ts";
 
@@ -179,17 +180,16 @@ function rateFailed(deps: LabelDeps, failed: string) {
   );
 }
 
+/** A refusal for an address past its limits, with the seconds it may try again after. */
+const tooMany = (retryAfter: number) =>
+  refuse(429, LABEL_SAYS.rate, undefined, { "Retry-After": String(retryAfter) });
+
 /** A checked request asked of the model: its roles, or a refusal that says why there are none. */
 async function answer(
   lines: readonly Features[],
   model: Exclude<LanguageModel, string>,
   deps: LabelDeps,
-  address: string,
 ): Promise<Response> {
-  // What the call sends, taken from the address's day before it is sent.
-  const chars = INSTRUCTIONS.length + promptOf(lines).length;
-  const failed = await spend(deps.rates, address, chars, deps.now(), deps.limits);
-  if (failed !== undefined) rateFailed(deps, failed);
   const asked = await askRoles(lines, model, AbortSignal.timeout(deps.limits.modelMs));
   if ("roles" in asked) return json(200, { roles: asked.roles });
   deps.log?.(`The label route's model gave no roles (${asked.failure}).`, "warn");
@@ -198,31 +198,50 @@ async function answer(
   return refuse(422, LABEL_SAYS.invalid);
 }
 
-/** A request taken past its method and content type: the rate limit, the body, the checks. */
+/**
+ * A request taken past its method and content type. Its address's buckets are looked at first, and
+ * an address past its limits is refused before its body is read; then the body and the checks; and
+ * then the request is counted, in one write of its address's buckets: a token from each request
+ * bucket, and, for a request the model will be asked, the characters its prompt will send. One
+ * write a request, since KV refuses a second write to a key within a second, which once left the
+ * characters uncounted (item 13's review). A refused request is counted too, with no characters.
+ */
 async function received(request: Request, deps: LabelDeps): Promise<Response> {
   const address = addressKey(deps.address);
-  const decision = await take(deps.rates, address, deps.now(), deps.limits);
-  if (!decision.allowed)
-    return refuse(429, LABEL_SAYS.rate, undefined, { "Retry-After": String(decision.retryAfter) });
-  if (decision.failed !== undefined) rateFailed(deps, decision.failed);
+  const before = await peek(deps.rates, address, deps.now(), deps.limits);
+  if (!before.allowed) return tooMany(before.retryAfter);
+  if (before.failed !== undefined) rateFailed(deps, before.failed);
+  const count = async (chars: number) => {
+    const decision = await take(deps.rates, address, deps.now(), deps.limits, chars);
+    if (decision.allowed && decision.failed !== undefined) rateFailed(deps, decision.failed);
+    return decision;
+  };
+  const refused = async (status: number, error: string, problems?: string[]) => {
+    await count(0);
+    return refuse(status, error, problems);
+  };
   const body = await readCapped(request, deps.limits.bytes);
-  if (body === undefined) return refuse(413, LABEL_SAYS.large);
+  if (body === undefined) return refused(413, LABEL_SAYS.large);
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(body);
   } catch {
-    return refuse(400, LABEL_SAYS.text);
+    return refused(400, LABEL_SAYS.text);
   }
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch {
-    return refuse(400, LABEL_SAYS.json);
+    return refused(400, LABEL_SAYS.json);
   }
   const parsed = LabelRequest.safeParse(value);
-  if (!parsed.success) return refuse(400, LABEL_SAYS.schema, problemsOf(parsed.error.issues));
-  if (deps.model === undefined) return refuse(503, LABEL_SAYS.none);
-  return answer(parsed.data.lines, deps.model, deps, address);
+  if (!parsed.success) return refused(400, LABEL_SAYS.schema, problemsOf(parsed.error.issues));
+  if (deps.model === undefined) return refused(503, LABEL_SAYS.none);
+  const { lines } = parsed.data;
+  // What the call sends, taken from the address's day before it is sent, in the request's one write.
+  const decision = await count(INSTRUCTIONS.length + promptOf(lines).length);
+  if (!decision.allowed) return tooMany(decision.retryAfter);
+  return answer(lines, deps.model, deps);
 }
 
 /**
