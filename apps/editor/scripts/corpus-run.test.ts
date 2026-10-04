@@ -389,7 +389,7 @@ describe("the baseline", () => {
       rates: { success: 10, editable: 42.5 },
     },
   });
-  const scope = { committedOnly: true, whole: true };
+  const scope = { whole: true };
 
   test("as committed, is one the schema takes, the placeholder or a run's", () => {
     const committed = Baseline.safeParse(
@@ -409,15 +409,12 @@ describe("the baseline", () => {
     });
   });
 
-  test("holds a run over the whole corpus from the committed answers alone, and no other", () => {
-    for (const other of [
-      { committedOnly: false, whole: true },
-      { committedOnly: true, whole: false },
-    ])
-      expect(baselineVerdict(summary(0), baseline, other)).toMatchObject({
-        compared: false,
-        failed: false,
-      });
+  test("holds a run over the whole corpus, and no other: a run has one mode", () => {
+    expect(baselineVerdict(summary(0), baseline, { whole: false })).toEqual({
+      compared: false,
+      failed: false,
+      line: "Not held to corpus/baseline.json: only a run over the whole corpus is.",
+    });
   });
 
   test("fails a run whose success rate falls more than a point under it, in one line", () => {
@@ -440,7 +437,7 @@ describe("the baseline", () => {
 
   test("is never written over by a run that falls more than a point under it", () => {
     const run = (success: number) => ({ ...summaryOf([]), ...summary(success) });
-    const next = (success: number, scope = { committedOnly: true, whole: true }) =>
+    const next = (success: number, scope = { whole: true }) =>
       nextBaseline({
         summary: run(success),
         baseline,
@@ -455,13 +452,12 @@ describe("the baseline", () => {
     });
     expect(next(18).baseline?.run?.success).toBe(18);
     expect(next(24).line).toBe("Wrote corpus/baseline.json from the run, at fffffff.");
-    expect(next(24, { committedOnly: false, whole: true }).baseline).toBeUndefined();
-    expect(next(24, { committedOnly: true, whole: false }).baseline).toBeUndefined();
-    // Over no baseline, any run over the whole corpus from the committed answers gives the first.
+    expect(next(24, { whole: false }).baseline).toBeUndefined();
+    // Over no baseline, any run over the whole corpus gives the first.
     const first = nextBaseline({
       summary: run(0),
       baseline: Baseline.parse({ version: 1, run: null }),
-      scope: { committedOnly: true, whole: true },
+      scope: { whole: true },
       date: "2026-10-02",
       commit: "f".repeat(40),
     });
@@ -492,12 +488,12 @@ describe("the baseline", () => {
     const run = {
       version: 1,
       at: { date: "2026-10-03", commit: `${commit}+dirty` },
-      mode: { answers: "committed", cache: null, asked: null, documents: "all" },
+      mode: { documents: "all" },
       complete: true,
       documents: [],
     };
     expect(
-      baselineFromFile(run, Baseline.parse({ version: 1, run: null })).baseline,
+      baselineFromFile(run, Baseline.parse({ version: 1, run: null }), summaryOf, 1).baseline,
     ).toBeUndefined();
   });
 
@@ -525,7 +521,7 @@ describe("the baseline", () => {
     );
   });
 
-  test("is adopted from a finished run's file, over the whole corpus from the committed answers", () => {
+  test("is adopted from a finished run's file over the whole corpus, summed by its own run", () => {
     const rows: RunRow[] = Array.from({ length: 10 }, (_, i) =>
       row(`jake-${String(i + 1).padStart(4, "0")}`, "jake", {
         outcome: i < 2 ? "success" : "partial",
@@ -535,14 +531,14 @@ describe("the baseline", () => {
     const file = (changes: Record<string, unknown> = {}) => ({
       version: 1,
       at: { date: "2026-10-03", commit: "c".repeat(40) },
-      mode: { answers: "committed", cache: null, asked: null, documents: "all" },
+      mode: { documents: "all" },
       complete: true,
       summary: summaryOf(rows),
       documents: rows,
       ...changes,
     });
     // Two in ten is 20%, over the baseline's 10%.
-    expect(baselineFromFile(file(), baseline).baseline?.run).toMatchObject({
+    expect(baselineFromFile(file(), baseline, summaryOf, 1).baseline?.run).toMatchObject({
       date: "2026-10-03",
       commit: "c".repeat(40),
       documents: 10,
@@ -551,20 +547,21 @@ describe("the baseline", () => {
     });
     const refused =
       "corpus/baseline.json is not written: the file is no finished run's, naming its commit.";
-    expect(baselineFromFile(file({ complete: false }), baseline).line).toBe(refused);
+    expect(baselineFromFile(file({ complete: false }), baseline, summaryOf, 1).line).toBe(refused);
     expect(
-      baselineFromFile(file({ at: { date: "2026-10-03", commit: null } }), baseline).line,
+      baselineFromFile(file({ at: { date: "2026-10-03", commit: null } }), baseline, summaryOf, 1)
+        .line,
     ).toBe(refused);
-    const cache = { answers: "cache", cache: "invented-model", asked: null, documents: "all" };
-    expect(baselineFromFile(file({ mode: cache }), baseline).baseline).toBeUndefined();
+    const some = { documents: "some" };
+    expect(baselineFromFile(file({ mode: some }), baseline, summaryOf, 1).baseline).toBeUndefined();
     // A run under the baseline is never adopted over it.
     const lower = rows.map((each) => ({ ...each, outcome: "partial" as const }));
-    expect(baselineFromFile(file({ documents: lower }), baseline).line).toBe(
+    expect(baselineFromFile(file({ documents: lower }), baseline, summaryOf, 1).line).toBe(
       "corpus/baseline.json is not written: the run falls more than a point under it, and a baseline is lowered only by a pull request that edits it.",
     );
     // Nor one whose successes miss item 14's bar, counted again from the rows.
     const bare = rows.map(({ controls: _controls, ...each }) => each);
-    expect(baselineFromFile(file({ documents: bare }), baseline).line).toBe(
+    expect(baselineFromFile(file({ documents: bare }), baseline, summaryOf, 1).line).toBe(
       "corpus/baseline.json is not written: 2 successes lack the page size, the margins or the font size, item 14's bar.",
     );
   });
@@ -631,21 +628,20 @@ describe("the run and compare commands", () => {
   });
 
   test("refuse what cannot be run, before any document is read", () => {
-    const both = run({}, "run", "--committed-only", "--allow-model");
-    expect(both.status).toBe(1);
-    expect(both.stderr).toContain("--committed-only reads no cache");
-    const keyless = run({}, "run", "--allow-model");
-    expect(keyless.status).toBe(1);
-    expect(keyless.stderr).toContain("run --allow-model asks SoCLaaS, which needs a key");
-    const subset = run({}, "run", "--committed-only", "--write-baseline", "--only", "jake-0001");
-    expect(subset.stderr).toContain(
-      "--write-baseline takes a --committed-only run over the whole corpus",
-    );
+    // The run has one mode: the first pass's answers and model are no options of it any more.
+    for (const gone of ["--committed-only", "--allow-model"]) {
+      const old = run({}, "run", gone);
+      expect(old.status).toBe(1);
+      expect(old.stderr).toContain(gone);
+    }
+    const subset = run({}, "run", "--write-baseline", "--only", "jake-0001");
+    expect(subset.status).toBe(1);
+    expect(subset.stderr).toContain("--write-baseline takes a run over the whole corpus");
     expect(run({}, "run", "--only", "jake-0001", "--ids", "x").stderr).toContain(
       "--only and --ids each name the documents to run",
     );
     expect(run({}, "probe", "--ids", "x").stderr).toContain("--ids goes with run");
-    expect(run({}, "name", "--committed-only").stderr).toContain("--committed-only goes with run");
+    expect(run({}, "name", "--write-baseline").stderr).toContain("--write-baseline goes with run");
     expect(run({}, "review").stderr).toContain("review is followed by export or check");
     expect(run({}, "review", "export", "--dir", "x").stderr).toContain(
       "--dir goes with review check",
@@ -654,7 +650,7 @@ describe("the run and compare commands", () => {
       "--top and --out go with review export",
     );
     expect(run({}, "--help").stdout).toContain(
-      "| run [--only <id>] [--ids <file>] [--json <file>] [--committed-only] [--allow-model] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>]",
+      "| run [--only <id>] [--ids <file>] [--json <file>] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>]",
     );
     // A dozen spawns of the runner, each loading every command's modules: about a second each on
     // a CI runner, so the test takes the engine tests' timeout, as `corpus.test.ts`'s does.
@@ -673,9 +669,9 @@ describe("the run and compare commands", () => {
     writeFileSync(
       unfinished,
       JSON.stringify({
-        version: 1,
+        version: 2,
         at: { date: "2026-10-03", commit: "c".repeat(40) },
-        mode: { answers: "committed", cache: null, asked: null, documents: "all" },
+        mode: { documents: "all" },
         complete: false,
         documents: [],
       }),

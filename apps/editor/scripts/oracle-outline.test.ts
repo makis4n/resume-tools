@@ -43,13 +43,40 @@ const fetched = existsSync(join(ORACLE_DIR, "jake-0000", "resume.tex"));
 /**
  * Each upstream sample's words as item 13's report reads them from its page (decision 0039): the
  * resume's in all, as the hand counts of each page have them (decision 0039, 2026-10-03), which the
- * import's count matches within two; and the share the spike found in fields (decision 0050), which
- * the outline holds at least, less two points.
+ * import's count matches within two; the share the spike found in fields (decision 0050), which
+ * the outline holds at least, less two points; and, pinned, the report's three shares after the
+ * checks (the second pass's item 6), in words: editable in place, changeable through the retype,
+ * and locked; and the fields the checks found required.
  */
-const SAMPLES: Readonly<Record<string, { body: number; fields: number }>> = {
-  "jake-0000": { body: 389, fields: 0.89 },
-  "altacv-0000": { body: 232, fields: 0.72 },
-  "awesome-cv-0000": { body: 1287, fields: 0.96 },
+const SAMPLES: Readonly<
+  Record<
+    string,
+    {
+      body: number;
+      fields: number;
+      shares: { editable: number; retype: number; locked: number };
+      required: number;
+    }
+  >
+> = {
+  "jake-0000": {
+    body: 389,
+    fields: 0.89,
+    shares: { editable: 349, retype: 40, locked: 0 },
+    required: 0,
+  },
+  "altacv-0000": {
+    body: 232,
+    fields: 0.72,
+    shares: { editable: 168, retype: 51, locked: 13 },
+    required: 10,
+  },
+  "awesome-cv-0000": {
+    body: 1287,
+    fields: 0.96,
+    shares: { editable: 1246, retype: 23, locked: 18 },
+    required: 3,
+  },
 };
 
 /** The engine's tree, as the page and the import read it. */
@@ -85,8 +112,10 @@ describe.skipIf(!fetched || !engineAvailable())(
         if (isRefusal(outcome)) throw new Error(`${id} refused: ${outcome.reason}`);
         const { words } = outcome.report.outline;
         // The words in fields, in kept text the retype reaches, and locked, which item 6 pins.
+        const o = outcome.report.outline;
+        const shown = reportOfImport(outcome);
         console.info(
-          `${id}: ${words.body} words, ${words.fields} in fields, ${words.retype} in kept text the retype reaches, ${words.locked} locked; ${outcome.report.outline.fields} fields, ${outcome.report.outline.groups} groups of ${outcome.report.outline.units} units; ${outcome.report.compiles} compiles, ${Math.round(outcome.report.ms)} ms`,
+          `${id}: ${words.body} words, ${words.fields} in fields, ${words.retype} in kept text the retype reaches, ${words.locked} locked; report ${JSON.stringify(shown.words)} ${JSON.stringify(shown.shares)}; ${o.fields} fields, ${o.required} required, kept ${JSON.stringify(o.kept)}; ${o.groups} groups of ${o.units} units, fixed ${JSON.stringify(o.fixed)}, trials ${JSON.stringify(o.trials)}; outcome ${outcome.report.checks.outcome}; checks ${outcome.report.checks.compiles} compiles ${Math.round(outcome.report.checks.ms)} ms; ${outcome.report.compiles} compiles, ${Math.round(outcome.report.ms)} ms; notes ${JSON.stringify(shown.notes)}; ${JSON.stringify(outcome.report.checks.findings)}`,
         );
         expect(Math.abs(words.body - expected.body), "the resume's words").toBeLessThanOrEqual(2);
         expect(words.template, "the template's words").toBe(0);
@@ -97,6 +126,20 @@ describe.skipIf(!fetched || !engineAvailable())(
         expect(outcome.report.outline.groups, "groups of units").toBeGreaterThan(5);
         // The outline compiled as the editor will compile it sets the reference's page.
         expect(outcome.report.checks.outcome, "the outline's page").toBe("assembled");
+        // The checks' report, pinned: the three shares in words, what the checks kept and required,
+        // and every group taking a copy and, where it has two units or more, both removals.
+        expect({
+          editable: shown.words.editable,
+          retype: shown.words.retype,
+          locked: shown.words.locked,
+        }).toEqual(expected.shares);
+        expect(shown.words.body).toBe(words.body);
+        expect(o.kept, "fields the checks kept as text").toEqual({});
+        expect(o.required, "required fields").toBe(expected.required);
+        expect(o.fixed, "fixed groups").toEqual({});
+        expect(o.trials.copy).toBe(o.groups);
+        expect(o.scripts).toEqual({ greek: true, cyrillic: true });
+        expect(shown.notes.join(" ")).not.toMatch(/[\\{}]/);
         expect(outcome.document.resume.sections.map((section) => section.kind)).toEqual([
           "outline",
         ]);
@@ -125,6 +168,6 @@ describe.skipIf(!fetched || !engineAvailable())(
           report.locked.filter((each) => /[\\{}]/.test(each.words)).length,
           "a backslash or a brace",
         ).toBe(0);
-      }, 180_000); // AltaCV alone takes about 40 s; a loaded machine or CI more than doubles it.
+      }, 180_000); // AltaCV's import alone takes about 48 s; a loaded machine or CI more than doubles it.
   },
 );

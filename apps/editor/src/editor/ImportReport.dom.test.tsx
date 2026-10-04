@@ -15,7 +15,15 @@ const report = (changes: Partial<Report> = {}): Report => ({
   outcome: "succeeded",
   rate: 0.957,
   matched: true,
-  words: { editable: 89, panel: 3, locked: 4, byReason: { date: 4 }, body: 93, template: 2 },
+  words: {
+    editable: 89,
+    panel: 3,
+    retype: 0,
+    locked: 4,
+    byReason: { date: 4 },
+    body: 93,
+    template: 2,
+  },
   locked: [{ words: "Jan 2020 – Present", count: 4, reason: "date", why: LOCK_WHY.date }],
   dropped: [],
   notes: [],
@@ -26,7 +34,15 @@ const report = (changes: Partial<Report> = {}): Report => ({
 const PARTIAL = report({
   outcome: "partial",
   rate: 0.826,
-  words: { editable: 76, panel: 0, locked: 16, byReason: { unmapped: 16 }, body: 92, template: 0 },
+  words: {
+    editable: 76,
+    panel: 0,
+    retype: 0,
+    locked: 16,
+    byReason: { unmapped: 16 },
+    body: 92,
+    template: 0,
+  },
   locked: [
     {
       words: "Quill Invented 555-0100 | quill@example.invalid | quill…",

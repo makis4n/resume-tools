@@ -2,8 +2,8 @@
  * An import, from the person's files to a package and a document (milestone 3 item 12, decision
  * 0038; the second pass's item 5, decision 0049): the pipeline, on the editor's own engine session
  * in the browser's worker, in the jobs its steps compile in (`import`, and item 8's `fonts` for a
- * XeTeX document), which it forgets when it ends. `corpus run`'s child still runs the first pass's
- * own pipeline, with answers, until the second pass's item 6 gives it one mode.
+ * XeTeX document), which it forgets when it ends. `corpus run` runs it as it is, in Node, over the
+ * corpus (`scripts/corpus-import-child.ts`).
  *
  * The steps: the intake (decision 0019), each stand-in the PDF could not show copied to a plain path
  * (`plainStandIns`); the reference compile, read in Latin Modern where the page cannot draw its
@@ -12,15 +12,12 @@
  * preamble dumps and the probe compiles from a saved format; the engine's signatures; the parse;
  * the probe (decision 0022), whose format goes as soon as it is done; the outline, built from the
  * body's tree and the probe's verdicts (`buildOutline`), with its package (`outlinePackage`); and
- * the outline compiled as the editor will compile it, against the reference's page
- * (`compileOutline`), whose format the editor takes rather than dumping it again (decision 0045).
+ * the four checks without answers (`checkOutline`, the second pass's item 6), which compile the
+ * outline as the editor will compile it, against the reference's page, keep as text each field
+ * that moves it or stops on text, mark those that stop when empty required, and fix each group
+ * that does not take a copy of its last unit and the removal of its first and its last; the
+ * format they compiled from is what the editor takes rather than dumping it again (decision 0045).
  * No request is built and no service is called: a `.tex` import sends nothing (decision 0049).
- *
- * TODO(the second pass's item 6): the checks without answers. Here the outline is compiled once:
- * where the page it sets differs from the reference's, the import is partial and says so; where it
- * does not compile, its fields become kept text and it is compiled again. Item 6 bisects check 1
- * to the fields that move the page, adds check 2's mutations, check 3's trials of each group and
- * check 4's controls, and the report's three shares.
  *
  * Each step, and each compile as it begins and ends, is reported through `onStep`, with the step's
  * name in plain English, as plan section 6.4's progress display names it, and the compiles so far;
@@ -33,26 +30,25 @@
  * tests on the same session class, `startNodeSession`.
  */
 
-import type { Resume } from "@resume-tools/resume-model";
+import type { OutlineGroup } from "@resume-tools/resume-model";
 import { zipSync } from "fflate";
 import type { Document } from "../editor/document";
 import type { Engine, EngineSession } from "../engine/session";
 import type { FontLibrary } from "../page/fonts";
 import { fontDeclarations } from "../templates/generate";
 import type { FontFamily, TemplatePackage } from "../templates/package";
-import type { AssemblyChecks, LockedPart } from "./assemble";
+import type { AssemblyChecks, LockedPart, LockReason } from "./assemble";
 import { candidatesOf, isSetter } from "./candidates";
+import { type Checked, checkOutline, OutlineCompiler } from "./checks";
 import type { Tree as TexTree } from "./fonts";
 import { encodeLike, type Intake, intake, type Upload } from "./intake";
 import { inLatinModern, undrawableFonts } from "./latin-modern";
 import {
   buildOutline,
-  compileOutline,
-  type Outline,
-  type OutlineCompiled,
   outlinePackage,
-  outlineResume,
   ownersOf,
+  reachedRuns,
+  reachOf,
   type Words,
   wordsOf,
 } from "./outline";
@@ -104,18 +100,30 @@ export interface ImportDeps {
   tree: TexTree;
   /** The tree's images by name (`treeImages`), which a stand-in of the same size takes the place of. */
   treeImage?: (name: string) => Uint8Array | undefined;
+  /** How many compiles each bisection of the checks may make (`CHECK_BUDGET` unless given). */
+  checkBudget?: number;
 }
 
 /**
  * What the outline holds, for the report and the corpus: its fields, groups and units, and the
  * page's words, each set down to a field, to kept text the retype reaches, or to kept text it does
- * not (`wordsOf`), as the spike counted them (decision 0050).
+ * not (`wordsOf`), as the spike counted them (decision 0050); and what the checks found: the
+ * fields required, the probe's editable candidates the checks kept as text, by why, and the groups
+ * fixed, by why, and those whose trials kept the page, by kind of trial.
  */
 export interface OutlineSummary {
   fields: number;
   groups: number;
   units: number;
   words: Words;
+  required: number;
+  kept: Partial<Record<LockReason, number>>;
+  fixed: Partial<Record<NonNullable<OutlineGroup["fixed"]>, number>>;
+  trials: { copy: number; first: number; last: number };
+  /** How many of the probe's editable candidates each of check 2's texts stopped the compile with. */
+  stops: { long: number; special: number; empty: number };
+  /** Whether its fields take letters of other scripts, Greek and Cyrillic, which its fonts may lack. */
+  scripts: { greek: boolean; cyrillic: boolean };
 }
 
 /**
@@ -320,15 +328,15 @@ export async function importResume(
       begin: body.before.slice(body.preamble.length),
       end: /^\\end\s*\{document\}/.exec(body.after)?.[0] ?? "\\end{document}",
     };
-    const outlineOf = (candidates: Probe["candidates"]) =>
+    const outlineOf = (kept: ReadonlySet<string>) =>
       buildOutline({
         tree: built,
         ...(head === undefined ? {} : { preamble: head }),
-        candidates,
+        candidates: probed.candidates,
+        kept,
         macros: probed.signatures.macros,
         ...ends,
       });
-    let outline = outlineOf(probed.candidates);
     const pkg = await outlinePackage({
       engine,
       preamble: body.preamble,
@@ -336,42 +344,40 @@ export async function importResume(
       ...(rewritten === undefined ? {} : { fonts: rewritten.fonts }),
       reference: made,
     });
-    const documentOf = (resume: Resume): Document => ({
-      version: 1,
-      template: pkg.id,
-      resume,
-      controls: {},
-    });
 
     enter("validate");
-    const checkFiles = referenceFiles(taken, made, { job: IMPORT_JOB, ...options });
-    const compile = (resume: Resume) =>
-      compileOutline({
-        session,
-        fonts,
-        pkg,
-        document: documentOf(resume),
+    const compiler = new OutlineCompiler({
+      session,
+      fonts,
+      pkg,
+      job: IMPORT_JOB,
+      files: referenceFiles(taken, made, { job: IMPORT_JOB, ...options }),
+      ...(signal === undefined ? {} : { signal }),
+    });
+    let checked: Checked | Refusal;
+    try {
+      const dumped = compiler.start();
+      if (!dumped.ok) return refusal("stopped", undefined, dumped.log);
+      checked = await checkOutline({
+        compiler,
         reference: made,
-        job: IMPORT_JOB,
-        files: checkFiles,
+        build: outlineOf,
+        candidates: probed.candidates,
+        runs: probed.runs ?? [],
+        ...(deps.checkBudget === undefined ? {} : { budget: deps.checkBudget }),
       });
-    let resume = outlineResume(outline.parts);
-    // An upload whose kept text the model refuses, as one that holds the editor's own macros, or
-    // whose braces do not balance, cannot be kept as it was written.
-    if (resume === undefined) return refusal("keep");
-    let compiled = await compile(resume);
-    // TODO(the second pass's item 6): check 1 finds the fields that stop the compile. Until then,
-    // an outline that does not compile keeps every field as kept text, as the probe's baseline,
-    // each with the plain reason `compile` (`LOCK_WHY`).
-    const fallen = "stopped" in compiled && outline.counts.fields > 0;
-    if (fallen) {
-      outline = outlineOf([]);
-      resume = outlineResume(outline.parts);
-      if (resume === undefined) return refusal("keep");
-      compiled = await compile(resume);
+    } finally {
+      compiler.close();
     }
-    if ("stopped" in compiled) return refusal("stopped", undefined, compiled.log);
-    const document = documentOf(resume);
+    if (isRefusal(checked)) return checked;
+    const outline = checked.outline;
+    const document: Document = {
+      version: 1,
+      template: pkg.id,
+      resume: checked.resume,
+      controls: {},
+    };
+    const format = compiler.format;
 
     // What the document's compiles need beside the package, as the outline compiled: the
     // reference compile's files for the editor's job, its bibliography under whatever job reads it.
@@ -380,25 +386,27 @@ export async function importResume(
     delete editorFiles[`${EDITOR_JOB}.bbl`];
     const { log: _log, ...shown } = made;
     const runs = probed.runs ?? [];
-    const words = wordsOf({
+    const counting = {
       reference: made,
       runs,
       candidates: probed.candidates,
       fields: new Set(outline.fields.keys()),
       sources: { body: built.source, preamble: head?.tree.source ?? "" },
-    });
+    };
+    const reach = reachOf(counting);
+    const words = wordsOf(counting, reach);
     return {
       package: pkg,
       document,
       report: {
         engine,
         reference: shown,
-        checks: checksOf(outline, compiled, probed, words, swap?.swapped, fallen),
+        checks: checksOf(checked, probed, words, reachedRuns(reach.reached), swap?.swapped),
         locked: [],
         images: taken.images,
         // What the intake and the XeTeX rewrite set aside, which the report lists (decision 0039).
         warnings: [...taken.warnings, ...(rewritten?.warnings ?? [])],
-        outline: { ...outline.counts, words },
+        outline: summaryOf(checked, words),
         compiles,
         ms: performance.now() - started,
       },
@@ -408,7 +416,7 @@ export async function importResume(
         ...(bbl === undefined ? {} : { bbl }),
         images: [...taken.images.replaced, ...made.images].map((image) => image.path),
       },
-      formats: [{ name: compiled.format.name, format: compiled.format.bytes }],
+      formats: [{ name: format.name, format: format.bytes }],
     };
   };
   try {
@@ -461,53 +469,83 @@ function preambleOf(
 
 /**
  * What the checks found, as item 13's report reads them (`AssemblyChecks`): the outline's fields,
- * and the probe's other candidates by why they are kept text, each it proved among them where the
- * outline with its fields stopped the compile (`fallen`); the page's words set down to what
- * sets them (`ownersOf`); whether the outline compiled sets the reference's page, and how it first
- * differs where it does not; and its compiles and time. What the first pass's checks decided, the
- * controls, the redefinitions, the units and the harness's findings, an outline has none of yet.
- * TODO(the second pass's item 6): the checks without answers fill these.
+ * required or not, and the probe's other candidates by why they are kept text, the checks' reasons
+ * among them; the page's words set down to what sets them (`ownersOf`), and the glyphs of kept text
+ * the retype reaches (`retype`); whether the outline sets the reference's page, and how it first
+ * differs where it does not; each group's trials, by its id; what the checks could not do; and
+ * their compiles and time. What the first pass's checks decided beside, the controls, the
+ * redefinitions and the harness's findings, an outline has none of.
  */
 function checksOf(
-  outline: Outline,
-  compiled: OutlineCompiled,
+  checked: Checked,
   probed: Probe,
   words: Words,
+  retype: AssemblyChecks["retype"],
   latinModern: readonly string[] | undefined,
-  fallen: boolean,
 ): AssemblyChecks {
+  const { outline, difference } = checked;
   const locked: AssemblyChecks["fields"]["locked"] = {};
   for (const each of probed.candidates) {
-    if (each.verdict === "container" || (each.verdict === "editable" && !fallen)) continue;
-    // An editable candidate kept since the outline with its fields stopped the compile.
-    const reason = each.verdict === "editable" ? "compile" : each.verdict;
-    locked[reason] = (locked[reason] ?? 0) + 1;
+    const reason: LockReason | undefined =
+      checked.kept.get(each.id) ??
+      (each.verdict === "editable" || each.verdict === "container" ? undefined : each.verdict);
+    if (reason !== undefined) locked[reason] = (locked[reason] ?? 0) + 1;
   }
-  const { difference } = compiled;
   return {
-    outcome: difference === undefined ? "assembled" : "partial",
+    outcome: checked.outcome,
     ...(difference === undefined
       ? {}
       : { difference: { kind: difference.kind, text: difference.text } }),
-    fields: { editable: outline.counts.fields, raw: 0, required: 0, locked },
+    fields: {
+      editable: outline.counts.fields,
+      raw: 0,
+      required: checked.required.size,
+      locked,
+    },
     words: { editable: words.fields, locked: {} },
     sections: { mapped: 0, locked: 0 },
-    required: [],
+    required: [...checked.required].map((id) => `${id}.text`),
     controls: { offered: [], proven: [], dropped: [] },
     redefinitions: { applied: [], dropped: [], placement: "class" },
-    repeatable: [],
-    findings: [],
-    compiles: compiled.compiles + (fallen ? 1 : 0),
-    ms: compiled.ms,
+    repeatable: [...outline.groups.keys()].map((id) => {
+      const found = checked.trials.get(id) ?? {};
+      const kept = (verdict: string | undefined) => verdict === "holds" || verdict === "reflows";
+      return {
+        kind: id,
+        added: kept(found.copy),
+        removed: kept(found.first) && kept(found.last),
+      };
+    }),
+    findings: checked.notes,
+    compiles: checked.compiles,
+    ms: checked.ms,
     decisions: {},
     ...(latinModern === undefined ? {} : { latinModern: [...latinModern] }),
     all: [],
-    owners: ownersOf(
-      probed.runs ?? [],
-      probed.candidates,
-      outline.fields,
-      fallen ? "compile" : "shape",
-    ),
+    owners: ownersOf(probed.runs ?? [], probed.candidates, outline.fields, checked.kept),
+    ...(retype === undefined ? {} : { retype }),
+  };
+}
+
+/** What the outline holds and what the checks found of it, for the report (`OutlineSummary`). */
+function summaryOf(checked: Checked, words: Words): OutlineSummary {
+  const kept: OutlineSummary["kept"] = {};
+  for (const reason of checked.kept.values()) kept[reason] = (kept[reason] ?? 0) + 1;
+  const fixed: OutlineSummary["fixed"] = {};
+  for (const why of checked.fixed.values()) fixed[why] = (fixed[why] ?? 0) + 1;
+  const trials = { copy: 0, first: 0, last: 0 };
+  const holds = (verdict: string | undefined) => verdict === "holds" || verdict === "reflows";
+  for (const found of checked.trials.values())
+    for (const kind of ["copy", "first", "last"] as const) if (holds(found[kind])) trials[kind]++;
+  return {
+    ...checked.outline.counts,
+    words,
+    required: checked.required.size,
+    kept,
+    fixed,
+    trials,
+    stops: { ...checked.stops },
+    scripts: { ...checked.scripts },
   };
 }
 

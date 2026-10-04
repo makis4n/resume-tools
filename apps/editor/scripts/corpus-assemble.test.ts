@@ -628,6 +628,7 @@ describe("item 13's report in the runner (decision 0039)", () => {
       words: {
         editable: 10,
         panel: 2,
+        retype: 0,
         locked: 71,
         byReason: { unmapped: 71 },
         body: 81,

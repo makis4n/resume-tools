@@ -7,6 +7,8 @@ import {
   MAX_KEPT_LATEX,
   MAX_OUTLINE,
   MAX_OUTLINE_DEPTH,
+  OUTLINE_FIXED,
+  OUTLINE_PLACEHOLDER,
   type OutlinePart,
   type OutlineUnit,
   outlineNodes,
@@ -500,6 +502,34 @@ describe("Resume, with an outline (decision 0049)", () => {
     expect(
       accepts(withOutline([{ kind: "group", id: "g", units: [{ id: "u", parts: [] }] }])),
     ).toBe(false);
+  });
+
+  it("holds what the import's checks found: a required field and a fixed group, with why", () => {
+    const marked: OutlinePart[] = [
+      kept("\\begin{document}\\role{"),
+      { kind: "text", id: "f-role", text: "Lantern Works", required: true },
+      kept("}"),
+      {
+        kind: "group",
+        id: "g-bullets",
+        fixed: "removal",
+        units: [unit("u-1", "\n", [{ kind: "rich", id: "f-1", text: [], required: false }])],
+      },
+      kept("\\end{document}"),
+    ];
+    const resume = withOutline(marked);
+    expect(Resume.parse(resume)).toEqual(resume);
+    for (const fixed of OUTLINE_FIXED)
+      expect(accepts(withOutline([{ kind: "group", id: "g", fixed, units: [] }]))).toBe(true);
+    expect(accepts(withOutline([{ kind: "group", id: "g", fixed: "stops", units: [] }]))).toBe(
+      false,
+    );
+    expect(accepts(withOutline([{ kind: "group", id: "g", fixed: true, units: [] }]))).toBe(false);
+    expect(accepts(withOutline([{ kind: "text", id: "f", text: "x", required: "yes" }]))).toBe(
+      false,
+    );
+    expect(accepts(withOutline([{ kind: "kept", latex: "x", required: true }]))).toBe(false);
+    expect(OUTLINE_PLACEHOLDER.trim()).not.toBe("");
   });
 
   it("keeps every field's, group's and unit's id unique across the document", () => {

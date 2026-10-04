@@ -47,6 +47,7 @@ import {
   MIN_SHARED,
   macroAt,
   NO_REQUEST_NOTE,
+  REVIEW_FIRST_PASS,
   type RunDocument,
   redefinitionVerdicts,
   reviewNotesOf,
@@ -568,23 +569,29 @@ describe("the last run, as the review reads it", () => {
   });
 
   test("refuses one that read other answers, did not finish, or left another run's documents", () => {
-    expect(mismatch(undefined)).toBe("No run is recorded: run `corpus run` first.");
-    expect(mismatch({ complete: false })).toBe(
-      "The last run did not finish: run `corpus run` again.",
-    );
+    // Nothing refreshes the first pass's run since item 6 of the second pass: each line says so,
+    // and none sends the person to a `corpus run` that would not help.
+    const why = (line: string) => `${line}: ${REVIEW_FIRST_PASS}`;
+    expect(mismatch(undefined)).toBe(why("No first-pass run is recorded"));
+    expect(mismatch({ complete: false })).toBe(why("The first pass's last run did not finish"));
     expect(mismatch({ answers: "committed", cache: null })).toBe(
-      "The last run read the committed answers alone, and the review reads invented-model's cache too: run `corpus run` without --committed-only.",
+      why(
+        "The first pass's last run read the committed answers alone, and the review reads invented-model's cache too",
+      ),
     );
     expect(mismatch({ cache: "another-model" })).toBe(
-      "The last run read another-model's cache, and NAMING_MODEL names invented-model: run `corpus run` with the one model.",
+      why(
+        "The first pass's last run read another-model's cache, and NAMING_MODEL names invented-model",
+      ),
     );
     const mixed = new Map([
       ["jake-0001", "2026-10-01T00:00:00.000Z-0a1b2c3d"],
       ["jake-0002", "2026-09-30T00:00:00.000Z-99999999"],
     ]);
     expect(mismatch({}, "export", mixed)).toBe(
-      "1 of the last run's 2 documents was kept by another run: run `corpus run` again.",
+      why("1 of the first pass's last run's 2 documents was kept by another run"),
     );
+    expect(REVIEW_FIRST_PASS).not.toContain("--committed-only");
   });
 
   test("lets the export take a run over some documents, and the check only one over all", () => {
@@ -592,7 +599,7 @@ describe("the last run, as the review reads it", () => {
     const fetched = ["jake-0001", "jake-0002", "jake-0003"];
     expect(mismatch(some, "export", stamped(), fetched)).toBeUndefined();
     expect(mismatch(some, "check", stamped(), fetched)).toBe(
-      "The last run took 1 of the 3 fetched documents, and the check holds a redefinition to every one: run `corpus run` over the whole corpus.",
+      `The first pass's last run took 1 of the 3 fetched documents, and the check holds a redefinition to every one: ${REVIEW_FIRST_PASS}`,
     );
   });
 });

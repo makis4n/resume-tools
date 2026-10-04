@@ -238,7 +238,7 @@ closes.
    is built and no service is called. On XeTeX the fonts are rewritten to files first, so the probe
    compiles from a saved format. Done when the three samples import with no naming call, and a test
    proves a `.tex` import makes no network request.
-6. [ ] **The checks, without answers.** Check 1: the outline compiled sets the reference's page; a
+6. [x] **The checks, without answers.** Check 1: the outline compiled sets the reference's page; a
    field whose rewriting moves it becomes kept text. Check 2: every field takes a long text, no
    text and special characters; one that stops the compile when empty is required, and one that
    stops on text becomes kept text. Check 3: every group gains a copy of its last unit with its

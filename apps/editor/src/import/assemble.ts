@@ -259,6 +259,12 @@ export interface AssemblyChecks {
    * assembly made from a probe that gave no runs.
    */
   owners?: GlyphOwner[];
+  /**
+   * The glyphs of kept text the retype reaches (decision 0042), as runs on each page, the page's
+   * glyphs counted as `owners` counts them: an outline's (the second pass's item 6), whose report
+   * counts the words in them apart from the locked ones. Absent from an assembly.
+   */
+  retype?: { page: number; from: number; to: number }[];
 }
 
 /** An imported resume assembled: the package, the document, what is locked, and the checks. */
