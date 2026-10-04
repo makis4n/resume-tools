@@ -3,7 +3,7 @@ import { PRIVACY_NOTE } from "./privacy";
 
 test("says, under decision 0047, what leaves the browser and when, in two plain sentences", () => {
   expect(PRIVACY_NOTE).toBe(
-    "Your resume stays in this browser unless you ask for something that needs to send it, and you are told what is sent. Reading a PDF with the reading service sends its text, and only once you agree, with the setting below; checking a resume sends its PDF to the checker; importing a .tex file sends only its template's command definitions, with your resume's text replaced.",
+    "Your resume stays in this browser unless you ask for something that needs to send it, and you are told what is sent. Reading a PDF with the reading service sends its text, and only once you agree, with the setting below; checking a resume sends its PDF to the checker; importing a .tex file sends nothing.",
   );
   // Two sentences, each ending with a full stop; the file's extension is not one.
   expect(PRIVACY_NOTE.replace(".tex", "tex").match(/[.!?]/g)).toEqual([".", "."]);
@@ -21,8 +21,7 @@ test("says, under decision 0047, what leaves the browser and when, in two plain 
     "reading service sends its text",
     "only once you agree",
     "sends its PDF to the checker",
-    "command definitions",
-    "resume's text replaced",
+    "importing a .tex file sends nothing",
   ])
     expect(PRIVACY_NOTE, words).toContain(words);
 });

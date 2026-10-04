@@ -17,4 +17,4 @@
  * told what is sent, and the three things that send. Plain English, no LaTeX, and no command named.
  */
 export const PRIVACY_NOTE =
-  "Your resume stays in this browser unless you ask for something that needs to send it, and you are told what is sent. Reading a PDF with the reading service sends its text, and only once you agree, with the setting below; checking a resume sends its PDF to the checker; importing a .tex file sends only its template's command definitions, with your resume's text replaced.";
+  "Your resume stays in this browser unless you ask for something that needs to send it, and you are told what is sent. Reading a PDF with the reading service sends its text, and only once you agree, with the setting below; checking a resume sends its PDF to the checker; importing a .tex file sends nothing.";
