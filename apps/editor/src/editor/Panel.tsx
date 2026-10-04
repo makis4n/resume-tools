@@ -25,6 +25,9 @@
  * LaTeX; a group's units one under the other, each opening to show its own parts; a field with an
  * input where the page does not show it, as any field; and kept text with words to retype with
  * "Change words", the keyboard's way to its editor on the page, as a locked part's (decision 0042).
+ * Each unit moves up and down and is removed, and each group takes another, a copy of its last unit
+ * with its fields emptied (the second pass's item 8); a group the import's checks fixed takes none
+ * of these, and its buttons say why (`FIXED_WHY`), as a group's only unit's Remove does.
  *
  * Plain HTML in plain English, with nothing in it that is LaTeX.
  */
@@ -39,6 +42,7 @@ import {
   LinkKind,
   type LockedSection,
   OUTLINE_PLACEHOLDER,
+  type OutlineFixed,
   type OutlinePart,
   type OutlineSection,
   type OutlineUnit,
@@ -372,6 +376,11 @@ export interface PanelProps {
    */
   retypes?: ReadonlyMap<string, string | undefined>;
   onRetype?: (section: string) => void;
+  /**
+   * A field whose input takes the focus as it appears, by its id: the first field of a unit Enter
+   * added from the page (the second pass's item 8), which the page cannot open while it is empty.
+   */
+  focus?: string;
   /** Where the panel's commands go: the way an edit on the page goes, so the page follows. */
   onCommand: Send;
   /**
@@ -387,6 +396,9 @@ export interface PanelProps {
  */
 const ShownFields = createContext<ReadonlySet<string> | undefined>(undefined);
 
+/** `PanelProps.focus`, carried to each `FieldInput` in the same way. */
+const Focus = createContext<string | undefined>(undefined);
+
 /** `PanelProps.onSeal`, carried to each `TypedInput` in the same way. */
 const Seal = createContext<() => void>(() => {});
 
@@ -400,6 +412,7 @@ export function Panel({
   lockedWords,
   retypes,
   onRetype,
+  focus,
   onCommand,
   onSeal,
 }: PanelProps) {
@@ -412,37 +425,39 @@ export function Panel({
   return (
     <ShownFields value={shownFields}>
       <Seal value={onSeal}>
-        <RulesOf value={rules}>
-          <div style={STYLE.panel}>
-            {!outline && <HeaderFields header={header} rules={rules} send={onCommand} />}
-            {!outline && (
-              <Links
-                links={header.links}
-                kept={keptOf(header).has("links")}
-                rules={rules}
-                send={onCommand}
-              />
-            )}
-            {outline === undefined ? (
-              <Sections
-                sections={sections}
-                format={dateFormatOf(document, known)}
-                rules={rules}
-                lockedWords={lockedWords}
-                retypes={retypes}
-                onRetype={onRetype}
-                send={onCommand}
-              />
-            ) : (
-              <OutlineRows
-                section={outline}
-                retypes={retypes}
-                onRetype={onRetype}
-                send={onCommand}
-              />
-            )}
-          </div>
-        </RulesOf>
+        <Focus value={focus}>
+          <RulesOf value={rules}>
+            <div style={STYLE.panel}>
+              {!outline && <HeaderFields header={header} rules={rules} send={onCommand} />}
+              {!outline && (
+                <Links
+                  links={header.links}
+                  kept={keptOf(header).has("links")}
+                  rules={rules}
+                  send={onCommand}
+                />
+              )}
+              {outline === undefined ? (
+                <Sections
+                  sections={sections}
+                  format={dateFormatOf(document, known)}
+                  rules={rules}
+                  lockedWords={lockedWords}
+                  retypes={retypes}
+                  onRetype={onRetype}
+                  send={onCommand}
+                />
+              ) : (
+                <OutlineRows
+                  section={outline}
+                  retypes={retypes}
+                  onRetype={onRetype}
+                  send={onCommand}
+                />
+              )}
+            </div>
+          </RulesOf>
+        </Focus>
       </Seal>
     </ShownFields>
   );
@@ -790,6 +805,23 @@ function partsWords(parts: readonly OutlinePart[]): string {
 /** What a unit of an outline is called when it has no words. */
 export const NO_WORDS = "No words";
 
+/** The button that adds a copy of a group's last unit, its fields emptied (the second pass's item 8). */
+export const ADD_UNIT = "Add another";
+
+/**
+ * Why a group's buttons are disabled where the import's checks found it fixed (decision 0055),
+ * which they say when pointed at: it takes no unit more or fewer, and none of its units moves.
+ */
+export const FIXED_WHY: Readonly<Record<OutlineFixed, string>> = {
+  copy: "Adding one here changed the rest of the page when your resume was imported, so these stay as they are",
+  removal:
+    "Removing one here changed the rest of the page when your resume was imported, so these stay as they are",
+  untried: "These could not be tried when your resume was imported, so they stay as they are",
+};
+
+/** Why the Remove of a group's only unit is disabled: a list needs at least one (decision 0050). */
+export const ONLY_UNIT = "This is the only one here, and there must be at least one";
+
 /**
  * What an outline's rows need besides their parts: the segment of kept text each piece of it is in,
  * by its place (`keptKey`), and what each segment offers to retype (`PanelProps.retypes`).
@@ -874,16 +906,35 @@ function OutlineParts({
             />
           </li>,
         ];
-      case "group":
+      case "group": {
+        const fixed = part.fixed === undefined ? undefined : FIXED_WHY[part.fixed];
+        const last = part.units.at(-1);
         return [
           <li key={key}>
             <ol style={STYLE.list}>
               {part.units.map((unit, u) => (
-                <UnitRow key={unit.id} unit={unit} path={[...at, u]} context={context} />
+                <UnitRow
+                  key={unit.id}
+                  unit={unit}
+                  path={[...at, u]}
+                  index={u}
+                  count={part.units.length}
+                  fixed={fixed}
+                  context={context}
+                />
               ))}
             </ol>
+            {last !== undefined && (
+              <AddButton
+                refused={fixed}
+                onClick={() => context.send(structural({ op: "addUnit", after: last.id }))}
+              >
+                {ADD_UNIT}
+              </AddButton>
+            )}
           </li>,
         ];
+      }
     }
   });
   if (rows.length === 0) return null;
@@ -897,20 +948,38 @@ function OutlineParts({
 function UnitRow({
   unit,
   path,
+  index,
+  count,
+  fixed,
   context,
 }: {
   unit: OutlineUnit;
   path: readonly number[];
+  /** Where it is among its group's units, and how many they are. */
+  index: number;
+  count: number;
+  /** Why its group stays as it was imported, if it does (`FIXED_WHY`). */
+  fixed: string | undefined;
   context: OutlineContext;
 }) {
   const [open, setOpen] = useState(false);
   const words = firstWords(partsWords(unit.parts));
+  const { send } = context;
   return (
     <li>
       <div style={STYLE.row}>
         <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
           {words === "" ? NO_WORDS : words}
         </button>
+        <Reorder
+          index={index}
+          count={count}
+          onMove={(to) => send(structural({ op: "moveUnit", id: unit.id, to }))}
+          onRemove={() => send(structural({ op: "removeUnit", id: unit.id }))}
+          refused={fixed ?? (count <= 1 ? ONLY_UNIT : undefined)}
+          up={fixed}
+          down={fixed}
+        />
       </div>
       {open ? (
         <OutlineParts parts={unit.parts} path={path} context={context} />
@@ -1437,6 +1506,12 @@ function FieldInput({
   const shownFields = useContext(ShownFields);
   const rules = useContext(RulesOf);
   const [used, setUsed] = useState(false);
+  // The field asked for takes the focus as its input appears (`PanelProps.focus`).
+  const wanted = useContext(Focus) === field;
+  const box = useRef<HTMLLabelElement>(null);
+  useEffect(() => {
+    if (wanted) box.current?.querySelector("input")?.focus();
+  }, [wanted]);
   if (rules.fields !== undefined && !rules.fields.has(field)) return <>{children}</>;
   const required = rules.required.has(field);
   if (locked || (!used && !needsInput(field, text, placeholder, shownFields)))
@@ -1447,7 +1522,7 @@ function FieldInput({
       </>
     );
   return (
-    <label style={STYLE.row} onFocus={() => setUsed(true)}>
+    <label ref={box} style={STYLE.row} onFocus={() => setUsed(true)}>
       {label}
       <TypedInput value={text ?? ""} {...requiredInput(required)} onChange={onChange} />
       {fieldStatus(text, placeholder) === "placeholder" && <Mark />}

@@ -14,9 +14,13 @@
 
 import {
   endsInComment,
+  isOutlineField,
+  OUTLINE_PLACEHOLDER,
+  type OutlineGroup,
   type OutlinePart,
   OutlineSection,
   type OutlineUnit,
+  outlineNodes,
   type Resume,
 } from "@resume-tools/resume-model";
 import { keptId } from "../page/kept";
@@ -237,4 +241,105 @@ export function* outlineFields(
     else if (part.kind === "group")
       for (const [u, unit] of part.units.entries()) yield* outlineFields(unit.parts, [...at, u]);
   }
+}
+
+/**
+ * A copy of a unit as the editor makes a new one (the second pass's item 8), which check 3 tries as
+ * it is made here (decision 0055): every field, group and unit in it under a new id `mint` gives,
+ * every field emptied, or holding `OUTLINE_PLACEHOLDER` where `required` names it, and its kept
+ * text and gap as they are, byte for byte. A group in it keeps its units, each copied so, and why
+ * it is fixed, if it is; a field keeps whether it is required and given as one token.
+ */
+export function emptiedCopy(
+  unit: OutlineUnit,
+  mint: () => string,
+  required: (id: string) => boolean,
+): OutlineUnit {
+  const map = (list: readonly OutlinePart[]): OutlinePart[] =>
+    list.map((part): OutlinePart => {
+      if (part.kind === "kept") return part;
+      if (part.kind === "group")
+        return {
+          ...part,
+          id: mint(),
+          units: part.units.map((each) => ({ ...each, id: mint(), parts: map(each.parts) })),
+        };
+      const holds = required(part.id) ? OUTLINE_PLACEHOLDER : "";
+      return part.kind === "text"
+        ? { ...part, id: mint(), text: holds }
+        : { ...part, id: mint(), text: holds === "" ? [] : [{ text: holds }] };
+    });
+  return { ...unit, id: mint(), parts: map(unit.parts) };
+}
+
+/**
+ * Where a unit of an outline is: `path` goes from the outline's parts to its group (`KeptAt.path`),
+ * the group, and the unit's index among its units.
+ */
+export interface UnitPlace {
+  path: number[];
+  group: OutlineGroup;
+  index: number;
+}
+
+/** Where the unit `id` is among `parts`, however deep (`UnitPlace`), or undefined. */
+export function unitPlace(
+  parts: readonly OutlinePart[],
+  id: string,
+  path: readonly number[] = [],
+): UnitPlace | undefined {
+  for (const [index, part] of parts.entries()) {
+    if (part.kind !== "group") continue;
+    const at = [...path, index];
+    for (const [u, unit] of part.units.entries()) {
+      if (unit.id === id) return { path: at, group: part, index: u };
+      const inner = unitPlace(unit.parts, id, [...at, u]);
+      if (inner !== undefined) return inner;
+    }
+  }
+  return undefined;
+}
+
+/** Every id an outline's parts hold, of its fields, groups and units. */
+export function outlineIds(parts: readonly OutlinePart[]): string[] {
+  const ids: string[] = [];
+  for (const step of outlineNodes(parts))
+    if (step.kind === "unit") ids.push(step.unit.id);
+    else if (step.part.kind !== "kept") ids.push(step.part.id);
+  return ids;
+}
+
+/**
+ * The unit a field ends, as Enter at the field's end adds a unit after (the second pass's item 8):
+ * the innermost unit that holds the field `id`, where no field of the unit the generator writes
+ * comes after it, so that the end of the field is the end of what the unit sets in words; or
+ * undefined, for a field in no unit or one with a written field after it.
+ */
+export function unitEnding(parts: readonly OutlinePart[], id: string): UnitPlace | undefined {
+  const within = (
+    list: readonly OutlinePart[],
+    path: readonly number[],
+  ): { found: boolean; place?: UnitPlace } => {
+    for (const [index, part] of list.entries()) {
+      if (isOutlineField(part)) {
+        if (part.id === id) return { found: true };
+        continue;
+      }
+      if (part.kind !== "group") continue;
+      for (const [u, unit] of part.units.entries()) {
+        const inner = within(unit.parts, [...path, index, u]);
+        if (!inner.found) continue;
+        if (inner.place !== undefined) return inner;
+        // The field is in this unit, in no unit within it: the unit ends with it, unless a field
+        // it writes comes after.
+        const fields = [...outlineFields(unit.parts)].filter((each) => written(each.part));
+        const last = fields.at(-1);
+        return last?.part.id === id
+          ? { found: true, place: { path: [...path, index], group: part, index: u } }
+          : { found: true };
+      }
+    }
+    return { found: false };
+  };
+  return within(parts, []).place;
 }

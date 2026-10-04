@@ -1,0 +1,22 @@
+% An invented resume whose roles take no third: a copy of a role stops the compile, so the
+% import's checks find the run of roles fixed (decisions 0050 and 0055), while each role's bullets
+% take a copy, a removal and a move. For the second pass's item 8; every word is invented.
+\documentclass[11pt]{article}
+\usepackage[margin=0.8in]{geometry}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\newcounter{roles}
+\newcommand{\role}[2]{\stepcounter{roles}\ifnum\value{roles}>2 \errmessage{Only two roles}\fi\par\textbf{#1} \hfill #2\par}
+\begin{document}
+\section*{Quill Wrenfield}
+\role{Lantern Works}{2021 -- 2024}
+\begin{itemize}
+  \item Set careful type for forty journals
+  \item Kept the press running through the winter
+\end{itemize}
+\role{Mill and Sons}{2019}
+\begin{itemize}
+  \item Cut half of the waste in the shop
+  \item Wrote the shop's notes on folded paper
+\end{itemize}
+\end{document}

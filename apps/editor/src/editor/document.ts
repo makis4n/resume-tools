@@ -31,6 +31,8 @@ import {
   LockedLatex,
   type OutlineField,
   type OutlinePart,
+  OutlineSection,
+  type OutlineUnit,
   Resume,
   RichText,
   type Section,
@@ -52,7 +54,18 @@ import {
   type UnitKind,
 } from "../templates/package";
 import { parseSnippet, SnippetError, type SnippetNode } from "../templates/snippet";
-import { type KeptEdit, markerOf, outlineFields, partAt, withKept, withPartAt } from "./outline";
+import {
+  emptiedCopy,
+  type KeptEdit,
+  markerOf,
+  outlineFields,
+  outlineIds,
+  partAt,
+  type UnitPlace,
+  unitPlace,
+  withKept,
+  withPartAt,
+} from "./outline";
 
 export const Document = z.strictObject({
   version: z.literal(1),
@@ -544,6 +557,10 @@ export function mintId(prefix: string, taken: ReadonlySet<string>): string {
  * cannot lose (`removable`, decision 0038), a bullet to an entry whose snippet shows none
  * (`showsBullets`), or a unit to a list its node keeps whole as the upload had it (`kept`), is
  * refused, and so is one that empties a field the package requires (`isRequired`, decision 0026).
+ * An imported outline's units, a bullet or an entry found by shape (decision 0049), are added,
+ * removed and moved by their own ops (`restructureUnits`, the second pass's item 8): `addUnit` puts
+ * a copy of the unit `after` in after it, and `removeUnit` and `moveUnit` name the unit by its id,
+ * which never leaves its group.
  */
 export type StructureOp =
   | { op: "addSection"; kind: SectionKind; role: SectionRole; at?: number }
@@ -563,7 +580,10 @@ export type StructureOp =
   | { op: "removeLink"; id: string }
   | { op: "moveLink"; id: string; to: number }
   | { op: "setLink"; id: string; kind?: LinkKind; label?: string; href?: string }
-  | { op: "setHeader"; headline?: string; email?: string; phone?: string; location?: string };
+  | { op: "setHeader"; headline?: string; email?: string; phone?: string; location?: string }
+  | { op: "addUnit"; after: string }
+  | { op: "removeUnit"; id: string }
+  | { op: "moveUnit"; id: string; to: number };
 
 /** A choice for one of the template's controls; `undefined` goes back to the template's default. */
 type ControlCommand = {
@@ -1141,10 +1161,110 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
       }
       return HEADER.put(resume, header);
     }
+    case "addUnit":
+    case "removeUnit":
+    case "moveUnit":
+      return restructureUnits(resume, op);
     default:
       // The types rule this out; the check keeps a slip from leaving the document without a resume.
       throw new CommandError(`there is no structure op ${String((op as { op: unknown }).op)}`);
   }
+}
+
+/** Every id a resume holds, of its links, sections, entries, bullets, items and outline's nodes. */
+function idsOf(resume: Resume): Set<string> {
+  const ids = new Set(resume.header.links.map((link) => link.id));
+  for (const section of resume.sections) {
+    ids.add(section.id);
+    if (section.kind === "entries")
+      for (const entry of section.entries) {
+        ids.add(entry.id);
+        for (const bullet of entry.bullets) ids.add(bullet.id);
+      }
+    else if (section.kind === "list" || section.kind === "labelled")
+      for (const item of section.items) ids.add(item.id);
+    else if (section.kind === "outline") for (const id of outlineIds(section.parts)) ids.add(id);
+  }
+  return ids;
+}
+
+/**
+ * Why the editor takes a step on a unit of no group the import's checks found fixed (decision
+ * 0055): such a group takes no unit more and none fewer, and none of its units moves, since its
+ * units were found not to stand apart from the page around them, or were not tried.
+ */
+function refuseFixed({ group }: UnitPlace, step: string): void {
+  if (group.fixed !== undefined)
+    throw new CommandError(
+      `the group ${group.id} stays as it was imported (${group.fixed}), and takes no ${step}`,
+    );
+}
+
+/**
+ * The resume after an op on a unit of its outline (the second pass's item 8), a new value that
+ * shares what the op left alone: a copy of the unit `after` put in after it, its fields emptied or
+ * holding the placeholder where they are required (`emptiedCopy`), each id in it minted against
+ * every id in the resume; the unit `id` removed, but never its group's only one (decision 0050's
+ * first rule); or the unit `id` moved to `to` among its group's units, with its gap, as a unit
+ * carries it (`OutlineUnit`). A unit of a fixed group takes none of them (`refuseFixed`). The
+ * outline after it must be one the model takes (`OutlineSection`), as within its size.
+ */
+function restructureUnits(
+  resume: Resume,
+  op: Extract<StructureOp, { op: "addUnit" | "removeUnit" | "moveUnit" }>,
+): Resume {
+  const at = resume.sections.findIndex((section) => section.kind === "outline");
+  const section = resume.sections[at];
+  if (section?.kind !== "outline") throw new CommandError("the document holds no outline");
+  const id = op.op === "addUnit" ? op.after : op.id;
+  if (typeof id !== "string") throw new CommandError(`a unit is named by its id, not ${typeof id}`);
+  const place = unitPlace(section.parts, id);
+  if (place === undefined) throw new CommandError(`the outline has no unit ${id}`);
+  const { group, index } = place;
+  let units: OutlineUnit[];
+  switch (op.op) {
+    case "addUnit": {
+      refuseFixed(place, "unit more");
+      const unit = group.units[index] as OutlineUnit;
+      const taken = idsOf(resume);
+      const mint = () => {
+        const minted = mintId("copy", taken);
+        taken.add(minted);
+        return minted;
+      };
+      const required = new Set(
+        [...outlineFields(unit.parts)].flatMap(({ part }) =>
+          part.required === true ? [part.id] : [],
+        ),
+      );
+      const copy = emptiedCopy(unit, mint, (field) => required.has(field));
+      units = [...group.units.slice(0, index + 1), copy, ...group.units.slice(index + 1)];
+      break;
+    }
+    case "removeUnit":
+      refuseFixed(place, "unit fewer");
+      if (group.units.length <= 1)
+        throw new CommandError(`${id} is its group's only unit, which stays`);
+      units = group.units.filter((_, u) => u !== index);
+      break;
+    case "moveUnit":
+      refuseFixed(place, "move");
+      if (!isIndex(op.to, group.units.length))
+        throw new CommandError(`${id} cannot move to ${op.to} in a group of ${group.units.length}`);
+      units = [...group.units];
+      units.splice(op.to, 0, ...units.splice(index, 1));
+      break;
+  }
+  const parts = withPartAt(section.parts, place.path, { ...group, units });
+  if (parts === undefined) throw new CommandError(`the outline has no group ${group.id}`);
+  const changed: OutlineSection = { ...section, parts };
+  // Checked, and kept as built, so that it shares what the op left alone with the document before.
+  const read = OutlineSection.safeParse(changed);
+  if (!read.success)
+    throw new CommandError(`the outline cannot take that: ${z.prettifyError(read.error)}`);
+  const sections = [...resume.sections];
+  sections[at] = changed;
+  return { ...resume, sections };
 }
 
 /**
