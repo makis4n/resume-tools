@@ -27,7 +27,7 @@ function row(id: string, changes: Partial<ImportRow> = {}): ImportRow {
       required: 1,
       kept: { differs: 1 },
       stops: { long: 0, special: 0, empty: 1 },
-      scripts: true,
+      scripts: { greek: true, cyrillic: false },
     },
     groups: {
       found: 4,
@@ -97,6 +97,9 @@ describe("the run's summary, table and lines", () => {
     expect(table).toContain("| Partial, the first difference: `position` |");
     expect(table).toContain("| Fixed: `removal` | 2 | 0 | 1 | 0 | 0 | 0 | 3 |");
     expect(table).toContain("| Stop the compile with the empty text | 2 | 0 | 1 | 0 | 0 | 0 | 3 |");
+    // Each script is counted apart: these fonts set Greek and lack Cyrillic.
+    expect(table).toContain("| Documents whose fonts lack Greek | 0 | 0 | 0 | 0 | 0 | 0 | 0 |");
+    expect(table).toContain("| Documents whose fonts lack Cyrillic | 2 | 0 | 1 | 0 | 0 | 0 | 3 |");
     expect(importLine(ROWS[0] as ImportRow)).toBe(
       "pdftex, success, 100 words: 95% in place, 4% retype, 1% locked; 20 fields, 1 required; 4 groups, 1 fixed; 30 compiles, 3.0 s",
     );
@@ -116,16 +119,30 @@ describe("the run's summary, table and lines", () => {
     };
     const again = { ...file, documents: ROWS.map((each) => ({ ...each, times: { wall: 1 } })) };
     expect(runDifferences(file, again)).toEqual([]);
-    const adopted = baselineFromFile<ImportRow>(
-      file,
-      Baseline.parse({ version: 1, run: null }),
-      importSummary,
-    );
+    const none = Baseline.parse({ version: 1, run: null });
+    const adopted = baselineFromFile<ImportRow>(file, none, importSummary, 2);
     expect(adopted.baseline?.run).toMatchObject({
       documents: 5,
       timeouts: 1,
       success: 1,
       rates: { success: 25, editable: 80 },
     });
+    // A first pass's file, version 1, its rows of outcomes the outline's run never gives, is refused
+    // in plain words, and never summed.
+    const first = {
+      ...file,
+      version: 1,
+      mode: { answers: "cache", cache: "invented-model", asked: null, documents: "all" },
+      documents: [{ id: "jake-0001", family: "jake", outcome: "no answer", times: { wall: 1 } }],
+    };
+    expect(baselineFromFile<ImportRow>(first, none, importSummary, 2)).toEqual({
+      line: "corpus/baseline.json is not written: the file is a first pass's run, which read naming answers, and `corpus run` takes the outline's import now, whose runs are version 2.",
+    });
+    expect(baselineFromFile<ImportRow>({ ...file, version: 3 }, none, importSummary, 2).line).toBe(
+      "corpus/baseline.json is not written: the file is no run of version 2, the one `corpus run` writes.",
+    );
+    // And a row of an outcome the run never gives counts in no outcome, never as a number that is not one.
+    const odd = importSummary([{ ...(ROWS[0] as ImportRow), outcome: "no answer" as never }]);
+    expect(Object.values(odd.outcomes).every(Number.isFinite)).toBe(true);
   });
 });

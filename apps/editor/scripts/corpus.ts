@@ -161,7 +161,10 @@
  *                 and exits 1. A document that timed out counts in no success rate
  *   compare       say whether runs' JSON agree, times aside, each with the next, and where they do
  *                 not; it exits 1 when they differ
- *   review export write, for each of the top templates of the last run's documents, a folder an
+ *   review export the first pass's, until item 17 of the second: what its last run kept under
+ *                 `.corpus/run/`, which no command writes since `corpus run` took the outline's
+ *                 import and cannot be refreshed, is read as it stands and said so;
+ *                 write, for each of the top templates of the last run's documents, a folder an
  *                 Opus agent reviews the answers from (decision 0037): the naming requests the
  *                 privacy gate passed, the answers the cache holds for its macros, and the checks'
  *                 findings reduced to reasons, macro names and counts, every file checked with the
@@ -326,6 +329,7 @@ import {
   type Checked,
   carriersOf,
   exportPlan,
+  REVIEW_FIRST_PASS,
   type RunDocument,
   redefinitionVerdicts,
   runMismatch,
@@ -1386,6 +1390,7 @@ function adoptBaseline(from: string) {
     JSON.parse(readFileSync(from, "utf8")),
     readBaseline(),
     importSummary,
+    2,
   );
   if (next.baseline !== undefined) writeAtomically(BASELINE_FILE, formatJson(next.baseline));
   print([next.line]);
@@ -1827,6 +1832,8 @@ async function runReviewExport(top: number, out: string) {
     throw new Error("NAMING_MODEL is not a model's id: letters, digits and ._:/@- only");
   const fetched = fetchedDocuments(undefined);
   const documents = lastRun("export", config.id, fetched);
+  // What it reads is the first pass's, which nothing refreshes since item 6: said before anything.
+  print([`Read as it stands: ${REVIEW_FIRST_PASS}`]);
   const cache = new FileAnswerCache({ model: config.id });
   const detector = await leakDetector();
   let plan: Awaited<ReturnType<typeof exportPlan>>;
@@ -1896,6 +1903,7 @@ async function runReviewCheck(dir: string) {
   );
   const fetched = fetchedDocuments(undefined);
   const kept = lastRun("check", config.id, fetched);
+  print([`Read as it stands: ${REVIEW_FIRST_PASS}`]);
   const holders = new Map<string, string[]>();
   for (const doc of kept)
     for (const macro of doc.request?.macros ?? [])

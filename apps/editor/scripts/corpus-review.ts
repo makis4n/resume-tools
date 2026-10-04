@@ -130,11 +130,21 @@ export interface RunDocument {
 }
 
 /**
- * Why what the last run kept cannot serve the review's export, or its check, in one line; none when
- * it can. The review reads the committed answers and `model`'s cache, so the run must have read the
- * same; it must have finished, and every document it took must carry its stamp, none left by
- * another run (`stamps`, each document's by its id); and the check, which holds a redefinition to
- * every corpus document whose request holds its key, needs a run that took every fetched one.
+ * Why the review cannot be refreshed once what the first pass's run kept will not serve it: since
+ * the second pass's item 6, `corpus run` takes the outline's import, which names nothing, and keeps
+ * nothing under `.corpus/run/`, so no command writes what the review reads; the review and the
+ * naming step it serves go with item 17.
+ */
+export const REVIEW_FIRST_PASS =
+  "the review reads the first pass's last run under .corpus/run/, which no command writes since `corpus run` took the outline's import (the second pass's item 6), so it cannot be refreshed; the review goes with the naming step in item 17.";
+
+/**
+ * Why what the first pass's last run kept cannot serve the review's export, or its check, in one
+ * line; none when it can. The review reads the committed answers and `model`'s cache, so the run
+ * must have read the same; it must have finished, and every document it took must carry its stamp,
+ * none left by another run (`stamps`, each document's by its id); and the check, which holds a
+ * redefinition to every corpus document whose request holds its key, needs a run that took every
+ * fetched one. Each line ends by saying that nothing refreshes that run (`REVIEW_FIRST_PASS`).
  */
 export function runMismatch(input: {
   record: RunRecord | undefined;
@@ -143,19 +153,24 @@ export function runMismatch(input: {
   fetched: readonly string[];
   stamps: ReadonlyMap<string, string | undefined>;
 }): string | undefined {
+  const why = mismatchOf(input);
+  return why === undefined ? undefined : `${why}: ${REVIEW_FIRST_PASS}`;
+}
+
+function mismatchOf(input: Parameters<typeof runMismatch>[0]): string | undefined {
   const { record, model } = input;
-  if (record === undefined) return "No run is recorded: run `corpus run` first.";
-  if (!record.complete) return "The last run did not finish: run `corpus run` again.";
+  if (record === undefined) return "No first-pass run is recorded";
+  if (!record.complete) return "The first pass's last run did not finish";
   if (record.answers !== "cache")
-    return `The last run read the committed answers alone, and the review reads ${model}'s cache too: run \`corpus run\` without --committed-only.`;
+    return `The first pass's last run read the committed answers alone, and the review reads ${model}'s cache too`;
   if (record.cache !== model)
-    return `The last run read ${record.cache === null ? "no model's cache" : `${record.cache}'s cache`}, and NAMING_MODEL names ${model}: run \`corpus run\` with the one model.`;
+    return `The first pass's last run read ${record.cache === null ? "no model's cache" : `${record.cache}'s cache`}, and NAMING_MODEL names ${model}`;
   const taken = new Set(record.ids);
   if (input.purpose === "check" && input.fetched.some((id) => !taken.has(id)))
-    return `The last run took ${record.ids.length} of the ${input.fetched.length} fetched documents, and the check holds a redefinition to every one: run \`corpus run\` over the whole corpus.`;
+    return `The first pass's last run took ${record.ids.length} of the ${input.fetched.length} fetched documents, and the check holds a redefinition to every one`;
   const stale = record.ids.filter((id) => input.stamps.get(id) !== record.stamp).length;
   if (stale > 0)
-    return `${stale} of the last run's ${record.ids.length} documents ${stale === 1 ? "was" : "were"} kept by another run: run \`corpus run\` again.`;
+    return `${stale} of the first pass's last run's ${record.ids.length} documents ${stale === 1 ? "was" : "were"} kept by another run`;
   return undefined;
 }
 

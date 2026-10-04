@@ -98,8 +98,8 @@ export interface ImportRow {
     kept: Partial<Record<LockReason, number>>;
     /** The candidates each of check 2's texts stopped the compile with. */
     stops: { long: number; special: number; empty: number };
-    /** Whether they take letters of other scripts, Greek and Cyrillic. */
-    scripts: boolean;
+    /** Whether they take letters of other scripts, Greek and Cyrillic, each tried apart. */
+    scripts: { greek: boolean; cyrillic: boolean };
   };
   /** Its groups of units, their units, those fixed by why, and those each kind of trial kept. */
   groups?: {
@@ -157,7 +157,8 @@ export function importSummary(rows: readonly ImportRow[]): ImportSummary {
     ImportOutcome,
     number
   >;
-  for (const row of rows) outcomes[row.outcome]++;
+  // A row of an outcome the outline's run never gives, as a first pass's file holds, is no count.
+  for (const row of rows) if (row.outcome in outcomes) outcomes[row.outcome]++;
   const words: ImportWords = { body: 0, editable: 0, retype: 0, locked: 0, byReason: {} };
   for (const row of rows.filter(imported)) {
     const each = row.words;
@@ -345,7 +346,8 @@ export function importTable(rows: readonly ImportRow[]): string {
     ...(["long", "special", "empty"] as const).map((text) =>
       sum(`Stop the compile with the ${text} text`, (row) => row.fields?.stops[text] ?? 0),
     ),
-    count("Documents whose fonts lack Greek or Cyrillic", (row) => row.fields?.scripts === false),
+    count("Documents whose fonts lack Greek", (row) => row.fields?.scripts.greek === false),
+    count("Documents whose fonts lack Cyrillic", (row) => row.fields?.scripts.cyrillic === false),
     section("Groups of units"),
     sum("Groups", (row) => row.groups?.found ?? 0),
     sum("Units", (row) => row.groups?.units ?? 0),

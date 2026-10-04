@@ -493,7 +493,7 @@ describe("the baseline", () => {
       documents: [],
     };
     expect(
-      baselineFromFile(run, Baseline.parse({ version: 1, run: null }), summaryOf).baseline,
+      baselineFromFile(run, Baseline.parse({ version: 1, run: null }), summaryOf, 1).baseline,
     ).toBeUndefined();
   });
 
@@ -538,7 +538,7 @@ describe("the baseline", () => {
       ...changes,
     });
     // Two in ten is 20%, over the baseline's 10%.
-    expect(baselineFromFile(file(), baseline, summaryOf).baseline?.run).toMatchObject({
+    expect(baselineFromFile(file(), baseline, summaryOf, 1).baseline?.run).toMatchObject({
       date: "2026-10-03",
       commit: "c".repeat(40),
       documents: 10,
@@ -547,21 +547,21 @@ describe("the baseline", () => {
     });
     const refused =
       "corpus/baseline.json is not written: the file is no finished run's, naming its commit.";
-    expect(baselineFromFile(file({ complete: false }), baseline, summaryOf).line).toBe(refused);
+    expect(baselineFromFile(file({ complete: false }), baseline, summaryOf, 1).line).toBe(refused);
     expect(
-      baselineFromFile(file({ at: { date: "2026-10-03", commit: null } }), baseline, summaryOf)
+      baselineFromFile(file({ at: { date: "2026-10-03", commit: null } }), baseline, summaryOf, 1)
         .line,
     ).toBe(refused);
     const some = { documents: "some" };
-    expect(baselineFromFile(file({ mode: some }), baseline, summaryOf).baseline).toBeUndefined();
+    expect(baselineFromFile(file({ mode: some }), baseline, summaryOf, 1).baseline).toBeUndefined();
     // A run under the baseline is never adopted over it.
     const lower = rows.map((each) => ({ ...each, outcome: "partial" as const }));
-    expect(baselineFromFile(file({ documents: lower }), baseline, summaryOf).line).toBe(
+    expect(baselineFromFile(file({ documents: lower }), baseline, summaryOf, 1).line).toBe(
       "corpus/baseline.json is not written: the run falls more than a point under it, and a baseline is lowered only by a pull request that edits it.",
     );
     // Nor one whose successes miss item 14's bar, counted again from the rows.
     const bare = rows.map(({ controls: _controls, ...each }) => each);
-    expect(baselineFromFile(file({ documents: bare }), baseline, summaryOf).line).toBe(
+    expect(baselineFromFile(file({ documents: bare }), baseline, summaryOf, 1).line).toBe(
       "corpus/baseline.json is not written: 2 successes lack the page size, the margins or the font size, item 14's bar.",
     );
   });
@@ -669,7 +669,7 @@ describe("the run and compare commands", () => {
     writeFileSync(
       unfinished,
       JSON.stringify({
-        version: 1,
+        version: 2,
         at: { date: "2026-10-03", commit: "c".repeat(40) },
         mode: { documents: "all" },
         complete: false,

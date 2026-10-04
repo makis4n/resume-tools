@@ -853,13 +853,25 @@ export function nextBaseline(input: {
  * What `--write-baseline --from <run.json>` does with a run's file, as CI's run leaves it: the
  * baseline it gives, or why none, as `nextBaseline` has it, the run's summary counted again from its
  * rows by `summarize` (`importSummary` for `corpus run`'s), its day and its commit its own; only a
- * file of a finished run over the whole corpus, which names its commit, gives one.
+ * file of a finished run over the whole corpus, which names its commit, gives one, and only one of
+ * the `version` the summary reads: the outline's runs are version 2 (`ImportFile`) and the first
+ * pass's version 1, whose rows `importSummary` cannot count, and which is refused in plain words.
  */
 export function baselineFromFile<Row>(
   file: unknown,
   baseline: Baseline,
   summarize: (rows: Row[]) => BaselineSummary,
+  version: number,
 ): { baseline?: Baseline; line: string } {
+  const given = z.looseObject({ version: z.unknown() }).safeParse(file);
+  const was = given.success ? given.data.version : undefined;
+  if (was !== version)
+    return {
+      line:
+        was === 1
+          ? "corpus/baseline.json is not written: the file is a first pass's run, which read naming answers, and `corpus run` takes the outline's import now, whose runs are version 2."
+          : `corpus/baseline.json is not written: the file is no run of version ${version}, the one \`corpus run\` writes.`,
+    };
   const run = z
     .looseObject({
       at: z.strictObject({ date: z.iso.date(), commit: z.string().regex(/^[0-9a-f]{40}$/) }),

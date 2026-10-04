@@ -138,7 +138,7 @@ describe.skipIf(!fetched || !engineAvailable())(
         expect(o.required, "required fields").toBe(expected.required);
         expect(o.fixed, "fixed groups").toEqual({});
         expect(o.trials.copy).toBe(o.groups);
-        expect(o.scripts).toBe(true);
+        expect(o.scripts).toEqual({ greek: true, cyrillic: true });
         expect(shown.notes.join(" ")).not.toMatch(/[\\{}]/);
         expect(outcome.document.resume.sections.map((section) => section.kind)).toEqual([
           "outline",
