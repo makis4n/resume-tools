@@ -46,7 +46,13 @@ import type { CompileResult, Engine, EngineSession } from "../engine/session";
 import type { GlyphBox } from "../page/draw";
 import type { FontLibrary } from "../page/fonts";
 import { generateBody, generateFormat } from "../templates/generate";
-import { type FontFamily, fontFiles, IMPORTED_PREFIX, TemplatePackage } from "../templates/package";
+import {
+  type FontFamily,
+  fontFiles,
+  IMPORTED_PREFIX,
+  TemplatePackage,
+  UNIT_KINDS,
+} from "../templates/package";
 import type { GlyphOwner, LockReason } from "./assemble";
 import { type Candidate, wrapEnd } from "./candidates";
 import { decodeText } from "./intake";
@@ -708,8 +714,10 @@ async function sha256(text: string): Promise<string> {
  * but that a `{{` that would begin a tag is broken and control characters go (`snippetText`), with
  * hyperref's lines (`hyperrefLines`) and, where the preamble ends with `@` a letter, its category
  * kept for the body; the upload's classes, styles and the files its preamble inputs, as text, at
- * the job's top; a XeTeX rewrite's families; no control; and a document snippet that is the
- * outline alone, `{{sections}}`. Its id is `import-` and twelve hex digits of the SHA-256 of the
+ * the job's top; a XeTeX rewrite's families; no control; a document snippet that is the outline
+ * alone, `{{sections}}`; and every kind of unit fixed, since nothing of the shared structure, a
+ * header's name or link, a section or an entry, reaches the page of an outline (item 8 adds and
+ * removes the outline's own units). Its id is `import-` and twelve hex digits of the SHA-256 of the
  * rest of it, so that the same preamble gives the same package, and the same formats.
  */
 export async function outlinePackage(input: OutlinePackageInput): Promise<TemplatePackage> {
@@ -764,6 +772,7 @@ export async function outlinePackage(input: OutlinePackageInput): Promise<Templa
         items: "\n",
       },
     },
+    fixed: [...UNIT_KINDS],
   };
   const hash = await sha256(JSON.stringify(fields));
   return TemplatePackage.parse({ id: `${IMPORTED_PREFIX}${hash.slice(0, 12)}`, ...fields });

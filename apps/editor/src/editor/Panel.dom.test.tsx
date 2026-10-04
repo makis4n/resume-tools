@@ -3,6 +3,7 @@ import { Resume } from "@resume-tools/resume-model";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { outlinePackage, outlineResume } from "../import/outline";
 import { curated } from "../templates/curated";
 import type { TemplatePackage } from "../templates/package";
 import { type Command, type Document, newDocument } from "./document";
@@ -185,5 +186,40 @@ describe("the side panel, under an imported package's rules", () => {
     expect(sent).toEqual([]);
     act(() => down?.click());
     expect(sent).toEqual([{ type: "structure", op: { op: "moveSection", id, to: 3 } }]);
+  });
+
+  it("offers an imported outline's document none of the shared structure's fields or units", async () => {
+    // A `.tex` import's package and document, invented: what the panel would add or change of a
+    // header, a link, a section or an entry never reaches its page (decision 0049).
+    const pkg = await outlinePackage({
+      engine: "pdftex",
+      preamble: "\\documentclass{article}\n",
+      files: {},
+      reference: { log: "" },
+    });
+    const resume = outlineResume([
+      { kind: "kept", latex: "\\begin{document}\n\\section*{" },
+      { kind: "rich", id: "s1", text: [{ text: "Invented heading" }] },
+      { kind: "kept", latex: "}\n\\end{document}" },
+    ]);
+    if (resume === undefined) throw new Error("refused");
+    const imported: Document = { version: 1, template: pkg.id, resume, controls: {} };
+    act(() =>
+      root.render(
+        <Panel
+          document={imported}
+          pkg={pkg}
+          onCommand={(command) => sent.push(command)}
+          onSeal={() => {}}
+        />,
+      ),
+    );
+    const labels = [...host.querySelectorAll("label")].map((label) => label.textContent ?? "");
+    expect(labels.filter((label) => /name|Kind|Role/.test(label))).toEqual([]);
+    const texts = [...host.querySelectorAll("button")].map((button) => button.textContent);
+    expect(texts.filter((text) => /^Add /.test(text ?? ""))).toEqual([]);
+    expect(host.querySelectorAll("input, select, textarea")).toHaveLength(0);
+    expect(host.textContent).toContain("Your resume as you imported it");
+    expect(sent).toEqual([]);
   });
 });
