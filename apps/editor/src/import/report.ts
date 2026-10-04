@@ -489,7 +489,7 @@ const lockedKey = (key: OwnerKey) => key.startsWith("p:") || key.startsWith("k:"
  * none of the source sets stays the template's: its own running line is its own. A field's glyphs
  * are never given on: a field the template sets on every page is locked (`twice`) by the probe.
  */
-function ownRunningLines(pages: readonly (readonly Glyph[])[], owners: OwnerKey[][]): void {
+export function ownRunningLines(pages: readonly (readonly Glyph[])[], owners: OwnerKey[][]): void {
   /** Each page's lines: stretches of its glyphs one after the other, each on one line. */
   const lines: { page: number; from: number; to: number; v: number; size: number }[] = [];
   pages.forEach((glyphs, page) => {

@@ -696,7 +696,10 @@ export function unbalanced(latex: string, macros: EngineSignatures["macros"]): b
  * is the macro `\name` (`\@protected@testopt \name \\name {}`), or a robust command's, `name `.
  * Undefined for a macro that holds data, or one the signatures did not print.
  */
-function replacementOf(macros: EngineSignatures["macros"], name: string): string | undefined {
+export function replacementOf(
+  macros: EngineSignatures["macros"],
+  name: string,
+): string | undefined {
   const macroOf = (each: string) => (Object.hasOwn(macros, each) ? macros[each] : undefined);
   const textOf = (each: string) => {
     const macro = macroOf(each);
