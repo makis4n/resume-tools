@@ -11,7 +11,7 @@ as a built-in template's does, kept text that lines up with the page keeps the r
 locked section, so its kept text carries no lock marker, and its pieces are fragments of the
 person's LaTeX, a command and the brace that opens its argument, where no marker could stand.
 Its kept text and preamble can also set the editor's markers by spellings the model does not
-refuse (item 5's review). And item 6's review found that a letter the document's fonts lack, or a
+refuse (item 5's review). And item 6's review (decision 0055) found that a letter the document's fonts lack, or a
 field of about 199,000 characters, stops the compile, which a field's edit could then save.
 
 ## Decision
@@ -57,8 +57,8 @@ field of about 199,000 characters, stops the compile, which a field's edit could
   Awesome-CV's header contacts are offered; AltaCV's wheel chart, in paracol's column, is not.
 - A field's edit on an outline is saved a compile later than a built-in template's; a tab closed in
   that second loses it, as a structural step's (decision 0041).
-- `isRequired` reads no requirement of an outline's field yet; item 6's mark is wired when this
-  rebases onto it.
+- `isRequired` reads an outline field's `required` mark, set by the import's checks (decision 0055),
+  and the side panel marks such a field's input while it holds `OUTLINE_PLACEHOLDER`.
 - `DrawOptions` gains `outline`, `collectFields` an accepted set, `Command` `retypeKept`, `History`
   `restore`, `StructureGuard.changed` `every`, `FieldSlot.snippet` `outline`, and the page's lock
   its lines (`LockTips`).

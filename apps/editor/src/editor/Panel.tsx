@@ -38,6 +38,7 @@ import {
   type Link,
   LinkKind,
   type LockedSection,
+  OUTLINE_PLACEHOLDER,
   type OutlinePart,
   type OutlineSection,
   type OutlineUnit,
@@ -750,6 +751,15 @@ function LockedRow({
   );
 }
 
+/**
+ * A required field's placeholder, which a new unit's copy of it holds until a person types in it
+ * (`OUTLINE_PLACEHOLDER`, decision 0055), so that its input marks it while it does.
+ */
+const placeholderOf = (part: OutlinePart) =>
+  (part.kind === "text" || part.kind === "rich") && part.required === true
+    ? { placeholder: OUTLINE_PLACEHOLDER }
+    : {};
+
 /** A piece of kept text's place, as a key. */
 const keptKey = (at: KeptAt) => `${at.path.join(".")}${at.gap ? "g" : ""}`;
 
@@ -846,6 +856,7 @@ function OutlineParts({
               label="Text"
               {...textField(markerOf(part.id), context.send)}
               text={part.text}
+              {...placeholderOf(part)}
             >
               <span>{firstWords(part.text)}</span>
             </FieldInput>
@@ -859,6 +870,7 @@ function OutlineParts({
               field={markerOf(part.id)}
               runs={part.text}
               send={context.send}
+              {...placeholderOf(part)}
             />
           </li>,
         ];
@@ -924,6 +936,7 @@ function UnitInputs({ parts, send }: { parts: readonly OutlinePart[]; send: Send
                 label="Text"
                 {...textField(markerOf(part.id), send)}
                 text={part.text}
+                {...placeholderOf(part)}
               />
             );
           case "rich":
@@ -933,6 +946,7 @@ function UnitInputs({ parts, send }: { parts: readonly OutlinePart[]; send: Send
                 label="Text"
                 field={markerOf(part.id)}
                 text={plainText(part.text)}
+                {...placeholderOf(part)}
                 locked={
                   part.text.some((run) => run.bold || run.italic || run.href !== undefined) &&
                   !isBlank(plainText(part.text))

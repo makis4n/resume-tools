@@ -85,6 +85,25 @@ describe("an outline's fields", () => {
     expect(history.present.resume).toEqual(after.resume);
   });
 
+  it("refuse to empty a field the import's checks found required (decision 0055)", async () => {
+    const parts = outlineParts();
+    parts[1] = { kind: "rich", id: "work", text: [{ text: "Experience" }], required: true };
+    const { pkg, document } = await inventedOutline(parts);
+    expect(() => apply(document, { type: "rich", field: "work.text", runs: [] })).toThrow(
+      CommandError,
+    );
+    const history = new History(document, pkg);
+    expect(() =>
+      history.dispatch({ type: "rich", field: "work.text", runs: [{ text: " " }] }),
+    ).toThrow(CommandError);
+    // Another text, and another field emptied, are taken.
+    history.dispatch({ type: "rich", field: "work.text", runs: [{ text: "Work" }] });
+    history.dispatch({ type: "text", field: "mill-dates.text", text: "" });
+    expect(
+      fieldsOf(history.present.resume).get("mill-dates.text")?.get(history.present.resume),
+    ).toBe("");
+  });
+
   it("refuse a text for a rich field, and a field the outline does not hold", async () => {
     const { document } = await inventedOutline();
     expect(() => apply(document, { type: "text", field: "orrery.text", text: "x" })).toThrow(

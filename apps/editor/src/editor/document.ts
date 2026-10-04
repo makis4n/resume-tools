@@ -123,11 +123,13 @@ export type FieldRef = (
  * required slots name it (`RequiredPlace`), and the name of its slot there. A labelled item's field
  * is `labelledItem`'s, an item's `item`'s, and a paragraph's text, like any section's title,
  * `section`'s. An outline's field is set by no snippet but where it stands in the outline
- * (`outline`, named by its own id).
+ * (`outline`, named by its own id), and carries whether the import's checks found it required
+ * (`OutlineText.required`, decision 0055).
  */
 export interface FieldSlot {
   snippet: RequiredPlace | "outline";
   name: string;
+  required?: boolean;
 }
 
 /**
@@ -281,7 +283,11 @@ export function fieldsOf(resume: Resume): Map<string, FieldRef> {
       const parts = under(ofKind(place, "outline"), "parts");
       for (const { part, path } of outlineFields(section.parts)) {
         const field = outlinePart(parts, path, part.id);
-        const slot: FieldSlot = { snippet: "outline", name: part.id };
+        const slot: FieldSlot = {
+          snippet: "outline",
+          name: part.id,
+          ...(part.required === true ? { required: true } : {}),
+        };
         add(
           markerOf(part.id),
           part.kind === "text"
@@ -388,7 +394,7 @@ function outlineText<T extends string | RichText>(field: Place<OutlineField>): P
  * one, requires nothing.
  */
 export function isRequired(pkg: TemplatePackage | undefined, slot: FieldSlot): boolean {
-  if (slot.snippet === "outline") return false;
+  if (slot.snippet === "outline") return slot.required === true;
   return pkg !== undefined && requiredSlots(pkg, slot.snippet).has(slot.name);
 }
 
