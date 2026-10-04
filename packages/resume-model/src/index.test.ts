@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { Extras, KeptLatex, LockedLatex, MAX_KEPT_LATEX, Resume } from "./index";
+import {
+  Extras,
+  KeptLatex,
+  LockedLatex,
+  MAX_KEPT_LATEX,
+  MAX_OUTLINE,
+  MAX_OUTLINE_DEPTH,
+  type OutlinePart,
+  type OutlineUnit,
+  outlineNodes,
+  Resume,
+} from "./index";
 
 // Everything in these resumes is invented.
 
@@ -377,5 +388,202 @@ describe("Resume, with what an import keeps", () => {
     expect(Extras.safeParse({ photo: "\\rtfield{x}{y}" }).success).toBe(false);
     expect(Extras.safeParse({ photo: "\\photo{face" }).success).toBe(false);
     expect(accepts(withEntry({ extras: { Icon: "x" } }))).toBe(false);
+  });
+});
+
+/** Kept text, a part of an outline. */
+const kept = (latex: string): OutlinePart => ({ kind: "kept", latex });
+
+/** A unit of a group, after `gap`. */
+const unit = (id: string, gap: string, parts: OutlinePart[]): OutlineUnit => ({ id, gap, parts });
+
+/**
+ * An invented resume as an outline: a preamble's call issued again with two fields, the body's
+ * kept text, a section's title, and a group of two roles, each with a group of bullets.
+ */
+const outlineParts: OutlinePart[] = [
+  kept("\\name{"),
+  { kind: "text", id: "f-first", text: "Quill" },
+  kept("}{"),
+  { kind: "text", id: "f-last", text: "Wren" },
+  kept("}\n\\begin{document}\n\\makeheader\n\\section*{"),
+  { kind: "rich", id: "f-work", text: [{ text: "Experience" }] },
+  kept("}\n"),
+  {
+    kind: "group",
+    id: "g-roles",
+    units: [
+      unit("u-lantern", "\n\n", [
+        kept("\\role{"),
+        { kind: "text", id: "f-lantern", text: "Lantern Works" },
+        kept("}{2021}\n\\begin{itemize}\n  "),
+        {
+          kind: "group",
+          id: "g-lantern",
+          units: [
+            unit("u-lantern-1", "\n  ", [
+              kept("\\item "),
+              {
+                kind: "rich",
+                id: "f-lantern-1",
+                text: [{ text: "Set " }, { text: "careful", italic: true }, { text: " type" }],
+              },
+            ]),
+            unit("u-lantern-2", "\n  ", [
+              kept("\\item "),
+              { kind: "rich", id: "f-lantern-2", text: [{ text: "Kept the press" }] },
+            ]),
+          ],
+        },
+        kept("\n\\end{itemize}"),
+      ]),
+      unit("u-mill", "\n\n", [
+        kept("\\role{"),
+        { kind: "text", id: "f-mill", text: "Mill & Sons" },
+        kept("}{2019} \\textbf "),
+        { kind: "text", id: "f-grade", text: "A", bare: true },
+      ]),
+    ],
+  },
+  kept("\n% the end\n\\end{document}"),
+];
+
+/** A resume holding an outline of `parts`, or of the invented resume's. */
+const withOutline = (parts: unknown = outlineParts, section: object = {}) => ({
+  ...minimal,
+  sections: [{ kind: "outline", id: "outline", title: "", role: "other", parts, ...section }],
+});
+
+describe("Resume, with an outline (decision 0049)", () => {
+  it("accepts an outline of kept text, fields and groups of units, unchanged", () => {
+    const resume = withOutline();
+    expect(Resume.parse(resume)).toEqual(resume);
+    expect(accepts(withOutline([]))).toBe(true);
+  });
+
+  it("walks an outline's fields, groups and units in the order they are written", () => {
+    const walked = [...outlineNodes(outlineParts)].flatMap((step) =>
+      step.kind === "unit"
+        ? [`${step.unit.id}@${step.depth}${step.first ? " first" : ""}`]
+        : step.part.kind === "kept"
+          ? []
+          : [`${step.part.id}@${step.depth}`],
+    );
+    expect(walked).toEqual([
+      "f-first@0",
+      "f-last@0",
+      "f-work@0",
+      "g-roles@0",
+      "u-lantern@1 first",
+      "f-lantern@1",
+      "g-lantern@1",
+      "u-lantern-1@2 first",
+      "f-lantern-1@2",
+      "u-lantern-2@2",
+      "f-lantern-2@2",
+      "u-mill@1",
+      "f-mill@1",
+      "f-grade@1",
+    ]);
+  });
+
+  it("refuses an outline with a title, another role, or a part it does not know", () => {
+    expect(accepts(withOutline(outlineParts, { title: "Résumé" }))).toBe(false);
+    expect(accepts(withOutline(outlineParts, { role: "experience" }))).toBe(false);
+    expect(accepts(withOutline(outlineParts, { latex: "" }))).toBe(false);
+    expect(accepts(withOutline([{ kind: "field", id: "f", text: "x" }]))).toBe(false);
+    expect(accepts(withOutline([{ kind: "text", id: "f", text: [{ text: "x" }] }]))).toBe(false);
+    expect(accepts(withOutline([{ kind: "rich", id: "f", text: "x" }]))).toBe(false);
+    expect(accepts(withOutline([{ kind: "text", id: "F", text: "x" }]))).toBe(false);
+    expect(accepts(withOutline([{ kind: "kept", latex: "x", id: "k" }]))).toBe(false);
+    expect(
+      accepts(withOutline([{ kind: "group", id: "g", units: [{ id: "u", parts: [] }] }])),
+    ).toBe(false);
+  });
+
+  it("keeps every field's, group's and unit's id unique across the document", () => {
+    const clash = (id: string) => {
+      const resume = withOutline();
+      const [section] = resume.sections;
+      return Resume.safeParse({ ...resume, sections: [{ ...section, id }] });
+    };
+    for (const id of ["f-first", "g-lantern", "u-lantern-2", "f-grade"])
+      expect(messages(clash(id)), id).toEqual([`the id ${id} is already used by another node`]);
+    const twice = [
+      { kind: "group", id: "g", units: [unit("u", "", []), unit("u", "", [])] },
+    ] as OutlinePart[];
+    expect(messages(Resume.safeParse(withOutline(twice)))).toEqual([
+      "the id u is already used by another node",
+    ]);
+  });
+
+  it("refuses kept text that holds the editor's macros or markers, however its parts meet", () => {
+    const refused =
+      "an outline's kept text holds the editor's own macros or markers, which only the generator writes";
+    const field = { kind: "text", id: "f", text: "" } as const;
+    for (const parts of [
+      [kept("\\rtfield{f.text}{x}")],
+      [kept("\\special{rt:b:f.text}")],
+      // Two pieces that make one when the field between them is empty, or a gap and its unit.
+      [kept("\\rt"), field, kept("field{f.text}{x}")],
+      [kept("\\special{rt:"), field, kept("e:f.text}")],
+      [{ kind: "group", id: "g", units: [unit("u", "", []), unit("v", "\\rtlocked{a}{b}", [])] }],
+      // A first unit's gap, which is written once the unit moves.
+      [{ kind: "group", id: "g", units: [unit("u", "\\rt@par", [])] }],
+    ] as OutlinePart[][])
+      expect(messages(Resume.safeParse(withOutline(parts))), JSON.stringify(parts)).toEqual([
+        refused,
+      ]);
+    expect(accepts(withOutline([kept("\\rtimes"), field, kept("field")]))).toBe(true);
+  });
+
+  it("refuses a piece of kept text that ends in a backslash that would escape what follows", () => {
+    const field = { kind: "text", id: "f", text: "x" } as const;
+    expect(accepts(withOutline([kept("a\\"), field]))).toBe(false);
+    expect(accepts(withOutline([kept("a\\\\\\"), field]))).toBe(false);
+    expect(accepts(withOutline([kept("a\\\\"), field]))).toBe(true);
+    expect(
+      accepts(withOutline([{ kind: "group", id: "g", units: [unit("u", "\\", [field])] }])),
+    ).toBe(false);
+  });
+
+  it("holds the braces to balance over the outline, each field a group, and in each unit", () => {
+    const field = { kind: "rich", id: "f", text: [] } as const;
+    // A command's argument opened in one piece and closed in the next, around a field.
+    expect(accepts(withOutline([kept("\\textbf{"), field, kept("}")]))).toBe(true);
+    expect(accepts(withOutline([kept("\\textbf{"), field]))).toBe(false);
+    expect(
+      accepts(withOutline([kept("\\href{https://quill.example/a%20b}{"), field, kept("}")])),
+    ).toBe(true);
+    // A unit is copied, removed and moved whole, so it balances on its own, as its gap does.
+    const across = [
+      { kind: "group", id: "g", units: [unit("u", "", [kept("{")]), unit("v", "", [kept("}")])] },
+    ] as OutlinePart[];
+    expect(messages(Resume.safeParse(withOutline(across)))).toEqual([
+      "a unit of an outline, or its gap, does not balance as TeX reads it",
+    ]);
+    const gap = [{ kind: "group", id: "g", units: [unit("u", "}", []), unit("v", "{", [])] }];
+    expect(accepts(withOutline(gap))).toBe(false);
+  });
+
+  it("holds an outline to its size and its groups to their depth", () => {
+    expect(accepts(withOutline([kept("x".repeat(MAX_OUTLINE))]))).toBe(true);
+    expect(messages(Resume.safeParse(withOutline([kept("x".repeat(MAX_OUTLINE + 1))])))).toEqual([
+      `an outline holds at most ${MAX_OUTLINE} characters`,
+    ]);
+    const half = "x".repeat(MAX_OUTLINE / 2);
+    const fields = [
+      { kind: "text", id: "a", text: half },
+      { kind: "rich", id: "b", text: [{ text: half, href: "y" }] },
+    ];
+    expect(accepts(withOutline(fields))).toBe(false);
+    const nested = (depth: number, at = 0): OutlinePart[] =>
+      at === depth
+        ? []
+        : [{ kind: "group", id: `g${at}`, units: [unit(`u${at}`, "", nested(depth, at + 1))] }];
+    expect(accepts(withOutline(nested(MAX_OUTLINE_DEPTH)))).toBe(true);
+    expect(messages(Resume.safeParse(withOutline(nested(MAX_OUTLINE_DEPTH + 1))))).toEqual([
+      `an outline's groups nest at most ${MAX_OUTLINE_DEPTH} deep`,
+    ]);
   });
 });

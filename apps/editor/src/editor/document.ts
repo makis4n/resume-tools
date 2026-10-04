@@ -265,7 +265,8 @@ export function fieldsOf(resume: Resume): Map<string, FieldRef> {
       add(`${link.id}.label`, text(label, slot("link", "label")));
     });
   resume.sections.forEach((section, s) => {
-    if (section.kind === "locked") return;
+    // An outline's fields come with the second pass's item 7, which opens them in place.
+    if (section.kind === "locked" || section.kind === "outline") return;
     const place = at(SECTIONS, s, section.id);
     const kept = keptOf(section);
     add(`${section.id}.title`, text(under(place, "title"), slot("section", "title")), kept);
@@ -802,6 +803,7 @@ function nodesOf(resume: Resume): Map<string, Located> {
       }
       case "paragraph":
       case "locked":
+      case "outline":
         break;
     }
   });
@@ -885,6 +887,9 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
     case "removeSection": {
       const { node, siblings } = find(op.id, "section");
       const { kind } = node.get(resume);
+      // An outline holds the whole of an imported resume, `\begin{document}` with it.
+      if (kind === "outline")
+        throw new CommandError(`the outline ${op.id} is the imported resume, which stays`);
       // A locked section is no unit of a kind: the user removes it as any part of the page, but
       // for one the template stops without (decision 0041).
       if (kind !== "locked") refuseUnremovable(pkg, `section.${kind}`);
@@ -904,8 +909,8 @@ function restructure(resume: Resume, op: StructureOp, pkg: TemplatePackage | und
     case "setSection": {
       const { node } = find(op.id, "section");
       const section = node.get(resume);
-      if (section.kind === "locked")
-        throw new CommandError(`the locked section ${op.id} keeps its role, other`);
+      if (section.kind === "locked" || section.kind === "outline")
+        throw new CommandError(`the ${section.kind} section ${op.id} keeps its role, other`);
       if (op.role === undefined) return resume;
       const role = checked(SectionRole, op.role, "a section's role");
       return node.put(resume, { ...section, role });

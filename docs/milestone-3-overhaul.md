@@ -223,7 +223,7 @@ closes.
 
 ### Stage 1. A `.tex` import that keeps its own shape
 
-4. [ ] **The outline in the shared model.** `packages/resume-model` gains, additively, a section
+4. [x] **The outline in the shared model.** `packages/resume-model` gains, additively, a section
    kind that holds an outline: kept LaTeX, fields of plain or rich text, and groups whose units
    repeat. The generator writes it: kept text byte for byte, each field escaped inside the editor's
    marker, as it writes a slot today. Nothing of the built-in templates changes, and no second type

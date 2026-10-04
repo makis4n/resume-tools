@@ -56,6 +56,10 @@ import { isRefusal, type Refusal } from "./refusal";
 import { LAYOUT_TYPEOUT, layoutOfLog, signatures } from "./signatures";
 import type { XetexRewrite } from "./xetex";
 
+/** A section's extras: an outline, which the assembly never makes, keeps none. */
+const extrasOf = (section: Section | undefined) =>
+  section === undefined || section.kind === "outline" ? undefined : section.extras;
+
 // Every document, class, answer and verdict here is invented for these tests
 // (`../test/invented-import.ts`); nothing is taken from a real resume.
 
@@ -478,8 +482,8 @@ describe("the document", () => {
     const kinds = result.document.resume.sections.map((section) => section.kind);
     expect(kinds).toEqual(["entries", "list", "paragraph"]);
     const skills = sectionOf(result, 1);
-    expect(skills.extras?.after).toContain("\\verb|Invented|");
-    expect(skills.extras?.after).toContain("\\cvunknown{Invented aside}");
+    expect(extrasOf(skills)?.after).toContain("\\verb|Invented|");
+    expect(extrasOf(skills)?.after).toContain("\\cvunknown{Invented aside}");
     // Before any section, there is nowhere to keep it.
     const before = await assembled({
       body: BODY.replace("\\cvheader\n", "\\cvheader\n\\verb|x|\n"),
@@ -499,8 +503,8 @@ describe("the document", () => {
     const result = ok((await assembled({ body })).result);
     const skills = sectionOf(result, 1);
     expect(skills.kind).toBe("list");
-    expect(skills.extras?.before).toContain("\\cvlistStart");
-    expect(skills.extras?.after).toBe("\n\\cvlistEnd");
+    expect(extrasOf(skills)?.before).toContain("\\cvlistStart");
+    expect(extrasOf(skills)?.after).toBe("\n\\cvlistEnd");
     // What stands after the closer is a locked part of its own, as before.
     const locked = sectionOf(result, 2);
     expect(locked.kind === "locked" && locked.latex).toBe("\n\n\\vspace{2pt}%");
@@ -549,7 +553,7 @@ describe("the document", () => {
     const skills = ok((await assembled({ body: last })).result);
     const section = skills.document.resume.sections.at(-1);
     expect(section?.kind).toBe("list");
-    expect(section?.extras?.after).toBe("\n\\cvlistEnd");
+    expect(extrasOf(section)?.after).toBe("\n\\cvlistEnd");
     expect(skills.package.snippets.document).not.toContain("\\cvlistEnd");
     const count = (latex: string, name: string) => latex.split(name).length - 1;
     const balanced = (result: Assembled, resume: Resume) => {
@@ -578,7 +582,7 @@ describe("the document", () => {
     const entries = ok((await assembled({ body: entriesLast })).result);
     const work = entries.document.resume.sections.at(-1);
     expect(work?.kind).toBe("entries");
-    expect(work?.extras?.before ?? "").not.toContain("\\cvlistStart");
+    expect(extrasOf(work)?.before ?? "").not.toContain("\\cvlistStart");
     expect(entries.package.snippets.document).not.toContain("\\cvlistEnd");
     expect(balanced(entries, without(entries, work?.id ?? ""))).toBe(true);
 
@@ -730,7 +734,7 @@ describe("the document", () => {
     );
     const kept = sectionOf(locked, 1);
     expect(kept.kind === "labelled" && kept.items).toEqual([]);
-    expect(kept.extras?.items).toContain("\\item[Tools] Another skill");
+    expect(extrasOf(kept)?.items).toContain("\\item[Tools] Another skill");
   });
 
   test("reads a list of bullets a section holds alone, between the answer's opener and closer", async () => {
@@ -901,7 +905,7 @@ describe("a template of environments, with its header in the body", () => {
     const skills = locked.document.resume.sections[1];
     if (skills?.kind !== "labelled") throw new Error("the skills");
     expect(skills.items).toEqual([]);
-    expect(skills.extras?.items).toContain("\\cvskill{Languages}{Invented, Words}");
+    expect(extrasOf(skills)?.items).toContain("\\cvskill{Languages}{Invented, Words}");
     expect(locked.extras).toContainEqual(
       expect.objectContaining({ kind: "list", key: "items", reason: "alignment" }),
     );
@@ -1712,7 +1716,7 @@ Invented words of an invented summary.
       (section) => section.title === "Invented skills",
     );
     expect(skills?.kind).toBe("list");
-    expect(skills?.extras?.after).toContain("\\cvlistEnd");
+    expect(extrasOf(skills)?.after).toContain("\\cvlistEnd");
     expect(compiles(result.package, result.document.resume)).toBe(true);
     const removed = apply(result.document, {
       type: "structure",

@@ -728,7 +728,7 @@ export interface PlaceCount {
 interface Nodes {
   header: { links: readonly { id: string }[] };
   sections: readonly (
-    | { kind: "locked"; id: string }
+    | { kind: "locked" | "outline"; id: string }
     | {
         kind: "entries";
         id: string;

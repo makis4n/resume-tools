@@ -1,6 +1,12 @@
+import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Resume } from "@resume-tools/resume-model";
+import {
+  type OutlinePart,
+  type OutlineUnit,
+  Resume,
+  type RichText,
+} from "@resume-tools/resume-model";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { z } from "zod";
 import type { EngineManifest } from "../engine/manifest";
@@ -8,9 +14,11 @@ import { isFormatName } from "../engine/names";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { CompileResult, EngineSession } from "../engine/session";
 import { difference, glyphStream } from "../import/reference";
+import type { ImportReport } from "../import/run";
 import { type DrawnPage, drawPage } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
+import { DocumentStore } from "../storage/store";
 import { bound, fastest } from "../test/timing";
 import { type PageItem, parseDvi } from "../tex/dvi";
 import { alignGlyphs, collectFields, MARKER_BEGIN, MARKER_END } from "../tex/fields";
@@ -2194,5 +2202,311 @@ describe.skipIf(!engineAvailable())("what an import keeps, through the engine", 
     expect(set(without.items, "cmbx10").join("")).not.toContain("New");
     expect(rules(withThem.items).length).toBeGreaterThan(rules(without.items).length);
     expect(withThem.fields).toEqual(without.fields);
+  }, 60_000);
+});
+
+// The outline (decision 0049). Everything in it is invented.
+
+/** Kept text, a part of an outline. */
+const keptText = (latex: string): OutlinePart => ({ kind: "kept", latex });
+
+/** A field of plain text, or of rich text from runs, in an outline. */
+const plain = (id: string, text: string, bare = false): OutlinePart => ({
+  kind: "text",
+  id,
+  text,
+  ...(bare ? { bare } : {}),
+});
+const richField = (id: string, text: RichText): OutlinePart => ({ kind: "rich", id, text });
+
+/** A unit of a group, after `gap`. */
+const unitOf = (id: string, gap: string, parts: OutlinePart[]): OutlineUnit => ({
+  id,
+  gap,
+  parts,
+});
+
+/** A role's unit: its call, with four fields, and its list of bullets, a group of its own. */
+function roleUnit(
+  id: string,
+  gap: string,
+  texts: [string, string, string, string],
+  bullets: RichText[],
+) {
+  const [company, place, title, dates] = texts;
+  return unitOf(id, gap, [
+    keptText("\\role{"),
+    plain(`${id}-company`, company),
+    keptText("}{"),
+    plain(`${id}-place`, place),
+    keptText("}{"),
+    richField(`${id}-title`, [{ text: title }]),
+    keptText("}{"),
+    plain(`${id}-dates`, dates),
+    keptText("}\n\\begin{itemize}\n  "),
+    {
+      kind: "group",
+      id: `${id}-bullets`,
+      units: bullets.map((runs, b) =>
+        unitOf(`${id}-${b + 1}`, "\n  ", [
+          keptText("\\item "),
+          richField(`${id}-${b + 1}-text`, runs),
+        ]),
+      ),
+    },
+    keptText("\n\\end{itemize}"),
+  ]);
+}
+
+/**
+ * An invented resume as an outline would hold it, the whole of its LaTeX after its preamble: the
+ * preamble's call that stores the name, issued again with its two fields; `\begin{document}`; a
+ * section's title; a group of two roles, each with a group of bullets, one with a link whose
+ * address holds a % and a #, and fields holding characters TeX takes as its own; a section kept
+ * whole, a comment in it; a word set by an argument given as one token; and `\end{document}`.
+ */
+const OUTLINE_PARTS: OutlinePart[] = [
+  keptText("\\name{"),
+  plain("name-first", "Quill"),
+  keptText("}{"),
+  plain("name-last", "Wren"),
+  keptText("}\n\n\\begin{document}\n\\makeheader\n\n\\section*{"),
+  richField("work-title", [{ text: "Experience" }]),
+  keptText("}\n"),
+  {
+    kind: "group",
+    id: "roles",
+    units: [
+      roleUnit(
+        "lantern",
+        "\n\n",
+        ["Lantern Works", "Harbour City", "Typesetting engineer", "2021 -- 2024"],
+        [
+          [{ text: "Set " }, { text: "careful", italic: true }, { text: " type for 40 journals" }],
+          [
+            { text: "Kept " },
+            { text: "the press", bold: true, href: "https://press.example/a%20b#top" },
+            { text: " running" },
+          ],
+        ],
+      ),
+      roleUnit(
+        "mill",
+        "\n\n% the role before it\n",
+        ["Mill & Sons, R&D", "Eastmere", "Apprentice", "2019"],
+        [[{ text: "Cut 50% of the waste, #1 in the shop" }]],
+      ),
+    ],
+  },
+  keptText(
+    "\n\n\\section*{Hobbies \\& clubs} % kept as it was\nRowing, 50\\% of weekends.\n\nGrade: \\textbf ",
+  ),
+  plain("grade", "A", true),
+  keptText("\n\\end{document}"),
+];
+
+/** The resume of an outline document: an empty header, and the outline. */
+const OUTLINED = Resume.parse({
+  version: 1,
+  header: { name: { first: "", last: "" }, links: [] },
+  sections: [{ kind: "outline", id: "outline", title: "", role: "other", parts: OUTLINE_PARTS }],
+});
+
+/**
+ * An imported package for the outline, invented: its preamble defines the template's macros and
+ * stores the name as Awesome-CV does, and its document is the outline alone, which holds
+ * `\begin{document}`, so that the preamble's call issued again goes before it.
+ */
+const outlinedInput: PackageInput = (() => {
+  const copy = structuredClone(input);
+  copy.id = "import-0a1b2c3d4e5f";
+  copy.name = "Invented import";
+  copy.files = {};
+  copy.controls = {};
+  copy.preamble = [
+    "\\documentclass[11pt,dvipdfmx]{article}",
+    "\\usepackage[margin=0.8in]{geometry}",
+    "\\usepackage[hidelinks]{hyperref}",
+    "\\pagestyle{empty}",
+    "\\setlength{\\parindent}{0pt}",
+    "\\renewcommand{\\labelitemi}{$\\bullet$}",
+    "\\makeatletter",
+    "\\newcommand*{\\name}[2]{\\def\\@firstname{#1}\\def\\@lastname{#2}}",
+    "\\newcommand*{\\makeheader}{\\begin{center}{\\LARGE\\bfseries\\@firstname\\ \\@lastname}\\end{center}}",
+    "\\makeatother",
+    "\\newcommand{\\role}[4]{\\textbf{#1} \\hfill #2\\par\\textit{#3} \\hfill \\textit{#4}\\par}",
+    "\\name{}{}",
+  ].join("\n");
+  copy.snippets.document = "{{sections}}";
+  return copy;
+})();
+const outlined = parsePackage(outlinedInput);
+
+describe("generateBody, with an outline", () => {
+  it("writes kept text byte for byte, and each field escaped in its marker, as a slot", () => {
+    const { latex, texts } = generateBody(outlined, OUTLINED, {});
+    const mark = (id: string, inside: string) => `\\rtfield{${id}.text}{${inside}}`;
+    const lantern = [
+      "\\role{",
+      mark("lantern-company", "Lantern Works"),
+      "}{",
+      mark("lantern-place", "Harbour City"),
+      "}{",
+      mark("lantern-title", "Typesetting engineer"),
+      "}{",
+      mark("lantern-dates", escapeText("2021 -- 2024")),
+      "}\n\\begin{itemize}\n  \\item ",
+      mark("lantern-1-text", "Set \\textit{careful} type for 40 journals"),
+      "\n  \\item ",
+      mark(
+        "lantern-2-text",
+        "Kept \\href{https://press.example/a\\%20b\\#top}{\\textbf{the press}} running",
+      ),
+      "\n\\end{itemize}",
+    ].join("");
+    const mill = [
+      "\\role{",
+      mark("mill-company", escapeText("Mill & Sons, R&D")),
+      "}{",
+      mark("mill-place", "Eastmere"),
+      "}{",
+      mark("mill-title", "Apprentice"),
+      "}{",
+      mark("mill-dates", "2019"),
+      "}\n\\begin{itemize}\n  \\item ",
+      mark("mill-1-text", escapeText("Cut 50% of the waste, #1 in the shop")),
+      "\n\\end{itemize}",
+    ].join("");
+    expect(latex).toBe(
+      [
+        `\\name{${mark("name-first", "Quill")}}{${mark("name-last", "Wren")}}`,
+        "\n\n\\begin{document}\n\\makeheader\n\n\\section*{",
+        mark("work-title", "Experience"),
+        "}\n",
+        // The first unit's gap is not written; the second's is, comment and all.
+        lantern,
+        "\n\n% the role before it\n",
+        mill,
+        "\n\n\\section*{Hobbies \\& clubs} % kept as it was\nRowing, 50\\% of weekends.\n\nGrade: \\textbf ",
+        // An argument given as one token: its field in braces of its own.
+        `{${mark("grade", "A")}}`,
+        "\n\\end{document}\n",
+      ].join(""),
+    );
+    expect(escapeText("Mill & Sons, R&D")).toBe("Mill \\& Sons, R\\&D");
+    // Every field, by its id, with the text the page shows for it.
+    expect(Object.fromEntries(texts)).toEqual({
+      "name-first.text": "Quill",
+      "name-last.text": "Wren",
+      "work-title.text": "Experience",
+      "lantern-company.text": "Lantern Works",
+      "lantern-place.text": "Harbour City",
+      "lantern-title.text": "Typesetting engineer",
+      "lantern-dates.text": "2021 -- 2024",
+      "lantern-1-text.text": "Set careful type for 40 journals",
+      "lantern-2-text.text": "Kept the press running",
+      "mill-company.text": "Mill & Sons, R&D",
+      "mill-place.text": "Eastmere",
+      "mill-title.text": "Apprentice",
+      "mill-dates.text": "2019",
+      "mill-1-text.text": "Cut 50% of the waste, #1 in the shop",
+      "grade.text": "A",
+    });
+    // No snippet sets it, so it is the same through every package, among the sections.
+    expect(generateBody(pkg, OUTLINED, {}).latex).toContain(`\n${latex.slice(0, -1)}\n`);
+  });
+
+  it("writes nothing for a blank field, but the braces of a bare one", () => {
+    const parts: OutlinePart[] = [
+      keptText("\\textbf{"),
+      plain("blank", " "),
+      keptText("} \\textbf "),
+      plain("bare", "", true),
+      keptText(" "),
+      richField("runs", [{ text: "" }, { text: "", bold: true }]),
+    ];
+    const resume = Resume.parse({
+      ...OUTLINED,
+      sections: [{ kind: "outline", id: "outline", title: "", role: "other", parts }],
+    });
+    const { latex, texts } = generateBody(outlined, resume, {});
+    expect(latex).toBe("\\textbf{} \\textbf {} \n");
+    expect(texts.size).toBe(0);
+  });
+
+  it("ends a kept piece whose last line holds a comment, and leaves the rest as it is", () => {
+    const parts: OutlinePart[] = [
+      keptText("a % note"),
+      plain("word", "word"),
+      keptText("\\% b"),
+      plain("other", "other"),
+    ];
+    const resume = Resume.parse({
+      ...OUTLINED,
+      sections: [{ kind: "outline", id: "outline", title: "", role: "other", parts }],
+    });
+    expect(generateBody(outlined, resume, {}).latex).toBe(
+      "a % note\n\\rtfield{word.text}{word}\\% b\\rtfield{other.text}{other}\n",
+    );
+  });
+});
+
+// Needs `.engine/` (pnpm --filter @resume-tools/editor fetch-engine).
+describe.skipIf(!engineAvailable())("an outline through the store and the engine", () => {
+  it("is stored, read back, generated and compiled, and the page marks every field", async () => {
+    // Through the store, as an import is kept (decision 0038): the package, and the document.
+    const store = new DocumentStore({ name: "generate-outline" });
+    const document = { version: 1 as const, template: outlined.id, resume: OUTLINED, controls: {} };
+    const id = await store.importDocument({
+      package: outlined,
+      document,
+      report: {} as ImportReport,
+      upload: {
+        files: [{ name: "cv.tex", bytes: new TextEncoder().encode("\\name{Quill}{Wren}") }],
+      },
+      job: { files: {}, images: [] },
+    });
+    const stored = await store.get(id);
+    const template = await store.templateOf(outlined.id, id);
+    await store.close();
+    if (stored === undefined || template === undefined) throw new Error("the import was not kept");
+    expect(stored.document).toEqual(document);
+
+    const session = await startNodeSession();
+    const format = generateFormat(template.package, stored.document.controls);
+    const dumped = session.dump("pdftex", format.name, format.preamble, format.files);
+    if (!dumped.ok) throw new Error(dumped.error);
+    const body = generateBody(template.package, stored.document.resume, stored.document.controls);
+    const result = session.compile("pdftex", format.name, body.latex, { job: "outline" });
+    if (!result.output) throw new Error(result.error);
+    expect(result.ok).toBe(true);
+    expect(result.log).not.toMatch(/^! /m);
+    expect(result.pages).toBe(1);
+
+    // Every field's markers are on the page, the preamble's call's among them, and nothing else's.
+    const fields = parseDvi(result.output, () => undefined).pages.flatMap((page) => [
+      ...collectFields(page, () => undefined).keys(),
+    ]);
+    expect(body.texts.size).toBe(15);
+    expect([...fields].sort()).toEqual([...body.texts.keys()].sort());
+    // And the page reads every glyph of each as its text, every one matched.
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    const fonts = new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+      readFileSync(join(ENGINE_DIR, "files", path)),
+    );
+    const page = await drawPage(result.output, fonts, body.texts);
+    expect([...page.fields.keys()].sort()).toEqual([...body.texts.keys()].sort());
+    expect(page.unmatched).toBe(0);
+    expect(page.missingFonts).toEqual(new Map());
+    const spelt = (field: string) =>
+      page.glyphs
+        .filter((glyph) => glyph.field === field)
+        .map((glyph) => glyph.text ?? "")
+        .join("");
+    expect(spelt("name-first.text")).toBe("Quill");
+    expect(spelt("mill-company.text")).toBe("Mill&Sons,R&D");
+    expect(spelt("mill-1-text.text")).toBe("Cut50%ofthewaste,#1intheshop");
   }, 60_000);
 });

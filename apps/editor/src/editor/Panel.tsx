@@ -31,6 +31,7 @@ import {
   type Link,
   LinkKind,
   type LockedSection,
+  type OutlineSection,
   type RichText,
   SECTION_KINDS,
   SECTION_ROLES,
@@ -204,11 +205,22 @@ export function holdsContent(section: Section): boolean {
       return !isBlank(plainText(section.text));
     case "locked":
       return !isBlank(section.latex);
+    case "outline":
+      return section.parts.length > 0;
   }
 }
 
-/** Any section but a locked one, which no field edits and the panel moves and removes. */
-type EditableSection = Exclude<Section, LockedSection>;
+/**
+ * What the panel says of an outline, an imported resume in its own shape, whose parts the page
+ * edits; the panel lists them with the second pass's item 7.
+ */
+const OUTLINE = "Your resume as you imported it";
+
+/**
+ * Any section but a locked one, which no field edits and the panel moves and removes, and an
+ * outline, which holds an imported resume in its own shape.
+ */
+type EditableSection = Exclude<Section, LockedSection | OutlineSection>;
 
 /** Each kind of section in plain English. */
 const KIND_NAMES: Readonly<Record<SectionKind, string>> = {
@@ -562,7 +574,11 @@ function Sections({
       {sections.length > 0 && (
         <ol style={STYLE.list}>
           {sections.map((section, index) =>
-            section.kind === "locked" ? (
+            section.kind === "outline" ? (
+              <li key={section.id} style={STYLE.row}>
+                <span>{OUTLINE}</span>
+              </li>
+            ) : section.kind === "locked" ? (
               <LockedRow
                 key={section.id}
                 section={section}

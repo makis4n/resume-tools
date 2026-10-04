@@ -16,7 +16,9 @@
  * lock markers (`\rtlocked`), the second through an extras slot (decision 0025). A slot a node
  * keeps (`kept`) is set through its extra alone: the model's value for it sets nothing, markers
  * included; and where an entry or a section has no extra under an extras slot's key, as a unit the
- * user adds has none, the slot writes its package's default for the key (decision 0026).
+ * user adds has none, the slot writes its package's default for the key (decision 0026). An
+ * outline's kept text is the other (decision 0049): written as it is, around fields escaped and
+ * marked as any slot's (`outlinePart`).
  */
 
 import type {
@@ -25,11 +27,14 @@ import type {
   Header,
   Link,
   LockedSection,
+  OutlinePart,
+  OutlineSection,
   Resume,
   RichText,
   Section,
   SectionRole,
 } from "@resume-tools/resume-model";
+import { outlineNodes } from "@resume-tools/resume-model";
 import { INVISIBLE } from "../tex/fields";
 import { type RunBreaks, runBreaks, runBreaksWithin, UNBROKEN_RUN } from "../tex/runs";
 import { formatDates } from "./dates";
@@ -556,10 +561,11 @@ function linkPart(build: Build, link: Link): Part | undefined {
 
 /**
  * A section through its kind's snippet, and everything in it through its role's variants; a
- * locked one through no snippet (`lockedPart`).
+ * locked one and an outline through no snippet (`lockedPart`, `outlinePart`).
  */
 function sectionPart(build: Build, section: Section): Part {
   if (section.kind === "locked") return lockedPart(section);
+  if (section.kind === "outline") return outlinePart(section);
   const { snippets } = build.pkg;
   const { role, kept: keeps } = section;
   const nodes = build.tree(byRole(snippets.section[section.kind], role));
@@ -624,6 +630,39 @@ function sectionPart(build: Build, section: Section): Part {
 function lockedPart(section: LockedSection): Part {
   const text = `\\rtlocked{${section.id}}{${section.latex}\n}`;
   return { nodes: [{ kind: "text", text }], scope: {} };
+}
+
+/**
+ * An outline (decision 0049): its parts in order, through no snippet, so that it renders the same
+ * in every package, where it sits among the sections. Kept text is written as the upload had it,
+ * never escaped, with a line's end after a piece whose last line holds a comment (`kept`), which a
+ * piece cut from the upload's own LaTeX never has; a field as a slot of its type is, escaped in its
+ * marker, `<id>.text`, and nothing for a blank one, in braces of its own where it is `bare`; and a
+ * group's units one after the other, each after its gap but the first.
+ */
+function outlinePart(section: OutlineSection): Part {
+  const nodes: SnippetNode[] = [];
+  const scope: Record<string, Value> = {};
+  const keep = (latex: string) => {
+    if (latex !== "") nodes.push({ kind: "text", text: kept(latex) });
+  };
+  for (const step of outlineNodes(section.parts)) {
+    if (step.kind === "unit") {
+      if (!step.first) keep(step.unit.gap);
+      continue;
+    }
+    const part: OutlinePart = step.part;
+    if (part.kind === "kept") keep(part.latex);
+    else if (part.kind === "text" || part.kind === "rich") {
+      const field = `${part.id}.text`;
+      scope[part.id] =
+        part.kind === "text" ? textSlot(field, part.text) : richSlot(field, part.text);
+      if (part.bare === true) nodes.push({ kind: "text", text: "{" });
+      nodes.push({ kind: "slot", name: part.id, raw: false });
+      if (part.bare === true) nodes.push({ kind: "text", text: "}" });
+    }
+  }
+  return { nodes, scope };
 }
 
 function entryPart(build: Build, entry: Entry, role: SectionRole): Part {

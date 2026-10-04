@@ -8,6 +8,7 @@ import {
   LabelledItem,
   Link,
   LockedSection,
+  OutlineSection,
   SECTION_KEPT,
   SECTION_KINDS,
   Section,
@@ -334,13 +335,15 @@ describe("slot vocabularies", () => {
     expect(slots(HEADER_SLOTS)).toEqual(
       [...fields(Header, "name", "extras", "kept"), "first", "last", "contacts"].sort(),
     );
-    // A locked section is set by no snippet, so it has no slots: every other kind has a snippet
-    // whose slots are its fields (decision 0025).
+    // A locked section and an outline are set by no snippet, so they have no slots: every other
+    // kind has a snippet whose slots are its fields (decisions 0025 and 0049).
     const kinds = Section.options.map((option) => option.shape.kind.value);
-    expect([...kinds].sort()).toEqual([...SECTION_KINDS, LockedSection.shape.kind.value].sort());
+    expect([...kinds].sort()).toEqual(
+      [...SECTION_KINDS, LockedSection.shape.kind.value, OutlineSection.shape.kind.value].sort(),
+    );
     for (const option of Section.options) {
       const kind = option.shape.kind.value;
-      if (kind === "locked") continue;
+      if (kind === "locked" || kind === "outline") continue;
       expect(slots(SECTION_SLOTS[kind])).toEqual(
         fields(option, "id", "kind", "role", "extras", "kept"),
       );
