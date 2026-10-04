@@ -125,6 +125,6 @@ describe.skipIf(!fetched || !engineAvailable())(
           report.locked.filter((each) => /[\\{}]/.test(each.words)).length,
           "a backslash or a brace",
         ).toBe(0);
-      }, 60_000);
+      }, 180_000); // AltaCV alone takes about 40 s; a loaded machine or CI more than doubles it.
   },
 );
