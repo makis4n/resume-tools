@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc --noEmit -p functions",
     "test": "vitest run",
-    "spike-pdf": "node scripts/spike-pdf.ts"
+    "spike-pdf": "node scripts/spike-pdf.ts",
+    "pdf-model": "node scripts/pdf-model.ts"
   },
   "dependencies": {
     "@resume-tools/contracts": "workspace:*",

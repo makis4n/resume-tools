@@ -11,16 +11,20 @@
  * (decision 0038); a refusal comes back as the list's notice, the refusal's own words, which never
  * show LaTeX. An import that came through partial, under the bar or with its page moved, waits on
  * the person with its report in place of the progress line (milestone 3 item 13, decision 0039):
- * continue, and the document opens as it is; stop, and nothing of it is kept.
+ * continue, and the document opens as it is; stop, and nothing of it is kept. Beside the way in
+ * sits the setting that says whether a PDF's text may be sent to the reading service (milestone 3
+ * second pass, item 13, decision 0047).
  */
 
 import type { DragEvent } from "react";
 import { useState } from "react";
 import { PRIVACY_NOTE } from "../import/privacy";
 import type { Report } from "../import/report";
+import type { PdfConsent } from "../pdf/consent";
 import type { Summary } from "../storage/store";
 import { CURATED } from "../templates/curated";
 import { ImportReport } from "./ImportReport";
+import { PdfReadingSetting } from "./PdfReading";
 
 /**
  * Where an import is, as the progress line says it: its step's name, and the compiles so far, for
@@ -57,6 +61,11 @@ export interface DocumentListProps {
   onCancelImport?(): void;
   /** A partial import waiting on the person, if one is, which nothing else starts beside. */
   waiting?: ImportWaiting;
+  /**
+   * Whether a PDF's text may be sent to the reading service, and the setting that changes it
+   * (milestone 3 second pass, item 13).
+   */
+  pdfReading?: { consent: PdfConsent | undefined; onChange(answer: PdfConsent): void };
 }
 
 const MINUTE = 60_000;
@@ -121,6 +130,7 @@ export function DocumentList({
   importing,
   onCancelImport,
   waiting,
+  pdfReading,
 }: DocumentListProps) {
   const [choosing, setChoosing] = useState(false);
   const [over, setOver] = useState(false);
@@ -208,6 +218,9 @@ export function DocumentList({
                 : "Or drop your .tex file or zip anywhere here."}{" "}
               {PRIVACY_NOTE}
             </p>
+          )}
+          {pdfReading && (
+            <PdfReadingSetting consent={pdfReading.consent} onChange={pdfReading.onChange} />
           )}
           {choosing && (
             <ul aria-label="Templates">

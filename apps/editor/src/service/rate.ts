@@ -103,13 +103,24 @@ function untilFull(buckets: Buckets, limits: RateLimits): number {
   );
 }
 
+/** Buckets that hold too little for a request, as a refusal with the seconds until they do not. */
+function refusalOf(buckets: Buckets, limits: RateLimits): RateDecision | undefined {
+  if (buckets.minute >= WHOLE && buckets.day >= WHOLE && buckets.chars >= WHOLE) return undefined;
+  const wait = Math.max(
+    waitFor(buckets.minute, limits.perMinute, MINUTE),
+    waitFor(buckets.day, limits.perDay, DAY),
+    waitFor(buckets.chars, limits.charsPerDay, DAY),
+  );
+  return { allowed: false, retryAfter: Math.max(1, Math.ceil(wait)) };
+}
+
 /**
- * A request from the address whose key is `address`: allowed, with a token taken from each of its
- * request buckets, or refused, with the whole seconds until both hold one and its characters are no
- * longer spent. A store that cannot read or keep the buckets lets the request through uncounted,
- * and the decision names what it threw.
+ * Whether a request from the address whose key is `address` would be allowed now, read and written
+ * nothing: for a route that refuses an address past its limits before it reads a body, and counts
+ * the request once it knows what it costs (`take` with its characters), in one write. A store that
+ * cannot read lets the request through, and the decision names what it threw.
  */
-export async function take(
+export async function peek(
   store: RateStore,
   address: string,
   now: number,
@@ -121,19 +132,38 @@ export async function take(
   } catch (error) {
     return { allowed: true, failed: classOf(error) };
   }
-  const buckets = refill(held, now, limits);
-  if (buckets.minute < WHOLE || buckets.day < WHOLE || buckets.chars < WHOLE) {
-    const wait = Math.max(
-      waitFor(buckets.minute, limits.perMinute, MINUTE),
-      waitFor(buckets.day, limits.perDay, DAY),
-      waitFor(buckets.chars, limits.charsPerDay, DAY),
-    );
-    return { allowed: false, retryAfter: Math.max(1, Math.ceil(wait)) };
+  return refusalOf(refill(held, now, limits), limits) ?? { allowed: true };
+}
+
+/**
+ * A request from the address whose key is `address`: allowed, with a token taken from each of its
+ * request buckets and `chars` from its characters, below nothing if they must, all in one write,
+ * or refused, with the whole seconds until both hold one and its characters are no longer spent.
+ * One write a request matters on KV, which refuses a second write to a key within a second. A store
+ * that cannot read or keep the buckets lets the request through uncounted, and the decision names
+ * what it threw.
+ */
+export async function take(
+  store: RateStore,
+  address: string,
+  now: number,
+  limits: RateLimits,
+  chars = 0,
+): Promise<RateDecision> {
+  let held: Buckets | undefined;
+  try {
+    held = await store.get(address);
+  } catch (error) {
+    return { allowed: true, failed: classOf(error) };
   }
+  const buckets = refill(held, now, limits);
+  const refused = refusalOf(buckets, limits);
+  if (refused !== undefined) return refused;
   const spent: Buckets = {
     ...buckets,
     minute: Math.max(0, buckets.minute - 1),
     day: Math.max(0, buckets.day - 1),
+    chars: buckets.chars - Math.max(0, chars),
   };
   try {
     await store.put(address, spent, untilFull(spent, limits));

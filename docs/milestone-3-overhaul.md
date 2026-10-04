@@ -291,7 +291,7 @@ closes.
     and is flagged. What fits nowhere goes to a last section and is flagged, so nothing is dropped:
     a check counts every word read against the resume built. Done when the targets item 3 set for
     rules are met on the three sets.
-13. [ ] **The hosted model for the labels, with consent.** It replaces only the first step of
+13. [x] **The hosted model for the labels, with consent.** It replaces only the first step of
     item 12. The first time a person imports a PDF, they are asked whether PDFs' text may be sent
     to the reading service, in plain words that say what is sent and that nothing is kept. The
     answer is remembered in that browser, a setting changes it, and every later import says in one

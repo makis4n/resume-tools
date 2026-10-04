@@ -18,11 +18,12 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { DEFAULT_MODEL, soclaasModel } from "@resume-tools/naming/providers";
 import { APICallError, generateText, jsonSchema, NoObjectGeneratedError, Output } from "ai";
+import { INSTRUCTIONS, promptOf, rolesOf, schemaOf } from "../../src/service/label-model.ts";
 import { BUILTIN_DIR } from "./builtin.ts";
 import { type Layout, layOut } from "./layout.ts";
 import { OTHER_DIR } from "./print.ts";
 import { readPdf } from "./read.ts";
-import { type Features, featuresOf, ROLES, type Role } from "./roles.ts";
+import { type Features, featuresOf, type Role } from "./roles.ts";
 
 /** The model the spike asks: the naming step's default, decision 0044's. */
 export const MODEL = DEFAULT_MODEL;
@@ -88,69 +89,8 @@ export function assertInvented(path: string, roots: readonly string[] = INVENTED
   return real;
 }
 
-const INSTRUCTIONS = `You read the lines of a resume, taken from a PDF, and say what each line is. Give every line exactly one role:
-- name: the person's name.
-- contact: an email address, a phone number, a web address or profile, or the person's town, where the resume gives the person's details.
-- section heading: the title of a section, such as Experience, Education or Skills.
-- entry head: a line that heads an entry of a section: a job's title, an employer, a school, a degree, a project's or an award's name.
-- date: a date or a range of dates standing on its own.
-- place: the town, region or country of a job or a school, standing on its own.
-- bullet: an item of a list, usually after a bullet's sign.
-- running text: anything else, such as a summary, a paragraph, a line of skills, or a headline under the name.
-Each line comes with what the page shows of it: its page; its column, of how many stand side by side there; its indent from its column's left edge and its width, in points; its size against the body text's, where 1 is the body's; bold (B), italic (I) and all capitals (C); whether a bullet's sign stood before it (•); its place among the pieces of text on its row, of how many; whether a long rule runs by it (_); the gap above it, in body-text sizes; how many links lie over it; and how many rows of text it joins. Answer with an object whose keys are the lines' ids and whose values are their roles.`;
-
-/** The lines as the model is told them: one row each, its id, its features, and its text. */
-export function promptOf(features: readonly Features[]): string {
-  const rows = features.map((line) => {
-    const style = `${line.bold ? "B" : ""}${line.italic ? "I" : ""}${line.caps ? "C" : ""}` || "-";
-    return [
-      `L${line.id}`,
-      line.page,
-      `${line.column + 1}/${line.columns}`,
-      line.indent,
-      line.width,
-      line.size,
-      style,
-      line.bullet ? "•" : "-",
-      `${line.rowIndex + 1}/${line.rowSize}`,
-      line.rule ? "_" : "-",
-      line.gapAbove ?? "-",
-      line.links,
-      line.rows,
-      line.text.replace(/\s+/g, " "),
-    ].join(" | ");
-  });
-  return [
-    "id | page | column | indent | width | size | style | bullet | row | rule | gap above | links | rows | text",
-    ...rows,
-  ].join("\n");
-}
-
-/** The reply's schema: every line's id a key, its value one of the roles. */
-export function schemaOf(features: readonly Features[]) {
-  const properties = Object.fromEntries(
-    features.map((line) => [`L${line.id}`, { type: "string", enum: [...ROLES] }]),
-  );
-  return {
-    type: "object",
-    properties,
-    required: Object.keys(properties),
-    additionalProperties: false,
-  } as const;
-}
-
-/** The roles in a reply, in the lines' order, or undefined for a reply not of the schema's form. */
-export function rolesOf(features: readonly Features[], reply: unknown): Role[] | undefined {
-  if (typeof reply !== "object" || reply === null || Array.isArray(reply)) return undefined;
-  const values = reply as Record<string, unknown>;
-  const roles: Role[] = [];
-  for (const line of features) {
-    const role = values[`L${line.id}`];
-    if (typeof role !== "string" || !(ROLES as readonly string[]).includes(role)) return undefined;
-    roles.push(role as Role);
-  }
-  return Object.keys(values).length === features.length ? roles : undefined;
-}
+// The prompt, the schema and the check of a reply are the reading service's now (item 13).
+export { INSTRUCTIONS, promptOf, rolesOf, schemaOf };
 
 /** What one call to the model came to. */
 export interface ModelCall {

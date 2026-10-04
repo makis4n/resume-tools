@@ -6,8 +6,8 @@ import { build, type Manifest } from "vite";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 // The page is built once, with the app's own config, into a folder of its own, with invented values
-// in the naming key's variables, as a developer's .env or a deploy's environment would hold them,
-// and with Vite's manifest of its chunks, which says what the first load fetches.
+// in the service's key's and models' variables, as a developer's .env or a deploy's environment
+// would hold them, and with Vite's manifest of its chunks, which says what the first load fetches.
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
 const made: string[] = [];
@@ -27,6 +27,7 @@ function filesUnder(dir: string): string[] {
 const VALUES = {
   SOCLAAS_API_KEY: "invented-provider-key-9c2e",
   NAMING_MODEL: "invented-naming-model",
+  PDF_LABEL_MODEL: "invented-label-model",
 };
 
 /** What pdf.js's code holds however it is minified: its messages' names and its errors'. */
