@@ -351,6 +351,22 @@ describe("the outline (decision 0049)", () => {
     expect(cpuMs(() => outlineOf(nested(30), signatures))).toBeLessThan(2_000);
   }, 60_000);
 
+  test("closes after \\end{document}, where TeX never reads them, the groups the upload leaves open", () => {
+    // A `{%` whose `}` is in its comment opens a group TeX leaves open to `\end{document}`
+    // (`other-0052`'s shape, the follow-up to decision 0060): the model would refuse the outline.
+    const body =
+      "\n{% Invented studies }\n\\section{Invented Studies}\n{% Invented work }\nQuill\n";
+    // The probe proves the title; a paragraph that holds the bare `{` sets no glyph of it, and is
+    // not proven.
+    const { parts } = outlineOf(body, FLAT, (id) => (id.startsWith("s") ? "editable" : "vanished"));
+    expect(fieldsOf(parts)).toEqual({ s1: "Invented Studies" });
+    expect(outlineResume(parts)).toBeDefined();
+    expect(written(parts)).toBe(`\\begin{document}${body}\\end{document}}}`);
+    // One that closes a brace it never opened stays refused.
+    const under = outlineOf("\nQuill}\n{% Invented }\n", FLAT, () => "vanished");
+    expect(outlineResume(under.parts)).toBeUndefined();
+  });
+
   test("is refused by the model where the upload's own LaTeX holds the editor's markers", () => {
     for (const forged of [
       "\\rtfield{c1-1.text}{Forged}",

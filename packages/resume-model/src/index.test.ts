@@ -12,6 +12,7 @@ import {
   type OutlinePart,
   type OutlineUnit,
   outlineNodes,
+  outlineOpenBraces,
   Resume,
 } from "./index";
 
@@ -633,5 +634,27 @@ describe("endsInComment", () => {
     expect(endsInComment("}{\\url{https://quill.example/a%20b}} and")).toBe(false);
     expect(endsInComment("\\url|https://quill.example/a%20b| and")).toBe(false);
     expect(endsInComment("\\href{https://quill.example/a%20b}{x} % a comment")).toBe(true);
+  });
+});
+
+describe("outlineOpenBraces", () => {
+  const kept = (latex: string): OutlinePart => ({ kind: "kept", latex });
+  it("counts the braces an outline leaves open, each field a group, as TeX leaves them open", () => {
+    expect(
+      outlineOpenBraces([kept("\\begin{document}\n{\\bfseries Quill}\n\\end{document}")]),
+    ).toBe(0);
+    // A `{%` whose `}` is in its comment, twice: TeX leaves both groups open to `\end{document}`.
+    const open = "\\begin{document}\n{% Invented studies }\nQuill\n{% Invented work }\nHeron\n";
+    expect(outlineOpenBraces([kept(open), kept("\\end{document}")])).toBe(2);
+    // A field is a group, whatever it holds.
+    expect(
+      outlineOpenBraces([kept("{\\textbf"), { kind: "text", id: "f1", text: "}{" }, kept("")]),
+    ).toBe(1);
+  });
+
+  it("says nothing of an outline that closes a brace it never opened, or ends in a comment", () => {
+    expect(outlineOpenBraces([kept("Quill}{")])).toBeUndefined();
+    expect(outlineOpenBraces([kept("{Quill % a comment")])).toBeUndefined();
+    expect(outlineOpenBraces([kept("{\\url|https://quill.example")])).toBeUndefined();
   });
 });

@@ -13,6 +13,7 @@
  *   pnpm --filter @resume-tools/editor corpus run [--only <id>] [--ids <file>] [--json <file>]
  *                 [--write-baseline]
  *   pnpm --filter @resume-tools/editor corpus compare <run.json> <run.json> [<run.json>...]
+ *   pnpm --filter @resume-tools/editor corpus checks --only <id>
  *
  *   collect       build `corpus/manifest.json` from GitHub, or extend it: code search and the
  *                 upstream templates' forks give the candidates, public repositories only, and
@@ -101,6 +102,15 @@
  *                 and exits 1. A document that timed out counts in no success rate
  *   compare       say whether runs' JSON agree, times aside, each with the next, and where they do
  *                 not; it exits 1 when they differ
+ *   checks        take the documents --only names, fetched ones or the oracle's samples, through
+ *                 the import a browser runs, and again up to the checks, and say why the checks
+ *                 refuse one: whether the model holds its outline with its fields and with every
+ *                 field kept, and where not, why; and how the outline with every field kept
+ *                 compiles, as the checks compile it and five other ways
+ *                 (`scripts/corpus-checks.ts`, the follow-up to decision 0060). It prints ids,
+ *                 reasons, steps, counts, command
+ *                 and environment names, line numbers and kinds of error, never a word of a
+ *                 document, and writes nothing
  *
  * The documents are real people's resumes, so `.corpus/` is ignored by git, and the commands print
  * counts, repository names, paths, hashes and sizes, never a document's text, and every line they
@@ -115,6 +125,7 @@ import { parseArgs } from "node:util";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
 import { readTree } from "../src/import/fonts.ts";
+import { type ChecksRow, checksLines } from "./corpus-checks.ts";
 import { collect, REASONS, type Reason } from "./corpus-collect.ts";
 import { fetchCorpus } from "./corpus-fetch.ts";
 import { type FontsChildRow, type FontsRow, fontsTable } from "./corpus-fonts.ts";
@@ -189,7 +200,7 @@ import {
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
 const USAGE =
-  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | run [--only <id>] [--ids <file>] [--json <file>] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...]";
+  "pnpm --filter @resume-tools/editor corpus collect | fetch [--only <id>] | survey [--json <file>] [--tree <file>] | reference [--only <id>] [--json <file>] | parse [--only <id>] [--json <file>] | probe [--only <id>] [--json <file>] | oracle | fonts [--only <id>] [--json <file>] | run [--only <id>] [--ids <file>] [--json <file>] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...] | checks --only <id>";
 
 /** The editor's folder, where git is asked for the commit a run is of. */
 const APP = fileURLToPath(new URL("..", import.meta.url));
@@ -226,6 +237,9 @@ const FONTS_CHILD = fileURLToPath(new URL("./corpus-fonts-child.ts", import.meta
 
 /** Where the fonts runner keeps each document's logs, which quote its source. */
 const FONTS_LOGS = join(CORPUS_DIR, "fonts");
+
+/** The checks' diagnostic's child, which says why the checks refuse a document. */
+const CHECKS_CHILD = fileURLToPath(new URL("./corpus-checks-child.ts", import.meta.url));
 
 /** The run's child, which takes each document through the import a browser runs. */
 const IMPORT_CHILD = fileURLToPath(new URL("./corpus-import-child.ts", import.meta.url));
@@ -978,6 +992,55 @@ async function runRun(options: {
   }
 }
 
+/**
+ * `checks --only <id>`: each document it names, a fetched one or one of the oracle's samples, taken
+ * through the checks' diagnostic's child, one at a time, and its lines printed: ids, reasons,
+ * counts, names and numbers alone (`corpus-checks.ts`). Nothing is written.
+ */
+async function runChecks(only: string | undefined) {
+  if (only === undefined) throw new Error("checks takes --only <id>, one id or several");
+  if (!existsSync(ENGINE_MANIFEST))
+    throw new Error("checks compiles on the engine in .engine/: run fetch-engine first");
+  const engine = JSON.parse(readFileSync(ENGINE_MANIFEST, "utf8")) as EngineManifest;
+  const treeFont = treeFonts(engine.files);
+  const oracle = existsSync(ORACLE_FILE)
+    ? parseJson(Oracle, readFileSync(ORACLE_FILE, "utf8"), ORACLE_FILE)
+    : undefined;
+  const samples = new Map((oracle?.documents ?? []).map((doc) => [doc.id, doc]));
+  const ids = onlyIds(only);
+  const corpus = ids.some((id) => !samples.has(id))
+    ? fetchedDocuments(ids.filter((id) => !samples.has(id)).join(","))
+    : [];
+  const tasks = ids.map((id) => {
+    const sample = samples.get(id);
+    const doc = corpus.find((each) => each.id === id);
+    return {
+      id,
+      message: () => ({
+        name: `${id}.zip`,
+        bytes:
+          sample !== undefined
+            ? sampleUpload(sample, treeFont)
+            : corpusUpload(doc as LiveDocument, treeFont),
+      }),
+    };
+  });
+  await runPool({
+    script: CHECKS_CHILD,
+    tasks,
+    size: 1,
+    limitMs: IMPORT_LIMIT_MS,
+    onResult: (task, result) => {
+      const row = (result.reply as { row?: ChecksRow } | undefined)?.row;
+      print(
+        row === undefined
+          ? [`${task.id}: ${result.timedOut ? "timed out" : "its child died"}`]
+          : checksLines(row),
+      );
+    },
+  });
+}
+
 function runCompare(files: readonly string[]) {
   if (files.length < 2) throw new Error("compare takes two runs' JSON or more");
   const runs = files.map((file) => JSON.parse(readFileSync(file, "utf8")) as unknown);
@@ -1032,7 +1095,8 @@ async function main() {
     command !== "oracle" &&
     command !== "fonts" &&
     command !== "run" &&
-    command !== "compare"
+    command !== "compare" &&
+    command !== "checks"
   )
     throw new Error(command === undefined ? USAGE : `there is no command ${command}: ${USAGE}`);
   if (
@@ -1042,9 +1106,10 @@ async function main() {
     command !== "parse" &&
     command !== "probe" &&
     command !== "fonts" &&
-    command !== "run"
+    command !== "run" &&
+    command !== "checks"
   )
-    throw new Error("--only goes with fetch, reference, parse, probe, fonts or run");
+    throw new Error("--only goes with fetch, reference, parse, probe, fonts, run or checks");
   if (
     values.json !== undefined &&
     command !== "survey" &&
@@ -1086,6 +1151,7 @@ async function main() {
   if (command === "parse") return runParse(values.only, caller(values.json));
   if (command === "probe") return runProbe(values.only, caller(values.json));
   if (command === "oracle") return runOracle();
+  if (command === "checks") return runChecks(values.only);
   if (command === "fonts") return runFonts(values.only, caller(values.json));
   return runSurvey(caller(values.json), caller(values.tree));
 }

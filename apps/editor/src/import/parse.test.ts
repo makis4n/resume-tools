@@ -8,7 +8,7 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
-import { bound, fastest } from "../test/timing";
+import { bound, cpuMs, fastest } from "../test/timing";
 import { MAX_DELIMITED } from "./arguments";
 import { readTree } from "./fonts";
 import { encodeLike, type Intake, intake } from "./intake";
@@ -728,6 +728,57 @@ describe("the body of a main file", () => {
     expect(body.after).toBe("\\end{document}\ntrailing");
     expect(body.sources).toEqual([{ start: 0, end: 7, file: "cv.tex", offset: 59 }]);
   });
+
+  test("ends the body at the \\end{document} TeX reads, past one a verbatim or a \\verb shows", () => {
+    // An invented resume that shows a document's code, as `other-0006`'s shape does (the follow-up
+    // to decision 0060): the body runs past the code's `\end{document}` to the document's own.
+    const code =
+      "\\begin{verbatim}\n\\begin{document}\nInvented sample\n\\end{document}\n\\end{verbatim}";
+    const main = `\\documentclass{article}\n\\begin{document}\nQuill\n${code}\nAshgrove \\verb|\\end{document}| here\n\\section{Invented}\nTenterfield\n\\end{document}\n`;
+    const body = bodyFrom(main);
+    expect(body.text).toBe(
+      `\nQuill\n${code}\nAshgrove \\verb|\\end{document}| here\n\\section{Invented}\nTenterfield\n`,
+    );
+    expect(body.after).toBe("\\end{document}\n");
+    // A comment's verbatim is no verbatim, and one never closed is read as before.
+    const commented = bodyFrom(
+      "\\begin{document}\n% \\begin{verbatim}\nQuill\n\\end{document}\n\\end{verbatim}\n",
+    );
+    expect(commented.after).toBe("\\end{document}\n\\end{verbatim}\n");
+    const open = bodyFrom("\\begin{document}\n\\begin{verbatim}\nQuill\n\\end{document}\n");
+    expect(open.text).toBe("\n\\begin{verbatim}\nQuill\n");
+  });
+
+  test("finds the body's end in time linear in the file, whatever verbatim it opens", () => {
+    // The review of 13099bf: 2 MB of verbatim openers no `\end` closes, after the document's end,
+    // took 22 s, and a long line of `\verb`s grew as its square; and the review of ef7da1f:
+    // `\verb`s of 20,000 distinct delimiters none closes, each on its line, then a long run of
+    // letters, each searched to the file's end. A file of plain lines the same size is the baseline.
+    const size = 2_000_000;
+    const head = "\\documentclass{article}\n\\begin{document}\nQuill\n\\end{document}\n";
+    const lines = (unit: string) => head + unit.repeat(Math.floor(size / unit.length));
+    const plain = lines("Invented line\n");
+    const openers = lines("\\begin{verbatim}\n");
+    const verbs = `\\documentclass{article}\n\\begin{document}\n${"\\verb!x! ".repeat(size / 9)}\n\\end{document}\n`;
+    const distinct = Array.from(
+      { length: 20_000 },
+      (_, k) => `\\verb${String.fromCharCode(0x4e00 + k)}\n`,
+    ).join("");
+    const delimiters = head + distinct + "a".repeat(size - distinct.length);
+    const [base = 0, unclosed = 0, line = 0, many = 0] = fastest(
+      [
+        () => bodyFrom(plain),
+        () => bodyFrom(openers),
+        () => bodyFrom(verbs),
+        () => bodyFrom(delimiters),
+      ],
+      3,
+    );
+    expect(unclosed).toBeLessThan(bound(8, base));
+    expect(line).toBeLessThan(bound(30, base));
+    expect(many).toBeLessThan(bound(8, base));
+    expect(cpuMs(() => bodyFrom(openers))).toBeLessThan(1_000);
+  }, 60_000);
 
   test("refuses a main file that does not start and end its document", () => {
     expect(bodyOf(intakeOf("\\documentclass{article}\nQuill"))).toMatchObject({

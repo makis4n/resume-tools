@@ -3,11 +3,11 @@
  * 0020): what the probe (item 5) wraps and the outline (the second pass's item 5) is built from,
  * and what prints back to the bytes it came from (`print.ts`).
  *
- * The main file is split at `\begin{document}` and `\end{document}`, outside comments; the
- * preamble stays text. The body's `\input`, `\include` and `\subfile` of `.tex` files the job
- * holds are inlined, never a file of the tree, `\endinput` honoured where it begins a line and the
- * spaces TeX reads around a file kept, and the body remembers which spans came from which file
- * (`bodyOf`).
+ * The main file is split at `\begin{document}` and `\end{document}`, outside comments, and the
+ * end outside what TeX reads verbatim; the preamble stays text. The body's `\input`, `\include`
+ * and `\subfile` of `.tex` files the job holds are inlined, never a file of the tree, `\endinput`
+ * honoured where it begins a line and the spaces TeX reads around a file kept, and the body
+ * remembers which spans came from which file (`bodyOf`).
  *
  * unified-latex parses the body (`readBody`), with nothing attached; the parser then reads each
  * command's arguments (`arguments.ts`) by its table of standard commands (`standard.ts`) or by the
@@ -132,6 +132,65 @@ function isCommandAt(text: string, at: number): boolean {
   return before % 2 === 0;
 }
 
+/**
+ * What TeX reads verbatim in a body and what opens it: the environments unified-latex reads so
+ * (`readBody`), LaTeX's `verbatim`, `filecontents` and `comment`, listings' `lstlisting` and minted's
+ * `minted`, each up to the first `\end` of its own name; and `\verb`, up to its delimiter.
+ */
+const VERBATIM =
+  /\\(?:begin\s*\{(verbatim\*?|filecontents\*?|comment|lstlisting|minted)\}|verb\*?([^A-Za-z\s*]))/g;
+
+/**
+ * A main file as `documentCommand` searches its body, from `from`: its comments made spaces, as
+ * `masked` has them (`maskComments`), and the text TeX reads verbatim there too (`VERBATIM`), so
+ * that an `\end{document}` a resume shows as code, in a `verbatim` or a `\verb`, does not end its
+ * body (the follow-up to decision 0060, `other-0006`). An environment no `\end` of its name closes,
+ * or a `\verb` whose delimiter its line does not hold, is left as it is. Every index is the file's.
+ *
+ * It reads the file once, however many openers it holds: an environment's end and a line's end are
+ * looked for from where the last search for each found it, since openers come in order, and an end
+ * not found is not looked for again, as later openers of an environment no `\end` closes would.
+ * A `\verb`'s delimiter, which may be any character but a letter, is looked for on its own line,
+ * which TeX's `\verb` cannot leave, and MAX_DELIMITED characters on at most, as `maskedForParse`
+ * looks for it.
+ */
+function maskedVerbatim(text: string, masked: string, from: number): string {
+  const found = new Map<string, number>();
+  /** The first `needle` at or after `at`, or -1: the last search's answer while it still holds. */
+  const next = (needle: string, at: number) => {
+    const known = found.get(needle);
+    if (known !== undefined && (known < 0 || known >= at)) return known;
+    const place = text.indexOf(needle, at);
+    found.set(needle, place);
+    return place;
+  };
+  const spans: [number, number][] = [];
+  VERBATIM.lastIndex = from;
+  for (let match = VERBATIM.exec(masked); match; match = VERBATIM.exec(masked)) {
+    if (!isCommandAt(masked, match.index)) continue;
+    const start = match.index + match[0].length;
+    const [, environment, delimiter] = match;
+    let close: number;
+    if (environment !== undefined) close = next(`\\end{${environment}}`, start);
+    else {
+      const lineEnd = next("\n", start);
+      const stop = Math.min(lineEnd < 0 ? text.length : lineEnd, start + MAX_DELIMITED);
+      close = charWithin(text, delimiter ?? "", start, stop);
+    }
+    if (close < 0) continue;
+    spans.push([start, close]);
+    VERBATIM.lastIndex = close + 1;
+  }
+  if (spans.length === 0) return masked;
+  let out = "";
+  let at = 0;
+  for (const [start, close] of spans) {
+    out += masked.slice(at, start) + masked.slice(start, close).replace(/[^\n]/g, " ");
+    at = close;
+  }
+  return out + masked.slice(at);
+}
+
 /** The first `\begin{document}` or `\end{document}` outside comments at or after `from`. */
 function documentCommand(masked: string, which: "begin" | "end", from: number) {
   const pattern = new RegExp(`\\\\${which}\\s*\\{document\\}`, "g");
@@ -211,9 +270,10 @@ function subfileBody(text: string): { start: number; end: number } | undefined {
 }
 
 /**
- * The main file's body, split at `\begin{document}` and `\end{document}` outside comments, with the
- * `.tex` files its `\input`, `\include` and `\subfile` name inlined, when the job holds them; or a
- * refusal when the main file does not start and end a document, or the body is past its cap.
+ * The main file's body, split at `\begin{document}` and `\end{document}` outside comments and,
+ * for the end, outside what TeX reads verbatim (`maskedVerbatim`), with the `.tex` files its
+ * `\input`, `\include` and `\subfile` name inlined, when the job holds them; or a refusal when the
+ * main file does not start and end a document, or the body is past its cap.
  *
  * A file read in ends in a newline, one added where it lacks one, as TeX ends every line it reads
  * with a line's end, and an empty file is one empty line, a blank line. Where its input is the last
@@ -233,7 +293,8 @@ export function bodyOf(intake: Pick<Intake, "main" | "files">): Body | Refusal {
   const begin = documentCommand(masked, "begin", 0);
   if (begin === undefined) return refusedParse(NO_BODY);
   const bodyStart = begin.index + begin[0].length;
-  const end = documentCommand(masked, "end", bodyStart);
+  // The body ends at the `\end{document}` TeX reads, not one a verbatim shows as code.
+  const end = documentCommand(maskedVerbatim(text, masked, bodyStart), "end", bodyStart);
   if (end === undefined) return refusedParse(NO_BODY);
   const preamble = text.slice(0, begin.index);
   const only = includeOnly(preamble);
