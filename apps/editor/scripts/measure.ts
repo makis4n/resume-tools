@@ -4,7 +4,7 @@
  * import from the file to the page (milestone 3 item 19, decision 0045):
  *
  *   pnpm --filter @resume-tools/editor measure [--runs <n>] [--json <file>]
- *   pnpm --filter @resume-tools/editor measure --import [--engine <engine>] [--runs <n>]
+ *   pnpm --filter @resume-tools/editor measure --import [--engine <engine> | --pdf] [--runs <n>]
  *     [--json <file>]
  *
  *   --runs <n>         edits to time per package, 10 by default; the overlay's row layout is timed
@@ -12,6 +12,7 @@
  *   --json <file>      write the numbers as JSON too, for the decision record
  *   --import           measure the import instead: a launch template's upstream sample, cached
  *   --engine <engine>  with --import, the one sample of pdftex or xetex, not both
+ *   --pdf              with --import, the PDF import by rules alone, not the .tex samples
  *
  * Each package gets an engine session and fonts of its own, as a first load does, and the editor's
  * compile scheduler drives them, as the app drives its worker: it opens the sample as a new
@@ -32,13 +33,23 @@
  * the page, and the verdict against the bar, under 8 s, raised by decision 0045 from plan section
  * 4.3's 5 s, judged on pdfTeX; XeTeX's import is reported beside it, not judged.
  *
+ * Beside them, unless `--engine` picks one sample, a PDF import by rules (the second pass's item
+ * 18, `src/measure/pdf-import.ts`): the editor's own PDFs of the three built-in templates, each
+ * typesetting its own invented sample, made first on the engine, and the invented resumes other
+ * tools printed (`scripts/spike-pdf/fixtures/other/`), never a corpus resume, each read, laid out,
+ * labelled by rules with a no on record, filed and made the review's draft, then the draft set on
+ * its template to its first drawn page, on one engine shared by every page. One pass over them is
+ * not counted, then `--runs` are timed. It prints each part's median and slowest, the whole's, the
+ * page's beside it, a row a PDF, and the verdict against the target, under 1 s, judged on the
+ * slowest import. No model is asked: the model's time is `pdf-model`'s, run by hand with the key.
+ *
  * The editor's modules are written for Vite, with extensionless imports, JSX, and JSON and `?raw`
  * imports, which Node cannot load. So this file, which Node runs as it is, loads them through
  * Vite's module runner with the app's own Vite config, the way Vitest loads the tests, and imports
  * nothing of the editor itself but types.
  */
 
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { cpus, loadavg, totalmem } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,10 +60,14 @@ import type { EngineManifest } from "../src/engine/manifest.ts";
 import type { Engine, Fetched } from "../src/engine/session.ts";
 import type { ImportRuns, ImportTime } from "../src/measure/import.ts";
 import type { FirstLoad, PackageNumbers, StepReads } from "../src/measure/measure.ts";
+import type { PdfSample, PdfTime } from "../src/measure/pdf-import.ts";
 import { sampleUpload } from "./serve-samples.ts";
+import { OTHER_DIR } from "./spike-pdf/print.ts";
 
 type Measure = typeof import("../src/measure/measure.ts");
 type Imports = typeof import("../src/measure/import.ts");
+type PdfImports = typeof import("../src/measure/pdf-import.ts");
+type PdfNode = typeof import("../src/pdf/node.ts");
 type NodeImports = typeof import("../src/measure/node.ts");
 type NodeEngine = typeof import("../src/engine/node.ts");
 type Curated = typeof import("../src/templates/curated.ts");
@@ -63,7 +78,7 @@ const APP = fileURLToPath(new URL("..", import.meta.url));
 
 const USAGE = [
   "pnpm --filter @resume-tools/editor measure [--runs <n>] [--json <file>]",
-  "pnpm --filter @resume-tools/editor measure --import [--engine <pdftex|xetex>] [--runs <n>] [--json <file>]",
+  "pnpm --filter @resume-tools/editor measure --import [--engine <pdftex|xetex> | --pdf] [--runs <n>] [--json <file>]",
 ].join("\n");
 
 /** Edits timed per package when `--runs` does not say. */
@@ -80,9 +95,10 @@ const ENGINES: readonly Engine[] = ["pdftex", "xetex"];
 interface Options {
   runs: number;
   json: string | undefined;
-  /** Whether to measure the import, and on which engines' samples. */
+  /** Whether to measure the import, on which engines' samples, and whether a PDF's by rules. */
   import: boolean;
   engines: readonly Engine[];
+  pdf: boolean;
   help: boolean;
 }
 
@@ -98,6 +114,7 @@ function optionsOf(args: string[]): Options {
       json: { type: "string" },
       import: { type: "boolean" },
       engine: { type: "string" },
+      pdf: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -107,14 +124,23 @@ function optionsOf(args: string[]): Options {
     throw new Error(`--runs takes a whole number from 1, not ${values.runs}`);
   if (values.engine !== undefined && !imports)
     throw new Error("--engine picks the sample an import is measured on: give --import with it");
-  const engines =
-    values.engine === undefined ? ENGINES : ENGINES.filter((e) => e === values.engine);
-  if (engines.length === 0)
+  if (values.pdf && !imports)
+    throw new Error("--pdf picks the PDF import by rules alone: give --import with it");
+  if (values.pdf && values.engine !== undefined)
+    throw new Error("--pdf measures the PDF import alone, which --engine does not pick: give one");
+  const engines = values.pdf
+    ? []
+    : values.engine === undefined
+      ? ENGINES
+      : ENGINES.filter((e) => e === values.engine);
+  if (!values.pdf && engines.length === 0)
     throw new Error(`--engine takes ${ENGINES.join(" or ")}, not ${values.engine}`);
+  // The PDF import goes beside both samples, or alone with --pdf; --engine picks one sample alone.
+  const pdf = imports && values.engine === undefined;
   // pnpm runs the script in the editor's folder; a path is the caller's, from where pnpm was run.
   const json =
     values.json === undefined ? undefined : resolve(process.env.INIT_CWD ?? ".", values.json);
-  return { runs, json, import: imports, engines, help: values.help ?? false };
+  return { runs, json, import: imports, engines, pdf, help: values.help ?? false };
 }
 
 /** The machine the numbers were taken on, which they mean nothing without. */
@@ -185,17 +211,44 @@ interface SampleMeasured {
   runs: ImportTime[];
 }
 
-/** The import's numbers as the JSON keeps them: each sample's imports, and their medians. */
+/** What `--import` measured of the PDF import by rules, and the machine's load as it started and ended. */
+interface PdfMeasured {
+  load: { start: number; end: number };
+  /** How long the engine the pages share took to start, once, before the PDFs were made. */
+  startMs: number;
+  warm: PdfTime[];
+  runs: PdfTime[];
+}
+
+/**
+ * The import's numbers as the JSON keeps them: each sample's imports, and their medians; and the
+ * PDF import's, with no text of any PDF, only its id.
+ */
 function importJson(
   imports: Imports,
+  pdfImports: PdfImports,
   about: ReturnType<typeof machine>,
   runs: number,
   measured: readonly SampleMeasured[],
+  pdf: PdfMeasured | undefined,
 ): string {
   return written({
     date: new Date().toISOString(),
     machine: about,
     runs,
+    ...(pdf === undefined
+      ? {}
+      : {
+          pdf: {
+            load: pdf.load,
+            startMs: pdf.startMs,
+            pdfs: [...new Set(pdf.runs.map((run) => run.id))],
+            medians: pdfImports.pdfMedians(pdf.runs),
+            target: { ...pdfImports.PDF_RULES_TARGET, ...pdfImports.pdfMeets(pdf.runs) },
+            warm: pdf.warm,
+            runs: pdf.runs,
+          },
+        }),
     samples: measured.map(({ engine, load, warm, runs: timed }) => {
       const medians = imports.importMedians(timed);
       return {
@@ -282,9 +335,10 @@ async function measureImports(runner: Runner, options: Options) {
     engine,
     upload: sampleUpload(imports.IMPORT_SAMPLES[engine].id),
   }));
+  const others = options.pdf ? otherPdfs() : [];
   const about = machine();
   console.log(
-    `On ${about.cpu} (${about.cores} cores, ${about.memoryGiB} GiB), ${about.platform}, Node ${about.node}, load ${about.load.toFixed(1)}: ${options.runs} imports timed per sample, after one not counted\n`,
+    `On ${about.cpu} (${about.cores} cores, ${about.memoryGiB} GiB), ${about.platform}, Node ${about.node}, load ${about.load.toFixed(1)}: ${options.runs} imports timed per sample${options.pdf ? " and per PDF" : ""}, after one not counted\n`,
   );
 
   const measured: SampleMeasured[] = [];
@@ -319,17 +373,90 @@ async function measureImports(runner: Runner, options: Options) {
     console.log(`${imports.importTable(engine, done.runs, "node")}`);
     console.log(`The load ${end.toFixed(1)} as the imports ended.\n`);
   }
-  console.log(
-    [
-      "Each import built its outline with no naming step and sent nothing. The bar is judged on",
-      "pdfTeX, and XeTeX is reported beside it, not judged; it is under",
-      `${imports.IMPORT_TARGET.limit / 1000} s, raised by decision 0045 from the plan's 5 s.`,
-    ].join("\n"),
-  );
+  if (uploads.length > 0)
+    console.log(
+      [
+        "Each import built its outline with no naming step and sent nothing. The bar is judged on",
+        "pdfTeX, and XeTeX is reported beside it, not judged; it is under",
+        `${imports.IMPORT_TARGET.limit / 1000} s, raised by decision 0045 from the plan's 5 s.`,
+      ].join("\n"),
+    );
+  const pdfImports = await runner.import<PdfImports>("/src/measure/pdf-import.ts");
+  let pdf: PdfMeasured | undefined;
+  if (options.pdf) {
+    if (uploads.length > 0) console.log("");
+    pdf = await measurePdfs(runner, pdfImports, node, manifest, others, options.runs);
+  }
   if (options.json !== undefined) {
-    writeFileSync(options.json, importJson(imports, about, options.runs, measured));
+    writeFileSync(
+      options.json,
+      importJson(imports, pdfImports, about, options.runs, measured, pdf),
+    );
     console.log(`\nThe numbers are in ${options.json}`);
   }
+}
+
+/**
+ * The invented resumes other tools printed, each `resume.pdf` in a folder of the PDF spike's third
+ * set, with its truth beside it: never a corpus resume. Read before anything is measured, so that
+ * one missing says so at once.
+ */
+function otherPdfs(): PdfSample[] {
+  return readdirSync(OTHER_DIR)
+    .filter((name) => existsSync(join(OTHER_DIR, name, "resume.pdf")))
+    .sort()
+    .map((name) => ({
+      id: name,
+      set: "other" as const,
+      bytes: new Uint8Array(readFileSync(join(OTHER_DIR, name, "resume.pdf"))),
+    }));
+}
+
+/**
+ * The PDF import by rules, on the built-in templates' PDFs, made first on the engine, and on
+ * `others`: one pass not counted, then `runs` timed, every page on one engine started once.
+ */
+async function measurePdfs(
+  runner: Runner,
+  pdfImports: PdfImports,
+  node: NodeImports,
+  manifest: EngineManifest,
+  others: readonly PdfSample[],
+  runs: number,
+): Promise<PdfMeasured> {
+  const { readPdf } = await runner.import<PdfNode>("/src/pdf/node.ts");
+  const starting = performance.now();
+  // One engine for every page: Node compiles the engine afresh at each start, 3.4 s, where a
+  // browser keeps it compiled (decision 0045), and the page part times the draft's own requests.
+  const engine = await node.importEngine(manifest);
+  const startMs = performance.now() - starting;
+  const builtin = await pdfImports.builtinPdfs(engine, node.treeFonts(manifest));
+  const pdfs = [...builtin, ...others];
+  const start = loadavg()[0] ?? 0;
+  console.log(
+    `The PDF import by rules on ${pdfs.length} invented PDFs, the load ${start.toFixed(1)}; the engine the pages share started in ${pdfImports.formatTime(startMs)}`,
+  );
+  const done = await pdfImports.pdfRuns(
+    pdfs,
+    (pdf) =>
+      pdfImports.measurePdfImport(pdf, {
+        read: (bytes) => readPdf(bytes),
+        page: { engine: async () => engine, fonts: () => node.treeFonts(manifest) },
+      }),
+    runs,
+    (pass) =>
+      console.log(`  ${pass === 0 ? "warm-up pass, not counted" : `pass ${pass} of ${runs}`}`),
+  );
+  if (done === undefined) throw new Error("the PDF imports stopped");
+  if ("refused" in done) {
+    const { id, refused } = done.refused;
+    throw new Error(`the invented PDF ${id} was refused (${refused.reason}): ${refused.message}`);
+  }
+  const end = loadavg()[0] ?? 0;
+  console.log(pdfImports.pdfTable(done.runs, "node"));
+  console.log(`The load ${end.toFixed(1)} as the imports ended.`);
+  engine.terminate();
+  return { load: { start, end }, startMs, warm: done.warm, runs: done.runs };
 }
 
 async function main() {

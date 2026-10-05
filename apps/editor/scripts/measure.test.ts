@@ -19,7 +19,7 @@ describe("measure", () => {
     const run = measure("--help");
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("pnpm --filter @resume-tools/editor measure");
-    expect(run.stdout).toContain("measure --import [--engine <pdftex|xetex>]");
+    expect(run.stdout).toContain("measure --import [--engine <pdftex|xetex> | --pdf]");
   });
 
   test("refuses an engine without --import, and one it has no sample for", () => {
@@ -29,6 +29,17 @@ describe("measure", () => {
     const unknown = measure("--import", "--engine", "luatex");
     expect(unknown.status).toBe(1);
     expect(unknown.stderr).toContain("--engine takes pdftex or xetex, not luatex");
+  });
+
+  test("takes --pdf with --import alone, without --engine", () => {
+    const alone = measure("--pdf");
+    expect(alone.status).toBe(1);
+    expect(alone.stderr).toContain(
+      "--pdf picks the PDF import by rules alone: give --import with it",
+    );
+    const both = measure("--import", "--pdf", "--engine", "pdftex");
+    expect(both.status).toBe(1);
+    expect(both.stderr).toContain("--pdf measures the PDF import alone");
   });
 
   test("refuses a count of runs that is not a whole number from 1", () => {
