@@ -145,15 +145,48 @@ idle: an agent checking another branch ran beside it, a one-minute load average 
 - `?measure=1` is decision 0016's page, and gives what it gave in Chrome: an edit's page in 82 ms
   against 79 ms, the keystroke's rows a hundredth of a frame.
 
+The two `.tex` import pages were taken again after the last import change, decision 0065's (#109),
+on main at `fc62298`, in the owner's Chrome 154 with the tab in front throughout, as each page
+reported, the built-in pane being hidden then; the one-minute load was 4.1 to 3.8:
+
+| Page | This browser, on main after #109 | With the engine's start, without `load` | Target |
+|---|---|---|---|
+| `?measure=import` | 2.67 s, from 2.66 to 2.67 s, 17 compiles | 2.96 s | under 8 s, met by 5.04 s |
+| `?measure=import-xetex` | 17.58 s, from 17.56 to 17.60 s, 81 compiles | 17.87 s | reported, under the 20 s aim by 2.13 s |
+
+They agree with the pane's numbers above within 3%: decision 0065 adds a pass over the main file
+for what TeX reads verbatim and a count of the braces left open, a few milliseconds of the whole.
+`?measure=1` and `?measure=import-pdf` run nothing that change touched.
 
 ### The corpus run on main
 
-The corpus workflow, started by hand on main after the last import change of milestone 3's
-follow-ups (`gh workflow run corpus.yml --ref main`, decision 0035), runs the survey and the import
-run over the fetched corpus, held to `apps/editor/corpus/baseline.json`, decision 0060's: 50
-successes of 220, 22.73%, and 73.91% of words editable in place.
+One run over the whole corpus after the last import change of milestone 3's follow-ups, decision
+0065's (#109), on main at `fc62298`, a clean tree: `corpus run --json`, all 220 fetched documents,
+four at a time, the import a browser runs. It ran on this machine, not in the corpus workflow
+(decision 0035): GitHub's runners were not starting jobs that evening, and the owner chose a local
+run over the workflow on 5 October 2026, since the outcome is the same on either. The checks'
+budgets count compiles, not time (decision 0055), no document came near the 900 s cap, and decision
+0060's baseline was itself a run on this machine. It took 6.6 minutes, at a one-minute load of 1.7
+to 4.1.
 
-[[CORPUS RUN: URL, conclusion, successes and editable rate against the baseline's 50 and 73.91% — filled by the orchestrator]]
+| | Decision 0060's baseline (`bd21e8f`) | This run (`fc62298`) |
+|---|---|---|
+| Successes | 50 of 220, 22.73% | 50 of 220, 22.73%: holds |
+| Partial | 58 | 60 |
+| Refused by a step | 9 | 7, all by the XeTeX fonts' rewrite |
+| No reference | 103 | 103 |
+| Timed out | 0 | 0 |
+| Documents imported | 108 | 110 |
+| Words editable in place, of the documents imported | 73.91% of 79,582 | 71.9% of 82,391 |
+| Documents at 90% or more in place | 53 | 53 |
+
+- The two documents decision 0065 lets in, `other-0006` and `other-0052`, are the whole change:
+  both import as partial, 0% and 30% of their 1,409 and 1,400 words in place. The other 108
+  imported documents hold 58,822 of their 79,582 words in place, 73.91%, word for word the baseline.
+  The editable share falls to 71.9% only because the two add 2,809 words, 418 of them in place.
+- The baseline is adopted from this run (`corpus run --write-baseline --from`): 50 successes, 22.73%,
+  and 71.9% editable, at `fc62298`.
+
 
 ## Consequences
 

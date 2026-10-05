@@ -1,9 +1,9 @@
 # 0060. The corpus on the new import
 
 > Accepted by 0066: AltaCV's 82.2% against 90%, which this record calls a follow-up, is a
-> known limit, not chased in milestone 3.
+> known limit, not chased in milestone 3. The two resumes its checks refused are settled by 0065.
 
-Date: 2026-10-05 · Status: accepted; resets the baseline of decision 0043 for the outline's import; its AltaCV gap is accepted by 0066
+Date: 2026-10-05 · Status: accepted; resets the baseline of decision 0043 for the outline's import; its AltaCV gap is accepted by 0066; its two refused resumes are settled by 0065
 
 ## Context
 
