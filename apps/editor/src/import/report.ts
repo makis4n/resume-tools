@@ -359,6 +359,43 @@ export function reportOfImport(imported: {
 }
 
 /**
+ * One of the body's words as the report counts it (`countWords`): the word, the owner of each glyph
+ * of its page by key (a field's `f:`, a locked part's `p:`, kept text's `k:` and its reason, or the
+ * template's `t`), the key it was set down to, how it counted, and, for one of kept text, the reason
+ * it is kept. Places and keys, never text.
+ */
+export interface CountedWord {
+  word: PageWord;
+  owners: readonly string[];
+  owner: string;
+  counted: "editable" | "panel" | "retype" | "locked";
+  reason?: LockReason;
+}
+
+/** What hears each of the body's words as the report counts it. */
+export type WordVisitor = (counted: CountedWord) => void;
+
+/**
+ * The words of an import that came through, counted as its report counts them (`reportOfImport`),
+ * each of the body's told to `visit` as it is counted: for the corpus's diagnostics, which set the
+ * words not in place down to what holds them. The same words as the report's.
+ */
+export function visitImportWords(
+  imported: {
+    report: Pick<ImportReport, "checks" | "locked" | "reference">;
+    document: { resume: unknown };
+  },
+  visit: WordVisitor,
+): Report["words"] {
+  const { report, document } = imported;
+  return countWords(
+    { checks: report.checks, extras: report.locked, document },
+    report.reference,
+    visit,
+  ).words;
+}
+
+/**
  * Whether a resume writes two halves of a word a hyphen joins, `full` and `stack` as `full-stack`,
  * in its text or in what it keeps as the upload wrote it, whatever their case: the hyphen a line
  * ends with between them is then the resume's own, which parts two words, and not one TeX added.
@@ -773,6 +810,7 @@ export function ownRunningLines(pages: readonly (readonly Glyph[])[], owners: Ow
  * locked by reason, or the template's; and the locked parts that set any, in the page's order, each
  * by its first words. A running line a locked part sets is its on every page (`ownRunningLines`).
  * What the document keeps that no part counts is shown as a part of its own for each run of it.
+ * `visit`, where given, hears each of the body's words as it is counted (`WordVisitor`).
  */
 function countWords(
   assembled: {
@@ -781,6 +819,7 @@ function countWords(
     document?: { resume: unknown };
   },
   reference: Pick<Reference, "pages">,
+  visit?: WordVisitor,
 ): { words: Report["words"]; locked: LockedShown[] } {
   const { checks, extras, document } = assembled;
   const pages = pageWords(reference, document === undefined ? undefined : writesHyphen(document));
@@ -848,21 +887,25 @@ function countWords(
       }
       words.body++;
       if (key.startsWith("f:")) {
-        if (modes.get(key.slice(2))?.mode === "raw") words.panel++;
+        const panel = modes.get(key.slice(2))?.mode === "raw";
+        if (panel) words.panel++;
         else words.editable++;
-        keptRun = undefined;
-        continue;
-      }
-      // A word of kept text most of whose glyphs the retype reaches is changed where it stands.
-      const hit = word.glyphs.filter((at) => reached[page]?.[at] === true).length;
-      if (2 * hit > word.glyphs.length) {
-        words.retype++;
+        visit?.({ word, owners: row, owner: key, counted: panel ? "panel" : "editable" });
         keptRun = undefined;
         continue;
       }
       const part = key.startsWith("p:") ? extras[Number(key.slice(2))] : undefined;
       const reason: LockReason =
         part?.reason ?? (key.startsWith("k:") ? (key.slice(2) as LockReason) : "unmapped");
+      // A word of kept text most of whose glyphs the retype reaches is changed where it stands.
+      const hit = word.glyphs.filter((at) => reached[page]?.[at] === true).length;
+      if (2 * hit > word.glyphs.length) {
+        words.retype++;
+        visit?.({ word, owners: row, owner: key, counted: "retype", reason });
+        keptRun = undefined;
+        continue;
+      }
+      visit?.({ word, owners: row, owner: key, counted: "locked", reason });
       words.locked++;
       words.byReason[reason] = (words.byReason[reason] ?? 0) + 1;
       // Words kept with no part are a part of their own for each run of them on the page.
