@@ -161,7 +161,7 @@ checks' many compiles, as decision 0050 found.
   `other-0052`, whose outline with every field kept is not one the model holds, or is not compiled
   (`keep`). Each had no answer with the first pass's committed answers. Why needs the documents
   read on the engine, which this item may not do; invented documents of their shape would say.
-  Decision 00XX says why, without reading them, and fixes both.
+  Decision 0065 says why, without reading them, and fixes both.
 - **At least 60% of body words editable in place: met, 73.9%** of the 108 imported documents'
   79,582 words.
 - **At least 90% on Jake's, Awesome-CV's and AltaCV's forks: met on Jake's (93.7%) and Awesome-CV's

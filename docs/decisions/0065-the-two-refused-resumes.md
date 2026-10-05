@@ -1,4 +1,4 @@
-# 00XX. The two refused resumes
+# 0065. The two refused resumes
 
 Date: 2026-10-05 · Status: accepted, the owner's decision 5 of 5 October 2026; amends decision
 0020's split of the main file, and the outline's rule that an upload whose braces do not balance is
