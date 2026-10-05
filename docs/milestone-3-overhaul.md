@@ -260,7 +260,7 @@ closes.
    with a plain message when it fails, as a structural step is today. Done when, on each sample, a
    bullet is added to a list and removed from it with the rest of the page unchanged but for moving
    down, and a fixed group's button is disabled with its reason.
-9. [ ] **The corpus on the new import.** The whole corpus runs on the new import. The baseline is
+9. [x] **The corpus on the new import.** The whole corpus runs on the new import. The baseline is
    reset. The run is compared resume by resume with the first pass's last run. The hand counts on
    the three samples are taken again and pinned. The import is timed on pdfTeX and on XeTeX. Done
    when three runs in a row agree and the `.tex` targets are met, or each gap is recorded with its

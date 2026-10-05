@@ -46,7 +46,10 @@ const fetched = existsSync(join(ORACLE_DIR, "jake-0000", "resume.tex"));
  * import's count matches within two; the share the spike found in fields (decision 0050), which
  * the outline holds at least, less two points; and, pinned, the report's three shares after the
  * checks (the second pass's item 6), in words: editable in place, changeable through the retype,
- * and locked; and the fields the checks found required.
+ * and locked; the same three counted by hand on each page (the second pass's item 9): each word on
+ * the reference's page read line by line and put in a field the editor's page marks, in a run of
+ * plain text of the kept LaTeX that lines up with the page (decision 0042's retype), or neither,
+ * which the report's shares match within two; and the fields the checks found required.
  */
 const SAMPLES: Readonly<
   Record<
@@ -55,6 +58,7 @@ const SAMPLES: Readonly<
       body: number;
       fields: number;
       shares: { editable: number; retype: number; locked: number };
+      hand: { editable: number; retype: number; locked: number };
       required: number;
     }
   >
@@ -63,18 +67,21 @@ const SAMPLES: Readonly<
     body: 389,
     fields: 0.89,
     shares: { editable: 349, retype: 40, locked: 0 },
+    hand: { editable: 349, retype: 40, locked: 0 },
     required: 0,
   },
   "altacv-0000": {
     body: 232,
     fields: 0.72,
     shares: { editable: 168, retype: 51, locked: 13 },
+    hand: { editable: 168, retype: 51, locked: 13 },
     required: 10,
   },
   "awesome-cv-0000": {
     body: 1287,
     fields: 0.96,
     shares: { editable: 1246, retype: 23, locked: 18 },
+    hand: { editable: 1246, retype: 23, locked: 18 },
     required: 3,
   },
 };
@@ -134,6 +141,12 @@ describe.skipIf(!fetched || !engineAvailable())(
           locked: shown.words.locked,
         }).toEqual(expected.shares);
         expect(shown.words.body).toBe(words.body);
+        // Item 9's hand counts, taken apart from the report, which its shares match within two.
+        for (const share of ["editable", "retype", "locked"] as const)
+          expect(
+            Math.abs(shown.words[share] - expected.hand[share]),
+            `the ${share} share against the hand count`,
+          ).toBeLessThanOrEqual(2);
         expect(o.kept, "fields the checks kept as text").toEqual({});
         expect(o.required, "required fields").toBe(expected.required);
         expect(o.fixed, "fixed groups").toEqual({});
