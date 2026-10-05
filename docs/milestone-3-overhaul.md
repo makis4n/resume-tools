@@ -316,7 +316,7 @@ closes.
     the corpus run is. The model's reading is measured by a command run by hand with the key, on
     the invented sets only; the suite tests its path with a recorded reply, and no model is called
     in CI. Done when the numbers are recorded and the thresholds hold in the suite.
-16. [ ] **The bridge between the two ways in.** A `.tex` import that is refused offers the person
+16. [x] **The bridge between the two ways in.** A `.tex` import that is refused offers the person
     its PDF instead. One that compiles but ends under the bar offers to move its content onto a
     built-in template, which runs the PDF path on the import's own reference page, under the same
     consent. Done when both offers show in the report and each produces a document on the three

@@ -553,9 +553,9 @@ function summaryOf(checked: Checked, words: Words): OutlineSummary {
  * The session as the import compiles on it: every compile, dump and PDF first stops the import
  * when `signal` has been aborted, throwing its reason, and is reported as it begins and ends
  * (`heard`, with whether it is a compile, which the count takes). Everything else goes to the
- * session as it is.
+ * session as it is. The bridge's PDF of an import's page is made on it too (`bridge.ts`).
  */
-function watched(
+export function watched(
   session: EngineSession,
   signal: AbortSignal | undefined,
   heard: (compiling: boolean, compile: boolean) => void,

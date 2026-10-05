@@ -23,7 +23,7 @@ import { pdfFileName, savePdf } from "./editor/download";
 import { enterAdds } from "./editor/enter";
 import { applyFit, type Fitted, fit } from "./editor/fit";
 import { StructureGuard } from "./editor/guard";
-import { ImportReport } from "./editor/ImportReport";
+import { ImportReport, offersMove } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
 import { markerOf, outlineFields, outlineOf, unitPlace } from "./editor/outline";
 import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
@@ -43,6 +43,7 @@ import { holdsTyping, useHistoryKeys, type Way } from "./editor/undo";
 import { EngineCancelled, EngineClient } from "./engine/client";
 import type { EngineManifest } from "./engine/manifest";
 import { engineTag, fileUrl, manifestUrl } from "./engine/urls";
+import { type PagePdf, pageFile } from "./import/bridge";
 import type { Upload } from "./import/intake";
 import { isRefusal } from "./import/refusal";
 import { type Report, reportOfImport } from "./import/report";
@@ -122,6 +123,16 @@ const IMPORT_FAILED = "The import could not finish. Try again.";
 
 /** What the user reads when an import came through but the browser could not keep it. */
 const COULD_NOT_KEEP = "The imported resume could not be kept in this browser.";
+
+/**
+ * What the progress line says while the bridge makes a PDF of a partial import's page, to move its
+ * content onto a built-in template (milestone 3 second pass, item 16).
+ */
+const MOVE_STEP = "Making a PDF of your resume's pages";
+
+/** What the user reads when no PDF of that page could be made; the details go to the console. */
+const MOVE_NO_PDF =
+  "This editor could not make a PDF of your resume's pages, so it cannot move its content. If you have a PDF of it, stop, and import that instead.";
 
 async function get(url: string): Promise<Response> {
   const response = await fetch(url);
@@ -267,7 +278,12 @@ export function App() {
   /** The import under way, as the list's progress line shows it (decision 0038). */
   const [importing, setImporting] = useState<ImportShown>();
   /** The import under way, which the list's Cancel stops; none once it has landed or stopped. */
-  const importRun = useRef<ImportRun | undefined>(undefined);
+  const importRun = useRef<Pick<ImportRun, "cancel"> | undefined>(undefined);
+  /**
+   * The refusal whose notice offers to import a PDF of the same resume instead (milestone 3 second
+   * pass, item 16): the offer shows while the notice is that refusal's, and goes with it.
+   */
+  const [offerFor, setOfferFor] = useState<string>();
   /**
    * Whether a PDF's text may be sent to the reading service, kept in this browser, and the
    * documents screen's setting that changes it (milestone 3 second pass, item 13, decision 0047).
@@ -771,6 +787,7 @@ export function App() {
     if (isRefusal(outcome)) {
       console.warn(`The import was refused (${outcome.reason})`, outcome.log ?? "");
       setNotice(outcome.message);
+      setOfferFor(outcome.message);
       return;
     }
     const report = reportOfImport(outcome);
@@ -791,6 +808,54 @@ export function App() {
    * checks dumped went as they ended (decision 0038), so there is nothing else to drop.
    */
   const stopImport = () => setWaiting(undefined);
+
+  /**
+   * Move a partial import's content onto a built-in template (milestone 3 second pass, item 16):
+   * the bridge makes a PDF of the page its original compiles to, on the compiler's engine, while
+   * the list shows its progress line, and the PDF import takes it from there, its question the
+   * first time and its setting after, its reading, its review and "Create document". Nothing of
+   * the partial import is kept. A cancel while the PDF is made, or no PDF, leaves the import
+   * waiting as it was, the latter with a notice that says so.
+   */
+  const moveImport = async () => {
+    const owned = compiler.current;
+    const pending = waiting;
+    if (owned === undefined || pending === undefined || importRun.current !== undefined) return;
+    setWaiting(undefined);
+    setNotice(undefined);
+    setImporting({ label: MOVE_STEP });
+    const files = pending.outcome.upload.files;
+    const run = owned.referencePdf(files, () => {});
+    importRun.current = run;
+    let made: PagePdf;
+    try {
+      made = await run.done;
+    } catch (error) {
+      if (importRun.current !== run) {
+        setWaiting(pending);
+        return;
+      }
+      importRun.current = undefined;
+      setImporting(undefined);
+      if (!(error instanceof EngineCancelled)) console.error("No PDF of the page was made:", error);
+      setWaiting(pending);
+      setNotice(MOVE_NO_PDF);
+      return;
+    }
+    if (importRun.current !== run) {
+      setWaiting(pending);
+      return;
+    }
+    importRun.current = undefined;
+    setImporting(undefined);
+    if (!made.ok) {
+      console.warn(`No PDF of the page was made ()`);
+      setWaiting(pending);
+      setNotice(MOVE_NO_PDF);
+      return;
+    }
+    pdfImport.start(pageFile(made.pdf, files[0]?.name));
+  };
 
   /** Stop the import under way: its worker is terminated and starts afresh (decision 0038). */
   const cancelImport = () => {
@@ -835,6 +900,9 @@ export function App() {
         {...(importShown === undefined ? {} : { importing: importShown })}
         onCancelImport={cancelImport}
         pdfReading={{ consent: pdfConsent, onChange: setPdfConsent }}
+        {...(notice !== undefined && notice === offerFor && library !== undefined
+          ? { pdfOffer: { onChoose: (file: File) => void importFiles([file]) } }
+          : {})}
         {...(pdf.step === "asking"
           ? { pdfQuestion: { onAnswer: pdfImport.answerQuestion, onCancel: pdfImport.cancel } }
           : {})}
