@@ -1,4 +1,4 @@
-# 00XX. Adding, removing and moving an outline's units
+# 0061. Adding, removing and moving an outline's units
 
 Date: 2026-10-05 · Status: accepted; the second pass's item 8, under decisions 0049 and 0055
 
