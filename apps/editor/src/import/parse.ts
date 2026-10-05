@@ -146,20 +146,34 @@ const VERBATIM =
  * that an `\end{document}` a resume shows as code, in a `verbatim` or a `\verb`, does not end its
  * body (the follow-up to decision 0060, `other-0006`). An environment no `\end` of its name closes,
  * or a `\verb` whose delimiter its line does not hold, is left as it is. Every index is the file's.
+ *
+ * It reads the file once, however many openers it holds: each end, delimiter and line's end is
+ * looked for from where the last search for it found it, since openers come in order, and one not
+ * found is not looked for again, as later openers of an environment no `\end` closes would.
  */
 function maskedVerbatim(text: string, masked: string, from: number): string {
+  const found = new Map<string, number>();
+  /** The first `needle` at or after `at`, or -1: the last search's answer while it still holds. */
+  const next = (needle: string, at: number) => {
+    const known = found.get(needle);
+    if (known !== undefined && (known < 0 || known >= at)) return known;
+    const place = text.indexOf(needle, at);
+    found.set(needle, place);
+    return place;
+  };
   const spans: [number, number][] = [];
   VERBATIM.lastIndex = from;
   for (let match = VERBATIM.exec(masked); match; match = VERBATIM.exec(masked)) {
     if (!isCommandAt(masked, match.index)) continue;
     const start = match.index + match[0].length;
     const [, environment, delimiter] = match;
-    const close =
-      environment !== undefined
-        ? text.indexOf(`\\end{${environment}}`, start)
-        : text.indexOf(delimiter ?? "", start);
-    const lineEnd = text.indexOf("\n", start);
-    if (close < 0 || (delimiter !== undefined && lineEnd >= 0 && close > lineEnd)) continue;
+    const close = next(
+      environment !== undefined ? `\\end{${environment}}` : (delimiter ?? ""),
+      start,
+    );
+    if (close < 0) continue;
+    const lineEnd = delimiter === undefined ? -1 : next("\n", start);
+    if (lineEnd >= 0 && close > lineEnd) continue;
     spans.push([start, close]);
     VERBATIM.lastIndex = close + 1;
   }

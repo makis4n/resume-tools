@@ -8,7 +8,7 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
-import { bound, fastest } from "../test/timing";
+import { bound, cpuMs, fastest } from "../test/timing";
 import { MAX_DELIMITED } from "./arguments";
 import { readTree } from "./fonts";
 import { encodeLike, type Intake, intake } from "./intake";
@@ -748,6 +748,25 @@ describe("the body of a main file", () => {
     const open = bodyFrom("\\begin{document}\n\\begin{verbatim}\nQuill\n\\end{document}\n");
     expect(open.text).toBe("\n\\begin{verbatim}\nQuill\n");
   });
+
+  test("finds the body's end in time linear in the file, whatever verbatim it opens", () => {
+    // The review of 13099bf: 2 MB of verbatim openers no `\end` closes, after the document's end,
+    // took 22 s, and a long line of `\verb`s grew as its square; a file of plain lines the same
+    // size is the baseline.
+    const size = 2_000_000;
+    const head = "\\documentclass{article}\n\\begin{document}\nQuill\n\\end{document}\n";
+    const lines = (unit: string) => head + unit.repeat(Math.floor(size / unit.length));
+    const plain = lines("Invented line\n");
+    const openers = lines("\\begin{verbatim}\n");
+    const verbs = `\\documentclass{article}\n\\begin{document}\n${"\\verb!x! ".repeat(size / 9)}\n\\end{document}\n`;
+    const [base = 0, unclosed = 0, line = 0] = fastest(
+      [() => bodyFrom(plain), () => bodyFrom(openers), () => bodyFrom(verbs)],
+      3,
+    );
+    expect(unclosed).toBeLessThan(bound(8, base));
+    expect(line).toBeLessThan(bound(30, base));
+    expect(cpuMs(() => bodyFrom(openers))).toBeLessThan(1_000);
+  }, 60_000);
 
   test("refuses a main file that does not start and end its document", () => {
     expect(bodyOf(intakeOf("\\documentclass{article}\nQuill"))).toMatchObject({
