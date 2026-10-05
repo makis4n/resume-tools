@@ -309,8 +309,8 @@ async function measurePackages(runner: Runner, options: Options) {
     [
       "",
       "An edit is timed from its command to its drawn page; the scheduler's pause before the",
-      "compile, which waits for the typing to stop, is not in it. The slow-laptop target counts",
-      "only on a 2019 laptop. Sizes are uncompressed; the CDN compresses them (milestone 5).",
+      "compile, which waits for the typing to stop, is not in it. Sizes are uncompressed;",
+      "the CDN compresses them (milestone 5).",
     ].join("\n"),
   );
   if (options.json !== undefined) {

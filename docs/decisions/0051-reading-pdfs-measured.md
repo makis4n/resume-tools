@@ -1,7 +1,12 @@
 # 0051. Reading PDFs, measured
 
+> Accepted by 00YY: the 42 compiling resumes xdvipdfmx makes no PDF of, and the rules' 68.8%
+> on the two held-out layouts, which this record leaves to later items, are known limits, not
+> chased in milestone 3.
+
 Date: 2026-10-04 · Status: accepted; the targets and the model's time budget were set by the
-owner on 4 October 2026
+owner on 4 October 2026; its 42 resumes with no PDF and the rules' 68.8% on the held-out pair
+are accepted by 00YY
 
 ## Context
 

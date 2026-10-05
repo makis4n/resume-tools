@@ -93,7 +93,6 @@ describe("meets", () => {
   it("words each limit as the plan does", () => {
     expect(formatLimit(TARGETS.keystroke)).toBe("under 16 ms");
     expect(formatLimit(TARGETS.typical)).toBe("300 ms");
-    expect(formatLimit(TARGETS.slowLaptop)).toBe("under 500 ms");
     expect(formatLimit(TARGETS.firstLoad)).toBe("under 30 MB");
   });
 });
@@ -296,13 +295,11 @@ describe("the tables", () => {
     expect(rows.map((row) => row.target)).toEqual([
       TARGETS.keystroke,
       TARGETS.typical,
-      TARGETS.slowLaptop,
       TARGETS.firstLoad,
     ]);
     expect(rows.map((row) => row.values.map((each) => each.met))).toEqual([
       [true, false],
       [true, false],
-      [true, true],
       [true, false],
     ]);
     expect(rows[1]?.values.map((each) => each.value)).toEqual([80, 400]);

@@ -75,7 +75,7 @@ describe("measure", () => {
             bytes: expect.any(Number),
           });
         }
-        expect(numbers.summary).toHaveLength(4);
+        expect(numbers.summary).toHaveLength(3);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

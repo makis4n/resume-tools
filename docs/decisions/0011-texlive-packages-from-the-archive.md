@@ -1,6 +1,9 @@
 # 0011. TeX Live packages from the archive
 
-Date: 2026-09-25 · Status: accepted
+> Superseded by 00YY in the slow laptop's run its consequences leave the engine's start to,
+> which is dropped: the start is judged on an M4 Pro.
+
+Date: 2026-09-25 · Status: accepted; the slow laptop's run it leaves the engine's start to is dropped by 00YY
 
 ## Context
 

@@ -1,6 +1,9 @@
 # 0060. The corpus on the new import
 
-Date: 2026-10-05 · Status: accepted; resets the baseline of decision 0043 for the outline's import
+> Accepted by 00YY: AltaCV's 82.2% against 90%, which this record calls a follow-up, is a
+> known limit, not chased in milestone 3.
+
+Date: 2026-10-05 · Status: accepted; resets the baseline of decision 0043 for the outline's import; its AltaCV gap is accepted by 00YY
 
 ## Context
 

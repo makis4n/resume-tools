@@ -1,6 +1,10 @@
 # 0064. The second pass measured, and milestone 3 closed
 
-Date: 2026-10-05 · Status: accepted; closes milestone 3 with its second pass
+> Superseded by 00YY in what it leaves owed: the slow laptop's column is dropped, and the
+> browser's numbers are 00YY's. Accepted by 00YY: XeTeX's margin, 1.49 s under the 20 s aim, is a
+> known limit, not chased in milestone 3.
+
+Date: 2026-10-05 · Status: accepted; closes milestone 3 with its second pass; its slow laptop's column is dropped, its browser's numbers are taken and its XeTeX margin is accepted by 00YY
 
 ## Context
 

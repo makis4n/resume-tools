@@ -1,8 +1,8 @@
 /**
  * The import's measurement page, which the app shows in place of the editor at `?measure=import`,
  * and `?measure=import-xetex` for XeTeX (milestone 3 item 19, decision 0045), so that the import
- * can be timed in a browser, the slow laptop's among them, with nothing installed but the dev
- * server. It is a developer's page, not a user's.
+ * can be timed in a browser with nothing installed but the dev server. It is a developer's page,
+ * not a user's.
  *
  * It takes the upstream sample `import.ts` names for the engine, Jake's Resume for pdfTeX and
  * Awesome-CV for XeTeX, as the dev server serves it (`scripts/serve-samples.ts`, once `corpus

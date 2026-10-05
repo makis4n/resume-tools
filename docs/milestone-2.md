@@ -164,7 +164,8 @@ end to end before the other two templates, so that the editing loop is proven on
 23. [x] **Measure on the slow laptop and retire the spike page.** All three templates, every
     target in section 4.3, with the numbers recorded next to decision 0003's. A first pass on
     Jake's Resume should happen as soon as item 9 lands, so a miss shows up early. The spike's
-    Node scripts stay, since the decision records cite them.
+    Node scripts stay, since the decision records cite them. Decision 00YY dropped the slow-laptop
+    run, never taken.
 
 ## Decisions this milestone makes
 
@@ -187,16 +188,16 @@ pull request that acts on it.
 
 ## Risks
 
-- **Measured on a fast machine only, so far** (item 23, decision 0016). On an M4 Pro, Jake's
+- **Measured on a fast machine only** (item 23, decision 0016). On an M4 Pro, Jake's
   Resume, AltaCV and Awesome-CV meet the keystroke target (0.07, 0.11 and 0.11 ms against 16)
   and the typical edit (84, 115 and 110 ms against 300), and fit a sample that just runs past a
   page in one compile; all three miss the first load as the dev server serves it, 42, 44 and
   53 MB uncompressed against 30, which milestone 5's CDN and engine build have to bring under.
-  The slow laptop is still to measure, with the same command and page.
-- **Awesome-CV may not meet the slow-laptop target.** The loop measured 459 ms at best and
-  847 ms under load on an M4 Pro, against 500 ms on a 2019 laptop. Item 21 found the speed:
-  with no font folder scanned, Awesome-CV's edit takes 110 ms in Node on the same machine
-  (decision 0016), so the risk now rests on the slow laptop's run alone.
+  The slow laptop's run was dropped by decision 00YY: the targets are judged on the M4 Pro.
+- **Awesome-CV and the slow-laptop target, dropped by decision 00YY.** The loop measured 459 ms
+  at best and 847 ms under load on an M4 Pro, against 500 ms on a 2019 laptop. Item 21 found the
+  speed: with no font folder scanned, Awesome-CV's edit takes 110 ms in Node on the same machine
+  (decision 0016), so the risk rested on the slow laptop's run alone, dropped with its target.
 - **ProseMirror and TeX's line breaks** (item 10). ProseMirror owns the editable DOM, so the
   breaks have to come in as decorations. If that fights the editor, rich fields fall back to the
   browser's breaks until the compile lands, which decision 0004 accepts only for hyphenation. That
@@ -214,7 +215,7 @@ pull request that acts on it.
 
 | Item | Where |
 |---|---|
-| Slow-laptop numbers | A first pass after item 9, then item 23 |
+| Slow-laptop numbers | A first pass after item 9, then item 23; never taken, and dropped by decision 00YY |
 | The paragraph special the marker macro should emit (decision 0004) | Item 5 |
 | An OpenType writer so the Python web font script can go | Item 9, using opentype.js |
 | Hyphenation in the line breaker | Only when a port needs it; none is known to |

@@ -1,6 +1,9 @@
 # 0054. A PDF onto the resume, by rules
 
-Date: 2026-10-04 · Status: accepted
+> Accepted by 00YY: the rules' known lacks, which this record leaves open, and their 68.8% on
+> the two held-out layouts are known limits, not chased in milestone 3.
+
+Date: 2026-10-04 · Status: accepted; the rules' known lacks it leaves open are accepted by 00YY
 
 ## Context
 
