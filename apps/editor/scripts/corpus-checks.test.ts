@@ -80,12 +80,56 @@ describe("texError", () => {
 
   it("names a file of the upload by its extension and a job's file as the job's", () => {
     const log = "(./import.tex (./import.aux\n! Missing } inserted.\nl.3 \\@writefile";
-    expect(texError(log, "import")?.file).toBe("the job's .aux");
+    expect(texError(log, "import")?.file).toBe("a file of the job's (.aux)");
     const input = "(./import.tex (./Quillon.tex\n! Missing } inserted.\nl.3 x";
     expect(texError(input, "import")?.file).toBe("a file of the upload's (.tex)");
     const closed =
       "(./import.tex (./Quillon.tex) (/texmf/tex/latex/base/size10.clo)\n! Missing } inserted.";
     expect(texError(closed, "import")?.file).toBe("main");
+    // An extension that is no file's kind is a word of the upload's, and is not printed.
+    const odd = "(./import.tex (./Quillon.Ashgrove\n! Missing } inserted.";
+    expect(texError(odd, "import")?.file).toBe("a file of the upload's");
+  });
+
+  it("names a file of the tree only where the tree holds it", () => {
+    const tree = "/texlive/texmf-dist/tex/latex/base/size10.clo";
+    const log = `(./import.tex (${tree}\n! Missing } inserted.`;
+    expect(texError(log, "import", (path) => path === tree)?.file).toBe("TeX Live's size10.clo");
+    expect(texError(log, "import")?.file).toBe("a file of TeX Live's");
+  });
+
+  it("prints no word of a runaway argument's echo or a box's display as a file", () => {
+    // The two invented logs of the review of 13099bf: a word in `(/...` before the error.
+    const logs = [
+      [
+        "(./import.tex",
+        "Runaway argument?",
+        "{Zorbin Klatch (/u/Weltermoor \\par \\item Fennelby",
+        "! Paragraph ended before \\resumeItem was complete.",
+        "<to be read again> ",
+        "                   \\par ",
+        "l.30 ",
+      ],
+      [
+        "(./import.tex",
+        "Overfull \\hbox (3.2pt too wide) in paragraph at lines 12--14",
+        "[]\\T1/lmr/m/n/10 See (/in/zorbin-klatch on the site",
+        " []",
+        "",
+        "! Undefined control sequence.",
+        "l.15 \\foo",
+      ],
+    ];
+    for (const lines of logs) {
+      const error = texError(lines.join("\n"), "import", () => false);
+      expect(error?.file).toBe("main");
+      const printed = errorLine(error as NonNullable<typeof error>);
+      for (const word of ["Weltermoor", "zorbin", "klatch", "Fennelby", "Zorbin"])
+        expect(printed).not.toContain(word);
+    }
+    // Even where a word stays open and is taken for a file, it is never printed as a name.
+    const unskipped = "(./import.tex See (/in/zorbin-klatch\n! Undefined control sequence.";
+    expect(texError(unskipped, "import")?.file).toBe("a file of TeX Live's");
   });
 
   it("finds no error in a log without one", () => {

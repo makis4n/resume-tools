@@ -143,6 +143,8 @@ async function main() {
     readFileSync(join(ENGINE_DIR, "files", path)),
   );
   const deps = { session, fonts, tree, treeImage };
+  /** Whether a path a log names is a file of the engine's tree, which alone a line names. */
+  const treeFile = (path: string) => Object.hasOwn(manifest.files, path);
   const options = { treeImage };
 
   process.on("message", async (task: Task) => {
@@ -478,7 +480,7 @@ async function main() {
       // The compiles, as the checks compile them.
       const dumped = compiler.start();
       if (!dumped.ok) {
-        const error = texError(dumped.log, IMPORT_JOB);
+        const error = texError(dumped.log, IMPORT_JOB, treeFile);
         say(
           `the package's format: does not dump: ${error === undefined ? "no error" : errorLine(error, (n) => `at preamble line ${n}`)}`,
         );
@@ -495,7 +497,7 @@ async function main() {
         line: (n: number) => string,
       ): Promise<CompileVerdict> => {
         if (failed(result, 3) || result.output === undefined) {
-          const error = texError(result.log, IMPORT_JOB);
+          const error = texError(result.log, IMPORT_JOB, treeFile);
           return {
             outcome: "stops",
             ...(error === undefined ? {} : { error: errorLine(error, line) }),

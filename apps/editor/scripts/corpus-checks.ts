@@ -159,53 +159,102 @@ export interface TexError {
 const commandName = (text: string | undefined) =>
   text !== undefined && COMMAND.test(text) ? text : undefined;
 
+/** The extensions a file of the job's folder is named by, which are never the upload's words. */
+const KNOWN_EXTENSIONS = new Set(
+  [
+    ...["tex", "sty", "cls", "def", "cfg", "fd", "clo", "ldf", "dict", "bib", "bbl", "bst", "aux"],
+    ...["toc", "out", "lof", "lot", "nav", "snm", "vrb", "png", "jpg", "jpeg", "pdf", "eps"],
+  ].map((extension) => `.${extension}`),
+);
+
+/** A file's extension as printed: one of `KNOWN_EXTENSIONS`, or none. */
+const knownExtension = (name: string) => {
+  const extension = /\.[A-Za-z0-9]{1,8}$/.exec(name)?.[0]?.toLowerCase() ?? "";
+  return KNOWN_EXTENSIONS.has(extension) ? extension : undefined;
+};
+
+/** A log line that begins a box's display, which echoes the box's text up to a blank line. */
+const BOX_WARNING = /^(?:Overfull|Underfull|Tight|Loose) \\[hv]box\b/;
+
 /**
- * The file a log was reading where its first error is, by the files TeX opened and closed before
- * it, `(path` and `)`: the job's main file (`main`), another of its files by extension, as its
- * `.aux`, or a file of the tree by its name; or undefined where the log does not say.
+ * The file a log was reading where its first error is, by the parentheses TeX writes as it opens
+ * and closes files: every `(` opens something and every `)` closes the last, a file where a path
+ * follows the `(`, so that a parenthesis of a warning's own words, `(badness 10000)`, closes
+ * itself. What echoes the document is skipped: the line after a runaway argument's, and a box's
+ * display, from its warning to the blank line after it. The file is the innermost one open, as
+ * `fileKind` names it; or undefined where the log does not say.
  */
-function fileAt(lines: readonly string[], at: number, job: string): string | undefined {
-  const open: string[] = [];
-  const opening =
-    /\(((?:\.\/|\/)[^\s()]*|[A-Za-z0-9_.-]+\.(?:tex|sty|cls|def|cfg|fd|clo|ldf|aux|toc|out|bbl|dict))/g;
+function fileAt(
+  lines: readonly string[],
+  at: number,
+  job: string,
+  treeFile: (path: string) => boolean,
+): string | undefined {
+  const open: (string | undefined)[] = [];
+  const path =
+    /^((?:\.\/|\/)[^\s()]*|[A-Za-z0-9_.-]+\.(?:tex|sty|cls|def|cfg|fd|clo|ldf|aux|toc|out|bbl|dict))/;
+  let skip: "line" | "box" | undefined;
   for (const line of lines.slice(0, at)) {
-    let k = 0;
-    for (const found of line.matchAll(opening)) {
-      const index = found.index ?? 0;
-      // A `)` before this `(` closes what was open.
-      for (const char of line.slice(k, index)) if (char === ")") open.pop();
-      open.push(found[1] ?? "");
-      k = index + found[0].length;
+    if (skip === "line") {
+      skip = undefined;
+      continue;
     }
-    for (const char of line.slice(k)) if (char === ")") open.pop();
+    if (skip === "box") {
+      if (line.trim() === "") skip = undefined;
+      continue;
+    }
+    if (/^Runaway \w+\?$/.test(line)) {
+      skip = "line";
+      continue;
+    }
+    if (BOX_WARNING.test(line)) {
+      skip = "box";
+      continue;
+    }
+    for (let k = 0; k < line.length; k++) {
+      if (line[k] === "(") open.push(path.exec(line.slice(k + 1, k + 513))?.[1]);
+      else if (line[k] === ")") open.pop();
+    }
   }
-  const path = open.at(-1);
-  if (path === undefined) return undefined;
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  return fileKind(path, name, job);
+  const innermost = [...open].reverse().find((each) => each !== undefined);
+  if (innermost === undefined) return undefined;
+  return fileKind(innermost, innermost.slice(innermost.lastIndexOf("/") + 1), job, treeFile);
 }
 
 /**
  * A file as printed: the job's main file, the body, as `main`; another file of the job's folder by
- * its extension alone, since its name is the upload's (`.tex of the upload`, `the job's .aux`); a
- * file of TeX Live by its name, which is a package's.
+ * a known extension alone, since its name is the upload's (`a file of the upload's (.tex)`, `the
+ * job's .aux`); a file of the engine's tree by its name, a package's, only where `treeFile` says
+ * the path is one; and anything else in fixed words, so that no word of a log's reaches a line.
  */
-function fileKind(path: string, name: string, job: string): string {
-  const extension = /\.[A-Za-z0-9]{1,8}$/.exec(name)?.[0] ?? "";
+function fileKind(
+  path: string,
+  name: string,
+  job: string,
+  treeFile: (path: string) => boolean,
+): string {
+  const extension = knownExtension(name);
+  const shown = extension === undefined ? "" : ` (${extension})`;
   if (name === `${job}.tex` || name === job) return "main";
-  if (name.startsWith(`${job}.`)) return `the job's ${extension}`;
-  if (path.startsWith("./") || !path.startsWith("/"))
-    return `a file of the upload's (${extension})`;
-  return /^[A-Za-z0-9_.-]{1,60}$/.test(name) ? `TeX Live's ${name}` : "a file of TeX Live's";
+  if (name.startsWith(`${job}.`)) return `a file of the job's${shown}`;
+  if (path.startsWith("./") || !path.startsWith("/")) return `a file of the upload's${shown}`;
+  return treeFile(path) && /^[A-Za-z0-9_.-]{1,60}$/.test(name)
+    ? `TeX Live's ${name}`
+    : "a file of TeX Live's";
 }
 
 /**
  * A log's first error as a kind (`TexError`), or undefined where it has none: the error's line read
  * against `KINDS` alone, and of its context only `l.<n>`, the undefined command, the macros being
  * expanded and a token read again, each a command's name or a number. A runaway argument's line,
- * which echoes the argument, is only counted. `job` names the job, whose main file is the body.
+ * which echoes the argument, is only counted. `job` names the job, whose main file is the body;
+ * `treeFile` says whether a path is a file of the engine's tree, which alone is named.
  */
-export function texError(log: string, job: string): TexError | undefined {
+export function texError(
+  log: string,
+  job: string,
+  treeFile: (path: string) => boolean = () => false,
+): TexError | undefined {
   const lines = log.split(/\r?\n/);
   const at = lines.findIndex((line) => line.startsWith("! "));
   if (at < 0) return undefined;
@@ -223,7 +272,7 @@ export function texError(log: string, job: string): TexError | undefined {
     inside: [],
     runaway: lines.slice(Math.max(0, at - 3), at).some((each) => /^Runaway \w+\?$/.test(each)),
   };
-  const file = fileAt(lines, at, job);
+  const file = fileAt(lines, at, job, treeFile);
   if (file !== undefined) error.file = file;
   const context = lines.slice(at + 1, at + 40);
   if (kind === "undefined control sequence") {
