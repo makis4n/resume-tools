@@ -1,6 +1,6 @@
 /**
  * The measurement page, which the app shows in place of the editor at `?measure=1` (milestone 2
- * item 23, decision 0016), so that the targets of plan section 4.3 can be read on the slow laptop
+ * item 23, decision 0016), so that the targets of plan section 4.3 can be read in a browser
  * with nothing installed but the dev server. It is a developer's page, not a user's.
  *
  * It opens a curated package's sample as a new document, Jake's Resume unless `?measure=<id>`
@@ -109,11 +109,7 @@ function report({ name, id, engine, first, keystroke, edits, pages }: Measured):
     ]),
     "",
     "Against plan section 4.3, an edit by its page's own time",
-    table([
-      verdict(TARGETS.keystroke, keystroke.ms),
-      verdict(TARGETS.typical, edit),
-      verdict(TARGETS.slowLaptop, edit),
-    ]),
+    table([verdict(TARGETS.keystroke, keystroke.ms), verdict(TARGETS.typical, edit)]),
   ].join("\n");
 }
 

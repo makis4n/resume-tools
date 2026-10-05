@@ -1,9 +1,8 @@
 /**
  * The PDF import's measurement page, which the app shows in place of the editor at
  * `?measure=import-pdf` (milestone 3 second pass, item 18), beside the `.tex` import's
- * (`ImportMeasurePage.tsx`), so that a PDF import by rules can be timed in a browser, the slow
- * laptop's among them, with nothing installed but the dev server. It is a developer's page, not a
- * user's.
+ * (`ImportMeasurePage.tsx`), so that a PDF import by rules can be timed in a browser with nothing
+ * installed but the dev server. It is a developer's page, not a user's.
  *
  * It makes the editor's own PDF of each built-in template, typesetting its own invented sample, on
  * a worker of its own, as the editor exports one (`builtinPdfs`), and imports each by rules as the

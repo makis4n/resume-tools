@@ -132,9 +132,9 @@ The class patches from `acv.cjs` (tcolorbox dropped, unicode-math dropped, `\bul
 - **New:** a `\dump` loses hyperref's first-shipout specials on XeTeX. The pdfTeX comparison in
   `jake-fmt.cjs` was byte-identical, so this is worth a look when the XeTeX renderer or download
   path cares about PDF version specials.
-- **Machine load matters:** the same script gave 847 ms under a load average of 10, so the
-  slow-laptop numbers the plan asks for are still open, and the XeTeX debounce should assume
-  the worse figure.
+- **Machine load matters:** the same script gave 847 ms under a load average of 10, so a
+  slower machine's numbers would be worse (the plan's run on a 2019 laptop was dropped by
+  decision 0066), and the XeTeX debounce should assume the worse figure.
 
 ## Files
 

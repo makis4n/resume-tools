@@ -52,8 +52,7 @@ export interface Target {
  * 3 measures the cached template's (`import.ts`, decision 0045); a cache miss's waits on the model,
  * which no measurement asks. The cached template's is under 8 s, which the owner raised on
  * 2 October 2026 from the plan's 5 s (decision 0045), judged on pdfTeX; the plan's own row is the
- * owner's to revise. A slow laptop is a 2019 machine with integrated graphics; the slow-laptop target is judged here on
- * whatever machine runs the measurement, so it says something only on one.
+ * owner's to revise.
  */
 export const TARGETS = {
   keystroke: { path: "Keystroke in the overlay", limit: 16, unit: "ms", under: true },
@@ -62,12 +61,6 @@ export const TARGETS = {
     limit: 300,
     unit: "ms",
     under: false,
-  },
-  slowLaptop: {
-    path: "True page updated after an edit, slow laptop",
-    limit: 500,
-    unit: "ms",
-    under: true,
   },
   firstLoad: { path: "First load, cached afterwards", limit: 30e6, unit: "bytes", under: true },
   importCached: { path: "Import, template already cached", limit: 8000, unit: "ms", under: true },
@@ -775,7 +768,6 @@ export function verdicts(measured: readonly { numbers: PackageNumbers; load: Fir
   return [
     against(TARGETS.keystroke, ({ numbers }) => numbers.keystroke.ms),
     against(TARGETS.typical, edit),
-    against(TARGETS.slowLaptop, edit),
     against(TARGETS.firstLoad, ({ load }) => load.total),
   ] satisfies Verdict[];
 }

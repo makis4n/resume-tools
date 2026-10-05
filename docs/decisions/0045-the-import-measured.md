@@ -1,6 +1,9 @@
 # 0045. The import measured, and milestone 2's owed table closed
 
-Date: 2026-10-01 · Status: proposed; raises milestone 3's import bar to under 8 s (2026-10-02)
+> Superseded by 0066 in its slow laptop's column, which is dropped: the import is judged on
+> this record's M4 Pro, in Node and in the browser.
+
+Date: 2026-10-01 · Status: proposed; raises milestone 3's import bar to under 8 s (2026-10-02); its slow laptop's column is dropped by 0066
 
 ## Context
 
