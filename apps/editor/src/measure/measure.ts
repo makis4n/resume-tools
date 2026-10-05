@@ -71,6 +71,8 @@ export const TARGETS = {
   },
   firstLoad: { path: "First load, cached afterwards", limit: 30e6, unit: "bytes", under: true },
   importCached: { path: "Import, template already cached", limit: 8000, unit: "ms", under: true },
+  // docs/milestone-3-overhaul.md, "Done means": with rules a PDF import takes under 1 s.
+  pdfRules: { path: "PDF import by rules", limit: 1000, unit: "ms", under: true },
 } as const satisfies Record<string, Target>;
 
 /** Whether a value meets a target. */

@@ -178,7 +178,7 @@ export interface ImportHow {
 }
 
 /** A request the scheduler made of the engine for the page, as the measurement notes it. */
-interface Noted {
+export interface Noted {
   kind: "dump" | "putFormat" | "compile" | "pdf";
   ms: number;
   passes?: number[];
@@ -189,7 +189,7 @@ interface Noted {
  * PDF noted with how long it took, from the call to its answer, a compile with its passes. The
  * import itself is passed on as it is: its own progress times it.
  */
-function noted(engine: CompilerEngine, now: () => number, note: (noted: Noted) => void) {
+export function noted(engine: CompilerEngine, now: () => number, note: (noted: Noted) => void) {
   const timed =
     <A extends unknown[], R>(kind: Noted["kind"], call: (...args: A) => Promise<R>) =>
     async (...args: A): Promise<R> => {
