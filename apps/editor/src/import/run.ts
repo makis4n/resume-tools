@@ -439,9 +439,10 @@ export async function importResume(
  * The preamble's tree and its calls that store a header's text, as the probe found them: the
  * preamble read again, since a text read once builds one tree, with the template macros the
  * engine's signatures say store their arguments (`isSetter`); undefined where the preamble holds
- * none, or where its candidates are not the probe's, which then are no fields.
+ * none, or where its candidates are not the probe's, which then are no fields. `corpus checks`
+ * builds the outline with it as the import does.
  */
-function preambleOf(
+export function preambleOf(
   body: Body,
   built: Tree,
   probed: Probe,

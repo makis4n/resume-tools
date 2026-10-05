@@ -308,6 +308,63 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decisions 0038 an
     expect(done.report.checks.difference).toBeUndefined();
   }, 60_000);
 
+  test("imports a resume that shows a document's code in a verbatim, past the code's \\end{document}", async () => {
+    // `other-0006`'s shape (the follow-up to decision 0060), invented: the body ends at the
+    // `\end{document}` TeX reads, so the outline holds the verbatim's end and what follows it.
+    const source = String.raw`\documentclass{article}
+\begin{document}
+\section{Invented Templates}
+Quill Ashgrove writes invented templates, such as this one.
+\begin{verbatim}
+\documentclass{article}
+\begin{document}
+An invented sample.
+\end{document}
+\end{verbatim}
+\section{Invented Projects}
+\begin{itemize}
+\item Tended invented bees.
+\item Wrote invented words.
+\end{itemize}
+\end{document}
+`;
+    const done = await imported(source);
+    expect(done.report.checks.outcome).toBe("assembled");
+    const [section] = done.document.resume.sections;
+    if (section?.kind !== "outline") throw new Error("the import holds no outline");
+    const kept = [...outlineNodes(section.parts)].flatMap((step) =>
+      step.kind === "part" && step.part.kind === "kept" ? [step.part.latex] : [],
+    );
+    expect(kept.join("")).toContain("\\end{verbatim}");
+    expect(nodesOf(done).groups).toBeGreaterThan(0);
+    expect(compiles(done, done.document.resume)).toBe(true);
+  }, 60_000);
+
+  test("imports a resume whose groups TeX leaves open to \\end{document}, closing them there", async () => {
+    // `other-0052`'s shape (the follow-up to decision 0060), invented: each `{%` line opens a group
+    // whose `}` is in its comment, which TeX leaves open to `\end{document}`. The outline closes
+    // them just before it, and its page is the original's.
+    const source = String.raw`\documentclass{article}
+\begin{document}
+{% Invented studies }
+\section{Invented Studies}
+Quill Academy, in Wrenford.
+{% Invented work }
+\section{Invented Work}
+Tended invented bees at Heron College.
+\end{document}
+`;
+    const done = await imported(source);
+    expect(done.report.checks.outcome).toBe("assembled");
+    expect(done.report.checks.difference).toBeUndefined();
+    const [section] = done.document.resume.sections;
+    if (section?.kind !== "outline") throw new Error("the import holds no outline");
+    const last = section.parts.at(-1);
+    expect(last?.kind === "kept" && last.latex.endsWith("}}\\end{document}")).toBe(true);
+    expect(nodesOf(done).fields.length).toBeGreaterThan(0);
+    expect(compiles(done, done.document.resume)).toBe(true);
+  }, 60_000);
+
   test("keeps every field as kept text, with a plain reason, when its marked outline stops", async () => {
     // A session on which the outline's compile with its fields stops, as one would whose regenerated
     // text a template cannot take: every compile of a body that holds a field's marker as the

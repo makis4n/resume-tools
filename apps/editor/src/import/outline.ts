@@ -27,7 +27,9 @@
  * far as the editor's loop needs, and a document snippet of `{{sections}}`. It is checked against
  * the model's schema, which refuses kept text that holds the editor's own macros or markers, a
  * piece that ends in an escaping backslash, and braces that do not balance (decision 0049): an
- * upload that makes one is refused (`keep`).
+ * upload that makes one is refused (`keep`). Braces the upload opens and never closes, which TeX
+ * leaves open to `\end{document}`, are closed just before it (`closeOpenBraces`), and the checks
+ * compile the outline so closed.
  *
  * Nothing here compiles: the checks compile the outline (`checks.ts`). Nothing here reaches the
  * network.
@@ -38,6 +40,7 @@ import {
   OutlineSection,
   type OutlineUnit,
   outlineNodes,
+  outlineOpenBraces,
   Resume,
   type RichText,
 } from "@resume-tools/resume-model";
@@ -638,6 +641,7 @@ export function buildOutline(input: OutlineInput): Outline {
   for (const spot of writer.spots) spotted.set(spot.id, spot.candidate);
   add(partsIn(writer, { start: 0, end: tree.source.length }));
   add([{ kind: "kept", latex: input.end }]);
+  closeOpenBraces(parts, input.end);
   // The fields and groups the parts hold: a group the model refused is written as its parts, and
   // what was placed inside it before is not there.
   const owners = new Map<string, string>();
@@ -660,6 +664,25 @@ export function buildOutline(input: OutlineInput): Outline {
     groups: spans,
     counts: { fields: fieldCount(parts), groups: made.groups, units: made.units },
   };
+}
+
+/** The most braces an outline closes for its upload: as many as the parser lets a body nest. */
+const MAX_CLOSED = 64;
+
+/**
+ * Close, just before `\end{document}`, the braces an outline's parts leave open, as the model
+ * reads them (`outlineOpenBraces`): a group the upload opens and never closes, as a `{%` whose `}`
+ * is in its comment does, which TeX leaves open to `\end{document}` and the model would refuse the
+ * outline for (the follow-up to decision 0060, `other-0052`). Nothing is done to parts that
+ * balance, close a brace they never opened, or leave more than `MAX_CLOSED` open, which the model
+ * goes on refusing; the checks compile what is closed, and say where the page differs.
+ */
+function closeOpenBraces(parts: OutlinePart[], end: string) {
+  const open = outlineOpenBraces(parts);
+  const last = parts.at(-1);
+  if (open === undefined || open === 0 || open > MAX_CLOSED) return;
+  if (last?.kind !== "kept" || !last.latex.endsWith(end)) return;
+  last.latex = `${last.latex.slice(0, last.latex.length - end.length)}${"}".repeat(open)}${end}`;
 }
 
 /**

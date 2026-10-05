@@ -729,6 +729,26 @@ describe("the body of a main file", () => {
     expect(body.sources).toEqual([{ start: 0, end: 7, file: "cv.tex", offset: 59 }]);
   });
 
+  test("ends the body at the \\end{document} TeX reads, past one a verbatim or a \\verb shows", () => {
+    // An invented resume that shows a document's code, as `other-0006`'s shape does (the follow-up
+    // to decision 0060): the body runs past the code's `\end{document}` to the document's own.
+    const code =
+      "\\begin{verbatim}\n\\begin{document}\nInvented sample\n\\end{document}\n\\end{verbatim}";
+    const main = `\\documentclass{article}\n\\begin{document}\nQuill\n${code}\nAshgrove \\verb|\\end{document}| here\n\\section{Invented}\nTenterfield\n\\end{document}\n`;
+    const body = bodyFrom(main);
+    expect(body.text).toBe(
+      `\nQuill\n${code}\nAshgrove \\verb|\\end{document}| here\n\\section{Invented}\nTenterfield\n`,
+    );
+    expect(body.after).toBe("\\end{document}\n");
+    // A comment's verbatim is no verbatim, and one never closed is read as before.
+    const commented = bodyFrom(
+      "\\begin{document}\n% \\begin{verbatim}\nQuill\n\\end{document}\n\\end{verbatim}\n",
+    );
+    expect(commented.after).toBe("\\end{document}\n\\end{verbatim}\n");
+    const open = bodyFrom("\\begin{document}\n\\begin{verbatim}\nQuill\n\\end{document}\n");
+    expect(open.text).toBe("\n\\begin{verbatim}\nQuill\n");
+  });
+
   test("refuses a main file that does not start and end its document", () => {
     expect(bodyOf(intakeOf("\\documentclass{article}\nQuill"))).toMatchObject({
       refused: true,
