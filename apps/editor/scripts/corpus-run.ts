@@ -69,6 +69,18 @@ function fieldsOf(value: unknown, field: string, out: Set<string>) {
 }
 
 /**
+ * The row's diagnostics, which runs made before them lack (`corpus-pieces.ts`): the only fields
+ * `corpus compare` sets aside where one run lacks them throughout. Times are aside anyway.
+ */
+export const DIAGNOSTICS: readonly string[] = [
+  "pieces",
+  "budgets",
+  "compiles.trials",
+  "compiles.dumps",
+  "compiles.pdfs",
+];
+
+/**
  * The fields one side holds somewhere and the other nowhere, each where it begins (`a.b`, not
  * `a.b.c` too): what an older run lacks of a newer one's rows.
  */
@@ -97,10 +109,10 @@ const LooseRun = z.looseObject({
 /**
  * Where two runs' JSON differ, times aside: each document's by its id, its `times` left out, and
  * everything else of the file; each a line naming the path and the two values, which are counts and
- * the words of closed lists. None when they agree. A field one run's rows hold and the other's hold
- * nowhere, as a run made before the field was added lacks it, is not compared but named
- * (`lacking`), each by its path in a row, or under `run.` in the file; a document one run lacks
- * still differs.
+ * the words of closed lists. None when they agree. One of the row's diagnostics (`DIAGNOSTICS`) that
+ * one run's rows hold and the other's hold nowhere, as a run made before they were added lacks
+ * them, is not compared but named (`lacking`); every other field one run lacks still differs, as
+ * a document one run lacks does.
  */
 export function runComparison(
   first: unknown,
@@ -112,18 +124,21 @@ export function runComparison(
   // When and at which commit a run ran is no result of it, as its times are not.
   const { documents: rowsA, at: _atA, ...restA } = a;
   const { documents: rowsB, at: _atB, ...restB } = b;
-  const lackingRun = lackingFields([restA], [restB]);
-  differences(restA, restB, "run", out, "", (field) => lackingRun.has(field));
+  differences(restA, restB, "run", out);
   const byId = (rows: typeof rowsA) =>
     new Map(rows.map(({ times: _times, ...row }) => [row.id, row] as const));
   const one = byId(rowsA);
   const two = byId(rowsB);
-  const lacking = lackingFields([...one.values()], [...two.values()]);
+  const lacking = new Set(
+    [...lackingFields([...one.values()], [...two.values()])].filter((field) =>
+      DIAGNOSTICS.includes(field),
+    ),
+  );
   for (const id of [...new Set([...one.keys(), ...two.keys()])].sort())
     differences(one.get(id), two.get(id), id, out, "", (field) => lacking.has(field));
   return {
     differences: out.map(printable),
-    lacking: [...[...lackingRun].map((field) => `run.${field}`), ...lacking].sort().map(printable),
+    lacking: [...lacking].sort().map(printable),
   };
 }
 

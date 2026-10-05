@@ -4,6 +4,7 @@ import { strToU8 } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
 import type { EngineManifest } from "../src/engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/node";
+import type { EngineSession } from "../src/engine/session";
 import type { CheckEvent } from "../src/import/checks";
 import { readTree } from "../src/import/fonts";
 import { type Intake, treeImages } from "../src/import/intake";
@@ -12,7 +13,7 @@ import type { Probe, ProbeCandidate, UncoveredRun } from "../src/import/probe";
 import type { Reference, ReferenceGlyph } from "../src/import/reference";
 import { isRefusal } from "../src/import/refusal";
 import { type AssemblyChecks, type LockReason, reportOfImport } from "../src/import/report";
-import { type ImportDeps, type Imported, importResume, watched } from "../src/import/run";
+import { type ImportDeps, type Imported, importResume } from "../src/import/run";
 import { STANDARD, STANDARD_ENVIRONMENTS } from "../src/import/standard";
 import { FontLibrary } from "../src/page/fonts";
 import { TexLiveIndex } from "../src/page/texlive";
@@ -22,7 +23,6 @@ import {
   addsUp,
   definedNames,
   loadedTreeFiles,
-  mentionedNames,
   type Names,
   namerOf,
   PIECE_BUCKETS,
@@ -33,7 +33,7 @@ import {
   TrialClock,
   uploadNames,
 } from "./corpus-pieces";
-import { runComparison, runDifferences } from "./corpus-run";
+import { DIAGNOSTICS, runComparison, runDifferences } from "./corpus-run";
 
 // Every document, name, word and count here is invented for these tests; SECRET stands for a
 // document's text, which nothing the runner prints or writes may show.
@@ -129,8 +129,11 @@ describe("a piece's name", () => {
       signatures: { commands: { sigstandard: { kind: "standard" } }, environments: {} },
       standard: { macros: STANDARD, environments: STANDARD_ENVIRONMENTS },
       inTree: (path) => path === "/texmf/texmf-dist/tex/latex/invented/invented.cls",
-      treeNames: () => mentionedNames(String.raw`\newcommand{\cventry}{} \begin{cvlist}`),
-      shared: mentionedNames(String.raw`\newcommand{\cvsection}{}`),
+      treeNames: () =>
+        definedNames(
+          String.raw`\newcommand{\cventry}{} \newenvironment{cvlist}{}{} \section{Heading}`,
+        ),
+      shared: definedNames(String.raw`\newcommand{\cvsection}{}`),
     });
     expect(namer("macro", "textbf")).toBe("textbf");
     expect(namer("environment", "itemize")).toBe("itemize");
@@ -140,6 +143,33 @@ describe("a piece's name", () => {
     expect(namer("macro", "cvsection")).toBe("cvsection");
     expect(namer("macro", "resumeItem")).toBe("user macro");
     expect(namer("macro", "unheard")).toBe("other macro");
+    // A word in braces a tree's file only writes, a heading's, defines nothing.
+    expect(namer("environment", "Heading")).toBe("other environment");
+  });
+
+  test("is a bucket for a name the document defines in any way, as either kind", () => {
+    // Something public writes every name, as a package's heading may: the document's own wins.
+    const known = () => true;
+    for (const source of [
+      String.raw`\newcommand{\Publications}{}`,
+      String.raw`\newtheorem{Publications}{P}`,
+      String.raw`\newtheorem*{Publications}{P}`,
+      String.raw`\newtcolorbox[auto counter]{Publications}{}`,
+      String.raw`\newmdenv[linewidth=1pt]{Publications}`,
+      String.raw`\DeclareDocumentEnvironment{Publications}{}{}{}`,
+      String.raw`\NewEnviron{Publications}{}`,
+      String.raw`\LetLtxMacro\Publications\section`,
+      String.raw`\newfontfamily\Publications{Invented Sans}`,
+      String.raw`\def\Publications{}\def\endPublications{}`,
+    ]) {
+      const sources = { ...uploadNames(source, {}), known };
+      expect(pieceName("environment", "Publications", sources), source).toBe("user environment");
+      expect(pieceName("macro", "Publications", sources), source).toBe("user macro");
+    }
+    const tree = definedNames(
+      String.raw`\section{Publications} \begin{Experience} \def\endHonours{} \newenvironment{cvlist}{}{}`,
+    );
+    expect([...tree.environments].sort()).toEqual(["Honours", "cvlist"]);
   });
 });
 
@@ -338,15 +368,28 @@ describe("the words not in place, by piece", () => {
   });
 });
 
+/** An invented session whose compile, dump and PDF each take the milliseconds their name says. */
+function fakeSession(spend: (ms: number) => void): EngineSession {
+  const result = (ms: string) => {
+    spend(Number(ms));
+    return { ok: true, passes: [], log: "" };
+  };
+  return {
+    compile: (_engine: string, format: string) => result(format),
+    dump: (_engine: string, name: string) => result(name),
+    pdf: (job: string) => result(job),
+  } as unknown as EngineSession;
+}
+
 describe("the compiles, by kind of trial", () => {
   test("set each compile down to its step, or the checks' phase, the probe's last its bisection's", () => {
     let now = 0;
     const clock = new TrialClock(() => now);
-    const compile = (ms: number, isCompile = true) => {
-      clock.heard(true, isCompile);
-      now += ms;
-      clock.heard(false, false);
-    };
+    const session = clock.timed(fakeSession((ms) => (now += ms)));
+    const compile = (ms: number, isCompile = true) =>
+      isCompile
+        ? session.compile("pdftex", String(ms), "")
+        : session.dump("pdftex", String(ms), "", {});
     clock.enter("reference");
     compile(100);
     clock.enter("signatures");
@@ -393,10 +436,26 @@ describe("the compiles, by kind of trial", () => {
     expect(trials.ms).toMatchObject({ probe: 20, "probe bisection": 70, "check 1 bisection": 4 });
     expect(Object.keys(trials.compiles)[0]).toBe("reference");
     expect(trials.dumps).toEqual({ n: 2, ms: 12 });
+    expect(trials.pdfs).toEqual({ n: 0, ms: 0 });
     expect(trials.budgets).toEqual({
       checks: { hits: 2, fields: 5 },
       units: { hits: 1, groups: 4 },
     });
+  });
+});
+
+describe("the PDFs", () => {
+  test("are counted and timed apart from the dumps and the compiles", () => {
+    let now = 0;
+    const clock = new TrialClock(() => now);
+    const session = clock.timed(fakeSession((ms) => (now += ms)));
+    clock.enter("validate");
+    session.pdf("11");
+    session.dump("pdftex", "3", "", {});
+    const trials = clock.result(0);
+    expect(trials.pdfs).toEqual({ n: 1, ms: 11 });
+    expect(trials.dumps).toEqual({ n: 1, ms: 3 });
+    expect(trials.compiles).toEqual({});
   });
 });
 
@@ -446,6 +505,17 @@ describe("the tables per family", () => {
     expect(table).toContain("**all**, 2 imported");
     expect(table).not.toContain("**jake**");
     expect(table).not.toContain(SECRET);
+    expect(table).not.toContain("no pieces");
+  });
+
+  test("say how many rows have no pieces, their words not added up", () => {
+    const rows = [
+      row("other-0001", "other", [
+        { piece: "paragraph", why: "raw", kept: "raw", by: "parse", words: 3 },
+      ]),
+      row("other-0002", "other", undefined),
+    ];
+    expect(pieceTables(rows)).toContain("1 of the 2 has no pieces");
   });
 });
 
@@ -468,6 +538,39 @@ describe("comparing runs", () => {
       lacking: ["compiles.dumps", "compiles.trials", "pieces"],
     });
     expect(runDifferences(file(newer), file(old))).toEqual([]);
+  });
+
+  test("set aside only the row's diagnostics, and compare every other field one run lacks", () => {
+    const row = (id: string, extra: object) => ({
+      id,
+      family: "other",
+      outcome: "partial",
+      times: { wall: 1 },
+      ...extra,
+    });
+    const run = (documents: object[]) => ({ version: 1, documents });
+    expect(
+      runDifferences(
+        run([row("a", { latinModern: true }), row("b", {})]),
+        run([row("a", {}), row("b", {})]),
+      ),
+    ).toEqual(["a.latinModern: true against absent"]);
+    expect(
+      runDifferences(
+        run([row("a", { words: { body: 5, retype: 2 } })]),
+        run([row("a", { words: { body: 5 } })]),
+      ),
+    ).toEqual(["a.words.retype: 2 against absent"]);
+    expect(runDifferences(run([row("a", { refusal: null })]), run([row("a", {})]))).toEqual([
+      "a.refusal: null against absent",
+    ]);
+    expect(DIAGNOSTICS).toEqual([
+      "pieces",
+      "budgets",
+      "compiles.trials",
+      "compiles.dumps",
+      "compiles.pdfs",
+    ]);
   });
 
   test("still compare the fields both have, and a document one run lacks", () => {
@@ -518,7 +621,7 @@ describe.skipIf(!engineAvailable())("the diagnostics, on the engine", () => {
       files,
       {
         ...deps,
-        session: watched(deps.session, undefined, clock.heard),
+        session: clock.timed(deps.session),
         observe: {
           probed: (found) => {
             probed = found;
@@ -559,7 +662,7 @@ describe.skipIf(!engineAvailable())("the diagnostics, on the engine", () => {
       signatures: probed.probe.signatures,
       standard: { macros: STANDARD, environments: STANDARD_ENVIRONMENTS },
       inTree: (path) => path in manifest.files,
-      treeNames: (path) => mentionedNames(readFileSync(join(ENGINE_DIR, "files", path), "latin1")),
+      treeNames: (path) => definedNames(readFileSync(join(ENGINE_DIR, "files", path), "latin1")),
       shared: none(),
     });
     const { pieces } = piecesOf({
@@ -576,5 +679,22 @@ describe.skipIf(!engineAvailable())("the diagnostics, on the engine", () => {
       expect(defined.macros.has(each.piece) || defined.environments.has(each.piece)).toBe(false);
       expect(PIECE_BUCKETS.includes(each.piece) || PIECE_NAME.test(each.piece)).toBe(true);
     }
+  }, 120_000);
+
+  test("come through an observer that throws, the import as it would be without one", async () => {
+    const files = [{ name: "resume.tex", bytes: strToU8(JAKE_FORK) }];
+    const plain = await importResume(files, deps);
+    const fails = () => {
+      throw new Error("an observer's fault");
+    };
+    const observed = await importResume(files, {
+      ...deps,
+      observe: { probed: fails, checks: fails },
+    });
+    if (isRefusal(plain)) throw new Error("the fork was refused");
+    expect(isRefusal(observed)).toBe(false);
+    if (isRefusal(observed)) return;
+    expect(observed.report.compiles).toBe(plain.report.compiles);
+    expect(observed.document).toEqual(plain.document);
   }, 120_000);
 });

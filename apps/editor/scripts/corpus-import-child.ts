@@ -7,7 +7,7 @@
  * (`reportOfImport`, decision 0039).
  *
  * Beside the report, it hears what the probe found and where the checks are (`ImportObserver`),
- * and times each compile on the session the import is given (`watched`), which change nothing the
+ * and times each compile on the session the import is given (`TrialClock`), which change nothing the
  * import does, for the row's diagnostics (`corpus-pieces.ts`): its words not in place by the piece
  * that holds them, named only by names something public defines, and its compiles by kind of trial.
  *
@@ -34,8 +34,8 @@ import type { ImportStep } from "../src/import/run.ts";
 import { type ImportChildRow, refusedOutcome } from "./corpus-import.ts";
 import {
   addsUp,
+  definedNames,
   joinedNames,
-  mentionedNames,
   type Names,
   namerOf,
   piecesOf,
@@ -55,7 +55,7 @@ const APP = fileURLToPath(new URL("..", import.meta.url));
 /** The upstream samples, public, whose classes' names count as public (`corpus oracle`). */
 const ORACLE = join(APP, ".corpus", "oracle");
 
-/** The names the upstream samples' classes and packages mention: public names. */
+/** The names the upstream samples' classes and packages define: public names. */
 function publicNames(): Names {
   if (!existsSync(ORACLE)) return { macros: new Set(), environments: new Set() };
   const found: Names[] = [];
@@ -63,7 +63,7 @@ function publicNames(): Names {
     if (!sample.isDirectory()) continue;
     for (const file of readdirSync(join(ORACLE, sample.name)))
       if (/\.(?:cls|sty)$/.test(file))
-        found.push(mentionedNames(readFileSync(join(ORACLE, sample.name, file), "latin1")));
+        found.push(definedNames(readFileSync(join(ORACLE, sample.name, file), "latin1")));
   }
   return joinedNames(found);
 }
@@ -89,7 +89,7 @@ async function main() {
   const { TexLiveIndex } = await runner.import<TexLive>("/src/page/texlive.ts");
   const { treeImages } = await runner.import<IntakeModule>("/src/import/intake.ts");
   const { readTree } = await runner.import<ImportFonts>("/src/import/fonts.ts");
-  const { importResume, watched } = await runner.import<RunModule>("/src/import/run.ts");
+  const { importResume } = await runner.import<RunModule>("/src/import/run.ts");
   const { STANDARD, STANDARD_ENVIRONMENTS } =
     await runner.import<StandardModule>("/src/import/standard.ts");
 
@@ -97,12 +97,12 @@ async function main() {
     readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
   ) as EngineManifest;
   const shared = publicNames();
-  /** What each file of the tree mentions, read once (`mentionedNames`). */
+  /** What each file of the tree defines, read once (`definedNames`). */
   const treeNames = new Map<string, Names>();
-  const mentionedIn = (path: string): Names => {
+  const definedIn = (path: string): Names => {
     let names = treeNames.get(path);
     if (names === undefined) {
-      names = mentionedNames(readFileSync(join(ENGINE_DIR, "files", path), "latin1"));
+      names = definedNames(readFileSync(join(ENGINE_DIR, "files", path), "latin1"));
       treeNames.set(path, names);
     }
     return names;
@@ -115,7 +115,7 @@ async function main() {
       signatures: probe.signatures,
       standard: { macros: STANDARD, environments: STANDARD_ENVIRONMENTS },
       inTree: (path) => path in manifest.files,
-      treeNames: mentionedIn,
+      treeNames: definedIn,
       shared,
     });
   const deps = {
@@ -162,7 +162,7 @@ async function main() {
     try {
       const outcome = await importResume(
         [{ name: task.message.name, bytes: new Uint8Array(task.message.bytes) }],
-        { ...deps, session: watched(deps.session, undefined, clock.heard), observe },
+        { ...deps, session: clock.timed(deps.session), observe },
         onStep,
       );
       close();
@@ -228,6 +228,7 @@ async function main() {
           checks: checks.compiles,
           trials: trials.compiles,
           dumps: trials.dumps.n,
+          ...(trials.pdfs.n === 0 ? {} : { pdfs: trials.pdfs.n }),
         },
         budgets: { probe: { hits: probeLeft > 0 ? 1 : 0, fields: probeLeft }, ...trials.budgets },
         times: {
@@ -235,6 +236,7 @@ async function main() {
           import: Math.round(report.ms),
           trials: trials.ms,
           dumps: trials.dumps.ms,
+          ...(trials.pdfs.n === 0 ? {} : { pdfs: trials.pdfs.ms }),
         },
       });
     } catch {

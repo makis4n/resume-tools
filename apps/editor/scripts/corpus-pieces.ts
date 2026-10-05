@@ -22,6 +22,7 @@
 
 // Node runs this file by stripping its types, so it imports values only from files that import
 // nothing Node lacks, and the editor's modules as types alone, with their real extensions.
+import type { EngineSession } from "../src/engine/session.ts";
 import type { CheckEvent, CheckPhase } from "../src/import/checks.ts";
 import type { ProbeCandidate, UncoveredRun } from "../src/import/probe.ts";
 // The report imports nothing but types, so Node runs it as it is.
@@ -49,23 +50,26 @@ export interface Names {
 }
 
 /**
- * A command that defines another, a macro, an environment or a list, in any of TeX's, LaTeX's,
- * xparse's, etoolbox's or expl3's ways: a control word that holds `def`, `let`, `command`, `cmd`,
- * `environment`, `environ`, `list`, `_new`, `_set` or `_gset`. Generous on purpose: a name taken for
+ * A command that defines another, a macro, an environment, a list, a theorem or a box, in any of
+ * TeX's, LaTeX's, xparse's, etoolbox's, tcolorbox's, mdframed's, letltxmacro's, fontspec's or
+ * expl3's ways: a control word that begins `new`, `renew`, `provide` or `declare`, whatever its
+ * case, or that holds `def`, `let`, `command`, `cmd`, `environ`, `list`, `theorem`, `box`,
+ * `env`, `macro`, `family`, `_new`, `_set` or `_gset`. Generous on purpose: a name taken for
  * the document's own where it is not costs only a bucket.
  */
-const DEFINER = String.raw`\\[A-Za-z@_:]*(?:def|let|[Cc]ommand|cmd|[Ee]nviron|list|_new|_set|_gset)[A-Za-z@_:]*\*?`;
+const DEFINER = String.raw`\\(?:(?:[Nn]ew|[Rr]enew|[Pp]rovide|[Dd]eclare)[A-Za-z@_:]*|[A-Za-z@_:]*(?:def|[Ll]et|[Cc]ommand|cmd|[Ee]nviron|list|theorem|[Bb]ox|env|[Mm]acro|[Ff]amily|_new|_set|_gset)[A-Za-z@_:]*)\*?\s*(?:\[[^\]]*\]\s*)*`;
 
 /** A name a definer defines: `\x`, `{\x}`, or `{x}` for an environment or by its letters. */
-const DEFINED_MACRO = new RegExp(`${DEFINER}\\s*(?:\\{\\s*)?\\\\([A-Za-z@]+)`, "g");
-const DEFINED_BY_NAME = new RegExp(`${DEFINER}\\s*\\{\\s*([A-Za-z@]+\\*?)\\s*\\}`, "g");
+const DEFINED_MACRO = new RegExp(`${DEFINER}(?:\\{\\s*)?\\\\([A-Za-z@]+)`, "g");
+const DEFINED_BY_NAME = new RegExp(`${DEFINER}\\{\\s*([A-Za-z@]+\\*?)\\s*\\}`, "g");
 /** A name made from its letters, which `\csname` defines as well as any. */
 const CSNAME = /\\csname\s*([A-Za-z@]+)\s*\\endcsname/g;
 
 /**
  * The names a text defines: each macro after a definer (`DEFINER`), and each name a definer takes
  * in braces, as an environment's or a list's, or a macro's by its letters, which counts as both,
- * as does a name built with `\csname`.
+ * as does a name built with `\csname`; and an environment `x` whose `\endx` it defines, as TeX
+ * defines one by hand.
  */
 export function definedNames(text: string): Names {
   const macros = new Set<string>();
@@ -77,16 +81,7 @@ export function definedNames(text: string): Names {
         macros.add(name.replace(/\*$/, ""));
         environments.add(name);
       }
-  return { macros, environments };
-}
-
-/** Every control word a text holds, and every name it holds in braces: what it mentions. */
-export function mentionedNames(text: string): Names {
-  const macros = new Set<string>();
-  const environments = new Set<string>();
-  for (const [, name] of text.matchAll(/\\([A-Za-z@]+)/g)) if (name !== undefined) macros.add(name);
-  for (const [, name] of text.matchAll(/\{([A-Za-z@]+\*?)\}/g))
-    if (name !== undefined) environments.add(name);
+  for (const name of macros) if (/^end[A-Za-z@]+$/.test(name)) environments.add(name.slice(3));
   return { macros, environments };
 }
 
@@ -150,7 +145,7 @@ export const PIECE_BUCKETS: readonly string[] = [
 ];
 
 /**
- * Where a document's names are defined: its own `.tex` files (`user`), the other text files it
+ * Where a document's names are defined, as either kind: its own `.tex` files (`user`), the other text files it
  * uploaded, its own classes and packages (`uploaded`), and whether something public defines one
  * (`known`): a file of TeX Live's it loaded, a public class, or LaTeX's own.
  */
@@ -162,16 +157,20 @@ export interface NameSources {
 
 /**
  * A macro's or an environment's name as a piece is named: a user macro or environment where the
- * document's own `.tex` defines it, whatever else does; the name itself where it is plainly one and
+ * document's own `.tex` defines it, as either kind, whatever else does; the name itself where it is plainly one and
  * something public defines it; a class macro or environment where only an uploaded class or package
  * does; and another macro or environment otherwise, as a name that is no name is.
  */
 export function pieceName(kind: NameKind, name: string, sources: NameSources): string {
   if (!PIECE_NAME.test(name)) return `other ${kind}`;
-  const set = (names: Names) => (kind === "macro" ? names.macros : names.environments);
-  if (set(sources.user).has(name)) return `user ${kind}`;
+  // Defined as either kind: a name the upload defines as a macro and uses as an environment, or
+  // the other way, is its own all the same.
+  const bare = name.replace(/\*$/, "");
+  const has = (names: Names) =>
+    [name, bare].some((each) => names.macros.has(each) || names.environments.has(each));
+  if (has(sources.user)) return `user ${kind}`;
   if (sources.known(kind, name)) return name;
-  if (set(sources.uploaded).has(name)) return `class ${kind}`;
+  if (has(sources.uploaded)) return `class ${kind}`;
   return `other ${kind}`;
 }
 
@@ -210,17 +209,17 @@ export interface NamerInput {
   };
   /** LaTeX's tables of its own macros and environments (`STANDARD`, `STANDARD_ENVIRONMENTS`). */
   standard: { macros: ReadonlyMap<string, unknown>; environments: ReadonlyMap<string, unknown> };
-  /** Whether a path is a file of the tree, and what it mentions (`mentionedNames`). */
+  /** Whether a path is a file of the tree, and what it defines (`definedNames`). */
   inTree: (path: string) => boolean;
   treeNames: (path: string) => Names;
-  /** What the upstream samples' classes mention, which are public. */
+  /** What the upstream samples' classes define, which are public. */
   shared: Names;
 }
 
 /**
  * How a document's pieces are named (`pieceName`): from its upload's own definitions, and what is
  * public: LaTeX's tables, what the engine says is LaTeX's own, what the files of the tree its
- * reference compile loaded mention, and what the upstream samples' classes mention.
+ * reference compile loaded define, and what the upstream samples' classes define.
  */
 export function namerOf(input: NamerInput): (kind: NameKind, name: string) => string {
   const loaded = joinedNames(loadedTreeFiles(input.log, input.inTree).map(input.treeNames));
@@ -426,27 +425,30 @@ const STEP_TRIALS: Partial<Record<ImportStep, TrialKind>> = {
   probe: "probe",
 };
 
-/** What `TrialClock` comes to: compiles and milliseconds by kind of trial, dumps, and budgets. */
+/**
+ * What `TrialClock` comes to: compiles and milliseconds by kind of trial, the formats dumped and
+ * the PDFs made, each counted and timed apart, and the budgets.
+ */
 export interface Trials {
   compiles: Partial<Record<TrialKind, number>>;
   ms: Partial<Record<TrialKind, number>>;
   dumps: { n: number; ms: number };
+  pdfs: { n: number; ms: number };
   budgets: Omit<ImportBudgets, "probe">;
 }
 
 /**
  * Each compile of an import, timed as the session makes it and set down to its kind of trial: the
  * step it is in (`enter`), as the import's `onStep` says; in the checks, the phase they say
- * (`onCheck`). The session as the import is given it reports each compile, dump or PDF as it begins
- * and ends (`heard`, `watched`'s callback). It changes nothing the import does.
+ * (`onCheck`). The session the import is given (`timed`) times each compile, dump and PDF, each
+ * kind apart, and hands it on as it is: it changes nothing the import does.
  */
 export class TrialClock {
   private step: ImportStep = "intake";
   private phase: CheckPhase | undefined;
   private readonly made: { kind: TrialKind; ms: number }[] = [];
   private readonly dumps = { n: 0, ms: 0 };
-  private began = 0;
-  private compiling = false;
+  private readonly pdfs = { n: 0, ms: 0 };
   private readonly budgets: Trials["budgets"] = {
     checks: { hits: 0, fields: 0 },
     units: { hits: 0, groups: 0 },
@@ -480,29 +482,42 @@ export class TrialClock {
     }
   };
 
-  /** A compile, dump or PDF beginning, and ending, as `watched` reports it. */
-  readonly heard = (compiling: boolean, compile: boolean) => {
-    if (compiling) {
-      this.began = this.now();
-      this.compiling = compile;
-      return;
-    }
-    const ms = this.now() - this.began;
-    if (!this.compiling) {
+  /**
+   * The session as the import is to compile on it: each compile, dump and PDF timed, each kind
+   * apart, and everything else the session's own, as `watched` wraps one.
+   */
+  timed(session: EngineSession): EngineSession {
+    const proxy = Object.create(session) as EngineSession;
+    const timing =
+      <A extends unknown[], R>(call: (...args: A) => R, done: (ms: number) => void) =>
+      (...args: A): R => {
+        const began = this.now();
+        try {
+          return call(...args);
+        } finally {
+          done(this.now() - began);
+        }
+      };
+    proxy.compile = timing(session.compile.bind(session), (ms) => {
+      const kind =
+        this.step === "validate" ? (this.phase ?? "other") : (STEP_TRIALS[this.step] ?? "other");
+      this.made.push({ kind, ms });
+    });
+    proxy.dump = timing(session.dump.bind(session), (ms) => {
       this.dumps.n++;
       this.dumps.ms += ms;
-      return;
-    }
-    this.compiling = false;
-    const kind =
-      this.step === "validate" ? (this.phase ?? "other") : (STEP_TRIALS[this.step] ?? "other");
-    this.made.push({ kind, ms });
-  };
+    });
+    proxy.pdf = timing(session.pdf.bind(session), (ms) => {
+      this.pdfs.n++;
+      this.pdfs.ms += ms;
+    });
+    return proxy;
+  }
 
   /**
    * The compiles by kind, the probe's last `bisection` of them its bisection's (`Probe.compiles`,
    * the compiles its candidates took, which come after the rest of its compiles), in milliseconds
-   * rounded; the dumps; and the budgets.
+   * rounded; the dumps and the PDFs; and the budgets.
    */
   result(bisection: number): Trials {
     const probes = this.made.filter((each) => each.kind === "probe");
@@ -525,6 +540,7 @@ export class TrialClock {
       compiles: order(compiles, (n) => n),
       ms: order(ms, (n) => Math.round(n)),
       dumps: { n: this.dumps.n, ms: Math.round(this.dumps.ms) },
+      pdfs: { n: this.pdfs.n, ms: Math.round(this.pdfs.ms) },
       budgets: {
         checks: { ...this.budgets.checks },
         units: { ...this.budgets.units },
@@ -561,8 +577,8 @@ const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
 /**
  * Per family and in all, of the documents imported: the pieces that hold the most words not in
  * place, with why and where it was decided, how many words and in how many documents; the
- * compiles and time by kind of trial, and the dumps; and the budgets that ran out. Names of pieces,
- * reasons and numbers, never text.
+ * compiles and time by kind of trial, the dumps and the PDFs; how many rows have no pieces; and the
+ * budgets that ran out. Names of pieces, reasons and numbers, never text.
  */
 export function pieceTables(rows: readonly ImportRow[]): string {
   const lines: string[] = [];
@@ -587,8 +603,15 @@ export function pieceTables(rows: readonly ImportRow[]): string {
     const shown = ranked.slice(0, TOP_PIECES);
     const rest = ranked.slice(TOP_PIECES);
     const notInPlace = ranked.reduce((sum, [, each]) => sum + each.words, 0);
+    // A row whose pieces did not add up to its report's words keeps none, which is said.
+    const without = of.filter((row) => row.pieces === undefined).length;
     lines.push(
       `**${family}**, ${of.length} imported: ${notInPlace.toLocaleString("en-GB")} words not in place, by the piece that holds them`,
+      ...(without === 0
+        ? []
+        : [
+            `${without} of the ${of.length} ${without === 1 ? "has" : "have"} no pieces, their words not set down to any, and ${without === 1 ? "its words are" : "theirs are"} not in the table.`,
+          ]),
       "",
       "| Piece | Why | Decided by | Words | Documents |",
       "|---|---|---|--:|--:|",
@@ -616,6 +639,11 @@ export function pieceTables(rows: readonly ImportRow[]): string {
     if (dumped.length > 0)
       lines.push(
         `| dumps | ${dumped.reduce((sum, row) => sum + (row.compiles?.dumps ?? 0), 0).toLocaleString("en-GB")} | ${seconds(dumped.reduce((sum, row) => sum + (row.times.dumps ?? 0), 0))} | ${dumped.length} |`,
+      );
+    const pdfs = of.filter((row) => (row.compiles?.pdfs ?? 0) > 0);
+    if (pdfs.length > 0)
+      lines.push(
+        `| PDFs | ${pdfs.reduce((sum, row) => sum + (row.compiles?.pdfs ?? 0), 0).toLocaleString("en-GB")} | ${seconds(pdfs.reduce((sum, row) => sum + (row.times.pdfs ?? 0), 0))} | ${pdfs.length} |`,
       );
     const ran = (pick: (budgets: ImportBudgets) => number) =>
       of.filter((row) => row.budgets !== undefined && pick(row.budgets) > 0).length;

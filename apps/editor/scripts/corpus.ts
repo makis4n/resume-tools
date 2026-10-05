@@ -1056,7 +1056,7 @@ function runCompare(files: readonly string[]) {
     const aside =
       lacking.length === 0
         ? "times aside"
-        : `times aside, and the fields only one of them has: ${lacking.join(", ")}`;
+        : `times aside, and the diagnostics only one of them has: ${lacking.join(", ")}`;
     if (found.length === 0) {
       const count = (runs[i] as { documents?: unknown[] }).documents?.length ?? 0;
       print([`${pair} agree on ${count} ${count === 1 ? "document" : "documents"}, ${aside}.`]);

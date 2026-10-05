@@ -165,18 +165,19 @@ export interface ImportRow {
   latinModern?: boolean;
   /** For one imported, its words not in place by the piece that holds them, the most first. */
   pieces?: PieceWords[];
-  /** Its compiles in all, and the checks'; by kind of trial; and its formats dumped. */
+  /** Its compiles in all, and the checks'; by kind of trial; its formats dumped; its PDFs, if any. */
   compiles?: {
     all: number;
     checks: number;
     trials?: Partial<Record<TrialKind, number>>;
     dumps?: number;
+    pdfs?: number;
   };
   /** For one imported, the budgets that ran out. */
   budgets?: ImportBudgets;
   /**
    * Milliseconds: each step's, the import's in all, and from being sent to its row coming back; and
-   * for one imported, its compiles' by kind of trial, and its dumps'.
+   * for one imported, its compiles' by kind of trial, its dumps' and its PDFs', if any.
    */
   times: {
     steps?: Partial<Record<ImportStep, number>>;
@@ -184,6 +185,7 @@ export interface ImportRow {
     wall: number;
     trials?: Partial<Record<TrialKind, number>>;
     dumps?: number;
+    pdfs?: number;
   };
 }
 

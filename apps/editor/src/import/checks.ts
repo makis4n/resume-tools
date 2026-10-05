@@ -668,7 +668,12 @@ const counted = (n: number, thing: string) => `${n} ${thing}${n === 1 ? "" : "s"
  */
 export async function checkOutline(input: ChecksInput): Promise<Checked | Refusal> {
   const { compiler, reference, build, runs } = input;
-  const observe = input.observe ?? (() => {});
+  // What the caller hears changes nothing the checks do, not even when it throws.
+  const observe = (event: CheckEvent) => {
+    try {
+      input.observe?.(event);
+    } catch {}
+  };
   const budget = input.budget ?? CHECK_BUDGET;
   const byId = new Map(input.candidates.map((each) => [each.id, each]));
   const notes: Checked["notes"] = [];
