@@ -8,7 +8,7 @@ request that finishes it.
 
 **The second pass.** The first pass fell short of the milestone's goal, and a second pass rebuilt
 the import: [milestone-3-overhaul.md](milestone-3-overhaul.md). It is done and measured in
-decision [00XX](decisions/00XX-the-second-pass-measured.md), which closes the milestone.
+decision [0064](decisions/0064-the-second-pass-measured.md), which closes the milestone.
 
 ## The goal
 

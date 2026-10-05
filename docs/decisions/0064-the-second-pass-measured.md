@@ -1,4 +1,4 @@
-# 00XX. The second pass measured, and milestone 3 closed
+# 0064. The second pass measured, and milestone 3 closed
 
 Date: 2026-10-05 · Status: accepted; closes milestone 3 with its second pass
 
