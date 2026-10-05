@@ -122,7 +122,29 @@ machine's, from the four measuring pages:
   One pass not counted, then five timed; judged against under 1 s at the slowest import. The PDFs
   other tools printed are the Node command's alone.
 
-[[BROWSER NUMBERS: ?measure=1, ?measure=import (pdfTeX), ?measure=import-xetex, ?measure=import-pdf — filled by the orchestrator]]
+Taken on 5 October 2026 in the desktop app's built-in browser (Chromium), its pane displayed and
+the tab in front throughout, as each import page reported, on the dev server of main as of
+`40c8bf5` with this milestone's click fix (#108), which changes no import. The machine was not
+idle: an agent checking another branch ran beside it, a one-minute load average of 3.5 to 4.0.
+
+| Page | What | This browser | Beside it | Target |
+|---|---|---|---|---|
+| `?measure=1` | engine start; first page | 359 ms; 635 ms | decision 0016's Chrome: first page 654 ms | |
+| | an edit's page, median of 10 | 82 ms, by the page's own time; 184 ms from the command, the pause included, 189 ms at the slowest | decision 0016's Chrome: 79 ms, 182 ms from the command; its Node: 84 ms | 300 ms, met |
+| | the keystroke's rows, median of 100 | 0.10 ms, 245 characters on 3 lines | | under 16 ms, met |
+| `?measure=import` | Jake's Resume's upstream sample on pdfTeX, median of 5 | 2.62 s, from 2.60 to 2.64 s, 17 compiles; 2.93 s with the engine's start (363 ms) and without `load` | decision 0064's Node: 2.56 s. Decision 0045's Chrome: 5.39 s | under 8 s, met by 5.07 s |
+| `?measure=import-xetex` | Awesome-CV's upstream sample on XeTeX, median of 5 | 18.10 s, from 17.96 to 18.20 s, 81 compiles; 18.42 s with the engine's start (368 ms) and without `load` | decision 0064's Node: 18.51 s. Decision 0045's Chrome: 74.55 s | reported, under the 20 s aim by 1.58 s |
+| `?measure=import-pdf` | the three built-in templates' PDFs by rules, 5 imports each | 122 ms at the median, 127 ms at the slowest (AltaCV's), the reader 117 ms of it; the draft's page beside it 557 ms | decision 0064's Node: 18 ms and 73 ms, over eleven PDFs, the reader drawing no picture | under 1 s, met by 873 ms |
+
+- The `.tex` imports take in the browser what they take in Node, within 3%: the engine is the same
+  WebAssembly, and the parts are the same compiles. Decision 0045's first-pass Chrome numbers were
+  two to four times these, as its Node numbers were.
+- The PDF import is slower in the browser than in Node because its reader draws each page as a
+  picture for the review, in its worker, which the Node command does not; the reader is 117 ms of
+  the 122. It is under its bar by seven times over.
+- `?measure=1` is decision 0016's page, and gives what it gave in Chrome: an edit's page in 82 ms
+  against 79 ms, the keystroke's rows a hundredth of a frame.
+
 
 ### The corpus run on main
 
