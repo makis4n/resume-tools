@@ -11,6 +11,7 @@
  * its limit is a hung compile, and gets the same, the import failing with `EngineTimeout`.
  */
 
+import type { PagePdf } from "../import/bridge";
 import type { Upload } from "../import/intake";
 import type { ImportOutcome, ImportProgress } from "../import/run";
 import type { EngineReply, EngineRequest, EngineResults } from "./protocol";
@@ -172,8 +173,34 @@ export class EngineClient {
     onProgress: (progress: ImportProgress) => void,
     limit = IMPORT_COMPILE_LIMIT,
   ): Promise<ImportOutcome> {
+    return this.timed({ type: "import", files: [...files] }, onProgress, limit);
+  }
+
+  /**
+   * Make a PDF of the reference page an import of these files compiles (`referencePdf` of
+   * `src/import/bridge.ts`, milestone 3 second pass, item 16), in the worker, in a job of its own,
+   * timed compile by compile as an import is.
+   */
+  referencePdf(
+    files: readonly Upload[],
+    onProgress: (progress: ImportProgress) => void,
+    limit = IMPORT_COMPILE_LIMIT,
+  ): Promise<PagePdf> {
+    return this.timed({ type: "referencePdf", files: [...files] }, onProgress, limit);
+  }
+
+  /**
+   * A request that sends progress, timed compile by compile: one that runs past `limit` is taken
+   * for hung, and the worker is terminated and started afresh, the request failing with
+   * `EngineTimeout`.
+   */
+  private timed<R extends Extract<EngineRequest, { type: "import" | "referencePdf" }>>(
+    request: R,
+    onProgress: (progress: ImportProgress) => void,
+    limit: number,
+  ): Promise<EngineResults[R["type"]]> {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const done = this.call({ type: "import", files: [...files] }, [], (progress) => {
+    const done = this.call(request, [], (progress) => {
       clearTimeout(timer);
       timer = progress.compiling
         ? setTimeout(() => this.cancel(new EngineTimeout(limit)), limit)

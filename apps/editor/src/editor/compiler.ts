@@ -69,6 +69,7 @@ import type {
   PdfResult,
   Engine as SessionEngine,
 } from "../engine/session";
+import type { PagePdf } from "../import/bridge";
 import type { Upload } from "../import/intake";
 import { isRefusal, refusal } from "../import/refusal";
 import type { Imported, ImportJob, ImportOutcome, ImportProgress } from "../import/run";
@@ -130,6 +131,14 @@ export interface Engine {
     files: readonly Upload[],
     onProgress: (progress: ImportProgress) => void,
   ): Promise<ImportOutcome>;
+  /**
+   * Make a PDF of the reference page an import of these files compiles
+   * (`EngineClient.referencePdf`, milestone 3 second pass, item 16), as `importResume` runs.
+   */
+  referencePdf?(
+    files: readonly Upload[],
+    onProgress: (progress: ImportProgress) => void,
+  ): Promise<PagePdf>;
   /** Stop the engine at once and start it afresh for the next request (`EngineClient.cancel`). */
   cancel?(): void;
   /** Take a format out of the engine, to free what it holds (`EngineClient.dropFormat`). */
@@ -628,11 +637,56 @@ export class Compiler {
     files: readonly Upload[],
     onProgress: (progress: ImportProgress) => void,
   ): ImportRun {
+    return this.holding(
+      (engine) => engine.importResume?.bind(engine),
+      async (run) => {
+        const outcome = await run(files, onProgress);
+        if (!isRefusal(outcome)) this.takeFormats(outcome);
+        return outcome;
+      },
+      (error) => refusal("timeout", undefined, error.message),
+      true,
+    );
+  }
+
+  /**
+   * Make a PDF of the reference page an import of these files compiles, on this compiler's engine
+   * (`EngineClient.referencePdf`, milestone 3 second pass, item 16): the bridge that moves an
+   * import's content onto a built-in template through the PDF path. It holds the engine as an
+   * import does, and `cancel` and a hung compile stop it as they stop an import; one that hangs
+   * comes to no PDF.
+   */
+  referencePdf(
+    files: readonly Upload[],
+    onProgress: (progress: ImportProgress) => void,
+  ): { done: Promise<PagePdf>; cancel(): void } {
+    return this.holding(
+      (engine) => engine.referencePdf?.bind(engine),
+      (make) => make(files, onProgress),
+      (error): PagePdf => ({ ok: false, why: error.message }),
+      false,
+    );
+  }
+
+  /**
+   * Run `call` with what `pick` takes of the engine, once what is in flight has landed, holding the
+   * engine until it lands, as an import does (`importResume`): `cancel` terminates the worker,
+   * which starts afresh for the next request, and a hung compile gets the same, `timedOut` saying
+   * what that came to. Where the call `dumps` an imported package's formats to check them, those
+   * it dropped are forgotten as installed, and put back from the kept bytes when a document needs
+   * them.
+   */
+  private holding<F, T>(
+    pick: (engine: Engine) => F | undefined,
+    call: (taken: F) => Promise<T>,
+    timedOut: (error: EngineTimeout) => T,
+    dumps: boolean,
+  ): { done: Promise<T>; cancel(): void } {
     let cancelled = false;
     let stop = () => {
       cancelled = true;
     };
-    const done = (async (): Promise<ImportOutcome> => {
+    const done = (async (): Promise<T> => {
       // What is in flight lands first: the engine takes one request at a time, and a request behind
       // the import's would spend its time limit waiting for it.
       while (this.busy && !this.closed && !cancelled)
@@ -641,15 +695,14 @@ export class Compiler {
       if (cancelled) throw new EngineCancelled();
       const instance = this.currentInstance();
       const { engine } = instance;
-      if (engine.importResume === undefined || engine.cancel === undefined)
+      const taken = pick(engine);
+      if (taken === undefined || engine.cancel === undefined)
         throw new Error("this engine cannot import");
       this.importing = true;
       this.setBusy();
       stop = () => engine.cancel?.();
       try {
-        const outcome = await engine.importResume(files, onProgress);
-        if (!isRefusal(outcome)) this.takeFormats(outcome);
-        return outcome;
+        return await call(taken);
       } catch (error) {
         if (this.instance === instance) {
           // Cancelled, or hung: the worker was terminated and starts afresh, holding nothing. Lost
@@ -657,14 +710,14 @@ export class Compiler {
           this.instance = error instanceof EngineCancelled ? freshInstance(engine) : undefined;
           if (!(error instanceof EngineCancelled)) engine.terminate();
         }
-        if (error instanceof EngineTimeout) return refusal("timeout", undefined, error.message);
+        if (error instanceof EngineTimeout) return timedOut(error);
         throw error;
       } finally {
         stop = () => {};
         // The import dumped and dropped formats of the imported package it checked, which may be
         // ones a document of it had installed: those are put back from the kept bytes when needed.
         const now = this.instance;
-        if (now === instance)
+        if (dumps && now === instance)
           for (const key of [...now.installed])
             if (nameOfKey(key).startsWith(IMPORTED_PREFIX)) {
               now.installed.delete(key);

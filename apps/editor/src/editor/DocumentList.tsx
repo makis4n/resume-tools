@@ -16,6 +16,11 @@
  * second pass, item 13, decision 0047). The picker and a drop take a PDF too (item 14): the first
  * time, the question whether its text may be sent stands in place of the progress line, and while
  * the answer is yes, the line under the progress line says it is being sent.
+ *
+ * The bridge between the two ways in (milestone 3 second pass, item 16): a `.tex` import that was
+ * refused offers, under its notice, to import a PDF of the same resume instead, the person's own,
+ * which runs the ordinary PDF import; and a partial import under the bar offers, in its report, to
+ * move its content onto a built-in template.
  */
 
 import type { DragEvent } from "react";
@@ -46,6 +51,8 @@ export interface ImportWaiting {
   onContinue(): void;
   /** Keep nothing of the import. */
   onStop(): void;
+  /** Move its content onto a built-in template through the PDF path, offered under the bar. */
+  onMove?(): void;
 }
 
 export interface DocumentListProps {
@@ -75,6 +82,11 @@ export interface DocumentListProps {
    * in place of the progress line (milestone 3 second pass, item 14); Cancel keeps no answer.
    */
   pdfQuestion?: { onAnswer(answer: PdfConsent): void; onCancel(): void };
+  /**
+   * The offer a refused `.tex` import makes under its notice (item 16): pick a PDF of the same
+   * resume, which the PDF import then reads.
+   */
+  pdfOffer?: { onChoose(file: File): void };
 }
 
 const MINUTE = 60_000;
@@ -130,6 +142,13 @@ export const TAKES = ".tex,.zip,.pdf";
 export const PDF_NOTE =
   "From a PDF, the editor reads your resume's text and sets it on a template you pick: it keeps your content, not your PDF's look.";
 
+/** What a refused `.tex` import offers under its notice (item 16). */
+export const PDF_OFFER =
+  "If you have a PDF of this resume, import it instead: the editor reads its text and sets it on a built-in template you pick, which keeps your content but not your PDF's look.";
+
+/** The picker of that offer, which takes a PDF. */
+export const PDF_OFFER_PICK = "Import its PDF";
+
 /** Whether something dragged over the list holds files, which a drop imports. */
 const holdsFiles = (event: DragEvent) => [...(event.dataTransfer?.types ?? [])].includes("Files");
 
@@ -145,6 +164,7 @@ export function DocumentList({
   waiting,
   pdfReading,
   pdfQuestion,
+  pdfOffer,
 }: DocumentListProps) {
   const [choosing, setChoosing] = useState(false);
   const [over, setOver] = useState(false);
@@ -183,6 +203,23 @@ export function DocumentList({
     >
       <h1>Documents</h1>
       {notice && <p role="alert">{notice}</p>}
+      {notice && pdfOffer && !busy && (
+        <p>
+          {PDF_OFFER}{" "}
+          <label>
+            {PDF_OFFER_PICK}{" "}
+            <input
+              type="file"
+              accept=".pdf,application/pdf"
+              onChange={(event) => {
+                const [file] = [...(event.currentTarget.files ?? [])];
+                event.currentTarget.value = "";
+                if (file !== undefined) pdfOffer.onChoose(file);
+              }}
+            />
+          </label>
+        </p>
+      )}
       {pdfQuestion ? (
         <PdfReadingQuestion onAnswer={pdfQuestion.onAnswer} onCancel={pdfQuestion.onCancel} />
       ) : waiting ? (
@@ -190,6 +227,7 @@ export function DocumentList({
           report={waiting.report}
           onContinue={waiting.onContinue}
           onStop={waiting.onStop}
+          {...(waiting.onMove === undefined ? {} : { onMove: waiting.onMove })}
         />
       ) : importing ? (
         <>
