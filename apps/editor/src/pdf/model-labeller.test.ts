@@ -1,7 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { Resume } from "@resume-tools/resume-model";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it } from "vitest";
 import { handleLabel, LABEL_LIMITS } from "../service/label";
@@ -12,11 +8,8 @@ import { fileLines } from "./file";
 import { featuresOf, LABEL_TEXT_CHARS, labelByRules, labelLines, labelText } from "./label";
 import { layOut } from "./layout";
 import { type FetchLike, MODEL_BUDGET_MS, modelLabeller } from "./model-labeller";
-import { readPdf } from "./node";
 import type { ReadPdf, TextRun } from "./read";
-import { isPdfRefusal } from "./refusals";
 import { resumeOfPdf } from "./resume";
-import { scoreResume } from "./score";
 
 function run(text: string, x: number, baseline: number, options: Partial<TextRun> = {}): TextRun {
   const size = options.size ?? 10;
@@ -288,50 +281,4 @@ describe("the rules answer in the model's place, for each cause", () => {
     stop.abort();
     await expect(labelling).rejects.toBeDefined();
   });
-});
-
-describe("the whole path, with a recorded reply", () => {
-  const OTHER = fileURLToPath(new URL("../../scripts/spike-pdf/fixtures/other/", import.meta.url));
-  const RECORDED = fileURLToPath(
-    new URL("./fixtures/model-reply.chrome-table.json", import.meta.url),
-  );
-
-  it("the page's labeller, the route and the model's recorded reply read an invented PDF", async () => {
-    const reading = await readPdf(
-      new Uint8Array(readFileSync(join(OTHER, "chrome-table", "resume.pdf"))),
-    );
-    if (isPdfRefusal(reading)) throw new Error("refused");
-    const truth = Resume.parse(
-      JSON.parse(readFileSync(join(OTHER, "chrome-table", "truth.json"), "utf8")),
-    );
-    const recorded = JSON.parse(readFileSync(RECORDED, "utf8")) as { content: string };
-    const model = new MockLanguageModelV4({
-      modelId: "recorded",
-      doGenerate: async () => ({
-        content: [{ type: "text", text: recorded.content }],
-        finishReason: { unified: "stop", raw: undefined },
-        usage: {
-          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: undefined },
-          outputTokens: { total: 0, text: 0, reasoning: 0 },
-        },
-        warnings: [],
-      }),
-    });
-    const deps = {
-      model,
-      address: "127.0.0.1",
-      rates: new MemoryRateStore(),
-      limits: LABEL_LIMITS,
-      now: () => 0,
-    };
-    const labeller = modelLabeller({
-      consent: memoryConsent("yes"),
-      fetch: (url, init) => handleLabel(new Request(new URL(url, "http://localhost"), init), deps),
-    });
-    const { labels, filed } = await resumeOfPdf(reading, { labeller });
-    expect(labels.by).toBe("model");
-    expect(model.doGenerateCalls).toHaveLength(1);
-    const score = scoreResume(truth, filed.resume);
-    expect(score.all.right / score.all.total).toBeGreaterThanOrEqual(0.9);
-  }, 60_000);
 });

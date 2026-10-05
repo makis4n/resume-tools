@@ -1,5 +1,0 @@
-{
-  "model": "qwen3.8:27b",
-  "at": "2026-10-04T20:59:08.426Z",
-  "content": "{\n  \"L0\": \"contact\",\n  \"L1\": \"name\",\n  \"L10\": \"bullet\",\n  \"L11\": \"date\",\n  \"L12\": \"entry head\",\n  \"L13\": \"bullet\",\n  \"L14\": \"section heading\",\n  \"L15\": \"date\",\n  \"L16\": \"entry head\",\n  \"L17\": \"date\",\n  \"L18\": \"entry head\",\n  \"L19\": \"section heading\",\n  \"L2\": \"contact\",\n  \"L20\": \"date\",\n  \"L21\": \"entry head\",\n  \"L22\": \"date\",\n  \"L23\": \"entry head\",\n  \"L24\": \"section heading\",\n  \"L25\": \"date\",\n  \"L26\": \"entry head\",\n  \"L27\": \"date\",\n  \"L28\": \"entry head\",\n  \"L3\": \"contact\",\n  \"L4\": \"running text\",\n  \"L5\": \"contact\",\n  \"L6\": \"section heading\",\n  \"L7\": \"date\",\n  \"L8\": \"entry head\",\n  \"L9\": \"bullet\"\n}"
-}

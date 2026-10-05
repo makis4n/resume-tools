@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { countsOf, pdfErrorKind } from "./counts.ts";
-import { fileLines } from "./file.ts";
-import { layOut } from "./layout.ts";
-import type { ReadPdf, TextRun } from "./read.ts";
-import { summariseCorpus, tables } from "./report.ts";
-import { labelByRules } from "./roles.ts";
+import type { ReadPdf, TextRun } from "../src/pdf/read.ts";
+import { resumeOfPdf } from "../src/pdf/resume.ts";
+import {
+  type CorpusCounts,
+  corpusTable,
+  countsOf,
+  pdfErrorKind,
+  summariseCorpus,
+  targetLines,
+} from "./pdf-counts.ts";
 
 function run(text: string, x: number, baseline: number, options: Partial<TextRun> = {}): TextRun {
   const size = options.size ?? 10;
@@ -69,26 +73,39 @@ describe("why no PDF was made", () => {
 });
 
 describe("the corpus's counts", () => {
-  it("hold numbers and names of kinds, never a document's words", () => {
-    const layout = layOut(read);
-    const roles = labelByRules(layout);
-    const counts = countsOf(layout, roles, fileLines(layout, roles));
-    expect(counts).toMatchObject({ outcome: "read", pages: 1, sections: 1, columns: 1 });
+  it("hold numbers and names of kinds, never a document's words", async () => {
+    const counts = countsOf(await resumeOfPdf(read));
+    expect(counts).toMatchObject({
+      outcome: "read",
+      pages: 1,
+      sections: 1,
+      columns: 1,
+      entries: 1,
+      entriesDated: 1,
+    });
     expect(counts.words?.read).toBe(counts.words?.landed);
     const kept = JSON.stringify({ id: "other-0001", family: "other", counts });
     for (const word of WORDS) expect(kept, word).not.toContain(word);
-    const printed = tables({
-      version: 1,
-      corpus: {
-        at: "2026-10-04T00:00:00.000Z",
-        commit: "invented",
-        summary: summariseCorpus([
-          { id: "other-0001", family: "other", counts },
-          { id: "other-0002", family: "other", counts: { outcome: "package" } },
-        ]),
-      },
-    });
+    const summary = summariseCorpus([
+      { id: "other-0001", family: "other", counts: { ...counts, readMs: 40, rulesMs: 5 } },
+      { id: "other-0002", family: "other", counts: { outcome: "package" } },
+    ]);
+    const printed = [...corpusTable(summary), ...targetLines(summary)].join("\n");
     for (const word of WORDS) expect(printed, word).not.toContain(word);
     expect(printed).toMatch(/Not read, by reason \| package 1/);
+    expect(printed).toMatch(/Every word read lands: 1 of 1 documents read: met/);
+    expect(printed).toMatch(/reading and the rules together, median and max \| 45 ms, 45 ms/);
+  });
+
+  it("say a target missed as missed", () => {
+    const counts: CorpusCounts = {
+      outcome: "read",
+      readMs: 900,
+      rulesMs: 200,
+      words: { read: 100, landed: 100, unfiled: 10, recognised: 90 },
+    };
+    const lines = targetLines(summariseCorpus([{ id: "other-0001", family: "other", counts }]));
+    expect(lines.join("\n")).toMatch(/words in a recognised place: 90\.0%: NOT met/);
+    expect(lines.join("\n")).toMatch(/1\.1 s at most: NOT met/);
   });
 });
