@@ -104,20 +104,34 @@ the model: 92 of 92 candidates, each kept alone, break it
   says so. The model holds an outline only where its braces balance as TeX reads them
   (`OutlineSection`). So it refused the outline whatever its fields were, and the checks' first
   step answered `keep`.
-- **The fix.** The outline closes, just before `\end{document}`, the braces its parts leave open
-  as the model reads them (`closeOpenBraces` in `src/import/outline.ts`). The model gains
+- **The fix.** The outline closes the braces its parts leave open, as the model reads them, after
+  `\end{document}` (`closeOpenBraces` in `src/import/outline.ts`). The model gains
   `outlineOpenBraces` for this, additively (`packages/resume-model`). It closes them only where
   every `}` closes a `{` before it, the text does not end in a comment or an address, and at most
-  64 are open; any other outline the model refuses as before. TeX then closes the groups just
-  before `\end{document}` rather than at it. The checks compile the outline so closed against the
-  reference, and keep its page or say how it differs, as for any outline.
+  64 are open; any other outline the model refuses as before.
+- **Why after it.** TeX stops reading at `\end{document}`, so it never reads the braces: the model
+  holds the outline, and TeX reads the upload's own LaTeX. A first version closed them just before
+  `\end{document}`, where TeX reads them, and the review of that commit (13099bf) showed two
+  ways that goes wrong:
+  - A group's settings were undone before the last page was set. An invented resume with a
+    `{\raggedright\small %...}` group and a last paragraph running into `\end{document}` imported
+    partial, its page moved; a `\pagestyle{empty}` in such a group lost its effect.
+  - A `{` the model counts but TeX never opens, as in `\verb|{|`, a skipped `\iffalse{\fi` or
+    `{...\egroup`, got a `}` TeX read as one too many. A resume that compiles went from refused
+    `keep` to refused `stopped`.
+
+  After `\end{document}`, the engine's output is the same, byte for byte, and both of those import
+  with the reference's page. The checks compile the outline against the reference and judge its
+  page, as for any outline.
 - **The tests.** `index.test.ts` (resume-model) counts the braces left open. `outline.test.ts`
-  closes them on an invented body, and leaves refused one whose `}` closes nothing. `run.test.ts`
-  imports an invented resume of that shape, which is refused `keep` on main, with the reference's
-  page.
+  closes them after `\end{document}` on an invented body, and leaves refused one whose `}` closes
+  nothing. `run.test.ts` imports three invented resumes, each with the reference's page: one of
+  this shape, refused `keep` on main; and the review's two, a group's settings held to the last
+  paragraph (partial at 13099bf) and a `\verb|{|` (refused `stopped` at 13099bf).
 - **What it imports now.** Partial, on XeTeX: 1,400 words, 418 in place (29.9%), 971 through the
   retype (69.4%), 11 locked (0.8%); 84 fields, 2 required; 4 groups, none fixed; 17.3 s. The
-  outline with every field kept sets the reference's page, its seven braces added.
+  outline with every field kept sets the reference's page, its seven braces added after
+  `\end{document}`.
 
 ### Nothing else moved
 
@@ -132,14 +146,19 @@ times; 13,919 words of the 18 imported, 64.7% in place, 33.5% through the retype
   - A main file whose body holds an `\end{document}` in a verbatim or a `\verb` now has its whole
     body read, probed and kept.
   - A document whose own braces TeX leaves open at `\end{document}` now imports. Its outline, and
-    the document the store keeps, hold the closing braces the upload lacks, just before
-    `\end{document}`.
+    the document the store keeps, hold the closing braces the upload lacks, after
+    `\end{document}`, where TeX never reads them.
+  - So does a document whose braces only the model misreads as left open: a `{` in a `\verb`, in
+    a skipped conditional, or closed by `\egroup`. Its page is checked, as any import's is.
+  - The model's rule that a whole outline's braces balance is met, for these documents, by braces
+    TeX never reads. Each unit still balances on its own, so a unit is still copied, removed and
+    moved whole; what the rule guards in the rest of the outline the checks' compiles now guard.
   - A document of either shape whose page the checks then find different imports as partial, as
     any does.
 - **Decision 0020's split now reads:** at the first `\begin{document}` and the `\end{document}`
   after it, outside comments, and for the end outside what TeX reads verbatim. An upload whose
   braces do not balance is still refused (decision 0049), except for braces it only leaves open,
-  which the outline closes.
+  which the outline closes after `\end{document}`.
 - **The next run over the corpus should count both as imported, partial,** where decision 0060
   counted them refused: 110 imported of 117 that compile, 7 refused, all by the XeTeX rewrite.
 - **Two follow-ups for `other-0006`, left open.**

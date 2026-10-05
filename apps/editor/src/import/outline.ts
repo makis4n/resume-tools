@@ -27,9 +27,10 @@
  * far as the editor's loop needs, and a document snippet of `{{sections}}`. It is checked against
  * the model's schema, which refuses kept text that holds the editor's own macros or markers, a
  * piece that ends in an escaping backslash, and braces that do not balance (decision 0049): an
- * upload that makes one is refused (`keep`). Braces the upload opens and never closes, which TeX
- * leaves open to `\end{document}`, are closed just before it (`closeOpenBraces`), and the checks
- * compile the outline so closed.
+ * upload that makes one is refused (`keep`). Braces the upload leaves open, as the model reads
+ * them, are closed after `\end{document}`, where TeX never reads them (`closeOpenBraces`): the
+ * model's reading of the outline then balances, TeX reads the upload's own, and the checks compile
+ * it and judge its page.
  *
  * Nothing here compiles: the checks compile the outline (`checks.ts`). Nothing here reaches the
  * network.
@@ -670,19 +671,22 @@ export function buildOutline(input: OutlineInput): Outline {
 const MAX_CLOSED = 64;
 
 /**
- * Close, just before `\end{document}`, the braces an outline's parts leave open, as the model
- * reads them (`outlineOpenBraces`): a group the upload opens and never closes, as a `{%` whose `}`
- * is in its comment does, which TeX leaves open to `\end{document}` and the model would refuse the
- * outline for (the follow-up to decision 0060, `other-0052`). Nothing is done to parts that
- * balance, close a brace they never opened, or leave more than `MAX_CLOSED` open, which the model
- * goes on refusing; the checks compile what is closed, and say where the page differs.
+ * Close, after `\end{document}`, the braces an outline's parts leave open as the model reads them
+ * (`outlineOpenBraces`), so that the model holds the outline (the follow-up to decision 0060,
+ * `other-0052`). They are a group the upload opens and never closes, as a `{%` whose `}` is in its
+ * comment does, which TeX leaves open to `\end{document}`; or a `{` the model counts that TeX
+ * never opens, in a `\verb` or a skipped conditional. TeX stops reading at `\end{document}`, so
+ * it never reads the braces closed after it: the page is the upload's, settings in an open group
+ * still hold as the last page is shipped out, and a brace TeX never opened is never closed twice.
+ * Nothing is done to parts that balance, close a brace they never opened, or leave more than
+ * `MAX_CLOSED` open, which the model goes on refusing.
  */
 function closeOpenBraces(parts: OutlinePart[], end: string) {
   const open = outlineOpenBraces(parts);
   const last = parts.at(-1);
   if (open === undefined || open === 0 || open > MAX_CLOSED) return;
   if (last?.kind !== "kept" || !last.latex.endsWith(end)) return;
-  last.latex = `${last.latex.slice(0, last.latex.length - end.length)}${"}".repeat(open)}${end}`;
+  last.latex = `${last.latex}${"}".repeat(open)}`;
 }
 
 /**

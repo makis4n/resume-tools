@@ -340,10 +340,10 @@ An invented sample.
     expect(compiles(done, done.document.resume)).toBe(true);
   }, 60_000);
 
-  test("imports a resume whose groups TeX leaves open to \\end{document}, closing them there", async () => {
+  test("imports a resume whose groups TeX leaves open to \\end{document}, closing them after it", async () => {
     // `other-0052`'s shape (the follow-up to decision 0060), invented: each `{%` line opens a group
     // whose `}` is in its comment, which TeX leaves open to `\end{document}`. The outline closes
-    // them just before it, and its page is the original's.
+    // them after it, where TeX never reads them, and its page is the original's.
     const source = String.raw`\documentclass{article}
 \begin{document}
 {% Invented studies }
@@ -360,8 +360,43 @@ Tended invented bees at Heron College.
     const [section] = done.document.resume.sections;
     if (section?.kind !== "outline") throw new Error("the import holds no outline");
     const last = section.parts.at(-1);
-    expect(last?.kind === "kept" && last.latex.endsWith("}}\\end{document}")).toBe(true);
+    expect(last?.kind === "kept" && last.latex.endsWith("\\end{document}}}")).toBe(true);
     expect(nodesOf(done).fields.length).toBeGreaterThan(0);
+    expect(compiles(done, done.document.resume)).toBe(true);
+  }, 60_000);
+
+  test("keeps the page of a group left open whose settings hold to the last paragraph", async () => {
+    // An invented resume of the shape the review of 13099bf found: a `{\raggedright\small %...}`
+    // group left open, and a last paragraph that runs into `\end{document}`. Braces closed before
+    // `\end{document}` undo the settings before the paragraph is broken into lines.
+    const words = "Quill Ashgrove tended invented bees for the Wrenford guild across many invented";
+    const source = String.raw`\documentclass{article}
+\begin{document}
+{\raggedright\small % Invented roles }
+\section{Invented Roles}
+${words} summers, and taught invented apprentices to keep invented hives and invented gardens.
+\end{document}
+`;
+    const done = await imported(source);
+    expect(done.report.checks.outcome).toBe("assembled");
+    expect(done.report.checks.difference).toBeUndefined();
+    expect(compiles(done, done.document.resume)).toBe(true);
+  }, 60_000);
+
+  test("imports a resume whose \\verb shows a brace the model counts and TeX never opens", async () => {
+    // A `{` in a `\verb`, which TeX reads as a character, the model as a group left open: a `}`
+    // closed before `\end{document}` would be one TeX reads too many, and stop the compile.
+    const source = String.raw`\documentclass{article}
+\begin{document}
+\section{Invented Notes}
+An invented note shows \verb|{| as it opens an invented group.
+\section{Invented Roles}
+Quill Ashgrove tended invented bees.
+\end{document}
+`;
+    const done = await imported(source);
+    expect(done.report.checks.outcome).toBe("assembled");
+    expect(done.report.checks.difference).toBeUndefined();
     expect(compiles(done, done.document.resume)).toBe(true);
   }, 60_000);
 

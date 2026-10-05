@@ -582,7 +582,7 @@ export type OutlineSection = z.infer<typeof OutlineSection>;
  * every `}` closes a `{` before it, and undefined for parts that close a brace they never opened,
  * or end inside an address `\url|...|` opened or in a comment. TeX leaves a group a document opens
  * and never closes open to `\end{document}`, as a `{%` whose `}` is in its comment does; an import
- * closes it just before (the follow-up to decision 0060).
+ * closes it after `\end{document}`, where TeX never reads (the follow-up to decision 0060).
  */
 export function outlineOpenBraces(parts: readonly OutlinePart[]): number | undefined {
   const read = scan(outlineText(parts, () => "{}").text, true);
