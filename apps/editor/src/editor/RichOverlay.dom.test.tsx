@@ -176,3 +176,74 @@ describe("the rich editor's paste and drop", () => {
     expect(docToRuns(view.state.doc)).toEqual([{ text: "Ledthe whole the team" }]);
   });
 });
+
+describe("Enter in the rich editor", () => {
+  let host: HTMLElement;
+  let root: Root;
+  let ends: number;
+  let commands: Command[];
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    ends = 0;
+    commands = [];
+    act(() =>
+      root.render(
+        <RichOverlay
+          field="fennel-2.text"
+          offset={0}
+          runs={[{ text: "Led the team" }]}
+          family="serif"
+          looks={new Map()}
+          measure={() => undefined}
+          rowsFor={oneRow}
+          onCommand={(command) => commands.push(command)}
+          onClose={() => {}}
+          onEnd={() => ends++}
+        />,
+      ),
+    );
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  /** Press `key` in the editor with its caret at `at`, or with `from` to `at` selected. */
+  function press(at: number, from = at, init: KeyboardEventInit = {}) {
+    const dom = host.querySelector(".ProseMirror") as (HTMLElement & { editor?: Editor }) | null;
+    const editor = dom?.editor;
+    if (editor === undefined) throw new Error("the rich editor did not mount");
+    act(() => {
+      editor.commands.setTextSelection({ from, to: at });
+    });
+    const event = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    act(() => {
+      editor.view.dom.dispatchEvent(event);
+    });
+    return { editor, event };
+  }
+
+  it("asks for a unit after at the field's end, and inserts nothing anywhere", () => {
+    // The text's end: after its twelve characters, past the paragraph's start.
+    const { editor, event } = press(13);
+    expect(ends).toBe(1);
+    expect(event.defaultPrevented).toBe(true);
+    expect(docToRuns(editor.state.doc)).toEqual([{ text: "Led the team" }]);
+    // Within the text, with text selected to the end, or with Shift: nothing, as before.
+    press(5);
+    press(13, 5);
+    press(13, 13, { shiftKey: true });
+    expect(ends).toBe(1);
+    expect(docToRuns(editor.state.doc)).toEqual([{ text: "Led the team" }]);
+    expect(commands).toEqual([]);
+  });
+});

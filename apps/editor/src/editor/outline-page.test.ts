@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { outlineNodes } from "@resume-tools/resume-model";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
@@ -19,9 +20,11 @@ import {
   OUTLINE_PREAMBLE,
   outlineParts,
 } from "../test/invented-outline";
+import { movedDown, placedGlyphs } from "../test/moved-down";
 import { Compiler, drawOptions, type Engine, type Shown } from "./compiler";
-import { type Command, type Document, fieldsOf, History } from "./document";
+import { type Command, type Document, fieldsOf, History, type StructureOp } from "./document";
 import { StructureGuard } from "./guard";
+import { outlineOf } from "./outline";
 import { isRetype, RetypeGuard, type RetypeVerdict, retypesOf, showsTyped } from "./retype";
 import { outsideCheck } from "./retype-check";
 
@@ -344,6 +347,61 @@ describe.skipIf(!engineAvailable())("typing in an imported outline, on the engin
     compiler.update(history.present);
     const back = await landing;
     expect("page" in back).toBe(true);
+    compiler.close();
+  }, 120_000);
+
+  it("adds a unit held until its page, takes back one whose compile stops, and removes one", async () => {
+    // An invented resume whose roles stop TeX past two, as a counter a template keeps might: a
+    // copy of a role stops the compile, which no check of this hand-made outline caught.
+    const roles =
+      "\\newcounter{roles}\\renewcommand{\\role}[2]{\\stepcounter{roles}\\ifnum\\value{roles}>2 \\errmessage{Only two roles}\\fi\\textbf{#1} \\hfill #2\\par}";
+    const setup = await opened(`${OUTLINE_PREAMBLE}\n${roles}`);
+    const { history, compiler, store, id, stored, name, first } = setup;
+    const guard = new StructureGuard();
+    let saved = 0;
+    /** A step from the side panel, as the app follows it: compiled, saved once a page shows it. */
+    const step = async (op: StructureOp) => {
+      const before = history.present;
+      const landing = setup.next();
+      compiler.update(history.dispatch({ type: "structure", op }));
+      expect(guard.changed(history, before, true), "held until its page").toBe(false);
+      const landed = await landing;
+      if ("page" in landed && guard.paged(landed.page.document)) {
+        store.save(id, history.present, stored.revision);
+        saved++;
+      }
+      return landed;
+    };
+    // A bullet after the lantern's first: an empty one, its fields emptied, and the rest of the
+    // page as before but for moving down.
+    const added = await step({ op: "addUnit", after: "lantern-1" });
+    if (!("page" in added)) throw new Error("no page after the bullet");
+    expect(saved).toBe(1);
+    const before = placedGlyphs(first.pages);
+    const moved = movedDown(before, placedGlyphs(added.page.pages));
+    expect(moved.problem).toBeUndefined();
+    expect(placedGlyphs(added.page.pages)).not.toEqual(before);
+    const shown = history.present;
+    // A third role stops the compile: taken back, never saved.
+    const stopped = await step({ op: "addUnit", after: "mill" });
+    if (!("stopped" in stopped)) throw new Error("the compile did not stop");
+    expect(guard.stopped(stopped.stopped), "taken back").toBe(true);
+    expect(history.present).toBe(shown);
+    expect(history.canRedo).toBe(false);
+    expect(saved).toBe(1);
+    expect((await store.flush()).written).toBe(1);
+    const again = new DocumentStore({ name });
+    const reread = await again.get(id);
+    await again.close();
+    expect(reread?.document).toEqual(shown);
+    // The new bullet removed: the page is the first, glyph for glyph.
+    const copy = [...outlineNodes(outlineOf(shown.resume)?.parts ?? [])].flatMap((node) =>
+      node.kind === "unit" && node.group.id === "lantern-bullets" ? [node.unit.id] : [],
+    )[1];
+    if (copy === undefined) throw new Error("no copy");
+    const removed = await step({ op: "removeUnit", id: copy });
+    if (!("page" in removed)) throw new Error("no page after the removal");
+    expect(placedGlyphs(removed.page.pages)).toEqual(before);
     compiler.close();
   }, 120_000);
 });

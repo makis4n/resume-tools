@@ -27,7 +27,7 @@
 import type { RichText } from "@resume-tools/resume-model";
 import { Extension } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import { Plugin, PluginKey, Selection, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import {
   type Editor,
@@ -120,6 +120,8 @@ export interface RichOverlayProps {
   /** Each edit, as a command for the document. */
   onCommand: (command: Command) => void;
   onClose: () => void;
+  /** Enter at the end of the field's text, nothing selected (`OverlayProps.onEnd`). */
+  onEnd?: () => void;
 }
 
 /** What the editor draws the field's lines from. */
@@ -217,11 +219,13 @@ interface Hooks {
   layout: () => Layout;
   close: () => void;
   link: () => void;
+  /** Enter at the end of the field's text, nothing selected: whether something took it. */
+  end: () => void;
 }
 
 /**
  * A field's keys and TeX's lines: Enter inserts nothing, in any combination, since a field is one
- * paragraph; Escape closes the editor; and Cmd or Ctrl and K open the link popover, and never the
+ * paragraph, and at the field's end, alone, it asks for a unit after (`Hooks.end`); Escape closes the editor; and Cmd or Ctrl and K open the link popover, and never the
  * browser's own search, which would take the focus and close the editor.
  */
 function fieldKeys(hooks: Hooks) {
@@ -230,7 +234,13 @@ function fieldKeys(hooks: Hooks) {
     priority: 1000,
     addKeyboardShortcuts() {
       return {
-        Enter: () => true,
+        // Enter inserts nothing; at the field's end, with nothing selected, it adds a unit
+        // (`OverlayProps.onEnd`).
+        Enter: ({ editor }) => {
+          const { selection, doc } = editor.state;
+          if (selection.empty && selection.head === Selection.atEnd(doc).head) hooks.end();
+          return true;
+        },
         "Shift-Enter": () => true,
         "Mod-Enter": () => true,
         Escape: () => {
@@ -366,6 +376,7 @@ export function RichOverlay({
   rowsFor,
   onCommand,
   onClose,
+  onEnd,
 }: RichOverlayProps) {
   const [frame, setFrame] = useState<RichFrame>();
   // Whether the user asked for the link popover, rather than the caret being in a link.
@@ -377,13 +388,14 @@ export function RichOverlay({
   // on and each edit it has sent since, which the document may not show yet; and whether the
   // document has shown anything else, which only a change the editor did not make gives.
   const [known] = useState(() => ({ sent: [JSON.stringify(runs)], changed: false }));
-  const latest = useRef({ field, onCommand, onClose, link: () => {}, known });
+  const latest = useRef({ field, onCommand, onClose, onEnd, link: () => {}, known });
 
   const [options] = useState((): UseEditorOptions => {
     const hooks: Hooks = {
       layout: () => layout.current,
       close: () => latest.current.onClose(),
       link: () => latest.current.link(),
+      end: () => latest.current.onEnd?.(),
     };
     return {
       extensions: [...RICH_SCHEMA, fieldKeys(hooks)],
@@ -462,7 +474,7 @@ export function RichOverlay({
     setLinking(true);
   };
   useLayoutEffect(() => {
-    latest.current = { field, onCommand, onClose, link: openLink, known };
+    latest.current = { field, onCommand, onClose, onEnd, link: openLink, known };
   });
   // Each time the document's runs for the field change: the editor's own edit coming back, which
   // settles every edit sent before it, or another change.

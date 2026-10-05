@@ -14,9 +14,15 @@
 
 import {
   endsInComment,
+  isOutlineField,
+  OUTLINE_PLACEHOLDER,
+  type OutlineField,
+  type OutlineFixed,
+  type OutlineGroup,
   type OutlinePart,
   OutlineSection,
   type OutlineUnit,
+  outlineNodes,
   type Resume,
 } from "@resume-tools/resume-model";
 import { keptId } from "../page/kept";
@@ -238,3 +244,179 @@ export function* outlineFields(
       for (const [u, unit] of part.units.entries()) yield* outlineFields(unit.parts, [...at, u]);
   }
 }
+
+/**
+ * A copy of a unit as the editor makes a new one (the second pass's item 8), which check 3 tries as
+ * it is made here (decision 0055): every field, group and unit in it under a new id `mint` gives,
+ * every field emptied, or holding `OUTLINE_PLACEHOLDER` where `required` names it, and its kept
+ * text and gap as they are, byte for byte. A group in it keeps its units, each copied so, and why
+ * it is fixed, if it is; a field keeps whether it is required and given as one token.
+ */
+export function emptiedCopy(
+  unit: OutlineUnit,
+  mint: () => string,
+  required: (id: string) => boolean,
+): OutlineUnit {
+  const map = (list: readonly OutlinePart[]): OutlinePart[] =>
+    list.map((part): OutlinePart => {
+      if (part.kind === "kept") return part;
+      if (part.kind === "group")
+        return {
+          ...part,
+          id: mint(),
+          units: part.units.map((each) => ({ ...each, id: mint(), parts: map(each.parts) })),
+        };
+      const holds = required(part.id) ? OUTLINE_PLACEHOLDER : "";
+      return part.kind === "text"
+        ? { ...part, id: mint(), text: holds }
+        : { ...part, id: mint(), text: holds === "" ? [] : [{ text: holds }] };
+    });
+  return { ...unit, id: mint(), parts: map(unit.parts) };
+}
+
+/**
+ * Where a unit of an outline is: `path` goes from the outline's parts to its group (`KeptAt.path`),
+ * the group, and the unit's index among its units.
+ */
+export interface UnitPlace {
+  path: number[];
+  group: OutlineGroup;
+  index: number;
+}
+
+/** Where the unit `id` is among `parts`, however deep (`UnitPlace`), or undefined. */
+export function unitPlace(
+  parts: readonly OutlinePart[],
+  id: string,
+  path: readonly number[] = [],
+): UnitPlace | undefined {
+  for (const [index, part] of parts.entries()) {
+    if (part.kind !== "group") continue;
+    const at = [...path, index];
+    for (const [u, unit] of part.units.entries()) {
+      if (unit.id === id) return { path: at, group: part, index: u };
+      const inner = unitPlace(unit.parts, id, [...at, u]);
+      if (inner !== undefined) return inner;
+    }
+  }
+  return undefined;
+}
+
+/** Every id an outline's parts hold, of its fields, groups and units. */
+export function outlineIds(parts: readonly OutlinePart[]): string[] {
+  const ids: string[] = [];
+  for (const step of outlineNodes(parts))
+    if (step.kind === "unit") ids.push(step.unit.id);
+    else if (step.part.kind !== "kept") ids.push(step.part.id);
+  return ids;
+}
+
+/**
+ * The unit a field ends, as Enter at the field's end adds a unit after (the second pass's item 8):
+ * the unit whose own parts, outside the groups within it, hold the field `id`, where no field of
+ * its own parts the generator writes comes after it, so that the end of the field is the end of
+ * what the unit sets in words of its own: a bullet's text ends its bullet, and an entry's last
+ * field before its bullets ends its entry. Undefined for a field in no unit, or one with a written
+ * field of its unit's own after it. What Enter adds is this, but for a section (`enterAdds`).
+ */
+export function unitEnding(parts: readonly OutlinePart[], id: string): UnitPlace | undefined {
+  /** Whether `list` holds the field as a part of its own, and where it ends a unit within, if so. */
+  const within = (
+    list: readonly OutlinePart[],
+    path: readonly number[],
+  ): { own: boolean; place?: UnitPlace } | undefined => {
+    for (const [index, part] of list.entries()) {
+      if (isOutlineField(part)) {
+        if (part.id === id) return { own: true };
+        continue;
+      }
+      if (part.kind !== "group") continue;
+      for (const [u, unit] of part.units.entries()) {
+        const inner = within(unit.parts, [...path, index, u]);
+        if (inner === undefined) continue;
+        if (!inner.own) return { own: false, ...(inner.place ? { place: inner.place } : {}) };
+        const own = unit.parts.filter(
+          (each): each is OutlineField => isOutlineField(each) && written(each),
+        );
+        return own.at(-1)?.id === id
+          ? { own: false, place: { path: [...path, index], group: part, index: u } }
+          : { own: false };
+      }
+    }
+    return undefined;
+  };
+  return within(parts, [])?.place;
+}
+
+/** LaTeX that sets its spaces as typed, where no space may be read as another. */
+const VERBATIM = /\\verb\b|\\begin\s*\{(?:verbatim|lstlisting|minted|alltt|Verbatim)\*?\}/;
+
+/**
+ * Kept text as TeX reads its spaces: a blank line, a paragraph's break, one line's end with the
+ * spaces and tabs around it, and every other run of spaces and tabs, one space; so that two pieces
+ * of kept text differing only in their indentation read alike. Kept text that sets its spaces as
+ * typed, as verbatim does, is left byte for byte.
+ */
+export function texSpaces(latex: string): string {
+  if (VERBATIM.test(latex)) return latex;
+  return latex
+    .replace(/[ \t]*\n(?:[ \t]*\n)+[ \t]*/g, "\u0000")
+    .replace(/[ \t]*\n[ \t]*/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replaceAll("\u0000", "\n\n");
+}
+
+/**
+ * A unit's shape: its own parts, outside the groups within it, as the generator writes them with
+ * every field emptied, its kept text as TeX reads its spaces (`texSpaces`), each field by its kind,
+ * and a group within it by its place alone. Two units of one shape set the same around their
+ * fields.
+ */
+export function unitShape(unit: OutlineUnit): string {
+  return JSON.stringify(
+    unit.parts.map((part) =>
+      part.kind === "kept"
+        ? ["kept", texSpaces(part.latex)]
+        : part.kind === "group"
+          ? ["group"]
+          : [part.kind, part.bare === true, part.required === true],
+    ),
+  );
+}
+
+/**
+ * Whether a group's units are all of one shape (`unitShape`), so that what parts one from the next
+ * is in their gaps and the last holds nothing the others lack: then a unit moves among them, and a
+ * copy of the last goes in after any of them, as it went in after the last when the import's checks
+ * tried it.
+ */
+export function alike(group: OutlineGroup): boolean {
+  const last = group.units.at(-1);
+  if (last === undefined) return true;
+  const shape = unitShape(last);
+  return group.units.every((unit) => unitShape(unit) === shape);
+}
+
+/**
+ * Why a group's buttons are disabled where the import's checks found it fixed (decision 0055),
+ * which they say when pointed at: it takes no unit more or fewer, and none of its units moves.
+ */
+export const FIXED_WHY: Readonly<Record<OutlineFixed, string>> = {
+  copy: "Adding one here changed the rest of the page when your resume was imported, so these stay as they are",
+  removal:
+    "Removing one here changed the rest of the page when your resume was imported, so these stay as they are",
+  untried: "These could not be tried when your resume was imported, so they stay as they are",
+  stops:
+    "A change here stopped the page from being made when your resume was imported, so these stay as they are",
+};
+
+/** Why the Remove of a group's only unit is disabled: a list needs at least one (decision 0050). */
+export const ONLY_UNIT = "This is the only one here, and there must be at least one";
+
+/**
+ * Why a group's units take no move, and a new one only after the last (`alike`): they are not all
+ * written alike in the person's file, so what parts them may be in them, and the last may hold
+ * what follows the group (the second pass's item 8).
+ */
+export const NOT_ALIKE =
+  "These are not all written alike in your file, so they keep their order, and a new one goes after the last";

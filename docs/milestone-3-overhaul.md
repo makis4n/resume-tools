@@ -253,7 +253,7 @@ closes.
    the outline, its parts in order by their first words, in place of the labelled form. Done when,
    on each sample, a field on the first page and one on the last open in place and an edit is still
    there after a reload.
-8. [ ] **Adding, removing and moving units.** A bullet gains a sibling from the page, with Enter at
+8. [x] **Adding, removing and moving units.** A bullet gains a sibling from the page, with Enter at
    its end, and from the side panel; an entry likewise; either can be removed or moved among its
    siblings. A new unit is a copy of the one beside it with its fields emptied, or holding a
    placeholder where a field is required. The step is held until its compile shows and taken back

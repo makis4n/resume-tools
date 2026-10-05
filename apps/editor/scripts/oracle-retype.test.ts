@@ -1,9 +1,9 @@
 import "fake-indexeddb/auto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RichText } from "@resume-tools/resume-model";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { Compiler, type Engine, type Shown } from "../src/editor/compiler";
+import { Compiler, type Shown } from "../src/editor/compiler";
 import { type Command, type Document, fieldsOf, History } from "../src/editor/document";
 import { keptSegments, outlineOf, writtenFields } from "../src/editor/outline";
 import {
@@ -15,20 +15,14 @@ import {
   showsTyped,
 } from "../src/editor/retype";
 import { outsideCheck, outsideDifference } from "../src/editor/retype-check";
-import type { EngineManifest } from "../src/engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/node";
 import type { EngineSession } from "../src/engine/session";
-import { readTree } from "../src/import/fonts";
-import { treeImages } from "../src/import/intake";
-import { isRefusal } from "../src/import/refusal";
-import { type Imported, importResume } from "../src/import/run";
 import type { DrawnPage } from "../src/page/draw";
 import { FontLibrary } from "../src/page/fonts";
 import { TexLiveIndex } from "../src/page/texlive";
 import { DocumentStore } from "../src/storage/store";
 import { resolveTemplate } from "../src/templates/resolve";
-import { ORACLE_DIR, ORACLE_FILE, Oracle, oracleDocument } from "./corpus-oracle";
-import { uploadOf } from "./corpus-reference";
+import { engineManifest, engineOf, fetched, importedSample } from "./oracle-samples";
 
 // The second pass's item 7 (decision 0049) on the upstream samples, each imported as the browser
 // imports a resume, as an outline, kept in a store and opened through the compiler on the engine,
@@ -40,48 +34,6 @@ import { uploadOf } from "./corpus-reference";
 // an invented substitution of its letters, the fields and the kept text chosen by where they are
 // and the template's commands around them, so that no sample's text is in this file, and numbers
 // alone, with the template's command names, reach the test's output.
-
-const engineManifest = () =>
-  JSON.parse(readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8")) as EngineManifest;
-
-/** Whether this machine has fetched the oracle's samples, which `corpus oracle` fetches. */
-const fetched = existsSync(join(ORACLE_DIR, "jake-0000", "resume.tex"));
-
-/** An upstream sample imported as the browser imports a resume, on a session of its own. */
-async function importedSample(id: string, fonts: FontLibrary): Promise<Imported> {
-  const oracle = Oracle.parse(JSON.parse(readFileSync(ORACLE_FILE, "utf8")));
-  const doc = oracle.documents.find((each) => each.id === id);
-  if (doc === undefined) throw new Error(`${id} is no oracle sample`);
-  const manifest = engineManifest();
-  const zip = uploadOf(
-    oracleDocument(doc),
-    (path) => new Uint8Array(readFileSync(join(ORACLE_DIR, doc.id, ...path.split("/")))),
-    () => undefined,
-  );
-  const outcome = await importResume([{ name: `${id}.zip`, bytes: zip }], {
-    session: await startNodeSession(),
-    fonts,
-    tree: readTree(manifest.files, manifest.fonts),
-    treeImage: treeImages(
-      manifest.files,
-      (path) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path))),
-    ),
-  });
-  if (isRefusal(outcome)) throw new Error(`${id} refused: ${outcome.reason}`);
-  return outcome;
-}
-
-/** The compile engine the app's worker is, over a Node session, as the compiler takes one. */
-const engineOf = (on: EngineSession) => (): Engine => ({
-  start: async () => {},
-  dump: async (kind, name, preamble, files) => on.dump(kind, name, preamble, files),
-  putFormat: async (kind, name, format) => on.putFormat(kind, name, format),
-  forget: async (job) => on.forget(job),
-  compile: async (kind, format, body, options) => on.compile(kind, format, body, options),
-  pdf: async (job, options) => on.pdf(job, options),
-  dropFormat: async (kind, name) => on.dropFormat(kind, name),
-  terminate: () => {},
-});
 
 /** What a compile the compiler ran came to: a page, its document stopping it, or a message. */
 type Landed = { page: Shown } | { stopped: Document } | { error: string };

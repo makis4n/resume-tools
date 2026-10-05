@@ -15,14 +15,17 @@ import {
   type Document as EditorDocument,
   FieldTooLong,
   History,
+  REFUSED_STEP,
   TOO_LONG,
+  UnitRefused,
 } from "./editor/document";
 import { pdfFileName, savePdf } from "./editor/download";
+import { enterAdds } from "./editor/enter";
 import { applyFit, type Fitted, fit } from "./editor/fit";
 import { StructureGuard } from "./editor/guard";
 import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
-import { outlineOf } from "./editor/outline";
+import { markerOf, outlineFields, outlineOf, unitPlace } from "./editor/outline";
 import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
 import { usePdfConsent } from "./editor/PdfReading";
 import { PdfReview } from "./editor/PdfReview";
@@ -311,6 +314,15 @@ export function App() {
   const [takenBack, setTakenBack] = useState(false);
   /** Whether the last edit was refused for making a field longer than one may be (`MAX_FIELD`). */
   const [tooLong, setTooLong] = useState(false);
+  /**
+   * Why Enter at a field's end added no unit, where its group stays as it was imported (decision
+   * 0055); and the field of the unit it did add whose input in the side panel takes the focus,
+   * since the page cannot open a field while it is empty (the second pass's item 8).
+   */
+  const [unitNote, setUnitNote] = useState<string>();
+  const [focusField, setFocusField] = useState<string>();
+  /** The visit to a field, by its click, whose Enter at the end added a unit: it adds no other. */
+  const ended = useRef<number | undefined>(undefined);
   /** Whether the compile that just stopped was a step taken back, whose plain message is said. */
   const tookBack = useRef(false);
   /** The fonts the pages are drawn with, which a retype's check reads the outputs with. */
@@ -347,6 +359,8 @@ export function App() {
     setRetyping(undefined);
     setTakenBack(false);
     setTooLong(false);
+    setUnitNote(undefined);
+    setFocusField(undefined);
     setOpen(undefined);
     setClicked(undefined);
     setImportedReport(undefined);
@@ -422,6 +436,8 @@ export function App() {
     setRetyping(undefined);
     setTakenBack(false);
     setTooLong(false);
+    setUnitNote(undefined);
+    setFocusField(undefined);
     compiler.current?.open(pkg, document, job);
   };
 
@@ -605,6 +621,7 @@ export function App() {
     followHistory(doc);
     const { present } = doc.history;
     setTakenBack(false);
+    setUnitNote(undefined);
     compiler.current?.update(present);
     // An imported outline's every change waits for its page (`StructureGuard`).
     const every = outlineOf(present.resume) !== undefined;
@@ -862,6 +879,9 @@ export function App() {
         setTooLong(true);
         setClicked(undefined);
       }
+      // A structural step refused says why in plain words, an outline's unit's its own.
+      if (error instanceof UnitRefused) setUnitNote(error.plain);
+      else if (command.type === "structure") setUnitNote(REFUSED_STEP);
       return;
     }
     setTooLong(false);
@@ -883,6 +903,8 @@ export function App() {
    */
   const openField = (field: string, offset: number) => {
     if (retypeGuard.current.holds()) return;
+    setFocusField(undefined);
+    setUnitNote(undefined);
     seal();
     setRetyping(undefined);
     setClicked({ field, offset, click: ++clicks.current });
@@ -892,6 +914,38 @@ export function App() {
   const closeField = () => {
     seal();
     setClicked(undefined);
+  };
+
+  /**
+   * Enter at the end of an outline's field (the second pass's item 8): where the field ends a unit,
+   * a bullet by its text or an entry by its last field before its bullets, never a section
+   * (`enterAdds`), a copy of its group's
+   * last unit, its fields emptied, goes in after it (`addUnit`), as a step of its own after the
+   * visit to the field, held until its page shows as every change to an outline is; the field
+   * closes, and the new unit's first field takes the focus in the side panel, since the page shows
+   * no empty field to open. A step the outline refuses, in a group that stays as it was imported or
+   * after a unit not of the last's shape, adds nothing, and the message line says why.
+   */
+  const endField = (field: string, click: number) => {
+    // A key held down repeats before the field closes: one visit adds one unit.
+    if (ended.current === click) return;
+    const outline = outlineOf(history.present.resume);
+    const id = field.endsWith(".text") ? field.slice(0, -".text".length) : undefined;
+    const place = outline && id !== undefined ? enterAdds(outline.parts, id) : undefined;
+    const unit = place?.group.units[place.index];
+    if (unit === undefined) return;
+    // The add is a step of its own, after the visit: one the outline refuses says why, and the
+    // field stays open.
+    const before = history.present;
+    edit({ type: "structure", op: { op: "addUnit", after: unit.id } });
+    const after = outlineOf(history.present.resume);
+    if (history.present === before || after === undefined) return;
+    ended.current = click;
+    closeField();
+    const now = unitPlace(after.parts, unit.id);
+    const added = now?.group.units[now.index + 1];
+    const first = added === undefined ? undefined : outlineFields(added.parts).next().value;
+    setFocusField(first === undefined ? undefined : markerOf(first.part.id));
   };
 
   /**
@@ -1048,8 +1102,12 @@ export function App() {
         lockedWords={rowNames}
         retypes={retypeRows}
         onRetype={openRetype}
+        {...(focusField === undefined ? {} : { focus: focusField })}
         onCommand={edit}
-        onSeal={seal}
+        onSeal={() => {
+          seal();
+          setFocusField(undefined);
+        }}
       />
       <Controls
         pkg={pkg}
@@ -1209,6 +1267,7 @@ export function App() {
         </p>
         {takenBack && <p role="status">{TAKEN_BACK}</p>}
         {tooLong && <p role="status">{TOO_LONG}</p>}
+        {unitNote && <p role="status">{unitNote}</p>}
         {pdfError && <p>{pdfError}</p>}
         {/* The fit takes the page on screen to be the present document's, so it waits while a
             page is on its way; it waits while a PDF is being made, whose request would otherwise
@@ -1258,6 +1317,9 @@ export function App() {
               fonts={library}
               onCommand={(command) => edit(command, `field:${clicked.field}`)}
               onClose={closeField}
+              {...(outlineOf(present.resume) === undefined
+                ? {}
+                : { onEnd: () => endField(clicked.field, clicked.click) })}
             />
           )}
         </div>

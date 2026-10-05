@@ -300,12 +300,13 @@ describe.skipIf(!engineAvailable())("the checks on the engine (the second pass's
     // The name stops TeX when empty: it stays a field, required.
     expect(fields.filter((part) => part.required === true).map(textOf)).toEqual(["Quill Wren"]);
     expect(outline.required).toBe(1);
-    // The jobs take no third: their group is fixed for its copy; the bullets take anything.
+    // The jobs take no third: their group is fixed, its copy having stopped the compile; the
+    // bullets take anything.
     const jobs = groups.find((group) => group.units.length === 2);
     const bullets = groups.find((group) => group.units.length === 3);
-    expect(jobs?.fixed).toBe("copy");
+    expect(jobs?.fixed).toBe("stops");
     expect(bullets?.fixed).toBeUndefined();
-    expect(outline.fixed).toEqual({ copy: 1 });
+    expect(outline.fixed).toEqual({ stops: 1 });
     // The page is the original's, and the report names the kept motto in plain words.
     expect(checks.outcome).toBe("assembled");
     const report = reportOfImport(outcome);

@@ -19,7 +19,8 @@
  * and only a document without the field closes it (`shouldClose`).
  *
  * Offsets are UTF-16 indices throughout, as the DOM and the model slice by. A field is one
- * paragraph, so Enter inserts nothing, and pasted text comes in plain, its line breaks as spaces.
+ * paragraph, so Enter inserts nothing, though at the field's end it may add a unit after the one
+ * the field ends (`OverlayProps.onEnd`, the second pass's item 8), and pasted text comes in plain, its line breaks as spaces.
  * Formatting keys insert nothing, and neither do the browser's own undo and redo, whose record of
  * the rows this overlay redraws on every input would be wrong. The app takes the undo and redo keys
  * (item 12), and closes the overlay first, so that an undo takes back the whole visit to the field.
@@ -701,6 +702,21 @@ export function deleteAt(text: string, offset: number, direction: "backward" | "
   return deleteRange(text, at, at + (after?.segment.length ?? 0));
 }
 
+/**
+ * Whether a key pressed in a plain field is Enter at the field's end (`OverlayProps.onEnd`): Enter
+ * alone, no key held with it and no character being composed, with nothing selected and the caret
+ * after the field's last character.
+ */
+export function endsField(
+  key: Pick<KeyboardEvent, "key" | "shiftKey" | "altKey" | "ctrlKey" | "metaKey" | "isComposing">,
+  collapsed: boolean,
+  caret: number | undefined,
+  length: number,
+): boolean {
+  const held = key.shiftKey || key.altKey || key.ctrlKey || key.metaKey || key.isComposing;
+  return key.key === "Enter" && !held && collapsed && caret === length;
+}
+
 export interface OverlayProps {
   /** The field's id, as the page's markers and the document's commands name it. */
   field: string;
@@ -721,6 +737,12 @@ export interface OverlayProps {
   /** Each edit, as a command for the document. */
   onCommand: (command: Command) => void;
   onClose: () => void;
+  /**
+   * Enter with the caret at the end of the field's text and nothing selected, which adds a unit
+   * after the one the field ends, where it ends one (the second pass's item 8); without it, Enter
+   * inserts nothing, as anywhere else in a field.
+   */
+  onEnd?: () => void;
 }
 
 /**
@@ -1124,12 +1146,13 @@ function Rows({
   ready,
   onCommand,
   onClose,
+  onEnd,
 }: OpenProps & { text: string; ready: Ready }) {
   const box = useRef<HTMLDivElement>(null);
   const rows = useRef<FieldRows | undefined>(undefined);
-  const latest = useRef({ onCommand, onClose });
+  const latest = useRef({ onCommand, onClose, onEnd });
   useLayoutEffect(() => {
-    latest.current = { onCommand, onClose };
+    latest.current = { onCommand, onClose, onEnd };
   });
 
   // The rows and what the browser does to them, from when they first appear to when they close.
@@ -1174,8 +1197,14 @@ function Rows({
       [
         "keydown",
         (event) => {
-          const { key } = event as KeyboardEvent;
-          if (key === "Enter") event.preventDefault();
+          const keyboard = event as KeyboardEvent;
+          const { key } = keyboard;
+          if (key === "Enter") {
+            event.preventDefault();
+            const collapsed = document.getSelection()?.isCollapsed ?? false;
+            if (endsField(keyboard, collapsed, editing.caret(), editing.text.length))
+              latest.current.onEnd?.();
+          }
           if (key === "Escape") {
             event.preventDefault();
             latest.current.onClose();
@@ -1323,6 +1352,7 @@ function RichField(props: OpenProps) {
       rowsFor={rowsFor}
       onCommand={props.onCommand}
       onClose={props.onClose}
+      {...(props.onEnd === undefined ? {} : { onEnd: props.onEnd })}
     />
   );
 }

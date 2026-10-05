@@ -6,10 +6,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { outlinePackage, outlineResume } from "../import/outline";
 import { curated } from "../templates/curated";
 import type { TemplatePackage } from "../templates/package";
-import { inventedOutline, outlineParts } from "../test/invented-outline";
+import { AWARD_PREAMBLE, AWARDS, inventedOutline, outlineParts } from "../test/invented-outline";
 import { type Command, type Document, fieldsOf, newDocument } from "./document";
 import { keptSegments, outlineOf } from "./outline";
-import { KEPT_AS_WRITTEN, NO_WORDS, OUTLINE, Panel } from "./Panel";
+import {
+  ADD_AFTER,
+  ADD_UNIT,
+  FIXED_WHY,
+  KEPT_AS_WRITTEN,
+  NO_WORDS,
+  NOT_ALIKE,
+  ONLY_UNIT,
+  OUTLINE,
+  Panel,
+} from "./Panel";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -259,7 +269,9 @@ describe("the side panel, under an imported package's rules", () => {
     expect(rows[0]).toBe(`Quill Wrenfield Harbour City, Eastmere${KEPT_AS_WRITTEN}Change words`);
     expect(rows[1]).toBe("Experience");
     // The roles, each a unit named by its first words.
-    expect(rows[2]).toBe("Lantern Works 2021 -- 2024 Set…Mill and Sons 2019 Cut half…");
+    expect(rows[2]).toBe(
+      "Lantern Works 2021 -- 2024 Set…↑↓RemoveAdd afterMill and Sons 2019 Cut half…↑↓RemoveAdd afterAdd another",
+    );
     expect(rows[3]).toBe(`Hobbies Rowing on the river most…${KEPT_AS_WRITTEN}Change words`);
     expect(rows[4]).toBe("Projects");
     // No form of the shared structure, and nothing of the LaTeX.
@@ -296,5 +308,132 @@ describe("the side panel, under an imported package's rules", () => {
     ]);
     // A unit with no words is named so.
     expect(NO_WORDS).toBe("No words");
+  });
+
+  it("adds, removes and moves an outline's units, and disables a fixed group's buttons with why", async () => {
+    // The invented outline with its roles fixed, as the checks fix a group a copy of which moved
+    // the page (decision 0055); their bullets are no fixed group.
+    const parts = outlineParts().map((part) =>
+      part.kind === "group" && part.id === "roles" ? { ...part, fixed: "copy" as const } : part,
+    );
+    const { pkg, document: imported } = await inventedOutline(parts);
+    const focused: string[] = [];
+    act(() =>
+      root.render(
+        <Panel
+          document={imported}
+          pkg={pkg}
+          onCommand={(command) => sent.push(command)}
+          onSeal={() => focused.push("sealed")}
+        />,
+      ),
+    );
+    const buttons = () => [...host.querySelectorAll("button")];
+    const adds = () => buttons().filter((button) => button.textContent === ADD_UNIT);
+    // The roles' Add another, and each role's moves and Remove: disabled, saying why.
+    const [rolesAdd] = adds();
+    expect(rolesAdd?.disabled).toBe(true);
+    expect(rolesAdd?.title).toBe(FIXED_WHY.copy);
+    expect(FIXED_WHY.copy).not.toMatch(/[\\{}]|copy|LaTeX/);
+    const lantern = buttons().find((button) => button.textContent?.startsWith("Lantern Works"));
+    const row = lantern?.closest("li");
+    if (lantern === undefined || row === null || row === undefined) throw new Error("no role");
+    const own = [...row.querySelectorAll(":scope > div > span > button")] as HTMLButtonElement[];
+    expect(own.map((button) => button.disabled)).toEqual([true, true, true]);
+    expect(own.map((button) => button.title)).toEqual([
+      FIXED_WHY.copy,
+      FIXED_WHY.copy,
+      FIXED_WHY.copy,
+    ]);
+    // Its Add after too; and why is written under the group, which each disabled button names.
+    const after = row.querySelector(":scope > div > button:last-child") as HTMLButtonElement;
+    expect([after.textContent, after.disabled]).toEqual([ADD_AFTER, true]);
+    for (const button of [...own, after, rolesAdd as HTMLButtonElement]) {
+      const note = document.getElementById(button.getAttribute("aria-describedby") ?? "");
+      expect(note?.getAttribute("role")).toBe("note");
+      expect(note?.textContent?.trim()).toBe(`${FIXED_WHY.copy}.`);
+    }
+    // A role opened: its bullets take a copy of the last, a move, and a removal.
+    act(() => lantern.click());
+    const bulletsAdd = adds().find((button) => !button.disabled);
+    act(() => bulletsAdd?.click());
+    expect(sent).toEqual([{ type: "structure", op: { op: "addUnit", after: "lantern-2" } }]);
+    const set = buttons().find((button) => button.textContent?.startsWith("Set careful"));
+    const setRow = set?.closest("li");
+    const [up, down, remove] = [
+      ...(setRow?.querySelectorAll(":scope > div > span > button") ?? []),
+    ] as HTMLButtonElement[];
+    expect([up?.disabled, down?.disabled, remove?.disabled]).toEqual([true, false, false]);
+    expect(remove?.hasAttribute("aria-describedby")).toBe(false);
+    act(() => down?.click());
+    act(() => remove?.click());
+    const addAfter = setRow?.querySelector(":scope > div > button:last-child") as HTMLButtonElement;
+    expect(addAfter.disabled).toBe(false);
+    act(() => addAfter.click());
+    expect(sent.slice(1)).toEqual([
+      { type: "structure", op: { op: "moveUnit", id: "lantern-1", to: 1 } },
+      { type: "structure", op: { op: "removeUnit", id: "lantern-1" } },
+      { type: "structure", op: { op: "addUnit", after: "lantern-1" } },
+    ]);
+    // The mill's only bullet is never removed, which its Remove says.
+    const mill = buttons().find((button) => button.textContent?.startsWith("Mill and Sons"));
+    act(() => mill?.click());
+    const cut = buttons().find((button) => button.textContent?.startsWith("Cut half"));
+    const only = [
+      ...(cut?.closest("li")?.querySelectorAll(":scope > div > span > button") ?? []),
+    ] as HTMLButtonElement[];
+    expect(only.map((button) => button.disabled)).toEqual([true, true, true]);
+    expect(only[2]?.title).toBe(ONLY_UNIT);
+    const why = document.getElementById(only[2]?.getAttribute("aria-describedby") ?? "");
+    expect(why?.textContent?.trim()).toBe(`${ONLY_UNIT}.`);
+  });
+
+  it("disables the moves of units not all of one shape, and an Add after not after the last", async () => {
+    const { pkg, document: imported } = await inventedOutline([...AWARDS], AWARD_PREAMBLE);
+    act(() =>
+      root.render(
+        <Panel
+          document={imported}
+          pkg={pkg}
+          onCommand={(command) => sent.push(command)}
+          onSeal={() => {}}
+        />,
+      ),
+    );
+    const rows = [...host.querySelectorAll("fieldset li li")] as HTMLLIElement[];
+    const buttonsOf = (row: HTMLLIElement) =>
+      [
+        ...row.querySelectorAll(":scope > div > span > button, :scope > div > button:last-child"),
+      ] as HTMLButtonElement[];
+    expect(rows.map((row) => buttonsOf(row).map((button) => button.disabled))).toEqual([
+      [true, true, false, true],
+      [true, true, false, true],
+      [true, true, false, false],
+    ]);
+    const note = host.querySelector("[role=note]");
+    expect(note?.textContent?.trim()).toBe(`${NOT_ALIKE}.`);
+    const [up] = buttonsOf(rows[1] as HTMLLIElement);
+    expect(up?.getAttribute("aria-describedby")).toBe(note?.id);
+    expect(note?.textContent).not.toMatch(/[\\{}]/);
+  });
+
+  it("puts the focus in the input of the field it is asked to", async () => {
+    const parts = outlineParts();
+    parts[7] = { kind: "rich", id: "orrery", text: [] };
+    const { pkg, document: imported } = await inventedOutline(parts);
+    act(() =>
+      root.render(
+        <Panel
+          document={imported}
+          pkg={pkg}
+          focus="orrery.text"
+          onCommand={(command) => sent.push(command)}
+          onSeal={() => {}}
+        />,
+      ),
+    );
+    const input = host.querySelector("input");
+    expect(input).not.toBeNull();
+    expect(document.activeElement).toBe(input);
   });
 });

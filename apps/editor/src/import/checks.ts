@@ -44,14 +44,13 @@
  */
 
 import {
-  OUTLINE_PLACEHOLDER,
   type OutlineFixed,
   type OutlinePart,
-  type OutlineUnit,
   outlineNodes,
   type Resume,
   type RichText,
 } from "@resume-tools/resume-model";
+import { emptiedCopy } from "../editor/outline";
 import type { EngineSession } from "../engine/session";
 import type { FontLibrary } from "../page/fonts";
 import { generateBody, generateFormat } from "../templates/generate";
@@ -475,32 +474,8 @@ export function mutated(
   return map(parts);
 }
 
-/**
- * A copy of a unit as the editor makes a new one: every field, group and unit in it under a new id
- * `mint` gives, every field emptied, or holding `OUTLINE_PLACEHOLDER` where `required` names it,
- * and its kept text and gap as they are.
- */
-export function emptiedCopy(
-  unit: OutlineUnit,
-  mint: () => string,
-  required: (id: string) => boolean,
-): OutlineUnit {
-  const map = (list: readonly OutlinePart[]): OutlinePart[] =>
-    list.map((part): OutlinePart => {
-      if (part.kind === "kept") return part;
-      if (part.kind === "group")
-        return {
-          ...part,
-          id: mint(),
-          units: part.units.map((each) => ({ ...each, id: mint(), parts: map(each.parts) })),
-        };
-      const holds = required(part.id) ? OUTLINE_PLACEHOLDER : "";
-      return part.kind === "text"
-        ? { ...part, id: mint(), text: holds }
-        : { ...part, id: mint(), text: holds === "" ? [] : [{ text: holds }] };
-    });
-  return { ...unit, id: mint(), parts: map(unit.parts) };
-}
+/** The editor's copy of a unit, which check 3 tries as the editor makes it (`emptiedCopy`). */
+export { emptiedCopy };
 
 /** A trial of check 3: its group, by id, what it tries, and the span of the body it changes. */
 export interface Trial {
@@ -926,9 +901,10 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
         (removals && (found.first === undefined || found.last === undefined))
       )
         fixed.set(id, "untried");
-      else if (!keepsPage(found.copy)) fixed.set(id, "copy");
+      // A trial that stopped the compile says so (`stops`), apart from one that changed the page.
+      else if (!keepsPage(found.copy)) fixed.set(id, found.copy === "stops" ? "stops" : "copy");
       else if (removals && !(keepsPage(found.first) && keepsPage(found.last)))
-        fixed.set(id, "removal");
+        fixed.set(id, found.first === "stops" || found.last === "stops" ? "stops" : "removal");
     }
     const left = [...fixed.values()].filter((why) => why === "untried").length;
     if (left > 0)

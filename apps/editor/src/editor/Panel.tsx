@@ -25,6 +25,9 @@
  * LaTeX; a group's units one under the other, each opening to show its own parts; a field with an
  * input where the page does not show it, as any field; and kept text with words to retype with
  * "Change words", the keyboard's way to its editor on the page, as a locked part's (decision 0042).
+ * Each unit moves up and down and is removed, and each group takes another, a copy of its last unit
+ * with its fields emptied (the second pass's item 8); a group the import's checks fixed takes none
+ * of these, and its buttons say why (`FIXED_WHY`), as a group's only unit's Remove does.
  *
  * Plain HTML in plain English, with nothing in it that is LaTeX.
  */
@@ -39,6 +42,7 @@ import {
   LinkKind,
   type LockedSection,
   OUTLINE_PLACEHOLDER,
+  type OutlineGroup,
   type OutlinePart,
   type OutlineSection,
   type OutlineUnit,
@@ -56,6 +60,7 @@ import {
   type ReactNode,
   useContext,
   useEffect,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -85,7 +90,16 @@ import {
   type StructureOp,
   showsBullets,
 } from "./document";
-import { type KeptAt, keptSegments, markerOf } from "./outline";
+import {
+  alike,
+  FIXED_WHY,
+  type KeptAt,
+  keptSegments,
+  markerOf,
+  NOT_ALIKE,
+  ONLY_UNIT,
+  unitShape,
+} from "./outline";
 import { piecesOf } from "./retype";
 
 /** How long typing in the panel waits for a pause before it becomes a command, in milliseconds. */
@@ -372,6 +386,11 @@ export interface PanelProps {
    */
   retypes?: ReadonlyMap<string, string | undefined>;
   onRetype?: (section: string) => void;
+  /**
+   * A field whose input takes the focus as it appears, by its id: the first field of a unit Enter
+   * added from the page (the second pass's item 8), which the page cannot open while it is empty.
+   */
+  focus?: string;
   /** Where the panel's commands go: the way an edit on the page goes, so the page follows. */
   onCommand: Send;
   /**
@@ -387,6 +406,9 @@ export interface PanelProps {
  */
 const ShownFields = createContext<ReadonlySet<string> | undefined>(undefined);
 
+/** `PanelProps.focus`, carried to each `FieldInput` in the same way. */
+const Focus = createContext<string | undefined>(undefined);
+
 /** `PanelProps.onSeal`, carried to each `TypedInput` in the same way. */
 const Seal = createContext<() => void>(() => {});
 
@@ -400,6 +422,7 @@ export function Panel({
   lockedWords,
   retypes,
   onRetype,
+  focus,
   onCommand,
   onSeal,
 }: PanelProps) {
@@ -412,37 +435,39 @@ export function Panel({
   return (
     <ShownFields value={shownFields}>
       <Seal value={onSeal}>
-        <RulesOf value={rules}>
-          <div style={STYLE.panel}>
-            {!outline && <HeaderFields header={header} rules={rules} send={onCommand} />}
-            {!outline && (
-              <Links
-                links={header.links}
-                kept={keptOf(header).has("links")}
-                rules={rules}
-                send={onCommand}
-              />
-            )}
-            {outline === undefined ? (
-              <Sections
-                sections={sections}
-                format={dateFormatOf(document, known)}
-                rules={rules}
-                lockedWords={lockedWords}
-                retypes={retypes}
-                onRetype={onRetype}
-                send={onCommand}
-              />
-            ) : (
-              <OutlineRows
-                section={outline}
-                retypes={retypes}
-                onRetype={onRetype}
-                send={onCommand}
-              />
-            )}
-          </div>
-        </RulesOf>
+        <Focus value={focus}>
+          <RulesOf value={rules}>
+            <div style={STYLE.panel}>
+              {!outline && <HeaderFields header={header} rules={rules} send={onCommand} />}
+              {!outline && (
+                <Links
+                  links={header.links}
+                  kept={keptOf(header).has("links")}
+                  rules={rules}
+                  send={onCommand}
+                />
+              )}
+              {outline === undefined ? (
+                <Sections
+                  sections={sections}
+                  format={dateFormatOf(document, known)}
+                  rules={rules}
+                  lockedWords={lockedWords}
+                  retypes={retypes}
+                  onRetype={onRetype}
+                  send={onCommand}
+                />
+              ) : (
+                <OutlineRows
+                  section={outline}
+                  retypes={retypes}
+                  onRetype={onRetype}
+                  send={onCommand}
+                />
+              )}
+            </div>
+          </RulesOf>
+        </Focus>
       </Seal>
     </ShownFields>
   );
@@ -790,6 +815,14 @@ function partsWords(parts: readonly OutlinePart[]): string {
 /** What a unit of an outline is called when it has no words. */
 export const NO_WORDS = "No words";
 
+/** The button that adds a copy of a group's last unit, its fields emptied (the second pass's item 8). */
+export const ADD_UNIT = "Add another";
+
+/** A unit's button that adds a copy of its group's last unit after it (the second pass's item 8). */
+export const ADD_AFTER = "Add after";
+
+export { FIXED_WHY, NOT_ALIKE, ONLY_UNIT };
+
 /**
  * What an outline's rows need besides their parts: the segment of kept text each piece of it is in,
  * by its place (`keptKey`), and what each segment offers to retype (`PanelProps.retypes`).
@@ -875,15 +908,7 @@ function OutlineParts({
           </li>,
         ];
       case "group":
-        return [
-          <li key={key}>
-            <ol style={STYLE.list}>
-              {part.units.map((unit, u) => (
-                <UnitRow key={unit.id} unit={unit} path={[...at, u]} context={context} />
-              ))}
-            </ol>
-          </li>,
-        ];
+        return [<GroupRow key={key} group={part} path={at} context={context} />];
     }
   });
   if (rows.length === 0) return null;
@@ -891,26 +916,119 @@ function OutlineParts({
 }
 
 /**
+ * A group of an outline's units, one under the other, and "Add another", which adds a copy of its
+ * last unit after it (the second pass's item 8). What its disabled buttons would do and why not is
+ * said under it, in plain words the buttons name as their description (`FIXED_WHY`, `NOT_ALIKE`,
+ * `ONLY_UNIT`), so that it is read without a pointer.
+ */
+function GroupRow({
+  group,
+  path,
+  context,
+}: {
+  group: OutlineGroup;
+  path: readonly number[];
+  context: OutlineContext;
+}) {
+  const note = useId();
+  const fixed = group.fixed === undefined ? undefined : FIXED_WHY[group.fixed];
+  const count = group.units.length;
+  const last = group.units.at(-1);
+  const same = alike(group);
+  const shape = last === undefined ? "" : unitShape(last);
+  const reasons =
+    fixed !== undefined
+      ? [fixed]
+      : [...(same ? [] : [NOT_ALIKE]), ...(count <= 1 ? [ONLY_UNIT] : [])];
+  return (
+    <li>
+      <ol style={STYLE.list}>
+        {group.units.map((unit, u) => (
+          <UnitRow
+            key={unit.id}
+            unit={unit}
+            path={[...path, u]}
+            refused={{
+              add: fixed ?? (u === count - 1 || unitShape(unit) === shape ? undefined : NOT_ALIKE),
+              move: fixed ?? (same ? undefined : NOT_ALIKE),
+              remove: fixed ?? (count <= 1 ? ONLY_UNIT : undefined),
+            }}
+            index={u}
+            count={count}
+            note={note}
+            context={context}
+          />
+        ))}
+      </ol>
+      {last !== undefined && (
+        <AddButton
+          refused={fixed}
+          describedBy={note}
+          onClick={() => context.send(structural({ op: "addUnit", after: last.id }))}
+        >
+          {ADD_UNIT}
+        </AddButton>
+      )}
+      {reasons.length > 0 && (
+        <small id={note} role="note" style={STYLE.mark}>
+          {` ${reasons.join(". ")}.`}
+        </small>
+      )}
+    </li>
+  );
+}
+
+/**
  * A unit of an outline's group, a bullet or an entry: named by its first words, and opening to show
- * its parts; closed, it still gives an input to each of its fields that needs one.
+ * its parts; closed, it still gives an input to each of its fields that needs one. Beside its name,
+ * ↑, ↓, Remove, and "Add after", which adds a copy of its group's last unit after it.
  */
 function UnitRow({
   unit,
   path,
+  index,
+  count,
+  refused,
+  note,
   context,
 }: {
   unit: OutlineUnit;
   path: readonly number[];
+  /** Where it is among its group's units, and how many they are. */
+  index: number;
+  count: number;
+  /** Why it takes no unit after it, no move, or no removal, where it does not. */
+  refused: { add: string | undefined; move: string | undefined; remove: string | undefined };
+  /** The id of its group's note, which says why in words its disabled buttons name. */
+  note: string;
   context: OutlineContext;
 }) {
   const [open, setOpen] = useState(false);
   const words = firstWords(partsWords(unit.parts));
+  const { send } = context;
   return (
     <li>
       <div style={STYLE.row}>
         <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
           {words === "" ? NO_WORDS : words}
         </button>
+        <Reorder
+          index={index}
+          count={count}
+          onMove={(to) => send(structural({ op: "moveUnit", id: unit.id, to }))}
+          onRemove={() => send(structural({ op: "removeUnit", id: unit.id }))}
+          refused={refused.remove}
+          up={refused.move}
+          down={refused.move}
+          describedBy={note}
+        />
+        <AddButton
+          refused={refused.add}
+          describedBy={note}
+          onClick={() => send(structural({ op: "addUnit", after: unit.id }))}
+        >
+          {ADD_AFTER}
+        </AddButton>
       </div>
       {open ? (
         <OutlineParts parts={unit.parts} path={path} context={context} />
@@ -1005,11 +1123,14 @@ function KeptRow({
  */
 function AddButton({
   refused,
+  describedBy,
   onClick,
   children,
 }: {
   /** Why the template takes no unit here, if it takes none. */
   refused: string | undefined;
+  /** The id of words on the panel that say why, which a disabled button names as its description. */
+  describedBy?: string;
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -1018,6 +1139,9 @@ function AddButton({
       type="button"
       disabled={refused !== undefined}
       {...(refused === undefined ? {} : { title: refused })}
+      {...(refused === undefined || describedBy === undefined
+        ? {}
+        : { "aria-describedby": describedBy })}
       onClick={onClick}
     >
       {children}
@@ -1329,6 +1453,7 @@ function Reorder({
   refused,
   up,
   down,
+  describedBy,
 }: {
   index: number;
   count: number;
@@ -1339,13 +1464,18 @@ function Reorder({
   /** Why the template cannot take the node one place up, or down, if it cannot (decision 0041). */
   up?: string | undefined;
   down?: string | undefined;
+  /** The id of words on the panel that say why, which a disabled button names as its description. */
+  describedBy?: string | undefined;
 }) {
+  const described = (why: string | undefined) =>
+    why === undefined || describedBy === undefined ? {} : { "aria-describedby": describedBy };
   return (
     <span style={STYLE.row}>
       <button
         type="button"
         title={up ?? "Move up"}
         aria-label="Move up"
+        {...described(up)}
         disabled={index === 0 || up !== undefined}
         onClick={() => onMove(index - 1)}
       >
@@ -1355,6 +1485,7 @@ function Reorder({
         type="button"
         title={down ?? "Move down"}
         aria-label="Move down"
+        {...described(down)}
         disabled={index === count - 1 || down !== undefined}
         onClick={() => onMove(index + 1)}
       >
@@ -1364,6 +1495,7 @@ function Reorder({
         type="button"
         disabled={refused !== undefined}
         {...(refused === undefined ? {} : { title: refused })}
+        {...described(refused)}
         onClick={onRemove}
       >
         Remove
@@ -1437,6 +1569,12 @@ function FieldInput({
   const shownFields = useContext(ShownFields);
   const rules = useContext(RulesOf);
   const [used, setUsed] = useState(false);
+  // The field asked for takes the focus as its input appears (`PanelProps.focus`).
+  const wanted = useContext(Focus) === field;
+  const box = useRef<HTMLLabelElement>(null);
+  useEffect(() => {
+    if (wanted) box.current?.querySelector("input")?.focus();
+  }, [wanted]);
   if (rules.fields !== undefined && !rules.fields.has(field)) return <>{children}</>;
   const required = rules.required.has(field);
   if (locked || (!used && !needsInput(field, text, placeholder, shownFields)))
@@ -1447,7 +1585,7 @@ function FieldInput({
       </>
     );
   return (
-    <label style={STYLE.row} onFocus={() => setUsed(true)}>
+    <label ref={box} style={STYLE.row} onFocus={() => setUsed(true)}>
       {label}
       <TypedInput value={text ?? ""} {...requiredInput(required)} onChange={onChange} />
       {fieldStatus(text, placeholder) === "placeholder" && <Mark />}
