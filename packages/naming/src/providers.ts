@@ -6,7 +6,7 @@
  * Each takes the key its caller gives, never one read from the environment, so that its caller, the
  * service that labels a PDF's lines or `pdf-model`, decides where the key comes from. The default,
  * `qwen3.8:27b`, is asked with its thinking off (decision 0044). It was written for the first
- * pass's naming step, which the second pass's item 17 deleted (decision 00XX); the PDF reading
+ * pass's naming step, which the second pass's item 17 deleted (decision 0063); the PDF reading
  * reuses it (decision 0056), and the package keeps its name.
  */
 

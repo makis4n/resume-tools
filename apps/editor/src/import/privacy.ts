@@ -1,7 +1,7 @@
 /**
  * What the documents screen says of what leaves the browser (decision 0047). A `.tex` import sends
  * nothing (decision 0049, held by `no-network.test.ts`); the first pass's naming request, its
- * privacy gate and its leak check went with the naming step (decision 00XX). A PDF's text is sent
+ * privacy gate and its leak check went with the naming step (decision 0063). A PDF's text is sent
  * only once the person agrees (`src/pdf/consent.ts`), and a PDF goes to the checker only when the
  * person sends it there (the ATS feature, AGENTS.md).
  */

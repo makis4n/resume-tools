@@ -1,4 +1,4 @@
-# 00XX. Retire the naming step
+# 0063. Retire the naming step
 
 Date: 2026-10-05 · Status: accepted; carries out 0049's "the naming step is deleted, not kept
 unused"; supersedes what 0049 left of 0024, 0027, 0036, 0037, 0044's choice for naming, and

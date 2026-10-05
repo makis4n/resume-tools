@@ -2,7 +2,7 @@
  * What the engine would say of an invented template's commands and environments, for the outline's
  * tests, without an engine. Every command here is invented; nothing is taken from a real resume.
  * The first pass's invented imports, with their naming answers, went with the naming step (decision
- * 00XX).
+ * 0063).
  *
  * Only tests import this, and vitest collects only `*.test.ts` and `*.test.tsx` files, so it is
  * never run as one.

@@ -16,7 +16,7 @@ import { type ImportDeps, importResume } from "./run";
 // Decision 0049, and the privacy rule of decision 0047: a `.tex` import sends nothing, which this
 // test holds. Every way a page or a worker could send something is stubbed to fail and to say so,
 // and a whole import of invented resumes, one on each engine, must come through without one being
-// tried. The naming step is deleted (decision 00XX), and the model's provider code, which the PDF
+// tried. The naming step is deleted (decision 0063), and the model's provider code, which the PDF
 // reading's service uses, cannot even be loaded here: an import that reached it would fail. Every
 // resume here is invented.
 

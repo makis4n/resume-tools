@@ -20,7 +20,7 @@
  * for a body the probe could not read, since it does not set the reference's glyphs when compiled
  * again unmarked (`probe`); and for a failure of the editor's own while it read the resume
  * (`failed`). The first pass's naming request gave two more, `unreadable` and `request`, which
- * went with it (decision 00XX).
+ * went with it (decision 0063).
  */
 export const REFUSAL_REASONS = [
   "intake",

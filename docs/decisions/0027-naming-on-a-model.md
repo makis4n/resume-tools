@@ -1,6 +1,6 @@
 # 0027. The naming step on a model
 
-> Superseded by 00XX: the naming step on a model is deleted (the second pass's item 17), all but its
+> Superseded by 0063: the naming step on a model is deleted (the second pass's item 17), all but its
 > provider code, which the PDF reading keeps.
 
 Date: 2026-09-27 · Status: proposed; the provider is SoCLaaS, not Gemini (0036); superseded by 0049: the naming step leaves the import, and only its provider code stays, for the PDF reading

@@ -10,7 +10,7 @@ calls its own origin. Deploying the function is milestone 5's; this says how it 
 bound.
 
 The first pass's naming route, `POST /v1/name`, and its caches in KV went with the naming step
-(decision 00XX). Its namespace was `NAMING_KV`; nothing was ever deployed under that name, so the
+(decision 0063). Its namespace was `NAMING_KV`; nothing was ever deployed under that name, so the
 label route's namespace is named for it alone.
 
 | Name | Kind | What it is |

@@ -3,7 +3,7 @@ name: corpus
 # The corpus of public resumes, fetched from the sources its manifest names, surveyed (decisions
 # 0017 and 0018), and every document put through the import a browser runs, which sends nothing,
 # held to the baseline (decisions 0043 and 0055). The naming request's leak check went with the
-# naming step (decision 00XX). It runs only when a person starts it, from the Actions tab or with
+# naming step (decision 0063). It runs only when a person starts it, from the Actions tab or with
 # `gh workflow run corpus.yml --ref <branch>`, never on a schedule, a push or a pull request
 # (decision 0035): every input is pinned, so a run finds something only after a change, and no pull
 # request downloads real resumes. It holds no model key, ever: the run asks no model.

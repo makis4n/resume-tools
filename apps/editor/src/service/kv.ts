@@ -3,7 +3,7 @@
  * buckets, in the namespace the label route's Pages Function is bound to, `LABEL_KV`, under its
  * prefix. It takes any store with KV's `get` and `put`, which Workers' `KVNamespace` is, so it is
  * written and tested without the Workers runtime. The first pass's answer and preamble caches in
- * KV went with the naming step (decision 00XX).
+ * KV went with the naming step (decision 0063).
  *
  * KV is eventually consistent, a write seen at once where it was made and within a minute
  * elsewhere, and a key takes one write a second, so the rate limit holds only roughly.

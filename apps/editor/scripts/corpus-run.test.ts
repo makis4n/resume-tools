@@ -364,7 +364,7 @@ describe("the run and compare commands", () => {
     );
     expect(run({}, "probe", "--ids", "x").stderr).toContain("--ids goes with run");
     expect(run({}, "probe", "--write-baseline").stderr).toContain("--write-baseline goes with run");
-    // The first pass's naming commands are gone (decision 00XX).
+    // The first pass's naming commands are gone (decision 0063).
     for (const gone of ["name", "seed", "assemble", "leak", "review", "bench"])
       expect(run({}, gone).stderr).toContain(`there is no command ${gone}`);
     expect(run({}, "--help").stdout).toContain(

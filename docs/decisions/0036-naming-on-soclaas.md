@@ -1,6 +1,6 @@
 # 0036. The naming step runs on SoCLaaS
 
-> Superseded by 00XX: the naming step is deleted (the second pass's item 17); the PDF reading keeps
+> Superseded by 0063: the naming step is deleted (the second pass's item 17); the PDF reading keeps
 > SoCLaaS and its key, `SOCLAAS_API_KEY`.
 
 Date: 2026-09-30 · Status: accepted; amends 0027 and 0028; its default model is item 18's

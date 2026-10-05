@@ -3,7 +3,7 @@
  * whole corpus is held to (`baselineVerdict`, decision 0043), `corpus compare`'s differences
  * (`runDifferences`), the run's commit, its pool's size and the ids a file names. The first pass's
  * whole import over the corpus, its rows and its table, went with the naming step in the second
- * pass's item 17 (decision 00XX).
+ * pass's item 17 (decision 0063).
  *
  * What is printed and written names documents by id, and counts, never a document's text.
  */
