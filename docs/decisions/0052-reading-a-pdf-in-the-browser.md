@@ -1,9 +1,9 @@
 # 0052. Reading a PDF in the browser
 
-> Accepted by 00YY: about 1.4 GB for a second before a near-limit PDF is refused is a known
+> Accepted by 0066: about 1.4 GB for a second before a near-limit PDF is refused is a known
 > limit, and the guard's budgets stay as they are.
 
-Date: 2026-10-04 · Status: accepted; its 1.4 GB peak before a near-limit PDF is refused is accepted by 00YY
+Date: 2026-10-04 · Status: accepted; its 1.4 GB peak before a near-limit PDF is refused is accepted by 0066
 
 ## Context
 

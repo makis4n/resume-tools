@@ -387,7 +387,7 @@ of each launch template must find editable what the hand-written port marks.
     a Jake's Resume fork, from the file to the page, in Node and at `?measure=import` in the
     browser, with a warm HTTP cache; under 8 s on this machine is the bar, 5 s until decision
     0045 raised it, and the XeTeX number is reported beside it. The numbers go next to decision
-    0016's, the slow laptop's column was left the owner's (dropped since by decision 00YY), and
+    0016's, the slow laptop's column was left the owner's (dropped since by decision 0066), and
     milestone 2's owed table is closed out.
 
 ## Decisions this milestone makes
@@ -470,7 +470,7 @@ pull request that acts on it. The first two the owner settled on 26 September.
   compile read, before the dump, is the mitigation.
 - **Compiles add up.** Probes, four checks and their bisections are a few dozen compiles, near
   the logarithm of the field count when few fail and linear when many do; on the M4 Pro that is
-  two to three seconds for a Jake fork, and on the slow laptop, whose run decision 00YY dropped,
+  two to three seconds for a Jake fork, and on the slow laptop, whose run decision 0066 dropped,
   perhaps ten. Plan section 6.4's 60 s for a cache miss is generous; the 5 s for a hit was tight,
   and item 19 found by how much, after which decision 0045 raised it to 8 s.
 - **XeTeX imports start slow.** fontspec's probing costs 200 to 350 ms a face (decision 0003),
@@ -508,7 +508,7 @@ pull request that acts on it. The first two the owner settled on 26 September.
 | The harness in a worker the browser can terminate (decision 0008) | Item 12 |
 | The `controls` check draws each font an import proves (decision 0012) | Item 14 |
 | A template chooser for a new document | Item 12 |
-| The slow laptop's column in decision 0016 | The owner's, with the same command; item 19 adds the import to it; dropped by decision 00YY |
+| The slow laptop's column in decision 0016 | The owner's, with the same command; item 19 adds the import to it; dropped by decision 0066 |
 | Small capitals and per-shape features for Awesome-CV (decision 0014's additions) | Item 8: an import's reference compile sets them, so the loop must too |
 | Case folding in the aligner, for a field set through `\MakeUppercase` (decisions 0007 and 0013) | Item 5 |
 | The first load at 42 to 44 MB uncompressed | Milestone 5 |

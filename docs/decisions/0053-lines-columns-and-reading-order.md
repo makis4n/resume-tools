@@ -1,9 +1,9 @@
 # 0053. Lines, columns and reading order
 
-> Accepted by 00YY: two columns on one grid of baselines read as a table is a known limit,
+> Accepted by 0066: two columns on one grid of baselines read as a table is a known limit,
 > not chased in milestone 3.
 
-Date: 2026-10-04 · Status: accepted; two columns on one grid of baselines read as a table is accepted by 00YY
+Date: 2026-10-04 · Status: accepted; two columns on one grid of baselines read as a table is accepted by 0066
 
 ## Context
 

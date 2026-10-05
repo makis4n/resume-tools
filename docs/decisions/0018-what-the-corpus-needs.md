@@ -1,9 +1,9 @@
 # 0018. What the corpus needs
 
-> Superseded by 00YY in the slow laptop's start it leaves IBM Plex to, which is dropped with
+> Superseded by 0066 in the slow laptop's start it leaves IBM Plex to, which is dropped with
 > the slow laptop's run.
 
-Date: 2026-09-26 · Status: accepted; the corpus workflow runs by hand, not nightly (0035); the slow laptop's start it leaves IBM Plex to is dropped by 00YY
+Date: 2026-09-26 · Status: accepted; the corpus workflow runs by hand, not nightly (0035); the slow laptop's start it leaves IBM Plex to is dropped by 0066
 
 ## Context
 

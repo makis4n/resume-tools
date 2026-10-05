@@ -134,7 +134,7 @@ The class patches from `acv.cjs` (tcolorbox dropped, unicode-math dropped, `\bul
   path cares about PDF version specials.
 - **Machine load matters:** the same script gave 847 ms under a load average of 10, so a
   slower machine's numbers would be worse (the plan's run on a 2019 laptop was dropped by
-  decision 00YY), and the XeTeX debounce should assume the worse figure.
+  decision 0066), and the XeTeX debounce should assume the worse figure.
 
 ## Files
 

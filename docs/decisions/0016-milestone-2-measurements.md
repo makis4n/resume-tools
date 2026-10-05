@@ -1,9 +1,9 @@
 # 0016. The editor measured against its targets
 
-> Superseded by 00YY in its slow laptop's column and target, which are dropped: the targets
+> Superseded by 0066 in its slow laptop's column and target, which are dropped: the targets
 > are judged on this record's M4 Pro, in Node and in the browser.
 
-Date: 2026-09-25 · Status: accepted; its slow laptop's column and target are dropped by 00YY
+Date: 2026-09-25 · Status: accepted; its slow laptop's column and target are dropped by 0066
 
 ## Context
 

@@ -1,4 +1,4 @@
-# 00YY. Milestone 3's known limits accepted, and the slow laptop's run dropped
+# 0066. Milestone 3's known limits accepted, and the slow laptop's run dropped
 
 Date: 2026-10-05 · Status: accepted, the owner's decisions of 5 October 2026; amends 0003, 0011,
 0016, 0018, 0045, 0051, 0052, 0053, 0054, 0060, 0062 and 0064
@@ -96,7 +96,7 @@ chasing one is out of the milestone, and a later one that takes it up writes a r
 ### The two resumes the checks refuse
 
 Decision 0060's gap of 2, `other-0006` (`stopped`) and `other-0052` (`keep`), is not among the
-limits above: decision 00XX settles it.
+limits above: decision 0065 settles it.
 
 ### The browser's numbers
 

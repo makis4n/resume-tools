@@ -1,9 +1,9 @@
 # 0003. Engine spike findings
 
-> Superseded by 00YY in its slow-laptop measurements: the slow laptop's run is dropped, and
+> Superseded by 0066 in its slow-laptop measurements: the slow laptop's run is dropped, and
 > the targets are judged on an M4 Pro, in Node and in the browser.
 
-Date: 2026-09-16 · Status: proposed; its slow-laptop measurements are dropped by 00YY
+Date: 2026-09-16 · Status: proposed; its slow-laptop measurements are dropped by 0066
 
 ## Context
 

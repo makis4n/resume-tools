@@ -1,9 +1,9 @@
 # 0062. The bridge between the two ways in
 
-> Accepted by 00YY: the 42 compiling resumes xdvipdfmx makes no PDF of, which the move cannot
+> Accepted by 0066: the 42 compiling resumes xdvipdfmx makes no PDF of, which the move cannot
 > take, are a known limit; their way across is the person's own PDF.
 
-Date: 2026-10-05 · Status: accepted; the second pass's item 16, under decisions 0047, 0049 and 0051; the 42 pages it cannot move are accepted by 00YY
+Date: 2026-10-05 · Status: accepted; the second pass's item 16, under decisions 0047, 0049 and 0051; the 42 pages it cannot move are accepted by 0066
 
 ## Context
 
