@@ -1,9 +1,8 @@
 /**
  * An invented fork of Jake's Resume, for the import's tests (milestone 3 item 12, decision 0038): the
- * template's preamble and commands as upstream writes them, so that the naming step finds its
- * macros' keys among the committed answers (`corpus/answers/`, the seed), and a body of invented
- * words in its shape: a centred heading of text and links, entries between the list commands with
- * their bullets, a project heading, and a skills list the list commands frame. Nothing here is a
+ * template's preamble and commands as upstream writes them, and a body of invented words in its
+ * shape: a centred heading of text and links, entries between the list commands with their
+ * bullets, a project heading, and a skills list the list commands frame. Nothing here is a
  * real person's resume; the template is Jake Gutierrez's, after Sourabh Bajaj's, under the MIT
  * licence its notice below keeps, as the curated port does (decision 0008).
  *

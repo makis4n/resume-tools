@@ -4,12 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
-import type { AssemblyChecks } from "../src/import/assemble";
-import { DROPPED } from "../src/import/validate";
-import { assembleRow, barFailures } from "./corpus-assemble";
 import {
   BASELINE_SLACK,
   Baseline,
+  type BaselineSummary,
   baselineFromFile,
   baselineOf,
   baselineVerdict,
@@ -17,19 +15,8 @@ import {
   commitOf,
   idsOf,
   nextBaseline,
-  OUTCOME_RULE,
-  outcomeOf,
   poolSize,
-  type RunRow,
-  runBar,
   runDifferences,
-  runHeadline,
-  runLine,
-  runRowOf,
-  runTable,
-  SUCCESS_RATE,
-  succeeded,
-  summaryOf,
 } from "./corpus-run";
 
 // Every row, count and id here is invented for these tests; SECRET stands for a document's text,
@@ -37,319 +24,57 @@ import {
 
 const SECRET = "Quillwort Larkfield";
 
-/** An assembly's checks, as validation gives them: nine words in ten editable, unless changed. */
-const checks = (changes: Partial<AssemblyChecks> = {}): AssemblyChecks => ({
-  outcome: "assembled",
-  fields: { editable: 9, raw: 1, required: 1, locked: { date: 1 } },
-  words: { editable: 90, locked: { date: 10 } },
-  sections: { mapped: 3, locked: 1 },
-  required: ["command|cventry|1"],
-  controls: { offered: ["pageSize", "fontSize"], proven: ["pageSize"], dropped: [] },
-  redefinitions: { applied: ["cvtag"], dropped: ["cvevent"], placement: "class" },
-  repeatable: [{ kind: "entry", added: true, removed: true }],
-  findings: [{ check: "pdf", message: `the title ${SECRET} is in capitals`, field: "ent-1.title" }],
-  compiles: 20,
-  ms: 1000,
-  decisions: {},
-  all: [],
-  ...changes,
-});
-
-/** A reference with no page, as an assembly whose words its source counts reads against. */
-const NO_PAGE = { pages: [], bibliographyLeftOut: false, images: [] };
-
-/** The outcome of an assembly whose checks are given and that keeps no part, against no page. */
-const outcomeOfChecks = (given: AssemblyChecks) =>
-  outcomeOf({ checks: given, extras: [] }, NO_PAGE);
-
-describe("the outcome and the editable rate", () => {
-  test("is a success where the first check holds and nine words in ten or more are editable", () => {
-    expect(outcomeOfChecks(checks())).toEqual({
-      outcome: "success",
-      rate: 0.9,
-      counted: { editable: 90, all: 100, locked: { date: 10 } },
-    });
-    expect(SUCCESS_RATE).toBe(0.9);
-    expect(OUTCOME_RULE).toBe(
-      "the first check holds, and 90% of the words or more are editable on the page",
-    );
-    const short = outcomeOfChecks(checks({ words: { editable: 89, locked: { date: 11 } } }));
-    expect(short).toEqual({
-      outcome: "partial",
-      rate: 0.89,
-      counted: { editable: 89, all: 100, locked: { date: 11 } },
-    });
-  });
-
-  test("is partial where the first check differs, however many words are editable", () => {
-    const all = { editable: 100, locked: {} };
-    expect(outcomeOfChecks(checks({ outcome: "partial", words: all }))).toEqual({
-      outcome: "partial",
-      rate: 1,
-      counted: { editable: 100, all: 100, locked: {} },
-    });
-  });
-
-  test("counts every locked word, of every reason, and takes a document of no words as none", () => {
-    const words = { editable: 60, locked: { unmapped: 30, shape: 5, date: 5 } };
-    expect(outcomeOfChecks(checks({ words })).rate).toBe(0.6);
-    expect(outcomeOfChecks(checks({ words: { editable: 0, locked: {} } }))).toEqual({
-      outcome: "partial",
-      rate: 0,
-      counted: { editable: 0, all: 0, locked: {} },
-    });
-  });
-
-  test("reads the words of the reference's page, as item 13's report does, where the assembly says what sets them", () => {
-    // Ten one-letter words on an invented page: six an entry's title's, three a locked part's, and
-    // one the template's own, which is no word of the resume's.
-    const size = 655_360;
-    const items = Array.from({ length: 10 }, (_, i) => ({
-      kind: "glyph" as const,
-      font: "invented10",
-      size,
-      code: 97 + i,
-      text: String.fromCharCode(97 + i),
-      h: i * size,
-      v: 0,
-      width: size / 2,
-    }));
-    const outcome = outcomeOf(
-      {
-        checks: checks({
-          owners: [
-            { page: 0, from: 0, to: 6, field: "ent-1.title" },
-            { page: 0, from: 6, to: 9, part: 0 },
-            { page: 0, from: 9, to: 10 },
-          ],
-        }),
-        extras: [{ at: "b0", kind: "section", reason: "unmapped", words: 3 }],
-      },
-      { pages: [{ items }], bibliographyLeftOut: false, images: [] },
-    );
-    // The page's count, never the source's ninety words of a hundred.
-    expect(outcome).toEqual({
-      outcome: "partial",
-      rate: 6 / 9,
-      counted: { editable: 6, all: 9, locked: { unmapped: 3 } },
-    });
-  });
-
-  test("goes into a row with the assembly's counts, names of closed lists and numbers only", () => {
-    const row = runRowOf({ checks: checks(), extras: [] }, "pdftex", {
-      probeCompiles: 7,
-      times: { probe: 1200, checks: 3400 },
-      reference: NO_PAGE,
-    });
-    expect(row).toMatchObject({
-      outcome: "success",
-      engine: "pdftex",
-      rate: 0.9,
-      counted: { editable: 90, all: 100, locked: { date: 10 } },
-      fields: { editable: 9, raw: 1, required: 1, locked: { date: 1 } },
-      words: { editable: 90, locked: { date: 10 } },
-      controls: { proven: ["pageSize"], dropped: [] },
-      redefinitions: { applied: 1, dropped: 1 },
-      findings: { pdf: 1 },
-      compiles: { probe: 7, checks: 20 },
-      times: { probe: 1200, checks: 3400 },
-    });
-    expect(JSON.stringify(row)).not.toContain("Quillwort");
-  });
-
-  test("keeps the controls as item 14's row has them, each dropped one's kind of why and no words", () => {
-    const margins = checks({
-      controls: {
-        offered: ["pageSize", "margins", "fontSize"],
-        proven: ["pageSize", "fontSize"],
-        dropped: [{ control: "margins", why: DROPPED.same }],
-      },
-    });
-    const row = runRowOf({ checks: margins, extras: [] }, "pdftex", {
-      probeCompiles: 1,
-      times: {},
-      reference: NO_PAGE,
-    });
-    expect(row.controls).toEqual(
-      assembleRow(margins, "pdftex", { answered: 0, unanswered: 0 }).controls,
-    );
-    expect(row.controls).toEqual({
-      proven: ["pageSize", "fontSize"],
-      dropped: ["margins"],
-      unchecked: [],
-      why: { margins: "same" },
-    });
-  });
-});
-
-const row = (id: string, family: RunRow["family"], changes: Partial<RunRow>): RunRow => ({
-  id,
-  family,
-  outcome: "partial",
-  times: { wall: 1000 },
-  ...changes,
-});
-
-const ROWS: RunRow[] = [
-  row("jake-0001", "jake", {
+/** Invented rows of a run, ids, outcomes and counts, as a run's JSON holds them. */
+const ROWS = [
+  {
+    id: "jake-0001",
+    family: "jake",
     outcome: "success",
-    engine: "pdftex",
     rate: 0.95,
-    counted: { editable: 95, all: 100 },
-    words: { editable: 95, locked: { date: 5 } },
-    fields: { editable: 10, raw: 0, required: 0, locked: { date: 1 } },
-    controls: { proven: ["pageSize"], dropped: ["margins"], why: { margins: "same" } },
-    findings: {},
-    naming: {
-      macros: 8,
-      reviewed: 8,
-      model: 0,
-      refused: 0,
-      missing: 0,
-      asked: 0,
-      stored: 0,
-      invalid: 0,
-      conflicts: 0,
-      calls: 0,
-      tokens: { input: 0, cached: 0, output: 0 },
-      gate: "passes",
-    },
-    compiles: { probe: 5, checks: 20 },
-    times: { probe: 1000, checks: 4000, wall: 6000 },
-  }),
-  row("jake-0002", "jake", {
-    engine: "pdftex",
-    rate: 0.2,
-    counted: { editable: 20, all: 100 },
-    difference: "position",
-    words: { editable: 20, locked: { unmapped: 70, shape: 10 } },
-    controls: { proven: ["pageSize", "margins", "fontSize"], dropped: [] },
-    findings: { pdf: 2 },
+    compiles: { probe: 9, checks: 30 },
+    times: { wall: 10 },
+  },
+  {
+    id: "jake-0002",
+    family: "jake",
+    outcome: "partial",
+    rate: 0.4,
     compiles: { probe: 9, checks: 40 },
-    times: { wall: 9000 },
-  }),
-  row("awesome-cv-0001", "awesome-cv", {
-    outcome: "refused",
-    engine: "xetex",
-    refused: "difference",
-  }),
-  row("other-0001", "other", { outcome: "no reference", refused: "package" }),
-  row("other-0002", "other", { outcome: "refused", refused: `evil\n${SECRET}` }),
-  row("altacv-0001", "altacv", { outcome: "timeout" }),
+    times: { wall: 10 },
+  },
+  { id: "jake-0003", family: "jake", outcome: "refused", times: { wall: 10 } },
+  {
+    id: "altacv-0001",
+    family: "altacv",
+    outcome: "partial",
+    rate: 0.5,
+    compiles: { probe: 3, checks: 20 },
+    times: { wall: 10 },
+  },
+  { id: "awesome-cv-0001", family: "awesome-cv", outcome: "not parsed", times: { wall: 10 } },
+  { id: "other-0001", family: "other", outcome: "timeout", times: { wall: 900 } },
 ];
 
-describe("the summary, the headline and the table", () => {
-  test("add up the outcomes, and what outcomeOf counted of the documents assembled alone", () => {
-    const summary = summaryOf(ROWS);
-    expect(summary.documents).toBe(6);
-    expect(summary.outcomes).toMatchObject({
-      success: 1,
-      partial: 1,
-      refused: 2,
-      "no reference": 1,
-      timeout: 1,
-    });
-    expect(summary.counted).toEqual({ editable: 115, all: 200 });
-    expect(summary.locked).toEqual({ date: 5, shape: 10, unmapped: 70 });
-    // One success of the five that did not time out: a timeout counts in no rate.
-    expect(summary.rates).toEqual({ success: 20, editable: 57.5 });
-    // Item 14's bar over the one success, which lacks the margins and the font size; the partial
-    // one is no success, whatever it proves.
-    expect(summary.bar).toEqual({
-      lacking: 1,
-      controls: { pageSize: 0, margins: 1, fontSize: 1 },
-    });
-  });
-
-  test("judge item 14's bar with its own function, over the run's successes alone", () => {
-    expect(runBar(ROWS)).toEqual([
-      { id: "jake-0001", control: "margins" },
-      { id: "jake-0001", control: "fontSize" },
-    ]);
-    expect(runBar(ROWS)).toEqual(barFailures(ROWS, succeeded));
-    // A partial import that proves none of the three, or a document never assembled, misses no bar.
-    const none = { proven: [], dropped: [] };
-    expect(runBar([row("jake-0009", "jake", { controls: none }), ROWS[5] as RunRow])).toEqual([]);
-    expect(runBar([row("jake-0009", "jake", { outcome: "success", controls: none })])).toHaveLength(
-      3,
-    );
-  });
-
-  test("give the shares, where the others stopped, the locked words by reason and the bar", () => {
-    const [shares, words, bar] = runHeadline(ROWS);
-    expect(shares).toBe(
-      "6 documents, 1 of which timed out and counts in no share; of the 5 others, 1 success (20.0%), 1 partial (20.0%), 3 refused or stopped (60.0%): 2 refused, 1 with no reference, 0 not parsed, 0 not probed, 0 with no answer, 0 died.",
-    );
-    expect(words).toBe(
-      "Words in editable fields: 57.5% of 200 words in the 2 documents assembled; locked, by reason: unmapped 70, shape 10, date 5.",
-    );
-    expect(bar).toBe(
-      "The bar: 1 of the 1 success lacks the page size, the margins or the font size: margins 1, fontSize 1.",
-    );
-    expect(runHeadline(ROWS.slice(1))[2]).toBe(
-      "The bar: 0 of the 0 successes lack the page size, the margins or the font size.",
-    );
-  });
-
-  test("count per family and in all, and show no text of a document", () => {
-    const table = runTable(ROWS);
-    const cells = (label: string) =>
-      table
-        .split("\n")
-        .find((line) => line.startsWith(`| ${label} |`))
-        ?.split("|")
-        .slice(2, -1)
-        .map((cell) => cell.trim());
-    // Columns: jake, awesome-cv, altacv, moderncv, europecv, other, all.
-    expect(cells("Documents")).toEqual(["2", "1", "1", "0", "0", "2", "6"]);
-    expect(cells("Partial: the first check differs")?.at(-1)).toBe("1");
-    expect(cells("Refused: `difference`")?.at(-1)).toBe("1");
-    expect(cells("No reference: `package`")?.at(-1)).toBe("1");
-    expect(cells("In editable fields, as `outcomeOf` counts them")).toEqual([
-      "58%",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "58%",
-    ]);
-    // The rule is `outcomeOf`'s alone: the table applies no rate of its own.
-    expect(table).not.toContain("under 90%");
-    expect(cells("Locked: `unmapped`")?.at(-1)).toBe("70");
-    expect(cells("`margins` proven")?.at(-1)).toBe("1");
-    expect(cells("`margins` dropped")?.at(-1)).toBe("1");
-    expect(cells("The bar: page size, margins and font size all proven")).toEqual([
-      "1",
-      "0",
-      "0",
-      "0",
-      "0",
-      "0",
-      "1",
-    ]);
-    expect(cells("The bar: a success lacking one")?.at(-1)).toBe("1");
-    expect(cells("The bar: a success lacking `pageSize`")?.at(-1)).toBe("0");
-    expect(cells("The bar: a success lacking `margins`")?.at(-1)).toBe("1");
-    expect(cells("The bar: a success lacking `fontSize`")?.at(-1)).toBe("1");
-    expect(cells("`pdf`")?.at(-1)).toBe("1");
-    expect(cells("Answered from the committed answers")?.at(-1)).toBe("8");
-    expect(cells("A document, slowest")?.at(-1)).toBe("9000 ms");
-    expect(table).not.toContain("Quillwort");
-    expect(table.split("\n").every((line) => !/\p{Cc}/u.test(line))).toBe(true);
-    expect(runLine(ROWS[4] as RunRow)).toBe("refused");
-    expect(runLine(ROWS[0] as RunRow)).toBe(
-      "pdftex, success, 95% of 100 words editable, 10 fields editable, 20 compiles, 6 s; the bar: pageSize proven, lacking margins (every value sets the same page), fontSize (not offered)",
-    );
-    expect(runLine(ROWS[1] as RunRow)).toBe(
-      "pdftex, partial, the first check differs (position), 20% of 100 words editable, 0 fields editable, 40 compiles, 9 s; the bar: pageSize margins fontSize proven",
-    );
-  });
+/** A run's JSON, its rows and a count of them. */
+const file = (rows: readonly object[]) => ({
+  version: 2,
+  summary: { documents: rows.length },
+  documents: rows,
 });
 
-describe("two runs compared", () => {
-  const file = (rows: RunRow[]) => ({ version: 1, summary: summaryOf(rows), documents: rows });
+/** A summary of rows as a run's own sums them: its documents, successes and timeouts. */
+const summed = (rows: { outcome: string }[]): BaselineSummary => {
+  const success = rows.filter((each) => each.outcome === "success").length;
+  const timeout = rows.filter((each) => each.outcome === "timeout").length;
+  const counted = rows.length - timeout;
+  return {
+    documents: rows.length,
+    outcomes: { success, timeout },
+    rates: { success: counted === 0 ? 0 : (100 * success) / counted, editable: 0 },
+  };
+};
 
+describe("two runs compared", () => {
   test("agree when only their times differ", () => {
     const later = ROWS.map((each) => ({ ...each, times: { ...each.times, wall: 1, probe: 2 } }));
     expect(runDifferences(file(ROWS), file(later))).toEqual([]);
@@ -374,9 +99,10 @@ describe("two runs compared", () => {
 });
 
 describe("the baseline", () => {
-  const summary = (success: number, documents = 200) => ({
+  const summary = (success: number, documents = 200, timeout = 0) => ({
     documents,
-    outcomes: { ...summaryOf([]).outcomes, success },
+    outcomes: { success, timeout },
+    rates: { success: (100 * success) / (documents - timeout), editable: 50 },
   });
   const baseline = Baseline.parse({
     version: 1,
@@ -436,10 +162,9 @@ describe("the baseline", () => {
   });
 
   test("is never written over by a run that falls more than a point under it", () => {
-    const run = (success: number) => ({ ...summaryOf([]), ...summary(success) });
     const next = (success: number, scope = { whole: true }) =>
       nextBaseline({
-        summary: run(success),
+        summary: summary(success),
         baseline,
         scope,
         date: "2026-10-02",
@@ -455,7 +180,7 @@ describe("the baseline", () => {
     expect(next(24, { whole: false }).baseline).toBeUndefined();
     // Over no baseline, any run over the whole corpus gives the first.
     const first = nextBaseline({
-      summary: run(0),
+      summary: summary(0),
       baseline: Baseline.parse({ version: 1, run: null }),
       scope: { whole: true },
       date: "2026-10-02",
@@ -464,17 +189,17 @@ describe("the baseline", () => {
     expect(first.baseline?.run?.success).toBe(0);
   });
 
-  test("counts a file git does not track as a change, an answer not yet committed among them", () => {
+  test("counts a file git does not track as a change", () => {
     expect(
       changedPaths(
         [
-          "?? apps/editor/corpus/answers/0123.json",
+          "?? apps/editor/corpus/invented.json",
           " M apps/editor/corpus/baseline.json",
           " M apps/editor/scripts/corpus.ts",
           "",
         ].join("\n"),
       ),
-    ).toEqual(["apps/editor/corpus/answers/0123.json", "apps/editor/scripts/corpus.ts"]);
+    ).toEqual(["apps/editor/corpus/invented.json", "apps/editor/scripts/corpus.ts"]);
     expect(changedPaths(" M apps/editor/corpus/baseline.json\n")).toEqual([]);
   });
 
@@ -483,22 +208,30 @@ describe("the baseline", () => {
     expect(commitOf(commit, "")).toBe(commit);
     expect(commitOf(commit, " M apps/editor/corpus/baseline.json\n")).toBe(commit);
     expect(commitOf(commit, " M packages/naming/src/providers.ts\n")).toBe(`${commit}+dirty`);
-    expect(commitOf(commit, "?? apps/editor/scripts/corpus-bench.ts\n")).toBe(`${commit}+dirty`);
+    expect(commitOf(commit, "?? apps/editor/scripts/corpus-invented.ts\n")).toBe(`${commit}+dirty`);
     // A run whose file names a dirty commit gives no baseline.
     const run = {
-      version: 1,
+      version: 2,
       at: { date: "2026-10-03", commit: `${commit}+dirty` },
       mode: { documents: "all" },
       complete: true,
       documents: [],
     };
     expect(
-      baselineFromFile(run, Baseline.parse({ version: 1, run: null }), summaryOf, 1).baseline,
+      baselineFromFile(run, Baseline.parse({ version: 1, run: null }), summed, 2).baseline,
     ).toBeUndefined();
   });
 
   test("is written from a run's summary, with the day and the commit", () => {
-    const written = baselineOf(summaryOf(ROWS), "2026-10-02", "f".repeat(40));
+    const written = baselineOf(
+      {
+        documents: 6,
+        outcomes: { success: 1, timeout: 1 },
+        rates: { success: 20, editable: 57.5 },
+      },
+      "2026-10-02",
+      "f".repeat(40),
+    );
     expect(written.run).toEqual({
       date: "2026-10-02",
       commit: "f".repeat(40),
@@ -512,33 +245,27 @@ describe("the baseline", () => {
   test("leaves a document that timed out out of the success rate it compares", () => {
     // 18 of the 180 that did not time out is 10%, the baseline's own rate: that holds, where
     // counting the 20 timeouts as failures would have made it 9%.
-    const timedOut = {
-      documents: 200,
-      outcomes: { ...summaryOf([]).outcomes, success: 18, timeout: 20 },
-    };
+    const timedOut = summary(18, 200, 20);
     expect(baselineVerdict(timedOut, baseline, scope).line).toBe(
       "The success rate, 10.0%, holds against the baseline's 10.0% (2026-10-01, 0123456).",
     );
   });
 
   test("is adopted from a finished run's file over the whole corpus, summed by its own run", () => {
-    const rows: RunRow[] = Array.from({ length: 10 }, (_, i) =>
-      row(`jake-${String(i + 1).padStart(4, "0")}`, "jake", {
-        outcome: i < 2 ? "success" : "partial",
-        controls: { proven: ["pageSize", "margins", "fontSize"], dropped: [] },
-      }),
-    );
+    const rows = Array.from({ length: 10 }, (_, i) => ({
+      id: `jake-${String(i + 1).padStart(4, "0")}`,
+      outcome: i < 2 ? "success" : "partial",
+    }));
     const file = (changes: Record<string, unknown> = {}) => ({
-      version: 1,
+      version: 2,
       at: { date: "2026-10-03", commit: "c".repeat(40) },
       mode: { documents: "all" },
       complete: true,
-      summary: summaryOf(rows),
       documents: rows,
       ...changes,
     });
     // Two in ten is 20%, over the baseline's 10%.
-    expect(baselineFromFile(file(), baseline, summaryOf, 1).baseline?.run).toMatchObject({
+    expect(baselineFromFile(file(), baseline, summed, 2).baseline?.run).toMatchObject({
       date: "2026-10-03",
       commit: "c".repeat(40),
       documents: 10,
@@ -547,31 +274,26 @@ describe("the baseline", () => {
     });
     const refused =
       "corpus/baseline.json is not written: the file is no finished run's, naming its commit.";
-    expect(baselineFromFile(file({ complete: false }), baseline, summaryOf, 1).line).toBe(refused);
+    expect(baselineFromFile(file({ complete: false }), baseline, summed, 2).line).toBe(refused);
     expect(
-      baselineFromFile(file({ at: { date: "2026-10-03", commit: null } }), baseline, summaryOf, 1)
+      baselineFromFile(file({ at: { date: "2026-10-03", commit: null } }), baseline, summed, 2)
         .line,
     ).toBe(refused);
     const some = { documents: "some" };
-    expect(baselineFromFile(file({ mode: some }), baseline, summaryOf, 1).baseline).toBeUndefined();
+    expect(baselineFromFile(file({ mode: some }), baseline, summed, 2).baseline).toBeUndefined();
     // A run under the baseline is never adopted over it.
-    const lower = rows.map((each) => ({ ...each, outcome: "partial" as const }));
-    expect(baselineFromFile(file({ documents: lower }), baseline, summaryOf, 1).line).toBe(
+    const lower = rows.map((each) => ({ ...each, outcome: "partial" }));
+    expect(baselineFromFile(file({ documents: lower }), baseline, summed, 2).line).toBe(
       "corpus/baseline.json is not written: the run falls more than a point under it, and a baseline is lowered only by a pull request that edits it.",
     );
-    // Nor one whose successes miss item 14's bar, counted again from the rows.
-    const bare = rows.map(({ controls: _controls, ...each }) => each);
-    expect(baselineFromFile(file({ documents: bare }), baseline, summaryOf, 1).line).toBe(
-      "corpus/baseline.json is not written: 2 successes lack the page size, the margins or the font size, item 14's bar.",
+    // A first pass's file, of version 1, is refused in plain words.
+    expect(baselineFromFile(file({ version: 1 }), baseline, summed, 2).line).toBe(
+      "corpus/baseline.json is not written: the file is a first pass's run, and `corpus run` takes the outline's import now, whose runs are version 2.",
     );
   });
 
   test("is never written from a run that fails item 14's bar, however high its rate", () => {
-    const failing = {
-      ...summaryOf([]),
-      ...summary(24),
-      bar: { lacking: 1, controls: { pageSize: 0, margins: 1, fontSize: 0 } },
-    };
+    const failing = { ...summary(24), bar: { lacking: 1 } };
     expect(
       nextBaseline({
         summary: failing,
@@ -616,7 +338,7 @@ describe("the ids a file names", () => {
 
 describe("the run and compare commands", () => {
   const SCRIPT = fileURLToPath(new URL("./corpus.ts", import.meta.url));
-  /** The command, run with no naming key in its environment, whatever this machine's has. */
+  /** The command, run with no model key in its environment, whatever this machine's has. */
   const run = (env: Record<string, string>, ...args: string[]) =>
     spawnSync(process.execPath, [SCRIPT, ...args], {
       encoding: "utf8",
@@ -641,16 +363,12 @@ describe("the run and compare commands", () => {
       "--only and --ids each name the documents to run",
     );
     expect(run({}, "probe", "--ids", "x").stderr).toContain("--ids goes with run");
-    expect(run({}, "name", "--write-baseline").stderr).toContain("--write-baseline goes with run");
-    expect(run({}, "review").stderr).toContain("review is followed by export or check");
-    expect(run({}, "review", "export", "--dir", "x").stderr).toContain(
-      "--dir goes with review check",
-    );
-    expect(run({}, "review", "check", "--top", "3").stderr).toContain(
-      "--top and --out go with review export",
-    );
+    expect(run({}, "probe", "--write-baseline").stderr).toContain("--write-baseline goes with run");
+    // The first pass's naming commands are gone (decision 00XX).
+    for (const gone of ["name", "seed", "assemble", "leak", "review", "bench"])
+      expect(run({}, gone).stderr).toContain(`there is no command ${gone}`);
     expect(run({}, "--help").stdout).toContain(
-      "| run [--only <id>] [--ids <file>] [--json <file>] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...] | review export [--top <n>] [--out <dir>] | review check [--dir <dir>]",
+      "| run [--only <id>] [--ids <file>] [--json <file>] [--write-baseline] | run --write-baseline --from <run.json> | compare <run.json> <run.json> [<run.json>...]",
     );
     // A dozen spawns of the runner, each loading every command's modules: about a second each on
     // a CI runner, so the test takes the engine tests' timeout, as `corpus.test.ts`'s does.
@@ -686,28 +404,12 @@ describe("the run and compare commands", () => {
     expect(readFileSync(baselineFile, "utf8")).toBe(before);
   }, 60_000);
 
-  test("the review's export never writes over a folder that is not an export", () => {
-    const dir = mkdtempSync(join(tmpdir(), "resume-tools-run-"));
-    made.push(dir);
-    const kept = join(dir, "notes.txt");
-    writeFileSync(kept, "invented notes");
-    const refused = run({}, "review", "export", "--out", dir);
-    expect(refused.status).toBe(1);
-    expect(refused.stderr).toContain(
-      "--out names a folder that holds files and no review export: name an empty or new one",
-    );
-    expect(readFileSync(kept, "utf8")).toBe("invented notes");
-    expect(run({}, "review", "export", "--top", "0").stderr).toContain(
-      "--top takes a whole number of templates",
-    );
-  }, 60_000);
-
   test("compare says whether runs agree, times aside, and exits 1 when they do not", () => {
     const dir = mkdtempSync(join(tmpdir(), "resume-tools-run-"));
     made.push(dir);
-    const write = (name: string, rows: RunRow[]) => {
+    const write = (name: string, rows: readonly object[]) => {
       const path = join(dir, name);
-      writeFileSync(path, JSON.stringify({ version: 1, documents: rows }));
+      writeFileSync(path, JSON.stringify({ version: 2, documents: rows }));
       return path;
     };
     const first = write("first.json", ROWS);

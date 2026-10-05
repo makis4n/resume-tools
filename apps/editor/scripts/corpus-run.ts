@@ -1,658 +1,25 @@
 /**
- * The first pass's whole import over the corpus (milestone 3 item 17, decision 0043), whose rows,
- * summary and table `corpus bench` still reads, with `corpus-assemble-child.ts`, until the second
- * pass's item 17 retires the naming step; and what every run shares: the baseline a run over the
- * whole corpus is held to (`baselineVerdict`), `corpus compare`'s differences (`runDifferences`),
- * the run's commit, its pool's size and the ids a file names. `corpus run` itself takes each
- * document through the outline's import in one mode since the second pass's item 6
- * (`corpus-import.ts`, decision 0055): no answers, no model.
+ * What every corpus run shares (`corpus run`, `corpus-import.ts`): the baseline a run over the
+ * whole corpus is held to (`baselineVerdict`, decision 0043), `corpus compare`'s differences
+ * (`runDifferences`), the run's commit, its pool's size and the ids a file names. The first pass's
+ * whole import over the corpus, its rows and its table, went with the naming step in the second
+ * pass's item 17 (decision 00XX).
  *
- * The first pass's row of a document: its outcome, which `outcomeOf` gives (the one place item
- * 13's report takes over), its editable rate, its words and fields, editable and locked by reason,
- * its sections, its controls as `assembleRow` gives them, its redefinitions, the harness's and the
- * checks' findings, its naming step, its compiles and the time each step took. The table adds them
- * up per family and in all, and the headline gives the shares, the locked words by reason and item
- * 14's bar (`runBar`, decision 0040).
- *
- * What is printed and written names documents by id, reasons, checks and controls, and counts,
- * never a document's text.
+ * What is printed and written names documents by id, and counts, never a document's text.
  */
 
 // Node runs this file by stripping its types, so it imports values only from files that import
-// nothing Node lacks, and the editor's modules as types alone, with their real extensions.
+// nothing Node lacks.
 import { availableParallelism } from "node:os";
 import { z } from "zod";
-import type { AssemblyChecks, LockedPart, LockReason } from "../src/import/assemble.ts";
-import type { Reference } from "../src/import/reference.ts";
-// Item 13's report imports nothing but types, so Node runs it as it is: the one function the
-// browser's import, `corpus assemble` and this runner read an import's outcome with (decision 0039).
-import { type ReportInputs, reportOf, SUCCESS_RATE } from "../src/import/report.ts";
-import {
-  ASSEMBLE_LIMIT_MS,
-  type AssembleRow,
-  assembleRow,
-  BAR_CONTROLS,
-  type BarControl,
-  barControls,
-  barFailures,
-  barLine,
-  CONTROLS,
-  LOCK_REASONS,
-} from "./corpus-assemble.ts";
-import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
-import { type FailureKind, MODEL_LIMIT_MS } from "./corpus-name.ts";
+import { IMPORT_OUTCOMES } from "./corpus-import.ts";
+import { printable } from "./corpus-manifest.ts";
 import { POOL_SIZE } from "./corpus-reference.ts";
 
-/**
- * How long one document may take: its pipeline, its probe and its checks, as `corpus assemble`'s;
- * and with `--allow-model`, a model step's more, as `corpus name`'s.
- */
-export const runLimitMs = (asking: boolean) => ASSEMBLE_LIMIT_MS + (asking ? MODEL_LIMIT_MS : 0);
-
-/**
- * The share of a document's words that must be in editable fields for its import to be a success:
- * item 13's bar (plan section 6.2), the report's own (decision 0039).
- */
-export { SUCCESS_RATE };
-
-/**
- * What became of a document: a success or partial, as `outcomeOf` says; refused by a step, as the
- * Latin Modern swap, the naming request's builder, the XeTeX rewrite or the checks refuse one; or
- * where it stopped: the intake or the reference compile refused it (`no reference`), its body did
- * not parse, its body unmarked did not set its reference's glyphs (`baseline`), no macro it calls
- * has an answer, or its child timed out or died.
- */
-export const RUN_OUTCOMES = [
-  "success",
-  "partial",
-  "refused",
-  "no reference",
-  "not parsed",
-  "baseline",
-  "no answer",
-  "timeout",
-  "crashed",
-] as const;
-export type RunOutcome = (typeof RUN_OUTCOMES)[number];
-
-/**
- * What an outcome is counted by: the words in editable fields, all the words counted, and of them
- * those locked, by reason, as item 13's report reads them from the page (decision 0039). A row of a
- * run from before the report has no locked words here, and the summary then reads its assembly's.
- */
-export interface Counted {
-  editable: number;
-  all: number;
-  locked?: Partial<Record<LockReason, number>>;
-}
-
-/** The rule `outcomeOf` holds a success to, as the table says it. */
-export const OUTCOME_RULE = `the first check holds, and ${Math.round(SUCCESS_RATE * 100)}% of the words or more are editable on the page`;
-
-/**
- * What an import came to, its editable rate, and what the rate counts, as item 13's report says it
- * (`reportOf`, decision 0039), the one function the browser's import and `corpus assemble` read it
- * with too: the words of the reference's page, those in editable fields over the resume's, the
- * template's own aside, and of them those locked, by reason. A success is an import whose first
- * check holds and at least `SUCCESS_RATE` of whose words are editable (`OUTCOME_RULE`), and
- * anything else assembled is partial. The runner reads the outcome here alone, and adds up the
- * counts it gives for the corpus's rate, in the summary, the headline, the table and the baseline.
- */
-export function outcomeOf(
-  assembled: {
-    checks: AssemblyChecks;
-    extras: readonly LockedPart[];
-    document?: { resume: unknown };
-  },
-  reference: Pick<Reference, "pages" | "bibliographyLeftOut" | "images">,
-  inputs: ReportInputs = {},
-): {
-  outcome: "success" | "partial";
-  rate: number;
-  counted: Counted;
-} {
-  const report = reportOf(assembled, reference, inputs);
-  return {
-    outcome: report.outcome === "succeeded" ? "success" : "partial",
-    rate: report.rate,
-    counted: {
-      editable: report.words.editable,
-      all: report.words.body,
-      locked: { ...report.words.byReason },
-    },
-  };
-}
-
-/** A rate as a row keeps it: four decimals, so that the JSON reads, and two runs compare. */
-const kept = (rate: number) => Math.round(rate * 10_000) / 10_000;
-
-/**
- * The step that refused a document the pipeline took past its parse: the Latin Modern swap, the
- * naming request's builder, the XeTeX rewrite of its fonts or its check, or the validation, the
- * assembly and its checks. The child says it beside its rows, for `corpus review check`.
- */
-export type RefusalStep = "latinModern" | "request" | "fonts" | "checks";
-
-/** The naming step of a document, in counts: where its macros' answers came from, and the gate's word. */
-export interface RunNaming {
-  /** The request's macros and environments with a key: those the naming step answers. */
-  macros: number;
-  /** Answered from the committed answers, a person's or the review's, and from the model's cache. */
-  reviewed: number;
-  model: number;
-  /** Whose key the cache holds another macro's answer under: a miss (`answerFor`'s refusal). */
-  refused: number;
-  /** Left with no answer. */
-  missing: number;
-  /** Asked of the model now, stored, never valid, and keys in conflict (`corpus name`'s counts). */
-  asked: number;
-  stored: number;
-  invalid: number;
-  conflicts: number;
-  /** Why the model's answer was not taken, as the naming step's reason. */
-  failed?: string;
-  /**
-   * And the kind the benchmark counts it as (`failureKind`, decision 0044), with what the step
-   * says of it, which names a part, macros by plain names, and a provider's status and first line,
-   * never a request's text nor the model's words (decision 0027), and the part that failed, by its
-   * number from 1, where a part did, as `times.parts` numbers them.
-   */
-  failure?: { kind: FailureKind; message: string; part?: number };
-  calls: number;
-  /** The calls' tokens, and of those out, the reasoning, where the provider counts it apart. */
-  tokens: { input: number; cached: number; output: number; reasoning?: number };
-  /**
-   * Whether the request passes the stricter check the model is asked behind, the header's values
-   * given to it besides, or is withheld from the model (`assertNoText`): a request the import's own
-   * check refuses refuses the document (`request`), as the import does (decision 0038).
-   */
-  gate: "passes" | "withholds";
-}
-
-/** Milliseconds each step took, and the document's time in all; what `runDifferences` sets aside. */
-export interface RunTimes {
-  reference?: number;
-  latinModern?: number;
-  parse?: number;
-  probe?: number;
-  naming?: number;
-  fonts?: number;
-  checks?: number;
-  /**
-   * Each part the model was asked, its call and its retries, in the order asked, the last the part
-   * that failed where one did (decision 0044): within `naming`.
-   */
-  parts?: number[];
-  /** From the document's being sent to its child to its row coming back. */
-  wall: number;
-}
-
-/** One document's row: names of reasons, checks and controls, and numbers, never its text. */
-export interface RunRow {
-  id: string;
-  family: Family;
-  outcome: RunOutcome;
-  engine?: "pdftex" | "xetex";
-  /** Why a step refused it, the refusal's reason: a word of a closed list. */
-  refused?: string;
-  /** For one refused for a font the page cannot draw, the font: a name from the tree, no text. */
-  font?: string;
-  /** For one whose first check differs, the kind of its first difference. */
-  difference?: string;
-  /** Its editable rate, and what the rate counts, as `outcomeOf` gives them. */
-  rate?: number;
-  counted?: Counted;
-  naming?: RunNaming;
-  fields?: {
-    editable: number;
-    raw: number;
-    required: number;
-    locked: Partial<Record<LockReason, number>>;
-  };
-  words?: { editable: number; locked: Partial<Record<LockReason, number>> };
-  sections?: { mapped: number; locked: number };
-  /**
-   * The controls proven and dropped, as `assembleRow` gives them (decision 0040): of those dropped,
-   * those the checks never tried, and the kind of why each was dropped, never the checks' words.
-   */
-  controls?: AssembleRow["controls"];
-  redefinitions?: { applied: number; dropped: number };
-  /** The harness's findings and the checks' own, by check. */
-  findings?: Partial<Record<string, number>>;
-  /** The kinds of unit whose adding or removing stopped the compile, and those the editor cannot add. */
-  unrepeatable?: string[];
-  fixed?: string[];
-  /** Whether it is read in Latin Modern, its Computer Modern in T1 or TS1 being fonts the page cannot draw. */
-  latinModern?: boolean;
-  /** The probe's compiles, where it ran, and the checks', where they did. */
-  compiles?: { probe: number; checks?: number };
-  times: RunTimes;
-}
-
-/** A row as the child sends it, before the parent adds the document's id, family and time. */
-export type RunChildRow = Omit<RunRow, "id" | "family" | "times"> & {
-  times: Omit<RunTimes, "wall">;
-};
-
-/**
- * An assembled document's row, as the child sends it: `assembleRow`'s counts, and the outcome and
- * the rate `outcomeOf` gives, from the assembly, its reference and what the intake and the XeTeX
- * rewrite set aside (`inputs`), as item 13's report reads them.
- */
-export function runRowOf(
-  assembled: Parameters<typeof outcomeOf>[0],
-  engine: "pdftex" | "xetex",
-  more: {
-    naming?: RunNaming;
-    probeCompiles: number;
-    times: RunChildRow["times"];
-    reference: Parameters<typeof outcomeOf>[1];
-    inputs?: ReportInputs;
-  },
-): RunChildRow {
-  const { outcome, rate, counted } = outcomeOf(assembled, more.reference, more.inputs);
-  const row = assembleRow(assembled.checks, engine, { answered: 0, unanswered: 0 });
-  return {
-    outcome,
-    engine,
-    ...(row.difference === undefined ? {} : { difference: row.difference }),
-    rate: kept(rate),
-    counted,
-    ...(more.naming === undefined ? {} : { naming: more.naming }),
-    ...(row.fields === undefined ? {} : { fields: row.fields }),
-    ...(row.words === undefined ? {} : { words: row.words }),
-    ...(row.sections === undefined ? {} : { sections: row.sections }),
-    ...(row.controls === undefined ? {} : { controls: row.controls }),
-    redefinitions: {
-      applied: row.redefinitions?.applied.length ?? 0,
-      dropped: row.redefinitions?.dropped.length ?? 0,
-    },
-    findings: row.findings ?? {},
-    unrepeatable: row.unrepeatable ?? [],
-    fixed: row.fixed ?? [],
-    ...(row.latinModern === true ? { latinModern: true } : {}),
-    compiles: { probe: more.probeCompiles, checks: row.compiles ?? 0 },
-    times: more.times,
-  };
-}
-
-// The summary.
-
-/** Whether a document was assembled: a success or partial. */
-export const assembled = (row: Pick<RunRow, "outcome">) =>
-  row.outcome === "success" || row.outcome === "partial";
-
-/** Whether a document is a success, as `outcomeOf` says: the run's successes, item 14's bar's. */
-export const succeeded = (row: Pick<RunRow, "outcome">) => row.outcome === "success";
-
-/**
- * Where the run misses item 14's bar (decision 0040): each success, by its document's id, and each
- * of the page size, the margins and the font size it lacks, as item 14's `barFailures` finds them
- * with the run's successes in place of its first check's; none when every success has all three.
- */
-export const runBar = (rows: readonly RunRow[]) => barFailures(rows, succeeded);
-
-/**
- * What a run came to in all: the documents by outcome; what `outcomeOf` counted over the documents
- * assembled, added up, and the words the assembly locked in them, by reason; the two rates, in
- * percent; and item 14's bar.
- */
-export interface RunSummary {
-  documents: number;
-  outcomes: Record<RunOutcome, number>;
-  counted: Counted;
-  locked: Partial<Record<LockReason, number>>;
-  /**
-   * The share of the documents that are a success, of those that did not time out, which a machine's
-   * speed decides and count in no rate; and of what `outcomeOf` counted that is editable.
-   */
-  rates: { success: number; editable: number };
-  /**
-   * Item 14's bar (`runBar`): how many successes lack one or more of the page size, the margins
-   * and the font size, and how many lack each.
-   */
-  bar: { lacking: number; controls: Record<BarControl, number> };
-}
-
-/**
- * A row's locked words, by reason, as `outcomeOf` counted them (decision 0039); for a row of a run
- * from before item 13's report, which kept none, as its assembly counted them in the source.
- */
-const lockedOf = (row: Pick<RunRow, "counted" | "words">) =>
-  row.counted?.locked ?? row.words?.locked ?? {};
-
-/** A percentage as the summary keeps it: two decimals. */
-const percent = (part: number, whole: number) =>
-  whole === 0 ? 0 : Math.round((10_000 * part) / whole) / 100;
-
-export function summaryOf(rows: readonly RunRow[]): RunSummary {
-  const outcomes = Object.fromEntries(RUN_OUTCOMES.map((each) => [each, 0])) as Record<
-    RunOutcome,
-    number
-  >;
-  for (const row of rows) outcomes[row.outcome]++;
-  const counted: Counted = { editable: 0, all: 0 };
-  const locked: Partial<Record<LockReason, number>> = {};
-  for (const row of rows.filter(assembled)) {
-    counted.editable += row.counted?.editable ?? 0;
-    counted.all += row.counted?.all ?? 0;
-    for (const [reason, n] of Object.entries(lockedOf(row)) as [LockReason, number][])
-      locked[reason] = (locked[reason] ?? 0) + n;
-  }
-  const failures = runBar(rows);
-  return {
-    documents: rows.length,
-    outcomes,
-    counted,
-    locked: Object.fromEntries(
-      LOCK_REASONS.flatMap((each) => (locked[each] ? [[each, locked[each]]] : [])),
-    ),
-    rates: {
-      success: percent(outcomes.success, rows.length - outcomes.timeout),
-      editable: percent(counted.editable, counted.all),
-    },
-    bar: {
-      lacking: new Set(failures.map((failure) => failure.id)).size,
-      controls: Object.fromEntries(
-        BAR_CONTROLS.map((control) => [
-          control,
-          failures.filter((failure) => failure.control === control).length,
-        ]),
-      ) as Record<BarControl, number>,
-    },
-  };
-}
-
-/** A count and its noun, in the plural where it takes one. */
-const plural = (count: number, noun: string) =>
-  `${count.toLocaleString("en-GB")} ${count === 1 ? noun : `${noun}s`}`;
-
-/** A share as the headline shows it. */
+/** A share as a line shows it. */
 const shown = (value: number) => `${value.toFixed(1)}%`;
 
-/**
- * The headline under the table: the documents, the success, partial and other shares, where the
- * others stopped, the editable rate over the documents assembled, the locked words by reason, and
- * item 14's bar: how many successes lack the page size, the margins or the font size, and each.
- */
-export function runHeadline(rows: readonly RunRow[]): string[] {
-  const summary = summaryOf(rows);
-  const { outcomes, bar } = summary;
-  // A document that timed out counts in no share: a machine's speed decides it.
-  const n = summary.documents - outcomes.timeout;
-  const rest = n - outcomes.success - outcomes.partial;
-  const share = (count: number) => shown(n === 0 ? 0 : (100 * count) / n);
-  const reasons = (Object.entries(summary.locked) as [LockReason, number][])
-    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : 1))
-    .map(([reason, count]) => `${reason} ${count.toLocaleString("en-GB")}`);
-  const lacking = BAR_CONTROLS.flatMap((control) =>
-    bar.controls[control] > 0 ? [`${control} ${bar.controls[control]}`] : [],
-  );
-  return [
-    `${plural(summary.documents, "document")}, ${outcomes.timeout} of which timed out and ${outcomes.timeout === 1 ? "counts" : "count"} in no share; of the ${n} others, ${outcomes.success} success (${share(outcomes.success)}), ${outcomes.partial} partial (${share(outcomes.partial)}), ${rest} refused or stopped (${share(rest)}): ${outcomes.refused} refused, ${outcomes["no reference"]} with no reference, ${outcomes["not parsed"]} not parsed, ${outcomes.baseline} not probed, ${outcomes["no answer"]} with no answer, ${outcomes.crashed} died.`,
-    `Words in editable fields: ${shown(summary.rates.editable)} of ${plural(summary.counted.all, "word")} in the ${plural(outcomes.success + outcomes.partial, "document")} assembled${reasons.length === 0 ? "." : `; locked, by reason: ${reasons.join(", ")}.`}`,
-    `The bar: ${bar.lacking} of the ${outcomes.success} ${outcomes.success === 1 ? "success" : "successes"} ${bar.lacking === 1 ? "lacks" : "lack"} the page size, the margins or the font size${lacking.length === 0 ? "." : `: ${lacking.join(", ")}.`}`,
-  ].map(printable);
-}
-
-// The table.
-
-const COLUMNS = [...FAMILIES, "all"] as const;
-
-/** The median of numbers, or undefined for none. */
-function median(values: readonly number[]): number | undefined {
-  if (values.length === 0) return undefined;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1
-    ? sorted[middle]
-    : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
-}
-
-/** A word of a closed list as the table shows it: letters, dashes and dots, and nothing else. */
-const PLAIN = /^[A-Za-z][A-Za-z.-]{0,31}$/;
-
-/** The steps whose times the table gives, in the pipeline's order. */
-const STEPS = ["reference", "latinModern", "parse", "probe", "naming", "fonts", "checks"] as const;
-
-/**
- * What the run came to, as one Markdown table, per family and in all: the outcomes, and where the
- * others stopped; the words in editable fields and the words locked by reason; the fields, the
- * sections, the controls, item 14's bar (the documents with the page size, the margins and the font
- * size all proven, and the successes lacking any, and which) and the findings; the naming step; and
- * the compiles and times. Names of reasons, checks and controls, and numbers, only.
- */
-export function runTable(rows: readonly RunRow[]): string {
-  const of = (column: (typeof COLUMNS)[number]) =>
-    rows.filter((row) => column === "all" || row.family === column);
-  const line = (label: string, values: readonly (number | string)[]) =>
-    `| ${label} | ${values.join(" | ")} |`;
-  const count = (label: string, test: (row: RunRow) => boolean) =>
-    line(
-      label,
-      COLUMNS.map((column) => of(column).filter(test).length),
-    );
-  const sum = (label: string, pick: (row: RunRow) => number) =>
-    line(
-      label,
-      COLUMNS.map((column) => of(column).reduce((total, row) => total + pick(row), 0)),
-    );
-  const share = (label: string, part: (row: RunRow) => number, whole: (row: RunRow) => number) =>
-    line(
-      label,
-      COLUMNS.map((column) => {
-        const total = of(column).reduce((all, row) => all + whole(row), 0);
-        const some = of(column).reduce((all, row) => all + part(row), 0);
-        return total === 0 ? "" : `${Math.round((100 * some) / total)}%`;
-      }),
-    );
-  const middle = (label: string, pick: (row: RunRow) => number | undefined, unit = "") =>
-    line(
-      label,
-      COLUMNS.map((column) => {
-        const value = median(of(column).flatMap((row) => pick(row) ?? []));
-        return value === undefined ? "" : `${Math.round(value)}${unit}`;
-      }),
-    );
-  const most = (label: string, pick: (row: RunRow) => number | undefined, unit = "") =>
-    line(
-      label,
-      COLUMNS.map((column) => {
-        const values = of(column).flatMap((row) => pick(row) ?? []);
-        return values.length === 0 ? "" : `${Math.round(Math.max(...values))}${unit}`;
-      }),
-    );
-  const section = (label: string) =>
-    line(
-      `**${label}**`,
-      COLUMNS.map(() => ""),
-    );
-  const present = (names: Iterable<string>) =>
-    [...new Set(names)].filter((each) => PLAIN.test(each)).sort();
-  const refusals = present(
-    rows.flatMap((row) => (row.outcome === "refused" && row.refused ? [row.refused] : [])),
-  );
-  const stoppedAt = present(
-    rows.flatMap((row) => (row.outcome === "no reference" && row.refused ? [row.refused] : [])),
-  );
-  const differences = present(rows.flatMap((row) => row.difference ?? []));
-  const reasons = LOCK_REASONS.filter((reason) =>
-    rows.some((row) => (lockedOf(row)[reason] ?? 0) > 0),
-  );
-  const partsLocked = LOCK_REASONS.filter((reason) =>
-    rows.some((row) => (row.fields?.locked[reason] ?? 0) > 0),
-  );
-  const dropped = CONTROLS.filter((name) =>
-    rows.some((row) => row.controls?.dropped.includes(name)),
-  );
-  // Item 14's bar over the successes, as `runBar` finds it, the one rule the summary counts too.
-  const misses = runBar(rows);
-  const lacks = (row: RunRow, control?: BarControl) =>
-    misses.some(
-      (miss) => miss.id === row.id && (control === undefined || miss.control === control),
-    );
-  const findings = present(rows.flatMap((row) => Object.keys(row.findings ?? {})));
-  const failures = present(rows.flatMap((row) => row.naming?.failed ?? []));
-  const lines = [
-    line("", COLUMNS),
-    `|---|${COLUMNS.map(() => "--:").join("|")}|`,
-    count("Documents", () => true),
-    count(`**Success**: ${OUTCOME_RULE}`, (row) => row.outcome === "success"),
-    count("**Partial**: assembled, short of a success", (row) => row.outcome === "partial"),
-    count(
-      "Partial: the first check differs",
-      (row) => row.outcome === "partial" && row.difference !== undefined,
-    ),
-    ...differences.map((kind) =>
-      count(`Partial, the first difference: \`${kind}\``, (row) => row.difference === kind),
-    ),
-    count("**Refused** by a step", (row) => row.outcome === "refused"),
-    ...refusals.map((reason) =>
-      count(`Refused: \`${reason}\``, (row) => row.outcome === "refused" && row.refused === reason),
-    ),
-    count(
-      "No reference: the intake or the reference compile refused it",
-      (row) => row.outcome === "no reference",
-    ),
-    ...stoppedAt.map((reason) =>
-      count(
-        `No reference: \`${reason}\``,
-        (row) => row.outcome === "no reference" && row.refused === reason,
-      ),
-    ),
-    count("Not parsed", (row) => row.outcome === "not parsed"),
-    count(
-      "Not probed: the body unmarked did not set the reference's glyphs",
-      (row) => row.outcome === "baseline",
-    ),
-    count("No answer for any macro the body calls", (row) => row.outcome === "no answer"),
-    count("Timed out: counted in no rate", (row) => row.outcome === "timeout"),
-    count("Died", (row) => row.outcome === "crashed"),
-    count("Read in Latin Modern", (row) => assembled(row) && row.latinModern === true),
-    section("Words, of the documents assembled"),
-    share(
-      "In editable fields, as `outcomeOf` counts them",
-      (row) => (assembled(row) ? (row.counted?.editable ?? 0) : 0),
-      (row) => (assembled(row) ? (row.counted?.all ?? 0) : 0),
-    ),
-    sum("All, as `outcomeOf` counts them", (row) => (assembled(row) ? (row.counted?.all ?? 0) : 0)),
-    ...reasons.map((reason) =>
-      sum(`Locked: \`${reason}\``, (row) => (assembled(row) ? (lockedOf(row)[reason] ?? 0) : 0)),
-    ),
-    section("Fields"),
-    sum("Editable", (row) => row.fields?.editable ?? 0),
-    sum("Raw: set, and edited in the panel alone", (row) => row.fields?.raw ?? 0),
-    sum("Required", (row) => row.fields?.required ?? 0),
-    ...partsLocked.map((reason) =>
-      sum(`Parts locked: \`${reason}\``, (row) => row.fields?.locked[reason] ?? 0),
-    ),
-    sum("Sections mapped onto the model", (row) => row.sections?.mapped ?? 0),
-    sum("Sections locked", (row) => row.sections?.locked ?? 0),
-    section("Controls and redefinitions, documents"),
-    ...CONTROLS.map((name) =>
-      count(`\`${name}\` proven`, (row) => row.controls?.proven.includes(name) === true),
-    ),
-    ...dropped.map((name) =>
-      count(`\`${name}\` dropped`, (row) => row.controls?.dropped.includes(name) === true),
-    ),
-    count(
-      "The bar: page size, margins and font size all proven",
-      (row) => assembled(row) && barControls(row).lacking.length === 0,
-    ),
-    count("The bar: a success lacking one", (row) => lacks(row)),
-    ...BAR_CONTROLS.map((control) =>
-      count(`The bar: a success lacking \`${control}\``, (row) => lacks(row, control)),
-    ),
-    count("Redefinitions applied", (row) => (row.redefinitions?.applied ?? 0) > 0),
-    count("Redefinitions dropped", (row) => (row.redefinitions?.dropped ?? 0) > 0),
-    section("Findings, documents"),
-    ...findings.map((check) => count(`\`${check}\``, (row) => (row.findings?.[check] ?? 0) > 0)),
-    count(
-      "No finding, the harness's or the checks'",
-      (row) => assembled(row) && Object.keys(row.findings ?? {}).length === 0,
-    ),
-    count(
-      "A unit added or removed stops the compile",
-      (row) => (row.unrepeatable ?? []).length > 0,
-    ),
-    section("The naming step"),
-    sum("Macros and environments to answer", (row) => row.naming?.macros ?? 0),
-    sum("Answered from the committed answers", (row) => row.naming?.reviewed ?? 0),
-    sum("Answered from the model's cache", (row) => row.naming?.model ?? 0),
-    sum(
-      "Refused from the cache: another macro's answer under its key",
-      (row) => row.naming?.refused ?? 0,
-    ),
-    sum("Asked of the model now", (row) => row.naming?.asked ?? 0),
-    sum("Stored now", (row) => row.naming?.stored ?? 0),
-    sum("Missing: no answer", (row) => row.naming?.missing ?? 0),
-    count(
-      "Requests withheld from the model, the header's values given to the check",
-      (row) => row.naming?.gate === "withholds",
-    ),
-    ...failures.map((reason) =>
-      count(`The model's answer failed: \`${reason}\``, (row) => row.naming?.failed === reason),
-    ),
-    sum("Model calls", (row) => row.naming?.calls ?? 0),
-    section("Compiles and time"),
-    middle("Compiles of the probe, median", (row) => row.compiles?.probe),
-    middle("Compiles of the checks, median", (row) =>
-      assembled(row) ? row.compiles?.checks : undefined,
-    ),
-    most("Compiles of the checks, most", (row) =>
-      assembled(row) ? row.compiles?.checks : undefined,
-    ),
-    ...STEPS.map((step) => middle(`\`${step}\`, median`, (row) => row.times[step], " ms")),
-    middle("A document, median", (row) => row.times.wall, " ms"),
-    most("A document, slowest", (row) => row.times.wall, " ms"),
-  ];
-  return `${lines.map(printable).join("\n")}\n`;
-}
-
-/**
- * A row as a line of progress: its outcome, numbers, and for a document assembled, the bar's
- * controls it proves and, for a success, those it lacks and the kind of why (`barLine`); never text.
- */
-export function runLine(row: RunRow): string {
-  const engine = row.engine === undefined ? "" : `${row.engine}, `;
-  const why = row.refused !== undefined && PLAIN.test(row.refused) ? ` (${row.refused})` : "";
-  if (!assembled(row)) return printable(`${engine}${row.outcome}${why}`);
-  const difference =
-    row.difference !== undefined && PLAIN.test(row.difference)
-      ? `, the first check differs (${row.difference})`
-      : "";
-  return printable(
-    `${engine}${row.outcome}${difference}, ${Math.round(100 * (row.rate ?? 0))}% of ${plural(row.counted?.all ?? 0, "word")} editable, ${plural(row.fields?.editable ?? 0, "field")} editable, ${row.compiles?.checks ?? 0} compiles, ${Math.round(row.times.wall / 1000)} s; the bar: ${barLine(row, succeeded(row))}`,
-  );
-}
-
-// The run's file.
-
-/** What answers a run reads, and whether it asks the model. */
-export interface RunMode {
-  /** The committed answers alone, or with the model's cache. */
-  answers: "committed" | "cache";
-  /** The model whose cache folder is read, with `answers: "cache"`. */
-  cache: string | null;
-  /** The model asked for what the cache does not answer, with `--allow-model`. */
-  asked: string | null;
-  /** Every fetched document, or those `--only` or `--ids` name. */
-  documents: "all" | "some";
-}
-
-/** The run's JSON: its mode, its summary, and a row a document. */
-export interface RunFile {
-  version: 1;
-  /** The day it started, and the commit it ran at, which a baseline adopted from the file names. */
-  at: { date: string; commit: string | null };
-  tree: { layout: number; files: number };
-  limitMs: number;
-  mode: RunMode;
-  /** Whether every document it took is in it: a run a signal stopped writes what it did. */
-  complete: boolean;
-  summary: RunSummary;
-  documents: RunRow[];
-}
+// The differences between runs.
 
 /** A value's differences from another, each a path and the two values, times aside. */
 function differences(a: unknown, b: unknown, path: string, out: string[]) {
@@ -700,26 +67,6 @@ export function runDifferences(first: unknown, second: unknown): string[] {
   return out.map(printable);
 }
 
-// What `.corpus/run/` holds.
-
-/**
- * The record of the last run under `.corpus/run/run.json`: a stamp of its own, which each document's
- * `review.json` it keeps carries too; what answers it read, the committed alone or with a model's
- * cache, and the model it asked, if any; whether it took every fetched document or some, and which;
- * and whether it finished. The review's export and check read it (`runMismatch`).
- */
-export const RunRecord = z.strictObject({
-  version: z.literal(1),
-  stamp: z.string().min(1).max(64),
-  answers: z.enum(["committed", "cache"]),
-  cache: z.string().nullable(),
-  asked: z.string().nullable(),
-  documents: z.enum(["all", "some"]),
-  ids: z.array(z.string()),
-  complete: z.boolean(),
-});
-export type RunRecord = z.infer<typeof RunRecord>;
-
 // The baseline.
 
 /** The baseline a run over the whole corpus is held to. */
@@ -747,9 +94,8 @@ export type Baseline = z.infer<typeof Baseline>;
 export const BASELINE_SLACK = 1;
 
 /**
- * What a baseline reads of a run's summary, the first pass's (`RunSummary`) or the outline's
- * (`ImportSummary`, `corpus-import.ts`): its documents, its successes and those that timed out, its
- * rates, and item 14's bar where the run judged one.
+ * What a baseline reads of a run's summary (`ImportSummary`, `corpus-import.ts`): its documents,
+ * its successes and those that timed out, its rates, and item 14's bar where the run judged one.
  */
 export interface BaselineSummary {
   documents: number;
@@ -851,11 +197,12 @@ export function nextBaseline(input: {
 
 /**
  * What `--write-baseline --from <run.json>` does with a run's file, as CI's run leaves it: the
- * baseline it gives, or why none, as `nextBaseline` has it, the run's summary counted again from its
- * rows by `summarize` (`importSummary` for `corpus run`'s), its day and its commit its own; only a
- * file of a finished run over the whole corpus, which names its commit, gives one, and only one of
- * the `version` the summary reads: the outline's runs are version 2 (`ImportFile`) and the first
- * pass's version 1, whose rows `importSummary` cannot count, and which is refused in plain words.
+ * baseline it gives, or why none, as `nextBaseline` has it, the run's summary counted again from
+ * its rows by `summarize` (`importSummary` for `corpus run`'s), its day and its commit its own;
+ * only a file of a finished run over the whole corpus, which names its commit, gives one, and only
+ * one of the `version` the summary reads: the outline's runs are version 2 (`ImportFile`) and the
+ * first pass's were version 1, whose rows `importSummary` cannot count, and which is refused in
+ * plain words.
  */
 export function baselineFromFile<Row>(
   file: unknown,
@@ -869,7 +216,7 @@ export function baselineFromFile<Row>(
     return {
       line:
         was === 1
-          ? "corpus/baseline.json is not written: the file is a first pass's run, which read naming answers, and `corpus run` takes the outline's import now, whose runs are version 2."
+          ? "corpus/baseline.json is not written: the file is a first pass's run, and `corpus run` takes the outline's import now, whose runs are version 2."
           : `corpus/baseline.json is not written: the file is no run of version ${version}, the one \`corpus run\` writes.`,
     };
   const run = z
@@ -877,7 +224,7 @@ export function baselineFromFile<Row>(
       at: z.strictObject({ date: z.iso.date(), commit: z.string().regex(/^[0-9a-f]{40}$/) }),
       mode: z.looseObject({ documents: z.string() }),
       complete: z.literal(true),
-      documents: z.array(z.looseObject({ id: z.string(), outcome: z.enum(RUN_OUTCOMES) })),
+      documents: z.array(z.looseObject({ id: z.string(), outcome: z.enum(IMPORT_OUTCOMES) })),
     })
     .safeParse(file);
   if (!run.success)
@@ -904,8 +251,7 @@ const BASELINE_PATH = "apps/editor/corpus/baseline.json";
 
 /**
  * The paths `git status --porcelain` names, the baseline's own aside: tracked files changed, and
- * files git does not track, as an answer written under `corpus/answers/` and not yet committed is,
- * which a run reads all the same; what git ignores it names none of.
+ * files git does not track, which a run may read all the same; what git ignores it names none of.
  */
 export function changedPaths(porcelain: string): string[] {
   return porcelain

@@ -8,7 +8,6 @@
 
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
-import type { RunFile } from "./corpus-run.ts";
 import type { Words } from "./spike-outline-build.ts";
 
 /** What became of a document: measured, or where it stopped. */
@@ -122,12 +121,21 @@ export const SAMPLE_FIRST_PASS: Readonly<Record<string, { editable: number; all:
 };
 
 /**
+ * What the spike reads of a first pass's run's JSON, which `--first` names and no command writes
+ * since the second pass's item 17: each document's id, and its words as its report counted them,
+ * where it assembled.
+ */
+export interface FirstPassRun {
+  documents: readonly { id: string; counted?: { editable: number; all: number } }[];
+}
+
+/**
  * The first pass's words of each document a run's JSON holds, and of the samples: a document it
  * assembled with what its report counted, and one it did not, refused, unanswered or timed out,
  * as `none`, none of its words editable.
  */
 export function firstPassOf(
-  run: Pick<RunFile, "documents"> | undefined,
+  run: FirstPassRun | undefined,
 ): Map<string, { editable: number; all: number } | "none"> {
   const found = new Map<string, { editable: number; all: number } | "none">(
     Object.entries(SAMPLE_FIRST_PASS),

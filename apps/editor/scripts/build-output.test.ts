@@ -26,7 +26,6 @@ function filesUnder(dir: string): string[] {
 /** The invented values the build is made with, which nothing of it may hold. */
 const VALUES = {
   SOCLAAS_API_KEY: "invented-provider-key-9c2e",
-  NAMING_MODEL: "invented-naming-model",
   PDF_LABEL_MODEL: "invented-label-model",
 };
 
@@ -55,7 +54,7 @@ describe("the page's build", () => {
     }
   }, 300_000);
 
-  test("holds neither the naming key's variables nor the functions folder", () => {
+  test("holds neither the service's key's variables nor the functions folder", () => {
     const files = filesUnder(out);
     expect(files.map((file) => relative(out, file))).toContain("index.html");
     for (const file of files) {
@@ -67,7 +66,7 @@ describe("the page's build", () => {
         ...Object.values(VALUES),
         // What the Pages Function alone names: its export, its binding and its address header.
         "onRequestPost",
-        "NAMING_KV",
+        "LABEL_KV",
         "CF-Connecting-IP",
       ])
         expect(text.includes(needle), `${needle} in ${path}`).toBe(false);

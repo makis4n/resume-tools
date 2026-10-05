@@ -43,13 +43,11 @@
  * meaning, with the emails, links and phone numbers in it masked by a placeholder of the same
  * length, closed over the template macros it names, the first reached first, to 64 definitions
  * and 64 KB, the data among them by name alone, but for scratch macros, whose meaning is whatever
- * was last put in them; each definition's SHA-256, and its closure's (`keysOf`), are item 6's
- * cache key, and an environment's covers its `\end` code and that code's closure too, as its
- * request does. The masking and the key are the naming contract's (`@resume-tools/naming`), so
- * that the editor, the naming service and the corpus runner read one rule.
+ * was last put in them; and each definition's SHA-256. The masking (`masked`) was the first pass's
+ * naming contract's, kept here when the second pass's item 17 deleted the naming step, so that a
+ * definition reads as it did.
  */
 
-import { maskDefinition } from "@resume-tools/naming";
 import { printRaw } from "@unified-latex/unified-latex-util-argspec";
 import type { Engine, EngineSession } from "../engine/session";
 import { isReadable, readSpec } from "./arguments";
@@ -93,7 +91,7 @@ export interface TemplateMacro {
   kind?: "definition";
   /** Its `\meaning`, as TeX printed it, emails, links and phone numbers masked. */
   meaning: string;
-  /** The SHA-256 of its masked meaning in UTF-8, in hex: item 6's cache key is built from it. */
+  /** The SHA-256 of its masked meaning in UTF-8, in hex. */
   hash: string;
   /** The template macros its meaning names, and theirs, the first reached first, to the cap. */
   dependencies: string[];
@@ -1329,13 +1327,64 @@ export function isScratch(name: string): boolean {
   );
 }
 
+/** A placeholder of `length` characters for what a pattern found: `<email___>`. */
+function placeholderOf(kind: string, length: number): string {
+  if (length < kind.length + 2) return "_".repeat(length);
+  return `<${kind}${"_".repeat(length - kind.length - 2)}>`;
+}
+
+/**
+ * A host name as the patterns read one: at most ten labels of at most 63 characters, as DNS has
+ * them, the last of letters. The bounds keep a match to a few hundred characters, so that the
+ * patterns below take time linear in a definition however it is spelled: unbounded, a megabyte of
+ * dotted or hyphenated letters made each pattern try every label from every start, which is
+ * quadratic, seconds on 64,000 characters.
+ */
+const HOST = String.raw`[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,63}`;
+
+/**
+ * A link: a scheme and an address, `www.` and one, or a host and a path of at most 2,048
+ * characters.
+ */
+const LINK = new RegExp(
+  String.raw`\b(?:(?:https?|ftp):\/\/|mailto:|www\.)[^\s{}\\]+|\b${HOST}\/[^\s{}\\]{0,2048}`,
+  "g",
+);
+
+/**
+ * An email address: a local part of at most 64 characters, as RFC 5321 has it, that starts where a
+ * word does, and a host.
+ */
+const EMAIL = new RegExp(String.raw`\b[A-Za-z0-9._%+-]{1,64}@${HOST}`, "g");
+
+/** A run of digits and the separators a phone number has; one of 7 digits or more is one. */
+const PHONE = /\+?\(?\d[\d ().~/+-]*\d/g;
+
+/**
+ * A postcode of letters and digits, in capitals, a space between its halves, as an address writes
+ * one: the UK's, `QV1A 2ZX`, and Canada's, `X9Q 0Q9`. No class's or package's code is so shaped,
+ * where a postcode of digits alone, `94103` or `10115`, is a number as code writes them,
+ * `\penalty 10000`, and is left as it is (decision 0033).
+ */
+const POSTCODE = /\b(?:[A-Z]{1,2}\d[A-Z\d]? \d[A-Z]{2}|[A-Z]\d[A-Z] \d[A-Z]\d)\b/g;
+
 /**
  * A definition with the personal data item 11's patterns find in it masked, each by a placeholder
- * of its own length: links, email addresses, and runs of 7 digits or more with separators, which
- * phone numbers are. A definition then hashes the same whoever's address it holds. The rule is the
- * naming contract's (`maskDefinition`), since what leaves the browser is masked by it.
+ * of its own length: links, email addresses, runs of 7 digits or more with separators, which phone
+ * numbers are (decision 0020), and postcodes of letters and digits (`POSTCODE`). A definition then
+ * hashes the same whoever's address it holds. It takes time linear in the definition's length
+ * (`HOST`). The rule was the naming contract's, `maskDefinition` (decision 0033), moved here
+ * when the second pass's item 17 deleted the naming step.
  */
-export const masked = maskDefinition;
+export function masked(text: string): string {
+  return text
+    .replace(LINK, (found) => placeholderOf("link", found.length))
+    .replace(EMAIL, (found) => placeholderOf("email", found.length))
+    .replace(PHONE, (found) =>
+      (found.match(/\d/g) ?? []).length >= 7 ? placeholderOf("phone", found.length) : found,
+    )
+    .replace(POSTCODE, (found) => placeholderOf("postcode", found.length));
+}
 
 /**
  * Each template macro's closure: the template macros its meaning names and those it hands its
@@ -1380,11 +1429,7 @@ export function closure(
 /** A record for an object keyed by names a document gives, with no prototype to collide with. */
 const record = <T>() => Object.create(null) as Record<string, T>;
 
-/**
- * The SHA-256 of a text's UTF-8, as hex: a definition's hash, as the naming contract hashes one
- * (`sha256` of `@resume-tools/naming`), here so that a `.tex` import loads nothing of the naming
- * step (decision 0049).
- */
+/** The SHA-256 of a text's UTF-8, as hex: a definition's hash. */
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");

@@ -136,7 +136,7 @@ describe("the run's summary, table and lines", () => {
       documents: [{ id: "jake-0001", family: "jake", outcome: "no answer", times: { wall: 1 } }],
     };
     expect(baselineFromFile<ImportRow>(first, none, importSummary, 2)).toEqual({
-      line: "corpus/baseline.json is not written: the file is a first pass's run, which read naming answers, and `corpus run` takes the outline's import now, whose runs are version 2.",
+      line: "corpus/baseline.json is not written: the file is a first pass's run, and `corpus run` takes the outline's import now, whose runs are version 2.",
     });
     expect(baselineFromFile<ImportRow>({ ...file, version: 3 }, none, importSummary, 2).line).toBe(
       "corpus/baseline.json is not written: the file is no run of version 2, the one `corpus run` writes.",

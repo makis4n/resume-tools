@@ -1,14 +1,9 @@
 /**
- * What the import screen says of what leaves the browser (milestone 3 item 11, decision 0033), in
- * two plain sentences, which item 12 shows where a resume is imported. The naming request
- * (`naming.ts`) holds the template's command definitions, the names, emails, phone numbers, links
- * and addresses the page shows in them masked; the shape of a few calls, their letters and digits
- * placeholders and the template's command names kept; and the page's style settings. The resume's
- * text and the header's values stay in the browser, and the PDF leaves it only when the person
- * sends it to the checker (the ATS feature, AGENTS.md). What never reaches the page, a document's
- * metadata, the detector cannot read, so the builder sends such settings' text as placeholders
- * rather than as they are (`maskedMetadata`), and the gate refuses a request the check finds any
- * text of the document's in (`assertNoText`).
+ * What the documents screen says of what leaves the browser (decision 0047). A `.tex` import sends
+ * nothing (decision 0049, held by `no-network.test.ts`); the first pass's naming request, its
+ * privacy gate and its leak check went with the naming step (decision 00XX). A PDF's text is sent
+ * only once the person agrees (`src/pdf/consent.ts`), and a PDF goes to the checker only when the
+ * person sends it there (the ATS feature, AGENTS.md).
  */
 
 /**

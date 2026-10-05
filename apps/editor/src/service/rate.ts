@@ -1,11 +1,10 @@
 /**
- * The naming service's rate limit (milestone 3 item 10, decision 0028): three buckets for each
- * client address. Two count requests, one that holds `perMinute` and fills again over a minute, the
- * other `perDay` over a day, so that by default an address makes ten requests at once, then one
- * every six seconds, and a hundred in a day. The third counts the characters of the prompts the
- * model is sent for the address, `charsPerDay` over a day, two million by default: a request takes
- * a token from each request bucket before its body is read, and is refused while the characters are
- * spent; what its model calls send is taken from the third as each part is answered (`spend`), and
+ * The service's rate limit (milestone 3 item 10, decision 0028), which the route that labels a
+ * PDF's lines keeps (`label.ts`): three buckets for each client address. Two count requests, one
+ * that holds `perMinute` and fills again over a minute, the other `perDay` over a day. The third
+ * counts the characters of the prompts the model is sent for the address, `charsPerDay` over a
+ * day: a request takes a token from each request bucket before its body is read, and is refused
+ * while the characters are spent; what its model calls send is taken from the third (`spend`), and
  * may take it below nothing, which the address then waits out. An IPv6 address draws on the
  * buckets of its /48, which one subscriber may be given whole, and an IPv4 address written as IPv6
  * on its IPv4 address's.
@@ -14,7 +13,8 @@
  * Pages (`kv.ts`), where two requests at once can read the same buckets, so that the limit there
  * holds roughly; decision 0028 says what milestone 5 puts in its place. A store that fails, to read
  * or to write, lets the request through uncounted, and says so, rather than refuse every address
- * for what is no address's doing. This file holds no Node and no Workers code: it runs in both.
+ * for what is no address's doing, unless its caller refuses it instead, as the label route does
+ * (`label.ts`). This file holds no Node and no Workers code: it runs in both.
  */
 
 /**

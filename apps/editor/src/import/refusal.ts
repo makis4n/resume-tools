@@ -16,12 +16,11 @@
  * locked section nor in a section's extras (`keep`, decision 0026); by the corpus runner, for a
  * compile past its time (`timeout`); by the XeTeX rewrite of its fonts (decision 0023), for a
  * fontspec feature or package the rewrite cannot reproduce (`feature`), or fonts that come out
- * otherwise than the reference's (`difference`); or by the naming request's builder, for a page
- * set in fonts whose glyphs the page names nothing for, which leaves the leak detector blind
- * (`unreadable`, decision 0033). And by the import in the browser (decision 0038): for a body the
- * probe could not read, since it does not set the reference's glyphs when compiled again unmarked
- * (`probe`); for a naming request the privacy check finds the resume's text in, which is never sent
- * (`request`); and for a failure of the editor's own while it read the resume (`failed`).
+ * otherwise than the reference's (`difference`). And by the import in the browser (decision 0038):
+ * for a body the probe could not read, since it does not set the reference's glyphs when compiled
+ * again unmarked (`probe`); and for a failure of the editor's own while it read the resume
+ * (`failed`). The first pass's naming request gave two more, `unreadable` and `request`, which
+ * went with it (decision 00XX).
  */
 export const REFUSAL_REASONS = [
   "intake",
@@ -38,9 +37,7 @@ export const REFUSAL_REASONS = [
   "timeout",
   "feature",
   "difference",
-  "unreadable",
   "probe",
-  "request",
   "failed",
 ] as const;
 export type RefusalReason = (typeof REFUSAL_REASONS)[number];
@@ -174,12 +171,8 @@ export function refusal(reason: RefusalReason, name?: string, log?: string): Ref
     keep: "This resume has a part this editor cannot keep as it was written.",
     timeout: "This resume took too long to compile.",
     difference: `This editor sets this resume's font ${shown} otherwise than the resume does, so it cannot take it.`,
-    unreadable:
-      "This resume's text is set in fonts this editor cannot read yet, so it cannot tell your words from the template's, and sends nothing.",
     probe:
       "This resume does not come out the same when this editor compiles it again, so it cannot find the parts you would edit.",
-    request:
-      "This editor could not describe your template without some of your resume's text, so it sent nothing, and cannot import it.",
     failed: "This resume could not be imported: the editor failed while reading it.",
   };
   return {

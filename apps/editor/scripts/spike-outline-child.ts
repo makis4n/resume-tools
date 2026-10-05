@@ -1,7 +1,7 @@
 /**
  * One child of the outline spike's pool (`spike-outline.ts`, milestone 3's second pass, item 2): an
  * engine session and fonts of its own, which take one document at a time, as a zip, through the
- * import's pipeline up to the probe, as `corpus run`'s child does (`corpus-assemble-child.ts`): the
+ * import's pipeline up to the probe, as `corpus run`'s child does (`corpus-import-child.ts`): the
  * intake, the reference compile, read in Latin Modern where the page cannot draw its Computer
  * Modern in T1 or TS1 (decision 0026), the signatures, the parse and the probe (decision 0022).
  * Then the outline (`spike-outline-build.ts`):
@@ -47,7 +47,7 @@ type ParseModule = typeof import("../src/import/parse.ts");
 type SignaturesModule = typeof import("../src/import/signatures.ts");
 type ProbeModule = typeof import("../src/import/probe.ts");
 type CandidatesModule = typeof import("../src/import/candidates.ts");
-type ValidateModule = typeof import("../src/import/validate.ts");
+type ChecksModule = typeof import("../src/import/checks.ts");
 type BuildModule = typeof import("./spike-outline-build.ts");
 
 const APP = fileURLToPath(new URL("..", import.meta.url));
@@ -102,7 +102,7 @@ async function main() {
   const { candidatesOf, isSetter } = await runner.import<CandidatesModule>(
     "/src/import/candidates.ts",
   );
-  const { CHECK_BUDGET } = await runner.import<ValidateModule>("/src/import/validate.ts");
+  const { CHECK_BUDGET } = await runner.import<ChecksModule>("/src/import/checks.ts");
   const build = await runner.import<BuildModule>("/scripts/spike-outline-build.ts");
 
   const manifest = JSON.parse(

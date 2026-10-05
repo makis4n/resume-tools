@@ -38,9 +38,9 @@
  * 4. **Controls.** Unchanged: each control the package offers is tried at every value. An
  *    outline's package offers none (`outlinePackage`), so there is none to try.
  *
- * What it returns is the outline as the checks leave it, its fields kept or required and its
- * groups fixed, with why; and ids and counts. Nothing here reaches the naming step, the assembly
- * or the network, and nothing it says quotes the resume: a compile's log is for developers alone.
+ * What it returns is the outline as the checks leave it, its fields kept or required and its groups
+ * fixed, with why; and ids and counts. Nothing here reaches the network, and nothing it says quotes
+ * the resume: a compile's log is for developers alone.
  */
 
 import {
@@ -56,7 +56,6 @@ import type { FontLibrary } from "../page/fonts";
 import { generateBody, generateFormat } from "../templates/generate";
 import { fontFiles, type TemplatePackage } from "../templates/package";
 import { MARKER_BEGIN, markerId } from "../tex/fields";
-import type { LockReason } from "./assemble";
 import type { Candidate } from "./candidates";
 import { type Outline, outlineResume, type Unit } from "./outline";
 import type { Span } from "./parse";
@@ -79,6 +78,7 @@ import {
   shippedFont,
 } from "./reference";
 import { type Refusal, refusal } from "./refusal";
+import type { LockReason } from "./report";
 import { dumpFiles } from "./xetex-check";
 
 /** How many compiles one bisection of a check may make, as the probe's budget bounds its own. */

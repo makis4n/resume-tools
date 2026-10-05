@@ -147,7 +147,7 @@ describe("EngineClient's imports and cancel (decision 0038)", () => {
     const { client, workers } = clientWithWorkers();
     const done = client.importResume([], () => {}, 1_000);
     const [worker] = workers;
-    // Between compiles, the naming service may take as long as it takes.
+    // Between compiles, a step of the import may take as long as it takes.
     worker?.reply({ id: 1, progress: progress(0, false) });
     vi.advanceTimersByTime(5_000);
     expect(worker?.terminated).toBe(false);

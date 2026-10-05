@@ -1,5 +1,8 @@
 # 0044. The naming model, chosen by a benchmark
 
+> Superseded by 00XX in its choice for naming: the naming step and its benchmark are deleted (the
+> second pass's item 17); its default model stays the PDF reading's starting point.
+
 Date: 2026-10-01 · Status: proposed; amends 0036; superseded by 0049 in its choice for naming, from which the PDF reading starts
 
 ## Context

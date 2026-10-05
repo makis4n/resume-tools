@@ -19,7 +19,7 @@ apps/
 packages/
   contracts/            JSON Schemas for what crosses between the two   owner: both
   resume-model/         the editor's resume data model (Zod)  owner: @makis4n
-  naming/               the import's naming step: request, prompt, model call   owner: @makis4n
+  naming/               the model's provider code, which reads a PDF's lines   owner: @makis4n
 docs/
   editor-plan.md        the editor plan
   ats-prd.md            the ATS product requirements
@@ -42,13 +42,13 @@ cp -n apps/editor/.env.example apps/editor/.env   # settings, all optional; see 
 pnpm dev                                          # the editor at http://localhost:5173
 ```
 
-The dev server does more than serve the page. It serves the TeX engine's files from `apps/editor/.engine/` and answers the naming route that imports call, `/v1/name`, so until milestone 5 hosts both, the editor works fully only under `pnpm dev`: a production build keeps documents but cannot draw their pages. `http://localhost:5173/?measure=1` shows the timing page in place of the editor (decision 0016), and `?measure=import` and `?measure=import-xetex` time an import from the file to the page, once `pnpm --filter @resume-tools/editor corpus oracle` has fetched the upstream samples they import (decision 0045).
+The dev server does more than serve the page. It serves the TeX engine's files from `apps/editor/.engine/` and answers the route that reads an imported PDF's lines, `/v1/label`, so until milestone 5 hosts both, the editor works fully only under `pnpm dev`: a production build keeps documents but cannot draw their pages. `http://localhost:5173/?measure=1` shows the timing page in place of the editor (decision 0016), and `?measure=import` and `?measure=import-xetex` time an import from the file to the page, once `pnpm --filter @resume-tools/editor corpus oracle` has fetched the upstream samples they import (decision 0045).
 
 Every setting in `apps/editor/.env` is optional, and the editor runs with none:
 
 - `VITE_ATS_SERVICE_URL`: where the ATS panel will send PDFs, `http://localhost:8000` for the ATS service below. Nothing in the editor calls it yet.
 - `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`: for accounts, which come in milestone 4. Leave them empty.
-- The naming model's key and `NAMING_MODEL`, below. Without a key the naming route answers only from the answers already stored, and the dev server says so when it starts.
+- The reading model's key and `PDF_LABEL_MODEL`, below. Without a key the label route refuses and the editor reads a PDF by its rules, and the dev server says so when it starts.
 
 After you pull, run `pnpm install` and the `fetch-engine` line again, then restart `pnpm dev`. The fetch does nothing when the engine is current and rebuilds it when its layout changed, and a dev server left running does not see new workspace packages: it fails with "Cannot find package '@resume-tools/…'".
 
@@ -62,12 +62,12 @@ pnpm test           # tests that run TeX skip without the engine
 pnpm build          # the production bundle in apps/editor/dist
 ```
 
-### The naming model
+### Importing, and the reading model
 
-Importing a template asks a language model what each of the template's commands is. Only the template's code goes, with placeholders where the resume's text was, never the text itself (decision 0033). The model runs on SoCLaaS, the School of Computing's free LLM gateway for its students and staff (decision 0036), and `apps/editor/.env.example` names the variables the code reads.
+Importing a `.tex` resume sends nothing: the editor reads it, compiles it and builds its outline in the browser, and asks no model (decisions 0049 and 00XX). Importing a PDF may send the text of its lines to a language model, which says what each line is, but only once you agree, asked the first time you import one and changed by a setting on the documents screen (decision 0047); without your yes, or without a key, the editor reads the PDF by its rules. The model runs on SoCLaaS, the School of Computing's free LLM gateway for its students and staff (decision 0036), and `apps/editor/.env.example` names the variables the code reads.
 
 1. Log in at https://soclaas-portal.comp.nus.edu.sg with your SoC account and issue a key, or run `soclaas-portal issue` on an SoC server. It is shown once.
-2. Put it in `apps/editor/.env` as `SOCLAAS_API_KEY=clsk_...`, and, if you want another model than the default `qwen3.8:27b`, which milestone 3's item 18 picked and asks with its thinking off (decision 0044), its id as `NAMING_MODEL`. Never give either the `VITE_` prefix, which would put the key in the page.
+2. Put it in `apps/editor/.env` as `SOCLAAS_API_KEY=clsk_...`, and, if you want another model than the default `qwen3.8:27b`, which milestone 3's item 18 picked and asks with its thinking off (decision 0044), its id as `PDF_LABEL_MODEL`. Never give either the `VITE_` prefix, which would put the key in the page.
 3. Check that the key works, and which models it may use:
 
    ```sh
@@ -75,9 +75,9 @@ Importing a template asks a language model what each of the template's commands 
    curl -sS https://soclaas-api.comp.nus.edu.sg/v1/models -H "Authorization: Bearer $SOCLAAS_API_KEY" | jq -r '.data[].id'
    ```
 
-The dev server reads `apps/editor/.env` itself. The corpus scripts read only their environment, so load the file into your shell first with the `set -a` line. CI never has a key.
+The dev server reads `apps/editor/.env` itself. `pnpm --filter @resume-tools/editor pdf-model`, run by hand on the invented sets alone, reads only its environment, so load the file into your shell first with the `set -a` line. CI never has a key.
 
-To import a resume in the dev server, use "Import a resume" in the document list, or drop a `.tex` file or a zip on the list (decision 0038). Without a key the naming route answers from the committed answers and the local cache alone, and whatever they do not answer stays locked in the imported document.
+To import a resume in the dev server, use "Import a resume" in the document list, or drop a `.tex` file or a zip on the list (decision 0038). A `.tex` import works the same with a key or without one, since it sends nothing.
 
 ### The ATS service
 
@@ -111,7 +111,7 @@ The tree above names the owner of each path. In short: you own your app, we both
 
 **Tests.** Vitest for TypeScript, with test files next to the code as `name.test.ts`. pytest for Python, under `apps/ats/tests/`. A change that fixes a bug comes with the test that would have caught it.
 
-**The corpus.** The editor's import is measured on about 220 public resumes, listed in `apps/editor/corpus/` by source and hash and never committed. `.github/workflows/corpus.yml` fetches them and runs the survey, the leak check of every naming request and the import run, which takes every resume through the import a browser runs and fails when the share of documents that import successfully falls more than a point under `apps/editor/corpus/baseline.json`. It runs only when someone starts it: Actions → corpus → Run workflow, or `gh workflow run corpus.yml --ref <branch>`, with the results in the run's summary (decision 0035). A run is worth it before merging a change to the import pipeline, the naming request or its masking, the corpus scripts or manifest, or the engine's TeX Live tree, and most of all a change to what the naming request holds, since the leak check is what shows that no resume text leaves the browser. Whether to run it is the author's call, and it is never required to merge. AI agents suggest a run when their change touches those paths and leave the decision to you. The same steps run locally: `pnpm --filter @resume-tools/editor corpus fetch`, then `corpus survey`, `corpus leak` or `corpus run`.
+**The corpus.** The editor's import is measured on about 220 public resumes, listed in `apps/editor/corpus/` by source and hash and never committed. `.github/workflows/corpus.yml` fetches them and runs the survey and the import run, which takes every resume through the import a browser runs and fails when the share of documents that import successfully falls more than a point under `apps/editor/corpus/baseline.json`. It runs only when someone starts it: Actions → corpus → Run workflow, or `gh workflow run corpus.yml --ref <branch>`, with the results in the run's summary (decision 0035). A run is worth it before merging a change to the import pipeline, the corpus scripts or manifest, or the engine's TeX Live tree. Whether to run it is the author's call, and it is never required to merge. AI agents suggest a run when their change touches those paths and leave the decision to you. The same steps run locally: `pnpm --filter @resume-tools/editor corpus fetch`, then `corpus survey` or `corpus run`.
 
 **Reading PDFs.** How well the editor reads an imported PDF is tracked on three sets (decision 0051). The suite holds the owner's targets as thresholds on the two with a truth, the built-in templates' own PDFs and invented resumes printed by other tools (`apps/editor/src/pdf/round-trip.test.ts`), and tests the hosted model's path from its recorded replies, so no model is called in CI. Two commands run by hand, as the corpus run is, and print each target met or not. `pnpm --filter @resume-tools/editor pdf-corpus` makes PDFs of the corpus's resumes that compile and reads them by rules alone, after `corpus fetch`; it prints and keeps counts only, never text, under `apps/editor/.corpus/pdf-corpus/`, and no corpus resume is given to a model. `SOCLAAS_API_KEY="$(security find-generic-password -s soclaas -w)" pnpm --filter @resume-tools/editor pdf-model both --passes 1` asks the hosted model about the invented sets alone, and refuses any other file; `pdf-model other --record` records the suite's replies again after a change to the layout. Whether to run either is the author's call, as with the corpus run.
 

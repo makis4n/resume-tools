@@ -242,8 +242,7 @@ export interface PoolOptions {
   onResult?: (task: PoolTask, result: PoolResult) => void;
   /**
    * Called with what a child says of the task it holds before it answers, any message of a type
-   * other than `ready` and `done`, so that what a task did before its child is killed is kept, as
-   * the benchmark keeps a document's naming step (decision 0044).
+   * other than `ready` and `done`, so that what a task did before its child is killed is kept.
    */
   onMessage?: (task: PoolTask, message: unknown) => void;
   /**
@@ -366,25 +365,21 @@ const REASON_LABELS: Readonly<Record<RefusalReason, string>> = {
   intake: "Refused at intake",
   feature: "Refused: a font feature this editor cannot reproduce",
   difference: "Refused: fonts that come out otherwise",
-  unreadable: "Refused: a page set in fonts the page cannot read",
   probe: "Refused: the probe could not read its body",
-  request: "Refused: its naming request held its text",
   failed: "Refused: the editor failed while reading it",
 };
 
 /**
  * The reasons a reference compile can give, which the table has a row each for: not the parser's,
- * which come after the reference, nor the font rewrite's (decision 0023), nor the naming request
- * builder's (decision 0033), nor those of the import in the browser (decision 0038).
+ * which come after the reference, nor the font rewrite's (decision 0023), nor those of the import
+ * in the browser (decision 0038).
  */
 const REFERENCE_REASONS = REFUSAL_REASONS.filter(
   (reason) =>
     reason !== "parse" &&
     reason !== "feature" &&
     reason !== "difference" &&
-    reason !== "unreadable" &&
     reason !== "probe" &&
-    reason !== "request" &&
     reason !== "failed",
 );
 

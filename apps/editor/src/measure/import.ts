@@ -28,10 +28,9 @@
 import { Compiler, type Engine as CompilerEngine, type Shown } from "../editor/compiler";
 import type { Document } from "../editor/document";
 import type { CompileResult, Engine } from "../engine/session";
-import type { AssemblyChecks } from "../import/assemble";
 import type { Upload } from "../import/intake";
 import { isRefusal, type Refusal } from "../import/refusal";
-import { percent, type ReportOutcome, reportOfImport } from "../import/report";
+import { type AssemblyChecks, percent, type ReportOutcome, reportOfImport } from "../import/report";
 import { IMPORT_STEPS, type ImportProgress, type ImportStep } from "../import/run";
 import { drawPage } from "../page/draw";
 import type { FontLibrary } from "../page/fonts";
@@ -470,7 +469,7 @@ export type Where = "node" | "browser";
 /**
  * What the bar is judged on, and whether it is met; or, on an engine the bar is not judged on
  * (`IMPORT_JUDGED_ON`), the time reported. A `.tex` import names nothing, so every one is the
- * bar's case, a template whose answers need no service (decision 0049).
+ * bar's case, a template that needs no service (decision 0049).
  */
 export type ImportJudged =
   | { judged: false; reported: true; ms: number }

@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
-import type { AssemblyChecks, GlyphOwner, LockedPart } from "./assemble";
 import type { ReferenceGlyph, ReferenceItem } from "./reference";
 import {
+  type AssemblyChecks,
   FIRST_WORDS,
+  type GlyphOwner,
   LOCK_WHY,
+  type LockedPart,
   outcomeOf,
   pageWords,
   percent,
@@ -16,7 +18,19 @@ import {
   summaryOf,
   wholeShares,
 } from "./report";
-import { DROPPED, UNCHECKED } from "./validate";
+
+/**
+ * The first pass's checks' words for a control they dropped (decision 0040), which the report
+ * reads by how each begins: the checks' own, kept here when item 17 deleted them.
+ */
+const DROPPED = {
+  moves: "moves the original's page at the document's own value",
+  stops: "stops the compile at ",
+  same: "sets the same page at every value",
+  layout: "sets another page than it asks at ",
+  harness: "the harness finds it does not work",
+} as const;
+const UNCHECKED = "unchecked";
 
 // Every page, word and name here is invented for these tests; nothing is a real resume's.
 
@@ -479,17 +493,12 @@ describe("the report", () => {
     expect(report.dropped.every((each) => !each.text.includes("could not prove"))).toBe(true);
   });
 
-  test("says why everything stayed as the probe found it, what fonts it swapped, and what the template cannot add", () => {
-    const report = reportOfInvented(
-      { latinModern: ["ecrm1000"], decisions: { fixed: ["entry", "section.list"] } },
-      {
-        naming: {
-          failed: "The naming service could not be reached. Check the connection and try again.",
-        },
-      },
-    );
+  test("says what fonts it swapped, and what the template cannot add", () => {
+    const report = reportOfInvented({
+      latinModern: ["ecrm1000"],
+      decisions: { fixed: ["entry", "section.list"] },
+    });
     expect(report.notes).toEqual([
-      "No answer came for the template, so its parts stay as your original sets them: The naming service could not be reached. Check the connection and try again.",
       "Its Computer Modern fonts are set in Latin Modern, their successor, which the page can draw.",
       "The template takes no more and no fewer entries and list sections than your original has.",
       "3 more words are editable in the side panel, where the page cannot mark them.",
@@ -516,7 +525,6 @@ describe("the report", () => {
       {
         images: { replaced: [{ name: "\\photo{1}.png", path: "p.png", kind: "png" }], dropped: [] },
         warnings: ["\\input{x} is left out: {invented}."],
-        naming: { failed: "\\relax{}" },
       },
     );
     const strings = [

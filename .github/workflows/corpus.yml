@@ -1,9 +1,9 @@
 name: corpus
 
 # The corpus of public resumes, fetched from the sources its manifest names, surveyed (decisions
-# 0017 and 0018), each document's naming request checked for its text (decision 0033), and every
-# document put through the import a browser runs, which names nothing, held to the baseline
-# (decisions 0043 and 0055). It runs only when a person starts it, from the Actions tab or with
+# 0017 and 0018), and every document put through the import a browser runs, which sends nothing,
+# held to the baseline (decisions 0043 and 0055). The naming request's leak check went with the
+# naming step (decision 00XX). It runs only when a person starts it, from the Actions tab or with
 # `gh workflow run corpus.yml --ref <branch>`, never on a schedule, a push or a pull request
 # (decision 0035): every input is pinned, so a run finds something only after a change, and no pull
 # request downloads real resumes. It holds no model key, ever: the run asks no model.
@@ -60,24 +60,6 @@ jobs:
         with:
           name: survey
           path: survey.json
-      # Every document's naming request, built as the import builds it and checked for the
-      # document's text by the leak detector: the lines name documents, macros, kinds of text and
-      # counts, never a document's text, and the step fails when a request holds text the builder
-      # should have masked, or the check covers fewer documents than it should (decision 0033).
-      - id: leak
-        run: pnpm --filter @resume-tools/editor corpus leak --json leak.json > leak.md
-      - if: always() && steps.leak.outcome != 'skipped'
-        run: |
-          {
-            echo "## What leaves the browser"
-            echo
-            cat leak.md
-          } >> "$GITHUB_STEP_SUMMARY"
-      - if: always() && steps.leak.outcome != 'skipped'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: leak
-          path: leak.json
       # Every document through the import a browser runs, in its one mode, which reads no answer and
       # asks no model (decision 0055): the table and its headline name outcomes, reasons, steps and
       # counts, and run.json each document's row by its id, never a document's text. The run takes
