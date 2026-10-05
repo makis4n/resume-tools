@@ -63,12 +63,43 @@ describe("texError", () => {
     printsNoText(errorLine(error as NonNullable<typeof error>));
   });
 
-  it("withholds the words of a package's error, naming the package alone", () => {
-    const log =
-      "(./import.tex\n! Package invented Error: Quillon Marrowby is not allowed.\n\nl.4 x";
-    const error = texError(log, "import");
-    expect(error?.kind).toBe("package invented's error, its words withheld");
+  it("withholds the words of a package's error, naming the package only where the tree has it", () => {
+    const log = (owner: string) =>
+      `(./import.tex\n! Package ${owner} Error: Quillon Marrowby is not allowed.\n\nl.4 x`;
+    const tree = { path: () => false, name: (file: string) => file === "geometry.sty" };
+    const error = texError(log("Ashgrove"), "import", tree);
+    expect(error?.kind).toBe("the error of a package not in the tree, its words withheld");
     printsNoText(errorLine(error as NonNullable<typeof error>));
+    expect(texError(log("geometry"), "import", tree)?.kind).toBe(
+      "the error of package geometry, its words withheld",
+    );
+  });
+
+  it("names no class or package of the upload's own, as its author may name it after themselves", () => {
+    // The review of ef7da1f's two invented logs: an upload's class's `\ClassError`, and an option
+    // clash for an upload's package; and a package of the tree, still named.
+    const tree = { path: () => false, name: (file: string) => file === "geometry.sty" };
+    const classError = texError(
+      "(./import.tex\n! Class zorbinklatch-cv Error: Invented words.\n\nl.3 x",
+      "import",
+      tree,
+    );
+    expect(classError?.kind).toBe("the error of a class not in the tree, its words withheld");
+    const clash = texError(
+      "(./import.tex\n! LaTeX Error: Option clash for package zorbinklatch.\n\nl.5 x",
+      "import",
+      tree,
+    );
+    expect(clash?.kind).toBe("LaTeX: option clash for a package not in the tree");
+    for (const error of [classError, clash])
+      expect(errorLine(error as NonNullable<typeof error>)).not.toMatch(/zorbin|klatch/i);
+    expect(
+      texError(
+        "(./import.tex\n! LaTeX Error: Option clash for package geometry.\n\nl.5 x",
+        "import",
+        tree,
+      )?.kind,
+    ).toBe("LaTeX: option clash for package geometry");
   });
 
   it("withholds an error of a kind it does not know", () => {
@@ -94,7 +125,8 @@ describe("texError", () => {
   it("names a file of the tree only where the tree holds it", () => {
     const tree = "/texlive/texmf-dist/tex/latex/base/size10.clo";
     const log = `(./import.tex (${tree}\n! Missing } inserted.`;
-    expect(texError(log, "import", (path) => path === tree)?.file).toBe("TeX Live's size10.clo");
+    const files = { path: (path: string) => path === tree, name: () => false };
+    expect(texError(log, "import", files)?.file).toBe("TeX Live's size10.clo");
     expect(texError(log, "import")?.file).toBe("a file of TeX Live's");
   });
 
@@ -121,7 +153,7 @@ describe("texError", () => {
       ],
     ];
     for (const lines of logs) {
-      const error = texError(lines.join("\n"), "import", () => false);
+      const error = texError(lines.join("\n"), "import");
       expect(error?.file).toBe("main");
       const printed = errorLine(error as NonNullable<typeof error>);
       for (const word of ["Weltermoor", "zorbin", "klatch", "Fennelby", "Zorbin"])

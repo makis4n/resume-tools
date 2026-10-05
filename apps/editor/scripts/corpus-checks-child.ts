@@ -143,8 +143,14 @@ async function main() {
     readFileSync(join(ENGINE_DIR, "files", path)),
   );
   const deps = { session, fonts, tree, treeImage };
-  /** Whether a path a log names is a file of the engine's tree, which alone a line names. */
-  const treeFile = (path: string) => Object.hasOwn(manifest.files, path);
+  /** The engine's tree's files, by path and by name, which alone a line names (`texError`). */
+  const names = new Set(
+    Object.keys(manifest.files).map((path) => path.slice(path.lastIndexOf("/") + 1)),
+  );
+  const treeFile = {
+    path: (path: string) => Object.hasOwn(manifest.files, path),
+    name: (file: string) => names.has(file),
+  };
   const options = { treeImage };
 
   process.on("message", async (task: Task) => {

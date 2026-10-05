@@ -40,7 +40,7 @@ const OWNER = /^[A-Za-z0-9@_.-]{1,40}$/;
  * alone. A package's or a class's error is its owner's name and no more, since its words are the
  * package's own and may quote the document.
  */
-const KINDS: readonly [RegExp, (found: RegExpExecArray) => string][] = [
+const KINDS: readonly [RegExp, (found: RegExpExecArray, named: Named) => string][] = [
   [/^Undefined control sequence\.$/, () => "undefined control sequence"],
   [
     /^Missing ([{}$#]|\$\$|\\endcsname|\\right\.|\\cr|\\endgroup|control sequence) inserted\.$/,
@@ -113,8 +113,12 @@ const KINDS: readonly [RegExp, (found: RegExpExecArray) => string][] = [
     (found) => `command ${found[1]} ${found[2]}`,
   ],
   [
-    /^LaTeX Error: (There's no line here to end|Something's wrong--perhaps a missing \\item|Lonely \\item--perhaps a missing list environment|Too deeply nested|Can be used only in preamble|Missing \\begin\{document\}|Not in outer par mode|Float\(s\) lost|Too many unprocessed floats|\\verb ended by end of line|\\verb illegal in command argument|Bad math environment delimiter|Illegal character in array arg|Counter too large|Option clash for package [A-Za-z0-9@_.-]{1,40})\.$/,
+    /^LaTeX Error: (There's no line here to end|Something's wrong--perhaps a missing \\item|Lonely \\item--perhaps a missing list environment|Too deeply nested|Can be used only in preamble|Missing \\begin\{document\}|Not in outer par mode|Float\(s\) lost|Too many unprocessed floats|\\verb ended by end of line|\\verb illegal in command argument|Bad math environment delimiter|Illegal character in array arg|Counter too large)\.$/,
     (found) => `LaTeX: ${found[1]}`,
+  ],
+  [
+    /^LaTeX Error: Option clash for package ([^ ]{1,40})\.$/,
+    (found, named) => `LaTeX: option clash for ${owned("package", found[1], named)}`,
   ],
   [
     /^LaTeX Error: File `[^']*?(\.[A-Za-z0-9]{1,8})?' not found\.$/,
@@ -127,8 +131,8 @@ const KINDS: readonly [RegExp, (found: RegExpExecArray) => string][] = [
   ],
   [
     /^(Package|Class) ([^ ]{1,40}) Error: /,
-    (found) =>
-      `${found[1]?.toLowerCase()} ${OWNER.test(found[2] ?? "") ? found[2] : "of another name"}'s error, its words withheld`,
+    (found, named) =>
+      `the error of ${owned(found[1] === "Class" ? "class" : "package", found[2], named)}, its words withheld`,
   ],
   [
     /^pdfTeX error \((\\[A-Za-z]{1,40})\)/,
@@ -136,6 +140,31 @@ const KINDS: readonly [RegExp, (found: RegExpExecArray) => string][] = [
   ],
   [/^Font \\[^=]{1,60}=.* not loadable: /, () => "a font not loadable"],
 ];
+
+/**
+ * The engine's tree, as `texError` asks it: whether a path a log names is one of its files, and
+ * whether a file's name, as `geometry.sty`, is.
+ */
+export interface TreeFiles {
+  path(path: string): boolean;
+  name(file: string): boolean;
+}
+
+/** No tree: nothing a log names is printed as one of its files. */
+const NO_TREE: TreeFiles = { path: () => false, name: () => false };
+
+/** A package's or a class's name where the tree holds its file, `.sty` or `.cls`; or none. */
+type Named = (name: string | undefined, extension: ".sty" | ".cls") => string | undefined;
+
+/**
+ * A package or a class as printed: by its name where the tree holds its file, which is a public
+ * package's; otherwise in fixed words, since an upload's own class or package is named as its
+ * author likes, after themselves as often as not.
+ */
+function owned(kind: "package" | "class", name: string | undefined, named: Named): string {
+  const found = named(name, kind === "class" ? ".cls" : ".sty");
+  return found === undefined ? `a ${kind} not in the tree` : `${kind} ${found}`;
+}
 
 /** A TeX log's first error, as `texError` reads it: kinds, names and numbers, never words of it. */
 export interface TexError {
@@ -248,22 +277,24 @@ function fileKind(
  * against `KINDS` alone, and of its context only `l.<n>`, the undefined command, the macros being
  * expanded and a token read again, each a command's name or a number. A runaway argument's line,
  * which echoes the argument, is only counted. `job` names the job, whose main file is the body;
- * `treeFile` says whether a path is a file of the engine's tree, which alone is named.
+ * `tree` says which paths and names are the engine's tree's, which alone are printed.
  */
 export function texError(
   log: string,
   job: string,
-  treeFile: (path: string) => boolean = () => false,
+  tree: TreeFiles = NO_TREE,
 ): TexError | undefined {
   const lines = log.split(/\r?\n/);
   const at = lines.findIndex((line) => line.startsWith("! "));
   if (at < 0) return undefined;
   const line = (lines[at] ?? "").slice(2);
   let kind = "an error of another kind, its words withheld";
+  const named: Named = (name, extension) =>
+    name !== undefined && OWNER.test(name) && tree.name(`${name}${extension}`) ? name : undefined;
   for (const [pattern, name] of KINDS) {
     const found = pattern.exec(line);
     if (found !== null) {
-      kind = name(found);
+      kind = name(found, named);
       break;
     }
   }
@@ -272,7 +303,7 @@ export function texError(
     inside: [],
     runaway: lines.slice(Math.max(0, at - 3), at).some((each) => /^Runaway \w+\?$/.test(each)),
   };
-  const file = fileAt(lines, at, job, treeFile);
+  const file = fileAt(lines, at, job, tree.path);
   if (file !== undefined) error.file = file;
   const context = lines.slice(at + 1, at + 40);
   if (kind === "undefined control sequence") {
