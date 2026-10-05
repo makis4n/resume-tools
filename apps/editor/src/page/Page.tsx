@@ -1,7 +1,8 @@
 /**
  * The typeset pages, as SVG, one under the other, with every glyph clickable. A click on a glyph
  * that belongs to a field reports the field and the character the click landed on, whatever page
- * it is on (decision 0046).
+ * it is on (decision 0046), and so does a click between two of the field's glyphs on a line, as
+ * between its words, where TeX draws nothing.
  *
  * A locked part of an imported resume, kept as the upload had it, is no field (decision 0041): a
  * click on it reports nothing, so that neither the plain overlay nor the rich editor opens there;
@@ -97,17 +98,103 @@ export function lockedAt(target: Element | null): string | undefined {
 }
 
 /**
- * What a click on the page does: report the field and character under it, if there is one; else
- * the locked part under it, where its words can be retyped (`retypable`), so that its editor opens.
+ * How far a line's glyphs reach above and below their baseline, in their font's size, for a click
+ * beside a glyph rather than on it: as far as most letters reach, and short of the next line at
+ * the usual leading of 1.2.
+ */
+const REACH_UP = 0.75;
+const REACH_DOWN = 0.25;
+/** The advance of a glyph whose element gives none, as XeTeX's do, in its font's size. */
+const LETTER = 0.5;
+
+/** A glyph of the page, where the SVG sets it, in TeX points. */
+interface Placed {
+  glyph: Element;
+  /** Its origin, on its baseline. */
+  x: number;
+  y: number;
+  /** Its font's size. */
+  size: number;
+  /** How far it moves the next glyph on, where its element says (`data-w`). */
+  advance: number | undefined;
+}
+
+/** A number an attribute holds, or NaN when it holds none. */
+function numberAt(element: Element, name: string): number {
+  const value = element.getAttribute(name);
+  return value === null || value === "" ? Number.NaN : Number(value);
+}
+
+/** Where the SVG sets a glyph, from its attributes; undefined when they do not say. */
+function placedGlyph(glyph: Element): Placed | undefined {
+  const x = numberAt(glyph, "x");
+  const y = numberAt(glyph, "y");
+  const size = numberAt(glyph, "data-size");
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !(size > 0)) return undefined;
+  const advance = numberAt(glyph, "data-w");
+  return { glyph, x, y, size, advance: Number.isFinite(advance) ? advance : undefined };
+}
+
+/**
+ * The field and character offset of a click on a field's line that lands on none of its glyphs.
+ * A glyph takes a click only within its ink's box (`pointer-events: bounding-box`), and the space
+ * between two words draws nothing, so a click there, in the sliver between two letters or above a
+ * short one, lands on the page's white, or on a kept part's unpainted block under the line, and
+ * opened nothing: the first click on a field seemed to miss, and a second, on a letter, opened it.
+ * Between two glyphs of one field on a line, the click is the field's, at the later glyph; within
+ * a field's glyph's own advance, the glyph's. A click on a glyph is that glyph's alone, a kept
+ * part's included, and one past a field's last glyph, before what follows it, is no field's.
+ */
+export function fieldNear(
+  target: Element | null,
+  clientX: number | undefined,
+  clientY: number | undefined,
+): { field: string; offset: number } | undefined {
+  if (clientX === undefined || clientY === undefined) return undefined;
+  if (typeof target?.closest !== "function" || target.closest("use") !== null) return undefined;
+  const svg = target.closest("svg");
+  // A document that lays nothing out, as a test's, may give no matrix: the click is then no field's.
+  const ctm = typeof svg?.getScreenCTM === "function" ? svg.getScreenCTM() : null;
+  const det = ctm ? ctm.a * ctm.d - ctm.b * ctm.c : 0;
+  if (!svg || !ctm || det === 0) return undefined;
+  // The click in the SVG's own units, which are TeX points from the page's corner, wherever the
+  // page is scrolled to now.
+  const dx = clientX - ctm.e;
+  const dy = clientY - ctm.f;
+  const x = (ctm.d * dx - ctm.c * dy) / det;
+  const y = (ctm.a * dy - ctm.b * dx) / det;
+  // The glyphs on the click's line on either side of it: the last that starts at it or before,
+  // and the first that starts after.
+  let before: Placed | undefined;
+  let after: Placed | undefined;
+  for (const glyph of svg.querySelectorAll("use")) {
+    const at = placedGlyph(glyph);
+    if (at === undefined || y < at.y - REACH_UP * at.size || y > at.y + REACH_DOWN * at.size)
+      continue;
+    if (at.x <= x) {
+      if (before === undefined || at.x >= before.x) before = at;
+    } else if (after === undefined || at.x < after.x) after = at;
+  }
+  const own = before && fieldAt(before.glyph);
+  if (before === undefined || own === undefined) return undefined;
+  if (x <= before.x + (before.advance ?? LETTER * before.size)) return own;
+  const next = after && fieldAt(after.glyph);
+  return next?.field === own.field ? next : undefined;
+}
+
+/**
+ * What a click on the page does: report the field and character under it, or beside it on its
+ * line (`fieldNear`), if there is one; else the locked part under it, where its words can be
+ * retyped (`retypable`), so that its editor opens.
  */
 export function onPageClick(
   onField?: PageProps["onField"],
   onLocked?: PageProps["onLocked"],
   retypable?: ReadonlySet<string>,
 ) {
-  return (event: { target: EventTarget | null }) => {
+  return (event: { target: EventTarget | null; clientX?: number; clientY?: number }) => {
     const target = event.target as Element | null;
-    const hit = fieldAt(target);
+    const hit = fieldAt(target) ?? fieldNear(target, event.clientX, event.clientY);
     if (hit) {
       onField?.(hit.field, hit.offset);
       return;

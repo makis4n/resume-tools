@@ -10,9 +10,10 @@ import type { Shown } from "../editor/compiler";
 import { type Command, type Document, newDocument } from "../editor/document";
 import { Overlay } from "../editor/Overlay";
 import { curated } from "../templates/curated";
-import type { DviDocument } from "../tex/dvi";
+import type { DviDocument, PageItem } from "../tex/dvi";
+import type { Field } from "../tex/fields";
 import { glyphOf, glyphText } from "../tex/glyphs";
-import { renderPage, US_LETTER } from "../tex/svg";
+import { INCH, renderPage, US_LETTER } from "../tex/svg";
 import { parseTfm } from "../tex/tfm";
 import { parseType1 } from "../tex/type1";
 import type { DrawnPage, FieldLayout } from "./draw";
@@ -780,5 +781,305 @@ describe("every page on screen (decision 0046)", () => {
       (element) => (element as HTMLElement).tabIndex >= 0,
     );
     expect(stops.map((element) => element.textContent)).toEqual(["Before", "After"]);
+  });
+});
+
+// The first click on a field that seemed to miss (the owner's decision of 2026-10-05). An invented
+// document of two pages, the window scrolled down to the second, which sets a field of two words
+// in a TeX font, as pdfTeX sets a name, a kept part's glyph after it on its line, and under them a
+// field of two words in a native font, as XeTeX sets a bullet. The space between two words is no
+// glyph, and a glyph takes a click only within its ink's box, so a click between the words lands
+// on the page's white, as the browser said of the click that missed.
+
+const KEPT = "lock-after";
+/** The two lines' baselines, down the page from the DVI origin, in points. */
+const TEX_LINE = 30;
+const NATIVE_LINE = 50;
+/**
+ * The TeX field's glyphs' origins: two words of four glyphs, each five points wide, the first word
+ * ending at 20 points and the second starting at 26.
+ */
+const TEX_X = [0, 5, 10, 15, 26, 31, 36, 41];
+/** Where each of the TeX field's glyphs is in its text: the space between its words is at 4. */
+const TEX_OFFSETS = [0, 1, 2, 3, 5, 6, 7, 8];
+/** The kept part's glyph, after the field on its line. */
+const KEPT_X = 60;
+/** The native field's glyphs' origins, which give no width, and where each is in its text. */
+const NATIVE_X = [0, 6, 18, 24];
+const NATIVE_OFFSETS = [0, 1, 3, 4];
+
+/** The two pages: the first with nothing on it, and the second with the two fields. */
+const WORD_PAGES: DrawnPage[] = (() => {
+  const SP = 65536;
+  const cmr10 = parseType1(fixture("cmr10.pfb"));
+  const letter = (code: number, h: number): PageItem => ({
+    kind: "glyph",
+    font: 1,
+    code,
+    h: h * SP,
+    v: TEX_LINE * SP,
+    width: 5 * SP,
+  });
+  const items: PageItem[] = [
+    ...TEX_X.map((h, index) => letter(97 + index, h)),
+    letter(122, KEPT_X),
+    {
+      kind: "native",
+      font: 2,
+      h: 0,
+      v: NATIVE_LINE * SP,
+      width: 30 * SP,
+      glyphs: NATIVE_X.map((x) => ({ id: 7, x: x * SP, y: 0 })),
+    },
+  ];
+  const doc: DviDocument = {
+    id: 8,
+    numerator: 25_400_000,
+    denominator: 473_628_672,
+    magnification: 1000,
+    comment: "",
+    fonts: new Map([[1, { id: 1, name: "cmr10", checksum: 0, scale: 10 * SP, design: 10 * SP }]]),
+    nativeFonts: new Map([[2, { id: 2, name: "Invented.otf", index: 0, size: 10 * SP, flags: 0 }]]),
+    pages: [
+      { counters: [], items: [] },
+      { counters: [], items },
+    ],
+  };
+  const run = TEX_X.length + 1;
+  const fields = new Map<string, Field>([
+    [
+      PLAIN,
+      {
+        id: PLAIN,
+        glyphs: TEX_X.map((_, item) => ({ item, text: "a", offset: TEX_OFFSETS[item] ?? 0 })),
+      },
+    ],
+    [
+      LATER,
+      {
+        id: LATER,
+        glyphs: NATIVE_X.map((_, glyph) => ({
+          item: run,
+          glyph,
+          text: "v",
+          offset: NATIVE_OFFSETS[glyph] ?? 0,
+        })),
+      },
+    ],
+  ]);
+  const block: Box = {
+    left: INCH + KEPT_X - 1,
+    top: INCH + TEX_LINE - 8,
+    right: INCH + KEPT_X + 6,
+    bottom: INCH + TEX_LINE + 3,
+  };
+  return doc.pages.map((each, index): DrawnPage => {
+    const second = index === 1;
+    return {
+      svg: renderPage(doc, each, {
+        outlines: (name) => (name === "cmr10" ? cmr10 : undefined),
+        native: () => ({ unitsPerEm: 1000, pathOf: () => "M0 0L500 700Z" }),
+        ...(second ? { fields } : {}),
+        locked: {
+          glyphs: new Map(second ? [[String(TEX_X.length), KEPT]] : []),
+          blocks: new Map(second ? [[KEPT, [block]]] : []),
+        },
+        ids: index === 0 ? "" : `p${index}-`,
+      }),
+      size: US_LETTER,
+      fields: second
+        ? new Map([
+            [PLAIN, { id: PLAIN, glyphs: [], layout: layoutAt(INCH + TEX_LINE) }],
+            [LATER, { id: LATER, glyphs: [], layout: layoutAt(INCH + NATIVE_LINE) }],
+          ])
+        : new Map(),
+      locked: new Map([[KEPT, { id: KEPT, blocks: second ? [block] : [] }]]),
+      glyphs: [],
+      pageCount: 2,
+      unmatched: 0,
+      missingFonts: new Map(),
+    };
+  });
+})();
+
+const shownWords: Shown = { ...shown, page: WORD_PAGES[0] as DrawnPage, pages: WORD_PAGES };
+
+/** Every page and the overlay over them, as the app puts them together, each click noted. */
+function WordPages({ clicks }: { clicks: [string, number][] }) {
+  const [clicked, setClicked] = useState<{ field: string; offset: number; click: number }>();
+  const [sheet, setSheet] = useState<HTMLDivElement | null>(null);
+  return (
+    <div ref={setSheet} style={{ position: "relative" }}>
+      <Pages
+        pages={WORD_PAGES}
+        onField={(field, offset) => {
+          clicks.push([field, offset]);
+          setClicked({ field, offset, click: clicks.length });
+        }}
+      />
+      {clicked && sheet && (
+        <Overlay
+          key={clicked.click}
+          field={clicked.field}
+          offset={clicked.offset}
+          document={document0}
+          shown={shownWords}
+          page={sheet}
+          onCommand={(_: Command) => {}}
+          onClose={() => setClicked(undefined)}
+        />
+      )}
+    </div>
+  );
+}
+
+describe("a click between a field's glyphs, the window scrolled (the first click that missed)", () => {
+  let host: HTMLElement;
+  let root: Root;
+  let clicks: [string, number][];
+  /** How far down the window is scrolled, in pixels. */
+  let scrolled = 0;
+  const ctm = Object.getOwnPropertyDescriptor(SVGElement.prototype, "getScreenCTM");
+  const rect = Object.getOwnPropertyDescriptor(Element.prototype, "getBoundingClientRect");
+  const point0 = (globalThis as { DOMPoint?: unknown }).DOMPoint;
+
+  beforeAll(() => {
+    Object.assign(globalThis, {
+      FontFace: class {
+        load() {
+          return Promise.resolve(this);
+        }
+      },
+    });
+    if (!("fonts" in window.document))
+      Object.defineProperty(window.document, "fonts", { value: { add: () => {} } });
+    // jsdom lays nothing out: each page's SVG is drawn at a pixel a point, the second `SECOND`
+    // pixels under the first, and the window scrolled down by `scrolled` moves everything up.
+    Object.defineProperty(SVGElement.prototype, "getScreenCTM", {
+      configurable: true,
+      value(this: SVGElement) {
+        const index = Number(this.closest("[data-page]")?.getAttribute("data-page") ?? 0);
+        return { a: 1, b: 0, c: 0, d: 1, e: 0, f: index * SECOND - scrolled };
+      },
+    });
+    Object.defineProperty(Element.prototype, "getBoundingClientRect", {
+      configurable: true,
+      value: () =>
+        ({
+          left: 0,
+          top: -scrolled,
+          width: 900,
+          height: 2 * SECOND,
+          x: 0,
+          y: -scrolled,
+        }) as DOMRect,
+    });
+    if (point0 === undefined)
+      Object.assign(globalThis, {
+        DOMPoint: class {
+          constructor(
+            readonly x: number,
+            readonly y: number,
+          ) {}
+          matrixTransform(m: { a: number; b: number; c: number; d: number; e: number; f: number }) {
+            return { x: m.a * this.x + m.c * this.y + m.e, y: m.b * this.x + m.d * this.y + m.f };
+          }
+        },
+      });
+  });
+
+  afterAll(() => {
+    if (ctm) Object.defineProperty(SVGElement.prototype, "getScreenCTM", ctm);
+    else delete (SVGElement.prototype as { getScreenCTM?: unknown }).getScreenCTM;
+    if (rect) Object.defineProperty(Element.prototype, "getBoundingClientRect", rect);
+    if (point0 === undefined) delete (globalThis as { DOMPoint?: unknown }).DOMPoint;
+  });
+
+  beforeEach(() => {
+    scrolled = 0;
+    host = window.document.createElement("div");
+    window.document.body.append(host);
+    root = createRoot(host);
+    clicks = [];
+    act(() => root.render(<WordPages clicks={clicks} />));
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  const second = () => host.querySelector('[data-page="1"]') as HTMLElement;
+
+  /**
+   * A click on the second page at `x` points along a line from the DVI origin and `above` points
+   * over its `baseline`, as the browser sends one: to the element under it, which `on` names, the
+   * page's white unless said, and with where it is in the window, scrolled as it is.
+   */
+  function clickAt(x: number, baseline: number, above = 3, on?: Element | null) {
+    const target = on ?? second().querySelector('rect[fill="white"]');
+    if (!target) throw new Error("nothing to click on");
+    act(() => {
+      target.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          clientX: INCH + x,
+          clientY: SECOND - scrolled + INCH + baseline - above,
+        }),
+      );
+    });
+  }
+
+  /** The plain overlay's rows, once placed on the page that shows their field. */
+  async function placedRows(): Promise<HTMLElement> {
+    for (let tries = 0; tries < 50; tries++) {
+      const rows = host.querySelector(".overlay[contenteditable]") as HTMLElement | null;
+      if (rows?.style.top) return rows;
+      await act(() => new Promise((done) => setTimeout(done, 10)));
+    }
+    throw new Error("the plain overlay was not placed");
+  }
+
+  /** Close the open field, as a click elsewhere does. */
+  const leave = () => act(() => (window.document.activeElement as HTMLElement | null)?.blur());
+
+  it("opens a field at the first click between its words, after a scroll to its page", async () => {
+    scrolled = SECOND;
+    // Between the TeX field's two words: past the first, which ends at 20 points, and before the
+    // second, which starts at 26.
+    clickAt(23, TEX_LINE);
+    expect(clicks).toEqual([[PLAIN, 5]]);
+    // Over the field on the second page, where the window has scrolled it to.
+    const top = Number.parseFloat((await placedRows()).style.top);
+    expect(top).toBeGreaterThan(SECOND + INCH + TEX_LINE - 20);
+    expect(top).toBeLessThan(SECOND + INCH + TEX_LINE);
+    // Above a short letter, the second, within its width, from 5 points to 10: the letter's.
+    leave();
+    clickAt(7.5, TEX_LINE, 7);
+    expect(clicks.at(-1)).toEqual([PLAIN, 1]);
+  });
+
+  it("opens a field set in a native font, whose glyphs give no width, between its words", async () => {
+    scrolled = SECOND;
+    // Past half a size after the first word's last glyph, at 6, and before the second word's, at 18.
+    clickAt(15, NATIVE_LINE);
+    expect(clicks).toEqual([[LATER, 3]]);
+    await placedRows();
+  });
+
+  it("opens nothing off a field's line, past its end, or on a kept part's glyph beside it", async () => {
+    scrolled = SECOND;
+    // Past the field's end, at 46 points, and before the kept part's glyph, at 60; between the
+    // lines; and far off both.
+    clickAt(53, TEX_LINE);
+    clickAt(26, (TEX_LINE + NATIVE_LINE) / 2);
+    clickAt(300, TEX_LINE);
+    // On the kept part's glyph, and on its block beside it, on the field's line: the part's.
+    const kept = second().querySelector(`use[data-locked="${KEPT}"]`);
+    clickAt(KEPT_X, TEX_LINE, 3, kept);
+    clickAt(KEPT_X + 5, TEX_LINE, 3, second().querySelector(`rect[data-locked="${KEPT}"]`));
+    await act(() => new Promise((done) => setTimeout(done, 50)));
+    expect(clicks).toEqual([]);
+    expect(host.querySelector(".overlay")).toBeNull();
   });
 });
