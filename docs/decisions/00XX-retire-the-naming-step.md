@@ -2,7 +2,7 @@
 
 Date: 2026-10-05 · Status: accepted; carries out 0049's "the naming step is deleted, not kept
 unused"; supersedes what 0049 left of 0024, 0027, 0036, 0037, 0044's choice for naming, and
-0033's gate and leak check
+0033's gate and leak check; marks what it deletes in 0026, 0028, 0035 and 0043
 
 ## Context
 

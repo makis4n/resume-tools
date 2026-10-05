@@ -1,5 +1,9 @@
 # 0035. The corpus runs by hand
 
+> Superseded by 00XX in its leak check: it is deleted with the naming request it checked (the
+> second pass's item 17); a .tex import sends nothing, and the corpus workflow runs the survey and
+> the import run.
+
 Date: 2026-09-30 · Status: accepted; amends 0018 and 0033
 
 ## Context
