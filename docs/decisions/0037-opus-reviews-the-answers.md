@@ -1,5 +1,8 @@
 # 0037. Opus reviews the top templates' answers
 
+> Superseded by 0063: the review's commands and the reviewed answers are deleted with the naming
+> step (the second pass's item 17).
+
 Date: 2026-09-30 · Status: accepted; amends 0024; superseded by 0049: the naming step leaves the import, and the reviewed answers go with it
 
 ## Context

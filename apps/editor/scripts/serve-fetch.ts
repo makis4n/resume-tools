@@ -2,7 +2,7 @@
  * The service's routes in the dev server (decision 0028): each route's handler is written against
  * the fetch API, and these convert Node's request to a `Request`, whose body is a stream the handler
  * reads no faster than it takes it and no further than its cap, and the handler's `Response` back
- * to Node's. The naming route (`serve-naming.ts`) and the label route (`serve-label.ts`) share them.
+ * to Node's. The label route (`serve-label.ts`) uses them.
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";

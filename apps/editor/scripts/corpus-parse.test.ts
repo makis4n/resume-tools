@@ -3,19 +3,11 @@ import { bodyOfText, parseBody, type Signatures } from "../src/import/parse";
 import { isRefusal } from "../src/import/refusal";
 import type { EngineSignatures } from "../src/import/signatures";
 import {
-  baseName,
-  calledNames,
   charactersOf,
   datesOf,
-  definedNames,
-  documentClassOf,
-  fileMacros,
-  filePairs,
-  movedByPreamble,
   type ParseRow,
   parseNames,
   parseTable,
-  settingOf,
   shownMacro,
   signatureCounts,
   suspectsOf,
@@ -43,11 +35,6 @@ const templates = (meaning: number, unresolved = 0) => ({
 });
 
 describe("the table", () => {
-  const cls = (macros: Record<string, string>) => ({
-    hash: "a".repeat(64),
-    setting: "s".repeat(64),
-    macros,
-  });
   const rows: ParseRow[] = [
     row("jake-0001", "jake", {
       engine: "pdftex",
@@ -67,10 +54,6 @@ describe("the table", () => {
       dates: 3,
       parseMs: 20,
       signaturesMs: 150,
-      files: [
-        cls({ cventry: "k1", "\\cvopt": "k2" }),
-        { hash: "b".repeat(64), setting: "s".repeat(64), macros: {} },
-      ],
     }),
     row("jake-0002", "jake", {
       engine: "pdftex",
@@ -87,7 +70,6 @@ describe("the table", () => {
       dates: 1,
       parseMs: 40,
       signaturesMs: 250,
-      files: [cls({ cventry: "k1", "\\cvopt": "k3", [`bad\n${SECRET}`]: "k4" })],
     }),
     row("awesome-cv-0001", "awesome-cv", {
       engine: "xetex",
@@ -106,7 +88,6 @@ describe("the table", () => {
       undefinedNames: ["cvbodydefined"],
       chars: { body: 2000, text: 100, calls: 1500, raw: 200 },
       parseMs: 100,
-      files: [cls({ cventry: "k1" })],
     }),
     row("other-0001", "other", { outcome: "no reference" }),
     row("other-0002", "other", { outcome: "refused", refused: "deep" }),
@@ -165,29 +146,6 @@ describe("the table", () => {
       "0",
       "3",
     ]);
-  });
-
-  test("says, for two documents sharing a class byte for byte, whether its macros' keys agree", () => {
-    // jake-0001 and jake-0002 share it, and differ in one macro; each and awesome-cv-0001 agree.
-    expect(cells("Pairs of documents, a pair for each such file")).toEqual([
-      "1",
-      "0",
-      "0",
-      "0",
-      "0",
-      "0",
-      "3",
-    ]);
-    expect(cells("The file's macros both call have the same keys")?.at(-1)).toBe("2");
-    // Neither preamble moves `\\cvopt`'s key: the key invariant fails, where it should hold.
-    expect(
-      cells("Other keys, each where a preamble defines a macro it hands its work to")?.at(-1),
-    ).toBe("0");
-    expect(cells("Other keys otherwise")).toEqual(["1", "0", "0", "0", "0", "0", "1"]);
-    expect(cells("They call none of the file's macros in common")?.at(-1)).toBe("0");
-    // The macro whose optional form's second macro, `\\cvopt`, has other keys, by its name.
-    expect(cells("`\\cvopt`")).toEqual(["1", "0", "0", "0", "0", "0", "1"]);
-    expect(table).not.toContain("bad");
   });
 
   test("counts the template macros, how their arguments were read, and per document", () => {
@@ -323,167 +281,5 @@ describe("what a document's row adds", () => {
     );
     if (isRefusal(tree)) throw new Error(tree.message);
     expect(suspectsOf(tree)).toBe(2);
-  });
-
-  test("reads the names a class or style file defines, and nothing of what they are", () => {
-    const cls = String.raw`\NeedsTeXFormat{LaTeX2e}
-\ProvidesClass{inventedcv}
-\newcommand{\cventry}[2]{#1 #2}
-\renewcommand*\cvtitle{Quill}
-\DeclareRobustCommand{\cvrobust}[1]{#1}
-\NewDocumentCommand{\cvxp}{s m}{#2}
-\def\cv@helper#1{#1}\long\gdef\cvlong{x}
-\let\cvalias\textbf
-\newenvironment{cvitems}{\begin{itemize}}{\end{itemize}}
-\NewDocumentEnvironment{cvbox}{m}{}{}
-% \newcommand{\cvcomment}{never}`;
-    expect([...definedNames(cls)].sort()).toEqual(
-      [
-        "cventry",
-        "cvtitle",
-        "cvrobust",
-        "cvxp",
-        "cv@helper",
-        "cvlong",
-        "cvalias",
-        "cvitems",
-        "endcvitems",
-        "cvbox",
-        "endcvbox",
-      ].sort(),
-    );
-  });
-
-  test("takes the keys of a file's macros the body calls and the preamble leaves alone", () => {
-    expect(baseName("\\cvopt")).toBe("cvopt");
-    expect(baseName("cvrobust ")).toBe("cvrobust");
-    expect(baseName("cvxp code")).toBe("cvxp");
-    expect(baseName("environment cvbox end code")).toBe("cvbox");
-    const keys = {
-      cvopt: "k1",
-      "\\cvopt": "k2",
-      cvxp: "k3",
-      cvbox: "k4",
-      endcvbox: "k5",
-      cvmine: "k6",
-      cvunused: "k7",
-    };
-    const defined = new Set(["cvopt", "cvxp", "cvbox", "endcvbox", "cvmine", "cvunused"]);
-    // `\\cvopt` is not called: `cvopt`'s key is its closure's, which holds it. `cvmine` the
-    // preamble defines again, and `cvother` the file does not define.
-    expect(
-      fileMacros(
-        keys,
-        defined,
-        new Set(["cvopt", "cvxp", "cvbox", "endcvbox", "cvmine", "cvother"]),
-        new Set(["cvmine"]),
-      ),
-    ).toEqual({ cvopt: "k1", cvxp: "k3", cvbox: "k4", endcvbox: "k5" });
-  });
-
-  test("counts as called each template command and template environment's begin and end", () => {
-    expect(
-      calledNames({
-        commands: {
-          cvone: { kind: "template", how: "meaning", spec: "m" },
-          cvtwo: { kind: "template", how: "unresolved", why: "delimited" },
-          textbf: { kind: "standard", how: "meaning", spec: "m" },
-          cvgone: { kind: "undefined", how: "unresolved", why: "undefined" },
-        },
-        environments: {
-          cvbox: { kind: "template", how: "meaning", spec: "" },
-          center: { kind: "standard", how: "meaning", spec: "" },
-        },
-      }),
-    ).toEqual(new Set(["cvone", "cvtwo", "cvbox", "endcvbox"]));
-  });
-
-  test("gives a file's setting from its options, moderncv's style and the engine", () => {
-    const preamble = String.raw`\documentclass[11pt, a4paper]{moderncv} % [10pt]{moderncv}
-\usepackage[scaled=0.9]{inventedfont}
-\usepackage{other,inventedstyle}
-\moderncvstyle{classic}
-\moderncvcolor{blue}`;
-    expect(documentClassOf(preamble)).toBe("moderncv");
-    expect(documentClassOf("% \\documentclass{article}")).toBeUndefined();
-    const setting = settingOf(preamble, "texmf/tex/latex/moderncv/moderncv.cls", "pdftex");
-    expect(JSON.parse(setting)).toEqual({
-      options: ["11pt", "a4paper"],
-      own: [],
-      style: [["style", [], "classic"]],
-      colour: ["blue"],
-      engine: "pdftex",
-    });
-    expect(JSON.parse(settingOf(preamble, "inventedfont.sty", "pdftex")).own).toEqual([
-      ["scaled=0.9"],
-    ]);
-    expect(JSON.parse(settingOf(preamble, "inventedstyle.sty", "pdftex")).own).toEqual([[]]);
-    // Another style, colour, option or engine is another setting; spaces between are not.
-    const moved = (from: string, to: string) =>
-      settingOf(preamble.replace(from, to), "moderncv.cls", "pdftex");
-    const same = settingOf(preamble, "moderncv.cls", "pdftex");
-    expect(moved("{classic}", "{casual}")).not.toBe(same);
-    expect(moved("{blue}", "{green}")).not.toBe(same);
-    expect(moved("11pt", "10pt")).not.toBe(same);
-    expect(settingOf(preamble, "moderncv.cls", "xetex")).not.toBe(same);
-    expect(moved("11pt, a4paper", "11pt,a4paper")).toBe(same);
-  });
-
-  test("pairs the documents that hold a file byte for byte with one setting, each once", () => {
-    const held = (id: string, macros: Record<string, string>, setting = "s"): ParseRow =>
-      row(id, "moderncv", {
-        files: [
-          { hash: "c".repeat(64), setting, macros },
-          { hash: "c".repeat(64), setting, macros },
-        ],
-      });
-    expect(
-      filePairs([
-        held("moderncv-0001", { a: "1" }),
-        held("moderncv-0002", { a: "1", b: "2" }),
-        // The same file in another style: no pair with either.
-        held("moderncv-0003", { a: "9" }, "t"),
-      ]),
-    ).toEqual([{ families: ["moderncv", "moderncv"], common: 1, differing: [], unexplained: [] }]);
-  });
-
-  test("tells keys a preamble moves from keys that differ otherwise", () => {
-    const held = (id: string, macros: Record<string, string>, moved?: string[]): ParseRow =>
-      row(id, "altacv", {
-        files: [{ hash: "d".repeat(64), setting: "s", macros, ...(moved ? { moved } : {}) }],
-      });
-    expect(
-      filePairs([
-        held("altacv-0001", { cvsection: "1", cvtag: "2", cvevent: "3" }, ["cvsection"]),
-        held("altacv-0002", { cvsection: "4", cvtag: "5", cvevent: "3" }),
-      ]),
-    ).toEqual([
-      {
-        families: ["altacv", "altacv"],
-        common: 3,
-        differing: ["cvsection", "cvtag"],
-        unexplained: ["cvtag"],
-      },
-    ]);
-    // What a preamble moves: a called macro whose closure holds a definition it defines, but not
-    // one that holds data, which takes no part in a key.
-    const signatures: Pick<EngineSignatures, "macros"> = {
-      macros: {
-        cvsection: { meaning: "m", hash: "1", dependencies: ["cvsectionfont"], capped: false },
-        cvtag: { meaning: "m", hash: "2", dependencies: ["@name"], capped: false },
-        cvopt: { meaning: "m", hash: "3", dependencies: ["\\cvopt"], capped: false },
-        "\\cvopt": { meaning: "m", hash: "4", dependencies: [], capped: false },
-        cvsectionfont: { meaning: "m", hash: "5", dependencies: [], capped: false },
-        "@name": { kind: "data", length: 5 },
-      },
-    };
-    expect(
-      movedByPreamble(
-        signatures,
-        ["cvsection", "cvtag", "cvopt"],
-        new Set(["cvsectionfont", "@name"]),
-      ),
-    ).toEqual(["cvsection"]);
-    expect(movedByPreamble(signatures, ["cvopt"], new Set(["cvopt"]))).toEqual(["cvopt"]);
   });
 });

@@ -2,9 +2,9 @@
  * The reading service's route that labels a PDF's lines (milestone 3 second pass, item 13):
  * `POST /v1/label`, one handler written against the fetch API, which the dev server's middleware
  * (`scripts/serve-label.ts`) and a Cloudflare Pages Function (`functions/v1/label.ts`) both serve,
- * as the naming service's is (decision 0028). It imports neither Node, nor Vite, nor the Workers
- * runtime: its host hands it the model or none, the client's address, a store for the rate limit's
- * buckets, the limits, a clock and a log.
+ * as the first pass's naming service's was (decision 0028). It imports neither Node, nor Vite, nor
+ * the Workers runtime: its host hands it the model or none, the client's address, a store for the
+ * rate limit's buckets, the limits, a clock and a log.
  *
  * A request is taken in this order: its method and its content type; its address's rate limit,
  * looked at; its body, read no further than the cap; the contract's schema (`LabelRequest`); the
@@ -172,9 +172,9 @@ async function readCapped(request: Request, cap: number): Promise<Uint8Array | u
 
 /**
  * Whether this process has said that the rate limit's store failed: said once, by class. Unlike the
- * naming route's, the label route fails closed: a request it cannot count is refused with 429 and
- * the model is not asked, since on KV a write refused within a second would otherwise let a burst
- * through uncounted (item 13's review).
+ * first pass's naming route, the label route fails closed: a request it cannot count is refused
+ * with 429 and the model is not asked, since on KV a write refused within a second would otherwise
+ * let a burst through uncounted (item 13's review).
  */
 let rateStoreFailed = false;
 

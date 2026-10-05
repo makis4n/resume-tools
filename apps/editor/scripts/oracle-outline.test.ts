@@ -15,27 +15,17 @@ import { ORACLE_DIR, ORACLE_FILE, Oracle, oracleDocument } from "./corpus-oracle
 import { uploadOf } from "./corpus-reference";
 
 // The second pass's item 5 (decision 0049): each upstream sample imported as the browser imports a
-// resume, through `importResume` on a session of its own, as an outline, with no naming step. The
-// naming step's modules, the assembly and the first pass's checks cannot even be loaded here, and
-// of the naming package only its masking can be read: a `.tex` import that reached any of the rest
-// would fail. Numbers alone, ids and counts, reach
-// the test's output: a sample's text never does, nor does a compile's log, which may quote it.
+// resume, through `importResume` on a session of its own, as an outline, with no naming step: the
+// model's provider code cannot even be loaded here, and a `.tex` import that reached it would fail.
+// Numbers alone, ids and counts, reach the test's output: a sample's text never does, nor does
+// a compile's log, which may quote it.
 
 const { loaded } = vi.hoisted(() => ({
   loaded: (name: string) => () => {
     throw new Error(`a .tex import loaded ${name}, which it must not reach`);
   },
 }));
-// The naming contract's masking of a definition's personal data, which the signatures step applies
-// to what it reads of the template's macros, is the one thing of the naming package it may use;
-// any other export, a request's schema, a key or a version, throws as it is read.
-vi.mock("@resume-tools/naming", async (importOriginal) => ({
-  maskDefinition: (await importOriginal<typeof import("@resume-tools/naming")>()).maskDefinition,
-}));
-vi.mock("../src/import/naming", loaded("the naming request's builder"));
-vi.mock("../src/import/service", loaded("the naming service's client"));
-vi.mock("../src/import/assemble", loaded("the first pass's assembly"));
-vi.mock("../src/import/validate", loaded("the first pass's checks"));
+vi.mock("@resume-tools/naming/providers", loaded("the model's provider code"));
 
 /** Whether this machine has fetched the oracle's samples, which `corpus oracle` fetches. */
 const fetched = existsSync(join(ORACLE_DIR, "jake-0000", "resume.tex"));

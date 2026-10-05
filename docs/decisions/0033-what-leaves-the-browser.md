@@ -1,5 +1,8 @@
 # 0033. What leaves the browser
 
+> Superseded by 0063 in its gate and leak check, which are deleted with the naming request (the
+> second pass's item 17); its masking of a definition stays in the signatures step.
+
 Date: 2026-09-27 · Status: proposed; the leak check runs when the corpus workflow is started by hand, not nightly (0035); the rule it serves is restated as one sentence by 0047; amended by 0049: its gate and leak check go with the naming step
 
 ## Context

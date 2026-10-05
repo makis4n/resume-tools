@@ -56,9 +56,10 @@ import {
 } from "./corpus-manifest.ts";
 import { ORACLE_DIR, ORACLE_FILE, Oracle, oracleDocument } from "./corpus-oracle.ts";
 import { runPool, treeFonts, uploadOf } from "./corpus-reference.ts";
-import { idsOf, type RunFile } from "./corpus-run.ts";
+import { idsOf } from "./corpus-run.ts";
 import {
   documentTable,
+  type FirstPassRun,
   firstPassOf,
   importMs,
   type OutlineChildRow,
@@ -186,7 +187,9 @@ function line(row: OutlineRow): string {
 
 /** The tables, from the rows there are and the first pass's run. */
 function report(first: string) {
-  const run = existsSync(first) ? (JSON.parse(readFileSync(first, "utf8")) as RunFile) : undefined;
+  const run = existsSync(first)
+    ? (JSON.parse(readFileSync(first, "utf8")) as FirstPassRun)
+    : undefined;
   if (run === undefined)
     print([`No first pass's run at ${first}: its column reads ? for the corpus's documents`]);
   const passes = firstPassOf(run);

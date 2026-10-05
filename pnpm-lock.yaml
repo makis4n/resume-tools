@@ -137,9 +137,6 @@ importers:
       '@ai-sdk/openai-compatible':
         specifier: 3.0.57
         version: 3.0.57(zod@4.6.2)
-      '@resume-tools/resume-model':
-        specifier: workspace:*
-        version: link:../resume-model
       ai:
         specifier: ^7.0.116
         version: 7.0.116(zod@4.6.2)

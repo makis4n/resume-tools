@@ -1,5 +1,8 @@
 # 0056. Reading a PDF with the hosted model, with consent
 
+> Amended by 0063: the label route's KV namespace is renamed from NAMING_KV to LABEL_KV, under the
+> same label-rate: keys, with the naming route's deletion (the second pass's item 17).
+
 Date: 2026-10-04 · Status: accepted
 
 ## Context

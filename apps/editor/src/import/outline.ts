@@ -30,7 +30,7 @@
  * upload that makes one is refused (`keep`).
  *
  * Nothing here compiles: the checks compile the outline (`checks.ts`). Nothing here reaches the
- * naming step, the assembly or the network.
+ * network.
  */
 
 import {
@@ -50,14 +50,13 @@ import {
   TemplatePackage,
   UNIT_KINDS,
 } from "../templates/package";
-import type { GlyphOwner, LockReason } from "./assemble";
 import { type Candidate, wrapEnd } from "./candidates";
 import { decodeText } from "./intake";
 import type { Argument, Node, Span, Tree } from "./parse";
 import { extensionOf } from "./paths";
 import type { ProbeCandidate, UncoveredRun } from "./probe";
 import { COMPATIBILITY, type GlyphStream, type Reference } from "./reference";
-import { ownRunningLines, pageWords } from "./report";
+import { type GlyphOwner, type LockReason, ownRunningLines, pageWords } from "./report";
 import { type EngineSignatures, replacementOf } from "./signatures";
 import { snippetText } from "./templating";
 

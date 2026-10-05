@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { keyOf, NAMING_VERSION, sha256 } from "@resume-tools/naming";
 import { strToU8, zipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
 import type { EngineManifest } from "../engine/manifest";
@@ -8,11 +7,10 @@ import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
+import { fastest } from "../test/timing";
 import { readTree } from "./fonts";
 import { encodeLike, type Intake, intake } from "./intake";
-import { environmentKeysOf, keyInputs, keysOf } from "./keys";
-import { buildRequest } from "./naming";
-import { bodyOf, bodyOfText, buildTree, parseBody, readBody, type Uses, usesOf } from "./parse";
+import { bodyOf, buildTree, readBody, type Uses, usesOf } from "./parse";
 import { print } from "./print";
 import { compileLikeReference, type Reference, reference, sameGlyphs } from "./reference";
 import { isRefusal } from "./refusal";
@@ -475,7 +473,71 @@ describe("data and definitions", () => {
       "macro:->\\kern 2pt \\hskip 1.5em 2020-12",
     );
     expect(masked("macro:->2020-12-31")).toBe(`macro:->${hidden("phone", "2020-12-31")}`);
+    // A link the pattern finds is masked whoever's it is, the class's own template of one among
+    // them: a definition hashes the same whoever it links to.
+    expect(masked("macro:#1->\\href {mailto:#1}{#1}")).toBe("macro:#1->\\href {<link___>}{#1}");
+    // A placeholder too short to name its kind is underscores.
+    expect(masked("macro:->a@b.de")).toBe("macro:->______");
+    expect(masked("macro:->a@bc.de")).toBe("macro:-><email>");
+    // An address is masked whole, underscores, dots and all, and a host of several labels.
+    for (const email of ["quill_invented@example.invalid", "q.i+cv@mail.example.co.uk"])
+      expect(masked(`macro:->{${email}}`)).toBe(`macro:->{${hidden("email", email)}}`);
   });
+
+  test("masks a postcode of letters and digits, and none of a class's code with numbers", () => {
+    for (const code of [
+      "QV1A 2ZX",
+      "QX1A 1BZ",
+      "Q1 1QX",
+      "QX33 8XQ",
+      "XQ2 6QX",
+      "X9Q 0Q9",
+      "Q5V 3Q9",
+    ])
+      expect(masked(`macro:->Harbour City\\\\ ${code}\\par `), code).toBe(
+        `macro:->Harbour City\\\\ ${"_".repeat(code.length)}\\par `,
+      );
+    // A postcode of digits alone is a number as code writes one, and one written without its
+    // capitals or its space is no shape a pattern can tell.
+    const code = [
+      "macro:->\\penalty 10000 \\hskip 12345sp \\@M 10000\\relax 94103\\par ",
+      "macro:->\\fontencoding {T1}\\fontsize {10}{12}\\selectfont \\usefont {LY1}{ptm}{m}{n}",
+      'macro:->\\DeclareFontShape {T1}{lmr}{m}{n}{<-> ec-lmr10}{}\\char "1F600 ',
+      "macro:->\\definecolor {accent}{HTML}{1F4E79}\\setcounter {secnumdepth}{0}",
+      "macro:->\\ProvidesClass {inventedcv}[v1.2 an invented class]\\LoadClass [11pt]{article}",
+      "macro:->\\geometry {a4paper, margin=1.5cm, top=2cm}\\pgfmathsetmacro \\x {360*0.25}",
+      "macro:->A4 paper, T1 OT1 TS1 TU, LY1 A5 B5, \\hyphenpenalty =10000 \\exhyphenpenalty 50",
+      "macro:->\\node [minimum width=3cm] at (0,4.5) {X1}; \\draw (A1) -- (B2);",
+      "macro:->qv1a 2zx QV1A2ZX X9Q0Q9",
+    ];
+    for (const text of code) expect(masked(text), text).toBe(text);
+  });
+
+  test("masks in time linear in a definition's length, however it is spelled", () => {
+    // Runs of what an address is made of, which unbounded patterns tried from every start: each
+    // costs about ten times what a tenth of it costs, in CPU time, where it cost 90 times before
+    // the patterns were bounded, and seconds at the full length. So each is bound by three times
+    // ten times its tenth, and by 250 ms.
+    const shapes: [string, (length: number) => string][] = [
+      ["letters", (length) => "a".repeat(length)],
+      ["dotted letters", (length) => "a.".repeat(length / 2)],
+      ["dotted pairs", (length) => "aa.".repeat(length / 3)],
+      ["hyphenated labels", (length) => "a-a.".repeat(length / 4)],
+      ["spaced digits", (length) => `${"1 ".repeat(length / 2)}x`],
+      ["digits among spaces", (length) => `1${" ".repeat(50)}`.repeat(length / 51)],
+    ];
+    for (const [shape, make] of shapes) {
+      const [short = 0, long = 0] = fastest(
+        [6_400, 64_000].map((length) => {
+          const text = make(length);
+          return () => masked(text);
+        }),
+        5,
+      );
+      expect(long, shape).toBeLessThan(Math.max(3 * 10 * short, 1));
+      expect(long, shape).toBeLessThan(250);
+    }
+  }, 60_000);
 
   test("knows LaTeX's, xkeyval's and expl3's scratch macros", () => {
     for (const name of ["@tempa", "@tempdima", "reserved@a", "Gin@tempa", "XKV@tfam"])
@@ -539,120 +601,6 @@ describe("a definition's closure", () => {
     expect(long.capped).toBe(true);
     expect(long.dependencies.filter((name) => chain.has(name))).toHaveLength(
       MAX_CLOSURE_MACROS - 1,
-    );
-  });
-
-  test("keys a definition by its hash and its dependencies', data taking no part", async () => {
-    const macros: EngineSignatures["macros"] = {
-      cvhead: { meaning: "a", hash: "h1", dependencies: ["@firstname", "cvsep"], capped: false },
-      cvsep: { meaning: "b", hash: "h2", dependencies: [], capped: false },
-      "@firstname": { kind: "data", length: 5 },
-    };
-    const keys = await keysOf({ macros });
-    expect(Object.keys(keys)).toEqual(["cvhead", "cvsep"]);
-    expect(keys.cvhead).toMatch(/^[0-9a-f]{64}$/);
-    const renamed = { ...macros, "@firstname": { kind: "data" as const, length: 9 } };
-    expect((await keysOf({ macros: renamed })).cvhead).toBe(keys.cvhead);
-    const unset = {
-      cvhead: { ...definition({ macros }, "cvhead"), dependencies: ["cvsep"] },
-      cvsep: definition({ macros }, "cvsep"),
-    };
-    expect((await keysOf({ macros: unset })).cvhead).toBe(keys.cvhead);
-    const changed = { ...macros, cvsep: { ...definition({ macros }, "cvsep"), hash: "h3" } };
-    expect((await keysOf({ macros: changed })).cvhead).not.toBe(keys.cvhead);
-  });
-});
-
-describe("an environment's key", () => {
-  /**
-   * An invented template: an entry, a list whose `\begin` and `\end` codes both hand their work to
-   * one gap, and a note whose `\end` code is empty, which holds data as the engine reads it.
-   */
-  const MEANINGS: Record<string, string> = {
-    cventry: "macro:#1#2->\\textbf {#1}\\hfill {\\color {gray}#2}\\par ",
-    cvlist: "macro:->\\begin {itemize}\\cvlist@gap ",
-    endcvlist: "macro:->\\end {itemize}\\cvlist@gap \\cvlist@rule ",
-    "cvlist@gap": "macro:->\\vspace {-2pt}",
-    "cvlist@rule": "macro:->\\hrule ",
-    cvnote: "macro:->\\par \\small \\itshape ",
-  };
-
-  async function inventedSignatures(meanings = MEANINGS): Promise<EngineSignatures> {
-    const texts = new Map(Object.entries(meanings));
-    const macros: EngineSignatures["macros"] = {};
-    for (const [name, meaning] of texts)
-      macros[name] = { meaning, hash: await sha256(meaning), ...closure(name, texts) };
-    macros.endcvnote = { kind: "data", length: 0 };
-    const template = (spec: string) => ({
-      kind: "template" as const,
-      spec,
-      how: "meaning" as const,
-    });
-    return {
-      engine: "pdftex",
-      commands: { cventry: template("m m") },
-      environments: { cvlist: template(""), cvnote: template("") },
-      macros,
-      truncated: false,
-      ms: 0,
-    };
-  }
-
-  const BODY = String.raw`
-\begin{cvlist}
-\item Invented a thing for an invented client.
-\end{cvlist}
-\begin{cvnote}
-An invented note.
-\end{cvnote}
-\cventry{Invented Role}{Invented Labs}
-`;
-
-  test("is the one the request gives it, its end code first and both closures after", async () => {
-    const found = await inventedSignatures();
-    const tree = parseBody(bodyOfText(BODY), found);
-    if (isRefusal(tree)) throw new Error(tree.message);
-    const built = await buildRequest(tree, found, { macros: [], candidates: [] }, "");
-    if (isRefusal(built)) throw new Error(built.message);
-    const { request } = built;
-    const keys = await keysOf(found);
-    for (const [of, name] of [
-      ["environment", "cvlist"],
-      ["environment", "cvnote"],
-      ["command", "cventry"],
-    ] as const) {
-      const macro = request.macros.find((each) => each.of === of && each.name === name);
-      expect(macro?.key, name).toMatch(/^[0-9a-f]{64}$/);
-      expect(keys[name], name).toBe(macro?.key);
-    }
-    expect(await environmentKeysOf(found)).toEqual({ cvlist: keys.cvlist, cvnote: keys.cvnote });
-    // The list's key covers its end code and the rule only that hands its work to, the gap once.
-    const inputs = keyInputs(found, "environment", "cvlist");
-    expect(inputs?.dependencies.map(([name]) => name)).toEqual([
-      "endcvlist",
-      "cvlist@gap",
-      "cvlist@rule",
-    ]);
-    expect(await keyOf(NAMING_VERSION, inputs?.hash ?? "", inputs?.dependencies ?? [])).toBe(
-      keys.cvlist,
-    );
-    // An end code that holds data is left out, as every dependency that holds data is: the note's
-    // key is its begin code's alone.
-    expect(keyInputs(found, "environment", "cvnote")?.dependencies).toEqual([]);
-    expect(keys.cvnote).toBe((await keysOf({ macros: found.macros })).cvnote);
-    // Its begin code alone, as a command, is keyed without the end.
-    expect(keys.cvlist).not.toBe((await keysOf({ macros: found.macros })).cvlist);
-  });
-
-  test("moves when the end code does, which the begin code's own key never sees", async () => {
-    const found = await inventedSignatures();
-    const moved = await inventedSignatures({
-      ...MEANINGS,
-      endcvlist: "macro:->\\end {itemize}\\cvlist@gap \\bigskip ",
-    });
-    expect((await keysOf(moved)).cvlist).not.toBe((await keysOf(found)).cvlist);
-    expect((await keysOf({ macros: moved.macros })).cvlist).toBe(
-      (await keysOf({ macros: found.macros })).cvlist,
     );
   });
 });
@@ -1040,7 +988,6 @@ ${preamble}
           ? expect.objectContaining({ kind: "data" })
           : quill.found.macros[name],
       );
-    expect((await keysOf(wren.found)).makecvheader).toBe((await keysOf(quill.found)).makecvheader);
     // A definition holding an email and a phone number hashes the same as one holding others of
     // the same length.
     const footer = definition(quill.found, "cvfooter");
@@ -1089,7 +1036,7 @@ ${preamble}
 \def\cv@sep{}
 `;
 
-  test("keys a class's macros the same in two documents that differ in their settings and names", async () => {
+  test("reads a class's macros the same in two documents that differ in their settings and names", async () => {
     const document = (preamble: string) => ({
       "cv.tex": `\\documentclass{inventedkeys}\n${preamble}\n\\begin{document}\n\\cvhead\n\\cvinfo{Invented}\n\\end{document}\n`,
       "inventedkeys.cls": KEYS_CLASS,
@@ -1098,11 +1045,9 @@ ${preamble}
       document("\\setkeys{cvinfo}{sep={, }}\n\\name{Quill}{Invented}"),
     );
     const two = await signaturesOf(document("\\setkeys{cvinfo}{icon={*}}\n\\name{Wren}{Other}"));
-    const keysOne = await keysOf(one.found);
-    const keysTwo = await keysOf(two.found);
     for (const name of ["cvinfo", "\\cvinfo", "cvhead"]) {
-      expect(keysOne[name], name).toMatch(/^[0-9a-f]{64}$/);
-      expect(keysTwo[name], name).toBe(keysOne[name]);
+      expect(definition(one.found, name).hash, name).toMatch(/^[0-9a-f]{64}$/);
+      expect(definition(two.found, name), name).toEqual(definition(one.found, name));
     }
     for (const found of [one.found, two.found]) {
       expect(Object.keys(found.macros).filter(isScratch)).toEqual([]);

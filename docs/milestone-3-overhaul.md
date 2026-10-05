@@ -324,7 +324,7 @@ closes.
 
 ### Stage 3. Retire and close
 
-17. [ ] **Retire the naming step.** Once item 9's numbers beat the first pass's and item 13 has
+17. [x] **Retire the naming step.** Once item 9's numbers beat the first pass's and item 13 has
     landed. The naming package's prompt, request, masking, cache and answers, the import's request
     and privacy gate, the service's naming route, the committed answers, and the review, seed,
     benchmark, leak and naming commands all go. The model's provider code and the service's shell,

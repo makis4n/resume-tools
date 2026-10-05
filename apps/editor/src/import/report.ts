@@ -30,21 +30,155 @@
  * value it needs is its own.
  */
 
-import type { AssemblyChecks, GlyphOwner, LockedPart, LockReason } from "./assemble";
+import type { PinStep, UnitKind } from "../templates/package";
 import type { Intake } from "./intake";
+import type { Verdict } from "./probe";
 import type { GlyphStream, Reference, ReferenceGlyph } from "./reference";
 import type { ImportReport } from "./run";
 
+// What the checks found, which the report reads: the types the first pass's assembly defined
+// (decision 0026), kept here when the second pass's item 17 deleted it, since the outline's checks
+// fill them (`checkOutline`, decision 0055) and the store keeps them (`ImportReport`).
+
 /**
- * What the first pass's naming step came to (decision 0038), which the report still reads from an
- * assembly of the corpus's runner: how many of the request's macros the service's cache answered,
- * how many it asked its model, how many keys were left unfiled because their answers disagree, and
- * how many macros it left with no answer; or, when no answer came at all, why. A `.tex` import of
- * the second pass names nothing (decision 0049), and the naming step goes with item 17.
+ * Why a part of the document is kept out of the model, or locked: the probe's reasons (decision
+ * 0022); a date the generator writes otherwise (`date`); a text its field cannot hold as the
+ * template set it, marked in part or in more than one paragraph (`shape`); a part no snippet can
+ * express as the upload wrote it (`unmapped`); the first check's difference (`differs`); the
+ * second check's text that stops the compile (`text`); and the harness's `fields` and
+ * `alignment`.
  */
-export type NamingOutcome =
-  | { hits: number; asked: number; conflicts: number; missing: number }
-  | { failed: string };
+export type LockReason =
+  | Exclude<Verdict, "editable" | "container">
+  | "date"
+  | "shape"
+  | "unmapped"
+  | "differs"
+  | "text"
+  | "fields"
+  | "alignment"
+  | "compile";
+
+/** A locked part of the document: where it stands in the source, its node, and how many words. */
+export interface LockedPart {
+  /** Where it stands: `b` or `p`, for the body or the preamble, and the offset it starts at. */
+  at: string;
+  /** A field's, a list's or a section's: its node's id, and the extras key that holds it. */
+  node?: string;
+  key?: string;
+  kind: "field" | "list" | "section" | "header";
+  reason: LockReason;
+  words: number;
+}
+
+/**
+ * What the checks decided: redefinitions refused and where the rest go, controls dropped, field
+ * instances and whole slots locked with why, the slots that are required, the kinds of unit a new
+ * one of which, or the removal of one, stops the compile, which the package marks (`fixed`) and
+ * the editor neither adds nor removes (decision 0038), and the locked parts whose removal, or move
+ * one place up or down, stops it, by id, which the package pins (`pinned`, decision 0041).
+ */
+export interface Decisions {
+  dropped?: readonly string[];
+  placement?: "class" | "preamble";
+  controls?: readonly ControlName[];
+  instances?: Readonly<Record<string, LockReason>>;
+  slots?: Readonly<Record<string, LockReason>>;
+  required?: readonly string[];
+  fixed?: readonly UnitKind[];
+  pinned?: Readonly<Record<string, readonly PinStep[]>>;
+}
+
+/**
+ * The style controls a package offers (decision 0006), but the date format, which is the
+ * generator's.
+ */
+export type ControlName = "pageSize" | "margins" | "fontSize" | "font" | "accent" | "density";
+
+/** A field of the document, as the checks mutate and lock it. */
+export interface AssembledField {
+  /** Its instance's name: where its content starts, and its slot (`Decisions.instances`). */
+  at: string;
+  /** Its slot's name: its macro and argument, or its standard node's kind (`Decisions.slots`). */
+  slot: string;
+  /** Its field's id in the document: `<node id>.<slot>`, or `header.<slot>`. */
+  field: string;
+  /** Its node's id, or `header`. */
+  node: string;
+  type: "text" | "rich" | "date";
+  /** Whether its node keeps extras, so that an instance can be locked alone. */
+  lockable: boolean;
+  /** The list its instance is locked with where it cannot be locked alone. */
+  list?: string;
+  words: number;
+  /** How it is set: typeset in its markers, raw where the page cannot mark it, or locked. */
+  mode: "typeset" | "raw" | "locked";
+  reason?: LockReason;
+}
+
+/**
+ * What sets a run of the reference's glyphs in the document the import made (decision 0039): its
+ * page, from 0, and its glyphs' places among the page's, from `from` to before `to`, as the
+ * probe's runs have them; and an editable field, by its id (`field`), which the editor edits on
+ * the page or, set raw, in the side panel; a locked part, by its place among the document's
+ * (`part`); what the document keeps as the upload wrote it and no part counts, with why (`kept`);
+ * or, with none of them, the template's own text, which no part of the document's source sets, as
+ * a label, a separator, an icon or a page's number.
+ */
+export interface GlyphOwner {
+  page: number;
+  from: number;
+  to: number;
+  field?: string;
+  part?: number;
+  kept?: LockReason;
+}
+
+/** What the checks found, for item 13's report and the corpus runner. */
+export interface AssemblyChecks {
+  /** `partial` when the first check's glyph stream differs with every lock it could make. */
+  outcome: "assembled" | "partial";
+  difference?: { kind: string; text: string };
+  fields: {
+    editable: number;
+    raw: number;
+    required: number;
+    locked: Partial<Record<LockReason, number>>;
+  };
+  words: { editable: number; locked: Partial<Record<LockReason, number>> };
+  sections: { mapped: number; locked: number };
+  required: string[];
+  controls: {
+    offered: ControlName[];
+    proven: ControlName[];
+    dropped: { control: string; why: string }[];
+  };
+  redefinitions: { applied: string[]; dropped: string[]; placement: "class" | "preamble" };
+  repeatable: { kind: string; added: boolean; removed: boolean }[];
+  findings: { check: string; message: string; field?: string }[];
+  compiles: number;
+  ms: number;
+  decisions: Decisions;
+  /**
+   * The fonts the upload's reference set that the page cannot draw, Computer Modern's in T1 and
+   * TS1, where the import is read in Latin Modern (`inLatinModern`), by name; absent where it keeps
+   * its fonts.
+   */
+  latinModern?: string[];
+  /** Every field of the document, how it is set, and why where it is locked. */
+  all: AssembledField[];
+  /**
+   * What sets each run of the reference's glyphs (`GlyphOwner`), which item 13's report counts the
+   * page's words by.
+   */
+  owners?: GlyphOwner[];
+  /**
+   * The glyphs of kept text the retype reaches (decision 0042), as runs on each page, the page's
+   * glyphs counted as `owners` counts them: an outline's (the second pass's item 6), whose report
+   * counts the words in them apart from the locked ones.
+   */
+  retype?: { page: number; from: number; to: number }[];
+}
 
 /**
  * The share of the body's words that must be editable for an import to succeed, with its first
@@ -124,8 +258,6 @@ export interface ReportInputs {
   images?: Intake["images"];
   /** What the intake and the XeTeX rewrite said, plain English naming files at most. */
   warnings?: readonly string[];
-  /** How the naming step went; a failure is why every macro stayed as the probe left it. */
-  naming?: NamingOutcome;
   /**
    * An outline's groups of units, and those the checks fixed, which the notes count; and whether
    * its fields take letters of other scripts, which a note says they do not.
@@ -146,14 +278,14 @@ export function outcomeOf(rate: number, matched: boolean): ReportOutcome {
 }
 
 /**
- * The report of an import (decision 0039): its words read from the reference's glyph stream and
- * set down to what sets each (`AssemblyChecks.owners`), its rate and outcome, its locked parts by
- * their first words, and what was left out. `assembled` is what `validate` returns, or what the
+ * The report of an import (decision 0039): its words read from the reference's glyph stream and set
+ * down to what sets each (`AssemblyChecks.owners`), its rate and outcome, its locked parts by their
+ * first words, and what was left out. `assembled` is what the import's checks found, or what the
  * store keeps of it (`ImportReport`: the checks, and the locked parts as `locked`); `inputs` the
- * intake's images and warnings and how the naming went. The assembly's document, where it comes,
- * says which hyphens a line ends with are the resume's own (`readPage`). An assembly made before
- * the owners were read, whose words cannot be set down on the page, is counted as the assembly
- * counted its source's words, and names no part.
+ * intake's images and warnings. The document, where it comes, says which hyphens a line ends with
+ * are the resume's own (`readPage`). An assembly made before the owners were read, whose words
+ * cannot be set down on the page, is counted as the assembly counted its source's words, and names
+ * no part.
  */
 export function reportOf(
   assembled: {
@@ -834,9 +966,9 @@ const CONTROL_NAMES: Readonly<Record<string, string>> = {
 };
 
 /**
- * Why a control is not offered, in plain words, from the checks' reason (`DROPPED` and
- * `UNCHECKED` in `validate.ts`, read by how each begins, as `dropKind` reads them for the corpus's
- * table), never the reason's own words, which may name a value or quote TeX's log.
+ * Why a control is not offered, in plain words, from the checks' reason (the first pass's checks'
+ * words, read by how each begins), never the reason's own words, which may name a value or quote
+ * TeX's log.
  */
 function dropWords(why: string): string {
   if (why === "unchecked") return "the checks stopped before they could try it";
@@ -913,17 +1045,11 @@ function droppedOf(
 }
 
 /**
- * What else the report says: that no answer came for the template, which left everything as the
- * probe found it, in the naming client's words; that a font the page cannot draw was set in its
- * successor; and the kinds of unit the template can neither add nor remove.
+ * What else the report says: that a font the page cannot draw was set in its successor; and the
+ * kinds of unit the template can neither add nor remove.
  */
 function notesOf(checks: AssemblyChecks, inputs: ReportInputs): string[] {
   const notes: string[] = [];
-  const naming = inputs.naming;
-  if (naming !== undefined && "failed" in naming)
-    notes.push(
-      `No answer came for the template, so its parts stay as your original sets them: ${shown(naming.failed)}`,
-    );
   if ((checks.latinModern ?? []).length > 0)
     notes.push(
       "Its Computer Modern fonts are set in Latin Modern, their successor, which the page can draw.",

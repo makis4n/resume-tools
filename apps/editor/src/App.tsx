@@ -76,7 +76,7 @@ import { resolveTemplate, type Template } from "./templates/resolve";
  * 0038); an imported document opens with its package from the store, as a curated one with its
  * own; and a locked part's words, where they are plain text, are retyped on its page and kept only
  * once the page outside it is as it was (milestone 3 item 16, decision 0042). Only the dev server
- * serves `/engine/` and the naming route; hosting them is milestone 5, so
+ * serves `/engine/` and the label route; hosting them is milestone 5, so
  * a production build keeps documents but shows the failure message for their pages until then.
  */
 

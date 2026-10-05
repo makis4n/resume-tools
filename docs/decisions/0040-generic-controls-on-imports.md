@@ -1,5 +1,8 @@
 # 0040. Page size, margins and font size on every import
 
+> Superseded by 0063 in its corpus assemble command, which is deleted with the naming step (the
+> second pass's item 17).
+
 Date: 2026-10-01 · Status: proposed; amends 0026's generic controls, and does what 0012 left to
 milestone 3
 

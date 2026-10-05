@@ -1,5 +1,8 @@
 # 0039. The import's report, and its bar at nine tenths
 
+> Superseded by 0063 in its corpus assemble command, which is deleted with the naming step (the
+> second pass's item 17).
+
 Date: 2026-10-01 · Status: proposed; amends 0040's interim rule of what a successful import is,
 and replaces 0043's interim outcome · Amended 2026-10-03: the hand counts, and a running footer
 counted on every page (below)

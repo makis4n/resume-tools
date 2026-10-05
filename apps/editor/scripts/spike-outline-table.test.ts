@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import type { RunFile } from "./corpus-run.ts";
 import {
   documentTable,
+  type FirstPassRun,
   firstPassOf,
   importMs,
   type OutlineRow,
@@ -63,23 +63,11 @@ const ROWS: OutlineRow[] = [
   row("jake-0000", "jake", { fields: 89, retype: 10, locked: 1 }, { sample: true }),
 ];
 
-const RUN: Pick<RunFile, "documents"> = {
+const RUN: FirstPassRun = {
   documents: [
-    {
-      id: "jake-0101",
-      family: "jake",
-      outcome: "partial",
-      counted: { editable: 40, all: 100 },
-      times: { wall: 0 },
-    },
-    { id: "jake-0102", family: "jake", outcome: "no answer", times: { wall: 0 } },
-    {
-      id: "other-0101",
-      family: "other",
-      outcome: "refused",
-      refused: "difference",
-      times: { wall: 0 },
-    },
+    { id: "jake-0101", counted: { editable: 40, all: 100 } },
+    { id: "jake-0102" },
+    { id: "other-0101" },
   ],
 };
 

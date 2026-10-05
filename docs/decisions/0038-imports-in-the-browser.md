@@ -1,5 +1,9 @@
 # 0038. Imports in the browser, and their packages in the store
 
+> Superseded by 0063 in its naming request: importRequest, corpus name, corpus leak and the
+> assembly runner are deleted with the naming step (the second pass's item 17); a .tex import sends
+> nothing.
+
 Date: 2026-10-01 · Status: proposed
 
 ## Context

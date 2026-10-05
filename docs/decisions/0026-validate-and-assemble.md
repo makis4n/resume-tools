@@ -1,5 +1,8 @@
 # 0026. Validate and assemble
 
+> Superseded by 0063 in its code: assemble.ts and validate.ts are deleted with the naming step
+> (the second pass's item 17); the checks that stay now run on the outline (0055).
+
 Date: 2026-09-27 · Status: proposed; its generic controls are amended by 0040; superseded by 0049 in its assembly, which the outline's builder replaces; its four checks stay, without answers
 
 ## Context

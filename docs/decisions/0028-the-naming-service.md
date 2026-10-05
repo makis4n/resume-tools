@@ -1,5 +1,8 @@
 # 0028. The naming service, inside the editor's own project
 
+> Superseded by 0063 in its naming route: /v1/name is deleted with the naming step (the second
+> pass's item 17); the service's shell, rate limit and key handling stay for the label route.
+
 Date: 2026-09-27 · Status: proposed; the key is SOCLAAS_API_KEY (0036); amended by 0049: the service gains a route that labels a PDF's lines, and loses its naming route
 
 ## Context

@@ -21,10 +21,9 @@
 
 // Node runs this file by stripping its types, so it imports values only from files that import
 // nothing Node lacks, and the editor's modules as types alone, with their real extensions.
-import type { LockReason } from "../src/import/assemble.ts";
 import type { RefusalReason } from "../src/import/refusal.ts";
 // The report imports nothing but types, so Node runs it as it is (decision 0039).
-import { LOCK_WHY, SUCCESS_RATE } from "../src/import/report.ts";
+import { LOCK_WHY, type LockReason, SUCCESS_RATE } from "../src/import/report.ts";
 import type { ImportStep } from "../src/import/run.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 

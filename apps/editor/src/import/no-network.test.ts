@@ -16,23 +16,16 @@ import { type ImportDeps, importResume } from "./run";
 // Decision 0049, and the privacy rule of decision 0047: a `.tex` import sends nothing, which this
 // test holds. Every way a page or a worker could send something is stubbed to fail and to say so,
 // and a whole import of invented resumes, one on each engine, must come through without one being
-// tried. The naming step's modules, the assembly and the first pass's checks cannot even be
-// loaded, and of the naming package only the masking the signatures step applies to definitions
-// can be read: an import that reached any of the rest would fail. Every resume here is invented.
+// tried. The naming step is deleted (decision 0063), and the model's provider code, which the PDF
+// reading's service uses, cannot even be loaded here: an import that reached it would fail. Every
+// resume here is invented.
 
 const { loaded } = vi.hoisted(() => ({
   loaded: (name: string) => () => {
     throw new Error(`a .tex import loaded ${name}, which it must not reach`);
   },
 }));
-vi.mock("@resume-tools/naming", async (importOriginal) => ({
-  maskDefinition: (await importOriginal<typeof import("@resume-tools/naming")>()).maskDefinition,
-}));
-vi.mock("./naming", loaded("the naming request's builder"));
-vi.mock("./service", loaded("the naming service's client"));
-vi.mock("./privacy", loaded("the naming request's privacy gate"));
-vi.mock("./assemble", loaded("the first pass's assembly"));
-vi.mock("./validate", loaded("the first pass's checks"));
+vi.mock("@resume-tools/naming/providers", loaded("the model's provider code"));
 
 const tex = (name: string, text: string) => ({ name, bytes: strToU8(text) });
 

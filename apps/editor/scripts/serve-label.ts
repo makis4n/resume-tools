@@ -1,14 +1,14 @@
 /**
  * The label route in the dev server (milestone 3 second pass, item 13): `POST /v1/label`, answered
- * by the reading service's handler (`src/service/label.ts`) as a middleware, beside the naming
- * route, so that development runs no second process and the page calls its own origin, as it will
- * in production (decision 0028).
+ * by the reading service's handler (`src/service/label.ts`) as a middleware, so that development
+ * runs no second process and the page calls its own origin, as it will in production (decision
+ * 0028).
  *
- * The key is read on the server side alone: `SOCLAAS_API_KEY` (decision 0036), the naming route's,
- * from the editor's `.env` files and environment by Vite's `loadEnv`, never under the `VITE_`
- * prefix, which would put it in the page; `PDF_LABEL_MODEL` picks the model. With no key the route
- * refuses with 503 and the page's rules read the PDF, and the dev server says so in one line when it
- * starts. The rate limit's buckets are kept in memory. Nothing the route is sent is kept or logged.
+ * The key is read on the server side alone: `SOCLAAS_API_KEY` (decision 0036), from the editor's
+ * `.env` files and environment by Vite's `loadEnv`, never under the `VITE_` prefix, which would
+ * put it in the page; `PDF_LABEL_MODEL` picks the model. With no key the route refuses with 503 and
+ * the page's rules read the PDF, and the dev server says so in one line when it starts. The rate
+ * limit's buckets are kept in memory. Nothing the route is sent is kept or logged.
  */
 
 import { loadEnv, type Plugin } from "vite";

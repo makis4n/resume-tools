@@ -1,13 +1,13 @@
 /**
- * The naming step's providers (milestone 3 items 9 and 18, decisions 0027 and 0036): the one place
- * a model is made for `name`, which takes any AI SDK `LanguageModel`. SoCLaaS first, the School of
- * Computing's OpenAI-compatible gateway, whose calls bill nothing: `soclaasModel` makes one of its
- * models by its id. `googleModel` keeps Gemini, the fallback should the public launch not use the
- * school's gateway. Each takes the key its caller gives, never one read from the environment, so
- * that its caller, the naming service or the corpus runner, decides where the key comes from. The
- * id comes from `NAMING_MODEL`, and the default otherwise, so that a candidate swaps with a
- * variable, as item 18's benchmark swaps them; the default, `qwen3.8:27b`, is asked with its
- * thinking off (decision 0044).
+ * The model's provider code (milestone 3 items 9 and 18, decisions 0027 and 0036): the one place an
+ * AI SDK `LanguageModel` is made. SoCLaaS first, the School of Computing's OpenAI-compatible
+ * gateway, whose calls bill nothing: `soclaasModel` makes one of its models by its id.
+ * `googleModel` keeps Gemini, the fallback should the public launch not use the school's gateway.
+ * Each takes the key its caller gives, never one read from the environment, so that its caller, the
+ * service that labels a PDF's lines or `pdf-model`, decides where the key comes from. The default,
+ * `qwen3.8:27b`, is asked with its thinking off (decision 0044). It was written for the first
+ * pass's naming step, which the second pass's item 17 deleted (decision 0063); the PDF reading
+ * reuses it (decision 0056), and the package keeps its name.
  */
 
 import { createGoogle } from "@ai-sdk/google";
@@ -67,17 +67,16 @@ export function withoutThinking(
 }
 
 /**
- * The model the naming step asks when configuration names none: `qwen3.8:27b`, the gateway's
- * all-round model, asked with its thinking off (`MODEL_THINKING`), the highest editable rate whose
- * slowest part stayed within the naming service's two minutes in item 18's benchmark (decision
- * 0044).
+ * The model asked when configuration names none: `qwen3.8:27b`, the gateway's all-round model,
+ * asked with its thinking off (`MODEL_THINKING`), as the first pass's benchmark chose it (decision
+ * 0044), from which the PDF reading starts.
  */
 export const DEFAULT_MODEL = "qwen3.8:27b";
 
 /**
- * How a model is asked not to reason first wherever the naming step asks it, by its id (decision
- * 0044): the default, by its chat template's switch, as item 18's benchmark chose it. Reasoning
- * first, its every part of the sample outran the runner's 300 s, against the service's 120.
+ * How a model is asked not to reason first, by its id (decision 0044): the default, by its chat
+ * template's switch, as the first pass's benchmark chose it. Reasoning first, its every part of
+ * the sample outran the runner's 300 s.
  */
 export const MODEL_THINKING: Readonly<Record<string, ThinkingSwitch>> = {
   [DEFAULT_MODEL]: "template",
@@ -101,8 +100,8 @@ function keyOf(apiKey: string, provider: string): string {
 
 /**
  * SoCLaaS's model of the id given, over its chat completions route, with `apiKey`, the key the
- * caller read. The answer's schema goes to the gateway as a JSON schema response format, which
- * `name` validates whatever the gateway does with it. Every call asks the model not to reason
+ * caller read. An answer's schema goes to the gateway as a JSON schema response format, which its
+ * caller validates whatever the gateway does with it. Every call asks the model not to reason
  * first by the switch `MODEL_THINKING` gives its id, the default's included, or by `thinking`
  * where it is given; `thinking: false` leaves the model to reason, as the benchmark measures it so.
  * `fetch` stands in for the platform's, for a test that reads what would be sent.

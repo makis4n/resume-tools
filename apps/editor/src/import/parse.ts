@@ -1,7 +1,7 @@
 /**
  * The body of an imported resume as a tree (milestone 3 item 4, plan section 6 step 2, decision
- * 0020): what the probe (item 5) wraps, the naming step (item 6) describes and the assembly (item 7)
- * maps onto the model, and what prints back to the bytes it came from (`print.ts`).
+ * 0020): what the probe (item 5) wraps and the outline (the second pass's item 5) is built from,
+ * and what prints back to the bytes it came from (`print.ts`).
  *
  * The main file is split at `\begin{document}` and `\end{document}`, outside comments; the
  * preamble stays text. The body's `\input`, `\include` and `\subfile` of `.tex` files the job

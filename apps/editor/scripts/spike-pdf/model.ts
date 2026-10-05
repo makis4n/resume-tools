@@ -1,7 +1,7 @@
 /**
  * The PDF spike's hosted model (item 3, a first cut of item 13): SoCLaaS's `qwen3.8:27b`, asked as
- * the naming step asks it (`soclaasModel`, thinking off, decision 0044), says what each line of a
- * PDF is, given the lines' text and features, with the roles as a JSON schema's enum on every
+ * the provider code makes it (`soclaasModel`, thinking off, decision 0044), says what each line of
+ * a PDF is, given the lines' text and features, with the roles as a JSON schema's enum on every
  * line's key, so that a reply that keeps to the schema is valid by construction. The filing step
  * after it is the rules' own (`file.ts`).
  *
@@ -25,7 +25,7 @@ import { OTHER_DIR } from "./print.ts";
 import { readPdf } from "./read.ts";
 import { type Features, featuresOf, type Role } from "./roles.ts";
 
-/** The model the spike asks: the naming step's default, decision 0044's. */
+/** The model the spike asks: the provider code's default, decision 0044's. */
 export const MODEL = DEFAULT_MODEL;
 
 /** How long a call may take before it is stopped and counted a timeout: well past the budget. */

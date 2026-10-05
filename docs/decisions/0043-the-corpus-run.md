@@ -1,5 +1,8 @@
 # 0043. The corpus run, its baseline, and the review's tooling
 
+> Superseded by 0063 in its review tooling: corpus review, the assembly runner and the leak step
+> are deleted with the naming step (the second pass's item 17); corpus run and its baseline stay.
+
 Date: 2026-10-01 · Status: proposed; its interim outcome is replaced by 0039's report; superseded by 0049 in its answer modes: the corpus run keeps one mode
 
 ## Context
