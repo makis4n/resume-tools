@@ -913,6 +913,7 @@ export function App() {
                 report: waiting.report,
                 onContinue: () => void continueImport(),
                 onStop: stopImport,
+                onMove: () => void moveImport(),
               },
             })}
       />
