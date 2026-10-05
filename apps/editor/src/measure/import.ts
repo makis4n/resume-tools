@@ -32,8 +32,9 @@ import type { Upload } from "../import/intake";
 import { isRefusal, type Refusal } from "../import/refusal";
 import { type AssemblyChecks, percent, type ReportOutcome, reportOfImport } from "../import/report";
 import { IMPORT_STEPS, type ImportProgress, type ImportStep } from "../import/run";
-import { drawPage } from "../page/draw";
+import { type DrawnPage, drawEach, type drawPage, drawPages } from "../page/draw";
 import type { FontLibrary } from "../page/fonts";
+import type { TemplatePackage } from "../templates/package";
 import { formatMs, median, meets, TARGETS, table } from "./measure";
 
 /**
@@ -171,10 +172,37 @@ export interface ImportHow {
   fonts(): FontLibrary;
   /** The files, as a person gives them to the document list. */
   files: readonly Upload[];
-  /** How the page is drawn; the editor's way by default. */
+  /**
+   * How a page is drawn, by its index; by default every page of an output is drawn from one reading
+   * of it, as the editor draws them (`drawPages`).
+   */
   draw?: typeof drawPage;
   /** The clock, in milliseconds; `performance.now` by default. */
   now?: () => number;
+  /**
+   * What to do with the document once its first page is drawn, before the scheduler is closed: the
+   * typing on an imported resume is timed there (`import-typing.ts`). The import's own numbers are
+   * taken before it, so that nothing it does reaches them.
+   */
+  opened?: (opened: Opened) => Promise<void>;
+}
+
+/**
+ * An imported document open on the scheduler that imported it, as the app has it once the person
+ * continues: the scheduler, the document and its package, its first page, the requests the
+ * scheduler has made of the engine and the draws so far, each noted as it ends, and a way to wait
+ * for the page of a document given to the scheduler after it.
+ */
+export interface Opened {
+  compiler: Compiler;
+  document: Document;
+  pkg: TemplatePackage;
+  first: Shown;
+  requests: readonly Noted[];
+  draws: readonly number[];
+  /** The page the scheduler makes of `doc`, or its message, thrown, when it makes none. */
+  pageOf(doc: Document): Promise<Shown>;
+  now: () => number;
 }
 
 /** A request the scheduler made of the engine for the page, as the measurement notes it. */
@@ -240,18 +268,36 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
   const startMs = now() - starting;
   const requests: Noted[] = [];
   const draws: number[] = [];
-  const draw = how.draw ?? drawPage;
-  const timedDraw: typeof drawPage = async (...args) => {
-    const started = now();
-    try {
-      return await draw(...args);
-    } finally {
-      draws.push(now() - started);
+  // The scheduler draws an output's pages one by one with a draw given (`drawEach`), the rest of
+  // them at once; the editor draws them all from one reading of the output. So an output's pages
+  // are drawn together, as the editor draws them, at its first page's call, and timed once; the
+  // other pages' calls take theirs from there.
+  const given = how.draw;
+  const drawAll: typeof drawPages =
+    given === undefined ? drawPages : (...args) => drawEach(given, ...args);
+  let output: { dvi: Uint8Array; pages: Promise<DrawnPage[]> } | undefined;
+  const timedDraw: typeof drawPage = async (dvi, fonts, texts, pageIndex = 0, options = {}) => {
+    if (pageIndex === 0 || output?.dvi !== dvi) {
+      const started = now();
+      const pages = drawAll(dvi, fonts, texts, options);
+      output = { dvi, pages };
+      try {
+        await pages;
+      } finally {
+        draws.push(now() - started);
+      }
     }
+    const page = (await output.pages)[pageIndex];
+    if (page === undefined) throw new Error(`the output has no page ${pageIndex + 1}`);
+    return page;
   };
   let waiting:
     | { doc: Document; resolve: (shown: Shown) => void; reject: (error: Error) => void }
     | undefined;
+  const pageOf = (doc: Document) =>
+    new Promise<Shown>((resolve, reject) => {
+      waiting = { doc, resolve, reject };
+    });
   const compiler = new Compiler(
     () => noted(engine, now, (each) => requests.push(each)),
     how.fonts(),
@@ -289,14 +335,13 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
 
     const [requested, drawn] = [requests.length, draws.length];
     const document = outcome.document;
-    const shown = new Promise<Shown>((resolve, reject) => {
-      waiting = { doc: document, resolve, reject };
-    });
+    const shown = pageOf(document);
     // The app reads the report again as it opens an imported document, for the names its side panel
     // gives the locked parts (`lockedWordsFrom`, decision 0041), and then opens it.
     reportOfImport(outcome);
     compiler.open(outcome.package, document, outcome.job);
-    const { page } = await shown;
+    const first = await shown;
+    const { page } = first;
     const ended = now();
     const made = requests.slice(requested);
     const compiles = made.filter((each) => each.kind === "compile");
@@ -311,7 +356,7 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
       engineMs: sum([...compiles, ...others].map((each) => each.ms)),
     });
     const { checks } = outcome.report;
-    return {
+    const time: ImportTime = {
       startMs,
       parts,
       ms: ended - began,
@@ -331,6 +376,17 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
         pages: page.pageCount,
       },
     };
+    await how.opened?.({
+      compiler,
+      document,
+      pkg: outcome.package,
+      first,
+      requests,
+      draws,
+      pageOf,
+      now,
+    });
+    return time;
   } finally {
     compiler.close();
     // An engine the scheduler never took is stopped too; stopping one twice does nothing.

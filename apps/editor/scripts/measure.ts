@@ -6,6 +6,8 @@
  *   pnpm --filter @resume-tools/editor measure [--runs <n>] [--json <file>]
  *   pnpm --filter @resume-tools/editor measure --import [--engine <engine> | --pdf] [--runs <n>]
  *     [--json <file>]
+ *   pnpm --filter @resume-tools/editor measure --typing-imports --ids <file> [--runs <n>]
+ *     [--json <file>]
  *
  *   --runs <n>         edits to time per package, 10 by default; the overlay's row layout is timed
  *                      ten times as often. With --import, imports to time per sample, 5 by default
@@ -13,6 +15,10 @@
  *   --import           measure the import instead: a launch template's upstream sample, cached
  *   --engine <engine>  with --import, the one sample of pdftex or xetex, not both
  *   --pdf              with --import, the PDF import by rules alone, not the .tex samples
+ *   --typing-imports   measure typing on imported corpus resumes instead, those --ids names; with
+ *                      it, --runs is the edits timed per resume, 5 by default
+ *   --ids <file>       with --typing-imports, the corpus resumes a file names, one id a line, from
+ *                      where pnpm was run, as `corpus run --ids` takes them
  *
  * Each package gets an engine session and fonts of its own, as a first load does, and the editor's
  * compile scheduler drives them, as the app drives its worker: it opens the sample as a new
@@ -43,6 +49,18 @@
  * page's beside it, a row a PDF, and the verdict against the target, under 1 s, judged on the
  * slowest import. No model is asked: the model's time is `pdf-model`'s, run by hand with the key.
  *
+ * With `--typing-imports` (the perf run's lane D2), each corpus resume the file of ids names, which
+ * the last `corpus fetch` fetched, is zipped as `corpus run` zips it (`uploadOf`) and imported
+ * through the editor's compile scheduler as `--import` imports a sample, on an engine started
+ * afresh, then opened, and its longest editable field edited `--runs` times on the same scheduler
+ * and engine, as the app keeps them (`src/measure/import-typing.ts`): each edit timed from its
+ * command to its drawn page, with the scheduler's pause, and split into the pause, the compile and
+ * the draw. One at a time, so that nothing else runs while one is timed. It prints a row a resume
+ * and a table by family, the share whose median edit is within plan section 4.3's 300 ms by the
+ * page's own time, and the median, p90 and slowest; and counts the resumes it skipped: refused,
+ * with no editable field, or failed. Ids, families, counts and milliseconds only: nothing a resume
+ * says reaches the terminal or the JSON, not even what the editor logs while it works on one.
+ *
  * The editor's modules are written for Vite, with extensionless imports, JSX, and JSON and `?raw`
  * imports, which Node cannot load. So this file, which Node runs as it is, loads them through
  * Vite's module runner with the app's own Vite config, the way Vitest loads the tests, and imports
@@ -59,13 +77,29 @@ import { createRunnableDevEnvironment, resolveConfig } from "vite";
 import type { EngineManifest } from "../src/engine/manifest.ts";
 import type { Engine, Fetched } from "../src/engine/session.ts";
 import type { ImportRuns, ImportTime } from "../src/measure/import.ts";
+import type { TypingRow, TypingSkipped } from "../src/measure/import-typing.ts";
 import type { FirstLoad, PackageNumbers, StepReads } from "../src/measure/measure.ts";
 import type { PdfSample, PdfTime } from "../src/measure/pdf-import.ts";
+import {
+  CORPUS_DIR,
+  FETCH_REPORT_FILE,
+  FetchReport,
+  isLive,
+  type LiveDocument,
+  MANIFEST_FILE,
+  Manifest,
+  matchingEntries,
+  parseJson,
+  printable,
+} from "./corpus-manifest.ts";
+import { treeFonts as treeFontFiles, uploadOf } from "./corpus-reference.ts";
+import { idsOf } from "./corpus-run.ts";
 import { sampleUpload } from "./serve-samples.ts";
 import { OTHER_DIR } from "./spike-pdf/print.ts";
 
 type Measure = typeof import("../src/measure/measure.ts");
 type Imports = typeof import("../src/measure/import.ts");
+type Typing = typeof import("../src/measure/import-typing.ts");
 type PdfImports = typeof import("../src/measure/pdf-import.ts");
 type PdfNode = typeof import("../src/pdf/node.ts");
 type NodeImports = typeof import("../src/measure/node.ts");
@@ -79,6 +113,7 @@ const APP = fileURLToPath(new URL("..", import.meta.url));
 const USAGE = [
   "pnpm --filter @resume-tools/editor measure [--runs <n>] [--json <file>]",
   "pnpm --filter @resume-tools/editor measure --import [--engine <pdftex|xetex> | --pdf] [--runs <n>] [--json <file>]",
+  "pnpm --filter @resume-tools/editor measure --typing-imports --ids <file> [--runs <n>] [--json <file>]",
 ].join("\n");
 
 /** Edits timed per package when `--runs` does not say. */
@@ -90,6 +125,12 @@ const RUNS = 10;
  */
 const IMPORT_RUNS = 5;
 
+/**
+ * Edits timed per imported resume when `--runs` does not say, as `src/measure/import-typing.ts`'s
+ * `TYPING_EDITS` has it.
+ */
+const TYPING_EDITS = 5;
+
 const ENGINES: readonly Engine[] = ["pdftex", "xetex"];
 
 interface Options {
@@ -99,6 +140,8 @@ interface Options {
   import: boolean;
   engines: readonly Engine[];
   pdf: boolean;
+  /** With `--typing-imports`, the file of corpus ids to import and type on. */
+  typing: string | undefined;
   help: boolean;
 }
 
@@ -115,11 +158,29 @@ function optionsOf(args: string[]): Options {
       import: { type: "boolean" },
       engine: { type: "string" },
       pdf: { type: "boolean" },
+      "typing-imports": { type: "boolean" },
+      ids: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
   const imports = values.import ?? false;
-  const runs = values.runs === undefined ? (imports ? IMPORT_RUNS : RUNS) : Number(values.runs);
+  const typingImports = values["typing-imports"] ?? false;
+  if (typingImports && (imports || values.engine !== undefined || values.pdf))
+    throw new Error(
+      "--typing-imports measures typing on imported resumes: give no --import with it",
+    );
+  if (typingImports && values.ids === undefined)
+    throw new Error("--typing-imports takes the resumes to import in a file: give --ids <file>");
+  if (values.ids !== undefined && !typingImports)
+    throw new Error("--ids names the resumes typing is measured on: give --typing-imports with it");
+  const runs =
+    values.runs === undefined
+      ? typingImports
+        ? TYPING_EDITS
+        : imports
+          ? IMPORT_RUNS
+          : RUNS
+      : Number(values.runs);
   if (!Number.isInteger(runs) || runs < 1)
     throw new Error(`--runs takes a whole number from 1, not ${values.runs}`);
   if (values.engine !== undefined && !imports)
@@ -138,9 +199,10 @@ function optionsOf(args: string[]): Options {
   // The PDF import goes beside both samples, or alone with --pdf; --engine picks one sample alone.
   const pdf = imports && values.engine === undefined;
   // pnpm runs the script in the editor's folder; a path is the caller's, from where pnpm was run.
-  const json =
-    values.json === undefined ? undefined : resolve(process.env.INIT_CWD ?? ".", values.json);
-  return { runs, json, import: imports, engines, pdf, help: values.help ?? false };
+  const callers = (path: string) => resolve(process.env.INIT_CWD ?? ".", path);
+  const json = values.json === undefined ? undefined : callers(values.json);
+  const typing = values.ids === undefined ? undefined : callers(values.ids);
+  return { runs, json, import: imports, engines, pdf, typing, help: values.help ?? false };
 }
 
 /** The machine the numbers were taken on, which they mean nothing without. */
@@ -459,6 +521,148 @@ async function measurePdfs(
   return { load: { start, end }, startMs, warm: done.warm, runs: done.runs };
 }
 
+/**
+ * The corpus resumes a file of ids names, each of which the last fetch must have fetched, in the
+ * file's order, as `corpus run --ids` takes them.
+ */
+function corpusDocuments(idsFile: string): LiveDocument[] {
+  const ids = idsOf(readFileSync(idsFile, "utf8"));
+  if (ids.length === 0) throw new Error("the --ids file names no resume");
+  const manifest = parseJson(Manifest, readFileSync(MANIFEST_FILE, "utf8"), MANIFEST_FILE);
+  const report = existsSync(FETCH_REPORT_FILE)
+    ? parseJson(FetchReport, readFileSync(FETCH_REPORT_FILE, "utf8"), FETCH_REPORT_FILE)
+    : undefined;
+  const entries = matchingEntries(manifest, report);
+  const fetched = new Map(
+    manifest.documents
+      .filter(isLive)
+      .filter((doc) => entries.get(doc.id)?.state === "fetched")
+      .map((doc) => [doc.id, doc] as const),
+  );
+  const unknown = ids.filter((id) => !fetched.has(id));
+  if (unknown.length > 0)
+    throw new Error(
+      `${unknown.join(", ")} ${unknown.length === 1 ? "is no document" : "are no documents"} the last fetch fetched`,
+    );
+  return ids.map((id) => fetched.get(id) as LiveDocument);
+}
+
+/**
+ * Run `work` with the console silent: the editor logs, for developers, what may quote the resume
+ * it works on, a page's left-out words or a compile's log, which must never reach the terminal.
+ */
+async function silently<T>(work: () => Promise<T>): Promise<T> {
+  const methods = ["log", "info", "warn", "error", "debug"] as const;
+  const kept = methods.map((name) => [name, console[name]] as const);
+  for (const name of methods) console[name] = () => {};
+  try {
+    return await work();
+  } finally {
+    for (const [name, method] of kept) console[name] = method;
+  }
+}
+
+/** Typing on imported corpus resumes, as `--typing-imports` measures it. */
+async function measureTyping(runner: Runner, idsFile: string, options: Options) {
+  const typing = await runner.import<Typing>("/src/measure/import-typing.ts");
+  const { formatMs } = await runner.import<Measure>("/src/measure/measure.ts");
+  const { engineAvailable } = await runner.import<NodeEngine>("/src/engine/node.ts");
+  if (!engineAvailable())
+    throw new Error("There is no .engine/ to measure with: run fetch-engine first.");
+  const node = await runner.import<NodeImports>("/src/measure/node.ts");
+  const manifest = node.engineManifest();
+  const documents = corpusDocuments(idsFile);
+  const treeFont = treeFontFiles(manifest.files);
+  // Each line made printable apart, so that a table keeps its line breaks.
+  const say = (text: string) => console.log(text.split("\n").map(printable).join("\n"));
+  const about = machine();
+  say(
+    `On ${about.cpu} (${about.cores} cores, ${about.memoryGiB} GiB), ${about.platform}, Node ${about.node}, load ${about.load.toFixed(1)}: ${documents.length} corpus ${documents.length === 1 ? "resume" : "resumes"} imported one at a time, then ${options.runs} edits of each one's longest editable field\n`,
+  );
+  const rows: TypingRow[] = [];
+  const skipped: TypingSkipped = typing.noneSkipped();
+  const outcomes: { id: string; family: string; outcome: string; load: number }[] = [];
+  for (const [index, doc] of documents.entries()) {
+    const load = loadavg()[0] ?? 0;
+    const files = [
+      {
+        name: `${doc.id}.zip`,
+        bytes: uploadOf(
+          doc,
+          (path) => new Uint8Array(readFileSync(join(CORPUS_DIR, doc.id, ...path.split("/")))),
+          treeFont,
+        ),
+      },
+    ];
+    let measured: Awaited<ReturnType<Typing["measureImportTyping"]>> | "failed";
+    try {
+      measured = await silently(() =>
+        typing.measureImportTyping(
+          {
+            start: () => node.importEngine(manifest),
+            fonts: () => node.treeFonts(manifest),
+            files,
+          },
+          options.runs,
+        ),
+      );
+    } catch {
+      // What went wrong may quote the resume, so it goes unsaid.
+      measured = "failed";
+    }
+    const where = `${index + 1}/${documents.length} ${doc.id} (${doc.family})`;
+    let outcome: string;
+    if (measured === "failed") outcome = "failed";
+    else if ("refused" in measured) outcome = `refused (${measured.refused.refused.reason})`;
+    else if (!measured.typing.typed) outcome = measured.typing.why;
+    else {
+      const row = typing.typingRow(doc.id, doc.family, {
+        import: measured.import,
+        typing: measured.typing,
+      });
+      rows.push(row);
+      const stats = typing.typingStats(row.edits);
+      outcome = `typed: median ${formatMs(stats.median)}, slowest ${formatMs(stats.slowest)}, with the pause ${formatMs(stats.withPause)}; ${stats.pages} ${stats.pages === 1 ? "page" : "pages"}`;
+    }
+    if (measured === "failed" || "refused" in measured || !measured.typing.typed)
+      typing.skip(skipped, measured);
+    outcomes.push({ id: doc.id, family: doc.family, outcome, load });
+    say(`${where}: ${outcome}, the load ${load.toFixed(1)}`);
+  }
+  const end = loadavg()[0] ?? 0;
+  say("");
+  if (rows.length > 0) {
+    say(typing.typingTable(rows));
+    say("");
+    say(typing.familyTable(rows));
+    say("");
+  }
+  for (const line of typing.summaryLines(rows, skipped)) say(line);
+  say(`The load ${end.toFixed(1)} as the last resume ended.`);
+  if (options.json !== undefined) {
+    writeFileSync(
+      options.json,
+      written({
+        date: new Date().toISOString(),
+        machine: about,
+        runs: options.runs,
+        load: { start: about.load, end },
+        resumes: documents.length,
+        typed: rows.length,
+        skipped: { ...skipped, count: typing.skippedCount(skipped) },
+        summary: typing.typingSummary(rows) ?? null,
+        families: [...new Set(rows.map((row) => row.family))].sort().map((family) => ({
+          family,
+          ...typing.typingSummary(rows.filter((row) => row.family === family)),
+        })),
+        outcomes,
+        documents: rows.map((row) => ({ ...row, stats: typing.typingStats(row.edits) })),
+      }),
+    );
+    say(`\nThe numbers are in ${options.json}`);
+  }
+}
+
 async function main() {
   const options = optionsOf(process.argv.slice(2));
   if (options.help) {
@@ -482,7 +686,8 @@ async function main() {
   await environment.init();
   const { runner } = environment;
   try {
-    if (options.import) await measureImports(runner, options);
+    if (options.typing !== undefined) await measureTyping(runner, options.typing, options);
+    else if (options.import) await measureImports(runner, options);
     else await measurePackages(runner, options);
   } finally {
     await environment.close();
