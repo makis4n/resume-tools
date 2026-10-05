@@ -751,20 +751,32 @@ describe("the body of a main file", () => {
 
   test("finds the body's end in time linear in the file, whatever verbatim it opens", () => {
     // The review of 13099bf: 2 MB of verbatim openers no `\end` closes, after the document's end,
-    // took 22 s, and a long line of `\verb`s grew as its square; a file of plain lines the same
-    // size is the baseline.
+    // took 22 s, and a long line of `\verb`s grew as its square; and the review of ef7da1f:
+    // `\verb`s of 20,000 distinct delimiters none closes, each on its line, then a long run of
+    // letters, each searched to the file's end. A file of plain lines the same size is the baseline.
     const size = 2_000_000;
     const head = "\\documentclass{article}\n\\begin{document}\nQuill\n\\end{document}\n";
     const lines = (unit: string) => head + unit.repeat(Math.floor(size / unit.length));
     const plain = lines("Invented line\n");
     const openers = lines("\\begin{verbatim}\n");
     const verbs = `\\documentclass{article}\n\\begin{document}\n${"\\verb!x! ".repeat(size / 9)}\n\\end{document}\n`;
-    const [base = 0, unclosed = 0, line = 0] = fastest(
-      [() => bodyFrom(plain), () => bodyFrom(openers), () => bodyFrom(verbs)],
+    const distinct = Array.from(
+      { length: 20_000 },
+      (_, k) => `\\verb${String.fromCharCode(0x4e00 + k)}\n`,
+    ).join("");
+    const delimiters = head + distinct + "a".repeat(size - distinct.length);
+    const [base = 0, unclosed = 0, line = 0, many = 0] = fastest(
+      [
+        () => bodyFrom(plain),
+        () => bodyFrom(openers),
+        () => bodyFrom(verbs),
+        () => bodyFrom(delimiters),
+      ],
       3,
     );
     expect(unclosed).toBeLessThan(bound(8, base));
     expect(line).toBeLessThan(bound(30, base));
+    expect(many).toBeLessThan(bound(8, base));
     expect(cpuMs(() => bodyFrom(openers))).toBeLessThan(1_000);
   }, 60_000);
 
