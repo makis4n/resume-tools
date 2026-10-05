@@ -27,8 +27,12 @@ put in after it, and the removal of its first and its last; they did not try a m
 - **A copy of the last unit, after any unit of its shape.** The plan says "a copy of the one beside
   it". The editor departs from that: it always copies the group's last unit, the one check 3 proved,
   and puts it in after the unit asked for only where that unit is of the last's shape
-  (`unitShape`: its own parts outside the groups within it, kept text byte for byte, fields by
-  kind, a group by its place), or is the last. Why: a unit beside it may be written otherwise, and
+  (`unitShape`: its own parts outside the groups within it, kept text as TeX reads its spaces,
+  fields by kind, a group by its place), or is the last. Kept text is compared with a line's end
+  and the spaces and tabs around it, and any run of spaces, read as one space, and a blank line as
+  a paragraph's break, distinct from one line's end (`texSpaces`), so that units differing in their
+  indentation alone, as Jake's sample's experience entries, are of one shape; kept text that sets
+  its spaces as typed, `\verb` or a verbatim environment, is compared byte for byte. Why: a unit beside it may be written otherwise, and
   a copy of it that sets the page otherwise without stopping the compile would be kept. After a
   unit of another shape the step is refused, and the person reads "These are not all written alike
   in your file, so they keep their order, and a new one goes after the last" (`NOT_ALIKE`); "Add
@@ -66,7 +70,12 @@ put in after it, and the removal of its first and its last; they did not try a m
   nothing selected, the caret after the field's last character and no key held with it, it adds a
   copy after the unit whose own parts, outside the groups within it, end with that field among the
   fields the page writes (`unitEnding`): a bullet's text adds a bullet, and an entry's last field
-  before its bullets, as its place or its dates, adds an entry. Anywhere else Enter inserts nothing,
+  before its bullets, as its place or its dates, adds an entry. It never adds a section
+  (`enterAdds`): a unit of a group at the outline's own level whose units hold groups, as a run of
+  sections holds entries, or a unit whose own parts write one field and after it a group or kept
+  words, as a section's title before its entries or its paragraph (`sectionLike`). The cost: an
+  outline whose entries stand at its own level, in no section, gains entries from the side panel
+  alone, where "Add after" and "Add another" add sections too. Anywhere else Enter inserts nothing,
   as before. The add is a step of its own after the visit to the field, which then closes. An empty
   field is not on the page (decision 0007), so the new unit's first field takes the focus in the
   side panel (`PanelProps.focus`), where it has an input. A refused add adds nothing, the field
@@ -111,6 +120,10 @@ put in after it, and the removal of its first and its last; they did not try a m
   are those of the pages before that stand nowhere they stood after. The compiles are the editor's,
   on the engine in Node, under the load of other lanes' runs.
 
+- **Sections on the samples.** Enter at any field of a unit that begins with the template's
+  section command adds nothing: 4 fields of Jake's 4 sections, 11 of AltaCV's 10, and 6 of
+  Awesome-CV's 5, whose titles are kept text. Jake's experience entries, differing in their
+  indentation alone, are of one shape, move, and each takes a copy of the last after it.
 - **A fixed group, invented** (`src/test/invented-fixed-group.tex`): its two roles stop TeX at a
   third, so the checks fix their run, `stops`, while each role's bullets take all three steps
   (`units-import.test.ts`). None of the three samples has a fixed group to show. The review's two
@@ -127,6 +140,7 @@ put in after it, and the removal of its first and its last; they did not try a m
   placeholder shows and is marked there.
 - `StructureOp` gains `addUnit`, `removeUnit` and `moveUnit`; `OverlayProps` and
   `RichOverlayProps` `onEnd`; `PanelProps` `focus`; `src/editor/outline.ts` `emptiedCopy`,
-  `unitPlace`, `outlineIds`, `unitEnding`, `unitShape`, `alike` and the plain reasons;
+  `unitPlace`, `outlineIds`, `unitEnding`, `unitShape`, `texSpaces`, `alike` and the plain
+  reasons; `src/editor/enter.ts` `enterAdds` and `sectionLike`;
   `src/editor/document.ts` `UnitRefused` and `REFUSED_STEP`; the model's `OUTLINE_FIXED` `stops`.
   `src/import/checks.ts` re-exports `emptiedCopy` and sets `stops`.

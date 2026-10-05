@@ -317,7 +317,7 @@ export function outlineIds(parts: readonly OutlinePart[]): string[] {
  * its own parts the generator writes comes after it, so that the end of the field is the end of
  * what the unit sets in words of its own: a bullet's text ends its bullet, and an entry's last
  * field before its bullets ends its entry. Undefined for a field in no unit, or one with a written
- * field of its unit's own after it.
+ * field of its unit's own after it. What Enter adds is this, but for a section (`enterAdds`).
  */
 export function unitEnding(parts: readonly OutlinePart[], id: string): UnitPlace | undefined {
   /** Whether `list` holds the field as a part of its own, and where it ends a unit within, if so. */
@@ -348,16 +348,35 @@ export function unitEnding(parts: readonly OutlinePart[], id: string): UnitPlace
   return within(parts, [])?.place;
 }
 
+/** LaTeX that sets its spaces as typed, where no space may be read as another. */
+const VERBATIM = /\\verb\b|\\begin\s*\{(?:verbatim|lstlisting|minted|alltt|Verbatim)\*?\}/;
+
+/**
+ * Kept text as TeX reads its spaces: a blank line, a paragraph's break, one line's end with the
+ * spaces and tabs around it, and every other run of spaces and tabs, one space; so that two pieces
+ * of kept text differing only in their indentation read alike. Kept text that sets its spaces as
+ * typed, as verbatim does, is left byte for byte.
+ */
+export function texSpaces(latex: string): string {
+  if (VERBATIM.test(latex)) return latex;
+  return latex
+    .replace(/[ \t]*\n(?:[ \t]*\n)+[ \t]*/g, "\u0000")
+    .replace(/[ \t]*\n[ \t]*/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replaceAll("\u0000", "\n\n");
+}
+
 /**
  * A unit's shape: its own parts, outside the groups within it, as the generator writes them with
- * every field emptied, its kept text byte for byte, each field by its kind, and a group within it
- * by its place alone. Two units of one shape set the same around their fields.
+ * every field emptied, its kept text as TeX reads its spaces (`texSpaces`), each field by its kind,
+ * and a group within it by its place alone. Two units of one shape set the same around their
+ * fields.
  */
 export function unitShape(unit: OutlineUnit): string {
   return JSON.stringify(
     unit.parts.map((part) =>
       part.kind === "kept"
-        ? ["kept", part.latex]
+        ? ["kept", texSpaces(part.latex)]
         : part.kind === "group"
           ? ["group"]
           : [part.kind, part.bare === true, part.required === true],

@@ -3,9 +3,17 @@ import { join } from "node:path";
 import { type OutlineGroup, type OutlineUnit, outlineNodes } from "@resume-tools/resume-model";
 import { beforeAll, describe, expect, test } from "vitest";
 import { Compiler, type Shown } from "../src/editor/compiler";
-import { type Command, type Document, History } from "../src/editor/document";
+import { applyUnder, type Command, type Document, History } from "../src/editor/document";
+import { enterAdds } from "../src/editor/enter";
 import { StructureGuard } from "../src/editor/guard";
-import { outlineFields, outlineOf, unitEnding, unitPlace, unitShape } from "../src/editor/outline";
+import {
+  alike,
+  outlineFields,
+  outlineOf,
+  unitEnding,
+  unitPlace,
+  unitShape,
+} from "../src/editor/outline";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../src/engine/node";
 import type { EngineSession } from "../src/engine/session";
 import { FontLibrary } from "../src/page/fonts";
@@ -18,8 +26,9 @@ import { engineManifest, engineOf, fetched, importedSample } from "./oracle-samp
 // added after a list's first, as Enter at the end of its text adds one, the page then the page
 // before but for the new bullet and what moves down; the bullet removed, the page then the page
 // before to the glyph; then an entry with bullets added after itself in the same way, as Enter at
-// the end of its last field before its bullets adds one, and removed; and every group of the three
-// takes a unit more and one fewer, none fixed (decision 0055). The list is chosen by the template's command its bullets are set with, so that
+// the end of its last field before its bullets adds one, and removed; Enter at a section's fields
+// adding nothing; and every group of the three takes a unit more and one fewer, none fixed
+// (decision 0055). The list is chosen by the template's command its bullets are set with, so that
 // no sample's text is in this file, and numbers alone reach the test's output.
 
 /** Each sample's list: the kept text its bullets begin with, which no unit before it holds. */
@@ -132,7 +141,7 @@ describe.skipIf(!fetched || !engineAvailable())(
          * first to the glyph. What it came to, in numbers.
          */
         const addRemove = async (field: string, what: string) => {
-          const at = unitEnding(outlineOf(history.present.resume)?.parts ?? [], field);
+          const at = enterAdds(outlineOf(history.present.resume)?.parts ?? [], field);
           const after = at?.group.units[at.index];
           if (at === undefined || after === undefined) throw new Error(`${id}: no ${what} ends`);
           const added = await step({ type: "structure", op: { op: "addUnit", after: after.id } });
@@ -203,6 +212,42 @@ describe.skipIf(!fetched || !engineAvailable())(
         const head = entry === undefined ? undefined : lastOwnField(entry.unit);
         if (head === undefined) throw new Error(`${id}: no entry with bullets`);
         console.info(`${id}: an entry with bullets added in ${await addRemove(head, "entry")}`);
+
+        // Enter at a section's own fields adds nothing: each unit whose kept text begins with the
+        // template's section command, its title where it is a field and whatever else it writes.
+        const parts = outlineOf(history.present.resume)?.parts ?? [];
+        const SECTION = /^\s*\\(?:cv)?section\*?\s*\{/;
+        const sections = groups.flatMap((each) =>
+          each.units.filter((unit) => {
+            const head = unit.parts[0];
+            return head?.kind === "kept" && SECTION.test(head.latex);
+          }),
+        );
+        const titles = sections.flatMap((unit) =>
+          unit.parts.flatMap((part) =>
+            part.kind === "text" || part.kind === "rich" ? [part.id] : [],
+          ),
+        );
+        expect(sections.length, `${id}: sections`).toBeGreaterThan(2);
+        expect(titles.filter((title) => enterAdds(parts, title) !== undefined)).toEqual([]);
+        // Units differing only in their spaces are alike: the entry chosen moves, and each of its
+        // group's units takes a copy of the last after it.
+        const group = groups.find((each) => each.id === entry?.group.id) as OutlineGroup;
+        // Jake's entries differ in their indentation alone; AltaCV's jobs and Awesome-CV's entries, some
+        // without a description, are written otherwise.
+        expect(alike(group), `${id}: the entries alike`).toBe(id === "jake-0000");
+        for (const unit of group.units) {
+          const op = { op: "addUnit", after: unit.id } as const;
+          if (alike(group)) applyUnder(pkg, history.present, { type: "structure", op });
+        }
+        if (alike(group))
+          applyUnder(pkg, history.present, {
+            type: "structure",
+            op: { op: "moveUnit", id: group.units[0]?.id ?? "", to: 1 },
+          });
+        console.info(
+          `${id}: Enter at ${titles.length} fields of ${sections.length} sections adds nothing; the entries are ${alike(group) ? "" : "not "}alike`,
+        );
         compiler.close();
       }, 600_000);
   },

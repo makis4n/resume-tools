@@ -20,11 +20,12 @@ import {
   UnitRefused,
 } from "./editor/document";
 import { pdfFileName, savePdf } from "./editor/download";
+import { enterAdds } from "./editor/enter";
 import { applyFit, type Fitted, fit } from "./editor/fit";
 import { StructureGuard } from "./editor/guard";
 import { ImportReport } from "./editor/ImportReport";
 import { Overlay } from "./editor/Overlay";
-import { markerOf, outlineFields, outlineOf, unitEnding, unitPlace } from "./editor/outline";
+import { markerOf, outlineFields, outlineOf, unitPlace } from "./editor/outline";
 import { lockedWordsOf, Panel, shownFieldsOf } from "./editor/Panel";
 import { usePdfConsent } from "./editor/PdfReading";
 import { PdfReview } from "./editor/PdfReview";
@@ -917,7 +918,8 @@ export function App() {
 
   /**
    * Enter at the end of an outline's field (the second pass's item 8): where the field ends a unit,
-   * a bullet by its text or an entry by its last field before its bullets, a copy of its group's
+   * a bullet by its text or an entry by its last field before its bullets, never a section
+   * (`enterAdds`), a copy of its group's
    * last unit, its fields emptied, goes in after it (`addUnit`), as a step of its own after the
    * visit to the field, held until its page shows as every change to an outline is; the field
    * closes, and the new unit's first field takes the focus in the side panel, since the page shows
@@ -929,7 +931,7 @@ export function App() {
     if (ended.current === click) return;
     const outline = outlineOf(history.present.resume);
     const id = field.endsWith(".text") ? field.slice(0, -".text".length) : undefined;
-    const place = outline && id !== undefined ? unitEnding(outline.parts, id) : undefined;
+    const place = outline && id !== undefined ? enterAdds(outline.parts, id) : undefined;
     const unit = place?.group.units[place.index];
     if (unit === undefined) return;
     // The add is a step of its own, after the visit: one the outline refuses says why, and the

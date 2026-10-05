@@ -3,6 +3,7 @@ import {
   OUTLINE_PLACEHOLDER,
   type OutlineGroup,
   type OutlinePart,
+  type OutlineUnit,
   outlineNodes,
   Resume,
 } from "@resume-tools/resume-model";
@@ -25,6 +26,7 @@ import {
   type StructureOp,
   UnitRefused,
 } from "./document";
+import { enterAdds, sectionLike } from "./enter";
 import { endsField } from "./Overlay";
 import {
   alike,
@@ -34,6 +36,7 @@ import {
   outlineFields,
   outlineIds,
   outlineOf,
+  texSpaces,
   unitEnding,
   unitPlace,
   unitShape,
@@ -466,5 +469,82 @@ describe("units not all of one shape", () => {
     expect(why({ op: "removeUnit", id: "mill-1" })).toBe(ONLY_UNIT);
     for (const text of Object.values(FIXED_WHY)) expect(text).not.toMatch(/[\\{}]/);
     expect(FIXED_WHY.stops).not.toBe(FIXED_WHY.copy);
+  });
+});
+
+describe("a unit's shape and what Enter adds", () => {
+  it("reads kept text's spaces as TeX does, a blank line apart, verbatim byte for byte", () => {
+    expect(texSpaces("}\n      \\resumeItemListEnd")).toBe(texSpaces("}\n    \\resumeItemListEnd"));
+    expect(texSpaces("a  \t b")).toBe("a b");
+    expect(texSpaces("a\n\n  b")).not.toBe(texSpaces("a\n  b"));
+    expect(texSpaces("a \n \n\n b")).toBe("a\n\nb");
+    expect(texSpaces("\\verb|a  b|\n  ")).toBe("\\verb|a  b|\n  ");
+    const unit = (end: string): OutlineUnit => ({
+      id: "u",
+      gap: "\n",
+      parts: [
+        { kind: "kept", latex: "\\entry{" },
+        { kind: "text", id: "f", text: "x" },
+        { kind: "kept", latex: end },
+      ],
+    });
+    expect(unitShape(unit("}\n      \\par"))).toBe(unitShape(unit("}\n  \\par")));
+    expect(unitShape(unit("} \\\\"))).not.toBe(unitShape(unit("}\n\n")));
+  });
+
+  it("is a bullet or an entry, never a section", async () => {
+    const heading = (after: OutlinePart[]): OutlineUnit => ({
+      id: "s",
+      gap: "\n",
+      parts: [
+        { kind: "kept", latex: "\\section{" },
+        { kind: "rich", id: "t", text: [{ text: "Skills" }] },
+        { kind: "kept", latex: "}\n" },
+        ...after,
+      ],
+    });
+    // A heading with words kept after it, or with a group after it: a section.
+    expect(sectionLike(heading([{ kind: "kept", latex: "\\textbf{Tools}: Quill, Wren" }]))).toBe(
+      true,
+    );
+    expect(sectionLike(heading([{ kind: "group", id: "g", units: [] }]))).toBe(true);
+    // A heading with nothing after it but commands, and a bullet: none.
+    expect(sectionLike(heading([{ kind: "kept", latex: "\\vspace{2pt} % Quill\n" }]))).toBe(false);
+    const { document } = await inventedOutline();
+    const roles = groupOf(document, "roles");
+    expect(roles.units.map(sectionLike)).toEqual([false, false]);
+    // Units that hold units with bullets: a section of entries.
+    const sections: OutlineUnit = { id: "x", gap: "\n", parts: [{ ...roles }] };
+    expect(sectionLike(sections)).toBe(true);
+    // Enter at a section's heading adds nothing.
+    const parts: OutlinePart[] = [
+      {
+        kind: "group",
+        id: "secs",
+        units: [
+          heading([{ kind: "kept", latex: "Quill, Wren" }]),
+          {
+            ...heading([{ kind: "kept", latex: "Lantern" }]),
+            id: "s2",
+            parts: heading([{ kind: "kept", latex: "Lantern" }]).parts.map((part) =>
+              part.kind === "rich" ? { ...part, id: "t2" } : part,
+            ),
+          },
+        ],
+      },
+    ];
+    expect(unitEnding(parts, "t")).toBeDefined();
+    expect(enterAdds(parts, "t")).toBeUndefined();
+    expect(enterAdds(parts, "t2")).toBeUndefined();
+    // A bullet; and an entry where it stands in a section, not at the outline's own level, where
+    // its run is read as one of sections.
+    const outline = outlineOf(document.resume)?.parts ?? [];
+    expect(enterAdds(outline, "lantern-2-text")?.group.id).toBe("lantern-bullets");
+    expect(enterAdds(outline, "lantern-dates")).toBeUndefined();
+    const inSection: OutlinePart[] = [
+      { kind: "group", id: "wrap", units: [{ id: "wrap-1", gap: "\n", parts: outline }] },
+    ];
+    expect(enterAdds(inSection, "lantern-dates")?.group.id).toBe("roles");
+    expect(enterAdds(inSection, "lantern-2-text")?.group.id).toBe("lantern-bullets");
   });
 });
