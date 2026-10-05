@@ -333,7 +333,7 @@ closes.
     `.tex` import sends nothing. The superseded records are marked so. Done when the build and the
     suite are green, nothing in a `.tex` import reaches the service, and the corpus workflow runs
     the one command that is left.
-18. [ ] **Measure and close.** The measuring page times a `.tex` import on both engines and a PDF
+18. [x] **Measure and close.** The measuring page times a `.tex` import on both engines and a PDF
     import by rules; the model's time comes from item 15's command. One record holds the numbers
     beside decision 0045's. docs/milestone-3.md gets a line pointing here. The status page gets a
     section for each item that changed the product.

@@ -6,6 +6,10 @@ that takes the `.tex` resume a person already has, and says in what order. Each 
 one pull request, or a few if it grows past ten minutes of reading. Tick the item in the same pull
 request that finishes it.
 
+**The second pass.** The first pass fell short of the milestone's goal, and a second pass rebuilt
+the import: [milestone-3-overhaul.md](milestone-3-overhaul.md). It is done and measured in
+decision [00XX](decisions/00XX-the-second-pass-measured.md), which closes the milestone.
+
 ## The goal
 
 From the plan: intake, parser, probes, model step, validation, locked chunks, cache, the import
