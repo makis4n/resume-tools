@@ -22,13 +22,17 @@
  * - **template environments**, one the engine says the template defines, its arguments and body;
  * - **groups** and **blocks**, a braced group or a standard environment such as `center`, or a
  *   declaration used as one, `small` or `bfseries`, whose content the parser places;
- * - and **raw chunks**, everything else, byte for byte: math, verbatim, `tabular` and the
- *   environments the table does not know, commands whose effect is not text, typewriter text, a
- *   paragraph an alignment's `&` is in or whose `\\` ends a table's row, the body of a template
- *   environment that holds an `&` of its own, what a constant-false conditional skips, and any
- *   command the table does not know and the engine did not resolve, or resolved with a signature a
- *   group after the call belies. A raw chunk is the smallest node the parser cannot place: a raw
- *   command whose argument is text a page shows keeps that argument placed inside it.
+ * - **tables**, a `tabular` and its kin, a block whose body is cut into its cells, each placed as
+ *   any content is, the `&`, the rows' ends, the rules and the spanning commands kept as written
+ *   around them; and a `table` float, a block (decision 00XX);
+ * - and **raw chunks**, everything else, byte for byte: math, verbatim, the environments the table
+ *   does not know or keeps raw, a table whose cells are unsafe to place, commands whose effect is
+ *   not text, typewriter text, a paragraph an alignment's `&` is in or whose `\\` ends a table's
+ *   row, the body of a template environment that holds an `&` of its own, what a constant-false
+ *   conditional skips, and any command the table does not know and the engine did not resolve, or
+ *   resolved with a signature a group after the call belies. A raw chunk is the smallest node the
+ *   parser cannot place: a raw command whose argument is text a page shows keeps that argument
+ *   placed inside it.
  *
  * Every node keeps its span in the body, so that the printer gives back the bytes of what nobody
  * changed. A body past 5 MB, nested past 64 levels, or making a tree of more than 200,000 nodes or
@@ -1629,6 +1633,11 @@ function placeEnvironment(
     nodes: [made(context, { kind: "raw", why, name, ...span } satisfies RawNode)],
     next: i + 1,
   });
+  const table = TABLES.get(name);
+  if (table !== undefined) {
+    const placed = placeTable(node, i, name, table, context, state);
+    if (placed !== undefined) return placed;
+  }
   const standard = STANDARD_ENVIRONMENTS.get(name);
   const said = standard === undefined ? known(context.signatures?.environments, name) : undefined;
   const spec =
@@ -1719,6 +1728,184 @@ function placeEnvironment(
     ],
     next: i + 1,
   };
+}
+
+// Tables.
+
+/**
+ * The environments whose body is cut into its cells (decision 00XX), by their arguments: the
+ * alignments of LaTeX and of the tabularx, tabulary and longtable packages, which set text in their
+ * cells, and the `table` float, whose body is placed as a block's, so that an alignment in it is
+ * cut too. The `array` environment is not among them, since its cells are mathematics, nor is
+ * `tabbing`, whose marks are not an alignment's.
+ */
+const TABLES: ReadonlyMap<string, { spec: string; alignment: boolean }> = new Map([
+  ["tabular", { spec: "o m", alignment: true }],
+  ["tabular*", { spec: "m o m", alignment: true }],
+  ["tabularx", { spec: "m o m", alignment: true }],
+  ["tabulary", { spec: "m o m", alignment: true }],
+  ["longtable", { spec: "o m", alignment: true }],
+  ["table", { spec: "o", alignment: false }],
+  ["table*", { spec: "o", alignment: false }],
+]);
+
+/**
+ * The names of the alignments the parser cuts into cells: a block of one of them holds its cells,
+ * the `&` between them in the body's bytes, so no field spans it whole (`candidates.ts`).
+ */
+export const ALIGNMENTS: ReadonlySet<string> = new Set(
+  [...TABLES].flatMap(([name, table]) => (table.alignment ? [name] : [])),
+);
+
+/**
+ * What ends a row or stands between rows of an alignment, by its arguments: kept as the upload
+ * wrote it, never a cell's text. A row's end, `\\` and `\tabularnewline`, with a star and a space;
+ * the rules of LaTeX, booktabs and hhline, and colortbl's row colour; longtable's heads and feet.
+ */
+const ROW_MARKS: ReadonlyMap<string, string> = new Map([
+  ["\\", "s o"],
+  ["tabularnewline", "s o"],
+  ["hline", ""],
+  ["cline", "m"],
+  ["toprule", "o"],
+  ["midrule", "o"],
+  ["bottomrule", "o"],
+  ["cmidrule", "o d() m"],
+  ["addlinespace", "o"],
+  ["specialrule", "m m m"],
+  ["morecmidrules", ""],
+  ["hhline", "m"],
+  ["rowcolor", "o m"],
+  ["endhead", ""],
+  ["endfirsthead", ""],
+  ["endfoot", ""],
+  ["endlastfoot", ""],
+]);
+
+/**
+ * What spans cells, by its arguments and the one that is the text it sets: `\multicolumn`, its
+ * columns, their preamble and the text, and multirow's `\multirow`, its rows, its struts, its
+ * width, its shift and the text. It is kept as the upload wrote it, and its text placed.
+ */
+const SPANNERS: ReadonlyMap<string, { spec: string; text: number }> = new Map([
+  ["multicolumn", { spec: "m m m", text: 2 }],
+  ["multirow", { spec: "m o m o m", text: 4 }],
+]);
+
+/**
+ * What makes an alignment's cells unsafe to place, at the top level of its body: TeX's own ways of
+ * changing an alignment's cells, `\omit`, `\span`, `\cr` and the like; longtable's `\kill`, whose
+ * row is measured and never set; and a conditional, whose skipped text may cross a cell's edge.
+ * Such an alignment is kept whole, raw, as an alignment the parser does not cut always was.
+ */
+const UNSAFE_IN_TABLE: ReadonlySet<string> = new Set([
+  ...["omit", "span", "cr", "crcr", "noalign", "multispan", "kill", "else", "fi", "or"],
+]);
+
+/**
+ * Place a table: an alignment's body cut into its cells (`cellsOf`), or a `table` float's body
+ * placed, as a block named for it, its arguments kept; or undefined, for one whose arguments cannot
+ * be read, or an alignment whose cells are unsafe to place, which stays raw.
+ */
+function placeTable(
+  node: Ast.Environment,
+  i: number,
+  name: string,
+  table: { spec: string; alignment: boolean },
+  context: Context,
+  state: TextState,
+): Placed | undefined {
+  const span = spanOf(node) ?? { start: 0, end: 0 };
+  const read = readArguments(node.content, 0, table.spec, beginEnd(context.source, span.start));
+  if (read === undefined || !read.complete) return undefined;
+  const bodyNodes = node.content.slice(read.next);
+  const inner = deeper(context);
+  const body = { ...state, grouped: true };
+  const count = { ...context.count };
+  const content = table.alignment
+    ? cellsOf(bodyNodes, inner, body)
+    : sequence(bodyNodes, inner, body);
+  if (content === undefined) {
+    context.count.nodes = count.nodes;
+    context.count.levels = count.levels;
+    return undefined;
+  }
+  return {
+    nodes: [
+      made(context, {
+        kind: "block",
+        name,
+        ...span,
+        args: placedArguments(read.args, context, { marks: PLAIN, grouped: true }, []),
+        content,
+      } satisfies BlockNode),
+    ],
+    next: i + 1,
+  };
+}
+
+/**
+ * An alignment's body as its cells (decision 00XX): each cell's text placed as any content is, in a
+ * state of its own, since TeX sets each cell in a group; the `&` between cells left to the body's
+ * bytes between nodes; and a row's end, a rule and the like (`ROW_MARKS`) raw, with their
+ * arguments. A `\multicolumn` or a `\multirow` is raw, its text placed (`SPANNERS`). Undefined when
+ * a cell is unsafe to place (`UNSAFE_IN_TABLE`), or a mark's arguments cannot be read, which would
+ * leave them to be read as a cell's text.
+ */
+function cellsOf(nodes: Ast.Node[], context: Context, state: TextState): Node[] | undefined {
+  for (const node of nodes)
+    if (
+      node.type === "macro" &&
+      (UNSAFE_IN_TABLE.has(node.content) ||
+        STANDARD.get(node.content)?.role.kind === "conditional" ||
+        isConditional(node.content, context))
+    )
+      return undefined;
+  const out: Node[] = [];
+  let from = 0;
+  const cell = (to: number) => {
+    if (to > from)
+      for (const each of sequence(nodes.slice(from, to), context, { ...state })) out.push(each);
+  };
+  for (let j = 0; j < nodes.length; ) {
+    const node = nodes[j];
+    if (node?.type === "string" && node.content.includes("&")) {
+      if (!/^&+$/.test(node.content)) return undefined;
+      cell(j);
+      from = ++j;
+      continue;
+    }
+    const mark = node?.type === "macro" ? ROW_MARKS.get(node.content) : undefined;
+    const spanner = node?.type === "macro" ? SPANNERS.get(node.content) : undefined;
+    if (node?.type !== "macro" || (mark === undefined && spanner === undefined)) {
+      j++;
+      continue;
+    }
+    const span = spanOf(node) ?? { start: 0, end: 0 };
+    const read = readArguments(nodes, j + 1, mark ?? spanner?.spec ?? "", span.end, node);
+    if (read === undefined || !read.complete) return undefined;
+    cell(j);
+    out.push(
+      made(context, {
+        kind: "raw",
+        why: "command",
+        name: node.content,
+        start: span.start,
+        end: endAfter(read.args, span.end),
+        ...(spanner === undefined
+          ? {}
+          : {
+              args: placedArguments(read.args, context, { ...state, grouped: true }, [
+                spanner.text,
+              ]),
+            }),
+      } satisfies RawNode),
+    );
+    j = read.next;
+    from = j;
+  }
+  cell(nodes.length);
+  return out;
 }
 
 /**
