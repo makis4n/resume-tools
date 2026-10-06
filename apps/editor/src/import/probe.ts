@@ -275,7 +275,7 @@ const wordsIn = (set: readonly Candidate[]) =>
  * `untested`.
  *
  * The kinds held apart are tried before the rest of the set. With `wordsFirst`, as the probe
- * settles (decision 00XX), the rest's first compile comes before them when the rest holds more
+ * settles (decision 0069), the rest's first compile comes before them when the rest holds more
  * words than each, and a kind held apart whose candidates hold no word waits for the rest, since
  * the budget it would take one candidate at a time wins no word back. For candidates in the same
  * order, the same sets are compiled either way when the budget does not run out, so the verdicts
@@ -297,7 +297,7 @@ export async function settle(
   const passing = new Map<string, readonly Candidate[]>();
   /**
    * The sets, by their ids, that are what is left of a set once every candidate its compile named
-   * passed alone: such a set that fails is halved, whatever its compile names (decision 00XX).
+   * passed alone: such a set that fails is halved, whatever its compile names (decision 0069).
    */
   const blind = new Set<string>();
   const keyOf = (set: readonly Candidate[]) =>
@@ -593,7 +593,7 @@ export async function settle(
 /**
  * The order `settle` splits candidates along: kinds together, in the order each kind first comes
  * in the source, and each kind's candidates in the source's order, the body's before the
- * preamble's calls. With `wordsFirst`, as the probe takes them (decision 00XX), the kinds whose
+ * preamble's calls. With `wordsFirst`, as the probe takes them (decision 0069), the kinds whose
  * candidates' text holds the most words come first, kinds of as many words in the order each first
  * came: the bisection tries its first half before its second, so what the budget leaves
  * `untested` is the last kinds, the ones with the fewest words. The order is a heuristic: a first

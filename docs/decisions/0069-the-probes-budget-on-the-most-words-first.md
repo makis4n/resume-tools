@@ -1,4 +1,4 @@
-# 00XX. The probe's budget spent on the most words first
+# 0069. The probe's budget spent on the most words first
 
 Date: 2026-10-06 · Status: accepted, lane 2 of decision 0067; amends 0022
 
