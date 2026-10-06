@@ -47,6 +47,7 @@ import { inLatinModern, undrawableFonts } from "./latin-modern";
 import {
   buildOutline,
   outlinePackage,
+  outlineResume,
   ownersOf,
   reachedRuns,
   reachOf,
@@ -411,7 +412,16 @@ export async function importResume(
         compiler,
         ...(ended === undefined ? {} : { ended }),
         reference: made,
-        build: outlineOf,
+        // An outline built from what the checks keep is one a stage may show (`StagedCompiler`).
+        build:
+          ended === undefined
+            ? outlineOf
+            : (kept) => {
+                const outline = outlineOf(kept);
+                const resume = outlineResume(outline.parts);
+                if (resume !== undefined) compiler.want(resume);
+                return outline;
+              },
         candidates: probed.candidates,
         runs: probed.runs ?? [],
         ...(deps.checkBudget === undefined ? {} : { budget: deps.checkBudget }),

@@ -120,6 +120,23 @@ describe("StructureGuard, holding every change of an imported outline", () => {
     expect(guard.holds(history)).toBe(false);
   });
 
+  it("says which document a page last showed while it holds, which the store may hold meanwhile", () => {
+    const guard = new StructureGuard();
+    const history = new History(opened);
+    expect(guard.shown(history)).toBeUndefined();
+    type(history, "W");
+    guard.changed(history, opened, true);
+    expect(guard.shown(history)).toBe(opened);
+    const first = history.present;
+    type(history, "Wo");
+    guard.changed(history, first, true);
+    guard.paged(first);
+    expect(guard.shown(history)).toBe(first);
+    expect(guard.shown(new History(opened))).toBeUndefined();
+    guard.paged(history.present);
+    expect(guard.shown(history)).toBeUndefined();
+  });
+
   it("takes a stop back to the last document a page showed, within one visit, with nothing to redo", () => {
     const guard = new StructureGuard();
     const history = new History(opened);

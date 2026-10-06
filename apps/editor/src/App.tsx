@@ -657,7 +657,9 @@ export function App() {
     const { present } = doc.history;
     setTakenBack(false);
     setUnitNote(undefined);
-    compiler.current?.update(present);
+    // While the import's checks hold the engine, an edit waits in the history: the document the
+    // import lands compiles with it then (`landEarly`), and one cancelled or refused compiles nothing.
+    if (doc.importing !== "locked" && doc.importing !== "fields") compiler.current?.update(present);
     // An imported outline's every change waits for its page (`StructureGuard`); one whose import is
     // under way is saved once it is kept (decision 00XX).
     const every = outlineOf(present.resume) !== undefined;
@@ -812,6 +814,11 @@ export function App() {
     if (now?.importing === undefined) return;
     const marked = withOutcomeMarks(now.history.present, outcome.document);
     const history = marked === now.history.present ? now.history : new History(marked, now.pkg);
+    // What the person typed while the checks ran has not compiled yet: like every change to an
+    // imported outline, it waits for its page, and a compile it stops takes it back to the document
+    // the checks compiled, which is the one kept until a page shows the typed one (`StructureGuard`).
+    guard.current.forget();
+    if (marked !== outcome.document) guard.current.changed(history, outcome.document, true);
     const partial = report.outcome === "partial";
     const landed: Open = {
       ...now,
@@ -829,13 +836,15 @@ export function App() {
       setWaiting({ outcome, report });
       return;
     }
-    await adoptImport({ ...outcome, document: history.present }, report);
+    await adoptImport(outcome, report);
   };
 
   /**
-   * Keep an import whose document is open, as the person has it now (`Imported.document`), and give
-   * the open document its id: it is saved from then on as any document is, and its report shows
-   * above its page. One that cannot be kept goes, and the list says why.
+   * Keep an import whose document is open, the document its checks compiled (`Imported.document`),
+   * and give the open document its id: it is saved from then on as any document is, and its report
+   * shows above its page. What the person typed meanwhile is saved over it only once a page has shown
+   * it (`StructureGuard`), so that the store never holds a document that does not compile. One that
+   * cannot be kept goes, and the list says why.
    */
   const adoptImport = async (outcome: Imported, report: Report) => {
     let id: string | undefined;
@@ -860,9 +869,10 @@ export function App() {
     openNow.current = kept;
     setOpen(kept);
     setImportedReport({ id, report });
-    // What the person typed while it was being kept is saved now.
-    const present = kept.history.present;
-    if (present !== outcome.document) store.current?.save(id, present, revision);
+    // What the person typed meanwhile is saved now as far as a page has shown it; the rest, once one
+    // does (`page`), or never, if its compile stops and takes it back.
+    const shown = guard.current.shown(kept.history) ?? kept.history.present;
+    if (shown !== outcome.document) store.current?.save(id, shown, revision);
   };
 
   /**
@@ -960,8 +970,7 @@ export function App() {
     if (pending === undefined) return;
     setWaiting(undefined);
     const now = openNow.current;
-    if (now?.importing !== undefined)
-      await adoptImport({ ...pending.outcome, document: now.history.present }, pending.report);
+    if (now?.importing !== undefined) await adoptImport(pending.outcome, pending.report);
     else await keepImport(pending.outcome, pending.report);
   };
 

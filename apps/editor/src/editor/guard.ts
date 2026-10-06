@@ -89,6 +89,14 @@ export class StructureGuard {
   }
 
   /**
+   * The last document of `history` a page showed, where a step of it is held: what the store may
+   * hold of it until a page shows the present. Undefined where nothing of it is held.
+   */
+  shown(history: History): Document | undefined {
+    return this.held?.history === history ? this.held.shown : undefined;
+  }
+
+  /**
    * A page came of `document`: whether it shows the held step's structure, which lets go of it, so
    * that the app saves the history's present.
    */

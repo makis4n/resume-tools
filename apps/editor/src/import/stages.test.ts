@@ -40,7 +40,10 @@ async function heard(ends: CheckEnd[], compiled: OutlinePart[][]) {
   const outputs = new Map(
     compiled.map((parts, i) => [resumeKey(outlineResume(parts)), new Uint8Array([0xf7, i])]),
   );
-  const compiler = { outputOf: (key: string) => outputs.get(key) } as unknown as StagedCompiler;
+  const compiler = {
+    outputOf: (key: string) => outputs.get(key),
+    release: () => {},
+  } as unknown as StagedCompiler;
   const stages: ImportStage[] = [];
   let n = 0;
   const hear = stagesOf((stage) => stages.push(stage), {
@@ -113,11 +116,38 @@ describe("an import's stages (decision 00XX)", () => {
       {
         pkg,
         job: { files: {}, images: [] },
-        compiler: { outputOf: () => output } as unknown as StagedCompiler,
+        compiler: { outputOf: () => output, release: () => {} } as unknown as StagedCompiler,
         now: () => ({ ms: 0, compiles: 0 }),
       },
     );
     expect(() => hear(end(1, parts))).not.toThrow();
+  });
+
+  it("lets the outputs go once check 2 has ended, whether it brought a page or not", async () => {
+    const { pkg } = await inventedOutline();
+    const parts = outlineParts();
+    for (const ends of [
+      [end(1, parts), end(2, parts)],
+      [end(1, parts, false), end(2, keptField("mill-dates"))],
+    ]) {
+      const released: number[] = [];
+      let n = 0;
+      const hear = stagesOf(() => {}, {
+        pkg,
+        job: { files: {}, images: [] },
+        compiler: {
+          outputOf: () => (released.length > 0 ? undefined : new Uint8Array([0xf7])),
+          release: () => released.push(++n),
+        } as unknown as StagedCompiler,
+        now: () => ({ ms: 0, compiles: 0 }),
+      });
+      for (const each of ends) {
+        hear(each);
+        expect(released.length).toBe(each.check === 2 ? 1 : 0);
+      }
+      hear(end(3, parts));
+      expect(released).toEqual([1]);
+    }
   });
 
   it("keys a resume by its JSON, so that two alike take one key and two unlike two", () => {

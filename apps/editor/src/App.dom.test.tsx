@@ -11,7 +11,8 @@ import { MOVE } from "./editor/ImportReport";
 import { refusal } from "./import/refusal";
 import { LOCK_WHY, type Report } from "./import/report";
 import type { ImportOutcome, ImportStage } from "./import/run";
-import { inventedOutline } from "./test/invented-outline";
+import { DocumentStore, SAVE_DELAY } from "./storage/store";
+import { inventedOutline, outlineParts } from "./test/invented-outline";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -27,7 +28,16 @@ const landing = vi.hoisted(() => ({
   waits: [] as (() => void)[],
   /** The documents the compiler was given to compile, as `open` gives them. */
   opened: [] as unknown[],
-  events: undefined as { page(shown: unknown): void } | undefined,
+  /** The documents it was given as edits (`update`). */
+  updated: [] as unknown[],
+  /**
+   * How long `open`'s compile takes to land, in milliseconds, or none to land as it is asked: a
+   * document holding a Cyrillic letter stops it, as fonts with none make it (item 7).
+   */
+  lands: undefined as number | undefined,
+  events: undefined as
+    | { page(shown: unknown): void; error(message: string): void; stopped(document: unknown): void }
+    | undefined,
   /** The report the import is read into, a partial one's unless a test says otherwise. */
   report: undefined as unknown,
 }));
@@ -50,7 +60,7 @@ const blank = (document: unknown) => {
 vi.mock("./editor/compiler", async (original) => ({
   ...(await original<typeof import("./editor/compiler")>()),
   Compiler: class {
-    constructor(_engine: unknown, _fonts: unknown, events: { page(shown: unknown): void }) {
+    constructor(_engine: unknown, _fonts: unknown, events: typeof landing.events) {
       landing.events = events;
     }
     importResume(_files: unknown, _progress: unknown, onStage?: (stage: unknown) => void) {
@@ -70,9 +80,18 @@ vi.mock("./editor/compiler", async (original) => ({
     }
     open(_pkg: unknown, document: unknown) {
       landing.opened.push(document);
-      landing.events?.page(blank(document));
+      const land = () => {
+        if (JSON.stringify(document).includes("Ж")) {
+          landing.events?.stopped(document);
+          landing.events?.error("The page could not be updated.");
+        } else landing.events?.page(blank(document));
+      };
+      if (landing.lands === undefined) land();
+      else setTimeout(land, landing.lands);
     }
-    update() {}
+    update(document: unknown) {
+      landing.updated.push(document);
+    }
     close() {}
   },
 }));
@@ -144,6 +163,8 @@ describe("the app's documents screen", () => {
     landing.stages = stages;
     landing.waits = [];
     landing.opened = [];
+    landing.updated = [];
+    landing.lands = undefined;
     landing.report = undefined;
     act(() => root.render(<App />));
     await settle();
@@ -256,6 +277,98 @@ describe("the app's documents screen", () => {
     await release();
     expect(host.textContent).not.toContain(FIELDS_LOCKED);
     expect(host.querySelector('[role="alert"]')?.textContent).toBe(refused.message);
+  });
+
+  /** Type `text` into the first field of the open document's first role, in the side panel. */
+  const typeInFirstRole = async (text: string) => {
+    const role = [...host.querySelectorAll<HTMLButtonElement>("aside button")].find((each) =>
+      each.textContent?.startsWith("Lantern Works"),
+    );
+    act(() => role?.click());
+    const input = host.querySelector<HTMLInputElement>("aside input");
+    if (input === null) throw new Error("no field in the side panel");
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    act(() => {
+      set?.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      input.blur();
+    });
+    await settle();
+  };
+
+  /** The one document the store holds, as it holds it once the app's saves are written. */
+  const storedText = async () => {
+    await act(async () => new Promise((done) => setTimeout(done, SAVE_DELAY + 200)));
+    const store = new DocumentStore();
+    const [row] = await store.list();
+    const stored = row === undefined ? undefined : await store.get(row.id);
+    await store.close();
+    return JSON.stringify(stored?.document ?? null);
+  };
+
+  // Item 7's guard over an imported outline, for what is typed while check 3 runs: kept out of the
+  // store until a page shows it, whether the outcome's marks are the stage's or not, and whether the
+  // stop comes before the import is kept or after.
+  for (const marks of ["agree", "differ"] as const)
+    for (const lands of [undefined, 50])
+      it(`keeps a letter typed while the checks run, whose compile stops, out of the store (marks ${marks}, ${lands === undefined ? "stopped at once" : "stopped later"})`, async () => {
+        const { page, fields, outcome, document } = await early();
+        const fixedRoles =
+          marks === "agree"
+            ? document
+            : (
+                await inventedOutline(
+                  outlineParts().map((part) =>
+                    part.kind === "group" && part.id === "roles"
+                      ? { ...part, fixed: "copy" as const }
+                      : part,
+                  ),
+                )
+              ).document;
+        await imported({ ...outcome, document: fixedRoles } as ImportOutcome, [page, fields]);
+        landing.lands = lands;
+        landing.report = { ...PARTIAL, outcome: "succeeded", rate: 0.97, locked: [] };
+        await release();
+        await release();
+        expect(host.textContent).toContain(FIELDS_OPEN);
+        await typeInFirstRole("Ж");
+        await release();
+        await settle();
+        expect(landing.opened.some((each) => JSON.stringify(each).includes("Ж"))).toBe(true);
+        expect(await storedText()).not.toContain("Ж");
+        // Taken back to the document the checks compiled, which the store holds.
+        expect(await storedText()).toContain("Lantern Works");
+      });
+
+  it("saves what was typed while the checks ran once a page shows it", async () => {
+    const { page, fields, outcome } = await early();
+    await imported(outcome, [page, fields]);
+    landing.lands = 50;
+    landing.report = { ...PARTIAL, outcome: "succeeded", rate: 0.97, locked: [] };
+    await release();
+    await release();
+    await typeInFirstRole("Inkwell Press");
+    // Nothing compiles while the checks hold the engine: the edit waits for the outcome.
+    expect(landing.updated).toEqual([]);
+    await release();
+    await settle();
+    expect(await storedText()).toContain("Inkwell Press");
+  });
+
+  it("compiles nothing typed while the checks ran once the import is refused", async () => {
+    const { page, fields } = await early();
+    const refused = refusal("stopped");
+    await imported(refused, [page, fields]);
+    await release();
+    await release();
+    await typeInFirstRole("Inkwell Press");
+    await release();
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(refused.message);
+    expect(landing.updated).toEqual([]);
+    expect(landing.opened).toEqual([]);
   });
 
   it("offers a refused import its PDF", async () => {

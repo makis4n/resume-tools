@@ -27,8 +27,8 @@ which open as checks 1 and 2 settle them, and its entries' copy, removal and mov
 - **The fields, after check 2**, which has settled every field: those it kept as text are kept text
   on the page, as they always were, and the rest open, in place and in the side panel. Where check 2
   kept a field, the outline it leaves is another, and its page, which check 2 compiled anyway, is
-  drawn in place of the first. Where check 1 had to bisect, nothing opens after it, and the page and
-  the fields open together after check 2.
+  drawn in place of the first. Where check 1 bisects, the page opens after it only if the outline it
+  leaves was compiled and set the page; otherwise page and fields open together after check 2.
 - **The entries, with the outcome**, once check 3 has tried every group: until then a copy, a
   removal or a move of a unit is refused with "Entries can be added, removed and moved once the
   import's checks end, which try each kind." The outcome's document takes the place of the one
@@ -37,15 +37,19 @@ which open as checks 1 and 2 settle them, and its entries' copy, removal and mov
   report above the page; a partial import shows its report above the page, with Continue, Stop and
   the move onto a built-in template, and is kept only on Continue. A refusal, a failure or a cancel
   goes back to the list as before, saying why, and keeps nothing.
-- An edit typed after the fields open reaches the page once the import lands, since the import
-  holds the engine until then, and is kept with the document. Nothing is saved before the import is
-  kept: the document has no id in the store until then.
+- An edit typed after the fields open waits in the document until the import lands, since the import
+  holds the engine until then; nothing is asked of the engine for it, so an import cancelled or
+  refused compiles nothing after it. Nothing is saved before the import is kept: the document has no
+  id in the store until then. What is kept is the document the checks compiled; what was typed is
+  saved over it once a page shows it, as every change to an imported outline is (the second pass's
+  item 7, `StructureGuard`), and a compile it stops takes it back to the checked document.
 
 ### How
 
 - The page is a compile the checks made anyway, never one more: the checks' compiler keeps the
-  output of each compile that went through, by the resume it set (`StagedCompiler`, in
-  `src/import/stages.ts`), and each check's end (a callback in `checkOutline`, `ChecksInput.ended`)
+  output of each compile that went through of an outline the checks built from what they keep, by
+  the resume it set (`StagedCompiler`, in `src/import/stages.ts`), never a mutation's or a group's
+  trial, and lets them go once check 2 has ended; each check's end (a callback in `checkOutline`, `ChecksInput.ended`)
   looks up the outline it leaves. Where that outline was not compiled as it stands, or did not set
   the page, nothing opens until a later check's did, or until the outcome.
 - The import says what opens as a stage (`ImportStage`: `page` or `fields`, the package, the
@@ -85,6 +89,22 @@ in Node, from the files to the stage; the browser's draw comes on top.
 | XeTeX: median | 16.5 s | 12.1 s | 17.4 s | 18.0 s |
 | XeTeX: slowest | 41.8 s | 38.1 s | 41.1 s | 48.9 s |
 
+- Against decision 0067's targets this loaded run reaches one and misses three: the pdfTeX page under
+  8 s in 66 of 91 meets "at least 66" with none to spare, but the slowest pdfTeX page, 61.8 s, misses
+  "under 60 s", the XeTeX page under 20 s in 16 of 19 misses "at least 17", and the slowest XeTeX
+  page, 38.1 s, misses "under 36 s". Against the lane's own estimate (about 72 of 91, a slowest
+  pdfTeX page of 30 to 39 s, 18 of 19 on XeTeX) it falls short on every line. The targets were not
+  reached in this run.
+- A second whole run, after the review's fixes (which change what is kept for a stage, not what
+  opens or when), at a load of 5.0 to 6.9: `corpus compare` again finds all 220 the same, times
+  aside, no document worse, 5,817 compiles, and all 110 opened before the import ended. pdfTeX: the
+  page under 8 s in 66 of 91, median 3.7 s, slowest 55.9 s (`altacv-0017`); every field open in 60
+  of 91, slowest 105.1 s; the whole import in 57 of 91, slowest 185.7 s. XeTeX: the page under 20 s
+  in 17 of 19, median 11.9 s, slowest 31.9 s (`awesome-cv-0033`); every field open in 15 of 19; the
+  whole import in 14 of 19. This run meets all four of decision 0067's targets for the page, the
+  pdfTeX count with none to spare, and still falls short of the lane's estimate on the pdfTeX count,
+  the slowest pdfTeX page and the XeTeX count. The two runs differ by load alone, so the targets are
+  met only at the edge: a quiet machine's run, at integration, settles them.
 - The machine was busier than for the before-run (load 1.7 to 4.1): the same compiles took 1,642 s
   in all against 1,471 s, 12% more, and the slowest import 198.9 s against 175.9 s. So the
   whole-import columns are not this change's; the early columns are best read against this run's
@@ -99,6 +119,28 @@ in Node, from the files to the stage; the browser's draw comes on top.
   it is the reference, the signatures and above all the probe, which this lane does not touch.
 - Every resume opened its fields before its outcome; in two, `moderncv-0012` and `other-0030`,
   which have no groups, check 3 has nothing to try and the outcome follows within milliseconds.
+
+### In the browser
+
+The app, on this branch with the review's fixes, in the desktop app's browser pane, importing the three
+upstream samples through the document list as a person would (the dev server's sample zips put in
+its file input), on the real worker. The pane was hidden and the machine at a load of 5 to 7, so the
+times below show the order of events, not the wait a person would have.
+
+| Sample | The page opens, fields locked | Fields open | Outcome | The outcome's page |
+|---|---|---|---|---|
+| `jake-0000`, pdfTeX | 1.8 to 2.2 s | 2.2 to 2.5 s | partial at 2.6 to 2.9 s | the same page, compiled in 160 ms |
+| `altacv-0000`, pdfTeX | 33.2 to 34.2 s | 45.1 s | partial at 50.5 s | the same 2 pages, compiled in 910 ms |
+| `awesome-cv-0000`, XeTeX | 12.4 s | 17.6 s | success, kept, at 18.4 s | the same 3 pages, compiled in 309 ms |
+
+- Each page was drawn from the output the worker handed over, the XeTeX one with the browser's
+  fonts, and every page the outcome compiled was the early page byte for byte (its SVG the same).
+- While the fields were locked the side panel was inert, a click on a field opened nothing, and the
+  progress line with its Cancel stood above the page. Cancel there, on `altacv-0000`, went back to
+  the list, kept nothing and said nothing; the next import ran on the fresh worker.
+- A partial import's report stood above the page with Continue, Stop and the move: Stop kept nothing,
+  Continue kept the document. The success was kept with its report above the page. No error reached
+  the console.
 
 ## Consequences
 

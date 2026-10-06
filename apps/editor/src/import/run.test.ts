@@ -16,6 +16,7 @@ import { TexLiveIndex } from "../page/texlive";
 import { DocumentStore } from "../storage/store";
 import { generateBody, generateFormat } from "../templates/generate";
 import { resolveTemplate, type Template } from "../templates/resolve";
+import { inventedOutline, outlineParts } from "../test/invented-outline";
 import { JAKE_FORK } from "../test/jake-fork";
 import { XETEX_RESUME } from "../test/xetex-resume";
 import { readTree } from "./fonts";
@@ -32,6 +33,7 @@ import {
   importResume,
   uploadOf,
 } from "./run";
+import { resumeKey, StagedCompiler } from "./stages";
 
 // Every file here is invented for these tests: the fork of Jake's Resume holds invented words in
 // the template's own shape (`../test/jake-fork.ts`); nothing is a real person's resume.
@@ -313,15 +315,48 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decisions 0038 an
     const shown = await early;
     expect(shown.document).toBe(first.document);
     expect(fieldsShown(...shown.pages).size).toBeGreaterThan(10);
+    // Where check 2 kept a field, its stage brought a page of its own, drawn as the first was; the
+    // page the document compiles to once the import has landed is the last one brought.
+    let brought = shown;
+    if (last.output !== undefined) {
+      const fields = nextPage();
+      await compiler.preview(last.package, last.document, last.job, last.output);
+      brought = await fields;
+      expect(brought.document).toBe(last.document);
+    }
     const landed = nextPage();
     compiler.open(outcome.package, outcome.document, outcome.job);
     const again = await landed;
-    // Where check 2 kept a field, its stage brought a page of its own, and the early one differs.
-    if (last.output === undefined)
-      expect(again.pages.map((page) => page.svg)).toEqual(shown.pages.map((page) => page.svg));
-    else expect(first).not.toBe(last);
+    expect(again.pages.map((page) => page.svg)).toEqual(brought.pages.map((page) => page.svg));
     compiler.close();
     await store.close();
+  }, 60_000);
+
+  test("keeps the output of an outline a stage may show, none of another compile, and none once released", async () => {
+    const { pkg, document } = await inventedOutline();
+    const other = (await inventedOutline(outlineParts("\\par Another invented line."))).document;
+    const compiler = new StagedCompiler({
+      session: deps.session,
+      fonts: deps.fonts,
+      pkg,
+      job: "staged",
+      files: {},
+    });
+    expect(compiler.start().ok).toBe(true);
+    compiler.want(document.resume);
+    expect((await compiler.compile(document.resume)).broke).toBe(false);
+    // A mutation or a trial: compiled, and not kept.
+    expect((await compiler.compile(other.resume)).broke).toBe(false);
+    expect(compiler.outputOf(resumeKey(document.resume))?.[0]).toBe(0xf7);
+    expect(compiler.outputOf(resumeKey(other.resume))).toBeUndefined();
+    expect(compiler.count).toBe(2);
+    // Once the stages need none, what was kept goes, and nothing more is kept.
+    compiler.release();
+    expect(compiler.outputOf(resumeKey(document.resume))).toBeUndefined();
+    compiler.want(other.resume);
+    expect((await compiler.compile(other.resume)).broke).toBe(false);
+    expect(compiler.outputOf(resumeKey(other.resume))).toBeUndefined();
+    compiler.close();
   }, 60_000);
 
   test("reports the fork's words in fields, in kept text and locked, out of 92", async () => {

@@ -44,30 +44,52 @@ export function resumeKey(resume: unknown): string {
 }
 
 /**
- * The checks' compiler (`OutlineCompiler`), which also keeps the output of each compile that went
- * through, DVI or XDV, by the resume it set (`resumeKey`), until it closes. It compiles nothing more
- * than the checks ask of it.
+ * The checks' compiler (`OutlineCompiler`), which also keeps the output, DVI or XDV, of each compile
+ * of an outline the stages may ask for (`want`) that went through, by the resume it set
+ * (`resumeKey`): the outlines the checks build from what they keep, never their mutations' or their
+ * groups' trials, which no stage shows. It keeps them until the stages need none more (`release`),
+ * or until it closes, and compiles nothing more than the checks ask of it. The session it compiles
+ * on is the import's own, every call but `compile` going to it as it is.
  */
 export class StagedCompiler extends OutlineCompiler {
   private readonly outputs = new Map<string, Uint8Array>();
+  private readonly wanted = new Set<string>();
+  private keeping = true;
   /** The output of the compile under way, as the session gave it. */
-  private last: Uint8Array | undefined;
+  private readonly seen: { output?: Uint8Array | undefined };
 
   constructor(input: CompilerInput) {
-    const session = Object.create(input.session) as EngineSession;
-    super({ ...input, session });
-    session.compile = (...args) => {
-      const result = input.session.compile(...args);
-      this.last = result.output;
+    const seen: { output?: Uint8Array | undefined } = {};
+    const real = input.session;
+    const compile: EngineSession["compile"] = (...args) => {
+      const result = real.compile(...args);
+      seen.output = result.output;
       return result;
     };
+    const session = new Proxy(real, {
+      get(target, key) {
+        if (key === "compile") return compile;
+        const value: unknown = Reflect.get(target, key, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    super({ ...input, session });
+    this.seen = seen;
+  }
+
+  /** Keep the output of this resume's compile, once it goes through, for a stage to show. */
+  want(resume: unknown): void {
+    if (this.keeping) this.wanted.add(resumeKey(resume));
   }
 
   override async compile(resume: Parameters<OutlineCompiler["compile"]>[0]): Promise<Compiled> {
-    this.last = undefined;
+    this.seen.output = undefined;
     const compiled = await super.compile(resume);
-    if (!compiled.broke && this.last !== undefined) this.outputs.set(resumeKey(resume), this.last);
-    this.last = undefined;
+    const output = this.seen.output;
+    this.seen.output = undefined;
+    if (!this.keeping || compiled.broke || output === undefined) return compiled;
+    const key = resumeKey(resume);
+    if (this.wanted.has(key)) this.outputs.set(key, output);
     return compiled;
   }
 
@@ -76,9 +98,16 @@ export class StagedCompiler extends OutlineCompiler {
     return this.outputs.get(key);
   }
 
+  /** The stages need no output more: what is kept goes, and nothing more is kept. */
+  release(): void {
+    this.keeping = false;
+    this.outputs.clear();
+    this.wanted.clear();
+  }
+
   override close() {
     super.close();
-    this.outputs.clear();
+    this.release();
   }
 }
 
@@ -122,6 +151,14 @@ export function stagesOf(
   let shown: string | undefined;
   return (end) => {
     if (end.check === 3) return;
+    try {
+      bring(end);
+    } finally {
+      // Check 2's end is the last that brings a page: no output is needed after it.
+      if (end.check === 2) context.compiler.release();
+    }
+  };
+  function bring(end: CheckEnd) {
     const resume = outlineResume(end.outline.parts);
     if (resume === undefined) return;
     const key = resumeKey(resume);
@@ -146,5 +183,5 @@ export function stagesOf(
     } catch {
       // What hears the stages changes nothing the import does.
     }
-  };
+  }
 }
