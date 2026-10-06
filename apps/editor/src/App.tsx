@@ -659,7 +659,10 @@ export function App() {
     setUnitNote(undefined);
     // While the import's checks hold the engine, an edit waits in the history: the document the
     // import lands compiles with it then (`landEarly`), and one cancelled or refused compiles nothing.
-    if (doc.importing !== "locked" && doc.importing !== "fields") compiler.current?.update(present);
+    // Once it has landed, while it is being kept, the engine is free and the edit compiles at once.
+    const checksHold =
+      importRun.current !== undefined && (doc.importing === "locked" || doc.importing === "fields");
+    if (!checksHold) compiler.current?.update(present);
     // An imported outline's every change waits for its page (`StructureGuard`); one whose import is
     // under way is saved once it is kept (decision 00XX).
     const every = outlineOf(present.resume) !== undefined;

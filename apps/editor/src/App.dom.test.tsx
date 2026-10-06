@@ -358,6 +358,48 @@ describe("the app's documents screen", () => {
     expect(await storedText()).toContain("Inkwell Press");
   });
 
+  // A success that has landed is kept by a write to the store that takes its time: what is typed
+  // then compiles at once, the engine free, and is saved once its page shows, whether that page
+  // comes before the import is kept or after.
+  for (const order of ["before", "after"] as const)
+    it(`compiles and saves what is typed while a landed import is being kept (page ${order} it is kept)`, async () => {
+      const { page, fields, outcome } = await early();
+      let keep = () => {};
+      const write = DocumentStore.prototype.importDocument;
+      const spy = vi
+        .spyOn(DocumentStore.prototype, "importDocument")
+        .mockImplementation(async function (this: DocumentStore, imported) {
+          await new Promise<void>((done) => {
+            keep = done;
+          });
+          return write.call(this, imported);
+        });
+      try {
+        await imported(outcome, [page, fields]);
+        landing.report = { ...PARTIAL, outcome: "succeeded", rate: 0.97, locked: [] };
+        await release();
+        await release();
+        await release();
+        // Landed and compiled, its write to the store under way.
+        expect(landing.opened).toHaveLength(1);
+        expect(spy).toHaveBeenCalledOnce();
+        await typeInFirstRole("Inkwell Press");
+        const typed = landing.updated.at(-1);
+        expect(JSON.stringify(typed ?? null)).toContain("Inkwell Press");
+        const pageOfTyped = () => act(() => landing.events?.page(blank(typed)));
+        if (order === "before") pageOfTyped();
+        await act(async () => keep());
+        await settle();
+        if (order === "after") {
+          expect(await storedText()).not.toContain("Inkwell Press");
+          pageOfTyped();
+        }
+        expect(await storedText()).toContain("Inkwell Press");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
   it("compiles nothing typed while the checks ran once the import is refused", async () => {
     const { page, fields } = await early();
     const refused = refusal("stopped");
