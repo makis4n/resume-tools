@@ -242,7 +242,7 @@ describe("the outline (decision 0049)", () => {
     expect(Object.keys(fieldsOf(parts))).toEqual(["c1-1", "c2-2"]);
   });
 
-  test("names the rule that declined each editable candidate it makes no field of (decision 00XX)", () => {
+  test("names the rule that declined each editable candidate it makes no field of (decision 0073)", () => {
     const body = String.raw`\inventedentry{Quill Academy}{Wrenford \\ Lark Bay}
 \inventedentry{}{\textbf{Heron \\ College}}
 \inventedentry{Lark Bay}{Wren Hall}

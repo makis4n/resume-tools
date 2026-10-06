@@ -98,7 +98,7 @@ export const DECIDED = ["parse", "probe", "outline", "checks"] as const;
 export type Decided = (typeof DECIDED)[number];
 
 /**
- * The rules behind `shape` (decision 00XX): each rule the outline declines an editable candidate
+ * The rules behind `shape` (decision 0073): each rule the outline declines an editable candidate
  * by (`ShapeRule`), and the two ways the report counts a candidate as `shape` that the outline
  * never saw, the probe's `container` and a candidate the probe does not know; with what each means.
  */

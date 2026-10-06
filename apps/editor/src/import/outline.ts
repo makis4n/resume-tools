@@ -307,7 +307,7 @@ interface Spot {
 
 /**
  * Why the outline makes no field of a candidate the probe found editable, which the report counts
- * as `shape`, by the rule that declined it, for the corpus's diagnostics (decision 00XX). Each is a
+ * as `shape`, by the rule that declined it, for the corpus's diagnostics (decision 0073). Each is a
  * rule the outline already keeps; naming it changes nothing it writes.
  *
  * - `empty`: the candidate spans nothing.
