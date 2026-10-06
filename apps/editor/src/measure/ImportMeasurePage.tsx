@@ -29,6 +29,7 @@ import {
   formatTime,
   IMPORT_RUNS,
   IMPORT_SAMPLES,
+  type ImportHow,
   type ImportMeasured,
   type ImportRuns,
   importRuns,
@@ -62,7 +63,16 @@ async function get(url: string): Promise<Response> {
  * own, read through the HTTP cache as the app reads them.
  */
 export async function inThisBrowser(engine: Engine): Promise<() => Promise<ImportMeasured>> {
-  const { id } = IMPORT_SAMPLES[engine];
+  const how = await browserImport(IMPORT_SAMPLES[engine].id);
+  return () => measureImport(how);
+}
+
+/**
+ * How the upstream sample `id` is imported in this browser, once it and the tree's manifest are
+ * fetched: on a new worker for each import, and fonts of their own (`inThisBrowser`). The typing
+ * page imports this way too (`ImportTypingPage.tsx`).
+ */
+export async function browserImport(id: string): Promise<Omit<ImportHow, "opened">> {
   const files: Upload[] = [
     { name: `${id}.zip`, bytes: new Uint8Array(await (await get(sampleUrl(id))).arrayBuffer()) },
   ];
@@ -73,21 +83,20 @@ export async function inThisBrowser(engine: Engine): Promise<() => Promise<Impor
       new TexLiveIndex(manifest),
       async (path) => new Uint8Array(await (await get(fileUrl(tag, path))).arrayBuffer()),
     );
-  return () =>
-    measureImport({
-      start: async () => {
-        const client = new EngineClient();
-        try {
-          await client.start();
-        } catch (error) {
-          client.terminate();
-          throw error;
-        }
-        return client;
-      },
-      fonts,
-      files,
-    });
+  return {
+    start: async () => {
+      const client = new EngineClient();
+      try {
+        await client.start();
+      } catch (error) {
+        client.terminate();
+        throw error;
+      }
+      return client;
+    },
+    fonts,
+    files,
+  };
 }
 
 /** What the page shows once the imports are done: the table, or the refusal that stopped them. */

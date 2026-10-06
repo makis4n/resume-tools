@@ -30,6 +30,7 @@ import {
   usesOf,
 } from "./parse";
 import { print, regenerate, spellingOf } from "./print";
+import { probe, probeUses } from "./probe";
 import { compileLikeReference, type Reference, reference, sameGlyphs } from "./reference";
 import { isRefusal } from "./refusal";
 import { signatures } from "./signatures";
@@ -337,15 +338,15 @@ Another one.`);
     expect(sourceOf(tree, tree.content[1] as Node)).toBe(String.raw`\vspace{2pt}`);
   });
 
-  test("keeps mathematics, verbatim, a tabular and an unknown environment raw", () => {
+  test("keeps mathematics, verbatim, a tabbing and an unknown environment raw", () => {
     const tree = treeOf(String.raw`$x^2$ \verb|a%b| \[y\]
-\begin{tabular}{ll} a & b \\ \end{tabular}
+\begin{tabbing} a \= b \\ \end{tabbing}
 \begin{unknownenv}x\end{unknownenv}`);
     expect(tree.content).toMatchObject([
       { kind: "raw", why: "math" },
       { kind: "raw", why: "verbatim" },
       { kind: "raw", why: "math" },
-      { kind: "raw", why: "environment", name: "tabular" },
+      { kind: "raw", why: "environment", name: "tabbing" },
       { kind: "raw", why: "environment", name: "unknownenv" },
     ]);
   });
@@ -561,6 +562,216 @@ Quill \\ Wort`);
     const [call] = tree.content;
     const certified = call?.kind === "call" ? call.args[1]?.content?.[2] : undefined;
     expect(certified && sourceOf(tree, certified)).toBe("Certified \\\\ Invented");
+  });
+});
+
+describe("tables", () => {
+  /** The text of each text or date among nodes, through blocks, groups and raw chunks' arguments. */
+  const textsOf = (nodes: readonly Node[]): string[] =>
+    nodes.flatMap((node) => {
+      if (node.kind === "text") return [node.runs.map((run) => run.text).join("")];
+      if (node.kind === "date") return [node.text];
+      if (node.kind === "block" || node.kind === "group") return textsOf(node.content);
+      if (node.kind === "raw")
+        return (node.args ?? []).flatMap((arg) => textsOf(arg.content ?? []));
+      return [];
+    });
+
+  test("cuts a tabular into its cells, keeping the &, the rows' ends and the rules as written", () => {
+    const tree = treeOf(String.raw`\begin{tabular}{@{}l r@{}}\hline
+Invented Role & \textbf{Made-up Firm} \\[2pt]
+\multicolumn{2}{l}{\emph{Spanning invented words}} \\ \cline{1-2}
+Quill Town & 2019 -- 2021 \\*
+\end{tabular}`);
+    expect(tree.content).toMatchObject([
+      {
+        kind: "block",
+        name: "tabular",
+        args: [{ kind: "optional", present: false }, { kind: "mandatory" }],
+        content: [
+          { kind: "raw", name: "hline" },
+          { kind: "text", runs: [{ text: "Invented Role" }] },
+          { kind: "text", runs: [{ text: "Made-up Firm", bold: true }] },
+          { kind: "raw", name: "\\" },
+          {
+            kind: "raw",
+            name: "multicolumn",
+            args: [{}, {}, { content: [{ kind: "text", runs: [{ italic: true }] }] }],
+          },
+          { kind: "raw", name: "\\" },
+          { kind: "raw", name: "cline" },
+          { kind: "text", runs: [{ text: "Quill Town" }] },
+          { kind: "date", text: "2019 – 2021" },
+          { kind: "raw", name: "\\" },
+        ],
+      },
+    ]);
+    const table = tree.content[0];
+    const marks =
+      table?.kind === "block" ? table.content.filter((node) => node.kind === "raw") : [];
+    expect(marks.map((node) => sourceOf(tree, node))).toEqual([
+      "\\hline",
+      "\\\\[2pt]",
+      "\\multicolumn{2}{l}{\\emph{Spanning invented words}}",
+      "\\\\",
+      "\\cline{1-2}",
+      "\\\\*",
+    ]);
+    // The column preamble is the block's argument, kept; none of it is a cell's text.
+    const preamble = table?.kind === "block" ? table.args[1] : undefined;
+    expect(preamble && "content" in preamble).toBe(false);
+    expect(textsOf(tree.content)).toEqual([
+      "Invented Role",
+      "Made-up Firm",
+      "Spanning invented words",
+      "Quill Town",
+      "2019 – 2021",
+    ]);
+  });
+
+  test("keeps a declaration in its cell, as TeX sets each cell in a group", () => {
+    const tree = treeOf(
+      String.raw`\begin{tabular}{ll}\bfseries Invented & Plain words\end{tabular}`,
+    );
+    expect(tree.content).toMatchObject([
+      {
+        kind: "block",
+        content: [
+          { kind: "text", runs: [{ text: "Invented", bold: true }] },
+          { kind: "text", runs: [{ text: "Plain words" }] },
+        ],
+      },
+    ]);
+    const plain = tree.content[0]?.kind === "block" ? tree.content[0].content[1] : undefined;
+    expect(plain?.kind === "text" && plain.runs[0]?.bold).toBeFalsy();
+  });
+
+  test("reads tabular*, tabularx and longtable, with booktabs' rules and longtable's heads", () => {
+    const tree = treeOf(String.raw`\begin{tabular*}{\textwidth}[t]{l@{\extracolsep{\fill}}r}
+\textbf{Invented Name} & quill@example.invalid \\
+\end{tabular*}
+\begin{tabularx}{\linewidth}{lX}
+\toprule Skill & Invented, Made-up \\ \cmidrule(lr){1-2}
+Tools & Pretend \\ \bottomrule
+\end{tabularx}
+\begin{longtable}{ll}
+Year & Invented award \\ \endhead
+2020 & \multirow{2}{*}{Made-up prize} \\ \addlinespace[2pt]
+\end{longtable}`);
+    expect(tree.content.map((node) => (node.kind === "block" ? node.name : node.kind))).toEqual([
+      "tabular*",
+      "tabularx",
+      "longtable",
+    ]);
+    expect(textsOf(tree.content)).toEqual([
+      "Invented Name",
+      "quill@example.invalid",
+      "Skill",
+      "Invented, Made-up",
+      "Tools",
+      "Pretend",
+      "Year",
+      "Invented award",
+      "2020",
+      "Made-up prize",
+    ]);
+    const marks = tree.content.flatMap((node) =>
+      node.kind === "block"
+        ? node.content.filter((each) => each.kind === "raw").map((each) => sourceOf(tree, each))
+        : [],
+    );
+    expect(marks).toEqual([
+      "\\\\",
+      "\\toprule",
+      "\\\\",
+      "\\cmidrule(lr){1-2}",
+      "\\\\",
+      "\\bottomrule",
+      "\\\\",
+      "\\endhead",
+      "\\multirow{2}{*}{Made-up prize}",
+      "\\\\",
+      "\\addlinespace[2pt]",
+    ]);
+  });
+
+  test("reads multirow's place and colortbl's overhangs as the marks' arguments", () => {
+    const tree = treeOf(String.raw`\begin{tabular}{ll}
+\rowcolor{gray}[1pt][2pt] Invented & Words \\
+\multirow[t]{2}{*}[3pt]{Invented prize} & More words \\
+\rowcolor[gray]{0.9} Made-up & Pretend \\
+\end{tabular}`);
+    const table = tree.content[0];
+    const marks =
+      table?.kind === "block" ? table.content.filter((node) => node.kind === "raw") : [];
+    expect(marks.map((node) => sourceOf(tree, node))).toEqual([
+      "\\rowcolor{gray}[1pt][2pt]",
+      "\\\\",
+      "\\multirow[t]{2}{*}[3pt]{Invented prize}",
+      "\\\\",
+      "\\rowcolor[gray]{0.9}",
+      "\\\\",
+    ]);
+    expect(textsOf(tree.content)).toEqual([
+      "Invented",
+      "Words",
+      "Invented prize",
+      "More words",
+      "Made-up",
+      "Pretend",
+    ]);
+  });
+
+  test("places a table float's body, and the alignment in it", () => {
+    const tree = treeOf(String.raw`\begin{table}[h]
+\centering
+\begin{tabular}{ll} Invented & Words \end{tabular}
+\end{table}`);
+    expect(tree.content).toMatchObject([
+      {
+        kind: "block",
+        name: "table",
+        content: [
+          { kind: "raw", name: "centering" },
+          { kind: "block", name: "tabular" },
+        ],
+      },
+    ]);
+    expect(textsOf(tree.content)).toEqual(["Invented", "Words"]);
+  });
+
+  test("keeps raw a table whose cells are unsafe to place, or whose arguments cannot be read", () => {
+    const tree = treeOf(String.raw`\begin{tabular}{ll} \iffalse Invented & \fi Words \end{tabular}
+\begin{tabular}{ll} \omit Invented & Words \end{tabular}
+\begin{longtable}{ll} Measured & row \kill Invented & Words \end{longtable}
+\begin{tabular}{ll} Invented & Words \cline\end{tabular}
+\begin{tabular}`);
+    expect(tree.content).toMatchObject([
+      { kind: "raw", why: "environment", name: "tabular" },
+      { kind: "raw", why: "environment", name: "tabular" },
+      { kind: "raw", why: "environment", name: "longtable" },
+      { kind: "raw", why: "environment", name: "tabular" },
+      { kind: "raw" },
+    ]);
+    // What a table let go counts for nothing in the tree.
+    expect(tree.nodes).toBe(5);
+  });
+
+  test("cuts a tabular inside a paragraph and inside a cell, the text around it its own", () => {
+    const tree = treeOf(
+      String.raw`Before \begin{tabular}{l}Outer \begin{tabular}{c}Inner\end{tabular}\end{tabular} after`,
+    );
+    expect(tree.content).toMatchObject([
+      { kind: "text", runs: [{ text: "Before" }] },
+      {
+        kind: "block",
+        content: [
+          { kind: "text", runs: [{ text: "Outer" }] },
+          { kind: "block", content: [{ kind: "text", runs: [{ text: "Inner" }] }] },
+        ],
+      },
+      { kind: "text", runs: [{ text: "after" }] },
+    ]);
   });
 });
 
@@ -1276,6 +1487,74 @@ describe.skipIf(!engineAvailable())("the round trips, on the engine", () => {
       false,
     );
     expect(byte).toBe(true);
+  }, 60_000);
+
+  /** An invented document of tables, each of a kind the parser cuts into its cells. */
+  const TABLES_DOCUMENT = main(
+    String.raw`\begin{tabular*}{\textwidth}{l@{\extracolsep{\fill}}r}
+\textbf{Invented Name} & quill@example.invalid \\
+\end{tabular*}
+\begin{table}[h]
+\centering
+\begin{tabularx}{\linewidth}{lX}\toprule
+Skills & Invented, Made-up, Pretend \\ \cmidrule(lr){1-2}
+\multicolumn{2}{l}{\emph{Invented spanning words}} \\ \bottomrule
+\end{tabularx}
+\end{table}
+\begin{longtable}{ll}
+2020 & \multirow{2}{*}{Invented award} \\
+2021 & \\
+\end{longtable}`,
+    "\\usepackage{booktabs,tabularx,longtable,multirow}\n",
+  );
+
+  test("regenerates a table's cells, its rows' marks kept as written", async () => {
+    const { built, byte, regenerated } = await roundTrips({ "cv.tex": TABLES_DOCUMENT }, true);
+    expect(built.content.map((node) => (node.kind === "block" ? node.name : node.kind))).toEqual([
+      "tabular*",
+      "table",
+      "longtable",
+    ]);
+    expect(byte).toBe(true);
+    expect(regenerated).toBe(true);
+  }, 60_000);
+
+  test("probes a table's cells as fields, each editable", async () => {
+    const taken = intake(
+      { name: "invented.zip", bytes: zipSync({ "cv.tex": strToU8(TABLES_DOCUMENT) }) },
+      { tree },
+    );
+    if (isRefusal(taken)) throw new Error(taken.message);
+    const made = await reference(session, fonts, taken);
+    if (isRefusal(made)) throw new Error(made.message);
+    const split = bodyOf(taken);
+    if (isRefusal(split)) throw new Error(split.message);
+    const read = readBody(split);
+    if (isRefusal(read)) throw new Error(read.message);
+    const preamble = readBody(bodyOfText(split.preamble));
+    const given = await signatures(
+      session,
+      taken,
+      made,
+      split,
+      probeUses(read, isRefusal(preamble) ? undefined : preamble),
+    );
+    if (isRefusal(given)) throw new Error("no signatures");
+    const built = buildTree(read, given);
+    if (isRefusal(built)) throw new Error(built.message);
+    const found = await probe(session, fonts, taken, made, built, given);
+    const cells = found.candidates.filter((each) => each.kind === "paragraph");
+    expect(cells.map((each) => each.text)).toEqual([
+      "Invented Name",
+      "quill@example.invalid",
+      "Skills",
+      "Invented, Made-up, Pretend",
+      "Invented spanning words",
+      "2020",
+      "Invented award",
+      "2021",
+    ]);
+    expect(cells.map((each) => each.verdict)).toEqual(cells.map(() => "editable"));
   }, 60_000);
 
   test("regenerates a declaration's body, and keeps what \\iffalse skips and an alignment raw", async () => {

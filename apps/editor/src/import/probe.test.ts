@@ -336,7 +336,330 @@ describe("settling the candidates", () => {
       "t2",
     ]);
   });
+
+  test("orders the probe's kinds that hold the most words first, each kind's in the source's order", () => {
+    const words = (n: number) => Array.from({ length: n }, () => "Invented").join(" ");
+    const set = [
+      candidate("c1-1", "inventedshort", 1, { text: words(2) }),
+      candidate("c1-2", "inventedlong", 2, { text: words(5) }),
+      candidate("c2-1", "inventedshort", 1, { text: words(2) }),
+      candidate("c2-2", "inventedlong", 2, { text: words(4) }),
+      candidate("c3-1", "inventedtie", 1, { text: words(4) }),
+      candidate("c4-1", "inventedempty", 1, { text: "", empty: true }),
+      candidate("c5-1", "inventedother", 1, { text: words(4) }),
+    ];
+    // inventedlong 9 words, then the three kinds of 4 in the order each first came, the empty one
+    // last.
+    expect(probeOrder(set, undefined, true).map((each) => each.id)).toEqual([
+      "c1-2",
+      "c2-2",
+      "c1-1",
+      "c2-1",
+      "c3-1",
+      "c5-1",
+      "c4-1",
+    ]);
+    // In another source order, each kind's candidates follow it, and kinds of as many words follow
+    // the order each first came in it.
+    expect(probeOrder([...set].reverse(), undefined, true).map((each) => each.id)).toEqual([
+      "c2-2",
+      "c1-2",
+      "c5-1",
+      "c3-1",
+      "c2-1",
+      "c1-1",
+      "c4-1",
+    ]);
+    // The checks' bisections keep each kind where it first came in the source.
+    expect(probeOrder(set).map((each) => each.id)).toEqual([
+      "c1-1",
+      "c2-1",
+      "c1-2",
+      "c2-2",
+      "c3-1",
+      "c4-1",
+      "c5-1",
+    ]);
+  });
+
+  test("spends the budget on the kinds with the most words, and leaves the fewest untested", async () => {
+    // Four short kinds come first in the source, each of whose calls stops a compile, and one long
+    // kind last that passes: in the source's order the budget would go to the short ones.
+    const short = Array.from({ length: 4 }, (_, i) =>
+      candidate(`c${i + 1}-1`, `inventedshort${i}`, 1, { text: "Invented" }),
+    );
+    const long = Array.from({ length: 6 }, (_, i) =>
+      candidate(`c${i + 5}-1`, "inventedlong", 1, {
+        text: "Invented words for an invented line of a long invented entry",
+      }),
+    );
+    const behaviours = Object.fromEntries(short.map((each) => [each.id, "breaks" as const]));
+    const inSourceEngine = engine(behaviours);
+    const inSource = await settle([...short, ...long], inSourceEngine.compile, 4);
+    const orderedEngine = engine(behaviours);
+    const ordered = await settle(
+      probeOrder([...short, ...long], undefined, true),
+      orderedEngine.compile,
+      4,
+    );
+    const editable = (found: Awaited<ReturnType<typeof settle>>) =>
+      [...found.verdicts].filter(([, each]) => each.verdict === "editable").map(([id]) => id);
+    expect(editable(inSource)).toEqual([]);
+    expect(editable(ordered).sort()).toEqual(long.map((each) => each.id).sort());
+    // The whole set stops; its first half, the long kind, passes; the short calls stop together,
+    // and the budget's last compile goes to the first half of them.
+    expect(orderedEngine.compiled).toEqual([
+      ["c5-1", "c6-1", "c7-1", "c8-1", "c9-1", "c10-1", "c1-1", "c2-1", "c3-1", "c4-1"],
+      ["c5-1", "c6-1", "c7-1", "c8-1", "c9-1", "c10-1"],
+      ["c1-1", "c2-1", "c3-1", "c4-1"],
+      ["c1-1", "c2-1"],
+    ]);
+    const untested = [...ordered.verdicts].filter(([, each]) => each.verdict === "untested");
+    expect(untested.every(([id]) => short.some((each) => each.id === id))).toBe(true);
+  });
+
+  test.each([
+    ["holds no word, after the rest", ""],
+    ["holds fewer words than the rest, after the rest's first compile", "Invented"],
+  ])("tries a kind held apart that %s", async (_, text) => {
+    // Calls of one kind each move the page alone, and the first is found alone first; the others
+    // of its kind are held apart, and the long kind is the rest of the set.
+    const movers = Array.from({ length: 6 }, (_, i) =>
+      candidate(`c${i + 1}-1`, "inventedgap", 1, { text, empty: text === "" }),
+    );
+    const long = Array.from({ length: 4 }, (_, i) =>
+      candidate(`c${i + 7}-1`, "inventedlong", 1, {
+        text: "Invented words for an invented line of a long invented entry",
+      }),
+    );
+    const behaviours = Object.fromEntries(movers.map((each) => [each.id, "moves" as const]));
+    const set = probeOrder([...movers, ...long], undefined, true);
+    const editable = (found: Awaited<ReturnType<typeof settle>>) =>
+      long.filter((each) => found.verdicts.get(each.id)?.verdict === "editable").length;
+    // Held apart first, the movers take the budget one by one and the long kind is left.
+    const heldFirst = engine(behaviours, true);
+    const before = await settle(set, heldFirst.compile, 6);
+    expect(editable(before)).toBe(0);
+    // The long kind's compile comes before the movers', which settles it.
+    const wordsFirst = engine(behaviours, true);
+    const after = await settle(set, wordsFirst.compile, 6, undefined, true);
+    expect(editable(after)).toBe(4);
+    // The whole set moves and names the first mover, which moves alone; the long kind's compile
+    // comes next and passes; then the movers held apart, until the budget runs out.
+    expect(wordsFirst.compiled).toEqual([
+      ["c7-1", "c8-1", "c9-1", "c10-1", "c1-1", "c2-1", "c3-1", "c4-1", "c5-1", "c6-1"],
+      ["c1-1"],
+      ["c7-1", "c8-1", "c9-1", "c10-1"],
+      ["c2-1", "c3-1", "c4-1", "c5-1", "c6-1"],
+      ["c2-1"],
+      ["c3-1", "c4-1", "c5-1", "c6-1"],
+    ]);
+    // With the budget to settle everything, the order changes no verdict.
+    const all = await settle(set, engine(behaviours, true).compile, 64);
+    const allWordsFirst = await settle(set, engine(behaviours, true).compile, 64, undefined, true);
+    expect(verdictsOf(allWordsFirst)).toEqual(verdictsOf(all));
+    expect(allWordsFirst.compiles).toBe(all.compiles);
+  });
+
+  test("tries a kind held apart that holds more words than the rest before the rest, as before", async () => {
+    // Long calls of one kind each move the page alone, and the first is found alone first; the
+    // others of its kind are held apart, and the rest, a short kind, holds fewer words.
+    const movers = Array.from({ length: 5 }, (_, i) =>
+      candidate(`c${i + 1}-1`, "inventedlong", 1, {
+        text: "Invented words for an invented line of a long invented entry",
+      }),
+    );
+    const rest = Array.from({ length: 3 }, (_, i) =>
+      candidate(`c${i + 6}-1`, "inventedshort", 1, { text: "Invented" }),
+    );
+    const behaviours = Object.fromEntries(movers.map((each) => [each.id, "moves" as const]));
+    const set = probeOrder([...movers, ...rest], undefined, true);
+    const before = engine(behaviours, true);
+    const found = await settle(set, before.compile, 64);
+    const after = engine(behaviours, true);
+    const wordsFirst = await settle(set, after.compile, 64, undefined, true);
+    // The kind held apart goes first, so the compiles are the same ones in the same order.
+    expect(after.compiled).toEqual(before.compiled);
+    expect(verdictsOf(wordsFirst)).toEqual(verdictsOf(found));
+    expect(wordsFirst.compiles).toBe(found.compiles);
+    expect(verdictsOf(wordsFirst)).toEqual({
+      "c1-1": "moved alone",
+      "c2-1": "moved alone",
+      "c3-1": "moved alone",
+      "c4-1": "moved alone",
+      "c5-1": "moved alone",
+      "c6-1": "editable together",
+      "c7-1": "editable together",
+      "c8-1": "editable together",
+    });
+  });
+
+  test("keeps the one with more words of two that pass alone and fail together", async () => {
+    // Each passes alone; together they move the page, so the union locks the later one of them.
+    const set = [
+      candidate("c1-1", "inventedshort", 1, { text: "Invented" }),
+      candidate("c2-1", "inventedlong", 1, { text: "Invented words of an invented line" }),
+    ];
+    const compile: CompileSet = async (given) => ({
+      broke: false,
+      same: given.length < 2,
+      ...(given.length < 2 ? {} : { difference: "position" as const }),
+      torn: false,
+      own: new Map(given.map((each) => [each.id, { ok: true, glyphs: [] }])),
+    });
+    // With the budget to spare, the order of the kinds still decides which of the two is locked.
+    const inSource = await settle(probeOrder(set), compile, 64);
+    expect(verdictsOf(inSource)).toEqual({ "c1-1": "editable alone", "c2-1": "moved union" });
+    const ordered = await settle(probeOrder(set, undefined, true), compile, 64, undefined, true);
+    expect(verdictsOf(ordered)).toEqual({ "c1-1": "moved union", "c2-1": "editable alone" });
+  });
+
+  /**
+   * An invented engine whose compiles name the wrong candidate: a set that holds `mover` moves the
+   * page, and its compile names the candidate just before the mover in the set, which passes alone,
+   * as a field whose markers come last before where the output parts from the reference's may.
+   */
+  function misnaming(mover: string) {
+    const compiled: string[][] = [];
+    const compile: CompileSet = async (set) => {
+      const ids = set.map((each) => each.id);
+      compiled.push(ids);
+      const at = ids.indexOf(mover);
+      const before = at > 0 ? ids[at - 1] : undefined;
+      return {
+        broke: false,
+        same: at < 0,
+        ...(at < 0 ? {} : { difference: "position" as const }),
+        torn: false,
+        own: new Map(
+          set.map((each, i): [string, Own] => [each.id, { ok: true, glyphs: [[0, i]] }]),
+        ),
+        ...(before === undefined ? {} : { suspects: [before] }),
+      };
+    };
+    return { compile, compiled };
+  }
+
+  test("halves a set once a candidate its compile names passes alone", async () => {
+    const set = Array.from({ length: 16 }, (_, i) => candidate(`c${i + 1}-1`));
+    const wrong = misnaming("c11-1");
+    const found = await settle(set, wrong.compile, 64);
+    // The verdicts are those of halving with no name at all.
+    const plain = await settle(set, engine({ "c11-1": "moves" }).compile, 64);
+    const only = (settlement: typeof found) =>
+      Object.fromEntries([...settlement.verdicts].map(([id, { verdict }]) => [id, verdict]));
+    expect(only(found)).toEqual(only(plain));
+    expect(found.verdicts.get("c11-1")).toEqual({
+      verdict: "moved",
+      detail: "position",
+      settled: "alone",
+    });
+    // The whole set names `c10-1`, which passes alone; the rest moves and is halved, not tried
+    // without the next name. A half that moves is trusted again, and halved when its name is wrong
+    // too: at most four compiles a level, where trusting each next name took two a candidate.
+    const ids = (from: number, to: number, but?: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) => `c${from + i}-1`).filter(
+        (id) => id !== `c${but}-1`,
+      );
+    expect(wrong.compiled).toEqual([
+      ids(1, 16),
+      ["c10-1"],
+      ids(1, 16, 10),
+      ids(1, 7),
+      ids(8, 16, 10),
+      ["c9-1"],
+      ["c8-1", ...ids(11, 16)],
+      ["c8-1", "c11-1", "c12-1"],
+      ["c8-1"],
+      ["c11-1", "c12-1"],
+      ["c11-1"],
+      ["c12-1"],
+      ids(13, 16),
+      ids(1, 16, 11),
+    ]);
+    expect(found.compiles).toBe(14);
+  });
+
+  test("settles within the budget a long set whose compiles name the wrong candidate", async () => {
+    // Sixty-four calls, one of which moves the page; trusting each name took the whole budget on
+    // the calls before the mover, two at a time, and left the rest untested.
+    const set = Array.from({ length: 64 }, (_, i) => candidate(`c${i + 1}-1`));
+    const wrong = misnaming("c60-1");
+    const found = await settle(set, wrong.compile, 24);
+    const verdicts = [...found.verdicts.values()];
+    expect(verdicts.filter((each) => each.verdict === "untested")).toEqual([]);
+    expect(found.verdicts.get("c60-1")?.verdict).toBe("moved");
+    expect(verdicts.filter((each) => each.verdict === "editable")).toHaveLength(63);
+    // Nothing is editable that a compile without the mover did not pass: the last compile holds
+    // every editable candidate and passed.
+    const last = wrong.compiled.at(-1) ?? [];
+    expect(last).toHaveLength(63);
+    expect(last).not.toContain("c60-1");
+    // At most four compiles a level of six, and the union's: 22 of the budget's 24.
+    expect(found.compiles).toBe(22);
+  });
+
+  test("trusts the names when one of several it names bears them out alone", async () => {
+    // Two calls move the page; a compile names the one just before the first mover, wrongly, and
+    // the first mover, rightly. One right name of the two keeps the names' trust.
+    const set = Array.from({ length: 16 }, (_, i) => candidate(`c${i + 1}-1`));
+    const movers = ["c5-1", "c11-1"];
+    const compiled: string[][] = [];
+    const compile: CompileSet = async (given) => {
+      const ids = given.map((each) => each.id);
+      compiled.push(ids);
+      const first = ids.find((id) => movers.includes(id));
+      const at = first === undefined ? -1 : ids.indexOf(first);
+      const before = at > 0 ? ids[at - 1] : undefined;
+      return {
+        broke: false,
+        same: first === undefined,
+        ...(first === undefined ? {} : { difference: "position" as const }),
+        torn: false,
+        own: new Map(
+          given.map((each, i): [string, Own] => [each.id, { ok: true, glyphs: [[0, i]] }]),
+        ),
+        ...(first === undefined ? {} : { suspects: before ? [before, first] : [first] }),
+      };
+    };
+    const found = await settle(set, compile, 64);
+    const but = (...out: string[]) => set.map((each) => each.id).filter((id) => !out.includes(id));
+    // Each compile that moves: its two names alone, then the rest as it was left.
+    expect(compiled).toEqual([
+      but(),
+      ["c4-1"],
+      ["c5-1"],
+      but("c4-1", "c5-1"),
+      ["c10-1"],
+      ["c11-1"],
+      but("c4-1", "c5-1", "c10-1", "c11-1"),
+      but("c5-1", "c11-1"),
+    ]);
+    expect(verdictsOf(found)).toMatchObject({ "c5-1": "moved alone", "c11-1": "moved alone" });
+    expect(
+      Object.values(verdictsOf(found)).filter((each) => each.startsWith("editable")),
+    ).toHaveLength(14);
+  });
+
+  test("still trusts a name the candidate bears out alone", async () => {
+    // Each named mover moves alone, so the names keep their trust: the named one alone, the rest.
+    const set = Array.from({ length: 8 }, (_, i) => candidate(`c${i + 1}-1`, `inventedcall${i}`));
+    const named = engine({ "c3-1": "moves", "c6-1": "moves" }, true);
+    const found = await settle(set, named.compile, 64);
+    expect(named.compiled).toEqual([
+      ids8(),
+      ["c3-1"],
+      ids8("c3-1"),
+      ["c6-1"],
+      ids8("c3-1", "c6-1"),
+    ]);
+    expect(verdictsOf(found)).toMatchObject({ "c3-1": "moved alone", "c6-1": "moved alone" });
+  });
 });
+
+/** The ids `c1-1` to `c8-1`, but those given. */
+const ids8 = (...but: string[]) =>
+  Array.from({ length: 8 }, (_, i) => `c${i + 1}-1`).filter((id) => !but.includes(id));
 
 /** An invented candidate with a verdict. */
 function decided(

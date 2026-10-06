@@ -597,7 +597,31 @@ export interface ChecksInput {
   /** How many compiles each bisection of checks 1 and 2 may make, and check 3's trials. */
   budget?: number;
   unitsBudget?: number;
+  /** Hears where the checks are and where a budget ran out (`CheckEvent`), and changes nothing. */
+  observe?: (event: CheckEvent) => void;
 }
+
+/**
+ * Which compiles of the checks are under way: a check's own, or its bisection's, and the outline
+ * as checks 1 and 2 leave it, compiled again (`checks again`).
+ */
+export type CheckPhase =
+  | "check 1"
+  | "check 1 bisection"
+  | "check 2"
+  | "check 2 bisection"
+  | "checks again"
+  | "check 3"
+  | "check 3 bisection";
+
+/**
+ * What a caller may hear of the checks as they run, for the corpus's diagnostics: each phase as it
+ * begins, its compiles after it; and a check whose budget ran out, with how many fields it kept as
+ * text untried, or, for check 3, how many groups it left untried. Ids and counts, never text.
+ */
+export type CheckEvent =
+  | { phase: CheckPhase }
+  | { budget: "check 1" | "check 2" | "check 3"; left: number };
 
 /** What check 3 found of a group, by kind of trial: whether it keeps the page, or untried. */
 export interface GroupTrials {
@@ -663,6 +687,12 @@ const counted = (n: number, thing: string) => `${n} ${thing}${n === 1 ? "" : "s"
  */
 export async function checkOutline(input: ChecksInput): Promise<Checked | Refusal> {
   const { compiler, reference, build, runs } = input;
+  // What the caller hears changes nothing the checks do, not even when it throws.
+  const observe = (event: CheckEvent) => {
+    try {
+      input.observe?.(event);
+    } catch {}
+  };
   const budget = input.budget ?? CHECK_BUDGET;
   const byId = new Map(input.candidates.map((each) => [each.id, each]));
   const notes: Checked["notes"] = [];
@@ -690,6 +720,7 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
   };
 
   // 1. The page.
+  observe({ phase: "check 1" });
   const whole = build(new Set());
   if (outlineResume(whole.parts) === undefined) return refusal("keep");
   const fieldOf = switches(whole, byId);
@@ -715,6 +746,7 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
       first.compiled?.stream === undefined ? undefined : differs(target, first.compiled.stream);
     if (first.compiled === undefined || first.compiled.broke || again !== undefined) {
       const ids = (set: readonly Candidate[]) => new Set(set.map((each) => each.id));
+      observe({ phase: "check 1 bisection" });
       const settled = await settle(
         probeOrder(fieldOf, byId),
         async (set): Promise<SetResult> => {
@@ -751,6 +783,7 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
         );
         if (verdict === "untested") untested++;
       }
+      if (untested > 0) observe({ budget: "check 1", left: untested });
       if (untested > 0)
         notes.push({
           check: "untested",
@@ -796,9 +829,11 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
     // A field already kept as text by an earlier text is not tried again.
     const trying = fields.filter((each) => !onText.has(each.id) && !untried.has(each.id));
     if (trying.length === 0) break;
+    observe({ phase: "check 2" });
     const whole = await mutate(text, new Set(trying.map((each) => each.id)));
     if (!whole.broke) continue;
     const fieldIds = new Set(current.owners.keys());
+    observe({ phase: "check 2 bisection" });
     const settled = await settle(
       probeOrder(trying, byId),
       async (set): Promise<SetResult> => {
@@ -832,6 +867,7 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
         else onText.add(id);
       }
     }
+    if (left > 0) observe({ budget: "check 2", left });
     if (left > 0)
       notes.push({
         check: "untested",
@@ -841,6 +877,7 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
   // Letters of other scripts, in every field at once: where they stop the compile, they stop it
   // whatever field holds them, since the document's fonts lack them, and no field is the cause.
   const remaining = fields.filter((each) => !onText.has(each.id) && !untried.has(each.id));
+  observe({ phase: "check 2" });
   const sets = async (text: string) =>
     remaining.length === 0 ||
     !(await mutate(text, new Set(remaining.map((each) => each.id)))).broke;
@@ -859,6 +896,7 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
   // The outline as checks 1 and 2 leave it must set the page; one that the bisection did not
   // compile as it stands is compiled now.
   const settledKept = new Set(kept.keys());
+  observe({ phase: "checks again" });
   if (!known.has(keySet(settledKept))) await compileKept(settledKept);
   if (!holds(settledKept)) {
     let was = known.get(keySet(settledKept));
@@ -898,6 +936,7 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
   // a page that differs from it only in where its glyphs stand, as a package's preamble may move
   // them, is judged as well; one that sets other glyphs is not, and every group is untried.
   let judging = outcome === "assembled";
+  observe({ phase: "check 3" });
   if (!judging) {
     const resume = outlineResume(current.parts);
     const base = resume === undefined ? undefined : await compiler.compile(resume);
@@ -912,9 +951,12 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
     const isRequired = (id: string) => required.has(id);
     let spent = 0;
     const unitsBudget = input.unitsBudget ?? UNITS_BUDGET;
+    /** The batch the bisection is on, whose first compile is check 3's and the rest its halves'. */
+    let whole: readonly Trial[] = [];
     const test = async (batch: readonly Trial[]): Promise<TrialVerdict | undefined> => {
       if (spent >= unitsBudget) return undefined;
       spent++;
+      observe({ phase: batch === whole ? "check 3" : "check 3 bisection" });
       const kind = batch[0]?.kind ?? "copy";
       const resume = outlineResume(tried(current.parts, batch, isRequired));
       const compiled = resume === undefined ? undefined : await compiler.compile(resume);
@@ -925,12 +967,14 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
     };
     const all = trialsOf(current.groups);
     for (const kind of ["copy", "first", "last"] as const)
-      for (const batch of batchesOf(all.filter((each) => each.kind === kind)))
+      for (const batch of batchesOf(all.filter((each) => each.kind === kind))) {
+        whole = batch;
         for (const [trial, verdict] of await bisect(batch, test, keepsPage)) {
           const found = trials.get(trial.group) ?? {};
           if (verdict !== undefined) found[trial.kind] = verdict;
           trials.set(trial.group, found);
         }
+      }
     for (const id of groupIds) {
       const units = current.groups.get(id);
       const found = trials.get(id) ?? {};
@@ -947,6 +991,7 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
         fixed.set(id, found.first === "stops" || found.last === "stops" ? "stops" : "removal");
     }
     const left = [...fixed.values()].filter((why) => why === "untried").length;
+    if (left > 0) observe({ budget: "check 3", left });
     if (left > 0)
       notes.push({
         check: "units",

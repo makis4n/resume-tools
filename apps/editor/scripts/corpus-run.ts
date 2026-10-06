@@ -21,8 +21,22 @@ const shown = (value: number) => `${value.toFixed(1)}%`;
 
 // The differences between runs.
 
-/** A value's differences from another, each a path and the two values, times aside. */
-function differences(a: unknown, b: unknown, path: string, out: string[]) {
+/** Whether a value is an object whose keys a path goes on through: not an array, nor null. */
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * A value's differences from another, each a path and the two values, times aside; `field` is the
+ * path without the document's id, and a field `skip` names is not compared.
+ */
+function differences(
+  a: unknown,
+  b: unknown,
+  path: string,
+  out: string[],
+  field = "",
+  skip: (field: string) => boolean = () => false,
+) {
   if (a === b) return;
   const bothObjects = a !== null && b !== null && typeof a === "object" && typeof b === "object";
   if (!bothObjects || Array.isArray(a) !== Array.isArray(b)) {
@@ -30,13 +44,60 @@ function differences(a: unknown, b: unknown, path: string, out: string[]) {
     return;
   }
   const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
-  for (const key of keys)
+  for (const key of keys) {
+    const each = field === "" ? key : `${field}.${key}`;
+    if (skip(each)) continue;
     differences(
       (a as Record<string, unknown>)[key],
       (b as Record<string, unknown>)[key],
       `${path}.${key}`,
       out,
+      each,
+      skip,
     );
+  }
+}
+
+/** Every field a value holds, by its path of keys, down through objects but not into arrays. */
+function fieldsOf(value: unknown, field: string, out: Set<string>) {
+  if (!isRecord(value)) return;
+  for (const [key, each] of Object.entries(value)) {
+    const path = field === "" ? key : `${field}.${key}`;
+    out.add(path);
+    fieldsOf(each, path, out);
+  }
+}
+
+/**
+ * The row's diagnostics, which runs made before them lack (`corpus-pieces.ts`): the only fields
+ * `corpus compare` sets aside where one run lacks them throughout. Times are aside anyway.
+ */
+export const DIAGNOSTICS: readonly string[] = [
+  "pieces",
+  "budgets",
+  "compiles.trials",
+  "compiles.dumps",
+  "compiles.pdfs",
+];
+
+/**
+ * The fields one side holds somewhere and the other nowhere, each where it begins (`a.b`, not
+ * `a.b.c` too): what an older run lacks of a newer one's rows.
+ */
+function lackingFields(a: readonly unknown[], b: readonly unknown[]): Set<string> {
+  const one = new Set<string>();
+  const two = new Set<string>();
+  for (const each of a) fieldsOf(each, "", one);
+  for (const each of b) fieldsOf(each, "", two);
+  const lacking = new Set(
+    [...one].filter((path) => !two.has(path)).concat([...two].filter((path) => !one.has(path))),
+  );
+  return new Set(
+    [...lacking].filter((path) => {
+      const parent = path.slice(0, Math.max(0, path.lastIndexOf(".")));
+      return parent === "" || !lacking.has(parent);
+    }),
+  );
 }
 
 /** A run's JSON, loosely read: what `runDifferences` compares. */
@@ -48,9 +109,15 @@ const LooseRun = z.looseObject({
 /**
  * Where two runs' JSON differ, times aside: each document's by its id, its `times` left out, and
  * everything else of the file; each a line naming the path and the two values, which are counts and
- * the words of closed lists. None when they agree.
+ * the words of closed lists. None when they agree. One of the row's diagnostics (`DIAGNOSTICS`) that
+ * one run's rows hold and the other's hold nowhere, as a run made before they were added lacks
+ * them, is not compared but named (`lacking`); every other field one run lacks still differs, as
+ * a document one run lacks does.
  */
-export function runDifferences(first: unknown, second: unknown): string[] {
+export function runComparison(
+  first: unknown,
+  second: unknown,
+): { differences: string[]; lacking: string[] } {
   const a = LooseRun.parse(first);
   const b = LooseRun.parse(second);
   const out: string[] = [];
@@ -62,10 +129,22 @@ export function runDifferences(first: unknown, second: unknown): string[] {
     new Map(rows.map(({ times: _times, ...row }) => [row.id, row] as const));
   const one = byId(rowsA);
   const two = byId(rowsB);
+  const lacking = new Set(
+    [...lackingFields([...one.values()], [...two.values()])].filter((field) =>
+      DIAGNOSTICS.includes(field),
+    ),
+  );
   for (const id of [...new Set([...one.keys(), ...two.keys()])].sort())
-    differences(one.get(id), two.get(id), id, out);
-  return out.map(printable);
+    differences(one.get(id), two.get(id), id, out, "", (field) => lacking.has(field));
+  return {
+    differences: out.map(printable),
+    lacking: [...lacking].sort().map(printable),
+  };
 }
+
+/** Where two runs' JSON differ, times aside (`runComparison`), the fields only one has aside. */
+export const runDifferences = (first: unknown, second: unknown): string[] =>
+  runComparison(first, second).differences;
 
 // The baseline.
 

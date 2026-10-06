@@ -167,6 +167,7 @@ import {
   oracleTable,
 } from "./corpus-oracle.ts";
 import { type ParseChildRow, type ParseRow, parseNames, parseTable } from "./corpus-parse.ts";
+import { pieceTables } from "./corpus-pieces.ts";
 import {
   PROBE_LIMIT_MS,
   type ProbeChildRow,
@@ -195,7 +196,7 @@ import {
   idsOf,
   nextBaseline,
   poolSize,
-  runDifferences,
+  runComparison,
 } from "./corpus-run.ts";
 import { surveyCorpus, surveyTable } from "./corpus-survey.ts";
 
@@ -967,6 +968,8 @@ async function runRun(options: {
     "",
     ...importTable(rows).trimEnd().split("\n"),
     "",
+    ...pieceTables(rows).trimEnd().split("\n"),
+    "",
     ...importHeadline(rows),
     verdict.line,
     "",
@@ -1046,16 +1049,22 @@ function runCompare(files: readonly string[]) {
   const runs = files.map((file) => JSON.parse(readFileSync(file, "utf8")) as unknown);
   let differ = false;
   for (let i = 1; i < runs.length; i++) {
-    const found = runDifferences(runs[i - 1], runs[i]);
+    const { differences: found, lacking } = runComparison(runs[i - 1], runs[i]);
     const pair = `Runs ${i} and ${i + 1}`;
+    // The fields one run has and the other lacks throughout, as an older run lacks a newer one's,
+    // are named, and not compared.
+    const aside =
+      lacking.length === 0
+        ? "times aside"
+        : `times aside, and the diagnostics only one of them has: ${lacking.join(", ")}`;
     if (found.length === 0) {
       const count = (runs[i] as { documents?: unknown[] }).documents?.length ?? 0;
-      print([`${pair} agree on ${count} ${count === 1 ? "document" : "documents"}, times aside.`]);
+      print([`${pair} agree on ${count} ${count === 1 ? "document" : "documents"}, ${aside}.`]);
       continue;
     }
     differ = true;
     print([
-      `${pair} differ in ${found.length} ${found.length === 1 ? "place" : "places"}, times aside:`,
+      `${pair} differ in ${found.length} ${found.length === 1 ? "place" : "places"}, ${aside}:`,
       ...found.slice(0, 100).map((line) => `  ${line}`),
       ...(found.length > 100 ? [`  and ${found.length - 100} more`] : []),
     ]);
