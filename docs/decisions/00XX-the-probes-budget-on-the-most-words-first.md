@@ -101,8 +101,7 @@ outcome or fewer words in place.
 ### Halving after a wrong name, measured
 
 `corpus run --json` over all 220 documents on a local merge of main, #111, #112, lane 3's branch
-(the tables' cells) and this change, never pushed, four at a time, at a load near 16 just before
-it.
+(the tables' cells) and this change, never pushed, four at a time, at a load of 4 to 6.
 Against the before-run (`fc62298`) and lane 3's own run on that merge without the halving, no
 document has a worse outcome or fewer words in place.
 
@@ -118,19 +117,22 @@ document has a worse outcome or fewer words in place.
 | Successes | 50 | 54 | 56 |
 | Words the probe's budget left untested | 204 | 146 | 1 |
 | Resumes whose probe budget ran out | 6 | 8 | 4 |
-| The probe's compiles, all imports | 2,451 | 2,421 | 2,279 |
-| All compiles, all imports | 5,817 | 5,988 | 5,851 |
+| The probe's compiles, all imports | 2,451 | 2,421 | 2,275 |
+| All compiles, all imports | 5,817 | 5,988 | 5,845 |
 
 - Four resumes gain against lane 3's run: `other-0028` 106 to 2,974 words in place of 3,974;
   `moderncv-0013` 231 to 1,122 of 1,139 and `moderncv-0002` 82 to 504 of 553, both becoming
   successes; `europecv-0008` 1,025 to 1,066 of 1,414.
-- On lane 2 alone, without the tables' cells, over six resumes (`moderncv-0002`, `-0007`,
-  `-0013`, `other-0010`, `-0028`, `-0032`): `moderncv-0002` 82 to 504 and `moderncv-0013` 231
-  to 1,122, both successes, `other-0028` 2,315 to 2,860, none worse, 698 compiles to 654.
+- On lane 2 alone, without the tables' cells, a run over all 220 on its own merge, against its
+  run above: words in place 75.6% to 77.9% (64,211), the others 58.8% to 60.4%, moderncv 64.6% to
+  83.5%, europecv 76.7% to 78.1%; resumes under 50% 14 to 12, at 90% 54 to 56; untested words 133
+  to 1; all compiles 5,768 to 5,608. `moderncv-0002` 82 to 504 and `moderncv-0013` 231 to 1,122,
+  both successes, `other-0028` 2,315 to 2,860, `europecv-0008` 1,025 to 1,066; none worse, against
+  it or the before-run.
 - `moderncv-0002` takes 86 compiles, not 112, and its probe 42 of its 64. `other-0028`'s import
   takes 166 compiles, not 146: the checks of its new fields.
-- The run's load was higher than the earlier runs', so its times are not compared; its compiles
-  are.
+- The runs' load differs from the earlier runs', so their times are not compared; their
+  compiles are.
 
 ## Consequences
 
