@@ -54,11 +54,11 @@ find no document with a worse outcome or fewer words in place.
 | Words locked as raw | 877 | 873 | 688 |
 | All compiles, all imports | 5,817 | 5,768 | 5,988 |
 
-- Against lane 2 alone, 29 resumes gain 3,269 words in place and one loses: `other-0010` 1,765 to
-  4,613 of 4,922, a success; `other-0052` 418 to 1,212; `other-0051` 263 to 660; `other-0032`
-  1,339 to 1,662; `other-0034`, `other-0046` and `other-0065` from 10 to 61 words to 257 to 307,
-  the last two successes; all 15 of Jake's forks with a `tabular*`, 8 to 26 words each, and six
-  more.
+- Against lane 2 alone, 29 resumes gain 3,269 words in place: `other-0010` 1,765 to 4,613 of
+  4,922, a success; `other-0052` 418 to 1,212; `other-0051` 263 to 660; `other-0032` 1,339 to
+  1,662; `other-0034`, `other-0046` and `other-0065` from 10 to 61 words to 257 to 307, the last
+  two successes; all 15 of Jake's forks with a `tabular*`, 8 to 26 words each, and six more. One
+  loses, `other-0028`, below.
 - `other-0028` keeps 106 words in place, more than the before-run's 38 but fewer than lane 2's
   2,315. Its probe runs out of budget either way: a set's output moves, names a candidate, that
   candidate passes alone, and the set is tried again without it, two compiles a candidate. With
@@ -66,9 +66,13 @@ find no document with a worse outcome or fewer words in place.
   alone reached a set of 174 that passed. Lane 2's record names the fix, halving the set once a
   named candidate passes alone, as a follow-up in the probe.
 - The 31 resumes with a table take 1,449 compiles, 216 more than with lane 2 alone, and 369 s in
-  all against 315 s at a higher load. `other-0010` takes 77 compiles, not 18; `other-0015` takes
-  162, not 30, and wins no word: its cells' checks stop on the special characters and run out of
-  their budget.
+  all against 315 s at a higher load. `other-0010` takes 77 compiles, not 18, and 16.0 s, not
+  4.4 s, for its 2,848 more words; `other-0009` 9.9 s, not 7.3 s, for 66 more.
+- `other-0015` is a cost the owner's rule does not cover, since its extra seconds buy no word: 162
+  compiles, not 30, and 25.6 s, not 5.0 s, still with no word in place. Its cells' checks stop on
+  the special characters and spend their budget bisecting. Decision 0067's fix 6, check 3 stopping
+  when its budget cannot cover the groups it has left, is the follow-up that would win those
+  seconds back.
 
 ## Consequences
 
@@ -76,7 +80,9 @@ find no document with a worse outcome or fewer words in place.
   least 58% (67.6%), moderncv at least 60% (64.9%), at most 12 resumes under 50% (8), at least 55 at
   90% (59). The time targets rest on lane 4, which opens the page before the checks end.
 - The probe's and the checks' budgets now meet more candidates in a resume with a long table; the
-  corpus run is the guard, and `other-0028` shows what a halving rule in the probe would win back.
+  corpus run is the guard. `other-0028` shows what lane 2's halving rule in the probe would win
+  back, and `other-0015` what fix 6 would: the halving rule is best landed with this lane or
+  before it, so that no resume does worse than lane 2 alone.
 - A cell takes what any field takes: Enter inserts nothing (decision 0004), so no edit ends a
   row, and the generator escapes an `&` a person types.
 - The change is in `src/import/`, so a corpus run is worth doing, by the owner's choice:

@@ -695,6 +695,33 @@ Year & Invented award \\ \endhead
     ]);
   });
 
+  test("reads multirow's place and colortbl's overhangs as the marks' arguments", () => {
+    const tree = treeOf(String.raw`\begin{tabular}{ll}
+\rowcolor{gray}[1pt][2pt] Invented & Words \\
+\multirow[t]{2}{*}[3pt]{Invented prize} & More words \\
+\rowcolor[gray]{0.9} Made-up & Pretend \\
+\end{tabular}`);
+    const table = tree.content[0];
+    const marks =
+      table?.kind === "block" ? table.content.filter((node) => node.kind === "raw") : [];
+    expect(marks.map((node) => sourceOf(tree, node))).toEqual([
+      "\\rowcolor{gray}[1pt][2pt]",
+      "\\\\",
+      "\\multirow[t]{2}{*}[3pt]{Invented prize}",
+      "\\\\",
+      "\\rowcolor[gray]{0.9}",
+      "\\\\",
+    ]);
+    expect(textsOf(tree.content)).toEqual([
+      "Invented",
+      "Words",
+      "Invented prize",
+      "More words",
+      "Made-up",
+      "Pretend",
+    ]);
+  });
+
   test("places a table float's body, and the alignment in it", () => {
     const tree = treeOf(String.raw`\begin{table}[h]
 \centering

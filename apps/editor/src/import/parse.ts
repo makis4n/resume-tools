@@ -1760,7 +1760,8 @@ export const ALIGNMENTS: ReadonlySet<string> = new Set(
 /**
  * What ends a row or stands between rows of an alignment, by its arguments: kept as the upload
  * wrote it, never a cell's text. A row's end, `\\` and `\tabularnewline`, with a star and a space;
- * the rules of LaTeX, booktabs and hhline, and colortbl's row colour; longtable's heads and feet.
+ * the rules of LaTeX, booktabs and hhline, and colortbl's row colour with its overhangs; longtable's
+ * heads and feet.
  */
 const ROW_MARKS: ReadonlyMap<string, string> = new Map([
   ["\\", "s o"],
@@ -1775,7 +1776,7 @@ const ROW_MARKS: ReadonlyMap<string, string> = new Map([
   ["specialrule", "m m m"],
   ["morecmidrules", ""],
   ["hhline", "m"],
-  ["rowcolor", "o m"],
+  ["rowcolor", "o m o o"],
   ["endhead", ""],
   ["endfirsthead", ""],
   ["endfoot", ""],
@@ -1784,12 +1785,13 @@ const ROW_MARKS: ReadonlyMap<string, string> = new Map([
 
 /**
  * What spans cells, by its arguments and the one that is the text it sets: `\multicolumn`, its
- * columns, their preamble and the text, and multirow's `\multirow`, its rows, its struts, its
- * width, its shift and the text. It is kept as the upload wrote it, and its text placed.
+ * columns, their preamble and the text, and multirow's `\multirow`, its place, its rows, its
+ * struts, its width, its shift and the text (multirow 2.x). It is kept as the upload wrote it,
+ * and its text placed.
  */
 const SPANNERS: ReadonlyMap<string, { spec: string; text: number }> = new Map([
   ["multicolumn", { spec: "m m m", text: 2 }],
-  ["multirow", { spec: "m o m o m", text: 4 }],
+  ["multirow", { spec: "o m o m o m", text: 5 }],
 ]);
 
 /**
