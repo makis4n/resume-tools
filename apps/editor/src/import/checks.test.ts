@@ -17,14 +17,20 @@ import { TexLiveIndex } from "../page/texlive";
 import {
   batchesOf,
   bisect,
+  coversLeft,
   emptiedCopy,
   judged,
   keepsPage,
+  LONG_AND_SPECIAL,
+  MUTATIONS,
   marked,
   mutated,
+  ownStop,
   type Trial,
   trialsOf,
   tried,
+  UNITS_EVIDENCE,
+  UNITS_MARGIN,
 } from "./checks";
 import { readTree } from "./fonts";
 import { treeImages } from "./intake";
@@ -184,6 +190,24 @@ describe("check 3's trials", () => {
     expect(keepsPage(undefined)).toBe(false);
   });
 
+  test("stop where the budget cannot cover the trials left, and only on enough evidence", () => {
+    const budget = 64;
+    // Before its first compile, or with fewer than four trials decided, it covers them.
+    expect(coversLeft({ decided: 0, failed: 0, left: 346, spent: 0, budget })).toBe(true);
+    expect(coversLeft({ decided: 2, failed: 2, left: 344, spent: 9, budget })).toBe(true);
+    // Half the trials decided failed alone, and over three hundred are left: it cannot; nor with a
+    // quarter of them failing and two hundred left.
+    expect(coversLeft({ decided: 4, failed: 2, left: 342, spent: 10, budget })).toBe(false);
+    expect(coversLeft({ decided: 4, failed: 1, left: 202, spent: 12, budget })).toBe(false);
+    // One failure among the decided ones, fifty left: it can, with room to spare.
+    expect(coversLeft({ decided: 6, failed: 1, left: 50, spent: 7, budget })).toBe(true);
+    expect(coversLeft({ decided: 43, failed: 0, left: 85, spent: 2, budget })).toBe(true);
+    // Nothing left is covered whatever was spent.
+    expect(coversLeft({ decided: 30, failed: 30, left: 0, spent: 63, budget })).toBe(true);
+    expect(UNITS_EVIDENCE).toBe(4);
+    expect(UNITS_MARGIN).toBe(3);
+  });
+
   test("bisect a batch to the trials that fail alone, within a budget", async () => {
     let budget = 10;
     const test = async (set: readonly number[]) => {
@@ -217,6 +241,72 @@ describe("check 2's mutations and the marks", () => {
       "f-a=[]",
       "f-b=[]",
       "f-c=[]",
+    ]);
+  });
+
+  test("try the long and special texts in one, the special text at both of a field's edges", () => {
+    expect(LONG_AND_SPECIAL.startsWith(MUTATIONS.special)).toBe(true);
+    expect(LONG_AND_SPECIAL.endsWith(MUTATIONS.special)).toBe(true);
+    expect(LONG_AND_SPECIAL).toContain(MUTATIONS.long);
+  });
+
+  /** Fields as `ownStop` hears them, each id its kind's unless given. */
+  const heard = (...ids: string[]) =>
+    ids.map((id) => ({ id, kind: id.includes(":") ? (id.split(":")[0] as string) : id }));
+
+  test("take a stop for the text's own once fields of three kinds, and two no compile named, stop it alone", () => {
+    const own = ownStop();
+    const trying = heard("a", "b", "c", "d", "e", "f", "g", "h");
+    own.heard(trying, true);
+    for (const named of ["a", "b"]) {
+      own.heard(heard(named), true);
+      expect(own.asks()).toBe(false);
+    }
+    own.heard(heard("c"), true);
+    // Three kinds stopped it alone, but what is left without them has not stopped yet.
+    expect(own.asks()).toBe(false);
+    own.heard(heard("d", "e", "f", "g", "h"), true);
+    expect(own.asks()).toBe(true);
+    // The first and the last of the fields none tried alone, then asked once only.
+    const unnamed = own.unnamed(trying);
+    expect(unnamed.map((each) => each.id)).toEqual(["d", "h"]);
+    expect(own.asks()).toBe(false);
+    expect(own.shown()).toBe(false);
+    for (const each of unnamed) own.heard([each], true, true);
+    expect(own.shown()).toBe(true);
+  });
+
+  test("never take a stop for the text's own where a field is its cause", () => {
+    // A set went through: some field takes the text.
+    const passed = ownStop();
+    passed.heard(heard("a", "b", "c", "d", "e"), true);
+    passed.heard(heard("a", "b"), false);
+    for (const named of ["c", "d", "e"]) passed.heard(heard(named), true);
+    passed.heard(heard("f", "g"), true);
+    expect(passed.asks()).toBe(false);
+    // The fields that stopped it alone are all of one kind, which may be what stops it.
+    const oneKind = ownStop();
+    for (const named of ["x:1", "x:2", "x:3", "x:4"]) oneKind.heard(heard(named), true);
+    oneKind.heard(heard("y", "z"), true);
+    expect(oneKind.asks()).toBe(false);
+    // Several fields named rightly, each its own cause: one no compile named takes the text.
+    const named = ownStop();
+    for (const each of ["a", "b", "c"]) named.heard(heard(each), true);
+    named.heard(heard("d", "e", "f"), true);
+    expect(named.asks()).toBe(true);
+    const [first, second] = named.unnamed(heard("a", "b", "c", "d", "e", "f"));
+    if (first === undefined || second === undefined) throw new Error("no unnamed field");
+    named.heard([first], true, true);
+    named.heard([second], false, true);
+    expect(named.shown()).toBe(false);
+    // The fields no compile named are of kinds none tried alone was of, each of another.
+    const kinds = ownStop();
+    for (const each of ["a", "b", "c"]) kinds.heard(heard(each), true);
+    kinds.heard(heard("a:2", "d:1", "d:2", "e"), true);
+    expect(kinds.asks()).toBe(true);
+    expect(kinds.unnamed(heard("a:2", "d:1", "d:2", "e")).map((each) => each.id)).toEqual([
+      "d:1",
+      "e",
     ]);
   });
 
@@ -347,5 +437,120 @@ describe.skipIf(!engineAvailable())("the checks on the engine (the second pass's
     expect(withOutcomeMarks(stages[1]?.document as Document, outcome.document)).toBe(
       outcome.document,
     );
+  }, 60_000);
+});
+
+/**
+ * An invented resume whose preamble makes one letter of check 2's special text stop TeX wherever
+ * it is set, as a font that lacks it would: every field stops on that text, by no fault of its own.
+ */
+const LETTERLESS = String.raw`\documentclass{article}
+\pagestyle{empty}
+\DeclareUnicodeCharacter{011F}{\errmessage{This invented font has no such letter}}
+\begin{document}
+\section*{Invented heading}
+Set invented type by hand for a small press.
+
+Kept the invented press running through the winter.
+
+Wrote invented notes on paper and ink.
+
+Bound invented books in cloth and thread.
+
+Taught invented lettering to new hands.
+
+Mended invented frames and cases.
+
+Sorted invented type into its cases.
+
+Printed invented posters for the fair.
+\end{document}
+`;
+
+/**
+ * An invented resume whose entries stop TeX when empty, and a list that takes anything: the empty
+ * text's bisection, on a budget of two compiles, cannot reach every entry.
+ */
+const ENTRIES = String.raw`\documentclass{article}
+\pagestyle{empty}
+\newcommand{\entry}[1]{\setbox0\hbox{#1}\ifdim\wd0=0pt \errmessage{An entry is needed}\fi\par\noindent #1\par}
+\begin{document}
+\entry{Lantern Works}
+\entry{Mill and Sons}
+\entry{The Invented Press}
+\entry{Paper and Ink}
+\begin{itemize}
+\item Set invented type by hand
+\item Kept the press running
+\end{itemize}
+\end{document}
+`;
+
+describe.skipIf(!engineAvailable())("the checks' budgets on the engine (decision 00XX)", () => {
+  let deps: ImportDeps;
+  beforeAll(async () => {
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    deps = {
+      session: await startNodeSession(),
+      fonts: new FontLibrary(new TexLiveIndex(manifest), async (path) =>
+        readFileSync(join(ENGINE_DIR, "files", path)),
+      ),
+      tree: readTree(manifest.files, manifest.fonts),
+      treeImage: treeImages(
+        manifest.files,
+        (path) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path))),
+      ),
+    };
+  }, 60_000);
+
+  test("keep every field for a text that stops the compile in any, without a compile a field", async () => {
+    // The compiles of each phase of the checks, counted on the session.
+    let phase = "";
+    const compiles = new Map<string, number>();
+    const session = new Proxy(deps.session, {
+      get(target, key) {
+        const value = Reflect.get(target, key);
+        if (key === "compile")
+          return (...args: Parameters<typeof target.compile>) => {
+            compiles.set(phase, (compiles.get(phase) ?? 0) + 1);
+            return target.compile(...args);
+          };
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const outcome = await importResume([{ name: "cv.tex", bytes: strToU8(LETTERLESS) }], {
+      ...deps,
+      session,
+      observe: {
+        checks: (event) => {
+          if ("phase" in event) phase = event.phase;
+        },
+      },
+    });
+    if (isRefusal(outcome)) throw new Error(`refused: ${outcome.message}`);
+    const { outline, checks } = outcome.report;
+    // Every paragraph and the heading stop on the special text: each is kept as text.
+    expect(outline.kept).toEqual({ text: 9 });
+    expect(checks.fields.locked.text).toBe(9);
+    // The stop is shown the text's own before the bisection has tried each of the nine alone, which
+    // takes seventeen compiles or more; nothing is left untested.
+    expect(compiles.get("check 2 bisection") ?? 0).toBeLessThan(14);
+    expect(outline.kept.untested).toBeUndefined();
+  }, 60_000);
+
+  test("require the fields the empty text's bisection does not reach, which took text", async () => {
+    const outcome = await importResume([{ name: "cv.tex", bytes: strToU8(ENTRIES) }], {
+      ...deps,
+      checkBudget: 2,
+    });
+    if (isRefusal(outcome)) throw new Error(`refused: ${outcome.message}`);
+    const { outline, checks } = outcome.report;
+    // Every field took the long and special texts; the entries stop when empty, and those the
+    // budget left are required with them, not kept as text.
+    expect(outline.kept).toEqual({});
+    expect(checks.fields.locked.untested).toBeUndefined();
+    expect(outline.required).toBeGreaterThanOrEqual(4);
   }, 60_000);
 });
