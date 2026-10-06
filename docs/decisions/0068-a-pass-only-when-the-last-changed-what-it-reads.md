@@ -1,4 +1,4 @@
-# 00XX. A pass only when the last one changed what the next reads
+# 0068. A pass only when the last one changed what the next reads
 
 Date: 2026-10-06 · Status: accepted, lane 1 of decision 0067's chosen fixes; amends 0003's rule
 that a compile passes again whenever its log asks, and 0022's on the probe's second pass
@@ -29,7 +29,8 @@ job's folder but its log and its output.
   and, as before, the document is new, its log asks, or the caller asked for a pass after any
   change (`rerunOnChange`, the probe's, decision 0022). The session compares the folder's bytes
   before and after each pass that another may follow (`src/engine/session.ts`); the last pass the
-  cap allows, and a pass whose log does not ask, are not compared.
+  cap allows, and a pass that no other could follow (the document is not new, its log does not ask,
+  and the caller asked for no pass after a change), are not compared.
 - TeX reads nothing a pass can change but the files of the job's folder: the body, the format and
   the tree stay as they were. A pass after one that left those files as it found them reads what
   that one read, so it sets the same page, whatever the log asked for.
@@ -93,7 +94,8 @@ pass; and a label that changes on every pass, which still runs to the cap.
   that load it. Imports with biblatex lose a pass on many of their trial compiles. Their compiles and
   words are as before.
 - A pass another may follow is compared with the folder before it: the folder is copied before the
-  first pass, and after any pass whose log asks for another, and that copy is the next pass's
+  first pass, and after any pass another could follow (a new document's first pass, a pass whose log
+  asks, every pass of a `rerunOnChange` compile), and that copy is the next pass's
   before. A compile of one pass, and the last pass the cap allows, copy nothing. An upload's images
   are small blank stand-ins, but the folder also holds an upload's own fonts for fontconfig, which
   can come to several MB. Measured in Node over the passes' own time, on an edit of one pass: with

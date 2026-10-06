@@ -583,7 +583,7 @@ Invented \cite{invented}.
     );
     expect(result.bibliographyLeftOut).toBe(true);
     // Two: the second pass changes only biblatex's note of the .bbl's checksum, which sets no
-    // page, so the third its log asks for, for Biber, is not run (decision 00XX).
+    // page, so the third its log asks for, for Biber, is not run (decision 0068).
     expect(result.passes).toHaveLength(2);
   }, 60_000);
 

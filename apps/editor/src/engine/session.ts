@@ -372,7 +372,7 @@ export interface CompileOptions {
    * Passes at most, a whole number from 1, and 3 by default. A pass is repeated when the document
    * is new or the log asks for one, and only when it changed a file of the job's folder, its log
    * and its output aside: a pass that changed nothing the next would read would set the same page
-   * again (decision 00XX). The retry as a new document takes its passes from the same budget.
+   * again (decision 0068). The retry as a new document takes its passes from the same budget.
    */
   maxPasses?: number;
   /**
@@ -835,7 +835,7 @@ export class EngineSession {
    * `\begin{document}` on. A new document gets a second pass, since the first writes the
    * auxiliary files the second reads, and any pass is repeated when the log asks for it, but only
    * a pass that changed a file of the job's folder: one that left every file the next would read
-   * as it found them would set the same page again (decision 00XX). biblatex's log asks on every
+   * as it found them would set the same page again (decision 0068). biblatex's log asks on every
    * pass for Biber and a rerun after it, which no pass meets, since the engine runs no Biber; with
    * nothing changed, an edit of such a document takes one pass, not the most allowed.
    *
@@ -1047,8 +1047,8 @@ export class EngineSession {
    * the tree stay as they were. So a pass after one that left every file of the folder as it found
    * them reads what that one read and sets the same page, whatever its log asked for, and is not
    * run. Each pass but the last allowed therefore compares the folder's bytes before and after it,
-   * but for the files TeX writes for other programs and never reads (`UNREAD`) and the lines of a `.aux` that cannot
-   * change a page (`PAGELESS_AUX_LINE`).
+   * but for the files TeX writes for other programs and never reads (`UNREAD`) and the lines of a
+   * `.aux` that cannot change a page (`PAGELESS_AUX_LINE`).
    */
   private passes(
     spec: EngineSpec,
