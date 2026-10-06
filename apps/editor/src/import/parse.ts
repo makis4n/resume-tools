@@ -24,7 +24,7 @@
  *   declaration used as one, `small` or `bfseries`, whose content the parser places;
  * - **tables**, a `tabular` and its kin, a block whose body is cut into its cells, each placed as
  *   any content is, the `&`, the rows' ends, the rules and the spanning commands kept as written
- *   around them; and a `table` float, a block (decision 00XX);
+ *   around them; and a `table` float, a block (decision 0070);
  * - and **raw chunks**, everything else, byte for byte: math, verbatim, the environments the table
  *   does not know or keeps raw, a table whose cells are unsafe to place, commands whose effect is
  *   not text, typewriter text, a paragraph an alignment's `&` is in or whose `\\` ends a table's
@@ -1733,7 +1733,7 @@ function placeEnvironment(
 // Tables.
 
 /**
- * The environments whose body is cut into its cells (decision 00XX), by their arguments: the
+ * The environments whose body is cut into its cells (decision 0070), by their arguments: the
  * alignments of LaTeX and of the tabularx, tabulary and longtable packages, which set text in their
  * cells, and the `table` float, whose body is placed as a block's, so that an alignment in it is
  * cut too. The `array` environment is not among them, since its cells are mathematics, nor is
@@ -1847,7 +1847,7 @@ function placeTable(
 }
 
 /**
- * An alignment's body as its cells (decision 00XX): each cell's text placed as any content is, in a
+ * An alignment's body as its cells (decision 0070): each cell's text placed as any content is, in a
  * state of its own, since TeX sets each cell in a group; the `&` between cells left to the body's
  * bytes between nodes; and a row's end, a rule and the like (`ROW_MARKS`) raw, with their
  * arguments. A `\multicolumn` or a `\multirow` is raw, its text placed (`SPANNERS`). Undefined when

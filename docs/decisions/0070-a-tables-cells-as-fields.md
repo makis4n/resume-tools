@@ -1,6 +1,6 @@
-# 00XX. A table's cells as fields
+# 0070. A table's cells as fields
 
-Date: 2026-10-06 · Status: accepted, lane 3 of decision 0067; amends 0020
+Date: 2026-10-06 · Status: accepted, lane 3 of decision 0067, measured with lane 2 (decision 0069); amends 0020
 
 ## Context
 
