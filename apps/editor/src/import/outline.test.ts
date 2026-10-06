@@ -19,6 +19,7 @@ import {
   type Outline,
   outlinePackage,
   outlineResume,
+  unwrittenRule,
 } from "./outline";
 import { bodyOfText, parseBody, type Tree } from "./parse";
 import type { ProbeCandidate, Verdict } from "./probe";
@@ -285,6 +286,61 @@ describe("the outline (decision 0049)", () => {
     expect(outline.declined.has("c4-2")).toBe(false);
     // Naming the rules changes nothing the outline writes.
     expect(written(outline.parts)).toBe(`\\begin{document}${body}\\end{document}`);
+  });
+
+  test("names a text whose source ends a paragraph, which a field would set as one", () => {
+    // An invented tree whose one text runs over a blank line, as no parse of ours makes it.
+    const body = "Invented words\n\nMore invented words\n";
+    const tree = treeOf(body, FLAT);
+    const end = body.length - 1;
+    const merged: Tree = {
+      ...tree,
+      content: [
+        { kind: "text", runs: [{ text: "Invented words More invented words" }], start: 0, end },
+      ],
+    };
+    const [first] = probed(tree);
+    if (first === undefined) throw new Error("no candidate");
+    const outline = buildOutline({
+      tree: merged,
+      candidates: [{ ...first, start: 0, end }],
+      macros: FLAT.macros,
+      begin: "\\begin{document}",
+      end: "\\end{document}",
+    });
+    expect(Object.fromEntries(outline.declined)).toEqual({ [first.id]: "several-paragraphs" });
+  });
+
+  test("says where among the groups lies a span it never came to", () => {
+    // An invented group of two units, its units' own content at 10-25 and 30-50, kept text between.
+    const groups = [
+      {
+        start: 10,
+        end: 50,
+        units: [
+          { start: 10, end: 25, next: 30 },
+          { start: 30, end: 50, next: 50 },
+        ],
+      },
+    ];
+    expect(unwrittenRule({ start: 20, end: 28 }, groups)).toBe("cut-by-unit");
+    expect(unwrittenRule({ start: 5, end: 12 }, groups)).toBe("cut-by-unit");
+    expect(unwrittenRule({ start: 26, end: 29 }, groups)).toBe("between-units");
+    expect(unwrittenRule({ start: 12, end: 20 }, groups)).toBe("passed");
+    expect(unwrittenRule({ start: 60, end: 70 }, groups)).toBe("passed");
+    // Inside a unit of an outer group, between the units of a group inside it.
+    const nested = [
+      ...groups,
+      {
+        start: 31,
+        end: 48,
+        units: [
+          { start: 31, end: 35, next: 40 },
+          { start: 40, end: 48, next: 48 },
+        ],
+      },
+    ];
+    expect(unwrittenRule({ start: 36, end: 39 }, nested)).toBe("between-units");
   });
 
   test("keeps as text the candidates the checks name, and says each field's candidate and each group's spans", () => {

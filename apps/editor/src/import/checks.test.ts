@@ -14,20 +14,29 @@ import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
+import { signaturesOf } from "../test/invented-import";
+import { candidatesOf } from "./candidates";
 import {
   batchesOf,
   bisect,
+  type CheckEvent,
+  checkOutline,
   emptiedCopy,
   judged,
   keepsPage,
   marked,
   mutated,
+  type OutlineCompiler,
   type Trial,
   trialsOf,
   tried,
 } from "./checks";
 import { readTree } from "./fonts";
 import { treeImages } from "./intake";
+import { buildOutline } from "./outline";
+import { bodyOfText, parseBody } from "./parse";
+import type { ProbeCandidate } from "./probe";
+import type { GlyphStream, ReferenceGlyph } from "./reference";
 import { isRefusal } from "./refusal";
 import { reportOfImport } from "./report";
 import { type ImportDeps, type ImportStage, importResume } from "./run";
@@ -74,6 +83,69 @@ const fieldsOf = (list: readonly OutlinePart[]) =>
       ? [`${step.part.id}=${JSON.stringify(step.part.text)}`]
       : [],
   );
+
+describe("check 1's difference", () => {
+  test("is heard with its kind for each field it keeps because the field moved the page", async () => {
+    // An invented entry of two fields, the second of which, written as a field, moves the page's
+    // one glyph: a fake compiler sets the reference's page, or that glyph moved where it is a field.
+    const signatures = signaturesOf({ inventedentry: "m m" });
+    const tree = parseBody(bodyOfText("\\inventedentry{Quill Academy}{Wrenford}\n"), signatures);
+    if (isRefusal(tree)) throw new Error(tree.message);
+    const candidates: ProbeCandidate[] = candidatesOf(tree).candidates.map((each) => ({
+      ...each,
+      verdict: "editable",
+      settled: "together",
+    }));
+    const glyph = (h: number): ReferenceGlyph => ({
+      kind: "glyph",
+      font: "invented10",
+      size: 655360,
+      code: 81,
+      text: "Q",
+      h,
+      v: 0,
+      width: 5,
+    });
+    const page = (h: number): GlyphStream => ({
+      pages: [{ items: [glyph(h)] }],
+      size: { width: 612, height: 792 },
+      fonts: {} as GlyphStream["fonts"],
+      specials: [],
+    });
+    const compiler = {
+      count: 0,
+      ms: 0,
+      async compile(resume: unknown) {
+        compiler.count++;
+        const moved = JSON.stringify(resume).includes('"id":"c1-2"');
+        return { broke: false, stream: page(moved ? 30 : 10), log: "" };
+      },
+    };
+    const events: CheckEvent[] = [];
+    const checked = await checkOutline({
+      compiler: compiler as unknown as OutlineCompiler,
+      reference: page(10),
+      build: (keep) =>
+        buildOutline({
+          tree,
+          candidates,
+          kept: keep,
+          macros: signatures.macros,
+          begin: "\\begin{document}",
+          end: "\\end{document}",
+        }),
+      candidates,
+      runs: [],
+      observe: (event) => events.push(event),
+    });
+    if (isRefusal(checked)) throw new Error("refused");
+    expect(checked.kept.get("c1-2")).toBe("differs");
+    expect(checked.kept.has("c1-1")).toBe(false);
+    expect(events.filter((event) => "differs" in event)).toEqual([
+      { differs: "c1-2", kind: "position" },
+    ]);
+  });
+});
 
 describe("check 3's trials", () => {
   const groups = new Map([

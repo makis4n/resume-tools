@@ -317,6 +317,8 @@ interface Spot {
  * - `no-text`: it holds no text of the tree; `blank`: its texts are spaces alone.
  * - `overlaps`: its text overlaps a field placed before it.
  * - `cut-by-unit`: a group's unit begins or ends inside it.
+ * - `between-units`: it lies inside a group, between two of its units, in no unit, where the
+ *   outline writes only the kept text that parts them.
  * - `after-escape`: the kept text before it ends in a backslash that would take its marker.
  * - `passed`: the outline had written past where it begins.
  * - `outside-setter`: a preamble's candidate in no call that stores a header's text;
@@ -331,6 +333,7 @@ export type ShapeRule =
   | "blank"
   | "overlaps"
   | "cut-by-unit"
+  | "between-units"
   | "after-escape"
   | "passed"
   | "outside-setter"
@@ -740,19 +743,10 @@ export function buildOutline(input: OutlineInput): Outline {
     }
   }
   // Why each editable candidate that is no field is none: the rule noted, or for a spot `partsIn`
-  // never came to, a group's unit that cuts it, a preamble's call that does not hold it, or the
-  // writer's having passed it.
+  // never came to, a preamble's call that does not hold it, or where it lies among the groups.
   for (const spot of preambleSpots) if (!seen.has(spot)) note(spot.candidate, "outside-setter");
-  for (const spot of writer.spots) {
-    if (seen.has(spot)) continue;
-    const cut = groups.some(
-      (group) =>
-        spot.start < group.end &&
-        spot.end > group.start &&
-        !group.units.some((unit) => spot.start >= unit.start && spot.end <= unit.end),
-    );
-    note(spot.candidate, cut ? "cut-by-unit" : "passed");
-  }
+  for (const spot of writer.spots)
+    if (!seen.has(spot)) note(spot.candidate, unwrittenRule(spot, groups));
   const declined = new Map<string, ShapeRule>();
   for (const each of editable) {
     if (written.has(each.id)) continue;
@@ -769,6 +763,25 @@ export function buildOutline(input: OutlineInput): Outline {
     counts: { fields: fieldCount(parts), groups: made.groups, units: made.units },
     declined,
   };
+}
+
+/**
+ * Why the outline never came to a span of the body, where its groups lie (`Placed`): a unit of a
+ * group begins or ends inside it (`cut-by-unit`); it lies inside a group and in none of its units,
+ * between two of them, where only the kept text that parts them is written (`between-units`); or
+ * otherwise the writer had passed it (`passed`).
+ */
+export function unwrittenRule(
+  span: Span,
+  groups: readonly Pick<Placed, "start" | "end" | "units">[],
+): "cut-by-unit" | "between-units" | "passed" {
+  const overlaps = (other: Span) => span.start < other.end && span.end > other.start;
+  const inside = (other: Span) => span.start >= other.start && span.end <= other.end;
+  const touched = groups.filter(overlaps);
+  if (touched.some((group) => group.units.some((unit) => overlaps(unit) && !inside(unit))))
+    return "cut-by-unit";
+  if (touched.some((group) => inside(group) && !group.units.some(overlaps))) return "between-units";
+  return "passed";
 }
 
 /** The most braces an outline closes for its upload: as many as the parser lets a body nest. */

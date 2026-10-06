@@ -27,7 +27,8 @@ candidate whose run sets most of its glyphs, as the piece is:
   part of it; `several-paragraphs`, its text's source ends a paragraph, with `\par` or a blank
   line; `line-break`, it breaks a line, with `\\`, `\newline` or `\linebreak`; `empty`; `no-text`
   and `blank`, it holds no text, or spaces alone; `overlaps`, its text overlaps a field placed
-  before it; `cut-by-unit`, a group's unit begins or ends inside it; `after-escape`, the kept text
+  before it; `cut-by-unit`, a group's unit begins or ends inside it; `between-units`, it lies
+  inside a group between two of its units, in none of them; `after-escape`, the kept text
   before it ends in a backslash that would take its marker; `passed`, the outline had written past
   it; `outside-setter` and `no-preamble`, a preamble's candidate the outline has no call to write
   in. Two more come from the report's own count: `container`, a candidate the probe found holds
@@ -72,7 +73,7 @@ each. Gzip is the cautious measure: the spike's 14 MB was Brotli's, which compre
 and `other-0015`, four at a time: `corpus compare` finds them the same on all eight, times aside,
 the breakdowns set aside. Over the five resumes with the most `shape` words on main
 (`moderncv-0023`, `other-0059`, `other-0009`, `altacv-0005`, `jake-0031`), every one of their
-1,350 `shape` words is `line-break`; over the eight, `differs` is `position` and `glyph`, and
+1,350 `shape` words is `line-break`; over the eight, `differs` is `position`, `glyph` and `rule`, and
 `moved` is mostly `transform` (AltaCV's `cvtag` #1).
 
 ## Consequences

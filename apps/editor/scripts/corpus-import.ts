@@ -111,6 +111,7 @@ export const SHAPE_RULES = {
   blank: "its texts are spaces alone",
   overlaps: "its text overlaps a field placed before it",
   "cut-by-unit": "a group's unit begins or ends inside it",
+  "between-units": "it lies inside a group between two of its units, in none of them",
   "after-escape": "the kept text before it ends in a backslash that would take its marker",
   passed: "the outline had written past where it begins",
   "outside-setter": "a preamble's candidate in no call that stores a header's text",
