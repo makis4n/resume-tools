@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ImportProgress } from "../import/run";
+import type { ImportProgress, ImportStage } from "../import/run";
 import { EngineCancelled, EngineClient, EngineTimeout } from "./client";
 
 /** A stand-in for the compile worker, which keeps what it is sent and replies when told to. */
@@ -121,6 +121,33 @@ describe("EngineClient's imports and cancel (decision 0038)", () => {
     worker?.reply({ id: 1, result: outcome });
     await expect(done).resolves.toEqual(outcome);
     expect(heard).toEqual([progress(0, true), progress(1, false)]);
+  });
+
+  it("hands on an import's document before its checks end, which settles nothing (decision 00XX)", async () => {
+    const { client, workers } = clientWithWorkers();
+    const stages: ImportStage[] = [];
+    const done = client.importResume(
+      [],
+      () => {},
+      undefined,
+      (stage) => stages.push(stage),
+    );
+    const [worker] = workers;
+    const page = { phase: "page", output: new Uint8Array([0xf7, 2]), ms: 10, compiles: 5 };
+    const fields = { phase: "fields", ms: 20, compiles: 9 };
+    worker?.reply({ id: 1, stage: page });
+    worker?.reply({ id: 1, progress: progress(10, true) });
+    worker?.reply({ id: 1, stage: fields });
+    expect(stages).toEqual([page, fields]);
+    const outcome = { refused: true, reason: "parse", message: "This resume could not be read." };
+    worker?.reply({ id: 1, result: outcome });
+    await expect(done).resolves.toEqual(outcome);
+    // An import asked for without a listener for its stages takes them as nothing.
+    const quiet = client.importResume([], () => {});
+    worker?.reply({ id: 2, stage: page });
+    worker?.reply({ id: 2, result: outcome });
+    await expect(quiet).resolves.toEqual(outcome);
+    expect(stages).toHaveLength(2);
   });
 
   it("cancels: terminates the worker, fails what waits on it, and starts a new one for the next call", async () => {

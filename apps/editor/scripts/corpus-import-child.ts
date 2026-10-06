@@ -23,6 +23,7 @@ import type { EngineManifest } from "../src/engine/manifest.ts";
 // browser's import reads its report with (decision 0039).
 import { reportOfImport } from "../src/import/report.ts";
 import type { ImportStep } from "../src/import/run.ts";
+import { earlyClock } from "./corpus-early.ts";
 import { type ImportChildRow, refusedOutcome } from "./corpus-import.ts";
 
 type NodeEngine = typeof import("../src/engine/node.ts");
@@ -70,7 +71,11 @@ async function main() {
       manifest.files,
       (path) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path))),
     ),
+    // What the document under way hears of its page and its fields before its checks end.
+    onStage: (stage: { phase: "page" | "fields"; ms: number }) => staged?.hear(stage),
   };
+  /** When the document under way opened its page and its fields (`corpus-early.ts`). */
+  let staged: ReturnType<typeof earlyClock> | undefined;
 
   process.on("message", async (task: Task) => {
     if (task.type !== "task") return;
@@ -88,7 +93,9 @@ async function main() {
       close();
       step = progress.step;
     };
-    const done = (row: ImportChildRow) => send({ type: "done", id: task.id, row });
+    const early = earlyClock();
+    staged = early;
+    const done = (row: ImportChildRow) => send({ type: "done", id: task.id, row: early.into(row) });
     const started = performance.now();
     try {
       const outcome = await importResume(

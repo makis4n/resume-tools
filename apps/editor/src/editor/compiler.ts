@@ -72,7 +72,13 @@ import type {
 import type { PagePdf } from "../import/bridge";
 import type { Upload } from "../import/intake";
 import { isRefusal, refusal } from "../import/refusal";
-import type { Imported, ImportJob, ImportOutcome, ImportProgress } from "../import/run";
+import type {
+  Imported,
+  ImportJob,
+  ImportOutcome,
+  ImportProgress,
+  ImportStage,
+} from "../import/run";
 import { type DrawnPage, type DrawOptions, drawEach, drawPage, drawPages } from "../page/draw";
 import type { FontLibrary, NativeCoverage } from "../page/fonts";
 import {
@@ -124,12 +130,16 @@ export interface Engine {
   terminate(): void;
   /**
    * Import a resume in the engine's own job (`EngineClient.importResume`), which fails with
-   * `EngineCancelled` when `cancel` stops it and with `EngineTimeout` when a compile of it hangs.
-   * An engine without it, as a test's, cannot import.
+   * `EngineCancelled` when `cancel` stops it and with `EngineTimeout` when a compile of it hangs;
+   * `onStage` hears its document before its checks end (decision 00XX), and `limit` is the
+   * client's own, which the scheduler leaves as it is. An engine without it, as a test's, cannot
+   * import.
    */
   importResume?(
     files: readonly Upload[],
     onProgress: (progress: ImportProgress) => void,
+    limit?: number,
+    onStage?: (stage: ImportStage) => void,
   ): Promise<ImportOutcome>;
   /**
    * Make a PDF of the reference page an import of these files compiles
@@ -632,21 +642,65 @@ export class Compiler {
    * compiles need it. The import's own formats are the worker's to drop, which it does, whether it
    * comes to a document or not; the formats of an imported package it dumped to check are gone
    * from the engine then, and put back from the compiler's bytes when a document needs them.
+   * `onStage` hears the document before the checks end, its page and then its fields (decision
+   * 00XX), which `preview` shows while the import holds the engine.
    */
   importResume(
     files: readonly Upload[],
     onProgress: (progress: ImportProgress) => void,
+    onStage?: (stage: ImportStage) => void,
   ): ImportRun {
     return this.holding(
       (engine) => engine.importResume?.bind(engine),
       async (run) => {
-        const outcome = await run(files, onProgress);
+        const outcome = await run(files, onProgress, undefined, onStage);
         if (!isRefusal(outcome)) this.takeFormats(outcome);
         return outcome;
       },
       (error) => refusal("timeout", undefined, error.message),
       true,
     );
+  }
+
+  /**
+   * Show the page of an import's document before its checks end (decision 00XX): the output its
+   * checks compiled of it (`ImportStage.output`), drawn as a compile's output is drawn, with nothing
+   * asked of the engine, which the import holds. The document becomes the open one, with its
+   * package and job, so that an edit made meanwhile compiles once the import lands, in a job started
+   * afresh, as `open` starts it; and so does `open` with the document the import comes to, whose
+   * page then takes this one's place. No PDF is made of this page, which no job of the editor's
+   * engine holds. A page that cannot be drawn says so as a compile's does.
+   */
+  async preview(
+    pkg: TemplatePackage,
+    doc: Document,
+    job: ImportJob | undefined,
+    output: Uint8Array,
+  ): Promise<void> {
+    if (this.closed) return;
+    checkTemplate(pkg, doc);
+    this.pkg = pkg;
+    this.job = job;
+    this.latest = doc;
+    this.opened = true;
+    this.made = undefined;
+    const generation = ++this.generation;
+    const started = performance.now();
+    try {
+      const covering = this.coverage(pkg);
+      const coverage = covering && (await covering.catch(() => undefined));
+      const body = generateBody(pkg, doc.resume, doc.controls, { covers: coverage?.covers });
+      const pages = await this.draw(output, this.fonts, body.texts, drawOptions(pkg, doc));
+      if (this.closed || generation !== this.generation) return;
+      const [page] = pages;
+      if (page === undefined) throw new Error("the output has no page");
+      for (const each of pages) this.warnAboutFonts(each);
+      const ms = performance.now() - started;
+      this.events.page({ page, pages, body, document: doc, ms, output });
+    } catch (error) {
+      if (!this.closed && generation === this.generation)
+        this.fail("the imported page could not be drawn", error);
+    }
   }
 
   /**

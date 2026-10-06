@@ -25,6 +25,7 @@ import type { RefusalReason } from "../src/import/refusal.ts";
 // The report imports nothing but types, so Node runs it as it is (decision 0039).
 import { LOCK_WHY, type LockReason, SUCCESS_RATE } from "../src/import/report.ts";
 import type { ImportStep } from "../src/import/run.ts";
+import { earlyHeadline, earlyOf } from "./corpus-early.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 
 /** How long one document may take: its pipeline, its probe and its checks. */
@@ -210,6 +211,8 @@ export function importHeadline(rows: readonly ImportRow[]): string[] {
   return [
     `${plural(summary.documents, "document")}, ${outcomes.timeout} of which timed out and ${outcomes.timeout === 1 ? "counts" : "count"} in no share; of the ${n} others, ${outcomes.success} success (${share(outcomes.success)}), ${outcomes.partial} partial (${share(outcomes.partial)}), ${rest} refused or stopped (${share(rest)}): ${outcomes.refused} refused, ${outcomes["no reference"]} with no reference, ${outcomes["not parsed"]} not parsed, ${outcomes.baseline} not probed, ${outcomes.crashed} died.`,
     `Words of the ${plural(outcomes.success + outcomes.partial, "document")} imported, ${plural(words.body, "word")}: ${shown(rates.editable)} editable in place, ${shown(rates.retype)} through the retype, ${shown(rates.locked)} locked${reasons.length === 0 ? "." : `, by reason: ${reasons.join(", ")}.`}`,
+    // When the page opened, and every field, before the checks ended (decision 00XX).
+    ...earlyHeadline(rows),
   ].map(printable);
 }
 
@@ -361,6 +364,21 @@ export function importTable(rows: readonly ImportRow[]): string {
     ...STEPS.map((step) => middle(`\`${step}\`, median`, (row) => row.times.steps?.[step], " ms")),
     middle("An import, median", (row) => (imported(row) ? row.times.import : undefined), " ms"),
     most("An import, slowest", (row) => (imported(row) ? row.times.import : undefined), " ms"),
+    middle(
+      "Its page opened, median",
+      (row) => (imported(row) ? earlyOf(row).page : undefined),
+      " ms",
+    ),
+    most(
+      "Its page opened, slowest",
+      (row) => (imported(row) ? earlyOf(row).page : undefined),
+      " ms",
+    ),
+    most(
+      "Every field open, slowest",
+      (row) => (imported(row) ? earlyOf(row).unlocked : undefined),
+      " ms",
+    ),
     middle("A document, median", (row) => row.times.wall, " ms"),
   ];
   return `${lines.map(printable).join("\n")}\n`;

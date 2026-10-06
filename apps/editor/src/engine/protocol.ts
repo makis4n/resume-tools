@@ -4,11 +4,13 @@
  * import (milestone 3 item 12, decision 0038) also sends progress under its id, as many times as
  * it has steps and compiles, before its reply; a progress message settles nothing. So does the
  * bridge's PDF of an import's reference page (milestone 3 second pass, item 16), compile by compile.
+ * An import also sends its document before its checks end, its page and then its fields (decision
+ * 00XX), under its id, each once at most; a stage settles nothing either.
  */
 
 import type { PagePdf } from "../import/bridge";
 import type { Upload } from "../import/intake";
-import type { ImportOutcome, ImportProgress } from "../import/run";
+import type { ImportOutcome, ImportProgress, ImportStage } from "../import/run";
 import type {
   CompileOptions,
   CompileResult,
@@ -47,4 +49,5 @@ export interface EngineResults {
 export type EngineReply =
   | { id: number; result: EngineResults[keyof EngineResults] }
   | { id: number; error: string }
-  | { id: number; progress: ImportProgress };
+  | { id: number; progress: ImportProgress }
+  | { id: number; stage: ImportStage };

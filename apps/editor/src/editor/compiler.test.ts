@@ -21,6 +21,7 @@ import type {
   ImportOutcome,
   ImportProgress,
   ImportReport,
+  ImportStage,
 } from "../import/run";
 import type { DrawnPage } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
@@ -230,6 +231,7 @@ class ImportingEngine extends FakeEngine {
   imports: (Waiting<ImportOutcome> & {
     files: readonly Upload[];
     progress: (progress: ImportProgress) => void;
+    stage?: ((stage: ImportStage) => void) | undefined;
   })[] = [];
   cancels = 0;
   pdfOptions: unknown[] = [];
@@ -237,10 +239,12 @@ class ImportingEngine extends FakeEngine {
   importResume(
     files: readonly Upload[],
     progress: (progress: ImportProgress) => void,
+    _limit?: number,
+    stage?: (stage: ImportStage) => void,
   ): Promise<ImportOutcome> {
     this.calls.push("import");
     return new Promise((resolve, reject) =>
-      this.imports.push({ files, progress, resolve, reject }),
+      this.imports.push({ files, progress, stage, resolve, reject }),
     );
   }
 
@@ -1709,6 +1713,45 @@ describe("Compiler's imports (decision 0038)", () => {
     await expect(run.done).resolves.toEqual(outcome);
     await settle();
     expect(s.engine().compiles).toHaveLength(2);
+  });
+
+  it("shows an import's page before it lands with nothing asked of the engine, and compiles an edit once it has (decision 00XX)", async () => {
+    const s = scheduler();
+    const stages: ImportStage[] = [];
+    const run = s.compiler.importResume(
+      FILES,
+      () => {},
+      (stage) => stages.push(stage),
+    );
+    await settle();
+    const page: ImportStage = {
+      phase: "page",
+      package: imported,
+      document: importedDoc,
+      job: JOB,
+      output: new Uint8Array([0xf7, 1]),
+      ms: 100,
+      compiles: 3,
+    };
+    s.engine().imports[0]?.stage?.(page);
+    expect(stages).toEqual([page]);
+    const calls = s.engine().calls.length;
+    await s.compiler.preview(imported, importedDoc, JOB, page.output as Uint8Array);
+    // Drawn from the output it was given, with the document's texts, and nothing asked of the engine.
+    expect(s.shown).toHaveLength(1);
+    expect(s.shown[0]?.document).toBe(importedDoc);
+    expect(s.shown[0]?.output).toBe(page.output);
+    expect(s.engine().calls).toHaveLength(calls);
+    // An edit while the import holds the engine waits for it, and compiles in a job started afresh.
+    s.compiler.update({ ...importedDoc, controls: { ...importedDoc.controls } });
+    await wait(1_000);
+    expect(s.engine().compiles).toHaveLength(0);
+    s.engine().imports[0]?.resolve(refusal("parse"));
+    await run.done;
+    await settle();
+    s.engine().dumps[0]?.resolve(dumped());
+    await settle();
+    expect(s.engine().compiles).toHaveLength(1);
   });
 
   it("cancels an import: the worker starts afresh, and gets its formats again as they are needed", async () => {

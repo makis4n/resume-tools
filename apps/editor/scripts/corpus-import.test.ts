@@ -90,6 +90,7 @@ describe("the run's summary, table and lines", () => {
     expect(importHeadline(ROWS)).toEqual([
       "5 documents, 1 of which timed out and counts in no share; of the 4 others, 1 success (25.0%), 2 partial (50.0%), 1 refused or stopped (25.0%): 1 refused, 0 with no reference, 0 not parsed, 0 not probed, 0 died.",
       "Words of the 3 documents imported, 300 words: 80.0% editable in place, 16.0% through the retype, 4.0% locked, by reason: twice 10, raw 2.",
+      "pdfTeX: the page opened in 3 of 3 under 8 s, median 3.0 s, slowest 3.0 s; every field open in 3 of 3 under 8 s, median 3.0 s, slowest 3.0 s; the whole import in 3 of 3 under 8 s, median 3.0 s, slowest 3.0 s.",
     ]);
     const table = importTable(ROWS);
     expect(table).toContain("| Editable in place | 73% |  | 95% |");

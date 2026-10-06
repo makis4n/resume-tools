@@ -1,14 +1,17 @@
 // @vitest-environment jsdom
 import "fake-indexeddb/auto";
+import Dexie from "dexie";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { PDF_OFFER } from "./editor/DocumentList";
+import { FIELDS_LOCKED, FIELDS_OPEN } from "./editor/early-import";
 import { MOVE } from "./editor/ImportReport";
 import { refusal } from "./import/refusal";
 import { LOCK_WHY, type Report } from "./import/report";
-import type { ImportOutcome } from "./import/run";
+import type { ImportOutcome, ImportStage } from "./import/run";
+import { inventedOutline } from "./test/invented-outline";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,14 +20,59 @@ import type { ImportOutcome } from "./import/run";
 // rendered as it is, with the engine's tree an invented manifest, the compiler a stand-in whose
 // import lands at once, and the report of a partial import invented, as every word here is.
 
-const landing = vi.hoisted(() => ({ outcome: undefined as unknown }));
+const landing = vi.hoisted(() => ({
+  outcome: undefined as unknown,
+  /** The stages the import tells of before it lands, each when the test lets it (`release`). */
+  stages: [] as unknown[],
+  waits: [] as (() => void)[],
+  /** The documents the compiler was given to compile, as `open` gives them. */
+  opened: [] as unknown[],
+  events: undefined as { page(shown: unknown): void } | undefined,
+  /** The report the import is read into, a partial one's unless a test says otherwise. */
+  report: undefined as unknown,
+}));
+
+/** A page as the compiler draws one, blank, of the document given. */
+const blank = (document: unknown) => {
+  const page = {
+    svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 612 792"></svg>',
+    size: { width: 612, height: 792 },
+    fields: new Map(),
+    locked: new Map(),
+    glyphs: [],
+    pageCount: 1,
+    unmatched: 0,
+    missingFonts: new Map(),
+  };
+  return { page, pages: [page], body: { latex: "", texts: new Map() }, document, ms: 5 };
+};
 
 vi.mock("./editor/compiler", async (original) => ({
   ...(await original<typeof import("./editor/compiler")>()),
   Compiler: class {
-    importResume() {
-      return { done: Promise.resolve(landing.outcome), cancel: () => {} };
+    constructor(_engine: unknown, _fonts: unknown, events: { page(shown: unknown): void }) {
+      landing.events = events;
     }
+    importResume(_files: unknown, _progress: unknown, onStage?: (stage: unknown) => void) {
+      const done = (async () => {
+        for (const stage of landing.stages) {
+          await new Promise<void>((go) => landing.waits.push(go));
+          onStage?.(stage);
+        }
+        await new Promise<void>((go) => landing.waits.push(go));
+        return landing.outcome;
+      })();
+      return { done, cancel: () => {} };
+    }
+    preview(_pkg: unknown, document: unknown) {
+      landing.events?.page(blank(document));
+      return Promise.resolve();
+    }
+    open(_pkg: unknown, document: unknown) {
+      landing.opened.push(document);
+      landing.events?.page(blank(document));
+    }
+    update() {}
     close() {}
   },
 }));
@@ -50,7 +98,7 @@ const PARTIAL: Report = {
 
 vi.mock("./import/report", async (original) => ({
   ...(await original<typeof import("./import/report")>()),
-  reportOfImport: () => PARTIAL,
+  reportOfImport: () => landing.report ?? PARTIAL,
 }));
 
 describe("the app's documents screen", () => {
@@ -68,19 +116,35 @@ describe("the app's documents screen", () => {
     root = createRoot(host);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     act(() => root.unmount());
     host.remove();
     vi.unstubAllGlobals();
+    // The next test's store starts empty, as a new browser's does.
+    await Dexie.delete("resume-tools");
   });
 
   const settle = async () => {
     for (let i = 0; i < 40; i++) await act(async () => new Promise((done) => setTimeout(done, 5)));
   };
 
-  /** The app, its list up, given an invented `.tex` to import that lands as `outcome`. */
-  const imported = async (outcome: ImportOutcome) => {
+  /** Let the import go on to its next stage, or to its outcome after the last. */
+  const release = async () => {
+    await settle();
+    await act(async () => landing.waits.shift()?.());
+    await settle();
+  };
+
+  /**
+   * The app, its list up, given an invented `.tex` to import that lands as `outcome`, after
+   * `stages`, each as the test releases it; with none, at once.
+   */
+  const imported = async (outcome: ImportOutcome, stages: ImportStage[] = []) => {
     landing.outcome = outcome;
+    landing.stages = stages;
+    landing.waits = [];
+    landing.opened = [];
+    landing.report = undefined;
     act(() => root.render(<App />));
     await settle();
     const picker = host.querySelector<HTMLInputElement>('input[type="file"][multiple]');
@@ -88,6 +152,7 @@ describe("the app's documents screen", () => {
     const file = new File(["\\documentclass{article}"], "invented.tex", { type: "text/x-tex" });
     Object.defineProperty(picker, "files", { value: [file], configurable: true });
     await act(async () => picker.dispatchEvent(new Event("change", { bubbles: true })));
+    if (stages.length === 0) await release();
     await settle();
   };
   const button = (text: string) =>
@@ -97,6 +162,100 @@ describe("the app's documents screen", () => {
     await imported({ upload: { files: [] } } as unknown as ImportOutcome);
     expect(button("Continue")).toBeDefined();
     expect(button(MOVE)).toBeDefined();
+  });
+
+  /** An invented outline's stages and outcome, every word invented. */
+  async function early() {
+    const { pkg, document } = await inventedOutline();
+    const job = { files: {}, images: [] };
+    const at = { package: pkg, document, job };
+    const page: ImportStage = {
+      phase: "page",
+      ...at,
+      output: new Uint8Array([0xf7]),
+      ms: 1,
+      compiles: 3,
+    };
+    const fields: ImportStage = { phase: "fields", ...at, ms: 2, compiles: 6 };
+    const outcome = {
+      ...at,
+      report: {},
+      upload: { files: [] },
+      formats: [],
+    } as unknown as ImportOutcome;
+    return { page, fields, outcome, document };
+  }
+
+  it("opens an import's page before its checks end, its fields locked, then open, and its report after (decision 00XX)", async () => {
+    const { page, fields, outcome, document } = await early();
+    await imported(outcome, [page, fields]);
+    // The list, while the import has no page yet.
+    expect(host.textContent).not.toContain(FIELDS_LOCKED);
+    await release();
+    // The page, every field locked and the side panel with them, the import's progress and its
+    // Cancel above it, and no way back to the list but that.
+    expect(host.textContent).toContain(FIELDS_LOCKED);
+    expect(host.querySelector("svg")).not.toBeNull();
+    expect(button("Cancel")).toBeDefined();
+    expect(button("Documents")).toBeUndefined();
+    expect(host.querySelector("aside")?.hasAttribute("inert")).toBe(true);
+    await release();
+    expect(host.textContent).toContain(FIELDS_OPEN);
+    expect(host.querySelector("aside")?.hasAttribute("inert")).toBe(false);
+    expect(landing.opened).toEqual([]);
+    // The partial outcome lands where the page is: compiled at once, its report above the page with
+    // Continue, Stop and the move; kept only on Continue.
+    await release();
+    expect(host.textContent).not.toContain(FIELDS_OPEN);
+    expect(landing.opened).toEqual([document]);
+    expect(button(MOVE)).toBeDefined();
+    expect(button("Documents")).toBeUndefined();
+    await act(async () => button("Continue")?.click());
+    await settle();
+    expect(button("Continue")).toBeUndefined();
+    expect(button("Documents")).toBeDefined();
+    await act(async () => button("Documents")?.click());
+    await settle();
+    expect(button("Delete")).toBeDefined();
+  });
+
+  it("keeps an import open early that succeeds as it lands, its report above the page", async () => {
+    const { page, fields, outcome, document } = await early();
+    await imported(outcome, [page, fields]);
+    landing.report = { ...PARTIAL, outcome: "succeeded", rate: 0.97, locked: [] };
+    await release();
+    await release();
+    expect(host.textContent).toContain(FIELDS_OPEN);
+    await release();
+    expect(landing.opened).toEqual([document]);
+    expect(button("Continue")).toBeUndefined();
+    expect(button("Documents")).toBeDefined();
+    expect(host.querySelector('[aria-label="Import report"]')).not.toBeNull();
+  });
+
+  it("keeps nothing of an import open early that is stopped", async () => {
+    const { page, fields, outcome } = await early();
+    await imported(outcome, [page, fields]);
+    await release();
+    await release();
+    await release();
+    await act(async () => button("Stop")?.click());
+    await settle();
+    expect(host.textContent).not.toContain(FIELDS_OPEN);
+    expect(button("Continue")).toBeUndefined();
+    expect(host.querySelector('input[type="file"][multiple]')).not.toBeNull();
+    expect(host.textContent).toContain("No documents yet.");
+  });
+
+  it("goes back to the list, saying why, when an import open early is refused", async () => {
+    const { page } = await early();
+    const refused = refusal("stopped");
+    await imported(refused, [page]);
+    await release();
+    expect(host.textContent).toContain(FIELDS_LOCKED);
+    await release();
+    expect(host.textContent).not.toContain(FIELDS_LOCKED);
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(refused.message);
   });
 
   it("offers a refused import its PDF", async () => {

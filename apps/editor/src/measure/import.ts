@@ -99,6 +99,13 @@ export interface ImportTime {
    * the compile's passes and the draw; and the pages it set.
    */
   page: { formatMs: number; dumped: boolean; passes: number[]; drawMs: number; pages: number };
+  /**
+   * When the document opened before the import's checks ended (decision 00XX), from the files given,
+   * as `ms` is: its page drawn from the checks' output, its fields locked; and every field open,
+   * check 2 having settled them, its page drawn again where check 2 left another outline. An import
+   * that opened nothing early opens with its outcome, and both are `ms` then.
+   */
+  early?: { page: number; unlocked: number };
 }
 
 /** An import the pipeline refused: why, as a person reads it, and the parts it got through. */
@@ -214,7 +221,8 @@ export function noted(engine: CompilerEngine, now: () => number, note: (noted: N
     terminate: () => engine.terminate(),
   };
   if (importResume !== undefined)
-    passed.importResume = (files, onProgress) => importResume.call(engine, files, onProgress);
+    passed.importResume = (files, onProgress, limit, onStage) =>
+      importResume.call(engine, files, onProgress, limit, onStage);
   if (cancel !== undefined) passed.cancel = () => cancel.call(engine);
   if (dropFormat !== undefined)
     passed.dropFormat = (kind, name) => dropFormat.call(engine, kind, name);
@@ -272,9 +280,25 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
   try {
     const heard: Heard[] = [];
     const began = now();
-    const outcome = await compiler.importResume(how.files, (progress) =>
-      heard.push({ at: now(), progress }),
+    // The document opens before the checks end, as the app opens it (decision 00XX): its page drawn
+    // from the checks' output while the import holds the engine, and its fields open after check 2.
+    const early: { page?: number; unlocked?: number } = {};
+    let drawing = Promise.resolve();
+    const onStage: Parameters<Compiler["importResume"]>[2] = (stage) => {
+      const output = stage.output;
+      drawing = drawing.then(async () => {
+        if (output !== undefined)
+          await compiler.preview(stage.package, stage.document, stage.job, output);
+        early.page ??= now() - began;
+        if (stage.phase === "fields") early.unlocked ??= now() - began;
+      });
+    };
+    const outcome = await compiler.importResume(
+      how.files,
+      (progress) => heard.push({ at: now(), progress }),
+      onStage,
     ).done;
+    await drawing;
     const imported = now();
     const parts = partsOf(began, heard, imported);
     if (isRefusal(outcome)) return { refused: outcome, startMs, parts };
@@ -314,6 +338,7 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
     return {
       startMs,
       parts,
+      early: { page: early.page ?? ended - began, unlocked: early.unlocked ?? ended - began },
       ms: ended - began,
       compiles: outcome.report.compiles + compiles.length,
       engine: outcome.package.engine,
@@ -525,6 +550,8 @@ export function importTable(engine: Engine, runs: readonly ImportTime[], where: 
     `its body compiled in ${formatTime(median(runs.map((run) => sum(run.page.passes))))} over ${passes} ${passes === 1 ? "pass" : "passes"}`,
     `its page drawn in ${formatTime(median(runs.map((run) => run.page.drawMs)))}.`,
   ].join(", ");
+  // The document opens before the checks end (decision 00XX): when, from the files given.
+  const opened = `Opened before the checks end, medians: its page drawn at ${formatTime(median(runs.map((run) => run.early?.page ?? run.ms)))}, its fields locked; every field open at ${formatTime(median(runs.map((run) => run.early?.unlocked ?? run.ms)))}; the whole, the outcome's page, at ${formatTime(medians.ms)}.`;
   const loaded =
     where === "browser"
       ? [
@@ -570,6 +597,7 @@ export function importTable(engine: Engine, runs: readonly ImportTime[], where: 
     `Each import: ${shared}${differ ? ", and not every import alike" : ""}.`,
     ...waits,
     page,
+    opened,
     ...loaded,
     "",
     IMPORT_BAR,
