@@ -13,7 +13,12 @@ export interface LogSummary {
   errorLine?: number;
   /** Pages shipped out, from "Output written on ... (n pages, ...)"; 0 when there were none. */
   pages: number;
-  /** True when a package asked for another run, for references, labels or outlines. */
+  /**
+   * True when a package asked for another run, for references, labels or outlines. It is a reason
+   * for another pass, never enough alone: some ask on every pass for what no pass can give, as
+   * biblatex asks for Biber and a rerun after it, so the session passes again only when the pass
+   * also changed a file the next would read (`EngineSession.compile`, decision 0068).
+   */
   rerun: boolean;
 }
 
