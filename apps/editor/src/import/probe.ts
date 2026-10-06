@@ -275,9 +275,9 @@ const wordsIn = (set: readonly Candidate[]) =>
  * The kinds held apart are tried before the rest of the set. With `wordsFirst`, as the probe
  * settles (decision 00XX), the rest's first compile comes before them when the rest holds more
  * words than each, and a kind held apart whose candidates hold no word waits for the rest, since
- * the budget it would take one candidate at a time wins no word back. Either way the same sets are
- * compiled when the budget does not run out, so the verdicts are the same: the order decides only
- * what the budget leaves.
+ * the budget it would take one candidate at a time wins no word back. For candidates in the same
+ * order, the same sets are compiled either way when the budget does not run out, so the verdicts
+ * are the same: this rule decides only what the budget leaves.
  */
 export async function settle(
   candidates: readonly Candidate[],
@@ -582,8 +582,11 @@ export async function settle(
  * preamble's calls. With `wordsFirst`, as the probe takes them (decision 00XX), the kinds whose
  * candidates' text holds the most words come first, kinds of as many words in the order each first
  * came: the bisection tries its first half before its second, so what the budget leaves
- * `untested` is the last kinds, the ones with the fewest words. The checks' bisections keep the
- * source's order.
+ * `untested` is the last kinds, the ones with the fewest words. The order is a heuristic: a first
+ * half that fails can take a compile a later candidate would have passed with. And it changes more
+ * than what the budget leaves: the union locks the later of two that fail together, so with the
+ * words first it tends to keep the one with more words. The checks' bisections keep the source's
+ * order.
  */
 export function probeOrder(
   candidates: readonly Candidate[],

@@ -359,10 +359,17 @@ describe("settling the candidates", () => {
       "c5-1",
       "c4-1",
     ]);
-    // The same candidates in the same source order give the same order every time.
-    expect(probeOrder(set, undefined, true).map((each) => each.id)).toEqual(
-      probeOrder([...set], undefined, true).map((each) => each.id),
-    );
+    // In another source order, each kind's candidates follow it, and kinds of as many words follow
+    // the order each first came in it.
+    expect(probeOrder([...set].reverse(), undefined, true).map((each) => each.id)).toEqual([
+      "c2-2",
+      "c1-2",
+      "c5-1",
+      "c3-1",
+      "c2-1",
+      "c1-1",
+      "c4-1",
+    ]);
     // The checks' bisections keep each kind where it first came in the source.
     expect(probeOrder(set).map((each) => each.id)).toEqual([
       "c1-1",
@@ -387,17 +394,26 @@ describe("settling the candidates", () => {
       }),
     );
     const behaviours = Object.fromEntries(short.map((each) => [each.id, "breaks" as const]));
-    const inSource = await settle([...short, ...long], engine(behaviours).compile, 4);
+    const inSourceEngine = engine(behaviours);
+    const inSource = await settle([...short, ...long], inSourceEngine.compile, 4);
+    const orderedEngine = engine(behaviours);
     const ordered = await settle(
       probeOrder([...short, ...long], undefined, true),
-      engine(behaviours).compile,
+      orderedEngine.compile,
       4,
     );
     const editable = (found: Awaited<ReturnType<typeof settle>>) =>
       [...found.verdicts].filter(([, each]) => each.verdict === "editable").map(([id]) => id);
     expect(editable(inSource)).toEqual([]);
     expect(editable(ordered).sort()).toEqual(long.map((each) => each.id).sort());
-    expect(ordered.compiles).toBeLessThanOrEqual(4);
+    // The whole set stops; its first half, the long kind, passes; the short calls stop together,
+    // and the budget's last compile goes to the first half of them.
+    expect(orderedEngine.compiled).toEqual([
+      ["c5-1", "c6-1", "c7-1", "c8-1", "c9-1", "c10-1", "c1-1", "c2-1", "c3-1", "c4-1"],
+      ["c5-1", "c6-1", "c7-1", "c8-1", "c9-1", "c10-1"],
+      ["c1-1", "c2-1", "c3-1", "c4-1"],
+      ["c1-1", "c2-1"],
+    ]);
     const untested = [...ordered.verdicts].filter(([, each]) => each.verdict === "untested");
     expect(untested.every(([id]) => short.some((each) => each.id === id))).toBe(true);
   });
@@ -428,12 +444,74 @@ describe("settling the candidates", () => {
     const wordsFirst = engine(behaviours, true);
     const after = await settle(set, wordsFirst.compile, 6, undefined, true);
     expect(editable(after)).toBe(4);
-    expect(after.compiles).toBeLessThanOrEqual(6);
+    // The whole set moves and names the first mover, which moves alone; the long kind's compile
+    // comes next and passes; then the movers held apart, until the budget runs out.
+    expect(wordsFirst.compiled).toEqual([
+      ["c7-1", "c8-1", "c9-1", "c10-1", "c1-1", "c2-1", "c3-1", "c4-1", "c5-1", "c6-1"],
+      ["c1-1"],
+      ["c7-1", "c8-1", "c9-1", "c10-1"],
+      ["c2-1", "c3-1", "c4-1", "c5-1", "c6-1"],
+      ["c2-1"],
+      ["c3-1", "c4-1", "c5-1", "c6-1"],
+    ]);
     // With the budget to settle everything, the order changes no verdict.
     const all = await settle(set, engine(behaviours, true).compile, 64);
     const allWordsFirst = await settle(set, engine(behaviours, true).compile, 64, undefined, true);
     expect(verdictsOf(allWordsFirst)).toEqual(verdictsOf(all));
     expect(allWordsFirst.compiles).toBe(all.compiles);
+  });
+
+  test("tries a kind held apart that holds more words than the rest before the rest, as before", async () => {
+    // Long calls of one kind each move the page alone, and the first is found alone first; the
+    // others of its kind are held apart, and the rest, a short kind, holds fewer words.
+    const movers = Array.from({ length: 5 }, (_, i) =>
+      candidate(`c${i + 1}-1`, "inventedlong", 1, {
+        text: "Invented words for an invented line of a long invented entry",
+      }),
+    );
+    const rest = Array.from({ length: 3 }, (_, i) =>
+      candidate(`c${i + 6}-1`, "inventedshort", 1, { text: "Invented" }),
+    );
+    const behaviours = Object.fromEntries(movers.map((each) => [each.id, "moves" as const]));
+    const set = probeOrder([...movers, ...rest], undefined, true);
+    const before = engine(behaviours, true);
+    const found = await settle(set, before.compile, 64);
+    const after = engine(behaviours, true);
+    const wordsFirst = await settle(set, after.compile, 64, undefined, true);
+    // The kind held apart goes first, so the compiles are the same ones in the same order.
+    expect(after.compiled).toEqual(before.compiled);
+    expect(verdictsOf(wordsFirst)).toEqual(verdictsOf(found));
+    expect(wordsFirst.compiles).toBe(found.compiles);
+    expect(verdictsOf(wordsFirst)).toEqual({
+      "c1-1": "moved alone",
+      "c2-1": "moved alone",
+      "c3-1": "moved alone",
+      "c4-1": "moved alone",
+      "c5-1": "moved alone",
+      "c6-1": "editable together",
+      "c7-1": "editable together",
+      "c8-1": "editable together",
+    });
+  });
+
+  test("keeps the one with more words of two that pass alone and fail together", async () => {
+    // Each passes alone; together they move the page, so the union locks the later one of them.
+    const set = [
+      candidate("c1-1", "inventedshort", 1, { text: "Invented" }),
+      candidate("c2-1", "inventedlong", 1, { text: "Invented words of an invented line" }),
+    ];
+    const compile: CompileSet = async (given) => ({
+      broke: false,
+      same: given.length < 2,
+      ...(given.length < 2 ? {} : { difference: "position" as const }),
+      torn: false,
+      own: new Map(given.map((each) => [each.id, { ok: true, glyphs: [] }])),
+    });
+    // With the budget to spare, the order of the kinds still decides which of the two is locked.
+    const inSource = await settle(probeOrder(set), compile, 64);
+    expect(verdictsOf(inSource)).toEqual({ "c1-1": "editable alone", "c2-1": "moved union" });
+    const ordered = await settle(probeOrder(set, undefined, true), compile, 64, undefined, true);
+    expect(verdictsOf(ordered)).toEqual({ "c1-1": "moved union", "c2-1": "editable alone" });
   });
 });
 

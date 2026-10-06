@@ -22,8 +22,8 @@ kinds by their words, largest first, with the budget as it is.
   of its kind are held apart and tried among themselves, and the probe tried them before the rest
   of the set. Now the rest's first compile comes before them when the rest holds more words than
   each kind held apart, and a kind held apart whose candidates hold no word waits for the rest
-  altogether. These are the same compiles in another order: with the budget to finish, every
-  verdict is the same, and the order decides only what the budget leaves. Ordering the kinds alone
+  altogether. For candidates in the same order these are the same compiles in another order: with
+  the budget to finish, this rule changes no verdict, and decides only what the budget leaves. Ordering the kinds alone
   won 780 words on the 22 resumes of `top-loss.txt`; this rule took `other-0028` from 38 to 2,315
   words in place, where a rest of 174 candidates that passes in one compile had waited behind a kind
   held apart of 24, which took the last of the budget. Ordering the kinds held apart and the rest
@@ -33,8 +33,18 @@ kinds by their words, largest first, with the budget as it is.
   order, tried on them too, took `europecv-0008` from 1,025 words in place to 820 while it gave
   `altacv-0017` 224 more. The order is an option the probe asks for; the checks' bisections are
   decision 0067's fix 5, for a later change.
-- Nothing else changes: the verdicts, the budget, the union of the editable candidates, and the
-  order is the same for the same document every time.
+- **The kinds' order can change a verdict the budget does not reach.** The union compiles the
+  editable candidates in the order they settled, and of two that pass alone and fail together it
+  locks the later one. With the words first, that tends to be the one with fewer words, which
+  keeps the one with more words editable; in the source's order it was whichever came later.
+- **The order is a heuristic, and the corpus run is its guard.** Under a tight budget a first
+  half that fails, such as a rest whose candidates' markers tear or come twice, can take the
+  compile a candidate held apart would have passed with alone, so a resume can lose words to it.
+  On invented sets with budgets of 3 to 12 compiles the order left fewer words in place than the
+  source's order in about one seed in eight, and more in about one in four. No resume of the
+  corpus loses a word (below); a run over the corpus is what would show one that does.
+- Nothing else changes: the budget, the union's rule, and the order is the same for the same
+  document every time.
 
 ### Measured
 
