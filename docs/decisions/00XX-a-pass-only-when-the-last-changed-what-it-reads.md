@@ -59,15 +59,30 @@ and a label that changes on every pass, which still runs to the cap.
 
 ### Numbers
 
-- AltaCV's upstream sample, imported and edited in Node: three passes an edit before, one after; a
-  new document of it, three before, three after, since its second pass changes the label of a page.
+- AltaCV's upstream sample, imported and edited in Node as the app does: an edit took three
+  passes and 940 ms by the page's own time before, and takes one and about 305 ms after; its first
+  compile in the editor two passes, where it took three.
 - The 18 imports over 20 s (decision 0067's `slow.txt`), imported one at a time with each compile's
   passes counted, on a local merge of main with the two diagnostic changes (#111, #112): 2,891
   passes before, 2,767 after. `altacv-0017` 386 to 309 and its passes' time 175 to 131 s;
   `awesome-cv-0033` 137 to 99, 33 to 23 s; `altacv-0002` 128 to 121; `altacv-0015` 120 to 118; the
   other 14 as before. Every one of the 18 has the same outcome, compiles and words in place as the
   before-run. Times were taken while other lanes ran, at a load of 3.5 to 7.7, so they are
-  indicative; the pass counts are not.
+  indicative, and only the pass counts are firm.
+- The whole corpus, on the same local merge with this change, four at a time: `corpus compare`
+  against the before-run (`fc62298`) finds all 220 documents the same, times aside: 50 successes,
+  60 partial, 7 refused, 103 with no reference; 71.9% of 82,391 words in place, 16 resumes under
+  50% and 53 at 90% or more, every family as before. No document has a worse outcome or fewer words
+  in place. `altacv-0017` imported in 145.3 s where it took 175.9 s, `awesome-cv-0033` in 28.1 s
+  where it took 35.3 s, at a load of about 7 against 1.7 to 4.1 then; the other imports' times moved
+  with the load.
+- Typing on imports (`measure --typing-imports`), the median of five edits by the page's own time,
+  at a load of 3.5 to 6.5: `altacv-0017` 580 ms where it took 1,537, one pass an edit;
+  `awesome-cv-0033` 229 ms where it took 558, now under 300 ms; `altacv-0005` 303 ms (302),
+  `altacv-0002` 298 ms (295), `altacv-0014` 354 ms (343), one pass each before and after.
+- Typing on the built-in templates (`measure`), at a load of about 3: 85 ms Jake, 116 ms AltaCV,
+  127 ms Awesome-CV, against 78, 106 and 119 ms at 1.4 to 2.0 (decision 0067); every one one pass an
+  edit before and after, within the plan's 300 ms.
 
 ## Consequences
 
