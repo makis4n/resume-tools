@@ -42,6 +42,19 @@ describe("measure", () => {
     expect(both.stderr).toContain("--pdf measures the PDF import alone");
   });
 
+  test("takes --typing-imports with a file of ids, and neither without the other", () => {
+    expect(measure("--help").stdout).toContain("measure --typing-imports --ids <file>");
+    const alone = measure("--typing-imports");
+    expect(alone.status).toBe(1);
+    expect(alone.stderr).toContain("--typing-imports takes the resumes to import in a file");
+    const ids = measure("--ids", "ids.txt");
+    expect(ids.status).toBe(1);
+    expect(ids.stderr).toContain("--ids names the resumes typing is measured on");
+    const both = measure("--typing-imports", "--import", "--ids", "ids.txt");
+    expect(both.status).toBe(1);
+    expect(both.stderr).toContain("give no --import with it");
+  });
+
   test("refuses a count of runs that is not a whole number from 1", () => {
     for (const runs of ["0", "2.5", "many"]) {
       const run = measure("--runs", runs);
