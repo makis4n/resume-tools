@@ -67,6 +67,60 @@ export const STEPS = [
   "validate",
 ] as const satisfies readonly ImportStep[];
 
+/**
+ * The kinds of trial an import's compiles are counted and timed by: each step's that compiles, the
+ * probe's bisection apart from the rest of the probe, and each check's own compiles apart from its
+ * bisection's (`CheckPhase`); `other` for any a step not named here makes.
+ */
+export const TRIALS = [
+  "reference",
+  "fonts",
+  "rewrite",
+  "signatures",
+  "probe",
+  "probe bisection",
+  "check 1",
+  "check 1 bisection",
+  "check 2",
+  "check 2 bisection",
+  "checks again",
+  "check 3",
+  "check 3 bisection",
+  "other",
+] as const;
+export type TrialKind = (typeof TRIALS)[number];
+
+/** Where what keeps a piece's words out of place was decided. */
+export const DECIDED = ["parse", "probe", "outline", "checks"] as const;
+export type Decided = (typeof DECIDED)[number];
+
+/**
+ * Words not in place, by the piece of the source that holds them and why: the piece, a name the
+ * document's class, a package or LaTeX defines, or a bucket (`PIECE_BUCKETS`), never one the
+ * document defines itself; for an argument, its place; why, `retype` where the retype reaches them
+ * or the reason they are locked; the reason the piece is kept as text, and where that was decided;
+ * and how many words. Names and counts, never text.
+ */
+export interface PieceWords {
+  piece: string;
+  arg?: number;
+  why: LockReason | "retype";
+  kept: LockReason;
+  by: Decided;
+  words: number;
+}
+
+/**
+ * The budgets that ran out: the probe's, with the candidates it left untested; the checks'
+ * bisections', each time one ran out, with the fields they kept as text untried; and check 3's,
+ * with the groups it left untried.
+ */
+export interface ImportBudgets {
+  probe: { hits: number; fields: number };
+  checks: { hits: number; fields: number };
+  units: { hits: number; groups: number };
+}
+
 /** A document's words as item 13's report counts them, the template's own aside. */
 export interface ImportWords {
   body: number;
@@ -109,10 +163,30 @@ export interface ImportRow {
   };
   /** Whether it is read in Latin Modern, its Computer Modern in T1 or TS1 fonts the page lacks. */
   latinModern?: boolean;
-  /** Its compiles in all, and the checks'. */
-  compiles?: { all: number; checks: number };
-  /** Milliseconds: each step's, the import's in all, and from being sent to its row coming back. */
-  times: { steps?: Partial<Record<ImportStep, number>>; import?: number; wall: number };
+  /** For one imported, its words not in place by the piece that holds them, the most first. */
+  pieces?: PieceWords[];
+  /** Its compiles in all, and the checks'; by kind of trial; its formats dumped; its PDFs, if any. */
+  compiles?: {
+    all: number;
+    checks: number;
+    trials?: Partial<Record<TrialKind, number>>;
+    dumps?: number;
+    pdfs?: number;
+  };
+  /** For one imported, the budgets that ran out. */
+  budgets?: ImportBudgets;
+  /**
+   * Milliseconds: each step's, the import's in all, and from being sent to its row coming back; and
+   * for one imported, its compiles' by kind of trial, its dumps' and its PDFs', if any.
+   */
+  times: {
+    steps?: Partial<Record<ImportStep, number>>;
+    import?: number;
+    wall: number;
+    trials?: Partial<Record<TrialKind, number>>;
+    dumps?: number;
+    pdfs?: number;
+  };
 }
 
 /** A row as the child sends it, before the parent adds the document's id, family and time. */

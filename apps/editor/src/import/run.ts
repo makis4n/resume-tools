@@ -38,7 +38,7 @@ import type { FontLibrary } from "../page/fonts";
 import { fontDeclarations } from "../templates/generate";
 import type { FontFamily, TemplatePackage } from "../templates/package";
 import { candidatesOf, isSetter } from "./candidates";
-import { type Checked, checkOutline, OutlineCompiler } from "./checks";
+import { type CheckEvent, type Checked, checkOutline, OutlineCompiler } from "./checks";
 import type { Tree as TexTree } from "./fonts";
 import { encodeLike, type Intake, intake, type Upload } from "./intake";
 import { inLatinModern, undrawableFonts } from "./latin-modern";
@@ -102,6 +102,19 @@ export interface ImportDeps {
   treeImage?: (name: string) => Uint8Array | undefined;
   /** How many compiles each bisection of the checks may make (`CHECK_BUDGET` unless given). */
   checkBudget?: number;
+  /** Hears what the probe found and where the checks are (`ImportObserver`), and changes nothing. */
+  observe?: ImportObserver;
+}
+
+/**
+ * What a caller may hear of an import as it runs, which changes nothing it does: the corpus's
+ * diagnostics (`corpus run`) count the words not in place by what holds them, and the compiles by
+ * kind of trial. `probed` hears the document as the probe took it, and what the probe found;
+ * `checks` hears the checks' phases and budgets (`CheckEvent`). One that throws is not heard.
+ */
+export interface ImportObserver {
+  probed?: (found: { intake: Intake; reference: Reference; probe: Probe }) => void;
+  checks?: (event: CheckEvent) => void;
 }
 
 /**
@@ -320,6 +333,10 @@ export async function importResume(
     // The probe leaves the document's format in the session; the package has one of its own,
     // which the last step dumps, so the probe's goes now (decision 0022).
     if (probed.format !== undefined) session.dropFormat(engine, probed.format);
+    // What the caller hears changes nothing the import does, not even when it throws.
+    try {
+      deps.observe?.probed?.({ intake: taken, reference: made, probe: probed });
+    } catch {}
     if (probed.baseline !== undefined) return refusal("probe");
 
     enter("outline");
@@ -365,6 +382,7 @@ export async function importResume(
         candidates: probed.candidates,
         runs: probed.runs ?? [],
         ...(deps.checkBudget === undefined ? {} : { budget: deps.checkBudget }),
+        ...(deps.observe?.checks === undefined ? {} : { observe: deps.observe.checks }),
       });
     } finally {
       compiler.close();
