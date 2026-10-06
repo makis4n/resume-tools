@@ -179,14 +179,15 @@ place, 25 resumes past 90% and 3 past 50%. Expected: 2,000 to 3,700 words, 87 to
 
 ### The targets
 
-Each beats today's number and sits at about half to two thirds of what the chosen fixes can
-reach, inside what they are expected to reach.
+Each beats today's number and sits at about a quarter to a half of what the chosen fixes can
+reach, at the low end of what they are expected to reach, since each lane's gain is a guess until
+its corpus run.
 
 | Target | Today | The fixes can reach | Target |
 |---|--:|--:|--:|
-| Words editable in place, of the imported | 84.6% | 91.7% | at least 88.0% |
-| Imported resumes at 90% or more in place | 61 | 86 | at least 73 |
-| Imported resumes under 50% in place | 5 | 2 | at most 3 |
+| Words editable in place, of the imported | 84.6% | 91.7% | at least 86.5% |
+| Imported resumes at 90% or more in place | 61 | 86 | at least 68 |
+| Imported resumes under 50% in place | 5 | 2 | at most 4 |
 | Each family's share in place: jake, awesome-cv, altacv, europecv, moderncv, other | 94.8, 93.5, 83.0, 78.1, 83.8, 76.2% | 98.6, 96.1, 91.8, 78.7, 95.2, 86.1% | none lower than today |
 | pdfTeX: the slowest whole import | 136.3 s | about 80 s | under 100 s |
 | pdfTeX: the page within 8 s (0067) | 66 of 91 | | at least 66 |
@@ -203,12 +204,13 @@ reach, inside what they are expected to reach.
   `moderncv-0023`'s `cventry` #7 254 of them; `moderncv-0017` (12.5%, 12 short) through F3, whose
   15 `itemize` words moved the page. `other-0006` and `other-0015`, 0% each, are reached by none:
   their fields stop the compile on the special text, and their words are `raw`, `compile`, `text`
-  and untried. The target counts on the two of F2.
+  and untried. The target counts on one of the three.
 - **At 90%.** 25 resumes would cross if every word came back: 14 by F2's line breaks, 3 by its
   `glyph`, 7 by F3, 1 by F1 (`altacv-0017`, 250 words short of the bar, which the paragraphs' 273
-  cover). The target counts on half of them, 12.
-- **Words.** At least 72,598 of the 82,497 words, 2,795 more: about half of what the fixes can
-  reach, in the middle of what they are expected to.
+  cover). The target counts on 7 of them, fewer than F2's 14 alone.
+- **Words.** At least 71,360 of the 82,497 words, 1,557 more: about a quarter of what the fixes
+  can reach, near the low end of what F2 alone is expected to win (1,300 to 2,200), with F1's and
+  F3's expected words beside it.
 - **The slowest import.** F1's check 3 takes `altacv-0017` and `other-0028` to about 76 and 70 s;
   the next is `altacv-0014`, 34.5 s. Under 100 s leaves room for the fields F2 and F3 add.
 - 0067's targets are held, not raised. The pdfTeX page within 8 s has no margin: 66 of 91, with
