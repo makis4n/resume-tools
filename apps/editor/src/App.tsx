@@ -1279,13 +1279,23 @@ export function App() {
   };
 
   // A document open before its import was kept goes back to the list by the import's Cancel or
-  // its report's Stop, which keep nothing (decision 00XX).
+  // its report's Stop, which keep nothing (decision 00XX): a partial import's report, which waits on
+  // the person, stands where the way back does, on every screen, as the list held it before.
   const back =
-    early === undefined ? (
+    early === "deciding" ? (
+      waiting !== undefined && (
+        <ImportReport
+          report={waiting.report}
+          onContinue={() => void continueImport()}
+          onStop={stopImport}
+          onMove={() => void moveImport()}
+        />
+      )
+    ) : early === undefined ? (
       <button type="button" onClick={() => void leave()}>
         Documents
       </button>
-    ) : checking ? (
+    ) : (
       <p role="status">
         {importing?.label ?? IMPORT_STEPS.validate}…
         {importing?.compiles === undefined
@@ -1295,7 +1305,7 @@ export function App() {
           Cancel
         </button>
       </p>
-    ) : null;
+    );
 
   // Why the edits here are not being kept, when they are not: another tab's change, which a
   // reload takes in, and which leaves nothing here worth trying again; or a save that failed,
@@ -1472,8 +1482,13 @@ export function App() {
   // The locked parts a click on the page opens the small editor of, by id as the page reads them,
   // and that editor, under the part's first block, while one is open (decision 0042). It checks a
   // retype against the page on screen, so it takes one only while that page is the document's.
+  // None while the document's import is under way, which takes no retype (`openRetype`).
   const retypable = new Set(
-    [...(retypes ?? [])].flatMap(([part, found]) => (isRetype(found) ? [part.toLowerCase()] : [])),
+    early !== undefined
+      ? []
+      : [...(retypes ?? [])].flatMap(([part, found]) =>
+          isRetype(found) ? [part.toLowerCase()] : [],
+        ),
   );
   const retype = retyping === undefined ? undefined : retypes?.get(retyping.part);
   const editing =
@@ -1500,17 +1515,8 @@ export function App() {
         {saving}
         {/* The report of the import this document came from: its rate, and what was left out. */}
         {importedReport?.id === id && <ImportReport report={importedReport.report} />}
-        {/* An import open before its checks end: what is open yet; then a partial one's report,
-            which waits on the person, as the list held it before (decisions 0039 and 00XX). */}
+        {/* An import open before its checks end: what is open yet (decision 00XX). */}
         {checking && <p role="status">{early === "locked" ? FIELDS_LOCKED : FIELDS_OPEN}</p>}
-        {early === "deciding" && waiting !== undefined && (
-          <ImportReport
-            report={waiting.report}
-            onContinue={() => void continueImport()}
-            onStop={stopImport}
-            onMove={() => void moveImport()}
-          />
-        )}
         <p>
           {error ?? (checking ? "" : slow ? "Compiling…" : took)}{" "}
           {/* A document another tab has changed takes no undo, as it takes no edit. */}
