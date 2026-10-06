@@ -42,17 +42,17 @@ try each cell as they try any paragraph, with nothing else in the pipeline chang
 against the before-run of decision 0066 (`fc62298`). `corpus compare` and a count over both runs
 find no document with a worse outcome or fewer words in place.
 
-| | Before | Lane 2 alone | With this change |
-|---|--:|--:|--:|
-| Words editable in place, of the 110 imported | 71.9% (59,240) | 75.6% (62,312) | 79.5% (65,581) |
-| The others family | 51.9% | 58.8% | 67.6% |
-| Jake's | 93.7% | 93.7% | 94.8% |
-| moderncv | 54.1% | 64.6% | 64.9% |
-| Imported resumes under 50% in place | 16 | 14 | 8 |
-| Imported resumes at 90% or more | 53 | 54 | 59 |
-| Successes | 50 | 51 | 54 |
-| Words locked as raw | 877 | 873 | 688 |
-| All compiles, all imports | 5,817 | 5,768 | 5,988 |
+| | Before | Lane 2 alone | With this change | With lane 2's halving too |
+|---|--:|--:|--:|--:|
+| Words editable in place, of the 110 imported | 71.9% (59,240) | 75.6% (62,312) | 79.5% (65,581) | 84.6% (69,803) |
+| The others family | 51.9% | 58.8% | 67.6% | 76.2% |
+| Jake's | 93.7% | 93.7% | 94.8% | 94.8% |
+| moderncv | 54.1% | 64.6% | 64.9% | 83.8% |
+| Imported resumes under 50% in place | 16 | 14 | 8 | 5 |
+| Imported resumes at 90% or more | 53 | 54 | 59 | 61 |
+| Successes | 50 | 51 | 54 | 56 |
+| Words locked as raw | 877 | 873 | 688 | 702 |
+| All compiles, all imports | 5,817 | 5,768 | 5,988 | 5,851 |
 
 - Against lane 2 alone, 29 resumes gain 3,269 words in place: `other-0010` 1,765 to 4,613 of
   4,922, a success; `other-0052` 418 to 1,212; `other-0051` 263 to 660; `other-0032` 1,339 to
@@ -63,8 +63,10 @@ find no document with a worse outcome or fewer words in place.
   2,315. Its probe runs out of budget either way: a set's output moves, names a candidate, that
   candidate passes alone, and the set is tried again without it, two compiles a candidate. With
   its 87 cells among the candidates, that goes on to the end of the budget, where lane 2's order
-  alone reached a set of 174 that passed. Lane 2's record names the fix, halving the set once a
-  named candidate passes alone, as a follow-up in the probe.
+  alone reached a set of 174 that passed. Lane 2 now halves what is left of a set once a named
+  candidate passes alone (decision 0069), and with it `other-0028` keeps 2,974 words in place, more
+  than lane 2 alone. The last column is that run, on a merge of the same tree with lane 2's final
+  commit; it too finds no document worse than the before-run or than this change alone.
 - The 31 resumes with a table take 1,449 compiles, 216 more than with lane 2 alone, and 369 s in
   all against 315 s at a higher load. `other-0010` takes 77 compiles, not 18, and 16.0 s, not
   4.4 s, for its 2,848 more words; `other-0009` 9.9 s, not 7.3 s, for 66 more.
@@ -76,13 +78,13 @@ find no document with a worse outcome or fewer words in place.
 
 ## Consequences
 
-- With lane 2, decision 0067's word targets are met: at least 76% in place (79.5%), the others at
-  least 58% (67.6%), moderncv at least 60% (64.9%), at most 12 resumes under 50% (8), at least 55 at
-  90% (59). The time targets rest on lane 4, which opens the page before the checks end.
+- With lane 2, decision 0067's word targets are met: at least 76% in place (84.6%), the others at
+  least 58% (76.2%), moderncv at least 60% (83.8%), at most 12 resumes under 50% (5), at least 55 at
+  90% (61). The time targets rest on lane 4, which opens the page before the checks end.
 - The probe's and the checks' budgets now meet more candidates in a resume with a long table; the
-  corpus run is the guard. `other-0028` shows what lane 2's halving rule in the probe would win
-  back, and `other-0015` what fix 6 would: the halving rule is best landed with this lane or
-  before it, so that no resume does worse than lane 2 alone.
+  corpus run is the guard. `other-0015` shows what fix 6 would win back. Lane 2 is best merged
+  before this change, as the run's merge order has it, so that no resume does worse than lane 2
+  alone at any point.
 - A cell takes what any field takes: Enter inserts nothing (decision 0004), so no edit ends a
   row, and the generator escapes an `&` a person types.
 - The change is in `src/import/`, so a corpus run is worth doing, by the owner's choice:
