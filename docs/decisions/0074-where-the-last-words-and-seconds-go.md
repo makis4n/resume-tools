@@ -1,4 +1,4 @@
-# 00XX. Where the last words and seconds go
+# 0074. Where the last words and seconds go
 
 Date: 2026-10-07 · Status: accepted, under the owner's decisions of 6 October 2026, which let this
 run choose its fixes and set its targets from what it finds
@@ -10,7 +10,7 @@ words editable in place, 61 resumes at 90% or more and 5 under 50%, with its slo
 at 136.3 s. Decision 0072 listed what it left: the outline's `shape`, check 1's `differs`, the
 probe's `moved`, and the checks' budgets, which spend 163 compiles on `other-0015` for no word. The
 owner asked for a run that finds where those words and seconds go, fixes what is worth it, and
-sets a target for each number above today's. A diagnostic change (D3, record "the reasons behind
+sets a target for each number above today's. A diagnostic change (D3, decision 0073, "the reasons behind
 the pieces") made each corpus row say which of the outline's rules declined a candidate, what kind
 of difference check 1 found and what the probe saw move. This record reads its output only, never
 a resume. It names resumes by id, and pieces by the names their class or package defines.
