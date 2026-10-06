@@ -255,9 +255,11 @@ const wordsIn = (set: readonly Candidate[]) =>
  * does not set the reference's glyphs when no candidate's own markers say why. Such a set is split
  * until a single candidate fails alone (`breaks`, `moved`), the candidates the compile names first
  * (`SetResult.suspects`), each tried alone, and then the rest without them; otherwise in two, at
- * the edge between kinds nearest its middle when there is one near it. When the output sets the
- * reference's glyphs, every candidate whose markers passed is editable. When it does not, those
- * are tried again without the ones that failed, and so are the ones whose markers the move may
+ * the edge between kinds nearest its middle when there is one near it. When a named one passes
+ * alone, the name was a wrong guess, and the rest, if it fails too, is halved whatever its compile
+ * names; each half's compile is trusted again. When the output sets the reference's glyphs,
+ * every candidate whose markers passed is editable. When it does not, those are tried again
+ * without the ones that failed, and so are the ones whose markers the move may
  * have cost them (`unclear`): markers that never came, came on two pages, or came twice on the
  * page, as a field a move pushed across a page's end straddles it. Markers taken apart, whose ids
  * the set does not hold, leave a candidate whose markers never came to be tried alone, where a
@@ -293,6 +295,11 @@ export async function settle(
   const kind = (candidate: Candidate) => kinds.get(candidate.id) ?? candidate.id;
   /** The sets whose compile passed, each of its candidates' markers with it, by their ids. */
   const passing = new Map<string, readonly Candidate[]>();
+  /**
+   * The sets, by their ids, that are what is left of a set once a candidate its compile named
+   * passed alone: such a set that fails is halved, whatever its compile names (decision 00XX).
+   */
+  const blind = new Set<string>();
   const keyOf = (set: readonly Candidate[]) =>
     set
       .map((each) => each.id)
@@ -393,16 +400,21 @@ export async function settle(
   };
   /**
    * A set that failed as a whole, split: the candidates its compile names each tried alone, and the
-   * rest without them; or, when it names none of them, or all, in two.
+   * rest without them; or, when it names none of them, or all, or it is what was left of a set
+   * whose compile named wrongly, in two. A named one that passes alone was named wrongly, and the
+   * rest is halved if it fails, not tried without the next name: where each next name is wrong too,
+   * trusting them takes two compiles a candidate, and halving at most four a level.
    */
   const split = async (set: readonly Candidate[], result: SetResult, quarantine: boolean) => {
-    const named = set.filter((each) => result.suspects?.includes(each.id));
+    const named = blind.has(keyOf(set))
+      ? []
+      : set.filter((each) => result.suspects?.includes(each.id));
     if (named.length > 0 && named.length < set.length) {
       for (const each of named) await test([each], quarantine);
-      await test(
-        set.filter((each) => !named.includes(each)),
-        quarantine,
-      );
+      const rest = set.filter((each) => !named.includes(each));
+      if (named.some((each) => verdicts.get(each.id)?.verdict === "editable"))
+        blind.add(keyOf(rest));
+      await test(rest, quarantine);
       return;
     }
     for (const half of halves(set)) await test(half, quarantine);

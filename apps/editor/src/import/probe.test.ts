@@ -513,7 +513,111 @@ describe("settling the candidates", () => {
     const ordered = await settle(probeOrder(set, undefined, true), compile, 64, undefined, true);
     expect(verdictsOf(ordered)).toEqual({ "c1-1": "moved union", "c2-1": "editable alone" });
   });
+
+  /**
+   * An invented engine whose compiles name the wrong candidate: a set that holds `mover` moves the
+   * page, and its compile names the candidate just before the mover in the set, which passes alone,
+   * as a field whose markers come last before where the output parts from the reference's may.
+   */
+  function misnaming(mover: string) {
+    const compiled: string[][] = [];
+    const compile: CompileSet = async (set) => {
+      const ids = set.map((each) => each.id);
+      compiled.push(ids);
+      const at = ids.indexOf(mover);
+      const before = at > 0 ? ids[at - 1] : undefined;
+      return {
+        broke: false,
+        same: at < 0,
+        ...(at < 0 ? {} : { difference: "position" as const }),
+        torn: false,
+        own: new Map(
+          set.map((each, i): [string, Own] => [each.id, { ok: true, glyphs: [[0, i]] }]),
+        ),
+        ...(before === undefined ? {} : { suspects: [before] }),
+      };
+    };
+    return { compile, compiled };
+  }
+
+  test("halves a set once a candidate its compile names passes alone", async () => {
+    const set = Array.from({ length: 16 }, (_, i) => candidate(`c${i + 1}-1`));
+    const wrong = misnaming("c11-1");
+    const found = await settle(set, wrong.compile, 64);
+    // The verdicts are those of halving with no name at all.
+    const plain = await settle(set, engine({ "c11-1": "moves" }).compile, 64);
+    const only = (settlement: typeof found) =>
+      Object.fromEntries([...settlement.verdicts].map(([id, { verdict }]) => [id, verdict]));
+    expect(only(found)).toEqual(only(plain));
+    expect(found.verdicts.get("c11-1")).toEqual({
+      verdict: "moved",
+      detail: "position",
+      settled: "alone",
+    });
+    // The whole set names `c10-1`, which passes alone; the rest moves and is halved, not tried
+    // without the next name. A half that moves is trusted again, and halved when its name is wrong
+    // too: at most four compiles a level, where trusting each next name took two a candidate.
+    const ids = (from: number, to: number, but?: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) => `c${from + i}-1`).filter(
+        (id) => id !== `c${but}-1`,
+      );
+    expect(wrong.compiled).toEqual([
+      ids(1, 16),
+      ["c10-1"],
+      ids(1, 16, 10),
+      ids(1, 7),
+      ids(8, 16, 10),
+      ["c9-1"],
+      ["c8-1", ...ids(11, 16)],
+      ["c8-1", "c11-1", "c12-1"],
+      ["c8-1"],
+      ["c11-1", "c12-1"],
+      ["c11-1"],
+      ["c12-1"],
+      ids(13, 16),
+      ids(1, 16, 11),
+    ]);
+    expect(found.compiles).toBe(14);
+  });
+
+  test("settles within the budget a long set whose compiles name the wrong candidate", async () => {
+    // Sixty-four calls, one of which moves the page; trusting each name took the whole budget on
+    // the calls before the mover, two at a time, and left the rest untested.
+    const set = Array.from({ length: 64 }, (_, i) => candidate(`c${i + 1}-1`));
+    const wrong = misnaming("c60-1");
+    const found = await settle(set, wrong.compile, 24);
+    const verdicts = [...found.verdicts.values()];
+    expect(verdicts.filter((each) => each.verdict === "untested")).toEqual([]);
+    expect(found.verdicts.get("c60-1")?.verdict).toBe("moved");
+    expect(verdicts.filter((each) => each.verdict === "editable")).toHaveLength(63);
+    // Nothing is editable that a compile without the mover did not pass: the last compile holds
+    // every editable candidate and passed.
+    const last = wrong.compiled.at(-1) ?? [];
+    expect(last).toHaveLength(63);
+    expect(last).not.toContain("c60-1");
+    // At most four compiles a level of six, and the union's: 22 of the budget's 24.
+    expect(found.compiles).toBe(22);
+  });
+
+  test("still trusts a name the candidate bears out alone", async () => {
+    // Each named mover moves alone, so the names keep their trust: the named one alone, the rest.
+    const set = Array.from({ length: 8 }, (_, i) => candidate(`c${i + 1}-1`, `inventedcall${i}`));
+    const named = engine({ "c3-1": "moves", "c6-1": "moves" }, true);
+    const found = await settle(set, named.compile, 64);
+    expect(named.compiled).toEqual([
+      ids8(),
+      ["c3-1"],
+      ids8("c3-1"),
+      ["c6-1"],
+      ids8("c3-1", "c6-1"),
+    ]);
+    expect(verdictsOf(found)).toMatchObject({ "c3-1": "moved alone", "c6-1": "moved alone" });
+  });
 });
+
+/** The ids `c1-1` to `c8-1`, but those given. */
+const ids8 = (...but: string[]) =>
+  Array.from({ length: 8 }, (_, i) => `c${i + 1}-1`).filter((id) => !but.includes(id));
 
 /** An invented candidate with a verdict. */
 function decided(

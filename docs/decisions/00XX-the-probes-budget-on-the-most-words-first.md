@@ -43,6 +43,17 @@ kinds by their words, largest first, with the budget as it is.
   On invented sets with budgets of 3 to 12 compiles the order left fewer words in place than the
   source's order in about one seed in eight, and more in about one in four. No resume of the
   corpus loses a word (below); a run over the corpus is what would show one that does.
+- **A set the page names wrongly is halved.** When a set's compile moves the page or stops, the
+  probe tries first the candidate the compile names (the one TeX's error shows it reading, or the
+  field whose markers come last before where the output parts from the reference's), and then the
+  rest without it. When the named one passes alone, the name was a wrong guess; the rest, if it
+  fails too, is now split in two, as a set the compile names nothing of, not tried again without
+  the next name. Each half's compile is trusted again. Where every next name is wrong, trusting
+  them took two compiles a candidate; halving takes at most four a level. Halving every part of
+  such a set from then on, tried first, left `other-0028` at 175 words in place, where its names
+  are right more often than not, and gave `other-0010` 24 more compiles for no word, so only the
+  rest of the set named wrongly is halved. Verdicts stay sound: a candidate is editable only when
+  a compile passed it, alone or in a set, and the union compiles them all together as before.
 - Nothing else changes: the budget, the union's rule, and the order is the same for the same
   document every time.
 
@@ -80,18 +91,53 @@ outcome or fewer words in place.
 - The run's load was higher than the before-run's, 4 to 6 against 2.5 to 3.7, so its times are
   not compared here; its compiles are.
 
+### Halving after a wrong name, measured
+
+`corpus run --json` over all 220 documents on a local merge of main, #111, #112, lane 3's branch
+(the tables' cells) and this change, never pushed, four at a time, at a load near 16 just before it.
+Against the before-run (`fc62298`) and lane 3's own run on that merge without the halving, no
+document has a worse outcome or fewer words in place.
+
+| | Before-run | Lanes 2 and 3 | With the halving |
+|---|--:|--:|--:|
+| Words editable in place, of the 110 imported | 71.9% | 79.5% (65,581) | 84.6% (69,803) |
+| The others family | 51.9% | 67.6% | 76.2% |
+| moderncv | 54.1% | 64.9% | 83.8% |
+| europecv | 76.7% | 76.7% | 78.1% |
+| AltaCV, Jake's, Awesome-CV | 82.2%, 93.7%, 93.5% | 83.0%, 94.8%, 93.5% | the same |
+| Imported resumes under 50% in place | 16 | 8 | 5 |
+| Imported resumes at 90% or more | 53 | 59 | 61 |
+| Successes | 50 | 54 | 56 |
+| Words the probe's budget left untested | 204 | 146 | 1 |
+| Resumes whose probe budget ran out | 6 | 8 | 4 |
+| The probe's compiles, all imports | 2,451 | 2,421 | 2,279 |
+| All compiles, all imports | 5,817 | 5,988 | 5,851 |
+
+- Four resumes gain against lane 3's run: `other-0028` 106 to 2,974 words in place of 3,974;
+  `moderncv-0013` 231 to 1,122 of 1,139 and `moderncv-0002` 82 to 504 of 553, both becoming
+  successes; `europecv-0008` 1,025 to 1,066 of 1,414.
+- On lane 2 alone, without the tables' cells, over six resumes (`moderncv-0002`, `-0007`,
+  `-0013`, `other-0010`, `-0028`, `-0032`): `moderncv-0002` 82 to 504 and `moderncv-0013` 231
+  to 1,122, both successes, `other-0028` 2,315 to 2,860, none worse, 698 compiles to 654.
+- `moderncv-0002` takes 86 compiles, not 112, and its probe 42 of its 64. `other-0028`'s import
+  takes 166 compiles, not 146: the checks of its new fields.
+- The run's load was higher than the earlier runs', so its times are not compared; its compiles
+  are.
+
 ## Consequences
 
 - From decision 0067's targets, this lane alone meets moderncv's (at least 60%) and the others'
-  (at least 58%). Words in place overall (at least 76%), resumes under 50% (at most 12) and at
-  90% (at least 55) wait on lane 3, the tables' cells.
-- The order cannot reach `moderncv-0002` (442 words untested) or `other-0020` (1 word). In
-  `moderncv-0002` a set's output moves and names one candidate as the likely cause; tried alone,
-  that candidate passes, and the set is tried again without it, two compiles a candidate, 62 of
-  its 64. `other-0028` spends about 26 compiles the same way. Halving the set once a named
-  candidate passes alone would stop that; it changes how a set is split, so it is a follow-up.
+  (at least 58%). With lane 3, the tables' cells, it meets words in place overall (at least 76%),
+  resumes under 50% (at most 12) and at 90% (at least 55).
+- The order alone could not reach `moderncv-0002` (442 words untested): a set's output moved and
+  named a candidate that passed alone, and the set was tried again without it, two compiles a
+  candidate, 62 of its 64. With lane 3's cells, `other-0028` fell from 2,315 words in place to
+  106 the same way. The halving above ends both; `other-0020`'s 1 word is still untested.
+- Halving changes which sets are compiled, so like the order it can change which of two that fail
+  together the union locks; the corpus run is its guard too.
 - Lanes 3 and 4 measure on a merge with this change, since lane 3's new candidates are ordered by
   their words too.
 - The change is in `src/import/`, so a corpus run is worth doing, by the owner's choice:
   `gh workflow run corpus.yml --ref waikin/perf-probe-order`. It could move the probe's untested
   words, the words in place of the resumes the budget stops, and every resume's compile count.
+  The halving touches the same file and could move the same numbers.
