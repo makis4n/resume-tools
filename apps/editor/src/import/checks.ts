@@ -582,6 +582,11 @@ export function marked(
 /** What the checks take. */
 export interface ChecksInput {
   compiler: OutlineCompiler;
+  /**
+   * Hears each of checks 1, 2 and 3 as it ends (`CheckEnd`), and the checks wait for what it
+   * returns: an import opens its page, and then its fields, as they do (decision 0071).
+   */
+  ended?: (end: CheckEnd) => void | Promise<void>;
   /** The page the outline must set: the reference's, a XeTeX document's with its fonts by file. */
   reference: GlyphStream;
   /** The outline, with the candidates `kept` names kept as text (`buildOutline`). */
@@ -652,6 +657,20 @@ export interface Checked {
   notes: { check: string; message: string }[];
   compiles: number;
   ms: number;
+}
+
+/**
+ * A check as it ends: which; the outline as the checks leave it so far, the candidates they have
+ * kept as text and the fields they have found required; and whether that outline was compiled and
+ * set the page the checks hold it to. After check 1 only the page is settled, after check 2 every
+ * field is, and after check 3 every group is too, `outline` marked as the checks leave it.
+ */
+export interface CheckEnd {
+  check: 1 | 2 | 3;
+  outline: Outline;
+  kept: ReadonlyMap<string, LockReason>;
+  required: ReadonlySet<string>;
+  holds: boolean;
 }
 
 /** A field-switch of the bisections: the probe's candidate a field is of. */
@@ -775,6 +794,19 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
 
   // 2. Mutations: long, special and empty texts in every field, bisected where one stops.
   let current = build(new Set(kept.keys()));
+  // Check 1 ends: the outline with nothing kept sets the page where its first compile did, and with
+  // what the bisection kept, where that outline was compiled and did.
+  const firstStream = first.compiled?.broke === false ? first.compiled.stream : undefined;
+  await input.ended?.({
+    check: 1,
+    outline: current,
+    kept,
+    required: new Set(),
+    holds:
+      kept.size === 0 && firstStream !== undefined
+        ? differs(target, firstStream) === undefined
+        : holds(new Set(kept.keys())),
+  });
   const fields = switches(current, byId);
   const onText = new Set<string>();
   const stops = { long: 0, special: 0, empty: 0 };
@@ -885,6 +917,14 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
       differsFrom = was.found;
     }
   }
+  // Check 2 ends, every field settled: the outline as checks 1 and 2 leave it has been compiled.
+  await input.ended?.({
+    check: 2,
+    outline: current,
+    kept,
+    required,
+    holds: holds(new Set(kept.keys())),
+  });
 
   // 3. Groups: a copy of each one's last unit, and the removal of its first and its last.
   const fixed = new Map<string, OutlineFixed>();
@@ -962,6 +1002,14 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
   // 4. Controls: an outline's package offers none (`outlinePackage`), so there is none to try.
 
   const parts = marked(current.parts, required, fixed);
+  // Check 3 ends, every group settled: the outline marked as the checks leave it.
+  await input.ended?.({
+    check: 3,
+    outline: { ...current, parts },
+    kept,
+    required,
+    holds: holds(new Set(kept.keys())),
+  });
   const resume = outlineResume(parts);
   if (resume === undefined) return refusal("keep");
   return {

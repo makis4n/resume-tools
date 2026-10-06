@@ -13,7 +13,7 @@
 
 import type { PagePdf } from "../import/bridge";
 import type { Upload } from "../import/intake";
-import type { ImportOutcome, ImportProgress } from "../import/run";
+import type { ImportOutcome, ImportProgress, ImportStage } from "../import/run";
 import type { EngineReply, EngineRequest, EngineResults } from "./protocol";
 import type {
   CompileOptions,
@@ -31,6 +31,8 @@ interface Pending {
   reject: (error: Error) => void;
   /** What the request's progress goes to, for a request that sends some. */
   progress?: (progress: ImportProgress) => void;
+  /** What an import's document before its checks end goes to (`ImportStage`, decision 0071). */
+  stage?: (stage: ImportStage) => void;
 }
 
 /** A call that failed because the worker was terminated and started afresh (`cancel`). */
@@ -86,6 +88,10 @@ export class EngineClient {
         pending.progress?.(reply.progress);
         return;
       }
+      if ("stage" in reply) {
+        pending.stage?.(reply.stage);
+        return;
+      }
       this.pending.delete(reply.id);
       if ("error" in reply) pending.reject(new Error(reply.error));
       else pending.resolve(reply.result);
@@ -103,6 +109,7 @@ export class EngineClient {
     request: R,
     transfer: Transferable[] = [],
     progress?: (progress: ImportProgress) => void,
+    stage?: (stage: ImportStage) => void,
   ): Promise<EngineResults[R["type"]]> {
     if (this.stopped) return Promise.reject(this.stopped);
     // After a cancel, the next call starts the worker afresh.
@@ -115,6 +122,7 @@ export class EngineClient {
         resolve: resolve as (result: unknown) => void,
         reject,
         ...(progress === undefined ? {} : { progress }),
+        ...(stage === undefined ? {} : { stage }),
       });
       worker.postMessage({ ...request, id }, transfer);
     });
@@ -165,15 +173,17 @@ export class EngineClient {
   /**
    * Import a resume in the worker, in a job of its own (`importResume` of `src/import/run.ts`):
    * its package, document, report and files, or a refusal. `onProgress` hears each step and each
-   * compile as it begins and ends. A compile that runs past `limit` is taken for hung: the worker
+   * compile as it begins and ends, and `onStage` the document before its checks end, its page and
+   * then its fields (decision 0071). A compile that runs past `limit` is taken for hung: the worker
    * is terminated and started afresh, as `cancel` does, and the import fails with `EngineTimeout`.
    */
   importResume(
     files: readonly Upload[],
     onProgress: (progress: ImportProgress) => void,
     limit = IMPORT_COMPILE_LIMIT,
+    onStage?: (stage: ImportStage) => void,
   ): Promise<ImportOutcome> {
-    return this.timed({ type: "import", files: [...files] }, onProgress, limit);
+    return this.timed({ type: "import", files: [...files] }, onProgress, limit, onStage);
   }
 
   /**
@@ -198,15 +208,21 @@ export class EngineClient {
     request: R,
     onProgress: (progress: ImportProgress) => void,
     limit: number,
+    onStage?: (stage: ImportStage) => void,
   ): Promise<EngineResults[R["type"]]> {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const done = this.call(request, [], (progress) => {
-      clearTimeout(timer);
-      timer = progress.compiling
-        ? setTimeout(() => this.cancel(new EngineTimeout(limit)), limit)
-        : undefined;
-      onProgress(progress);
-    });
+    const done = this.call(
+      request,
+      [],
+      (progress) => {
+        clearTimeout(timer);
+        timer = progress.compiling
+          ? setTimeout(() => this.cancel(new EngineTimeout(limit)), limit)
+          : undefined;
+        onProgress(progress);
+      },
+      onStage,
+    );
     return done.finally(() => clearTimeout(timer));
   }
 

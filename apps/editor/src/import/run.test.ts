@@ -6,14 +6,17 @@ import { strToU8, unzipSync } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
 import { Compiler, type Engine, type Shown } from "../editor/compiler";
 import { type Document, History } from "../editor/document";
+import { withOutcomeMarks } from "../editor/early-import";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import type { EngineSession } from "../engine/session";
+import { fieldsShown } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
 import { DocumentStore } from "../storage/store";
 import { generateBody, generateFormat } from "../templates/generate";
 import { resolveTemplate, type Template } from "../templates/resolve";
+import { inventedOutline, outlineParts } from "../test/invented-outline";
 import { JAKE_FORK } from "../test/jake-fork";
 import { XETEX_RESUME } from "../test/xetex-resume";
 import { readTree } from "./fonts";
@@ -26,9 +29,11 @@ import {
   type ImportDeps,
   type Imported,
   type ImportProgress,
+  type ImportStage,
   importResume,
   uploadOf,
 } from "./run";
+import { resumeKey, StagedCompiler } from "./stages";
 
 // Every file here is invented for these tests: the fork of Jake's Resume holds invented words in
 // the template's own shape (`../test/jake-fork.ts`); nothing is a real person's resume.
@@ -275,6 +280,85 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decisions 0038 an
   // The hand count of decision 0039, over the fork's page, its words invented: 92 words, every one
   // the resume's. The first pass kept its heading and its skills as the upload wrote them; the
   // outline holds the words of both where the probe proved them, in fields.
+  test("opens the fork's page before the checks end, then its fields, with no compile more (decision 0071)", async () => {
+    const stages: ImportStage[] = [];
+    const outcome = await importResume([tex("resume.tex", JAKE_FORK)], {
+      ...deps,
+      onStage: (stage) => stages.push(stage),
+    });
+    if (isRefusal(outcome)) throw new Error(`refused: ${outcome.message}`);
+    // Heard or not, the import is the same: its page is a compile the checks made anyway.
+    const plain = await imported(JAKE_FORK);
+    expect(outcome.report.compiles).toBe(plain.report.compiles);
+    expect(outcome.document).toEqual(plain.document);
+    // The page first, its output a DVI, before the checks' last compile; the fields last, with the
+    // document the outcome gives but for its groups' marks, which check 3 adds.
+    const [first] = stages;
+    const last = stages.at(-1);
+    if (first?.output === undefined || last === undefined)
+      throw new Error("no page before the end");
+    expect(first.output[0]).toBe(0xf7);
+    expect(first.compiles).toBeLessThan(outcome.report.compiles);
+    expect(first.ms).toBeLessThan(outcome.report.ms);
+    expect(last.phase).toBe("fields");
+    expect(stages.map((stage) => stage.phase)).toEqual(
+      first.phase === "page" ? ["page", "fields"] : ["fields"],
+    );
+    expect(withOutcomeMarks(last.document, outcome.document)).toBe(outcome.document);
+    expect(last.job).toEqual(outcome.job);
+    // The page drawn from it, as the editor draws it while the import still holds the engine, marks
+    // the document's fields, and is the page the document compiles to once the import has landed.
+    const store = new DocumentStore({ name: `resume-tools-early-${Date.now()}` });
+    const { compiler, nextPage } = editor(store);
+    const early = nextPage();
+    await compiler.preview(first.package, first.document, first.job, first.output);
+    const shown = await early;
+    expect(shown.document).toBe(first.document);
+    expect(fieldsShown(...shown.pages).size).toBeGreaterThan(10);
+    // Where check 2 kept a field, its stage brought a page of its own, drawn as the first was; the
+    // page the document compiles to once the import has landed is the last one brought.
+    let brought = shown;
+    if (last.output !== undefined) {
+      const fields = nextPage();
+      await compiler.preview(last.package, last.document, last.job, last.output);
+      brought = await fields;
+      expect(brought.document).toBe(last.document);
+    }
+    const landed = nextPage();
+    compiler.open(outcome.package, outcome.document, outcome.job);
+    const again = await landed;
+    expect(again.pages.map((page) => page.svg)).toEqual(brought.pages.map((page) => page.svg));
+    compiler.close();
+    await store.close();
+  }, 60_000);
+
+  test("keeps the output of an outline a stage may show, none of another compile, and none once released", async () => {
+    const { pkg, document } = await inventedOutline();
+    const other = (await inventedOutline(outlineParts("\\par Another invented line."))).document;
+    const compiler = new StagedCompiler({
+      session: deps.session,
+      fonts: deps.fonts,
+      pkg,
+      job: "staged",
+      files: {},
+    });
+    expect(compiler.start().ok).toBe(true);
+    compiler.want(document.resume);
+    expect((await compiler.compile(document.resume)).broke).toBe(false);
+    // A mutation or a trial: compiled, and not kept.
+    expect((await compiler.compile(other.resume)).broke).toBe(false);
+    expect(compiler.outputOf(resumeKey(document.resume))?.[0]).toBe(0xf7);
+    expect(compiler.outputOf(resumeKey(other.resume))).toBeUndefined();
+    expect(compiler.count).toBe(2);
+    // Once the stages need none, what was kept goes, and nothing more is kept.
+    compiler.release();
+    expect(compiler.outputOf(resumeKey(document.resume))).toBeUndefined();
+    compiler.want(other.resume);
+    expect((await compiler.compile(other.resume)).broke).toBe(false);
+    expect(compiler.outputOf(resumeKey(other.resume))).toBeUndefined();
+    compiler.close();
+  }, 60_000);
+
   test("reports the fork's words in fields, in kept text and locked, out of 92", async () => {
     const done = await imported(JAKE_FORK);
     const { words } = done.report.outline;

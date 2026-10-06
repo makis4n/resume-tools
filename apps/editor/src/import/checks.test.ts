@@ -8,6 +8,8 @@ import {
 } from "@resume-tools/resume-model";
 import { strToU8 } from "fflate";
 import { beforeAll, describe, expect, test } from "vitest";
+import type { Document } from "../editor/document";
+import { withOutcomeMarks } from "../editor/early-import";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "../engine/node";
 import { FontLibrary } from "../page/fonts";
@@ -28,7 +30,7 @@ import { readTree } from "./fonts";
 import { treeImages } from "./intake";
 import { isRefusal } from "./refusal";
 import { reportOfImport } from "./report";
-import { type ImportDeps, importResume } from "./run";
+import { type ImportDeps, type ImportStage, importResume } from "./run";
 
 // The second pass's item 6: the checks without answers. Every text here is invented.
 
@@ -315,5 +317,35 @@ describe.skipIf(!engineAvailable())("the checks on the engine (the second pass's
       "1 of your resume's 2 lists and runs of entries keeps",
     );
     expect(report.notes.join(" ")).not.toMatch(/[\\{}]/);
+  }, 60_000);
+
+  test("say as each check ends what it settled, and open the page, then the fields, on it (decision 0071)", async () => {
+    const stages: ImportStage[] = [];
+    const outcome = await importResume([{ name: "cv.tex", bytes: strToU8(CHECKED) }], {
+      ...deps,
+      onStage: (stage) => stages.push(stage),
+    });
+    if (isRefusal(outcome)) throw new Error(`refused: ${outcome.message}`);
+    // Check 1 finds the outline sets the page at its first compile, every field to stay locked;
+    // check 2 keeps the motto as text, so its outline is another, compiled again by the checks, whose
+    // page comes with the fields, the name required. Check 3 then fixes the jobs, in the outcome.
+    expect(stages.map((stage) => [stage.phase, stage.output !== undefined])).toEqual([
+      ["page", true],
+      ["fields", true],
+    ]);
+    const textsOf = (stage: ImportStage | undefined) => {
+      const [section] = stage?.document.resume.sections ?? [];
+      if (section?.kind !== "outline") throw new Error("no outline");
+      return [...outlineNodes(section.parts)].flatMap((step) =>
+        step.kind === "part" && (step.part.kind === "rich" || step.part.kind === "text")
+          ? [step.part.required === true ? "required" : "field"]
+          : [],
+      );
+    };
+    expect(textsOf(stages[0]).length).toBe(textsOf(stages[1]).length + 1);
+    expect(textsOf(stages[1]).filter((each) => each === "required")).toHaveLength(1);
+    expect(withOutcomeMarks(stages[1]?.document as Document, outcome.document)).toBe(
+      outcome.document,
+    );
   }, 60_000);
 });

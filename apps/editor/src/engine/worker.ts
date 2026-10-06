@@ -9,13 +9,15 @@
  * its own, so that one engine is loaded at a time: the pipeline (`src/import/run.ts`) is loaded
  * only when the first import asks for it, with the fonts the page's glyphs are read with, fetched
  * as the page fetches them, the engine's own files. An import sends nothing anywhere (decision
- * 0049). Its progress goes to the client as it comes, under the request's id. The bridge's PDF of an
- * import's reference page (milestone 3 second pass, item 16) runs with it, loaded with it.
+ * 0049). Its progress goes to the client as it comes, under the request's id, and so does its
+ * document before its checks end, its page and then its fields (decision 0071), the page's output
+ * handed over rather than copied. The bridge's PDF of an import's reference page (milestone 3
+ * second pass, item 16) runs with it, loaded with it.
  */
 
 import type { PagePdf } from "../import/bridge";
 import type { Upload } from "../import/intake";
-import type { ImportOutcome, ImportProgress } from "../import/run";
+import type { ImportOutcome, ImportProgress, ImportStage } from "../import/run";
 import type { EngineManifest } from "./manifest";
 import type { EngineReply, EngineRequest } from "./protocol";
 import { EngineSession, type LoadEngine } from "./session";
@@ -53,7 +55,11 @@ async function start() {
 
 /** Runs on the session's engine, an import's and the bridge's PDF's, with what they share. */
 interface Importer {
-  run(files: Upload[], onStep: (step: ImportProgress) => void): Promise<ImportOutcome>;
+  run(
+    files: Upload[],
+    onStep: (step: ImportProgress) => void,
+    onStage: (stage: ImportStage) => void,
+  ): Promise<ImportOutcome>;
   pdf(files: Upload[], onStep: (step: ImportProgress) => void): Promise<PagePdf>;
 }
 
@@ -91,7 +97,7 @@ async function importer(session: EngineSession, manifest: EngineManifest): Promi
   const treeImage = treeImages(manifest.files, (path) => getSync(fileUrl(tag, path)));
   const deps = { session, fonts, tree, treeImage };
   return {
-    run: (files, onStep) => importResume(files, deps, onStep),
+    run: (files, onStep, onStage) => importResume(files, { ...deps, onStage }, onStep),
     pdf: (files, onStep) => referencePdf(files, deps, onStep),
   };
 }
@@ -132,11 +138,20 @@ async function handle(request: EngineRequest & { id: number }): Promise<EngineRe
       });
       const runs = await importing;
       const { id } = request;
-      const run = request.type === "import" ? runs.run : runs.pdf;
-      const result = await run(request.files, (progress) => {
+      const onStep = (progress: ImportProgress) => {
         const reply: EngineReply = { id, progress };
         self.postMessage(reply);
-      });
+      };
+      // A stage's output is its own copy, so it is handed over rather than copied.
+      const onStage = (stage: ImportStage) => {
+        const reply: EngineReply = { id, stage };
+        const output = stage.output?.buffer;
+        self.postMessage(reply, { transfer: output instanceof ArrayBuffer ? [output] : [] });
+      };
+      const result =
+        request.type === "import"
+          ? await runs.run(request.files, onStep, onStage)
+          : await runs.pdf(request.files, onStep);
       return { id, result };
     }
   }

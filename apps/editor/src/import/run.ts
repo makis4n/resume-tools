@@ -22,7 +22,9 @@
  * Each step, and each compile as it begins and ends, is reported through `onStep`, with the step's
  * name in plain English, as plan section 6.4's progress display names it, and the compiles so far;
  * a compile under way is what the worker's client times, and a hung one terminates the worker
- * (decision 0008). `signal` stops the import between compiles, with its reason thrown. A refusal
+ * (decision 0008). Before the checks end, `ImportDeps.onStage` hears the document as they settle
+ * it, its page and then its fields, so that the editor opens it then (`ImportStage`, decision
+ * 0071). `signal` stops the import between compiles, with its reason thrown. A refusal
  * comes back as the pipeline gives it, in plain English that never shows LaTeX, as do the few this
  * module adds; an unexpected failure is one of those, its details for developers alone.
  *
@@ -45,6 +47,7 @@ import { inLatinModern, undrawableFonts } from "./latin-modern";
 import {
   buildOutline,
   outlinePackage,
+  outlineResume,
   ownersOf,
   reachedRuns,
   reachOf,
@@ -58,6 +61,7 @@ import { IMPORT_JOB, type Reference, reference, referenceFiles } from "./referen
 import { isRefusal, type Refusal, refusal, refusedAtIntake, shownInMessage } from "./refusal";
 import type { AssemblyChecks, LockedPart, LockReason } from "./report";
 import { signatures } from "./signatures";
+import { StagedCompiler, stagesOf } from "./stages";
 import { plainStandIns } from "./standins";
 import { rewriteForXetex } from "./xetex";
 import { checkRewrite, jobFiles } from "./xetex-check";
@@ -94,6 +98,11 @@ export interface ImportProgress {
 export interface ImportDeps {
   /** The engine's session, the worker's, which every step compiles on. */
   session: EngineSession;
+  /**
+   * Hears the document before the checks end (`ImportStage`, decision 0071): its page, its fields
+   * locked, and then its fields open. Without it the import says nothing until its outcome.
+   */
+  onStage?: (stage: ImportStage) => void;
   /** The fonts the page's glyphs are read with, as the page reads them. */
   fonts: FontLibrary;
   /** The tree's fonts and styles (`readTree`), which the intake and the XeTeX rewrite read. */
@@ -190,6 +199,27 @@ export interface Imported {
 }
 
 export type ImportOutcome = Imported | Refusal;
+
+/**
+ * What an import says of its document before its checks end (decision 0071), so that the editor
+ * opens it then: `page` once check 1 has found that the outline, compiled as the editor compiles it,
+ * sets the page the checks hold it to, every field to stay locked; `fields` once check 2 has settled
+ * every field, which open, its groups taking no step until check 3 ends, after which the outcome
+ * comes as it always did. Each brings the package, the document so far, none of its groups marked
+ * fixed yet, which the editor holds as they are until the outcome marks them, and the job;
+ * and the output the page is drawn from, DVI or XDV, where it brings a page: `page` always, and
+ * `fields` only where the outline compiled for it is not the one `page` brought.
+ */
+export interface ImportStage {
+  phase: "page" | "fields";
+  package: TemplatePackage;
+  document: Document;
+  job: ImportJob;
+  output?: Uint8Array;
+  /** How long the import had taken, in milliseconds, and how many compiles it had made. */
+  ms: number;
+  compiles: number;
+}
 
 /** The job the editor compiles an open document in (decision 0010), whose `.bbl` it reads. */
 const EDITOR_JOB = "doc";
@@ -363,7 +393,17 @@ export async function importResume(
     });
 
     enter("validate");
-    const compiler = new OutlineCompiler({
+    // What the document's compiles need beside the package, as the outline compiled: the
+    // reference compile's files for the editor's job, its bibliography under whatever job reads it.
+    const editorFiles = referenceFiles(taken, made, { job: EDITOR_JOB, ...options });
+    const bbl = editorFiles[`${EDITOR_JOB}.bbl`];
+    delete editorFiles[`${EDITOR_JOB}.bbl`];
+    const job: ImportJob = {
+      files: editorFiles,
+      ...(bbl === undefined ? {} : { bbl }),
+      images: [...taken.images.replaced, ...made.images].map((image) => image.path),
+    };
+    const compiler = new StagedCompiler({
       session,
       fonts,
       pkg,
@@ -371,14 +411,34 @@ export async function importResume(
       files: referenceFiles(taken, made, { job: IMPORT_JOB, ...options }),
       ...(signal === undefined ? {} : { signal }),
     });
+    // The document opens before the checks end, as each check settles more of it (decision 0071).
+    const ended =
+      deps.onStage === undefined
+        ? undefined
+        : stagesOf(deps.onStage, {
+            pkg,
+            job,
+            compiler,
+            now: () => ({ ms: performance.now() - started, compiles }),
+          });
     let checked: Checked | Refusal;
     try {
       const dumped = compiler.start();
       if (!dumped.ok) return refusal("stopped", undefined, dumped.log);
       checked = await checkOutline({
         compiler,
+        ...(ended === undefined ? {} : { ended }),
         reference: made,
-        build: outlineOf,
+        // An outline built from what the checks keep is one a stage may show (`StagedCompiler`).
+        build:
+          ended === undefined
+            ? outlineOf
+            : (kept) => {
+                const outline = outlineOf(kept);
+                const resume = outlineResume(outline.parts);
+                if (resume !== undefined) compiler.want(resume);
+                return outline;
+              },
         candidates: probed.candidates,
         runs: probed.runs ?? [],
         ...(deps.checkBudget === undefined ? {} : { budget: deps.checkBudget }),
@@ -397,11 +457,6 @@ export async function importResume(
     };
     const format = compiler.format;
 
-    // What the document's compiles need beside the package, as the outline compiled: the
-    // reference compile's files for the editor's job, its bibliography under whatever job reads it.
-    const editorFiles = referenceFiles(taken, made, { job: EDITOR_JOB, ...options });
-    const bbl = editorFiles[`${EDITOR_JOB}.bbl`];
-    delete editorFiles[`${EDITOR_JOB}.bbl`];
     const { log: _log, ...shown } = made;
     const runs = probed.runs ?? [];
     const counting = {
@@ -429,11 +484,7 @@ export async function importResume(
         ms: performance.now() - started,
       },
       upload: { files: files.map((file) => ({ name: file.name, bytes: file.bytes })) },
-      job: {
-        files: editorFiles,
-        ...(bbl === undefined ? {} : { bbl }),
-        images: [...taken.images.replaced, ...made.images].map((image) => image.path),
-      },
+      job,
       formats: [{ name: format.name, format: format.bytes }],
     };
   };

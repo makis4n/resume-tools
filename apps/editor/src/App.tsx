@@ -20,6 +20,13 @@ import {
   UnitRefused,
 } from "./editor/document";
 import { pdfFileName, savePdf } from "./editor/download";
+import {
+  type EarlyPhase,
+  FIELDS_LOCKED,
+  FIELDS_OPEN,
+  UNITS_WAIT,
+  withOutcomeMarks,
+} from "./editor/early-import";
 import { enterAdds } from "./editor/enter";
 import { applyFit, type Fitted, fit } from "./editor/fit";
 import { StructureGuard } from "./editor/guard";
@@ -47,7 +54,13 @@ import { type PagePdf, pageFile } from "./import/bridge";
 import type { Upload } from "./import/intake";
 import { isRefusal } from "./import/refusal";
 import { type Report, reportOfImport } from "./import/report";
-import { IMPORT_STEPS, type Imported, type ImportJob, type ImportOutcome } from "./import/run";
+import {
+  IMPORT_STEPS,
+  type Imported,
+  type ImportJob,
+  type ImportOutcome,
+  type ImportStage,
+} from "./import/run";
 import { FontLibrary } from "./page/fonts";
 import { KEPT_TIPS, Pages } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
@@ -212,6 +225,11 @@ interface Open {
   stale: boolean;
   /** Whether its newest save could not be written; it stays open until one is. */
   unsaved: boolean;
+  /**
+   * Where the import it comes from has got to, while it is open before the import's checks end
+   * (decision 0071): it has no id in the store yet, and nothing of it is saved until it is kept.
+   */
+  importing?: EarlyPhase;
 }
 
 /**
@@ -513,9 +531,10 @@ export function App() {
         }
         setShown((before) => ({ latest, opening: before === undefined }));
         setError(undefined);
-        // A page that shows the structural step held lets it be saved, with what came after it.
+        // A page that shows the structural step held lets it be saved, with what came after it; but
+        // not a document whose import is still under way, which is not kept yet (decision 0071).
         const now = openNow.current;
-        if (now !== undefined && guard.current.paged(latest.document))
+        if (now !== undefined && guard.current.paged(latest.document) && !now.importing)
           kept.save(now.id, now.history.present, now.revision);
       },
       error: (message) => {
@@ -638,10 +657,16 @@ export function App() {
     const { present } = doc.history;
     setTakenBack(false);
     setUnitNote(undefined);
-    compiler.current?.update(present);
-    // An imported outline's every change waits for its page (`StructureGuard`).
+    // While the import's checks hold the engine, an edit waits in the history: the document the
+    // import lands compiles with it then (`landEarly`), and one cancelled or refused compiles nothing.
+    // Once it has landed, while it is being kept, the engine is free and the edit compiles at once.
+    const checksHold =
+      importRun.current !== undefined && (doc.importing === "locked" || doc.importing === "fields");
+    if (!checksHold) compiler.current?.update(present);
+    // An imported outline's every change waits for its page (`StructureGuard`); one whose import is
+    // under way is saved once it is kept (decision 0071).
     const every = outlineOf(present.resume) !== undefined;
-    if (guard.current.changed(doc.history, before, every))
+    if (guard.current.changed(doc.history, before, every) && !doc.importing)
       store.current?.save(doc.id, present, doc.revision);
   };
 
@@ -731,12 +756,148 @@ export function App() {
   };
 
   /**
+   * Open an import's document before its checks end, or move it on (decision 0071): its page,
+   * drawn from the output the checks compiled, its fields locked; then its fields open, and its page
+   * drawn again where check 2 left another outline. A stage that brings no page before any page
+   * opens nothing, and the import lands in the list as it always did. Nothing of it is kept yet.
+   */
+  const showStage = (stage: ImportStage) => {
+    const now = openNow.current;
+    const first = now?.importing === undefined;
+    if (first && stage.output === undefined) return;
+    const { package: pkg, document: doc, job, output } = stage;
+    const phase: EarlyPhase = stage.phase === "page" ? "locked" : "fields";
+    if (first) {
+      opening.current++;
+      setNotice(undefined);
+      setShown(undefined);
+      setError(undefined);
+      setPdfError(undefined);
+      setClicked(undefined);
+      guard.current.forget();
+      retypeGuard.current.forget();
+      setRetyping(undefined);
+      setTakenBack(false);
+      setTooLong(false);
+      setUnitNote(undefined);
+      setFocusField(undefined);
+    }
+    // No field could be typed in while they were locked, so the stage's document takes the place
+    // of the one open, with a history of its own.
+    const history = new History(doc, pkg);
+    const opened: Open = {
+      id: "",
+      revision: 0,
+      pkg,
+      job,
+      lockedWords: new Map(),
+      history,
+      present: doc,
+      canUndo: false,
+      canRedo: false,
+      stale: false,
+      unsaved: false,
+      importing: phase,
+    };
+    // The latest render's view is taken now, so that a second stage before the next render sees it.
+    openNow.current = opened;
+    setOpen(opened);
+    if (output !== undefined) void compiler.current?.preview(pkg, doc, job, output);
+  };
+
+  /**
+   * An import open before its checks end has come through (decision 0071): its document takes the
+   * marks the outcome gives it, its groups fixed or not, with whatever the person typed meanwhile,
+   * and compiles at once, the engine free again, its page taking the early one's place. A success
+   * is kept, and the report shows above the page; a partial import waits on the person, its report
+   * above the page with Continue, Stop and the move, and is kept only if they continue.
+   */
+  const landEarly = async (outcome: Imported, report: Report) => {
+    const now = openNow.current;
+    if (now?.importing === undefined) return;
+    const marked = withOutcomeMarks(now.history.present, outcome.document);
+    const history = marked === now.history.present ? now.history : new History(marked, now.pkg);
+    // What the person typed while the checks ran has not compiled yet: like every change to an
+    // imported outline, it waits for its page, and a compile it stops takes it back to the document
+    // the checks compiled, which is the one kept until a page shows the typed one (`StructureGuard`).
+    guard.current.forget();
+    if (marked !== outcome.document) guard.current.changed(history, outcome.document, true);
+    const partial = report.outcome === "partial";
+    const landed: Open = {
+      ...now,
+      history,
+      present: history.present,
+      canUndo: history.canUndo,
+      canRedo: history.canRedo,
+      importing: partial ? "deciding" : "fields",
+    };
+    openNow.current = landed;
+    setOpen(landed);
+    setUnitNote(undefined);
+    compiler.current?.open(outcome.package, history.present, outcome.job);
+    if (partial) {
+      setWaiting({ outcome, report });
+      return;
+    }
+    await adoptImport(outcome, report);
+  };
+
+  /**
+   * Keep an import whose document is open, the document its checks compiled (`Imported.document`),
+   * and give the open document its id: it is saved from then on as any document is, and its report
+   * shows above its page. What the person typed meanwhile is saved over it only once a page has shown
+   * it (`StructureGuard`), so that the store never holds a document that does not compile. One that
+   * cannot be kept goes, and the list says why.
+   */
+  const adoptImport = async (outcome: Imported, report: Report) => {
+    let id: string | undefined;
+    let revision = 0;
+    try {
+      id = await store.current?.importDocument(outcome);
+      if (id !== undefined) revision = (await store.current?.get(id))?.revision ?? revision;
+    } catch (error) {
+      console.error("The imported resume could not be kept:", error);
+      if (openNow.current?.importing !== undefined) await showList(COULD_NOT_KEEP);
+      return;
+    }
+    const now = openNow.current;
+    if (id === undefined || now?.importing === undefined) return;
+    let lockedWords: ReadonlyMap<string, string> = new Map();
+    try {
+      lockedWords = lockedWordsOf(report);
+    } catch (error) {
+      console.error("The import's report could not be read:", error);
+    }
+    const kept: Open = { ...now, id, revision, lockedWords, importing: undefined };
+    openNow.current = kept;
+    setOpen(kept);
+    setImportedReport({ id, report });
+    // What the person typed meanwhile is saved now as far as a page has shown it; the rest, once one
+    // does (`page`), or never, if its compile stops and takes it back.
+    const shown = guard.current.shown(kept.history) ?? kept.history.present;
+    if (shown !== outcome.document) store.current?.save(id, shown, revision);
+  };
+
+  /**
+   * Leave an import's document that is open before it was kept, for the list, saying why: nothing
+   * of it is kept.
+   */
+  const leaveEarly = async (reason?: string) => {
+    if (openNow.current?.importing === undefined) return false;
+    openNow.current = undefined;
+    await showList(reason);
+    return true;
+  };
+
+  /**
    * Import the files the list was given (decision 0038): on the compiler's engine, while the list
    * shows its progress line; a refusal says why in the list's notice, in its own plain words; a
    * cancel leaves the list as it was. What went wrong otherwise is for developers, as is a refusal's
    * log, which quotes the source. One that came through is read into its report (decision 0039):
    * a success is kept and opened as any document, and a partial one waits in the list, its report
-   * shown, for the person to continue with it or stop.
+   * shown, for the person to continue with it or stop. Its document opens before the checks end,
+   * where they set its page (decision 0071): a refusal or a failure then goes back to the list, and
+   * what came through lands where it is open (`landEarly`).
    */
   const importFiles = async (chosen: File[]) => {
     const owned = compiler.current;
@@ -764,9 +925,15 @@ export function App() {
     if (running()) return;
     setNotice(undefined);
     setImporting({ label: IMPORT_STEPS.intake, compiles: 0 });
-    const run = owned.importResume(files, ({ label, compiles }) => {
-      if (importRun.current === run) setImporting({ label, compiles });
-    });
+    const run = owned.importResume(
+      files,
+      ({ label, compiles }) => {
+        if (importRun.current === run) setImporting({ label, compiles });
+      },
+      (stage) => {
+        if (importRun.current === run) showStage(stage);
+      },
+    );
     importRun.current = run;
     let outcome: ImportOutcome;
     try {
@@ -775,9 +942,10 @@ export function App() {
       if (importRun.current !== run) return;
       importRun.current = undefined;
       setImporting(undefined);
-      if (error instanceof EngineCancelled) return;
-      console.error("The import could not finish:", error);
-      setNotice(IMPORT_FAILED);
+      const cancelled = error instanceof EngineCancelled;
+      if (!cancelled) console.error("The import could not finish:", error);
+      if (await leaveEarly(cancelled ? undefined : IMPORT_FAILED)) return;
+      if (!cancelled) setNotice(IMPORT_FAILED);
       return;
     }
     // Cancelled as it landed: the list stays as it was.
@@ -786,42 +954,53 @@ export function App() {
     setImporting(undefined);
     if (isRefusal(outcome)) {
       console.warn(`The import was refused (${outcome.reason})`, outcome.log ?? "");
-      setNotice(outcome.message);
+      if (!(await leaveEarly(outcome.message))) setNotice(outcome.message);
       setOfferFor(outcome.message);
       return;
     }
     const report = reportOfImport(outcome);
-    if (report.outcome === "partial") setWaiting({ outcome, report });
+    if (openNow.current?.importing !== undefined) await landEarly(outcome, report);
+    else if (report.outcome === "partial") setWaiting({ outcome, report });
     else await keepImport(outcome, report);
   };
 
-  /** Continue with a partial import: kept and opened as it is (decision 0039). */
+  /**
+   * Continue with a partial import: kept and opened as it is (decision 0039), or, open already,
+   * kept as the person has it now (decision 0071).
+   */
   const continueImport = async () => {
     const pending = waiting;
     if (pending === undefined) return;
     setWaiting(undefined);
-    await keepImport(pending.outcome, pending.report);
+    const now = openNow.current;
+    if (now?.importing !== undefined) await adoptImport(pending.outcome, pending.report);
+    else await keepImport(pending.outcome, pending.report);
   };
 
   /**
    * Stop a partial import: nothing of it is kept. Its package was never stored, and the formats its
-   * checks dumped went as they ended (decision 0038), so there is nothing else to drop.
+   * checks dumped went as they ended (decision 0038), so there is nothing else to drop; its document,
+   * open already, goes, and the list shows.
    */
-  const stopImport = () => setWaiting(undefined);
+  const stopImport = () => {
+    setWaiting(undefined);
+    void leaveEarly();
+  };
 
   /**
    * Move a partial import's content onto a built-in template (milestone 3 second pass, item 16):
    * the bridge makes a PDF of the page its original compiles to, on the compiler's engine, while
    * the list shows its progress line, and the PDF import takes it from there, its question the
    * first time and its setting after, its reading, its review and "Create document". Nothing of
-   * the partial import is kept. A cancel while the PDF is made, or no PDF, leaves the import
-   * waiting as it was, the latter with a notice that says so.
+   * the partial import is kept, and its document, open already, goes. A cancel while the PDF is
+   * made, or no PDF, leaves the import waiting in the list, the latter with a notice that says so.
    */
   const moveImport = async () => {
     const owned = compiler.current;
     const pending = waiting;
     if (owned === undefined || pending === undefined || importRun.current !== undefined) return;
     setWaiting(undefined);
+    await leaveEarly();
     setNotice(undefined);
     setImporting({ label: MOVE_STEP });
     const files = pending.outcome.upload.files;
@@ -857,7 +1036,10 @@ export function App() {
     pdfImport.start(pageFile(made.pdf, files[0]?.name));
   };
 
-  /** Stop the import under way: its worker is terminated and starts afresh (decision 0038). */
+  /**
+   * Stop the import under way: its worker is terminated and starts afresh (decision 0038), and its
+   * document, if it is open before its checks end, goes, and the list shows.
+   */
   const cancelImport = () => {
     if (pdfImport.busy) {
       pdfImport.cancel();
@@ -868,6 +1050,7 @@ export function App() {
     importRun.current = undefined;
     setImporting(undefined);
     run.cancel();
+    void leaveEarly();
   };
 
   if (open === undefined) {
@@ -921,6 +1104,9 @@ export function App() {
   }
 
   const { id, pkg, job, lockedWords, history, present, canUndo, canRedo, stale, unsaved } = open;
+  /** Where the import the document comes from has got to, while its checks still run (decision 0071). */
+  const early = open.importing;
+  const checking = early === "locked" || early === "fields";
 
   /**
    * Apply a command to the open document. One of a visit to a field, which the overlay and the
@@ -936,6 +1122,13 @@ export function App() {
     // could not be saved over the other tab's, and would be lost on the reload. Nor does one
     // whose retype waits for its page, which is then the retype's alone (decision 0042).
     if (stale || retypeGuard.current.holds()) return;
+    // While the import's checks run, no field is typed in until they open, and no unit takes a step
+    // until the outcome says which groups are fixed (decision 0071).
+    if (early === "locked") return;
+    if (checking && command.type === "structure") {
+      setUnitNote(UNITS_WAIT);
+      return;
+    }
     const before = history.present;
     let after: EditorDocument;
     try {
@@ -1024,7 +1217,9 @@ export function App() {
    * first, its visit ending, as a click on another field ends it.
    */
   const openRetype = (part: string) => {
-    if (stale || retypeGuard.current.holds()) return;
+    // A retype is checked against a page the engine compiles, and kept only once it is (decision
+    // 0042): not while an import holds the engine, nor before the document is kept.
+    if (stale || retypeGuard.current.holds() || early !== undefined) return;
     const key = [...(retypes?.keys() ?? [])].find(
       (each) => each.toLowerCase() === part.toLowerCase(),
     );
@@ -1095,11 +1290,34 @@ export function App() {
     await showList();
   };
 
-  const back = (
-    <button type="button" onClick={() => void leave()}>
-      Documents
-    </button>
-  );
+  // A document open before its import was kept goes back to the list by the import's Cancel or
+  // its report's Stop, which keep nothing (decision 0071): a partial import's report, which waits on
+  // the person, stands where the way back does, on every screen, as the list held it before.
+  const back =
+    early === "deciding" ? (
+      waiting !== undefined && (
+        <ImportReport
+          report={waiting.report}
+          onContinue={() => void continueImport()}
+          onStop={stopImport}
+          onMove={() => void moveImport()}
+        />
+      )
+    ) : early === undefined ? (
+      <button type="button" onClick={() => void leave()}>
+        Documents
+      </button>
+    ) : (
+      <p role="status">
+        {importing?.label ?? IMPORT_STEPS.validate}…
+        {importing?.compiles === undefined
+          ? ""
+          : ` ${importing.compiles} ${importing.compiles === 1 ? "compile" : "compiles"} so far.`}{" "}
+        <button type="button" onClick={cancelImport}>
+          Cancel
+        </button>
+      </p>
+    );
 
   // Why the edits here are not being kept, when they are not: another tab's change, which a
   // reload takes in, and which leaves nothing here worth trying again; or a save that failed,
@@ -1126,7 +1344,7 @@ export function App() {
    */
   const download = async () => {
     const owned = compiler.current;
-    if (owned === undefined) return;
+    if (owned === undefined || early !== undefined) return;
     // A retype's page is the compiler's output while it is checked: never in a PDF (decision 0042).
     if (retypeGuard.current.holds()) return;
     setDownloading(true);
@@ -1163,7 +1381,7 @@ export function App() {
           [...retypes].map(([part, found]) => [part, isRetype(found) ? undefined : found.reason]),
         );
   const side = (
-    <aside inert={stale} style={{ flex: "none", width: "24rem" }}>
+    <aside inert={stale || early === "locked"} style={{ flex: "none", width: "24rem" }}>
       <Panel
         document={present}
         pkg={pkg}
@@ -1197,7 +1415,7 @@ export function App() {
    */
   const fitToPage = async () => {
     const owned = compiler.current;
-    if (owned === undefined || stale) return;
+    if (owned === undefined || stale || early !== undefined) return;
     const doc = history.present;
     /** Say what the fit came to, or nothing, as long as it is still the fit of this document. */
     const say = (note?: string) =>
@@ -1276,8 +1494,13 @@ export function App() {
   // The locked parts a click on the page opens the small editor of, by id as the page reads them,
   // and that editor, under the part's first block, while one is open (decision 0042). It checks a
   // retype against the page on screen, so it takes one only while that page is the document's.
+  // None while the document's import is under way, which takes no retype (`openRetype`).
   const retypable = new Set(
-    [...(retypes ?? [])].flatMap(([part, found]) => (isRetype(found) ? [part.toLowerCase()] : [])),
+    early !== undefined
+      ? []
+      : [...(retypes ?? [])].flatMap(([part, found]) =>
+          isRetype(found) ? [part.toLowerCase()] : [],
+        ),
   );
   const retype = retyping === undefined ? undefined : retypes?.get(retyping.part);
   const editing =
@@ -1304,8 +1527,10 @@ export function App() {
         {saving}
         {/* The report of the import this document came from: its rate, and what was left out. */}
         {importedReport?.id === id && <ImportReport report={importedReport.report} />}
+        {/* An import open before its checks end: what is open yet (decision 0071). */}
+        {checking && <p role="status">{early === "locked" ? FIELDS_LOCKED : FIELDS_OPEN}</p>}
         <p>
-          {error ?? (slow ? "Compiling…" : took)}{" "}
+          {error ?? (checking ? "" : slow ? "Compiling…" : took)}{" "}
           {/* A document another tab has changed takes no undo, as it takes no edit. */}
           <button
             type="button"
@@ -1329,7 +1554,14 @@ export function App() {
           <button
             type="button"
             onClick={() => void download()}
-            disabled={busy || downloading || stale || fitRuns || retyping?.checking === true}
+            disabled={
+              busy ||
+              downloading ||
+              stale ||
+              fitRuns ||
+              retyping?.checking === true ||
+              early !== undefined
+            }
           >
             Download PDF
           </button>
@@ -1352,6 +1584,7 @@ export function App() {
                 busy ||
                 downloading ||
                 stale ||
+                early !== undefined ||
                 (fitShown !== undefined && fitShown.note === undefined)
               }
             >
@@ -1369,7 +1602,7 @@ export function App() {
         <div ref={setSheet} style={SHEET}>
           <Pages
             pages={shown.latest.pages}
-            onField={openField}
+            {...(early === "locked" ? {} : { onField: openField })}
             retypable={retypable}
             onLocked={openRetype}
             {...(outlineOf(present.resume) === undefined ? {} : { tips: KEPT_TIPS })}

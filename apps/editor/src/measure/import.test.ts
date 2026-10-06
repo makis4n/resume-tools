@@ -587,5 +587,16 @@ describe.skipIf(!engineAvailable())("measureImport, on the engine", () => {
     expect(result.page.dumped).toBe(false);
     expect(result.page.passes).toHaveLength(2);
     expect(result.page.pages).toBe(1);
+    // It opened before the checks ended, its page drawn from their output, and every field after
+    // check 2, both before the whole (decision 0071).
+    const early = result.early;
+    if (early === undefined) throw new Error("no early times");
+    const until = (part: string) =>
+      result.parts
+        .slice(0, result.parts.findIndex((each) => each.part === part) + 1)
+        .reduce((sum, each) => sum + each.ms, 0);
+    expect(early.page).toBeGreaterThan(until("outline"));
+    expect(early.page).toBeLessThanOrEqual(early.unlocked);
+    expect(early.unlocked).toBeLessThan(until("validate"));
   }, 60_000);
 });

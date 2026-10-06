@@ -51,13 +51,17 @@ export async function importEngine(manifest: EngineManifest): Promise<CompilerEn
     compile: async (engine, format, body, options) =>
       session.compile(engine, format, body, options),
     pdf: async (job, options) => session.pdf(job, options),
-    importResume: async (files, onProgress) => {
+    importResume: async (files, onProgress, _limit, onStage) => {
       deps ??= {
         fonts: treeFonts(manifest),
         tree: readTree(manifest.files, manifest.fonts),
         treeImage: treeImages(manifest.files, treeFile),
       };
-      return importResume(files, { session, ...deps }, onProgress);
+      return importResume(
+        files,
+        { session, ...deps, ...(onStage === undefined ? {} : { onStage }) },
+        onProgress,
+      );
     },
     cancel: () => {},
     terminate: () => {},
