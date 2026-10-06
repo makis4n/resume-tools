@@ -599,6 +599,48 @@ describe("settling the candidates", () => {
     expect(found.compiles).toBe(22);
   });
 
+  test("trusts the names when one of several it names bears them out alone", async () => {
+    // Two calls move the page; a compile names the one just before the first mover, wrongly, and
+    // the first mover, rightly. One right name of the two keeps the names' trust.
+    const set = Array.from({ length: 16 }, (_, i) => candidate(`c${i + 1}-1`));
+    const movers = ["c5-1", "c11-1"];
+    const compiled: string[][] = [];
+    const compile: CompileSet = async (given) => {
+      const ids = given.map((each) => each.id);
+      compiled.push(ids);
+      const first = ids.find((id) => movers.includes(id));
+      const at = first === undefined ? -1 : ids.indexOf(first);
+      const before = at > 0 ? ids[at - 1] : undefined;
+      return {
+        broke: false,
+        same: first === undefined,
+        ...(first === undefined ? {} : { difference: "position" as const }),
+        torn: false,
+        own: new Map(
+          given.map((each, i): [string, Own] => [each.id, { ok: true, glyphs: [[0, i]] }]),
+        ),
+        ...(first === undefined ? {} : { suspects: before ? [before, first] : [first] }),
+      };
+    };
+    const found = await settle(set, compile, 64);
+    const but = (...out: string[]) => set.map((each) => each.id).filter((id) => !out.includes(id));
+    // Each compile that moves: its two names alone, then the rest as it was left.
+    expect(compiled).toEqual([
+      but(),
+      ["c4-1"],
+      ["c5-1"],
+      but("c4-1", "c5-1"),
+      ["c10-1"],
+      ["c11-1"],
+      but("c4-1", "c5-1", "c10-1", "c11-1"),
+      but("c5-1", "c11-1"),
+    ]);
+    expect(verdictsOf(found)).toMatchObject({ "c5-1": "moved alone", "c11-1": "moved alone" });
+    expect(
+      Object.values(verdictsOf(found)).filter((each) => each.startsWith("editable")),
+    ).toHaveLength(14);
+  });
+
   test("still trusts a name the candidate bears out alone", async () => {
     // Each named mover moves alone, so the names keep their trust: the named one alone, the rest.
     const set = Array.from({ length: 8 }, (_, i) => candidate(`c${i + 1}-1`, `inventedcall${i}`));
