@@ -66,7 +66,39 @@ which open as checks 1 and 2 settle them, and its entries' copy, removal and mov
 
 ### Measured
 
-To be filled in from the corpus runs.
+`corpus run` over all 220 fetched documents on a local merge of main with #111 and #112 and this
+change, never pushed, four at a time, at a one-minute load of 5.7 to 7.4, with other worktrees'
+runs beside it; it took 7.3 minutes. `corpus compare` against the before-run (`fc62298`, decision
+0066) finds every document the same, times aside: 50 successes, 60 partial, 7 refused, 103 with no
+reference; 71.9% of 82,391 words in place, 16 resumes under 50% and 53 at 90% or more; 5,817
+compiles, as before. No document is worse, in outcome or in words in place.
+
+Every one of the 110 imported resumes opened before its import ended. Times are the pipeline's,
+in Node, from the files to the stage; the browser's draw comes on top.
+
+| | Before: the whole import | The page opens | Every field open | The whole import, this run |
+|---|---|---|---|---|
+| pdfTeX, 91: under 8 s | 57 | 66 | 60 | 56 |
+| pdfTeX: median | 5.3 s | 3.8 s | 5.5 s | 6.1 s |
+| pdfTeX: slowest | 175.9 s | 61.8 s | 120.0 s | 198.9 s |
+| XeTeX, 19: under 20 s | 15 | 16 | 11 | 11 |
+| XeTeX: median | 16.5 s | 12.1 s | 17.4 s | 18.0 s |
+| XeTeX: slowest | 41.8 s | 38.1 s | 41.1 s | 48.9 s |
+
+- The machine was busier than for the before-run (load 1.7 to 4.1): the same compiles took 1,642 s
+  in all against 1,471 s, 12% more, and the slowest import 198.9 s against 175.9 s. So the
+  whole-import columns are not this change's; the early columns are best read against this run's
+  own whole import.
+- The slowest page is `altacv-0017`'s, 61.8 s here: its probe takes 40 s before the outline is
+  made, and check 1 bisects, 7 compiles of about 2 s, before its outline sets the page. On a quieter
+  machine, in a run of 23 slow and sample resumes at a load of 3.8 to 5.8, it opened at 55.4 s of
+  177.4 s, every field at 101.0 s. Next `other-0028` at 44.6 s, `moderncv-0013` at 40.9 s (whose
+  check 1 bisects 48 compiles), `awesome-cv-0033` on XeTeX at 38.1 s.
+- The page opens soon after the outline is made: on the 23 resumes of the shorter run it opened
+  0.5 to 2 s after the steps before the checks, except where check 1 bisected. What is left before
+  it is the reference, the signatures and above all the probe, which this lane does not touch.
+- Every resume opened its fields before its outcome; in two, `moderncv-0012` and `other-0030`,
+  which have no groups, check 3 has nothing to try and the outcome follows within milliseconds.
 
 ## Consequences
 
@@ -75,9 +107,8 @@ To be filled in from the corpus runs.
 - Decisions 0038 and 0039 no longer hold an import's document until the checks end: a success opens
   before it is kept, and a partial import's report shows above its page rather than in the list. The
   list still holds a partial import that the move sent back to it, as before.
-- An import whose check 1 bisects, or whose check-2 outline was compiled long before and not kept,
-  opens no earlier than check 2's end; one whose page differs where check 1 left it opens with its
-  fields.
+- An import whose check 1 bisects opens when the bisection ends, and only with its fields, after
+  check 2, where the outline check 1 leaves was not compiled as it stands or did not set the page.
 - What the person typed while check 3 ran lands with the outcome, but its steps are not undone one
   by one: the document the outcome marks starts a history of its own.
 - The early document is not in the store, so a tab closed before the import is kept loses it, as a
