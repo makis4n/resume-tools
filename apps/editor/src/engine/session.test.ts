@@ -10,6 +10,7 @@ import { bound, fastest } from "../test/timing";
 import { parseDvi } from "../tex/dvi";
 import { collectFields } from "../tex/fields";
 import { hasToUnicode, mediaBoxes, shownStrings } from "../validate/pdf";
+import { summariseLog } from "./log";
 import { ENGINE_DIR, engineAvailable, startNodeSession } from "./node";
 import {
   type Engine,
@@ -222,6 +223,127 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
     // A pass that changes nothing is the same again.
     expect(compile("Invented three", true)).toBe(1);
   }, 30_000);
+
+  describe("passes again only when a pass changed a file the next one reads", () => {
+    /**
+     * An output with its preamble's comment blanked: TeX writes the minute it ran there (" TeX
+     * output 2026.10.06:0741"), which is no part of the page, and the only bytes two compiles of
+     * one body may differ in.
+     */
+    const unstamped = (output: Uint8Array | undefined) => {
+      if (output === undefined) throw new Error("no output");
+      const copy = output.slice();
+      const length = copy[14] ?? 0;
+      copy.fill(0, 15, 15 + length);
+      return copy;
+    };
+    /**
+     * The compiles of `bodies`, one after another in one job, as the session makes them, and as
+     * it made them before passes were skipped: each pass of the same job is a compile of one pass,
+     * which starts from the files the one before left, as the next pass of a compile does, and
+     * the old loop ran `maxPasses` of them while the log asked. Each body's output from both, and
+     * its passes now.
+     */
+    const both = (
+      format: string,
+      bodies: string[],
+      files?: Record<string, string>,
+      engine: Engine = "pdftex",
+    ) => {
+      const now = bodies.map((body) => {
+        const compiled = session.compile(engine, format, body, { job: "skip", files });
+        expect(compiled.error).toBeUndefined();
+        return compiled;
+      });
+      session.forget("skip");
+      const before = bodies.map((body, i) => {
+        let last: ReturnType<EngineSession["compile"]> | undefined;
+        let pass = 0;
+        for (; pass < 3; pass++) {
+          const once = { job: "skip", files, maxPasses: 1 };
+          last = session.compile(engine, format, body, once);
+          expect(last.error).toBeUndefined();
+          // The old loop passed again while the log asked, and after a new document's first.
+          const fresh = i === 0 && pass === 0;
+          if (!fresh && !summariseLog(last.log).rerun) break;
+        }
+        return { output: last?.output, passes: Math.min(pass + 1, 3) };
+      });
+      session.forget("skip");
+      return bodies.map((_, i) => ({
+        passes: now[i]?.passes.length,
+        before: before[i]?.passes,
+        same: Buffer.compare(unstamped(now[i]?.output), unstamped(before[i]?.output)) === 0,
+      }));
+    };
+
+    it.each(["pdftex", "xetex"] as const)(
+      "skips the pass biblatex asks for on every pass, for Biber, which the engine never runs, on %s",
+      (engine) => {
+        // Whole documents from the engine's own format, as XeTeX's formats hold no native font.
+        const files = { "invented.bib": "@misc{invented, title={Invented Title}}" };
+        const body = (words: string) =>
+          `\\documentclass{article}\\usepackage{biblatex}\\addbibresource{invented.bib}\\begin{document}${words} \\cite{invented}.\\printbibliography\\end{document}`;
+        // A new document's two, where the log asked for three: its second pass changes only
+        // biblatex's note of the .bbl's checksum in the .aux, from nohash, and the .bcf for Biber,
+        // neither of which changes a page. Then each edit in one.
+        expect(
+          both(
+            "stock",
+            [body("Invented words"), body("Other words"), body("Third words")],
+            files,
+            engine,
+          ),
+        ).toEqual([
+          { passes: 2, before: 3, same: true },
+          { passes: 1, before: 3, same: true },
+          { passes: 1, before: 3, same: true },
+        ]);
+      },
+      60_000,
+    );
+
+    it("keeps the second pass a cross-reference needs, and skips the third", () => {
+      session.dump(
+        "pdftex",
+        "refs",
+        "\\documentclass{article}\n\\usepackage{biblatex}\n\\addbibresource{invented.bib}",
+      );
+      const files = { "invented.bib": "@misc{invented, title={Invented Title}}" };
+      // The reference comes before its label, so only the pass after the label's .aux sets it.
+      const body = (extra: string) =>
+        String.raw`\begin{document}See section~\ref{later}.${extra}\section{Later}\label{later}Invented~\cite{invented}.\end{document}`;
+      const first = body("");
+      const moved = body("\\section{Earlier}Inserted.");
+      const settled = session.compile("pdftex", "refs", first, { job: "settled", files });
+      expect(settled.passes).toHaveLength(2);
+      const edited = session.compile("pdftex", "refs", moved, { job: "settled" });
+      // The label's number changed in the .aux, so the edit takes its second pass, and biblatex's
+      // request after it, with nothing changed, no third. The second sets what the first did not.
+      expect(edited.passes).toHaveLength(2);
+      const once = session.compile("pdftex", "refs", first, { job: "settled", maxPasses: 1 });
+      const twice = session.compile("pdftex", "refs", first, { job: "settled" });
+      expect(Buffer.compare(unstamped(once.output), unstamped(twice.output))).not.toBe(0);
+      session.forget("settled");
+      expect(both("refs", [first, moved, first, first], files)).toEqual([
+        { passes: 2, before: 3, same: true },
+        { passes: 2, before: 3, same: true },
+        { passes: 2, before: 3, same: true },
+        { passes: 1, before: 3, same: true },
+      ]);
+    }, 60_000);
+
+    it("passes again for a log that asks while a pass changes a file, up to the passes allowed", () => {
+      // A label that moves on every pass changes the .aux on every pass, and LaTeX asks again.
+      session.dump("pdftex", "restless", "\\documentclass{article}");
+      const body = String.raw`\begin{document}\makeatletter\newcounter{n}%
+\@ifundefined{r@n}{}{\setcounter{n}{\expandafter\expandafter\expandafter\@car\csname r@n\endcsname\@nil}}%
+\refstepcounter{n}\label{n}Invented \ref{n}.\makeatother\end{document}`;
+      const compiled = session.compile("pdftex", "restless", body, { job: "restless" });
+      expect(compiled.error).toBeUndefined();
+      expect(compiled.passes).toHaveLength(3);
+    }, 60_000);
+  });
 
   it("drops a format, which a job compiled with it meets afresh when it is made again", () => {
     session.dump("pdftex", "dropped", PREAMBLE);

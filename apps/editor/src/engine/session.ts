@@ -117,6 +117,32 @@ const ENV: Record<string, string> = {
   half_error_line: "238",
 };
 
+/**
+ * Files of a job's folder that TeX writes for other programs and never reads, so that a pass that
+ * changes one has changed nothing the next pass reads: biblatex's control file for Biber, and the
+ * requests for other programs that biblatex's logreq writes for latexmk.
+ */
+const UNREAD = ["bcf", "run.xml"];
+
+/**
+ * Lines of a `.aux` that the next pass reads but that cannot change its page: biblatex's note of
+ * the `.bbl`'s checksum and of its request for Biber, which it reads only to ask for Biber again,
+ * in its log and its `.run.xml`, when the `.bbl` has not changed since it last asked
+ * (`\blx@check@bbl@rerun@mdfivesum`). The checksum's line changes from `nohash`, written when
+ * the `.aux` read had none, to `nobblfile` or the `.bbl`'s checksum on the pass after, which
+ * would otherwise cost every compile of a document with biblatex a pass that sets the same page.
+ */
+const PAGELESS_AUX_LINE = /^\\abx@aux@read@(?:bbl@mdfivesum\{[^{}\n]*\}|bblrerun)\r?\n?/gm;
+
+/** Bytes as text, one character a byte, which keeps any two that differ apart. */
+const LATIN1 = new TextDecoder("latin1");
+
+const sameBytes = (a: Uint8Array, b: Uint8Array) => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
+
 /** The start of the heap restored after every run; all of the engine's state fits in it. */
 const HEADER_BYTES = 2 ** 26;
 
@@ -322,8 +348,9 @@ export interface CompileOptions {
   job?: string;
   /**
    * Passes at most, a whole number from 1, and 3 by default. A pass is repeated when the document
-   * is new or the log asks for one, and the retry as a new document takes its passes from the same
-   * budget.
+   * is new or the log asks for one, and only when it changed a file of the job's folder, its log
+   * and its output aside: a pass that changed nothing the next would read would set the same page
+   * again (decision 00XX). The retry as a new document takes its passes from the same budget.
    */
   maxPasses?: number;
   /**
@@ -350,7 +377,7 @@ export interface CompileOptions {
    * changed nothing it could read would be the same again, so none follows it. The import
    * pipeline's probe asks for it (decision 0022), since its compiles start from the auxiliary
    * files its baseline wrote rather than as new documents; the editor's own compiles take the
-   * log's word, as a LaTeX user does.
+   * log's word, as a LaTeX user does, though only when the pass changed a file.
    */
   rerunOnChange?: boolean;
 }
@@ -784,7 +811,11 @@ export class EngineSession {
    * Compile a body from a format: `stock` for the engine's own, or a name given to `dump` or
    * `putFormat`. The body is everything the format does not hold, usually from
    * `\begin{document}` on. A new document gets a second pass, since the first writes the
-   * auxiliary files the second reads, and any pass is repeated when the log asks for it.
+   * auxiliary files the second reads, and any pass is repeated when the log asks for it, but only
+   * a pass that changed a file of the job's folder: one that left every file the next would read
+   * as it found them would set the same page again (decision 00XX). biblatex's log asks on every
+   * pass for Biber and a rerun after it, which no pass meets, since the engine runs no Biber; with
+   * nothing changed, an edit of such a document takes one pass, not the most allowed.
    *
    * TeX reads a document's old auxiliary files before it writes new ones, so a bad line in any of
    * them (the .aux, an included part's .aux, the .toc) stops every later compile. A log cannot
@@ -986,9 +1017,16 @@ export class EngineSession {
   }
 
   /**
-   * Compile a job's body once, and again while it is new or its log asks, or, with `onChange`,
-   * while a pass changes a file of its folder, with `fonts`, when given, as fontconfig's
-   * configuration in the job's folder.
+   * Compile a job's body once, and again while a pass changes a file of its folder, its output and
+   * log aside, and the document is new, or its log asks, or `onChange` is given; with `fonts`, when
+   * given, as fontconfig's configuration in the job's folder.
+   *
+   * TeX reads nothing a pass can change but the files of the job's folder: the body, the format and
+   * the tree stay as they were. So a pass after one that left every file of the folder as it found
+   * them reads what that one read and sets the same page, whatever its log asked for, and is not
+   * run. Each pass therefore compares the folder's bytes before and after it, but for the files
+   * TeX writes for other programs and never reads (`UNREAD`) and the lines of a `.aux` that cannot
+   * change a page (`PAGELESS_AUX_LINE`).
    */
   private passes(
     spec: EngineSpec,
@@ -1015,7 +1053,7 @@ export class EngineSession {
       // What an earlier pass wrote must not pass for what this one did.
       this.removeTree(at(spec.output));
       this.removeTree(at("log"));
-      const before = onChange ? this.contentsOf(folder) : undefined;
+      const before = this.contentsOf(folder);
       run = this.run([spec.program, ...spec.args, "--fmt", formatPath, `${job}.tex`], folder);
       passes.push(run.ms);
       if (run.cpuMs === undefined) cpuPasses = undefined;
@@ -1024,12 +1062,10 @@ export class EngineSession {
       // Only a pass that shipped pages is worth another: one that failed, or that TeX finished
       // with nothing to ship, would do the same again.
       const shipped = run.code === 0 && this.engine.FS.analyzePath(at(spec.output)).exists;
-      const changed =
-        before !== undefined &&
-        shipped &&
-        this.changedSince(folder, before, [at(spec.output), at("log")]);
-      const again =
-        shipped && ((fresh && passes.length === 1) || summariseLog(log).rerun || changed);
+      const aside = [at(spec.output), at("log"), ...UNREAD.map(at)];
+      const changed = shipped && this.changedSince(folder, before, aside);
+      const asked = onChange || (fresh && passes.length === 1) || summariseLog(log).rerun;
+      const again = changed && asked;
       if (!again || passes.length >= maxPasses) break;
     }
     const summary = summariseLog(log);
@@ -1078,7 +1114,8 @@ export class EngineSession {
 
   /**
    * Whether a file below a folder, but those at `aside`, is not as `before` had it: new, gone, or
-   * holding other bytes.
+   * holding other bytes, but for the lines of a `.aux` that cannot change a page
+   * (`PAGELESS_AUX_LINE`).
    */
   private changedSince(
     folder: string,
@@ -1090,8 +1127,11 @@ export class EngineSession {
     for (const path of before.keys()) if (!aside.includes(path) && !after.has(path)) return true;
     for (const [path, bytes] of after) {
       const was = before.get(path);
-      if (was === undefined || was.length !== bytes.length) return true;
-      for (let i = 0; i < bytes.length; i++) if (was[i] !== bytes[i]) return true;
+      if (was === undefined) return true;
+      if (sameBytes(was, bytes)) continue;
+      if (!path.endsWith(".aux")) return true;
+      const read = (aux: Uint8Array) => LATIN1.decode(aux).replace(PAGELESS_AUX_LINE, "");
+      if (read(was) !== read(bytes)) return true;
     }
     return false;
   }

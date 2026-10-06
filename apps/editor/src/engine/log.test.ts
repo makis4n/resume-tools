@@ -52,6 +52,13 @@ describe("summariseLog", () => {
     expect(
       summariseLog("Package longtable Warning: Table widths have changed. Rerun LaTeX.").rerun,
     ).toBe(true);
+    // biblatex asks on every pass, for Biber and a pass after it, as \MessageBreak breaks it.
+    const biber = [
+      "Package biblatex Warning: Please (re)run Biber on the file:",
+      "(biblatex)                doc",
+      "(biblatex)                and rerun LaTeX afterwards.",
+    ].join("\n");
+    expect(summariseLog(biber).rerun).toBe(true);
     expect(summariseLog("LaTeX Warning: There were undefined references.").rerun).toBe(false);
     expect(
       summariseLog(
