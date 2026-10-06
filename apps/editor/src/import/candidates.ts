@@ -39,7 +39,7 @@
  * never nest: a field holds no candidate, and one that would is a container or raw, never wrapped.
  */
 
-import type { Argument, Node, RawWhy, Span, Tree } from "./parse";
+import { ALIGNMENTS, type Argument, type Node, type RawWhy, type Span, type Tree } from "./parse";
 import { storedTargets, type TemplateMacro } from "./signatures";
 
 /** What a candidate is. */
@@ -94,8 +94,9 @@ export interface RawChunk extends Span {
 
 /**
  * Commands that set no glyph, which a raw chunk of them alone cannot explain one by: spaces,
- * breaks, sizes, font switches, colours, rules and the page's layout. What else a raw chunk
- * holds may set glyphs, as mathematics, typewriter text or `\today` do.
+ * breaks, sizes, font switches, colours, rules, the page's layout, and the marks that end a table's
+ * rows or stand between them (`parse.ts`). What else a raw chunk holds may set glyphs, as
+ * mathematics, typewriter text or `\today` do.
  */
 const SETS_NOTHING: ReadonlySet<string> = new Set([
   ...["vspace", "hspace", "vskip", "hskip", "kern", "\\", "newline", "linebreak", "par"],
@@ -107,6 +108,9 @@ const SETS_NOTHING: ReadonlySet<string> = new Set([
   ...["addtolength", "label", "phantomsection", "pagestyle", "thispagestyle", "rule", "hrule"],
   ...["vrule", "hline", "quad", "qquad", "enskip", "enspace", "thinspace", ",", ";", " "],
   ...["columnbreak", "vfilneg", "strut", "leavevmode", "relax", "ignorespaces", "unskip"],
+  ...["tabularnewline", "cline", "toprule", "midrule", "bottomrule", "cmidrule", "addlinespace"],
+  ...["specialrule", "morecmidrules", "hhline", "rowcolor", "endhead", "endfirsthead", "endfoot"],
+  ...["endlastfoot"],
 ]);
 
 /** Whether a raw chunk may set glyphs of its own, and so explain some no field covers. */
@@ -149,11 +153,15 @@ function holdsStructure(nodes: readonly Node[]): boolean {
   });
 }
 
-/** Whether nodes hold a raw chunk anywhere in them, through groups and blocks. */
+/**
+ * Whether nodes hold a raw chunk anywhere in them, through groups and blocks; or an alignment's
+ * cells, whose `&` a field must never span, so that each cell is a candidate of its own.
+ */
 function holdsRaw(nodes: readonly Node[]): boolean {
   return nodes.some(
     (node) =>
       node.kind === "raw" ||
+      (node.kind === "block" && ALIGNMENTS.has(node.name)) ||
       ((node.kind === "group" || node.kind === "block") && holdsRaw(node.content)),
   );
 }

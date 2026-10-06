@@ -100,6 +100,34 @@ Invented paragraph words.`,
     expect(raw.map((chunk) => tree.source.slice(chunk.start, chunk.end))).toEqual(["$|$"]);
   });
 
+  test("take a table's cells as paragraphs, and its rows' marks as raw chunks that set nothing", () => {
+    const tree = treeOf(
+      String.raw`\inventedpost{\begin{tabular}{ll}\hline Invented & Words \\ \cline{1-2} \multicolumn{2}{r}{Spanning} \\ \end{tabular}}`,
+    );
+    const { candidates, raw } = candidatesOf(tree);
+    expect(candidates.map(summary)).toEqual([
+      { id: "c1-1", kind: "argument", name: "inventedpost", index: 1, text: "", unprobed: "raw" },
+      { id: "t1", kind: "paragraph", name: "", text: "Invented", within: "c1-1" },
+      { id: "t2", kind: "paragraph", name: "", text: "Words", within: "c1-1" },
+      { id: "t3", kind: "paragraph", name: "", text: "Spanning", within: "c1-1" },
+    ]);
+    // A cell's markers go around its text alone, the & and the row's end outside them.
+    expect(marked(tree.source, candidates.slice(1))).toBe(
+      String.raw`\inventedpost{\begin{tabular}{ll}\hline \rtfield{t1}{Invented} & \rtfield{t2}{Words} \\ \cline{1-2} \multicolumn{2}{r}{\rtfield{t3}{Spanning}} \\ \end{tabular}}`,
+    );
+    // Only the spanning command, whose text is placed inside it, may set glyphs of its own.
+    expect(raw.map((chunk) => chunk.name)).toEqual(["multicolumn"]);
+    // A table of one row, with no mark to keep, is still its cells, never one field across the &.
+    const row = candidatesOf(
+      treeOf(String.raw`\inventedpost{\begin{tabular}{ll} Invented & Words\end{tabular}}`),
+    );
+    expect(row.candidates.map(summary)).toEqual([
+      { id: "c1-1", kind: "argument", name: "inventedpost", index: 1, text: "", unprobed: "raw" },
+      { id: "t1", kind: "paragraph", name: "", text: "Invented", within: "c1-1" },
+      { id: "t2", kind: "paragraph", name: "", text: "Words", within: "c1-1" },
+    ]);
+  });
+
   test("take one that holds structure as a container, whose parts are candidates of their own", () => {
     const tree = treeOf(
       String.raw`\inventedentry{Invented role}{\begin{inventeditems}{Invented heading}
