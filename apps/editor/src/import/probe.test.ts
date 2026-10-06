@@ -336,6 +336,105 @@ describe("settling the candidates", () => {
       "t2",
     ]);
   });
+
+  test("orders the probe's kinds that hold the most words first, each kind's in the source's order", () => {
+    const words = (n: number) => Array.from({ length: n }, () => "Invented").join(" ");
+    const set = [
+      candidate("c1-1", "inventedshort", 1, { text: words(2) }),
+      candidate("c1-2", "inventedlong", 2, { text: words(5) }),
+      candidate("c2-1", "inventedshort", 1, { text: words(2) }),
+      candidate("c2-2", "inventedlong", 2, { text: words(4) }),
+      candidate("c3-1", "inventedtie", 1, { text: words(4) }),
+      candidate("c4-1", "inventedempty", 1, { text: "", empty: true }),
+      candidate("c5-1", "inventedother", 1, { text: words(4) }),
+    ];
+    // inventedlong 9 words, then the three kinds of 4 in the order each first came, the empty one
+    // last.
+    expect(probeOrder(set, undefined, true).map((each) => each.id)).toEqual([
+      "c1-2",
+      "c2-2",
+      "c1-1",
+      "c2-1",
+      "c3-1",
+      "c5-1",
+      "c4-1",
+    ]);
+    // The same candidates in the same source order give the same order every time.
+    expect(probeOrder(set, undefined, true).map((each) => each.id)).toEqual(
+      probeOrder([...set], undefined, true).map((each) => each.id),
+    );
+    // The checks' bisections keep each kind where it first came in the source.
+    expect(probeOrder(set).map((each) => each.id)).toEqual([
+      "c1-1",
+      "c2-1",
+      "c1-2",
+      "c2-2",
+      "c3-1",
+      "c4-1",
+      "c5-1",
+    ]);
+  });
+
+  test("spends the budget on the kinds with the most words, and leaves the fewest untested", async () => {
+    // Four short kinds come first in the source, each of whose calls stops a compile, and one long
+    // kind last that passes: in the source's order the budget would go to the short ones.
+    const short = Array.from({ length: 4 }, (_, i) =>
+      candidate(`c${i + 1}-1`, `inventedshort${i}`, 1, { text: "Invented" }),
+    );
+    const long = Array.from({ length: 6 }, (_, i) =>
+      candidate(`c${i + 5}-1`, "inventedlong", 1, {
+        text: "Invented words for an invented line of a long invented entry",
+      }),
+    );
+    const behaviours = Object.fromEntries(short.map((each) => [each.id, "breaks" as const]));
+    const inSource = await settle([...short, ...long], engine(behaviours).compile, 4);
+    const ordered = await settle(
+      probeOrder([...short, ...long], undefined, true),
+      engine(behaviours).compile,
+      4,
+    );
+    const editable = (found: Awaited<ReturnType<typeof settle>>) =>
+      [...found.verdicts].filter(([, each]) => each.verdict === "editable").map(([id]) => id);
+    expect(editable(inSource)).toEqual([]);
+    expect(editable(ordered).sort()).toEqual(long.map((each) => each.id).sort());
+    expect(ordered.compiles).toBeLessThanOrEqual(4);
+    const untested = [...ordered.verdicts].filter(([, each]) => each.verdict === "untested");
+    expect(untested.every(([id]) => short.some((each) => each.id === id))).toBe(true);
+  });
+
+  test.each([
+    ["holds no word, after the rest", ""],
+    ["holds fewer words than the rest, after the rest's first compile", "Invented"],
+  ])("tries a kind held apart that %s", async (_, text) => {
+    // Calls of one kind each move the page alone, and the first is found alone first; the others
+    // of its kind are held apart, and the long kind is the rest of the set.
+    const movers = Array.from({ length: 6 }, (_, i) =>
+      candidate(`c${i + 1}-1`, "inventedgap", 1, { text, empty: text === "" }),
+    );
+    const long = Array.from({ length: 4 }, (_, i) =>
+      candidate(`c${i + 7}-1`, "inventedlong", 1, {
+        text: "Invented words for an invented line of a long invented entry",
+      }),
+    );
+    const behaviours = Object.fromEntries(movers.map((each) => [each.id, "moves" as const]));
+    const set = probeOrder([...movers, ...long], undefined, true);
+    const editable = (found: Awaited<ReturnType<typeof settle>>) =>
+      long.filter((each) => found.verdicts.get(each.id)?.verdict === "editable").length;
+    // Held apart first, the movers take the budget one by one and the long kind is left.
+    const heldFirst = engine(behaviours, true);
+    const before = await settle(set, heldFirst.compile, 6);
+    expect(editable(before)).toBe(0);
+    // The long kind's compile comes before the movers', which settles it.
+    const wordsFirst = engine(behaviours, true);
+    const after = await settle(set, wordsFirst.compile, 6, undefined, true);
+    expect(editable(after)).toBe(4);
+    expect(after.compiles).toBeLessThanOrEqual(6);
+    // With the budget to settle everything, the order changes no verdict.
+    const all = await settle(set, engine(behaviours, true).compile, 64);
+    const allWordsFirst = await settle(set, engine(behaviours, true).compile, 64, undefined, true);
+    expect(verdictsOf(allWordsFirst)).toEqual(verdictsOf(all));
+    expect(allWordsFirst.compiles).toBe(all.compiles);
+  });
 });
 
 /** An invented candidate with a verdict. */

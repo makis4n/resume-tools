@@ -29,7 +29,8 @@
  * its own; a set whose compile stops, or whose output moves with no candidate's markers to say
  * why, is split until a single candidate fails alone (`settle`); and every editable candidate is
  * then compiled together, as item 7 marks them, and one that fails beside the others is locked. A
- * document has a budget of 64 compiles, after which what is left is `untested`. The verdicts are
+ * document has a budget of 64 compiles, spent on the kinds that hold the most words first
+ * (`probeOrder`), after which what is left is `untested`. The verdicts are
  * gathered per macro and argument, per environment and argument, and per kind of standard node
  * (`aggregate`), which is what item 6 describes and item 7 assembles from. The glyphs of the
  * reference no editable field covers are the uncovered runs, each set down, by where in the source
@@ -234,10 +235,18 @@ export function kindOf(candidate: Candidate, owners: ReadonlyMap<string, Candida
   ].join("|");
 }
 
+/** A text's words, as the report counts them: runs of letters and digits. */
+const wordCount = (text: string) => (text.match(/[\p{L}\p{N}]+/gu) ?? []).length;
+
+/** The words of a set of candidates' texts. */
+const wordsIn = (set: readonly Candidate[]) =>
+  set.reduce((sum, each) => sum + wordCount(each.text), 0);
+
 /**
  * The verdict of each candidate, from compiles of sets of them (`compile`), within `budget`
  * compiles. The candidates come in the order their sets are split along: kinds together, each
- * kind's in the order of the source (`probeOrder`).
+ * kind's in the order of the source (`probeOrder`), the probe's kinds that hold the most words
+ * first.
  *
  * A set is compiled whole. What a candidate's own markers and glyphs show is its own, whatever
  * else the set holds (`Own`): markers that never came, came twice, or went into a special, a
@@ -262,12 +271,20 @@ export function kindOf(candidate: Candidate, owners: ReadonlyMap<string, Candida
  * of them may fail that passed apart; the bisection leaves the budget's last compile to it when
  * there are editable candidates no compile has passed together. What the budget leaves is
  * `untested`.
+ *
+ * The kinds held apart are tried before the rest of the set. With `wordsFirst`, as the probe
+ * settles (decision 00XX), the rest's first compile comes before them when the rest holds more
+ * words than each, and a kind held apart whose candidates hold no word waits for the rest, since
+ * the budget it would take one candidate at a time wins no word back. Either way the same sets are
+ * compiled when the budget does not run out, so the verdicts are the same: the order decides only
+ * what the budget leaves.
  */
 export async function settle(
   candidates: readonly Candidate[],
   compile: CompileSet,
   budget: number,
   owners: ReadonlyMap<string, Candidate> = new Map(candidates.map((each) => [each.id, each])),
+  wordsFirst = false,
 ): Promise<Settlement> {
   const verdicts: Settlement["verdicts"] = new Map();
   const evidence = new Map<string, GlyphPlace[]>();
@@ -398,12 +415,17 @@ export async function settle(
     while (quarantine && set.length > 1) {
       const held = set.filter((each) => failing.has(kind(each)));
       if (held.length === 0) break;
+      if (wordsFirst) return apart(set, held);
       for (const group of byKind(held)) await testKind(group);
       set = open(set);
     }
     if (set.length === 0) return;
     const result = await run(set);
-    if (result === undefined) return;
+    if (result !== undefined) await judge(set, result);
+  };
+
+  /** What a compile of a set shows of its candidates, and the compiles it then takes. */
+  const judge = async (set: readonly Candidate[], result: SetResult): Promise<void> => {
     const only = set.length === 1 ? set[0] : undefined;
     if (only !== undefined) {
       const { verdict, detail } = alone(result, only);
@@ -431,6 +453,28 @@ export async function settle(
     else await split(set, result, true);
   };
 
+  /**
+   * A set some of whose kinds are held apart, with `wordsFirst`. The rest's first compile comes
+   * first when the rest holds more words than each kind held apart, since a rest that passes is
+   * settled by it whatever the budget leaves; then each kind held apart that holds a word, tried
+   * among themselves; then what the rest's compile showed, and the compiles it takes; then the
+   * kinds held apart that hold no word. The compiles are the ones the kinds held apart first would
+   * take, in another order.
+   */
+  const apart = async (set: readonly Candidate[], held: readonly Candidate[]) => {
+    const rest = set.filter((each) => !held.includes(each));
+    const groups = byKind(held);
+    const empty = groups.filter((group) => wordsIn(group) === 0);
+    const full = groups.filter((group) => !empty.includes(group));
+    const ahead = rest.length > 0 && full.every((group) => wordsIn(rest) > wordsIn(group));
+    const first = ahead ? await run(rest) : undefined;
+    for (const group of full) await testKind(group);
+    if (!ahead) await test(rest);
+    else if (first !== undefined) await judge(rest, first);
+    for (const group of empty) await testKind(group);
+    const left = open(set);
+    if (left.length > 0 && left.length < set.length) await test(left);
+  };
   /** A kind one of which stopped a compile or moved its glyphs alone, tried among themselves. */
   const testKind = async (group: readonly Candidate[]) => {
     const set = open(group);
@@ -535,20 +579,28 @@ export async function settle(
 /**
  * The order `settle` splits candidates along: kinds together, in the order each kind first comes
  * in the source, and each kind's candidates in the source's order, the body's before the
- * preamble's calls.
+ * preamble's calls. With `wordsFirst`, as the probe takes them (decision 00XX), the kinds whose
+ * candidates' text holds the most words come first, kinds of as many words in the order each first
+ * came: the bisection tries its first half before its second, so what the budget leaves
+ * `untested` is the last kinds, the ones with the fewest words. The checks' bisections keep the
+ * source's order.
  */
 export function probeOrder(
   candidates: readonly Candidate[],
   owners: ReadonlyMap<string, Candidate> = new Map(candidates.map((each) => [each.id, each])),
+  wordsFirst = false,
 ): Candidate[] {
-  const kinds = new Map<string, Candidate[]>();
+  const kinds = new Map<string, { words: number; first: number; members: Candidate[] }>();
   for (const candidate of candidates) {
     const name = kindOf(candidate, owners);
-    const list = kinds.get(name) ?? [];
-    list.push(candidate);
-    kinds.set(name, list);
+    const group = kinds.get(name) ?? { words: 0, first: kinds.size, members: [] };
+    group.members.push(candidate);
+    group.words += wordCount(candidate.text);
+    kinds.set(name, group);
   }
-  return [...kinds.values()].flat();
+  const groups = [...kinds.values()];
+  if (wordsFirst) groups.sort((a, b) => b.words - a.words || a.first - b.first);
+  return groups.flatMap((group) => group.members);
 }
 
 // Reading a compile.
@@ -1711,7 +1763,7 @@ export async function probe(
 
     const settlement =
       baseline === undefined
-        ? await settle(probeOrder(probed, owners), compileSet, budget, owners)
+        ? await settle(probeOrder(probed, owners, true), compileSet, budget, owners, true)
         : { verdicts: new Map(), evidence: new Map<string, GlyphPlace[]>(), compiles: 0 };
     session.forget(job);
 
