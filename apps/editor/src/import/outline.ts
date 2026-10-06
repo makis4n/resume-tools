@@ -305,6 +305,40 @@ interface Spot {
   part: Extract<OutlinePart, { kind: "text" | "rich" }>;
 }
 
+/**
+ * Why the outline makes no field of a candidate the probe found editable, which the report counts
+ * as `shape`, by the rule that declined it, for the corpus's diagnostics (decision 00XX). Each is a
+ * rule the outline already keeps; naming it changes nothing it writes.
+ *
+ * - `empty`: the candidate spans nothing.
+ * - `marked-in-part`: a text of the tree crosses its edge, so that a marker would hold part of it.
+ * - `several-paragraphs`: a text's source ends a paragraph, with `\par` or a blank line.
+ * - `line-break`: a text's source breaks a line, with `\\`, `\newline` or `\linebreak`.
+ * - `no-text`: it holds no text of the tree; `blank`: its texts are spaces alone.
+ * - `overlaps`: its text overlaps a field placed before it.
+ * - `cut-by-unit`: a group's unit begins or ends inside it.
+ * - `after-escape`: the kept text before it ends in a backslash that would take its marker.
+ * - `passed`: the outline had written past where it begins.
+ * - `outside-setter`: a preamble's candidate in no call that stores a header's text;
+ *   `no-preamble`: one where the outline has no preamble to write it in.
+ */
+export type ShapeRule =
+  | "empty"
+  | "marked-in-part"
+  | "several-paragraphs"
+  | "line-break"
+  | "no-text"
+  | "blank"
+  | "overlaps"
+  | "cut-by-unit"
+  | "after-escape"
+  | "passed"
+  | "outside-setter"
+  | "no-preamble";
+
+/** Notes why the outline made no field of a candidate, by its id; the first rule noted holds. */
+type Note = (candidate: string, rule: ShapeRule) => void;
+
 /** Whether a text holds something to set: a field of spaces alone is written as nothing. */
 const holdsText = (text: string) => text.trim() !== "";
 
@@ -316,6 +350,9 @@ const holdsText = (text: string) => text.trim() !== "";
 const breaksLine = (latex: string) =>
   /\\\\|\\(?:newline|linebreak|par)(?![A-Za-z@])|\n[ \t]*\r?\n/.test(latex);
 
+/** Whether a source that breaks its line (`breaksLine`) ends a paragraph, as `\par` or a blank line. */
+const endsParagraph = (latex: string) => /\\par(?![A-Za-z@])|\n[ \t]*\r?\n/.test(latex);
+
 /**
  * The fields of a source: each editable candidate's leaves where they stand (the module's comment),
  * in the order of the source. A leaf that holds the candidate's whole span, as a text whose braces
@@ -323,16 +360,21 @@ const breaksLine = (latex: string) =>
  * leaf that crosses its edge leaves the candidate kept text, and so does one whose source breaks a
  * line (`breaksLine`). A leaf of spaces alone is kept, since a blank field is written as nothing. A field's span runs past the spaces TeX skipped after a
  * leaf that ends in a control word, up to the next field, so that none is set after its marker.
+ * Why a candidate gets no field is noted (`note`), which changes nothing found.
  */
 function spotsOf(
   source: string,
   leaves: readonly Leaf[],
   candidates: readonly Candidate[],
+  note: Note = () => {},
 ): Spot[] {
   const found: Omit<Spot, "end">[] = [];
   const sorted = [...candidates].sort((a, b) => a.start - b.start || a.end - b.end);
   for (const candidate of sorted) {
-    if (candidate.empty || candidate.end <= candidate.start) continue;
+    if (candidate.empty || candidate.end <= candidate.start) {
+      note(candidate.id, "empty");
+      continue;
+    }
     const touching = leaves.filter(
       (leaf) => leaf.end > candidate.start && leaf.start < candidate.end,
     );
@@ -343,13 +385,22 @@ function spotsOf(
     if (holding !== undefined) chosen = [holding];
     else if (touching.every((leaf) => leaf.start >= candidate.start && leaf.end <= candidate.end))
       chosen = touching;
-    else continue;
-    if (chosen.some((leaf) => breaksLine(source.slice(leaf.start, leaf.end)))) continue;
+    else {
+      note(candidate.id, "marked-in-part");
+      continue;
+    }
+    const broken = chosen.filter((leaf) => breaksLine(source.slice(leaf.start, leaf.end)));
+    if (broken.length > 0) {
+      const paragraphs = broken.some((leaf) => endsParagraph(source.slice(leaf.start, leaf.end)));
+      note(candidate.id, paragraphs ? "several-paragraphs" : "line-break");
+      continue;
+    }
     const own = chosen.filter((leaf) =>
       leaf.kind === "date"
         ? holdsText(leaf.text)
         : holdsText(leaf.runs.map((run) => run.text).join("")),
     );
+    if (own.length === 0) note(candidate.id, chosen.length === 0 ? "no-text" : "blank");
     own.forEach((leaf, k) => {
       const id = own.length === 1 ? candidate.id : `${candidate.id}-p${k + 1}`;
       // An argument given as one token, without braces, takes braces of its own with its marker.
@@ -366,7 +417,10 @@ function spotsOf(
   let reach = -1;
   found.forEach((spot, i) => {
     // Leaves never overlap; one that would is left kept text.
-    if (spot.start < reach) return;
+    if (spot.start < reach) {
+      note(spot.candidate, "overlaps");
+      return;
+    }
     const next = found[i + 1]?.start ?? source.length;
     const end = wrapEnd(source, spot.leafEnd, Math.max(spot.leafEnd, next));
     spots.push({ ...spot, end });
@@ -418,6 +472,9 @@ interface Writer {
   made: { groups: number; units: number };
   /** Each group written, by its id, and its units' spans in the source. */
   placed: Map<string, readonly Unit[]>;
+  /** The spots `partsIn` came to, written or not, and why one was not (`Note`). */
+  seen: Set<Spot>;
+  note: Note;
 }
 
 /**
@@ -473,10 +530,17 @@ function partsIn(
   for (const step of steps) {
     if (step.kind === "spot") {
       const { spot } = step;
-      if (spot.start < at) continue;
+      writer.seen.add(spot);
+      if (spot.start < at) {
+        writer.note(spot.candidate, "passed");
+        continue;
+      }
       keep(spot.start);
       const last = parts.at(-1);
-      if (last?.kind === "kept" && endsEscaping(last.latex)) continue;
+      if (last?.kind === "kept" && endsEscaping(last.latex)) {
+        writer.note(spot.candidate, "after-escape");
+        continue;
+      }
       parts.push(spot.part);
       writer.written.set(spot.candidate, writer.written.get(spot.candidate) ?? spot.id);
       at = spot.end;
@@ -563,6 +627,11 @@ export interface Outline {
   groups: ReadonlyMap<string, readonly Unit[]>;
   /** How many fields, groups and units it holds. */
   counts: { fields: number; groups: number; units: number };
+  /**
+   * Each candidate the probe found editable, and the checks did not keep, that is no field, by its
+   * id, and the rule that declined it (`ShapeRule`): what the report counts as `shape`.
+   */
+  declined: ReadonlyMap<string, ShapeRule>;
 }
 
 /** How many fields an outline's parts hold, groups' among them. */
@@ -591,6 +660,11 @@ export function buildOutline(input: OutlineInput): Outline {
   const count = { groups: 0 };
   const placed = new Map<string, readonly Unit[]>();
   const spotted = new Map<string, string>();
+  const rules = new Map<string, ShapeRule>();
+  const note: Note = (candidate, rule) => {
+    if (!rules.has(candidate)) rules.set(candidate, rule);
+  };
+  const seen = new Set<Spot>();
   const parts: OutlinePart[] = [];
   const add = (more: readonly OutlinePart[]) => {
     for (const part of more) {
@@ -601,16 +675,20 @@ export function buildOutline(input: OutlineInput): Outline {
   };
   const { preamble } = input;
   const ours = editable.filter((each) => each.where === "preamble");
+  let preambleSpots: readonly Spot[] = [];
   if (preamble !== undefined && ours.length > 0) {
     const writer: Writer = {
       source: preamble.tree.source,
-      spots: spotsOf(preamble.tree.source, leavesOf(preamble.tree), ours),
+      spots: spotsOf(preamble.tree.source, leavesOf(preamble.tree), ours, note),
       groups: [],
       count,
       written,
       made,
       placed,
+      seen,
+      note,
     };
+    preambleSpots = writer.spots;
     for (const spot of writer.spots) spotted.set(spot.id, spot.candidate);
     for (const call of preamble.setters) {
       add(partsIn(writer, call));
@@ -632,12 +710,15 @@ export function buildOutline(input: OutlineInput): Outline {
       tree.source,
       leavesOf(tree),
       editable.filter((each) => each.where === "body"),
+      note,
     ),
     groups,
     count,
     written,
     made,
     placed,
+    seen,
+    note,
   };
   for (const spot of writer.spots) spotted.set(spot.id, spot.candidate);
   add(partsIn(writer, { start: 0, end: tree.source.length }));
@@ -658,12 +739,35 @@ export function buildOutline(input: OutlineInput): Outline {
       if (candidate !== undefined) owners.set(part.id, candidate);
     }
   }
+  // Why each editable candidate that is no field is none: the rule noted, or for a spot `partsIn`
+  // never came to, a group's unit that cuts it, a preamble's call that does not hold it, or the
+  // writer's having passed it.
+  for (const spot of preambleSpots) if (!seen.has(spot)) note(spot.candidate, "outside-setter");
+  for (const spot of writer.spots) {
+    if (seen.has(spot)) continue;
+    const cut = groups.some(
+      (group) =>
+        spot.start < group.end &&
+        spot.end > group.start &&
+        !group.units.some((unit) => spot.start >= unit.start && spot.end <= unit.end),
+    );
+    note(spot.candidate, cut ? "cut-by-unit" : "passed");
+  }
+  const declined = new Map<string, ShapeRule>();
+  for (const each of editable) {
+    if (written.has(each.id)) continue;
+    declined.set(
+      each.id,
+      rules.get(each.id) ?? (each.where === "preamble" ? "no-preamble" : "no-text"),
+    );
+  }
   return {
     parts,
     fields: written,
     owners,
     groups: spans,
     counts: { fields: fieldCount(parts), groups: made.groups, units: made.units },
+    declined,
   };
 }
 

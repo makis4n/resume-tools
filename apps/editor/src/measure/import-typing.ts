@@ -6,7 +6,8 @@
  * An import is measured by `measureImport` (`import.ts`), which takes the files through the editor's
  * compile scheduler as the document list does and opens the document they come to, to its first
  * drawn page; once it is open, on the scheduler and the engine that imported it, as the app keeps
- * them, `typeIn` edits the field whose rows cost the most to lay out (`longestField`), its last
+ * them, `typeIn` edits the field whose rows cost the most to lay out on any of its pages
+ * (`longestField`), its last
  * character retyped (`editCommand`) through the document's history under the import's package, so
  * that the edit is one the package takes, as a person's is. Each edit is split as the editor's own
  * measurements split it: the scheduler's pause, which waits for the typing to stop, the compile
@@ -76,7 +77,7 @@ export interface TypingEdit {
 }
 
 /**
- * What the typing came to: the edits of the field, or why none was timed: the page shows no
+ * What the typing came to: the edits of the field, or why none was timed: no page shows an
  * editable field, or the package refused the edit, as it refuses a person's.
  */
 export type Typed =
@@ -94,14 +95,15 @@ const sum = (values: readonly number[]) => values.reduce((total, value) => total
  * Edit the opened document's longest field `edits` times, one edit after another, each waiting for
  * its page, through the document's history under the import's package, and time each from the
  * command to the page it brings, the scheduler's pause included, with its compiles and draws read
- * from the scheduler's requests and draws. None when the page shows no field to edit, or the
+ * from the scheduler's requests and draws. None when no page shows a field to edit, or the
  * package refuses the edit.
  */
 export async function typeIn(opened: Opened, edits: number): Promise<Typed> {
   if (!Number.isInteger(edits) || edits < 1) throw new Error("edits must be a whole number from 1");
   const { compiler, document, pkg, first, requests, draws, pageOf, now } = opened;
   const pages = first.page.pageCount;
-  const field = longestField(document.resume, first.page);
+  // Any page's field: an imported resume's first page may show none, as a cover page would.
+  const field = longestField(document.resume, first.pages);
   if (field === undefined) return { typed: false, why: "no field", pages };
   const history = new History(document, pkg);
   const timed: TypingEdit[] = [];
@@ -392,6 +394,6 @@ export function summaryLines(rows: readonly TypingRow[], skipped: TypingSkipped)
   return [
     ...lines,
     skippedLine(skipped),
-    "An edit retypes the last character of the longest editable field the page shows. The page's own time is the compile and the draw with the body's making around them, as decisions 0016 and 0066 judge it; the pause, which waits for the typing to stop, is beside it.",
+    "An edit retypes the last character of the longest editable field any page shows. The page's own time is the compile and the draw with the body's making around them, as decisions 0016 and 0066 judge it; the pause, which waits for the typing to stop, is beside it.",
   ];
 }

@@ -241,6 +241,52 @@ describe("the outline (decision 0049)", () => {
     expect(Object.keys(fieldsOf(parts))).toEqual(["c1-1", "c2-2"]);
   });
 
+  test("names the rule that declined each editable candidate it makes no field of (decision 00XX)", () => {
+    const body = String.raw`\inventedentry{Quill Academy}{Wrenford \\ Lark Bay}
+\inventedentry{}{\textbf{Heron \\ College}}
+\inventedentry{Lark Bay}{Wren Hall}
+\inventedentry{Quill Hall}{Heron Bay}
+`;
+    const tree = treeOf(body, FLAT);
+    const found = probed(tree, (id) => (id === "c4-1" ? "moved" : "editable"));
+    const at = (id: string) => found.find((each) => each.id === id) as ProbeCandidate;
+    const lark = at("c3-1");
+    const candidates = [
+      ...found,
+      // Invented spans the parser never makes: one whose end crosses its text's, one over a text
+      // another field holds already, and one of the preamble's with no preamble to write it in.
+      { ...at("c3-2"), id: "x1", start: at("c3-2").start + 2, end: at("c3-2").end + 1 },
+      { ...lark, id: "x2" },
+      { ...lark, id: "x3", where: "preamble" as const },
+    ];
+    const outline = buildOutline({
+      tree,
+      candidates,
+      kept: new Set(["c4-2"]),
+      macros: FLAT.macros,
+      begin: "\\begin{document}",
+      end: "\\end{document}",
+    });
+    expect(Object.fromEntries(outline.declined)).toEqual({
+      "c1-2": "line-break",
+      "c2-1": "empty",
+      "c2-2": "line-break",
+      x1: "marked-in-part",
+      x2: "overlaps",
+      x3: "no-preamble",
+    });
+    // Every editable candidate the checks did not keep is a field or declined, and nothing else is:
+    // not the one the probe found moved the page, nor the one the checks kept.
+    const editable = candidates.filter((each) => each.verdict === "editable" && each.id !== "c4-2");
+    expect(
+      editable.every((each) => outline.fields.has(each.id) !== outline.declined.has(each.id)),
+    ).toBe(true);
+    expect(outline.declined.has("c4-1")).toBe(false);
+    expect(outline.declined.has("c4-2")).toBe(false);
+    // Naming the rules changes nothing the outline writes.
+    expect(written(outline.parts)).toBe(`\\begin{document}${body}\\end{document}`);
+  });
+
   test("keeps as text the candidates the checks name, and says each field's candidate and each group's spans", () => {
     const body = String.raw`\inventedentry{Quill Academy}{Wrenford}
 \inventedentry{Heron College}{Lark Bay}

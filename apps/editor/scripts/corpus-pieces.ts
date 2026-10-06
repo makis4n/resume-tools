@@ -29,13 +29,18 @@ import type { ProbeCandidate, UncoveredRun } from "../src/import/probe.ts";
 import { type LockReason, type Report, visitImportWords } from "../src/import/report.ts";
 import type { ImportStep } from "../src/import/run.ts";
 import {
+  BREAKDOWNS,
+  CAUSE_BUCKETS,
   DECIDED,
   type Decided,
+  DIFFERENCE_KINDS,
   type ImportBudgets,
   type ImportRow,
   imported,
   LOCK_REASONS,
+  MOVED_DETAILS,
   type PieceWords,
+  SHAPE_RULES,
   TRIALS,
   type TrialKind,
 } from "./corpus-import.ts";
@@ -253,6 +258,11 @@ export interface PiecesInput {
   >[];
   /** A macro's or an environment's name as a piece is named (`pieceName`). */
   name: (kind: NameKind, name: string) => string;
+  /**
+   * For a candidate kept for `shape`, `differs` or `moved`, the rule, kind or detail behind it
+   * (`causesOf`), which the pieces break their words down by (`PieceWords`); none, no breakdown.
+   */
+  cause?: (kept: keyof typeof BREAKDOWNS, candidate: string) => string;
 }
 
 /** What sets a glyph, as a piece: its name, an argument's place, and what kind of source it is. */
@@ -260,6 +270,8 @@ interface Label {
   piece: string;
   arg?: number;
   source: "raw" | "parse" | "probe" | "field";
+  /** The probe's candidate whose run sets it, if one does. */
+  candidate?: string;
 }
 
 /** Where a reason was decided, for a glyph no run of the probe's sets, a running line's copy. */
@@ -318,6 +330,7 @@ export function piecesOf(input: PiecesInput): { pieces: PieceWords[]; words: Rep
     const verdict = byId.get(run.candidate)?.verdict;
     return {
       ...pieceOfCandidate(run.candidate),
+      candidate: run.candidate,
       source:
         verdict === "raw"
           ? "parse"
@@ -384,6 +397,29 @@ export function piecesOf(input: PiecesInput): { pieces: PieceWords[]; words: Rep
       words: 0,
     };
     entry.words++;
+    // Why it is kept, further: the rule, kind or detail of the candidate whose runs set most of the
+    // word's glyphs among those it was set down to; its piece's bucket where no candidate's run does.
+    const breakdown = (BREAKDOWNS as Partial<Record<LockReason, keyof typeof CAUSES>>)[kept];
+    if (breakdown !== undefined && input.cause !== undefined) {
+      const reason = kept as keyof typeof BREAKDOWNS;
+      const causes = new Map<string, number>();
+      for (const at of word.glyphs) {
+        const candidate = owners[at] === owner ? row[at]?.candidate : undefined;
+        if (candidate === undefined) continue;
+        const cause = input.cause(reason, candidate);
+        causes.set(cause, (causes.get(cause) ?? 0) + 1);
+      }
+      let cause: string = (CAUSE_BUCKETS as readonly string[]).includes(piece) ? piece : "(other)";
+      let n = 0;
+      for (const [each, count] of causes)
+        if (count > n) {
+          cause = each;
+          n = count;
+        }
+      const split = entry[breakdown] ?? {};
+      split[cause] = (split[cause] ?? 0) + 1;
+      entry[breakdown] = split;
+    }
     tally.set(key, entry);
   };
   const words = visitImportWords(input.imported, visit);
@@ -399,6 +435,49 @@ export function piecesOf(input: PiecesInput): { pieces: PieceWords[]; words: Rep
 }
 
 type VisitorOf = Parameters<typeof visitImportWords>[1];
+
+/** The fields a piece breaks its words down in, by reason kept (`BREAKDOWNS`). */
+const CAUSES = { rules: true, kinds: true, details: true } as const;
+
+/**
+ * What a word kept for `shape`, `differs` or `moved` is set down to, from what the import said
+ * as it ran (`ImportObserver`), changing nothing it did: for `shape`, the rule the outline the
+ * checks left declined its candidate by (`Outline.declined`), `container` for one the probe found
+ * holds structure, and `unknown candidate` for one it does not know; for `differs`, the kind of
+ * difference check 1 found (`CheckEvent`); for `moved`, the probe's detail. Each is a name of a
+ * closed list (`SHAPE_RULES`, `DIFFERENCE_KINDS`, `MOVED_DETAILS`), or `(other)`.
+ */
+export class Causes {
+  private declined: ReadonlyMap<string, string> = new Map();
+  private readonly differs = new Map<string, string>();
+
+  /** The checks' events: check 1's kind of difference for each candidate it kept for `differs`. */
+  readonly onCheck = (event: CheckEvent) => {
+    if ("differs" in event) this.differs.set(event.differs, event.kind ?? "(none)");
+  };
+
+  /** The outline as the checks leave it, the rule behind each editable candidate it holds no field of. */
+  readonly outlined = (outline: { declined: ReadonlyMap<string, string> }) => {
+    this.declined = outline.declined;
+  };
+
+  /** The cause of a candidate kept for a reason, by the probe's candidates (`PiecesInput.cause`). */
+  of(
+    candidates: readonly Pick<ProbeCandidate, "id" | "verdict" | "detail">[],
+  ): NonNullable<PiecesInput["cause"]> {
+    const byId = new Map(candidates.map((each) => [each.id, each]));
+    const closed = (list: readonly string[], name: string | undefined) =>
+      name !== undefined && list.includes(name) ? name : "(other)";
+    return (kept, id) => {
+      const candidate = byId.get(id);
+      if (kept === "moved") return closed(MOVED_DETAILS, candidate?.detail);
+      if (kept === "differs") return closed(DIFFERENCE_KINDS, this.differs.get(id));
+      if (candidate === undefined) return "unknown candidate";
+      if (candidate.verdict === "container") return "container";
+      return closed(Object.keys(SHAPE_RULES), this.declined.get(id));
+    };
+  }
+}
 
 /** Whether pieces add up to the report's words: the retype's, and the locked by reason. */
 export function addsUp(pieces: readonly PieceWords[], words: Report["words"]): boolean {
@@ -467,12 +546,13 @@ export class TrialClock {
     this.phase = undefined;
   }
 
-  /** The checks' phases and budgets (`CheckEvent`). */
+  /** The checks' phases and budgets (`CheckEvent`), and nothing else they say. */
   readonly onCheck = (event: CheckEvent) => {
     if ("phase" in event) {
       this.phase = event.phase;
       return;
     }
+    if (!("budget" in event)) return;
     if (event.budget === "check 3") {
       this.budgets.units.hits++;
       this.budgets.units.groups += event.left;
@@ -571,6 +651,71 @@ function shownWhy(why: string, kept: string): string {
   return why === "retype" ? `retype, kept: ${reason(kept)}` : reason(why);
 }
 
+/** The names each breakdown's table may show (`BREAKDOWNS`): its closed list and the buckets. */
+const CAUSE_NAMES: Record<keyof typeof BREAKDOWNS, readonly string[]> = {
+  shape: [...Object.keys(SHAPE_RULES), ...CAUSE_BUCKETS, "(other)"],
+  differs: [...DIFFERENCE_KINDS, ...CAUSE_BUCKETS, "(other)"],
+  moved: [...MOVED_DETAILS, ...CAUSE_BUCKETS, "(other)"],
+};
+
+/**
+ * The words kept for `shape`, `differs` and `moved` of some rows, retyped or locked, by the rule,
+ * kind or detail behind them (`PieceWords`): words, documents, and the piece holding the most of
+ * them; the most words first within each reason. None where no row breaks them down.
+ */
+export function causeTable(rows: readonly ImportRow[]): string[] {
+  const found = new Map<
+    string,
+    { kept: string; cause: string; words: number; ids: Set<string>; pieces: Map<string, number> }
+  >();
+  for (const row of rows)
+    for (const each of row.pieces ?? []) {
+      const reason = each.kept as keyof typeof BREAKDOWNS;
+      const field = BREAKDOWNS[reason];
+      if (field === undefined) continue;
+      for (const [name, words] of Object.entries(each[field] ?? {})) {
+        const cause = CAUSE_NAMES[reason].includes(name) ? name : "(unknown)";
+        const key = `${reason}|${cause}`;
+        const entry = found.get(key) ?? {
+          kept: reason,
+          cause,
+          words: 0,
+          ids: new Set<string>(),
+          pieces: new Map<string, number>(),
+        };
+        entry.words += words;
+        entry.ids.add(row.id);
+        const piece = shownPiece(each.piece, each.arg);
+        entry.pieces.set(piece, (entry.pieces.get(piece) ?? 0) + words);
+        found.set(key, entry);
+      }
+    }
+  if (found.size === 0) return [];
+  const order = Object.keys(BREAKDOWNS);
+  const ranked = [...found.values()].sort(
+    (a, b) => order.indexOf(a.kept) - order.indexOf(b.kept) || b.words - a.words,
+  );
+  const largest = (pieces: ReadonlyMap<string, number>) => {
+    let name = "";
+    let most = 0;
+    for (const [each, n] of pieces)
+      if (n > most) {
+        name = each;
+        most = n;
+      }
+    return `${name}, ${most.toLocaleString("en-GB")}`;
+  };
+  return [
+    "",
+    "| Kept | Rule, kind or detail | Words | Documents | Largest piece |",
+    "|---|---|--:|--:|---|",
+    ...ranked.map(
+      (each) =>
+        `| ${each.kept} | ${each.cause} | ${each.words.toLocaleString("en-GB")} | ${each.ids.size} | ${largest(each.pieces)} |`,
+    ),
+  ];
+}
+
 /** Seconds, as a table shows them. */
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
 
@@ -624,6 +769,7 @@ export function pieceTables(rows: readonly ImportRow[]): string {
         : [
             `| ${rest.length} more | | | ${rest.reduce((sum, [, each]) => sum + each.words, 0).toLocaleString("en-GB")} | |`,
           ]),
+      ...causeTable(of),
       "",
       "| Trial | Compiles | Time | Documents |",
       "|---|--:|--:|--:|",
