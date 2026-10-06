@@ -143,6 +143,28 @@ const sameBytes = (a: Uint8Array, b: Uint8Array) => {
   return true;
 };
 
+/**
+ * Whether a folder's files `after` a pass, those at `aside` left out, are not as `before` had
+ * them: one new, gone, or holding other bytes, but for the lines of a `.aux` that cannot change a
+ * page (`PAGELESS_AUX_LINE`).
+ */
+const changedSince = (
+  before: ReadonlyMap<string, Uint8Array>,
+  after: ReadonlyMap<string, Uint8Array>,
+  aside: readonly string[],
+): boolean => {
+  for (const path of before.keys()) if (!aside.includes(path) && !after.has(path)) return true;
+  for (const [path, bytes] of after) {
+    const was = before.get(path);
+    if (was === undefined) return true;
+    if (sameBytes(was, bytes)) continue;
+    if (!path.endsWith(".aux")) return true;
+    const read = (aux: Uint8Array) => LATIN1.decode(aux).replace(PAGELESS_AUX_LINE, "");
+    if (read(was) !== read(bytes)) return true;
+  }
+  return false;
+};
+
 /** The start of the heap restored after every run; all of the engine's state fits in it. */
 const HEADER_BYTES = 2 ** 26;
 
@@ -1024,8 +1046,8 @@ export class EngineSession {
    * TeX reads nothing a pass can change but the files of the job's folder: the body, the format and
    * the tree stay as they were. So a pass after one that left every file of the folder as it found
    * them reads what that one read and sets the same page, whatever its log asked for, and is not
-   * run. Each pass therefore compares the folder's bytes before and after it, but for the files
-   * TeX writes for other programs and never reads (`UNREAD`) and the lines of a `.aux` that cannot
+   * run. Each pass but the last allowed therefore compares the folder's bytes before and after it,
+   * but for the files TeX writes for other programs and never reads (`UNREAD`) and the lines of a `.aux` that cannot
    * change a page (`PAGELESS_AUX_LINE`).
    */
   private passes(
@@ -1049,11 +1071,18 @@ export class EngineSession {
     let cpuPasses: number[] | undefined = [];
     let run: RunResult;
     let log: string;
+    const aside = [at(spec.output), at("log"), ...UNREAD.map(at)];
+    // The folder as the next pass finds it: taken before the first pass, and then the folder as
+    // the pass before left it, which is what the next starts from, its output and log aside.
+    let before: Map<string, Uint8Array> | undefined;
     for (;;) {
       // What an earlier pass wrote must not pass for what this one did.
       this.removeTree(at(spec.output));
       this.removeTree(at("log"));
-      const before = this.contentsOf(folder);
+      // The last pass allowed ends the loop whatever it changes, so nothing is compared for it:
+      // a compile of one pass, or an edit's pass at the cap, copies no file of the folder.
+      const last = passes.length + 1 >= maxPasses;
+      if (!last) before ??= this.contentsOf(folder);
       run = this.run([spec.program, ...spec.args, "--fmt", formatPath, `${job}.tex`], folder);
       passes.push(run.ms);
       if (run.cpuMs === undefined) cpuPasses = undefined;
@@ -1062,11 +1091,12 @@ export class EngineSession {
       // Only a pass that shipped pages is worth another: one that failed, or that TeX finished
       // with nothing to ship, would do the same again.
       const shipped = run.code === 0 && this.engine.FS.analyzePath(at(spec.output)).exists;
-      const aside = [at(spec.output), at("log"), ...UNREAD.map(at)];
-      const changed = shipped && this.changedSince(folder, before, aside);
       const asked = onChange || (fresh && passes.length === 1) || summariseLog(log).rerun;
-      const again = changed && asked;
-      if (!again || passes.length >= maxPasses) break;
+      if (last || before === undefined || !shipped || !asked) break;
+      const after = this.contentsOf(folder);
+      for (const path of aside) after.delete(path);
+      if (!changedSince(before, after, aside)) break;
+      before = after;
     }
     const summary = summariseLog(log);
     const output = run.code === 0 ? this.read(at(spec.output)) : undefined;
@@ -1110,30 +1140,6 @@ export class EngineSession {
     };
     if (fs.analyzePath(folder).exists) walk(folder);
     return found;
-  }
-
-  /**
-   * Whether a file below a folder, but those at `aside`, is not as `before` had it: new, gone, or
-   * holding other bytes, but for the lines of a `.aux` that cannot change a page
-   * (`PAGELESS_AUX_LINE`).
-   */
-  private changedSince(
-    folder: string,
-    before: ReadonlyMap<string, Uint8Array>,
-    aside: readonly string[],
-  ): boolean {
-    const after = this.contentsOf(folder);
-    for (const path of aside) after.delete(path);
-    for (const path of before.keys()) if (!aside.includes(path) && !after.has(path)) return true;
-    for (const [path, bytes] of after) {
-      const was = before.get(path);
-      if (was === undefined) return true;
-      if (sameBytes(was, bytes)) continue;
-      if (!path.endsWith(".aux")) return true;
-      const read = (aux: Uint8Array) => LATIN1.decode(aux).replace(PAGELESS_AUX_LINE, "");
-      if (read(was) !== read(bytes)) return true;
-    }
-    return false;
   }
 
   private formatPath(engine: Engine, name: string): string {

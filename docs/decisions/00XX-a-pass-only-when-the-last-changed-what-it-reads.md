@@ -28,7 +28,8 @@ job's folder but its log and its output.
 - A pass is repeated only when it changed a file of the job's folder that the next pass reads,
   and, as before, the document is new, its log asks, or the caller asked for a pass after any
   change (`rerunOnChange`, the probe's, decision 0022). The session compares the folder's bytes
-  before and after each pass (`src/engine/session.ts`).
+  before and after each pass that another may follow (`src/engine/session.ts`); the last pass the
+  cap allows, and a pass whose log does not ask, are not compared.
 - TeX reads nothing a pass can change but the files of the job's folder: the body, the format and
   the tree stay as they were. A pass after one that left those files as it found them reads what
   that one read, so it sets the same page, whatever the log asked for.
@@ -55,7 +56,9 @@ Outputs are compared byte for byte, with the minute TeX writes in the output's p
 They cover biblatex asking for Biber on pdfTeX and XeTeX (a new document 2 passes where it took 3,
 each edit 1 where it took 3); a reference set before its label, so that only the second pass sets it,
 where a new document and an edit that renumbers the label keep their second pass and lose the third;
-and a label that changes on every pass, which still runs to the cap.
+biblatex's deferred numbers from a supplied `.bbl`, which it notes in `.aux` lines of its own
+that the exception below must not take in, where each edit that renumbers an entry keeps its second
+pass; and a label that changes on every pass, which still runs to the cap.
 
 ### Numbers
 
@@ -89,7 +92,12 @@ and a label that changes on every pass, which still runs to the cap.
 - An edit of a resume with biblatex takes one pass, like any other: AltaCV's forks, and Awesome-CV's
   that load it. Imports with biblatex lose a pass on many of their trial compiles. Their compiles and
   words are as before.
-- Each pass now copies the job's folder before it runs and compares after: about 3 ms for 4 MB of
-  files in Node, and an upload's images are small blank stand-ins, so a pass's cost barely moves.
+- A pass another may follow is compared with the folder before it: the folder is copied before the
+  first pass, and after any pass whose log asks for another, and that copy is the next pass's
+  before. A compile of one pass, and the last pass the cap allows, copy nothing. An upload's images
+  are small blank stand-ins, but the folder also holds an upload's own fonts for fontconfig, which
+  can come to several MB. Measured in Node over the passes' own time, on an edit of one pass: with
+  biblatex, whose log asks, 0.6 ms with no extra file, 3.9 ms with 4 MB and 12.3 ms with 16 MB, about
+  0.7 ms a MB; without, whose log asks for nothing, 0.5, 1.0 and 1.3 ms. Small beside a pass.
 - The exception names biblatex's own lines. Another package whose `.aux` lines change on every pass
   without changing the page would still cost passes up to the cap, as every package did before.

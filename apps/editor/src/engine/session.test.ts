@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { ONE_BY_ONE, standIn, xbb } from "../import/images";
 import { GRAPHICS_CFG } from "../import/reference";
 import { curated } from "../templates/curated";
@@ -342,6 +342,61 @@ describe.skipIf(!engineAvailable())("EngineSession", () => {
       const compiled = session.compile("pdftex", "restless", body, { job: "restless" });
       expect(compiled.error).toBeUndefined();
       expect(compiled.passes).toHaveLength(3);
+    }, 60_000);
+
+    it("keeps a pass biblatex's deferred numbers need, which a .aux line of its own sets", () => {
+      // With defernumbers, biblatex numbers the entries as the bibliography prints them and notes
+      // each number in the .aux, where the next pass reads it for the citation. A supplied .bbl
+      // stands in for Biber's. Citing only the second entry numbers it 1; citing both numbers it
+      // 2, a change only the pass after can set, so the edit takes it, and the output is the one
+      // the old loop made.
+      const entry = (key: string, i: number) =>
+        `\\entry{${key}}{misc}{}{}\n\\field{sortinit}{${i}}\n\\field{labeltitlesource}{title}\n\\field{title}{Invented Title ${key}}\n\\endentry`;
+      const bbl = [
+        "% $ biblatex auxiliary file $",
+        "% $ biblatex bbl format version 3.2 $",
+        "% Do not modify the above lines!",
+        "\\refsection{0}",
+        "\\datalist[entry]{none/global//global/global/global}",
+        entry("first", 0),
+        entry("second", 1),
+        "\\enddatalist",
+        "\\endrefsection",
+        "\\endinput",
+        "",
+      ].join("\n");
+      const files = { "skip.bbl": bbl, "invented.bib": "@misc{first, title={X}}" };
+      const body = (keys: string) =>
+        `\\documentclass{article}\\usepackage[defernumbers=true]{biblatex}\\addbibresource{invented.bib}\\begin{document}Invented \\cite{${keys}}.\\printbibliography\\end{document}`;
+      expect(both("stock", [body("second"), body("first,second"), body("first")], files)).toEqual([
+        { passes: 2, before: 3, same: true },
+        { passes: 2, before: 3, same: true },
+        { passes: 2, before: 3, same: true },
+      ]);
+    }, 60_000);
+
+    it("copies the job's folder only for a pass another may follow, and once a pass", () => {
+      session.dump("pdftex", "copies", "\\documentclass{article}");
+      const body = (words: string) =>
+        String.raw`\begin{document}See \ref{here}.\section{Here}\label{here}${words}\end{document}`;
+      const walks = vi.spyOn(
+        session as unknown as { contentsOf: (folder: string) => Map<string, Uint8Array> },
+        "contentsOf",
+      );
+      try {
+        // A compile of one pass compares nothing, since no pass may follow it.
+        session.compile("pdftex", "copies", body("Invented one"), { job: "copies", maxPasses: 1 });
+        expect(walks).not.toHaveBeenCalled();
+        session.forget("copies");
+        // A new document's two passes: the folder before the first and after it, which is also
+        // the folder the second starts from, and nothing after the second, whose log asks for none.
+        const fresh = session.compile("pdftex", "copies", body("Invented two"), { job: "copies" });
+        expect(fresh.passes).toHaveLength(2);
+        expect(walks).toHaveBeenCalledTimes(2);
+      } finally {
+        walks.mockRestore();
+        session.forget("copies");
+      }
     }, 60_000);
   });
 
