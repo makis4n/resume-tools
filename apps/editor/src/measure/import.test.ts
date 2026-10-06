@@ -588,7 +588,7 @@ describe.skipIf(!engineAvailable())("measureImport, on the engine", () => {
     expect(result.page.passes).toHaveLength(2);
     expect(result.page.pages).toBe(1);
     // It opened before the checks ended, its page drawn from their output, and every field after
-    // check 2, both before the whole (decision 00XX).
+    // check 2, both before the whole (decision 0071).
     const early = result.early;
     if (early === undefined) throw new Error("no early times");
     const until = (part: string) =>

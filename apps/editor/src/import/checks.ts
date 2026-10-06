@@ -584,7 +584,7 @@ export interface ChecksInput {
   compiler: OutlineCompiler;
   /**
    * Hears each of checks 1, 2 and 3 as it ends (`CheckEnd`), and the checks wait for what it
-   * returns: an import opens its page, and then its fields, as they do (decision 00XX).
+   * returns: an import opens its page, and then its fields, as they do (decision 0071).
    */
   ended?: (end: CheckEnd) => void | Promise<void>;
   /** The page the outline must set: the reference's, a XeTeX document's with its fonts by file. */

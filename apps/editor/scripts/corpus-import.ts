@@ -211,7 +211,7 @@ export function importHeadline(rows: readonly ImportRow[]): string[] {
   return [
     `${plural(summary.documents, "document")}, ${outcomes.timeout} of which timed out and ${outcomes.timeout === 1 ? "counts" : "count"} in no share; of the ${n} others, ${outcomes.success} success (${share(outcomes.success)}), ${outcomes.partial} partial (${share(outcomes.partial)}), ${rest} refused or stopped (${share(rest)}): ${outcomes.refused} refused, ${outcomes["no reference"]} with no reference, ${outcomes["not parsed"]} not parsed, ${outcomes.baseline} not probed, ${outcomes.crashed} died.`,
     `Words of the ${plural(outcomes.success + outcomes.partial, "document")} imported, ${plural(words.body, "word")}: ${shown(rates.editable)} editable in place, ${shown(rates.retype)} through the retype, ${shown(rates.locked)} locked${reasons.length === 0 ? "." : `, by reason: ${reasons.join(", ")}.`}`,
-    // When the page opened, and every field, before the checks ended (decision 00XX).
+    // When the page opened, and every field, before the checks ended (decision 0071).
     ...earlyHeadline(rows),
   ].map(printable);
 }

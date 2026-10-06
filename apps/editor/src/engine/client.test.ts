@@ -123,7 +123,7 @@ describe("EngineClient's imports and cancel (decision 0038)", () => {
     expect(heard).toEqual([progress(0, true), progress(1, false)]);
   });
 
-  it("hands on an import's document before its checks end, which settles nothing (decision 00XX)", async () => {
+  it("hands on an import's document before its checks end, which settles nothing (decision 0071)", async () => {
     const { client, workers } = clientWithWorkers();
     const stages: ImportStage[] = [];
     const done = client.importResume(

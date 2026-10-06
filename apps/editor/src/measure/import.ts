@@ -100,7 +100,7 @@ export interface ImportTime {
    */
   page: { formatMs: number; dumped: boolean; passes: number[]; drawMs: number; pages: number };
   /**
-   * When the document opened before the import's checks ended (decision 00XX), from the files given,
+   * When the document opened before the import's checks ended (decision 0071), from the files given,
    * as `ms` is: its page drawn from the checks' output, its fields locked; and every field open,
    * check 2 having settled them, its page drawn again where check 2 left another outline. An import
    * that opened nothing early opens with its outcome, and both are `ms` then.
@@ -280,7 +280,7 @@ export async function measureImport(how: ImportHow): Promise<ImportMeasured> {
   try {
     const heard: Heard[] = [];
     const began = now();
-    // The document opens before the checks end, as the app opens it (decision 00XX): its page drawn
+    // The document opens before the checks end, as the app opens it (decision 0071): its page drawn
     // from the checks' output while the import holds the engine, and its fields open after check 2.
     const early: { page?: number; unlocked?: number } = {};
     let drawing = Promise.resolve();
@@ -550,7 +550,7 @@ export function importTable(engine: Engine, runs: readonly ImportTime[], where: 
     `its body compiled in ${formatTime(median(runs.map((run) => sum(run.page.passes))))} over ${passes} ${passes === 1 ? "pass" : "passes"}`,
     `its page drawn in ${formatTime(median(runs.map((run) => run.page.drawMs)))}.`,
   ].join(", ");
-  // The document opens before the checks end (decision 00XX): when, from the files given.
+  // The document opens before the checks end (decision 0071): when, from the files given.
   const opened = `Opened before the checks end, medians: its page drawn at ${formatTime(median(runs.map((run) => run.early?.page ?? run.ms)))}, its fields locked; every field open at ${formatTime(median(runs.map((run) => run.early?.unlocked ?? run.ms)))}; the whole, the outcome's page, at ${formatTime(medians.ms)}.`;
   const loaded =
     where === "browser"

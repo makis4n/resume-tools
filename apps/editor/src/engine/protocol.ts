@@ -5,7 +5,7 @@
  * it has steps and compiles, before its reply; a progress message settles nothing. So does the
  * bridge's PDF of an import's reference page (milestone 3 second pass, item 16), compile by compile.
  * An import also sends its document before its checks end, its page and then its fields (decision
- * 00XX), under its id, each once at most; a stage settles nothing either.
+ * 0071), under its id, each once at most; a stage settles nothing either.
  */
 
 import type { PagePdf } from "../import/bridge";

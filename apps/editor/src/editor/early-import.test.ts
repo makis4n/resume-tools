@@ -45,7 +45,7 @@ function typed(doc: Document, id: string, text: string): Document {
   };
 }
 
-describe("an import's document as its outcome comes (decision 00XX)", () => {
+describe("an import's document as its outcome comes (decision 0071)", () => {
   it("is the outcome's own where nothing was typed meanwhile", async () => {
     const { document: staged } = await inventedOutline(marked(outlineParts(), {}, ["mill-dates"]));
     const { document: final } = await inventedOutline(

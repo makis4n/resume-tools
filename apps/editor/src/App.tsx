@@ -227,7 +227,7 @@ interface Open {
   unsaved: boolean;
   /**
    * Where the import it comes from has got to, while it is open before the import's checks end
-   * (decision 00XX): it has no id in the store yet, and nothing of it is saved until it is kept.
+   * (decision 0071): it has no id in the store yet, and nothing of it is saved until it is kept.
    */
   importing?: EarlyPhase;
 }
@@ -532,7 +532,7 @@ export function App() {
         setShown((before) => ({ latest, opening: before === undefined }));
         setError(undefined);
         // A page that shows the structural step held lets it be saved, with what came after it; but
-        // not a document whose import is still under way, which is not kept yet (decision 00XX).
+        // not a document whose import is still under way, which is not kept yet (decision 0071).
         const now = openNow.current;
         if (now !== undefined && guard.current.paged(latest.document) && !now.importing)
           kept.save(now.id, now.history.present, now.revision);
@@ -664,7 +664,7 @@ export function App() {
       importRun.current !== undefined && (doc.importing === "locked" || doc.importing === "fields");
     if (!checksHold) compiler.current?.update(present);
     // An imported outline's every change waits for its page (`StructureGuard`); one whose import is
-    // under way is saved once it is kept (decision 00XX).
+    // under way is saved once it is kept (decision 0071).
     const every = outlineOf(present.resume) !== undefined;
     if (guard.current.changed(doc.history, before, every) && !doc.importing)
       store.current?.save(doc.id, present, doc.revision);
@@ -756,7 +756,7 @@ export function App() {
   };
 
   /**
-   * Open an import's document before its checks end, or move it on (decision 00XX): its page,
+   * Open an import's document before its checks end, or move it on (decision 0071): its page,
    * drawn from the output the checks compiled, its fields locked; then its fields open, and its page
    * drawn again where check 2 left another outline. A stage that brings no page before any page
    * opens nothing, and the import lands in the list as it always did. Nothing of it is kept yet.
@@ -806,7 +806,7 @@ export function App() {
   };
 
   /**
-   * An import open before its checks end has come through (decision 00XX): its document takes the
+   * An import open before its checks end has come through (decision 0071): its document takes the
    * marks the outcome gives it, its groups fixed or not, with whatever the person typed meanwhile,
    * and compiles at once, the engine free again, its page taking the early one's place. A success
    * is kept, and the report shows above the page; a partial import waits on the person, its report
@@ -896,7 +896,7 @@ export function App() {
    * log, which quotes the source. One that came through is read into its report (decision 0039):
    * a success is kept and opened as any document, and a partial one waits in the list, its report
    * shown, for the person to continue with it or stop. Its document opens before the checks end,
-   * where they set its page (decision 00XX): a refusal or a failure then goes back to the list, and
+   * where they set its page (decision 0071): a refusal or a failure then goes back to the list, and
    * what came through lands where it is open (`landEarly`).
    */
   const importFiles = async (chosen: File[]) => {
@@ -966,7 +966,7 @@ export function App() {
 
   /**
    * Continue with a partial import: kept and opened as it is (decision 0039), or, open already,
-   * kept as the person has it now (decision 00XX).
+   * kept as the person has it now (decision 0071).
    */
   const continueImport = async () => {
     const pending = waiting;
@@ -1104,7 +1104,7 @@ export function App() {
   }
 
   const { id, pkg, job, lockedWords, history, present, canUndo, canRedo, stale, unsaved } = open;
-  /** Where the import the document comes from has got to, while its checks still run (decision 00XX). */
+  /** Where the import the document comes from has got to, while its checks still run (decision 0071). */
   const early = open.importing;
   const checking = early === "locked" || early === "fields";
 
@@ -1123,7 +1123,7 @@ export function App() {
     // whose retype waits for its page, which is then the retype's alone (decision 0042).
     if (stale || retypeGuard.current.holds()) return;
     // While the import's checks run, no field is typed in until they open, and no unit takes a step
-    // until the outcome says which groups are fixed (decision 00XX).
+    // until the outcome says which groups are fixed (decision 0071).
     if (early === "locked") return;
     if (checking && command.type === "structure") {
       setUnitNote(UNITS_WAIT);
@@ -1291,7 +1291,7 @@ export function App() {
   };
 
   // A document open before its import was kept goes back to the list by the import's Cancel or
-  // its report's Stop, which keep nothing (decision 00XX): a partial import's report, which waits on
+  // its report's Stop, which keep nothing (decision 0071): a partial import's report, which waits on
   // the person, stands where the way back does, on every screen, as the list held it before.
   const back =
     early === "deciding" ? (
@@ -1527,7 +1527,7 @@ export function App() {
         {saving}
         {/* The report of the import this document came from: its rate, and what was left out. */}
         {importedReport?.id === id && <ImportReport report={importedReport.report} />}
-        {/* An import open before its checks end: what is open yet (decision 00XX). */}
+        {/* An import open before its checks end: what is open yet (decision 0071). */}
         {checking && <p role="status">{early === "locked" ? FIELDS_LOCKED : FIELDS_OPEN}</p>}
         <p>
           {error ?? (checking ? "" : slow ? "Compiling…" : took)}{" "}

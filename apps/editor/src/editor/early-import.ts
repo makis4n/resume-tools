@@ -1,5 +1,5 @@
 /**
- * An imported resume open before its import's checks end (decision 00XX): what the editor says
+ * An imported resume open before its import's checks end (decision 0071): what the editor says
  * while it waits on them, and the document the person has as the outcome comes, given the marks the
  * checks found. The document opens on its page as soon as the outline sets it, its fields locked
  * (`locked`); its fields open once checks 1 and 2 have settled them (`fields`), while its groups

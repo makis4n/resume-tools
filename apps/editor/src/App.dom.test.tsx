@@ -207,7 +207,7 @@ describe("the app's documents screen", () => {
     return { page, fields, outcome, document };
   }
 
-  it("opens an import's page before its checks end, its fields locked, then open, and its report after (decision 00XX)", async () => {
+  it("opens an import's page before its checks end, its fields locked, then open, and its report after (decision 0071)", async () => {
     const { page, fields, outcome, document } = await early();
     await imported(outcome, [page, fields]);
     // The list, while the import has no page yet.

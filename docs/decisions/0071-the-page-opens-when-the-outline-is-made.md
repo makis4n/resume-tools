@@ -1,4 +1,4 @@
-# 00XX. The page opens when the outline is made
+# 0071. The page opens when the outline is made
 
 Date: 2026-10-06 · Status: accepted, under the owner's decisions of 6 October 2026 (decision 0067's
 lane 4); amends 0038 and 0039 in when an import opens

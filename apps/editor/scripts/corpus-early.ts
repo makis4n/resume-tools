@@ -1,5 +1,5 @@
 /**
- * When an imported document opens, and when its fields do, over the corpus (decision 00XX): the
+ * When an imported document opens, and when its fields do, over the corpus (decision 0071): the
  * import says its page before its checks end, once the outline sets it, and its fields once check
  * 2 has settled them (`ImportStage`). The child hears the stages as the import runs (`earlyClock`)
  * and puts their times in the document's row, `times.page` and `times.unlocked`, in milliseconds

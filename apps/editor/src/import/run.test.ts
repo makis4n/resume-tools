@@ -280,7 +280,7 @@ describe.skipIf(!engineAvailable())("an import, on the engine (decisions 0038 an
   // The hand count of decision 0039, over the fork's page, its words invented: 92 words, every one
   // the resume's. The first pass kept its heading and its skills as the upload wrote them; the
   // outline holds the words of both where the probe proved them, in fields.
-  test("opens the fork's page before the checks end, then its fields, with no compile more (decision 00XX)", async () => {
+  test("opens the fork's page before the checks end, then its fields, with no compile more (decision 0071)", async () => {
     const stages: ImportStage[] = [];
     const outcome = await importResume([tex("resume.tex", JAKE_FORK)], {
       ...deps,

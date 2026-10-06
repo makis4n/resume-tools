@@ -61,7 +61,7 @@ async function heard(ends: CheckEnd[], compiled: OutlinePart[][]) {
   }));
 }
 
-describe("an import's stages (decision 00XX)", () => {
+describe("an import's stages (decision 0071)", () => {
   it("brings the page after check 1, and the fields after check 2 with no page where it is the same", async () => {
     const parts = outlineParts();
     const stages = await heard(

@@ -1,5 +1,5 @@
 /**
- * An import's document before its checks end (decision 00XX): the editor opens it as soon as the
+ * An import's document before its checks end (decision 0071): the editor opens it as soon as the
  * outline, compiled as the editor compiles it, has set the page the checks hold it to, its fields
  * locked; opens its fields once check 2 has settled them; and its groups once check 3 has, when the
  * outcome comes as it always did (`ImportStage`).

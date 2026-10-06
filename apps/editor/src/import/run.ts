@@ -24,7 +24,7 @@
  * a compile under way is what the worker's client times, and a hung one terminates the worker
  * (decision 0008). Before the checks end, `ImportDeps.onStage` hears the document as they settle
  * it, its page and then its fields, so that the editor opens it then (`ImportStage`, decision
- * 00XX). `signal` stops the import between compiles, with its reason thrown. A refusal
+ * 0071). `signal` stops the import between compiles, with its reason thrown. A refusal
  * comes back as the pipeline gives it, in plain English that never shows LaTeX, as do the few this
  * module adds; an unexpected failure is one of those, its details for developers alone.
  *
@@ -99,7 +99,7 @@ export interface ImportDeps {
   /** The engine's session, the worker's, which every step compiles on. */
   session: EngineSession;
   /**
-   * Hears the document before the checks end (`ImportStage`, decision 00XX): its page, its fields
+   * Hears the document before the checks end (`ImportStage`, decision 0071): its page, its fields
    * locked, and then its fields open. Without it the import says nothing until its outcome.
    */
   onStage?: (stage: ImportStage) => void;
@@ -188,7 +188,7 @@ export interface Imported {
 export type ImportOutcome = Imported | Refusal;
 
 /**
- * What an import says of its document before its checks end (decision 00XX), so that the editor
+ * What an import says of its document before its checks end (decision 0071), so that the editor
  * opens it then: `page` once check 1 has found that the outline, compiled as the editor compiles it,
  * sets the page the checks hold it to, every field to stay locked; `fields` once check 2 has settled
  * every field, which open, its groups taking no step until check 3 ends, after which the outcome
@@ -394,7 +394,7 @@ export async function importResume(
       files: referenceFiles(taken, made, { job: IMPORT_JOB, ...options }),
       ...(signal === undefined ? {} : { signal }),
     });
-    // The document opens before the checks end, as each check settles more of it (decision 00XX).
+    // The document opens before the checks end, as each check settles more of it (decision 0071).
     const ended =
       deps.onStage === undefined
         ? undefined

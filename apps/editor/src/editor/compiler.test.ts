@@ -1715,7 +1715,7 @@ describe("Compiler's imports (decision 0038)", () => {
     expect(s.engine().compiles).toHaveLength(2);
   });
 
-  it("shows an import's page before it lands with nothing asked of the engine, and compiles an edit once it has (decision 00XX)", async () => {
+  it("shows an import's page before it lands with nothing asked of the engine, and compiles an edit once it has (decision 0071)", async () => {
     const s = scheduler();
     const stages: ImportStage[] = [];
     const run = s.compiler.importResume(

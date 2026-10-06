@@ -319,7 +319,7 @@ describe.skipIf(!engineAvailable())("the checks on the engine (the second pass's
     expect(report.notes.join(" ")).not.toMatch(/[\\{}]/);
   }, 60_000);
 
-  test("say as each check ends what it settled, and open the page, then the fields, on it (decision 00XX)", async () => {
+  test("say as each check ends what it settled, and open the page, then the fields, on it (decision 0071)", async () => {
     const stages: ImportStage[] = [];
     const outcome = await importResume([{ name: "cv.tex", bytes: strToU8(CHECKED) }], {
       ...deps,

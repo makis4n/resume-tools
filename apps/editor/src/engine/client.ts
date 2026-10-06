@@ -31,7 +31,7 @@ interface Pending {
   reject: (error: Error) => void;
   /** What the request's progress goes to, for a request that sends some. */
   progress?: (progress: ImportProgress) => void;
-  /** What an import's document before its checks end goes to (`ImportStage`, decision 00XX). */
+  /** What an import's document before its checks end goes to (`ImportStage`, decision 0071). */
   stage?: (stage: ImportStage) => void;
 }
 
@@ -174,7 +174,7 @@ export class EngineClient {
    * Import a resume in the worker, in a job of its own (`importResume` of `src/import/run.ts`):
    * its package, document, report and files, or a refusal. `onProgress` hears each step and each
    * compile as it begins and ends, and `onStage` the document before its checks end, its page and
-   * then its fields (decision 00XX). A compile that runs past `limit` is taken for hung: the worker
+   * then its fields (decision 0071). A compile that runs past `limit` is taken for hung: the worker
    * is terminated and started afresh, as `cancel` does, and the import fails with `EngineTimeout`.
    */
   importResume(

@@ -131,7 +131,7 @@ export interface Engine {
   /**
    * Import a resume in the engine's own job (`EngineClient.importResume`), which fails with
    * `EngineCancelled` when `cancel` stops it and with `EngineTimeout` when a compile of it hangs;
-   * `onStage` hears its document before its checks end (decision 00XX), and `limit` is the
+   * `onStage` hears its document before its checks end (decision 0071), and `limit` is the
    * client's own, which the scheduler leaves as it is. An engine without it, as a test's, cannot
    * import.
    */
@@ -643,7 +643,7 @@ export class Compiler {
    * comes to a document or not; the formats of an imported package it dumped to check are gone
    * from the engine then, and put back from the compiler's bytes when a document needs them.
    * `onStage` hears the document before the checks end, its page and then its fields (decision
-   * 00XX), which `preview` shows while the import holds the engine.
+   * 0071), which `preview` shows while the import holds the engine.
    */
   importResume(
     files: readonly Upload[],
@@ -663,7 +663,7 @@ export class Compiler {
   }
 
   /**
-   * Show the page of an import's document before its checks end (decision 00XX): the output its
+   * Show the page of an import's document before its checks end (decision 0071): the output its
    * checks compiled of it (`ImportStage.output`), drawn as a compile's output is drawn, with nothing
    * asked of the engine, which the import holds. The document becomes the open one, with its
    * package and job, so that an edit made meanwhile compiles once the import lands, in a job started

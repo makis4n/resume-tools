@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { earlyClock, earlyHeadline, earlyOf } from "./corpus-early";
 import type { ImportRow } from "./corpus-import";
 
-// When an imported document opens, and its fields (decision 00XX). Every row is invented: ids and
+// When an imported document opens, and its fields (decision 0071). Every row is invented: ids and
 // counts, as the run keeps them.
 
 /** An invented row of a document imported on `engine`, which took `ms`, its page and fields as given. */

@@ -10,7 +10,7 @@
  * only when the first import asks for it, with the fonts the page's glyphs are read with, fetched
  * as the page fetches them, the engine's own files. An import sends nothing anywhere (decision
  * 0049). Its progress goes to the client as it comes, under the request's id, and so does its
- * document before its checks end, its page and then its fields (decision 00XX), the page's output
+ * document before its checks end, its page and then its fields (decision 0071), the page's output
  * handed over rather than copied. The bridge's PDF of an import's reference page (milestone 3
  * second pass, item 16) runs with it, loaded with it.
  */
