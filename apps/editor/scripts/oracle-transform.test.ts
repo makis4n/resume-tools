@@ -15,7 +15,7 @@ import { ORACLE_DIR, ORACLE_FILE, Oracle, oracleDocument } from "./corpus-oracle
 import { uploadOf } from "./corpus-reference";
 import { engineManifest } from "./oracle-samples";
 
-// AltaCV's upstream sample, as an import's reference compile sets it (decision 00XX): pgf's
+// AltaCV's upstream sample, as an import's reference compile sets it (decision 0081): pgf's
 // dvipdfmx driver sets each of its six tags' text, a TikZ node, through a `pdf:btrans` translation,
 // which xdvipdfmx applies, and which the page now applies too. Every glyph the translation moves is
 // where the PDF shows it. Numbers alone reach the test's output, never the sample's text.

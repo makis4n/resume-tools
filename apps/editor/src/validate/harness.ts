@@ -997,7 +997,7 @@ function graphicsStateChange(text: string): GraphicsStateChange | undefined {
  * The transformations the page draws a field in where the PDF draws it, and keeps it editable in:
  * a translation, as a TikZ node's text is set in, which moves the field's glyphs and nothing
  * else. A rotation, a scale or another matrix the page draws too, but the overlay sets a field's
- * rows upright and at the font's size, so such a field stays locked (decision 00XX); and one it
+ * rows upright and at the font's size, so such a field stays locked (decision 0081); and one it
  * does not read (`other`), or that a template's own `cm` moves, it cannot even place.
  */
 const EDITABLE_IN: ReadonlySet<TransformKind> = new Set(["translation"]);
@@ -1059,7 +1059,7 @@ function checkNotdefs(doc: DviDocument, log: string): Finding[] {
  * or from an `x:scale`, `x:rotate` or `x:bscale` to the end of its level, which the page draws
  * where the PDF does (`GraphicsState`) but the overlay cannot set upright; or one whose arguments
  * the page does not read, so cannot place. A translation, as a TikZ node's text is set in, the
- * page applies, so its fields are fields like any other (decision 00XX). A field is reported when
+ * page applies, so its fields are fields like any other (decision 0081). A field is reported when
  * its begin marker or a glyph of it is in one, with the kind (`Finding.transform`). A level closed
  * that was never opened closes the page's own, which xdvipdfmx opens with the move of an inch in
  * from the corner, so that everything after it on the page lands an inch left and off the page; and

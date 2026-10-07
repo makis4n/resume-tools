@@ -1,6 +1,6 @@
 /**
  * What xdvipdfmx's graphics state does to what a DVI sets, so that the page can draw it where the
- * PDF does (decision 00XX).
+ * PDF does (decision 0081).
  *
  * xdvipdfmx makes the PDF from the same DVI the page is drawn from (decision 0003), and a few of
  * the specials it reads change where it sets what follows them: `pdf:btrans` and its `pdf:etrans`,

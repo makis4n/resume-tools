@@ -8,7 +8,7 @@
  *
  * Every position is where the PDF puts the item: xdvipdfmx moves, turns and scales what it sets
  * inside a `pdf:btrans` and after an `x:scale` or `x:rotate`, as a TikZ node's text is set, and
- * the parser applies the same (`GraphicsState`, decision 00XX), so that whatever reads its output,
+ * the parser applies the same (`GraphicsState`, decision 0081), so that whatever reads its output,
  * the page, the glyphs' boxes, the reference's stream and the checks, reads the PDF's positions. An
  * item set inside one says so (`transform`), with the matrix's linear part where it turns or
  * scales, which the page draws its glyph with.

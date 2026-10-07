@@ -1,5 +1,5 @@
 /**
- * How far the page's glyphs are from where the PDF shows them (decision 00XX): the DVI's glyphs, TeX
+ * How far the page's glyphs are from where the PDF shows them (decision 0081): the DVI's glyphs, TeX
  * fonts' and native fonts', as `parseDvi` places them, against the text operators of the PDF
  * xdvipdfmx made of the same DVI (`shownTexts`). Tests and the transform lane's corpus script read it; it gives offsets and
  * counts, never a glyph's text.

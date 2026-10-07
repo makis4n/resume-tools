@@ -14,7 +14,7 @@
  *
  * An item set inside a rotation or a scale xdvipdfmx applies is drawn turned or scaled about its
  * origin as the PDF draws it (`turnedAbout`); `parseDvi` has already put the origin where the PDF
- * does (decision 00XX).
+ * does (decision 0081).
  */
 
 import type { DviDocument, DviPage, NativeFont, PageItem } from "./dvi";

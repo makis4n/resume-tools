@@ -143,7 +143,7 @@ export const MOVED_DETAILS = [...DIFFERENCE_KINDS, "transform"] as const;
 
 /**
  * The kinds of transformation a field kept as `moved` for `transform` is set inside, as the
- * harness's special check names them (`TransformKind`, decision 00XX).
+ * harness's special check names them (`TransformKind`, decision 0081).
  */
 export const TRANSFORM_KINDS = [
   "translation",

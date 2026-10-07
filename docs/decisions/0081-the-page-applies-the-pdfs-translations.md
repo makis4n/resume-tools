@@ -1,4 +1,4 @@
-# 00XX. The page applies the PDF's translations
+# 0081. The page applies the PDF's translations
 
 Date: 2026-10-07 · Status: accepted, lane T of the markers-and-transform run; amends decisions 0008
 and 0013 (the rule against fields in a transform) and 0073 (the `transform` detail); under the owner's

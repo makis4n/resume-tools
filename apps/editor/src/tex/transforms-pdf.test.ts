@@ -19,7 +19,7 @@ import { pdfOffsets, virtualCodes, worstOf } from "../test/pdf-offsets";
 import { parseTfm } from "../tex/tfm";
 import { parseVf } from "../tex/vf";
 
-// The page applies what xdvipdfmx's graphics state does to what it sets (decision 00XX): a TikZ
+// The page applies what xdvipdfmx's graphics state does to what it sets (decision 0081): a TikZ
 // node's text, which pgf's dvipdfmx driver sets through a `pdf:btrans` translation, and graphicx's
 // rotated and scaled boxes, `pdf:btrans rotate` and `x:scale`. Every text and every name here is
 // invented.

@@ -417,7 +417,7 @@ describe("checkSpecial", () => {
         [
           ...field("before"),
           // What pgf's dvipdfmx driver writes around a TikZ node's text: a translation, which the
-          // page applies as the PDF does (decision 00XX).
+          // page applies as the PDF does (decision 0081).
           special("pdf:btrans matrix 1.0 0.0 0.0 1.0 -23.59927 0.0"),
           ...field("node"),
           special("pdf:etrans"),
@@ -780,7 +780,7 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
 
     it("reports nothing of a field set inside a translation, as a TikZ node's text is", async () => {
       // xdvipdfmx sets the bullet 20 bp right of where TeX set it, and so does the page, which
-      // applies the translation (decision 00XX).
+      // applies the translation (decision 0081).
       const moved = plainWith("transformed", {
         bullet: "\\special{pdf:btrans matrix 1 0 0 1 20 0}{{text}}\\special{pdf:etrans}\\par",
       });

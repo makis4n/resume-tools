@@ -68,7 +68,7 @@ const SAMPLES: Readonly<
     body: 232,
     fields: 0.72,
     // Since a field a line (decision 0076), each referee's second address line is a field: 6 words.
-    // Since the page applies the PDF's translations (decision 00XX), the six tags' words, set in TikZ
+    // Since the page applies the PDF's translations (decision 0081), the six tags' words, set in TikZ
     // nodes, are fields: 12 words.
     shares: { editable: 186, retype: 33, locked: 13 },
     hand: { editable: 186, retype: 33, locked: 13 },

@@ -774,7 +774,7 @@ describe("comparing runs", () => {
       lacking: ["pieces.details", "pieces.rules"],
     });
     // A run with the breakdown of the words kept for a transformation by its kind, against one
-    // made before it (decision 00XX): set aside, not a difference on every row.
+    // made before it (decision 0081): set aside, not a difference on every row.
     const kinds = broken.map((each) => ({
       ...each,
       pieces: [each.pieces[0], { ...each.pieces[1], transforms: { rotate: 1 } }],
