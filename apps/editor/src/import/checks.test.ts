@@ -21,7 +21,6 @@ import {
   emptiedCopy,
   judged,
   keepsPage,
-  LONG_AND_SPECIAL,
   MUTATIONS,
   marked,
   mutated,
@@ -29,6 +28,7 @@ import {
   type Trial,
   trialsOf,
   tried,
+  UNITS_BUDGET,
   UNITS_EVIDENCE,
   UNITS_MARGIN,
 } from "./checks";
@@ -242,12 +242,6 @@ describe("check 2's mutations and the marks", () => {
       "f-b=[]",
       "f-c=[]",
     ]);
-  });
-
-  test("try the long and special texts in one, the special text at both of a field's edges", () => {
-    expect(LONG_AND_SPECIAL.startsWith(MUTATIONS.special)).toBe(true);
-    expect(LONG_AND_SPECIAL.endsWith(MUTATIONS.special)).toBe(true);
-    expect(LONG_AND_SPECIAL).toContain(MUTATIONS.long);
   });
 
   /** Fields as `ownStop` hears them, each id its kind's unless given. */
@@ -486,6 +480,44 @@ const ENTRIES = String.raw`\documentclass{article}
 \end{document}
 `;
 
+/**
+ * An invented resume whose skills are set in math where they are shorter than the line and as text
+ * where they are not: the special text stops the short path, and a text longer than the line, as
+ * the special and long texts together would be, never takes it.
+ */
+const SHORT_PATH = String.raw`\documentclass{article}
+\pagestyle{empty}
+\newcommand{\skill}[1]{\setbox0\hbox{#1}\ifdim\wd0<\linewidth $\mathrm{#1}$\else #1\fi\par}
+\begin{document}
+\skill{Typesetting}
+\skill{Bookbinding}
+\skill{Lettering}
+
+Set invented type by hand for a small press.
+
+Kept the invented press running through the winter.
+\end{document}
+`;
+
+/** How many parts `CROWDED` has, each of two posts. */
+const PARTS = 40;
+
+/**
+ * An invented resume of many parts, each a run of two posts, whose template takes no post more than
+ * it has: every copy check 3 tries stops the compile, each found alone, more than its budget covers.
+ */
+const CROWDED = String.raw`\documentclass{article}
+\pagestyle{empty}
+\newcounter{posts}
+\newcommand{\post}[1]{\stepcounter{posts}\ifnum\value{posts}>${2 * PARTS} \errmessage{No more posts}\fi\par\noindent #1\par}
+\begin{document}
+${Array.from(
+  { length: PARTS },
+  (_, n) =>
+    `\\section*{Invented part ${n + 1}}\n\\post{Inked plate ${n + 1}}\n\\post{Bound folio ${n + 1}}\n`,
+).join("")}\end{document}
+`;
+
 describe.skipIf(!engineAvailable())("the checks' budgets on the engine (decision 00XX)", () => {
   let deps: ImportDeps;
   beforeAll(async () => {
@@ -552,5 +584,88 @@ describe.skipIf(!engineAvailable())("the checks' budgets on the engine (decision
     expect(outline.kept).toEqual({});
     expect(checks.fields.locked.untested).toBeUndefined();
     expect(outline.required).toBeGreaterThanOrEqual(4);
+  }, 60_000);
+
+  /**
+   * An import whose compiles are heard by phase, each with its body, on `session` (the engine's
+   * unless given).
+   */
+  const heardImport = async (source: string, session = deps.session) => {
+    let phase = "";
+    const bodies = new Map<string, string[]>();
+    const counting = new Proxy(session, {
+      get(target, key) {
+        const value = Reflect.get(target, key);
+        if (key === "compile")
+          return (...args: Parameters<typeof target.compile>) => {
+            const [, , body] = args;
+            const text = typeof body === "string" ? body : new TextDecoder().decode(body);
+            bodies.set(phase, [...(bodies.get(phase) ?? []), text]);
+            return target.compile(...args);
+          };
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const outcome = await importResume([{ name: "cv.tex", bytes: strToU8(source) }], {
+      ...deps,
+      session: counting,
+      observe: {
+        checks: (event) => {
+          if ("phase" in event) phase = event.phase;
+        },
+      },
+    });
+    if (isRefusal(outcome)) throw new Error(`refused: ${outcome.message}`);
+    /** The bodies compiled in the phases of one check, its bisection's with its own. */
+    const of = (check: string) =>
+      [...bodies].flatMap(([name, list]) => (name.startsWith(check) ? list : []));
+    return { outcome, of };
+  };
+
+  test("try the special text apart from the long one, which a field may set on another path", async () => {
+    // Together with the long text, the special text is wider than the line and takes the text path;
+    // alone it is set in math, where it stops. Each skill stops on it and is kept as text, so that
+    // typing it into one cannot stop the compile.
+    const { outcome } = await heardImport(SHORT_PATH);
+    const { outline, checks } = outcome.report;
+    expect(outline.kept).toEqual({ text: 3 });
+    expect(checks.fields.locked.text).toBe(3);
+  }, 60_000);
+
+  test("make no bisection's first compile again, the check having made it", async () => {
+    // Check 2: the motto stops on the long text and the name when empty, each bisected.
+    const checked = await heardImport(CHECKED);
+    expect(checked.outcome.report.outline.kept).toEqual({ text: 1 });
+    const second = checked.of("check 2");
+    expect(second.length).toBeGreaterThan(4);
+    expect(new Set(second).size).toBe(second.length);
+    // Check 1: every compile of a field's marker stops, so its bisection starts from the outline
+    // the check compiled first, every field on.
+    const stopping = Object.create(deps.session) as typeof deps.session;
+    stopping.compile = (engine, format, body, options) => {
+      const result = deps.session.compile(engine, format, body, options);
+      const text = typeof body === "string" ? body : new TextDecoder().decode(body);
+      return /\\rtfield\{[a-z0-9-]+\.text\}/.test(text) ? { ...result, ok: false } : result;
+    };
+    const marked = await heardImport(CHECKED, stopping);
+    expect(marked.outcome.report.outline.fields).toBe(0);
+    const first = marked.of("check 1");
+    expect(first.length).toBeGreaterThan(2);
+    expect(new Set(first).size).toBe(first.length);
+  }, 60_000);
+
+  test("stop check 3 where its budget cannot cover the trials left, every group untried", async () => {
+    const { outcome, of } = await heardImport(CROWDED);
+    const { outline, checks } = outcome.report;
+    // Every copy stops the compile alone: after a few, check 3 judges the rest beyond its budget
+    // and stops, far short of it, every group fixed as untried, and says so.
+    const third = of("check 3");
+    expect(third.length).toBeGreaterThan(UNITS_EVIDENCE);
+    expect(third.length).toBeLessThan(UNITS_BUDGET / 2);
+    expect(outline.fixed).toEqual({ untried: PARTS + 1 });
+    const notes = checks.findings.filter((each) => each.check === "units");
+    expect(notes.map((each) => each.message.startsWith("the third check stopped after"))).toEqual([
+      true,
+    ]);
   }, 60_000);
 });

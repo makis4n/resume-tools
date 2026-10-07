@@ -16,12 +16,12 @@
  *    text, its candidate's every field with it, and one the budget leaves untried too
  *    (`untested`).
  * 2. **Mutations.** Every field is set to a long text, to special characters and to nothing, each
- *    in one compile of all of them, the long and special ones first together (`LONG_AND_SPECIAL`),
- *    bisected where it stops, or kept for every field where the stop shows itself the text's own
- *    (`ownStop`): a field that stops it on text becomes
- *    kept text (`text`), one that stops it only when empty is required (`OutlineText.required`),
- *    and one the bisection leaves untried becomes kept text (`untested`), since nothing proved it
- *    takes any text (the plan's "fields are proven once, at import, and then trusted"). Letters
+ *    in one compile of all of them, bisected where it stops, or kept for every field where the stop
+ *    shows itself the text's own (`ownStop`): a field that stops it on text becomes kept text
+ *    (`text`), one that stops it only when empty is required (`OutlineText.required`), and one
+ *    the bisection of the long or special text leaves untried becomes kept text (`untested`), since
+ *    nothing proved it takes any text (the plan's "fields are proven once, at import, and then
+ *    trusted"); one the empty text's leaves, having taken both, is required (decision 00XX). Letters
  *    of other scripts, Greek and Cyrillic, are tried once each in every field together: where one
  *    stops the compile, the document's fonts lack that script whatever field holds it, which the
  *    report says by its name, and no field is kept for it (decision 0055).
@@ -103,15 +103,6 @@ export const MUTATIONS = {
   special: "\\ { } $ & # ^ _ % ~ < > | [ ] * -- ' \" é ß ø ğ",
   scripts: { greek: "ω α", cyrillic: "Ж д" },
 } as const;
-
-/**
- * The long and the special texts tried in one compile (decision 00XX): the special text, the long
- * one and the special text again, so that every character and sequence of each is there, the
- * special text's at both of a field's edges, where a macro looks ahead or behind, and the whole
- * longer than the long text. Where it goes through in every field, each of the two would; where it
- * stops, each is tried apart, as before.
- */
-export const LONG_AND_SPECIAL = `${MUTATIONS.special} ${MUTATIONS.long} ${MUTATIONS.special}`;
 
 /**
  * How many fields, each of another kind, must stop the compile alone with a text, what is left
@@ -1049,16 +1040,14 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
         message: `the second check's bisection of the empty text ran out of its ${counted(budget, "compile")} and required ${counted(unreached, "field")} it did not reach`,
       });
   };
-  // The long and special texts together first: where they go through, neither is tried apart.
-  if (fields.length > 0) {
-    observe({ phase: "check 2" });
-    const both = await mutate(LONG_AND_SPECIAL, new Set(fields.map((each) => each.id)));
-    if (both.broke) {
-      await tryText("long", MUTATIONS.long);
-      await tryText("special", MUTATIONS.special);
-    }
-    await tryText("empty", MUTATIONS.empty);
-  }
+  // Each text apart: one that goes through in every field together proves nothing of another, as
+  // the special text, set short, may take a path the long text never does (decision 00XX).
+  for (const [name, text] of [
+    ["long", MUTATIONS.long],
+    ["special", MUTATIONS.special],
+    ["empty", MUTATIONS.empty],
+  ] as const)
+    await tryText(name, text);
   // Letters of other scripts, in every field at once: where they stop the compile, they stop it
   // whatever field holds them, since the document's fonts lack them, and no field is the cause.
   const remaining = fields.filter((each) => !onText.has(each.id) && !untried.has(each.id));

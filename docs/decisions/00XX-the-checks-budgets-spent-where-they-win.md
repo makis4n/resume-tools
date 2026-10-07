@@ -9,7 +9,8 @@ compiles out on `altacv-0017` and `other-0028`, 62.5 s and 43.5 s, for 4 and 39 
 and 2 bisected in the source's order, so the budget left `altacv-0017`'s paragraphs untested, 344
 words. Check 2 bisected `other-0006` and `other-0015` a field at a time, two compiles a field,
 though its special text stopped the compile in every field it tried. And check 2 compiled its long
-and special texts apart where both go through. It chose its fixes 2, 4, 5 and 7 for this lane.
+and special texts apart where both go through. It chose its fixes 2, 4, 5 and 7 for this lane; this
+record takes 2, 4 and 5, and leaves 7, for the reason below.
 
 ## Decision
 
@@ -47,12 +48,18 @@ and special texts apart where both go through. It chose its fixes 2, 4, 5 and 7 
   never left empty, as a field that stops when empty is not. Kept as text, its words were lost for
   the one text the editor can refuse. The rule "nothing proved it takes any text" still keeps a
   field the long or special text's bisection leaves.
-- **The long and special texts are tried in one compile** (`LONG_AND_SPECIAL`): the special text,
-  the long one and the special text again, so that every character and sequence of each is there,
-  the special text's at both of a field's edges, where a macro looks ahead or behind, and the whole
-  longer than the long text. Where it stops, each is tried apart as before, one compile more.
-- Nothing else changes: the budgets, the checks' verdicts where their budgets do not run out, and
-  check 3's trials and their judging.
+- **The long and special texts stay apart** (decision 0074's fix 7, not taken). One compile of the
+  special text, the long one and the special text again saves about one compile an import, but it
+  does not prove what each proves alone: together they are wider than a line, so a field whose
+  macro sets a short text another way, as one that sets it in math does, never meets the special
+  characters that way. The review found it on an invented look-alike: the special text alone stops
+  three such fields, which main keeps as text; the text together made them editable, and typing an
+  accented letter into one then stops the compile. Each text keeps its own compile.
+- **What else changes, and what does not.** The budgets, check 3's trials and their judging do not.
+  The checks' verdicts can change where no budget runs out: the words-first order can lock the other
+  of two fields that stop the compile only together, as `probeOrder` says of the probe, and
+  `ownStop` keeps every field the text is tried in once its stop shows itself the text's own,
+  where the bisection would have tried each alone.
 
 ### Measured
 
@@ -69,26 +76,29 @@ no document with a worse outcome or fewer words in place.
 | Imported resumes at 90% or more, under 50% | 61, 5 | 62, 5 |
 | Successes | 56 | 57 |
 | Fields the checks' bisections left untested | 235 in 4 resumes | 80 in 1 |
-| Check 3's bisection, all imports | 429 compiles, 169.9 s | 324, 76.5 s |
-| The checks' compiles, all imports | 3,147 | 2,869 |
-| All compiles, all imports | 5,845 | 5,567 |
-| pdfTeX: the slowest whole import | 142.2 s (`altacv-0017`) | 83.1 s (`altacv-0017`) |
+| Check 3's bisection, all imports | 429 compiles | 324 |
+| The checks' compiles, all imports | 3,147 | 2,974 |
+| All compiles, all imports | 5,845 | 5,672 |
+| `altacv-0017`'s whole import | 170 compiles, 142.2 s | 114 compiles, 83 to 135 s |
 
 - `altacv-0017` keeps 2,560 words in place of 2,740, not 2,216, and becomes a success: the empty
   text's bisection reaches its paragraphs first, and the fields it does not reach are required. Its
-  import takes 113 compiles, not 170, and 83.1 s, not 142.2 s; check 3 stops after 10 compiles,
-  not 64, its bisection 8.2 s, not 64.1 s.
-- `other-0028` takes 113 compiles, not 166, and 73.1 s, not 115.6 s; check 3 stops after 12
-  compiles, not 64, its bisection 5.4 s, not 44.0 s. Its words are the same.
-- `other-0006` takes 94 compiles, not 140, and `other-0015` 125, not 163: check 2 keeps every field
+  import takes 114 compiles, not 170; check 3 stops after 10 compiles, not 64.
+- `other-0028` takes 114 compiles, not 166; check 3 stops after 12 compiles, not 64. Its words are
+  the same.
+- `other-0006` takes 93 compiles, not 140, and `other-0015` 124, not 163: check 2 keeps every field
   for the special text after 8 and 9 compiles of its bisection, not 48. Neither has a word in
   place, as before; `other-0015` still keeps 80 fields untested by check 1's bisection, which the
   special text does not reach.
 - `europecv-0008` keeps 1,068 words in place, not 1,066, and leaves no field untested.
-- 17 imports take 1 to 13 compiles more: most in the empty text's bisection, where the words-first
-  order reaches every field either way and splits elsewhere (`other-0034` 13, `other-0043` 7), and
-  one more where the long and special texts together stop the compile. 85 take fewer, 8 the same.
-- Times are from a machine shared with the other lanes; the compiles are what compare.
+- 25 imports take 1 to 14 compiles more, most in the empty text's bisection, where the words-first
+  order reaches every field either way and splits elsewhere (`other-0034` 14, `other-0043` 8); 45
+  take fewer, 40 the same.
+- Times are from a machine shared with the other lanes, and they moved with its load more than
+  with this change: an earlier run of this lane, one compile fewer an import, took `altacv-0017` in
+  83.1 s and check 3's bisection over all imports in 76.5 s (main 169.9 s); this one, under more
+  load, 134.9 s and 105.7 s, its reference compile, which this change does not touch, half again
+  as slow as main's. The compiles are what compare.
 
 ## Consequences
 
