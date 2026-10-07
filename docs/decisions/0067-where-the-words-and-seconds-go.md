@@ -1,4 +1,4 @@
-# 00XX. Where the import's words and seconds go
+# 0067. Where the import's words and seconds go
 
 Date: 2026-10-06 · Status: accepted, under the owner's decisions of 6 October 2026, which let this
 run choose its fixes and set its targets from what it finds
