@@ -21,6 +21,8 @@ import { JAKE_FORK } from "../src/test/jake-fork";
 import type { ImportRow } from "./corpus-import";
 import {
   addsUp,
+  Causes,
+  causeTable,
   definedNames,
   loadedTreeFiles,
   type Names,
@@ -221,10 +223,11 @@ function checks(changes: Partial<AssemblyChecks>): AssemblyChecks {
 /**
  * An invented import's page, each line set by one piece: a field; an entry's argument the checks
  * kept; a line of the document's own macro the retype reaches; a paragraph the probe's budget left
- * untested; a list's item set twice; an argument no field holds; one only an uploaded class
- * defines, the checks' budget left untried; and the template's own label.
+ * untested; a list's item set twice, or with `moved`, one that moved the page; an argument no
+ * field holds; one only an uploaded class defines, the checks' budget left untried; and the
+ * template's own label.
  */
-function inventedImport() {
+function inventedImport(moved = false) {
   const texts = [
     "Quill Invented",
     "Invented Engineer Wren",
@@ -286,7 +289,11 @@ function inventedImport() {
       verdict: "editable",
     }),
     candidate("t3", { kind: "paragraph", name: "", verdict: "untested", settled: "budget" }),
-    candidate("i2", { kind: "item", name: "itemize", verdict: "twice" }),
+    candidate("i2", {
+      kind: "item",
+      name: "itemize",
+      ...(moved ? { verdict: "moved", detail: "glyph" } : { verdict: "twice" }),
+    }),
     candidate("c2-1", {
       kind: "argument",
       of: "call",
@@ -340,6 +347,69 @@ function inventedImport() {
 }
 
 describe("the words not in place, by piece", () => {
+  test("break the words kept for shape, differs and moved down by the rule, kind or detail behind them", () => {
+    const { imported, runs, candidates, name } = inventedImport(true);
+    const causes = new Causes();
+    // What the import says as it runs: check 1's kind for the field it kept, and the outline's rule.
+    causes.onCheck({ phase: "check 1" });
+    causes.onCheck({ differs: "c1-2", kind: "position" });
+    causes.outlined({ declined: new Map([["c2-1", "several-paragraphs"]]) });
+    const { pieces } = piecesOf({ imported, runs, candidates, name, cause: causes.of(candidates) });
+    expect(pieces).toEqual(
+      expect.arrayContaining([
+        {
+          piece: "cventry",
+          arg: 2,
+          why: "differs",
+          kept: "differs",
+          by: "checks",
+          words: 3,
+          kinds: { position: 3 },
+        },
+        {
+          piece: "cventry",
+          arg: 1,
+          why: "shape",
+          kept: "shape",
+          by: "outline",
+          words: 2,
+          rules: { "several-paragraphs": 2 },
+        },
+        {
+          piece: "itemize",
+          why: "moved",
+          kept: "moved",
+          by: "probe",
+          words: 2,
+          details: { glyph: 2 },
+        },
+      ]),
+    );
+    // Only those three reasons are broken down, each adding up to its words.
+    for (const each of pieces) {
+      const split = each.rules ?? each.kinds ?? each.details;
+      if (!["shape", "differs", "moved"].includes(each.kept)) expect(split).toBeUndefined();
+      else expect(Object.values(split ?? {}).reduce((a, b) => a + b, 0)).toBe(each.words);
+    }
+  });
+
+  test("name a cause only from a closed list, and a candidate the probe holds structure in", () => {
+    const { candidates } = inventedImport(true);
+    const causes = new Causes();
+    causes.onCheck({ differs: "c1-2", kind: SECRET });
+    causes.outlined({ declined: new Map([["c2-1", SECRET]]) });
+    const cause = causes.of([
+      ...candidates.map((each) => (each.id === "i2" ? { ...each, detail: SECRET } : each)),
+      { id: "b1", verdict: "container" },
+    ]);
+    expect(cause("differs", "c1-2")).toBe("(other)");
+    expect(cause("shape", "c2-1")).toBe("(other)");
+    expect(cause("moved", "i2")).toBe("(other)");
+    expect(cause("shape", "b1")).toBe("container");
+    expect(cause("shape", "nowhere")).toBe("unknown candidate");
+    expect(cause("differs", "nowhere")).toBe("(other)");
+  });
+
   test("set each word down to its piece, with why and where it was decided, adding up to the report's", () => {
     const { imported, runs, candidates, name } = inventedImport();
     const { pieces, words } = piecesOf({ imported, runs, candidates, name });
@@ -508,6 +578,70 @@ describe("the tables per family", () => {
     expect(table).not.toContain("no pieces");
   });
 
+  test("break shape, differs and moved down by rule, kind and detail, a name of no list set aside", () => {
+    const rows = [
+      row("other-0001", "other", [
+        {
+          piece: "paragraph",
+          why: "shape",
+          kept: "shape",
+          by: "outline",
+          words: 30,
+          rules: { "several-paragraphs": 25, "line-break": 5 },
+        },
+        {
+          piece: "itemize",
+          why: "retype",
+          kept: "shape",
+          by: "outline",
+          words: 10,
+          rules: { "several-paragraphs": 10 },
+        },
+        {
+          piece: "cventry",
+          arg: 7,
+          why: "differs",
+          kept: "differs",
+          by: "checks",
+          words: 6,
+          kinds: { position: 4, [SECRET]: 2 },
+        },
+      ]),
+      row("other-0002", "other", [
+        {
+          piece: "paragraph",
+          why: "moved",
+          kept: "moved",
+          by: "probe",
+          words: 8,
+          details: { count: 8 },
+        },
+        {
+          piece: "paragraph",
+          why: "shape",
+          kept: "shape",
+          by: "outline",
+          words: 4,
+          rules: { "line-break": 4 },
+        },
+      ]),
+    ];
+    const lines = causeTable(rows);
+    expect(lines).toContain("| shape | several-paragraphs | 35 | 1 | paragraph, 25 |");
+    expect(lines).toContain("| shape | line-break | 9 | 2 | paragraph, 9 |");
+    expect(lines).toContain("| differs | position | 4 | 1 | `cventry` #7, 4 |");
+    expect(lines).toContain("| differs | (unknown) | 2 | 1 | `cventry` #7, 2 |");
+    expect(lines).toContain("| moved | count | 8 | 1 | paragraph, 8 |");
+    // Shape first, the most words first within it.
+    expect(lines.findIndex((each) => each.includes("several-paragraphs"))).toBeLessThan(
+      lines.findIndex((each) => each.includes("| line-break")),
+    );
+    const table = pieceTables(rows);
+    expect(table).toContain("| Kept | Rule, kind or detail | Words | Documents | Largest piece |");
+    expect(table).not.toContain(SECRET);
+    expect(causeTable([row("other-0003", "other", [])])).toEqual([]);
+  });
+
   test("say how many rows have no pieces, their words not added up", () => {
     const rows = [
       row("other-0001", "other", [
@@ -566,10 +700,54 @@ describe("comparing runs", () => {
     ]);
     expect(DIAGNOSTICS).toEqual([
       "pieces",
+      "pieces.rules",
+      "pieces.kinds",
+      "pieces.details",
       "budgets",
       "compiles.trials",
       "compiles.dumps",
       "compiles.pdfs",
+    ]);
+  });
+
+  test("set aside the pieces' breakdowns where one run's pieces lack them throughout", () => {
+    const broken = newer.map((each) => ({
+      ...each,
+      pieces: [
+        { ...each.pieces[0], kept: "shape", rules: { "line-break": 1 } },
+        { ...each.pieces[0], kept: "moved", details: { glyph: 1 } },
+      ],
+    }));
+    const plain = newer.map((each) => ({
+      ...each,
+      pieces: [
+        { ...each.pieces[0], kept: "shape" },
+        { ...each.pieces[0], kept: "moved" },
+      ],
+    }));
+    expect(runComparison(file(plain), file(broken))).toEqual({
+      differences: [],
+      lacking: ["pieces.details", "pieces.rules"],
+    });
+    // Both with them, they are compared as any field is.
+    const other = broken.map((each) => ({
+      ...each,
+      pieces: [{ ...each.pieces[0], rules: { blank: 1 } }, each.pieces[1]],
+    }));
+    expect(runDifferences(file(broken), file(other))).toEqual([
+      "jake-0001.pieces.0.rules.blank: absent against 1",
+      "jake-0001.pieces.0.rules.line-break: 1 against absent",
+      "jake-0002.pieces.0.rules.blank: absent against 1",
+      "jake-0002.pieces.0.rules.line-break: 1 against absent",
+    ]);
+    // Anything else a piece differs in still differs.
+    const fewer = broken.map((each) => ({
+      ...each,
+      pieces: [{ ...each.pieces[0], words: 2 }, each.pieces[1]],
+    }));
+    expect(runDifferences(file(plain), file(fewer))).toEqual([
+      "jake-0001.pieces.0.words: 1 against 2",
+      "jake-0002.pieces.0.words: 1 against 2",
     ]);
   });
 
@@ -616,6 +794,9 @@ describe.skipIf(!engineAvailable())("the diagnostics, on the engine", () => {
     const files = [{ name: "resume.tex", bytes: strToU8(JAKE_FORK) }];
     const plain = await importResume(files, deps);
     const clock = new TrialClock();
+    const causes = new Causes();
+    // How many candidates the outline declined, once it is heard.
+    let declined = -1;
     let probed: { intake: Intake; reference: Reference; probe: Probe } | undefined;
     const observed = await importResume(
       files,
@@ -626,7 +807,14 @@ describe.skipIf(!engineAvailable())("the diagnostics, on the engine", () => {
           probed: (found) => {
             probed = found;
           },
-          checks: clock.onCheck,
+          checks: (event) => {
+            clock.onCheck(event);
+            causes.onCheck(event);
+          },
+          outlined: (outline) => {
+            causes.outlined(outline);
+            declined = outline.declined.size;
+          },
         },
       },
       (progress) => clock.enter(progress.step),
@@ -670,8 +858,18 @@ describe.skipIf(!engineAvailable())("the diagnostics, on the engine", () => {
       runs: probed.probe.runs ?? [],
       candidates: probed.probe.candidates,
       name: namer,
+      cause: causes.of(probed.probe.candidates),
     });
     expect(addsUp(pieces, reportOfImport(observed).words)).toBe(true);
+    // The outline as the checks left it is heard, and each piece kept for shape, differs or moved
+    // breaks its words down in full.
+    expect(declined).toBeGreaterThanOrEqual(0);
+    for (const each of pieces) {
+      const split = each.rules ?? each.kinds ?? each.details;
+      if (["shape", "differs", "moved"].includes(each.kept))
+        expect(Object.values(split ?? {}).reduce((a, b) => a + b, 0)).toBe(each.words);
+      else expect(split).toBeUndefined();
+    }
     // No piece is named by a name the fork defines, as its list commands.
     const defined = definedNames(JAKE_FORK);
     expect(defined.macros.has("resumeSubheading")).toBe(true);

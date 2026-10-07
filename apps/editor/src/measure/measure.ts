@@ -94,11 +94,18 @@ export interface MeasuredField {
 
 /**
  * The field whose rows cost the most to lay out, which the measurements type in: the resume's
- * longest rich field that the page shows, or its longest text field when it has no rich one on
- * the page. Undefined when the page shows neither.
+ * longest rich field that a page shows, or its longest text field when it has no rich one on a
+ * page; a page, or every page of the output, as an imported resume's first page may show none of
+ * its fields where its later ones show them all. Undefined when no page shows either.
  */
-export function longestField(resume: Resume, page: DrawnPage): MeasuredField | undefined {
-  const fields = [...fieldsOf(resume)].filter(([id]) => page.fields.get(id)?.layout !== undefined);
+export function longestField(
+  resume: Resume,
+  pages: DrawnPage | readonly DrawnPage[],
+): MeasuredField | undefined {
+  const shown = "fields" in pages ? [pages] : pages;
+  const fields = [...fieldsOf(resume)].filter(([id]) =>
+    shown.some((page) => page.fields.get(id)?.layout !== undefined),
+  );
   let rich: MeasuredField | undefined;
   let text: MeasuredField | undefined;
   for (const [id, field] of fields) {
@@ -582,7 +589,22 @@ export async function measurePackage(
   }
 }
 
-/** What a first load of a package fetches, in bytes as they are on disk, not compressed. */
+/**
+ * What a first load's files come to compressed, as gzip makes them: the engine, its loader and the
+ * manifest, and each file of the tree by its path. Plan section 4.3's 30 MB is a compressed size:
+ * the spike's 14 MB was (decision 0003).
+ */
+export interface Compressed {
+  engine: number;
+  loader: number;
+  manifest: number;
+  file: (path: string) => number;
+}
+
+/**
+ * What a first load of a package fetches, in bytes as they are on disk, and the same compressed
+ * (`Compressed`), which the plan's 30 MB is judged on.
+ */
 export interface FirstLoad {
   /** The engine, `busytex.wasm`, and its loader for the worker, `busytex.mjs`. */
   engine: number;
@@ -597,6 +619,15 @@ export interface FirstLoad {
    */
   fonts: number;
   total: number;
+  /** Each part, and the whole, compressed. */
+  compressed: {
+    engine: number;
+    loader: number;
+    manifest: number;
+    texLive: number;
+    fonts: number;
+    total: number;
+  };
 }
 
 /**
@@ -605,19 +636,41 @@ export interface FirstLoad {
  * it, by path with their sizes, less those TeX read already, since the worker's reads and the
  * page's go through the same HTTP cache under the same URLs. What the overlay reads when a field
  * opens is not in it (`overlayFonts`), nor what the edits read. Everything is counted once, as it
- * is on disk; what goes over the network compressed is the CDN's to say (milestone 5).
+ * is on disk, and as it is compressed (`Compressed`), each file of the tree once.
  */
 export function firstLoad(
   numbers: Pick<PackageNumbers, "reads">,
   sizes: { engine: number; loader: number; manifest: number },
+  compressed: Compressed,
 ): FirstLoad {
   const { tex, fonts: files } = numbers.reads.open;
   const read = new Set(tex.paths);
   const texLive = tex.bytes;
   let fonts = 0;
-  for (const [path, bytes] of files) if (!read.has(path)) fonts += bytes;
+  let packedFonts = 0;
+  for (const [path, bytes] of files)
+    if (!read.has(path)) {
+      fonts += bytes;
+      packedFonts += compressed.file(path);
+    }
   const total = sizes.engine + sizes.loader + sizes.manifest + texLive + fonts;
-  return { ...sizes, texLive, fonts, total };
+  const packed = {
+    engine: compressed.engine,
+    loader: compressed.loader,
+    manifest: compressed.manifest,
+    texLive: [...read].reduce((sum, path) => sum + compressed.file(path), 0),
+    fonts: packedFonts,
+  };
+  return {
+    ...sizes,
+    texLive,
+    fonts,
+    total,
+    compressed: {
+      ...packed,
+      total: packed.engine + packed.loader + packed.manifest + packed.texLive + packed.fonts,
+    },
+  };
 }
 
 /**
@@ -706,12 +759,12 @@ export function packageTable(numbers: PackageNumbers, load: FirstLoad): string {
     draw.missingFonts.length === 0
       ? "every font drawn"
       : `without ${draw.missingFonts.join(", ")}, which it cannot draw`;
-  const loaded = [
-    `engine ${formatMb(load.engine)}`,
-    `loader ${formatMb(load.loader)}`,
-    `manifest ${formatMb(load.manifest)}`,
-    `TeX Live ${formatMb(load.texLive)}`,
-    `fonts ${formatMb(load.fonts)}`,
+  const partsOf = (of: Omit<FirstLoad, "compressed" | "total">) => [
+    `engine ${formatMb(of.engine)}`,
+    `loader ${formatMb(of.loader)}`,
+    `manifest ${formatMb(of.manifest)}`,
+    `TeX Live ${formatMb(of.texLive)}`,
+    `fonts ${formatMb(of.fonts)}`,
   ];
   const passes = open.passes.map(formatMs).join(" + ");
   return table([
@@ -734,7 +787,12 @@ export function packageTable(numbers: PackageNumbers, load: FirstLoad): string {
       `${keystroke.field}, ${keystroke.characters} characters on ${keystroke.rows} lines`,
     ],
     ["Fit to one page", numbers.fit ? formatMs(numbers.fit.ms) : "-", fitted(numbers.fit)],
-    ["First load, uncompressed", formatMb(load.total), loaded.join(", ")],
+    [
+      "First load, compressed",
+      formatMb(load.compressed.total),
+      `gzip: ${partsOf(load.compressed).join(", ")}`,
+    ],
+    ["First load, uncompressed", formatMb(load.total), partsOf(load).join(", ")],
     [
       "Opening the field, uncompressed",
       formatMb(opening.bytes),
@@ -751,7 +809,7 @@ export interface Verdict {
 
 /**
  * Each target against each package's numbers: the keystroke's layout, the median edit for both
- * edit targets, and the first load. The edit is the page's own time, from the command to the drawn
+ * edit targets, and the first load, compressed, as the plan's 30 MB counts it. The edit is the page's own time, from the command to the drawn
  * page; the scheduler's pause before it, which waits for the typing to stop, is not in it, as it
  * was not in decision 0003's numbers.
  */
@@ -768,7 +826,7 @@ export function verdicts(measured: readonly { numbers: PackageNumbers; load: Fir
   return [
     against(TARGETS.keystroke, ({ numbers }) => numbers.keystroke.ms),
     against(TARGETS.typical, edit),
-    against(TARGETS.firstLoad, ({ load }) => load.total),
+    against(TARGETS.firstLoad, ({ load }) => load.compressed.total),
   ] satisfies Verdict[];
 }
 

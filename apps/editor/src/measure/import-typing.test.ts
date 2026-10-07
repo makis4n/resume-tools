@@ -64,14 +64,14 @@ const IMPORTED: Imported = {
 
 const FETCHED = { files: 0, bytes: 0, paths: [] };
 
-/** A page as the fake draw makes it, one page long, showing `fields` with a layout each. */
-function pageShowing(fields: readonly string[]): DrawnPage {
+/** A page as the fake draw makes it, of `pageCount` pages, showing `fields` with a layout each. */
+function pageShowing(fields: readonly string[], pageCount = 1): DrawnPage {
   return {
     svg: "<svg></svg>",
     size: US_LETTER,
     fields: new Map(fields.map((id) => [id, { layout: {} as FieldLayout }])) as DrawnPage["fields"],
     glyphs: [],
-    pageCount: 1,
+    pageCount,
     unmatched: 0,
     missingFonts: new Map(),
     locked: new Map(),
@@ -121,14 +121,20 @@ function fakeEngine(outcome: ImportOutcome) {
 }
 
 describe("measureImportTyping", () => {
-  async function measured(outcome: ImportOutcome, page: DrawnPage, edits = 3) {
+  /** Measured on a fake engine whose pages are `pages`, or one page, `page`, over and over. */
+  async function measured(
+    outcome: ImportOutcome,
+    page: DrawnPage | readonly DrawnPage[],
+    edits = 3,
+  ) {
     const { engine, bodies } = fakeEngine(outcome);
+    const pages = "fields" in page ? [page] : page;
     const result = await measureImportTyping(
       {
         start: async () => engine,
         fonts: NO_FONTS,
         files: [{ name: "invented.zip", bytes: new Uint8Array([0x50, 0x4b]) }],
-        draw: async () => page,
+        draw: async (_dvi, _fonts, _texts, index = 0) => pages[index] ?? (pages[0] as DrawnPage),
       },
       edits,
     );
@@ -159,7 +165,23 @@ describe("measureImportTyping", () => {
     expect(result.import.compiles).toBe(3);
   });
 
-  it("times no edit when the page shows no field", async () => {
+  it("edits a field a later page shows when the first shows none, as a cover page", async () => {
+    // An invented look-alike of a long import whose first page holds none of its fields: every
+    // field is on the second page.
+    const fields = [...fieldsOf(DOCUMENT.resume).keys()];
+    const pages = [pageShowing([], 2), pageShowing(fields, 2)];
+    const { result, bodies } = await measured(IMPORTED, pages, 2);
+    if ("refused" in result) throw new Error("refused");
+    if (!result.typing.typed) throw new Error(`not typed: ${result.typing.why}`);
+    expect(longestField(DOCUMENT.resume, pages[0] as DrawnPage)).toBeUndefined();
+    expect(result.typing.field).toEqual(longestField(DOCUMENT.resume, pages));
+    expect(result.typing.field.kind).toBe("rich");
+    expect(result.typing.edits).toHaveLength(2);
+    for (const edit of result.typing.edits) expect(edit.pages).toBe(2);
+    expect(bodies).toHaveLength(3);
+  });
+
+  it("times no edit when no page shows a field", async () => {
     const { result, bodies } = await measured(IMPORTED, pageShowing([]));
     if ("refused" in result) throw new Error("refused");
     expect(result.typing).toEqual({ typed: false, why: "no field", pages: 1 });

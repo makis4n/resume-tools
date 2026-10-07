@@ -26,7 +26,8 @@
  * edited through the document's history, each edit compiled and drawn (`src/measure/measure.ts`).
  * It prints a table per package and a summary against the targets. Sizes are bytes on disk: the
  * engine's `.wasm` and `.mjs`, the manifest, and the TeX Live files the engine and the fonts read;
- * what they compress to on the way is the CDN's to say (milestone 5). It needs `.engine/`, which
+ * the first load is judged on what they compress to with gzip, since the plan's 30 MB is a
+ * compressed size, and its bytes on disk are reported beside it. It needs `.engine/`, which
  * `fetch-engine` builds.
  *
  * With `--import`, the upstream samples of Jake's Resume on pdfTeX and of Awesome-CV on XeTeX,
@@ -335,6 +336,7 @@ async function measurePackages(runner: Runner, options: Options) {
     throw new Error("There is no .engine/ to measure with: run fetch-engine first.");
   const { CURATED } = await runner.import<Curated>("/src/templates/curated.ts");
   const { TexLiveIndex } = await runner.import<TexLive>("/src/page/texlive.ts");
+  const node = await runner.import<NodeImports>("/src/measure/node.ts");
 
   const manifestPath = join(ENGINE_DIR, "manifest.json");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as EngineManifest;
@@ -343,6 +345,8 @@ async function measurePackages(runner: Runner, options: Options) {
     loader: statSync(join(ENGINE_DIR, "busytex.mjs")).size,
     manifest: statSync(manifestPath).size,
   };
+  // The first load compressed, as the plan's 30 MB counts it: each file read and compressed once.
+  const compressed = node.engineCompressed();
   const about = machine();
   const layouts = options.runs * measure.LAYOUTS_PER_EDIT;
   console.log(
@@ -358,7 +362,7 @@ async function measurePackages(runner: Runner, options: Options) {
       read: async (path: string) => readFileSync(join(ENGINE_DIR, "files", path)),
     };
     const numbers = await measure.measurePackage(session, tree, pkg, sample, options.runs);
-    const load = measure.firstLoad(numbers, sizes);
+    const load = measure.firstLoad(numbers, sizes, compressed);
     measured.push({ numbers, load });
     console.log(`${pkg.name} (${pkg.id}, ${pkg.engine})`);
     console.log(`${measure.packageTable(numbers, load)}\n`);
@@ -371,8 +375,9 @@ async function measurePackages(runner: Runner, options: Options) {
     [
       "",
       "An edit is timed from its command to its drawn page; the scheduler's pause before the",
-      "compile, which waits for the typing to stop, is not in it. Sizes are uncompressed;",
-      "the CDN compresses them (milestone 5).",
+      "compile, which waits for the typing to stop, is not in it. The first load is judged",
+      "compressed, as gzip makes it, since the plan's 30 MB is a compressed size; uncompressed",
+      "beside it. The other sizes are uncompressed.",
     ].join("\n"),
   );
   if (options.json !== undefined) {
