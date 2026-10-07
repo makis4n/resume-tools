@@ -27,6 +27,7 @@ import {
   type GlyphPlace,
   kindOf,
   type Own,
+  PROBE_PRELUDE,
   type Probe,
   type ProbeCandidate,
   probe,
@@ -1318,6 +1319,57 @@ $x+y=z$ \par
     expect(verdict(found, "cvname")?.verdict).toBe("editable");
     // What the caller gave stays.
     expect(found.signatures.commands.cvplain).toEqual(given.commands.cvplain);
+  }, 60_000);
+
+  /**
+   * An invented document compiled whole, the prelude after its preamble as the probe has it, and
+   * its glyphs and rules where the page sets them: each one's page, font, code and place, exact.
+   */
+  async function placed(text: string) {
+    const withPrelude = text.replace("\\begin{document}", `${PROBE_PRELUDE}\\begin{document}`);
+    const taken = intake(
+      { name: "invented.zip", bytes: zipSync({ "cv.tex": strToU8(withPrelude) }) },
+      { tree },
+    );
+    if (isRefusal(taken)) throw new Error(`refused at intake: ${taken.message}`);
+    const made = await reference(session, fonts, taken as Intake);
+    if (isRefusal(made)) throw new Error(`refused: ${made.message}`);
+    return made.pages.map((page) =>
+      page.items.flatMap((item) =>
+        item.kind === "special"
+          ? []
+          : [[item.kind, item.h, item.v, item.kind === "glyph" ? `${item.font}:${item.code}` : ""]],
+      ),
+    );
+  }
+
+  test("ends a field's markers before a break that ends a ragged paragraph, and leaves the page as it was", async () => {
+    // `\\` under `\raggedright` ends the paragraph: an end marker after it would be set on the
+    // vertical list, between the item and the next, and move every line after it.
+    const document = (item: string) => String.raw`\documentclass{article}
+\raggedright
+\begin{document}
+\begin{itemize}
+\item ${item}
+\item Invented fern words
+\end{itemize}
+Invented words after the list.
+\end{document}
+`;
+    const found = await probed({ "cv.tex": document(String.raw`Invented quill words \\`) });
+    const quill = found.candidates.find((each) => each.text.includes("quill"));
+    expect(quill).toMatchObject({ verdict: "editable" });
+    const page = await placed(document(String.raw`Invented quill words \\`));
+    expect(page.flat().length).toBeGreaterThan(30);
+    const id = quill?.id ?? "";
+    // Where the probe now puts the markers, the page is the reference's, glyph for glyph.
+    expect(await placed(document(String.raw`\rtfield{${id}}{Invented quill words} \\`))).toEqual(
+      page,
+    );
+    // Where it put them before, after the break, every line after it moved.
+    expect(
+      await placed(document(String.raw`\rtfield{${id}}{Invented quill words \\}`)),
+    ).not.toEqual(page);
   }, 60_000);
 
   test("leaves its format in the session for the assembled package's check, for its caller to drop", async () => {

@@ -4,6 +4,7 @@ import {
   candidatesOf,
   isSetter,
   marked,
+  markerEnd,
   reissued,
   storedIn,
   tightened,
@@ -191,6 +192,28 @@ Invented paragraph words.`,
     expect(marked(tree.source, candidates)).toBe(
       String.raw`\inventedpost {\rtfield{c1-1}{x}} \rtfield{t1}{and} \inventedpost{\rtfield{c2-1}{Stra\ss   }}`,
     );
+  });
+
+  test("end a field's markers before the line breaks it ends with and the spaces before them", () => {
+    const tree = treeOf(String.raw`\begin{itemize}
+\item Invented quill words \\
+\item{ \textbf{Invented}{: fern words} \\ \\ }
+\item Invented kept \\[2pt]
+\end{itemize}
+\inventedpost{\\}`);
+    const { candidates } = candidatesOf(tree);
+    expect(marked(tree.source, candidates)).toBe(String.raw`\begin{itemize}
+\item \rtfield{t1}{Invented quill words} \\
+\item{ \rtfield{i2}{\textbf{Invented}{: fern words}} \\ \\ }
+\item \rtfield{t2}{Invented kept} \\[2pt]
+\end{itemize}
+\inventedpost{\rtfield{c1-1}{\\}}`);
+    // The spaces TeX skips after a control word stay inside, as without a break; a span of breaks
+    // alone keeps them; and a backslash that escapes another is no break.
+    expect(markerEnd(String.raw`x \Invented \\`, 0, 14)).toBe(11);
+    expect(markerEnd(String.raw`a \\\\`, 0, 6)).toBe(1);
+    expect(markerEnd("a\\\\\\", 0, 4)).toBe(4);
+    expect(markerEnd(String.raw`\\`, 0, 2)).toBe(2);
   });
 });
 
