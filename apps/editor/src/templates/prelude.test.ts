@@ -167,7 +167,8 @@ const LOOK_ALIKES: LookAlike[] = [
 \rtfield{b}{Invented staff}\textbf{Invented} words after it.
 \textit{\rtfield{c}{Invented half} \textup{words}} after it.
 \rtfield{d}{Invented staff} \textbf{.Invented} and \rtfield{e}{Invented staff} \textbf{}words.
-\rtfield{f}{Invented staff} \emph{Invented} and \textbf{\rtfield{g}{Invented staff} }words.`,
+\rtfield{f}{Invented staff} \emph{Invented} and \textbf{\rtfield{g}{Invented staff} }words.
+{\itshape \rtfield{h}{Invented half}} \textbf{Invented} and \textit{\small{\rtfield{i}{Invented half}}} after.`,
     moved: "old",
   },
   {

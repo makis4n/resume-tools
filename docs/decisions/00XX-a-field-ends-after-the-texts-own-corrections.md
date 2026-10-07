@@ -54,7 +54,8 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
 ### The macro
 
 - **Nothing is stored; the end marker waits.** A field's end (`\rt@f@end`) holds its end marker
-  back and reads the next token. Where it is the `\check@icr` of a text command whose argument the
+  back and reads the next token, past the end of a simple group, which sets nothing, as
+  `\small{...}` and `{\itshape ...}` close round a field. Where it is the `\check@icr` of a text command whose argument the
   field ends, that runs and the marker comes back after the group, behind LaTeX's `\maybe@ic`.
   Where it is one of LaTeX's text commands, after a space or none, whose text is not empty and
   does not start with `\nocorr`, the marker waits for that command's `\maybe@ic` at its start.
@@ -81,9 +82,8 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
   in a conditional's branch, as the letter class's `\signature` is: it is compared and never left
   in skipped text, where it would close the conditional. A first version did, and broke one
   candidate each in `other-0030` and `europecv-0008`.
-- **What still moves the page**: a correction across a group's end, `{\itshape <field>}
-  \textbf{...}`; a field followed by anything but a space before the text command whose start
-  corrects it, or by a command a class defines that corrects; XeTeX's line-start protrusion; the
+- **What still moves the page**: a field followed by anything but a space before the text command
+  whose start corrects it, as a tie, or by a command a document defines that corrects it; XeTeX's line-start protrusion; the
   begin marker's `\leavevmode`, which starts a paragraph where the field does (decision 0003; in
   the Awesome-CV sample it moves the colour special of a section's title into its line, and no
   glyph); and microtype's `\leftprotrusion` at the start of an item's later paragraphs, which reads
@@ -95,17 +95,18 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
 
 ### Tests
 
-- `prelude.test.ts`: for each cause, an invented look-alike whose marked page sets every glyph,
-  rule and special where its unmarked compile does, and which the macro it replaces moved: (a)
-  after a field that is a text command's argument, decided past the field's end, and at the next
-  text command's start, after a space or none; (d) in pdfTeX and with (a) in XeTeX; (b) an item's
-  first glyph; each of the prototype's two losses; a field that ends a conditional's branch. (c)
-  is pinned as it is: equal in pdfTeX, moved in XeTeX. Then every built-in template's sample
-  compiled marked and unmarked from its format: `jake: marked = unmarked, 950 glyphs; main's
-  macro moved them`, `altacv: marked = unmarked, 1253 glyphs`, `awesome-cv: marked = unmarked,
-  1693 glyphs`, glyphs and rules at the same places and the same specials in the same order.
-- `probe.test.ts`: `cvslant`, `\textit{#1}.`, is editable now; the field before a text command
-  after a group's end is the one kept `moved`, and the uncovered glyphs' test uses it.
+- `prelude.test.ts`: for each cause, an invented look-alike whose marked page sets every glyph, rule
+  and special where its unmarked compile does, and which the macro it replaces moved: (a) after a
+  field that is a text command's argument, decided past the field's end, and at the next text
+  command's start, after a space, none or a group's end; (d) in pdfTeX, and with (a) in XeTeX; (b)
+  an item's first glyph; each of the prototype's two losses; and a field that ends a conditional's
+  branch. (c) is pinned as it is: equal in pdfTeX, moved in XeTeX. Then every built-in template's
+  sample compiled marked and unmarked from its format: `jake: marked = unmarked, 950 glyphs; main's
+  macro moved them`, `altacv: marked = unmarked, 1253 glyphs`, `awesome-cv: marked = unmarked, 1693
+  glyphs`, glyphs and rules at the same places and the same specials in the same order.
+- `probe.test.ts`: `cvslant`, `\textit{#1}.`, is editable now; a field corrected by a document's
+  own command, `{\itshape #1} \cvbold{...}`, is the one kept `moved`, and the uncovered glyphs'
+  test uses it.
 - `rich.test.ts`: the last run's correction by what follows the field.
 - The oracle's pinned shares are unchanged; Jake's upstream sample imports in 27 compiles, as on
   main, in 4.06 to 4.11 s against 4.04 to 4.06 s on main, run back to back.

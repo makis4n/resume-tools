@@ -41,20 +41,22 @@ export const LOCK_END = "/";
  *     glyph before it, where it sets an upright font and its text does not start with `,` or `.`.
  *     It sets `\/`, the italic correction of the glyph that ends the list, and TeX's `\/` corrects
  *     nothing after a whatsit. So a field's end (`\rt@f@end`) holds its end marker back
- *     (`\rt@f@held`) and reads the next token: where it is the `\check@icr` of a text command whose
- *     argument the field ends, that runs, and the marker comes back after the group, behind
- *     `\maybe@ic` (`\rt@f@resume`); where it is a text command of LaTeX's, after a space or none,
- *     whose text is neither empty nor starts with `\nocorr`, the marker waits for that command's
- *     `\maybe@ic` at its start, which reads past `\rt@f@argstart`, put before its text, and where a
- *     class's own command of that name never reads it, `\rt@f@argstart` writes the marker before
- *     the text; and where a text command inside the field ends it, its `\maybe@ic` reads past the
- *     field's end and holds the marker. Each time LaTeX decides on the token the unmarked page has
- *     there, its `\/` corrects the glyph that ends the list, and only then is the end marker
- *     written, after the correction and, where the space came between, after the space. Anything
- *     else writes it at once. Nothing is stored but the held markers, global to pass the group's
- *     end, and they are written and cleared before the text after them is set, whether LaTeX
- *     corrects or not: no state outlives the text command. A token read ahead may be `\fi`, as
- *     where a class sets a field in a conditional's branch, so it is compared and never skipped.
+ *     (`\rt@f@held`) and reads the next token, past the end of a simple group, which sets nothing,
+ *     as `\small{...}` or `{\itshape ...}` close round a field: where it is the `\check@icr` of a
+ *     text command whose argument the field ends, that runs, and the marker comes back after the
+ *     group, behind `\maybe@ic` (`\rt@f@resume`); where it is a text command of LaTeX's, after a
+ *     space or none, whose text is neither empty nor starts with `\nocorr`, the marker waits for
+ *     that command's `\maybe@ic` at its start, which reads past `\rt@f@argstart`, put before its
+ *     text, and where a class's own command of that name never reads it, `\rt@f@argstart` writes
+ *     the marker before the text; and where a text command inside the field ends it, its
+ *     `\maybe@ic` reads past the field's end and holds the marker. Each time LaTeX decides on the
+ *     token the unmarked page has there, its `\/` corrects the glyph that ends the list, and only
+ *     then is the end marker written, after the correction and, where the space came between, after
+ *     the space. Anything else writes it at once. Nothing is stored but the held markers, global to
+ *     pass the group's end, and they are written and cleared before the text after them is set,
+ *     whether LaTeX corrects or not: no state outlives the text command. A token read ahead may be
+ *     `\fi`, as where a class sets a field in a conditional's branch, so it is compared and never
+ *     skipped.
  *   - microtype's `\leftprotrusion`, which `\@item` ends with, reads the next token and protrudes
  *     the item's first glyph only after a command it knows. It learns `\rtfield`
  *     (`\MT@prot@check@R`, where microtype is loaded) and goes to the start of the field's text,
@@ -63,8 +65,8 @@ export const LOCK_END = "/";
  *   The names are `\rt@f@...`, since the Awesome-CV port's class has an `\rt@end` of its own.
  *   XeTeX's margin protrusion at a line's start stops at the first whatsit, the begin marker, which
  *   no macro can put after the line's first glyph: there a field still moves the page, as it does
- *   where a group's end or anything but a space comes between it and the text command whose
- *   correction it would take.
+ *   where anything but a space comes between it and the text command whose correction it would
+ *   take, or where a command a document defines corrects it.
  * - `\rt@par{<id>}` writes the paragraph special right after the begin marker. It is measured by
  *   TeX rather than derived from the template (decision 0004), and item 9's overlay parses it to
  *   break the field's lines where TeX will. `\parshape` has as many lines as the template gave it,
@@ -138,8 +140,17 @@ export const PRELUDE = String.raw`\makeatletter
 \protected\def\rt@f@ahead{%
   \let\rt@f@ahead@then\rt@f@settle@@
   \ifx\rt@f@next\@sptoken\let\rt@f@ahead@then\rt@f@space\fi
+  \ifx\rt@f@next\egroup\let\rt@f@ahead@then\rt@f@group\fi
   \rt@f@iftext\rt@f@text
   \rt@f@ahead@then}
+% The end of a simple group, as \small{...} or {\itshape ...} close round a field, sets nothing:
+% the markers read on after it.
+\protected\def\rt@f@group{%
+  \let\rt@f@group@then\rt@f@settle@@
+  \ifhmode\ifnum\currentgrouptype=\@ne\let\rt@f@group@then\rt@f@aftergroup\fi\fi
+  \rt@f@group@then}
+\protected\def\rt@f@aftergroup{\aftergroup\rt@f@after}
+\protected\def\rt@f@after{\futurelet\rt@f@next\rt@f@ahead}
 \protected\def\rt@f@iftext#1{%
   \ifx\rt@f@next\textrm\let\rt@f@ahead@then#1\fi
   \ifx\rt@f@next\textsf\let\rt@f@ahead@then#1\fi

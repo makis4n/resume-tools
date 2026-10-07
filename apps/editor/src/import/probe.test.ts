@@ -1265,7 +1265,8 @@ Invented words for an invented page.
 \newcommand{\cvwhen}[1]{\textit{#1} and after\par}
 \newcommand{\cvdated}[1]{Invented {\slshape #1} and after\par}
 \newcommand{\cvslant}[1]{\textit{#1}. And after\par}
-\newcommand{\cvnext}[1]{Invented {\itshape #1} \textbf{after}\par}
+\newcommand{\cvbold}[1]{\textbf{#1}}
+\newcommand{\cvnext}[1]{Invented {\itshape #1} \cvbold{after}\par}
 \begin{document}
 \cvwhen{Invented half}
 \cvdated{Invented half}
@@ -1279,8 +1280,8 @@ Invented words for an invented page.
     expect(verdict(found, "cvdated")?.verdict).toBe("editable");
     // LaTeX leaves the correction out before a period, and so does the field (decision 00XX).
     expect(verdict(found, "cvslant")?.verdict).toBe("editable");
-    // The next text command's correction of the declaration's last glyph, after a space: the end
-    // marker stands between, and no state of the field's outlives it to set it (decision 00XX).
+    // The correction of the declaration's last glyph by the next text command, which a macro of
+    // the document's sets: the field's end reads only LaTeX's own (decision 00XX).
     expect(verdict(found, "cvnext")).toMatchObject({ verdict: "moved" });
   }, 60_000);
 
@@ -1288,7 +1289,8 @@ Invented words for an invented page.
     const found = await probed({
       "cv.tex": String.raw`\documentclass{article}
 \newcommand{\cvplain}[1]{\textbf{#1}\par}
-\newcommand{\cvslant}[1]{Invented label: {\itshape #1} \textbf{Done}\par}
+\newcommand{\cvbold}[1]{\textbf{#1}}
+\newcommand{\cvslant}[1]{Invented label: {\itshape #1} \cvbold{Done}\par}
 \begin{document}
 \cvplain{Invented alpha}
 $x+y=z$ \par
