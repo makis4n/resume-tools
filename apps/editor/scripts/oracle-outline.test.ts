@@ -56,15 +56,20 @@ const SAMPLES: Readonly<
   "jake-0000": {
     body: 389,
     fields: 0.89,
-    shares: { editable: 349, retype: 40, locked: 0 },
-    hand: { editable: 349, retype: 40, locked: 0 },
-    required: 0,
+    // Since a field a line (decision 0076), the skills block's three lines after its first are
+    // fields: 27 words by hand.
+    shares: { editable: 378, retype: 11, locked: 0 },
+    hand: { editable: 376, retype: 13, locked: 0 },
+    // Those three lines: the template sets `\raggedright` for the whole document, where `\\` ends
+    // the paragraph, so a line between two breaks, emptied, leaves the next nothing to end.
+    required: 3,
   },
   "altacv-0000": {
     body: 232,
     fields: 0.72,
-    shares: { editable: 168, retype: 51, locked: 13 },
-    hand: { editable: 168, retype: 51, locked: 13 },
+    // Since a field a line (decision 0076), each referee's second address line is a field: 6 words.
+    shares: { editable: 174, retype: 45, locked: 13 },
+    hand: { editable: 174, retype: 45, locked: 13 },
     required: 10,
   },
   "awesome-cv-0000": {

@@ -481,6 +481,13 @@ function spelledAt(text: string, glyphs: readonly string[], at: number): number 
 }
 
 /**
+ * How many glyphs, from the first of `glyphs` (their texts), spell `text` as `spelledAt` reads
+ * them, a hyphen TeX added at a line's end among them; 0 when they do not.
+ */
+export const spelledFrom = (text: string, glyphs: readonly (string | undefined)[]): number =>
+  spelledAt(canonical(text), glyphs.map(glyphCanonical), 0);
+
+/**
  * Each run lined up with a part's glyphs, in order, or undefined where it does not line up: a run
  * is found at the first glyph from where the last one ended that spells it, within `SKIP` glyphs
  * unless it is `LONG`, and a run the next one spells the same and is found at the same glyph is

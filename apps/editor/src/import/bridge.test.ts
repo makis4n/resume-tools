@@ -129,7 +129,9 @@ describe.skipIf(!engineAvailable())("the bridge on the engine", () => {
       return [{ name: `${id}.zip`, bytes: zip }];
     };
 
-    for (const id of ["jake-0000", "altacv-0000"])
+    // jake-0000 imports over the bar since its skills block is a field a line (decision 0076), so
+    // the move is offered to AltaCV's sample alone.
+    for (const id of ["altacv-0000"])
       it(`offers ${id} the move, which comes to a document of a built-in template`, async () => {
         const files = sample(id);
         const outcome = await importResume(files, deps);
