@@ -11,6 +11,10 @@
  * the part's id instead (`data-locked`), and so does an unpainted box over each of the part's
  * blocks, under every glyph, so that the pointer between its words and lines is over the part too
  * (decision 0041).
+ *
+ * An item set inside a rotation or a scale xdvipdfmx applies is drawn turned or scaled about its
+ * origin as the PDF draws it (`turnedAbout`); `parseDvi` has already put the origin where the PDF
+ * does (decision 00XX).
  */
 
 import type { DviDocument, DviPage, NativeFont, PageItem } from "./dvi";
@@ -104,6 +108,24 @@ export interface RenderOptions {
    * always had, and `p<index>-` for a later one (`drawPage`).
    */
   ids?: string;
+}
+
+/**
+ * The SVG `transform` attribute that turns or scales an item drawn at `(x, y)` about that point by
+ * the linear part of a matrix xdvipdfmx applies, y up as the PDF has it, so y down as the SVG has
+ * it; nothing where the item is set in no such matrix.
+ */
+export function turnedAbout(
+  matrix: readonly [number, number, number, number] | undefined,
+  x: number,
+  y: number,
+): string {
+  if (matrix === undefined) return "";
+  const [a, b, c, d] = matrix;
+  const e = x - a * x + c * y;
+  const f = y + b * x - d * y;
+  const n = (value: number) => Number(value.toFixed(6));
+  return ` transform="matrix(${n(a)} ${n(-b)} ${n(-c)} ${n(d)} ${e.toFixed(3)} ${f.toFixed(3)})"`;
 }
 
 const escape = (s: string) =>
@@ -205,7 +227,7 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
         const y = INCH + item.v * pt;
         const w = item.width * pt;
         body.push(
-          `<use href="#${id}" x="${x.toFixed(3)}" y="${y.toFixed(3)}" data-code="${item.code}" data-w="${w.toFixed(3)}" data-font="${escape(font.name)}" data-size="${(font.scale * pt).toFixed(3)}"${fieldAttrs(index)}${fill()}/>`,
+          `<use href="#${id}" x="${x.toFixed(3)}" y="${y.toFixed(3)}" data-code="${item.code}" data-w="${w.toFixed(3)}" data-font="${escape(font.name)}" data-size="${(font.scale * pt).toFixed(3)}"${fieldAttrs(index)}${fill()}${turnedAbout(item.transform?.matrix, x, y)}/>`,
         );
         return;
       }
@@ -225,7 +247,7 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
           const x = INCH + item.h * pt;
           const y = INCH + item.v * pt;
           body.push(
-            `<rect x="${x.toFixed(3)}" y="${(y - 7).toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="9" fill="none" stroke="rgb(200,60,60)" stroke-width="0.3"${fieldAttrs(index, 0)}/>`,
+            `<rect x="${x.toFixed(3)}" y="${(y - 7).toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="9" fill="none" stroke="rgb(200,60,60)" stroke-width="0.3"${fieldAttrs(index, 0)}${turnedAbout(item.transform?.matrix, x, y)}/>`,
           );
           return;
         }
@@ -260,7 +282,7 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
           const x = INCH + (item.h + g.x) * pt;
           const y = INCH + (item.v + g.y) * pt;
           body.push(
-            `<use href="#${id}" x="${x.toFixed(3)}" y="${y.toFixed(3)}" data-glyph="${g.id}" data-font="${escape(font.name)}" data-size="${(font.size * pt).toFixed(3)}"${fieldAttrs(index, glyph)}${own}/>`,
+            `<use href="#${id}" x="${x.toFixed(3)}" y="${y.toFixed(3)}" data-glyph="${g.id}" data-font="${escape(font.name)}" data-size="${(font.size * pt).toFixed(3)}"${fieldAttrs(index, glyph)}${own}${turnedAbout(item.transform?.matrix, x, y)}/>`,
           );
         });
         return;
@@ -269,8 +291,10 @@ export function renderPage(doc: DviDocument, page: DviPage, options: RenderOptio
         if (item.width <= 0 || item.height <= 0) return;
         const x = INCH + item.h * pt;
         const y = INCH + (item.v - item.height) * pt;
+        // A rule is set from its lower left corner, which a rotation or a scale turns it about.
+        const turned = turnedAbout(item.transform?.matrix, x, INCH + item.v * pt);
         body.push(
-          `<rect x="${x.toFixed(3)}" y="${y.toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="${(item.height * pt).toFixed(3)}"${fill()}${fieldAttrs(index)}/>`,
+          `<rect x="${x.toFixed(3)}" y="${y.toFixed(3)}" width="${(item.width * pt).toFixed(3)}" height="${(item.height * pt).toFixed(3)}"${fill()}${fieldAttrs(index)}${turned}/>`,
         );
         return;
       }

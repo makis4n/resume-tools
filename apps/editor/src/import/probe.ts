@@ -53,6 +53,7 @@ import {
   MARKER_END,
   markerId,
 } from "../tex/fields";
+import type { TransformKind } from "../tex/transforms";
 import { checkSpecial, SETS_NO_GLYPH } from "../validate/harness";
 import {
   type Candidate,
@@ -151,9 +152,12 @@ export interface ProbeCandidate extends Candidate {
   /**
    * More about a failure: where the second copy was (`page` or `special`), how a split field ended
    * (`no end`, `out of order`), that a macro took the markers apart (`torn`), that the page cannot
-   * place the field (`transform`), or the kind of the first difference from the reference.
+   * edit the field in the transformation it is set inside (`transform`), or the kind of the first
+   * difference from the reference.
    */
   detail?: string;
+  /** For `transform`, the kind of transformation the field is set inside (`checkSpecial`). */
+  transform?: TransformKind;
   settled: Settled;
 }
 
@@ -166,6 +170,8 @@ export interface Own {
   /** Why not, when not. */
   reason?: Failure;
   detail?: string;
+  /** For `transform`, the kind of transformation the field is set inside (`checkSpecial`). */
+  transform?: TransformKind;
   /** Its glyphs, when its markers came, the first copy's. */
   glyphs?: GlyphPlace[];
 }
@@ -201,7 +207,10 @@ export type CompileSet = (set: readonly Candidate[]) => Promise<SetResult>;
 
 /** What `settle` decided, and how many compiles it took. */
 export interface Settlement {
-  verdicts: Map<string, { verdict: Verdict; detail?: string; settled: Settled }>;
+  verdicts: Map<
+    string,
+    { verdict: Verdict; detail?: string; transform?: TransformKind; settled: Settled }
+  >;
   /**
    * The glyphs of each candidate that came in a compile whose output set the reference's, or set
    * them in the same order elsewhere (`SetResult.order`), as places among the reference's.
@@ -308,9 +317,20 @@ export async function settle(
   let compiles = 0;
 
   const open = (set: readonly Candidate[]) => set.filter((each) => !verdicts.has(each.id));
-  const decide = (candidate: Candidate, verdict: Verdict, settled: Settled, detail?: string) => {
+  const decide = (
+    candidate: Candidate,
+    verdict: Verdict,
+    settled: Settled,
+    detail?: string,
+    transform?: TransformKind,
+  ) => {
     if (verdicts.has(candidate.id)) return;
-    verdicts.set(candidate.id, { verdict, settled, ...(detail === undefined ? {} : { detail }) });
+    verdicts.set(candidate.id, {
+      verdict,
+      settled,
+      ...(detail === undefined ? {} : { detail }),
+      ...(transform === undefined ? {} : { transform }),
+    });
     if (settled === "alone" && (verdict === "breaks" || verdict === "moved"))
       failing.set(kind(candidate), verdict);
   };
@@ -387,13 +407,17 @@ export async function settle(
   const alone = (
     result: SetResult,
     candidate: Candidate,
-  ): { verdict: Verdict; detail?: string } => {
+  ): { verdict: Verdict; detail?: string; transform?: TransformKind } => {
     if (result.broke) return { verdict: "breaks" };
     const own = result.own.get(candidate.id);
     if (own !== undefined && !own.ok && own.reason !== undefined)
       return own.reason === "vanished" && result.torn
         ? { verdict: "misaligned", detail: "torn" }
-        : { verdict: own.reason, ...(own.detail === undefined ? {} : { detail: own.detail }) };
+        : {
+            verdict: own.reason,
+            ...(own.detail === undefined ? {} : { detail: own.detail }),
+            ...(own.transform === undefined ? {} : { transform: own.transform }),
+          };
     if (!result.same)
       return { verdict: "moved", ...(result.difference ? { detail: result.difference } : {}) };
     return { verdict: "editable" };
@@ -442,8 +466,8 @@ export async function settle(
   const judge = async (set: readonly Candidate[], result: SetResult): Promise<void> => {
     const only = set.length === 1 ? set[0] : undefined;
     if (only !== undefined) {
-      const { verdict, detail } = alone(result, only);
-      decide(only, verdict, "alone", detail);
+      const { verdict, detail, transform } = alone(result, only);
+      decide(only, verdict, "alone", detail, transform);
       return;
     }
     if (result.broke) {
@@ -454,7 +478,7 @@ export async function settle(
     for (const each of set) {
       const own = result.own.get(each.id);
       if (own === undefined || own.ok || unclear(result, each)) continue;
-      decide(each, own.reason ?? "vanished", "together", own.detail);
+      decide(each, own.reason ?? "vanished", "together", own.detail, own.transform);
     }
     const doubtful = set.filter((each) => unclear(result, each));
     if (result.same) {
@@ -509,7 +533,7 @@ export async function settle(
     for (const each of set) {
       const own = result.own.get(each.id);
       if (own !== undefined && !own.ok && !unclear(result, each))
-        decide(each, own.reason ?? "vanished", "together", own.detail);
+        decide(each, own.reason ?? "vanished", "together", own.detail, own.transform);
     }
     const passed = set.filter((each) => result.own.get(each.id)?.ok === true);
     const doubtful = open(set).filter((each) => !passed.includes(each));
@@ -625,9 +649,6 @@ export function probeOrder(
 /** A marker's id inside another special's text, as a link's address holds its argument's. */
 const EMBEDDED = /rt:b:(?:\\detokenize\s*\{)?([a-z0-9-]+)/gi;
 
-/** What the harness's special check says of a field set where the PDF alone transforms it. */
-const TRANSFORMED = "PDF-only transform";
-
 /** A field's text and glyphs, read case-insensitively. */
 function folded(field: Field): Field {
   return {
@@ -735,10 +756,12 @@ export async function observe(
       }
     }),
   );
-  const transformed = new Set(
-    checkSpecial(doc)
-      .filter((finding) => finding.message.includes(TRANSFORMED))
-      .flatMap((finding) => finding.field ?? []),
+  // The fields the harness's special check finds set inside a transformation the editor cannot
+  // edit them in, and its kind.
+  const transformed = new Map(
+    checkSpecial(doc).flatMap(({ field, transform }) =>
+      field === undefined || transform === undefined ? [] : [[field, transform] as const],
+    ),
   );
   const fieldsOn = new Map<number, Map<string, Field>>();
   const fieldOf = (page: number, id: string) => {
@@ -772,13 +795,15 @@ export async function observe(
       });
       return [[begin.page, first + (glyph.glyph ?? 0)] as const, ...others];
     });
-    const fail = (reason: Failure, detail?: string, keep = true) =>
+    const fail = (reason: Failure, detail?: string, keep = true, transform?: TransformKind) =>
       own.set(candidate.id, {
         ok: false,
         reason,
         ...(detail === undefined ? {} : { detail }),
+        ...(transform === undefined ? {} : { transform }),
         ...(keep ? { glyphs } : {}),
       });
+    const kind = transformed.get(candidate.id);
     const end = found.ends[0];
     if (found.begins.length > 1) fail("twice", "page");
     else if (found.embedded > 0) fail("twice", "special");
@@ -791,7 +816,7 @@ export async function observe(
           ? "case"
           : "misaligned",
       );
-    else if (transformed.has(candidate.id)) fail("moved", "transform");
+    else if (kind !== undefined) fail("moved", "transform", true, kind);
     else own.set(candidate.id, { ok: true, glyphs });
   }
   // The field whose begin marker comes last before where the output parts from the reference's.

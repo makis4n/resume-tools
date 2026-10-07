@@ -27,6 +27,7 @@ import type { RefusalReason } from "../src/import/refusal.ts";
 // The report imports nothing but types, so Node runs it as it is (decision 0039).
 import { LOCK_WHY, type LockReason, SUCCESS_RATE } from "../src/import/report.ts";
 import type { ImportStep } from "../src/import/run.ts";
+import type { TransformKind } from "../src/tex/transforms.ts";
 import { earlyHeadline, earlyOf } from "./corpus-early.ts";
 import { FAMILIES, type Family, printable } from "./corpus-manifest.ts";
 
@@ -135,9 +136,22 @@ export const DIFFERENCE_KINDS = [
 
 /**
  * The probe's details on a `moved` verdict: the kind of the first difference from the reference's
- * page (`DifferenceKind`), or `transform`, a field the page cannot place.
+ * page (`DifferenceKind`), or `transform`, a field set inside a transformation the editor cannot
+ * edit it in.
  */
 export const MOVED_DETAILS = [...DIFFERENCE_KINDS, "transform"] as const;
+
+/**
+ * The kinds of transformation a field kept as `moved` for `transform` is set inside, as the
+ * harness's special check names them (`TransformKind`, decision 00XX).
+ */
+export const TRANSFORM_KINDS = [
+  "translation",
+  "rotate",
+  "scale",
+  "matrix",
+  "other",
+] as const satisfies readonly TransformKind[];
 
 /**
  * What a word kept for `shape`, `differs` or `moved` is set down to when no candidate's run sets
@@ -153,7 +167,8 @@ export const CAUSE_BUCKETS = ["running line", "locked part"] as const;
  * and how many words. Where it is kept for `shape`, its words by the outline's rule behind it
  * (`rules`, `SHAPE_RULES`); for `differs`, by the kind of difference check 1 found (`kinds`,
  * `DIFFERENCE_KINDS`); for `moved`, by the probe's detail (`details`, `MOVED_DETAILS`); each
- * adding up to its words. Names and counts, never text.
+ * adding up to its words; and the words of `transform` among those, by the kind of transformation
+ * (`transforms`, `TRANSFORM_KINDS`). Names and counts, never text.
  */
 export interface PieceWords {
   piece: string;
@@ -165,6 +180,7 @@ export interface PieceWords {
   rules?: Record<string, number>;
   kinds?: Record<string, number>;
   details?: Record<string, number>;
+  transforms?: Record<string, number>;
 }
 
 /** The reasons kept whose words a piece breaks down further, and the field each goes in. */

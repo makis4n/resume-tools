@@ -15,6 +15,7 @@ import { defaultControls, parsePackage, type TemplatePackage } from "../template
 import { bound } from "../test/timing";
 import type { DviDocument, PageItem } from "../tex/dvi";
 import type { Field } from "../tex/fields";
+import { placeItems } from "../tex/transforms";
 import {
   CHECKS,
   type Check,
@@ -43,7 +44,7 @@ const ENSURES: Record<Check, string> = {
   alignment: "matches every glyph of every field to a character of its text, and shows it whole",
   fonts: "uses only fonts the page can draw",
   special:
-    "writes each field's paragraph special right after its begin marker, and no field in a PDF-only transform",
+    "writes each field's paragraph special right after its begin marker, and no field in a rotation or a scale",
   pdf: "makes its PDF from the same output: the page's size, readable, every field in its text",
 };
 
@@ -390,20 +391,33 @@ describe("checkSpecial", () => {
     comment: "",
     fonts: new Map(),
     nativeFonts: new Map(),
-    pages: pages.map((items) => ({ counters: [], items })),
+    // Placed as `parseDvi` places a page's items, which marks each with what it is set inside.
+    pages: pages.map((items) => {
+      const placed = items.map((item) => ({ ...item }));
+      placeItems(placed, 1);
+      return { counters: [], items: placed };
+    }),
   });
-  const transformed = (id: string) => ({
+  const NAMES = {
+    rotate: "a rotation",
+    scale: "a scale",
+    matrix: "a transformation",
+    other: "a transformation the page does not read",
+  } as const;
+  const transformed = (id: string, kind: keyof typeof NAMES) => ({
     check: "special",
     field: id,
-    message: `field ${id} is set inside a PDF-only transform, so the page cannot place it where the PDF does`,
+    message: `field ${id} is set inside ${NAMES[kind]} the PDF applies, which the editor cannot edit in place`,
+    transform: kind,
   });
 
-  it("reports a field set inside a PDF-only transform, however it nests, and none outside one", () => {
+  it("reports a field set inside a rotation or a scale, however it nests, and none in a translation", () => {
     const found = checkSpecial(
       documentOf(
         [
           ...field("before"),
-          // What pgf's dvipdfmx driver writes around a TikZ node's text.
+          // What pgf's dvipdfmx driver writes around a TikZ node's text: a translation, which the
+          // page applies as the PDF does (decision 00XX).
           special("pdf:btrans matrix 1.0 0.0 0.0 1.0 -23.59927 0.0"),
           ...field("node"),
           special("pdf:etrans"),
@@ -414,8 +428,14 @@ describe("checkSpecial", () => {
           special("pdf:et"),
           ...field("nested"),
           special("pdf:endtransform"),
-          // A transform that starts inside a field moves the glyphs after it.
-          ...field("partly", glyph, special("pdf:btrans matrix 1 0 0 1 5 0"), glyph),
+          // A rotation that starts inside a field turns the glyphs after it; a translation moves them.
+          ...field("partly", glyph, special("pdf:btrans rotate 10"), glyph),
+          special("pdf:etrans"),
+          ...field("shifted", glyph, special("pdf:btrans matrix 1 0 0 1 5 0"), glyph),
+          special("pdf:etrans"),
+          // One whose arguments the page does not read.
+          special("pdf:btrans skew 3"),
+          ...field("unread"),
           special("pdf:etrans"),
           // A content scope moves nothing, and nor does a special that only begins like one.
           special("pdf:bcontent"),
@@ -429,12 +449,12 @@ describe("checkSpecial", () => {
           glyph,
         ],
         [
-          special("pdf:btrans matrix 1 0 0 1 5 0"),
+          special("pdf:btrans matrix 2 0 0 2 5 0"),
           glyph,
           special("pdf:etrans"),
           special("rt:e:spans"),
           // Left open at the end of the page.
-          special("pdf:btrans matrix 1 0 0 1 5 0"),
+          special("pdf:btrans matrix 1 0.5 0 1 5 0"),
           ...field("last"),
         ],
         // The transform left open ends with its page; and a field is reported once, however many
@@ -443,30 +463,31 @@ describe("checkSpecial", () => {
       ),
     );
     expect(found).toEqual([
-      transformed("node"),
-      transformed("nested"),
-      transformed("partly"),
-      transformed("spans"),
-      transformed("last"),
+      transformed("nested", "rotate"),
+      transformed("partly", "rotate"),
+      transformed("unread", "other"),
+      transformed("spans", "scale"),
+      transformed("last", "matrix"),
+      transformed("node", "scale"),
     ]);
   });
 
   it("knows every name xdvipdfmx takes for a transform, after any whitespace it skips", () => {
     // Each pair around a field of its own, and a field after it, which it no longer moves.
     const pairs: [string, string][] = [
-      ["pdf:btrans matrix 1 0 0 1 50 0", "pdf:etrans"],
-      ["pdf:begintransform matrix 1 0 0 1 50 0", "pdf:endtransform"],
-      ["pdf:begintrans matrix 1 0 0 1 50 0", "pdf:endtrans"],
-      ["pdf:bt matrix 1 0 0 1 50 0", "pdf:et"],
-      [" pdf:btrans matrix 1 0 0 1 50 0", " pdf:etrans"],
-      ["\npdf:btrans matrix 1 0 0 1 50 0", "\npdf:etrans"],
-      ["\tpdf:  btrans matrix 1 0 0 1 50 0", "\t pdf:\tetrans"],
+      ["pdf:btrans matrix 2 0 0 2 50 0", "pdf:etrans"],
+      ["pdf:begintransform matrix 2 0 0 2 50 0", "pdf:endtransform"],
+      ["pdf:begintrans matrix 2 0 0 2 50 0", "pdf:endtrans"],
+      ["pdf:bt matrix 2 0 0 2 50 0", "pdf:et"],
+      [" pdf:btrans matrix 2 0 0 2 50 0", " pdf:etrans"],
+      ["\npdf:btrans matrix 2 0 0 2 50 0", "\npdf:etrans"],
+      ["\tpdf:  btrans matrix 2 0 0 2 50 0", "\t pdf:\tetrans"],
     ];
     for (const [begin, end] of pairs) {
       const found = checkSpecial(
         documentOf([special(begin), ...field("moved"), special(end), ...field("after")]),
       );
-      expect(found, JSON.stringify(begin)).toEqual([transformed("moved")]);
+      expect(found, JSON.stringify(begin)).toEqual([transformed("moved", "scale")]);
     }
   });
 
@@ -498,7 +519,8 @@ describe("checkSpecial", () => {
         ],
         [
           // x:escale undoes x:bscale about another point once the field is set between them, so
-          // the rest of the level stays moved, until x:grestore.
+          // the rest of the level stays moved, until x:grestore: by a translation, which the page
+          // applies.
           special("x:gsave"),
           special(" x: bscale 2 2"),
           ...field("inside"),
@@ -510,12 +532,11 @@ describe("checkSpecial", () => {
       ),
     );
     expect(found).toEqual([
-      transformed("scaled"),
-      transformed("turned"),
+      transformed("scaled", "scale"),
+      transformed("turned", "rotate"),
       // x:erotate closes nothing either, so it is not a close with nothing open.
-      transformed("rest"),
-      transformed("inside"),
-      transformed("past"),
+      transformed("rest", "scale"),
+      transformed("inside", "scale"),
     ]);
   });
 
@@ -757,21 +778,14 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
       expect(report.fields).toBe(4);
     }, 60_000);
 
-    it("reports a field set inside a PDF-only transform, as a TikZ node's text is, and nothing else", async () => {
-      // xdvipdfmx sets the bullet 20 bp right of where the page, drawn from the DVI, draws it,
-      // and the PDF still shows its words, so only this check can tell.
+    it("reports nothing of a field set inside a translation, as a TikZ node's text is", async () => {
+      // xdvipdfmx sets the bullet 20 bp right of where TeX set it, and so does the page, which
+      // applies the translation (decision 00XX).
       const moved = plainWith("transformed", {
         bullet: "\\special{pdf:btrans matrix 1 0 0 1 20 0}{{text}}\\special{pdf:etrans}\\par",
       });
       const report = await validatePackage(session, fonts, moved, RESUME);
-      expect(report.findings).toEqual([
-        {
-          check: "special",
-          field: "tern-1.text",
-          message:
-            "field tern-1.text is set inside a PDF-only transform, so the page cannot place it where the PDF does",
-        },
-      ]);
+      expect(report.findings).toEqual([]);
     }, 60_000);
 
     it("reports a field an x: special scales, and nothing else", async () => {
@@ -785,7 +799,8 @@ describe.skipIf(!engineAvailable())("the validation harness", () => {
           check: "special",
           field: "tern-1.text",
           message:
-            "field tern-1.text is set inside a PDF-only transform, so the page cannot place it where the PDF does",
+            "field tern-1.text is set inside a scale the PDF applies, which the editor cannot edit in place",
+          transform: "scale",
         },
       ]);
     }, 60_000);
