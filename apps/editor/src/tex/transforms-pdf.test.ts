@@ -15,7 +15,9 @@ import { type ImportDeps, importResume } from "../import/run";
 import { drawPage } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
-import { pdfOffsets, worstOf } from "../test/pdf-offsets";
+import { pdfOffsets, virtualCodes, worstOf } from "../test/pdf-offsets";
+import { parseTfm } from "../tex/tfm";
+import { parseVf } from "../tex/vf";
 
 // The page applies what xdvipdfmx's graphics state does to what it sets (decision 00XX): a TikZ
 // node's text, which pgf's dvipdfmx driver sets through a `pdf:btrans` translation, and graphicx's
@@ -48,8 +50,9 @@ and after.
 `;
 
 /**
- * A node set plainly, and three under a scope's `transform canvas`, which pgf writes as a `cm` of
- * its own around the node: turned, shifted and grown.
+ * A node set plainly, and five under a scope's `transform canvas`, which pgf writes as a `cm` of
+ * its own around the node: turned, shifted, grown, and given a half turn twice over, which pgf
+ * writes as `-1 0 0 -1 0 0 cm`, the half turn of its own pair around every node's text.
  */
 const CANVAS = String.raw`\documentclass{article}
 \usepackage[T1]{fontenc}
@@ -64,7 +67,26 @@ Before words.
 \begin{scope}[transform canvas={rotate=30}]\node at (3,0) {Canvas turned};\end{scope}
 \begin{scope}[transform canvas={shift={(2,0)}}]\node at (0,-1) {Canvas shifted};\end{scope}
 \begin{scope}[transform canvas={scale=2}]\node at (1,-1) {Canvas grown};\end{scope}
+\begin{scope}[transform canvas={rotate=180}]\node at (2,-2) {Canvas upside};\end{scope}
+\begin{scope}[transform canvas={xscale=-1,yscale=-1}]\node at (4,-2) {Canvas mirrored};\end{scope}
 \end{tikzpicture}
+\end{document}
+`;
+
+/**
+ * Words in a virtual font, Helvetica in T1 (`phvr8t`, drawn from the raw `phvr8r`), plainly and
+ * in a node: its ligatures, quotes and accented letters are other codes in the raw font.
+ */
+const VIRTUAL = String.raw`\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{tikz}
+\pagestyle{empty}
+\begin{document}
+Plain fine words.
+
+\tikz\node{\textquotedblleft Office\textquotedblright{} caf\'e flow, \textbf{fifty} -- final};
 \end{document}
 `;
 
@@ -178,8 +200,45 @@ describe.skipIf(!engineAvailable())("translations, rotations and scales against 
     expect(plain.operators).toBe(1);
     expect(plain.max).toBeLessThan(0.5);
     const canvas = worstOf(found, "other");
-    expect(canvas.operators).toBe(3);
+    expect(canvas.operators).toBe(5);
     expect(canvas.max).toBeGreaterThan(20);
+    expect(worstOf(found, undefined).max).toBeLessThan(0.5);
+  }, 60_000);
+
+  test("compares a virtual font's glyphs in a node by the codes its packets set", async () => {
+    const { doc, pdf } = await compiled(VIRTUAL, "virtual");
+    const manifest = JSON.parse(
+      readFileSync(join(ENGINE_DIR, "manifest.json"), "utf8"),
+    ) as EngineManifest;
+    const paths = new Map(
+      Object.keys(manifest.files).map((path) => [path.slice(path.lastIndexOf("/") + 1), path]),
+    );
+    const read = (file: string) => {
+      const path = paths.get(file);
+      return path === undefined
+        ? undefined
+        : new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path)));
+    };
+    const codesOf = virtualCodes(
+      (name) => {
+        const bytes = read(`${name}.vf`);
+        return bytes && parseVf(bytes);
+      },
+      (name) => {
+        const bytes = read(`${name}.tfm`);
+        return bytes && parseTfm(bytes);
+      },
+    );
+    // By the DVI's own codes, the operators with a ligature, a quote or an accent are not found.
+    expect(pdfOffsets(doc, pdf).unaligned).toBeGreaterThan(0);
+    const found = pdfOffsets(doc, pdf, codesOf);
+    expect(found.unaligned).toBe(0);
+    const translated = found.counts.find((each) => each.kind === "translation");
+    expect(translated?.glyphs).toBeGreaterThan(20);
+    expect(translated?.compared).toBe(translated?.glyphs);
+    const plain = found.counts.find((each) => each.kind === undefined);
+    expect(plain?.compared).toBe(plain?.glyphs);
+    expect(worstOf(found, "translation").max).toBeLessThan(0.5);
     expect(worstOf(found, undefined).max).toBeLessThan(0.5);
   }, 60_000);
 

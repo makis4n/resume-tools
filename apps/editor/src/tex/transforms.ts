@@ -16,10 +16,12 @@
  * pgf writes one for a scope's `transform canvas`. So the state also keeps the PDF's own stack of
  * levels, which xdvipdfmx's levels and a template's `q` and `Q` push and pop alike, and marks the
  * level such a `cm` is written in, and every level opened inside it, as `other`: what is set there
- * is left where it is and stays locked. pgf's pairs of `-1 0 0 -1 0 0 cm`, which undo each other
- * around each node's text, and the identity move nothing. What it does not see: a form,
- * `pdf:bxobj` to `pdf:exobj`, whose content the PDF draws wherever `pdf:uxobj` puts it. A
- * `pdf:btrans` whose arguments it cannot read is a level that moves nothing here, kept as `other`.
+ * is left where it is and stays locked. The identity moves nothing, and so does pgf's own pair
+ * of `-1 0 0 -1 0 0 cm` around each node's text, which undo each other; a half turn of any other
+ * kind, as a scope's `transform canvas={rotate=180}` writes, turns what follows, and marks it.
+ * What it does not see: a form, `pdf:bxobj` to `pdf:exobj`, whose content the PDF draws wherever
+ * `pdf:uxobj` puts it. A `pdf:btrans` whose arguments it cannot read is a level that moves nothing
+ * here, kept as `other`.
  */
 
 import type { PageItem } from "./dvi";
@@ -195,34 +197,36 @@ const ESCALE = /^\s*x:\s*escale(?!\w)/;
 const LITERAL = /^\s*pdf:\s*(code|literal|content)(?!\w)([\s\S]*)$/;
 
 /**
- * Whether a `cm`'s operands leave what is set after it where xdvipdfmx puts it: the identity, or
- * the half turn pgf writes twice around each node's text, which undo each other.
+ * What a `cm`'s operands do to what is set after it: nothing (the identity), a half turn about the
+ * origin (`-1 0 0 -1 0 0`), which only pgf's own pair around a node's text undoes
+ * (`literalOperators`), or anything else, which moves it.
  */
-function movesNothing(operands: readonly number[]): boolean {
+function cmOf(operands: readonly number[]): "identity" | "half" | "moves" {
   const [a, b, c, d, e, f] = operands;
   if (
     operands.length !== 6 ||
     [a, b, c, d, e, f].some((x) => x === undefined || !Number.isFinite(x))
   )
-    return false;
+    return "moves";
   const m = { a, b, c, d, e, f } as Affine;
-  return (
-    near(m.b, 0) &&
-    near(m.c, 0) &&
-    near(m.e, 0) &&
-    near(m.f, 0) &&
-    ((near(m.a, 1) && near(m.d, 1)) || (near(m.a, -1) && near(m.d, -1)))
-  );
+  if (!(near(m.b, 0) && near(m.c, 0) && near(m.e, 0) && near(m.f, 0))) return "moves";
+  if (near(m.a, 1) && near(m.d, 1)) return "identity";
+  if (near(m.a, -1) && near(m.d, -1)) return "half";
+  return "moves";
 }
+
+/** What a template's own content does to the PDF's stack of levels, operator by operator. */
+type LiteralOperator = "q" | "Q" | "half" | "moves";
 
 /**
  * What a template's own content does to the PDF's stack of levels, operator by operator: `q`
- * pushes one, `Q` pops one, and a `cm` that moves anything (`movesNothing`), or whose operands are
- * not read, marks the level it is in. Strings, hex strings and dictionaries are passed over, so
- * that a `q` inside one is not taken for the operator.
+ * pushes one, `Q` pops one, a `cm` that is a half turn about the origin is `half` (`cmOf`), and
+ * one that moves anything else, or whose operands are not read, `moves`; the identity is passed
+ * over. Strings, hex strings and dictionaries are passed over, so that a `q` inside one is not
+ * taken for the operator.
  */
-function literalOperators(content: string): ("q" | "Q" | "moves")[] {
-  const out: ("q" | "Q" | "moves")[] = [];
+function literalOperators(content: string): LiteralOperator[] {
+  const out: LiteralOperator[] = [];
   const tokens = content
     .replace(/\((?:\\[\s\S]|[^\\)])*\)|<<|>>|<[^<>]*>/g, " ")
     .split(/[\s[\]{}/]+/)
@@ -235,10 +239,34 @@ function literalOperators(content: string): ("q" | "Q" | "moves")[] {
       continue;
     }
     if (token === "q" || token === "Q") out.push(token);
-    else if (token === "cm" && !movesNothing(operands.slice(-6))) out.push("moves");
+    else if (token === "cm") {
+      const cm = cmOf(operands.slice(-6));
+      if (cm !== "identity") out.push(cm);
+    }
     operands = [];
   }
   return out;
+}
+
+/**
+ * pgf's dvipdfmx driver around a node's text (`\pgfsys@dvipdfmx@suspendcontent`): it opens the pair
+ * of half turns with `q -1 0 0 -1 0 0 cm q` in one literal, and after xdvipdfmx closes and opens a
+ * level, closes it with `-1 0 0 -1 0 0 cm` alone in the next, so that the two undo each other.
+ */
+const PGF_OPENS: readonly LiteralOperator[] = ["q", "half", "q"];
+const PGF_CLOSES: readonly LiteralOperator[] = ["half"];
+
+const same = (x: readonly LiteralOperator[], y: readonly LiteralOperator[]) =>
+  x.length === y.length && x.every((each, i) => each === y[i]);
+
+/**
+ * A level of the PDF's own stack: whether a template's `cm` moved what is set in it, which
+ * xdvipdfmx keeps no account of, and whether pgf's first half turn is open in it, waiting for the
+ * second, which undoes it.
+ */
+interface Written {
+  moved: boolean;
+  half: boolean;
 }
 
 /**
@@ -263,32 +291,53 @@ export class GraphicsState {
   private scales: { x: number; y: number }[] = [];
   /**
    * The PDF's own stack of levels, which xdvipdfmx's levels and a template's `q` and `Q` push and
-   * pop alike: for each, whether a template's `cm` moved what is set in it, which xdvipdfmx keeps
-   * no account of.
+   * pop alike (`Written`).
    */
-  private written: boolean[] = [false];
+  private written: Written[] = [{ moved: false, half: false }];
 
   constructor(private readonly unitsPerBp: number) {}
 
-  /** Whether a template's `cm` moves what is set now. */
+  private get writtenTop(): Written {
+    return this.written[this.written.length - 1] as Written;
+  }
+
+  /**
+   * Whether a template's `cm` moves what is set now: one that moves anything, or a half turn
+   * that is not one of pgf's pair, or is the first of one whose second has not come.
+   */
   private get moved(): boolean {
-    return this.written[this.written.length - 1] === true;
+    const top = this.writtenTop;
+    return top.moved || top.half;
   }
 
   private open() {
-    this.written.push(this.moved);
+    this.written.push({ ...this.writtenTop });
   }
 
   private close() {
     if (this.written.length > 1) this.written.pop();
   }
 
-  /** A template's own content, as the PDF's stack of levels takes it (`literalOperators`). */
+  /**
+   * A template's own content, as the PDF's stack of levels takes it (`literalOperators`): pgf's
+   * pair of half turns undo each other; any other half turn moves what follows, as the PDF turns it.
+   */
   private literal(content: string) {
-    for (const operator of literalOperators(content))
+    const operators = literalOperators(content);
+    if (same(operators, PGF_OPENS)) {
+      this.open();
+      this.writtenTop.half = true;
+      this.open();
+      return;
+    }
+    if (same(operators, PGF_CLOSES) && this.writtenTop.half) {
+      this.writtenTop.half = false;
+      return;
+    }
+    for (const operator of operators)
       if (operator === "q") this.open();
       else if (operator === "Q") this.close();
-      else this.written[this.written.length - 1] = true;
+      else this.writtenTop.moved = true;
   }
 
   private get top(): Level {

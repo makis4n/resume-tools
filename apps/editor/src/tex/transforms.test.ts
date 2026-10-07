@@ -283,6 +283,9 @@ describe("a template's own cm", () => {
       "0.86603 0.5 -0.5 0.86603 0.0 0.0 cm",
       "1.0 0.0 0.0 1.0 56.69362 0.0 cm",
       "2.0 0.0 0.0 2.0 0.0 0.0 cm",
+      // transform canvas={rotate=180} and {xscale=-1,yscale=-1}: the half turn pgf's pair also is.
+      "-1.0 0.0 0.0 -1.0 0.0 0.0 cm",
+      "-1 0 0 -1 0 0 cm",
     ]) {
       const items = drawn(dvi(node([cm])));
       expect(
@@ -292,6 +295,43 @@ describe("a template's own cm", () => {
       // The node's own translation still moves it, as on the page without the canvas.
       expect(items[0]?.h, cm).toBeCloseTo(-20 * (BP / PT), 3);
     }
+  });
+
+  it("takes a half turn for nothing only as pgf's pair, the first opened as pgf opens it", () => {
+    const items = drawn(
+      dvi([
+        // A half turn alone, then one closed by its own level.
+        special("pdf:code q -1 0 0 -1 0 0 cm"),
+        glyph(),
+        special("pdf:code Q"),
+        glyph(),
+        // Two in one literal undo each other, but are not pgf's pair: kept locked, to be safe.
+        special("pdf:code q -1 0 0 -1 0 0 cm -1 0 0 -1 0 0 cm"),
+        glyph(),
+        special("pdf:code Q"),
+        // pgf's opening with nothing to close it: what is set before the second is turned.
+        special("pdf:code q -1 0 0 -1 0 0 cm q"),
+        glyph(),
+        special("pdf:code -1 0 0 -1 0 0 cm"),
+        glyph(),
+        special("pdf:code Q Q"),
+        glyph(),
+      ]),
+    );
+    expect(items.map((item) => item.transform?.kind)).toEqual([
+      "other",
+      undefined,
+      "other",
+      "other",
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("keeps a node under a half turn other though pgf's own pair follows inside it", () => {
+    // A canvas turned twice comes back; turned once, pgf's pair inside does not undo it.
+    const once = drawn(dvi(node(["-1 0 0 -1 0 0 cm"])));
+    expect(once.map((item) => item.transform)).toEqual([{ kind: "other" }, undefined]);
   });
 
   it("follows q and Q in any literal, and passes over strings and the identity", () => {
