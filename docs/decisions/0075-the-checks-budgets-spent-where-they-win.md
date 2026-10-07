@@ -1,4 +1,4 @@
-# 00XX. The checks' budgets spent where they win words or time
+# 0075. The checks' budgets spent where they win words or time
 
 Date: 2026-10-07 · Status: accepted, lane F1 of decision 0074; amends 0049, 0050 and 0069
 

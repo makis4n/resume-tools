@@ -590,7 +590,7 @@ ${Array.from(
 ).join("")}\end{document}
 `;
 
-describe.skipIf(!engineAvailable())("the checks' budgets on the engine (decision 00XX)", () => {
+describe.skipIf(!engineAvailable())("the checks' budgets on the engine (decision 0075)", () => {
   let deps: ImportDeps;
   beforeAll(async () => {
     const manifest = JSON.parse(

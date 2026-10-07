@@ -5,7 +5,7 @@
  * 0026), with nothing named and nothing asked of a service. Each bisection is the probe's
  * (`settle`, decision 0022), the most words first with its rules for that order (decision 0069),
  * within `CHECK_BUDGET` compiles of its own, and check 3's within `UNITS_BUDGET`, which it stops
- * short of where it cannot cover the trials left (`coversLeft`, decision 00XX).
+ * short of where it cannot cover the trials left (`coversLeft`, decision 0075).
  *
  * 1. **The page.** The outline, every field the probe proved in the editor's marker, must set the
  *    reference's page, its glyphs and rules, the specials aside. Where it does not, the outline
@@ -21,7 +21,7 @@
  *    (`text`), one that stops it only when empty is required (`OutlineText.required`), and one
  *    the bisection of the long or special text leaves untried becomes kept text (`untested`), since
  *    nothing proved it takes any text (the plan's "fields are proven once, at import, and then
- *    trusted"); one the empty text's leaves, having taken both, is required (decision 00XX). Letters
+ *    trusted"); one the empty text's leaves, having taken both, is required (decision 0075). Letters
  *    of other scripts, Greek and Cyrillic, are tried once each in every field together: where one
  *    stops the compile, the document's fonts lack that script whatever field holds it, which the
  *    report says by its name, and no field is kept for it (decision 0055).
@@ -293,7 +293,7 @@ export const UNITS_EVIDENCE = 4;
 export const UNITS_MARGIN = 3;
 
 /**
- * Whether check 3's budget can be expected to cover the trials it has left (decision 00XX). The
+ * Whether check 3's budget can be expected to cover the trials it has left (decision 0075). The
  * trials left are expected to fail at the rate the decided ones did, one more failure and one more
  * pass counted in; each failure costs the bisection about two compiles for each halving down to it
  * from the trials left, at least two. Until `UNITS_EVIDENCE` trials are decided, or before its first
@@ -529,7 +529,7 @@ export interface KindedField {
 }
 
 /**
- * What check 2's bisection of a text shows of whose the stop is (decision 00XX). Some texts stop
+ * What check 2's bisection of a text shows of whose the stop is (decision 0075). Some texts stop
  * the compile whatever field holds them, as a letter the document's fonts lack does: the bisection
  * then finds every field alone, a compile a field and one for the rest, to the end of its budget.
  * The stop is the text's own once `OWN_STOP_KINDS` fields of as many kinds have each stopped it
@@ -1046,7 +1046,7 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
       });
   };
   // Each text apart: one that goes through in every field together proves nothing of another, as
-  // the special text, set short, may take a path the long text never does (decision 00XX).
+  // the special text, set short, may take a path the long text never does (decision 0075).
   for (const [name, text] of [
     ["long", MUTATIONS.long],
     ["special", MUTATIONS.special],
