@@ -117,8 +117,9 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
   own command, `{\itshape #1} \cvbold{...}`, is the one kept `moved`, and the uncovered glyphs'
   test uses it.
 - `rich.test.ts`: the last run's correction by what follows the field.
-- The oracle's pinned shares are unchanged; Jake's upstream sample imports in 27 compiles, as on
-  main, in 4.06 to 4.11 s against 4.04 to 4.06 s on main, run back to back.
+- The oracle's pinned shares are unchanged; Jake's upstream sample imports in 28 compiles and 2
+  dumps, as on main, in a median of 4.22 and 4.25 s against 4.22 s on main (`measure --import`,
+  run back to back at a load of 4.6 to 5.2).
 
 ### Measured
 
@@ -127,7 +128,17 @@ to 37,425 (+1,218); no resume worse in outcome or words; `moved` for `position` 
 for `rule` 10 to 0, `transform` 383 as it was; successes 22 to 27, resumes at 90% 24 to 29; all
 compiles 2,845 to 2,527.
 
-Then over all 220 documents: see below.
+Then over all 220 documents (`4f5053a`, 6.4 min, against main's run of `6167a5e`): no document
+worse in outcome or in words in place, and none timed out. Words in place 72,384 to 73,602 of
+82,497, 87.7% to 89.2% (+1,218); successes 69 to 74; resumes at 90% 75 to 80, under 50% 3 to 2.
+By family: jake 97.3% to 97.9%, moderncv 87.0% to 91.0%, other 80.0% to 82.5%, europecv 78.1% to
+78.3%, altacv 89.6% and awesome-cv 94.2% as they were. `moved` words 2,153 to 1,041: `position`
+1,760 in 39 resumes to 658 in 10 (pdfTeX 1,100 to 268; XeTeX 660 to 390, where (c) stays),
+`rule` 10 to 0, and `transform` 383 as it was, which the macro does not touch. Words locked as
+`moved` 75 to 64; the 11 more `differs` are in one resume with no words in place before or after.
+All compiles 5,849 to 5,505. The pdfTeX page opened within 8 s in 68 of 91 resumes against 63, and
+the slowest whole import took 91.3 s against 103.9 s, on a machine running other work, so the
+compiles are the measure.
 
 ## Consequences
 
