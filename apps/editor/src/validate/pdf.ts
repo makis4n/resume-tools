@@ -99,6 +99,11 @@ export interface ShownText {
    * width for a glyph it shows, or when the operator follows another whose end is not known.
    */
   end?: { x: number; y: number };
+  /**
+   * For a composite font's show, the two-byte codes it shows, before its ToUnicode map reads them:
+   * with `Identity-H`, as xdvipdfmx embeds a native font, the glyphs' ids.
+   */
+  ids?: number[];
 }
 
 /**
@@ -589,7 +594,24 @@ function readContent(
     const tx = next === undefined ? undefined : advance(shownParts);
     next = tx === undefined || next === undefined ? undefined : times(translation(tx, 0), next);
     const end = next === undefined ? undefined : times(next, ctm);
-    shown.push({ text, parts, x, y, ...(end && { end: { x: end[4], y: end[5] } }) });
+    const wide = widthsOf?.bytes === 2 || decode !== undefined;
+    const ids = wide
+      ? shownParts.flatMap((part) => {
+          if (typeof part === "number") return [];
+          const codes: number[] = [];
+          for (let at = 0; at + 1 < part.length; at += 2)
+            codes.push(part.charCodeAt(at) * 256 + part.charCodeAt(at + 1));
+          return codes;
+        })
+      : undefined;
+    shown.push({
+      text,
+      parts,
+      x,
+      y,
+      ...(end && { end: { x: end[4], y: end[5] } }),
+      ...(ids && { ids }),
+    });
     placed = false;
   };
   let at = 0;

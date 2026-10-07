@@ -11,8 +11,13 @@
  * it. `parseDvi` applies the result to every item of a page (`placeItems`), so that the page, its glyphs' boxes,
  * the reference's stream and the checks all see what the PDF shows (`tex/dvi.ts`).
  *
- * What it does not see: a `cm`, `q` or `Q` a template writes itself in a `pdf:code`, `pdf:literal`
- * or `pdf:content`, which pgf writes in pairs that undo each other around its boxes; and a form,
+ * A `cm` a template writes itself, in a `pdf:code`, `pdf:literal` or `pdf:content`, moves what
+ * the PDF sets after it too, but xdvipdfmx keeps no account of it, and the page does not follow it:
+ * pgf writes one for a scope's `transform canvas`. So the state also keeps the PDF's own stack of
+ * levels, which xdvipdfmx's levels and a template's `q` and `Q` push and pop alike, and marks the
+ * level such a `cm` is written in, and every level opened inside it, as `other`: what is set there
+ * is left where it is and stays locked. pgf's pairs of `-1 0 0 -1 0 0 cm`, which undo each other
+ * around each node's text, and the identity move nothing. What it does not see: a form,
  * `pdf:bxobj` to `pdf:exobj`, whose content the PDF draws wherever `pdf:uxobj` puts it. A
  * `pdf:btrans` whose arguments it cannot read is a level that moves nothing here, kept as `other`.
  */
@@ -186,6 +191,55 @@ const XSCALE = /^\s*x:\s*scale(?!\w)/;
 const XROTATE = /^\s*x:\s*rotate(?!\w)/;
 const BSCALE = /^\s*x:\s*bscale(?!\w)/;
 const ESCALE = /^\s*x:\s*escale(?!\w)/;
+/** The specials whose text goes into the PDF's content as it is, and their text. */
+const LITERAL = /^\s*pdf:\s*(code|literal|content)(?!\w)([\s\S]*)$/;
+
+/**
+ * Whether a `cm`'s operands leave what is set after it where xdvipdfmx puts it: the identity, or
+ * the half turn pgf writes twice around each node's text, which undo each other.
+ */
+function movesNothing(operands: readonly number[]): boolean {
+  const [a, b, c, d, e, f] = operands;
+  if (
+    operands.length !== 6 ||
+    [a, b, c, d, e, f].some((x) => x === undefined || !Number.isFinite(x))
+  )
+    return false;
+  const m = { a, b, c, d, e, f } as Affine;
+  return (
+    near(m.b, 0) &&
+    near(m.c, 0) &&
+    near(m.e, 0) &&
+    near(m.f, 0) &&
+    ((near(m.a, 1) && near(m.d, 1)) || (near(m.a, -1) && near(m.d, -1)))
+  );
+}
+
+/**
+ * What a template's own content does to the PDF's stack of levels, operator by operator: `q`
+ * pushes one, `Q` pops one, and a `cm` that moves anything (`movesNothing`), or whose operands are
+ * not read, marks the level it is in. Strings, hex strings and dictionaries are passed over, so
+ * that a `q` inside one is not taken for the operator.
+ */
+function literalOperators(content: string): ("q" | "Q" | "moves")[] {
+  const out: ("q" | "Q" | "moves")[] = [];
+  const tokens = content
+    .replace(/\((?:\\[\s\S]|[^\\)])*\)|<<|>>|<[^<>]*>/g, " ")
+    .split(/[\s[\]{}/]+/)
+    .filter(Boolean);
+  let operands: number[] = [];
+  for (const token of tokens) {
+    const value = numberOf(token);
+    if (Number.isFinite(value)) {
+      operands.push(value);
+      continue;
+    }
+    if (token === "q" || token === "Q") out.push(token);
+    else if (token === "cm" && !movesNothing(operands.slice(-6))) out.push("moves");
+    operands = [];
+  }
+  return out;
+}
 
 /**
  * A level of the graphics state: the transformation in effect, whether anything in it or around
@@ -207,8 +261,35 @@ export class GraphicsState {
   private levels: Level[] = [{ m: IDENTITY, transforming: false, unread: false }];
   /** The scales `x:bscale` took, which `x:escale` undoes, as xdvipdfmx keeps them, in no level. */
   private scales: { x: number; y: number }[] = [];
+  /**
+   * The PDF's own stack of levels, which xdvipdfmx's levels and a template's `q` and `Q` push and
+   * pop alike: for each, whether a template's `cm` moved what is set in it, which xdvipdfmx keeps
+   * no account of.
+   */
+  private written: boolean[] = [false];
 
   constructor(private readonly unitsPerBp: number) {}
+
+  /** Whether a template's `cm` moves what is set now. */
+  private get moved(): boolean {
+    return this.written[this.written.length - 1] === true;
+  }
+
+  private open() {
+    this.written.push(this.moved);
+  }
+
+  private close() {
+    if (this.written.length > 1) this.written.pop();
+  }
+
+  /** A template's own content, as the PDF's stack of levels takes it (`literalOperators`). */
+  private literal(content: string) {
+    for (const operator of literalOperators(content))
+      if (operator === "q") this.open();
+      else if (operator === "Q") this.close();
+      else this.written[this.written.length - 1] = true;
+  }
 
   private get top(): Level {
     return this.levels[this.levels.length - 1] as Level;
@@ -225,11 +306,19 @@ export class GraphicsState {
   special(text: string, h: number, v: number) {
     // Most of a page's specials are the editor's markers and colours, which change nothing here.
     if (!PREFIXED.test(text)) return;
-    if (BTRANS.test(text)) {
+    const literal = LITERAL.exec(text);
+    if (literal !== null) {
+      // xdvipdfmx sets a `pdf:content` inside a level of its own, which it closes after.
+      const own = literal[1] === "content";
+      if (own) this.open();
+      this.literal(literal[2] ?? "");
+      if (own) this.close();
+    } else if (BTRANS.test(text)) {
       const top = this.top;
       const m = btransMatrix(text.replace(BTRANS, ""));
       const level: Level = { m: top.m, transforming: true, unread: top.unread || m === undefined };
       this.levels.push(level);
+      this.open();
       if (m !== undefined)
         level.m = compose(
           top.m,
@@ -237,8 +326,13 @@ export class GraphicsState {
         );
     } else if (BCONTENT.test(text) || GSAVE.test(text)) {
       this.levels.push({ ...this.top });
+      this.open();
     } else if (ETRANS.test(text) || ECONTENT.test(text) || GRESTORE.test(text)) {
-      if (this.levels.length > 1) this.levels.pop();
+      // xdvipdfmx closes no level it did not open, and writes no `Q` for one.
+      if (this.levels.length > 1) {
+        this.levels.pop();
+        this.close();
+      }
     } else if (XSCALE.test(text)) {
       const [x, y] = text.replace(XSCALE, "").trim().split(/\s+/).map(numberOf);
       if (x !== undefined && y !== undefined && Number.isFinite(x) && Number.isFinite(y))
@@ -275,11 +369,14 @@ export class GraphicsState {
     return this.top.transforming ? this.top.m : undefined;
   }
 
-  /** What an item set now is inside, or undefined where nothing transforms what is set. */
+  /**
+   * What an item set now is inside, or undefined where nothing transforms what is set: `other`
+   * where a transformation is not read, or a template's `cm` moves it.
+   */
   transform(): ItemTransform | undefined {
     const top = this.top;
-    if (!top.transforming) return undefined;
-    const kind = top.unread ? "other" : kindOf(top.m);
+    if (!top.transforming && !this.moved) return undefined;
+    const kind = top.unread || this.moved ? "other" : kindOf(top.m);
     const { a, b, c, d } = top.m;
     const linear = kindOf(top.m) === "translation";
     return linear ? { kind } : { kind, matrix: [a, b, c, d] };
@@ -289,18 +386,19 @@ export class GraphicsState {
 /**
  * Put a page's items where xdvipdfmx sets them, in place: each special read where it is set, in
  * order, and each item set inside a transformation moved by it (`placed`), a native run's glyphs'
- * offsets turned with it (`turned`), and marked with what it is set inside (`transform`).
+ * offsets turned with it (`turned`), and marked with what it is set inside (`transform`); one a
+ * template's `cm` moves is marked `other` and left where the transformations read put it.
  * `unitsPerBp` is how many DVI units a big point is. The state starts afresh on each page.
  */
 export function placeItems(items: PageItem[], unitsPerBp: number): void {
   const state = new GraphicsState(unitsPerBp);
   for (const item of items) {
     const m = state.current;
-    const transform = m && state.transform();
+    const transform = state.transform();
     // A special changes the state from where it is set, which is where TeX set it.
     const { h, v } = item;
+    if (transform !== undefined) item.transform = transform;
     if (m !== undefined && transform !== undefined) {
-      item.transform = transform;
       const at = placed(m, item.h, item.v);
       item.h = at.h;
       item.v = at.v;

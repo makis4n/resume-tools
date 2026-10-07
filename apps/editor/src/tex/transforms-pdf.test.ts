@@ -47,6 +47,63 @@ and after.
 \end{document}
 `;
 
+/**
+ * A node set plainly, and three under a scope's `transform canvas`, which pgf writes as a `cm` of
+ * its own around the node: turned, shifted and grown.
+ */
+const CANVAS = String.raw`\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{tikz}
+\pagestyle{empty}
+\begin{document}
+Before words.
+
+\begin{tikzpicture}
+\node at (0,1) {Plain node};
+\begin{scope}[transform canvas={rotate=30}]\node at (3,0) {Canvas turned};\end{scope}
+\begin{scope}[transform canvas={shift={(2,0)}}]\node at (0,-1) {Canvas shifted};\end{scope}
+\begin{scope}[transform canvas={scale=2}]\node at (1,-1) {Canvas grown};\end{scope}
+\end{tikzpicture}
+\end{document}
+`;
+
+/** Words in a native font, set plainly, in a node, turned, scaled and tilted. */
+const NATIVE = String.raw`\documentclass{article}
+\usepackage{fontspec}
+\usepackage{graphicx}
+\usepackage{tikz}
+\pagestyle{empty}
+\begin{document}
+Plain native words.
+
+\tikz\node{Upright native node};
+
+\rotatebox{30}{Turned native words}
+
+\scalebox{1.5}[0.8]{Scaled native words}
+
+\tikz\node[rotate=60]{Tilted native node};
+\end{document}
+`;
+
+/**
+ * Words scaled by `x:bscale`, and words after its `x:escale`, which undoes the scale about
+ * another point and so leaves what follows moved.
+ */
+const BSCALE = String.raw`\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\pagestyle{empty}
+\begin{document}
+Before words.
+
+\special{x:gsave}\special{x:bscale 1.5 1.5}Grown words \special{x:escale}after words\special{x:grestore}
+
+Last words.
+\end{document}
+`;
+
 describe.skipIf(!engineAvailable())("translations, rotations and scales against the PDF", () => {
   let session: EngineSession;
   let fonts: FontLibrary;
@@ -111,6 +168,49 @@ describe.skipIf(!engineAvailable())("translations, rotations and scales against 
     60_000,
   );
 
+  test("keeps text under a scope's transform canvas other: the PDF moves it, the page does not", async () => {
+    // pgf writes the canvas's matrix as a cm of its own, which xdvipdfmx keeps no account of, so
+    // the page leaves the text where the node's own translation puts it, and marks it.
+    const { doc, pdf } = await compiled(CANVAS, "canvas");
+    const found = pdfOffsets(doc, pdf);
+    expect(found.unaligned).toBe(0);
+    const plain = worstOf(found, "translation");
+    expect(plain.operators).toBe(1);
+    expect(plain.max).toBeLessThan(0.5);
+    const canvas = worstOf(found, "other");
+    expect(canvas.operators).toBe(3);
+    expect(canvas.max).toBeGreaterThan(20);
+    expect(worstOf(found, undefined).max).toBeLessThan(0.5);
+  }, 60_000);
+
+  test("sets a native font's glyphs where the PDF shows them, in a translation, a rotation or a scale", async () => {
+    const { doc, pdf } = await compiled(NATIVE, "native", "xetex");
+    const found = pdfOffsets(doc, pdf);
+    expect(found.unaligned).toBe(0);
+    expect(found.operators.every((each) => each.native)).toBe(true);
+    for (const [kind, operators] of [
+      [undefined, 1],
+      ["translation", 1],
+      ["rotate", 2],
+      ["scale", 1],
+    ] as const) {
+      const worst = worstOf(found, kind);
+      expect(worst.placed, kind).toBeGreaterThanOrEqual(operators);
+      expect(worst.max, kind).toBeLessThan(0.5);
+    }
+  }, 60_000);
+
+  test("moves what follows an x:escale about another point as the PDF does", async () => {
+    const { doc, pdf } = await compiled(BSCALE, "bscale", "xetex");
+    const found = pdfOffsets(doc, pdf);
+    expect(found.unaligned).toBe(0);
+    const scaled = worstOf(found, "scale");
+    const after = worstOf(found, "translation");
+    expect(scaled.operators).toBeGreaterThanOrEqual(1);
+    expect(after.operators).toBeGreaterThanOrEqual(1);
+    expect(Math.max(scaled.max, after.max, worstOf(found, undefined).max)).toBeLessThan(0.5);
+  }, 60_000);
+
   test("draws a rotated or scaled glyph turned or scaled about its origin, its box with it", async () => {
     const { output } = await compiled(NODES, "drawn");
     const page = await drawPage(output, fonts, new Map());
@@ -139,7 +239,7 @@ describe.skipIf(!engineAvailable())("translations, rotations and scales against 
     expect(lying.length).toBe(1);
   }, 60_000);
 
-  test("lets a field in a translation be edited, and keeps one rotated or scaled locked", async () => {
+  test("lets a field in a translation be edited, and keeps one rotated, scaled or on a canvas locked", async () => {
     // Each kind in a macro of the upload's own, whose argument the probe marks as a field.
     const tex = String.raw`\documentclass{article}
 \usepackage{tikz}
@@ -149,6 +249,9 @@ describe.skipIf(!engineAvailable())("translations, rotations and scales against 
 \newcommand{\turned}[1]{\rotatebox{30}{#1}}
 \newcommand{\squeezed}[1]{\scalebox{1.5}[0.8]{#1}}
 \newcommand{\person}[1]{\par\noindent\textbf{#1}\par}
+\newcommand{\tiltbadge}[1]{\begin{tikzpicture}\begin{scope}[transform canvas={rotate=30}]\node[draw]{#1};\end{scope}\end{tikzpicture}}
+\newcommand{\movedbadge}[1]{\begin{tikzpicture}\begin{scope}[transform canvas={shift={(2,0)}}]\node[draw]{#1};\end{scope}\end{tikzpicture}}
+\newcommand{\bigbadge}[1]{\begin{tikzpicture}\begin{scope}[transform canvas={scale=2}]\node[draw]{#1};\end{scope}\end{tikzpicture}}
 \begin{document}
 \person{Quill Wren}
 \tag{Lantern Works} \tag{Mill Press} \tag{Heron Lane}
@@ -156,6 +259,15 @@ describe.skipIf(!engineAvailable())("translations, rotations and scales against 
 \turned{Upright Finch}
 
 \squeezed{Wide Owl}
+
+\vspace{2cm}
+\tiltbadge{Slate Harbour}
+
+\vspace{2cm}
+\movedbadge{Copper Gate}
+
+\vspace{2cm}
+\bigbadge{Amber Field}
 \end{document}
 `;
     let probed: Probe | undefined;
@@ -186,6 +298,13 @@ describe.skipIf(!engineAvailable())("translations, rotations and scales against 
       detail: "transform",
       transform: "scale",
     });
+    // Under a scope's transform canvas, which the page does not follow, each stays locked, as other.
+    for (const badge of ["Slate Harbour", "Copper Gate", "Amber Field"])
+      expect(verdicts.get(badge), badge).toEqual({
+        verdict: "moved",
+        detail: "transform",
+        transform: "other",
+      });
     // The outline makes a field of each tag and none of the rotated or scaled text, and the page
     // the checks compile is the upload's.
     const [section] = outcome.document.resume.sections;
@@ -202,6 +321,8 @@ describe.skipIf(!engineAvailable())("translations, rotations and scales against 
     expect(texts).toEqual(expect.arrayContaining(["Lantern Works", "Mill Press", "Heron Lane"]));
     expect(texts).not.toContain("Upright Finch");
     expect(texts).not.toContain("Wide Owl");
+    for (const badge of ["Slate Harbour", "Copper Gate", "Amber Field"])
+      expect(texts).not.toContain(badge);
     expect(outcome.report.checks.outcome).toBe("assembled");
   }, 180_000);
 });

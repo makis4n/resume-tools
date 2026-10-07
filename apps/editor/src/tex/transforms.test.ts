@@ -242,3 +242,83 @@ describe("parseDvi's transformations", () => {
     expect(items).toEqual([{ kind: "glyph", h: 0, v: 0 }]);
   });
 });
+
+describe("a template's own cm", () => {
+  /**
+   * A TikZ node's text as pgf's dvipdfmx driver sets it, its picture's `cm`s before it (none for a
+   * plain node, one for a scope's `transform canvas`): the half turns that undo each other around
+   * the text, and the levels xdvipdfmx and the raw `q` and `Q` open and close, interleaved.
+   */
+  const node = (canvas: string[]): Command[] => [
+    special("pdf:bcontent"),
+    special("pdf:code q "),
+    ...canvas.flatMap((cm) => [special("pdf:code q "), special(`pdf:code ${cm} `)]),
+    special("pdf:code q "),
+    special("pdf:code q -1 0 0 -1 0 0 cm q"),
+    special("pdf: econtent"),
+    special("pdf: bcontent"),
+    special("pdf:code -1 0 0 -1 0 0 cm"),
+    special("pdf:code q"),
+    special("pdf: econtent"),
+    special("pdf:btrans matrix 1.0 0.0 0.0 1.0 -20 -2"),
+    glyph(),
+    special("pdf:etrans"),
+    special("pdf: bcontent"),
+    special("pdf:code Q Q Q"),
+    special("pdf:code Q "),
+    ...canvas.map(() => special("pdf:code Q ")),
+    special("pdf:code n "),
+    special("pdf:code Q "),
+    special("pdf:econtent"),
+    glyph(),
+  ];
+
+  it("leaves a plain node's text a translation, through pgf's half turns", () => {
+    const items = drawn(dvi(node([])));
+    expect(items.map((item) => item.transform)).toEqual([{ kind: "translation" }, undefined]);
+  });
+
+  it("keeps a node under a transform canvas other, where it is, and nothing after it", () => {
+    for (const cm of [
+      "0.86603 0.5 -0.5 0.86603 0.0 0.0 cm",
+      "1.0 0.0 0.0 1.0 56.69362 0.0 cm",
+      "2.0 0.0 0.0 2.0 0.0 0.0 cm",
+    ]) {
+      const items = drawn(dvi(node([cm])));
+      expect(
+        items.map((item) => item.transform),
+        cm,
+      ).toEqual([{ kind: "other" }, undefined]);
+      // The node's own translation still moves it, as on the page without the canvas.
+      expect(items[0]?.h, cm).toBeCloseTo(-20 * (BP / PT), 3);
+    }
+  });
+
+  it("follows q and Q in any literal, and passes over strings and the identity", () => {
+    const items = drawn(
+      dvi([
+        special("pdf:literal direct q 1 0 0 1 0 0 cm (q Q 2 0 0 2 0 0 cm) Tj"),
+        glyph(),
+        special("pdf:content 0 1 -1 0 0 0 cm"),
+        glyph(),
+        special("pdf:literal q 1 0 0 1 5 0 cm"),
+        glyph(),
+        special("x:gsave"),
+        special("pdf:code Q"),
+        glyph(),
+        special("x:grestore"),
+        glyph(),
+      ]),
+    );
+    expect(items.map((item) => item.transform?.kind)).toEqual([
+      undefined,
+      // A pdf:content's level closes after it.
+      undefined,
+      "other",
+      // A Q of the template's own pops its q, under the level x:gsave opened; its x:grestore pops
+      // the level below.
+      "other",
+      undefined,
+    ]);
+  });
+});

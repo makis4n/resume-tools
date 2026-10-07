@@ -998,7 +998,7 @@ function graphicsStateChange(text: string): GraphicsStateChange | undefined {
  * a translation, as a TikZ node's text is set in, which moves the field's glyphs and nothing
  * else. A rotation, a scale or another matrix the page draws too, but the overlay sets a field's
  * rows upright and at the font's size, so such a field stays locked (decision 00XX); and one it
- * does not read (`other`) it cannot even place.
+ * does not read (`other`), or that a template's own `cm` moves, it cannot even place.
  */
 const EDITABLE_IN: ReadonlySet<TransformKind> = new Set(["translation"]);
 
@@ -1066,12 +1066,12 @@ function checkNotdefs(doc: DviDocument, log: string): Finding[] {
  * an `x:escale` with no `x:bscale` open stops xdvipdfmx. Either is one finding of its own, however
  * often it happens.
  *
- * What the check does not see, nor the page: a `cm`, `q` or `Q` a template writes itself, in a
- * `pdf:code`, `pdf:literal` or `pdf:content`, since pgf writes such pairs that undo each other
- * around its own boxes, and telling those from a pair that moves the text would take the matrices
- * multiplied out; and a form, `pdf:bxobj` to `pdf:exobj`, whose content the PDF draws wherever
- * `pdf:uxobj` puts it. Every copy of a field is checked, and a field is reported once for each
- * problem.
+ * A field set where a `cm` a template writes itself, in a `pdf:code`, `pdf:literal` or
+ * `pdf:content`, moves it, as pgf's `transform canvas` does, is in one the page does not read
+ * (`other`), and reported; pgf's half turns that undo each other around a node's text are not
+ * (`GraphicsState`). What the check does not see, nor the page: a form, `pdf:bxobj` to
+ * `pdf:exobj`, whose content the PDF draws wherever `pdf:uxobj` puts it. Every copy of a field is
+ * checked, and a field is reported once for each problem.
  */
 export function checkSpecial(doc: DviDocument): Finding[] {
   const findings: Finding[] = [];

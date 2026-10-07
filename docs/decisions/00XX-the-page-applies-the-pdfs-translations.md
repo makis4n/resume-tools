@@ -34,11 +34,16 @@ run made before it. On main's code with this breakdown, over the 9 resumes: all 
 (`GraphicsState`, `placeItems` in `src/tex/transforms.ts`): `pdf:btrans` and `pdf:etrans` under every
 name xdvipdfmx takes for them, nested; `pdf:bcontent` and `pdf:econtent`, `x:gsave` and `x:grestore`,
 which open and close a level; `x:scale` and `x:rotate` to the end of their level; `x:bscale` and
-`x:escale` as the tree's xdvipdfmx does them, about two points; afresh on each page. Each matrix is
-taken about the point it is written at, its offsets in big points and its y up, and composed with
-those open around it. Every item set inside one is moved to where the PDF puts it, a native run's
-glyph offsets turned with it, and marked with what it is set in (`PageItem.transform`, and the
-matrix's linear part where it is not the identity).
+`x:escale` as the tree's xdvipdfmx does them, about two points; afresh on each page. It also keeps
+the PDF's own stack of levels, which xdvipdfmx's levels and a template's raw `q` and `Q` in a
+`pdf:code`, `pdf:literal` or `pdf:content` push and pop alike: a raw `cm` that moves anything, as
+pgf writes for a scope's `transform canvas`, marks its level, and what is set there is `other`, left
+where the transformations read put it. pgf's half turns (`-1 0 0 -1 0 0 cm`), which undo each other
+around every node's text, and the identity mark nothing. Each matrix is taken about the point it
+is written at, its offsets in big points and its y up, and composed with those open around it.
+Every item set inside one is moved to where the PDF puts it, a native run's glyph offsets turned
+with it, and marked with what it is set in (`PageItem.transform`, and the matrix's linear part
+where it is not the identity).
 
 So everything that reads the parser's output reads the PDF's positions: the SVG, the glyphs' boxes
 and origins (`draw.ts`), the click between two glyphs (`fieldNear`, which reads the SVG), the
@@ -52,7 +57,7 @@ A rotated or scaled glyph or rule is drawn turned or scaled about its origin, as
 ### What the checks let through
 
 The special check names a field only where its begin marker or a glyph of it is set inside a
-rotation, a scale, another matrix, or a level it does not read, with the kind
+rotation, a scale, another matrix, a level it does not read, or one a raw `cm` moves, with the kind
 (`Finding.transform`), which the probe keeps as its `moved`, `transform` verdict. A field in a
 translation is checked as any other: the probe compiles it, and keeps it where its markers move the
 page, as it would anywhere. The overlay sets a field's rows upright at the font's size, so a rotated
@@ -79,14 +84,22 @@ The built-in templates set no field inside any, and their pages do not change.
   `scale`, neither a field; the outline's page is the upload's.
 - Every imported corpus resume whose reference output has a `pdf:btrans`, 16 of the 110: 10 set
   glyphs in a translation, 4,054 of them. Of those, 3,644 are matched to the PDF's operators, each
-  within 0.012 pt. The rest go unchecked: `altacv-0008` (72) and `altacv-0015` (63), whose PDF
-  xdvipdfmx cannot make (a font with no outline), and 275 of `other-0023`'s in operators whose codes
-  are not the DVI's. `europecv-0008`'s PDF was made, for this check alone, with its dvips picture
-  specials (`psfile=`), which the session refuses, passed over. The script prints ids, counts and
-  offsets only.
-- One way the PDF moves the text that the page still does not follow: a `cm` a template writes
-  itself in `pdf:code` or `pdf:literal`, and a form's content, which xdvipdfmx draws where
-  `pdf:uxobj` puts it. Neither is a translation pgf or graphicx writes around text.
+  within 0.012 pt. That is not every translated glyph of the corpus: 410 go unchecked, those of
+  `altacv-0008` (72), one of the resumes this change takes from partial to success, and of
+  `altacv-0015` (63), whose PDF xdvipdfmx cannot make (a font with no outline), and 275 of
+  `other-0023`'s, in operators whose codes are not the DVI's. `europecv-0008`'s PDF was made,
+  for this check alone, with its dvips picture specials (`psfile=`), which the session refuses,
+  passed over. The script prints ids, counts and offsets only.
+- A scope's `transform canvas` (turned, shifted, grown): pgf writes it as a raw `cm`, which moves
+  the node's text 28 to 67 pt from where its own translation puts it. The page does not follow it;
+  the text is `other`, and imported, each argument is `moved`, `transform`, `other`, not a field, as
+  on main, where any `pdf:btrans` locked it. A native font's glyphs on XeTeX (fontspec), plain, in a
+  node, turned, scaled and tilted, matched to the PDF by their ids, each placed operator within
+  0.5 pt; and words after an `x:escale` that undoes an `x:bscale` about another point, a
+  translation, within 0.5 pt (`src/tex/transforms-pdf.test.ts`).
+- What the page still does not follow: a form's content, which xdvipdfmx draws where `pdf:uxobj`
+  puts it, and a raw half turn no other undoes, which it takes for pgf's. Raw `cm`s of another
+  kind that undo each other it takes as moving the text, which stays locked.
 
 ### Measured
 
@@ -109,7 +122,8 @@ Words in place 72,384 to 72,753 of 82,519 (82,497 before), 87.7% to 88.2%; 75 to
 78.7%, the others 80.0% to 80.1%; Jake's, Awesome-CV and moderncv as before. `moved` words 2,153 to
 1,806: `transform` 383 to 0, `position` 1,760 to 1,796, `rule` 10. All compiles 5,849 to 5,867. The
 slowest pdfTeX import is still `altacv-0017`'s, 88.8 s (103.9 s in main's run, at its load); the
-others of the 9 within 3.2 s of main's run's times.
+others of the 9 within 3.2 s of main's run's times. With the raw `cm` followed, a second whole
+run agrees with this one on all 220 documents, times aside (`corpus compare`).
 
 ## Consequences
 
