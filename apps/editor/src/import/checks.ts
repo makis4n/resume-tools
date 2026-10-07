@@ -3,7 +3,9 @@
  * resume's outline compiled as the editor will compile it, from its package's format, dumped once
  * (`OutlineCompiler`), and checked, as the first pass's four checks checked an assembly (decision
  * 0026), with nothing named and nothing asked of a service. Each bisection is the probe's
- * (`settle`, decision 0022), within `CHECK_BUDGET` compiles, and check 3's within `UNITS_BUDGET`.
+ * (`settle`, decision 0022), the most words first with its rules for that order (decision 0069),
+ * within `CHECK_BUDGET` compiles of its own, and check 3's within `UNITS_BUDGET`, which it stops
+ * short of where it cannot cover the trials left (`coversLeft`, decision 0075).
  *
  * 1. **The page.** The outline, every field the probe proved in the editor's marker, must set the
  *    reference's page, its glyphs and rules, the specials aside. Where it does not, the outline
@@ -14,10 +16,12 @@
  *    text, its candidate's every field with it, and one the budget leaves untried too
  *    (`untested`).
  * 2. **Mutations.** Every field is set to a long text, to special characters and to nothing, each
- *    in one compile of all of them, bisected where it stops: a field that stops it on text becomes
- *    kept text (`text`), one that stops it only when empty is required (`OutlineText.required`),
- *    and one the bisection leaves untried becomes kept text (`untested`), since nothing proved it
- *    takes any text (the plan's "fields are proven once, at import, and then trusted"). Letters
+ *    in one compile of all of them, bisected where it stops, or kept for every field where the stop
+ *    shows itself the text's own (`ownStop`): a field that stops it on text becomes kept text
+ *    (`text`), one that stops it only when empty is required (`OutlineText.required`), and one
+ *    the bisection of the long or special text leaves untried becomes kept text (`untested`), since
+ *    nothing proved it takes any text (the plan's "fields are proven once, at import, and then
+ *    trusted"); one the empty text's leaves, having taken both, is required (decision 0075). Letters
  *    of other scripts, Greek and Cyrillic, are tried once each in every field together: where one
  *    stops the compile, the document's fonts lack that script whatever field holds it, which the
  *    report says by its name, and no field is kept for it (decision 0055).
@@ -61,6 +65,7 @@ import { type Outline, outlineResume, type Unit } from "./outline";
 import type { Span } from "./parse";
 import {
   failed,
+  kindOf,
   type ProbeCandidate,
   probeOrder,
   type SetResult,
@@ -98,6 +103,15 @@ export const MUTATIONS = {
   special: "\\ { } $ & # ^ _ % ~ < > | [ ] * -- ' \" é ß ø ğ",
   scripts: { greek: "ω α", cyrillic: "Ж д" },
 } as const;
+
+/**
+ * How many fields, each of another kind, must stop the compile alone with a text, what is left
+ * without them stopping it still and no set going through, before check 2 tries fields no compile
+ * named (`OWN_STOP_UNNAMED`), and takes the stop for the text's own where they stop it too
+ * (`ownStop`).
+ */
+export const OWN_STOP_KINDS = 3;
+export const OWN_STOP_UNNAMED = 2;
 
 // Compiling.
 
@@ -268,6 +282,40 @@ export async function bisect<T, V>(
   };
   await run(items);
   return results;
+}
+
+/**
+ * How many trials check 3 must have decided before it judges whether its budget covers the rest,
+ * and by how much the compiles it expects to need must pass the compiles it has left before it
+ * stops (`coversLeft`).
+ */
+export const UNITS_EVIDENCE = 4;
+export const UNITS_MARGIN = 3;
+
+/**
+ * Whether check 3's budget can be expected to cover the trials it has left (decision 0075). The
+ * trials left are expected to fail at the rate the decided ones did, one more failure and one more
+ * pass counted in; each failure costs the bisection about two compiles for each halving down to it
+ * from the trials left, at least two. Until `UNITS_EVIDENCE` trials are decided, or before its first
+ * compile, it covers them; then it does not when the compiles expected pass `UNITS_MARGIN` times
+ * those left. Check 3 then stops: what it settled stays settled, and the groups left are fixed as
+ * untried, as when its budget runs out, without the compiles that would only have run it out.
+ */
+export function coversLeft(outlook: {
+  /** Trials decided so far, and how many of them failed alone. */
+  decided: number;
+  failed: number;
+  /** Trials not decided yet. */
+  left: number;
+  /** Compiles made, and the budget. */
+  spent: number;
+  budget: number;
+}): boolean {
+  const { decided, failed, left, spent, budget } = outlook;
+  if (spent === 0 || decided < UNITS_EVIDENCE || left <= 0) return true;
+  const failures = (left * (failed + 1)) / (decided + 2);
+  const expected = 1 + failures * 2 * Math.max(1, Math.log2(left / failures));
+  return expected <= UNITS_MARGIN * (budget - spent);
 }
 
 /** A glyph as a trial compares two outputs: its font, face, size and code, wherever it stands. */
@@ -472,6 +520,74 @@ export function mutated(
       return part;
     });
   return map(parts);
+}
+
+/** A field as `ownStop` hears it: its candidate's id and kind (`kindOf`). */
+export interface KindedField {
+  id: string;
+  kind: string;
+}
+
+/**
+ * What check 2's bisection of a text shows of whose the stop is (decision 0075). Some texts stop
+ * the compile whatever field holds them, as a letter the document's fonts lack does: the bisection
+ * then finds every field alone, a compile a field and one for the rest, to the end of its budget.
+ * The stop is the text's own once `OWN_STOP_KINDS` fields of as many kinds have each stopped it
+ * alone, the fields left without them stop it still, no set has gone through, and then
+ * `OWN_STOP_UNNAMED` fields no compile named, each alone and of kinds none of those was of, stop it
+ * too. Where one field is the cause, a set without it goes through, and nothing is shown; where
+ * several are, each named rightly, the fields no compile named go through alone.
+ */
+export function ownStop(kinds = OWN_STOP_KINDS, unnamedOnes = OWN_STOP_UNNAMED) {
+  /** The fields that stopped it alone, by id, with their kinds, and whether a compile named them. */
+  const alone = new Map<string, { kind: string; named: boolean }>();
+  let passed = false;
+  let rest = false;
+  let asked = false;
+  const namedKinds = () =>
+    new Set([...alone.values()].flatMap((each) => (each.named ? [each.kind] : []))).size;
+  return {
+    /** A compile of `set` with the text, and whether it stopped; `unnamed` for one `unnamed` chose. */
+    heard(set: readonly KindedField[], broke: boolean, unnamed = false) {
+      if (!broke) {
+        passed = true;
+        return;
+      }
+      const [only] = set;
+      if (set.length === 1 && only !== undefined) {
+        alone.set(only.id, { kind: only.kind, named: !unnamed });
+        if (!unnamed) rest = false;
+      } else if (set.length > 1) rest = set.every((each) => !alone.has(each.id));
+    },
+    /** Whether to try the unnamed fields now: once, when the named ones have shown enough. */
+    asks() {
+      if (asked || passed || !rest || namedKinds() < kinds) return false;
+      asked = true;
+      return true;
+    },
+    /**
+     * Fields of `trying` none tried alone, of kinds none tried alone was of, each of another kind:
+     * the first and the last of them, and so on inwards, as many as `unnamedOnes`.
+     */
+    unnamed(trying: readonly KindedField[]): KindedField[] {
+      const seen = new Set([...alone.values()].map((each) => each.kind));
+      const fresh: KindedField[] = [];
+      for (const each of trying)
+        if (!alone.has(each.id) && !seen.has(each.kind) && !fresh.some((f) => f.kind === each.kind))
+          fresh.push(each);
+      const chosen: KindedField[] = [];
+      for (let i = 0; chosen.length < unnamedOnes && i < fresh.length; i++) {
+        const each = i % 2 === 0 ? fresh[i / 2] : fresh[fresh.length - 1 - (i - 1) / 2];
+        if (each !== undefined && !chosen.includes(each)) chosen.push(each);
+      }
+      return chosen;
+    },
+    /** Whether the stop is shown the text's own. */
+    shown() {
+      const unnamed = [...alone.values()].filter((each) => !each.named).length;
+      return asked && !passed && unnamed >= unnamedOnes;
+    },
+  };
 }
 
 /** The editor's copy of a unit, which check 3 tries as the editor makes it (`emptiedCopy`). */
@@ -749,13 +865,24 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
       first.compiled?.stream === undefined ? undefined : differs(target, first.compiled.stream);
     if (first.compiled === undefined || first.compiled.broke || again !== undefined) {
       const ids = (set: readonly Candidate[]) => new Set(set.map((each) => each.id));
+      /** An outline compiled unmarked; with nothing kept, the first compile, not made again. */
+      const reuse = async (off: ReadonlySet<string>) => {
+        if (off.size > 0 || first.compiled === undefined) return compileKept(off);
+        known.set(keySet(off), {
+          broke: first.compiled.broke,
+          ...(again ? { found: again } : {}),
+          log: first.compiled.log,
+        });
+        return { outline: first.outline, compiled: first.compiled, found: again };
+      };
       observe({ phase: "check 1 bisection" });
+      // The most words first, with decision 0069's held-apart and halving rules, as the probe.
       const settled = await settle(
-        probeOrder(fieldOf, byId),
+        probeOrder(fieldOf, byId, true),
         async (set): Promise<SetResult> => {
           const on = ids(set);
           const off = new Set([...all].filter((id) => !on.has(id)));
-          const tried = await compileKept(off);
+          const tried = await reuse(off);
           const own = new Map(set.map((each) => [each.id, { ok: true }]));
           if (tried.compiled === undefined) return { broke: true, same: false, torn: false, own };
           const fields = new Set([...tried.outline.owners.keys()]);
@@ -774,8 +901,10 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
             ...(suspects.length === 0 ? {} : { suspects }),
           };
         },
-        budget,
+        // Its first compile is one made already: the bisection makes `budget` of its own.
+        budget + 1,
         byId,
+        true,
       );
       let untested = 0;
       for (const [id, { verdict, detail }] of settled.verdicts) {
@@ -826,50 +955,82 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
     if (resume === undefined) return { broke: true, log: "" };
     return compiler.compile(resume);
   };
-  for (const [name, text] of [
-    ["long", MUTATIONS.long],
-    ["special", MUTATIONS.special],
-    ["empty", MUTATIONS.empty],
-  ] as const) {
+  /**
+   * One text in every field not yet kept, and where it stops the compile, its bisection: each field
+   * that stops it alone is kept as text (`text`), or, for the empty text, required. The whole's
+   * compile is the bisection's first, not made again. Where the stop shows itself the text's own
+   * (`ownStop`), every field tried takes it, without a compile a field.
+   */
+  const tryText = async (name: "long" | "special" | "empty", text: string) => {
     // A field already kept as text by an earlier text is not tried again.
     const trying = fields.filter((each) => !onText.has(each.id) && !untried.has(each.id));
-    if (trying.length === 0) break;
+    if (trying.length === 0) return;
     observe({ phase: "check 2" });
     const whole = await mutate(text, new Set(trying.map((each) => each.id)));
-    if (!whole.broke) continue;
+    if (!whole.broke) return;
     const fieldIds = new Set(current.owners.keys());
-    observe({ phase: "check 2 bisection" });
-    const settled = await settle(
-      probeOrder(trying, byId),
-      async (set): Promise<SetResult> => {
-        const on = new Set(set.map((each) => each.id));
-        const result = await mutate(text, on);
-        const suspects = [
-          ...new Set(
-            suspectsIn(result.log, fieldIds).flatMap((field) => current.owners.get(field) ?? []),
-          ),
-        ].filter((id) => on.has(id));
-        return {
-          broke: result.broke,
-          same: true,
-          torn: false,
-          own: new Map(set.map((each) => [each.id, { ok: true }])),
-          ...(suspects.length === 0 ? {} : { suspects }),
-        };
-      },
-      budget,
-      byId,
-    );
+    const kindsOf = (set: readonly Candidate[]) =>
+      set.map((each) => ({ id: each.id, kind: kindOf(each, byId) }));
+    const own = ownStop();
+    /** Ends the bisection once the stop is shown the text's own. */
+    const shown = new Error("the text stops the compile in every field");
+    let bisecting = false;
+    let settled: Awaited<ReturnType<typeof settle>> | undefined;
+    try {
+      settled = await settle(
+        probeOrder(trying, byId, true),
+        async (set): Promise<SetResult> => {
+          const on = new Set(set.map((each) => each.id));
+          // The bisection's first compile is the whole's, which was made.
+          const result = !bisecting && on.size === trying.length ? whole : await mutate(text, on);
+          if (!bisecting) observe({ phase: "check 2 bisection" });
+          bisecting = true;
+          own.heard(kindsOf(set), result.broke);
+          if (own.asks()) {
+            // Fields no compile named, each alone, of kinds no field tried alone was of: where they
+            // stop it too, the stop is the text's, whatever field holds it.
+            for (const each of own.unnamed(kindsOf(trying)))
+              own.heard([each], (await mutate(text, new Set([each.id]))).broke, true);
+            if (own.shown()) throw shown;
+          }
+          const suspects = [
+            ...new Set(
+              suspectsIn(result.log, fieldIds).flatMap((field) => current.owners.get(field) ?? []),
+            ),
+          ].filter((id) => on.has(id));
+          return {
+            broke: result.broke,
+            same: true,
+            torn: false,
+            own: new Map(set.map((each) => [each.id, { ok: true }])),
+            ...(suspects.length === 0 ? {} : { suspects }),
+          };
+        },
+        // Its first compile is one made already: the bisection makes `budget` of its own.
+        budget + 1,
+        byId,
+        true,
+      );
+    } catch (error) {
+      if (error !== shown) throw error;
+    }
     let left = 0;
-    for (const [id, { verdict }] of settled.verdicts) {
+    let unreached = 0;
+    for (const each of trying) {
+      const verdict = settled === undefined ? "breaks" : settled.verdicts.get(each.id)?.verdict;
       if (verdict === "editable") continue;
-      if (verdict === "untested") {
-        untried.add(id);
+      if ((verdict === "untested" || verdict === undefined) && name === "empty") {
+        // A field the empty text's bisection did not reach took the long and special texts, which
+        // proved it takes text: it is required, as one that stops when empty is, never left empty.
+        onEmpty.add(each.id);
+        unreached++;
+      } else if (verdict === "untested" || verdict === undefined) {
+        untried.add(each.id);
         left++;
       } else {
         stops[name]++;
-        if (name === "empty") onEmpty.add(id);
-        else onText.add(id);
+        if (name === "empty") onEmpty.add(each.id);
+        else onText.add(each.id);
       }
     }
     if (left > 0) observe({ budget: "check 2", left });
@@ -878,7 +1039,20 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
         check: "untested",
         message: `the second check's bisection of the ${name} text ran out of its ${counted(budget, "compile")} and kept ${counted(left, "field")} as text`,
       });
-  }
+    if (unreached > 0)
+      notes.push({
+        check: "required",
+        message: `the second check's bisection of the empty text ran out of its ${counted(budget, "compile")} and required ${counted(unreached, "field")} it did not reach`,
+      });
+  };
+  // Each text apart: one that goes through in every field together proves nothing of another, as
+  // the special text, set short, may take a path the long text never does (decision 0075).
+  for (const [name, text] of [
+    ["long", MUTATIONS.long],
+    ["special", MUTATIONS.special],
+    ["empty", MUTATIONS.empty],
+  ] as const)
+    await tryText(name, text);
   // Letters of other scripts, in every field at once: where they stop the compile, they stop it
   // whatever field holds them, since the document's fonts lack them, and no field is the cause.
   const remaining = fields.filter((each) => !onText.has(each.id) && !untried.has(each.id));
@@ -958,8 +1132,18 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
     const unitsBudget = input.unitsBudget ?? UNITS_BUDGET;
     /** The batch the bisection is on, whose first compile is check 3's and the rest its halves'. */
     let whole: readonly Trial[] = [];
+    const all = trialsOf(current.groups);
+    /** The trials decided so far, and how many of them failed alone; whether check 3 stopped. */
+    let decided = 0;
+    let failedAlone = 0;
+    let stopped = false;
     const test = async (batch: readonly Trial[]): Promise<TrialVerdict | undefined> => {
-      if (spent >= unitsBudget) return undefined;
+      if (stopped || spent >= unitsBudget) return undefined;
+      const outlook = { decided, failed: failedAlone, left: all.length - decided, spent };
+      if (!coversLeft({ ...outlook, budget: unitsBudget })) {
+        stopped = true;
+        return undefined;
+      }
       spent++;
       observe({ phase: batch === whole ? "check 3" : "check 3 bisection" });
       const kind = batch[0]?.kind ?? "copy";
@@ -968,9 +1152,12 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
       const output =
         compiled?.stream === undefined || compiled.broke ? undefined : glyphKeys(compiled.stream);
       const taken = kind === "copy" ? [] : batch.map((each) => each.span);
-      return judged(kind, wanted, output, rolesOf(reference, runs, byId, taken));
+      const verdict = judged(kind, wanted, output, rolesOf(reference, runs, byId, taken));
+      // As `bisect` decides them: a batch that keeps the page, or a trial alone.
+      if (keepsPage(verdict) || batch.length === 1) decided += batch.length;
+      if (!keepsPage(verdict) && batch.length === 1) failedAlone++;
+      return verdict;
     };
-    const all = trialsOf(current.groups);
     for (const kind of ["copy", "first", "last"] as const)
       for (const batch of batchesOf(all.filter((each) => each.kind === kind))) {
         whole = batch;
@@ -1000,7 +1187,9 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
     if (left > 0)
       notes.push({
         check: "units",
-        message: `the third check ran out of its ${counted(unitsBudget, "compile")} and left ${counted(left, "group")} untried, which take no unit more or fewer`,
+        message: stopped
+          ? `the third check stopped after ${counted(spent, "compile")} of its ${unitsBudget}, which could not cover the trials left, and left ${counted(left, "group")} untried, which take no unit more or fewer`
+          : `the third check ran out of its ${counted(unitsBudget, "compile")} and left ${counted(left, "group")} untried, which take no unit more or fewer`,
       });
   }
 
