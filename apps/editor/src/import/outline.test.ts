@@ -494,7 +494,7 @@ Quill \hfill Wren \\ Owl
       begin: "\\begin{document}",
       end: "\\end{document}",
     });
-    // A break the outline splits is a field a line (decision 00XX), not declined; one inside a mark,
+    // A break the outline splits is a field a line (decision 0076), not declined; one inside a mark,
     // which it cannot split, is.
     expect(outline.fields.has("c1-2")).toBe(true);
     expect(Object.fromEntries(outline.declined)).toEqual({

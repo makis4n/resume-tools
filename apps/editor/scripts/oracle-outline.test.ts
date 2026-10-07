@@ -56,7 +56,7 @@ const SAMPLES: Readonly<
   "jake-0000": {
     body: 389,
     fields: 0.89,
-    // Since a field a line (decision 00XX), the skills block's three lines after its first are
+    // Since a field a line (decision 0076), the skills block's three lines after its first are
     // fields: 27 words by hand.
     shares: { editable: 378, retype: 11, locked: 0 },
     hand: { editable: 376, retype: 13, locked: 0 },
@@ -67,7 +67,7 @@ const SAMPLES: Readonly<
   "altacv-0000": {
     body: 232,
     fields: 0.72,
-    // Since a field a line (decision 00XX), each referee's second address line is a field: 6 words.
+    // Since a field a line (decision 0076), each referee's second address line is a field: 6 words.
     shares: { editable: 174, retype: 45, locked: 13 },
     hand: { editable: 174, retype: 45, locked: 13 },
     required: 10,

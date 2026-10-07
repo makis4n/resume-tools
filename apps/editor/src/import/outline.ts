@@ -331,7 +331,7 @@ interface Spot {
  * - `marked-in-part`: a text of the tree crosses its edge, so that a marker would hold part of it.
  * - `several-paragraphs`: a text's source ends a paragraph, with `\par` or a blank line.
  * - `line-break`: a text's source breaks a line, with `\\`, `\newline` or `\linebreak`, and the
- *   outline cannot make a field a line of it (`linesOf`, decision 00XX).
+ *   outline cannot make a field a line of it (`linesOf`, decision 0076).
  * - `no-text`: it holds no text of the tree; `blank`: its texts are spaces alone.
  * - `overlaps`: its text overlaps a field placed before it.
  * - `cut-by-unit`: a group's unit begins or ends inside it.

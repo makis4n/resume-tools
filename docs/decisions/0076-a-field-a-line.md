@@ -1,4 +1,4 @@
-# 00XX. A field a line
+# 0076. A field a line
 
 Date: 2026-10-07 · Status: accepted, lane F2 of decision 0074 (its fix 1); amends 0049 and 0050
 
@@ -131,6 +131,9 @@ of kept first lines, 18 words more in place than before them.
 
 ## Consequences
 
+- Decision 0073's `line-break` rule now names only the breaks the outline cannot split: lines it
+  cannot tell apart, a break inside a mark such as `\textbf`, or a kept first line not at the
+  candidate's start.
 - A skills block or a description written as lines is a field a line in the editor; its first
   line, where it begins the line, stays kept text the retype reaches (decision 0042). Each field is
   one line: Enter still inserts nothing (decision 0004), so no edit adds or removes a line.
