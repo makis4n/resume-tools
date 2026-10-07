@@ -131,6 +131,32 @@ describe("breakRuns", () => {
     ]);
   });
 
+  it("decides the last run's correction on what the template sets after the field", () => {
+    const runs = [{ text: "Led the " }, { text: "Quill", italic: true }];
+    // A command, a space or `\par` after the field, as in the built-in templates: LaTeX corrects.
+    expect(breakRuns(runs, slanted).map((run) => run.italicCorrection)).toEqual([false, true]);
+    expect(breakRuns(runs, slanted, " and").map((run) => run.italicCorrection)).toEqual([
+      false,
+      true,
+    ]);
+    // A period or a comma after the field: LaTeX reads it past the end marker and sets none.
+    expect(breakRuns(runs, slanted, ". Then").map((run) => run.italicCorrection)).toEqual([
+      false,
+      false,
+    ]);
+    expect(breakRuns(runs, slanted, ",").map((run) => run.italicCorrection)).toEqual([
+      false,
+      false,
+    ]);
+    // A run after the last command still decides for it, whatever follows the field.
+    const plain = [...runs, { text: ", done" }];
+    expect(breakRuns(plain, slanted, "\\").map((run) => run.italicCorrection)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
   it("sets one before \\textbf for the character before it, unless its text starts with , or .", () => {
     expect(
       corrections([

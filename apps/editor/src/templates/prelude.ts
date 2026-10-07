@@ -33,13 +33,38 @@ export const LOCK_END = "/";
  *   field that starts a list item keeps the item's label, and `\texorpdfstring` so a bookmark
  *   holds the text and never the markers. Every special writes the id through `\detokenize`, so a
  *   character a template makes active, as underscore.sty does `_`, cannot expand inside a marker.
- *   Before its end marker, in a slanted font, comes the italic correction LaTeX's text commands
- *   add after their text (`\maybe@ic`'s test of `\fontdimen1`), since TeX's `\/` corrects only a
- *   letter that ends the list, which the end marker would otherwise be: `\textit{...}` around a
- *   field then sets the page as around its text alone. It comes only inside a text command,
- *   whose group has set `\check@icr` to correct after it, so that a field set slanted by a
- *   declaration, `{\slshape ...}`, which LaTeX never corrects, gets none either. An upright font
- *   gets none, and nor does vertical mode, where `\/` is an error (decision 0007).
+ *   A marker is a whatsit, a node, and TeX and LaTeX look at the list's last node or at the next
+ *   token in two places a field's markers would stand in, so the macro keeps out of their way, and
+ *   a marked page sets every glyph where the unmarked one does (decision 00XX):
+ *   - A text command, `\textbf{...}`, corrects with `\maybe@ic`: after its group, for its own last
+ *     glyph, unless the font after it is slanted or `,` or `.` follows; and at its start, for the
+ *     glyph before it, where it sets an upright font and its text does not start with `,` or `.`.
+ *     It sets `\/`, the italic correction of the glyph that ends the list, and TeX's `\/` corrects
+ *     nothing after a whatsit. So a field's end (`\rt@f@end`) holds its end marker back
+ *     (`\rt@f@held`) and reads the next token: where it is the `\check@icr` of a text command whose
+ *     argument the field ends, that runs, and the marker comes back after the group, behind
+ *     `\maybe@ic` (`\rt@f@resume`); where it is a text command of LaTeX's, after a space or none,
+ *     whose text is neither empty nor starts with `\nocorr`, the marker waits for that command's
+ *     `\maybe@ic` at its start, which reads past `\rt@f@argstart`, put before its text, and where a
+ *     class's own command of that name never reads it, `\rt@f@argstart` writes the marker before
+ *     the text; and where a text command inside the field ends it, its `\maybe@ic` reads past the
+ *     field's end and holds the marker. Each time LaTeX decides on the token the unmarked page has
+ *     there, its `\/` corrects the glyph that ends the list, and only then is the end marker
+ *     written, after the correction and, where the space came between, after the space. Anything
+ *     else writes it at once. Nothing is stored but the held markers, global to pass the group's
+ *     end, and they are written and cleared before the text after them is set, whether LaTeX
+ *     corrects or not: no state outlives the text command. A token read ahead may be `\fi`, as
+ *     where a class sets a field in a conditional's branch, so it is compared and never skipped.
+ *   - microtype's `\leftprotrusion`, which `\@item` ends with, reads the next token and protrudes
+ *     the item's first glyph only after a command it knows. It learns `\rtfield`
+ *     (`\MT@prot@check@R`, where microtype is loaded) and goes to the start of the field's text,
+ *     after the markers, where it protrudes the same glyph by the same kern; inside a text command
+ *     it reads on past the field's id.
+ *   The names are `\rt@f@...`, since the Awesome-CV port's class has an `\rt@end` of its own.
+ *   XeTeX's margin protrusion at a line's start stops at the first whatsit, the begin marker, which
+ *   no macro can put after the line's first glyph: there a field still moves the page, as it does
+ *   where a group's end or anything but a space comes between it and the text command whose
+ *   correction it would take.
  * - `\rt@par{<id>}` writes the paragraph special right after the begin marker. It is measured by
  *   TeX rather than derived from the template (decision 0004), and item 9's overlay parses it to
  *   break the field's lines where TeX will. `\parshape` has as many lines as the template gave it,
@@ -86,8 +111,95 @@ export const PRELUDE = String.raw`\makeatletter
 \providecommand{\texorpdfstring}[2]{#1}
 \newcommand{\rtfield}[2]{%
   \texorpdfstring{\leavevmode\special{${MARKER_BEGIN}\detokenize{#1}}\rt@par{#1}#2%
-    \ifhmode\ifx\check@icr\@empty\else\ifdim\fontdimen\@ne\font>\z@\/\fi\fi\fi%
-    \special{${MARKER_END}\detokenize{#1}}}{#2}}
+    \rt@f@end{#1}}{#2}}
+% A field's end: its marker is held back until LaTeX has decided the italic correction after it.
+\protected\def\rt@f@end#1{\rt@f@hold{#1}\futurelet\rt@f@next\rt@f@ahead}
+\global\let\rt@f@held\@empty
+\protected\def\rt@f@hold#1{%
+  \xdef\rt@f@held{\unexpanded\expandafter{\rt@f@held}\noexpand\rt@f@endmark{\detokenize{#1}}}}
+\protected\def\rt@f@endmark#1{\special{${MARKER_END}#1}}
+% The next token decides. Another field's end holds its marker too, an enclosing field's; the
+% \check@icr of a text command whose argument the field ends sets LaTeX's \maybe@ic after the
+% group, and the markers come back after it; anything else writes them.
+\protected\def\rt@f@settle{\ifx\rt@f@held\@empty\else\expandafter\rt@f@settle@\fi}
+\protected\def\rt@f@settle@{\futurelet\rt@f@next\rt@f@settle@@}
+% The token read may be a \fi, as where a template sets the field in a conditional's branch, so
+% it is compared and never skipped: a skipped \rt@f@next would close a conditional.
+\protected\def\rt@f@settle@@{%
+  \let\rt@f@settle@then\rt@f@flush
+  \ifx\rt@f@next\rt@f@end\let\rt@f@settle@then\relax\fi
+  \ifx\rt@f@next\check@icr\ifx\check@icr\@empty\else\let\rt@f@settle@then\rt@f@defer\fi\fi
+  \rt@f@settle@then}
+\protected\def\rt@f@defer#1{#1\aftergroup\rt@f@resume}
+% At the field's own end, a text command of LaTeX's, after a space or none, corrects the field's
+% last glyph as it starts, unless its text is empty or starts with \nocorr: the markers wait for
+% its \maybe@ic there, which reads past \rt@f@argstart at its text's start, and are written after
+% the correction; where its \maybe@ic never comes, \rt@f@argstart writes them before its text.
+\protected\def\rt@f@ahead{%
+  \let\rt@f@ahead@then\rt@f@settle@@
+  \ifx\rt@f@next\@sptoken\let\rt@f@ahead@then\rt@f@space\fi
+  \rt@f@iftext\rt@f@text
+  \rt@f@ahead@then}
+\protected\def\rt@f@iftext#1{%
+  \ifx\rt@f@next\textrm\let\rt@f@ahead@then#1\fi
+  \ifx\rt@f@next\textsf\let\rt@f@ahead@then#1\fi
+  \ifx\rt@f@next\texttt\let\rt@f@ahead@then#1\fi
+  \ifx\rt@f@next\textnormal\let\rt@f@ahead@then#1\fi
+  \ifx\rt@f@next\textbf\let\rt@f@ahead@then#1\fi
+  \ifx\rt@f@next\textmd\let\rt@f@ahead@then#1\fi
+  \ifx\rt@f@next\textit\let\rt@f@ahead@then#1\fi
+  \ifx\rt@f@next\textsl\let\rt@f@ahead@then#1\fi
+  \ifx\rt@f@next\textsc\let\rt@f@ahead@then#1\fi
+  \ifx\rt@f@next\textup\let\rt@f@ahead@then#1\fi
+  \ifx\rt@f@next\emph\let\rt@f@ahead@then#1\fi}
+\protected\def\rt@f@space{\ifhmode\expandafter\rt@f@space@\else\expandafter\rt@f@settle@@\fi}
+\protected\def\rt@f@space@{\afterassignment\rt@f@space@@\let\rt@f@next= }
+\protected\def\rt@f@space@@{\futurelet\rt@f@next\rt@f@space@@@}
+\protected\def\rt@f@space@@@{%
+  \let\rt@f@ahead@then\rt@f@spaceback
+  \ifx\rt@f@next\check@icr\ifx\check@icr\@empty\else\let\rt@f@ahead@then\rt@f@spacedefer\fi\fi
+  \rt@f@iftext\rt@f@textspace
+  \rt@f@ahead@then}
+\protected\def\rt@f@spaceback{\rt@f@flush\space}
+\protected\def\rt@f@spacedefer#1{\space#1\aftergroup\rt@f@resume}
+\protected\long\def\rt@f@text#1#2{\rt@f@ifcorrects{#2}{#1{\rt@f@argstart#2}}{\rt@f@flush#1{#2}}}
+\protected\long\def\rt@f@textspace#1#2{%
+  \rt@f@ifcorrects{#2}{\space#1{\rt@f@argstart#2}}{\rt@f@flush\space#1{#2}}}
+\long\def\rt@f@ifcorrects#1{%
+  \begingroup
+    \text@command{#1}%
+    \aftergroup\@secondoftwo
+    \ifhmode\ifx\check@icl\@empty\else\aftergroup\@gobble\aftergroup\@firstoftwo\fi\fi
+  \endgroup}
+\protected\def\rt@f@argstart{\rt@f@flush}
+\protected\def\rt@f@resume{\rt@f@settle}
+\protected\def\rt@f@flush{\let\rt@f@do\rt@f@held\global\let\rt@f@held\@empty\rt@f@do}
+% LaTeX's \maybe@ic looks past a field's end and past the markers' return after a group, decides
+% on the token after them, and then lets the held markers settle.
+\ifdefined\maybe@ic@
+  \let\rt@f@maybe@ic@\maybe@ic@
+  \def\maybe@ic@{%
+    \let\rt@f@ic@then\rt@f@icdecide
+    \ifx\@let@token\rt@f@end\let\rt@f@ic@then\rt@f@icend\fi
+    \ifx\@let@token\rt@f@resume\let\rt@f@ic@then\rt@f@icresume\fi
+    \ifx\@let@token\rt@f@argstart\let\rt@f@ic@then\rt@f@icresume\fi
+    \rt@f@ic@then}
+  \protected\def\rt@f@icend\rt@f@end#1{\rt@f@hold{#1}\futurelet\@let@token\maybe@ic@}
+  \protected\def\rt@f@icresume#1{\futurelet\@let@token\maybe@ic@}
+  \protected\def\rt@f@icdecide{\rt@f@maybe@ic@\rt@f@settle}
+\fi
+% microtype's \leftprotrusion, at an item's start, protrudes a field's first glyph from inside it.
+% Inside a text command it has already kept the command and its argument to set again after its
+% kern, so it reads on past the field's id into its text.
+\ifdefined\MT@prot@check@cmds
+  \protected\def\MT@prot@check@R{%
+    \ifx\MT@prot@l\MT@prot@l@tc
+      \def\MT@temp*##1##2{\MT@prot@get@firstgroup@tc}%
+    \else
+      \the\MT@toks\def\MT@temp*##1##2##3{##1{##2}{\leftprotrusion##3}}%
+    \fi}
+  \g@addto@macro\MT@prot@check@cmds{{R\rtfield}}
+\fi
 % The paragraph a field is set in, as TeX has it where the field begins, so that the editor's
 % overlay can break the field's lines where TeX will; item 9's overlay parses this special.
 \protected\def\rt@par#1{%

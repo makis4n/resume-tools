@@ -1259,31 +1259,36 @@ Invented words for an invented page.
     expect(found.passes).toBe(found.compiles + 1);
   }, 60_000);
 
-  test("keeps the italic correction a text command adds after a field, and adds none a declaration lacks", async () => {
+  test("sets the italic correction a text command adds after a field where LaTeX sets it, and none a declaration lacks", async () => {
     const found = await probed({
       "cv.tex": String.raw`\documentclass{article}
 \newcommand{\cvwhen}[1]{\textit{#1} and after\par}
 \newcommand{\cvdated}[1]{Invented {\slshape #1} and after\par}
 \newcommand{\cvslant}[1]{\textit{#1}. And after\par}
+\newcommand{\cvnext}[1]{Invented {\itshape #1} \textbf{after}\par}
 \begin{document}
 \cvwhen{Invented half}
 \cvdated{Invented half}
 \cvslant{Invented half}
+\cvnext{Invented half}
 \end{document}
 `,
     });
     expect(verdict(found, "cvwhen")?.verdict).toBe("editable");
     // A declaration's slanted text gets no correction, from LaTeX or from the field.
     expect(verdict(found, "cvdated")?.verdict).toBe("editable");
-    // LaTeX leaves the correction out before a period, and the field's own moves the period.
-    expect(verdict(found, "cvslant")).toMatchObject({ verdict: "moved" });
+    // LaTeX leaves the correction out before a period, and so does the field (decision 00XX).
+    expect(verdict(found, "cvslant")?.verdict).toBe("editable");
+    // The next text command's correction of the declaration's last glyph, after a space: the end
+    // marker stands between, and no state of the field's outlives it to set it (decision 00XX).
+    expect(verdict(found, "cvnext")).toMatchObject({ verdict: "moved" });
   }, 60_000);
 
   test("sets what no editable field covers down to the raw chunk, the locked argument or the template that sets it", async () => {
     const found = await probed({
       "cv.tex": String.raw`\documentclass{article}
 \newcommand{\cvplain}[1]{\textbf{#1}\par}
-\newcommand{\cvslant}[1]{Invented label: \textit{#1}. Done\par}
+\newcommand{\cvslant}[1]{Invented label: {\itshape #1} \textbf{Done}\par}
 \begin{document}
 \cvplain{Invented alpha}
 $x+y=z$ \par
@@ -1300,11 +1305,11 @@ $x+y=z$ \par
         .reduce((sum, run) => sum + run.to - run.from, 0);
     // The mathematics, a raw chunk: x, +, y, = and z.
     expect(glyphs("raw")).toBe(5);
-    // The locked argument's twelve letters, which a compile placed though it moved the period.
+    // The locked argument's twelve letters, which a compile placed though it moved the word after.
     expect(glyphs("candidate", slant?.id)).toBe(12);
-    // The label, the period and the word after, which only the macro sets, and the page's number.
-    expect(glyphs("chrome")).toBe(14 + 1 + 4 + 1);
-    expect(found.glyphs.covered).toBe(found.glyphs.reference - 5 - 12 - 20);
+    // The label and the word after, which only the macro sets, and the page's number.
+    expect(glyphs("chrome")).toBe(14 + 4 + 1);
+    expect(found.glyphs.covered).toBe(found.glyphs.reference - 5 - 12 - 19);
   }, 60_000);
 
   test("gives back the signatures of the header's macros a caller asked only of the body's", async () => {
