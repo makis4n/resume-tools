@@ -19,7 +19,8 @@ targets and what was measured.
 
 - The tree: main at `ad0a73e` with the run's pull requests merged in their merge order: #119
   (`b43bee2`), #121 (`3ff3509`), #120 (`1f21684`), #123 (`ea61fde`), #124 (`f97fcb5`), #125
-  (`b5659d2`) and #122 (`f9a7506`), giving `bdccef5`. The full suite passed on it: 2,360 editor
+  (`b5659d2`) and #122 (`f9a7506`; its later `ef00853` adds only the browser's memory to its record), giving
+  `bdccef5`. The full suite passed on it: 2,360 editor
   tests, 2 skipped, and the ATS's 41.
 - Each step ran alone on the M4 Pro, nothing else of the run beside it: `corpus run --json` over
   all 220 documents, four at a time, at a one-minute load of 7.3 to 9.2, its own four imports and
@@ -84,6 +85,21 @@ targets and what was measured.
 - Awesome-CV's sample imported on XeTeX in 17.51 s, under the 20 s aim, its page at 11.88 s and
   every field open at 16.49 s (17.43 s before).
 - A PDF read by rules in 53 ms at the slowest, under 1 s.
+
+### In the browser
+
+Chrome in the app's browser pane, displayed, the tab in front throughout, on the dev server of the
+same tree, one page at a time with nothing else of the run beside it, at a load of 1.5 to 4.4:
+
+- `?measure=1`: an edit of Jake's Resume on the page in 82 ms by the page's own time, 183 ms from
+  the command with the scheduler's pause; a keystroke's rows 0.10 ms.
+- `?measure=import`: Jake's Resume's sample imported on pdfTeX in 4.08 s, 28 compiles, its page
+  drawn at 1.86 s and every field open at 3.57 s; 4.38 s with the engine's start, under 8 s.
+- `?measure=import-xetex`: Awesome-CV's on XeTeX in 17.24 s, 77 compiles, its page at 11.59 s and
+  every field at 16.26 s; 17.56 s with the engine's start, under the 20 s aim.
+- `?measure=import-typing`: an edit after importing each upstream sample, median of 5: Jake's
+  87 ms, AltaCV's 307 ms (299 ms in decision 0072) and Awesome-CV's 183 ms; 189, 409 and 586 ms
+  with the pause. AltaCV's sample is no resume of the corpus's, whose typing target holds above.
 
 ## Consequences
 
