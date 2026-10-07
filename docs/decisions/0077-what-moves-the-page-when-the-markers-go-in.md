@@ -1,4 +1,4 @@
-# 00XX. What moves the page when the markers go in
+# 0077. What moves the page when the markers go in
 
 Date: 2026-10-07 · Status: accepted, lane F3 of decision 0074 (its fix 3, and fix 8 tried); under
 the owner's decision of 6 October 2026 that markers go only where they cannot move the layout
