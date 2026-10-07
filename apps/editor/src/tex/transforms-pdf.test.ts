@@ -15,7 +15,7 @@ import { type ImportDeps, importResume } from "../import/run";
 import { drawPage } from "../page/draw";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
-import { pdfOffsets, virtualCodes, worstOf } from "../test/pdf-offsets";
+import { pdfOffsets, virtualCodes, worstOf as worstOfKind } from "../test/pdf-offsets";
 import { parseTfm } from "../tex/tfm";
 import { parseVf } from "../tex/vf";
 
@@ -125,6 +125,19 @@ Before words.
 Last words.
 \end{document}
 `;
+
+/** The worst offset of one kind, printed beside the test that judges it, so a run shows each number. */
+function worstOf(
+  found: Parameters<typeof worstOfKind>[0],
+  kind: Parameters<typeof worstOfKind>[1],
+): ReturnType<typeof worstOfKind> {
+  const worst = worstOfKind(found, kind);
+  const test = expect.getState().currentTestName?.split(" > ").pop();
+  console.info(
+    `${test}: ${kind ?? "none"}, ${worst.operators} operators, ${worst.glyphs} glyphs, the most off ${worst.max.toFixed(4)} pt`,
+  );
+  return worst;
+}
 
 describe.skipIf(!engineAvailable())("translations, rotations and scales against the PDF", () => {
   let session: EngineSession;
@@ -341,6 +354,10 @@ describe.skipIf(!engineAvailable())("translations, rotations and scales against 
         { verdict: each.verdict, detail: each.detail, transform: each.transform },
       ]),
     );
+    for (const [text, each] of verdicts)
+      console.info(
+        `${text}: ${[each.verdict, each.detail, each.transform].filter(Boolean).join(" / ")}`,
+      );
     for (const tag of ["Lantern Works", "Mill Press", "Heron Lane"])
       expect(verdicts.get(tag), tag).toEqual({
         verdict: "editable",
@@ -382,6 +399,7 @@ describe.skipIf(!engineAvailable())("translations, rotations and scales against 
     expect(texts).not.toContain("Wide Owl");
     for (const badge of ["Slate Harbour", "Copper Gate", "Amber Field"])
       expect(texts).not.toContain(badge);
+    console.info(`the outline's fields: ${texts.join(", ")}`);
     expect(outcome.report.checks.outcome).toBe("assembled");
   }, 180_000);
 });
