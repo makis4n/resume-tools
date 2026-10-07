@@ -107,6 +107,22 @@ The targets, set from main after the follow-ups run (`6167a5e`, the numbers of 0
 - Every glyph a translation moves, in AltaCV's upstream sample (172) and in the corpus's resumes
   (4,054 in 10), is within 0.5 pt of the PDF, the most off 0.012 pt (0081).
 
+### In the browser
+
+Chrome in the app's browser pane, displayed, the tab in front throughout, on the dev server of the
+same tree, one page at a time with nothing else of the run beside it, at a load of 2.9 to 4.0, on
+8 October:
+
+- `?measure=1`: an edit of Jake's Resume on the page in 84 ms by the page's own time, 186 ms from
+  the command with the scheduler's pause; a keystroke's rows 0.10 ms.
+- `?measure=import`: Jake's Resume's sample imported on pdfTeX in 3.82 s, 28 compiles, its page
+  drawn at 1.72 s and every field open at 3.33 s; 4.10 s with the engine's start, under 8 s.
+- `?measure=import-xetex`: Awesome-CV's on XeTeX in 16.18 s, 77 compiles, its page at 10.79 s and
+  every field at 15.23 s; 16.48 s with the engine's start, under the 20 s aim.
+- `?measure=import-typing`: an edit after importing each upstream sample, median of 5: Jake's
+  85 ms, AltaCV's 297 ms and Awesome-CV's 181 ms; 187, 399 and 585 ms with the pause. AltaCV's
+  sample, its tags now editable where the PDF draws them, imported in 34.48 s in 96 compiles.
+
 ## Consequences
 
 - Plan section 4.3 takes this run's targets as its bars for what an imported `.tex` makes editable,
