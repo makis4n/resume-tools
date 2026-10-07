@@ -75,6 +75,15 @@ when one was kept. Its three losses are not understood yet.
 30 words that ended in `\\` now passes the probe and is kept by the outline's `line-break` rule
 (`shape`), which lane F2 splits at its breaks; with F2 it can be placed.
 
+Then over all 220 documents on the same merge, alone in its slot but beside the other lanes'
+work, against main's run: `corpus compare` finds them the same but in `jake-0043`, whose piece is
+now `shape` by the outline where it was `moved` by the probe, and whose compiles go from 59 to 44,
+15 fewer in the probe's bisection (its import 7.7 s to 6.2 s). Words in place stay 69,803 of
+82,497, 84.6%; 61 resumes at 90%, 5 under 50%; every family's share the same; no resume worse
+in outcome or words. All compiles 5,845 to 5,830. The times are no measure here: the run shared
+the machine with the other lanes, and its slowest pdfTeX import, `altacv-0017`, which this change
+does not reach, took 146.4 s against main's 142.2 s with the same compiles.
+
 ## Consequences
 
 - The probe no longer keeps a field for a break its end marker followed; the outline must not
