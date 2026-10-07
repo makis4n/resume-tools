@@ -1,4 +1,4 @@
-# 00XX. A speed spike: two engines and the edited page first
+# 0078. A speed spike: two engines and the edited page first
 
 Date: 2026-10-07 · Status: accepted, under the owner's decision 4 of 6 October 2026: a spike only,
 measured and written up, nothing built
