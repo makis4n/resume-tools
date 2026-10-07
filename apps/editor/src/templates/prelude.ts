@@ -35,7 +35,7 @@ export const LOCK_END = "/";
  *   character a template makes active, as underscore.sty does `_`, cannot expand inside a marker.
  *   A marker is a whatsit, a node, and TeX and LaTeX look at the list's last node or at the next
  *   token in two places a field's markers would stand in, so the macro keeps out of their way, and
- *   a marked page sets every glyph where the unmarked one does (decision 00XX):
+ *   a marked page sets every glyph where the unmarked one does (decision 0080):
  *   - A text command, `\textbf{...}`, corrects with `\maybe@ic`: after its group, for its own last
  *     glyph, unless the font after it is slanted or `,` or `.` follows; and at its start, for the
  *     glyph before it, where it sets an upright font and its text does not start with `,` or `.`.

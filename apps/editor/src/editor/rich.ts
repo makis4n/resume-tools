@@ -231,7 +231,7 @@ const COMMAND = "\\";
  * `slanted` says whether a variant's font is slanted, as `\fontdimen1` does.
  *
  * The field's end marker stands in no correction's way: the field macro holds it back while LaTeX
- * reads what follows the field, and writes it after LaTeX's decision (decision 00XX). So the last
+ * reads what follows the field, and writes it after LaTeX's decision (decision 0080). So the last
  * run's command decides on `after`, the LaTeX the template sets after the field, by its first
  * character: a command by default, as after a rich field in the built-in templates.
  */

@@ -1,4 +1,4 @@
-# 00XX. A field ends after the text's own corrections
+# 0080. A field ends after the text's own corrections
 
 Date: 2026-10-07 · Status: accepted, lane M of the markers-and-transform run; changes the field
 macro of decision 0007 and its update of 27 September, takes up the prototype of decision 0077,

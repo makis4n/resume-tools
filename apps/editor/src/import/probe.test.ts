@@ -1278,10 +1278,10 @@ Invented words for an invented page.
     expect(verdict(found, "cvwhen")?.verdict).toBe("editable");
     // A declaration's slanted text gets no correction, from LaTeX or from the field.
     expect(verdict(found, "cvdated")?.verdict).toBe("editable");
-    // LaTeX leaves the correction out before a period, and so does the field (decision 00XX).
+    // LaTeX leaves the correction out before a period, and so does the field (decision 0080).
     expect(verdict(found, "cvslant")?.verdict).toBe("editable");
     // The correction of the declaration's last glyph by the next text command, which a macro of
-    // the document's sets: the field's end reads only LaTeX's own (decision 00XX).
+    // the document's sets: the field's end reads only LaTeX's own (decision 0080).
     expect(verdict(found, "cvnext")).toMatchObject({ verdict: "moved" });
   }, 60_000);
 

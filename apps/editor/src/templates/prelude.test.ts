@@ -40,7 +40,7 @@ function unmarked(latex: string): string {
 }
 
 /**
- * The prelude with its field macro put back as main had it before decision 00XX: the italic
+ * The prelude with its field macro put back as main had it before decision 0080: the italic
  * correction of its own in a slanted text command, the end marker at once, no microtype hook.
  */
 const OLD_FIELD = String.raw`\newcommand{\rtfield}[2]{%
@@ -125,7 +125,7 @@ interface LookAlike {
   preamble: string;
   body: string;
   /**
-   * The macro that moved the look-alike's page: main's before decision 00XX, or the prototype; or
+   * The macro that moved the look-alike's page: main's before decision 0080, or the prototype; or
    * none, for a look-alike that only shows the macro works where it stands.
    */
   moved?: "old" | "prototype";
@@ -342,7 +342,7 @@ function fieldGlyphs(stream: GlyphStream): { counts: Record<string, number>; ord
   return { counts, order };
 }
 
-describe.skipIf(!engineAvailable())("the field macro, on the engine (decision 00XX)", () => {
+describe.skipIf(!engineAvailable())("the field macro, on the engine (decision 0080)", () => {
   let session: EngineSession;
   let fonts: FontLibrary;
   beforeAll(async () => {
@@ -397,7 +397,7 @@ describe.skipIf(!engineAvailable())("the field macro, on the engine (decision 00
   test("c: protrusion at a line's start passes the begin marker in pdfTeX, and stops at it in XeTeX", async () => {
     // A field that starts a line with a glyph microtype protrudes. pdfTeX's margin kerning passes
     // a whatsit to the line's first glyph; XeTeX's stops at it, and no macro can put the marker
-    // after that glyph: out of the macro's reach (decision 00XX).
+    // after that glyph: out of the macro's reach (decision 0080).
     const body = String.raw`\noindent\rtfield{a}{(Invented) words that open a paragraph and run on.}`;
     const cases = [
       { engine: "pdftex", preamble: `${ARTICLE}\\usepackage{microtype}\n`, same: true },
@@ -422,7 +422,7 @@ describe.skipIf(!engineAvailable())("the field macro, on the engine (decision 00
       const format = generateFormat(pkg, values);
       const dumped = session.dump(pkg.engine, format.name, format.preamble, format.files);
       if (!dumped.ok) throw new Error(dumped.error);
-      // The same format with main's macro before decision 00XX, to say what it did.
+      // The same format with main's macro before decision 0080, to say what it did.
       const old = `${format.name}-old`;
       const preamble = format.preamble.replace(PRELUDE, preludeWith(OLD_FIELD));
       const again = session.dump(pkg.engine, old, preamble, format.files);
