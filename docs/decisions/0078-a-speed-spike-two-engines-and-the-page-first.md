@@ -66,11 +66,13 @@ queue on its own, with other lanes' work beside it, at the one-minute loads give
 - The second engine costs what the first does, since the two share nothing but code. The
   WebAssembly memory is 512 MB from the start and never grew in these runs. The session zeroes all
   of it after every run, so all of it stays resident.
-- In the browser, each worker also holds its own fonts for reading output, which the Node run
-  shared between its sessions; Awesome-CV's import grew that heap by 65 MB. So a second worker
-  should cost about 620 MB on pdfTeX and 740 MB on XeTeX. The browser was not measured for this
-  record. A scratch page that reads each worker's WebAssembly memory and heap is left in the
-  spike's worktree.
+- In the browser, Chrome in the app's pane, displayed, on the dev server: each engine worker's
+  WebAssembly memory is 512 MB from its start, and stays 512 MB after importing Jake's and
+  Awesome-CV's upstream samples; a second worker beside it holds another 512 MB, so a second engine
+  costs at least that. Chrome reports no JS heap for a worker, so its fonts and files are not in
+  the figure; Node's parts put them at about 100 MB on pdfTeX and 170 MB on XeTeX more. The page's
+  own heap went from 57.5 MB to 73 MB with one engine and to 73 to 80 MB with two. The second
+  worker's imports took as long as the first's: 2.59 s and 16.93 s against 2.73 s and 17.47 s.
 - RSS on this machine moves with its swap, which was nearly full, so the parts are the firmer
   numbers.
 
@@ -187,7 +189,5 @@ The 14 slow resumes:
   files of the trial before. This is a follow-up in `src/import/checks.ts` whatever becomes of two
   engines: it changed one group's verdict in `moderncv-0023` and how many groups `other-0028`
   leaves untried, though no word in place.
-- The browser's memory for one and two workers is still to be read from the scratch page, with the
-  pane displayed. It is expected near Node's parts, plus each worker's fonts.
 - No change to `src/import/`, the corpus scripts or the engine's tree is committed, so no corpus
   run follows from this record.
