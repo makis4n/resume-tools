@@ -11,6 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import type { Engine as CompilerEngine } from "../editor/compiler";
 import type { EngineManifest } from "../engine/manifest";
 import { ENGINE_DIR, startNodeSession } from "../engine/node";
@@ -19,6 +20,7 @@ import { treeImages } from "../import/intake";
 import { type ImportDeps, importResume } from "../import/run";
 import { FontLibrary } from "../page/fonts";
 import { TexLiveIndex } from "../page/texlive";
+import type { Compressed } from "./measure";
 
 /** The engine's manifest, from `.engine/`, which `fetch-engine` builds. */
 export function engineManifest(): EngineManifest {
@@ -27,6 +29,31 @@ export function engineManifest(): EngineManifest {
 
 /** A file of the engine's tree, by its path in the engine's file system. */
 const treeFile = (path: string) => new Uint8Array(readFileSync(join(ENGINE_DIR, "files", path)));
+
+/** How many bytes gzip compresses some to, at its default level, as a server would send them. */
+export const gzipped = (bytes: Uint8Array) => gzipSync(bytes).length;
+
+/**
+ * A first load's files compressed (`Compressed`): the engine, its loader and the manifest from
+ * `.engine/`, and each file of the tree as it is first asked for, each read and compressed once.
+ */
+export function engineCompressed(): Compressed {
+  const of = (name: string) => gzipped(readFileSync(join(ENGINE_DIR, name)));
+  const files = new Map<string, number>();
+  return {
+    engine: of("busytex.wasm"),
+    loader: of("busytex.mjs"),
+    manifest: of("manifest.json"),
+    file: (path) => {
+      let size = files.get(path);
+      if (size === undefined) {
+        size = gzipped(treeFile(path));
+        files.set(path, size);
+      }
+      return size;
+    },
+  };
+}
 
 /** The tree's fonts as a new page or worker reads them: a library of their own, read from disk. */
 export function treeFonts(manifest: EngineManifest): FontLibrary {

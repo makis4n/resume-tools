@@ -6,10 +6,12 @@
  * checks. It names nothing and sends nothing; it reads the import's report as the app reads it
  * (`reportOfImport`, decision 0039).
  *
- * Beside the report, it hears what the probe found and where the checks are (`ImportObserver`),
- * and times each compile on the session the import is given (`TrialClock`), which change nothing the
- * import does, for the row's diagnostics (`corpus-pieces.ts`): its words not in place by the piece
- * that holds them, named only by names something public defines, and its compiles by kind of trial.
+ * Beside the report, it hears what the probe found, where the checks are, why check 1 kept a field
+ * and why the outline made no field of a candidate (`ImportObserver`), and times each compile on
+ * the session the import is given (`TrialClock`), which change nothing the import does, for the
+ * row's diagnostics (`corpus-pieces.ts`): its words not in place by the piece that holds them,
+ * named only by names something public defines, with the rule, kind or detail behind them
+ * (`Causes`), and its compiles by kind of trial.
  *
  * It answers with the document's row, ids, names and counts only, and prints nothing: a document's text
  * never reaches a terminal, nor does a compile's log, which may quote it. The editor's modules are
@@ -24,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { createRunnableDevEnvironment, resolveConfig } from "vite";
 // Node runs this file by stripping its types, so the type imports need their real extensions.
 import type { EngineManifest } from "../src/engine/manifest.ts";
+import type { CheckEvent } from "../src/import/checks.ts";
 import type { Intake } from "../src/import/intake.ts";
 import type { Probe } from "../src/import/probe.ts";
 import type { Reference } from "../src/import/reference.ts";
@@ -35,6 +38,7 @@ import { earlyClock } from "./corpus-early.ts";
 import { type ImportChildRow, refusedOutcome } from "./corpus-import.ts";
 import {
   addsUp,
+  Causes,
   definedNames,
   joinedNames,
   type Names,
@@ -149,12 +153,18 @@ async function main() {
     // Each compile timed and set down to its kind of trial, and what the probe found, heard as the
     // import runs; neither changes what it does.
     const clock = new TrialClock();
+    // Why words are kept for `shape`, `differs` and `moved`, as the outline and the checks say.
+    const causes = new Causes();
     let probed: { intake: Intake; reference: Reference; probe: Probe } | undefined;
     const observe = {
       probed: (found: { intake: Intake; reference: Reference; probe: Probe }) => {
         probed = found;
       },
-      checks: clock.onCheck,
+      checks: (event: CheckEvent) => {
+        clock.onCheck(event);
+        causes.onCheck(event);
+      },
+      outlined: causes.outlined,
     };
     const onStep = (progress: { step: ImportStep }) => {
       clock.enter(progress.step);
@@ -197,6 +207,7 @@ async function main() {
             runs: probed.probe.runs ?? [],
             candidates: probed.probe.candidates,
             name: namer(probed.intake, probed.reference, probed.probe),
+            cause: causes.of(probed.probe.candidates),
           });
           if (addsUp(found.pieces, read.words)) pieces = found.pieces;
         }

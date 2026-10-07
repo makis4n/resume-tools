@@ -82,6 +82,9 @@ describe("measure", () => {
         for (const each of numbers.packages) {
           expect(each.edits).toHaveLength(1);
           expect(each.firstLoad.total).toBeGreaterThan(each.firstLoad.engine);
+          // Judged compressed, as the plan's 30 MB counts it: less than on disk, and something.
+          expect(each.firstLoad.compressed.total).toBeLessThan(each.firstLoad.total);
+          expect(each.firstLoad.compressed.engine).toBeGreaterThan(0);
           // The JSON keeps how many files a step read, not which.
           expect(each.dump.read).toEqual({
             files: expect.any(Number),

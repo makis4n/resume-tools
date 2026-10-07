@@ -27,7 +27,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * A value's differences from another, each a path and the two values, times aside; `field` is the
- * path without the document's id, and a field `skip` names is not compared.
+ * path without the document's id, nor an array's indices, as `pieces.rules` names every piece's
+ * `rules`, and a field `skip` names is not compared.
  */
 function differences(
   a: unknown,
@@ -45,7 +46,7 @@ function differences(
   }
   const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
   for (const key of keys) {
-    const each = field === "" ? key : `${field}.${key}`;
+    const each = Array.isArray(a) ? field : field === "" ? key : `${field}.${key}`;
     if (skip(each)) continue;
     differences(
       (a as Record<string, unknown>)[key],
@@ -58,8 +59,15 @@ function differences(
   }
 }
 
-/** Every field a value holds, by its path of keys, down through objects but not into arrays. */
+/**
+ * Every field a value holds, by its path of keys, down through objects and through each element of
+ * an array under the array's own path, as `pieces.rules` is every piece's `rules`.
+ */
 function fieldsOf(value: unknown, field: string, out: Set<string>) {
+  if (Array.isArray(value)) {
+    for (const each of value) fieldsOf(each, field, out);
+    return;
+  }
   if (!isRecord(value)) return;
   for (const [key, each] of Object.entries(value)) {
     const path = field === "" ? key : `${field}.${key}`;
@@ -74,6 +82,9 @@ function fieldsOf(value: unknown, field: string, out: Set<string>) {
  */
 export const DIAGNOSTICS: readonly string[] = [
   "pieces",
+  "pieces.rules",
+  "pieces.kinds",
+  "pieces.details",
   "budgets",
   "compiles.trials",
   "compiles.dumps",

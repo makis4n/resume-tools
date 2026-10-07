@@ -732,12 +732,15 @@ export type CheckPhase =
 
 /**
  * What a caller may hear of the checks as they run, for the corpus's diagnostics: each phase as it
- * begins, its compiles after it; and a check whose budget ran out, with how many fields it kept as
- * text untried, or, for check 3, how many groups it left untried. Ids and counts, never text.
+ * begins, its compiles after it; a check whose budget ran out, with how many fields it kept as
+ * text untried, or, for check 3, how many groups it left untried; and each candidate check 1 kept
+ * as text because its field moved the page (`differs`), with the kind of the difference the
+ * compile that decided it showed (`DifferenceKind`). Ids, kinds and counts, never text.
  */
 export type CheckEvent =
   | { phase: CheckPhase }
-  | { budget: "check 1" | "check 2" | "check 3"; left: number };
+  | { budget: "check 1" | "check 2" | "check 3"; left: number }
+  | { differs: string; kind?: string };
 
 /** What check 3 found of a group, by kind of trial: whether it keeps the page, or untried. */
 export interface GroupTrials {
@@ -904,13 +907,15 @@ export async function checkOutline(input: ChecksInput): Promise<Checked | Refusa
         true,
       );
       let untested = 0;
-      for (const [id, { verdict }] of settled.verdicts) {
+      for (const [id, { verdict, detail }] of settled.verdicts) {
         if (verdict === "editable") continue;
-        kept.set(
-          id,
-          verdict === "untested" ? "untested" : verdict === "breaks" ? "compile" : "differs",
-        );
+        const reason: LockReason =
+          verdict === "untested" ? "untested" : verdict === "breaks" ? "compile" : "differs";
+        kept.set(id, reason);
         if (verdict === "untested") untested++;
+        // The kind of difference that moved the page, as the bisection's compile showed it.
+        if (reason === "differs")
+          observe({ differs: id, ...(detail === undefined ? {} : { kind: detail }) });
       }
       if (untested > 0) observe({ budget: "check 1", left: untested });
       if (untested > 0)

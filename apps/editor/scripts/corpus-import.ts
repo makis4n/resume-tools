@@ -21,6 +21,8 @@
 
 // Node runs this file by stripping its types, so it imports values only from files that import
 // nothing Node lacks, and the editor's modules as types alone, with their real extensions.
+import type { ShapeRule } from "../src/import/outline.ts";
+import type { DifferenceKind } from "../src/import/reference.ts";
 import type { RefusalReason } from "../src/import/refusal.ts";
 // The report imports nothing but types, so Node runs it as it is (decision 0039).
 import { LOCK_WHY, type LockReason, SUCCESS_RATE } from "../src/import/report.ts";
@@ -96,11 +98,62 @@ export const DECIDED = ["parse", "probe", "outline", "checks"] as const;
 export type Decided = (typeof DECIDED)[number];
 
 /**
+ * The rules behind `shape` (decision 0073): each rule the outline declines an editable candidate
+ * by (`ShapeRule`), and the two ways the report counts a candidate as `shape` that the outline
+ * never saw, the probe's `container` and a candidate the probe does not know; with what each means.
+ */
+export const SHAPE_RULES = {
+  empty: "the candidate spans nothing",
+  "marked-in-part": "a text of the tree crosses its edge, so a marker would hold part of it",
+  "several-paragraphs": "its text's source ends a paragraph, with \\par or a blank line",
+  "line-break": "its text's source breaks a line, with \\\\, \\newline or \\linebreak",
+  "no-text": "it holds no text of the tree",
+  blank: "its texts are spaces alone",
+  overlaps: "its text overlaps a field placed before it",
+  "cut-by-unit": "a group's unit begins or ends inside it",
+  "between-units": "it lies inside a group between two of its units, in none of them",
+  "after-escape": "the kept text before it ends in a backslash that would take its marker",
+  passed: "the outline had written past where it begins",
+  "outside-setter": "a preamble's candidate in no call that stores a header's text",
+  "no-preamble": "a preamble's candidate where the outline has no preamble",
+  container: "the probe found it holds structure, neither editable nor locked",
+  "unknown candidate": "a candidate the probe does not know",
+} as const satisfies Record<ShapeRule | "container" | "unknown candidate", string>;
+export type ShapeCause = keyof typeof SHAPE_RULES;
+
+/** The kinds of a first difference between two pages (`DifferenceKind`), as check 1 found them. */
+export const DIFFERENCE_KINDS = [
+  "pages",
+  "size",
+  "count",
+  "glyph",
+  "rule",
+  "special",
+  "kind",
+  "position",
+] as const satisfies readonly DifferenceKind[];
+
+/**
+ * The probe's details on a `moved` verdict: the kind of the first difference from the reference's
+ * page (`DifferenceKind`), or `transform`, a field the page cannot place.
+ */
+export const MOVED_DETAILS = [...DIFFERENCE_KINDS, "transform"] as const;
+
+/**
+ * What a word kept for `shape`, `differs` or `moved` is set down to when no candidate's run sets
+ * it: a running line's copy, or a locked part of the report's, as its piece is (`PIECE_BUCKETS`).
+ */
+export const CAUSE_BUCKETS = ["running line", "locked part"] as const;
+
+/**
  * Words not in place, by the piece of the source that holds them and why: the piece, a name the
  * document's class, a package or LaTeX defines, or a bucket (`PIECE_BUCKETS`), never one the
  * document defines itself; for an argument, its place; why, `retype` where the retype reaches them
  * or the reason they are locked; the reason the piece is kept as text, and where that was decided;
- * and how many words. Names and counts, never text.
+ * and how many words. Where it is kept for `shape`, its words by the outline's rule behind it
+ * (`rules`, `SHAPE_RULES`); for `differs`, by the kind of difference check 1 found (`kinds`,
+ * `DIFFERENCE_KINDS`); for `moved`, by the probe's detail (`details`, `MOVED_DETAILS`); each
+ * adding up to its words. Names and counts, never text.
  */
 export interface PieceWords {
   piece: string;
@@ -109,7 +162,17 @@ export interface PieceWords {
   kept: LockReason;
   by: Decided;
   words: number;
+  rules?: Record<string, number>;
+  kinds?: Record<string, number>;
+  details?: Record<string, number>;
 }
+
+/** The reasons kept whose words a piece breaks down further, and the field each goes in. */
+export const BREAKDOWNS = {
+  shape: "rules",
+  differs: "kinds",
+  moved: "details",
+} as const satisfies Partial<Record<LockReason, keyof PieceWords>>;
 
 /**
  * The budgets that ran out: the probe's, with the candidates it left untested; the checks'
