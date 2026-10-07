@@ -231,7 +231,82 @@ Invented label: \textsl{\rtfield{b}{Invented half}}, done.
     body: String.raw`\cvsig{\rtfield{a}{Invented Name}}\cvclose
 \cvsig{\textit{\rtfield{b}{Invented half}}}\cvclose`,
   },
+  {
+    // The end marker goes in before the correction's kern: after it, the glue after the kern
+    // would be where the line breaks, and the line would keep the kern.
+    name: "a line break right after a correction a text command sets after a field",
+    engine: "pdftex",
+    preamble: ARTICLE,
+    body: [216, 220, 224, 228, 232, 236, 240]
+      .map(
+        (width, k) =>
+          String.raw`\parbox{${width}pt}{Invented words run on here before \textbf{\rtfield{a${k}}{Invented staff}} words after it and more invented words fill out the paragraph to the end of it.}`,
+      )
+      .join("\n"),
+  },
+  {
+    name: "a line break right after a correction a text command sets after a field, in XeTeX",
+    engine: "xetex",
+    preamble: XETEX,
+    body: [196, 200, 204, 208, 212, 216, 220, 224]
+      .map(
+        (width, k) =>
+          String.raw`\parbox{${width}pt}{Invented words run on here before \textbf{\rtfield{a${k}}{Invented staff}} words after it.}`,
+      )
+      .join("\n"),
+  },
+  {
+    // And before a space the text command ends with, which \par and \\ take off a line's end.
+    name: "a space a text command ends with after a field, at a centred or ragged line's end",
+    engine: "pdftex",
+    preamble: ARTICLE,
+    body: String.raw`{\centering \textit{\rtfield{a}{Invented half} }\par}
+{\raggedleft \textbf{\rtfield{b}{Invented staff} }\\ next\par}`,
+  },
+  {
+    // Read past the group's end, the line's end would be read as \obeylines makes it: a new line.
+    name: "a field that ends a group under \\obeylines",
+    engine: "pdftex",
+    preamble: ARTICLE,
+    body: String.raw`Before.
+
+{\obeylines\itshape \rtfield{a}{Invented half}}
+words after it.`,
+  },
+  {
+    // A class's own text command of a kernel name: the markers go in before it.
+    name: "a field before a class's own \\emph and \\textsc",
+    engine: "pdftex",
+    preamble: String.raw`${ARTICLE}\renewcommand{\emph}[1]{\textbullet\ #1}
+\renewcommand{\textsc}[1]{}
+`,
+    body: String.raw`\rtfield{a}{Invented staff} \emph{Invented} words after.
+\rtfield{b}{Invented staff}\textsc{gone} more words \rtfield{c}{Invented other} words.`,
+  },
 ];
+
+/**
+ * Each field's glyphs, counted between its markers, and the markers in the order they stand: a
+ * field takes in no glyph of the text after it, and no marker is held past the next field's.
+ */
+function fieldGlyphs(stream: GlyphStream): { counts: Record<string, number>; order: string[] } {
+  const counts: Record<string, number> = {};
+  const open = new Set<string>();
+  const order: string[] = [];
+  for (const page of stream.pages)
+    for (const item of page.items) {
+      if (item.kind === "special" && item.text.startsWith(MARKER_BEGIN)) {
+        const id = item.text.slice(MARKER_BEGIN.length);
+        open.add(id);
+        counts[id] = 0;
+        order.push(item.text);
+      } else if (item.kind === "special" && item.text.startsWith(MARKER_END)) {
+        open.delete(item.text.slice(MARKER_END.length));
+        order.push(item.text);
+      } else if (item.kind === "glyph") for (const id of open) counts[id] = (counts[id] ?? 0) + 1;
+    }
+  return { counts, order };
+}
 
 describe.skipIf(!engineAvailable())("the field macro, on the engine (decision 00XX)", () => {
   let session: EngineSession;
@@ -275,6 +350,15 @@ describe.skipIf(!engineAvailable())("the field macro, on the engine (decision 00
         `${each.name}: marked = unmarked, ${glyphsOf(marked)} glyphs, ${fields} fields${moved}`,
       );
     }, 60_000);
+
+  test("holds no field's end past a class's own text command of a kernel name", async () => {
+    const each = LOOK_ALIKES.find((one) => one.name.includes("class's own")) as LookAlike;
+    const marked = await compiled(each.engine, document(each, PRELUDE, each.body), "classown");
+    const { counts, order } = fieldGlyphs(marked);
+    // "Invented staff" sets 12 glyphs, its ff a ligature, and "Invented other" 13.
+    expect(counts).toEqual({ a: 12, b: 12, c: 13 });
+    expect(order).toEqual(["a", "b", "c"].flatMap((id) => [MARKER_BEGIN + id, MARKER_END + id]));
+  }, 60_000);
 
   test("c: protrusion at a line's start passes the begin marker in pdfTeX, and stops at it in XeTeX", async () => {
     // A field that starts a line with a glyph microtype protrudes. pdfTeX's margin kerning passes

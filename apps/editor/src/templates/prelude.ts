@@ -44,20 +44,25 @@ export const LOCK_END = "/";
  *     set, read and taken off again), a field's end (`\rt@f@end`) holds its end marker back
  *     (`\rt@f@held`) and reads what follows, past spaces and the ends of simple groups, as
  *     `\small{...}` or `{\itshape ...}` close round a field, which set nothing a correction cannot
- *     pass and go back as they were: where it is the `\check@icr` of a text command whose argument
- *     the field ends, that runs, and the marker comes back after the group, behind `\maybe@ic`
- *     (`\rt@f@resume`); where it is a text command of LaTeX's whose text is neither empty nor
- *     starts with `\nocorr`, the marker waits for that command's `\maybe@ic` at its start, which
- *     reads past `\rt@f@argstart`, put before its text, and where a class's own command of that
- *     name never reads it, `\rt@f@argstart` writes the marker before the text. Where a text command
- *     inside the field ends it, its `\maybe@ic` reads past the field's end and holds the marker.
- *     Each time LaTeX decides on the token the unmarked page has there, its `\/` corrects the glyph
- *     that ends the list, and only then is the end marker written. Anything else writes it at once,
- *     as does a last glyph with no correction, where LaTeX's `\/` would set a kern of nothing.
- *     Nothing is stored but the held markers, global to pass a group's end, and they are written
- *     and cleared before the text after them is set, whether LaTeX corrects or not: no state
- *     outlives the text command. A token read ahead may be `\fi`, as where a class sets a field in
- *     a conditional's branch, so it is compared and never skipped.
+ *     pass and go back as they were (a group's end only where `\obeylines` and `\obeyspaces` are
+ *     not in force, since the token after it is read inside the group): where it is the
+ *     `\check@icr` of a text command whose argument the field ends, that runs, and the marker comes
+ *     back after the group, behind `\maybe@ic` (`\rt@f@resume`); where it is one of LaTeX's text
+ *     commands as the kernel defines it (`\rt@f@kernel`), whose text is neither empty nor starts
+ *     with `\nocorr`, the marker waits for that command's `\maybe@ic` at its start, which reads
+ *     past `\rt@f@argstart`, put before its text. A class's own command of that name may set glyphs
+ *     before its text or drop it, so it gets the marker at once. Where a text command inside the
+ *     field ends it, its `\maybe@ic` reads past the field's end and holds the marker. Each time
+ *     LaTeX decides on the token the unmarked page has there, its `\/` corrects the glyph that ends
+ *     the list, and only then is the end marker written, in front of the correction's kern and a
+ *     space the list may end with by then (`\rt@f@lift`), so that the list ends as the unmarked
+ *     one does: the kern, where glue follows it, is where a line may break, and `\par` and `\\`
+ *     take a last space off. Anything else writes it at once, as does a last glyph with no
+ *     correction, where LaTeX's `\/` would set a kern of nothing. Nothing is stored but the held
+ *     markers, global to pass a group's end, and they are written and cleared before the text
+ *     after them is set, whether LaTeX corrects or not: no state outlives the text command, and a
+ *     field's begin writes any still held first. A token read ahead may be `\fi`, as where a class
+ *     sets a field in a conditional's branch, so it is compared and never skipped.
  *   - microtype's `\leftprotrusion`, which `\@item` ends with, reads the next token and protrudes
  *     the item's first glyph only after a command it knows. It learns `\rtfield`
  *     (`\MT@prot@check@R`, where microtype is loaded) and goes to the start of the field's text,
@@ -113,7 +118,7 @@ export const PRELUDE = String.raw`\makeatletter
 % The editor's field markers, which the generator appends to every template (decision 0007).
 \providecommand{\texorpdfstring}[2]{#1}
 \newcommand{\rtfield}[2]{%
-  \texorpdfstring{\leavevmode\special{${MARKER_BEGIN}\detokenize{#1}}\rt@par{#1}#2%
+  \texorpdfstring{\leavevmode\rt@f@flush\special{${MARKER_BEGIN}\detokenize{#1}}\rt@par{#1}#2%
     \rt@f@end{#1}}{#2}}
 % A field's end: its marker is held back until LaTeX has decided the italic correction after it,
 % where the field's last glyph has one. Where it has none, a correction is a kern of nothing, and
@@ -151,26 +156,33 @@ export const PRELUDE = String.raw`\makeatletter
   \ifx\rt@f@next\check@icr\ifx\check@icr\@empty\else\let\rt@f@then\rt@f@defer\fi\fi
   \ifx\rt@f@next\@sptoken\let\rt@f@then\rt@f@space\fi
   \ifx\rt@f@next\egroup\let\rt@f@then\rt@f@group\fi
-  \ifx\rt@f@next\textrm\let\rt@f@then\rt@f@text\fi
-  \ifx\rt@f@next\textsf\let\rt@f@then\rt@f@text\fi
-  \ifx\rt@f@next\texttt\let\rt@f@then\rt@f@text\fi
-  \ifx\rt@f@next\textnormal\let\rt@f@then\rt@f@text\fi
-  \ifx\rt@f@next\textbf\let\rt@f@then\rt@f@text\fi
-  \ifx\rt@f@next\textmd\let\rt@f@then\rt@f@text\fi
-  \ifx\rt@f@next\textit\let\rt@f@then\rt@f@text\fi
-  \ifx\rt@f@next\textsl\let\rt@f@then\rt@f@text\fi
-  \ifx\rt@f@next\textsc\let\rt@f@then\rt@f@text\fi
-  \ifx\rt@f@next\textup\let\rt@f@then\rt@f@text\fi
-  \ifx\rt@f@next\emph\let\rt@f@then\rt@f@text\fi
+  \rt@f@kernel{textrm}\rt@f@kernel{textsf}\rt@f@kernel{texttt}\rt@f@kernel{textnormal}%
+  \rt@f@kernel{textbf}\rt@f@kernel{textmd}\rt@f@kernel{textit}\rt@f@kernel{textsl}%
+  \rt@f@kernel{textsc}\rt@f@kernel{textup}\rt@f@kernel{emph}%
   \rt@f@then}
-% Anything else: the markers now, then what was read past.
-\protected\def\rt@f@other{\rt@f@flush\rt@f@pre}
+% Anything else: the markers now, then what was read past. They go in before a space and LaTeX's
+% correction that the list may end with by now, so that it ends as the unmarked one does: a
+% correction's kern that glue follows is where the line may break, and \par and \\ take a last
+% space off.
+\protected\def\rt@f@other{\rt@f@lift\rt@f@pre}
+\protected\def\rt@f@lift{%
+  \ifhmode
+    \ifnum\lastnodetype=11 \skip@\lastskip\unskip\rt@f@liftkern\hskip\skip@
+    \else\rt@f@liftkern\fi
+  \else\rt@f@flush\fi}
+\protected\def\rt@f@liftkern{%
+  \ifnum\lastnodetype=12 \dimen@\lastkern\unkern\rt@f@flush\kern\dimen@\else\rt@f@flush\fi}
 % A space in a paragraph, or a simple group's end, is read past and goes back after.
 \protected\def\rt@f@space{%
   \ifhmode\expandafter\rt@f@take\expandafter\space\else\expandafter\rt@f@other\fi}
+% The token after a group's end is read before the group ends, with the group's category codes:
+% only where a line's end and a space are still what they are outside it, as \obeylines and
+% \obeyspaces leave them not.
 \protected\def\rt@f@group{%
   \let\rt@f@then\rt@f@other
-  \ifhmode\ifnum\currentgrouptype=\@ne\let\rt@f@then\rt@f@takegroup\fi\fi
+  \ifhmode\ifnum\currentgrouptype=\@ne\ifnum\catcode13=5 \ifnum\catcode32=10
+    \let\rt@f@then\rt@f@takegroup
+  \fi\fi\fi\fi
   \rt@f@then}
 \protected\def\rt@f@takegroup{\rt@f@take\egroup}
 \protected\def\rt@f@take#1{%
@@ -182,8 +194,8 @@ export const PRELUDE = String.raw`\makeatletter
 \protected\def\rt@f@defer@#1{#1\aftergroup\rt@f@resume}
 % A text command of LaTeX's corrects the field's last glyph as it starts, unless its text is empty
 % or starts with \nocorr: the markers wait for its \maybe@ic there, which reads past
-% \rt@f@argstart at its text's start, and are written after the correction; where the command is
-% a class's own of that name, which never reads it, \rt@f@argstart writes them before its text.
+% \rt@f@argstart at its text's start, and are written after the correction; where its \maybe@ic
+% does not run, \rt@f@argstart writes them before its text.
 \protected\long\def\rt@f@text#1#2{%
   \rt@f@ifcorrects{#2}{\rt@f@pre#1{\rt@f@argstart#2}}{\rt@f@flush\rt@f@pre#1{#2}}}
 \long\def\rt@f@ifcorrects#1{%
@@ -193,6 +205,26 @@ export const PRELUDE = String.raw`\makeatletter
     \ifhmode\ifx\check@icl\@empty\else\aftergroup\@gobble\aftergroup\@firstoftwo\fi\fi
   \endgroup}
 \protected\def\rt@f@argstart{\rt@f@flush}
+% Only a text command as the kernel defines it, its robust wrapper and inside it the declaration,
+% \check@icl and the text, is sure to read its text, and \rt@f@argstart with it, before it sets
+% anything: a class's own command of that name may set glyphs first or drop its text, and the
+% markers are written before it.
+\def\rt@f@kerneldef#1#2{%
+  \expandafter\edef\csname rt@f@o@#1\endcsname{%
+    \noexpand\protect\expandafter\noexpand\csname#1 \endcsname}%
+  \expandafter\long\expandafter\def\csname rt@f@k@#1\endcsname##1{%
+    \ifmmode\nfss@text{#2##1}\else
+      \hmode@bgroup\text@command{##1}#2\check@icl##1\check@icr\expandafter\egroup\fi}}
+\rt@f@kerneldef{textrm}\rmfamily \rt@f@kerneldef{textsf}\sffamily
+\rt@f@kerneldef{texttt}\ttfamily \rt@f@kerneldef{textnormal}\normalfont
+\rt@f@kerneldef{textbf}\bfseries \rt@f@kerneldef{textmd}\mdseries
+\rt@f@kerneldef{textit}\itshape \rt@f@kerneldef{textsl}\slshape
+\rt@f@kerneldef{textsc}\scshape \rt@f@kerneldef{textup}\upshape \rt@f@kerneldef{emph}\em
+\protected\def\rt@f@kernel#1{%
+  \expandafter\ifx\csname rt@f@o@#1\endcsname\rt@f@next
+    \expandafter\let\expandafter\rt@f@inner\csname#1 \endcsname
+    \expandafter\ifx\csname rt@f@k@#1\endcsname\rt@f@inner\let\rt@f@then\rt@f@text\fi
+  \fi}
 % After a group, or wherever LaTeX's \maybe@ic has decided: the next token decides again.
 \protected\def\rt@f@resume{\rt@f@settle}
 \protected\def\rt@f@settle{\ifx\rt@f@held\@empty\else\expandafter\rt@f@settle@\fi}

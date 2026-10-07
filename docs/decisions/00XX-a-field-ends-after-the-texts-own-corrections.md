@@ -69,6 +69,23 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
   before the text after them is set, whether LaTeX corrects or not: no state outlives the text
   command, and no correction is set but by TeX's `\/`. LaTeX's `\maybe@ic@` is wrapped, its decision
   kept as the kernel has it.
+- **Where the held marker goes, and what it waits for** (found by the lane's review). By the time
+  LaTeX has decided, the list may end in the correction's kern, and in a space set inside the text
+  command, as in `\textbf{\rtfield{c}{...} }`. A marker after them would end the list differently
+  from the unmarked page: after a kern, the glue that follows becomes the line's breakpoint, and a
+  line broken there keeps the kern, which shifts a justified line's spaces; after a space, `\par`
+  and `\\` can no longer take it off, which shifts a centred or ragged line. So the held markers
+  go in front of a last space and a last kern (`\rt@f@lift`), and the list ends as the unmarked
+  one does. A group's end is read past only where a line's end and a space have their usual
+  category codes, since the token after the group is read inside it: under `\obeylines` it would
+  be read as a paragraph's end. The marker waits for a text command only where the command is the
+  kernel's, its robust wrapper and inside it the declaration, `\check@icl` and the text
+  (`\rt@f@kernel`, checked against the kernel's definition, which fontspec, microtype, hyperref and
+  moderncv leave as it is, and ulem replaces for `\emph`): a class's own `\emph` that sets a bullet
+  before its text gave the bullet to the field before it, and one that drops its text held the
+  marker until the next field's end, which the next field's begin marker then stood inside. A
+  class's own command now gets the marker at once, and a field's begin writes any marker still
+  held, so no marker outlives the next field's start.
 - **The prelude's own `\/` goes** (d): LaTeX decides past the field.
 - **microtype** (b): `{R\rtfield}` joins `\MT@prot@check@cmds`, guarded by `\ifdefined`, so that
   `\leftprotrusion` goes to the start of the field's text, after the markers, and protrudes the
@@ -91,7 +108,8 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
   `\textit{\small{#4}}`, 14 words worse until the group's end was read past: main's own `\/` had
   corrected there.
 - **What still moves the page**: a field followed by anything but spaces and groups' ends before the
-  text command whose start corrects it, as a tie, or a command a document defines that corrects it;
+  text command whose start corrects it, as a tie, or a command a document defines that corrects it,
+  or a class's own command of a kernel text command's name;
   XeTeX's line-start protrusion; the begin marker's `\leavevmode`, which starts a paragraph where
   the field does (decision 0003; in the Awesome-CV sample it moves the colour special of a section's
   title into its line, and no glyph); and microtype's `\leftprotrusion` at the start of an item's
@@ -108,7 +126,13 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
   field that is a text command's argument, decided past the field's end, and at the next text
   command's start, after a space, none or a group's end; (d) in pdfTeX, and with (a) in XeTeX; (b)
   an item's first glyph; and each of the prototype's two losses. Two more show the macro where it
-  stands: a field that ends a conditional's branch, and one in a TikZ node. (c) is pinned as it is:
+  stands: a field that ends a conditional's branch, and one in a TikZ node. Five more come from
+  the review, each of which the macro before it moved or miscounted: a line broken right after a
+  bold field's correction, at seven widths in pdfTeX and eight in XeTeX; a space a text command
+  ends with after a field, at a centred line's end and before `\\` on a ragged one; a field that
+  ends a group under `\obeylines`; and fields before a class's own `\emph`, which sets a bullet
+  first, and `\textsc`, which drops its text, where each field counts its own glyphs alone and
+  the markers stand in order. (c) is pinned as it is:
   equal in pdfTeX, moved in XeTeX. Then every built-in template's sample compiled marked and
   unmarked from its format: `jake: marked = unmarked, 950 glyphs; main's macro moved them`, `altacv:
   marked = unmarked, 1253 glyphs`, `awesome-cv: marked = unmarked, 1693 glyphs`, glyphs and rules at
@@ -139,6 +163,14 @@ By family: jake 97.3% to 97.9%, moderncv 87.0% to 91.0%, other 80.0% to 82.5%, e
 All compiles 5,849 to 5,505. The pdfTeX page opened within 8 s in 68 of 91 resumes against 63, and
 the slowest whole import took 91.3 s against 103.9 s, on a machine running other work, so the
 compiles are the measure.
+
+With the review's fixes, all 220 again (6.2 min, against the same main run): no document worse in
+outcome or in words in place, none timed out. Words in place 73,617, 89.2% (+1,233 on main, 15
+more than before the fixes, all in `jake-0030`, whose 15 words kept `moved` for `position` are
+now in place); successes 74, resumes at 90% 80, under 50% 2, every family as above. `moved`
+words 1,004: `position` 621 in 8 resumes (pdfTeX 253, XeTeX 368), `transform` 383; in `other-0052`
+(XeTeX) 22 words go from `moved` to kept for another reason, its words in place the same. All
+compiles 5,501. The pdfTeX page opened within 8 s in 68 of 91, the slowest whole import 90.4 s.
 
 ## Consequences
 
