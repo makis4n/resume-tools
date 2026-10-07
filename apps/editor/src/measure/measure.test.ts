@@ -12,6 +12,7 @@ import { TexLiveIndex } from "../page/texlive";
 import { curated } from "../templates/curated";
 import { measuredTemplate } from "./MeasurePage";
 import {
+  type Compressed,
   editCommand,
   type FirstLoad,
   firstLoad,
@@ -186,6 +187,11 @@ describe("longestField", () => {
       length: 48,
     });
     expect(longestField(RESUME, pageShowing())).toBeUndefined();
+    // Over pages, a field any of them shows, the first showing none.
+    expect(longestField(RESUME, [pageShowing(), pageShowing("tern-2.text")])?.id).toBe(
+      "tern-2.text",
+    );
+    expect(longestField(RESUME, [pageShowing(), pageShowing()])).toBeUndefined();
   });
 });
 
@@ -197,6 +203,9 @@ const read = (paths: [string, number][]): Fetched => ({
 
 /** What a step read of nothing. */
 const NOTHING = { tex: read([]), fonts: new Map<string, number>() };
+
+/** Compressed sizes of nothing: every file, the engine's among them, compressed to no byte. */
+const NO_BYTES: Compressed = { engine: 0, loader: 0, manifest: 0, file: () => 0 };
 
 describe("firstLoad", () => {
   it("counts every file the first page read, the engine's and the fonts', once each", () => {
@@ -221,14 +230,34 @@ describe("firstLoad", () => {
       edits: { tex: read([["/f.tfm", 5]]), fonts: new Map() },
       fit: { tex: read([["/g.tfm", 5]]), fonts: new Map([["/g.pfb", 50]]) },
     };
-    expect(firstLoad({ reads }, { engine: 3000, loader: 30, manifest: 200 })).toEqual({
+    // Each file compressed to a tenth of its size, as an invented gzip would, each asked for once.
+    const sizes = new Map([
+      ["/a.fmt", 600],
+      ["/b.tfm", 20],
+      ["/c.sty", 30],
+      ["/d.pfb", 100],
+      ["/e.otf", 900],
+    ]);
+    const asked: string[] = [];
+    const compressed: Compressed = {
+      engine: 900,
+      loader: 9,
+      manifest: 20,
+      file: (path) => {
+        asked.push(path);
+        return (sizes.get(path) ?? 0) / 10;
+      },
+    };
+    expect(firstLoad({ reads }, { engine: 3000, loader: 30, manifest: 200 }, compressed)).toEqual({
       engine: 3000,
       loader: 30,
       manifest: 200,
       texLive: 650,
       fonts: 1000,
       total: 4880,
+      compressed: { engine: 900, loader: 9, manifest: 20, texLive: 65, fonts: 100, total: 1094 },
     });
+    expect(asked.sort()).toEqual(["/a.fmt", "/b.tfm", "/c.sty", "/d.pfb", "/e.otf"]);
   });
 
   it("leaves out the fonts the overlay reads when a field opens, and counts them apart", () => {
@@ -243,7 +272,7 @@ describe("firstLoad", () => {
       ]),
     };
     const reads = { open, overlay, edits: NOTHING, fit: NOTHING };
-    expect(firstLoad({ reads }, { engine: 0, loader: 0, manifest: 0 })).toMatchObject({
+    expect(firstLoad({ reads }, { engine: 0, loader: 0, manifest: 0 }, NO_BYTES)).toMatchObject({
       texLive: 20,
       fonts: 100,
       total: 120,
@@ -278,16 +307,18 @@ describe("the tables", () => {
     },
     reads: { open: NOTHING, overlay: NOTHING, edits: NOTHING, fit: NOTHING },
   });
+  /** A first load of `total` bytes compressed, and twice that on disk. */
   const load = (total: number): FirstLoad => ({
     engine: 1,
     loader: 1,
     manifest: 1,
     texLive: 1,
     fonts: 1,
-    total,
+    total: 2 * total,
+    compressed: { engine: 1, loader: 1, manifest: 1, texLive: 1, fonts: 1, total },
   });
 
-  it("judges each package against every target, an edit by its median", () => {
+  it("judges each package against every target, an edit by its median, the first load compressed", () => {
     const rows = verdicts([
       { numbers: numbers("fast", 80, 0.1), load: load(20e6) },
       { numbers: numbers("slow", 400, 20), load: load(42e6) },
@@ -312,7 +343,10 @@ describe("the tables", () => {
 
   it("lays a package's numbers out a row each", () => {
     const text = packageTable(numbers("fast", 80, 0.1), load(42e6));
-    expect(text.split("\n")).toHaveLength(9);
+    expect(text.split("\n")).toHaveLength(10);
+    // The first load compressed, which the plan's 30 MB judges, and on disk beside it.
+    expect(text).toMatch(/\nFirst load, compressed +42\.00 MB +gzip: engine 0\.00 MB, /);
+    expect(text).toMatch(/\nFirst load, uncompressed +84\.00 MB +engine 0\.00 MB, /);
     expect(text).toMatch(
       /\nFit to one page +420 ms +3 compiles, to compact density, 0.4 in margins, 10.5 pt, for the sample grown by 8 bullets onto 2 pages\n/,
     );
@@ -441,7 +475,7 @@ describe.skipIf(!engineAvailable())("measurePackage", () => {
 
   it("counts under first load every file the engine read, and the fonts' files besides", () => {
     const sizes = { engine: 10, loader: 1, manifest: 2 };
-    const load = firstLoad(numbers, sizes);
+    const load = firstLoad(numbers, sizes, NO_BYTES);
     // Everything the session read, which for this sample is all read for the first page.
     const tex = results.reduce((sum, result) => sum + result.fetched.bytes, 0);
     expect(load.texLive).toBe(tex);
@@ -465,7 +499,7 @@ describe.skipIf(!engineAvailable())("measurePackage", () => {
   });
 
   it("counts under first load the fonts the first page read, and the overlay's apart", () => {
-    const load = firstLoad(numbers, { engine: 0, loader: 0, manifest: 0 });
+    const load = firstLoad(numbers, { engine: 0, loader: 0, manifest: 0 }, NO_BYTES);
     const names = (files: ReadonlyMap<string, number>) =>
       [...files.keys()].map((path) => path.slice(path.lastIndexOf("/") + 1)).sort();
     // The overlay measures the bullet's bold italic, which no page of the sample sets, in a font of

@@ -30,6 +30,7 @@ import {
   outlinePackage,
   outlineResume,
   ownersOf,
+  unwrittenRule,
 } from "./outline";
 import { bodyOfText, parseBody, type Tree } from "./parse";
 import type { ProbeCandidate, Verdict } from "./probe";
@@ -465,6 +466,109 @@ Quill \hfill Wren \\ Owl
         expect(Object.values(fieldsOf(parts)), brk).toEqual(["Quill", "Wren"]);
       }
     });
+  });
+
+  test("names the rule that declined each editable candidate it makes no field of (decision 0073)", () => {
+    const body = String.raw`\inventedentry{Quill Academy}{Wrenford \\ Lark Bay}
+\inventedentry{}{\textbf{Heron \\ College}}
+\inventedentry{Lark Bay}{Wren Hall}
+\inventedentry{Quill Hall}{Heron Bay}
+`;
+    const tree = treeOf(body, FLAT);
+    const found = probed(tree, (id) => (id === "c4-1" ? "moved" : "editable"));
+    const at = (id: string) => found.find((each) => each.id === id) as ProbeCandidate;
+    const lark = at("c3-1");
+    const candidates = [
+      ...found,
+      // Invented spans the parser never makes: one whose end crosses its text's, one over a text
+      // another field holds already, and one of the preamble's with no preamble to write it in.
+      { ...at("c3-2"), id: "x1", start: at("c3-2").start + 2, end: at("c3-2").end + 1 },
+      { ...lark, id: "x2" },
+      { ...lark, id: "x3", where: "preamble" as const },
+    ];
+    const outline = buildOutline({
+      tree,
+      candidates,
+      kept: new Set(["c4-2"]),
+      macros: FLAT.macros,
+      begin: "\\begin{document}",
+      end: "\\end{document}",
+    });
+    // A break the outline splits is a field a line (decision 00XX), not declined; one inside a mark,
+    // which it cannot split, is.
+    expect(outline.fields.has("c1-2")).toBe(true);
+    expect(Object.fromEntries(outline.declined)).toEqual({
+      "c2-1": "empty",
+      "c2-2": "line-break",
+      x1: "marked-in-part",
+      x2: "overlaps",
+      x3: "no-preamble",
+    });
+    // Every editable candidate the checks did not keep is a field or declined, and nothing else is:
+    // not the one the probe found moved the page, nor the one the checks kept.
+    const editable = candidates.filter((each) => each.verdict === "editable" && each.id !== "c4-2");
+    expect(
+      editable.every((each) => outline.fields.has(each.id) !== outline.declined.has(each.id)),
+    ).toBe(true);
+    expect(outline.declined.has("c4-1")).toBe(false);
+    expect(outline.declined.has("c4-2")).toBe(false);
+    // Naming the rules changes nothing the outline writes.
+    expect(written(outline.parts)).toBe(`\\begin{document}${body}\\end{document}`);
+  });
+
+  test("names a text whose source ends a paragraph, which a field would set as one", () => {
+    // An invented tree whose one text runs over a blank line, as no parse of ours makes it.
+    const body = "Invented words\n\nMore invented words\n";
+    const tree = treeOf(body, FLAT);
+    const end = body.length - 1;
+    const merged: Tree = {
+      ...tree,
+      content: [
+        { kind: "text", runs: [{ text: "Invented words More invented words" }], start: 0, end },
+      ],
+    };
+    const [first] = probed(tree);
+    if (first === undefined) throw new Error("no candidate");
+    const outline = buildOutline({
+      tree: merged,
+      candidates: [{ ...first, start: 0, end }],
+      macros: FLAT.macros,
+      begin: "\\begin{document}",
+      end: "\\end{document}",
+    });
+    expect(Object.fromEntries(outline.declined)).toEqual({ [first.id]: "several-paragraphs" });
+  });
+
+  test("says where among the groups lies a span it never came to", () => {
+    // An invented group of two units, its units' own content at 10-25 and 30-50, kept text between.
+    const groups = [
+      {
+        start: 10,
+        end: 50,
+        units: [
+          { start: 10, end: 25, next: 30 },
+          { start: 30, end: 50, next: 50 },
+        ],
+      },
+    ];
+    expect(unwrittenRule({ start: 20, end: 28 }, groups)).toBe("cut-by-unit");
+    expect(unwrittenRule({ start: 5, end: 12 }, groups)).toBe("cut-by-unit");
+    expect(unwrittenRule({ start: 26, end: 29 }, groups)).toBe("between-units");
+    expect(unwrittenRule({ start: 12, end: 20 }, groups)).toBe("passed");
+    expect(unwrittenRule({ start: 60, end: 70 }, groups)).toBe("passed");
+    // Inside a unit of an outer group, between the units of a group inside it.
+    const nested = [
+      ...groups,
+      {
+        start: 31,
+        end: 48,
+        units: [
+          { start: 31, end: 35, next: 40 },
+          { start: 40, end: 48, next: 48 },
+        ],
+      },
+    ];
+    expect(unwrittenRule({ start: 36, end: 39 }, nested)).toBe("between-units");
   });
 
   test("keeps as text the candidates the checks name, and says each field's candidate and each group's spans", () => {

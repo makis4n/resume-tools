@@ -46,6 +46,7 @@ import { encodeLike, type Intake, intake, type Upload } from "./intake";
 import { inLatinModern, undrawableFonts } from "./latin-modern";
 import {
   buildOutline,
+  type Outline,
   outlinePackage,
   outlineResume,
   ownersOf,
@@ -119,11 +120,14 @@ export interface ImportDeps {
  * What a caller may hear of an import as it runs, which changes nothing it does: the corpus's
  * diagnostics (`corpus run`) count the words not in place by what holds them, and the compiles by
  * kind of trial. `probed` hears the document as the probe took it, and what the probe found;
- * `checks` hears the checks' phases and budgets (`CheckEvent`). One that throws is not heard.
+ * `checks` hears the checks' phases and budgets, and why check 1 kept a field (`CheckEvent`);
+ * `outlined` hears the outline as the checks leave it, with the rule that declined each editable
+ * candidate it holds no field of (`Outline.declined`). One that throws is not heard.
  */
 export interface ImportObserver {
   probed?: (found: { intake: Intake; reference: Reference; probe: Probe }) => void;
   checks?: (event: CheckEvent) => void;
+  outlined?: (outline: Outline) => void;
 }
 
 /**
@@ -449,6 +453,9 @@ export async function importResume(
     }
     if (isRefusal(checked)) return checked;
     const outline = checked.outline;
+    try {
+      deps.observe?.outlined?.(outline);
+    } catch {}
     const document: Document = {
       version: 1,
       template: pkg.id,
