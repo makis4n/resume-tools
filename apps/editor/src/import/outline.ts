@@ -45,6 +45,8 @@ import {
   Resume,
   type RichText,
 } from "@resume-tools/resume-model";
+import type * as Ast from "@unified-latex/unified-latex-types";
+import { parseMinimal } from "@unified-latex/unified-latex-util-parse";
 import { isRetype, retypeOf } from "../editor/retype";
 import type { Engine } from "../engine/session";
 import type { GlyphBox } from "../page/draw";
@@ -56,11 +58,26 @@ import {
 } from "../templates/package";
 import { type Candidate, wrapEnd } from "./candidates";
 import { decodeText } from "./intake";
-import type { Argument, Node, Span, Tree } from "./parse";
+import {
+  type Argument,
+  maskedForParse,
+  type Node,
+  type Span,
+  type TextNode,
+  type Tree,
+} from "./parse";
 import { extensionOf } from "./paths";
 import type { ProbeCandidate, UncoveredRun } from "./probe";
 import { COMPATIBILITY, type GlyphStream, type Reference } from "./reference";
 import { type GlyphOwner, type LockReason, ownRunningLines, pageWords } from "./report";
+import {
+  runsOf as decodedRuns,
+  type Marks,
+  PLAIN,
+  type TextItem,
+  type TextState,
+  textItem,
+} from "./richtext";
 import { type EngineSignatures, replacementOf } from "./signatures";
 import { snippetText } from "./templating";
 
@@ -311,23 +328,218 @@ const holdsText = (text: string) => text.trim() !== "";
 /**
  * Whether a leaf's source breaks its line or its paragraph, with `\\`, `\newline`, `\par` or
  * a blank line, which the parser reads as a space and a field, one paragraph, writes as one: the
- * generator would set it on one line, as the spike found Jake's skills set (decision 0050).
+ * generator would set it on one line, as the spike found Jake's skills set (decision 0050). Its
+ * lines may each be a field still (`linesOf`).
  */
 const breaksLine = (latex: string) =>
   /\\\\|\\(?:newline|linebreak|par)(?![A-Za-z@])|\n[ \t]*\r?\n/.test(latex);
+
+/** Whether a leaf's source ends a paragraph, with `\par` or a blank line, which no field holds. */
+const endsParagraph = (latex: string) => /\\par(?![A-Za-z@])|\n[ \t]*\r?\n/.test(latex);
+
+/** The marks a leaf's text may be read in, its group's declarations having set them before it. */
+const MARKS: readonly Marks[] = [
+  PLAIN,
+  { bold: true, italic: false },
+  { bold: false, italic: true },
+  { bold: true, italic: true },
+];
+
+/** Whether two rich texts are the same, run by run, as the model holds them (`runsOf`). */
+const sameRuns = (a: RichText, b: RichText) =>
+  JSON.stringify(runsOf(a)) === JSON.stringify(runsOf(b));
+
+/**
+ * The raw commands that set nothing and leave TeX where it was on its line, a line's text going on
+ * past them: spaces, glue, and a line's break, after which TeX is still in the paragraph.
+ */
+const ON_THE_LINE: ReadonlySet<string> = new Set([
+  ...["hfill", "hfil", "hss", "hspace", "hskip", "kern", "quad", "qquad", "enspace", "enskip"],
+  ...["thinspace", "negthinspace", "space", " ", ",", "/", "@", "nobreak", "\\", "newline"],
+  ...["linebreak", "allowbreak", "relax", "unskip"],
+]);
+
+/**
+ * The leaves of a tree that certainly follow text set on their own line: a text or a date before
+ * them in the same list, with nothing between but commands that leave TeX on the line
+ * (`ON_THE_LINE`) and no paragraph's end. Any other leaf may begin a paragraph, where TeX is still
+ * between paragraphs, and a `\\` with nothing set before it stops the compile.
+ */
+export function midLineLeaves(tree: Pick<Tree, "source" | "content">): Set<Leaf> {
+  const found = new Set<Leaf>();
+  const stack: (readonly Node[])[] = [tree.content];
+  for (let nodes = stack.pop(); nodes !== undefined; nodes = stack.pop()) {
+    let set = false;
+    let end = -1;
+    for (const node of nodes) {
+      const between = end < 0 ? "" : tree.source.slice(end, node.start);
+      if (endsParagraph(between)) set = false;
+      if (node.kind === "text" || node.kind === "date") {
+        if (set) found.add(node);
+        set = true;
+      } else if (!(node.kind === "raw" && ON_THE_LINE.has(node.name ?? ""))) set = false;
+      end = node.end;
+      stack.push(...childrenOf(node));
+    }
+  }
+  return found;
+}
+
+/** A leaf's lines (`linesOf`), and the text of a first line kept as the upload wrote it. */
+interface Lines {
+  lines: Leaf[];
+  kept?: { runs: RichText; start: number };
+}
+
+/**
+ * The glyphs a text kept at the start of a candidate the outline holds in part sets, at most, by
+ * its candidate (`linesOf`), for the report's count (`ownersOf`, `reachOf`): every character
+ * but a space, one more for a letter past ASCII, which OT1 sets as an accent and its letter, two
+ * more for an ellipsis, which it sets as three points, and two for hyphens TeX may add. A ligature sets fewer, so the count errs
+ * towards kept text, never towards a field. The outline notes it on the probe's own candidate,
+ * which the report's count is given too; nothing else reads it.
+ */
+const LEADS = new WeakMap<object, number>();
+
+/** What may stand between a candidate's start and a first line kept as text: nothing set. */
+const LEADING = /^(?:\s|\{|%[^\n]*(?:\n|$))*$/;
+
+/** The most glyphs a text sets (`LEADS`), two more for hyphens TeX may add where it breaks. */
+function glyphsAtMost(runs: RichText): number {
+  let n = 2;
+  for (const char of runs
+    .map((run) => run.text)
+    .join("")
+    .normalize("NFC")) {
+    if (/\s/u.test(char)) continue;
+    n += char === "…" ? 3 : /\p{L}/u.test(char) && char > "\u{7f}" ? 2 : 1;
+  }
+  return n;
+}
+
+/** A text item read again (`readItems`), the marks it was read in and its node's index. */
+interface ReadItem {
+  item: TextItem;
+  marks: Marks;
+  node: number;
+}
+
+/**
+ * The text items of nodes, each with the marks it was read in, read as the parser reads a
+ * paragraph's (`textItem`), in `state`, which the reading changes as a declaration does; or
+ * undefined where one is not text or ends a paragraph.
+ */
+function readItems(nodes: Ast.Node[], state: TextState, latex: string): ReadItem[] | undefined {
+  const items: ReadItem[] = [];
+  let skip = false;
+  for (let i = 0; i < nodes.length; ) {
+    const marks = { ...state.marks };
+    const found = textItem(nodes, i, state, latex, skip);
+    if (found === undefined || found.item.par === true) return undefined;
+    items.push({ item: found.item, marks, node: i });
+    skip = found.skipsNext;
+    i = found.next;
+  }
+  return items;
+}
+
+/** Whether a text item holds a break, its own or inside it. */
+const holdsBreak = (item: TextItem) => item.pieces.some((piece) => piece.kind === "break");
+
+/**
+ * The lines of a text leaf whose source breaks its line (`breaksLine`), each a leaf of its own, or
+ * undefined where they cannot be told apart. The leaf's source is read again as the parser read
+ * it (`textItem`), item by item, in the marks and the group a reading gives the leaf's own runs
+ * back in, and cut at each `\\` among its own items, or among a group's where that group is all the
+ * leaf holds, as `\item{...}` in Jake's skills block, whose braces then stay kept text around the
+ * lines. Each line's text is its items from its first that is not a space, a comment or a break to
+ * its last, as a paragraph's is (decision 0020), so that the break, its spaces and comments are
+ * kept text between two lines' fields, and a field's markers never hold one. A line of nothing,
+ * between two breaks or past one at an end, is no leaf.
+ *
+ * Undefined, and the leaf kept text as before: a date, a source that ends a paragraph, a break
+ * inside a mark's argument or inside a group beside other text (`\textbf{a \\ b}`, `c {a \\ b}`),
+ * which a field's markers could only part with braces between them, and a source the reading does
+ * not give the leaf's own runs back for. A leaf whose source breaks no line of its own, as one
+ * whose `\\` is in a comment, is its one line.
+ */
+function linesOf(source: string, leaf: Leaf, midLine: boolean): Lines | undefined {
+  if (leaf.kind !== "text") return undefined;
+  const latex = source.slice(leaf.start, leaf.end);
+  if (endsParagraph(latex)) return undefined;
+  let root: Ast.Node[];
+  try {
+    root = parseMinimal(maskedForParse(latex)).content;
+  } catch {
+    return undefined;
+  }
+  for (const grouped of [false, true])
+    for (const marks of MARKS) {
+      let nodes = root;
+      let items = readItems(nodes, { marks: { ...marks }, grouped }, latex);
+      if (
+        items === undefined ||
+        !sameRuns(decodedRuns(items.flatMap((each) => each.item.pieces)), leaf.runs)
+      )
+        continue;
+      // Into a group that is all the leaf holds and holds its breaks, its braces kept around them.
+      for (;;) {
+        const own = items.filter((each) => each.item.edge === undefined);
+        const [only] = own;
+        const node = only === undefined ? undefined : nodes[only.node];
+        if (own.length !== 1 || only === undefined || node?.type !== "group") break;
+        if (!holdsBreak(only.item)) break;
+        nodes = node.content;
+        items = readItems(nodes, { marks: { ...only.marks }, grouped: true }, latex);
+        if (items === undefined) return undefined;
+      }
+      // A break inside an item of its own, a group's or a mark's, has no edge a marker can take.
+      if (items.some((each) => each.item.edge !== "break" && holdsBreak(each.item)))
+        return undefined;
+      const lines: TextNode[] = [];
+      let kept: Lines["kept"];
+      const breaks = items.some((each) => each.item.edge === "break");
+      let from = 0;
+      for (let i = 0; i <= items.length; i++) {
+        if (i < items.length && items[i]?.item.edge !== "break") continue;
+        // A first line that may begin its line stays kept text: empty, it would leave its break
+        // nothing to end, which stops the compile (`midLine`).
+        const first = from === 0;
+        const line = items.slice(from, i).map((each) => each.item);
+        from = i + 1;
+        const begin = line.findIndex((item) => item.edge === undefined);
+        let last = line.length - 1;
+        while (last >= 0 && line[last]?.edge !== undefined) last--;
+        if (begin < 0) continue;
+        const inside = line.slice(begin, last + 1);
+        const runs = decodedRuns(inside.flatMap((item) => item.pieces));
+        const start = leaf.start + (inside[0]?.start ?? 0);
+        if (first && breaks && !midLine) {
+          kept = { runs, start };
+          continue;
+        }
+        lines.push({ kind: "text", runs, start, end: leaf.start + (inside.at(-1)?.end ?? 0) });
+      }
+      return { lines, ...(kept === undefined ? {} : { kept }) };
+    }
+  return undefined;
+}
 
 /**
  * The fields of a source: each editable candidate's leaves where they stand (the module's comment),
  * in the order of the source. A leaf that holds the candidate's whole span, as a text whose braces
  * the candidate's span is inside, is the field; otherwise every leaf inside its span is one, and a
- * leaf that crosses its edge leaves the candidate kept text, and so does one whose source breaks a
- * line (`breaksLine`). A leaf of spaces alone is kept, since a blank field is written as nothing. A field's span runs past the spaces TeX skipped after a
+ * leaf that crosses its edge leaves the candidate kept text. A leaf whose source breaks a line
+ * (`breaksLine`) is a field a line, the breaks kept text between them, and where its lines cannot
+ * be told apart (`linesOf`) it leaves the candidate kept text. A leaf of spaces alone is kept, since
+ * a blank field is written as nothing. A field's span runs past the spaces TeX skipped after a
  * leaf that ends in a control word, up to the next field, so that none is set after its marker.
  */
 function spotsOf(
   source: string,
   leaves: readonly Leaf[],
   candidates: readonly Candidate[],
+  midLine: ReadonlySet<Leaf> = new Set(),
 ): Spot[] {
   const found: Omit<Spot, "end">[] = [];
   const sorted = [...candidates].sort((a, b) => a.start - b.start || a.end - b.end);
@@ -339,12 +551,34 @@ function spotsOf(
     const holding = touching.find(
       (leaf) => leaf.start <= candidate.start && leaf.end >= candidate.end,
     );
-    let chosen: Leaf[];
-    if (holding !== undefined) chosen = [holding];
+    let whole: Leaf[];
+    if (holding !== undefined) whole = [holding];
     else if (touching.every((leaf) => leaf.start >= candidate.start && leaf.end <= candidate.end))
-      chosen = touching;
+      whole = touching;
     else continue;
-    if (chosen.some((leaf) => breaksLine(source.slice(leaf.start, leaf.end)))) continue;
+    const chosen: Leaf[] = [];
+    let split = true;
+    let lead = 0;
+    for (const [k, leaf] of whole.entries()) {
+      const found: Lines | undefined = breaksLine(source.slice(leaf.start, leaf.end))
+        ? linesOf(source, leaf, midLine.has(leaf))
+        : { lines: [leaf] };
+      // A first line kept as text is the candidate's start, nothing before it but spaces, a
+      // comment and braces, or the candidate is kept whole: the report counts it by its glyphs.
+      const kept = found?.kept;
+      if (
+        found === undefined ||
+        (kept !== undefined && (k > 0 || !LEADING.test(source.slice(candidate.start, kept.start))))
+      )
+        split = false;
+      else {
+        chosen.push(...found.lines);
+        if (kept !== undefined) lead = glyphsAtMost(kept.runs);
+      }
+    }
+    if (!split) continue;
+    if (lead > 0) LEADS.set(candidate, lead);
+    else LEADS.delete(candidate);
     const own = chosen.filter((leaf) =>
       leaf.kind === "date"
         ? holdsText(leaf.text)
@@ -604,7 +838,12 @@ export function buildOutline(input: OutlineInput): Outline {
   if (preamble !== undefined && ours.length > 0) {
     const writer: Writer = {
       source: preamble.tree.source,
-      spots: spotsOf(preamble.tree.source, leavesOf(preamble.tree), ours),
+      spots: spotsOf(
+        preamble.tree.source,
+        leavesOf(preamble.tree),
+        ours,
+        midLineLeaves(preamble.tree),
+      ),
       groups: [],
       count,
       written,
@@ -632,6 +871,7 @@ export function buildOutline(input: OutlineInput): Outline {
       tree.source,
       leavesOf(tree),
       editable.filter((each) => each.where === "body"),
+      midLineLeaves(tree),
     ),
     groups,
     count,
@@ -835,6 +1075,36 @@ export async function outlinePackage(input: OutlinePackageInput): Promise<Templa
 // What the report counts.
 
 /**
+ * How many of each run's glyphs a candidate the outline holds in part keeps at its start as kept
+ * text (`LEADS`), counted through its runs in the page's order, for those of `fielded`: a first
+ * line the outline kept as the upload wrote it.
+ */
+function leadingOf(
+  runs: readonly UncoveredRun[],
+  candidates: readonly Pick<ProbeCandidate, "id">[],
+  fielded: (id: string) => boolean,
+): Map<UncoveredRun, number> {
+  const left = new Map<string, number>();
+  for (const each of candidates) {
+    const lead = LEADS.get(each);
+    if (lead !== undefined && fielded(each.id)) left.set(each.id, lead);
+  }
+  const found = new Map<UncoveredRun, number>();
+  if (left.size === 0) return found;
+  const ordered = runs
+    .filter((run) => run.by === "candidate" && left.has(run.candidate ?? ""))
+    .sort((a, b) => a.page - b.page || a.from - b.from);
+  for (const run of ordered) {
+    const id = run.candidate ?? "";
+    const n = Math.min(left.get(id) ?? 0, Math.max(0, run.to - run.from));
+    if (n <= 0) continue;
+    found.set(run, n);
+    left.set(id, (left.get(id) ?? 0) - n);
+  }
+  return found;
+}
+
+/**
  * What sets each run of the reference's glyphs, as the report reads it (`GlyphOwner`): the probe's
  * runs, each a field's where its candidate is one (`Outline.fields`), by the field's name; kept
  * text where it is not, with the reason the import's checks kept it for (`checked`), or the probe's,
@@ -848,11 +1118,21 @@ export function ownersOf(
   checked: ReadonlyMap<string, LockReason> = new Map(),
 ): GlyphOwner[] {
   const byId = new Map(candidates.map((each) => [each.id, each]));
+  const leading = leadingOf(runs, candidates, (id) => fields.has(id));
   return runs.flatMap((run): GlyphOwner[] => {
     const at = { page: run.page, from: run.from, to: run.to };
     if (run.by === "raw") return [{ ...at, kept: "raw" }];
     if (run.by !== "candidate" || run.candidate === undefined) return [];
     const field = fields.get(run.candidate);
+    // A first line kept as text, at the start of a candidate the outline holds in part.
+    const lead = leading.get(run);
+    if (field !== undefined && lead !== undefined)
+      return [
+        { ...at, to: run.from + lead, kept: "shape" },
+        ...(run.from + lead < run.to
+          ? [{ ...at, from: run.from + lead, field: `${field}.text` }]
+          : []),
+      ];
     if (field !== undefined) return [{ ...at, field: `${field}.text` }];
     const verdict = byId.get(run.candidate)?.verdict;
     const reason: LockReason =
@@ -912,9 +1192,11 @@ export function reachOf(input: WordsInput): {
     page.items.flatMap((item) => (item.kind === "glyph" ? [item] : [])),
   );
   const owners = pages.map((read) => new Array<string>(read.texts.length).fill("t"));
+  const leading = leadingOf(runs, input.candidates, (id) => fields.has(id));
   for (const run of runs) {
     const row = owners[run.page];
     if (row === undefined) continue;
+    const lead = leading.get(run) ?? 0;
     const key =
       run.by === "candidate" && run.candidate !== undefined
         ? fields.has(run.candidate)
@@ -923,7 +1205,8 @@ export function reachOf(input: WordsInput): {
         : run.by === "raw" && run.raw !== undefined
           ? `p:r:${run.raw.start}:${run.raw.end}`
           : "t";
-    for (let at = Math.max(0, run.from); at < Math.min(run.to, row.length); at++) row[at] = key;
+    for (let at = Math.max(0, run.from); at < Math.min(run.to, row.length); at++)
+      row[at] = at < run.from + lead ? `p:c:${run.candidate}` : key;
   }
   ownRunningLines(glyphs, owners);
   /** A kept part's LaTeX, from its owner's key. */
