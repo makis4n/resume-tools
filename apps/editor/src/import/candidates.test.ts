@@ -214,6 +214,19 @@ Invented paragraph words.`,
     expect(markerEnd(String.raw`a \\\\`, 0, 6)).toBe(1);
     expect(markerEnd("a\\\\\\", 0, 4)).toBe(4);
     expect(markerEnd(String.raw`\\`, 0, 2)).toBe(2);
+    // A control space or an escaped line's end before the break is the field's glue, and its
+    // backslash is never left without what it escapes.
+    expect(markerEnd(String.raw`a\ \\`, 0, 5)).toBe(3);
+    expect(markerEnd("a\\\n\\\\", 0, 5)).toBe(3);
+    expect(markerEnd(String.raw`a\\ \\`, 0, 6)).toBe(1);
+    const spaced = treeOf(String.raw`\begin{itemize}
+\item{ Invented quill words\ \\ }
+\end{itemize}`);
+    const item = candidatesOf(spaced).candidates.find((each) => each.id === "i1");
+    expect(item).toBeDefined();
+    expect(marked(spaced.source, item === undefined ? [] : [item])).toBe(String.raw`\begin{itemize}
+\item{ \rtfield{i1}{Invented quill words\ }\\ }
+\end{itemize}`);
   });
 });
 

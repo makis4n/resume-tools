@@ -38,7 +38,8 @@ printed ids, verdicts and counts only. Of the 1,789 `position` words it reached,
   marker after an italic correction LaTeX adds once the field's group has ended.
 - **The end marker now goes before a trailing break.** Where a span ends in `\\`, with no star or
   length, the end marker goes before the breaks and the spaces before them (`markerEnd`), which
-  set no glyph. `\\` then takes off the space before it, as it does with no marker, and ends the
+  set no glyph; a control space or an escaped line's end before a break sets glue, and stays in
+  the field. `\\` then takes off the space before it, as it does with no marker, and ends the
   paragraph with the marker inside it. The candidates' spans stay as they are, so the outline,
   which places its own fields, and the source's attribution of glyphs read them as before; only
   where the probe writes its end marker changes.
@@ -89,7 +90,9 @@ does not reach, took 146.4 s against main's 142.2 s with the same compiles.
 - The probe no longer keeps a field for a break its end marker followed; the outline must not
   place a field's end after a `\\` either, or check 1 keeps it as `differs`.
 - What decision 0074 counted on from this fix, 450 to 900 words, is not won by markers' places:
-  1,242 of the 1,789 words are the marker macro's, and a change to the prelude, which every
+  of the 1,789 words, 1,458 move for one part of the marker macro alone (559 + 548 + 302 + 49 in
+  the table), 301 for no one part alone (both its ends together, or a macro that reads its
+  argument twice), and only 30 for a marker's place. A change to the prelude, which every
   template and the editor compile with, is the owner's to choose. The prototype above is the
   measure of it.
 - `transform`, 383 words, stays the owner's: placing a field inside a transformation is the

@@ -523,8 +523,15 @@ export function wrapEnd(source: string, end: number, limit: number): number {
  */
 export function markerEnd(source: string, start: number, end: number): number {
   let at = end;
+  /** Whether the character before `at` is escaped: after an odd run of backslashes. */
+  const escaped = (at: number) => {
+    let backslashes = 0;
+    while (at - 1 - backslashes > start && source[at - 2 - backslashes] === "\\") backslashes++;
+    return backslashes % 2 === 1;
+  };
   for (;;) {
-    while (at > start && /\s/.test(source[at - 1] ?? "")) at--;
+    // A control space or an escaped line's end sets glue, the field's: it stays inside.
+    while (at > start && /\s/.test(source[at - 1] ?? "") && !escaped(at)) at--;
     let backslashes = 0;
     while (at - backslashes > start && source[at - backslashes - 1] === "\\") backslashes++;
     if (backslashes < 2 || backslashes % 2 === 1) break;
