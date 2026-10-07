@@ -35,8 +35,11 @@
  * an empty one, nothing at the start of its content; inside a group that is all of it, past the
  * spaces TeX passes over in vertical mode (`tightened`); and an argument given as one token,
  * without braces, in braces with its markers. Where the span ends in a control word, the spaces
- * after it, which TeX skipped, go inside, so that none of them is set after the field's end. Spans
- * never nest: a field holds no candidate, and one that would is a container or raw, never wrapped.
+ * after it, which TeX skipped, go inside, so that none of them is set after the field's end. Where
+ * the span ends in line breaks, `\\`, its end marker goes before them and the spaces before them,
+ * which set no glyph (`markerEnd`), so that a break that ends the paragraph never leaves the marker
+ * on the vertical list after it. Spans never nest: a field holds no candidate, and one that would
+ * is a container or raw, never wrapped.
  */
 
 import { ALIGNMENTS, type Argument, type Node, type RawWhy, type Span, type Tree } from "./parse";
@@ -511,9 +514,52 @@ export function wrapEnd(source: string, end: number, limit: number): number {
 }
 
 /**
+ * Where a span's end marker goes: before the line breaks, `\\` with no star or length, that end
+ * it, and the spaces before each, which set no glyph; or its end, when it ends in none, or holds
+ * nothing else. Where `\\` ends a paragraph, as `\raggedright` and `\centering` have it, an end
+ * marker after it would be set on the vertical list between that paragraph and the next, and
+ * move every line after it; before it, the marker stays in the paragraph, after the field's last
+ * glyph, and `\\` takes off the space before it as it does without the marker. Never in a
+ * comment: where the place before the breaks is on a line after a `%`, as when a comment's line
+ * ends just before them, a brace there would be the comment's, so the marker stays at the end.
+ */
+export function markerEnd(source: string, start: number, end: number): number {
+  let at = end;
+  /** Whether the character before `at` is escaped: after an odd run of backslashes. */
+  const escaped = (at: number) => {
+    let backslashes = 0;
+    while (at - 1 - backslashes > start && source[at - 2 - backslashes] === "\\") backslashes++;
+    return backslashes % 2 === 1;
+  };
+  for (;;) {
+    // A control space or an escaped line's end sets glue, the field's: it stays inside.
+    while (at > start && /\s/.test(source[at - 1] ?? "") && !escaped(at)) at--;
+    let backslashes = 0;
+    while (at - backslashes > start && source[at - backslashes - 1] === "\\") backslashes++;
+    if (backslashes < 2 || backslashes % 2 === 1) break;
+    at -= 2;
+  }
+  return at === end || source.slice(start, at).trim() === "" || inComment(source, at) ? end : at;
+}
+
+/**
+ * Whether `at` is in a comment: after a `%` on its line that no backslash escapes, a backslash
+ * taking the character after it, so that `\%` is a percent sign and `\\%` a break and a comment.
+ */
+function inComment(source: string, at: number): boolean {
+  let i = Math.max(source.lastIndexOf("\n", at - 1), source.lastIndexOf("\r", at - 1)) + 1;
+  while (i < at) {
+    if (source[i] === "%") return true;
+    i += source[i] === "\\" ? 2 : 1;
+  }
+  return false;
+}
+
+/**
  * A source with each of `wrapped`, whose spans are of it, in its markers: `\rtfield{<id>}{...}`,
- * the prelude's marker macro, in braces for an argument given without them. Spans that would
- * overlap an earlier one are left as they are, which the candidates' spans never do.
+ * the prelude's marker macro, in braces for an argument given without them; the end marker
+ * before the line breaks a span ends with (`markerEnd`). Spans that would overlap an earlier one
+ * are left as they are, which the candidates' spans never do.
  */
 export function marked(source: string, wrapped: readonly Candidate[]): string {
   const sorted = [...wrapped].sort((a, b) => a.start - b.start || a.end - b.end);
@@ -522,10 +568,15 @@ export function marked(source: string, wrapped: readonly Candidate[]): string {
   sorted.forEach((candidate, i) => {
     if (candidate.start < at) return;
     const next = sorted[i + 1]?.start ?? source.length;
+    const before = candidate.bare
+      ? candidate.end
+      : markerEnd(source, candidate.start, candidate.end);
     const end =
       candidate.end === candidate.start
         ? candidate.end
-        : wrapEnd(source, candidate.end, Math.max(candidate.end, next));
+        : before < candidate.end
+          ? wrapEnd(source, before, candidate.end)
+          : wrapEnd(source, candidate.end, Math.max(candidate.end, next));
     const [open, close] = candidate.bare ? ["{", "}"] : ["", ""];
     out += `${source.slice(at, candidate.start)}${open}\\rtfield{${candidate.id}}{${source.slice(candidate.start, end)}}${close}`;
     at = end;

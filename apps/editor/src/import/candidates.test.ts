@@ -4,6 +4,7 @@ import {
   candidatesOf,
   isSetter,
   marked,
+  markerEnd,
   reissued,
   storedIn,
   tightened,
@@ -191,6 +192,66 @@ Invented paragraph words.`,
     expect(marked(tree.source, candidates)).toBe(
       String.raw`\inventedpost {\rtfield{c1-1}{x}} \rtfield{t1}{and} \inventedpost{\rtfield{c2-1}{Stra\ss   }}`,
     );
+  });
+
+  test("end a field's markers before the line breaks it ends with and the spaces before them", () => {
+    const tree = treeOf(String.raw`\begin{itemize}
+\item Invented quill words \\
+\item{ \textbf{Invented}{: fern words} \\ \\ }
+\item Invented kept \\[2pt]
+\end{itemize}
+\inventedpost{\\}`);
+    const { candidates } = candidatesOf(tree);
+    expect(marked(tree.source, candidates)).toBe(String.raw`\begin{itemize}
+\item \rtfield{t1}{Invented quill words} \\
+\item{ \rtfield{i2}{\textbf{Invented}{: fern words}} \\ \\ }
+\item \rtfield{t2}{Invented kept} \\[2pt]
+\end{itemize}
+\inventedpost{\rtfield{c1-1}{\\}}`);
+    // The spaces TeX skips after a control word stay inside, as without a break; a span of breaks
+    // alone keeps them; and a backslash that escapes another is no break.
+    expect(markerEnd(String.raw`x \Invented \\`, 0, 14)).toBe(11);
+    expect(markerEnd(String.raw`a \\\\`, 0, 6)).toBe(1);
+    expect(markerEnd("a\\\\\\", 0, 4)).toBe(4);
+    expect(markerEnd(String.raw`\\`, 0, 2)).toBe(2);
+    // A control space or an escaped line's end before the break is the field's glue, and its
+    // backslash is never left without what it escapes.
+    expect(markerEnd(String.raw`a\ \\`, 0, 5)).toBe(3);
+    expect(markerEnd("a\\\n\\\\", 0, 5)).toBe(3);
+    expect(markerEnd(String.raw`a\\ \\`, 0, 6)).toBe(1);
+    const spaced = treeOf(String.raw`\begin{itemize}
+\item{ Invented quill words\ \\ }
+\end{itemize}`);
+    const item = candidatesOf(spaced).candidates.find((each) => each.id === "i1");
+    expect(item).toBeDefined();
+    expect(marked(spaced.source, item === undefined ? [] : [item])).toBe(String.raw`\begin{itemize}
+\item{ \rtfield{i1}{Invented quill words\ }\\ }
+\end{itemize}`);
+  });
+
+  test("leave a field's end marker at its end where the place before its breaks is in a comment", () => {
+    // A comment's line that ends just before the breaks: a brace there would be the comment's.
+    expect(markerEnd("a % c\n\\\\", 0, 8)).toBe(8);
+    expect(markerEnd("a%\n\\\\", 0, 5)).toBe(5);
+    expect(markerEnd("a % c\r\n\\\\", 0, 9)).toBe(9);
+    // Breaks inside the comment are the comment's, and `\\%` is a break and a comment.
+    expect(markerEnd("a % c \\\\\n\\\\", 0, 11)).toBe(11);
+    expect(markerEnd("a\\\\%c\n\\\\", 0, 8)).toBe(8);
+    // A comment that starts before the span's start is still one.
+    expect(markerEnd("% a\n\\\\", 2, 6)).toBe(6);
+    // An escaped percent sign is a glyph, and a comment on an earlier line ends with it.
+    expect(markerEnd("a\\%\n\\\\", 0, 6)).toBe(3);
+    expect(markerEnd("% c\na \\\\", 0, 8)).toBe(5);
+    const noted = treeOf(String.raw`\begin{itemize}
+\item{ Invented quill words % invented note
+\\ }
+\end{itemize}`);
+    const item = candidatesOf(noted).candidates.find((each) => each.id === "i1");
+    expect(item).toBeDefined();
+    expect(marked(noted.source, item === undefined ? [] : [item])).toBe(String.raw`\begin{itemize}
+\item{ \rtfield{i1}{Invented quill words % invented note
+\\} }
+\end{itemize}`);
   });
 });
 

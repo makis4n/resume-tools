@@ -599,8 +599,8 @@ export async function settle(
  * `untested` is the last kinds, the ones with the fewest words. The order is a heuristic: a first
  * half that fails can take a compile a later candidate would have passed with. And it changes more
  * than what the budget leaves: the union locks the later of two that fail together, so with the
- * words first it tends to keep the one with more words. The checks' bisections keep the source's
- * order.
+ * words first it tends to keep the one with more words. The checks' bisections take the words
+ * first too (decision 0075, the checks' budgets).
  */
 export function probeOrder(
   candidates: readonly Candidate[],

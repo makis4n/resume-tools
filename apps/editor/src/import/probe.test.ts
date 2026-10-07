@@ -27,6 +27,7 @@ import {
   type GlyphPlace,
   kindOf,
   type Own,
+  PROBE_PRELUDE,
   type Probe,
   type ProbeCandidate,
   probe,
@@ -1091,7 +1092,7 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
   async function pipeline(
     files: Record<string, string>,
     options: { budget?: number; bodyOnly?: boolean } = {},
-  ): Promise<{ found: Probe; given: EngineSignatures }> {
+  ): Promise<{ found: Probe; given: EngineSignatures; source: string }> {
     const zipped = Object.fromEntries(
       Object.entries(files).map(([path, text]) => [path, strToU8(text)]),
     );
@@ -1113,7 +1114,11 @@ describe.skipIf(!engineAvailable())("the probe, on the engine", () => {
     const built = buildTree(read, given);
     if (isRefusal(built)) throw new Error(built.message);
     const budget = options.budget === undefined ? {} : { budget: options.budget };
-    return { found: await probe(session, fonts, taken, made, built, given, budget), given };
+    return {
+      found: await probe(session, fonts, taken, made, built, given, budget),
+      given,
+      source: built.source,
+    };
   }
   const probed = async (files: Record<string, string>, budget?: number) =>
     (await pipeline(files, budget === undefined ? {} : { budget })).found;
@@ -1318,6 +1323,87 @@ $x+y=z$ \par
     expect(verdict(found, "cvname")?.verdict).toBe("editable");
     // What the caller gave stays.
     expect(found.signatures.commands.cvplain).toEqual(given.commands.cvplain);
+  }, 60_000);
+
+  /**
+   * An invented document compiled whole, the prelude after its preamble as the probe has it, and
+   * its glyphs and rules where the page sets them: each one's page, font, code and place, exact.
+   */
+  async function placed(text: string) {
+    const withPrelude = text.replace("\\begin{document}", `${PROBE_PRELUDE}\\begin{document}`);
+    const taken = intake(
+      { name: "invented.zip", bytes: zipSync({ "cv.tex": strToU8(withPrelude) }) },
+      { tree },
+    );
+    if (isRefusal(taken)) throw new Error(`refused at intake: ${taken.message}`);
+    const made = await reference(session, fonts, taken as Intake);
+    if (isRefusal(made)) throw new Error(`refused: ${made.message}`);
+    return made.pages.map((page) =>
+      page.items.flatMap((item) =>
+        item.kind === "special"
+          ? []
+          : [[item.kind, item.h, item.v, item.kind === "glyph" ? `${item.font}:${item.code}` : ""]],
+      ),
+    );
+  }
+
+  test("ends a field's markers before a break that ends a ragged paragraph, and leaves the page as it was", async () => {
+    // `\\` under `\raggedright` ends the paragraph: an end marker after it would be set on the
+    // vertical list, between the item and the next, and move every line after it. The item's
+    // text is in a group of its own, so that the item is probed alone, its span ending in `\\`.
+    const ITEM = String.raw`\textbf{Invented}{: quill words}`;
+    const document = (item: string) => String.raw`\documentclass{article}
+\raggedright
+\begin{document}
+\begin{itemize}
+\item{ ${item} }
+\item Invented fern words
+\end{itemize}
+Invented words after the list.
+\end{document}
+`;
+    const { found, source } = await pipeline({ "cv.tex": document(String.raw`${ITEM} \\`) });
+    const quill = found.candidates.find(
+      (each) => each.kind === "item" && each.text.includes("quill"),
+    );
+    expect(quill).toMatchObject({ verdict: "editable" });
+    if (quill === undefined) return;
+    expect(source.slice(quill.start, quill.end)).toBe(String.raw`${ITEM} \\`);
+    // Where the probe puts the markers: before the break and the space before it.
+    const now = String.raw`\rtfield{${quill.id}}{${ITEM}} \\`;
+    expect(marked(source, [quill])).toBe(source.replace(String.raw`${ITEM} \\`, now));
+    const page = await placed(document(String.raw`${ITEM} \\`));
+    expect(page.flat().length).toBeGreaterThan(30);
+    // There, the page is the reference's, glyph for glyph.
+    expect(await placed(document(now))).toEqual(page);
+    // Where they went before, after the break, every line after it moved.
+    expect(await placed(document(String.raw`\rtfield{${quill.id}}{${ITEM} \\}`))).not.toEqual(page);
+  }, 60_000);
+
+  test("leaves a field's end marker after its break where a comment's line ends just before it", async () => {
+    // Before the break, the marker's closing brace would be the comment's and the compile would
+    // fail: the end marker stays after the break, where it was before.
+    const { found, source } = await pipeline({
+      "cv.tex": String.raw`\documentclass{article}
+\raggedright
+\begin{document}
+\begin{itemize}
+\item{ \textbf{Invented}{: quill words} % invented note
+\\ }
+\item Invented fern words
+\end{itemize}
+Invented words after the list.
+\end{document}
+`,
+    });
+    const quill = found.candidates.find(
+      (each) => each.kind === "item" && each.text.includes("quill"),
+    );
+    expect(quill).toBeDefined();
+    if (quill === undefined) return;
+    expect(quill.verdict).not.toBe("breaks");
+    expect(marked(source, [quill])).toContain(String.raw`% invented note
+\\}`);
   }, 60_000);
 
   test("leaves its format in the session for the assembled package's check, for its caller to drop", async () => {
