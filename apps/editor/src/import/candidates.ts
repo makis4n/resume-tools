@@ -519,7 +519,9 @@ export function wrapEnd(source: string, end: number, limit: number): number {
  * nothing else. Where `\\` ends a paragraph, as `\raggedright` and `\centering` have it, an end
  * marker after it would be set on the vertical list between that paragraph and the next, and
  * move every line after it; before it, the marker stays in the paragraph, after the field's last
- * glyph, and `\\` takes off the space before it as it does without the marker.
+ * glyph, and `\\` takes off the space before it as it does without the marker. Never in a
+ * comment: where the place before the breaks is on a line after a `%`, as when a comment's line
+ * ends just before them, a brace there would be the comment's, so the marker stays at the end.
  */
 export function markerEnd(source: string, start: number, end: number): number {
   let at = end;
@@ -537,7 +539,20 @@ export function markerEnd(source: string, start: number, end: number): number {
     if (backslashes < 2 || backslashes % 2 === 1) break;
     at -= 2;
   }
-  return at === end || source.slice(start, at).trim() === "" ? end : at;
+  return at === end || source.slice(start, at).trim() === "" || inComment(source, at) ? end : at;
+}
+
+/**
+ * Whether `at` is in a comment: after a `%` on its line that no backslash escapes, a backslash
+ * taking the character after it, so that `\%` is a percent sign and `\\%` a break and a comment.
+ */
+function inComment(source: string, at: number): boolean {
+  let i = Math.max(source.lastIndexOf("\n", at - 1), source.lastIndexOf("\r", at - 1)) + 1;
+  while (i < at) {
+    if (source[i] === "%") return true;
+    i += source[i] === "\\" ? 2 : 1;
+  }
+  return false;
 }
 
 /**

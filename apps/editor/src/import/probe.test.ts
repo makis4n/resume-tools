@@ -1380,6 +1380,32 @@ Invented words after the list.
     expect(await placed(document(String.raw`\rtfield{${quill.id}}{${ITEM} \\}`))).not.toEqual(page);
   }, 60_000);
 
+  test("leaves a field's end marker after its break where a comment's line ends just before it", async () => {
+    // Before the break, the marker's closing brace would be the comment's and the compile would
+    // fail: the end marker stays after the break, where it was before.
+    const { found, source } = await pipeline({
+      "cv.tex": String.raw`\documentclass{article}
+\raggedright
+\begin{document}
+\begin{itemize}
+\item{ \textbf{Invented}{: quill words} % invented note
+\\ }
+\item Invented fern words
+\end{itemize}
+Invented words after the list.
+\end{document}
+`,
+    });
+    const quill = found.candidates.find(
+      (each) => each.kind === "item" && each.text.includes("quill"),
+    );
+    expect(quill).toBeDefined();
+    if (quill === undefined) return;
+    expect(quill.verdict).not.toBe("breaks");
+    expect(marked(source, [quill])).toContain(String.raw`% invented note
+\\}`);
+  }, 60_000);
+
   test("leaves its format in the session for the assembled package's check, for its caller to drop", async () => {
     const files = {
       "cv.tex": `\\documentclass{inventedprobe}\n\\begin{document}\n\\cvplain{Invented plain words}\n\\end{document}\n`,

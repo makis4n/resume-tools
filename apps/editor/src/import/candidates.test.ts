@@ -228,6 +228,31 @@ Invented paragraph words.`,
 \item{ \rtfield{i1}{Invented quill words\ }\\ }
 \end{itemize}`);
   });
+
+  test("leave a field's end marker at its end where the place before its breaks is in a comment", () => {
+    // A comment's line that ends just before the breaks: a brace there would be the comment's.
+    expect(markerEnd("a % c\n\\\\", 0, 8)).toBe(8);
+    expect(markerEnd("a%\n\\\\", 0, 5)).toBe(5);
+    expect(markerEnd("a % c\r\n\\\\", 0, 9)).toBe(9);
+    // Breaks inside the comment are the comment's, and `\\%` is a break and a comment.
+    expect(markerEnd("a % c \\\\\n\\\\", 0, 11)).toBe(11);
+    expect(markerEnd("a\\\\%c\n\\\\", 0, 8)).toBe(8);
+    // A comment that starts before the span's start is still one.
+    expect(markerEnd("% a\n\\\\", 2, 6)).toBe(6);
+    // An escaped percent sign is a glyph, and a comment on an earlier line ends with it.
+    expect(markerEnd("a\\%\n\\\\", 0, 6)).toBe(3);
+    expect(markerEnd("% c\na \\\\", 0, 8)).toBe(5);
+    const noted = treeOf(String.raw`\begin{itemize}
+\item{ Invented quill words % invented note
+\\ }
+\end{itemize}`);
+    const item = candidatesOf(noted).candidates.find((each) => each.id === "i1");
+    expect(item).toBeDefined();
+    expect(marked(noted.source, item === undefined ? [] : [item])).toBe(String.raw`\begin{itemize}
+\item{ \rtfield{i1}{Invented quill words % invented note
+\\} }
+\end{itemize}`);
+  });
 });
 
 describe("the preamble's calls that store a header's text", () => {

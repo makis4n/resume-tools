@@ -40,9 +40,11 @@ printed ids, verdicts and counts only. Of the 1,789 `position` words it reached,
   length, the end marker goes before the breaks and the spaces before them (`markerEnd`), which
   set no glyph; a control space or an escaped line's end before a break sets glue, and stays in
   the field. `\\` then takes off the space before it, as it does with no marker, and ends the
-  paragraph with the marker inside it. The candidates' spans stay as they are, so the outline,
-  which places its own fields, and the source's attribution of glyphs read them as before; only
-  where the probe writes its end marker changes.
+  paragraph with the marker inside it. Where that place is in a comment, as when a comment's line
+  ends just before the breaks, the end marker stays after them, as on main: a brace there would
+  be the comment's, and the marker's argument would never close. The candidates' spans stay as
+  they are, so the outline, which places its own fields, and the source's attribution of glyphs
+  read them as before; only where the probe writes its end marker changes.
 - **`transform` stays as it is, the owner's.** On a look-alike of AltaCV's upstream sample, with
   the markers outside `\cvtag{...}` rather than inside it, the page is the same, but the field's
   glyphs are still inside the TikZ node's transformation, which the page, drawn from the DVI,
