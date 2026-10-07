@@ -101,6 +101,16 @@ now stand where the PDF has them, apart from the text they overlapped. Compiles 
 9. Jake's Resume's own sample imported in 4.27 s, 28 compiles, at a load of 6 beside another lane
 (4.23 s and 28 in decision 0079).
 
+Then over all 220 documents, alone in the whole-corpus slot but beside the other lane's work,
+against main's run: `corpus compare` finds them the same but the same 9, times aside, and the
+breakdown set aside where main's run lacks it; no resume worse in outcome or words in place.
+Words in place 72,384 to 72,753 of 82,519 (82,497 before), 87.7% to 88.2%; 75 to 78 resumes at 90%,
+3 under 50% as before; 69 to 72 successes. By family: AltaCV 89.6% to 94.3%, Europass 78.1% to
+78.7%, the others 80.0% to 80.1%; Jake's, Awesome-CV and moderncv as before. `moved` words 2,153 to
+1,806: `transform` 383 to 0, `position` 1,760 to 1,796, `rule` 10. All compiles 5,849 to 5,867. The
+slowest pdfTeX import is still `altacv-0017`'s, 88.8 s (103.9 s in main's run, at its load); the
+others of the 9 within 3.2 s of main's run's times.
+
 ## Consequences
 
 - Every imported page with a TikZ node's text changes: the text moves to where the PDF puts it.
