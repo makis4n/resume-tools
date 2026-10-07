@@ -62,7 +62,9 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
   text command whose argument the field ends, that runs and the marker comes back after the group,
   behind LaTeX's `\maybe@ic`. Where it is one of LaTeX's text commands whose text is not empty and
   does not start with `\nocorr`, the marker waits for that command's `\maybe@ic` at its start. Where
-  a text command inside the field ends it, its `\maybe@ic` reads past the field's end. Each time
+  a text command inside the field ends it, its `\maybe@ic` reads past the field's end. Where it is
+  the text's own `\/`, as a declaration's group `{\itshape #1\/}` sets it, that corrects, after
+  what was read past goes back. Each time
   LaTeX decides on the token the unmarked page has there, its own `\/` corrects the glyph that ends
   the list, since the marker is not on it yet, and only then is the marker written. Anything else
   writes it at once. The held markers are global, to pass a group's end, and are written and cleared
@@ -132,7 +134,11 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
   ends with after a field, at a centred line's end and before `\\` on a ragged one; a field that
   ends a group under `\obeylines`; and fields before a class's own `\emph`, which sets a bullet
   first, and `\textsc`, which drops its text, where each field counts its own glyphs alone and
-  the markers stand in order. (c) is pinned as it is:
+  the markers stand in order. Three more come from the re-verify: the text's own `\/` right
+  after a field, in a text command, a declaration's group and a document's command that wraps
+  one, `{\itshape #1\/}`, and after a group's end, in pdfTeX and XeTeX; the first version of the
+  macro wrote the marker before it, where it set nothing, and main's did in a declaration's group.
+  (c) is pinned as it is:
   equal in pdfTeX, moved in XeTeX. Then every built-in template's sample compiled marked and
   unmarked from its format: `jake: marked = unmarked, 950 glyphs; main's macro moved them`, `altacv:
   marked = unmarked, 1253 glyphs`, `awesome-cv: marked = unmarked, 1693 glyphs`, glyphs and rules at

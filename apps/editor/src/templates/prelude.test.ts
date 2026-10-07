@@ -190,6 +190,40 @@ Invented label: \textsl{\rtfield{b}{Invented half}}, done.
     moved: "old",
   },
   {
+    // The text's own \/ after a field corrects the field's last glyph: the end marker goes in
+    // before its kern, as before LaTeX's.
+    name: "an explicit \\/ right after a field that ends a text command's argument",
+    engine: "pdftex",
+    preamble: ARTICLE,
+    body: String.raw`\textit{\rtfield{a}{Invented half}\/} more words.
+\textit{\rtfield{b}{Invented half}\/}. And after.
+\textbf{\rtfield{c}{Invented staff}\/}: and after.
+\textit{\rtfield{d}{Invented half}}\/ and after.
+\rtfield{e}{Invented \textit{half}}\/ and after.`,
+  },
+  {
+    // A declaration, or a document's own command that wraps one, sets no text command's
+    // correction: the \/ after the field is the only one.
+    name: "an explicit \\/ after a field in a declaration's group, or after its end",
+    engine: "pdftex",
+    preamble: String.raw`${ARTICLE}\newcommand{\position}[1]{{\itshape #1\/}}
+`,
+    body: String.raw`{\itshape \rtfield{a}{Invented half}\/} more words.
+\position{\rtfield{b}{Invented half}} at an invented place.
+{\itshape \rtfield{c}{Invented half}}\/ and after.
+{\itshape \rtfield{d}{Invented half} }\/ and after.`,
+    moved: "old",
+  },
+  {
+    name: "an explicit \\/ after a field in XeTeX's text",
+    engine: "xetex",
+    preamble: String.raw`${XETEX}\newcommand{\position}[1]{{\itshape #1\/}}
+`,
+    body: String.raw`\textit{\rtfield{a}{Invented half}\/} more words.
+\position{\rtfield{b}{Invented half}} at an invented place.`,
+    moved: "old",
+  },
+  {
     name: "b: microtype's protrusion of an item's first glyph",
     engine: "pdftex",
     preamble: `${ARTICLE}\\usepackage{microtype}\n`,

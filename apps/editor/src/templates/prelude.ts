@@ -52,7 +52,8 @@ export const LOCK_END = "/";
  *     with `\nocorr`, the marker waits for that command's `\maybe@ic` at its start, which reads
  *     past `\rt@f@argstart`, put before its text. A class's own command of that name may set glyphs
  *     before its text or drop it, so it gets the marker at once. Where a text command inside the
- *     field ends it, its `\maybe@ic` reads past the field's end and holds the marker. Each time
+ *     field ends it, its `\maybe@ic` reads past the field's end and holds the marker. Where it is
+ *     the text's own `\/`, as `{\itshape #1\/}` sets it, that corrects (`\rt@f@icnow`). Each time
  *     LaTeX decides on the token the unmarked page has there, its `\/` corrects the glyph that ends
  *     the list, and only then is the end marker written, in front of the correction's kern and a
  *     space the list may end with by then (`\rt@f@lift`), so that the list ends as the unmarked
@@ -156,6 +157,7 @@ export const PRELUDE = String.raw`\makeatletter
   \ifx\rt@f@next\check@icr\ifx\check@icr\@empty\else\let\rt@f@then\rt@f@defer\fi\fi
   \ifx\rt@f@next\@sptoken\let\rt@f@then\rt@f@space\fi
   \ifx\rt@f@next\egroup\let\rt@f@then\rt@f@group\fi
+  \ifx\rt@f@next\/\let\rt@f@then\rt@f@icnow\fi
   \rt@f@kernel{textrm}\rt@f@kernel{textsf}\rt@f@kernel{texttt}\rt@f@kernel{textnormal}%
   \rt@f@kernel{textbf}\rt@f@kernel{textmd}\rt@f@kernel{textit}\rt@f@kernel{textsl}%
   \rt@f@kernel{textsc}\rt@f@kernel{textup}\rt@f@kernel{emph}%
@@ -165,6 +167,10 @@ export const PRELUDE = String.raw`\makeatletter
 % correction's kern that glue follows is where the line may break, and \par and \\ take a last
 % space off.
 \protected\def\rt@f@other{\rt@f@lift\rt@f@pre}
+% The text's own \/ after the field, or after a group's end or a space read past: what was read
+% past goes back, the \/ corrects the glyph that ends the list, as on the unmarked page, and the
+% markers go in before its kern.
+\protected\def\rt@f@icnow#1{\rt@f@pre#1\rt@f@lift}
 \protected\def\rt@f@lift{%
   \ifhmode
     \ifnum\lastnodetype=11 \skip@\lastskip\unskip\rt@f@liftkern\hskip\skip@
