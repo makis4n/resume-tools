@@ -216,6 +216,13 @@ Invented label: \textsl{\rtfield{b}{Invented half}}, done.
     moved: "prototype",
   },
   {
+    name: "a field in a TikZ node, whose text's closing brace the macro reads past",
+    engine: "pdftex",
+    preamble: `${ARTICLE}\\usepackage{tikz}\n`,
+    body: String.raw`A tag \tikz[baseline]\node[anchor=base,draw]{\rtfield{a}{Invented staff}}; and
+\tikz[baseline]\node[anchor=base]{\textit{\rtfield{b}{Invented half}}}; after.`,
+  },
+  {
     name: "a field that ends a conditional's branch, read past by the macro",
     engine: "pdftex",
     preamble: String.raw`${ARTICLE}\newcommand{\cvsig}[1]{\def\cvsigtext{#1}}

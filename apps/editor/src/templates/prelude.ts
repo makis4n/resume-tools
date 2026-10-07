@@ -40,23 +40,24 @@ export const LOCK_END = "/";
  *     glyph, unless the font after it is slanted or `,` or `.` follows; and at its start, for the
  *     glyph before it, where it sets an upright font and its text does not start with `,` or `.`.
  *     It sets `\/`, the italic correction of the glyph that ends the list, and TeX's `\/` corrects
- *     nothing after a whatsit. So a field's end (`\rt@f@end`) holds its end marker back
- *     (`\rt@f@held`) and reads the next token, past the end of a simple group, which sets nothing,
- *     as `\small{...}` or `{\itshape ...}` close round a field: where it is the `\check@icr` of a
- *     text command whose argument the field ends, that runs, and the marker comes back after the
- *     group, behind `\maybe@ic` (`\rt@f@resume`); where it is a text command of LaTeX's, after a
- *     space or none, whose text is neither empty nor starts with `\nocorr`, the marker waits for
- *     that command's `\maybe@ic` at its start, which reads past `\rt@f@argstart`, put before its
- *     text, and where a class's own command of that name never reads it, `\rt@f@argstart` writes
- *     the marker before the text; and where a text command inside the field ends it, its
- *     `\maybe@ic` reads past the field's end and holds the marker. Each time LaTeX decides on the
- *     token the unmarked page has there, its `\/` corrects the glyph that ends the list, and only
- *     then is the end marker written, after the correction and, where the space came between, after
- *     the space. Anything else writes it at once. Nothing is stored but the held markers, global to
- *     pass the group's end, and they are written and cleared before the text after them is set,
- *     whether LaTeX corrects or not: no state outlives the text command. A token read ahead may be
- *     `\fi`, as where a class sets a field in a conditional's branch, so it is compared and never
- *     skipped.
+ *     nothing after a whatsit. So where the field's last glyph has a correction (`\rt@f@measure`:
+ *     set, read and taken off again), a field's end (`\rt@f@end`) holds its end marker back
+ *     (`\rt@f@held`) and reads what follows, past spaces and the ends of simple groups, as
+ *     `\small{...}` or `{\itshape ...}` close round a field, which set nothing a correction cannot
+ *     pass and go back as they were: where it is the `\check@icr` of a text command whose argument
+ *     the field ends, that runs, and the marker comes back after the group, behind `\maybe@ic`
+ *     (`\rt@f@resume`); where it is a text command of LaTeX's whose text is neither empty nor
+ *     starts with `\nocorr`, the marker waits for that command's `\maybe@ic` at its start, which
+ *     reads past `\rt@f@argstart`, put before its text, and where a class's own command of that
+ *     name never reads it, `\rt@f@argstart` writes the marker before the text. Where a text command
+ *     inside the field ends it, its `\maybe@ic` reads past the field's end and holds the marker.
+ *     Each time LaTeX decides on the token the unmarked page has there, its `\/` corrects the glyph
+ *     that ends the list, and only then is the end marker written. Anything else writes it at once,
+ *     as does a last glyph with no correction, where LaTeX's `\/` would set a kern of nothing.
+ *     Nothing is stored but the held markers, global to pass a group's end, and they are written
+ *     and cleared before the text after them is set, whether LaTeX corrects or not: no state
+ *     outlives the text command. A token read ahead may be `\fi`, as where a class sets a field in
+ *     a conditional's branch, so it is compared and never skipped.
  *   - microtype's `\leftprotrusion`, which `\@item` ends with, reads the next token and protrudes
  *     the item's first glyph only after a command it knows. It learns `\rtfield`
  *     (`\MT@prot@check@R`, where microtype is loaded) and goes to the start of the field's text,
@@ -114,68 +115,77 @@ export const PRELUDE = String.raw`\makeatletter
 \newcommand{\rtfield}[2]{%
   \texorpdfstring{\leavevmode\special{${MARKER_BEGIN}\detokenize{#1}}\rt@par{#1}#2%
     \rt@f@end{#1}}{#2}}
-% A field's end: its marker is held back until LaTeX has decided the italic correction after it.
-\protected\def\rt@f@end#1{\rt@f@hold{#1}\futurelet\rt@f@next\rt@f@ahead}
+% A field's end: its marker is held back until LaTeX has decided the italic correction after it,
+% where the field's last glyph has one. Where it has none, a correction is a kern of nothing, and
+% the marker is written at once.
+\newdimen\rt@f@ic
+\protected\def\rt@f@end#1{%
+  \rt@f@hold{#1}%
+  \rt@f@ic\z@
+  \ifhmode\rt@f@measure\fi
+  \ifdim\rt@f@ic=\z@
+    \expandafter\rt@f@flush
+  \else
+    \let\rt@f@pre\@empty
+    \expandafter\rt@f@look
+  \fi}
 \global\let\rt@f@held\@empty
 \protected\def\rt@f@hold#1{%
   \xdef\rt@f@held{\unexpanded\expandafter{\rt@f@held}\noexpand\rt@f@endmark{\detokenize{#1}}}}
 \protected\def\rt@f@endmark#1{\special{${MARKER_END}#1}}
-% The next token decides. Another field's end holds its marker too, an enclosing field's; the
-% \check@icr of a text command whose argument the field ends sets LaTeX's \maybe@ic after the
-% group, and the markers come back after it; anything else writes them.
-\protected\def\rt@f@settle{\ifx\rt@f@held\@empty\else\expandafter\rt@f@settle@\fi}
-\protected\def\rt@f@settle@{\futurelet\rt@f@next\rt@f@settle@@}
-% The token read may be a \fi, as where a template sets the field in a conditional's branch, so
-% it is compared and never skipped: a skipped \rt@f@next would close a conditional.
-\protected\def\rt@f@settle@@{%
-  \let\rt@f@settle@then\rt@f@flush
-  \ifx\rt@f@next\rt@f@end\let\rt@f@settle@then\relax\fi
-  \ifx\rt@f@next\check@icr\ifx\check@icr\@empty\else\let\rt@f@settle@then\rt@f@defer\fi\fi
-  \rt@f@settle@then}
-\protected\def\rt@f@defer#1{#1\aftergroup\rt@f@resume}
-% At the field's own end, a text command of LaTeX's, after a space or none, corrects the field's
-% last glyph as it starts, unless its text is empty or starts with \nocorr: the markers wait for
-% its \maybe@ic there, which reads past \rt@f@argstart at its text's start, and are written after
-% the correction; where its \maybe@ic never comes, \rt@f@argstart writes them before its text.
-\protected\def\rt@f@ahead{%
-  \let\rt@f@ahead@then\rt@f@settle@@
-  \ifx\rt@f@next\@sptoken\let\rt@f@ahead@then\rt@f@space\fi
-  \ifx\rt@f@next\egroup\let\rt@f@ahead@then\rt@f@group\fi
-  \rt@f@iftext\rt@f@text
-  \rt@f@ahead@then}
-% The end of a simple group, as \small{...} or {\itshape ...} close round a field, sets nothing:
-% the markers read on after it.
+% The correction of the glyph that ends the list, a character, a ligature or XeTeX's text, which
+% \/ sets as a kern, taken off again.
+\protected\def\rt@f@measure{%
+  \ifnum\lastnodetype=\z@\expandafter\rt@f@measure@\fi
+  \ifnum\lastnodetype=7 \expandafter\rt@f@measure@\fi
+  \ifnum\lastnodetype=9 \expandafter\rt@f@measure@\fi}
+\protected\def\rt@f@measure@{\/\ifnum\lastnodetype=12 \rt@f@ic\lastkern\unkern\fi}
+% What follows the field's end decides, read past the ends of simple groups and spaces, which set
+% nothing a correction cannot pass, and which go back as they were (\rt@f@pre). The token read may
+% be a \fi, as where a class sets the field in a conditional's branch, so it is compared and never
+% left in skipped text, where it would close the conditional.
+\protected\def\rt@f@look{\futurelet\rt@f@next\rt@f@look@}
+\protected\def\rt@f@look@{%
+  \let\rt@f@then\rt@f@other
+  \ifx\rt@f@next\rt@f@end\let\rt@f@then\rt@f@pre\fi
+  \ifx\rt@f@next\check@icr\ifx\check@icr\@empty\else\let\rt@f@then\rt@f@defer\fi\fi
+  \ifx\rt@f@next\@sptoken\let\rt@f@then\rt@f@space\fi
+  \ifx\rt@f@next\egroup\let\rt@f@then\rt@f@group\fi
+  \ifx\rt@f@next\textrm\let\rt@f@then\rt@f@text\fi
+  \ifx\rt@f@next\textsf\let\rt@f@then\rt@f@text\fi
+  \ifx\rt@f@next\texttt\let\rt@f@then\rt@f@text\fi
+  \ifx\rt@f@next\textnormal\let\rt@f@then\rt@f@text\fi
+  \ifx\rt@f@next\textbf\let\rt@f@then\rt@f@text\fi
+  \ifx\rt@f@next\textmd\let\rt@f@then\rt@f@text\fi
+  \ifx\rt@f@next\textit\let\rt@f@then\rt@f@text\fi
+  \ifx\rt@f@next\textsl\let\rt@f@then\rt@f@text\fi
+  \ifx\rt@f@next\textsc\let\rt@f@then\rt@f@text\fi
+  \ifx\rt@f@next\textup\let\rt@f@then\rt@f@text\fi
+  \ifx\rt@f@next\emph\let\rt@f@then\rt@f@text\fi
+  \rt@f@then}
+% Anything else: the markers now, then what was read past.
+\protected\def\rt@f@other{\rt@f@flush\rt@f@pre}
+% A space in a paragraph, or a simple group's end, is read past and goes back after.
+\protected\def\rt@f@space{%
+  \ifhmode\expandafter\rt@f@take\expandafter\space\else\expandafter\rt@f@other\fi}
 \protected\def\rt@f@group{%
-  \let\rt@f@group@then\rt@f@settle@@
-  \ifhmode\ifnum\currentgrouptype=\@ne\let\rt@f@group@then\rt@f@aftergroup\fi\fi
-  \rt@f@group@then}
-\protected\def\rt@f@aftergroup{\aftergroup\rt@f@after}
-\protected\def\rt@f@after{\futurelet\rt@f@next\rt@f@ahead}
-\protected\def\rt@f@iftext#1{%
-  \ifx\rt@f@next\textrm\let\rt@f@ahead@then#1\fi
-  \ifx\rt@f@next\textsf\let\rt@f@ahead@then#1\fi
-  \ifx\rt@f@next\texttt\let\rt@f@ahead@then#1\fi
-  \ifx\rt@f@next\textnormal\let\rt@f@ahead@then#1\fi
-  \ifx\rt@f@next\textbf\let\rt@f@ahead@then#1\fi
-  \ifx\rt@f@next\textmd\let\rt@f@ahead@then#1\fi
-  \ifx\rt@f@next\textit\let\rt@f@ahead@then#1\fi
-  \ifx\rt@f@next\textsl\let\rt@f@ahead@then#1\fi
-  \ifx\rt@f@next\textsc\let\rt@f@ahead@then#1\fi
-  \ifx\rt@f@next\textup\let\rt@f@ahead@then#1\fi
-  \ifx\rt@f@next\emph\let\rt@f@ahead@then#1\fi}
-\protected\def\rt@f@space{\ifhmode\expandafter\rt@f@space@\else\expandafter\rt@f@settle@@\fi}
-\protected\def\rt@f@space@{\afterassignment\rt@f@space@@\let\rt@f@next= }
-\protected\def\rt@f@space@@{\futurelet\rt@f@next\rt@f@space@@@}
-\protected\def\rt@f@space@@@{%
-  \let\rt@f@ahead@then\rt@f@spaceback
-  \ifx\rt@f@next\check@icr\ifx\check@icr\@empty\else\let\rt@f@ahead@then\rt@f@spacedefer\fi\fi
-  \rt@f@iftext\rt@f@textspace
-  \rt@f@ahead@then}
-\protected\def\rt@f@spaceback{\rt@f@flush\space}
-\protected\def\rt@f@spacedefer#1{\space#1\aftergroup\rt@f@resume}
-\protected\long\def\rt@f@text#1#2{\rt@f@ifcorrects{#2}{#1{\rt@f@argstart#2}}{\rt@f@flush#1{#2}}}
-\protected\long\def\rt@f@textspace#1#2{%
-  \rt@f@ifcorrects{#2}{\space#1{\rt@f@argstart#2}}{\rt@f@flush\space#1{#2}}}
+  \let\rt@f@then\rt@f@other
+  \ifhmode\ifnum\currentgrouptype=\@ne\let\rt@f@then\rt@f@takegroup\fi\fi
+  \rt@f@then}
+\protected\def\rt@f@takegroup{\rt@f@take\egroup}
+\protected\def\rt@f@take#1{%
+  \expandafter\def\expandafter\rt@f@pre\expandafter{\rt@f@pre#1}%
+  \afterassignment\rt@f@look\let\rt@f@next= }
+% The \check@icr of a text command whose argument the field ends: it sets LaTeX's \maybe@ic after
+% the group, and the markers come back after that.
+\protected\def\rt@f@defer{\rt@f@pre\rt@f@defer@}
+\protected\def\rt@f@defer@#1{#1\aftergroup\rt@f@resume}
+% A text command of LaTeX's corrects the field's last glyph as it starts, unless its text is empty
+% or starts with \nocorr: the markers wait for its \maybe@ic there, which reads past
+% \rt@f@argstart at its text's start, and are written after the correction; where the command is
+% a class's own of that name, which never reads it, \rt@f@argstart writes them before its text.
+\protected\long\def\rt@f@text#1#2{%
+  \rt@f@ifcorrects{#2}{\rt@f@pre#1{\rt@f@argstart#2}}{\rt@f@flush\rt@f@pre#1{#2}}}
 \long\def\rt@f@ifcorrects#1{%
   \begingroup
     \text@command{#1}%
@@ -183,7 +193,10 @@ export const PRELUDE = String.raw`\makeatletter
     \ifhmode\ifx\check@icl\@empty\else\aftergroup\@gobble\aftergroup\@firstoftwo\fi\fi
   \endgroup}
 \protected\def\rt@f@argstart{\rt@f@flush}
+% After a group, or wherever LaTeX's \maybe@ic has decided: the next token decides again.
 \protected\def\rt@f@resume{\rt@f@settle}
+\protected\def\rt@f@settle{\ifx\rt@f@held\@empty\else\expandafter\rt@f@settle@\fi}
+\protected\def\rt@f@settle@{\let\rt@f@pre\@empty\rt@f@look}
 \protected\def\rt@f@flush{\let\rt@f@do\rt@f@held\global\let\rt@f@held\@empty\rt@f@do}
 % LaTeX's \maybe@ic looks past a field's end and past the markers' return after a group, decides
 % on the token after them, and then lets the held markers settle.

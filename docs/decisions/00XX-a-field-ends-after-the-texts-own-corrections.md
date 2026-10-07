@@ -53,19 +53,22 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
 
 ### The macro
 
-- **Nothing is stored; the end marker waits.** A field's end (`\rt@f@end`) holds its end marker
-  back and reads the next token, past the end of a simple group, which sets nothing, as
-  `\small{...}` and `{\itshape ...}` close round a field. Where it is the `\check@icr` of a text command whose argument the
-  field ends, that runs and the marker comes back after the group, behind LaTeX's `\maybe@ic`.
-  Where it is one of LaTeX's text commands, after a space or none, whose text is not empty and
-  does not start with `\nocorr`, the marker waits for that command's `\maybe@ic` at its start.
-  Where a text command inside the field ends it, its `\maybe@ic` reads past the field's end. Each
-  time LaTeX decides on the token the unmarked page has there, its own `\/` corrects the glyph
-  that ends the list, since the marker is not on it yet, and only then is the marker written.
-  Anything else writes it at once. The held markers are global, to pass the group's end, and are
-  written and cleared before the text after them is set, whether LaTeX corrects or not: no state
-  outlives the text command, and no correction is ever set but by TeX's `\/`. LaTeX's `\maybe@ic@`
-  is wrapped, its decision kept as the kernel has it.
+- **Nothing is stored; the end marker waits.** A field's end (`\rt@f@end`) first takes the italic
+  correction of the field's last glyph, as `\/` sets it, and off again. Where it is none, LaTeX's
+  own `\/` would set a kern of nothing there, and the end marker is written at once, as most fields'
+  are. Where it is some, the end marker is held back, and what follows is read, past spaces and the
+  ends of simple groups, as `\small{...}` and `{\itshape ...}` close round a field, which set
+  nothing a correction cannot pass and are put back as they were. Where it is the `\check@icr` of a
+  text command whose argument the field ends, that runs and the marker comes back after the group,
+  behind LaTeX's `\maybe@ic`. Where it is one of LaTeX's text commands whose text is not empty and
+  does not start with `\nocorr`, the marker waits for that command's `\maybe@ic` at its start. Where
+  a text command inside the field ends it, its `\maybe@ic` reads past the field's end. Each time
+  LaTeX decides on the token the unmarked page has there, its own `\/` corrects the glyph that ends
+  the list, since the marker is not on it yet, and only then is the marker written. Anything else
+  writes it at once. The held markers are global, to pass a group's end, and are written and cleared
+  before the text after them is set, whether LaTeX corrects or not: no state outlives the text
+  command, and no correction is set but by TeX's `\/`. LaTeX's `\maybe@ic@` is wrapped, its decision
+  kept as the kernel has it.
 - **The prelude's own `\/` goes** (d): LaTeX decides past the field.
 - **microtype** (b): `{R\rtfield}` joins `\MT@prot@check@cmds`, guarded by `\ifdefined`, so that
   `\leftprotrusion` goes to the start of the field's text, after the markers, and protrudes the
@@ -79,15 +82,20 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
 - Every new macro is `\protected`, and draw.ts reads nothing new: nothing comes between `rt:b:` and
   `\rt@par`. The names are `\rt@f@...`, since the Awesome-CV port's class has an `\rt@end`, an
   `\rt@next` and an `\rt@do` of its own. A token read ahead may be `\fi`, where a class sets a field
-  in a conditional's branch, as the letter class's `\signature` is: it is compared and never left
-  in skipped text, where it would close the conditional. A first version did, and broke one
-  candidate each in `other-0030` and `europecv-0008`.
-- **What still moves the page**: a field followed by anything but a space before the text command
-  whose start corrects it, as a tie, or by a command a document defines that corrects it; XeTeX's line-start protrusion; the
-  begin marker's `\leavevmode`, which starts a paragraph where the field does (decision 0003; in
-  the Awesome-CV sample it moves the colour special of a section's title into its line, and no
-  glyph); and microtype's `\leftprotrusion` at the start of an item's later paragraphs, which reads
-  the `\leavevmode`.
+  in a conditional's branch, as the letter class's `\signature` is: it is compared and never left in
+  skipped text, where it would close the conditional. A first version did, and broke one candidate
+  each in `other-0030` and `europecv-0008`. A group's end is read by taking it and putting it back,
+  never by `\aftergroup`: TikZ's node text ends in a group whose own `\aftergroup` must come first,
+  and a version that read past it so stopped AltaCV's `\cvtag` compiles (35 words more `breaks`,
+  none fewer in place). And the first whole run found `jake-0035`, whose fork sets
+  `\textit{\small{#4}}`, 14 words worse until the group's end was read past: main's own `\/` had
+  corrected there.
+- **What still moves the page**: a field followed by anything but spaces and groups' ends before the
+  text command whose start corrects it, as a tie, or a command a document defines that corrects it;
+  XeTeX's line-start protrusion; the begin marker's `\leavevmode`, which starts a paragraph where
+  the field does (decision 0003; in the Awesome-CV sample it moves the colour special of a section's
+  title into its line, and no glyph); and microtype's `\leftprotrusion` at the start of an item's
+  later paragraphs, which reads the `\leavevmode`.
 - `rich.ts` follows: the last run's closing correction is decided on what the template sets after
   the field (`breakRuns`' `after`), a command by default, which corrects as the space, `\par` or
   brace that follows a rich field in the built-in templates does. Before, the end marker stood
@@ -99,11 +107,12 @@ Two invented look-alikes, one in each engine, move under the prototype and not u
   and special where its unmarked compile does, and which the macro it replaces moved: (a) after a
   field that is a text command's argument, decided past the field's end, and at the next text
   command's start, after a space, none or a group's end; (d) in pdfTeX, and with (a) in XeTeX; (b)
-  an item's first glyph; each of the prototype's two losses; and a field that ends a conditional's
-  branch. (c) is pinned as it is: equal in pdfTeX, moved in XeTeX. Then every built-in template's
-  sample compiled marked and unmarked from its format: `jake: marked = unmarked, 950 glyphs; main's
-  macro moved them`, `altacv: marked = unmarked, 1253 glyphs`, `awesome-cv: marked = unmarked, 1693
-  glyphs`, glyphs and rules at the same places and the same specials in the same order.
+  an item's first glyph; and each of the prototype's two losses. Two more show the macro where it
+  stands: a field that ends a conditional's branch, and one in a TikZ node. (c) is pinned as it is:
+  equal in pdfTeX, moved in XeTeX. Then every built-in template's sample compiled marked and
+  unmarked from its format: `jake: marked = unmarked, 950 glyphs; main's macro moved them`, `altacv:
+  marked = unmarked, 1253 glyphs`, `awesome-cv: marked = unmarked, 1693 glyphs`, glyphs and rules at
+  the same places and the same specials in the same order.
 - `probe.test.ts`: `cvslant`, `\textit{#1}.`, is editable now; a field corrected by a document's
   own command, `{\itshape #1} \cvbold{...}`, is the one kept `moved`, and the uncovered glyphs'
   test uses it.
