@@ -334,7 +334,7 @@ Quill \hfill Wren \\ Owl
 
     test("counts a first line kept as text as kept, its glyphs at most, never as a field", () => {
       const body = String.raw`\begin{itemize}
-  \item{\textbf{Tongues}{: Quillish, Wrenese} \\ Heron Press}
+  \item{\textbf{Officers}{: Quillish, Wrenese} \\ Heron Press}
 \end{itemize}
 `;
       const tree = treeOf(body, FLAT);
@@ -356,11 +356,44 @@ Quill \hfill Wren \\ Owl
         by: "candidate" as const,
         candidate: "i1",
       };
-      // "Tongues: Quillish, Wrenese" sets at most 26 glyphs, its 24 characters but its spaces and two for hyphens.
+      // With no page to line it up with, "Officers: Quillish, Wrenese" sets at most 28 glyphs: its
+      // 25 characters but its spaces, and a hyphen a word.
       expect(ownersOf([run], candidates, outline.fields)).toEqual([
-        { page: 0, from: 10, to: 36, kept: "shape" },
-        { page: 0, from: 36, to: 60, field: "i1.text" },
+        { page: 0, from: 10, to: 38, kept: "shape" },
+        { page: 0, from: 38, to: 60, field: "i1.text" },
       ]);
+      // On the page it sets 24, a ligature for "ffi" and a hyphen TeX added among them: lined up
+      // with them, it is counted to its last glyph, no more, no fewer.
+      const glyphs = [
+        ...Array.from({ length: 10 }, () => "·"),
+        ...["O", "ffi", "c", "e", "r", "s", ":", "Q", "u", "i", "l", "l", "i", "s", "h", ","],
+        ...["W", "r", "e", "n", "-", "e", "s", "e"],
+        ...["H", "e", "r", "o", "n", "P", "r", "e", "s", "s"],
+      ];
+      const page = { pages: [{ items: glyphs.map((text) => ({ kind: "glyph", text })) }] };
+      expect(
+        ownersOf(
+          [{ ...run, to: glyphs.length }],
+          candidates,
+          outline.fields,
+          new Map(),
+          page as never,
+        ),
+      ).toEqual([
+        { page: 0, from: 10, to: 34, kept: "shape" },
+        { page: 0, from: 34, to: 44, field: "i1.text" },
+      ]);
+    });
+
+    test("keeps a first line after a raw break, which ends the paragraph where text is centred", () => {
+      // In `center` a `\\[2pt]` ends the paragraph: the next line begins one, and emptied would
+      // leave its own break nothing to end. The last line, emptied, ends nothing.
+      const body = String.raw`\begin{center} Quill \\[2pt] Lark \\ Wren \end{center}
+`;
+      const { parts } = outlineOf(body);
+      expect(written(parts)).toBe(`\\begin{document}${body}\\end{document}`);
+      expect(Object.values(fieldsOf(parts))).toEqual(["Quill", "Wren"]);
+      expect(shown(parts)).toContain("Lark \\\\ [");
     });
 
     test("leaves no line of nothing, between two breaks or at either end, a field", () => {
@@ -691,6 +724,19 @@ Quill Wrenfield \hfill Harbour City \\ Lantern Works \\ Heron Press
 \cventry{2017--2019}{Invented Runner}{Wren Post}{Quill Town}{}{Ran \textbf{invented \\ errands} daily}
 \end{document}
 `,
+  // First lines kept as text that TeX hyphenates many times in a narrow box, or sets with many
+  // ligatures, before a line that is a field.
+  hyphens: String.raw`\documentclass{article}
+\pagestyle{empty}
+\begin{document}
+\noindent\parbox{2.4cm}{Characterization internationalization institutionalization incomprehensibilities ab \\ Quill Wren}
+
+Affable officers sniffled in fluffy offices, baffled by offline affidavits; efficient
+chiffon traffickers ruffled waffles and shuffled stiff coffee filters off the fifth
+floor, scoffing at difficult sufficiency, while affluent buffoons fluffed truffles and
+offered snuffled riffs to effluent muffins \\ Heron Lark Owl Finch
+\end{document}
+`,
 };
 
 describe.skipIf(!engineAvailable())("a leaf that breaks its line, on the engine", () => {
@@ -763,9 +809,18 @@ describe.skipIf(!engineAvailable())("a leaf that breaks its line, on the engine"
     expect(texts.some((text) => /Invented Tongues|A paragraph/.test(text))).toBe(false);
     // No line stops the compile when empty: a field emptied leaves its break a line to end.
     expect(report.outline.stops.empty).toBe(0);
-    // The two first lines kept, 5 and 7 words, are counted as kept text, and the retype reaches
-    // them; the count errs towards kept text, so the second line's short first word is too.
-    expect(words).toMatchObject({ editable: words.body - 13, retype: 12, locked: 1 });
+    // The two first lines kept, 5 and 7 words, are counted as kept text, lined up with their
+    // glyphs, and the retype reaches them; every other word is in place.
+    expect(words).toMatchObject({ editable: words.body - 12, retype: 12, locked: 0 });
+  }, 60_000);
+
+  test("counts a first line kept as text to its last glyph, hyphens and ligatures aside", async () => {
+    const { report, fields, differs, words } = await imported(BROKEN_LINES.hyphens);
+    expect(differs).toBeUndefined();
+    expect(Object.values(fields)).toEqual(["Quill Wren", "Heron Lark Owl Finch"]);
+    // The kept lines' words are kept text the retype reaches, the fields' six in place.
+    expect(report.outline.stops.empty).toBe(0);
+    expect(words).toMatchObject({ editable: 6, retype: words.body - 6, locked: 0 });
   }, 60_000);
 
   test("keeps a rich run across a break whole, and the page the upload's, on moderncv", async () => {

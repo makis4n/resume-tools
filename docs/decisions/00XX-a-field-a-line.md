@@ -36,17 +36,34 @@ whether the `differs` words of kind `glyph`, 425, come from how the outline writ
   required, but its bisection of the empty text has to find it first: tried with every first line a
   field, `other-0010`'s bisection, among 1,172 fields, found 3 such candidates within its 48 compiles
   and left 741 fields untested, 2,938 words fewer in place. So the first line is a field only where
-  a text or a date certainly stands before it on its line, with nothing between but spacing and
-  breaks; otherwise it is kept text, and its candidate's other lines are fields. A candidate whose
-  kept first line is not its start is kept whole. Lines after a break set nothing amiss when
-  emptied, and are fields.
+  a text or a date certainly stands before it on its line, with nothing between but spacing,
+  `\newline` and `\linebreak`; otherwise it is kept text, and its candidate's other lines are
+  fields. A raw `\\*` or `\\[2pt]` before it does not count: where text is centred or ragged it ends
+  the paragraph. A candidate whose kept first line is not its start is kept whole.
+- **Lines after a break are fields, and some of them are required.** Outside centred and ragged
+  text, a line after a break is set in the paragraph its break ends a line of, and emptied sets
+  nothing amiss. In `center`, `flushleft` and `flushright`, and after `\centering`, `\raggedright`
+  or `\raggedleft`, `\\` ends the paragraph, so a line between two breaks begins one: emptied, it
+  leaves the next `\\` nothing to end, and LaTeX stops as above. Check 2 finds it, so the page and
+  the editor stay safe, but it judges a candidate required as a whole, so every field of that
+  candidate is required, the last line and a first line after text among them, which empty
+  harmlessly. Jake's template sets `\raggedright` for its whole document, so its skills block's
+  lines after the first are all required (three in its sample), and resume headers often set their
+  lines centred: this is where the person meets it most, and part of the required fields measured
+  below. Judging each field of a split candidate on its own is a change to check 2's bisection,
+  left for later.
 - **The report counts a kept first line as kept text.** The probe's runs give a candidate's glyphs to
   it whole, so the count (`ownersOf`, `reachOf`) gives the first glyphs of a candidate the outline
-  holds in part to kept text, `shape`, and the rest to its field. It counts the glyphs the kept
-  line sets as at most every character but a space, one more for a letter past ASCII, two more for
-  an ellipsis and two for hyphens TeX may add, so it errs towards kept text and never counts a kept
-  word as in place. On an invented look-alike of Jake's skills block it counts the 12 kept words
-  as kept, and one short word after them.
+  holds in part to kept text, `shape`, and the rest to its field. The kept line's glyphs are those
+  that spell its text from the candidate's first glyph on the reference's page, a hyphen TeX added
+  among them, as the retype lines a run up (decision 0042), so a ligature or a word broken many
+  times is counted to its last glyph. Where they do not spell it, as where OT1 sets an accent apart
+  from its letter, the count takes the most the line can set: every character but a space, one
+  more for a letter past ASCII, two more for an ellipsis, and a hyphen a word, which errs towards
+  kept text unless TeX breaks one word twice. On an invented look-alike of Jake's skills block it
+  counts the 12 kept words as kept and none after them; on a narrow box whose kept line TeX
+  hyphenates many times, and on a paragraph set with thirty-odd ligatures, every kept word is one
+  the retype reaches and every field's word is in place.
 - **Check 1 guards each new field, as any field.** A split candidate whose fields move the page is
   kept whole as text (`differs`), with every field of it, as before.
 
@@ -74,36 +91,40 @@ parser, outside this lane's files:
 ### Measured
 
 `corpus run --json` over all 220 documents on a merge of D3's diagnostics (decision 0073) and this
-change, never pushed, four at a time at a load of 4.7 to 5.8, against main's run (`ad0a73e`):
-`corpus compare` and a count over both runs find no document with a worse outcome or fewer words in
-place.
+change and its review fixes, never pushed, four at a time at a load of 3.2 to 13.3, against main's
+run (`ad0a73e`): `corpus compare` and a count over both runs find no document with a worse outcome
+or fewer words in place. The review fixes change no field on the corpus; they change only the count
+of kept first lines, 18 words more in place than before them.
 
 | | Main | This change |
 |---|--:|--:|
-| Words editable in place, of the 110 imported | 84.6% (69,803) | 87.3% (71,994) |
+| Words editable in place, of the 110 imported | 84.6% (69,803) | 87.3% (72,012) |
 | Jake's, Awesome-CV, AltaCV | 94.8%, 93.5%, 83.0% | 97.2%, 94.2%, 84.5% |
 | europecv, moderncv, the others | 78.1%, 83.8%, 76.2% | 78.1%, 87.0%, 80.0% |
 | Imported resumes at 90% or more in place | 61 | 74 |
 | Imported resumes under 50% in place | 5 | 3 |
 | Successes | 56 | 68 |
-| Words kept for `shape` | 3,250 | 934 |
+| Words kept for `shape` | 3,250 | 916 |
 | Words kept for `differs` | 2,317 | 2,442 |
 | Fields, and of them required | 9,480, 211 | 9,733, 284 |
 | All compiles, all imports | 5,845 | 6,037 |
 
-- 34 resumes gain 2,191 words in place: `other-0059` 742 to 1,024 of 1,068, a success;
-  `other-0009` 594 to 823; `moderncv-0023` 211 to 432 of 631 and `other-0043` 187 to 349 of
-  412, both past 50%; `jake-0031` 1,286 to 1,414, a success; `other-0063`, `altacv-0005`,
-  `jake-0045`, `other-0060`, `other-0040`, `other-0070` and `jake-0016` 60 to 119 each; 12 of
+- 34 resumes gain 2,209 words in place: `other-0059` 742 to 1,026 of 1,068, a success;
+  `other-0009` 594 to 827; `moderncv-0023` 211 to 434 of 631 and `other-0043` 187 to 352 of
+  412, both past 50%; `jake-0031` 1,286 to 1,415, a success; `other-0063`, `altacv-0005`,
+  `jake-0045`, `other-0060`, `other-0040`, `other-0070` and `jake-0016` 60 to 120 each; 12 of
   Jake's forks in all.
-- Of the 3,250 `shape` words, 818 are first lines kept as text and 116 texts that cannot be cut.
+- Of the 3,250 `shape` words, 800 are first lines kept as text and 116 texts that cannot be cut.
   125 more words are `differs`: lines whose fields moved the page, kept whole by check 1.
 - The checks take 192 more compiles, most of them check 2's bisection of the empty text, which now
   finds the candidates whose first line is a field after another text that is a field too: emptied
   together, they leave the break nothing to end, and the candidate is required:
   `other-0043` 42 to 60, `altacv-0005` 81 to 97, `moderncv-0023` 72 to 75; `jake-0004` is
-  unchanged. The run's time targets of decision 0074 hold but the slowest whole import, 135.8 s,
-  which is F1's.
+  unchanged. The run before the review fixes, at a load of 4.7 to 5.8, held the time targets of
+  decision 0074 but the slowest whole import, 135.8 s, which is F1's; the run after them, with the
+  same compiles, all 6,037, ran beside other lanes' work at a load of 3.2 to 13.3, so its times
+  (62 pages of 91 within 8 s on pdfTeX, 13 of 19 within 20 s on XeTeX) measure the machine, not
+  this change.
 - Typing on the 36 resumes of `shape-top.txt` (`measure --typing-imports`, at a load of 4.9 to
   2.4, against the investigation's run at 1.2 to 4.1): 35 within 300 ms either way, median 90 ms
   against 96 ms, slowest `altacv-0005` 310 ms against 302 ms.
@@ -114,7 +135,9 @@ place.
   line, where it begins the line, stays kept text the retype reaches (decision 0042). Each field is
   one line: Enter still inserts nothing (decision 0004), so no edit adds or removes a line.
 - More fields reach check 2, and some are required: a first line that is a field after another
-  field on its line stops the compile when both are emptied. Check 2's bisections meet more fields, which F1 (decision 0074) changes.
+  field on its line stops the compile when both are emptied, and so does a line between two breaks
+  in centred or ragged text, which makes every field of its candidate required. Check 2's
+  bisections meet more fields, which F1 (decision 0074) changes.
 - The outline's `line-break` rule (decision 0073's diagnostics) now names only texts it cannot
   cut; its kept first lines are counted as `shape` with no rule of their own.
 - `differs` of kind `glyph` is left for a change to the model's marks, the generator or the parser:

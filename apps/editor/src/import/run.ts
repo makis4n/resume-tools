@@ -474,7 +474,7 @@ export async function importResume(
       report: {
         engine,
         reference: shown,
-        checks: checksOf(checked, probed, words, reachedRuns(reach.reached), swap?.swapped),
+        checks: checksOf(checked, probed, words, reachedRuns(reach.reached), swap?.swapped, made),
         locked: [],
         images: taken.images,
         // What the intake and the XeTeX rewrite set aside, which the report lists (decision 0039).
@@ -540,11 +540,11 @@ export function preambleOf(
 /**
  * What the checks found, as item 13's report reads them (`AssemblyChecks`): the outline's fields,
  * required or not, and the probe's other candidates by why they are kept text, the checks' reasons
- * among them; the page's words set down to what sets them (`ownersOf`), and the glyphs of kept text
- * the retype reaches (`retype`); whether the outline sets the reference's page, and how it first
- * differs where it does not; each group's trials, by its id; what the checks could not do; and
- * their compiles and time. What the first pass's checks decided beside, the controls, the
- * redefinitions and the harness's findings, an outline has none of.
+ * among them; the page's words set down to what sets them on the reference's glyphs (`ownersOf`),
+ * and the glyphs of kept text the retype reaches (`retype`); whether the outline sets the
+ * reference's page, and how it first differs where it does not; each group's trials, by its id;
+ * what the checks could not do; and their compiles and time. What the first pass's checks decided
+ * beside, the controls, the redefinitions and the harness's findings, an outline has none of.
  */
 function checksOf(
   checked: Checked,
@@ -552,6 +552,7 @@ function checksOf(
   words: Words,
   retype: AssemblyChecks["retype"],
   latinModern: readonly string[] | undefined,
+  reference: Pick<Reference, "pages">,
 ): AssemblyChecks {
   const { outline, difference } = checked;
   const locked: AssemblyChecks["fields"]["locked"] = {};
@@ -592,7 +593,7 @@ function checksOf(
     decisions: {},
     ...(latinModern === undefined ? {} : { latinModern: [...latinModern] }),
     all: [],
-    owners: ownersOf(probed.runs ?? [], probed.candidates, outline.fields, checked.kept),
+    owners: ownersOf(probed.runs ?? [], probed.candidates, outline.fields, checked.kept, reference),
     ...(retype === undefined ? {} : { retype }),
   };
 }

@@ -47,7 +47,7 @@ import {
 } from "@resume-tools/resume-model";
 import type * as Ast from "@unified-latex/unified-latex-types";
 import { parseMinimal } from "@unified-latex/unified-latex-util-parse";
-import { isRetype, retypeOf } from "../editor/retype";
+import { isRetype, retypeOf, spelledFrom } from "../editor/retype";
 import type { Engine } from "../engine/session";
 import type { GlyphBox } from "../page/draw";
 import {
@@ -351,11 +351,15 @@ const sameRuns = (a: RichText, b: RichText) =>
 
 /**
  * The raw commands that set nothing and leave TeX where it was on its line, a line's text going on
- * past them: spaces, glue, and a line's break, after which TeX is still in the paragraph.
+ * past them: spaces, glue, and `\newline` and `\linebreak`, after which TeX is still in the
+ * paragraph in every environment (the kernel's `\newline` is the plain `\\`). A raw `\\*` or
+ * `\\[2pt]` is not among them: in `center`, `flushleft`, `flushright` and after `\centering`,
+ * `\raggedright` or `\raggedleft` it ends the paragraph, and a first line after it, emptied, would
+ * leave the next break nothing to end.
  */
 const ON_THE_LINE: ReadonlySet<string> = new Set([
   ...["hfill", "hfil", "hss", "hspace", "hskip", "kern", "quad", "qquad", "enspace", "enskip"],
-  ...["thinspace", "negthinspace", "space", " ", ",", "/", "@", "nobreak", "\\", "newline"],
+  ...["thinspace", "negthinspace", "space", " ", ",", "/", "@", "nobreak", "newline"],
   ...["linebreak", "allowbreak", "relax", "unskip"],
 ]);
 
@@ -392,25 +396,31 @@ interface Lines {
 }
 
 /**
- * The glyphs a text kept at the start of a candidate the outline holds in part sets, at most, by
- * its candidate (`linesOf`), for the report's count (`ownersOf`, `reachOf`): every character
- * but a space, one more for a letter past ASCII, which OT1 sets as an accent and its letter, two
- * more for an ellipsis, which it sets as three points, and two for hyphens TeX may add. A ligature sets fewer, so the count errs
- * towards kept text, never towards a field. The outline notes it on the probe's own candidate,
- * which the report's count is given too; nothing else reads it.
+ * A text kept at the start of a candidate the outline holds in part (`linesOf`), by its candidate,
+ * for the report's count (`ownersOf`, `reachOf`): its text, which the count lines up with the
+ * candidate's glyphs where it has them (`leadingOf`), and the glyphs it sets at most where they do
+ * not line up (`glyphsAtMost`). The outline notes it on the probe's own candidate, which the
+ * report's count is given too; nothing else reads it.
  */
-const LEADS = new WeakMap<object, number>();
+interface Lead {
+  text: string;
+  most: number;
+}
+const LEADS = new WeakMap<object, Lead>();
 
 /** What may stand between a candidate's start and a first line kept as text: nothing set. */
 const LEADING = /^(?:\s|\{|%[^\n]*(?:\n|$))*$/;
 
-/** The most glyphs a text sets (`LEADS`), two more for hyphens TeX may add where it breaks. */
-function glyphsAtMost(runs: RichText): number {
-  let n = 2;
-  for (const char of runs
-    .map((run) => run.text)
-    .join("")
-    .normalize("NFC")) {
+/**
+ * The most glyphs a text sets (`LEADS`), where its glyphs do not line up with it: every character
+ * but a space, one more for a letter past ASCII, which OT1 sets as an accent and its letter, two
+ * more for an ellipsis, which it sets as three points, and one a word for a hyphen TeX may add
+ * where it breaks the line. A ligature sets fewer, so the count errs towards kept text; only a word
+ * TeX breaks twice, in a column narrower than it, sets more.
+ */
+function glyphsAtMost(text: string): number {
+  let n = text.split(/\s+/u).filter((word) => word !== "").length;
+  for (const char of text.normalize("NFC")) {
     if (/\s/u.test(char)) continue;
     n += char === "…" ? 3 : /\p{L}/u.test(char) && char > "\u{7f}" ? 2 : 1;
   }
@@ -503,7 +513,10 @@ function linesOf(source: string, leaf: Leaf, midLine: boolean): Lines | undefine
       for (let i = 0; i <= items.length; i++) {
         if (i < items.length && items[i]?.item.edge !== "break") continue;
         // A first line that may begin its line stays kept text: empty, it would leave its break
-        // nothing to end, which stops the compile (`midLine`).
+        // nothing to end, which stops the compile (`midLine`). A later line is a field, though in
+        // `center`, `flushleft`, `flushright` and after `\centering`, `\raggedright` or
+        // `\raggedleft`, where `\\` ends the paragraph, it begins one too: emptied, it stops the
+        // compile the same way, and check 2 finds its candidate required, every field of it.
         const first = from === 0;
         const line = items.slice(from, i).map((each) => each.item);
         from = i + 1;
@@ -558,7 +571,7 @@ function spotsOf(
     else continue;
     const chosen: Leaf[] = [];
     let split = true;
-    let lead = 0;
+    let lead: Lead | undefined;
     for (const [k, leaf] of whole.entries()) {
       const found: Lines | undefined = breaksLine(source.slice(leaf.start, leaf.end))
         ? linesOf(source, leaf, midLine.has(leaf))
@@ -573,11 +586,14 @@ function spotsOf(
         split = false;
       else {
         chosen.push(...found.lines);
-        if (kept !== undefined) lead = glyphsAtMost(kept.runs);
+        if (kept !== undefined) {
+          const text = kept.runs.map((run) => run.text).join("");
+          lead = { text, most: glyphsAtMost(text) };
+        }
       }
     }
     if (!split) continue;
-    if (lead > 0) LEADS.set(candidate, lead);
+    if (lead !== undefined) LEADS.set(candidate, lead);
     else LEADS.delete(candidate);
     const own = chosen.filter((leaf) =>
       leaf.kind === "date"
@@ -1074,26 +1090,49 @@ export async function outlinePackage(input: OutlinePackageInput): Promise<Templa
 
 // What the report counts.
 
+/** The texts of each page's glyphs, by the index the probe's runs count them by. */
+const glyphTexts = (reference: Pick<GlyphStream, "pages">) =>
+  reference.pages.map((page) =>
+    page.items.flatMap((item) => (item.kind === "glyph" ? [item.text] : [])),
+  );
+
 /**
  * How many of each run's glyphs a candidate the outline holds in part keeps at its start as kept
  * text (`LEADS`), counted through its runs in the page's order, for those of `fielded`: a first
- * line the outline kept as the upload wrote it.
+ * line the outline kept as the upload wrote it. Its glyphs are those that spell its text from the
+ * candidate's first, a hyphen TeX added among them (`spelledFrom`), where `texts` gives the
+ * page's glyphs and they spell it; otherwise the most it sets (`glyphsAtMost`).
  */
 function leadingOf(
   runs: readonly UncoveredRun[],
   candidates: readonly Pick<ProbeCandidate, "id">[],
   fielded: (id: string) => boolean,
+  texts?: readonly (readonly (string | undefined)[])[],
 ): Map<UncoveredRun, number> {
-  const left = new Map<string, number>();
+  const leads = new Map<string, Lead>();
   for (const each of candidates) {
     const lead = LEADS.get(each);
-    if (lead !== undefined && fielded(each.id)) left.set(each.id, lead);
+    if (lead !== undefined && fielded(each.id)) leads.set(each.id, lead);
   }
   const found = new Map<UncoveredRun, number>();
-  if (left.size === 0) return found;
+  if (leads.size === 0) return found;
   const ordered = runs
-    .filter((run) => run.by === "candidate" && left.has(run.candidate ?? ""))
+    .filter((run) => run.by === "candidate" && leads.has(run.candidate ?? ""))
     .sort((a, b) => a.page - b.page || a.from - b.from);
+  const left = new Map<string, number>();
+  for (const [id, lead] of leads) {
+    let n = 0;
+    if (texts !== undefined) {
+      const drawn = ordered
+        .filter((run) => run.candidate === id)
+        .flatMap((run) => {
+          const row = texts[run.page] ?? [];
+          return row.slice(Math.max(0, run.from), Math.min(run.to, row.length));
+        });
+      n = spelledFrom(lead.text, drawn);
+    }
+    left.set(id, n > 0 ? n : lead.most);
+  }
   for (const run of ordered) {
     const id = run.candidate ?? "";
     const n = Math.min(left.get(id) ?? 0, Math.max(0, run.to - run.from));
@@ -1116,9 +1155,15 @@ export function ownersOf(
   candidates: readonly ProbeCandidate[],
   fields: ReadonlyMap<string, string>,
   checked: ReadonlyMap<string, LockReason> = new Map(),
+  reference?: Pick<GlyphStream, "pages">,
 ): GlyphOwner[] {
   const byId = new Map(candidates.map((each) => [each.id, each]));
-  const leading = leadingOf(runs, candidates, (id) => fields.has(id));
+  const leading = leadingOf(
+    runs,
+    candidates,
+    (id) => fields.has(id),
+    reference === undefined ? undefined : glyphTexts(reference),
+  );
   return runs.flatMap((run): GlyphOwner[] => {
     const at = { page: run.page, from: run.from, to: run.to };
     if (run.by === "raw") return [{ ...at, kept: "raw" }];
@@ -1192,7 +1237,7 @@ export function reachOf(input: WordsInput): {
     page.items.flatMap((item) => (item.kind === "glyph" ? [item] : [])),
   );
   const owners = pages.map((read) => new Array<string>(read.texts.length).fill("t"));
-  const leading = leadingOf(runs, input.candidates, (id) => fields.has(id));
+  const leading = leadingOf(runs, input.candidates, (id) => fields.has(id), glyphTexts(reference));
   for (const run of runs) {
     const row = owners[run.page];
     if (row === undefined) continue;
