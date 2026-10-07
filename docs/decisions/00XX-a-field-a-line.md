@@ -73,36 +73,48 @@ parser, outside this lane's files:
 
 ### Measured
 
-`corpus run --json` over the 56 resumes of `shape-top.txt`, `differs-top.txt`, `jake-0004`,
-`other-0043` and `moderncv-0023`, on a merge of D3's diagnostics (decision 0073) and this change,
-never pushed, four at a time, against main's run (`ad0a73e`): no resume has a worse outcome or fewer
-words in place.
+`corpus run --json` over all 220 documents on a merge of D3's diagnostics (decision 0073) and this
+change, never pushed, four at a time at a load of 4.7 to 5.8, against main's run (`ad0a73e`):
+`corpus compare` and a count over both runs find no document with a worse outcome or fewer words in
+place.
 
-| On the 56 resumes | Main | This change |
+| | Main | This change |
 |---|--:|--:|
-| Words editable in place, of 51,194 | 40,375 | 42,589 (+2,214) |
-| Words kept for `shape` | 3,250 | 911 |
+| Words editable in place, of the 110 imported | 84.6% (69,803) | 87.3% (71,994) |
+| Jake's, Awesome-CV, AltaCV | 94.8%, 93.5%, 83.0% | 97.2%, 94.2%, 84.5% |
+| europecv, moderncv, the others | 78.1%, 83.8%, 76.2% | 78.1%, 87.0%, 80.0% |
+| Imported resumes at 90% or more in place | 61 | 74 |
+| Imported resumes under 50% in place | 5 | 3 |
+| Successes | 56 | 68 |
+| Words kept for `shape` | 3,250 | 934 |
 | Words kept for `differs` | 2,317 | 2,442 |
-| Fields | 5,497 | 5,750 |
-| Required fields | 118 | 191 |
-| Compiles | 3,136 | 3,328 |
+| Fields, and of them required | 9,480, 211 | 9,733, 284 |
+| All compiles, all imports | 5,845 | 6,037 |
 
-- 34 resumes gain: `other-0059` 742 to 1,026 words in place, a success; `other-0009` 594 to 827;
-  `moderncv-0023` 211 to 434; `other-0043` 187 to 352; `jake-0031` 1,286 to 1,415, a success;
-  `other-0063`, `altacv-0005`, `jake-0045`, `other-0060`, `other-0070` and `other-0040` 76 to 120
-  each; 12 of Jake's forks.
-- Of the 3,250 `shape` words, 795 are first lines kept as text and 116 texts that cannot be cut. 125
-  more words are `differs`: lines whose fields moved the page, kept whole by check 1.
-
-The whole corpus, on the same merge: in the consequences below.
+- 34 resumes gain 2,191 words in place: `other-0059` 742 to 1,024 of 1,068, a success;
+  `other-0009` 594 to 823; `moderncv-0023` 211 to 432 of 631 and `other-0043` 187 to 349 of
+  412, both past 50%; `jake-0031` 1,286 to 1,414, a success; `other-0063`, `altacv-0005`,
+  `jake-0045`, `other-0060`, `other-0040`, `other-0070` and `jake-0016` 60 to 119 each; 12 of
+  Jake's forks in all.
+- Of the 3,250 `shape` words, 818 are first lines kept as text and 116 texts that cannot be cut.
+  125 more words are `differs`: lines whose fields moved the page, kept whole by check 1.
+- The checks take 192 more compiles, most of them check 2's bisection of the empty text, which now
+  finds the candidates whose first line is a field after another text that is a field too: emptied
+  together, they leave the break nothing to end, and the candidate is required:
+  `other-0043` 42 to 60, `altacv-0005` 81 to 97, `moderncv-0023` 72 to 75; `jake-0004` is
+  unchanged. The run's time targets of decision 0074 hold but the slowest whole import, 135.8 s,
+  which is F1's.
+- Typing on the 36 resumes of `shape-top.txt` (`measure --typing-imports`, at a load of 4.9 to
+  2.4, against the investigation's run at 1.2 to 4.1): 35 within 300 ms either way, median 90 ms
+  against 96 ms, slowest `altacv-0005` 310 ms against 302 ms.
 
 ## Consequences
 
 - A skills block or a description written as lines is a field a line in the editor; its first
   line, where it begins the line, stays kept text the retype reaches (decision 0042). Each field is
   one line: Enter still inserts nothing (decision 0004), so no edit adds or removes a line.
-- More fields reach check 2, and some are required: a line's field that leaves its candidate's
-  first line empty is one. Check 2's bisections meet more fields, which F1 (decision 0074) changes.
+- More fields reach check 2, and some are required: a first line that is a field after another
+  field on its line stops the compile when both are emptied. Check 2's bisections meet more fields, which F1 (decision 0074) changes.
 - The outline's `line-break` rule (decision 0073's diagnostics) now names only texts it cannot
   cut; its kept first lines are counted as `shape` with no rule of their own.
 - `differs` of kind `glyph` is left for a change to the model's marks, the generator or the parser:
