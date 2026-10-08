@@ -57,9 +57,7 @@
       "id": "adaptability",
       "name": "Adaptability",
       "kind": "skill",
-      "aliases": [
-        "flexibility"
-      ]
+      "aliases": []
     },
     {
       "id": "administrative-support",
@@ -332,8 +330,7 @@
       "name": "Basic Life Support certification",
       "kind": "qualification",
       "aliases": [
-        "bls certification",
-        "bls"
+        "bls certification"
       ]
     },
     {
@@ -419,9 +416,7 @@
       "id": "calendar-management",
       "name": "Calendar management",
       "kind": "skill",
-      "aliases": [
-        "scheduling"
-      ]
+      "aliases": []
     },
     {
       "id": "call-centre-operations",
@@ -910,7 +905,7 @@
       "name": "Employee onboarding",
       "kind": "skill",
       "aliases": [
-        "onboarding"
+        "new hire onboarding"
       ]
     },
     {
@@ -1123,7 +1118,6 @@
       "name": "Google Cloud Platform",
       "kind": "tool",
       "aliases": [
-        "gcp",
         "google cloud"
       ]
     },

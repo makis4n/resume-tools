@@ -818,6 +818,27 @@ def test_excel_guard_survives_hard_line_wraps(taxonomy: Taxonomy) -> None:
     ):
         assert [m.skill.id for m in taxonomy.mentions(text)].count("excel-spreadsheets") == 1, text
     assert not taxonomy.mentions("Skills\nExcel in a fast-paced team")
+    for text in (
+        "Led the team.\nExcel in a fast-paced environment",
+        "Detail-oriented analyst.\r\nExcel in fast-paced, deadline-driven teams.",
+        "Team player.\nExcel at meeting deadlines.",
+    ):
+        assert not taxonomy.mentions(text), text
+
+
+def test_excel_guard_ignores_whitespace_only_window(taxonomy: Taxonomy) -> None:
+    text = "Built models in" + " " * 70 + "Excel at Acme"
+    assert [m.skill.id for m in taxonomy.mentions(text)] == ["excel-spreadsheets"]
+
+
+def test_dropped_ambiguous_bare_aliases(taxonomy: Taxonomy) -> None:
+    for text in (
+        "Own customer onboarding and flexibility with shift scheduling.",
+        "Analysed BLS wage data for compensation benchmarking.",
+        "ICH-GCP certification required; maintain GCP compliance.",
+    ):
+        assert not taxonomy.mentions(text), text
+    assert taxonomy.mentions("Completed new hire onboarding")
 
 
 def test_excel_guard_recognises_more_bullet_markers(taxonomy: Taxonomy) -> None:

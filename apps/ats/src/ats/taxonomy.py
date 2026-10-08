@@ -34,8 +34,8 @@ Normalisation and matching, in brief:
   into the original text, since nothing about the haystack itself was touched. Terms not listed
   under an entry's `case_sensitive` match case-insensitively, through a per-alternative scoped
   `(?i:...)` group (Python's `re` has supported scoped inline flags since 3.6); terms that are
-  listed match only in the exact case given, which is how ambiguous short names ("Spark", "Chef",
-  "PM"...) are kept out of ordinary prose without also losing every other alias's normal
+  listed match only in the exact case given, which is how ambiguous short names ("Spark", "Chef"...)
+  are kept out of ordinary prose without also losing every other alias's normal
   case-insensitive matching. `re.finditer` walks the text left to right and its matches never
   overlap, which is exactly "every non-overlapping mention, ordered by start offset" for free, in
   one linear pass. To keep that pass cheap, the alternatives are bucketed by first character
@@ -183,7 +183,7 @@ def normalise(term: str) -> str:
     4. Leading and trailing punctuation is stripped, repeatedly, until nothing more comes off --
        except `+ # . / & -`, which are kept wherever they sit, since our data uses them inside
        terms that mean something different without them: "C++", "C#", ".NET", "Node.js", "CI/CD",
-       "e-learning". These five are kept unconditionally, not just when they look meaningful, so
+       "e-learning". These six are kept unconditionally, not just when they look meaningful, so
        "Python." (a trailing sentence period) normalises to "python." rather than "python": this
        function folds a standalone alias, name or `lookup()` term, never an arbitrary sentence
        fragment, and telling a meaningful "." from a stray one would need to know which term it
@@ -322,13 +322,19 @@ def _starts_sentence(text: str, start: int) -> bool:
     stripped = prefix.rstrip()
     gap = prefix[len(stripped) :]
     if not stripped:
-        return True
+        # An all-whitespace window is a start only when it reaches the true start of the text.
+        return lo == 0
     if "\n" in gap or "\r" in gap:
         # A hard-wrapped line ("... models in\nExcel at Acme") continues the sentence when the
         # previous line stops on a lower-case word or a comma; a capitalised word (a heading such
         # as "Skills") or any other ending starts a line.
         if stripped[-1] == ",":
             return False
+        if stripped[-1] in "!?":
+            return True
+        if stripped[-1] == ".":
+            word = _LAST_WORD.search(stripped, max(0, len(stripped) - 32), len(stripped) - 1)
+            return word is None or word.group().lower() not in _ABBREVIATIONS
         word = _LAST_WORD.search(stripped, max(0, len(stripped) - 32))
         return word is None or not word.group()[:1].islower()
     core = stripped.rstrip(_OPENERS).rstrip()

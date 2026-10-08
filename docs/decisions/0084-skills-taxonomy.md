@@ -79,20 +79,23 @@ changed and why.
     - Review round four dropped the bare "cpa" (`cpa-license`: cost per acquisition in marketing)
       and "acls" (`acls-certification`: network access control lists), and renamed `typing-speed`
       from "Typing" to "Typing speed" ("static typing" in software text); the long forms stay.
+    - A final round dropped the bare aliases "onboarding" (`employee-onboarding`; "customer
+      onboarding" is everywhere in support and sales text; "new hire onboarding" replaces it),
+      "flexibility" (`adaptability`; benefits copy), "scheduling" (`calendar-management`; shift
+      scheduling), "bls" (`bls-certification`; the Bureau of Labor Statistics) and "gcp"
+      (`google-cloud-platform`; Good Clinical Practice). The long forms stay.
     - "Excel", too, was dropped in the taxonomy's first version, then brought back -- see
       `not_followed_by`, below.
   - **Kept, but only under `case_sensitive`:** "Swift", "Rust", "Spark" (alias of `apache-spark`),
-    "Chef", "SAP" (alias of `sap-erp`), "Spring
-    Boot" is kept but bare "Spring" was *dropped instead* (see below -- it is listed here to
-    explain why it is not simply case-sensitive), "Outlook" (`microsoft-outlook`), "Slack",
+    "Chef", "SAP" (alias of `sap-erp`), "Outlook" (`microsoft-outlook`), "Slack",
     "Zoom", "Notion", "Sketch", "Workday" (`hris-workday`: "a flexible workday" is ordinary office
     prose, almost always lower case), "Illustration" ("for illustration purposes" is almost always
     lower case too), "Confluence" ("a confluence of skills and experience"), "Puppet",
-    "Salesforce", "ML" (`machine-learning`: lower-case "ml" is deliberately not matched, trading
+    "Salesforce" ("our salesforce grew 20%", the one-word spelling of "sales force"), "ML" (`machine-learning`: lower-case "ml" is deliberately not matched, trading
     recall for precision, as with React and Agile), and, from review round three, the names "Greenhouse" (`greenhouse-ats`),
     "Blackboard" (`blackboard-lms`), "Intercom", "Flask", "dbt" (the clinical acronym DBT is
     upper case), "SEM" ("Sem 1" means semester) and the alias "Illustrator" of
-    `adobe-illustrator` ("book illustrator") ("our salesforce grew 20%", the one-word spelling of "sales force"). "Angular" is
+    `adobe-illustrator` ("book illustrator"). "Angular" is
     included here too, on the same judgement (an "angular" logo or face is ordinary design/general
     prose, almost never capitalised mid-sentence). These are judged to collide with ordinary prose
     only rarely in exactly this case -- the lower-case common-word or idiomatic sense is usually
@@ -109,7 +112,8 @@ changed and why.
     applied by `mentions()` only when the match starts a text, line, list item or sentence (after
     any bullet glyph, including private-use ones, whitespace including non-breaking, and opening
     quotes; the common arrow, triangle and tick bullets and "1)" / "a)" numbering; a hard line wrap
-    after a lower-case word or comma continues the sentence rather than starting one; a hyphen glued to the word, as in "MS-Excel", and abbreviation periods such as
+    after a lower-case word or comma continues the sentence rather than starting one, but a line
+    ending in a sentence-final period, "!" or "?" does start one; a hyphen glued to the word, as in "MS-Excel", and abbreviation periods such as
     "incl." or "e.g." do not count as starting one, nor does a colon).
     "Proficient in Excel (pivot tables)", "Built models in Excel at Acme" and "Advanced Excel at an
     expert level" still match; a sentence-initial "Excel in a fast-paced environment" does not. `react` briefly had a
@@ -120,8 +124,9 @@ changed and why.
   - **Sentence-initial capitals are a stated limit.** Any `case_sensitive` name is matched when
     capitalised only because it starts a sentence: "React quickly.", "Spark innovation across the
     team.", "Swift action is expected.", "Notion of ownership...". `mentions()` has no
-    sentence-boundary awareness and this record does not add any. The guard on Excel is the one
-    exception, kept because "Excel in ..." is by far the commonest sentence-initial use of the
+    general sentence-boundary awareness. The guard on Excel is the one exception (it uses
+    `_starts_sentence()`, described above; any new `not_followed_by` entry inherits its
+    heuristics), kept because "Excel in ..." is by far the commonest sentence-initial use of the
     verb. Callers should treat a single bare mention of these names as weaker evidence than a
     mention with a corroborating alias or context.
   - **Accepted collisions that need name or context awareness.** "Dr. Jenkins" tags `jenkins`
