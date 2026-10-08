@@ -148,6 +148,13 @@ _EDGE_PUNCTUATION = "".join(c for c in string.punctuation if c not in _MEANINGFU
     "“”‘’—–…"  # curly quotes, em/en dash, ellipsis
 )
 
+# Typographic apostrophes fold to ASCII "'" (length-preserving), so "Bachelor\u2019s degree" from
+# LaTeX or Word output matches "Bachelor's degree". Trademark and registered signs are dropped
+# from a looked-up term, since NFKC would otherwise turn U+2122 into the letters "TM".
+_APOSTROPHES = {0x2018: "'", 0x2019: "'", 0x02BC: "'"}
+_TRADEMARK_SIGNS = {0x2122: None, 0x2120: None, 0x00AE: None}
+_LOOKUP_PRE_FOLD = {**_APOSTROPHES, **_TRADEMARK_SIGNS}
+
 # A match cannot be immediately preceded by a Unicode word character, or immediately followed by a
 # Unicode letter or underscore (a word character that is not a digit). See the module docstring for
 # why the right-hand side deliberately tolerates a following digit or "+" (a version suffix:
@@ -165,7 +172,7 @@ def _fold_whitespace_and_edges(text: str) -> str:
     `case_sensitive` alias's exact spelling while still tolerating incidental whitespace and
     surrounding punctuation such as "(Python)," or a trailing sentence period.
     """
-    text = unicodedata.normalize("NFKC", text)
+    text = unicodedata.normalize("NFKC", text.translate(_LOOKUP_PRE_FOLD))
     text = re.sub(r"\s+", " ", text).strip()
     while True:
         stripped = text.strip(_EDGE_PUNCTUATION).strip()
@@ -317,7 +324,13 @@ def _compat_fold(text: str) -> tuple[str, list[int] | None, list[int] | None]:
     ends: list[int] = []
     changed = False
     for i, char in enumerate(text):
-        piece = unicodedata.normalize("NFKC", char) if ord(char) > 127 else char
+        code = ord(char)
+        if code in _APOSTROPHES:
+            piece = "'"
+        elif code in _TRADEMARK_SIGNS:
+            piece = char  # keep as a non-letter; NFKC would make letters ("TM") that block a match
+        else:
+            piece = unicodedata.normalize("NFKC", char) if code > 127 else char
         if piece != char:
             changed = True
         pieces.append(piece)

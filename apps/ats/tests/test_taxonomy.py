@@ -969,6 +969,33 @@ def test_mentions_agrees_with_lookup_on_compatibility_characters(
 @pytest.mark.parametrize(
     "text",
     [
+        "Proficiency in Microsoft Office\u2122 and Salesforce\u2122 required.",
+        "Java\u2122 and Tableau\u2122 dashboards",
+        "Jira\u2120, Workday\u00ae",
+    ],
+)
+def test_mentions_survives_trademark_signs(taxonomy: Taxonomy, text: str) -> None:
+    assert _found_ids(taxonomy, text)
+    assert _found_ids(taxonomy, text) == _found_ids(taxonomy, text.replace("\u2122", ""))
+
+
+@pytest.mark.parametrize("term", ["Salesforce\u00ae", "Tableau\u00ae", "Jira\u2122", "Java\u2122"])
+def test_lookup_ignores_trademark_signs(taxonomy: Taxonomy, term: str) -> None:
+    assert taxonomy.lookup(term) is not None
+
+
+@pytest.mark.parametrize(
+    "text", ["Bachelor\u2019s degree in Finance", "Master\u2019s degree required"]
+)
+def test_curly_apostrophes_match_like_ascii(taxonomy: Taxonomy, text: str) -> None:
+    ascii_text = text.replace("\u2019", "'")
+    assert _found_ids(taxonomy, text) == _found_ids(taxonomy, ascii_text) != []
+    assert taxonomy.lookup(text.split(" in ")[0].split(" required")[0]) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "Owned demand forecasting and replenishment.",
         "Data pipeline management with Airflow",
         "Influence purchasing decisions",
