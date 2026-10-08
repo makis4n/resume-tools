@@ -232,10 +232,8 @@ def test_lookup_honours_case_sensitive_spark_lowercase_does_not_match(taxonomy: 
     assert spark is not None
     assert spark.id == "apache-spark"
     assert taxonomy.lookup("spark") is None
-    # The all-caps form (a shouted heading) is accepted; mixed case is not.
-    all_caps = taxonomy.lookup("SPARK")
-    assert all_caps is not None
-    assert all_caps.id == "apache-spark"
+    # Exactly the declared case, as mentions() requires; no all-caps tolerance.
+    assert taxonomy.lookup("SPARK") is None
     assert taxonomy.lookup("sPARK") is None
 
 
@@ -244,11 +242,13 @@ def test_lookup_case_sensitive_chef_vs_lowercase(taxonomy: Taxonomy) -> None:
     assert taxonomy.lookup("chef") is None
 
 
-def test_lookup_accepts_all_caps_for_a_case_sensitive_alias(taxonomy: Taxonomy) -> None:
-    for term in ("REACT", "React", "EXCEL", "CHEF"):
+def test_lookup_and_mentions_agree_on_a_case_sensitive_alias(taxonomy: Taxonomy) -> None:
+    for term in ("React", "Excel", "Chef"):
         assert taxonomy.lookup(term) is not None, term
-    assert taxonomy.lookup("react") is None
-    assert taxonomy.lookup("rEACT") is None
+        assert taxonomy.mentions(f"Skills: {term}"), term
+    for term in ("REACT", "react", "rEACT", "EXCEL", "CHEF"):
+        assert taxonomy.lookup(term) is None, term
+        assert not taxonomy.mentions(f"Skills: {term}"), term
 
 
 def test_lookup_retries_without_a_trailing_period(taxonomy: Taxonomy) -> None:
@@ -268,6 +268,14 @@ def test_lookup_retries_without_a_trailing_period(taxonomy: Taxonomy) -> None:
 def test_lookup_tolerates_incidental_punctuation_and_whitespace(taxonomy: Taxonomy) -> None:
     assert taxonomy.lookup("  Python  ") is not None
     assert taxonomy.lookup("(Python)") is not None
+
+
+def test_lookup_retries_after_a_bracket_and_a_sentence_period(taxonomy: Taxonomy) -> None:
+    python = taxonomy.lookup("Python")
+    assert python is not None
+    assert taxonomy.lookup("(Python).") == python
+    assert taxonomy.lookup("(Python),") == python
+    assert taxonomy.lookup('"Python".') == python
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +583,72 @@ def test_mentions_does_not_find_excel_in_the_fast_paced_idiom(taxonomy: Taxonomy
         m.skill.id == "excel-spreadsheets"
         for m in taxonomy.mentions("Ready to excel at any challenge.")
     )
+
+
+def _ids(taxonomy: Taxonomy, text: str) -> set[str]:
+    return {m.skill.id for m in taxonomy.mentions(text)}
+
+
+def test_excel_guard_applies_only_at_the_start_of_a_sentence(taxonomy: Taxonomy) -> None:
+    for text in (
+        "Built monthly reporting in Excel at Acme Corp",
+        "Used Excel in every client engagement",
+        "Advanced Excel at an expert level is required.",
+        "Build financial models in Excel in collaboration with the finance team.",
+    ):
+        assert "excel-spreadsheets" in _ids(taxonomy, text), text
+    for text in (
+        "Excel in a fast-paced environment.",
+        "Team player. Excel at any challenge.",
+        "Skills:\nExcel in a fast-paced team",
+        "- Excel at meeting deadlines",
+    ):
+        assert "excel-spreadsheets" not in _ids(taxonomy, text), text
+
+
+@pytest.mark.parametrize(
+    ("text", "absent"),
+    [
+        ("Financial Analyst, American Express, 2019-2022", "express-js"),
+        ("Pharmacy benefits analyst at Express Scripts", "express-js"),
+        ("Cut greenhouse gas emissions across the network by 12%", "greenhouse-ats"),
+        ("Explained fractions on the blackboard to a class of 30", "blackboard-lms"),
+        ("Answered the nurse-call intercom", "intercom"),
+        ("Sterilised each flask before culturing", "flask"),
+        ("Ran Spark jobs on Amazon EMR", "electronic-health-records"),
+        ("Provided DBT and CBT therapy to adolescent clients", "dbt"),
+        ("Hiring a PM to run construction projects on schedule", "product-management"),
+        ("NUS Dean's List, AY2023/24 Sem 1 and Sem 2.", "search-engine-marketing"),
+        ("I sharpened my SQL skills on reporting work.", "mysql"),
+        ("Partnered with a CRO on phase II clinical trials", "conversion-rate-optimisation"),
+        ("Freelance children's book illustrator", "adobe-illustrator"),
+    ],
+)
+def test_ordinary_prose_does_not_tag_a_tool(taxonomy: Taxonomy, text: str, absent: str) -> None:
+    assert absent not in _ids(taxonomy, text)
+
+
+def test_the_real_tool_spellings_still_match(taxonomy: Taxonomy) -> None:
+    assert "greenhouse-ats" in _ids(taxonomy, "Managed requisitions in Greenhouse.")
+    assert "dbt" in _ids(taxonomy, "Modelled marts in dbt and Snowflake.")
+    assert "search-engine-marketing" in _ids(taxonomy, "Ran SEM campaigns.")
+    assert "adobe-illustrator" in _ids(taxonomy, "Photoshop, Illustrator, Figma")
+    assert "electronic-health-records" in _ids(
+        taxonomy, "Charted in EHR and electronic medical records"
+    )
+    assert "sql" in _ids(taxonomy, "I sharpened my SQL skills.")
+
+
+def test_react_native_with_a_hyphen_is_not_react(taxonomy: Taxonomy) -> None:
+    assert _ids(taxonomy, "Built mobile apps in React-Native.") == {"react-native"}
+    assert _ids(taxonomy, "Built mobile apps in React Native.") == {"react-native"}
+
+
+def test_mentions_stays_fast_on_whitespace_and_punctuation_heavy_text(taxonomy: Taxonomy) -> None:
+    for text in (".," * 25_000, "machine" + " " * 50_000, "a " * 25_000, "the cat sat. " * 20_000):
+        start = time.monotonic()
+        taxonomy.mentions(text)
+        assert time.monotonic() - start < 1.5, repr(text[:12])
 
 
 # ---------------------------------------------------------------------------

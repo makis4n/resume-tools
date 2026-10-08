@@ -38,7 +38,9 @@ Normalisation and matching, in brief:
   "PM"...) are kept out of ordinary prose without also losing every other alias's normal
   case-insensitive matching. `re.finditer` walks the text left to right and its matches never
   overlap, which is exactly "every non-overlapping mention, ordered by start offset" for free, in
-  one linear pass.
+  one linear pass. To keep that pass cheap, the alternatives are bucketed by first character
+  (see `_build_pattern()`), so a position tries only the dozens that could start there instead of
+  every alternative in the file.
 - The boundary rule a match must satisfy: it cannot be immediately preceded by a Unicode letter,
   digit or underscore (`(?<!\\w)`), or immediately followed by a Unicode letter or underscore
   (`(?![^\\W\\d])`), so "éPython" and "Pythoné" do not match. This is deliberately narrower on the
@@ -53,8 +55,11 @@ Normalisation and matching, in brief:
   `case_sensitive` aliases, since those are exactly the ones ambiguous enough to need it) that must
   not immediately follow a match, as a plain space-separated word -- `excel-spreadsheets` uses
   `["in", "at"]` so "Excel in a fast-paced environment" does not tag the spreadsheet tool, while
-  "Proficient in Excel (pivot tables)" still does. It compiles to one extra negative lookahead,
-  `(?!\\s+(?:in|at)\\b)`, appended to just that alias's alternative.
+  "Proficient in Excel (pivot tables)" still does. The guard applies only when the match starts a
+  sentence, line or list item, which is the only place the capitalised verb "Excel" occurs, so a
+  mid-sentence "Built models in Excel at Acme" or "Advanced Excel at an expert level" still
+  matches. `mentions()` applies it after the regex match rather than inside the pattern, because
+  the sentence-start test needs the text before the match.
 - Why a regex alternation rather than a token trie: the taxonomy is a few hundred entries with a
   handful of aliases each, matched against job-description- and resume-sized text (tens of
   kilobytes, not books). A single compiled `re` pattern is one call into `re`'s C implementation
@@ -214,40 +219,47 @@ class Taxonomy:
         # Used by `lookup()` only; `mentions()` resolves a match to its skill through the
         # pattern's own group numbers instead (see the module docstring for why).
         index: dict[str, tuple[Skill, str | None]] = {}
-        # One (text, requires_exact_case, extra_lookahead, skill) per name/alias, across every
-        # skill, used to build the mention-finding pattern below.
-        specs: list[tuple[str, bool, str, Skill]] = []
+        # One (text, requires_exact_case, skill) per name/alias, across every skill, used to build
+        # the mention-finding pattern below.
+        specs: list[tuple[str, bool, Skill]] = []
+        # group-number-independent: skill id -> pattern for the words that must not follow a
+        # sentence-initial match (see `mentions()`).
+        self._guards: dict[str, re.Pattern[str]] = {}
 
         for skill in skills:
             exact_terms = case_sensitive_terms.get(skill.id, frozenset())
             extra_words = not_followed_by.get(skill.id, ())
+            if extra_words:
+                words = "|".join(re.escape(w) for w in extra_words)
+                self._guards[skill.id] = re.compile(rf"\s+(?:{words})\b")
             for term in (skill.name, *skill.aliases):
                 requires_exact = term in exact_terms
                 key = normalise(term)
                 exact_value = _fold_whitespace_and_edges(term) if requires_exact else None
                 index[key] = (skill, exact_value)
-
-                extra_lookahead = ""
-                if requires_exact and extra_words:
-                    words = "|".join(re.escape(w) for w in extra_words)
-                    extra_lookahead = rf"(?!\s+(?:{words})\b)"
-                specs.append((term, requires_exact, extra_lookahead, skill))
+                specs.append((term, requires_exact, skill))
 
         self._index = index
-        self._pattern, self._group_to_skill = _build_pattern(specs)
+        # (skill id, term) pairs whose guard applies: only `case_sensitive` aliases.
+        self._guarded_groups: dict[int, re.Pattern[str]] = {}
+        self._pattern, self._group_to_skill, group_to_spec = _build_pattern(specs)
+        for group, (_term, requires_exact, spec_skill) in group_to_spec.items():
+            if requires_exact and spec_skill.id in self._guards:
+                self._guarded_groups[group] = self._guards[spec_skill.id]
 
     def lookup(self, term: str) -> Skill | None:
         """The skill whose normalised name or alias equals `term`, or `None`.
 
-        A `case_sensitive` alias matches `term` only in the case it was declared with, or in
-        all capitals ("React" or "REACT", as in a shouted heading); other terms match regardless
-        of case. If nothing matches, the lookup is retried once without trailing periods, so a
-        sentence-final "Python." still finds Python, while ".NET" and "Node.js" keep theirs.
+        A `case_sensitive` alias matches `term` only in the case it was declared with, exactly as
+        `mentions()` does; other terms match regardless of case. If nothing matches, the lookup is
+        retried once without trailing periods (and the edge punctuation they were shielding, as in
+        "(Python)."), so a sentence-final "Python." still finds Python, while ".NET" and "Node.js"
+        keep theirs.
         """
         folded = _fold_whitespace_and_edges(term)
         skill = self._lookup_folded(folded)
         if skill is None and folded.endswith("."):
-            skill = self._lookup_folded(folded.rstrip(".").rstrip())
+            skill = self._lookup_folded(_fold_whitespace_and_edges(folded.rstrip(".")))
         return skill
 
     def _lookup_folded(self, folded: str) -> Skill | None:
@@ -255,7 +267,7 @@ class Taxonomy:
         if entry is None:
             return None
         skill, exact_value = entry
-        if exact_value is not None and folded not in (exact_value, exact_value.upper()):
+        if exact_value is not None and folded != exact_value:
             return None
         return skill
 
@@ -268,38 +280,75 @@ class Taxonomy:
         """
         results = []
         for match in self._pattern.finditer(text):
+            guard = self._guarded_groups.get(match.lastindex)
+            if (
+                guard is not None
+                and guard.match(text, match.end())
+                and _starts_sentence(text, match.start())
+            ):
+                continue
             skill = self._group_to_skill[match.lastindex]
             results.append(Mention(skill=skill, start=match.start(), end=match.end()))
         return results
 
 
+_SENTENCE_BREAKS = ".!?:;\n\r\u2022\u00b7|*-\u2013\u2014"
+
+
+def _starts_sentence(text: str, start: int) -> bool:
+    """Whether the match at `start` begins the text, a line, a list item or a sentence."""
+    before = text[:start].rstrip(" \t")
+    return not before or before[-1] in _SENTENCE_BREAKS
+
+
 def _build_pattern(
-    specs: list[tuple[str, bool, str, Skill]],
-) -> tuple[re.Pattern[str], dict[int, Skill]]:
+    specs: list[tuple[str, bool, Skill]],
+) -> tuple[re.Pattern[str], dict[int, Skill], dict[int, tuple[str, bool, Skill]]]:
     """One compiled regex matching any of `specs`, longest text first, plus the `group number ->
     Skill` table `mentions()` uses to resolve a match without re-deriving anything from the
-    matched text.
+    matched text, and the `group number -> spec` table it uses to find a group's guard.
 
     Each alternative is wrapped in its own capturing group and is otherwise a fixed `re.escape`d
     literal (with internal whitespace loosened to `\\s+`), wrapped in a scoped `(?i:...)` group
-    when it should match case-insensitively, plus a `not_followed_by` lookahead where the entry
-    declared one. No alternative contains a nested quantifier, so there is nothing that can
-    backtrack catastrophically; and because exactly one top-level group can participate in a
-    match at a time, `match.lastindex` always names the alternative -- and so the skill -- that
-    matched.
+    when it should match case-insensitively. No alternative contains a nested quantifier, so there
+    is nothing that can backtrack catastrophically; and because exactly one top-level group can
+    participate in a match at a time, `match.lastindex` always names the alternative -- and so the
+    skill -- that matched.
+
+    Alternatives are bucketed by first character, each bucket behind a one-character
+    case-insensitive lookahead, and the whole thing behind a lookahead over every such character.
+    Without that the regex engine tries every alternative at every position, about 0.1 ms each,
+    which made whitespace-heavy or punctuation-heavy text (common in PDF extraction) take seconds
+    per 50 KB. The lookaheads only ever skip positions where no alternative could match, since
+    `(?i:c)` accepts a superset of what a case-sensitive `c` does.
     """
     ordered = sorted(specs, key=lambda spec: (-len(spec[0]), spec[0]))
-    alternatives = []
+    buckets: dict[str, list[tuple[str, bool, Skill]]] = {}
+    for spec in ordered:
+        first = spec[0].lstrip()[0]
+        key = first.lower() if len(first.lower()) == 1 else first
+        buckets.setdefault(key, []).append(spec)
+
     group_to_skill: dict[int, Skill] = {}
-    for group_number, (text, requires_exact, extra_lookahead, skill) in enumerate(ordered, start=1):
-        body = _escape_with_flexible_whitespace(text)
-        if not requires_exact:
-            body = f"(?i:{body})"
-        alternatives.append(f"({body}{extra_lookahead})")
-        group_to_skill[group_number] = skill
-    combined = "|".join(alternatives)
-    pattern = re.compile(f"{_BOUNDARY_BEFORE}(?:{combined}){_BOUNDARY_AFTER}")
-    return pattern, group_to_skill
+    group_to_spec: dict[int, tuple[str, bool, Skill]] = {}
+    group_number = 0
+    bucket_patterns = []
+    for key in sorted(buckets):
+        alternatives = []
+        for spec in buckets[key]:
+            text, requires_exact, skill = spec
+            group_number += 1
+            body = _escape_with_flexible_whitespace(text)
+            if not requires_exact:
+                body = f"(?i:{body})"
+            alternatives.append(f"({body})")
+            group_to_skill[group_number] = skill
+            group_to_spec[group_number] = spec
+        bucket_patterns.append(f"(?=(?i:{re.escape(key)}))(?:{'|'.join(alternatives)})")
+    any_first = "".join(re.escape(key) for key in sorted(buckets))
+    combined = "|".join(bucket_patterns)
+    pattern = re.compile(f"{_BOUNDARY_BEFORE}(?=(?i:[{any_first}]))(?:{combined}){_BOUNDARY_AFTER}")
+    return pattern, group_to_skill, group_to_spec
 
 
 def _fail(message: str) -> NoReturn:

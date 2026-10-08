@@ -38,9 +38,10 @@ changed and why.
   even when they are not meaningful in a particular case (a trailing sentence period survives
   normalisation too; see the function's docstring). Every alias is unique after normalisation
   across the whole file, and no alias equals another entry's name; both are enforced by the loader
-  and by a test over the raw file. `Taxonomy.lookup()` additionally accepts the all-caps form of a
-  `case_sensitive` alias ("REACT" for "React") and, when nothing matches, retries once without
-  trailing periods, so a sentence-final "Python." resolves while ".NET" and "Node.js" keep theirs. An alias that normalises to nothing (whitespace or punctuation
+  and by a test over the raw file. `Taxonomy.lookup()` honours `case_sensitive` exactly as
+  `mentions()` does (no all-caps tolerance: the two APIs must agree on the same term) and, when
+  nothing matches, retries once without trailing periods and the edge punctuation they shielded,
+  so a sentence-final "Python." and "(Python)." resolve while ".NET" and "Node.js" keep theirs. An alias that normalises to nothing (whitespace or punctuation
   only) is rejected by the loader.
 - **Ambiguity.** A handful of short names are also ordinary English words, abbreviations or bare
   letters. Handled per name, not by one rule, and swept for repeatedly as new collisions turned up
@@ -66,33 +67,41 @@ changed and why.
       enough as bare two-and-three-letter abbreviations (pull request, ahead-of-time abbreviation
       of almost anything) that even exact case does not help, and neither has an obvious
       unambiguous long alias worth adding in their place.
+    - Review round three dropped, because they collide with ordinary prose or a larger tool
+      family: "Express" (`express-js`: "American Express", "Express Scripts"), "emr"
+      (`electronic-health-records`: Amazon EMR in data job descriptions; "electronic medical
+      records" is the alias instead), "PM" (`product-management`: it also means project manager),
+      "my sql" (`mysql`: "my SQL skills" swallowed the real SQL mention) and "cro"
+      (`conversion-rate-optimisation`: clinical research organisation).
     - "Excel", too, was dropped in the taxonomy's first version, then brought back -- see
       `not_followed_by`, below.
   - **Kept, but only under `case_sensitive`:** "Swift", "Rust", "Spark" (alias of `apache-spark`),
-    "Chef", "SAP" (alias of `sap-erp`), "PM" (alias of `product-management`), "Express" (alias of
-    `express-js`, whose bare form collided with the ordinary verb "express interest"), "Spring
+    "Chef", "SAP" (alias of `sap-erp`), "Spring
     Boot" is kept but bare "Spring" was *dropped instead* (see below -- it is listed here to
     explain why it is not simply case-sensitive), "Outlook" (`microsoft-outlook`), "Slack",
     "Zoom", "Notion", "Sketch", "Workday" (`hris-workday`: "a flexible workday" is ordinary office
     prose, almost always lower case), "Illustration" ("for illustration purposes" is almost always
-    lower case too), "Confluence" ("a confluence of skills and experience"), "Puppet" and
-    "Salesforce" ("our salesforce grew 20%", the one-word spelling of "sales force"). "Angular" is
+    lower case too), "Confluence" ("a confluence of skills and experience"), "Puppet",
+    "Salesforce", and, from review round three, the names "Greenhouse" (`greenhouse-ats`),
+    "Blackboard" (`blackboard-lms`), "Intercom", "Flask", "dbt" (the clinical acronym DBT is
+    upper case), "SEM" ("Sem 1" means semester) and the alias "Illustrator" of
+    `adobe-illustrator` ("book illustrator") ("our salesforce grew 20%", the one-word spelling of "sales force"). "Angular" is
     included here too, on the same judgement (an "angular" logo or face is ordinary design/general
     prose, almost never capitalised mid-sentence). These are judged to collide with ordinary prose
     only rarely in exactly this case -- the lower-case common-word or idiomatic sense is usually
     written lower case, so requiring the exact declared case filters most of it -- so the taxonomy
     keeps the short name rather than losing it. This is a judgement call, not a guarantee:
     `Taxonomy.mentions()` will still tag "Chef" in a professional chef's resume as the
-    configuration-management tool, and a sentence-initial "Spark innovation..." or a written-out
-    "5 PM" meeting time can still match. None of the role families this taxonomy targets is
+    configuration-management tool, and a sentence-initial "Spark innovation..." can still match. None of the role families this taxonomy targets is
     culinary or otherwise depends on "chef" as a job title, so that particular one is accepted
     rather than engineered around.
   - **`not_followed_by`:** even exact case is not enough when the ordinary sense can be
     sentence-initial, which capitalises it the same way English capitalises anything at the start
     of a sentence. One entry needs this: `excel-spreadsheets`, where `"Excel"` is `case_sensitive`
-    with `"not_followed_by": ["in", "at"]`, compiling to a negative lookahead on that one alias,
-    `(?!\s+(?:in|at)\b)`. "Proficient in Excel (pivot tables)" still matches; "Excel in a
-    fast-paced environment" and "Ready to excel at any challenge" do not. `react` briefly had a
+    with `"not_followed_by": ["in", "at"]`, checked after the regex match,
+    applied by `mentions()` only when the match starts a text, line, list item or sentence.
+    "Proficient in Excel (pivot tables)", "Built models in Excel at Acme" and "Advanced Excel at an
+    expert level" still match; a sentence-initial "Excel in a fast-paced environment" does not. `react` briefly had a
     list of its own (`["quickly", "to"]`) and lost it again: a handful of continuation words
     cannot enumerate the ways "React" can open a sentence ("React to feedback", "React fast"),
     and "React to" also hides real uses ("React to Redux migration"). It stays `case_sensitive`
@@ -104,6 +113,10 @@ changed and why.
     exception, kept because "Excel in ..." is by far the commonest sentence-initial use of the
     verb. Callers should treat a single bare mention of these names as weaker evidence than a
     mention with a corroborating alias or context.
+  - **Accepted collisions that need name or context awareness.** "Dr. Jenkins" tags `jenkins`
+    and a first name "Ruby" tags `ruby-programming-language`; case does not separate them from the
+    tools and no cheap rule does, so a lone mention of either is weak evidence. "Greenhouse",
+    "Blackboard", "Intercom" and "Flask" still match when a sentence starts with them.
   - Everything else with a common-word or generic-abbreviation collision risk (`Java`, `PHP`,
     `Ruby`, `SQL`, `SAS`) is matched case-insensitively as normal: none of those is an ordinary
     English word or a plausible sentence-initial capitalisation the way the entries above are.
@@ -126,7 +139,10 @@ changed and why.
   per-alternative scoped `(?i:...)` group, so the rest of the alternation still matches
   case-insensitively); every other term matches regardless of case. `re.finditer` over one such
   pattern gives every match in one linear left-to-right pass, already ordered by start offset and
-  never overlapping, without a second data structure or an overlap-resolution pass. The haystack
+  never overlapping, without a second data structure or an overlap-resolution pass. Alternatives
+  are bucketed by first character behind one-character lookaheads so a position tries only the
+  alternatives that could start there; without that, whitespace- or punctuation-heavy text took
+  seconds per 50 KB (about 0.1 ms per position tried against all ~640 alternatives). The haystack
   text itself is never run through `normalise()` -- doing so could change its length (casefold and
   NFKC are not always length-preserving) and would drift the character offsets `mentions()`
   promises against the original text.
@@ -182,8 +198,7 @@ changed and why.
 - Every alias is a lever on real matches: adding one can change which requirements a resume is
   found to satisfy. Because `version` is derived from the file's content, that change is always
   visible to anything that caches by version, rather than silently reusing a stale result.
-- The ambiguity calls above are documented, not proven safe. "Chef" in a culinary resume, "PM" in
-  a written-out "5 PM", and an "angular" design description are known, accepted false positives,
+- The ambiguity calls above are documented, not proven safe. "Chef" in a culinary resume and an "angular" design description are known, accepted false positives,
   not oversights; revisiting them needs either a new decision or a disambiguation mechanism this
   pull request does not build.
 - Making an entry `case_sensitive` after it already shipped is a matching-behaviour change for

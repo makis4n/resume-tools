@@ -75,7 +75,10 @@
       "name": "Adobe Illustrator",
       "kind": "tool",
       "aliases": [
-        "illustrator"
+        "Illustrator"
+      ],
+      "case_sensitive": [
+        "Illustrator"
       ]
     },
     {
@@ -317,6 +320,9 @@
       "kind": "tool",
       "aliases": [
         "blackboard lms"
+      ],
+      "case_sensitive": [
+        "Blackboard"
       ]
     },
     {
@@ -632,8 +638,7 @@
       "name": "Conversion rate optimisation",
       "kind": "skill",
       "aliases": [
-        "conversion rate optimization",
-        "cro"
+        "conversion rate optimization"
       ]
     },
     {
@@ -787,6 +792,9 @@
       "kind": "tool",
       "aliases": [
         "data build tool"
+      ],
+      "case_sensitive": [
+        "dbt"
       ]
     },
     {
@@ -887,7 +895,7 @@
       "kind": "skill",
       "aliases": [
         "ehr",
-        "emr"
+        "electronic medical records"
       ]
     },
     {
@@ -956,11 +964,7 @@
       "name": "Express.js",
       "kind": "tool",
       "aliases": [
-        "expressjs",
-        "Express"
-      ],
-      "case_sensitive": [
-        "Express"
+        "expressjs"
       ]
     },
     {
@@ -993,7 +997,10 @@
       "id": "flask",
       "name": "Flask",
       "kind": "tool",
-      "aliases": []
+      "aliases": [],
+      "case_sensitive": [
+        "Flask"
+      ]
     },
     {
       "id": "flutter",
@@ -1178,6 +1185,9 @@
       "aliases": [
         "greenhouse ats",
         "greenhouse recruiting"
+      ],
+      "case_sensitive": [
+        "Greenhouse"
       ]
     },
     {
@@ -1295,7 +1305,10 @@
       "id": "intercom",
       "name": "Intercom",
       "kind": "tool",
-      "aliases": []
+      "aliases": [],
+      "case_sensitive": [
+        "Intercom"
+      ]
     },
     {
       "id": "inventory-management",
@@ -1632,9 +1645,7 @@
       "id": "mysql",
       "name": "MySQL",
       "kind": "tool",
-      "aliases": [
-        "my sql"
-      ]
+      "aliases": []
     },
     {
       "id": "natural-language-processing",
@@ -1880,12 +1891,7 @@
       "id": "product-management",
       "name": "Product management",
       "kind": "skill",
-      "aliases": [
-        "PM"
-      ],
-      "case_sensitive": [
-        "PM"
-      ]
+      "aliases": []
     },
     {
       "id": "product-marketing",
@@ -2049,7 +2055,9 @@
       "id": "react-native",
       "name": "React Native",
       "kind": "tool",
-      "aliases": []
+      "aliases": [
+        "react-native"
+      ]
     },
     {
       "id": "real-estate-licence",
@@ -2201,6 +2209,9 @@
       "kind": "skill",
       "aliases": [
         "search engine marketing"
+      ],
+      "case_sensitive": [
+        "SEM"
       ]
     },
     {
