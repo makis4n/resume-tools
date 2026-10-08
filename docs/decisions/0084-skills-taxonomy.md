@@ -154,7 +154,8 @@ changed and why.
   `ats/data/skills.json` is actually present in it, and a test guards the configuration.
 - **Validation.** `load()` (the package's own data, cached) and `load_from_bytes()`/
   `load_from_path()` (anyone else's bytes or file -- what the tests use, so they never have to
-  touch or fake-corrupt the real data file) share one validation pass. It rejects: a duplicate or
+  touch or fake-corrupt the real data file) share one validation pass. It rejects: an entry with a key other than the six above (a misspelt
+  `case_sensitve` would otherwise silently disable its rule); a duplicate or
   non-kebab-case id; ids out of alphabetical order; a missing, empty or non-string `name`; a
   missing or non-string `kind`, or one that is not `skill`/`tool`/`qualification` (a non-string
   `kind` is rejected as `TaxonomyError`, not left to raise a bare `TypeError` from a set-membership

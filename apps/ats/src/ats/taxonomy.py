@@ -128,6 +128,7 @@ _FILE_NAME = "skills.json"
 _VALID_KINDS = {kind.value for kind in SkillKind}
 _ID_PATTERN = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 _NOT_FOLLOWED_BY_WORD = re.compile(r"[A-Za-z]+")
+_ENTRY_KEYS = frozenset({"id", "name", "kind", "aliases", "case_sensitive", "not_followed_by"})
 
 # Punctuation `normalise()` strips from the edges of a term. Deliberately excludes the symbols a
 # handful of our terms carry meaning with -- + # . / & and the hyphen -- so "C++", "C#", ".NET",
@@ -322,6 +323,10 @@ def _validate_and_build(
     for i, raw in enumerate(raw_entries):
         if not isinstance(raw, dict):
             _fail(f"entry {i} is not an object")
+
+        unknown_keys = sorted(set(raw) - _ENTRY_KEYS)
+        if unknown_keys:
+            _fail(f"entry {i} has unknown keys {unknown_keys}; expected only {sorted(_ENTRY_KEYS)}")
 
         entry_id = raw.get("id")
         name = raw.get("name")

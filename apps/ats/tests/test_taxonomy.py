@@ -642,6 +642,14 @@ def test_load_from_bytes_rejects_a_non_string_kind_with_taxonomy_error_not_type_
         load_from_bytes(_bytes_for([entry]))
 
 
+def test_load_from_bytes_rejects_unknown_entry_keys() -> None:
+    # A misspelt optional key ("case_sensitve") would otherwise silently disable its rule.
+    for key in ("case_sensitve", "notes", "Aliases"):
+        entry = _minimal_entry(**{key: ["x"]})
+        with pytest.raises(TaxonomyError, match="unknown keys"):
+            load_from_bytes(_bytes_for([entry]))
+
+
 def test_load_from_bytes_rejects_a_non_kebab_case_id() -> None:
     for bad_id in ("Widget_Making", "widget making", "Widget-Making", "-widget", "widget-", ""):
         with pytest.raises(TaxonomyError):
