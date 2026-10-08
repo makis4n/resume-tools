@@ -54,3 +54,23 @@ def test_matching_is_case_insensitive() -> None:
 def test_word_needs_both_tokens() -> None:
     # "Word" alone, with no mention of Microsoft, is not enough to call it Word.
     assert classify("Word Processor Pro", None) is Producer.OTHER
+
+
+def test_a_word_filename_mentioning_latex_still_classifies_as_word() -> None:
+    # Word writes a Creator like "Microsoft Word - <filename>"; a job seeker naming their own
+    # file "latex_style_resume.docx" must not turn a Word export into a LaTeX one.
+    assert classify(None, "Microsoft Word - latex_style_resume.docx") is Producer.WORD
+
+
+def test_producer_wins_even_when_creator_suggests_something_else() -> None:
+    # Producer is written by the tool itself, not a user-editable field; it is trusted first and
+    # Creator is not even consulted once Producer gives an answer.
+    assert classify("Canva", "Microsoft Word") is Producer.CANVA
+
+
+def test_creator_is_only_consulted_when_producer_is_other() -> None:
+    assert classify("Some Unrecognised Producer String", "Canva") is Producer.CANVA
+
+
+def test_creator_with_no_filename_suffix_still_classifies() -> None:
+    assert classify(None, "Google Docs") is Producer.GOOGLE_DOCS
