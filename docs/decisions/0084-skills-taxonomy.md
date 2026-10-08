@@ -73,7 +73,7 @@ changed and why.
       records" is the alias instead), "PM" (`product-management`: it also means project manager),
       "my sql" (`mysql`: "my SQL skills" swallowed the real SQL mention) and "cro"
       (`conversion-rate-optimisation`: clinical research organisation), and "qc"
-      (`quality-control`: the Qu\u00e9bec province code in every Qu\u00e9bec address). Bare "agile" became
+      (`quality-control`: the Québec province code in every Québec address). Bare "agile" became
       `case_sensitive` "Agile", so the everyday adjective ("must be agile") no longer tags the
       methodology; a capitalised "Agile thinker" still does and is an accepted collision.
     - "Excel", too, was dropped in the taxonomy's first version, then brought back -- see
