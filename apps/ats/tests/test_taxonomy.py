@@ -453,6 +453,16 @@ def test_mentions_boundaries_are_unicode_aware(taxonomy: Taxonomy) -> None:
         assert any(m.skill == python for m in taxonomy.mentions(text)), text
 
 
+def test_mentions_finds_asp_net_and_vb_net_not_just_dot_net(taxonomy: Taxonomy) -> None:
+    text = "Experience with ASP.NET MVC, VB.NET and .NET Core."
+    ids = [m.skill.id for m in taxonomy.mentions(text)]
+    assert ids == ["asp-net", "vb-net", "dot-net"]
+    asp = taxonomy.lookup("asp.net")
+    assert asp is not None and asp.id == "asp-net"
+    vb = taxonomy.lookup("VB.NET")
+    assert vb is not None and vb.id == "vb-net"
+
+
 def test_mentions_does_not_crash_on_turkish_dotted_and_dotless_i(taxonomy: Taxonomy) -> None:
     """`re.IGNORECASE` matches the pattern "i" against U+0130 (İ) and U+0131 (ı), but
     `str.casefold()` does not fold either of them to plain "i" -- so resolving a match by

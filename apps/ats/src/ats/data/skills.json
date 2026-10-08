@@ -210,6 +210,15 @@
       "aliases": []
     },
     {
+      "id": "asp-net",
+      "name": "ASP.NET",
+      "kind": "tool",
+      "aliases": [
+        "asp.net core",
+        "asp.net mvc"
+      ]
+    },
+    {
       "id": "auditing",
       "name": "Auditing",
       "kind": "skill",
@@ -2515,6 +2524,14 @@
       "name": "Variance analysis",
       "kind": "skill",
       "aliases": []
+    },
+    {
+      "id": "vb-net",
+      "name": "VB.NET",
+      "kind": "tool",
+      "aliases": [
+        "visual basic .net"
+      ]
     },
     {
       "id": "vendor-management",

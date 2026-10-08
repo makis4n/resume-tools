@@ -27,11 +27,11 @@ changed and why.
 - **File format.** `{"entries": [...]}`, each entry `{id, name, kind, aliases, case_sensitive?,
   not_followed_by?}`. `kind` is `skill`, `tool` or `qualification`. `id` is a stable kebab-case
   identifier (`^[a-z0-9]+(-[a-z0-9]+)*$`, checked by the loader, not just by convention); entries
-  are sorted by `id` for a readable diff when one is added or changed. 336 entries at this pull
+  are sorted by `id` for a readable diff when one is added or changed. 338 entries at this pull
   request (across the role families listed above). Coverage favours common, unambiguous entries
   over exhaustive ones; it grows by pull request as later milestones find gaps -- this pass added
-  `HTML`, `CSS` and `Linux`, previously missing despite being some of the most common terms a
-  software job description would use.
+  `HTML`, `CSS`, `Linux`, `ASP.NET` and `VB.NET`, previously missing despite being some of the
+  most common terms a software job description would use.
 - **Normalisation (`taxonomy.normalise()`).** NFKC, casefold, collapse whitespace, then strip
   leading and trailing punctuation -- except `+ # . / & -`, which our data uses to mean something
   ("C++", "C#", ".NET", "Node.js", "CI/CD", "e-learning") and which are therefore never stripped,
