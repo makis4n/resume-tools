@@ -57,6 +57,11 @@ suggestion text and never returned raw (§8.3).
     (`_OBJECT_BUDGET = 100,000`), since the page objects walked here come from an untrusted upload
     (PRD §11) and an unbounded walk of a maliciously deep or wide form nesting could be made
     arbitrarily expensive.
+  - Outlines versus image-only: a text-less document is `text-as-outlines` only when over half of
+    its page objects are paths and either it has no images or it has at least 10 paths
+    (`_MIN_OUTLINE_PATHS`); a scan with a border or rule is `image-only`.
+  - Extraction classifies at most 200,000 characters per document (`_CHAR_BUDGET`); pages past that
+    get only a non-whitespace `char_count`, so an untrusted upload cannot hold the PDFium lock.
   - `blank-page` (warning, layout): a page with no characters, text objects, images or paths, only
     reported when some other page in the document does have text. Requiring `text_objects == 0` as
     well as `char_count == 0` matters: a page can have a text-drawing operation that produced no
@@ -74,7 +79,10 @@ suggestion text and never returned raw (§8.3).
     bullets do, so the font actually drawing the character is what is checked, not just its code
     point.
   - `ligature-characters` (warning, layout): any Latin ligature character (U+FB00–U+FB06) on a
-    page.
+    page. Known limit: this check is currently inert on real PDFs. PDFium expands U+FB00–FB06 into
+    plain letters before any text API returns them, so `ligature_count` is always 0; only a unit
+    test that patches `FPDFText_GetUnicode` makes it fire. Detecting ligatures needs another
+    signal (a font's raw ToUnicode map or glyph names) and is later work.
   - The whole-document text-layer check short-circuits the per-page glyph checks: once nothing on
     a page could be read at all, its individual unmapped glyphs are noise on top of the one finding
     that matters.

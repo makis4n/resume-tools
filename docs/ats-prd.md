@@ -29,7 +29,8 @@ decision 0030; the editor's side of the integration is decision 0031.
 - Milestone 1's first slice has landed: `analyze` now returns a real, deterministic
   ATS-readiness score with findings, under the versioned rubric in decision 0083. The checks are
   text layer (including text exported as outlines and image-only pages), page count and
-  glyph-mapping (unmapped, icon-font and ligature characters); each finding carries an origin, and
+  glyph-mapping (unmapped and icon-font characters; the ligature check exists but cannot fire on
+  real PDFs yet, see decision 0083); each finding carries an origin, and
   the producing tool is classified from the PDF's metadata. There are no contact, section or
   reading-order checks yet, and no job matching: those are later PRs within milestone 1 and
   milestone 3.

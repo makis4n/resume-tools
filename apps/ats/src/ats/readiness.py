@@ -17,6 +17,11 @@ from ats.suggestions import suggestion_for
 # than simply missing -- e.g. Canva's text-as-outlines export (PRD §12.1).
 _MOSTLY_PATHS_THRESHOLD = 0.5
 
+# Outlined text is drawn as many glyph shapes, so a document with images needs at least this many
+# path objects before it is called outlines: a scanned page with a border or rule has a couple of
+# paths next to its one big image and is `image-only`, not outlined text.
+_MIN_OUTLINE_PATHS = 10
+
 # A page's unmapped glyphs above this fraction of its characters are enough to warn; above the
 # second threshold the page is unreadable enough to call it critical (decision 0083).
 _UNMAPPED_WARNING_THRESHOLD = 0.02
@@ -83,7 +88,8 @@ def _no_text_layer_finding(document: Document, producer: Producer) -> Finding:
     total_texts = sum(page.text_objects for page in document.pages)
     total_objects = total_paths + total_images + total_texts
 
-    if total_objects > 0 and total_paths / total_objects > _MOSTLY_PATHS_THRESHOLD:
+    mostly_paths = total_objects > 0 and total_paths / total_objects > _MOSTLY_PATHS_THRESHOLD
+    if mostly_paths and (total_images == 0 or total_paths >= _MIN_OUTLINE_PATHS):
         finding_id, message = "text-as-outlines", TEXT_AS_OUTLINES_MESSAGE
     elif total_images > 0:
         finding_id, message = "image-only", IMAGE_ONLY_MESSAGE

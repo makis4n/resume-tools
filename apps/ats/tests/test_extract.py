@@ -21,6 +21,7 @@ from tests.pdfs import (
     malformed_producer_metadata_pdf,
     minimal_pdf,
     postscript_named_symbol_bullet_pdf,
+    supplementary_icon_font_pdf,
     symbol_font_bullet_pdf,
     text_as_outlines_pdf,
     text_resume_with_form_wrapped_graphic_page_pdf,
@@ -344,3 +345,25 @@ def test_an_icon_font_private_use_glyph_is_still_counted() -> None:
 )
 def test_is_symbol_font(name: str | None, expected: bool) -> None:
     assert _is_symbol_font(name) is expected
+
+
+def test_a_supplementary_plane_icon_font_glyph_is_counted_once_as_private_use() -> None:
+    (page,) = extract(supplementary_icon_font_pdf()).pages
+    assert page.char_count == 1
+    assert page.private_use_count == 1
+
+
+def test_characters_over_the_budget_get_a_cheap_count_and_no_per_character_stats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ats.extract as extract_module
+
+    monkeypatch.setattr(extract_module, "_CHAR_BUDGET", 3)
+    (page,) = extract(icon_font_pua_pdf()).pages  # 1 char: within budget
+    assert page.private_use_count == 1
+
+    monkeypatch.setattr(extract_module, "_CHAR_BUDGET", 5)
+    document = extract(minimal_pdf("Invented Person"))  # 14 non-space chars: over budget
+    (page,) = document.pages
+    assert page.char_count == 14
+    assert page.unmapped_count == page.private_use_count == page.ligature_count == 0

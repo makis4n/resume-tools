@@ -57,6 +57,13 @@ _SYMBOL_FONT_NAMES = frozenset({"symbol", "wingdings", "wingdings2", "wingdings3
 _FORM_RECURSION_LIMIT = 8
 _OBJECT_BUDGET = 100_000
 
+# `_char_stats` makes several PDFium calls per character from Python while `_PDFIUM_LOCK` is held,
+# and a tiny compressed upload can hold millions of characters. Across one document it classifies
+# at most this many characters (a dense resume page has a few thousand); any page beyond the
+# budget gets only a cheap non-whitespace `char_count` and zero for every other per-character
+# count, so a hostile upload cannot stall every other request behind the lock.
+_CHAR_BUDGET = 200_000
+
 
 class ExtractError(ValueError):
     """Base class for a PDF that pypdfium2 could not turn into text."""
@@ -220,6 +227,12 @@ def _char_stats(text_page: pdfium.PdfTextPage, text: str) -> tuple[int, int, int
     `Page`. Whitespace is not counted at all, so an inserted space or line break can never be
     miscounted as an unmapped or private-use glyph.
 
+    A character outside the Basic Multilingual Plane is one `str` character in `text` but two
+    UTF-16 code units, and PDFium counts it as two entries in its character list, so `text` and the
+    list no longer line up and the fallback runs: it joins a surrogate pair from `GetUnicode` back
+    into one codepoint (so the supplementary Private Use Areas match) and skips the pair's second
+    half, and skips whitespace, so it counts exactly what the aligned path does.
+
     The common case makes exactly one PDFium call per character, `FPDFText_HasUnicodeMapError`.
     The Unicode value comes from `text` -- `get_text_bounded` already decoded it from this same
     character list -- and `text[i]` lines up with character-list index `i` (verified
@@ -227,7 +240,7 @@ def _char_stats(text_page: pdfium.PdfTextPage, text: str) -> tuple[int, int, int
     characters PDFium generates itself are only inserted spaces and line breaks, so whitespace in
     `text` is skipped instead of asking `FPDFText_IsGenerated` per character; it can never be
     unmapped, private-use or a ligature. The per-character `IsGenerated` and `GetUnicode` calls
-    remain only as a fallback for `len(text) != count_chars()`, which nothing in testing produced.
+    remain only as a fallback for `len(text) != count_chars()`, which a non-BMP character causes.
 
     A third PDFium call, `FPDFText_GetFontInfo`, happens only for a character already identified as
     Private Use Area, to tell an icon font's glyph (still counted) from a Symbol/Wingdings/Webdings
@@ -239,7 +252,10 @@ def _char_stats(text_page: pdfium.PdfTextPage, text: str) -> tuple[int, int, int
     ligature_count = 0
     total = text_page.count_chars()
     aligned = len(text) == total
+    skip_until = 0
     for index in range(total):
+        if index < skip_until:
+            continue
         if aligned:
             char = text[index]
             if char.isspace():
@@ -249,6 +265,13 @@ def _char_stats(text_page: pdfium.PdfTextPage, text: str) -> tuple[int, int, int
             if pdfium.raw.FPDFText_IsGenerated(text_page, index) == 1:
                 continue
             codepoint = pdfium.raw.FPDFText_GetUnicode(text_page, index)
+            if 0xD800 <= codepoint <= 0xDBFF and index + 1 < total:
+                low = pdfium.raw.FPDFText_GetUnicode(text_page, index + 1)
+                if 0xDC00 <= low <= 0xDFFF:
+                    codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00)
+                    skip_until = index + 2
+            if codepoint <= 0x10FFFF and chr(codepoint).isspace():
+                continue
         char_count += 1
         has_map_error = pdfium.raw.FPDFText_HasUnicodeMapError(text_page, index) == 1
         if has_map_error or codepoint in _UNMAPPED_CODEPOINTS:
@@ -330,7 +353,8 @@ def _count_objects(pdf_page: pdfium.PdfPage) -> tuple[int, int, int]:
     return text_objects, image_objects, path_objects
 
 
-def _read_page(pdf_page: pdfium.PdfPage, number: int) -> Page:
+def _read_page(pdf_page: pdfium.PdfPage, number: int, char_budget: int) -> tuple[Page, int]:
+    """Read one page; returns it and how much of `char_budget` it used (see `_CHAR_BUDGET`)."""
     width, height = pdf_page.get_size()
     text_page = pdf_page.get_textpage()
     try:
@@ -339,11 +363,21 @@ def _read_page(pdf_page: pdfium.PdfPage, number: int) -> Page:
         # to the page's displayed box and would silently drop hidden or off-page text (see
         # `_UNBOUNDED`'s comment).
         text = text_page.get_text_bounded(-_UNBOUNDED, -_UNBOUNDED, _UNBOUNDED, _UNBOUNDED)
-        char_count, unmapped_count, private_use_count, ligature_count = _char_stats(text_page, text)
+        total_chars = text_page.count_chars()
+        if total_chars <= char_budget:
+            char_count, unmapped_count, private_use_count, ligature_count = _char_stats(
+                text_page, text
+            )
+            used = total_chars
+        else:
+            # Over budget: a C-speed count of non-whitespace characters, no per-character calls.
+            char_count = len("".join(text.split()))
+            unmapped_count = private_use_count = ligature_count = 0
+            used = 0
     finally:
         text_page.close()
     text_objects, image_objects, path_objects = _count_objects(pdf_page)
-    return Page(
+    page = Page(
         number=number,
         width=width,
         height=height,
@@ -356,6 +390,7 @@ def _read_page(pdf_page: pdfium.PdfPage, number: int) -> Page:
         image_objects=image_objects,
         path_objects=path_objects,
     )
+    return page, used
 
 
 def extract(pdf: bytes) -> Document:
@@ -374,11 +409,14 @@ def extract(pdf: bytes) -> Document:
             creator = _metadata_value(document, "Creator")
             page_count = len(document)
             pages = []
+            char_budget = _CHAR_BUDGET
             try:
                 for number in range(1, page_count + 1):
                     pdf_page = document.get_page(number - 1)
                     try:
-                        pages.append(_read_page(pdf_page, number))
+                        page, used = _read_page(pdf_page, number, char_budget)
+                        char_budget -= used
+                        pages.append(page)
                     finally:
                         pdf_page.close()
             except pdfium.PdfiumError:

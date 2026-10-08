@@ -59,6 +59,12 @@ def test_image_only_when_images_present_and_not_mostly_paths() -> None:
     assert _ids(document) == ["image-only"]
 
 
+def test_scanned_page_with_a_border_is_image_only_not_outlines() -> None:
+    # One scan image plus two rule/border paths: 2/3 paths by count, but far too few to be glyphs.
+    document = _document(_page(char_count=0, text_objects=0, path_objects=2, image_objects=1))
+    assert _ids(document) == ["image-only"]
+
+
 def test_exactly_half_paths_is_not_mostly_paths() -> None:
     # 5 paths, 5 images: exactly 50%, not over it, so this falls through to the "any image" rule.
     document = _document(_page(char_count=0, text_objects=0, path_objects=5, image_objects=5))

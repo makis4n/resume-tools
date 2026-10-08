@@ -362,3 +362,10 @@ def icon_font_pua_pdf() -> bytes:
     name back as `"FontAwesome"`, which is not one of `ats.extract._SYMBOL_FONT_NAMES`.
     """
     return _pua_char_pdf(b"FontAwesome", 34, "F0FC")
+
+
+def supplementary_icon_font_pdf() -> bytes:
+    """A one-page PDF whose only character is U+F0001 (Supplementary Private Use Area-A, where
+    Material Design Icons and Nerd Fonts sit), drawn in a font named "MaterialDesignIcons". The
+    ToUnicode value is the UTF-16 surrogate pair DB80 DC01."""
+    return _pua_char_pdf(b"MaterialDesignIcons", 34, "DB80DC01")
