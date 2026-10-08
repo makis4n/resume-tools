@@ -443,6 +443,16 @@ def test_mentions_performance_on_a_50kb_document(taxonomy: Taxonomy) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_mentions_boundaries_are_unicode_aware(taxonomy: Taxonomy) -> None:
+    python = taxonomy.lookup("Python")
+    assert python is not None
+    for text in ("éPython", "Pythoné", "Pythonß", "Дpython", "_Python", "Python_"):
+        assert not [m for m in taxonomy.mentions(text) if m.skill == python], text
+    # Still fine next to punctuation, a version digit, or non-word characters.
+    for text in ("(Python)", "Python3", "café, Python", "日本 Python"):
+        assert any(m.skill == python for m in taxonomy.mentions(text)), text
+
+
 def test_mentions_does_not_crash_on_turkish_dotted_and_dotless_i(taxonomy: Taxonomy) -> None:
     """`re.IGNORECASE` matches the pattern "i" against U+0130 (İ) and U+0131 (ı), but
     `str.casefold()` does not fold either of them to plain "i" -- so resolving a match by

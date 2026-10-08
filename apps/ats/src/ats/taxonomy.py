@@ -39,9 +39,10 @@ Normalisation and matching, in brief:
   case-insensitive matching. `re.finditer` walks the text left to right and its matches never
   overlap, which is exactly "every non-overlapping mention, ordered by start offset" for free, in
   one linear pass.
-- The boundary rule a match must satisfy: it cannot be immediately preceded by an ASCII letter or
-  digit, or immediately followed by an ASCII letter. This is deliberately narrower on the left
-  than `\\b` (which treats `+`, `#`, `.` and `/` as already being boundaries) and deliberately
+- The boundary rule a match must satisfy: it cannot be immediately preceded by a Unicode letter,
+  digit or underscore (`(?<!\\w)`), or immediately followed by a Unicode letter or underscore
+  (`(?![^\\W\\d])`), so "éPython" and "Pythoné" do not match. This is deliberately narrower on the
+  left than `\\b` (which treats `+`, `#`, `.` and `/` as already being boundaries) and deliberately
   looser on the right than a plain "no adjacent alphanumeric" rule, so that a version suffix still
   counts as the same term: "C++17" matches "C++" (nothing forbids the "1" that follows), "Python3"
   matches "Python", "Angular2+" matches "Angular" (a digit run and a trailing "+" are both fine,
@@ -139,12 +140,13 @@ _EDGE_PUNCTUATION = "".join(c for c in string.punctuation if c not in _MEANINGFU
     "“”‘’—–…"  # curly quotes, em/en dash, ellipsis
 )
 
-# A match cannot be immediately preceded by an ASCII letter or digit, or immediately followed by
-# an ASCII letter. See the module docstring for why the right-hand side deliberately tolerates a
-# following digit or "+" (a version suffix: "C++17", "Python3", "Angular2+") while the left-hand
-# side still forbids one (so a match cannot start mid-word either).
-_BOUNDARY_BEFORE = r"(?<![A-Za-z0-9])"
-_BOUNDARY_AFTER = r"(?![A-Za-z])"
+# A match cannot be immediately preceded by a Unicode word character, or immediately followed by a
+# Unicode letter or underscore (a word character that is not a digit). See the module docstring for
+# why the right-hand side deliberately tolerates a following digit or "+" (a version suffix:
+# "C++17", "Python3", "Angular2+") while the left-hand side still forbids one (so a match cannot
+# start mid-word either).
+_BOUNDARY_BEFORE = r"(?<!\w)"
+_BOUNDARY_AFTER = r"(?![^\W\d])"
 
 
 def _fold_whitespace_and_edges(text: str) -> str:

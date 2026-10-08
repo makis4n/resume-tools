@@ -116,8 +116,9 @@ changed and why.
   match resolution" below for why that matters). A run of whitespace inside a multi-word term
   becomes `\s+` in the pattern, so a line break or doubled space in PDF-extracted text still
   counts as a match ("machine\\nlearning", "Microsoft   Excel"); the returned offsets still index
-  the original, untouched text. A match cannot be immediately preceded by an ASCII letter or
-  digit, and cannot be immediately followed by an ASCII letter -- but *can* be immediately followed
+  the original, untouched text. A match cannot be immediately preceded by a Unicode letter,
+  digit or underscore (`(?<!\w)`), and cannot be immediately followed by a Unicode letter or
+  underscore (`(?![^\W\d])`), so accented text does not leak a match ("éPython", "Pythoné") -- but *can* be immediately followed
   by a digit or a "+", so a version suffix still counts as the same term ("C++17" matches "C++",
   "Python3" matches "Python", "Angular2+" matches "Angular"), while "Java" still cannot match
   inside "JavaScript" (the following "S" is a letter) and "C++" still cannot match inside "CSS". A
