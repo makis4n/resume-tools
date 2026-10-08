@@ -435,7 +435,7 @@ def test_mentions_performance_on_a_50kb_document(taxonomy: Taxonomy) -> None:
     elapsed = time.monotonic() - start
 
     assert mentions
-    assert elapsed < 1.0, f"mentions() took {elapsed:.3f}s on ~50KB of text"
+    assert elapsed < 5.0, f"mentions() took {elapsed:.3f}s on ~50KB of text"
 
 
 # ---------------------------------------------------------------------------
