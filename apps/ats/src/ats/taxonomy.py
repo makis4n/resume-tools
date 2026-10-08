@@ -296,7 +296,10 @@ _SENTENCE_BREAKS = ".!?;\u2022\u00b7|*" + "-\u2013\u2014"
 _DASHES = "-\u2013\u2014"
 # Bullet glyphs exported by word processors, beyond the ones in `_SENTENCE_BREAKS`. Private-use
 # code points (Word's Symbol-font bullet is U+F0B7) are accepted too, by category.
-_BULLETS = "\u25cf\u25aa\u25ab\u2219\u25e6\u25a0\u2023\u2043\u2024"
+_BULLETS = (
+    "\u25cf\u25aa\u25ab\u2219\u25e6\u25a0\u2023\u2043\u2024"
+    "\u27a2\u27a4\u2794\u25ba\u25b6\u25b8\u2713\u2714\u2756"
+)
 # Opening quotes and brackets that may sit between a sentence break and the first word.
 _OPENERS = "\"'\u201c\u2018\u00ab([{"
 # Lower-case abbreviations whose trailing period does not end a sentence ("incl. Excel at ...").
@@ -304,13 +307,30 @@ _ABBREVIATIONS = frozenset({"incl", "e.g", "i.e", "eg", "ie", "approx", "esp", "
 _LAST_WORD = re.compile(r"[\w.]+$")
 
 
+_WINDOW = 64
+_LIST_NUMBER = re.compile(r"(?:^|\s)(?:\d{1,2}|[A-Za-z])\)$")
+
+
 def _starts_sentence(text: str, start: int) -> bool:
-    """Whether the match at `start` begins the text, a line, a list item or a sentence."""
-    prefix = text[:start]
+    """Whether the match at `start` begins the text, a line, a list item or a sentence.
+
+    Only a bounded window before the match is inspected, so the cost does not grow with the
+    length of the text.
+    """
+    lo = max(0, start - _WINDOW)
+    prefix = text[lo:start]
     stripped = prefix.rstrip()
     gap = prefix[len(stripped) :]
-    if not stripped or "\n" in gap or "\r" in gap:
+    if not stripped:
         return True
+    if "\n" in gap or "\r" in gap:
+        # A hard-wrapped line ("... models in\nExcel at Acme") continues the sentence when the
+        # previous line stops on a lower-case word or a comma; a capitalised word (a heading such
+        # as "Skills") or any other ending starts a line.
+        if stripped[-1] == ",":
+            return False
+        word = _LAST_WORD.search(stripped, max(0, len(stripped) - 32))
+        return word is None or not word.group()[:1].islower()
     core = stripped.rstrip(_OPENERS).rstrip()
     if not core:
         return True
@@ -320,8 +340,10 @@ def _starts_sentence(text: str, start: int) -> bool:
         glued = len(core) == len(prefix) and len(core) > 1 and not core[-2].isspace()
         return not glued
     if last == ".":
-        word = _LAST_WORD.search(core[:-1])
+        word = _LAST_WORD.search(core, max(0, len(core) - 32), len(core) - 1)
         return word is None or word.group().lower() not in _ABBREVIATIONS
+    if last == ")" and _LIST_NUMBER.search(core):
+        return True
     return last in _SENTENCE_BREAKS or last in _BULLETS or unicodedata.category(last) == "Co"
 
 

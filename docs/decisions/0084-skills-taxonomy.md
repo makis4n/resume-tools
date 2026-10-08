@@ -76,6 +76,9 @@ changed and why.
       (`quality-control`: the Québec province code in every Québec address). Bare "agile" became
       `case_sensitive` "Agile", so the everyday adjective ("must be agile") no longer tags the
       methodology; a capitalised "Agile thinker" still does and is an accepted collision.
+    - Review round four dropped the bare "cpa" (`cpa-license`: cost per acquisition in marketing)
+      and "acls" (`acls-certification`: network access control lists), and renamed `typing-speed`
+      from "Typing" to "Typing speed" ("static typing" in software text); the long forms stay.
     - "Excel", too, was dropped in the taxonomy's first version, then brought back -- see
       `not_followed_by`, below.
   - **Kept, but only under `case_sensitive`:** "Swift", "Rust", "Spark" (alias of `apache-spark`),
@@ -85,7 +88,8 @@ changed and why.
     "Zoom", "Notion", "Sketch", "Workday" (`hris-workday`: "a flexible workday" is ordinary office
     prose, almost always lower case), "Illustration" ("for illustration purposes" is almost always
     lower case too), "Confluence" ("a confluence of skills and experience"), "Puppet",
-    "Salesforce", and, from review round three, the names "Greenhouse" (`greenhouse-ats`),
+    "Salesforce", "ML" (`machine-learning`: lower-case "ml" is deliberately not matched, trading
+    recall for precision, as with React and Agile), and, from review round three, the names "Greenhouse" (`greenhouse-ats`),
     "Blackboard" (`blackboard-lms`), "Intercom", "Flask", "dbt" (the clinical acronym DBT is
     upper case), "SEM" ("Sem 1" means semester) and the alias "Illustrator" of
     `adobe-illustrator` ("book illustrator") ("our salesforce grew 20%", the one-word spelling of "sales force"). "Angular" is
@@ -104,7 +108,8 @@ changed and why.
     with `"not_followed_by": ["in", "at"]`, checked after the regex match,
     applied by `mentions()` only when the match starts a text, line, list item or sentence (after
     any bullet glyph, including private-use ones, whitespace including non-breaking, and opening
-    quotes; a hyphen glued to the word, as in "MS-Excel", and abbreviation periods such as
+    quotes; the common arrow, triangle and tick bullets and "1)" / "a)" numbering; a hard line wrap
+    after a lower-case word or comma continues the sentence rather than starting one; a hyphen glued to the word, as in "MS-Excel", and abbreviation periods such as
     "incl." or "e.g." do not count as starting one, nor does a colon).
     "Proficient in Excel (pivot tables)", "Built models in Excel at Acme" and "Advanced Excel at an
     expert level" still match; a sentence-initial "Excel in a fast-paced environment" does not. `react` briefly had a

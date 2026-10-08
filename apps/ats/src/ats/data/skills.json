@@ -50,8 +50,7 @@
       "name": "Advanced Cardiovascular Life Support certification",
       "kind": "qualification",
       "aliases": [
-        "acls certification",
-        "acls"
+        "acls certification"
       ]
     },
     {
@@ -655,8 +654,7 @@
       "name": "CPA licence",
       "kind": "qualification",
       "aliases": [
-        "certified public accountant",
-        "cpa"
+        "certified public accountant"
       ]
     },
     {
@@ -2478,10 +2476,9 @@
     },
     {
       "id": "typing-speed",
-      "name": "Typing",
+      "name": "Typing speed",
       "kind": "skill",
       "aliases": [
-        "typing speed",
         "keyboarding"
       ]
     },

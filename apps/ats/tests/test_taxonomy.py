@@ -809,3 +809,34 @@ def test_load_from_bytes_accepts_a_valid_not_followed_by() -> None:
     taxonomy = load_from_bytes(_bytes_for([entry]))
     assert not any(m.skill.id == "widget-making" for m in taxonomy.mentions("Widget in a box."))
     assert any(m.skill.id == "widget-making" for m in taxonomy.mentions("A fine Widget."))
+
+
+def test_excel_guard_survives_hard_line_wraps(taxonomy: Taxonomy) -> None:
+    for text in (
+        "Built financial models in\nExcel at Acme Corp.",
+        "Advanced proficiency with Word and\nExcel at an expert level required.",
+    ):
+        assert [m.skill.id for m in taxonomy.mentions(text)].count("excel-spreadsheets") == 1, text
+    assert not taxonomy.mentions("Skills\nExcel in a fast-paced team")
+
+
+def test_excel_guard_recognises_more_bullet_markers(taxonomy: Taxonomy) -> None:
+    for marker in ("➢", "►", "1)", "a)"):
+        assert not taxonomy.mentions(f"{marker} Excel in a fast-paced environment"), marker
+
+
+def test_acronym_collisions_do_not_match(taxonomy: Taxonomy) -> None:
+    for text in (
+        "Optimise paid campaigns to hit CPA and ROAS targets.",
+        "Configure VPC security groups, network ACLs and IAM policies.",
+        "Experience with static typing and gradual typing.",
+    ):
+        ids = {m.skill.id for m in taxonomy.mentions(text)}
+        assert not ids & {"cpa-license", "acls-certification", "typing-speed"}, text
+    assert taxonomy.mentions("Typing speed of 80 wpm")
+
+
+def test_excel_guard_stays_fast_on_many_sentence_starts(taxonomy: Taxonomy) -> None:
+    start = time.monotonic()
+    taxonomy.mentions("Excel in x. " * 20_000)
+    assert time.monotonic() - start < 1.5
