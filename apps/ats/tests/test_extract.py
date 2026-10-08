@@ -4,15 +4,25 @@ from pathlib import Path
 
 import pytest
 
-from ats.extract import Document, EncryptedPdfError, UnreadablePdfError, extract
+from ats.extract import (
+    Document,
+    EncryptedPdfError,
+    UnreadablePdfError,
+    _is_symbol_font,
+    extract,
+)
 from tests.pdfs import (
     build_pdf,
+    form_wrapped_image_pdf,
     glyph_case_pdf,
+    icon_font_pua_pdf,
     image_only_pdf,
     malformed_page_tree_pdf,
     malformed_producer_metadata_pdf,
     minimal_pdf,
+    symbol_font_bullet_pdf,
     text_as_outlines_pdf,
+    text_resume_with_form_wrapped_graphic_page_pdf,
     zero_page_pdf,
 )
 
@@ -158,7 +168,7 @@ def test_a_zero_page_document_closes_the_native_handle(monkeypatch: pytest.Monke
 
 def test_a_plain_text_page_has_one_text_object_and_no_images_or_paths() -> None:
     (page,) = extract(minimal_pdf()).pages
-    assert page.char_count == len("Invented Person")
+    assert page.char_count == len("InventedPerson")
     assert page.unmapped_count == 0
     assert page.private_use_count == 0
     assert page.ligature_count == 0
@@ -243,8 +253,14 @@ def test_ligature_count_classifies_a_raw_ligature_codepoint(
     `tests.pdfs.glyph_case_pdf`'s docstring for what was verified -- PDFium always expands one of
     U+FB00-FB06 into its plain-letter equivalent before `FPDFText_GetUnicode` ever returns it, no
     matter how the character's Unicode value was derived. This drives that one call directly
-    instead, to prove `ats.extract`'s per-character loop classifies U+FB01 as a ligature when it
-    is actually given one."""
+    instead, to prove `ats.extract._char_stats` classifies U+FB01 as a ligature when it is
+    actually given one.
+
+    `_char_stats` normally trusts `text[i]` to line up with character-list index `i` rather than
+    calling `FPDFText_GetUnicode` (see its docstring), so this also has to force that assumption
+    false -- passing a `text` argument that cannot possibly match `count_chars()` -- rather than
+    querying an out-of-range character index, whose behaviour PDFium does not document.
+    """
     import ats.extract as extract_module
 
     real_get_unicode = extract_module.pdfium.raw.FPDFText_GetUnicode
@@ -254,8 +270,63 @@ def test_ligature_count_classifies_a_raw_ligature_codepoint(
 
     monkeypatch.setattr(extract_module.pdfium.raw, "FPDFText_GetUnicode", fake_get_unicode)
 
-    (page,) = extract(minimal_pdf("A")).pages
+    pdf = minimal_pdf("A")
+    with extract_module._PDFIUM_LOCK:
+        document = extract_module._open_document(pdf)
+        try:
+            pdf_page = document.get_page(0)
+            try:
+                text_page = pdf_page.get_textpage()
+                try:
+                    stats = extract_module._char_stats(text_page, text="")
+                finally:
+                    text_page.close()
+            finally:
+                pdf_page.close()
+        finally:
+            document.close()
+
+    char_count, unmapped_count, private_use_count, ligature_count = stats
+    assert char_count == 1
+    assert ligature_count == 1
+    assert unmapped_count == 0
+    assert private_use_count == 0
+
+
+def test_a_form_wrapped_image_is_counted_as_an_image() -> None:
+    (page,) = extract(form_wrapped_image_pdf()).pages
+    assert (page.text_objects, page.image_objects, page.path_objects) == (0, 1, 0)
+
+
+def test_a_form_wrapped_graphic_is_counted_as_a_path() -> None:
+    _, graphic_page = extract(text_resume_with_form_wrapped_graphic_page_pdf()).pages
+    assert (graphic_page.text_objects, graphic_page.image_objects) == (0, 0)
+    assert graphic_page.path_objects == 1
+
+
+def test_a_symbol_font_bullet_is_not_an_icon_font_glyph() -> None:
+    (page,) = extract(symbol_font_bullet_pdf()).pages
     assert page.char_count == 1
-    assert page.ligature_count == 1
-    assert page.unmapped_count == 0
     assert page.private_use_count == 0
+
+
+def test_an_icon_font_private_use_glyph_is_still_counted() -> None:
+    (page,) = extract(icon_font_pua_pdf()).pages
+    assert page.private_use_count == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Symbol", True),
+        ("ABCDEF+Symbol", True),
+        ("Wingdings 2", True),
+        ("ABCDEF+Wingdings3", True),
+        ("webdings", True),
+        ("FontAwesome", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_is_symbol_font(name: str | None, expected: bool) -> None:
+    assert _is_symbol_font(name) is expected

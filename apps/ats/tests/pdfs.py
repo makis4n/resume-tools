@@ -240,3 +240,119 @@ def glyph_case_pdf() -> bytes:
         b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
     ]
     return _assemble(objects)
+
+
+def form_wrapped_image_pdf(*, width: float = 612, height: float = 792) -> bytes:
+    """A one-page PDF with a single small image and no text at all, like `image_only_pdf`, but
+    with the image drawn inside a Form XObject rather than directly on the page -- as scanner and
+    print-driver output commonly does.
+
+    Verified experimentally against pypdfium2 5.13.0: a page-object count that only looks at the
+    page's own top-level objects comes back `(text=0, image=0, path=0)` for this fixture -- the
+    image is invisible to it, entirely because of the wrapping form, not because it is missing --
+    while one that recurses into the Form XObject finds it, at `(text=0, image=1, path=0)`.
+    """
+    image_stream = (
+        b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray "
+        b"/BitsPerComponent 8 /Length 1 >>\nstream\n\x80\nendstream"
+    )
+    form_content = b"q %g 0 0 %g 0 0 cm /Im1 Do Q" % (width, height)
+    form_stream = (
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 %g %g] "
+        b"/Resources << /XObject << /Im1 4 0 R >> >> /Length %d >>\nstream\n%s\nendstream"
+    ) % (width, height, len(form_content), form_content)
+    page_content = b"q 1 0 0 1 0 0 cm /Fm1 Do Q"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %g %g] "
+        b"/Resources << /XObject << /Fm1 5 0 R >> >> /Contents 6 0 R >>" % (width, height),
+        image_stream,
+        form_stream,
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(page_content), page_content),
+    ]
+    return _assemble(objects)
+
+
+def text_resume_with_form_wrapped_graphic_page_pdf() -> bytes:
+    """A two-page PDF: page 1 has ordinary extractable text; page 2 has no text at all, only a
+    single filled rectangle -- a decorative graphic, say -- drawn inside a Form XObject, so it has
+    no top-level path object of its own either.
+
+    Regression fixture for the `blank-page` check: a page-object count that does not recurse into
+    the Form XObject sees page 2 as `(text=0, image=0, path=0)`, indistinguishable from a page
+    that is genuinely blank; recursing finds the rectangle, at `(text=0, image=0, path=1)`.
+    """
+    text_content = b"BT /F1 12 Tf 72 700 Td (Invented Text) Tj ET"
+    rect_content = b"0 0 0 rg 10 10 50 50 re f"
+    page2_content = b"q 1 0 0 1 0 0 cm /Fm1 Do Q"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 8 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(text_content), text_content),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /XObject << /Fm1 6 0 R >> >> /Contents 7 0 R >>",
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] /Length %d >>\nstream\n%s\nendstream"
+        % (len(rect_content), rect_content),
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(page2_content), page2_content),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    return _assemble(objects)
+
+
+def _pua_char_pdf(base_font: bytes, code: int, unicode_hex: str) -> bytes:
+    """A one-page PDF whose one character is drawn in a font named `base_font`, with its Unicode
+    value set to `unicode_hex` (a 4-hex-digit codepoint) by an explicit `/ToUnicode` CMap.
+
+    A CMap is used rather than `/Encoding << /Differences [...] >>` (as `glyph_case_pdf` uses)
+    because a font literally named "Symbol" is treated as an inherently symbolic font: verified
+    experimentally against pypdfium2 5.13.0, PDFium ignores `/Differences` glyph-name overrides
+    for it entirely (the character extracts as U+0000 with no font name resolved at all), but
+    correctly reports both the intended Unicode value and the font name once a `/ToUnicode` CMap
+    is present instead.
+    """
+    tounicode = (
+        b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+        b"1 begincodespacerange\n<00> <ff>\nendcodespacerange\n"
+        b"1 beginbfchar\n<%02x> <%s>\nendbfchar\nendcmap\nend\nend\n" % (code, unicode_hex.encode())
+    )
+    content = b"BT /F1 12 Tf 72 700 Td (" + bytes([code]) + b") Tj ET"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 6 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /" + base_font + b" /ToUnicode 5 0 R >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(tounicode), tounicode),
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+    ]
+    return _assemble(objects)
+
+
+def symbol_font_bullet_pdf() -> bytes:
+    """A one-page PDF whose only character is U+F0B7 (a filled square, Word's default bullet
+    glyph) drawn in a font literally named "Symbol" -- exactly how Word encodes a bulleted list
+    item.
+
+    Verified experimentally against pypdfium2 5.13.0: `FPDFText_GetFontInfo` reports the font
+    name back as `"Symbol"` for this character. A subset-embedded font's `"ABCDEF+Symbol"`-style
+    prefix could not be exercised this way -- pypdfium2 could not resolve *any* character in a
+    subset-prefixed "Symbol" font with no embedded font program at all, which no synthetic
+    fixture without a real embedded TrueType/Type1 font program can avoid. The prefix-stripping
+    itself is a pure string operation, so `test_extract.py` tests `ats.extract._is_symbol_font`
+    directly with a plain string instead of via a built PDF.
+    """
+    return _pua_char_pdf(b"Symbol", 34, "F0B7")
+
+
+def icon_font_pua_pdf() -> bytes:
+    """A one-page PDF whose only character is U+F0FC, drawn in a font named "FontAwesome" -- an
+    icon font with no real text behind its glyphs, which sits in the same Private Use Area range
+    Word's Symbol-font bullets do (decision 0083's `icon-font-glyphs` check must still catch it).
+
+    Verified experimentally against pypdfium2 5.13.0: `FPDFText_GetFontInfo` reports the font
+    name back as `"FontAwesome"`, which is not one of `ats.extract._SYMBOL_FONT_NAMES`.
+    """
+    return _pua_char_pdf(b"FontAwesome", 34, "F0FC")

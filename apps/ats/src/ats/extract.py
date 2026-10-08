@@ -7,7 +7,9 @@ metadata strings; they exist only so `ats.producer.classify` can turn them into 
 no caller may return or log them.
 """
 
+import ctypes
 import threading
+from codecs import decode
 from dataclasses import dataclass
 
 import pypdfium2 as pdfium
@@ -27,16 +29,33 @@ _PDFIUM_LOCK = threading.Lock()
 _UNBOUNDED = 1_000_000.0
 
 # Codepoints classified as icon-font glyphs with no real Unicode mapping behind them: the BMP
-# Private Use Area, and Supplementary Private Use Areas A and B (decision 0033).
+# Private Use Area, and Supplementary Private Use Areas A and B (decision 0083).
 _PRIVATE_USE_RANGES = ((0xE000, 0xF8FF), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD))
 
 # Latin small-letter ligatures (ﬀ ﬁ ﬂ ﬃ ﬄ ﬅ ﬆ) that keyword search on the extracted text misses,
-# because e.g. "ﬁle" does not contain the substring "file" (decision 0033).
+# because e.g. "ﬁle" does not contain the substring "file" (decision 0083).
 _LIGATURE_RANGE = (0xFB00, 0xFB06)
 
 # A character extracted as one of these stands in for "no real mapping was found", the same as a
 # character PDFium itself flags with `FPDFText_HasUnicodeMapError`.
 _UNMAPPED_CODEPOINTS = (0xFFFD, 0x0000)
+
+# Word and other Office tools draw a bulleted list item's bullet glyph as an ordinary, readable
+# character in the Private Use Area, in one of a handful of dingbat fonts -- never as an icon font
+# with no real text behind it. Matched against `_font_name_at`'s result with any subset-embedding
+# prefix stripped and spaces removed, case-insensitively, since real font names appear as both
+# "Wingdings2" and "Wingdings 2" (decision 0083).
+_SYMBOL_FONT_NAMES = frozenset({"symbol", "wingdings", "wingdings2", "wingdings3", "webdings"})
+
+# Recursion into Form XObjects (`_count_objects`) is bounded two ways, since the objects it walks
+# come from an untrusted upload (PRD §11): a depth limit, so a form nested inside a form inside a
+# form cannot recurse arbitrarily deep, and a total budget on how many objects are ever visited
+# (at any depth), so a wide fan-out at any single level -- which the depth limit alone does not
+# bound -- cannot make one page's counting combinatorially expensive. 100,000 comfortably covers a
+# single very dense resume page (tens of thousands of text runs) while still bounding a
+# pathologically nested or wide upload to a small, fast amount of work.
+_FORM_RECURSION_LIMIT = 8
+_OBJECT_BUDGET = 100_000
 
 
 class ExtractError(ValueError):
@@ -60,23 +79,26 @@ class Page:
     its MediaBox with rotation and the CropBox already applied, not necessarily the raw MediaBox.
 
     `char_count`, `unmapped_count`, `private_use_count` and `ligature_count` all count characters
-    from the same single pass over the page's text (see `_char_stats`), and all exclude characters
-    PDFium generated itself (inserted spaces and line breaks that are not really in the page's
-    content stream) -- so `unmapped_count`, `private_use_count` and `ligature_count` are always
-    counts within `char_count`, keeping any fraction of them well-formed.
+    from the same single pass over the page's text (see `_char_stats`), and all exclude whitespace
+    (which also covers the spaces and line breaks PDFium generates itself, that are not really in
+    the page's content stream) -- so `unmapped_count`, `private_use_count` and `ligature_count`
+    are always counts within `char_count`, keeping any fraction of them well-formed.
 
-    - `char_count`: non-generated characters on the page.
+    - `char_count`: non-whitespace characters on the page.
     - `unmapped_count`: characters with no usable Unicode mapping -- PDFium flags these directly
       (`FPDFText_HasUnicodeMapError`), or they decode as the replacement character U+FFFD or as
       NUL.
     - `private_use_count`: characters in a Private Use Area, i.e. an icon font with no real text
-      behind it.
+      behind it -- except a character in one of the handful of dingbat fonts (Symbol, Wingdings,
+      Webdings) Word and other Office tools draw an ordinary bullet glyph with, which is real,
+      readable list-bullet content and is not counted here (`_is_symbol_font`, decision 0083).
     - `ligature_count`: characters that are a single Latin ligature glyph (ﬀ ﬁ ﬂ ﬃ ﬄ ﬅ ﬆ), which
       breaks plain keyword search on the extracted text.
 
-    `text_objects`, `image_objects` and `path_objects` count only the page's own, top-level
-    objects (`FPDFPage_CountObjects` / `FPDFPage_GetObject`): a Form XObject is counted once, as
-    its own object, and its contents are not recursed into.
+    `text_objects`, `image_objects` and `path_objects` count every TEXT, IMAGE and PATH object on
+    the page, recursing into any Form XObject to reach objects nested inside it (common in scanner
+    and print-driver output): see `_count_objects`. A Form XObject itself is not tallied into any
+    of the three counts.
     """
 
     number: int
@@ -153,51 +175,114 @@ def _is_private_use(codepoint: int) -> bool:
     return any(low <= codepoint <= high for low, high in _PRIVATE_USE_RANGES)
 
 
-def _char_stats(text_page: pdfium.PdfTextPage) -> tuple[int, int, int, int]:
+def _is_symbol_font(font_name: str | None) -> bool:
+    """Whether `font_name` (as `_font_name_at` reports it) is one of the dingbat/bullet fonts
+    Word and other Office tools use for a Private Use Area bullet glyph, per `_SYMBOL_FONT_NAMES`.
+
+    A subset-embedded font's name carries a 6-letter subset tag and a "+" (e.g. "ABCDEF+Symbol",
+    PDF 32000-1:2008 §9.6.4); that prefix is stripped before matching. Matching also drops spaces
+    and ignores case, since real font names appear as both "Wingdings2" and "Wingdings 2".
+    """
+    if not font_name:
+        return False
+    _, _, unprefixed = font_name.rpartition("+")
+    return unprefixed.replace(" ", "").lower() in _SYMBOL_FONT_NAMES
+
+
+def _font_name_at(text_page: pdfium.PdfTextPage, index: int) -> str | None:
+    """The font name PDFium reports for the character at `index` on `text_page`, or `None` if it
+    could not resolve one.
+
+    There is no pypdfium2 helper for `FPDFText_GetFontInfo` itself; the buffer-sizing pattern
+    (call once with no buffer to size it, then again to fill it) is the same one pypdfium2's own
+    `PdfFont._get_name_impl` uses for `FPDFFont_GetBaseFontName`, verified against pypdfium2 5.13.0.
+    """
+    flags = ctypes.c_int()
+    size = pdfium.raw.FPDFText_GetFontInfo(text_page, index, None, 0, flags)
+    if size == 0:
+        return None
+    buffer = ctypes.create_string_buffer(size)
+    pdfium.raw.FPDFText_GetFontInfo(text_page, index, buffer, size, flags)
+    return decode(memoryview(buffer)[: size - 1], "utf-8", errors="replace")
+
+
+def _char_stats(text_page: pdfium.PdfTextPage, text: str) -> tuple[int, int, int, int]:
     """Classify every character on `text_page` in one linear pass over its character list.
 
     Returns `(char_count, unmapped_count, private_use_count, ligature_count)`, as documented on
-    `Page`. A character PDFium generated itself (`FPDFText_IsGenerated`) is skipped entirely, so
-    an inserted space or line break can never be miscounted as an unmapped or private-use glyph.
+    `Page`. Whitespace is not counted at all, so an inserted space or line break can never be
+    miscounted as an unmapped or private-use glyph.
+
+    The common case makes exactly one PDFium call per character, `FPDFText_HasUnicodeMapError`.
+    The Unicode value comes from `text` -- `get_text_bounded` already decoded it from this same
+    character list -- and `text[i]` lines up with character-list index `i` (verified
+    experimentally, including across a PDFium-generated space and a decomposed ligature). The
+    characters PDFium generates itself are only inserted spaces and line breaks, so whitespace in
+    `text` is skipped instead of asking `FPDFText_IsGenerated` per character; it can never be
+    unmapped, private-use or a ligature. The per-character `IsGenerated` and `GetUnicode` calls
+    remain only as a fallback for `len(text) != count_chars()`, which nothing in testing produced.
+
+    A third PDFium call, `FPDFText_GetFontInfo`, happens only for a character already identified as
+    Private Use Area, to tell an icon font's glyph (still counted) from a Symbol/Wingdings/Webdings
+    bullet glyph (not counted): see `_is_symbol_font`.
     """
     char_count = 0
     unmapped_count = 0
     private_use_count = 0
     ligature_count = 0
     total = text_page.count_chars()
+    aligned = len(text) == total
     for index in range(total):
-        if pdfium.raw.FPDFText_IsGenerated(text_page, index) == 1:
-            continue
+        if aligned:
+            char = text[index]
+            if char.isspace():
+                continue
+            codepoint = ord(char)
+        else:
+            if pdfium.raw.FPDFText_IsGenerated(text_page, index) == 1:
+                continue
+            codepoint = pdfium.raw.FPDFText_GetUnicode(text_page, index)
         char_count += 1
-        codepoint = pdfium.raw.FPDFText_GetUnicode(text_page, index)
         has_map_error = pdfium.raw.FPDFText_HasUnicodeMapError(text_page, index) == 1
         if has_map_error or codepoint in _UNMAPPED_CODEPOINTS:
             unmapped_count += 1
-        if _is_private_use(codepoint):
-            private_use_count += 1
         if _LIGATURE_RANGE[0] <= codepoint <= _LIGATURE_RANGE[1]:
             ligature_count += 1
+        if _is_private_use(codepoint) and not _is_symbol_font(_font_name_at(text_page, index)):
+            private_use_count += 1
     return char_count, unmapped_count, private_use_count, ligature_count
 
 
-def _count_objects(pdf_page: pdfium.PdfPage) -> tuple[int, int, int]:
-    """Count `pdf_page`'s own, top-level page objects by type: `(text, image, path)`.
+def _count_objects_in(
+    parent: object,
+    count_fn: object,
+    get_fn: object,
+    depth: int,
+    budget: int,
+) -> tuple[int, int, int, int]:
+    """One level of `_count_objects`'s walk: `parent`'s own objects, via `count_fn`/`get_fn`
+    (`FPDFPage_CountObjects`/`FPDFPage_GetObject` at the top, `FPDFFormObj_CountObjects`/
+    `FPDFFormObj_GetObject` inside a Form XObject), recursing into any nested Form XObject while
+    `depth` stays under `_FORM_RECURSION_LIMIT` and `budget` (objects visited so far, at any
+    depth) stays under `_OBJECT_BUDGET`.
 
-    Only `FPDFPage_CountObjects` / `FPDFPage_GetObject` are used, so a Form XObject on the page is
-    counted once, as its own object, and its contents are never recursed into.
+    Returns `(text, image, path, budget_remaining)`.
     """
     text_objects = 0
     image_objects = 0
     path_objects = 0
-    count = pdfium.raw.FPDFPage_CountObjects(pdf_page)
+    count = count_fn(parent)
     for index in range(count):
-        raw_obj = pdfium.raw.FPDFPage_GetObject(pdf_page, index)
+        if budget <= 0:
+            break
+        raw_obj = get_fn(parent, index)
         if not raw_obj:
             # A malformed content stream in an untrusted upload could in principle make an
             # in-range index fail to resolve; pypdfium2's own `get_objects()` helper guards the
             # same call the same way. Skipping rather than passing a null pointer on to
             # `FPDFPageObj_GetType` avoids handing PDFium's C API something it never expects.
             continue
+        budget -= 1
         obj_type = pdfium.raw.FPDFPageObj_GetType(raw_obj)
         if obj_type == pdfium.raw.FPDF_PAGEOBJ_TEXT:
             text_objects += 1
@@ -205,6 +290,36 @@ def _count_objects(pdf_page: pdfium.PdfPage) -> tuple[int, int, int]:
             image_objects += 1
         elif obj_type == pdfium.raw.FPDF_PAGEOBJ_PATH:
             path_objects += 1
+        elif obj_type == pdfium.raw.FPDF_PAGEOBJ_FORM and depth < _FORM_RECURSION_LIMIT:
+            sub_text, sub_image, sub_path, budget = _count_objects_in(
+                raw_obj,
+                pdfium.raw.FPDFFormObj_CountObjects,
+                pdfium.raw.FPDFFormObj_GetObject,
+                depth + 1,
+                budget,
+            )
+            text_objects += sub_text
+            image_objects += sub_image
+            path_objects += sub_path
+    return text_objects, image_objects, path_objects, budget
+
+
+def _count_objects(pdf_page: pdfium.PdfPage) -> tuple[int, int, int]:
+    """Count every TEXT, IMAGE and PATH object on `pdf_page`: `(text, image, path)`.
+
+    Recurses into any Form XObject to reach objects nested inside it, which scanner and
+    print-driver output commonly wraps an image in, bounded by `_FORM_RECURSION_LIMIT` and
+    `_OBJECT_BUDGET` (see their comments; the objects walked here come from an untrusted upload,
+    PRD §11). A Form XObject itself is not tallied into any of the three counts, only what it
+    (recursively) contains.
+    """
+    text_objects, image_objects, path_objects, _ = _count_objects_in(
+        pdf_page,
+        pdfium.raw.FPDFPage_CountObjects,
+        pdfium.raw.FPDFPage_GetObject,
+        0,
+        _OBJECT_BUDGET,
+    )
     return text_objects, image_objects, path_objects
 
 
@@ -217,7 +332,7 @@ def _read_page(pdf_page: pdfium.PdfPage, number: int) -> Page:
         # to the page's displayed box and would silently drop hidden or off-page text (see
         # `_UNBOUNDED`'s comment).
         text = text_page.get_text_bounded(-_UNBOUNDED, -_UNBOUNDED, _UNBOUNDED, _UNBOUNDED)
-        char_count, unmapped_count, private_use_count, ligature_count = _char_stats(text_page)
+        char_count, unmapped_count, private_use_count, ligature_count = _char_stats(text_page, text)
     finally:
         text_page.close()
     text_objects, image_objects, path_objects = _count_objects(pdf_page)
