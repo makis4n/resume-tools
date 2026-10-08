@@ -208,6 +208,7 @@ async function main() {
             candidates: probed.probe.candidates,
             name: namer(probed.intake, probed.reference, probed.probe),
             cause: causes.of(probed.probe.candidates),
+            transform: causes.transformOf(probed.probe.candidates),
           });
           if (addsUp(found.pieces, read.words)) pieces = found.pieces;
         }

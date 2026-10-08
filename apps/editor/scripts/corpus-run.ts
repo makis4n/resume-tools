@@ -85,6 +85,7 @@ export const DIAGNOSTICS: readonly string[] = [
   "pieces.rules",
   "pieces.kinds",
   "pieces.details",
+  "pieces.transforms",
   "budgets",
   "compiles.trials",
   "compiles.dumps",

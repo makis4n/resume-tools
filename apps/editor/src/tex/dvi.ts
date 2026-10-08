@@ -5,7 +5,16 @@
  * every position in scaled points (2^-16 pt) measured from the DVI origin, which
  * sits one inch in from the top-left corner of the page. Stream order matters: the
  * glyphs between two marker specials are the glyphs of that field.
+ *
+ * Every position is where the PDF puts the item: xdvipdfmx moves, turns and scales what it sets
+ * inside a `pdf:btrans` and after an `x:scale` or `x:rotate`, as a TikZ node's text is set, and
+ * the parser applies the same (`GraphicsState`, decision 0081), so that whatever reads its output,
+ * the page, the glyphs' boxes, the reference's stream and the checks, reads the PDF's positions. An
+ * item set inside one says so (`transform`), with the matrix's linear part where it turns or
+ * scales, which the page draws its glyph with.
  */
+
+import { type ItemTransform, placeItems } from "./transforms";
 
 export interface DviFont {
   id: number;
@@ -34,8 +43,21 @@ export interface NativeFont {
   embolden?: number;
 }
 
+/**
+ * One thing a page sets. `transform` is there for an item set inside a transformation xdvipdfmx
+ * applies (`ItemTransform`): its `h` and `v`, and a native run's glyphs' offsets, are then
+ * already where the PDF puts them.
+ */
 export type PageItem =
-  | { kind: "glyph"; font: number; code: number; h: number; v: number; width: number }
+  | {
+      kind: "glyph";
+      font: number;
+      code: number;
+      h: number;
+      v: number;
+      width: number;
+      transform?: ItemTransform;
+    }
   | {
       kind: "native";
       font: number;
@@ -44,9 +66,17 @@ export type PageItem =
       width: number;
       glyphs: { id: number; x: number; y: number }[];
       text?: string;
+      transform?: ItemTransform;
     }
-  | { kind: "rule"; h: number; v: number; width: number; height: number }
-  | { kind: "special"; h: number; v: number; text: string };
+  | {
+      kind: "rule";
+      h: number;
+      v: number;
+      width: number;
+      height: number;
+      transform?: ItemTransform;
+    }
+  | { kind: "special"; h: number; v: number; text: string; transform?: ItemTransform };
 
 export interface DviPage {
   counters: number[];
@@ -306,6 +336,10 @@ export function parseDvi(bytes: Uint8Array, widthsFor: WidthProvider): DviDocume
       throw new Error(`unknown DVI opcode ${op} at byte ${r.pos - 1}`);
     }
   }
+  // Each page's items where the PDF puts them, a big point in DVI units being what a
+  // transformation's offsets are given in.
+  const unitsPerBp = 72.27 / 72 / pointsPerUnit(doc);
+  for (const each of doc.pages) placeItems(each.items, unitsPerBp);
   return doc;
 }
 

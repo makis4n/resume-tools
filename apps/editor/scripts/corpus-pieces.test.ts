@@ -393,6 +393,49 @@ describe("the words not in place, by piece", () => {
     }
   });
 
+  test("break the words kept for a transformation down by its kind, from a closed list", () => {
+    const { imported, runs, candidates, name } = inventedImport(true);
+    const causes = new Causes();
+    const turned = candidates.map((each) =>
+      each.id === "i2" ? { ...each, detail: "transform", transform: "rotate" as const } : each,
+    );
+    const { pieces } = piecesOf({
+      imported,
+      runs,
+      candidates: turned,
+      name,
+      cause: causes.of(turned),
+      transform: causes.transformOf(turned),
+    });
+    expect(pieces).toEqual(
+      expect.arrayContaining([
+        {
+          piece: "itemize",
+          why: "moved",
+          kept: "moved",
+          by: "probe",
+          words: 2,
+          details: { transform: 2 },
+          transforms: { rotate: 2 },
+        },
+      ]),
+    );
+    // Only words kept for a transformation are broken down so.
+    expect(pieces.filter((each) => each.transforms !== undefined)).toHaveLength(1);
+    // A kind not of the list is (other), and so is a candidate with none.
+    const kindOf = causes.transformOf([
+      { id: "a", transform: SECRET as "rotate" },
+      { id: "b" },
+      { id: "c", transform: "translation" },
+    ]);
+    expect([kindOf("a"), kindOf("b"), kindOf("c"), kindOf("nowhere")]).toEqual([
+      "(other)",
+      "(other)",
+      "translation",
+      "(other)",
+    ]);
+  });
+
   test("name a cause only from a closed list, and a candidate the probe holds structure in", () => {
     const { candidates } = inventedImport(true);
     const causes = new Causes();
@@ -703,6 +746,7 @@ describe("comparing runs", () => {
       "pieces.rules",
       "pieces.kinds",
       "pieces.details",
+      "pieces.transforms",
       "budgets",
       "compiles.trials",
       "compiles.dumps",
@@ -728,6 +772,16 @@ describe("comparing runs", () => {
     expect(runComparison(file(plain), file(broken))).toEqual({
       differences: [],
       lacking: ["pieces.details", "pieces.rules"],
+    });
+    // A run with the breakdown of the words kept for a transformation by its kind, against one
+    // made before it (decision 0081): set aside, not a difference on every row.
+    const kinds = broken.map((each) => ({
+      ...each,
+      pieces: [each.pieces[0], { ...each.pieces[1], transforms: { rotate: 1 } }],
+    }));
+    expect(runComparison(file(broken), file(kinds))).toEqual({
+      differences: [],
+      lacking: ["pieces.transforms"],
     });
     // Both with them, they are compared as any field is.
     const other = broken.map((each) => ({

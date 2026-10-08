@@ -276,12 +276,12 @@ export function ruleCrossings(
   for (const item of page.items) {
     // The same test the SVG makes before it draws a rule.
     if (item.kind !== "rule" || item.width <= 0 || item.height <= 0) continue;
-    const rule: RuleBox = {
+    const rule: RuleBox = boxAbout(item.transform?.matrix, INCH + item.h * pt, INCH + item.v * pt, {
       left: INCH + item.h * pt,
       top: INCH + (item.v - item.height) * pt,
       right: INCH + (item.h + item.width) * pt,
       bottom: INCH + item.v * pt,
-    };
+    });
     for (const glyph of glyphs) {
       const across = Math.min(rule.right, glyph.right) > Math.max(rule.left, glyph.left);
       const through = Math.min(rule.bottom, glyph.bottom) > Math.max(rule.top, glyph.top);
@@ -389,10 +389,41 @@ export function glyphTextOf(
 }
 
 /**
+ * A box about the point `(x, y)`, in TeX points from the page's top-left corner, turned or scaled
+ * about that point by the linear part of a matrix xdvipdfmx applies, y up as the PDF has it, as the
+ * SVG draws an item set in one (`turnedAbout`): the box that holds the four corners where they go.
+ * The box as it is where there is no such matrix.
+ */
+export function boxAbout<T extends { left: number; top: number; right: number; bottom: number }>(
+  matrix: readonly [number, number, number, number] | undefined,
+  x: number,
+  y: number,
+  box: T,
+): T {
+  if (matrix === undefined) return box;
+  const [a, b, c, d] = matrix;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const across of [box.left - x, box.right - x])
+    for (const down of [box.top - y, box.bottom - y]) {
+      xs.push(x + a * across - c * down);
+      ys.push(y - b * across + d * down);
+    }
+  return {
+    ...box,
+    left: Math.min(...xs),
+    top: Math.min(...ys),
+    right: Math.max(...xs),
+    bottom: Math.max(...ys),
+  };
+}
+
+/**
  * The box of every glyph on a page the SVG draws, a TeX font's or a native run's, with its field,
  * or its locked part from `locked`, by `glyphKey`, in the order the SVG paints them. A native
  * glyph's box is its outline's, scaled to the font's size and stretched and slanted as xdvipdfmx
- * stretches and slants it, as the SVG draws it. Each box is put in `keyed` under its glyph's key.
+ * stretches and slants it, as the SVG draws it; one set inside a rotation or a scale is turned or
+ * scaled as the SVG draws it too (`boxAbout`). Each box is put in `keyed` under its glyph's key.
  */
 function glyphBoxes(
   doc: DviDocument,
@@ -442,18 +473,21 @@ function glyphBoxes(
         const x = INCH + (item.h + g.x) * pt;
         const y = INCH + (item.v + g.y) * pt;
         const key = glyphKey(index, glyph);
-        push(key, {
-          x,
-          y,
-          left: x + Math.min(...across) * s,
-          top: y - yMax * s,
-          right: x + Math.max(...across) * s,
-          bottom: y - yMin * s,
-          font: nativeFileName(def.name),
-          size: def.size * pt,
-          ...ownerOf(key),
-          ...textField(textOf(item, glyph)),
-        });
+        push(
+          key,
+          boxAbout(item.transform?.matrix, x, y, {
+            x,
+            y,
+            left: x + Math.min(...across) * s,
+            top: y - yMax * s,
+            right: x + Math.max(...across) * s,
+            bottom: y - yMin * s,
+            font: nativeFileName(def.name),
+            size: def.size * pt,
+            ...ownerOf(key),
+            ...textField(textOf(item, glyph)),
+          }),
+        );
       });
       return;
     }
@@ -468,18 +502,21 @@ function glyphBoxes(
     const y = INCH + item.v * pt;
     const [xMin, yMin, xMax, yMax] = glyph.b ?? [0, 0, 0, 0];
     const key = glyphKey(index);
-    push(key, {
-      x,
-      y,
-      left: x + xMin * s,
-      top: y - yMax * s,
-      right: x + xMax * s,
-      bottom: y - yMin * s,
-      font: font.name,
-      size: font.scale * pt,
-      ...ownerOf(key),
-      ...textField(textOf(item)),
-    });
+    push(
+      key,
+      boxAbout(item.transform?.matrix, x, y, {
+        x,
+        y,
+        left: x + xMin * s,
+        top: y - yMax * s,
+        right: x + xMax * s,
+        bottom: y - yMin * s,
+        font: font.name,
+        size: font.scale * pt,
+        ...ownerOf(key),
+        ...textField(textOf(item)),
+      }),
+    );
   });
   return boxes;
 }
@@ -522,15 +559,18 @@ function regionsOf(
       const rule = page?.items[each.item];
       if (rule?.kind !== "rule") continue;
       const bottom = INCH + rule.v * pt;
-      placed.push({
-        left: INCH + rule.h * pt,
-        top: INCH + (rule.v - rule.height) * pt,
-        right: INCH + (rule.h + rule.width) * pt,
-        bottom,
-        baseline: bottom,
-        size,
-        resumes,
-      });
+      const left = INCH + rule.h * pt;
+      placed.push(
+        boxAbout(rule.transform?.matrix, left, bottom, {
+          left,
+          top: INCH + (rule.v - rule.height) * pt,
+          right: INCH + (rule.h + rule.width) * pt,
+          bottom,
+          baseline: bottom,
+          size,
+          resumes,
+        }),
+      );
     }
     regions.set(set.id, { id: set.id, blocks: blocksOf(placed) });
   }

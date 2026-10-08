@@ -41,6 +41,7 @@ import {
   MOVED_DETAILS,
   type PieceWords,
   SHAPE_RULES,
+  TRANSFORM_KINDS,
   TRIALS,
   type TrialKind,
 } from "./corpus-import.ts";
@@ -263,6 +264,11 @@ export interface PiecesInput {
    * (`causesOf`), which the pieces break their words down by (`PieceWords`); none, no breakdown.
    */
   cause?: (kept: keyof typeof BREAKDOWNS, candidate: string) => string;
+  /**
+   * For a candidate kept as `moved` for `transform`, the kind of transformation it is set inside
+   * (`Causes.transformOf`), which the pieces break those words down by (`PieceWords.transforms`).
+   */
+  transform?: (candidate: string) => string;
 }
 
 /** What sets a glyph, as a piece: its name, an argument's place, and what kind of source it is. */
@@ -419,6 +425,27 @@ export function piecesOf(input: PiecesInput): { pieces: PieceWords[]; words: Rep
       const split = entry[breakdown] ?? {};
       split[cause] = (split[cause] ?? 0) + 1;
       entry[breakdown] = split;
+      // A word kept for a transformation, further: the kind of the candidate's that sets most of
+      // its glyphs among those kept for one.
+      if (reason === "moved" && cause === "transform" && input.transform !== undefined) {
+        const kinds = new Map<string, number>();
+        for (const at of word.glyphs) {
+          const candidate = owners[at] === owner ? row[at]?.candidate : undefined;
+          if (candidate === undefined || input.cause(reason, candidate) !== "transform") continue;
+          const kind = input.transform(candidate);
+          kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+        }
+        let kind = "(other)";
+        let most = 0;
+        for (const [each, count] of kinds)
+          if (count > most) {
+            kind = each;
+            most = count;
+          }
+        const transforms = entry.transforms ?? {};
+        transforms[kind] = (transforms[kind] ?? 0) + 1;
+        entry.transforms = transforms;
+      }
     }
     tally.set(key, entry);
   };
@@ -460,6 +487,22 @@ export class Causes {
   readonly outlined = (outline: { declined: ReadonlyMap<string, string> }) => {
     this.declined = outline.declined;
   };
+
+  /**
+   * The kind of transformation a candidate kept as `moved` for `transform` is set inside, by the
+   * probe's candidates (`PiecesInput.transform`): a name of `TRANSFORM_KINDS`, or `(other)`.
+   */
+  transformOf(
+    candidates: readonly Pick<ProbeCandidate, "id" | "transform">[],
+  ): NonNullable<PiecesInput["transform"]> {
+    const byId = new Map(candidates.map((each) => [each.id, each.transform]));
+    return (id) => {
+      const kind = byId.get(id);
+      return kind !== undefined && (TRANSFORM_KINDS as readonly string[]).includes(kind)
+        ? kind
+        : "(other)";
+    };
+  }
 
   /** The cause of a candidate kept for a reason, by the probe's candidates (`PiecesInput.cause`). */
   of(
