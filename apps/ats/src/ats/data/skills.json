@@ -133,9 +133,12 @@
       "name": "Agile software development",
       "kind": "skill",
       "aliases": [
-        "agile",
+        "Agile",
         "agile development",
         "agile methodology"
+      ],
+      "case_sensitive": [
+        "Agile"
       ]
     },
     {
@@ -2010,9 +2013,7 @@
       "id": "quality-control",
       "name": "Quality control",
       "kind": "skill",
-      "aliases": [
-        "qc"
-      ]
+      "aliases": []
     },
     {
       "id": "quantitative-analysis",

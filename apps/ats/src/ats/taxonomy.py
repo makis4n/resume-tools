@@ -292,13 +292,37 @@ class Taxonomy:
         return results
 
 
-_SENTENCE_BREAKS = ".!?:;\n\r\u2022\u00b7|*-\u2013\u2014"
+_SENTENCE_BREAKS = ".!?;\u2022\u00b7|*" + "-\u2013\u2014"
+_DASHES = "-\u2013\u2014"
+# Bullet glyphs exported by word processors, beyond the ones in `_SENTENCE_BREAKS`. Private-use
+# code points (Word's Symbol-font bullet is U+F0B7) are accepted too, by category.
+_BULLETS = "\u25cf\u25aa\u25ab\u2219\u25e6\u25a0\u2023\u2043\u2024"
+# Opening quotes and brackets that may sit between a sentence break and the first word.
+_OPENERS = "\"'\u201c\u2018\u00ab([{"
+# Lower-case abbreviations whose trailing period does not end a sentence ("incl. Excel at ...").
+_ABBREVIATIONS = frozenset({"incl", "e.g", "i.e", "eg", "ie", "approx", "esp", "vs", "inc"})
+_LAST_WORD = re.compile(r"[\w.]+$")
 
 
 def _starts_sentence(text: str, start: int) -> bool:
     """Whether the match at `start` begins the text, a line, a list item or a sentence."""
-    before = text[:start].rstrip(" \t")
-    return not before or before[-1] in _SENTENCE_BREAKS
+    prefix = text[:start]
+    stripped = prefix.rstrip()
+    gap = prefix[len(stripped) :]
+    if not stripped or "\n" in gap or "\r" in gap:
+        return True
+    core = stripped.rstrip(_OPENERS).rstrip()
+    if not core:
+        return True
+    last = core[-1]
+    if last in _DASHES:
+        # "MS-Excel": a dash glued to the word on both sides is a hyphen, not a list marker.
+        glued = len(core) == len(prefix) and len(core) > 1 and not core[-2].isspace()
+        return not glued
+    if last == ".":
+        word = _LAST_WORD.search(core[:-1])
+        return word is None or word.group().lower() not in _ABBREVIATIONS
+    return last in _SENTENCE_BREAKS or last in _BULLETS or unicodedata.category(last) == "Co"
 
 
 def _build_pattern(

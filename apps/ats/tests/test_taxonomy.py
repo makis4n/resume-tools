@@ -607,6 +607,41 @@ def test_excel_guard_applies_only_at_the_start_of_a_sentence(taxonomy: Taxonomy)
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "Built models in MS-Excel at Acme Corp",
+        "Office tools, incl. Excel at an advanced level",
+        "Strong spreadsheet skills (e.g. Excel at an expert level)",
+        "Tools: Excel at an expert level",
+    ],
+)
+def test_excel_guard_does_not_drop_mid_sentence_mentions(taxonomy: Taxonomy, text: str) -> None:
+    assert "excel-spreadsheets" in _ids(taxonomy, text), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "\u25cf Excel in a fast-paced environment",
+        "\u25aa Excel in a fast-paced environment",
+        "\uf0b7 Excel in a fast-paced environment",
+        "\u2219 Excel in a fast-paced environment",
+        "\u2022\u00a0Excel in a fast-paced environment",
+        "Summary.\u00a0Excel in a fast-paced team",
+        '"Excel in everything we do"',
+    ],
+)
+def test_excel_guard_handles_bullets_nbsp_and_quotes(taxonomy: Taxonomy, text: str) -> None:
+    assert "excel-spreadsheets" not in _ids(taxonomy, text), text
+
+
+def test_province_code_and_adjective_do_not_tag_skills(taxonomy: Taxonomy) -> None:
+    assert "quality-control" not in _ids(taxonomy, "Jane Doe, Montr\u00e9al, QC H3B 2Y5")
+    assert "agile-software-development" not in _ids(taxonomy, "Must be agile and adaptable.")
+    assert "agile-software-development" in _ids(taxonomy, "Agile, Scrum, Kanban")
+
+
+@pytest.mark.parametrize(
     ("text", "absent"),
     [
         ("Financial Analyst, American Express, 2019-2022", "express-js"),

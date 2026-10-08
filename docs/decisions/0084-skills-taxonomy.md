@@ -72,7 +72,10 @@ changed and why.
       (`electronic-health-records`: Amazon EMR in data job descriptions; "electronic medical
       records" is the alias instead), "PM" (`product-management`: it also means project manager),
       "my sql" (`mysql`: "my SQL skills" swallowed the real SQL mention) and "cro"
-      (`conversion-rate-optimisation`: clinical research organisation).
+      (`conversion-rate-optimisation`: clinical research organisation), and "qc"
+      (`quality-control`: the Qu\u00e9bec province code in every Qu\u00e9bec address). Bare "agile" became
+      `case_sensitive` "Agile", so the everyday adjective ("must be agile") no longer tags the
+      methodology; a capitalised "Agile thinker" still does and is an accepted collision.
     - "Excel", too, was dropped in the taxonomy's first version, then brought back -- see
       `not_followed_by`, below.
   - **Kept, but only under `case_sensitive`:** "Swift", "Rust", "Spark" (alias of `apache-spark`),
@@ -99,7 +102,10 @@ changed and why.
     sentence-initial, which capitalises it the same way English capitalises anything at the start
     of a sentence. One entry needs this: `excel-spreadsheets`, where `"Excel"` is `case_sensitive`
     with `"not_followed_by": ["in", "at"]`, checked after the regex match,
-    applied by `mentions()` only when the match starts a text, line, list item or sentence.
+    applied by `mentions()` only when the match starts a text, line, list item or sentence (after
+    any bullet glyph, including private-use ones, whitespace including non-breaking, and opening
+    quotes; a hyphen glued to the word, as in "MS-Excel", and abbreviation periods such as
+    "incl." or "e.g." do not count as starting one, nor does a colon).
     "Proficient in Excel (pivot tables)", "Built models in Excel at Acme" and "Advanced Excel at an
     expert level" still match; a sentence-initial "Excel in a fast-paced environment" does not. `react` briefly had a
     list of its own (`["quickly", "to"]`) and lost it again: a handful of continuation words
