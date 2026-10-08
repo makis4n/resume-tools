@@ -395,13 +395,17 @@ def test_mentions_finds_nothing_in_the_reviewed_ambiguous_word_paragraph(
 ) -> None:
     """The exact paragraph the review flagged: every capitalised word in it is either an
     ambiguous alias we dropped, or an ambiguous one we kept case-sensitive but that appears here
-    in a form (lower case, or -- for "React" -- followed by an ordinary-verb continuation) that
-    must not match."""
-    text = (
-        "Our organization is growing; express interest by Spring. Keep a positive outlook. "
-        "React quickly."
-    )
+    in lower case, so it must not match."""
+    text = "Our organization is growing; express interest by Spring. Keep a positive outlook."
     assert taxonomy.mentions(text) == []
+
+
+def test_mentions_sentence_initial_capital_is_a_known_false_positive(taxonomy: Taxonomy) -> None:
+    """Documented limit (decision 0084): `case_sensitive` cannot tell a capital that names the
+    tool from one that is only there because the word starts a sentence. Only Excel carries a
+    `not_followed_by` guard; "React quickly." still tags React."""
+    assert any(m.skill.id == "react" for m in taxonomy.mentions("React quickly."))
+    assert not taxonomy.mentions("Excel in a fast-paced environment.")
 
 
 def test_mentions_no_false_positive_on_pr_ts_or_lower_case_ml(taxonomy: Taxonomy) -> None:

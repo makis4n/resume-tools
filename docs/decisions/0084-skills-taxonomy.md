@@ -89,21 +89,21 @@ changed and why.
     rather than engineered around.
   - **`not_followed_by`:** even exact case is not enough when the ordinary sense can be
     sentence-initial, which capitalises it the same way English capitalises anything at the start
-    of a sentence. Two entries need this:
-    - `excel-spreadsheets`: `"Excel"` is `case_sensitive`, with `"not_followed_by": ["in", "at"]`,
-      compiling to a negative lookahead on that one alias, `(?!\s+(?:in|at)\b)`. "Proficient in
-      Excel (pivot tables)" still matches; "Excel in a fast-paced environment" and "Ready to excel
-      at any challenge" do not.
-    - `react`: `"React"` is `case_sensitive`, with `"not_followed_by": ["quickly", "to"]`. Review
-      caught this one directly: "React quickly." is a plausible sentence on its own (capitalised
-      because it starts the sentence, not because it means the framework), and `case_sensitive`
-      alone does not filter a capital letter that is there only because of where the sentence
-      starts. `react-router` and `reactjs`/`react.js` are unaffected (those aliases are not
-      `case_sensitive`, or are not "React" followed by "quickly"/"to"), and "React experience
-      required" still matches. This is the same mechanism as Excel's, applied to a second entry;
-      it was not judged worth adding to every other `case_sensitive` entry pre-emptively, since
-      the others do not have a similarly common, plausible sentence-initial reading and no probe
-      against real data has found one yet.
+    of a sentence. One entry needs this: `excel-spreadsheets`, where `"Excel"` is `case_sensitive`
+    with `"not_followed_by": ["in", "at"]`, compiling to a negative lookahead on that one alias,
+    `(?!\s+(?:in|at)\b)`. "Proficient in Excel (pivot tables)" still matches; "Excel in a
+    fast-paced environment" and "Ready to excel at any challenge" do not. `react` briefly had a
+    list of its own (`["quickly", "to"]`) and lost it again: a handful of continuation words
+    cannot enumerate the ways "React" can open a sentence ("React to feedback", "React fast"),
+    and "React to" also hides real uses ("React to Redux migration"). It stays `case_sensitive`
+    and the sentence-initial reading is an accepted limit, below.
+  - **Sentence-initial capitals are a stated limit.** Any `case_sensitive` name is matched when
+    capitalised only because it starts a sentence: "React quickly.", "Spark innovation across the
+    team.", "Swift action is expected.", "Notion of ownership...". `mentions()` has no
+    sentence-boundary awareness and this record does not add any. The guard on Excel is the one
+    exception, kept because "Excel in ..." is by far the commonest sentence-initial use of the
+    verb. Callers should treat a single bare mention of these names as weaker evidence than a
+    mention with a corroborating alias or context.
   - Everything else with a common-word or generic-abbreviation collision risk (`Java`, `PHP`,
     `Ruby`, `SQL`, `SAS`) is matched case-insensitively as normal: none of those is an ordinary
     English word or a plausible sentence-initial capitalisation the way the entries above are.
@@ -191,8 +191,8 @@ changed and why.
   their lower-case match in this pass for exactly that reason: recall traded for precision on
   words that read as ordinary English at least as often as they read as the tool or skill.
 - `not_followed_by` is deliberately narrow and enumerable, not a general disambiguator: it blocks
-  the *specific* continuations review found (Excel "in"/"at", React "quickly"/"to"), not every way
-  a word could be used as an ordinary verb. A new idiom found later needs a new word added to the
+  the *specific* continuations review found (Excel "in"/"at"), not every way a word could be used
+  as an ordinary verb. A new idiom found later needs a new word added to the
   list, or a new decision if the mechanism itself needs to change.
 - `Taxonomy.mentions()` no longer needs the matched substring to look anything up -- only its
   span -- which also means a future caller cannot accidentally rely on the matched text being
