@@ -236,15 +236,23 @@ class Taxonomy:
     def lookup(self, term: str) -> Skill | None:
         """The skill whose normalised name or alias equals `term`, or `None`.
 
-        A `case_sensitive` alias only matches `term` in exactly the case (and, as with any term,
-        the whitespace and edge punctuation) it was declared with; other terms match regardless
-        of case.
+        A `case_sensitive` alias matches `term` only in the case it was declared with, or in
+        all capitals ("React" or "REACT", as in a shouted heading); other terms match regardless
+        of case. If nothing matches, the lookup is retried once without trailing periods, so a
+        sentence-final "Python." still finds Python, while ".NET" and "Node.js" keep theirs.
         """
-        entry = self._index.get(normalise(term))
+        folded = _fold_whitespace_and_edges(term)
+        skill = self._lookup_folded(folded)
+        if skill is None and folded.endswith("."):
+            skill = self._lookup_folded(folded.rstrip(".").rstrip())
+        return skill
+
+    def _lookup_folded(self, folded: str) -> Skill | None:
+        entry = self._index.get(folded.casefold())
         if entry is None:
             return None
         skill, exact_value = entry
-        if exact_value is not None and _fold_whitespace_and_edges(term) != exact_value:
+        if exact_value is not None and folded not in (exact_value, exact_value.upper()):
             return None
         return skill
 

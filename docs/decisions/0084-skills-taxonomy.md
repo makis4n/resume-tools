@@ -38,7 +38,9 @@ changed and why.
   even when they are not meaningful in a particular case (a trailing sentence period survives
   normalisation too; see the function's docstring). Every alias is unique after normalisation
   across the whole file, and no alias equals another entry's name; both are enforced by the loader
-  and by a test over the raw file. An alias that normalises to nothing (whitespace or punctuation
+  and by a test over the raw file. `Taxonomy.lookup()` additionally accepts the all-caps form of a
+  `case_sensitive` alias ("REACT" for "React") and, when nothing matches, retries once without
+  trailing periods, so a sentence-final "Python." resolves while ".NET" and "Node.js" keep theirs. An alias that normalises to nothing (whitespace or punctuation
   only) is rejected by the loader.
 - **Ambiguity.** A handful of short names are also ordinary English words, abbreviations or bare
   letters. Handled per name, not by one rule, and swept for repeatedly as new collisions turned up

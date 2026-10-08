@@ -232,12 +232,37 @@ def test_lookup_honours_case_sensitive_spark_lowercase_does_not_match(taxonomy: 
     assert spark is not None
     assert spark.id == "apache-spark"
     assert taxonomy.lookup("spark") is None
-    assert taxonomy.lookup("SPARK") is None
+    # The all-caps form (a shouted heading) is accepted; mixed case is not.
+    all_caps = taxonomy.lookup("SPARK")
+    assert all_caps is not None
+    assert all_caps.id == "apache-spark"
+    assert taxonomy.lookup("sPARK") is None
 
 
 def test_lookup_case_sensitive_chef_vs_lowercase(taxonomy: Taxonomy) -> None:
     assert taxonomy.lookup("Chef") is not None
     assert taxonomy.lookup("chef") is None
+
+
+def test_lookup_accepts_all_caps_for_a_case_sensitive_alias(taxonomy: Taxonomy) -> None:
+    for term in ("REACT", "React", "EXCEL", "CHEF"):
+        assert taxonomy.lookup(term) is not None, term
+    assert taxonomy.lookup("react") is None
+    assert taxonomy.lookup("rEACT") is None
+
+
+def test_lookup_retries_without_a_trailing_period(taxonomy: Taxonomy) -> None:
+    python = taxonomy.lookup("Python")
+    assert python is not None
+    assert taxonomy.lookup("Python.") == python
+    assert taxonomy.lookup("python...") == python
+    # A period that belongs to the term is still honoured, and case rules still apply.
+    assert taxonomy.lookup("Node.js") is not None
+    assert taxonomy.lookup(".NET") is not None
+    assert taxonomy.lookup("Spark.") is not None
+    assert taxonomy.lookup("spark.") is None
+    assert taxonomy.lookup("underwater basket weaving.") is None
+    assert taxonomy.lookup(".") is None
 
 
 def test_lookup_tolerates_incidental_punctuation_and_whitespace(taxonomy: Taxonomy) -> None:
