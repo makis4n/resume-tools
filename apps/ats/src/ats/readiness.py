@@ -1,4 +1,4 @@
-"""Deterministic readiness checks for one extracted PDF (decision 0033); `ats.rubric` scores their
+"""Deterministic readiness checks for one extracted PDF (decision 0083); `ats.rubric` scores their
 output. `check` covers milestone 1's checks only: text layer, page count and glyph mapping.
 Contact/section checks, reading order and hidden text, and rate limits are later milestones.
 
@@ -18,32 +18,35 @@ from ats.suggestions import suggestion_for
 _MOSTLY_PATHS_THRESHOLD = 0.5
 
 # A page's unmapped glyphs above this fraction of its characters are enough to warn; above the
-# second threshold the page is unreadable enough to call it critical (decision 0033).
+# second threshold the page is unreadable enough to call it critical (decision 0083).
 _UNMAPPED_WARNING_THRESHOLD = 0.02
 _UNMAPPED_CRITICAL_THRESHOLD = 0.20
 
 # More than this many pages triggers `page-count`; most resumes fit on one or two (PRD §8.3).
 _MAX_EXPECTED_PAGES = 2
 
-NO_TEXT_LAYER_MESSAGE = "No selectable text was found in this PDF, so an ATS cannot read it at all."
+NO_TEXT_LAYER_MESSAGE = (
+    "No selectable text was found in this PDF. Many ATSs cannot read a resume like this at all."
+)
 TEXT_AS_OUTLINES_MESSAGE = (
-    "The text on this resume appears to be drawn as shapes rather than real characters, so an "
-    "ATS cannot read it."
+    "The text on this resume appears to be drawn as shapes rather than real characters. Many "
+    "ATSs cannot read text like this."
 )
 IMAGE_ONLY_MESSAGE = (
-    "This resume looks scanned or exported as an image, so an ATS cannot read its text."
+    "This resume looks scanned or exported as an image. Many ATSs cannot read text from an image."
 )
-BLANK_PAGE_MESSAGE = "This page has no text, image or drawn content."
+BLANK_PAGE_MESSAGE = "This page has no readable text, image or drawn content."
 PAGE_COUNT_MESSAGE = (
     "This resume is {count} pages long. Most resumes fit on one or two pages, though longer can "
     "be appropriate for some careers."
 )
 UNMAPPED_GLYPHS_MESSAGE = (
-    "Some characters on this page have no readable mapping to text, so this content will read as "
-    "garbage or be missing entirely when an ATS extracts it."
+    "Some characters on this page have no readable mapping to text, so this content may read as "
+    "garbled text or be missed entirely when an ATS extracts it."
 )
 ICON_FONT_GLYPHS_MESSAGE = (
-    "This page uses icon or symbol glyphs with no real text behind them, which an ATS cannot read."
+    "This page uses icon or symbol glyphs with no real text behind them, which many ATSs cannot "
+    "read."
 )
 LIGATURE_MESSAGE = (
     'This page contains ligature characters (letter pairs like "fi" or "fl" joined into a single '
@@ -72,7 +75,8 @@ def _no_text_layer_finding(document: Document, producer: Producer) -> Finding:
     """The single document-wide finding for when no page has any characters at all.
 
     Chooses among `text-as-outlines`, `image-only` and plain `no-text-layer` from the document's
-    total page-object counts: see `_MOSTLY_PATHS_THRESHOLD`.
+    total page-object counts: see `_MOSTLY_PATHS_THRESHOLD`. Every choice builds the same
+    `Finding` shape, so only the id and message need choosing before building it once.
     """
     total_paths = sum(page.path_objects for page in document.pages)
     total_images = sum(page.image_objects for page in document.pages)
@@ -80,27 +84,18 @@ def _no_text_layer_finding(document: Document, producer: Producer) -> Finding:
     total_objects = total_paths + total_images + total_texts
 
     if total_objects > 0 and total_paths / total_objects > _MOSTLY_PATHS_THRESHOLD:
-        return Finding(
-            id="text-as-outlines",
-            severity=Severity.CRITICAL,
-            origin=Origin.LAYOUT,
-            message=TEXT_AS_OUTLINES_MESSAGE,
-            suggestion=suggestion_for("text-as-outlines", producer),
-        )
-    if total_images > 0:
-        return Finding(
-            id="image-only",
-            severity=Severity.CRITICAL,
-            origin=Origin.LAYOUT,
-            message=IMAGE_ONLY_MESSAGE,
-            suggestion=suggestion_for("image-only", producer),
-        )
+        finding_id, message = "text-as-outlines", TEXT_AS_OUTLINES_MESSAGE
+    elif total_images > 0:
+        finding_id, message = "image-only", IMAGE_ONLY_MESSAGE
+    else:
+        finding_id, message = "no-text-layer", NO_TEXT_LAYER_MESSAGE
+
     return Finding(
-        id="no-text-layer",
+        id=finding_id,
         severity=Severity.CRITICAL,
         origin=Origin.LAYOUT,
-        message=NO_TEXT_LAYER_MESSAGE,
-        suggestion=suggestion_for("no-text-layer", producer),
+        message=message,
+        suggestion=suggestion_for(finding_id, producer),
     )
 
 
@@ -119,9 +114,14 @@ def _page_count_findings(document: Document) -> list[Finding]:
 
 
 def _blank_page_findings(document: Document, has_text: bool) -> list[Finding]:
-    """A page with no characters, images or paths at all, but only when some other page in the
-    document does have text -- otherwise every page is blank and `no-text-layer` already covers
-    the whole document."""
+    """A page with no characters, text objects, images or paths at all, but only when some other
+    page in the document does have text -- otherwise every page is blank and `no-text-layer`
+    already covers the whole document.
+
+    `text_objects == 0` is required alongside `char_count == 0`: a page can have a text-drawing
+    operation that produced no extractable characters (e.g. invisible text, or a font PDFium could
+    not read at all), which is not the same as a page with nothing on it, and should not be called
+    "blank"."""
     if not has_text:
         return []
     return [
@@ -133,7 +133,10 @@ def _blank_page_findings(document: Document, has_text: bool) -> list[Finding]:
             page=page.number,
         )
         for page in document.pages
-        if page.char_count == 0 and page.image_objects == 0 and page.path_objects == 0
+        if page.char_count == 0
+        and page.text_objects == 0
+        and page.image_objects == 0
+        and page.path_objects == 0
     ]
 
 

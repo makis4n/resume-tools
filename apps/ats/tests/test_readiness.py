@@ -101,6 +101,14 @@ def test_a_page_with_only_an_image_is_not_blank() -> None:
     assert _ids(document) == []
 
 
+def test_a_page_with_a_text_object_but_no_characters_is_not_blank() -> None:
+    document = _document(
+        _page(number=1, char_count=10),
+        _page(number=2, char_count=0, text_objects=1),
+    )
+    assert _ids(document) == []
+
+
 # --- page-count ---
 
 
