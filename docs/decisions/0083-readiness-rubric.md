@@ -67,7 +67,8 @@ suggestion text and never returned raw (§8.3).
     (`_UNMAPPED_WARNING_THRESHOLD`) warn; over 20% (`_UNMAPPED_CRITICAL_THRESHOLD`) is critical.
   - `icon-font-glyphs` (warning, layout): any Private Use Area character on a page, except one
     drawn in a font Word and other Office tools use for an ordinary bulleted list item -- Symbol,
-    Wingdings, Wingdings 2/3 or Webdings (`ats.extract._is_symbol_font`) -- which is real, readable
+    Wingdings, Wingdings 2/3 or Webdings, including PostScript-style names such as `SymbolMT`,
+    `Wingdings-Regular` and `Symbol,Bold` (`ats.extract._is_symbol_font`) -- which is real, readable
     list content, not an icon font with nothing behind it. A range-based exclusion does not work
     here: FontAwesome and other real icon fonts also sit in the same code-point range Word's
     bullets do, so the font actually drawing the character is what is checked, not just its code
@@ -102,3 +103,10 @@ suggestion text and never returned raw (§8.3).
 - The symbol-font exclusion is a fixed, curated list of font names, not a general "is this font a
   real typeface" test; an Office tool that ships a differently-named dingbat font in the future
   needs its name added here.
+- `producer` and `finding.origin` are closed enums in v1, and the editor rejects a reply with a
+  value outside them. Adding a producer (for example `libreoffice`) or an origin is therefore a
+  breaking change that needs `ats/v2/`; until then an unrecognised tool is classified `other`.
+- Per-page image-only detection is deliberately out of scope for milestone 1: a page that is only a
+  scanned image, in a document where another page has text, produces no finding (`no-text-layer`
+  and `image-only` fire only when no page has characters, and `blank-page` excludes pages with an
+  image). Reporting it needs a new per-page finding id and rubric weight, left to a later milestone.

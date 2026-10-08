@@ -20,6 +20,7 @@ from tests.pdfs import (
     malformed_page_tree_pdf,
     malformed_producer_metadata_pdf,
     minimal_pdf,
+    postscript_named_symbol_bullet_pdf,
     symbol_font_bullet_pdf,
     text_as_outlines_pdf,
     text_resume_with_form_wrapped_graphic_page_pdf,
@@ -310,6 +311,12 @@ def test_a_symbol_font_bullet_is_not_an_icon_font_glyph() -> None:
     assert page.private_use_count == 0
 
 
+def test_a_postscript_named_symbol_font_bullet_is_not_an_icon_font_glyph() -> None:
+    (page,) = extract(postscript_named_symbol_bullet_pdf()).pages
+    assert page.char_count == 1
+    assert page.private_use_count == 0
+
+
 def test_an_icon_font_private_use_glyph_is_still_counted() -> None:
     (page,) = extract(icon_font_pua_pdf()).pages
     assert page.private_use_count == 1
@@ -323,6 +330,13 @@ def test_an_icon_font_private_use_glyph_is_still_counted() -> None:
         ("Wingdings 2", True),
         ("ABCDEF+Wingdings3", True),
         ("webdings", True),
+        ("SymbolMT", True),
+        ("ABCDEF+SymbolMT", True),
+        ("Wingdings-Regular", True),
+        ("ABCDEF+Wingdings-Regular", True),
+        ("Symbol,Bold", True),
+        ("Wingdings2-Regular", True),
+        ("FontAwesome-Regular", False),
         ("FontAwesome", False),
         ("", False),
         (None, False),

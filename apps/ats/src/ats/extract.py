@@ -181,12 +181,19 @@ def _is_symbol_font(font_name: str | None) -> bool:
 
     A subset-embedded font's name carries a 6-letter subset tag and a "+" (e.g. "ABCDEF+Symbol",
     PDF 32000-1:2008 §9.6.4); that prefix is stripped before matching. Matching also drops spaces
-    and ignores case, since real font names appear as both "Wingdings2" and "Wingdings 2".
+    and ignores case, since real font names appear as both "Wingdings2" and "Wingdings 2". A
+    ",Style" or "-Style" suffix and a trailing "MT" are dropped too, so the PostScript names Word
+    writes ("SymbolMT", "Wingdings-Regular", "Symbol,Bold") match.
     """
     if not font_name:
         return False
     _, _, unprefixed = font_name.rpartition("+")
-    return unprefixed.replace(" ", "").lower() in _SYMBOL_FONT_NAMES
+    name = unprefixed.replace(" ", "").lower()
+    # Style suffixes: "Symbol,Bold" (comma form) and "Wingdings-Regular" (PostScript form).
+    name = name.split(",", 1)[0].split("-", 1)[0]
+    # Office's PostScript names for Symbol: "SymbolMT".
+    name = name.removesuffix("mt")
+    return name in _SYMBOL_FONT_NAMES
 
 
 def _font_name_at(text_page: pdfium.PdfTextPage, index: int) -> str | None:

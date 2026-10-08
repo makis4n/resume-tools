@@ -347,6 +347,12 @@ def symbol_font_bullet_pdf() -> bytes:
     return _pua_char_pdf(b"Symbol", 34, "F0B7")
 
 
+def postscript_named_symbol_bullet_pdf() -> bytes:
+    """Like `symbol_font_bullet_pdf`, but the font's BaseFont is the PostScript name Office
+    writes ("Wingdings-Regular") rather than the bare family name."""
+    return _pua_char_pdf(b"Wingdings-Regular", 34, "F0A7")
+
+
 def icon_font_pua_pdf() -> bytes:
     """A one-page PDF whose only character is U+F0FC, drawn in a font named "FontAwesome" -- an
     icon font with no real text behind its glyphs, which sits in the same Private Use Area range
