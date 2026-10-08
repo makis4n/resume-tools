@@ -18,18 +18,19 @@ def test_a_warning_deducts_ten() -> None:
     assert score([_finding("ligature-characters", Severity.WARNING)]) == 90
 
 
-def test_a_critical_deducts_forty_and_caps_at_forty() -> None:
+def test_a_critical_alone_deducts_sixty_leaving_forty() -> None:
     assert score([_finding("no-text-layer", Severity.CRITICAL)]) == 40
 
 
-def test_a_critical_caps_the_score_even_with_few_other_deductions() -> None:
-    # One critical (-40, capped at 40) plus one warning (-10) would otherwise total 50, but the
-    # cap means a critical problem is never hidden behind a higher number.
+def test_a_critical_and_a_warning_deductions_add() -> None:
+    # There is no separate cap on top of the deduction: a critical (-60) plus a warning (-10) is
+    # -70, not capped at -60, so a resume that is both unreadable and has another problem scores
+    # lower than one that is only unreadable.
     findings = [
         _finding("no-text-layer", Severity.CRITICAL),
         _finding("ligature-characters", Severity.WARNING),
     ]
-    assert score(findings) == 40
+    assert score(findings) == 30
 
 
 def test_many_warnings_floor_at_zero() -> None:

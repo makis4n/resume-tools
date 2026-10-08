@@ -1,4 +1,4 @@
-"""Scores a set of findings into the ATS-readiness score (decision 0033).
+"""Scores a set of findings into the ATS-readiness score (decision 0083).
 
 Bump `RUBRIC_VERSION` whenever a check's threshold, severity or deduction changes -- the version
 string is the contract's promise that the same findings always score the same way.
@@ -8,16 +8,16 @@ from ats.findings import Finding, Severity
 
 RUBRIC_VERSION = "readiness-1"
 
-# Deducted once per distinct finding id, never per occurrence (see `score`'s docstring).
+# Deducted once per distinct finding id, never per occurrence (see `score`'s docstring). A single
+# critical finding, alone, leaves a score of 40 (100 - 60): there is no separate cap on top of
+# this, since one would either do nothing (once the critical deduction alone already reaches the
+# cap) or silently forgive whatever else is wrong on the same resume once a critical is already
+# present, which is not a distinction this rubric needs.
 _DEDUCTION_BY_SEVERITY = {
-    Severity.CRITICAL: 40,
+    Severity.CRITICAL: 60,
     Severity.WARNING: 10,
     Severity.INFO: 0,
 }
-
-# Any critical finding caps the score here, so a critical problem can never be masked by a high
-# number built from many small, unrelated deductions elsewhere.
-_CRITICAL_CAP = 40
 
 
 def score(findings: list[Finding]) -> int:
@@ -31,14 +31,8 @@ def score(findings: list[Finding]) -> int:
     the loop happened to see last. The result is floored at 0 and is always an int.
     """
     deduction_by_id: dict[str, int] = {}
-    has_critical = False
     for finding in findings:
-        if finding.severity is Severity.CRITICAL:
-            has_critical = True
         deduction = _DEDUCTION_BY_SEVERITY[finding.severity]
         deduction_by_id[finding.id] = max(deduction_by_id.get(finding.id, 0), deduction)
 
-    total = 100 - sum(deduction_by_id.values())
-    if has_critical:
-        total = min(total, _CRITICAL_CAP)
-    return max(0, total)
+    return max(0, 100 - sum(deduction_by_id.values()))
