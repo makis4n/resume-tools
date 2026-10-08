@@ -861,3 +861,120 @@ def test_excel_guard_stays_fast_on_many_sentence_starts(taxonomy: Taxonomy) -> N
     start = time.monotonic()
     taxonomy.mentions("Excel in x. " * 20_000)
     assert time.monotonic() - start < 1.5
+
+
+# ---------------------------------------------------------------------------
+# Loader rejection paths, fed bad bytes through load_from_bytes()
+# ---------------------------------------------------------------------------
+
+
+def test_loader_rejects_a_cross_entry_collision_after_normalisation() -> None:
+    entries = [
+        _minimal_entry(id="widget-making", name="Widget making"),
+        _minimal_entry(id="widget-repair", name="Widget repair", aliases=["WIDGET  Making"]),
+    ]
+    with pytest.raises(TaxonomyError, match="collides"):
+        load_from_bytes(_bytes_for(entries))
+
+
+def test_loader_rejects_ids_out_of_order() -> None:
+    entries = [
+        _minimal_entry(id="widget-repair", name="Widget repair"),
+        _minimal_entry(id="widget-making", name="Widget making"),
+    ]
+    with pytest.raises(TaxonomyError, match="sorted"):
+        load_from_bytes(_bytes_for(entries))
+
+
+def test_loader_rejects_case_sensitive_naming_a_term_the_entry_lacks() -> None:
+    entry = _minimal_entry(case_sensitive=["Not a term"])
+    with pytest.raises(TaxonomyError, match="case_sensitive"):
+        load_from_bytes(_bytes_for([entry]))
+
+
+def test_loader_rejects_a_duplicate_id() -> None:
+    entries = [_minimal_entry(), _minimal_entry(name="Other name")]
+    with pytest.raises(TaxonomyError, match="duplicate id"):
+        load_from_bytes(_bytes_for(entries))
+
+
+def test_loader_rejects_an_unknown_kind_string() -> None:
+    with pytest.raises(TaxonomyError, match="unknown kind"):
+        load_from_bytes(_bytes_for([_minimal_entry(kind="hobby")]))
+
+
+def test_loader_rejects_an_empty_name() -> None:
+    with pytest.raises(TaxonomyError, match="name"):
+        load_from_bytes(_bytes_for([_minimal_entry(name="  ")]))
+
+
+def test_loader_rejects_a_non_object_entry() -> None:
+    with pytest.raises(TaxonomyError, match="not an object"):
+        load_from_bytes(json.dumps({"entries": ["widget"]}).encode())
+
+
+@pytest.mark.parametrize("alias", ["-", "&", "+", "#", "/", "."])
+def test_loader_rejects_a_punctuation_only_alias(alias: str) -> None:
+    with pytest.raises(TaxonomyError, match="letter or digit"):
+        load_from_bytes(_bytes_for([_minimal_entry(aliases=[alias])]))
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: guard case, line-start openers, NFKC agreement, dropped bare aliases
+# ---------------------------------------------------------------------------
+
+
+def _found_ids(taxonomy: Taxonomy, text: str) -> list[str]:
+    return [m.skill.id for m in taxonomy.mentions(text)]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Excel In Fast-Paced Environments",
+        "Results-driven analyst. Excel In Fast-Paced Teams",
+        'Values\n"Excel in everything we do"',
+        "Summary\n(Excel in fast-paced teams)",
+        "Led the team.” Excel in a fast-paced environment",
+        'Led the team." Excel in a fast-paced environment',
+    ],
+)
+def test_excel_guard_covers_case_and_line_start_openers(taxonomy: Taxonomy, text: str) -> None:
+    assert "excel-spreadsheets" not in _found_ids(taxonomy, text)
+
+
+def test_excel_still_matches_mid_sentence_after_a_quote(taxonomy: Taxonomy) -> None:
+    assert "excel-spreadsheets" in _found_ids(taxonomy, 'Built "models" in Excel at Acme')
+    assert "excel-spreadsheets" in _found_ids(taxonomy, "Skills\n(Excel and Word)")
+
+
+@pytest.mark.parametrize(
+    ("text", "skill_id", "matched"),
+    [
+        ("Microsoft Oﬃce", "microsoft-office-suite", "Microsoft Oﬃce"),
+        ("Apache Airﬂow", "airflow", "Apache Airﬂow"),
+        ("ＰＹＴＨＯＮ", "python-programming-language", "ＰＹＴＨＯＮ"),
+    ],
+)
+def test_mentions_agrees_with_lookup_on_compatibility_characters(
+    taxonomy: Taxonomy, text: str, skill_id: str, matched: str
+) -> None:
+    assert taxonomy.lookup(text) is not None
+    found = taxonomy.mentions(f"Used {text} daily")
+    assert [(m.skill.id, f"Used {text} daily"[m.start : m.end]) for m in found] == [
+        (skill_id, matched)
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Owned demand forecasting and replenishment.",
+        "Data pipeline management with Airflow",
+        "Influence purchasing decisions",
+    ],
+)
+def test_bare_head_noun_aliases_do_not_misattribute(taxonomy: Taxonomy, text: str) -> None:
+    assert not {"forecasting", "pipeline-management", "procurement"} & set(
+        _found_ids(taxonomy, text)
+    )

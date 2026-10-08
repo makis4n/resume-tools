@@ -1017,9 +1017,7 @@
       "id": "forecasting",
       "name": "Financial forecasting",
       "kind": "skill",
-      "aliases": [
-        "forecasting"
-      ]
+      "aliases": []
     },
     {
       "id": "forklift-certification",
@@ -1822,9 +1820,7 @@
       "id": "pipeline-management",
       "name": "Sales pipeline management",
       "kind": "skill",
-      "aliases": [
-        "pipeline management"
-      ]
+      "aliases": []
     },
     {
       "id": "postgresql",
@@ -1878,9 +1874,7 @@
       "id": "procurement",
       "name": "Procurement",
       "kind": "skill",
-      "aliases": [
-        "purchasing"
-      ]
+      "aliases": []
     },
     {
       "id": "product-management",

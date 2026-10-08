@@ -13,6 +13,9 @@ Normalisation and matching, in brief:
   stripped from the edges -- except the symbols a handful of our terms use to mean something
   ("C++", "C#", ".NET", "Node.js", "CI/CD", "A/B testing", "e-learning"), which are left alone
   wherever they sit in the term.
+- `mentions()` does fold each haystack character on its own with NFKC (`_compat_fold()`), mapping
+  offsets back to the original text, so ligatures and fullwidth letters in extracted PDF text
+  match as `lookup()` does.
 - `Taxonomy.mentions()` does **not** run `normalise()` over the haystack text, and does not
   re-derive a lookup key from whatever the regex matched. Both would be unsound: normalising the
   haystack could change its length (casefold and NFKC are not always length-preserving) and would
@@ -231,7 +234,7 @@ class Taxonomy:
             extra_words = not_followed_by.get(skill.id, ())
             if extra_words:
                 words = "|".join(re.escape(w) for w in extra_words)
-                self._guards[skill.id] = re.compile(rf"\s+(?:{words})\b")
+                self._guards[skill.id] = re.compile(rf"\s+(?:{words})\b", re.IGNORECASE)
             for term in (skill.name, *skill.aliases):
                 requires_exact = term in exact_terms
                 key = normalise(term)
@@ -278,18 +281,51 @@ class Taxonomy:
         before a letter that continues the word (see the module docstring for the exact boundary
         rule, including the version-suffix and `not_followed_by` exceptions).
         """
+        folded, starts, ends = _compat_fold(text)
         results = []
-        for match in self._pattern.finditer(text):
+        for match in self._pattern.finditer(folded):
             guard = self._guarded_groups.get(match.lastindex)
             if (
                 guard is not None
-                and guard.match(text, match.end())
-                and _starts_sentence(text, match.start())
+                and guard.match(folded, match.end())
+                and _starts_sentence(folded, match.start())
             ):
                 continue
             skill = self._group_to_skill[match.lastindex]
-            results.append(Mention(skill=skill, start=match.start(), end=match.end()))
+            start, end = match.start(), match.end()
+            if starts is not None and ends is not None:
+                start, end = starts[start], ends[end - 1]
+            results.append(Mention(skill=skill, start=start, end=end))
         return results
+
+
+def _compat_fold(text: str) -> tuple[str, list[int] | None, list[int] | None]:
+    """`text` with each character NFKC-folded on its own (so "\ufb03" becomes "ffi", fullwidth
+    letters become plain ones), plus tables mapping a folded index back to the start and end
+    offsets of the original character it came from. ASCII text, and text with nothing to fold,
+    comes back unchanged with no tables, so the common case costs one scan.
+
+    This keeps `mentions()` in step with `lookup()`, which applies NFKC, on extracted PDF text
+    where pdflatex maps fi, ffi and fl glyphs to ligature code points. Offsets stay valid against
+    the original text. Folding per character (not the whole string) is what makes the mapping
+    exact; it skips only compositions across characters, such as "e" plus a combining accent.
+    """
+    if text.isascii():
+        return text, None, None
+    pieces: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    changed = False
+    for i, char in enumerate(text):
+        piece = unicodedata.normalize("NFKC", char) if ord(char) > 127 else char
+        if piece != char:
+            changed = True
+        pieces.append(piece)
+        starts.extend([i] * len(piece))
+        ends.extend([i + 1] * len(piece))
+    if not changed:
+        return text, None, None
+    return "".join(pieces), starts, ends
 
 
 _SENTENCE_BREAKS = ".!?;\u2022\u00b7|*" + "-\u2013\u2014"
@@ -301,7 +337,7 @@ _BULLETS = (
     "\u27a2\u27a4\u2794\u25ba\u25b6\u25b8\u2713\u2714\u2756"
 )
 # Opening quotes and brackets that may sit between a sentence break and the first word.
-_OPENERS = "\"'\u201c\u2018\u00ab([{"
+_OPENERS = "\"'\u201c\u201d\u2018\u2019\u00ab\u00bb([{"
 # Lower-case abbreviations whose trailing period does not end a sentence ("incl. Excel at ...").
 _ABBREVIATIONS = frozenset({"incl", "e.g", "i.e", "eg", "ie", "approx", "esp", "vs", "inc"})
 _LAST_WORD = re.compile(r"[\w.]+$")
@@ -324,6 +360,14 @@ def _starts_sentence(text: str, start: int) -> bool:
     if not stripped:
         # An all-whitespace window is a start only when it reaches the true start of the text.
         return lo == 0
+    if stripped[-1] in _OPENERS:
+        # A line that starts with an opening quote or bracket: look through it to the whitespace
+        # before it, so "Values\n\"Excel in ...\"" is read as a line start.
+        head = stripped.rstrip(_OPENERS)
+        head_core = head.rstrip()
+        head_gap = head[len(head_core) :]
+        if head_core and ("\n" in head_gap or "\r" in head_gap):
+            stripped, gap = head_core, head_gap
     if "\n" in gap or "\r" in gap:
         # A hard-wrapped line ("... models in\nExcel at Acme") continues the sentence when the
         # previous line stops on a lower-case word or a comma; a capitalised word (a heading such
@@ -487,6 +531,8 @@ def _validate_and_build(
             key = normalise(term)
             if not key:
                 _fail(f"'{entry_id}' has a term that normalises to empty: '{term}'")
+            if not any(c.isalnum() for c in key):
+                _fail(f"'{entry_id}' has a term with no letter or digit in it: '{term}'")
             if key in seen_within_entry:
                 _fail(f"'{entry_id}' has the same term twice after normalisation: '{term}'")
             seen_within_entry.add(key)

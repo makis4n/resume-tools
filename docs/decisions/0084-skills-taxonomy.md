@@ -41,8 +41,9 @@ changed and why.
   and by a test over the raw file. `Taxonomy.lookup()` honours `case_sensitive` exactly as
   `mentions()` does (no all-caps tolerance: the two APIs must agree on the same term) and, when
   nothing matches, retries once without trailing periods and the edge punctuation they shielded,
-  so a sentence-final "Python." and "(Python)." resolve while ".NET" and "Node.js" keep theirs. An alias that normalises to nothing (whitespace or punctuation
-  only) is rejected by the loader.
+  so a sentence-final "Python." and "(Python)." resolve while ".NET" and "Node.js" keep theirs. An alias that normalises to nothing, or to no letter or digit at all ("-", "&", "+", "#"),
+  is rejected by the loader. The loader's rejection paths are each tested by feeding bad bytes to
+  `load_from_bytes()`.
 - **Ambiguity.** A handful of short names are also ordinary English words, abbreviations or bare
   letters. Handled per name, not by one rule, and swept for repeatedly as new collisions turned up
   in review rather than decided once and left alone:
@@ -84,6 +85,12 @@ changed and why.
       "flexibility" (`adaptability`; benefits copy), "scheduling" (`calendar-management`; shift
       scheduling), "bls" (`bls-certification`; the Bureau of Labor Statistics) and "gcp"
       (`google-cloud-platform`; Good Clinical Practice). The long forms stay.
+    - "Spring" (`spring-framework`): the season and the verb. Only "Spring Framework" and
+      "Spring Boot" match. Also dropped from a few entries: the bare head nouns "forecasting"
+      (`forecasting`, Financial forecasting: "demand forecasting" is operations, and
+      `demand-planning` and sales forecasting are separate entries), "pipeline management"
+      (`pipeline-management`, Sales: "data pipeline management") and "purchasing"
+      (`procurement`: "influence purchasing decisions"). The entries keep their names.
     - "Excel", too, was dropped in the taxonomy's first version, then brought back -- see
       `not_followed_by`, below.
   - **Kept, but only under `case_sensitive`:** "Swift", "Rust", "Spark" (alias of `apache-spark`),
@@ -133,6 +140,10 @@ changed and why.
     and a first name "Ruby" tags `ruby-programming-language`; case does not separate them from the
     tools and no cheap rule does, so a lone mention of either is weak evidence. "Greenhouse",
     "Blackboard", "Intercom" and "Flask" still match when a sentence starts with them.
+    "Greenhouse" also still matches the title-case "Greenhouse Gas" in ESG and sustainability
+    text, mid-sentence too, because `not_followed_by` acts only at a sentence start. Accepted: a
+    mid-sentence guard would need a different mechanism, and a lone "Greenhouse" is weak evidence
+    anyway.
   - Everything else with a common-word or generic-abbreviation collision risk (`Java`, `PHP`,
     `Ruby`, `SQL`, `SAS`) is matched case-insensitively as normal: none of those is an ordinary
     English word or a plausible sentence-initial capitalisation the way the entries above are.
@@ -161,7 +172,12 @@ changed and why.
   seconds per 50 KB (about 0.1 ms per position tried against all ~640 alternatives). The haystack
   text itself is never run through `normalise()` -- doing so could change its length (casefold and
   NFKC are not always length-preserving) and would drift the character offsets `mentions()`
-  promises against the original text.
+  promises against the original text. `mentions()` does fold each character on its own with NFKC
+  (a ligature such as "ﬃ", which pdflatex output uses, or a fullwidth letter) and maps the offsets
+  back to the original, so it agrees with `lookup()` on those terms ("Microsoft Oﬃce"). The
+  `not_followed_by` words match case-insensitively, and an opening quote or bracket at the start
+  of a line does not hide the line start; a closing curly quote after a sentence-final period
+  counts as part of that sentence end.
 - **Group-based match resolution (not re-normalising the matched text).** The first version of
   this taxonomy resolved a match by calling `normalise()` on the matched substring and looking
   that up. This is unsound: `re.IGNORECASE` and `str.casefold()` do not agree on every code point.
