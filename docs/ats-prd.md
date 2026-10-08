@@ -27,7 +27,7 @@ decision 0030; the editor's side of the integration is decision 0031.
   one. `apps/editor/src/features/ats` holds the client, which validates replies against the
   contract, and a panel that nothing mounts yet.
 - Milestone 1's first slice has landed: `analyze` now returns a real, deterministic
-  ATS-readiness score with findings, under the versioned rubric in decision 0033. The checks are
+  ATS-readiness score with findings, under the versioned rubric in decision 0083. The checks are
   text layer (including text exported as outlines and image-only pages), page count and
   glyph-mapping (unmapped, icon-font and ligature characters); each finding carries an origin, and
   the producing tool is classified from the PDF's metadata. There are no contact, section or
@@ -544,7 +544,7 @@ These require measurements or an accepted decision record before they become arc
 - The sandboxing approach.
 - The first skills taxonomy and its licence.
 - The model provider for requirement extraction, its data-retention terms and the daily cap.
-- Score dimensions, weights and thresholds for readiness findings landed in decision 0033; a
+- Score dimensions, weights and thresholds for readiness findings landed in decision 0083; a
   per-dimension score breakdown, and weights for any later job-match score, remain open.
 - The embedding runtime, model and memory ceiling (milestone 4).
 - ATS hosting platform, cost ceiling and regional data handling.
