@@ -1,4 +1,4 @@
-"""Tests for the skills taxonomy (decision 0034): the data file, and `ats.taxonomy`'s loader,
+"""Tests for the skills taxonomy (decision 0084): the data file, and `ats.taxonomy`'s loader,
 normalisation, lookup and mention-finding.
 """
 
@@ -276,7 +276,7 @@ def test_mentions_java_does_not_match_inside_javascript(taxonomy: Taxonomy) -> N
 
 
 def test_mentions_no_bare_r_go_or_c_false_positives(taxonomy: Taxonomy) -> None:
-    # "Go", "R" and "C" bare are intentionally not in the taxonomy at all (decision 0034): even
+    # "Go", "R" and "C" bare are intentionally not in the taxonomy at all (decision 0084): even
     # exact-case matching would still collide with ordinary prose ("Go the extra mile", "R&D",
     # "C-suite"). This asserts that residual behaviour rather than the taxonomy's contents.
     text = (
@@ -295,7 +295,7 @@ def test_mentions_no_bare_r_go_or_c_false_positives(taxonomy: Taxonomy) -> None:
 def test_mentions_no_false_positive_on_ambiguous_capitalised_words_we_dropped(
     taxonomy: Taxonomy,
 ) -> None:
-    # "Word" and "Access" bare were dropped as too noisy (decision 0034); only the "Microsoft
+    # "Word" and "Access" bare were dropped as too noisy (decision 0084); only the "Microsoft
     # ..." / "MS ..." aliases are in the taxonomy. "Excel" is back (see the not_followed_by tests
     # below), guarded against exactly this idiom instead of dropped.
     text = "Excel in a fast-paced environment. Word of mouth matters. Access to the office is easy."

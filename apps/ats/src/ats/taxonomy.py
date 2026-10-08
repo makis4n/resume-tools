@@ -1,7 +1,7 @@
-"""The hand-curated skills taxonomy (decision 0034): data, loading, normalisation and lookup.
+"""The hand-curated skills taxonomy (decision 0084): data, loading, normalisation and lookup.
 
 `data/skills.json` is vocabulary we wrote and own: canonical skill, tool and qualification names
-with their common aliases. `apps/ats/src/ats/rubric.py` and the requirement-matching code that
+with their common aliases. The rubric and requirement-matching code that
 come after this pull request use `load()`, `Taxonomy.lookup()` and `Taxonomy.mentions()` to turn
 free text -- a job description or a resume -- into taxonomy entries. This module has no HTTP
 surface and does not change the contract; it is data plus a small loader.
@@ -64,7 +64,7 @@ Normalisation and matching, in brief:
   risk to audit for.
 
 Ambiguity: a handful of short names are also ordinary English words or bare letters ("Excel",
-"Word", "Access", "Go", "R", "C", "Spring", "React"...). Decision 0034 records, entry by entry,
+"Word", "Access", "Go", "R", "C", "Spring", "React"...). Decision 0084 records, entry by entry,
 which are kept case-sensitive (with or without `not_followed_by`), which get an unambiguous alias
 instead, and which are dropped outright because even an exact-case match would still be noisy.
 

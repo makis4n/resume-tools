@@ -543,7 +543,7 @@ with the provider disabled.
 These require measurements or an accepted decision record before they become architecture:
 
 - The sandboxing approach.
-- The first skills taxonomy and its licence: decided, see decision 0034.
+- The first skills taxonomy and its licence: decided, see decision 0084.
 - The model provider for requirement extraction, its data-retention terms and the daily cap.
 - Score dimensions, weights and thresholds for readiness findings landed in decision 0083; a
   per-dimension score breakdown, and weights for any later job-match score, remain open.

@@ -1,4 +1,4 @@
-# 0034. The skills taxonomy
+# 0084. The skills taxonomy
 
 Date: 2026-09-27 · Status: accepted
 
