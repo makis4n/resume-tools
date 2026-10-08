@@ -229,8 +229,17 @@ const COMMAND = "\\";
  * end its specials stand between the run and the text beside it, so nothing reaches past them. A
  * run whose LaTeX is only spaces has no corrections, since LaTeX takes its text for `\space`.
  * `slanted` says whether a variant's font is slanted, as `\fontdimen1` does.
+ *
+ * The field's end marker stands in no correction's way: the field macro holds it back while LaTeX
+ * reads what follows the field, and writes it after LaTeX's decision (decision 0080). So the last
+ * run's command decides on `after`, the LaTeX the template sets after the field, by its first
+ * character: a command by default, as after a rich field in the built-in templates.
  */
-export function breakRuns(runs: RichText, slanted: (variant: Variant) => boolean): BreakRun[] {
+export function breakRuns(
+  runs: RichText,
+  slanted: (variant: Variant) => boolean,
+  after: string = COMMAND,
+): BreakRun[] {
   const written: Written[] = [];
   for (const run of runs) {
     const latex = escapeText(run.text);
@@ -249,14 +258,14 @@ export function breakRuns(runs: RichText, slanted: (variant: Variant) => boolean
     } else written.push(next);
   }
   const blank = (run: Written) => run.latex.trim() === "";
-  // What TeX reads first after each run: the next run's command, or its first character, or the
-  // field's end marker, a `\special`, past runs the generator writes as nothing. Found in one walk
-  // from the end, as the last run that sets anything before each is in one walk from the start,
-  // so that a field of many runs costs time in proportion to them.
-  const after: string[] = [];
-  let next = COMMAND;
+  // What TeX reads first after each run: the next run's command, or its first character, or what
+  // follows the field, past runs the generator writes as nothing. Found in one walk from the end,
+  // as the last run that sets anything before each is in one walk from the start, so that a field
+  // of many runs costs time in proportion to them.
+  const following: string[] = [];
+  let next = after.slice(0, 1) || COMMAND;
   for (let k = written.length - 1; k >= 0; k--) {
-    after[k] = next;
+    following[k] = next;
     const run = written[k] as Written;
     if (wrapped(run)) next = COMMAND;
     else if (run.latex !== "") next = run.latex[0] as string;
@@ -275,7 +284,7 @@ export function breakRuns(runs: RichText, slanted: (variant: Variant) => boolean
     // In `\textbf{\textit{...}}`, `\textit` ends in the bold font, before `\textbf`'s own end.
     if (run.bold && run.italic && corrects("bold", COMMAND)) return true;
     // Inside `\href`, hyperref's own command follows.
-    return corrects("regular", run.linked ? COMMAND : (after[k] as string));
+    return corrects("regular", run.linked ? COMMAND : (following[k] as string));
   };
   // The correction a run's first command sets after the text before it, where that text is not
   // a link, whose closing special would stand between.
