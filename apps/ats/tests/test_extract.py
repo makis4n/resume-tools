@@ -15,6 +15,7 @@ from tests.pdfs import (
     build_pdf,
     form_wrapped_image_pdf,
     glyph_case_pdf,
+    hyphenated_pdf,
     icon_font_pua_pdf,
     image_only_pdf,
     malformed_page_tree_pdf,
@@ -367,3 +368,36 @@ def test_characters_over_the_budget_get_a_cheap_count_and_no_per_character_stats
     (page,) = document.pages
     assert page.char_count == 14
     assert page.unmapped_count == page.private_use_count == page.ligature_count == 0
+
+
+# --- text rects and hyphen breaks (decision 0086) ---
+
+
+def test_text_rects_come_in_extraction_order_with_plausible_coordinates() -> None:
+    pdf = build_pdf([[("First invented line", 72, 700), ("Second invented line", 100, 650)]])
+    (page,) = extract(pdf).pages
+    assert len(page.text_rects) == 2
+    (l1, b1, r1, t1), (l2, b2, r2, t2) = page.text_rects
+    assert 72 <= l1 < 76 and 695 <= b1 <= 701 and r1 > l1 and t1 > b1
+    assert 100 <= l2 < 104 and 645 <= b2 <= 651
+    assert b1 > b2  # the first line is higher on the page
+
+
+def test_a_page_over_the_budget_gets_no_text_rects(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ats.extract as extract_module
+
+    monkeypatch.setattr(extract_module, "_CHAR_BUDGET", 5)
+    (page,) = extract(minimal_pdf("Invented Person")).pages
+    assert page.text_rects == ()
+
+
+def test_only_a_line_end_hyphen_before_a_lowercase_letter_is_a_hyphen_break() -> None:
+    # One real break ("distri-" / "buted"); controls: before an uppercase letter, before a digit,
+    # mid-line, and a hyphen followed by a jump to the other column on the same line.
+    (page,) = extract(hyphenated_pdf()).pages
+    assert page.hyphen_break_count == 1
+
+
+def test_a_page_without_hyphenated_breaks_counts_zero() -> None:
+    (page,) = extract(minimal_pdf()).pages
+    assert page.hyphen_break_count == 0
