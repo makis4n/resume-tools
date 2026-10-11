@@ -30,6 +30,13 @@ _DEFAULTS: dict[str, str] = {
     "ligature-characters": (
         "Turn off font ligatures, or use a font that does not substitute them, before exporting."
     ),
+    "column-interleaving": (
+        "Use a single-column layout, or make sure each column's text is kept together rather than "
+        "drawn line by line across the page."
+    ),
+    "hyphenated-line-breaks": (
+        "Turn off automatic hyphenation, and avoid breaking a word across lines by hand."
+    ),
 }
 
 # Suggestion text specific to the producing tool, keyed by finding id then by Producer. Only menu
@@ -62,6 +69,19 @@ _BY_PRODUCER: dict[str, dict[Producer, str]] = {
         Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
     },
     "ligature-characters": {
+        Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
+    },
+    "column-interleaving": {
+        Producer.WORD: (
+            "Place side-by-side text with Layout > Columns, or use a single-column layout."
+        ),
+        Producer.GOOGLE_DOCS: (
+            "Place side-by-side text with Format > Columns, or use a single-column layout."
+        ),
+        Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
+    },
+    "hyphenated-line-breaks": {
+        Producer.WORD: "Turn off hyphenation with Layout > Hyphenation > None.",
         Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
     },
 }

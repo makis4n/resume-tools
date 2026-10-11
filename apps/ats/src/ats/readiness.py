@@ -1,6 +1,8 @@
 """Deterministic readiness checks for one extracted PDF (decision 0083); `ats.rubric` scores their
-output. `check` covers milestone 1's checks only: text layer, page count and glyph mapping.
-Contact/section checks, reading order and hidden text, and rate limits are later milestones.
+output. `check` covers milestone 1's checks only: text layer, page count, glyph mapping, and the
+two reading-order checks read from text positions (decision 0086): lines of side-by-side columns
+drawn alternately, and words split across lines by hyphenation. Contact/section checks, hidden text
+and rate limits are later milestones.
 
 Every message and suggestion string these checks use lives here or in `ats.suggestions`; nothing
 here quotes resume text, and no message asserts a specific ATS behaviour this product cannot back
@@ -59,6 +61,46 @@ LIGATURE_MESSAGE = (
     "plain letters."
 )
 
+COLUMN_INTERLEAVING_MESSAGE = (
+    "Text on this page appears to be read across side-by-side columns line by line, so lines from "
+    "different columns may run together when an ATS extracts it."
+)
+HYPHENATED_LINE_BREAKS_MESSAGE = (
+    "Some words on this page are split across lines with a hyphen, so an ATS may read them as two "
+    "fragments and miss them in a keyword search."
+)
+
+# --- Reading-order geometry (decision 0086) ---
+# A text rect is (left, bottom, right, top) in PDF points, in extraction order.
+Rect = tuple[float, float, float, float]
+
+# Two consecutive rects join into one line segment when their vertical ranges overlap by at least
+# this fraction of the smaller height: same line, tolerating baseline and font-size differences.
+_SEGMENT_MIN_VERTICAL_OVERLAP = 0.5
+# ...and the horizontal gap between them is at most this multiple of the larger height (a word
+# space is about a quarter of the height; a column gutter is well over it), and at least
+# -0.5 * height (a little overlap from kerning or italic slant, but not a rect drawn over another).
+_SEGMENT_JOIN_FACTOR = 1.0
+_SEGMENT_MAX_OVERLAP_FACTOR = 0.5
+# A step between consecutive segments is lateral (left one, then one across a gutter) when the
+# gap is at least this many points: wider than any word space at ordinary resume sizes, narrower
+# than a real column gutter.
+_MIN_GUTTER_PT = 18.0
+# ...and their vertical centres differ by at most this multiple of the larger height: same line,
+# allowing for the offset baselines of two columns set independently.
+_LATERAL_CENTRE_FACTOR = 1.5
+# A left segment must sit lower than the previous one by at least this multiple of its height for
+# the chain to be moving down the page, one line at a time.
+_MIN_DESCENT_FACTOR = 0.5
+# A left segment is "filled" when its right edge reaches into the right quarter of the chain's
+# left segments' extent: wrapped prose fills its column, a skills grid's short cells do not.
+_FILL_FRACTION = 0.25
+# At least this fraction of a chain's left segments must be filled for it to count.
+_MIN_FILLED_RATIO = 0.75
+# Alternating lateral steps needed to call a page interleaved. Four consecutive lines read
+# across a gutter is not a table row or a date: it is columns of prose read line by line.
+_MIN_INTERLEAVED_LINES = 4
+
 # The fixed order findings are sorted into within a page (see `check`'s docstring). Document-level
 # findings carry no page, so they sort ahead of every per-page finding.
 _ID_ORDER = (
@@ -70,6 +112,8 @@ _ID_ORDER = (
     "unmapped-glyphs",
     "icon-font-glyphs",
     "ligature-characters",
+    "column-interleaving",
+    "hyphenated-line-breaks",
 )
 # A lookup, not `_ID_ORDER.index(...)` at sort time: an id a future check forgets to add here
 # then sorts after every listed one instead of crashing `check()` outright.
@@ -199,6 +243,127 @@ def _glyph_findings(document: Document, producer: Producer) -> list[Finding]:
     return findings
 
 
+def _segments(rects: tuple[Rect, ...]) -> list[Rect]:
+    """Merge consecutive rects that sit on one line into segments, so a producer that draws one
+    rect per glyph and one that draws one per line give the same segments. A rect joins the
+    previous segment when their vertical ranges overlap enough and the gap is small
+    (`_SEGMENT_JOIN_FACTOR`)."""
+    segments: list[Rect] = []
+    for left, bottom, right, top in rects:
+        if segments:
+            p_left, p_bottom, p_right, p_top = segments[-1]
+            height = top - bottom
+            p_height = p_top - p_bottom
+            overlap = min(top, p_top) - max(bottom, p_bottom)
+            gap = left - p_right
+            max_height = max(height, p_height)
+            if (
+                overlap >= _SEGMENT_MIN_VERTICAL_OVERLAP * min(height, p_height)
+                and -_SEGMENT_MAX_OVERLAP_FACTOR * max_height
+                <= gap
+                <= _SEGMENT_JOIN_FACTOR * max_height
+            ):
+                segments[-1] = (
+                    min(p_left, left),
+                    min(p_bottom, bottom),
+                    max(p_right, right),
+                    max(p_top, top),
+                )
+                continue
+        segments.append((left, bottom, right, top))
+    return segments
+
+
+def _is_lateral(a: Rect, b: Rect) -> bool:
+    """Whether `b` follows `a` across a gutter on the same line."""
+    height = max(a[3] - a[1], b[3] - b[1])
+    centre_a = (a[1] + a[3]) / 2
+    centre_b = (b[1] + b[3]) / 2
+    return b[0] - a[2] >= _MIN_GUTTER_PT and abs(centre_a - centre_b) <= (
+        _LATERAL_CENTRE_FACTOR * height
+    )
+
+
+def _chain_length(lefts: list[Rect]) -> int:
+    """The chain's length if enough of its left segments are filled (`_FILL_FRACTION`), else 0."""
+    min_left = min(seg[0] for seg in lefts)
+    max_right = max(seg[2] for seg in lefts)
+    threshold = max_right - _FILL_FRACTION * (max_right - min_left)
+    filled = sum(1 for seg in lefts if seg[2] >= threshold)
+    return len(lefts) if filled >= _MIN_FILLED_RATIO * len(lefts) else 0
+
+
+def _interleaved_lines(rects: tuple[Rect, ...]) -> int:
+    """The longest run of lines read left, right, left, right across a gutter, or 0 if none.
+
+    After merging rects into segments, a chain is a run of lateral steps (`_is_lateral`) that
+    alternate strictly (each step's left segment comes straight after the previous step's right
+    one), whose left segments move down the page and whose gutters all share one x-band. It counts
+    only if most of its left segments are filled (`_chain_length`), which tells wrapped prose in
+    two columns from a short skills grid or a right-aligned date. Linear in the segment count: a
+    chain that breaks its band restarts at the step that broke it.
+    """
+    segments = _segments(rects)
+    best = 0
+    lefts: list[Rect] = []
+    band_low = band_high = 0.0
+    index = 0
+    while index + 1 < len(segments):
+        a, b = segments[index], segments[index + 1]
+        if not _is_lateral(a, b):
+            if lefts:
+                best = max(best, _chain_length(lefts))
+                lefts = []
+            index += 1
+            continue
+        if lefts:
+            prev = lefts[-1]
+            height = a[3] - a[1]
+            descends = (prev[1] + prev[3]) / 2 - (a[1] + a[3]) / 2 >= _MIN_DESCENT_FACTOR * height
+            low, high = max(band_low, a[2]), min(band_high, b[0])
+            if not (descends and low < high):
+                best = max(best, _chain_length(lefts))
+                lefts = []
+        if not lefts:
+            band_low, band_high = a[2], b[0]
+        else:
+            band_low, band_high = max(band_low, a[2]), min(band_high, b[0])
+        lefts.append(a)
+        index += 2
+    if lefts:
+        best = max(best, _chain_length(lefts))
+    return best
+
+
+def _reading_order_findings(document: Document, producer: Producer) -> list[Finding]:
+    """Per-page reading-order findings. Only called when the document has a text layer."""
+    findings: list[Finding] = []
+    for page in document.pages:
+        if _interleaved_lines(page.text_rects) >= _MIN_INTERLEAVED_LINES:
+            findings.append(
+                Finding(
+                    id="column-interleaving",
+                    severity=Severity.WARNING,
+                    origin=Origin.LAYOUT,
+                    message=COLUMN_INTERLEAVING_MESSAGE,
+                    page=page.number,
+                    suggestion=suggestion_for("column-interleaving", producer),
+                )
+            )
+        if page.hyphen_break_count > 0:
+            findings.append(
+                Finding(
+                    id="hyphenated-line-breaks",
+                    severity=Severity.WARNING,
+                    origin=Origin.LAYOUT,
+                    message=HYPHENATED_LINE_BREAKS_MESSAGE,
+                    page=page.number,
+                    suggestion=suggestion_for("hyphenated-line-breaks", producer),
+                )
+            )
+    return findings
+
+
 def check(document: Document, producer: Producer) -> list[Finding]:
     """Run every milestone-1 readiness check against `document`, deterministically ordered by
     page (a document-level finding sorts first) and then by a fixed id order (`_ID_ORDER`).
@@ -206,7 +371,8 @@ def check(document: Document, producer: Producer) -> list[Finding]:
     If no page in the document has any characters at all, the single whole-document text-layer
     finding (`no-text-layer`, `text-as-outlines` or `image-only`) fires and the per-page glyph
     findings do not: once nothing on the page could be read at all, reporting its individual
-    unmapped glyphs would just be noise on top of the one finding that matters.
+    unmapped glyphs would just be noise on top of the one finding that matters. The same holds for
+    the reading-order findings.
     """
     has_text = any(page.char_count > 0 for page in document.pages)
 
@@ -215,6 +381,7 @@ def check(document: Document, producer: Producer) -> list[Finding]:
         findings.append(_no_text_layer_finding(document, producer))
     else:
         findings.extend(_glyph_findings(document, producer))
+        findings.extend(_reading_order_findings(document, producer))
     findings.extend(_page_count_findings(document))
     findings.extend(_blank_page_findings(document, has_text))
 
