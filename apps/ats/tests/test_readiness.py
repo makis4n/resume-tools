@@ -1,6 +1,6 @@
 from ats.extract import Document, Page
 from ats.producer import Producer
-from ats.readiness import Rect, _interleaved_lines, _segments, check
+from ats.readiness import Rect, _interleaved_lines, _join_markers, _segments, check
 
 
 def _page(
@@ -388,7 +388,9 @@ def test_reading_order_suggestions_vary_by_producer() -> None:
         return [f.suggestion for f in check(document, producer)]
 
     template = "This comes from the template's design."
-    assert suggestions(Producer.LATEX) == [template, template]
+    latex = suggestions(Producer.LATEX)
+    assert latex[0] == template
+    assert latex[1] and "Reword" in latex[1] and "compound" in latex[1]
     word = suggestions(Producer.WORD)
     assert word[0] and "Layout > Columns" in word[0]
     assert word[1] and word[1].startswith("Turn off hyphenation with Layout > Hyphenation > None")
@@ -428,3 +430,58 @@ def test_hyphen_message_names_compound_hyphens() -> None:
     (finding,) = check(_document(_page(hyphen_break_count=1)), Producer.WORD)
     assert "compound" in finding.message
     assert finding.suggestion and "compound" in finding.suggestion
+
+
+def _bulleted_rows(
+    items: int,
+    lines_per_item: int,
+    *,
+    left_x: float = 72.0,
+    right_x: float = 330.0,
+    indent: float = 18.0,
+    marker: bool = True,
+) -> tuple[Rect, ...]:
+    """Two columns of bulleted items, written left, right, left, right line by line. The last line
+    of each item is short. With `marker`, the bullet is a small separate rect."""
+    rects: list[Rect] = []
+    row = 0
+    for _ in range(items):
+        for line in range(lines_per_item):
+            for x in (left_x, right_x):
+                bottom = 700.0 - 16 * row
+                last = line == lines_per_item - 1
+                text_x = x + indent
+                if line == 0 and marker:
+                    rects.append((x, bottom + 3, x + 4, bottom + 7))
+                right = text_x + (90 if last else 200 - indent)
+                rects.append((text_x, bottom, right, bottom + _H))
+            row += 1
+    return tuple(rects)
+
+
+def test_interleaved_bulleted_columns_with_short_last_lines_fire() -> None:
+    rects = _bulleted_rows(items=4, lines_per_item=3)
+    assert _ids_for(rects) == ["column-interleaving"]
+
+
+def test_interleaved_columns_of_two_line_items_are_not_detected() -> None:
+    # Half the lines are short: not told apart from a table of ragged cells (decision 0086).
+    assert _ids_for(_bulleted_rows(items=6, lines_per_item=2)) == []
+
+
+def test_bullet_marks_are_merged_into_their_text() -> None:
+    rects = ((72.0, 703.0, 76.0, 707.0), (90.0, 700.0, 270.0, 710.0))
+    assert _join_markers(_segments(rects)) == [(72.0, 700.0, 270.0, 710.0)]
+
+
+def test_interleaved_bullets_with_the_text_in_a_tight_hanging_indent_fire() -> None:
+    rects = _bulleted_rows(items=4, lines_per_item=3, indent=12.0, marker=False)
+    assert _ids_for(rects) == ["column-interleaving"]
+
+
+def test_two_unfilled_cells_in_a_row_do_not_count_as_filled() -> None:
+    rects: list[Rect] = []
+    for row, width in enumerate((200, 90, 80, 200, 90, 80)):
+        rects.append(_line(72, 72 + width, row))
+        rects.append(_line(330, 330 + width, row))
+    assert _interleaved_lines(tuple(rects)) == 0

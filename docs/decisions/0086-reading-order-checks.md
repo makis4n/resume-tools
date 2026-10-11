@@ -31,17 +31,22 @@ finding conventions: stable ids, `warning` severity for layout problems, "many A
   lower than the previous (by at least half its height) and all gutters share one x-band.
   A page whose chain reaches `_MIN_INTERLEAVED_LINES` = 4 fires `column-interleaving`.
 - **Fill and width.** A chain counts only if, for its left segments and for its right segments
-  alike, at least 3/4 are filled (right edge within the right quarter of that side's extent) and
-  the median width is at least 150 points (`_MIN_COLUMN_WIDTH_PT`). Wrapped prose fills wide
-  columns; a skills grid's short cells, right-aligned years, key/value labels, date columns and
-  school/city rows do not, however similar their widths. The fill band is the right 12 percent
-  (`_FILL_FRACTION`), and at least 3/4 of each side's segments must also start within 3 points of
-  that side's median start (`_LEFT_EDGE_TOLERANCE_PT`): wrapped prose starts every line at one x, a
-  right-aligned cell does not. A chain that breaks its band restarts at the step that broke it, which keeps
-  the work linear; the fill test is made on the whole chain.
+  alike, at least 3/5 are filled (right edge within the right 12 percent of that side's extent,
+  `_FILL_FRACTION`) with no two unfilled ones in a row, and the median width is at least 150
+  points (`_MIN_COLUMN_WIDTH_PT`). The last line of a paragraph or bullet is short, so a lone
+  unfilled segment is allowed; a skills grid's short cells, right-aligned years, key/value labels,
+  date columns, school/city rows and ragged one-line cells are not. At least 3/4 of each side's
+  segments must also start within 3 points of one of that side's two commonest start x positions
+  (`_LEFT_EDGE_TOLERANCE_PT`, `_MIN_ALIGNED_RATIO`): wrapped prose starts every line at one x, a
+  bulleted list at two (the bullet and the hanging indent), a right-aligned cell at many. A bullet
+  or number mark drawn apart from its text (no wider than the line height, text within twice the
+  height on the same line) is merged into that text first (`_join_markers`), so a list item is one
+  segment. A chain that breaks its band restarts at the step that broke it, which keeps the work
+  linear; the fill test is made on the whole chain.
 - **Calibration.** Synthetic: interleaved prose 7/7 (fires), with offset baselines 7/7 (fires),
   cleanly ordered two columns 0, single column 0, right-aligned dates 1, a skills grid of five rows
-  with two filled cells 0. The eight committed editor spike PDFs (`chrome-icons`, `chrome-table`,
+  with two filled cells 0, bulleted columns of 3-line items with a hanging indent 12/12
+  (fires), ragged one-line cells 0. The eight committed editor spike PDFs (`chrome-icons`, `chrome-table`,
   `chrome-one-column`, `chrome-sidebar`, `chrome-right-sidebar`, `textedit-rtf`, `textutil-table`,
   `textutil-html`) all score 2 or fewer, below the threshold. They were a one-off calibration;
   tests do not read anything under `apps/editor`.
@@ -62,7 +67,8 @@ finding conventions: stable ids, `warning` severity for layout problems, "many A
 
 ## Consequences
 
-- Known limits. A table whose rows are single lines of near-equal width at one left x, drawn row by
+- Known limits. Columns of one- or two-line items (half or more of the lines short) cannot be told from a table of ragged cells and are
+  not detected. A table whose rows are single lines of near-equal width at one left x, drawn row by
   row, cannot be told from wrapped prose by geometry alone and may still fire. Other out-of-order cases, such as shuffled text boxes jumping up within one
   column, are not detected and are later work. A producer that writes both columns in one text run
   gives one rect that spans the gutter, so the check misses it. Pages over `_CHAR_BUDGET` get no

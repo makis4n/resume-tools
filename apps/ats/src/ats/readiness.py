@@ -93,13 +93,23 @@ _LATERAL_CENTRE_FACTOR = 1.5
 # A left segment must sit lower than the previous one by at least this multiple of its height for
 # the chain to be moving down the page, one line at a time.
 _MIN_DESCENT_FACTOR = 0.5
-# A left segment is "filled" when its right edge reaches into the right quarter of the chain's
-# left segments' extent (a tight band: wrapped prose is ragged by a few words, a row of table cells
-# of unrelated text by more): wrapped prose fills its column, a skills grid's cells do not.
+# A segment is "filled" when its right edge reaches into the right 12 percent of its side's extent
+# (a tight band: wrapped prose is ragged by a few words, a row of table cells of unrelated text by
+# more): wrapped prose fills its column, a skills grid's cells do not.
 _FILL_FRACTION = 0.12
 # At least this fraction of a chain's left segments must be filled for it to count, and the same
-# for its right segments.
-_MIN_FILLED_RATIO = 0.75
+# for its right segments. Below 3/4 on purpose: the last line of each paragraph or bullet is short,
+# so a column of 3-line items is only 2/3 filled. Two unfilled segments in a row never count (see
+# `_filled`), which keeps a table of ragged one-line cells out.
+_MIN_FILLED_RATIO = 0.6
+# At least this fraction of a side's segments must start at one of its two commonest x positions
+# (the bullet and the hanging indent of a list), each within `_LEFT_EDGE_TOLERANCE_PT`.
+_MIN_ALIGNED_RATIO = 0.75
+# A bullet or a number is drawn as a small mark apart from its text. A segment no wider than this
+# multiple of the line height, followed on the same line by another segment within
+# `_MARKER_JOIN_FACTOR` times the height, is merged into it (see `_join_markers`).
+_MARKER_MAX_WIDTH_FACTOR = 1.0
+_MARKER_JOIN_FACTOR = 2.0
 # Wrapped prose columns are wide; a date, a label, a city or a short table cell is not. A chain
 # counts only if the median width of its left segments, and of its right segments, is at least
 # this many points. This tells columns of prose from table rows (dates, key/value lists, school
@@ -286,6 +296,31 @@ def _segments(rects: tuple[Rect, ...]) -> list[Rect]:
     return segments
 
 
+def _join_markers(segments: list[Rect]) -> list[Rect]:
+    """Merge a bullet or number mark into the text that follows it on its line, so a list item is
+    one segment however far the text is indented."""
+    joined: list[Rect] = []
+    index = 0
+    while index < len(segments):
+        seg = segments[index]
+        if index + 1 < len(segments):
+            nxt = segments[index + 1]
+            height = max(seg[3] - seg[1], nxt[3] - nxt[1])
+            gap = nxt[0] - seg[2]
+            same_line = abs((seg[1] + seg[3]) / 2 - (nxt[1] + nxt[3]) / 2) <= 0.5 * height
+            if (
+                seg[2] - seg[0] <= _MARKER_MAX_WIDTH_FACTOR * height
+                and same_line
+                and 0 <= gap <= _MARKER_JOIN_FACTOR * height
+            ):
+                joined.append((seg[0], min(seg[1], nxt[1]), nxt[2], max(seg[3], nxt[3])))
+                index += 2
+                continue
+        joined.append(seg)
+        index += 1
+    return joined
+
+
 def _is_lateral(a: Rect, b: Rect) -> bool:
     """Whether `b` follows `a` across a gutter on the same line."""
     height = max(a[3] - a[1], b[3] - b[1])
@@ -297,22 +332,32 @@ def _is_lateral(a: Rect, b: Rect) -> bool:
 
 
 def _filled(segs: list[Rect]) -> bool:
-    """Whether most of the segments reach into the right quarter (`_FILL_FRACTION`) of their own
-    extent."""
+    """Whether most of the segments reach into the right 12 percent (`_FILL_FRACTION`) of their own
+    extent and no two unfilled ones sit side by side. The last line of a paragraph or bullet is
+    short, so a lone unfilled segment is allowed; two in a row are a list of short cells."""
     min_left = min(seg[0] for seg in segs)
     max_right = max(seg[2] for seg in segs)
     threshold = max_right - _FILL_FRACTION * (max_right - min_left)
-    filled = sum(1 for seg in segs if seg[2] >= threshold)
-    return filled >= _MIN_FILLED_RATIO * len(segs)
+    flags = [seg[2] >= threshold for seg in segs]
+    if any(not a and not b for a, b in zip(flags, flags[1:], strict=False)):
+        return False
+    return sum(flags) >= _MIN_FILLED_RATIO * len(segs)
 
 
 def _aligned(segs: list[Rect]) -> bool:
-    """Whether most of the segments start at one x, as every line of a wrapped column does and a
-    right-aligned cell does not."""
-    starts = sorted(seg[0] for seg in segs)
-    median = starts[len(starts) // 2]
-    aligned = sum(1 for start in starts if abs(start - median) <= _LEFT_EDGE_TOLERANCE_PT)
-    return aligned >= _MIN_FILLED_RATIO * len(segs)
+    """Whether most of the segments start at one of two x positions, as the lines of a wrapped
+    column or of a bulleted list with a hanging indent do and a right-aligned cell does not."""
+    starts = [seg[0] for seg in segs]
+    best = 0
+    for anchor in starts:
+        near = [s for s in starts if abs(s - anchor) <= _LEFT_EDGE_TOLERANCE_PT]
+        rest = [s for s in starts if abs(s - anchor) > _LEFT_EDGE_TOLERANCE_PT]
+        second = max(
+            (sum(1 for t in rest if abs(t - other) <= _LEFT_EDGE_TOLERANCE_PT) for other in rest),
+            default=0,
+        )
+        best = max(best, len(near) + second)
+    return best >= _MIN_ALIGNED_RATIO * len(segs)
 
 
 def _wide(segs: list[Rect]) -> bool:
@@ -341,7 +386,7 @@ def _interleaved_lines(rects: tuple[Rect, ...]) -> int:
     row of labels and values. Linear in the segment count: a
     chain that breaks its band restarts at the step that broke it.
     """
-    segments = _segments(rects)
+    segments = _join_markers(_segments(rects))
     best = 0
     lefts: list[Rect] = []
     rights: list[Rect] = []

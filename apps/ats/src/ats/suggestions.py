@@ -86,7 +86,10 @@ _BY_PRODUCER: dict[str, dict[Producer, str]] = {
             "Turn off hyphenation with Layout > Hyphenation > None, and reword so a hyphenated "
             "compound (such as full-stack) does not fall at the end of a line."
         ),
-        Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
+        Producer.LATEX: (
+            "Reword so a hyphenated compound (such as user-facing) does not fall at the end of "
+            "a line."
+        ),
     },
 }
 
