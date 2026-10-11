@@ -150,3 +150,57 @@ def test_wrapped_prose_and_job_titles_are_not_headings(text: str) -> None:
 def test_a_heading_beside_another_columns_text_is_found() -> None:
     facts = detect("Experience Python, Java, Go, Rust, Kotlin, TypeScript, SQL")
     assert facts.has_experience
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Ada\nWork Experiences\nstuff",
+        "EXPERIENCES",
+        "Educational Background\nx",
+        "Skillset\nx",
+        "Skills & Interests\nx",
+        "Professional Experience (Selected)\nx",
+        "01 Experience",
+        "01. Experience",
+        "Experience Senior Engineer, Acme",
+        "Experience Acme Corp",
+        "Contact Experience",
+        "Ada Inventa Experience",
+        "Languages Skills",
+        "Skills | Experience",
+    ],
+)
+def test_plural_numbered_and_shared_line_headings_are_found(text: str) -> None:
+    facts = detect(text)
+    assert facts.has_experience or facts.has_education or facts.has_skills
+
+
+def test_each_heading_on_a_shared_line_is_found() -> None:
+    assert detect("Contact Experience").has_experience
+    assert detect("Languages Education").has_education
+    assert detect("Skills: Python, Java, SQL").has_skills
+    assert detect("Profile Education").has_education
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Education Coordinator, Invented School, 2019 - 2021",
+        "Experience Designer, Invented Co, 2019 - 2021",
+    ],
+)
+def test_a_dated_job_line_starting_with_a_keyword_is_not_a_heading(text: str) -> None:
+    facts = detect(text)
+    assert not (facts.has_experience or facts.has_education)
+
+
+@pytest.mark.parametrize("text", ["07911 123456", "07700 900 123", "07700 900123", "98765 43210"])
+def test_national_phone_formats_without_a_prefix(text: str) -> None:
+    assert detect(text).has_phone
+
+
+def test_an_at_word_emails_domain_is_not_a_profile_link() -> None:
+    facts = detect("ada[at]inventa.dev")
+    assert facts.has_email_candidate
+    assert not facts.has_profile_link

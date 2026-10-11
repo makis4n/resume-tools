@@ -272,6 +272,14 @@ def _content_findings(document: Document, producer: Producer) -> list[Finding]:
     ]
 
 
+def _mostly_unmapped(document: Document) -> bool:
+    """True when the text is mostly unmapped glyphs: it is garbage, so contact and section
+    checks would only add wrong advice on top of the `unmapped-glyphs` finding."""
+    chars = sum(page.char_count for page in document.pages)
+    unmapped = sum(page.unmapped_count for page in document.pages)
+    return chars > 0 and unmapped / chars > _UNMAPPED_CRITICAL_THRESHOLD
+
+
 def check(document: Document, producer: Producer) -> list[Finding]:
     """Run every milestone-1 readiness check against `document`, deterministically ordered by
     page (a document-level finding sorts first) and then by a fixed id order (`_ID_ORDER`).
@@ -288,7 +296,8 @@ def check(document: Document, producer: Producer) -> list[Finding]:
         findings.append(_no_text_layer_finding(document, producer))
     else:
         findings.extend(_glyph_findings(document, producer))
-        findings.extend(_content_findings(document, producer))
+        if not _mostly_unmapped(document):
+            findings.extend(_content_findings(document, producer))
     findings.extend(_page_count_findings(document))
     findings.extend(_blank_page_findings(document, has_text))
 

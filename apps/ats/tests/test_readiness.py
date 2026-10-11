@@ -326,3 +326,8 @@ def test_detect_reads_a_bounded_amount_of_text(monkeypatch) -> None:
     monkeypatch.setattr(readiness, "detect", spy)
     check(_document(_page(text="a. " * 400_000)), Producer.OTHER)
     assert seen == [readiness._DETECT_CHAR_LIMIT]
+
+
+def test_content_findings_are_skipped_when_the_text_is_mostly_unmapped() -> None:
+    document = _document(_page(char_count=800, unmapped_count=800))
+    assert _ids(document) == ["unmapped-glyphs"]

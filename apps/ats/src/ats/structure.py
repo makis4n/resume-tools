@@ -23,7 +23,7 @@ EDUCATION_EXACT = (
     "qualifications",
     "academic qualifications",
 )
-SKILLS_CONTAINS = ("skills", "competencies")
+SKILLS_CONTAINS = ("skills", "skillset", "competencies")
 SKILLS_EXACT = (
     "areas of expertise",
     "expertise",
@@ -54,6 +54,12 @@ _EMAIL_SPACED = re.compile(
 _EMAIL_AT_WORD = re.compile(
     r"[A-Za-z0-9][ \t]{0,3}[\[(][ \t]{0,3}at[ \t]{0,3}[\])][ \t]{0,3}[A-Za-z0-9]", re.IGNORECASE
 )
+# The whole "name [at] domain.tld" attempt, so its domain is not taken for a profile link.
+_EMAIL_AT_FULL = re.compile(
+    r"[A-Za-z0-9._%+-]{0,64}[ \t]{0,3}[\[(][ \t]{0,3}at[ \t]{0,3}[\])]"
+    r"[ \t]{0,3}[A-Za-z0-9.-]{1,80}",
+    re.IGNORECASE,
+)
 
 _PHONE = re.compile(r"\+?\(?\d[\d \t().-]{6,30}\d")
 _PHONE_LABEL = re.compile(r"(?:phone|mobile|tel|cell|whatsapp)[ \t]*:?[ \t]*$", re.IGNORECASE)
@@ -75,6 +81,7 @@ _ODD_SPACES = re.compile(r"[   -   　]")
 _ZERO_WIDTH = re.compile(r"[​-‍⁠﻿]")
 _LINE_BREAKS = re.compile(r"\r\n|\n|\r")
 _EDGE_PUNCTUATION = re.compile(r"^[\W_]+|[\W_]+$")
+_SECTION_NUMBER = re.compile(r"^\s*\d{1,2}[.):]?\s+(?=[A-Za-z])")
 
 
 @dataclass(frozen=True)
@@ -103,7 +110,7 @@ def _has_email_candidate(text: str) -> bool:
 
 
 def _has_profile_link(text: str) -> bool:
-    text = _EMAIL_SPACED.sub(" ", _EMAIL.sub(" ", text))
+    text = _EMAIL_AT_FULL.sub(" ", _EMAIL_SPACED.sub(" ", _EMAIL.sub(" ", text)))
     return bool(_LINK.search(text) or _BARE_DOMAIN.search(text))
 
 
@@ -118,7 +125,10 @@ def _is_phone_number(raw: str, prefix: str) -> bool:
         return False
     if raw.startswith("+") or _PHONE_LABEL.search(prefix):
         return True
-    if len(groups) < 2 or any(len(group) > 4 for group in groups):
+    # National formats such as "07911 123456" or "98765 43210" have 10-11 digits in groups of up
+    # to six; any other number with a group over four digits is an identifier, not a phone.
+    long_groups_ok = 10 <= digits <= 11 and all(len(group) <= 6 for group in groups)
+    if len(groups) < 2 or (any(len(group) > 4 for group in groups) and not long_groups_ok):
         return False
     if any(_YEAR.fullmatch(group) for group in groups) and not any(len(g) == 3 for g in groups):
         return False  # a month-year or year-month range
@@ -137,6 +147,7 @@ def _has_phone(lines: list[str]) -> bool:
 
 def _heading(line: str) -> str | None:
     """The normalised heading `line` could be, or None when it is too long to be one."""
+    line = _SECTION_NUMBER.sub("", line)  # "01 Experience", "02. Education"
     if line.rstrip().endswith((".", ",", ";")) or any(ch.isdigit() for ch in line):
         return None  # a sentence or a dated line, not a heading
     line = line.casefold().replace("&", " and ")
@@ -159,37 +170,62 @@ _HEADING_WORDS = frozenset(
     "work professional relevant technical core key career related selected additional other "
     "industry research teaching leadership internship volunteer computer soft hard academic "
     "summary history employment and training projects certifications highlights overview "
-    "experience education skills".split()
+    "experience education skills interests hobbies languages background profile".split()
 )
+
+
+_KEYWORD_SUFFIXES = ("", "s", "al")  # "experiences", "educational"
 
 
 def _matches(heading: str, contains: tuple[str, ...], exact: tuple[str, ...]) -> bool:
     if heading in exact:
         return True
+    tokens = [_EDGE_PUNCTUATION.sub("", token) for token in heading.split()]
+    tokens = [token for token in tokens if token]
     for word in contains:
-        index = heading.find(word)
-        if index < 0:
-            continue
-        around = heading[:index].split() + heading[index + len(word) :].split()
-        if all(token in _HEADING_WORDS for token in around):
-            return True
+        parts = word.split()
+        for start in range(len(tokens) - len(parts) + 1):
+            window = tokens[start : start + len(parts)]
+            if window[:-1] != parts[:-1] or not any(
+                window[-1] == parts[-1] + suffix for suffix in _KEYWORD_SUFFIXES
+            ):
+                continue
+            around = tokens[:start] + tokens[start + len(parts) :]
+            if all(token in _HEADING_WORDS for token in around):
+                return True
     return False
 
 
-def _leading_headings(line: str) -> list[str]:
-    """Headings a too-long line starts with: a two-column layout puts a heading on the same line
-    as the other column's text. The words after it must not read as prose continuing it."""
+# A word before a trailing section keyword that makes it a job title ("User Experience").
+_TITLE_WORDS = frozenset("user customer patient player student learner client employee".split())
+
+
+def _edge_headings(line: str) -> list[str]:
+    """Headings at either end of a line that is not a heading as a whole: a two-column layout puts
+    a heading on the same line as the other column's text or another heading. A line with a digit
+    is a dated job or education line, never a heading beside another column."""
+    if any(ch.isdigit() for ch in line):
+        return []
     tokens = line.split()
     found = []
     for count in range(1, 4):
-        if len(tokens) <= count or not all(token[:1].isupper() for token in tokens[:count]):
-            continue
-        following = tokens[count][:1]
-        if following.isalpha() and not following.isupper():
-            continue
-        heading = _heading(" ".join(tokens[:count]))
-        if heading is not None:
-            found.append(heading)
+        if len(tokens) <= count:
+            break
+        lead, rest = tokens[:count], tokens[count:]
+        following = rest[0][:1]
+        if all(t[:1].isupper() for t in lead) and not (following.isalpha() and following.islower()):
+            heading = _heading(" ".join(lead))
+            if heading is not None:
+                found.append(heading)
+        tail, before = tokens[-count:], tokens[-count - 1]
+        if (
+            all(t[:1].isupper() for t in tail)
+            and before[:1].isupper()
+            and before.casefold().strip(",:;|") not in _TITLE_WORDS
+        ):
+            heading = _heading(" ".join(tail))
+            if heading is not None:
+                found.append(heading)
     return found
 
 
@@ -202,7 +238,7 @@ def detect(text: str) -> StructureFacts:
     experience = education = skills = False
     for line in lines:
         heading = _heading(line)
-        headings = [heading] if heading is not None else _leading_headings(line)
+        headings = ([heading] if heading is not None else []) + _edge_headings(line)
         for heading in headings:
             experience = experience or _matches(heading, EXPERIENCE_CONTAINS, EXPERIENCE_EXACT)
             education = education or _matches(heading, EDUCATION_CONTAINS, EDUCATION_EXACT)
