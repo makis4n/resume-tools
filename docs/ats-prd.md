@@ -30,9 +30,10 @@ decision 0030; the editor's side of the integration is decision 0031.
   ATS-readiness score with findings, under the versioned rubric in decision 0083. The checks are
   text layer (including text exported as outlines and image-only pages), page count and
   glyph-mapping (unmapped and icon-font characters; the ligature check exists but cannot fire on
-  real PDFs yet, see decision 0083); each finding carries an origin, and
-  the producing tool is classified from the PDF's metadata. There are no contact, section or
-  reading-order checks yet, and no job matching: those are later PRs within milestone 1 and
+  real PDFs yet, see decision 0083), plus column interleaving and words split by hyphenation at
+  line ends (decision 0086); each finding carries an origin, and
+  the producing tool is classified from the PDF's metadata. Contact and section checks are still
+  to come, and there is no job matching: those are later PRs within milestone 1 and
   milestone 3.
 - The editor's milestone 2 has landed: three curated templates, the side panel, documents kept in
   the browser and PDF download. `Compiler.pdf()` in `apps/editor/src/editor/compiler.ts` returns the

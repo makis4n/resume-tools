@@ -1,0 +1,66 @@
+# 0086. Reading-order checks
+
+Date: 2026-10-12 · Status: accepted
+
+## Context
+
+Milestone 1 (`docs/ats-prd.md` §13) lists reading-order checks. Two common layouts make an ATS
+extract a resume in the wrong order or lose words: side-by-side columns whose lines are drawn
+alternately (left line one, right line one, left line two, ...), which an extractor joins into one
+run of mixed text; and words split across lines with a hyphen, which an extractor reads as two
+fragments. Decision 0032 fixed pypdfium2 as the only extractor, and decision 0083 fixed the
+finding conventions: stable ids, `warning` severity for layout problems, "many ATSs/may" wording.
+
+## Decision
+
+- **Source.** Reading order is read from pypdfium2's text rects (`PdfTextPage.get_rect`), in
+  extraction order, with no second extractor (0032). `ats.extract.Page.text_rects` carries
+  `(left, bottom, right, top)` per rect, geometry only. It is read only on pages within
+  `_CHAR_BUDGET` (there are never more rects than characters, so the budget already bounds the
+  work); a page over budget gets `()` and no reading-order check.
+- **Segments.** Chrome/Skia PDFs make one rect per glyph, so consecutive rects merge into line
+  segments when their vertical ranges overlap by at least half the smaller height and the
+  horizontal gap lies between -0.5 and 1.0 times the larger height (`_SEGMENT_JOIN_FACTOR`): a word
+  space is about a quarter of the height, a column gutter is well over it.
+- **Lateral step.** From segment a to the next segment b, when `b.left - a.right >= 18` points
+  (`_MIN_GUTTER_PT`: wider than any word space, narrower than a real gutter) and their vertical
+  centres differ by at most 1.5 times the larger height (two columns set independently have
+  offset baselines).
+- **Chain.** The longest run of lateral steps that alternate strictly (the left segment of each
+  step comes straight after the right segment of the one before), where each left segment sits
+  lower than the previous (by at least half its height) and all gutters share one x-band.
+  A page whose chain reaches `_MIN_INTERLEAVED_LINES` = 4 fires `column-interleaving`.
+- **Fill.** A chain counts only if at least 3/4 of its left segments are filled: right edge within
+  the right quarter of the left segments' extent. Wrapped prose fills its column; a skills grid's
+  short cells do not. A chain that breaks its band restarts at the step that broke it, which keeps
+  the work linear; the fill test is made on the whole chain.
+- **Calibration.** Synthetic: interleaved prose 7/7 (fires), with offset baselines 7/7 (fires),
+  cleanly ordered two columns 0, single column 0, right-aligned dates 1, a skills grid of five rows
+  with two filled cells 0. The eight committed editor spike PDFs (`chrome-icons`, `chrome-table`,
+  `chrome-one-column`, `chrome-sidebar`, `chrome-right-sidebar`, `textedit-rtf`, `textutil-table`,
+  `textutil-html`) all score 2 or fewer, below the threshold. They were a one-off calibration;
+  tests do not read anything under `apps/editor`.
+- **Hyphenation.** PDFium turns a hyphen at the end of a line into U+0002 and joins the two lines
+  with no break ("distri\x02buted"), whatever the next line starts with. A mid-line hyphen, or a
+  hyphen followed by a jump to another column on the same line, stays `-`. `hyphen_break_count`
+  counts a letter, U+0002, then a lowercase letter, computed from `Page.text` with one compiled
+  regex for every page. A line-end hyphen before a capital or a digit (such as a name or a date
+  range) is not counted. `hyphenated-line-breaks` fires when the count is above zero.
+- **Findings.** Both are `warning`, origin `layout`, with a page, and both ids are stable (0083).
+  Neither message quotes resume text. Both run only when the document has a text layer.
+- **Versions.** `RUBRIC_VERSION` stays `readiness-1`: these are new checks that were silent before
+  and do not change any existing fixture's result (0083). The analyser goes to 0.2.0, because a
+  new check changes the response.
+
+## Consequences
+
+- Known limits. Other out-of-order cases, such as shuffled text boxes jumping up within one
+  column, are not detected and are later work. A producer that writes both columns in one text run
+  gives one rect that spans the gutter, so the check misses it. Pages over `_CHAR_BUDGET` get no
+  reading-order check. Fonts so large that a word space exceeds 18 points could merge columns.
+- `Page.text` still contains U+0002; joining hyphenated words before matching is milestone 3's
+  concern.
+- Under PRD §12.1, a curated LaTeX template that hyphenates or interleaves would now fail the
+  validation gate. That is a follow-up for the editor's owner (@makis4n) and is not changed here.
+- `keaen/contact-sections` also moves the analyser to 0.2.0; whichever branch merges second takes
+  0.3.0 when it is rebased.
