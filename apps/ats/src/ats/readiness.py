@@ -1,6 +1,7 @@
 """Deterministic readiness checks for one extracted PDF (decision 0083); `ats.rubric` scores their
-output. `check` covers milestone 1's checks only: text layer, page count and glyph mapping.
-Contact/section checks, reading order and hidden text, and rate limits are later milestones.
+output. `check` covers milestone 1's checks so far: text layer, page count, glyph mapping, and
+contact details and conventional sections (decision 0085). Reading order and hidden text, and rate
+limits are later milestones.
 
 Every message and suggestion string these checks use lives here or in `ats.suggestions`; nothing
 here quotes resume text, and no message asserts a specific ATS behaviour this product cannot back
@@ -10,6 +11,7 @@ up.
 from ats.extract import Document
 from ats.findings import Finding, Origin, Severity
 from ats.producer import Producer
+from ats.structure import detect
 from ats.suggestions import suggestion_for
 
 # Above this fraction of a document's total page objects being paths, with no usable text anywhere,
@@ -58,6 +60,28 @@ LIGATURE_MESSAGE = (
     'glyph), so a word like "profile" may not be found by a keyword search that only looks for '
     "plain letters."
 )
+NO_EMAIL_MESSAGE = (
+    "No email address was found in this resume's text. ATSs and recruiters use it to contact you."
+)
+UNRECOGNISED_EMAIL_MESSAGE = (
+    "Something in this resume looks like an email address but could not be read as one, so an "
+    "ATS may not find it."
+)
+NO_PHONE_MESSAGE = (
+    "No phone number was found in this resume's text. Recruiters often use it to reach you."
+)
+NO_PROFILE_LINK_MESSAGE = (
+    "No link was found in this resume's text. If you have a LinkedIn profile, portfolio or "
+    "website, write its address out in full as plain text, since a clickable word alone may not "
+    "be read."
+)
+_MISSING_SECTION_MESSAGE = (
+    'No heading such as "{name}" was found. Many ATSs look for conventional section headings to '
+    "sort a resume's content."
+)
+MISSING_EXPERIENCE_MESSAGE = _MISSING_SECTION_MESSAGE.format(name="Experience")
+MISSING_EDUCATION_MESSAGE = _MISSING_SECTION_MESSAGE.format(name="Education")
+MISSING_SKILLS_MESSAGE = _MISSING_SECTION_MESSAGE.format(name="Skills")
 
 # The fixed order findings are sorted into within a page (see `check`'s docstring). Document-level
 # findings carry no page, so they sort ahead of every per-page finding.
@@ -66,6 +90,13 @@ _ID_ORDER = (
     "text-as-outlines",
     "image-only",
     "page-count",
+    "missing-contact-email",
+    "unrecognised-contact-email",
+    "missing-contact-phone",
+    "missing-profile-link",
+    "missing-section-experience",
+    "missing-section-education",
+    "missing-section-skills",
     "blank-page",
     "unmapped-glyphs",
     "icon-font-glyphs",
@@ -199,14 +230,50 @@ def _glyph_findings(document: Document, producer: Producer) -> list[Finding]:
     return findings
 
 
+def _content_findings(document: Document, producer: Producer) -> list[Finding]:
+    """Document-level contact and section findings (decision 0085). Only called when the document
+    has text. `structure.detect` returns booleans only, so no resume text reaches a message."""
+    facts = detect("\n".join(page.text for page in document.pages))
+
+    missing: list[tuple[str, Severity, str]] = []
+    if not facts.has_email:
+        if facts.has_email_candidate:
+            missing.append(
+                ("unrecognised-contact-email", Severity.WARNING, UNRECOGNISED_EMAIL_MESSAGE)
+            )
+        else:
+            missing.append(("missing-contact-email", Severity.WARNING, NO_EMAIL_MESSAGE))
+    if not facts.has_phone:
+        missing.append(("missing-contact-phone", Severity.INFO, NO_PHONE_MESSAGE))
+    if not facts.has_profile_link:
+        missing.append(("missing-profile-link", Severity.INFO, NO_PROFILE_LINK_MESSAGE))
+    if not facts.has_experience:
+        missing.append(("missing-section-experience", Severity.WARNING, MISSING_EXPERIENCE_MESSAGE))
+    if not facts.has_education:
+        missing.append(("missing-section-education", Severity.INFO, MISSING_EDUCATION_MESSAGE))
+    if not facts.has_skills:
+        missing.append(("missing-section-skills", Severity.INFO, MISSING_SKILLS_MESSAGE))
+
+    return [
+        Finding(
+            id=finding_id,
+            severity=severity,
+            origin=Origin.CONTENT,
+            message=message,
+            suggestion=suggestion_for(finding_id, producer),
+        )
+        for finding_id, severity, message in missing
+    ]
+
+
 def check(document: Document, producer: Producer) -> list[Finding]:
     """Run every milestone-1 readiness check against `document`, deterministically ordered by
     page (a document-level finding sorts first) and then by a fixed id order (`_ID_ORDER`).
 
     If no page in the document has any characters at all, the single whole-document text-layer
     finding (`no-text-layer`, `text-as-outlines` or `image-only`) fires and the per-page glyph
-    findings do not: once nothing on the page could be read at all, reporting its individual
-    unmapped glyphs would just be noise on top of the one finding that matters.
+    and contact/section findings do not: once nothing on the page could be read at all, reporting
+    its individual unmapped glyphs would just be noise on top of the one finding that matters.
     """
     has_text = any(page.char_count > 0 for page in document.pages)
 
@@ -215,6 +282,7 @@ def check(document: Document, producer: Producer) -> list[Finding]:
         findings.append(_no_text_layer_finding(document, producer))
     else:
         findings.extend(_glyph_findings(document, producer))
+        findings.extend(_content_findings(document, producer))
     findings.extend(_page_count_findings(document))
     findings.extend(_blank_page_findings(document, has_text))
 

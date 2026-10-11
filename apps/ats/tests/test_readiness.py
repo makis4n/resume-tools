@@ -2,6 +2,12 @@ from ats.extract import Document, Page
 from ats.producer import Producer
 from ats.readiness import check
 
+_CLEAN_TEXT = (
+    "Ada Inventa\nada.inventa@example.com | +1 555 010 0199 | github.com/ada-inventa-example\n"
+    "Experience\nEngineer at Invented Works\nEducation\nBSc in Invention\n"
+    "Skills\nPrototyping and documentation"
+)
+
 
 def _page(
     number: int = 1,
@@ -13,12 +19,13 @@ def _page(
     text_objects: int = 1,
     image_objects: int = 0,
     path_objects: int = 0,
+    text: str = _CLEAN_TEXT,
 ) -> Page:
     return Page(
         number=number,
         width=612,
         height=792,
-        text="invented placeholder text",
+        text=text,
         char_count=char_count,
         unmapped_count=unmapped_count,
         private_use_count=private_use_count,
@@ -246,3 +253,61 @@ def test_word_gets_a_word_specific_suggestion() -> None:
     document = _document(_page(char_count=0, text_objects=0))
     findings = check(document, Producer.WORD)
     assert "Save as PDF" in (findings[0].suggestion or "")
+
+
+# --- contact and section findings (decision 0085) ---
+
+_NEW_IDS = [
+    "missing-contact-email",
+    "missing-contact-phone",
+    "missing-profile-link",
+    "missing-section-experience",
+    "missing-section-education",
+    "missing-section-skills",
+]
+
+
+def test_a_text_page_with_no_contact_or_headings_gets_every_content_finding() -> None:
+    document = _document(_page(text="Some invented words and nothing else"))
+    findings = check(document, Producer.OTHER)
+    assert [f.id for f in findings] == _NEW_IDS
+    assert [f.severity for f in findings] == [
+        "warning",
+        "info",
+        "info",
+        "warning",
+        "info",
+        "info",
+    ]
+    assert all(f.origin == "content" and f.page is None for f in findings)
+
+
+def test_an_email_candidate_alone_is_unrecognised_not_missing() -> None:
+    text = _CLEAN_TEXT.replace("ada.inventa@example.com", "ada@inventa")
+    ids = _ids(_document(_page(text=text)))
+    assert ids == ["unrecognised-contact-email"]
+    findings = check(_document(_page(text=text)), Producer.OTHER)
+    assert findings[0].severity == "warning"
+
+
+def test_no_contact_or_section_findings_without_a_text_layer() -> None:
+    document = _document(_page(char_count=0, text_objects=0, text=""))
+    assert _ids(document) == ["no-text-layer"]
+
+
+def test_content_findings_sort_before_per_page_findings_and_after_page_count() -> None:
+    pages = [_page(n, text="nothing useful") for n in (1, 2, 3)]
+    pages[0] = _page(1, text="nothing useful", private_use_count=1)
+    ids = _ids(_document(*pages))
+    assert ids[0] == "page-count"
+    assert ids[1] == "missing-contact-email"
+    assert ids[-1] == "icon-font-glyphs"
+
+
+def test_latex_content_findings_use_the_neutral_suggestion() -> None:
+    findings = check(_document(_page(text="nothing useful")), Producer.LATEX)
+    assert findings
+    for finding in findings:
+        assert finding.suggestion
+        assert "\\" not in finding.suggestion and "LaTeX" not in finding.suggestion
+        assert finding.suggestion != "This comes from the template's design."
