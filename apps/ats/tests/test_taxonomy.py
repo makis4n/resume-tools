@@ -985,6 +985,24 @@ def test_lookup_ignores_trademark_signs(taxonomy: Taxonomy, term: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("text", "skill_id"),
+    [
+        ("Microsoft\u00ae Office", "microsoft-office-suite"),
+        ("Microsoft\u2122 Office", "microsoft-office-suite"),
+        ("Google\u00ae Analytics", "google-analytics"),
+    ],
+)
+def test_a_trademark_sign_inside_a_term_matches_in_lookup_and_mentions(
+    taxonomy: Taxonomy, text: str, skill_id: str
+) -> None:
+    found = taxonomy.lookup(text)
+    assert found is not None and found.id == skill_id
+    mentions = taxonomy.mentions(text)
+    assert [m.skill.id for m in mentions] == [skill_id]
+    assert (mentions[0].start, mentions[0].end) == (0, len(text))
+
+
+@pytest.mark.parametrize(
     "text", ["Bachelor\u2019s degree in Finance", "Master\u2019s degree required"]
 )
 def test_curly_apostrophes_match_like_ascii(taxonomy: Taxonomy, text: str) -> None:
