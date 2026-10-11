@@ -45,9 +45,10 @@ _EMAIL = re.compile(
 # An unreadable email attempt: (a) letters either side of '@' with no whitespace, such as a
 # domain with no TLD; (b) spaces around '@' or '.' before a lowercase TLD; (c) "[at]"/"(at)".
 _EMAIL_NO_TLD = re.compile(r"[A-Za-z0-9._%+-]{0,64}[A-Za-z]@[A-Za-z][A-Za-z0-9.-]{0,63}")
+# Lowercase only, so a job title such as "Intern @ Grab.com" is not taken for an email attempt.
 _EMAIL_SPACED = re.compile(
-    r"[A-Za-z0-9._%+-]{1,64}[ \t]{0,3}@[ \t]{0,3}[A-Za-z0-9-]{1,63}"
-    r"([ \t]{0,3}\.[ \t]{0,3}[A-Za-z0-9-]{1,63}){0,8}"
+    r"(?<![A-Za-z0-9._%+-])[a-z0-9._%+-]{1,64}[ \t]{0,3}@[ \t]{0,3}[a-z0-9-]{1,63}"
+    r"([ \t]{0,3}\.[ \t]{0,3}[a-z0-9-]{1,63}){0,8}"
     r"[ \t]{0,3}\.[ \t]{0,3}[a-z]{2,6}"
 )
 _EMAIL_AT_WORD = re.compile(
@@ -61,9 +62,13 @@ _DATE = re.compile(r"\d{4}[./-]\d{1,2}[./-]\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{4}
 _PHONE_SEPARATORS = re.compile(r"[ \t().-]+")
 
 _LINK = re.compile(
-    r"https?://|www\.|(?:linkedin|github|gitlab|behance|dribbble)\.(?:com|net)/"
-    r"|\b[a-z0-9-]{1,63}\.(?:com|io|dev|me|net|org|co|app|page|site|ai|xyz)(?![a-z0-9-])",
+    r"https?://|www\.|(?:linkedin|github|gitlab|behance|dribbble)\.(?:com|net)/",
     re.IGNORECASE,
+)
+# A bare domain such as "ada.dev" counts only in lowercase, so ASP.NET, Socket.IO and an employer
+# written "Booking.com" are not taken for links.
+_BARE_DOMAIN = re.compile(
+    r"(?<![A-Za-z0-9-])[a-z0-9-]{1,63}\.(?:com|io|dev|me|org|co|app|page|site|ai|xyz)(?![A-Za-z0-9-])"
 )
 
 _ODD_SPACES = re.compile(r"[   -   　]")
@@ -97,6 +102,11 @@ def _has_email_candidate(text: str) -> bool:
     )
 
 
+def _has_profile_link(text: str) -> bool:
+    text = _EMAIL_SPACED.sub(" ", _EMAIL.sub(" ", text))
+    return bool(_LINK.search(text) or _BARE_DOMAIN.search(text))
+
+
 def _is_phone_number(raw: str, prefix: str) -> bool:
     digits = sum(ch.isdigit() for ch in raw)
     if not _MIN_PHONE_DIGITS <= digits <= _MAX_PHONE_DIGITS:
@@ -106,11 +116,15 @@ def _is_phone_number(raw: str, prefix: str) -> bool:
     groups = [group for group in _PHONE_SEPARATORS.split(raw.lstrip("+")) if group]
     if groups and all(_YEAR.fullmatch(group) for group in groups):
         return False
-    if raw.startswith("+"):
+    if raw.startswith("+") or _PHONE_LABEL.search(prefix):
         return True
-    if len(groups) >= 2:
-        return True
-    return bool(_PHONE_LABEL.search(prefix))
+    if len(groups) < 2 or any(len(group) > 4 for group in groups):
+        return False
+    if any(_YEAR.fullmatch(group) for group in groups) and not any(len(g) == 3 for g in groups):
+        return False  # a month-year or year-month range
+    if len(groups[0]) <= 3 and all(len(group) == 3 for group in groups[1:]):
+        return False  # a large number written with spaces, "10 000 000"
+    return True
 
 
 def _has_phone(lines: list[str]) -> bool:
@@ -123,6 +137,8 @@ def _has_phone(lines: list[str]) -> bool:
 
 def _heading(line: str) -> str | None:
     """The normalised heading `line` could be, or None when it is too long to be one."""
+    if line.rstrip().endswith((".", ",", ";")) or any(ch.isdigit() for ch in line):
+        return None  # a sentence or a dated line, not a heading
     line = line.casefold().replace("&", " and ")
     line = _EDGE_PUNCTUATION.sub("", line)
     tokens = line.split()
@@ -136,8 +152,45 @@ def _heading(line: str) -> str | None:
     return line
 
 
+# A "contains" keyword counts only when the words around it are ones a heading uses ("Work
+# Experience", "Skills Summary"), so the end of a wrapped sentence or a job title such as "User
+# Experience Designer" is not taken for a section heading.
+_HEADING_WORDS = frozenset(
+    "work professional relevant technical core key career related selected additional other "
+    "industry research teaching leadership internship volunteer computer soft hard academic "
+    "summary history employment and training projects certifications highlights overview "
+    "experience education skills".split()
+)
+
+
 def _matches(heading: str, contains: tuple[str, ...], exact: tuple[str, ...]) -> bool:
-    return heading in exact or any(word in heading for word in contains)
+    if heading in exact:
+        return True
+    for word in contains:
+        index = heading.find(word)
+        if index < 0:
+            continue
+        around = heading[:index].split() + heading[index + len(word) :].split()
+        if all(token in _HEADING_WORDS for token in around):
+            return True
+    return False
+
+
+def _leading_headings(line: str) -> list[str]:
+    """Headings a too-long line starts with: a two-column layout puts a heading on the same line
+    as the other column's text. The words after it must not read as prose continuing it."""
+    tokens = line.split()
+    found = []
+    for count in range(1, 4):
+        if len(tokens) <= count or not all(token[:1].isupper() for token in tokens[:count]):
+            continue
+        following = tokens[count][:1]
+        if following.isalpha() and not following.isupper():
+            continue
+        heading = _heading(" ".join(tokens[:count]))
+        if heading is not None:
+            found.append(heading)
+    return found
 
 
 def detect(text: str) -> StructureFacts:
@@ -149,17 +202,17 @@ def detect(text: str) -> StructureFacts:
     experience = education = skills = False
     for line in lines:
         heading = _heading(line)
-        if heading is None:
-            continue
-        experience = experience or _matches(heading, EXPERIENCE_CONTAINS, EXPERIENCE_EXACT)
-        education = education or _matches(heading, EDUCATION_CONTAINS, EDUCATION_EXACT)
-        skills = skills or _matches(heading, SKILLS_CONTAINS, SKILLS_EXACT)
+        headings = [heading] if heading is not None else _leading_headings(line)
+        for heading in headings:
+            experience = experience or _matches(heading, EXPERIENCE_CONTAINS, EXPERIENCE_EXACT)
+            education = education or _matches(heading, EDUCATION_CONTAINS, EDUCATION_EXACT)
+            skills = skills or _matches(heading, SKILLS_CONTAINS, SKILLS_EXACT)
 
     return StructureFacts(
         has_email=has_email,
         has_email_candidate=not has_email and _has_email_candidate(text),
         has_phone=_has_phone(lines),
-        has_profile_link=bool(_LINK.search(_EMAIL.sub(" ", text))),
+        has_profile_link=_has_profile_link(text),
         has_experience=experience,
         has_education=education,
         has_skills=skills,

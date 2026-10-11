@@ -85,3 +85,68 @@ def test_a_long_sentence_is_not_a_heading() -> None:
 
 def test_facts_carry_only_booleans() -> None:
     assert all(field.type is bool for field in dataclasses.fields(StructureFacts))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Engineer, Example Co. 2019.01 - 2023.06",
+        "Software Engineer 2019-01 - 2023-06",
+        "Engineer 09.2019 - 06.2023",
+        "09 2019 - 06 2023",
+        "Scaled to 10 000 000 users",
+        "Singapore 123456 2019",
+        "ISBN 978-3-16-148410-0",
+    ],
+)
+def test_dates_and_large_numbers_are_not_phone_numbers(text: str) -> None:
+    assert not detect(text).has_phone
+
+
+def test_a_phone_ending_in_a_year_like_group_is_still_a_phone() -> None:
+    assert detect("(555) 010-2019").has_phone
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Skills\nC#, ASP.NET, ADO.NET, SQL Server",
+        "Built a chat app with Socket.IO",
+        "Software Engineer, Booking.com",
+        "ada @ example.com",
+    ],
+)
+def test_technology_names_and_broken_emails_are_not_profile_links(text: str) -> None:
+    assert not detect(text).has_profile_link
+
+
+def test_a_lowercase_bare_domain_is_a_profile_link() -> None:
+    assert detect("ada-inventa.dev").has_profile_link
+
+
+@pytest.mark.parametrize("text", ["Intern @ Grab.com", "Software Engineer @ Shopee.sg"])
+def test_a_job_title_with_an_at_sign_is_not_an_email_candidate(text: str) -> None:
+    assert not detect(text).has_email_candidate
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Summary\nSeasoned engineer who builds reliable systems and mentors teams with\n"
+        "years of industry experience.\nProjects",
+        "Redesigned onboarding flow, improving customer\nexperience.",
+        "improving customer experience",
+        "User Experience Designer",
+        "5 years of experience",
+        "Led education outreach",
+        "to sharpen their\nanalysis skills.",
+    ],
+)
+def test_wrapped_prose_and_job_titles_are_not_headings(text: str) -> None:
+    facts = detect(text)
+    assert not (facts.has_experience or facts.has_education or facts.has_skills)
+
+
+def test_a_heading_beside_another_columns_text_is_found() -> None:
+    facts = detect("Experience Python, Java, Go, Rust, Kotlin, TypeScript, SQL")
+    assert facts.has_experience

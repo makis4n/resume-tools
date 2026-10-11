@@ -311,3 +311,18 @@ def test_latex_content_findings_use_the_neutral_suggestion() -> None:
         assert finding.suggestion
         assert "\\" not in finding.suggestion and "LaTeX" not in finding.suggestion
         assert finding.suggestion != "This comes from the template's design."
+
+
+def test_detect_reads_a_bounded_amount_of_text(monkeypatch) -> None:
+    import ats.readiness as readiness
+
+    seen: list[int] = []
+    real = readiness.detect
+
+    def spy(text: str):
+        seen.append(len(text))
+        return real(text)
+
+    monkeypatch.setattr(readiness, "detect", spy)
+    check(_document(_page(text="a. " * 400_000)), Producer.OTHER)
+    assert seen == [readiness._DETECT_CHAR_LIMIT]

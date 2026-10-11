@@ -32,6 +32,11 @@ _UNMAPPED_CRITICAL_THRESHOLD = 0.20
 # More than this many pages triggers `page-count`; most resumes fit on one or two (PRD §8.3).
 _MAX_EXPECTED_PAGES = 2
 
+# `structure.detect` is pure-Python regex work that holds the GIL, about ten times slower per
+# character than extraction, and a tiny upload can hold millions of characters. It reads at most
+# this many (a resume is a few thousand), so one upload cannot stall every other request.
+_DETECT_CHAR_LIMIT = 100_000
+
 NO_TEXT_LAYER_MESSAGE = (
     "No selectable text was found in this PDF. Many ATSs cannot read a resume like this at all."
 )
@@ -233,7 +238,8 @@ def _glyph_findings(document: Document, producer: Producer) -> list[Finding]:
 def _content_findings(document: Document, producer: Producer) -> list[Finding]:
     """Document-level contact and section findings (decision 0085). Only called when the document
     has text. `structure.detect` returns booleans only, so no resume text reaches a message."""
-    facts = detect("\n".join(page.text for page in document.pages))
+    text = "\n".join(page.text for page in document.pages)
+    facts = detect(text[:_DETECT_CHAR_LIMIT])
 
     missing: list[tuple[str, Severity, str]] = []
     if not facts.has_email:
