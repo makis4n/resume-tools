@@ -35,6 +35,8 @@ SKILLS_EXACT = (
 
 _MAX_HEADING_WORDS = 6
 _MAX_HEADING_CHARS = 50
+# A heading line, before it is cleaned: room for letter spacing, padding and a section number.
+_MAX_HEADING_LINE_CHARS = 4 * _MAX_HEADING_CHARS
 
 _MIN_PHONE_DIGITS = 8
 _MAX_PHONE_DIGITS = 15
@@ -147,6 +149,8 @@ def _has_phone(lines: list[str]) -> bool:
 
 def _heading(line: str) -> str | None:
     """The normalised heading `line` could be, or None when it is too long to be one."""
+    if len(line) > _MAX_HEADING_LINE_CHARS:
+        return None  # checked first so the regexes below never run over a huge line
     line = _SECTION_NUMBER.sub("", line)  # "01 Experience", "02. Education"
     if line.rstrip().endswith((".", ",", ";")) or any(ch.isdigit() for ch in line):
         return None  # a sentence or a dated line, not a heading
@@ -200,31 +204,50 @@ def _matches(heading: str, contains: tuple[str, ...], exact: tuple[str, ...]) ->
 _TITLE_WORDS = frozenset("user customer patient player student learner client employee".split())
 
 
+_MAX_EDGE_LINE_CHARS = 400
+# Words that open ordinary lines ("Work Authorization: ...", "Tools Used: ...") and so are not
+# taken for a heading when they only sit at the edge of a longer line.
+_AMBIGUOUS_EDGE = frozenset(("work", "tools"))
+
+
+def _is_contact_token(token: str) -> bool:
+    return any(ch.isdigit() or ch in "@/" for ch in token)
+
+
 def _edge_headings(line: str) -> list[str]:
     """Headings at either end of a line that is not a heading as a whole: a two-column layout puts
-    a heading on the same line as the other column's text or another heading. A line with a digit
-    is a dated job or education line, never a heading beside another column."""
-    if any(ch.isdigit() for ch in line):
+    a heading on the same line as the other column's text or another heading. The other column's
+    text may hold a phone number, an email, a link or a date; the heading words themselves never
+    contain a digit (`_heading` rejects those)."""
+    if len(line) > _MAX_EDGE_LINE_CHARS:
         return []
     tokens = line.split()
+    has_digit = any(ch.isdigit() for ch in line)
     found = []
     for count in range(1, 4):
         if len(tokens) <= count:
             break
         lead, rest = tokens[:count], tokens[count:]
         following = rest[0][:1]
-        if all(t[:1].isupper() for t in lead) and not (following.isalpha() and following.islower()):
+        # A dated line that opens with a keyword and a word ("Experience Designer, Acme, 2019")
+        # is a job line; a digit is allowed only when the text after the heading starts with
+        # something that is not a word (a phone number, a year).
+        if has_digit and following.isalpha():
+            pass
+        elif all(t[:1].isupper() for t in lead) and not (
+            following.isalpha() and following.islower()
+        ):
             heading = _heading(" ".join(lead))
-            if heading is not None:
+            if heading is not None and heading not in _AMBIGUOUS_EDGE:
                 found.append(heading)
         tail, before = tokens[-count:], tokens[-count - 1]
         if (
             all(t[:1].isupper() for t in tail)
-            and before[:1].isupper()
+            and (before[:1].isupper() or _is_contact_token(before))
             and before.casefold().strip(",:;|") not in _TITLE_WORDS
         ):
             heading = _heading(" ".join(tail))
-            if heading is not None:
+            if heading is not None and heading not in _AMBIGUOUS_EDGE:
                 found.append(heading)
     return found
 

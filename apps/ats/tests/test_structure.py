@@ -204,3 +204,35 @@ def test_an_at_word_emails_domain_is_not_a_profile_link() -> None:
     facts = detect("ada[at]inventa.dev")
     assert facts.has_email_candidate
     assert not facts.has_profile_link
+
+
+def test_a_huge_line_is_rejected_quickly() -> None:
+    import time
+
+    start = time.perf_counter()
+    facts = detect("x" + "-" * 96_000 + "x\n" + "x" + " " * 96_000 + "x")
+    assert time.perf_counter() - start < 2
+    assert not facts.has_experience
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "+65 9123 4567 EXPERIENCE",
+        "ada@example.com EXPERIENCE",
+        "linkedin.com/in/ada EXPERIENCE",
+        "Singapore 123456 EXPERIENCE",
+        "Experience +1 555 010 0199",
+    ],
+)
+def test_a_heading_beside_contact_text_is_found(line: str) -> None:
+    assert detect(line).has_experience
+
+
+@pytest.mark.parametrize(
+    "line", ["Work Authorization: US Citizen", "Work Permit Holder", "Tools Used: Python"]
+)
+def test_ordinary_lines_opening_with_work_or_tools_are_not_headings(line: str) -> None:
+    facts = detect(line)
+    assert not facts.has_experience
+    assert not facts.has_skills
