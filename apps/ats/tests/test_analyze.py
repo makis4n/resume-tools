@@ -2,13 +2,54 @@ import pytest
 
 from ats.analyze import CONTRACT, analyze
 from ats.extract import UnreadablePdfError
-from tests.pdfs import minimal_pdf
+from ats.rubric import RUBRIC_VERSION
+from tests.pdfs import build_pdf, image_only_pdf, minimal_pdf
 
 
 def test_returns_contract_shape() -> None:
     result = analyze(minimal_pdf())
     assert result["contract"] == CONTRACT
-    assert set(result) == {"contract", "score", "findings"}
+    assert set(result) == {
+        "contract",
+        "score",
+        "findings",
+        "producer",
+        "rubric_version",
+        "analyser_version",
+    }
+
+
+def test_a_clean_one_page_pdf_scores_100_with_no_findings() -> None:
+    result = analyze(minimal_pdf())
+    assert result["score"] == 100
+    assert result["findings"] == []
+    assert result["producer"] == "other"
+    assert result["rubric_version"] == RUBRIC_VERSION
+    assert isinstance(result["analyser_version"], str) and result["analyser_version"]
+
+
+def test_a_text_less_pdf_gets_a_critical_finding_and_a_low_score() -> None:
+    result = analyze(image_only_pdf())
+    assert result["score"] <= 40
+    assert any(f["severity"] == "critical" for f in result["findings"])
+    assert all(f["id"] != "unmapped-glyphs" for f in result["findings"])
+
+
+def test_producer_is_classified_from_metadata() -> None:
+    pdf = build_pdf([[("Invented Text", 72, 700)]], producer="Canva")
+    assert analyze(pdf)["producer"] == "canva"
+
+
+def test_analysis_is_deterministic() -> None:
+    pdf = minimal_pdf()
+    assert analyze(pdf) == analyze(pdf)
+
+
+def test_findings_are_the_contract_shape() -> None:
+    result = analyze(image_only_pdf())
+    for finding in result["findings"]:
+        assert set(finding) <= {"id", "severity", "origin", "message", "page", "suggestion"}
+        assert {"id", "severity", "origin", "message"} <= set(finding)
 
 
 def test_rejects_non_pdf() -> None:

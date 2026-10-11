@@ -10,22 +10,45 @@ def _escape(text: str) -> bytes:
     return escaped.encode("ascii")
 
 
+def _escape_bytes(raw: bytes) -> bytes:
+    return raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
+
+
 def _content_stream(lines: Sequence[Line]) -> bytes:
     parts = [b"BT /F1 12 Tf %g %g Td (%s) Tj ET" % (x, y, _escape(text)) for text, x, y in lines]
     return b" ".join(parts)
 
 
-def _assemble(objects: Sequence[bytes]) -> bytes:
-    """Wrap numbered object bodies with a correct xref, trailer and startxref."""
+def _text_string(text: str) -> bytes:
+    """A PDF text string literal encoding `text` as UTF-16BE with a leading byte-order mark, so a
+    metadata value outside ASCII (e.g. "Microsoft® Word") round-trips correctly. Verified
+    experimentally against pypdfium2 5.13.0's `PdfDocument.get_metadata_value`."""
+    raw = b"\xfe\xff" + text.encode("utf-16-be")
+    return b"(" + _escape_bytes(raw) + b")"
+
+
+def _assemble(objects: Sequence[bytes], info: bytes | None = None) -> bytes:
+    """Wrap numbered object bodies with a correct xref, trailer and startxref.
+
+    `info`, if given, is appended as one more numbered object and referenced from the trailer's
+    `/Info`. Omitted, the trailer is byte-identical to before this parameter existed.
+    """
     out = bytearray(b"%PDF-1.4\n")
     offsets = []
     for number, body in enumerate(objects, start=1):
         offsets.append(len(out))
         out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
+    info_ref = b""
+    if info is not None:
+        info_number = len(objects) + 1
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (info_number, info)
+        info_ref = b" /Info %d 0 R" % info_number
     xref = len(out)
-    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    size = len(offsets) + 1
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % size
     out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
-    out += b"trailer\n<< /Size %d /Root 1 0 R >>\n" % (len(objects) + 1)
+    out += b"trailer\n<< /Size %d /Root 1 0 R%s >>\n" % (size, info_ref)
     out += b"startxref\n%d\n%%%%EOF\n" % xref
     return bytes(out)
 
@@ -36,6 +59,8 @@ def build_pdf(
     width: float = 612,
     height: float = 792,
     crop_box: tuple[float, float, float, float] | None = None,
+    producer: str | None = None,
+    creator: str | None = None,
 ) -> bytes:
     """A valid PDF with one page per entry in `pages`, in a standard-14 font (Helvetica).
 
@@ -46,6 +71,9 @@ def build_pdf(
 
     `crop_box`, as `(left, bottom, right, top)`, sets every page's `/CropBox`; omitted, a page has
     none and its displayed box is the full `MediaBox`.
+
+    `producer` and `creator`, if given, are written into an `/Info` dictionary referenced from the
+    trailer, matching what `ats.extract.Document.producer`/`.creator` then reads back.
     """
     n_pages = len(pages)
     font_obj = 3
@@ -68,7 +96,16 @@ def build_pdf(
         )
         objects.append(b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content))
 
-    return _assemble(objects)
+    info = None
+    if producer is not None or creator is not None:
+        parts = []
+        if producer is not None:
+            parts.append(b"/Producer " + _text_string(producer))
+        if creator is not None:
+            parts.append(b"/Creator " + _text_string(creator))
+        info = b"<< " + b" ".join(parts) + b" >>"
+
+    return _assemble(objects, info=info)
 
 
 def minimal_pdf(text: str = "Invented Person") -> bytes:
@@ -98,3 +135,237 @@ def zero_page_pdf() -> bytes:
         b"<< /Type /Pages /Kids [] /Count 0 >>",
     ]
     return _assemble(objects)
+
+
+def malformed_producer_metadata_pdf() -> bytes:
+    """An otherwise perfectly readable one-page PDF whose `/Producer` metadata string is not
+    valid UTF-16: a byte-order mark followed by a lone UTF-16 high surrogate with no matching low
+    surrogate.
+
+    Verified experimentally against pypdfium2 5.13.0: reading this value with
+    `PdfDocument.get_metadata_value` raises `UnicodeDecodeError`, which
+    `ats.extract._metadata_value` must not let escape and fail the analysis of a page that reads
+    just fine otherwise.
+    """
+    content = b"BT /F1 12 Tf 72 700 Td (Invented Text) Tj ET"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+    ]
+    bad_bytes = b"\xfe\xff" + bytes([0xD8, 0x00, 0x00, 0x41])
+    info = b"<< /Producer (" + _escape_bytes(bad_bytes) + b") >>"
+    return _assemble(objects, info=info)
+
+
+def image_only_pdf(*, width: float = 612, height: float = 792) -> bytes:
+    """A one-page PDF with a single small image and no text at all, e.g. a scanned resume.
+
+    The image is a 1x1 DeviceGray XObject with one uncompressed sample byte, drawn once with `Do`.
+    Verified experimentally against pypdfium2 5.13.0: the page's object counts come back as
+    `(text=0, image=1, path=0)`, and `count_chars()` as 0.
+    """
+    image_stream = (
+        b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray "
+        b"/BitsPerComponent 8 /Length 1 >>\nstream\n\x80\nendstream"
+    )
+    content = b"q %g 0 0 %g 0 0 cm /Im1 Do Q" % (width, height)
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %g %g] "
+        b"/Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>" % (width, height),
+        image_stream,
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+    ]
+    return _assemble(objects)
+
+
+def text_as_outlines_pdf(*, width: float = 612, height: float = 792, rectangles: int = 15) -> bytes:
+    """A one-page PDF with no text at all, only filled rectangles -- standing in for a PDF where
+    every glyph was exported as a drawn shape (e.g. Canva's flattened export), rather than real
+    text.
+
+    Verified experimentally against pypdfium2 5.13.0: with `rectangles=15` and no text or image
+    objects, the page's object counts come back as `(text=0, image=0, path=15)`.
+    """
+    rects = b" ".join(b"%d 10 20 20 re f" % (10 + 30 * i) for i in range(rectangles))
+    content = b"0 0 0 rg " + rects
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %g %g] /Contents 4 0 R >>" % (width, height),
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+    ]
+    return _assemble(objects)
+
+
+def glyph_case_pdf() -> bytes:
+    """A one-page PDF whose one line of text has an icon-font (PUA) glyph and an unmapped glyph,
+    via a standard-14 font with a custom `/Encoding << /Differences [...] >>` array.
+
+    Two character codes are remapped by name: one to `/uniE001` (the "uniXXXX" glyph-name
+    convention pypdfium2/PDFium resolves directly to that Unicode codepoint, U+E001, inside the
+    Private Use Area), and one to `/g0042` (a made-up name PDFium cannot resolve at all).
+
+    Verified experimentally against pypdfium2 5.13.0: `/uniE001` extracts as U+E001 with
+    `FPDFText_HasUnicodeMapError` false, so it counts as a private-use character but not an
+    unmapped one; `/g0042` extracts as *some* fallback codepoint from the font's base encoding
+    (not U+FFFD or U+0000), but with `FPDFText_HasUnicodeMapError` true, which is what
+    `ats.extract._char_stats` actually keys `unmapped_count` off -- the specific fallback
+    codepoint does not matter and is not asserted on.
+
+    No fixture here exercises `ligature_count` with a real PDF. Every standard-14 ligature glyph
+    name (`/fi`, `/ff`, `/fl`, `/ffi`, `/ffl`) and every explicit `/ToUnicode` mapping to one of
+    U+FB00-FB06 that this module tried -- including through a Type0/CID font, bypassing glyph-name
+    resolution entirely -- came back from pypdfium2 5.13.0 already split into its plain-letter
+    expansion (e.g. "fi" as two separate, fully-mapped characters, `f` then `i`), never as the
+    single ligature codepoint. PDFium normalises these ligatures away unconditionally, regardless
+    of how the character's Unicode value was derived, so a PDF that would make `ligature_count`
+    positive could not be built for this test; `tests/test_extract.py` covers the classification
+    logic itself by controlling `FPDFText_GetUnicode`'s return value directly instead.
+    """
+    codes = bytes([34, 35])  # '"' and '#'; neither needs string-literal escaping
+    content = b"BT /F1 12 Tf 72 700 Td (" + codes + b") Tj ET"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+        b"/Encoding << /Differences [34 /uniE001 /g0042] >> >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+    ]
+    return _assemble(objects)
+
+
+def form_wrapped_image_pdf(*, width: float = 612, height: float = 792) -> bytes:
+    """A one-page PDF with a single small image and no text at all, like `image_only_pdf`, but
+    with the image drawn inside a Form XObject rather than directly on the page -- as scanner and
+    print-driver output commonly does.
+
+    Verified experimentally against pypdfium2 5.13.0: a page-object count that only looks at the
+    page's own top-level objects comes back `(text=0, image=0, path=0)` for this fixture -- the
+    image is invisible to it, entirely because of the wrapping form, not because it is missing --
+    while one that recurses into the Form XObject finds it, at `(text=0, image=1, path=0)`.
+    """
+    image_stream = (
+        b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray "
+        b"/BitsPerComponent 8 /Length 1 >>\nstream\n\x80\nendstream"
+    )
+    form_content = b"q %g 0 0 %g 0 0 cm /Im1 Do Q" % (width, height)
+    form_stream = (
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 %g %g] "
+        b"/Resources << /XObject << /Im1 4 0 R >> >> /Length %d >>\nstream\n%s\nendstream"
+    ) % (width, height, len(form_content), form_content)
+    page_content = b"q 1 0 0 1 0 0 cm /Fm1 Do Q"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %g %g] "
+        b"/Resources << /XObject << /Fm1 5 0 R >> >> /Contents 6 0 R >>" % (width, height),
+        image_stream,
+        form_stream,
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(page_content), page_content),
+    ]
+    return _assemble(objects)
+
+
+def text_resume_with_form_wrapped_graphic_page_pdf() -> bytes:
+    """A two-page PDF: page 1 has ordinary extractable text; page 2 has no text at all, only a
+    single filled rectangle -- a decorative graphic, say -- drawn inside a Form XObject, so it has
+    no top-level path object of its own either.
+
+    Regression fixture for the `blank-page` check: a page-object count that does not recurse into
+    the Form XObject sees page 2 as `(text=0, image=0, path=0)`, indistinguishable from a page
+    that is genuinely blank; recursing finds the rectangle, at `(text=0, image=0, path=1)`.
+    """
+    text_content = b"BT /F1 12 Tf 72 700 Td (Invented Text) Tj ET"
+    rect_content = b"0 0 0 rg 10 10 50 50 re f"
+    page2_content = b"q 1 0 0 1 0 0 cm /Fm1 Do Q"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 8 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(text_content), text_content),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /XObject << /Fm1 6 0 R >> >> /Contents 7 0 R >>",
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] /Length %d >>\nstream\n%s\nendstream"
+        % (len(rect_content), rect_content),
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(page2_content), page2_content),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    return _assemble(objects)
+
+
+def _pua_char_pdf(base_font: bytes, code: int, unicode_hex: str) -> bytes:
+    """A one-page PDF whose one character is drawn in a font named `base_font`, with its Unicode
+    value set to `unicode_hex` (a 4-hex-digit codepoint) by an explicit `/ToUnicode` CMap.
+
+    A CMap is used rather than `/Encoding << /Differences [...] >>` (as `glyph_case_pdf` uses)
+    because a font literally named "Symbol" is treated as an inherently symbolic font: verified
+    experimentally against pypdfium2 5.13.0, PDFium ignores `/Differences` glyph-name overrides
+    for it entirely (the character extracts as U+0000 with no font name resolved at all), but
+    correctly reports both the intended Unicode value and the font name once a `/ToUnicode` CMap
+    is present instead.
+    """
+    tounicode = (
+        b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+        b"1 begincodespacerange\n<00> <ff>\nendcodespacerange\n"
+        b"1 beginbfchar\n<%02x> <%s>\nendbfchar\nendcmap\nend\nend\n" % (code, unicode_hex.encode())
+    )
+    content = b"BT /F1 12 Tf 72 700 Td (" + bytes([code]) + b") Tj ET"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 6 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /" + base_font + b" /ToUnicode 5 0 R >>",
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(tounicode), tounicode),
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+    ]
+    return _assemble(objects)
+
+
+def symbol_font_bullet_pdf() -> bytes:
+    """A one-page PDF whose only character is U+F0B7 (a filled square, Word's default bullet
+    glyph) drawn in a font literally named "Symbol" -- exactly how Word encodes a bulleted list
+    item.
+
+    Verified experimentally against pypdfium2 5.13.0: `FPDFText_GetFontInfo` reports the font
+    name back as `"Symbol"` for this character. A subset-embedded font's `"ABCDEF+Symbol"`-style
+    prefix could not be exercised this way -- pypdfium2 could not resolve *any* character in a
+    subset-prefixed "Symbol" font with no embedded font program at all, which no synthetic
+    fixture without a real embedded TrueType/Type1 font program can avoid. The prefix-stripping
+    itself is a pure string operation, so `test_extract.py` tests `ats.extract._is_symbol_font`
+    directly with a plain string instead of via a built PDF.
+    """
+    return _pua_char_pdf(b"Symbol", 34, "F0B7")
+
+
+def postscript_named_symbol_bullet_pdf() -> bytes:
+    """Like `symbol_font_bullet_pdf`, but the font's BaseFont is the PostScript name Office
+    writes ("Wingdings-Regular") rather than the bare family name."""
+    return _pua_char_pdf(b"Wingdings-Regular", 34, "F0A7")
+
+
+def icon_font_pua_pdf() -> bytes:
+    """A one-page PDF whose only character is U+F0FC, drawn in a font named "FontAwesome" -- an
+    icon font with no real text behind its glyphs, which sits in the same Private Use Area range
+    Word's Symbol-font bullets do (decision 0083's `icon-font-glyphs` check must still catch it).
+
+    Verified experimentally against pypdfium2 5.13.0: `FPDFText_GetFontInfo` reports the font
+    name back as `"FontAwesome"`, which is not one of `ats.extract._SYMBOL_FONT_NAMES`.
+    """
+    return _pua_char_pdf(b"FontAwesome", 34, "F0FC")
+
+
+def supplementary_icon_font_pdf() -> bytes:
+    """A one-page PDF whose only character is U+F0001 (Supplementary Private Use Area-A, where
+    Material Design Icons and Nerd Fonts sit), drawn in a font named "MaterialDesignIcons". The
+    ToUnicode value is the UTF-16 surrogate pair DB80 DC01."""
+    return _pua_char_pdf(b"MaterialDesignIcons", 34, "DB80DC01")

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/makis4n/resume-tools/packages/contracts/ats/v1/analysis.schema.json",
   "title": "ATS analysis, v1 (draft)",
-  "description": "Response of POST /v1/analyze. The request is multipart/form-data with one field, `file`, containing a PDF. Clients ignore properties they do not know, so new ones can be added within v1. Draft: expect changes until both owners mark it stable.",
+  "description": "Response of POST /v1/analyze. The request is multipart/form-data with one field, `file`, containing a PDF. Clients ignore properties they do not know, so new ones can be added within v1. Since milestone 1, the response also carries the detected producer, the rubric version and the analyser version; clients must still cope with any of them being absent, from a reply sent by an older service build. Draft: expect changes until both owners mark it stable.",
   "type": "object",
   "required": ["contract", "score", "findings"],
   "properties": {
@@ -10,7 +10,7 @@
       "const": "ats/v1"
     },
     "score": {
-      "description": "Overall score from 0 to 100, or null when the analyser could not produce one.",
+      "description": "The ATS-readiness score from 0 to 100, or null when the analyser could not produce one.",
       "type": ["number", "null"],
       "minimum": 0,
       "maximum": 100
@@ -20,6 +20,18 @@
       "items": {
         "$ref": "#/$defs/finding"
       }
+    },
+    "producer": {
+      "description": "The tool the analyser believes produced the PDF, from its metadata. The service always sends this from milestone 1 on; a client must still cope with it being absent, from a reply sent by an older service build.",
+      "enum": ["latex", "word", "google-docs", "canva", "other"]
+    },
+    "rubric_version": {
+      "type": "string",
+      "description": "The version of the scoring rubric that produced this result (decision 0083). The service always sends this from milestone 1 on; a client must still cope with it being absent, from a reply sent by an older service build."
+    },
+    "analyser_version": {
+      "type": "string",
+      "description": "The installed version of the ats package that produced this result. The service always sends this from milestone 1 on; a client must still cope with it being absent, from a reply sent by an older service build."
     }
   },
   "$defs": {
@@ -33,6 +45,10 @@
         },
         "severity": {
           "enum": ["info", "warning", "critical"]
+        },
+        "origin": {
+          "description": "Whether the user can fix this by changing the resume's content, or whether it comes from the template or tool that produced the PDF. The service always sends this from milestone 1 on; a client must still cope with it being absent, from a reply sent by an older service build.",
+          "enum": ["content", "layout"]
         },
         "message": {
           "type": "string",
