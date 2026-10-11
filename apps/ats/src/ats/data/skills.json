@@ -1,0 +1,2620 @@
+{
+  "entries": [
+    {
+      "id": "a-b-test-analysis",
+      "name": "Product experimentation",
+      "kind": "skill",
+      "aliases": [
+        "experimentation",
+        "feature experimentation"
+      ]
+    },
+    {
+      "id": "a-b-testing",
+      "name": "A/B testing",
+      "kind": "skill",
+      "aliases": [
+        "split testing",
+        "ab testing"
+      ]
+    },
+    {
+      "id": "accessibility-design",
+      "name": "Accessibility design",
+      "kind": "skill",
+      "aliases": [
+        "a11y",
+        "inclusive design"
+      ]
+    },
+    {
+      "id": "account-management",
+      "name": "Account management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "accounts-payable",
+      "name": "Accounts payable",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "accounts-receivable",
+      "name": "Accounts receivable",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "acls-certification",
+      "name": "Advanced Cardiovascular Life Support certification",
+      "kind": "qualification",
+      "aliases": [
+        "acls certification"
+      ]
+    },
+    {
+      "id": "adaptability",
+      "name": "Adaptability",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "administrative-support",
+      "name": "Administrative support",
+      "kind": "skill",
+      "aliases": [
+        "office administration"
+      ]
+    },
+    {
+      "id": "adobe-illustrator",
+      "name": "Adobe Illustrator",
+      "kind": "tool",
+      "aliases": [
+        "Illustrator"
+      ],
+      "case_sensitive": [
+        "Illustrator"
+      ]
+    },
+    {
+      "id": "adobe-indesign",
+      "name": "Adobe InDesign",
+      "kind": "tool",
+      "aliases": [
+        "indesign"
+      ]
+    },
+    {
+      "id": "adobe-photoshop",
+      "name": "Adobe Photoshop",
+      "kind": "tool",
+      "aliases": [
+        "photoshop"
+      ]
+    },
+    {
+      "id": "adobe-premiere-pro",
+      "name": "Adobe Premiere Pro",
+      "kind": "tool",
+      "aliases": [
+        "premiere pro"
+      ]
+    },
+    {
+      "id": "adobe-xd",
+      "name": "Adobe XD",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "after-effects",
+      "name": "Adobe After Effects",
+      "kind": "tool",
+      "aliases": [
+        "after effects"
+      ]
+    },
+    {
+      "id": "agile-certified-practitioner",
+      "name": "PMI-ACP certification",
+      "kind": "qualification",
+      "aliases": [
+        "pmi agile certified practitioner",
+        "pmi-acp"
+      ]
+    },
+    {
+      "id": "agile-software-development",
+      "name": "Agile software development",
+      "kind": "skill",
+      "aliases": [
+        "Agile",
+        "agile development",
+        "agile methodology"
+      ],
+      "case_sensitive": [
+        "Agile"
+      ]
+    },
+    {
+      "id": "airflow",
+      "name": "Apache Airflow",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "android-development",
+      "name": "Android development",
+      "kind": "skill",
+      "aliases": [
+        "android app development"
+      ]
+    },
+    {
+      "id": "angular",
+      "name": "Angular",
+      "kind": "tool",
+      "aliases": [
+        "angularjs",
+        "angular js"
+      ],
+      "case_sensitive": [
+        "Angular"
+      ]
+    },
+    {
+      "id": "ansible",
+      "name": "Ansible",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "apache-kafka",
+      "name": "Apache Kafka",
+      "kind": "tool",
+      "aliases": [
+        "kafka"
+      ]
+    },
+    {
+      "id": "apache-spark",
+      "name": "Apache Spark",
+      "kind": "tool",
+      "aliases": [
+        "Spark"
+      ],
+      "case_sensitive": [
+        "Spark"
+      ]
+    },
+    {
+      "id": "api-design",
+      "name": "API design",
+      "kind": "skill",
+      "aliases": [
+        "api development",
+        "rest api design"
+      ]
+    },
+    {
+      "id": "applicant-tracking-systems",
+      "name": "Applicant tracking systems",
+      "kind": "skill",
+      "aliases": [
+        "ats software"
+      ]
+    },
+    {
+      "id": "asana",
+      "name": "Asana",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "asp-net",
+      "name": "ASP.NET",
+      "kind": "tool",
+      "aliases": [
+        "asp.net core",
+        "asp.net mvc"
+      ]
+    },
+    {
+      "id": "auditing",
+      "name": "Auditing",
+      "kind": "skill",
+      "aliases": [
+        "internal auditing",
+        "financial auditing"
+      ]
+    },
+    {
+      "id": "autocad",
+      "name": "AutoCAD",
+      "kind": "tool",
+      "aliases": [
+        "auto cad"
+      ]
+    },
+    {
+      "id": "aws",
+      "name": "Amazon Web Services",
+      "kind": "tool",
+      "aliases": [
+        "aws"
+      ]
+    },
+    {
+      "id": "aws-certified-solutions-architect",
+      "name": "AWS Certified Solutions Architect",
+      "kind": "qualification",
+      "aliases": [
+        "aws csa"
+      ]
+    },
+    {
+      "id": "azure",
+      "name": "Microsoft Azure",
+      "kind": "tool",
+      "aliases": [
+        "azure",
+        "ms azure"
+      ]
+    },
+    {
+      "id": "bachelors-degree",
+      "name": "Bachelor's degree",
+      "kind": "qualification",
+      "aliases": [
+        "bachelor degree",
+        "ba degree",
+        "bs degree",
+        "undergraduate degree"
+      ]
+    },
+    {
+      "id": "backend-development",
+      "name": "Backend development",
+      "kind": "skill",
+      "aliases": [
+        "back-end development",
+        "server-side development"
+      ]
+    },
+    {
+      "id": "bash-scripting",
+      "name": "Bash scripting",
+      "kind": "skill",
+      "aliases": [
+        "bash"
+      ]
+    },
+    {
+      "id": "benefits-administration",
+      "name": "Benefits administration",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "big-data",
+      "name": "Big data",
+      "kind": "skill",
+      "aliases": [
+        "big data analytics"
+      ]
+    },
+    {
+      "id": "bilingual-english-spanish",
+      "name": "Bilingual English and Spanish",
+      "kind": "skill",
+      "aliases": [
+        "english/spanish bilingual",
+        "spanish fluency"
+      ]
+    },
+    {
+      "id": "blackboard-lms",
+      "name": "Blackboard",
+      "kind": "tool",
+      "aliases": [
+        "blackboard lms"
+      ],
+      "case_sensitive": [
+        "Blackboard"
+      ]
+    },
+    {
+      "id": "bls-certification",
+      "name": "Basic Life Support certification",
+      "kind": "qualification",
+      "aliases": [
+        "bls certification"
+      ]
+    },
+    {
+      "id": "bookkeeping",
+      "name": "Bookkeeping",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "brand-identity-design",
+      "name": "Brand identity design",
+      "kind": "skill",
+      "aliases": [
+        "branding design"
+      ]
+    },
+    {
+      "id": "brand-management",
+      "name": "Brand management",
+      "kind": "skill",
+      "aliases": [
+        "branding"
+      ]
+    },
+    {
+      "id": "budgeting",
+      "name": "Budgeting",
+      "kind": "skill",
+      "aliases": [
+        "budget management"
+      ]
+    },
+    {
+      "id": "business-development",
+      "name": "Business development",
+      "kind": "skill",
+      "aliases": [
+        "biz dev"
+      ]
+    },
+    {
+      "id": "business-intelligence",
+      "name": "Business intelligence",
+      "kind": "skill",
+      "aliases": [
+        "bi reporting",
+        "business intelligence reporting"
+      ]
+    },
+    {
+      "id": "c-plus-plus",
+      "name": "C++",
+      "kind": "tool",
+      "aliases": [
+        "cpp"
+      ]
+    },
+    {
+      "id": "c-programming-language",
+      "name": "C programming language",
+      "kind": "tool",
+      "aliases": [
+        "ansi c"
+      ]
+    },
+    {
+      "id": "c-sharp",
+      "name": "C#",
+      "kind": "tool",
+      "aliases": [
+        "csharp"
+      ]
+    },
+    {
+      "id": "cad-software",
+      "name": "CAD software",
+      "kind": "skill",
+      "aliases": [
+        "computer-aided design"
+      ]
+    },
+    {
+      "id": "calendar-management",
+      "name": "Calendar management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "call-centre-operations",
+      "name": "Call centre operations",
+      "kind": "skill",
+      "aliases": [
+        "call center operations"
+      ]
+    },
+    {
+      "id": "canvas-lms",
+      "name": "Canvas LMS",
+      "kind": "tool",
+      "aliases": [
+        "canvas learning management system"
+      ]
+    },
+    {
+      "id": "cash-flow-management",
+      "name": "Cash flow management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "cdl-licence",
+      "name": "Commercial driver's licence",
+      "kind": "qualification",
+      "aliases": [
+        "cdl",
+        "commercial driver's license"
+      ]
+    },
+    {
+      "id": "cerner-emr",
+      "name": "Cerner",
+      "kind": "tool",
+      "aliases": [
+        "cerner emr"
+      ]
+    },
+    {
+      "id": "certified-scrum-master",
+      "name": "Certified ScrumMaster",
+      "kind": "qualification",
+      "aliases": [
+        "csm certification"
+      ]
+    },
+    {
+      "id": "cfa-charter",
+      "name": "CFA charter",
+      "kind": "qualification",
+      "aliases": [
+        "chartered financial analyst",
+        "cfa"
+      ]
+    },
+    {
+      "id": "chef-configuration-management",
+      "name": "Chef",
+      "kind": "tool",
+      "aliases": [
+        "chef infra"
+      ],
+      "case_sensitive": [
+        "Chef"
+      ]
+    },
+    {
+      "id": "ci-cd",
+      "name": "CI/CD",
+      "kind": "skill",
+      "aliases": [
+        "continuous integration",
+        "continuous deployment",
+        "continuous delivery"
+      ]
+    },
+    {
+      "id": "cisco-ccna",
+      "name": "Cisco CCNA certification",
+      "kind": "qualification",
+      "aliases": [
+        "ccna",
+        "cisco certified network associate"
+      ]
+    },
+    {
+      "id": "civil-engineering",
+      "name": "Civil engineering",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "classroom-management",
+      "name": "Classroom management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "clean-code",
+      "name": "Clean code practices",
+      "kind": "skill",
+      "aliases": [
+        "clean code"
+      ]
+    },
+    {
+      "id": "clinical-documentation",
+      "name": "Clinical documentation",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "cloud-computing",
+      "name": "Cloud computing",
+      "kind": "skill",
+      "aliases": [
+        "cloud infrastructure",
+        "cloud architecture"
+      ]
+    },
+    {
+      "id": "cna-certification",
+      "name": "Certified Nursing Assistant certification",
+      "kind": "qualification",
+      "aliases": [
+        "cna certification",
+        "cna"
+      ]
+    },
+    {
+      "id": "code-review",
+      "name": "Code review",
+      "kind": "skill",
+      "aliases": [
+        "peer code review"
+      ]
+    },
+    {
+      "id": "cold-calling",
+      "name": "Cold calling",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "communication-skills",
+      "name": "Communication skills",
+      "kind": "skill",
+      "aliases": [
+        "verbal and written communication"
+      ]
+    },
+    {
+      "id": "compensation-planning",
+      "name": "Compensation planning",
+      "kind": "skill",
+      "aliases": [
+        "compensation and benefits"
+      ]
+    },
+    {
+      "id": "competitive-analysis",
+      "name": "Competitive analysis",
+      "kind": "skill",
+      "aliases": [
+        "competitor analysis"
+      ]
+    },
+    {
+      "id": "comptia-a-plus",
+      "name": "CompTIA A+ certification",
+      "kind": "qualification",
+      "aliases": [
+        "comptia a+",
+        "a+ certification"
+      ]
+    },
+    {
+      "id": "conflict-resolution",
+      "name": "Conflict resolution",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "confluence",
+      "name": "Confluence",
+      "kind": "tool",
+      "aliases": [],
+      "case_sensitive": [
+        "Confluence"
+      ]
+    },
+    {
+      "id": "content-marketing",
+      "name": "Content marketing",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "content-strategy",
+      "name": "Content strategy",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "continuous-improvement",
+      "name": "Continuous improvement",
+      "kind": "skill",
+      "aliases": [
+        "kaizen"
+      ]
+    },
+    {
+      "id": "conversion-rate-optimisation",
+      "name": "Conversion rate optimisation",
+      "kind": "skill",
+      "aliases": [
+        "conversion rate optimization"
+      ]
+    },
+    {
+      "id": "copywriting",
+      "name": "Copywriting",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "cpa-license",
+      "name": "CPA licence",
+      "kind": "qualification",
+      "aliases": [
+        "certified public accountant"
+      ]
+    },
+    {
+      "id": "critical-thinking",
+      "name": "Critical thinking",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "crm-software",
+      "name": "CRM software",
+      "kind": "skill",
+      "aliases": [
+        "customer relationship management software"
+      ]
+    },
+    {
+      "id": "css",
+      "name": "CSS",
+      "kind": "tool",
+      "aliases": [
+        "CSS3",
+        "cascading style sheets"
+      ]
+    },
+    {
+      "id": "curriculum-development",
+      "name": "Curriculum development",
+      "kind": "skill",
+      "aliases": [
+        "curriculum design"
+      ]
+    },
+    {
+      "id": "customer-relationship-management",
+      "name": "Customer relationship management",
+      "kind": "skill",
+      "aliases": [
+        "customer relations"
+      ]
+    },
+    {
+      "id": "customer-retention",
+      "name": "Customer retention",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "customer-satisfaction-management",
+      "name": "Customer satisfaction management",
+      "kind": "skill",
+      "aliases": [
+        "csat management"
+      ]
+    },
+    {
+      "id": "customer-service",
+      "name": "Customer service",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "data-analysis",
+      "name": "Data analysis",
+      "kind": "skill",
+      "aliases": [
+        "data analytics"
+      ]
+    },
+    {
+      "id": "data-cleaning",
+      "name": "Data cleaning",
+      "kind": "skill",
+      "aliases": [
+        "data wrangling",
+        "data cleansing"
+      ]
+    },
+    {
+      "id": "data-engineering",
+      "name": "Data engineering",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "data-entry",
+      "name": "Data entry",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "data-governance",
+      "name": "Data governance",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "data-modelling",
+      "name": "Data modelling",
+      "kind": "skill",
+      "aliases": [
+        "data modeling"
+      ]
+    },
+    {
+      "id": "data-pipeline-design",
+      "name": "Data pipeline design",
+      "kind": "skill",
+      "aliases": [
+        "etl pipeline design"
+      ]
+    },
+    {
+      "id": "data-science",
+      "name": "Data science",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "data-visualisation",
+      "name": "Data visualisation",
+      "kind": "skill",
+      "aliases": [
+        "data visualization"
+      ]
+    },
+    {
+      "id": "data-warehousing",
+      "name": "Data warehousing",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "dbt",
+      "name": "dbt",
+      "kind": "tool",
+      "aliases": [
+        "data build tool"
+      ],
+      "case_sensitive": [
+        "dbt"
+      ]
+    },
+    {
+      "id": "decision-making",
+      "name": "Decision-making",
+      "kind": "skill",
+      "aliases": [
+        "decision making"
+      ]
+    },
+    {
+      "id": "deep-learning",
+      "name": "Deep learning",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "demand-planning",
+      "name": "Demand planning",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "design-systems",
+      "name": "Design systems",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "digital-marketing",
+      "name": "Digital marketing",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "django",
+      "name": "Django",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "docker",
+      "name": "Docker",
+      "kind": "tool",
+      "aliases": [
+        "containerisation",
+        "containerization"
+      ]
+    },
+    {
+      "id": "doctoral-degree",
+      "name": "Doctoral degree",
+      "kind": "qualification",
+      "aliases": [
+        "phd",
+        "doctorate"
+      ]
+    },
+    {
+      "id": "dot-net",
+      "name": ".NET",
+      "kind": "tool",
+      "aliases": [
+        "dotnet",
+        ".net framework",
+        ".net core"
+      ]
+    },
+    {
+      "id": "dropbox",
+      "name": "Dropbox",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "e-learning-development",
+      "name": "E-learning development",
+      "kind": "skill",
+      "aliases": [
+        "elearning development"
+      ]
+    },
+    {
+      "id": "elasticsearch",
+      "name": "Elasticsearch",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "electrical-engineering",
+      "name": "Electrical engineering",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "electronic-health-records",
+      "name": "Electronic health records",
+      "kind": "skill",
+      "aliases": [
+        "ehr",
+        "electronic medical records"
+      ]
+    },
+    {
+      "id": "email-marketing",
+      "name": "Email marketing",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "employee-onboarding",
+      "name": "Employee onboarding",
+      "kind": "skill",
+      "aliases": [
+        "new hire onboarding"
+      ]
+    },
+    {
+      "id": "employee-relations",
+      "name": "Employee relations",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "epic-systems",
+      "name": "Epic Systems",
+      "kind": "tool",
+      "aliases": [
+        "epic emr"
+      ]
+    },
+    {
+      "id": "etl",
+      "name": "ETL",
+      "kind": "skill",
+      "aliases": [
+        "extract transform load"
+      ]
+    },
+    {
+      "id": "event-planning",
+      "name": "Event planning",
+      "kind": "skill",
+      "aliases": [
+        "event coordination"
+      ]
+    },
+    {
+      "id": "excel-spreadsheets",
+      "name": "Microsoft Excel",
+      "kind": "tool",
+      "aliases": [
+        "ms excel",
+        "excel spreadsheets",
+        "Excel"
+      ],
+      "case_sensitive": [
+        "Excel"
+      ],
+      "not_followed_by": [
+        "in",
+        "at"
+      ]
+    },
+    {
+      "id": "express-js",
+      "name": "Express.js",
+      "kind": "tool",
+      "aliases": [
+        "expressjs"
+      ]
+    },
+    {
+      "id": "figma",
+      "name": "Figma",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "financial-analysis",
+      "name": "Financial analysis",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "financial-modelling",
+      "name": "Financial modelling",
+      "kind": "skill",
+      "aliases": [
+        "financial modeling"
+      ]
+    },
+    {
+      "id": "financial-reporting",
+      "name": "Financial reporting",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "flask",
+      "name": "Flask",
+      "kind": "tool",
+      "aliases": [],
+      "case_sensitive": [
+        "Flask"
+      ]
+    },
+    {
+      "id": "flutter",
+      "name": "Flutter",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "food-handler-certification",
+      "name": "Food handler certification",
+      "kind": "qualification",
+      "aliases": [
+        "servsafe certification",
+        "servsafe"
+      ]
+    },
+    {
+      "id": "forecasting",
+      "name": "Financial forecasting",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "forklift-certification",
+      "name": "Forklift certification",
+      "kind": "qualification",
+      "aliases": [
+        "forklift operator certification",
+        "forklift license"
+      ]
+    },
+    {
+      "id": "freshdesk",
+      "name": "Freshdesk",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "gaap",
+      "name": "GAAP",
+      "kind": "skill",
+      "aliases": [
+        "generally accepted accounting principles"
+      ]
+    },
+    {
+      "id": "general-ledger",
+      "name": "General ledger accounting",
+      "kind": "skill",
+      "aliases": [
+        "general ledger"
+      ]
+    },
+    {
+      "id": "git",
+      "name": "Git",
+      "kind": "tool",
+      "aliases": [
+        "git version control"
+      ]
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "gitlab",
+      "name": "GitLab",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "go-programming-language",
+      "name": "Go (programming language)",
+      "kind": "tool",
+      "aliases": [
+        "golang",
+        "go lang",
+        "go programming"
+      ]
+    },
+    {
+      "id": "go-to-market-strategy",
+      "name": "Go-to-market strategy",
+      "kind": "skill",
+      "aliases": [
+        "gtm strategy"
+      ]
+    },
+    {
+      "id": "google-ads",
+      "name": "Google Ads",
+      "kind": "tool",
+      "aliases": [
+        "google adwords",
+        "adwords"
+      ]
+    },
+    {
+      "id": "google-analytics",
+      "name": "Google Analytics",
+      "kind": "tool",
+      "aliases": [
+        "ga4"
+      ]
+    },
+    {
+      "id": "google-classroom",
+      "name": "Google Classroom",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "google-cloud-platform",
+      "name": "Google Cloud Platform",
+      "kind": "tool",
+      "aliases": [
+        "google cloud"
+      ]
+    },
+    {
+      "id": "google-docs",
+      "name": "Google Docs",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "google-drive",
+      "name": "Google Drive",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "google-sheets",
+      "name": "Google Sheets",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "google-slides",
+      "name": "Google Slides",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "google-tag-manager",
+      "name": "Google Tag Manager",
+      "kind": "tool",
+      "aliases": [
+        "gtm tag manager"
+      ]
+    },
+    {
+      "id": "google-workspace",
+      "name": "Google Workspace",
+      "kind": "tool",
+      "aliases": [
+        "g suite"
+      ]
+    },
+    {
+      "id": "graphic-design",
+      "name": "Graphic design",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "graphql",
+      "name": "GraphQL",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "greenhouse-ats",
+      "name": "Greenhouse",
+      "kind": "tool",
+      "aliases": [
+        "greenhouse ats",
+        "greenhouse recruiting"
+      ],
+      "case_sensitive": [
+        "Greenhouse"
+      ]
+    },
+    {
+      "id": "hadoop",
+      "name": "Hadoop",
+      "kind": "tool",
+      "aliases": [
+        "apache hadoop"
+      ]
+    },
+    {
+      "id": "help-desk-support",
+      "name": "Help desk support",
+      "kind": "skill",
+      "aliases": [
+        "helpdesk support"
+      ]
+    },
+    {
+      "id": "hipaa-compliance",
+      "name": "HIPAA compliance",
+      "kind": "skill",
+      "aliases": [
+        "hipaa"
+      ]
+    },
+    {
+      "id": "hr-information-systems",
+      "name": "HR information systems",
+      "kind": "skill",
+      "aliases": [
+        "hris"
+      ]
+    },
+    {
+      "id": "hris-workday",
+      "name": "Workday",
+      "kind": "tool",
+      "aliases": [
+        "workday hcm"
+      ],
+      "case_sensitive": [
+        "Workday"
+      ]
+    },
+    {
+      "id": "html",
+      "name": "HTML",
+      "kind": "tool",
+      "aliases": [
+        "HTML5",
+        "hypertext markup language"
+      ]
+    },
+    {
+      "id": "hubspot",
+      "name": "HubSpot",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "hubspot-sales-hub",
+      "name": "HubSpot Sales Hub",
+      "kind": "tool",
+      "aliases": [
+        "hubspot crm"
+      ]
+    },
+    {
+      "id": "ifrs",
+      "name": "IFRS",
+      "kind": "skill",
+      "aliases": [
+        "international financial reporting standards"
+      ]
+    },
+    {
+      "id": "illustration",
+      "name": "Illustration",
+      "kind": "skill",
+      "aliases": [
+        "digital illustration"
+      ],
+      "case_sensitive": [
+        "Illustration"
+      ]
+    },
+    {
+      "id": "influencer-marketing",
+      "name": "Influencer marketing",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "information-architecture",
+      "name": "Information architecture",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "instructional-design",
+      "name": "Instructional design",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "interaction-design",
+      "name": "Interaction design",
+      "kind": "skill",
+      "aliases": [
+        "ixd"
+      ]
+    },
+    {
+      "id": "intercom",
+      "name": "Intercom",
+      "kind": "tool",
+      "aliases": [],
+      "case_sensitive": [
+        "Intercom"
+      ]
+    },
+    {
+      "id": "inventory-management",
+      "name": "Inventory management",
+      "kind": "skill",
+      "aliases": [
+        "stock management"
+      ]
+    },
+    {
+      "id": "ios-development",
+      "name": "iOS development",
+      "kind": "skill",
+      "aliases": [
+        "ios app development"
+      ]
+    },
+    {
+      "id": "itil-foundation",
+      "name": "ITIL Foundation certification",
+      "kind": "qualification",
+      "aliases": [
+        "itil foundation",
+        "itil certification"
+      ]
+    },
+    {
+      "id": "java",
+      "name": "Java",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "javascript",
+      "name": "JavaScript",
+      "kind": "tool",
+      "aliases": [
+        "js",
+        "ecmascript"
+      ]
+    },
+    {
+      "id": "jenkins",
+      "name": "Jenkins",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "jira",
+      "name": "Jira",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "jupyter-notebooks",
+      "name": "Jupyter notebooks",
+      "kind": "tool",
+      "aliases": [
+        "jupyter"
+      ]
+    },
+    {
+      "id": "kotlin",
+      "name": "Kotlin",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "kubernetes",
+      "name": "Kubernetes",
+      "kind": "tool",
+      "aliases": [
+        "k8s"
+      ]
+    },
+    {
+      "id": "labour-relations",
+      "name": "Labour relations",
+      "kind": "skill",
+      "aliases": [
+        "labor relations"
+      ]
+    },
+    {
+      "id": "lead-generation",
+      "name": "Lead generation",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "leadership",
+      "name": "Leadership",
+      "kind": "skill",
+      "aliases": [
+        "team leadership"
+      ]
+    },
+    {
+      "id": "lean-manufacturing",
+      "name": "Lean manufacturing",
+      "kind": "skill",
+      "aliases": [
+        "lean methodology"
+      ]
+    },
+    {
+      "id": "lesson-planning",
+      "name": "Lesson planning",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "linux-administration",
+      "name": "Linux administration",
+      "kind": "skill",
+      "aliases": [
+        "linux system administration"
+      ]
+    },
+    {
+      "id": "linux-operating-system",
+      "name": "Linux",
+      "kind": "tool",
+      "aliases": [
+        "GNU/Linux"
+      ]
+    },
+    {
+      "id": "linux-professional-institute-certification",
+      "name": "LPIC certification",
+      "kind": "qualification",
+      "aliases": [
+        "lpic",
+        "linux professional institute certification"
+      ]
+    },
+    {
+      "id": "live-chat-support",
+      "name": "Live chat support",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "logistics-management",
+      "name": "Logistics management",
+      "kind": "skill",
+      "aliases": [
+        "logistics"
+      ]
+    },
+    {
+      "id": "looker",
+      "name": "Looker",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "machine-learning",
+      "name": "Machine learning",
+      "kind": "skill",
+      "aliases": [
+        "ML",
+        "machine-learning"
+      ],
+      "case_sensitive": [
+        "ML"
+      ]
+    },
+    {
+      "id": "mailchimp",
+      "name": "Mailchimp",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "market-research",
+      "name": "Market research",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "marketing-automation",
+      "name": "Marketing automation",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "marketo",
+      "name": "Marketo",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "masters-degree",
+      "name": "Master's degree",
+      "kind": "qualification",
+      "aliases": [
+        "master degree",
+        "ma degree",
+        "ms degree",
+        "graduate degree"
+      ]
+    },
+    {
+      "id": "mechanical-engineering",
+      "name": "Mechanical engineering",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "media-planning",
+      "name": "Media planning",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "medical-billing-and-coding",
+      "name": "Medical billing and coding",
+      "kind": "skill",
+      "aliases": [
+        "medical coding"
+      ]
+    },
+    {
+      "id": "medical-terminology",
+      "name": "Medical terminology",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "meeting-coordination",
+      "name": "Meeting coordination",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "meta-ads-manager",
+      "name": "Meta Ads Manager",
+      "kind": "tool",
+      "aliases": [
+        "facebook ads manager",
+        "facebook ads"
+      ]
+    },
+    {
+      "id": "microservices-architecture",
+      "name": "Microservices architecture",
+      "kind": "skill",
+      "aliases": [
+        "microservices"
+      ]
+    },
+    {
+      "id": "microsoft-access",
+      "name": "Microsoft Access",
+      "kind": "tool",
+      "aliases": [
+        "ms access"
+      ]
+    },
+    {
+      "id": "microsoft-office-suite",
+      "name": "Microsoft Office",
+      "kind": "tool",
+      "aliases": [
+        "ms office",
+        "microsoft office suite"
+      ]
+    },
+    {
+      "id": "microsoft-outlook",
+      "name": "Microsoft Outlook",
+      "kind": "tool",
+      "aliases": [
+        "Outlook"
+      ],
+      "case_sensitive": [
+        "Outlook"
+      ]
+    },
+    {
+      "id": "microsoft-powerpoint",
+      "name": "Microsoft PowerPoint",
+      "kind": "tool",
+      "aliases": [
+        "powerpoint",
+        "ms powerpoint"
+      ]
+    },
+    {
+      "id": "microsoft-teams",
+      "name": "Microsoft Teams",
+      "kind": "tool",
+      "aliases": [
+        "ms teams"
+      ]
+    },
+    {
+      "id": "microsoft-word",
+      "name": "Microsoft Word",
+      "kind": "tool",
+      "aliases": [
+        "ms word"
+      ]
+    },
+    {
+      "id": "mongodb",
+      "name": "MongoDB",
+      "kind": "tool",
+      "aliases": [
+        "mongo db",
+        "mongo"
+      ]
+    },
+    {
+      "id": "moodle",
+      "name": "Moodle",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "motion-graphics",
+      "name": "Motion graphics",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "multitasking",
+      "name": "Multitasking",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "mysql",
+      "name": "MySQL",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "natural-language-processing",
+      "name": "Natural language processing",
+      "kind": "skill",
+      "aliases": [
+        "nlp"
+      ]
+    },
+    {
+      "id": "negotiation",
+      "name": "Negotiation",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "netlogistics-wms",
+      "name": "Warehouse management systems",
+      "kind": "skill",
+      "aliases": [
+        "wms software"
+      ]
+    },
+    {
+      "id": "netsuite",
+      "name": "NetSuite",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "nodejs",
+      "name": "Node.js",
+      "kind": "tool",
+      "aliases": [
+        "nodejs",
+        "node js"
+      ]
+    },
+    {
+      "id": "nosql-databases",
+      "name": "NoSQL databases",
+      "kind": "skill",
+      "aliases": [
+        "nosql"
+      ]
+    },
+    {
+      "id": "notary-public-commission",
+      "name": "Notary public commission",
+      "kind": "qualification",
+      "aliases": [
+        "notary public"
+      ]
+    },
+    {
+      "id": "notion",
+      "name": "Notion",
+      "kind": "tool",
+      "aliases": [],
+      "case_sensitive": [
+        "Notion"
+      ]
+    },
+    {
+      "id": "nursing-care",
+      "name": "Nursing care",
+      "kind": "skill",
+      "aliases": [
+        "patient care"
+      ]
+    },
+    {
+      "id": "object-oriented-programming",
+      "name": "Object-oriented programming",
+      "kind": "skill",
+      "aliases": [
+        "oop",
+        "object oriented programming"
+      ]
+    },
+    {
+      "id": "okrs",
+      "name": "OKRs",
+      "kind": "skill",
+      "aliases": [
+        "objectives and key results"
+      ]
+    },
+    {
+      "id": "organisational-development",
+      "name": "Organisational development",
+      "kind": "skill",
+      "aliases": [
+        "organizational development"
+      ]
+    },
+    {
+      "id": "organisational-skills",
+      "name": "Organisational skills",
+      "kind": "skill",
+      "aliases": [
+        "organizational skills"
+      ]
+    },
+    {
+      "id": "osha-certification",
+      "name": "OSHA certification",
+      "kind": "qualification",
+      "aliases": [
+        "osha 30",
+        "osha 10"
+      ]
+    },
+    {
+      "id": "outreach-io",
+      "name": "Outreach.io",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "pandas",
+      "name": "Pandas",
+      "kind": "tool",
+      "aliases": [
+        "pandas library"
+      ]
+    },
+    {
+      "id": "patient-scheduling",
+      "name": "Patient scheduling",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "payroll-processing",
+      "name": "Payroll processing",
+      "kind": "skill",
+      "aliases": [
+        "payroll administration"
+      ]
+    },
+    {
+      "id": "performance-management",
+      "name": "Performance management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "phlebotomy",
+      "name": "Phlebotomy",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "php",
+      "name": "PHP",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "phr-certification",
+      "name": "PHR certification",
+      "kind": "qualification",
+      "aliases": [
+        "professional in human resources",
+        "phr"
+      ]
+    },
+    {
+      "id": "physician-assistant-licence",
+      "name": "Physician assistant licence",
+      "kind": "qualification",
+      "aliases": [
+        "physician assistant",
+        "pa-c"
+      ]
+    },
+    {
+      "id": "pipeline-management",
+      "name": "Sales pipeline management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "postgresql",
+      "name": "PostgreSQL",
+      "kind": "tool",
+      "aliases": [
+        "postgres",
+        "postgre sql"
+      ]
+    },
+    {
+      "id": "power-bi",
+      "name": "Power BI",
+      "kind": "tool",
+      "aliases": [
+        "powerbi",
+        "power-bi"
+      ]
+    },
+    {
+      "id": "predictive-modelling",
+      "name": "Predictive modelling",
+      "kind": "skill",
+      "aliases": [
+        "predictive modeling"
+      ]
+    },
+    {
+      "id": "presentation-skills",
+      "name": "Presentation skills",
+      "kind": "skill",
+      "aliases": [
+        "public speaking"
+      ]
+    },
+    {
+      "id": "problem-solving",
+      "name": "Problem-solving",
+      "kind": "skill",
+      "aliases": [
+        "problem solving"
+      ]
+    },
+    {
+      "id": "process-improvement",
+      "name": "Process improvement",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "procurement",
+      "name": "Procurement",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "product-management",
+      "name": "Product management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "product-marketing",
+      "name": "Product marketing",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "product-roadmapping",
+      "name": "Product roadmapping",
+      "kind": "skill",
+      "aliases": [
+        "roadmap planning",
+        "product roadmap"
+      ]
+    },
+    {
+      "id": "product-strategy",
+      "name": "Product strategy",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "professional-engineer-licence",
+      "name": "Professional Engineer licence",
+      "kind": "qualification",
+      "aliases": [
+        "pe licence",
+        "pe license",
+        "professional engineer license"
+      ]
+    },
+    {
+      "id": "project-management",
+      "name": "Project management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "project-management-professional",
+      "name": "PMP certification",
+      "kind": "qualification",
+      "aliases": [
+        "project management professional",
+        "pmp"
+      ]
+    },
+    {
+      "id": "prototyping",
+      "name": "Prototyping",
+      "kind": "skill",
+      "aliases": [
+        "rapid prototyping"
+      ]
+    },
+    {
+      "id": "public-relations",
+      "name": "Public relations",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "puppet",
+      "name": "Puppet",
+      "kind": "tool",
+      "aliases": [
+        "puppet labs"
+      ],
+      "case_sensitive": [
+        "Puppet"
+      ]
+    },
+    {
+      "id": "python-programming-language",
+      "name": "Python",
+      "kind": "tool",
+      "aliases": [
+        "python programming"
+      ]
+    },
+    {
+      "id": "pytorch",
+      "name": "PyTorch",
+      "kind": "tool",
+      "aliases": [
+        "py torch"
+      ]
+    },
+    {
+      "id": "qa-automation",
+      "name": "QA automation",
+      "kind": "skill",
+      "aliases": [
+        "test automation",
+        "automated testing"
+      ]
+    },
+    {
+      "id": "qlik",
+      "name": "Qlik",
+      "kind": "tool",
+      "aliases": [
+        "qlikview",
+        "qlik sense"
+      ]
+    },
+    {
+      "id": "quality-assurance",
+      "name": "Quality assurance",
+      "kind": "skill",
+      "aliases": [
+        "qa processes"
+      ]
+    },
+    {
+      "id": "quality-control",
+      "name": "Quality control",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "quantitative-analysis",
+      "name": "Quantitative analysis",
+      "kind": "skill",
+      "aliases": [
+        "quant analysis"
+      ]
+    },
+    {
+      "id": "quickbooks",
+      "name": "QuickBooks",
+      "kind": "tool",
+      "aliases": [
+        "quick books"
+      ]
+    },
+    {
+      "id": "r-programming-language",
+      "name": "R (programming language)",
+      "kind": "tool",
+      "aliases": [
+        "r programming",
+        "r language"
+      ]
+    },
+    {
+      "id": "react",
+      "name": "React",
+      "kind": "tool",
+      "aliases": [
+        "reactjs",
+        "react.js"
+      ],
+      "case_sensitive": [
+        "React"
+      ]
+    },
+    {
+      "id": "react-native",
+      "name": "React Native",
+      "kind": "tool",
+      "aliases": [
+        "react-native"
+      ]
+    },
+    {
+      "id": "real-estate-licence",
+      "name": "Real estate licence",
+      "kind": "qualification",
+      "aliases": [
+        "real estate license",
+        "realtor licence"
+      ]
+    },
+    {
+      "id": "recruiting",
+      "name": "Recruiting",
+      "kind": "skill",
+      "aliases": [
+        "talent acquisition",
+        "recruitment"
+      ]
+    },
+    {
+      "id": "redis",
+      "name": "Redis",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "registered-nurse-licence",
+      "name": "Registered nurse licence",
+      "kind": "qualification",
+      "aliases": [
+        "registered nurse",
+        "rn licence",
+        "rn license"
+      ]
+    },
+    {
+      "id": "relationship-building",
+      "name": "Relationship building",
+      "kind": "skill",
+      "aliases": [
+        "relationship management"
+      ]
+    },
+    {
+      "id": "rest-apis",
+      "name": "REST APIs",
+      "kind": "skill",
+      "aliases": [
+        "restful apis",
+        "rest api"
+      ]
+    },
+    {
+      "id": "risk-management",
+      "name": "Risk management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "ruby-on-rails",
+      "name": "Ruby on Rails",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "ruby-programming-language",
+      "name": "Ruby",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "rust-programming-language",
+      "name": "Rust",
+      "kind": "tool",
+      "aliases": [],
+      "case_sensitive": [
+        "Rust"
+      ]
+    },
+    {
+      "id": "sales-forecasting",
+      "name": "Sales forecasting",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "salesforce",
+      "name": "Salesforce",
+      "kind": "tool",
+      "aliases": [
+        "salesforce crm",
+        "sfdc"
+      ],
+      "case_sensitive": [
+        "Salesforce"
+      ]
+    },
+    {
+      "id": "sap-erp",
+      "name": "SAP ERP",
+      "kind": "tool",
+      "aliases": [
+        "SAP"
+      ],
+      "case_sensitive": [
+        "SAP"
+      ]
+    },
+    {
+      "id": "sap-scm",
+      "name": "SAP SCM",
+      "kind": "tool",
+      "aliases": [
+        "sap supply chain management"
+      ]
+    },
+    {
+      "id": "sas",
+      "name": "SAS",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "scala",
+      "name": "Scala",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "scikit-learn",
+      "name": "scikit-learn",
+      "kind": "tool",
+      "aliases": [
+        "sklearn",
+        "scikit learn"
+      ]
+    },
+    {
+      "id": "scrum",
+      "name": "Scrum",
+      "kind": "skill",
+      "aliases": [
+        "scrum methodology"
+      ]
+    },
+    {
+      "id": "search-engine-marketing",
+      "name": "SEM",
+      "kind": "skill",
+      "aliases": [
+        "search engine marketing"
+      ],
+      "case_sensitive": [
+        "SEM"
+      ]
+    },
+    {
+      "id": "search-engine-optimisation",
+      "name": "SEO",
+      "kind": "skill",
+      "aliases": [
+        "search engine optimisation",
+        "search engine optimization"
+      ]
+    },
+    {
+      "id": "semrush",
+      "name": "Semrush",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "shell-scripting",
+      "name": "Shell scripting",
+      "kind": "skill",
+      "aliases": [
+        "shell scripts",
+        "unix shell scripting"
+      ]
+    },
+    {
+      "id": "shrm-cp",
+      "name": "SHRM-CP",
+      "kind": "qualification",
+      "aliases": [
+        "shrm certified professional"
+      ]
+    },
+    {
+      "id": "six-sigma",
+      "name": "Six Sigma",
+      "kind": "skill",
+      "aliases": [
+        "lean six sigma"
+      ]
+    },
+    {
+      "id": "sketch",
+      "name": "Sketch",
+      "kind": "tool",
+      "aliases": [
+        "sketch app"
+      ],
+      "case_sensitive": [
+        "Sketch"
+      ]
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "kind": "tool",
+      "aliases": [],
+      "case_sensitive": [
+        "Slack"
+      ]
+    },
+    {
+      "id": "social-media-management",
+      "name": "Social media management",
+      "kind": "skill",
+      "aliases": [
+        "social media marketing"
+      ]
+    },
+    {
+      "id": "software-architecture",
+      "name": "Software architecture",
+      "kind": "skill",
+      "aliases": [
+        "system design",
+        "software design"
+      ]
+    },
+    {
+      "id": "solidworks",
+      "name": "SolidWorks",
+      "kind": "tool",
+      "aliases": [
+        "solid works"
+      ]
+    },
+    {
+      "id": "solution-selling",
+      "name": "Solution selling",
+      "kind": "skill",
+      "aliases": [
+        "consultative selling"
+      ]
+    },
+    {
+      "id": "spring-framework",
+      "name": "Spring Framework",
+      "kind": "tool",
+      "aliases": [
+        "spring boot"
+      ]
+    },
+    {
+      "id": "sql",
+      "name": "SQL",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "stakeholder-communication",
+      "name": "Stakeholder communication",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "stakeholder-management",
+      "name": "Stakeholder management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "statistical-analysis",
+      "name": "Statistical analysis",
+      "kind": "skill",
+      "aliases": [
+        "statistics"
+      ]
+    },
+    {
+      "id": "student-assessment",
+      "name": "Student assessment",
+      "kind": "skill",
+      "aliases": [
+        "academic assessment"
+      ]
+    },
+    {
+      "id": "succession-planning",
+      "name": "Succession planning",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "supply-chain-management",
+      "name": "Supply chain management",
+      "kind": "skill",
+      "aliases": [
+        "supply chain"
+      ]
+    },
+    {
+      "id": "swift-programming-language",
+      "name": "Swift",
+      "kind": "tool",
+      "aliases": [],
+      "case_sensitive": [
+        "Swift"
+      ]
+    },
+    {
+      "id": "system-administration",
+      "name": "System administration",
+      "kind": "skill",
+      "aliases": [
+        "sysadmin"
+      ]
+    },
+    {
+      "id": "tableau",
+      "name": "Tableau",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "talent-management",
+      "name": "Talent management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "tax-preparation",
+      "name": "Tax preparation",
+      "kind": "skill",
+      "aliases": [
+        "tax filing"
+      ]
+    },
+    {
+      "id": "teaching-licence",
+      "name": "Teaching licence",
+      "kind": "qualification",
+      "aliases": [
+        "teaching license",
+        "teacher certification"
+      ]
+    },
+    {
+      "id": "teamwork",
+      "name": "Teamwork",
+      "kind": "skill",
+      "aliases": [
+        "collaboration"
+      ]
+    },
+    {
+      "id": "technical-support",
+      "name": "Technical support",
+      "kind": "skill",
+      "aliases": [
+        "tech support"
+      ]
+    },
+    {
+      "id": "terraform",
+      "name": "Terraform",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "tesol-certification",
+      "name": "TESOL certification",
+      "kind": "qualification",
+      "aliases": [
+        "tesol",
+        "tefl certification",
+        "tefl"
+      ]
+    },
+    {
+      "id": "ticketing-systems",
+      "name": "Ticketing systems",
+      "kind": "skill",
+      "aliases": [
+        "support ticketing"
+      ]
+    },
+    {
+      "id": "time-management",
+      "name": "Time management",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "travel-coordination",
+      "name": "Travel coordination",
+      "kind": "skill",
+      "aliases": [
+        "travel arrangement"
+      ]
+    },
+    {
+      "id": "trello",
+      "name": "Trello",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "typescript",
+      "name": "TypeScript",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "typing-speed",
+      "name": "Typing speed",
+      "kind": "skill",
+      "aliases": [
+        "keyboarding"
+      ]
+    },
+    {
+      "id": "typography",
+      "name": "Typography",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "ui-design",
+      "name": "UI design",
+      "kind": "skill",
+      "aliases": [
+        "user interface design"
+      ]
+    },
+    {
+      "id": "unit-testing",
+      "name": "Unit testing",
+      "kind": "skill",
+      "aliases": [
+        "unit tests"
+      ]
+    },
+    {
+      "id": "user-research",
+      "name": "User research",
+      "kind": "skill",
+      "aliases": [
+        "ux research"
+      ]
+    },
+    {
+      "id": "user-story-writing",
+      "name": "User story writing",
+      "kind": "skill",
+      "aliases": [
+        "writing user stories"
+      ]
+    },
+    {
+      "id": "ux-design",
+      "name": "UX design",
+      "kind": "skill",
+      "aliases": [
+        "user experience design"
+      ]
+    },
+    {
+      "id": "variance-analysis",
+      "name": "Variance analysis",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "vb-net",
+      "name": "VB.NET",
+      "kind": "tool",
+      "aliases": [
+        "visual basic .net"
+      ]
+    },
+    {
+      "id": "vendor-management",
+      "name": "Vendor management",
+      "kind": "skill",
+      "aliases": [
+        "supplier management"
+      ]
+    },
+    {
+      "id": "version-control",
+      "name": "Version control",
+      "kind": "skill",
+      "aliases": [
+        "source control"
+      ]
+    },
+    {
+      "id": "vital-signs-monitoring",
+      "name": "Vital signs monitoring",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "vue-js",
+      "name": "Vue.js",
+      "kind": "tool",
+      "aliases": [
+        "vuejs",
+        "vue"
+      ]
+    },
+    {
+      "id": "warehouse-operations",
+      "name": "Warehouse operations",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "web-development",
+      "name": "Web development",
+      "kind": "skill",
+      "aliases": [
+        "web dev"
+      ]
+    },
+    {
+      "id": "webpack",
+      "name": "Webpack",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "wireframing",
+      "name": "Wireframing",
+      "kind": "skill",
+      "aliases": []
+    },
+    {
+      "id": "xero",
+      "name": "Xero",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "zendesk",
+      "name": "Zendesk",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "zendesk-sell",
+      "name": "Zendesk Sell",
+      "kind": "tool",
+      "aliases": []
+    },
+    {
+      "id": "zoom",
+      "name": "Zoom",
+      "kind": "tool",
+      "aliases": [
+        "zoom video conferencing"
+      ],
+      "case_sensitive": [
+        "Zoom"
+      ]
+    }
+  ]
+}
