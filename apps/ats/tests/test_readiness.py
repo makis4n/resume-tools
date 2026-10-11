@@ -311,7 +311,7 @@ def test_right_aligned_dates_between_full_width_bullets_do_not_fire() -> None:
         for _ in range(2):
             rects.append(_line(72, 540, row))
             row += 1
-    assert _interleaved_lines(tuple(rects)) == 1
+    assert _interleaved_lines(tuple(rects)) == 0
     assert _ids_for(tuple(rects)) == []
 
 

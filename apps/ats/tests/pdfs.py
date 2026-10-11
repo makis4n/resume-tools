@@ -459,6 +459,71 @@ def skills_grid_pdf() -> bytes:
     return build_pdf([lines])
 
 
+def _rows_pdf(rows: Sequence[tuple[str, str]], left_x: float, right_x: float) -> bytes:
+    lines: list[Line] = []
+    for row, (left, right) in enumerate(rows):
+        lines.append((left, left_x, 700 - 16 * row))
+        lines.append((right, right_x, 700 - 16 * row))
+    return build_pdf([lines])
+
+
+def dated_list_pdf() -> bytes:
+    """Four single-line entries at x=72, each with a right-aligned year at x=510 on the same
+    baseline, written row by row. Read line by line it is already in order."""
+    return _rows_pdf(
+        (
+            ("Certified Invented Cloud Architect", "2023"),
+            ("Professional Pretend Data Engineer", "2022"),
+            ("Associate Fictional Security Analyst", "2021"),
+            ("Practitioner of Made-up Project Methods", "2020"),
+        ),
+        72,
+        510,
+    )
+
+
+def label_value_table_pdf() -> bytes:
+    """A skills table drawn row by row: a short label at x=72 and its values at x=180."""
+    return _rows_pdf(
+        (
+            ("Languages", "Python, Java, Go"),
+            ("Frameworks", "Invented Web, Sample Test"),
+            ("Databases", "Placeholder SQL, Example Store"),
+            ("Platforms", "Pretend Cloud, Made-up Containers"),
+        ),
+        72,
+        180,
+    )
+
+
+def education_rows_pdf() -> bytes:
+    """Two education entries as four two-cell rows: name and place, then degree and dates."""
+    return _rows_pdf(
+        (
+            ("Example State University", "Sample City, ST"),
+            ("B.Sc. in Computer Science", "Aug 2016 - May 2020"),
+            ("Invented Community College", "Made-up Town, ST"),
+            ("A.A. in Liberal Arts Studies", "Aug 2014 - May 2016"),
+        ),
+        72,
+        420,
+    )
+
+
+def date_column_pdf() -> bytes:
+    """Four rows of a date range at x=72 beside a one-line role at x=160."""
+    return _rows_pdf(
+        (
+            ("2021 - 2024", "Operations Lead, Example Works"),
+            ("2018 - 2021", "Analyst, Sample Partners"),
+            ("2016 - 2018", "Coordinator, Invented Trading"),
+            ("2014 - 2016", "Assistant, Placeholder Group"),
+        ),
+        72,
+        160,
+    )
+
+
 def hyphenated_pdf() -> bytes:
     """One line ending 'distri-' followed by a line starting 'buted ...', plus control lines.
 

@@ -95,8 +95,14 @@ _MIN_DESCENT_FACTOR = 0.5
 # A left segment is "filled" when its right edge reaches into the right quarter of the chain's
 # left segments' extent: wrapped prose fills its column, a skills grid's short cells do not.
 _FILL_FRACTION = 0.25
-# At least this fraction of a chain's left segments must be filled for it to count.
+# At least this fraction of a chain's left segments must be filled for it to count, and the same
+# for its right segments.
 _MIN_FILLED_RATIO = 0.75
+# Wrapped prose columns are wide; a date, a label, a city or a short table cell is not. A chain
+# counts only if the median width of its left segments, and of its right segments, is at least
+# this many points. This tells columns of prose from table rows (dates, key/value lists, school
+# and city) whose cells merely have similar widths.
+_MIN_COLUMN_WIDTH_PT = 150.0
 # Alternating lateral steps needed to call a page interleaved. Four consecutive lines read
 # across a gutter is not a table row or a date: it is columns of prose read line by line.
 _MIN_INTERLEAVED_LINES = 4
@@ -284,13 +290,26 @@ def _is_lateral(a: Rect, b: Rect) -> bool:
     )
 
 
-def _chain_length(lefts: list[Rect]) -> int:
-    """The chain's length if enough of its left segments are filled (`_FILL_FRACTION`), else 0."""
-    min_left = min(seg[0] for seg in lefts)
-    max_right = max(seg[2] for seg in lefts)
+def _filled(segs: list[Rect]) -> bool:
+    """Whether most of the segments reach into the right quarter (`_FILL_FRACTION`) of their own
+    extent."""
+    min_left = min(seg[0] for seg in segs)
+    max_right = max(seg[2] for seg in segs)
     threshold = max_right - _FILL_FRACTION * (max_right - min_left)
-    filled = sum(1 for seg in lefts if seg[2] >= threshold)
-    return len(lefts) if filled >= _MIN_FILLED_RATIO * len(lefts) else 0
+    filled = sum(1 for seg in segs if seg[2] >= threshold)
+    return filled >= _MIN_FILLED_RATIO * len(segs)
+
+
+def _wide(segs: list[Rect]) -> bool:
+    """Whether the median segment width is at least `_MIN_COLUMN_WIDTH_PT`."""
+    widths = sorted(seg[2] - seg[0] for seg in segs)
+    return widths[len(widths) // 2] >= _MIN_COLUMN_WIDTH_PT
+
+
+def _chain_length(lefts: list[Rect], rights: list[Rect]) -> int:
+    """The chain's length if both its columns look like prose (wide and filled), else 0."""
+    columns_are_prose = all(_wide(segs) and _filled(segs) for segs in (lefts, rights))
+    return len(lefts) if columns_are_prose else 0
 
 
 def _interleaved_lines(rects: tuple[Rect, ...]) -> int:
@@ -299,21 +318,23 @@ def _interleaved_lines(rects: tuple[Rect, ...]) -> int:
     After merging rects into segments, a chain is a run of lateral steps (`_is_lateral`) that
     alternate strictly (each step's left segment comes straight after the previous step's right
     one), whose left segments move down the page and whose gutters all share one x-band. It counts
-    only if most of its left segments are filled (`_chain_length`), which tells wrapped prose in
-    two columns from a short skills grid or a right-aligned date. Linear in the segment count: a
+    only if both its left and its right segments are wide and mostly filled (`_chain_length`),
+    which tells wrapped prose in two columns from a skills grid, a right-aligned date or a table
+    row of labels and values. Linear in the segment count: a
     chain that breaks its band restarts at the step that broke it.
     """
     segments = _segments(rects)
     best = 0
     lefts: list[Rect] = []
+    rights: list[Rect] = []
     band_low = band_high = 0.0
     index = 0
     while index + 1 < len(segments):
         a, b = segments[index], segments[index + 1]
         if not _is_lateral(a, b):
             if lefts:
-                best = max(best, _chain_length(lefts))
-                lefts = []
+                best = max(best, _chain_length(lefts, rights))
+                lefts, rights = [], []
             index += 1
             continue
         if lefts:
@@ -322,16 +343,17 @@ def _interleaved_lines(rects: tuple[Rect, ...]) -> int:
             descends = (prev[1] + prev[3]) / 2 - (a[1] + a[3]) / 2 >= _MIN_DESCENT_FACTOR * height
             low, high = max(band_low, a[2]), min(band_high, b[0])
             if not (descends and low < high):
-                best = max(best, _chain_length(lefts))
-                lefts = []
+                best = max(best, _chain_length(lefts, rights))
+                lefts, rights = [], []
         if not lefts:
             band_low, band_high = a[2], b[0]
         else:
             band_low, band_high = max(band_low, a[2]), min(band_high, b[0])
         lefts.append(a)
+        rights.append(b)
         index += 2
     if lefts:
-        best = max(best, _chain_length(lefts))
+        best = max(best, _chain_length(lefts, rights))
     return best
 
 

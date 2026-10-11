@@ -30,9 +30,11 @@ finding conventions: stable ids, `warning` severity for layout problems, "many A
   step comes straight after the right segment of the one before), where each left segment sits
   lower than the previous (by at least half its height) and all gutters share one x-band.
   A page whose chain reaches `_MIN_INTERLEAVED_LINES` = 4 fires `column-interleaving`.
-- **Fill.** A chain counts only if at least 3/4 of its left segments are filled: right edge within
-  the right quarter of the left segments' extent. Wrapped prose fills its column; a skills grid's
-  short cells do not. A chain that breaks its band restarts at the step that broke it, which keeps
+- **Fill and width.** A chain counts only if, for its left segments and for its right segments
+  alike, at least 3/4 are filled (right edge within the right quarter of that side's extent) and
+  the median width is at least 150 points (`_MIN_COLUMN_WIDTH_PT`). Wrapped prose fills wide
+  columns; a skills grid's short cells, right-aligned years, key/value labels, date columns and
+  school/city rows do not, however similar their widths. A chain that breaks its band restarts at the step that broke it, which keeps
   the work linear; the fill test is made on the whole chain.
 - **Calibration.** Synthetic: interleaved prose 7/7 (fires), with offset baselines 7/7 (fires),
   cleanly ordered two columns 0, single column 0, right-aligned dates 1, a skills grid of five rows

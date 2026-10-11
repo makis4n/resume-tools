@@ -10,9 +10,13 @@ from ats.rubric import RUBRIC_VERSION
 from tests.pdfs import (
     build_pdf,
     clean_two_column_pdf,
+    date_column_pdf,
+    dated_list_pdf,
+    education_rows_pdf,
     hyphenated_pdf,
     image_only_pdf,
     interleaved_two_column_pdf,
+    label_value_table_pdf,
     minimal_pdf,
     single_column_with_dates_pdf,
     skills_grid_pdf,
@@ -91,7 +95,16 @@ def test_an_interleaved_two_column_pdf_gets_one_finding_and_scores_90() -> None:
 
 
 @pytest.mark.parametrize(
-    "build", [clean_two_column_pdf, single_column_with_dates_pdf, skills_grid_pdf]
+    "build",
+    [
+        clean_two_column_pdf,
+        single_column_with_dates_pdf,
+        skills_grid_pdf,
+        dated_list_pdf,
+        label_value_table_pdf,
+        education_rows_pdf,
+        date_column_pdf,
+    ],
 )
 def test_layouts_that_read_in_order_have_no_findings(build) -> None:  # type: ignore[no-untyped-def]
     result = analyze(build())
