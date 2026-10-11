@@ -34,7 +34,10 @@ finding conventions: stable ids, `warning` severity for layout problems, "many A
   alike, at least 3/4 are filled (right edge within the right quarter of that side's extent) and
   the median width is at least 150 points (`_MIN_COLUMN_WIDTH_PT`). Wrapped prose fills wide
   columns; a skills grid's short cells, right-aligned years, key/value labels, date columns and
-  school/city rows do not, however similar their widths. A chain that breaks its band restarts at the step that broke it, which keeps
+  school/city rows do not, however similar their widths. The fill band is the right 12 percent
+  (`_FILL_FRACTION`), and at least 3/4 of each side's segments must also start within 3 points of
+  that side's median start (`_LEFT_EDGE_TOLERANCE_PT`): wrapped prose starts every line at one x, a
+  right-aligned cell does not. A chain that breaks its band restarts at the step that broke it, which keeps
   the work linear; the fill test is made on the whole chain.
 - **Calibration.** Synthetic: interleaved prose 7/7 (fires), with offset baselines 7/7 (fires),
   cleanly ordered two columns 0, single column 0, right-aligned dates 1, a skills grid of five rows
@@ -47,7 +50,10 @@ finding conventions: stable ids, `warning` severity for layout problems, "many A
   hyphen followed by a jump to another column on the same line, stays `-`. `hyphen_break_count`
   counts a letter, U+0002, then a lowercase letter, computed from `Page.text` with one compiled
   regex for every page. A line-end hyphen before a capital or a digit (such as a name or a date
-  range) is not counted. `hyphenated-line-breaks` fires when the count is above zero.
+  range) is not counted. `hyphenated-line-breaks` fires when the count is above zero. PDFium also
+  writes U+0002 for the hyphen of a real compound (`user-` / `facing`), so the count cannot tell it
+  from an automatic break; the message and suggestions say so and advise rewording the compound,
+  because turning hyphenation off does not clear it.
 - **Findings.** Both are `warning`, origin `layout`, with a page, and both ids are stable (0083).
   Neither message quotes resume text. Both run only when the document has a text layer.
 - **Versions.** `RUBRIC_VERSION` stays `readiness-1`: these are new checks that were silent before
@@ -56,7 +62,8 @@ finding conventions: stable ids, `warning` severity for layout problems, "many A
 
 ## Consequences
 
-- Known limits. Other out-of-order cases, such as shuffled text boxes jumping up within one
+- Known limits. A table whose rows are single lines of near-equal width at one left x, drawn row by
+  row, cannot be told from wrapped prose by geometry alone and may still fire. Other out-of-order cases, such as shuffled text boxes jumping up within one
   column, are not detected and are later work. A producer that writes both columns in one text run
   gives one rect that spans the gutter, so the check misses it. Pages over `_CHAR_BUDGET` get no
   reading-order check. Fonts so large that a word space exceeds 18 points could merge columns.

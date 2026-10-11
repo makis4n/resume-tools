@@ -35,7 +35,8 @@ _DEFAULTS: dict[str, str] = {
         "drawn line by line across the page."
     ),
     "hyphenated-line-breaks": (
-        "Turn off automatic hyphenation, and avoid breaking a word across lines by hand."
+        "Turn off automatic hyphenation, and reword or adjust spacing so no word or hyphenated "
+        "compound (such as user-facing) is split at the end of a line."
     ),
 }
 
@@ -81,7 +82,10 @@ _BY_PRODUCER: dict[str, dict[Producer, str]] = {
         Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
     },
     "hyphenated-line-breaks": {
-        Producer.WORD: "Turn off hyphenation with Layout > Hyphenation > None.",
+        Producer.WORD: (
+            "Turn off hyphenation with Layout > Hyphenation > None, and reword so a hyphenated "
+            "compound (such as full-stack) does not fall at the end of a line."
+        ),
         Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
     },
 }

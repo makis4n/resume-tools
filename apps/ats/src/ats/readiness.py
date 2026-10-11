@@ -66,8 +66,9 @@ COLUMN_INTERLEAVING_MESSAGE = (
     "different columns may run together when an ATS extracts it."
 )
 HYPHENATED_LINE_BREAKS_MESSAGE = (
-    "Some words on this page are split across lines with a hyphen, so an ATS may read them as two "
-    "fragments and miss them in a keyword search."
+    "Some words on this page are split across lines at a hyphen (automatic hyphenation, or a "
+    "hyphenated compound such as user-facing), so an ATS may read them as two fragments and miss "
+    "them in a keyword search."
 )
 
 # --- Reading-order geometry (decision 0086) ---
@@ -93,8 +94,9 @@ _LATERAL_CENTRE_FACTOR = 1.5
 # the chain to be moving down the page, one line at a time.
 _MIN_DESCENT_FACTOR = 0.5
 # A left segment is "filled" when its right edge reaches into the right quarter of the chain's
-# left segments' extent: wrapped prose fills its column, a skills grid's short cells do not.
-_FILL_FRACTION = 0.25
+# left segments' extent (a tight band: wrapped prose is ragged by a few words, a row of table cells
+# of unrelated text by more): wrapped prose fills its column, a skills grid's cells do not.
+_FILL_FRACTION = 0.12
 # At least this fraction of a chain's left segments must be filled for it to count, and the same
 # for its right segments.
 _MIN_FILLED_RATIO = 0.75
@@ -103,6 +105,10 @@ _MIN_FILLED_RATIO = 0.75
 # this many points. This tells columns of prose from table rows (dates, key/value lists, school
 # and city) whose cells merely have similar widths.
 _MIN_COLUMN_WIDTH_PT = 150.0
+# Wrapped prose in a column starts every line at the same x. A right-aligned cell (a date, a city)
+# starts each line at a different x. A chain's segments on each side count only if at least
+# `_MIN_FILLED_RATIO` of them start within this many points of the side's median start.
+_LEFT_EDGE_TOLERANCE_PT = 3.0
 # Alternating lateral steps needed to call a page interleaved. Four consecutive lines read
 # across a gutter is not a table row or a date: it is columns of prose read line by line.
 _MIN_INTERLEAVED_LINES = 4
@@ -300,6 +306,15 @@ def _filled(segs: list[Rect]) -> bool:
     return filled >= _MIN_FILLED_RATIO * len(segs)
 
 
+def _aligned(segs: list[Rect]) -> bool:
+    """Whether most of the segments start at one x, as every line of a wrapped column does and a
+    right-aligned cell does not."""
+    starts = sorted(seg[0] for seg in segs)
+    median = starts[len(starts) // 2]
+    aligned = sum(1 for start in starts if abs(start - median) <= _LEFT_EDGE_TOLERANCE_PT)
+    return aligned >= _MIN_FILLED_RATIO * len(segs)
+
+
 def _wide(segs: list[Rect]) -> bool:
     """Whether the median segment width is at least `_MIN_COLUMN_WIDTH_PT`."""
     widths = sorted(seg[2] - seg[0] for seg in segs)
@@ -307,8 +322,10 @@ def _wide(segs: list[Rect]) -> bool:
 
 
 def _chain_length(lefts: list[Rect], rights: list[Rect]) -> int:
-    """The chain's length if both its columns look like prose (wide and filled), else 0."""
-    columns_are_prose = all(_wide(segs) and _filled(segs) for segs in (lefts, rights))
+    """The chain's length if both columns look like prose (wide, filled, left-aligned), else 0."""
+    columns_are_prose = all(
+        _wide(segs) and _filled(segs) and _aligned(segs) for segs in (lefts, rights)
+    )
     return len(lefts) if columns_are_prose else 0
 
 
@@ -318,7 +335,8 @@ def _interleaved_lines(rects: tuple[Rect, ...]) -> int:
     After merging rects into segments, a chain is a run of lateral steps (`_is_lateral`) that
     alternate strictly (each step's left segment comes straight after the previous step's right
     one), whose left segments move down the page and whose gutters all share one x-band. It counts
-    only if both its left and its right segments are wide and mostly filled (`_chain_length`),
+    only if both its left and its right segments are wide, mostly filled and start at one x
+    (`_chain_length`),
     which tells wrapped prose in two columns from a skills grid, a right-aligned date or a table
     row of labels and values. Linear in the segment count: a
     chain that breaks its band restarts at the step that broke it.

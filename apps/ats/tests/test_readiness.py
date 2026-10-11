@@ -391,7 +391,7 @@ def test_reading_order_suggestions_vary_by_producer() -> None:
     assert suggestions(Producer.LATEX) == [template, template]
     word = suggestions(Producer.WORD)
     assert word[0] and "Layout > Columns" in word[0]
-    assert word[1] == "Turn off hyphenation with Layout > Hyphenation > None."
+    assert word[1] and word[1].startswith("Turn off hyphenation with Layout > Hyphenation > None")
     google = suggestions(Producer.GOOGLE_DOCS)
     assert google[0] and "Format > Columns" in google[0]
     for producer in (Producer.CANVA, Producer.OTHER):
@@ -401,3 +401,30 @@ def test_reading_order_suggestions_vary_by_producer() -> None:
     for producer in Producer:
         for text in suggestions(producer):
             assert text and "latex" not in text.lower() and "\\" not in text
+
+
+def test_right_aligned_right_cells_in_long_rows_do_not_fire() -> None:
+    # Education rows: a long left cell at x=50 and a right cell right-aligned to x=562, so the
+    # right cells start at different x. Each row already reads in order.
+    rights = (180.0, 200.0, 170.0, 190.0)
+    rects: list[Rect] = []
+    for row, width in enumerate(rights):
+        rects.append(_line(50, 50 + 200 + row * 7, row))
+        rects.append(_line(562 - width, 562, row))
+    assert _interleaved_lines(tuple(rects)) == 0
+
+
+def test_a_two_column_table_of_ragged_long_cells_does_not_fire() -> None:
+    lefts = (190.0, 235.0, 205.0, 250.0)
+    rights = (240.0, 195.0, 255.0, 210.0)
+    rects: list[Rect] = []
+    for row in range(4):
+        rects.append(_line(50, 50 + lefts[row], row))
+        rects.append(_line(320, 320 + rights[row], row))
+    assert _interleaved_lines(tuple(rects)) == 0
+
+
+def test_hyphen_message_names_compound_hyphens() -> None:
+    (finding,) = check(_document(_page(hyphen_break_count=1)), Producer.WORD)
+    assert "compound" in finding.message
+    assert finding.suggestion and "compound" in finding.suggestion
