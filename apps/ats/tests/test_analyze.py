@@ -1,9 +1,19 @@
+import json
+
 import pytest
 
 from ats.analyze import CONTRACT, analyze
 from ats.extract import UnreadablePdfError
 from ats.rubric import RUBRIC_VERSION
-from tests.pdfs import build_pdf, image_only_pdf, minimal_pdf
+from tests.pdfs import (
+    RESUME_EMAIL,
+    RESUME_LINK,
+    RESUME_PHONE,
+    build_pdf,
+    image_only_pdf,
+    minimal_pdf,
+    resume_pdf,
+)
 
 
 def test_returns_contract_shape() -> None:
@@ -20,7 +30,7 @@ def test_returns_contract_shape() -> None:
 
 
 def test_a_clean_one_page_pdf_scores_100_with_no_findings() -> None:
-    result = analyze(minimal_pdf())
+    result = analyze(resume_pdf())
     assert result["score"] == 100
     assert result["findings"] == []
     assert result["producer"] == "other"
@@ -60,3 +70,20 @@ def test_rejects_non_pdf() -> None:
 def test_rejects_a_pdf_signature_with_an_unreadable_body() -> None:
     with pytest.raises(UnreadablePdfError):
         analyze(b"%PDF-1.7 minimal")
+
+
+def test_a_pdf_with_no_contact_details_or_headings_gets_content_findings() -> None:
+    result = analyze(minimal_pdf())
+    ids = [f["id"] for f in result["findings"]]
+    assert "missing-contact-email" in ids
+    assert "missing-section-experience" in ids
+    assert result["score"] == 80
+    assert result["rubric_version"] == "readiness-1"
+    assert result["analyser_version"] == "0.2.0"
+
+
+def test_the_analysis_carries_none_of_the_detected_contact_details() -> None:
+    dumped = json.dumps(analyze(resume_pdf()))
+    assert RESUME_EMAIL not in dumped
+    assert "555 010 0199" not in dumped and RESUME_PHONE not in dumped
+    assert RESUME_LINK not in dumped

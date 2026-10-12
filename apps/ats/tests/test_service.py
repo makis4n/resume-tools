@@ -10,7 +10,15 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
 from ats.service import create_app, readable_size
-from tests.pdfs import image_only_pdf, malformed_page_tree_pdf, minimal_pdf, zero_page_pdf
+from tests.pdfs import (
+    RESUME_EMAIL,
+    RESUME_PHONE,
+    image_only_pdf,
+    malformed_page_tree_pdf,
+    minimal_pdf,
+    resume_pdf,
+    zero_page_pdf,
+)
 
 CONTRACTS = Path(__file__).parents[3] / "packages" / "contracts" / "ats" / "v1"
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -71,7 +79,7 @@ def test_analyze_returns_a_schema_valid_analysis(client: TestClient) -> None:
 
 
 def test_a_clean_one_page_pdf_scores_100_with_no_findings(client: TestClient) -> None:
-    response = upload(client, minimal_pdf())
+    response = upload(client, resume_pdf())
     body = response.json()
     ANALYSIS.validate(body)
     assert body["score"] == 100
@@ -238,7 +246,10 @@ def test_does_not_log_resume_contents(client: TestClient, caplog: pytest.LogCapt
     with caplog.at_level(logging.DEBUG):
         upload(client, minimal_pdf(marker))
         upload(client, marker.encode())
+        upload(client, resume_pdf())
     assert marker not in caplog.text
+    assert RESUME_EMAIL not in caplog.text
+    assert RESUME_PHONE not in caplog.text
 
 
 def test_an_error_keeps_safe_headers_but_not_framing_ones() -> None:
