@@ -68,6 +68,7 @@ _PHONE_LABEL = re.compile(r"(?:phone|mobile|tel|cell|whatsapp)[ \t]*:?[ \t]*$", 
 _YEAR = re.compile(r"(?:19|20)\d\d")
 _DATE = re.compile(r"\d{4}[./-]\d{1,2}[./-]\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{4}")
 _PHONE_SEPARATORS = re.compile(r"[ \t().-]+")
+_WHITESPACE_RUN = re.compile(r"[ \t]+")
 
 _LINK = re.compile(
     r"https?://|www\.|(?:linkedin|github|gitlab|behance|dribbble)\.(?:com|net)/",
@@ -75,8 +76,11 @@ _LINK = re.compile(
 )
 # A bare domain such as "ada.dev" counts only in lowercase, so ASP.NET, Socket.IO and an employer
 # written "Booking.com" are not taken for links.
+# Common TLDs plus any two-letter country code; file-extension-like names (Node.js) are excluded.
 _BARE_DOMAIN = re.compile(
-    r"(?<![A-Za-z0-9-])[a-z0-9-]{1,63}\.(?:com|io|dev|me|org|co|app|page|site|ai|xyz)(?![A-Za-z0-9-])"
+    r"(?<![A-Za-z0-9-])(?!asp\.net)(?![a-z0-9-]{1,63}\.(?:js|ts|py|rb|rs|md|sh|cs|go)(?![a-z0-9-]))"
+    r"[a-z0-9-]{1,63}\.(?:com|net|edu|io|dev|me|org|co|app|page|site|ai|xyz|[a-z]{2})"
+    r"(?![A-Za-z0-9-])"
 )
 
 _ODD_SPACES = re.compile(r"[   -   　]")
@@ -141,10 +145,40 @@ def _is_phone_number(raw: str, prefix: str) -> bool:
 
 def _has_phone(lines: list[str]) -> bool:
     for line in lines:
-        for match in _PHONE.finditer(line):
+        pos = 0
+        while (match := _PHONE.search(line, pos)) is not None:
             if _is_phone_number(match.group(0), line[: match.start()]):
                 return True
+            # Rescan from the next group boundary, so a rejected ZIP code does not swallow the
+            # phone number that follows it.
+            sep = _WHITESPACE_RUN.search(match.group(0))
+            pos = match.start() + sep.end() if sep else match.end()
     return False
+
+
+def _vocabulary() -> frozenset[str]:
+    words: set[str] = set(_HEADING_WORDS) | {"of", "and"}
+    for entry in (
+        EXPERIENCE_CONTAINS + EXPERIENCE_EXACT + EDUCATION_CONTAINS + EDUCATION_EXACT
+        + SKILLS_CONTAINS + SKILLS_EXACT
+    ):  # fmt: skip
+        words.update(entry.split())
+    return frozenset(words | {w + s for w in words for s in ("s", "al")})
+
+
+def _segment(joined: str) -> list[str] | None:
+    """Split `joined` into known heading words (fewest words), or None when it cannot be."""
+    if not joined.isalpha() or len(joined) > _MAX_HEADING_CHARS:
+        return None
+    best: list[list[str] | None] = [None] * (len(joined) + 1)
+    best[0] = []
+    for end in range(1, len(joined) + 1):
+        for start in range(end):
+            prev = best[start]
+            if prev is not None and joined[start:end] in _VOCABULARY:
+                if best[end] is None or len(prev) + 1 < len(best[end]):
+                    best[end] = [*prev, joined[start:end]]
+    return best[-1]
 
 
 def _heading(line: str) -> str | None:
@@ -157,10 +191,12 @@ def _heading(line: str) -> str | None:
     line = line.casefold().replace("&", " and ")
     line = _EDGE_PUNCTUATION.sub("", line)
     tokens = line.split()
-    if len(tokens) >= 3 and all(len(token) == 1 for token in tokens):
-        # Letter-spaced ("E X P E R I E N C E"); two or more spaces mark a word gap.
-        words = re.split(r" {2,}", line)
-        line = " ".join("".join(word.split()) for word in words)
+    if len(tokens) >= 2 and any(len(token) <= 3 for token in tokens):
+        # Letter-spaced ("E X P E R I E N C E", "WO R K E X PERIENCE"): drop the spaces and read
+        # the letters as known heading words.
+        words = _segment("".join(tokens))
+        if words is not None:
+            line = " ".join(words)
     line = " ".join(line.split())
     if not line or len(line) > _MAX_HEADING_CHARS or len(line.split()) > _MAX_HEADING_WORDS:
         return None
@@ -174,16 +210,25 @@ _HEADING_WORDS = frozenset(
     "work professional relevant technical core key career related selected additional other "
     "industry research teaching leadership internship volunteer computer soft hard academic "
     "summary history employment and training projects certifications highlights overview "
-    "experience education skills interests hobbies languages background profile".split()
+    "experience education skills interests hobbies languages background profile of".split()
 )
+_VOCABULARY = _vocabulary()
 
 
 _KEYWORD_SUFFIXES = ("", "s", "al")  # "experiences", "educational"
 
 
-def _matches(heading: str, contains: tuple[str, ...], exact: tuple[str, ...]) -> bool:
-    if heading in exact:
+def _matches(
+    heading: str, contains: tuple[str, ...], exact: tuple[str, ...], part: bool = False
+) -> bool:
+    if heading in exact and not (part and heading in _AMBIGUOUS_EDGE):
         return True
+    if not part and " and " in f" {heading} ":
+        # "Education and Honors": either side may be the section heading.
+        if any(
+            _matches(side.strip(), contains, exact, True) for side in f" {heading} ".split(" and ")
+        ):
+            return True
     tokens = [_EDGE_PUNCTUATION.sub("", token) for token in heading.split()]
     tokens = [token for token in tokens if token]
     for word in contains:

@@ -329,5 +329,5 @@ def test_detect_reads_a_bounded_amount_of_text(monkeypatch) -> None:
 
 
 def test_content_findings_are_skipped_when_the_text_is_mostly_unmapped() -> None:
-    document = _document(_page(char_count=800, unmapped_count=800))
+    document = _document(_page(text="nothing useful", char_count=800, unmapped_count=800))
     assert _ids(document) == ["unmapped-glyphs"]

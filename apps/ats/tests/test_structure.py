@@ -236,3 +236,67 @@ def test_ordinary_lines_opening_with_work_or_tools_are_not_headings(line: str) -
     facts = detect(line)
     assert not facts.has_experience
     assert not facts.has_skills
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "WO R K E X PERIENCE",
+        "E XPERIENCE",
+        "EX PERIENCE",
+        "W O R K  E X P E R I E N C E",
+        "W O R K E X P E R I E N C E",
+    ],
+)
+def test_irregular_and_multi_word_letter_spacing_is_collapsed(heading: str) -> None:
+    assert detect(f"Jane\n{heading}\nbody").has_experience
+
+
+@pytest.mark.parametrize(
+    ("heading", "field"),
+    [
+        ("EDUCATI ON", "has_education"),
+        ("S K ILLS", "has_skills"),
+        ("T E C H N I C A L S K I L L S", "has_skills"),
+    ],
+)
+def test_letter_spaced_education_and_skills(heading: str, field: str) -> None:
+    assert getattr(detect(f"Jane\n{heading}\nbody"), field)
+
+
+@pytest.mark.parametrize(
+    ("text", "field"),
+    [
+        ("Work Experience and Internships", "has_experience"),
+        ("Experience and Internships", "has_experience"),
+        ("Education and Honors", "has_education"),
+        ("Education and Coursework", "has_education"),
+        ("Skills and Abilities", "has_skills"),
+        ("Skills and Technologies", "has_skills"),
+        ("Summary of Skills", "has_skills"),
+    ],
+)
+def test_headings_joined_with_and_are_found(text: str, field: str) -> None:
+    assert getattr(detect(f"Jane\n{text}\nx"), field)
+
+
+def test_and_headings_do_not_admit_job_titles_or_ordinary_lines() -> None:
+    assert not detect("Jane\nCustomer Experience and Design\nx").has_experience
+    assert not detect("Jane\nWork and Life Balance\nx").has_experience
+
+
+@pytest.mark.parametrize("text", ["ada.example.net", "ada.de", "ada.ca", "ada.edu"])
+def test_more_bare_domains_are_profile_links(text: str) -> None:
+    assert detect(text).has_profile_link
+
+
+@pytest.mark.parametrize("text", ["Built with node.js", "asp.net", "uses next.js and vue.js"])
+def test_file_extension_like_names_are_not_profile_links(text: str) -> None:
+    assert not detect(text).has_profile_link
+
+
+@pytest.mark.parametrize(
+    "text", ["Boston, MA 02115 617-555-0142", "New York, NY 10001 (555) 123-4567"]
+)
+def test_a_phone_after_a_zip_code_is_found(text: str) -> None:
+    assert detect(text).has_phone

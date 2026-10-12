@@ -21,7 +21,7 @@ stored, logged or returned.
   "unrecognised" state for an address someone tried to write that cannot be read (no TLD, spaces
   around `@` or `.`, or `[at]`); a phone regex counting 8 to 15 digits, rejecting year ranges and
   dates, and accepting an unseparated number only with a `+` or a label such as "Phone"; a profile
-  link (a scheme, `www.`, a known profile host, or a bare domain with a common TLD, not part of an
+  link (a scheme, `www.`, a known profile host, or a bare domain with a common TLD, `.net`, `.edu` or a two-letter country code (not file-extension-like names such as `node.js`), not part of an
   email); and section headings, matched on short lines (at most 6 words and 50 characters) against
   the documented synonym lists `EXPERIENCE_*`, `EDUCATION_*` and `SKILLS_*`, after NFKC
   normalisation and with letter-spacing collapsed.
