@@ -8,6 +8,7 @@ no caller may return or log them.
 """
 
 import ctypes
+import re
 import threading
 from codecs import decode
 from dataclasses import dataclass
@@ -64,6 +65,15 @@ _OBJECT_BUDGET = 100_000
 # count, so a hostile upload cannot stall every other request behind the lock.
 _CHAR_BUDGET = 200_000
 
+# PDFium replaces a hyphen that ends a line with U+0002 and joins the two lines with no break
+# ("distri\x02buted"), whatever the next line starts with. A letter, U+0002, then a letter is the
+# shape of a word split by hyphenation; `_hyphen_break_count` also requires the second letter to be
+# lowercase, so a line-end hyphen before a capital or a digit (a date range, a name) is not counted.
+#
+# Chrome/Skia draws an automatic line-end hyphen as U+2010 and PDFium keeps both it and the line
+# break ("be\u2010\r\ncomes"), so a letter, U+2010, a line break, then a lowercase letter counts.
+_HYPHEN_BREAK = re.compile(r"[^\W\d_](?:\x02|\u2010\r?\n)(?=[^\W\d_])")
+
 
 class ExtractError(ValueError):
     """Base class for a PDF that pypdfium2 could not turn into text."""
@@ -106,6 +116,14 @@ class Page:
     the page, recursing into any Form XObject to reach objects nested inside it (common in scanner
     and print-driver output): see `_count_objects`. A Form XObject itself is not tallied into any
     of the three counts.
+
+    `text_rects` are the page's text rects in extraction order, each `(left, bottom, right, top)`
+    in PDF points: geometry only, never the text. A producer that draws one rect per glyph gives
+    one per character, so `ats.readiness` merges them into line segments. It is `()` for a page
+    over `_CHAR_BUDGET`, which is read cheaply and gets no reading-order check.
+
+    `hyphen_break_count` counts words split across a line by a hyphen: a letter, PDFium's U+0002
+    line-end hyphen marker, then a lowercase letter. It is computed from `text` for every page.
     """
 
     number: int
@@ -119,6 +137,8 @@ class Page:
     text_objects: int
     image_objects: int
     path_objects: int
+    text_rects: tuple[tuple[float, float, float, float], ...] = ()
+    hyphen_break_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -353,6 +373,23 @@ def _count_objects(pdf_page: pdfium.PdfPage) -> tuple[int, int, int]:
     return text_objects, image_objects, path_objects
 
 
+def _hyphen_break_count(text: str) -> int:
+    """Words split across a line by hyphenation: see `_HYPHEN_BREAK`."""
+    return sum(
+        1 for match in _HYPHEN_BREAK.finditer(text) if text[match.end() : match.end() + 1].islower()
+    )
+
+
+def _text_rects(text_page: pdfium.PdfTextPage) -> tuple[tuple[float, float, float, float], ...]:
+    """The page's text rects in extraction order. There are never more rects than characters, so
+    the caller's character budget already bounds this work."""
+    rects = []
+    for index in range(text_page.count_rects()):
+        left, bottom, right, top = text_page.get_rect(index)
+        rects.append((float(left), float(bottom), float(right), float(top)))
+    return tuple(rects)
+
+
 def _read_page(pdf_page: pdfium.PdfPage, number: int, char_budget: int) -> tuple[Page, int]:
     """Read one page; returns it and how much of `char_budget` it used (see `_CHAR_BUDGET`)."""
     width, height = pdf_page.get_size()
@@ -368,11 +405,13 @@ def _read_page(pdf_page: pdfium.PdfPage, number: int, char_budget: int) -> tuple
             char_count, unmapped_count, private_use_count, ligature_count = _char_stats(
                 text_page, text
             )
+            text_rects = _text_rects(text_page)
             used = total_chars
         else:
             # Over budget: a C-speed count of non-whitespace characters, no per-character calls.
             char_count = len("".join(text.split()))
             unmapped_count = private_use_count = ligature_count = 0
+            text_rects = ()
             used = 0
     finally:
         text_page.close()
@@ -389,6 +428,8 @@ def _read_page(pdf_page: pdfium.PdfPage, number: int, char_budget: int) -> tuple
         text_objects=text_objects,
         image_objects=image_objects,
         path_objects=path_objects,
+        text_rects=text_rects,
+        hyphen_break_count=_hyphen_break_count(text),
     )
     return page, used
 

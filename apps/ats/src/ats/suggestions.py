@@ -16,7 +16,8 @@ _CANVA_FLATTEN_SUGGESTION = 'Turn off "Flatten PDF" when downloading as PDF Stan
 
 # The producer-neutral suggestion for a finding id, used when `_BY_PRODUCER` has nothing more
 # specific. `page-count` and `blank-page` have none: there is nothing a specific tool does
-# differently for them.
+# differently for them. The contact and section ids (decision 0085) have only a neutral default:
+# the same fix applies in every tool.
 _DEFAULTS: dict[str, str] = {
     "no-text-layer": (
         "Export your resume so its text stays selectable, rather than flattening it to an image."
@@ -30,6 +31,27 @@ _DEFAULTS: dict[str, str] = {
     "ligature-characters": (
         "Turn off font ligatures, or use a font that does not substitute them, before exporting."
     ),
+    "column-interleaving": (
+        "Use a single-column layout, or make sure each column's text is kept together rather than "
+        "drawn line by line across the page."
+    ),
+    "hyphenated-line-breaks": (
+        "Turn off automatic hyphenation, and reword or adjust spacing so no word or hyphenated "
+        "compound (such as user-facing) is split at the end of a line."
+    ),
+    "missing-contact-email": "Add your email address as plain text near the top of the first page.",
+    "unrecognised-contact-email": (
+        "Write your email address in full as plain text (name@example.com), not as an image, "
+        "icon or with spaces."
+    ),
+    "missing-contact-phone": "Add your phone number as plain text near the top of the first page.",
+    "missing-profile-link": (
+        "Write out the full address of your profile or portfolio as plain text, such as "
+        "linkedin.com/in/your-name."
+    ),
+    "missing-section-experience": 'Add a section headed "Experience" or "Work Experience".',
+    "missing-section-education": 'Add a section headed "Education".',
+    "missing-section-skills": 'Add a section headed "Skills".',
 }
 
 # Suggestion text specific to the producing tool, keyed by finding id then by Producer. Only menu
@@ -63,6 +85,25 @@ _BY_PRODUCER: dict[str, dict[Producer, str]] = {
     },
     "ligature-characters": {
         Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
+    },
+    "column-interleaving": {
+        Producer.WORD: (
+            "Place side-by-side text with Layout > Columns, or use a single-column layout."
+        ),
+        Producer.GOOGLE_DOCS: (
+            "Place side-by-side text with Format > Columns, or use a single-column layout."
+        ),
+        Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
+    },
+    "hyphenated-line-breaks": {
+        Producer.WORD: (
+            "Turn off hyphenation with Layout > Hyphenation > None, and reword so a hyphenated "
+            "compound (such as full-stack) does not fall at the end of a line."
+        ),
+        Producer.LATEX: (
+            "Reword so a hyphenated compound (such as user-facing) does not fall at the end of "
+            "a line."
+        ),
     },
 }
 
