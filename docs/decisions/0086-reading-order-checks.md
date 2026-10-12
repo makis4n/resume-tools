@@ -41,8 +41,8 @@ finding conventions: stable ids, `warning` severity for layout problems, "many A
   bulleted list at two (the bullet and the hanging indent), a right-aligned cell at many. A bullet
   or number mark drawn apart from its text (no wider than the line height, text within twice the
   height on the same line) is merged into that text first (`_join_markers`), so a list item is one
-  segment. A chain that breaks its band restarts at the step that broke it, which keeps the work
-  linear; the fill test is made on the whole chain.
+  segment. A chain that breaks its band restarts at the step that broke it, and alignment is counted on
+  sorted starts, which keeps the work O(n log n); the fill test is made on the whole chain.
 - **Calibration.** Synthetic: interleaved prose 7/7 (fires), with offset baselines 7/7 (fires),
   cleanly ordered two columns 0, single column 0, right-aligned dates 1, a skills grid of five rows
   with two filled cells 0, bulleted columns of 3-line items with a hanging indent 12/12

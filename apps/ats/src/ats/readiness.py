@@ -391,8 +391,8 @@ def _interleaved_lines(rects: tuple[Rect, ...]) -> int:
     only if both its left and its right segments are wide, mostly filled and start at one x
     (`_chain_length`),
     which tells wrapped prose in two columns from a skills grid, a right-aligned date or a table
-    row of labels and values. Linear in the segment count: a
-    chain that breaks its band restarts at the step that broke it.
+    row of labels and values. O(n log n) in the segment count: a chain that breaks its band
+    restarts at the step that broke it, and alignment is counted on sorted starts.
     """
     segments = _join_markers(_segments(rects))
     best = 0
