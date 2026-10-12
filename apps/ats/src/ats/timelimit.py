@@ -6,8 +6,9 @@ stopped, and pypdfium2 releases the GIL, so a deadline inside the process would 
 Children come from a forkserver: it is single-threaded, so forking from it is safe while uvicorn
 has threads. It preloads `ats.analyze`. Each child also runs the main script's top level again,
 which is why `ats.serve` stays light. At most `MAX_CONCURRENT_ANALYSES` children run at once,
-because each holds a PDFium document; a request waits for a slot before its clock starts. This is
-a time limit, not a sandbox.
+because each holds a PDFium document; a request waits for a slot before its clock starts, but only
+for `slot_wait_seconds`, after which it is refused as busy so a few clients cannot queue everyone
+else out. This is a time limit, not a sandbox.
 """
 
 import multiprocessing
@@ -36,6 +37,10 @@ class AnalysisTimeoutError(Exception):
     """The analysis did not finish in time and its process was killed."""
 
 
+class ServerBusyError(Exception):
+    """No analysis slot became free in time."""
+
+
 class AnalysisCrashedError(Exception):
     """The analysis process died or failed unexpectedly. The message is a type name or exit code."""
 
@@ -53,10 +58,17 @@ def _child(analyser: Callable[[bytes], dict[str, Any]], pdf: bytes, send: Connec
 
 
 def run_with_time_limit(
-    analyser: Callable[[bytes], dict[str, Any]], pdf: bytes, seconds: float
+    analyser: Callable[[bytes], dict[str, Any]],
+    pdf: bytes,
+    seconds: float,
+    slot_wait_seconds: float = 5.0,
 ) -> dict[str, Any]:
-    with _SLOTS:
+    if not _SLOTS.acquire(timeout=slot_wait_seconds):
+        raise ServerBusyError
+    try:
         return _run(analyser, pdf, seconds)
+    finally:
+        _SLOTS.release()
 
 
 def _run(analyser: Callable[[bytes], dict[str, Any]], pdf: bytes, seconds: float) -> dict[str, Any]:

@@ -358,3 +358,26 @@ def test_a_crashing_analysis_is_a_500_and_the_service_carries_on() -> None:
     assert_error(upload(client, minimal_pdf()), 500, "internal-error")
     assert client.get("/health").status_code == 200
     assert_error(upload(client, minimal_pdf()), 500, "internal-error")
+
+
+def test_a_request_that_finds_every_analysis_slot_taken_is_told_the_service_is_busy() -> None:
+    from ats import timelimit
+
+    app = create_app(
+        max_upload_bytes=MAX_UPLOAD_BYTES,
+        allowed_origins=[EDITOR_ORIGIN],
+        analyze_rate_limit_per_minute=0,
+        slot_wait_seconds=0.2,
+    )
+    held = 0
+    try:
+        while timelimit._SLOTS.acquire(blocking=False):
+            held += 1
+        started = time.monotonic()
+        response = upload(TestClient(app), minimal_pdf())
+    finally:
+        for _ in range(held):
+            timelimit._SLOTS.release()
+    assert_error(response, 503, "server-busy")
+    assert response.headers["Retry-After"] == "5"
+    assert time.monotonic() - started < 3

@@ -23,7 +23,12 @@ from ats.analyze import NotAPdfError, analyze
 from ats.errors import error_response
 from ats.extract import EncryptedPdfError, UnreadablePdfError
 from ats.ratelimit import RateLimiter, RateLimitMiddleware
-from ats.timelimit import AnalysisCrashedError, AnalysisTimeoutError, run_with_time_limit
+from ats.timelimit import (
+    AnalysisCrashedError,
+    AnalysisTimeoutError,
+    ServerBusyError,
+    run_with_time_limit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +39,8 @@ DEFAULT_RATE_LIMIT_MAX_CLIENTS = 10_000
 DEFAULT_TRUSTED_PROXY_HOPS = 0
 DEFAULT_ANALYSIS_TIMEOUT_SECONDS = 10.0
 MAX_ANALYSIS_TIMEOUT_SECONDS = 3600.0
+DEFAULT_SLOT_WAIT_SECONDS = 5.0
+BUSY_RETRY_AFTER_SECONDS = 5
 
 # Room for the multipart boundaries and headers around the file in a request body.
 MULTIPART_OVERHEAD_BYTES = 64 * 1024
@@ -49,6 +56,7 @@ ANALYSIS_TIMEOUT = (
     "This PDF took too long to analyse. It may be unusually complex; export it again, or "
     "simplify it, and try again."
 )
+SERVER_BUSY = "The service is busy right now. Please try again in a few seconds."
 INTERNAL_ERROR = "Something went wrong while analysing the resume. Please try again."
 
 # Declared types a PDF may arrive with. The signature is checked as well, so a generic type is
@@ -187,6 +195,7 @@ def create_app(
     rate_limit_max_clients: int | None = None,
     trusted_proxy_hops: int | None = None,
     analysis_timeout_seconds: float | None = None,
+    slot_wait_seconds: float | None = None,
     analyser: Callable[[bytes], dict[str, Any]] = analyze,
 ) -> FastAPI:
     """Build the service. Settings not passed in are read from the environment.
@@ -209,6 +218,8 @@ def create_app(
         analysis_timeout_seconds = env_number(
             "ATS_ANALYSIS_TIMEOUT_SECONDS", DEFAULT_ANALYSIS_TIMEOUT_SECONDS, float, 0
         )
+    if slot_wait_seconds is None:
+        slot_wait_seconds = env_number("ATS_SLOT_WAIT_SECONDS", DEFAULT_SLOT_WAIT_SECONDS, float, 0)
     if not 0 < analysis_timeout_seconds <= MAX_ANALYSIS_TIMEOUT_SECONDS:
         raise ValueError(
             "ATS_ANALYSIS_TIMEOUT_SECONDS must be greater than 0 and at most "
@@ -273,7 +284,7 @@ def create_app(
             raise too_large(max_upload_bytes)
         try:
             return await run_in_threadpool(
-                run_with_time_limit, analyser, pdf, analysis_timeout_seconds
+                run_with_time_limit, analyser, pdf, analysis_timeout_seconds, slot_wait_seconds
             )
         except NotAPdfError:
             raise ServiceError(415, "not-a-pdf", NOT_A_PDF) from None
@@ -284,6 +295,10 @@ def create_app(
         except AnalysisTimeoutError:
             # A 422: the time depends on the file, and the same file would time out again.
             raise ServiceError(422, "analysis-timeout", ANALYSIS_TIMEOUT) from None
+        except ServerBusyError:
+            error = ServiceError(503, "server-busy", SERVER_BUSY)
+            error.headers = {"Retry-After": str(BUSY_RETRY_AFTER_SECONDS)}
+            raise error from None
         except AnalysisCrashedError as error:
             # Its message is an exception type name or an exit code, never content. The error then
             # reaches UnexpectedErrorMiddleware, which answers 500 internal-error.
