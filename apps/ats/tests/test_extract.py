@@ -18,6 +18,7 @@ from tests.pdfs import (
     glyph_case_pdf,
     gradient_clip_text_pdf,
     hidden_stuffing_resume_pdf,
+    hyphenated_pdf,
     icon_font_pua_pdf,
     image_only_pdf,
     invisible_text_beside_a_photo_in_a_form_pdf,
@@ -561,3 +562,44 @@ def test_page_renders_are_capped_per_document(monkeypatch: pytest.MonkeyPatch) -
     assert renders == extract_module._RENDER_BUDGET
     # Pages past the budget fail open: the character is not called hidden.
     assert [page.hidden_count for page in document.pages][-1] == 0
+
+
+# --- text rects and hyphen breaks (decision 0086) ---
+
+
+def test_text_rects_come_in_extraction_order_with_plausible_coordinates() -> None:
+    pdf = build_pdf([[("First invented line", 72, 700), ("Second invented line", 100, 650)]])
+    (page,) = extract(pdf).pages
+    assert len(page.text_rects) == 2
+    (l1, b1, r1, t1), (l2, b2, r2, t2) = page.text_rects
+    assert 72 <= l1 < 76 and 695 <= b1 <= 701 and r1 > l1 and t1 > b1
+    assert 100 <= l2 < 104 and 645 <= b2 <= 651
+    assert b1 > b2  # the first line is higher on the page
+
+
+def test_a_page_over_the_budget_gets_no_text_rects(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ats.extract as extract_module
+
+    monkeypatch.setattr(extract_module, "_CHAR_BUDGET", 5)
+    (page,) = extract(minimal_pdf("Invented Person")).pages
+    assert page.text_rects == ()
+
+
+def test_only_a_line_end_hyphen_before_a_lowercase_letter_is_a_hyphen_break() -> None:
+    # One real break ("distri-" / "buted"); controls: before an uppercase letter, before a digit,
+    # mid-line, and a hyphen followed by a jump to the other column on the same line.
+    (page,) = extract(hyphenated_pdf()).pages
+    assert page.hyphen_break_count == 1
+
+
+def test_a_chrome_u2010_line_end_hyphen_is_a_hyphen_break() -> None:
+    from ats.extract import _hyphen_break_count
+
+    assert _hyphen_break_count("It be\u2010\r\ncomes clear and com\u2010\r\nponents") == 2
+    assert _hyphen_break_count("Level\u2010\r\nHigh and 2019\u2010\r\n2021") == 0
+    assert _hyphen_break_count("a mid\u2010line hyphen") == 0
+
+
+def test_a_page_without_hyphenated_breaks_counts_zero() -> None:
+    (page,) = extract(minimal_pdf()).pages
+    assert page.hyphen_break_count == 0

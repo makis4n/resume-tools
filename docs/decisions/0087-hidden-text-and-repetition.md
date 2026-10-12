@@ -51,7 +51,7 @@ sees the extracted text, harms the candidate. Decision 0083 left both checks for
   every invisible-text lookup answers "covered", so a hostile upload gets no hidden count rather than quadratic
   work. Page renders are capped at 10 per document (`_RENDER_BUDGET`); a page after that answers "inked", so white text on it is not counted.
 - **Rubric unchanged.** `RUBRIC_VERSION` stays `readiness-1` (decision 0083: new checks silent on
-  existing fixtures). The analyser version moves to 0.2.0.
+  existing fixtures). The analyser version moves to 0.4.0.
 
 ## Consequences
 
