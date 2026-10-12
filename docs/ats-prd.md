@@ -26,7 +26,7 @@ decision 0030; the editor's side of the integration is decision 0031.
   signature, opens the file with pypdfium2 (decision 0032) and refuses an encrypted or unreadable
   one. `apps/editor/src/features/ats` holds the client, which validates replies against the
   contract, and a panel that nothing mounts yet.
-- Milestone 1's first slice has landed: `analyze` now returns a real, deterministic
+- Milestone 1 is built. `analyze` returns a real, deterministic
   ATS-readiness score with findings, under the versioned rubric in decision 0083. The checks are
   text layer (including text exported as outlines and image-only pages), page count,
   glyph-mapping (unmapped and icon-font characters; the ligature check exists but cannot fire on
@@ -38,9 +38,9 @@ decision 0030; the editor's side of the integration is decision 0031.
   repetition (decision 0087); each finding carries an origin, and the producing tool is
   classified from the PDF's metadata. There is no job matching yet: that is
   milestone 3.
-- Milestone 1's request limits have landed. `POST /v1/analyze` has a configurable per-IP rate
-  limit (429 `rate-limited` with Retry-After) and a hard processing-time limit
-  (`analysis-timeout`), next to the existing upload-size limit (decision 0088). The
+- `POST /v1/analyze` has a configurable per-IP rate limit (429 `rate-limited` with Retry-After),
+  a hard processing-time limit (422 `analysis-timeout`) and a cap on concurrent analyses (503
+  `server-busy`), next to the existing upload-size limit (decision 0088). The
   job-description-length limit and the daily model cap come with milestone 3.
 - The editor's milestone 2 has landed: three curated templates, the side panel, documents kept in
   the browser and PDF download. `Compiler.pdf()` in `apps/editor/src/editor/compiler.ts` returns the
