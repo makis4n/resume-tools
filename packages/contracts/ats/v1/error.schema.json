@@ -12,7 +12,7 @@
       "properties": {
         "code": {
           "type": "string",
-          "description": "Stable machine-readable code. Current codes: invalid-request (400, 422), not-found (404), method-not-allowed (405), file-too-large (413), not-a-pdf (415), pdf-encrypted (422), pdf-unreadable (422), internal-error (500), and http-error for any other status. New codes may be added within v1."
+          "description": "Stable machine-readable code. Current codes: invalid-request (400, 422), not-found (404), method-not-allowed (405), file-too-large (413), not-a-pdf (415), pdf-encrypted (422), pdf-unreadable (422), analysis-timeout (422), rate-limited (429, with a Retry-After header in seconds), internal-error (500), and http-error for any other status. New codes may be added within v1."
         },
         "message": {
           "type": "string",

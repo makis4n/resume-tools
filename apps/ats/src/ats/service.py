@@ -6,6 +6,7 @@ Nothing here reads, logs or keeps the PDF's contents.
 import logging
 import math
 import os
+from collections.abc import Callable
 from typing import Any
 
 import uvicorn
@@ -20,12 +21,19 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ats.analyze import NotAPdfError, analyze
+from ats.errors import error_response
 from ats.extract import EncryptedPdfError, UnreadablePdfError
+from ats.ratelimit import RateLimiter, RateLimitMiddleware
+from ats.timelimit import AnalysisCrashedError, AnalysisTimeoutError, run_with_time_limit
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 DEFAULT_ALLOWED_ORIGINS = "http://localhost:5173"
+DEFAULT_ANALYZE_RATE_LIMIT_PER_MINUTE = 10
+DEFAULT_RATE_LIMIT_MAX_CLIENTS = 10_000
+DEFAULT_TRUSTED_PROXY_HOPS = 0
+DEFAULT_ANALYSIS_TIMEOUT_SECONDS = 10.0
 
 # Room for the multipart boundaries and headers around the file in a request body.
 MULTIPART_OVERHEAD_BYTES = 64 * 1024
@@ -37,6 +45,10 @@ PDF_ENCRYPTED = (
 )
 PDF_UNREADABLE = "This PDF could not be read. It may be damaged; export it again and try again."
 INVALID_REQUEST = "The request must include a PDF in the `file` field."
+ANALYSIS_TIMEOUT = (
+    "This PDF took too long to analyse. It may be unusually complex; export it again, or "
+    "simplify it, and try again."
+)
 INTERNAL_ERROR = "Something went wrong while analysing the resume. Please try again."
 
 # Declared types a PDF may arrive with. The signature is checked as well, so a generic type is
@@ -64,10 +76,6 @@ class ServiceError(HTTPException):
         super().__init__(status_code=status, detail=message)
         self.code = code
         self.message = message
-
-
-def error_response(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
 
 
 def readable_size(size: int) -> str:
@@ -159,10 +167,50 @@ class BodyLimitMiddleware:
         await self.app(scope, counting_receive, send)
 
 
+def env_number(name: str, default: float, cast: Callable[[str], Any], minimum: float) -> Any:
+    """Read a number from the environment, refusing one below `minimum` (or not a number)."""
+    raw = os.environ.get(name)
+    try:
+        value = default if raw is None else cast(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number, not {raw!r}") from None
+    if not value >= minimum:
+        raise ValueError(f"{name} must be at least {minimum:g}, not {raw!r}")
+    return value
+
+
 def create_app(
-    max_upload_bytes: int | None = None, allowed_origins: list[str] | None = None
+    max_upload_bytes: int | None = None,
+    allowed_origins: list[str] | None = None,
+    *,
+    analyze_rate_limit_per_minute: int | None = None,
+    rate_limit_max_clients: int | None = None,
+    trusted_proxy_hops: int | None = None,
+    analysis_timeout_seconds: float | None = None,
+    analyser: Callable[[bytes], dict[str, Any]] = analyze,
 ) -> FastAPI:
-    """Build the service. Settings not passed in are read from the environment."""
+    """Build the service. Settings not passed in are read from the environment.
+
+    `analyser` is a seam for tests; it must be importable by name from another process.
+    """
+    if analyze_rate_limit_per_minute is None:
+        analyze_rate_limit_per_minute = env_number(
+            "ATS_ANALYZE_RATE_LIMIT_PER_MINUTE", DEFAULT_ANALYZE_RATE_LIMIT_PER_MINUTE, int, 0
+        )
+    if rate_limit_max_clients is None:
+        rate_limit_max_clients = env_number(
+            "ATS_RATE_LIMIT_MAX_CLIENTS", DEFAULT_RATE_LIMIT_MAX_CLIENTS, int, 1
+        )
+    if trusted_proxy_hops is None:
+        trusted_proxy_hops = env_number(
+            "ATS_TRUSTED_PROXY_HOPS", DEFAULT_TRUSTED_PROXY_HOPS, int, 0
+        )
+    if analysis_timeout_seconds is None:
+        analysis_timeout_seconds = env_number(
+            "ATS_ANALYSIS_TIMEOUT_SECONDS", DEFAULT_ANALYSIS_TIMEOUT_SECONDS, float, 0
+        )
+    if analysis_timeout_seconds <= 0:
+        raise ValueError("ATS_ANALYSIS_TIMEOUT_SECONDS must be greater than 0")
     if max_upload_bytes is None:
         max_upload_bytes = int(os.environ.get("ATS_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES))
     if allowed_origins is None:
@@ -188,9 +236,16 @@ def create_app(
     async def invalid_request(_: Request, __: RequestValidationError) -> JSONResponse:
         return error_response(422, "invalid-request", INVALID_REQUEST)
 
-    # Each middleware added wraps the ones before it: errors, then the body limit, then CORS.
+    limits: dict[str, RateLimiter] = {}
+    if analyze_rate_limit_per_minute > 0:
+        limits["/v1/analyze"] = RateLimiter(analyze_rate_limit_per_minute, rate_limit_max_clients)
+
+    # Each middleware added wraps the ones before it: errors, then the body limit, then the rate
+    # limit, then CORS. The rate limit sits inside CORS so a 429 carries CORS headers, and
+    # outside the body reading so a refused client's body is never read.
     app.add_middleware(UnexpectedErrorMiddleware)
     app.add_middleware(BodyLimitMiddleware, max_upload_bytes=max_upload_bytes)
+    app.add_middleware(RateLimitMiddleware, limits=limits, trusted_proxy_hops=trusted_proxy_hops)
     # Added last so it is outermost, and every error response carries CORS headers too.
     # A preflight it refuses gets its own plain-text 400, which error.schema.json excludes.
     app.add_middleware(
@@ -198,6 +253,7 @@ def create_app(
         allow_origins=allowed_origins,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
+        expose_headers=["Retry-After"],
     )
 
     @app.get("/health")
@@ -213,13 +269,23 @@ def create_app(
         if len(pdf) > max_upload_bytes:
             raise too_large(max_upload_bytes)
         try:
-            return await run_in_threadpool(analyze, pdf)
+            return await run_in_threadpool(
+                run_with_time_limit, analyser, pdf, analysis_timeout_seconds
+            )
         except NotAPdfError:
             raise ServiceError(415, "not-a-pdf", NOT_A_PDF) from None
         except EncryptedPdfError:
             raise ServiceError(422, "pdf-encrypted", PDF_ENCRYPTED) from None
         except UnreadablePdfError:
             raise ServiceError(422, "pdf-unreadable", PDF_UNREADABLE) from None
+        except AnalysisTimeoutError:
+            # A 422: the time depends on the file, and the same file would time out again.
+            raise ServiceError(422, "analysis-timeout", ANALYSIS_TIMEOUT) from None
+        except AnalysisCrashedError as error:
+            # Its message is an exception type name or an exit code, never content. The error then
+            # reaches UnexpectedErrorMiddleware, which answers 500 internal-error.
+            logger.error("Analysis process failed: %s", error)
+            raise
 
     return app
 
@@ -233,4 +299,6 @@ def main() -> None:
         "ats.service:app",
         host=os.environ.get("ATS_HOST", "127.0.0.1"),
         port=int(os.environ.get("ATS_PORT", "8000")),
+        # scope["client"] stays the TCP peer; only ATS_TRUSTED_PROXY_HOPS reads X-Forwarded-For.
+        proxy_headers=False,
     )

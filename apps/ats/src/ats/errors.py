@@ -1,0 +1,7 @@
+"""The contract's error reply (packages/contracts/ats/v1/error.schema.json)."""
+
+from fastapi.responses import JSONResponse
+
+
+def error_response(status: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
