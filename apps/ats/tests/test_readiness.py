@@ -378,3 +378,9 @@ def test_repeated_terms_is_document_level_without_quoting_the_word() -> None:
     ids = _ids(_document(_page(1, text="intro"), _page(2, text="zebra " * 30, hidden_count=20)))
     assert ids == ["repeated-terms", "hidden-text"]
     assert check(doc, Producer.OTHER) == check(doc, Producer.OTHER)
+
+
+def test_a_column_drawn_one_token_per_line_is_not_repetition() -> None:
+    skills = "\n".join(["python", "terraform", "kubernetes", "postgres", "golang"])
+    column = skills + "\n" + "\n".join(["advanced"] * 5)
+    assert "repeated-terms" not in _ids(_document(_page(text=column)))

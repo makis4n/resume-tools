@@ -357,6 +357,51 @@ def _is_scan_like(image: object, width_points: float, height_points: float) -> b
     )
 
 
+_INKED_TABLE = bytes(1 if value < 255 - _BACKGROUND_TOLERANCE else 0 for value in range(256))
+
+
+def _displayed_box(pdf_page: pdfium.PdfPage) -> tuple[float, float, float, float]:
+    """`(left, bottom, right, top)` of the box PDFium displays and renders: the CropBox clipped
+    to the MediaBox, in unrotated page space. A PDF rectangle may name any two opposite corners,
+    so each is ordered first."""
+
+    def ordered(box: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        return min(box[0], box[2]), min(box[1], box[3]), max(box[0], box[2]), max(box[1], box[3])
+
+    media = ordered(pdf_page.get_mediabox())
+    crop = pdf_page.get_cropbox()
+    crop_box = ordered(crop)
+    clipped = (
+        max(media[0], crop_box[0]),
+        max(media[1], crop_box[1]),
+        min(media[2], crop_box[2]),
+        min(media[3], crop_box[3]),
+    )
+    if clipped[2] <= clipped[0] or clipped[3] <= clipped[1]:
+        return media
+    return clipped
+
+
+def _inked_table(
+    data: bytes, width: int, height: int, stride: int, channels: int
+) -> list[list[int]]:
+    """A summed-area table of the render's inked pixels (any colour channel below the background
+    tolerance): `table[y][x]` counts the inked pixels above row `y` and left of column `x`. Built
+    once per page with whole-row byte operations, so its cost is bounded by the render size."""
+    from itertools import accumulate
+    from operator import add
+
+    table = [[0] * (width + 1)]
+    for row in range(height):
+        pixels = data[row * stride : row * stride + width * channels]
+        merged = 0
+        for channel in range(min(3, channels)):
+            merged |= int.from_bytes(pixels[channel::channels].translate(_INKED_TABLE), "big")
+        mask = merged.to_bytes(width, "big")
+        table.append(list(map(add, table[-1], (0, *accumulate(mask)))))
+    return table
+
+
 class _HiddenReader:
     """Decides, per character, whether text is hidden from a reader (decision 0087). One per
     page; it holds the page's lazily read covers and per-text-object caches."""
@@ -372,17 +417,11 @@ class _HiddenReader:
         self._budget = budget
         # (left, bottom, right, top), unrotated page space. A PDF rectangle may name any two
         # opposite corners, so order them.
-        crop = pdf_page.get_cropbox()
-        self._crop = (
-            min(crop[0], crop[2]),
-            min(crop[1], crop[3]),
-            max(crop[0], crop[2]),
-            max(crop[1], crop[3]),
-        )
+        self._crop = _displayed_box(pdf_page)
         self._covers: list[_Cover] | None = None
         self._objects: dict[int, tuple[int, tuple[_Colour | None, ...]]] = {}
         self._rect = pdfium.raw.FS_RECTF()
-        self._render: tuple[object, int, int, int, int, float] | None = None
+        self._render: tuple[list[list[int]], int, int, float] | None = None
         self._render_failed = False
 
     def _covered(self, centre: tuple[float, float]) -> bool:
@@ -408,22 +447,20 @@ class _HiddenReader:
             self._render_failed = self._render is None
         if self._render is None:
             return True
-        buffer, width, height, stride, channels, scale = self._render
+        sat, width, height, scale = self._render
         left, bottom, right, top = self._crop
         x0 = max(0, int((box[0] - left) * scale))
         x1 = min(width, int((box[2] - left) * scale) + 1)
         y0 = max(0, int((top - box[3]) * scale))
         y1 = min(height, int((top - box[1]) * scale) + 1)
-        data: bytes = buffer  # type: ignore[assignment]
-        for row in range(y0, y1):
-            base = row * stride
-            for column in range(x0, x1):
-                offset = base + column * channels
-                if any(value < 255 - _BACKGROUND_TOLERANCE for value in data[offset : offset + 3]):
-                    return True
-        return False
+        if x0 >= x1 or y0 >= y1:
+            return False
+        # Inked pixels in the rectangle from the summed-area table: constant time per character
+        # however large the box, so a hostile page of huge glyphs costs no more than a normal one.
+        row_end, row_start = sat[y1], sat[y0]
+        return row_end[x1] - row_end[x0] - row_start[x1] + row_start[x0] > 0
 
-    def _make_render(self) -> tuple[object, int, int, int, int, float] | None:
+    def _make_render(self) -> tuple[list[list[int]], int, int, float] | None:
         left, bottom, right, top = self._crop
         longest = max(right - left, top - bottom)
         if longest <= 0:
@@ -435,8 +472,18 @@ class _HiddenReader:
                 rotation=(360 - self._pdf_page.get_rotation()) % 360,
                 may_draw_forms=False,
             )
-            data = bytes(bitmap.buffer)
-            return data, bitmap.width, bitmap.height, bitmap.stride, bitmap.n_channels, scale
+            return (
+                _inked_table(
+                    bytes(bitmap.buffer),
+                    bitmap.width,
+                    bitmap.height,
+                    bitmap.stride,
+                    bitmap.n_channels,
+                ),
+                bitmap.width,
+                bitmap.height,
+                scale,
+            )
         except Exception:
             return None
 

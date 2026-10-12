@@ -57,7 +57,10 @@ sees the extracted text, harms the candidate. Decision 0083 left both checks for
 
 - Two new stable finding ids, `hidden-text` and `repeated-terms`; no contract change.
 - Per-character cost is roughly four times the old pass (0.20 s extra over 201,598 characters, from
-  measurements), bounded by the character budget.
+  measurements), bounded by the character budget. The render is read through a summed-area table built once per
+  page, so a character costs the same however large its box; the render covers the CropBox clipped
+  to the MediaBox, as PDFium displays it. A run of equal tokens that sits one per line (a table
+  column) is not counted as repetition.
 - Known limits: text hidden under an opaque shape drawn on top of it; soft masks and blend modes
   (the render shows them, but the text colour is still read as drawn); coloured text on a
   same-coloured panel (only near-white text is compared); white text next to visible dark ink

@@ -288,7 +288,8 @@ def _is_content_token(token: str) -> bool:
     return len(token) >= 2 and not token.isdigit() and token not in _STOPWORDS
 
 
-def _is_repeated(tokens: list[str]) -> bool:
+def _is_repeated(tokens: list[str], lines: list[int] | None = None) -> bool:
+    """`lines[i]` numbers the text line token `i` is on (counting only lines that hold a token)."""
     if not tokens:
         return False
     counts: dict[str, int] = {}
@@ -316,13 +317,27 @@ def _is_repeated(tokens: list[str]) -> bool:
             if streak >= needed and any(
                 _is_content_token(token) for token in tokens[index - length + 1 : index + 1]
             ):
+                start = index - needed - length + 1
+                if lines is not None and lines[index] - lines[start] == index - start:
+                    # One token per line is a table column drawn on its own ("Advanced" down a
+                    # skill-level column), not stuffing run together.
+                    streak = 0
+                    continue
                 return True
     return False
 
 
 def _repeated_terms_findings(document: Document, producer: Producer) -> list[Finding]:
-    tokens = _TOKEN.findall(_repetition_text(document).lower())
-    if not _is_repeated(tokens):
+    tokens: list[str] = []
+    lines: list[int] = []
+    line_number = 0
+    for line in _repetition_text(document).lower().splitlines():
+        found = _TOKEN.findall(line)
+        if found:
+            line_number += 1
+            tokens.extend(found)
+            lines.extend([line_number] * len(found))
+    if not _is_repeated(tokens, lines):
         return []
     return [
         Finding(

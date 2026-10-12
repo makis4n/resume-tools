@@ -13,6 +13,7 @@ from ats.extract import (
 )
 from tests.pdfs import (
     build_pdf,
+    build_raw_pdf,
     form_wrapped_image_pdf,
     glyph_case_pdf,
     gradient_clip_text_pdf,
@@ -512,3 +513,19 @@ def test_a_stretched_one_pixel_image_does_not_excuse_invisible_text() -> None:
 def test_text_used_as_a_clip_for_a_gradient_is_not_hidden() -> None:
     assert _hidden(gradient_clip_text_pdf()) == (0, 0, 0, 0, 0)
     assert _hidden(invisible_text_pdf(7))[0] > 0
+
+
+def test_white_text_on_a_dark_panel_with_a_crop_box_past_the_media_box_is_not_hidden() -> None:
+    text = b"BT 1 g /F1 12 Tf 20 %d Td (Invented Sidebar Text) Tj ET"
+    sidebar = b"0.1 0.1 0.3 rg 0 0 200 792 re f " + text % 700
+    band = b"0.1 0.1 0.3 rg 0 700 612 92 re f " + text % 740
+    assert _hidden(build_raw_pdf(sidebar, crop_box=(-150, 0, 612, 792))) == (0, 0, 0, 0, 0)
+    assert _hidden(build_raw_pdf(band, crop_box=(0, 0, 612, 1000))) == (0, 0, 0, 0, 0)
+
+
+def test_a_page_of_huge_white_glyphs_is_read_in_bounded_time() -> None:
+    content = b"BT 1 g /F1 700 Tf -389 Tc 20 0 Td (" + b"abdeghnopqu0" * 40 + b") Tj ET"
+    started = time.perf_counter()
+    (page,) = extract(build_raw_pdf(content)).pages
+    assert time.perf_counter() - started < 2.0
+    assert page.background_colour_count == page.hidden_count > 0
