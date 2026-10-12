@@ -50,10 +50,12 @@ finding conventions: stable ids, `warning` severity for layout problems, "many A
   `chrome-one-column`, `chrome-sidebar`, `chrome-right-sidebar`, `textedit-rtf`, `textutil-table`,
   `textutil-html`) all score 2 or fewer, below the threshold. They were a one-off calibration;
   tests do not read anything under `apps/editor`.
-- **Hyphenation.** PDFium turns a hyphen at the end of a line into U+0002 and joins the two lines
+- **Hyphenation.** PDFium turns a U+002D or U+00AD hyphen at the end of a line into U+0002 and joins the two lines
   with no break ("distri\x02buted"), whatever the next line starts with. A mid-line hyphen, or a
   hyphen followed by a jump to another column on the same line, stays `-`. `hyphen_break_count`
-  counts a letter, U+0002, then a lowercase letter, computed from `Page.text` with one compiled
+  counts a letter, U+0002, then a lowercase letter, or a letter, U+2010, a line break, then a lowercase
+  letter (Chrome/Skia draws an automatic hyphen as U+2010, which PDFium keeps along with the line
+  break), computed from `Page.text` with one compiled
   regex for every page. A line-end hyphen before a capital or a digit (such as a name or a date
   range) is not counted. `hyphenated-line-breaks` fires when the count is above zero. PDFium also
   writes U+0002 for the hyphen of a real compound (`user-` / `facing`), so the count cannot tell it

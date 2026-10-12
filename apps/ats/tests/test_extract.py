@@ -398,6 +398,14 @@ def test_only_a_line_end_hyphen_before_a_lowercase_letter_is_a_hyphen_break() ->
     assert page.hyphen_break_count == 1
 
 
+def test_a_chrome_u2010_line_end_hyphen_is_a_hyphen_break() -> None:
+    from ats.extract import _hyphen_break_count
+
+    assert _hyphen_break_count("It be\u2010\r\ncomes clear and com\u2010\r\nponents") == 2
+    assert _hyphen_break_count("Level\u2010\r\nHigh and 2019\u2010\r\n2021") == 0
+    assert _hyphen_break_count("a mid\u2010line hyphen") == 0
+
+
 def test_a_page_without_hyphenated_breaks_counts_zero() -> None:
     (page,) = extract(minimal_pdf()).pages
     assert page.hyphen_break_count == 0

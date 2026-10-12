@@ -69,7 +69,10 @@ _CHAR_BUDGET = 200_000
 # ("distri\x02buted"), whatever the next line starts with. A letter, U+0002, then a letter is the
 # shape of a word split by hyphenation; `_hyphen_break_count` also requires the second letter to be
 # lowercase, so a line-end hyphen before a capital or a digit (a date range, a name) is not counted.
-_HYPHEN_BREAK = re.compile(r"[^\W\d_]\x02(?=[^\W\d_])")
+#
+# Chrome/Skia draws an automatic line-end hyphen as U+2010 and PDFium keeps both it and the line
+# break ("be\u2010\r\ncomes"), so a letter, U+2010, a line break, then a lowercase letter counts.
+_HYPHEN_BREAK = re.compile(r"[^\W\d_](?:\x02|\u2010\r?\n)(?=[^\W\d_])")
 
 
 class ExtractError(ValueError):
