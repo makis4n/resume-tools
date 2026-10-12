@@ -37,8 +37,16 @@ analyse should not be able to hold a worker for as long as it likes.
   it is not a transient 5xx. The child returns tags rather than exceptions, so no traceback that
   could quote the resume is printed; a child that dies is a 500 `internal-error`, logged by exit
   code or exception type only.
-- **Concurrency.** Requests already wait in Starlette's threadpool (anyio's default of 40), which
-  caps the number of analysis processes at once.
+- **Light entry point.** Every child re-runs the main script's top level (CPython does not pass
+  the main path to the forkserver preload). `ats-serve` is `ats.serve:main`, which imports
+  uvicorn and the service only inside `main`, so a child does not pay for them.
+- **Concurrency.** At most `min(4, CPUs)` analysis processes run at once, held by a semaphore in
+  `ats/timelimit.py`. A request waits for a slot before its clock starts, so queueing is never
+  reported as `analysis-timeout`. The anyio threadpool of 40 alone would allow 40 PDFium processes.
+- **Settings are checked at start.** `ATS_ANALYSIS_TIMEOUT_SECONDS` must be finite, above 0 and at
+  most 3600; `inf` is refused by name rather than failing every analysis.
+- **Forwarded entries.** A `:port` or `[v6]:port` suffix on the trusted entry is stripped before
+  parsing. An entry that still is not an IP logs a warning and falls back to the peer.
 - Both new codes are added to the description in `packages/contracts/ats/v1/error.schema.json`,
   an additive change within v1. The analyser version is not bumped: the analysis body does not
   change.

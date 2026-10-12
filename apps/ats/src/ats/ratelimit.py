@@ -8,6 +8,7 @@ purpose: the limiter is only touched on the event loop.
 """
 
 import ipaddress
+import logging
 import math
 import time
 from collections import OrderedDict
@@ -17,6 +18,8 @@ from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ats.errors import error_response
+
+logger = logging.getLogger(__name__)
 
 RATE_LIMITED = (
     "Too many requests were sent in a short time. Please wait about {} seconds and try again."
@@ -77,17 +80,39 @@ def client_key(scope: Scope, trusted_proxy_hops: int) -> str:
         values = Headers(scope=scope).getlist("x-forwarded-for")
         entries = [part.strip() for value in values for part in value.split(",")]
         if len(entries) >= trusted_proxy_hops:
-            raw = entries[-trusted_proxy_hops]
+            raw = _strip_port(entries[-trusted_proxy_hops])
+        if _parse(raw) is None:
+            logger.warning(
+                "ATS_TRUSTED_PROXY_HOPS=%d but the X-Forwarded-For entry is not an IP address "
+                "or has too few entries; limiting by the TCP peer instead",
+                trusted_proxy_hops,
+            )
     return _normalise(raw, peer)
+
+
+def _strip_port(entry: str) -> str:
+    """Drop a `:port` from `1.2.3.4:80` or `[v6]:80`, and the brackets from `[v6]`."""
+    if entry.startswith("["):
+        end = entry.find("]")
+        return entry[1:end] if end != -1 else entry
+    if entry.count(":") == 1:
+        return entry.split(":", 1)[0]
+    return entry
+
+
+def _parse(candidate: str | None) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    if candidate is None:
+        return None
+    try:
+        return ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
 
 
 def _normalise(raw: str | None, peer: str | None) -> str:
     for candidate in (raw, peer):
-        if candidate is None:
-            continue
-        try:
-            address = ipaddress.ip_address(candidate)
-        except ValueError:
+        address = _parse(candidate)
+        if address is None:
             continue
         if isinstance(address, ipaddress.IPv6Address):
             if address.ipv4_mapped is not None:

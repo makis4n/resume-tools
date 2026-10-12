@@ -4,12 +4,15 @@ The analysis runs in a child process that is killed when the time is up. A threa
 stopped, and pypdfium2 releases the GIL, so a deadline inside the process would not work.
 
 Children come from a forkserver: it is single-threaded, so forking from it is safe while uvicorn
-has threads, and with `ats.analyze` preloaded a child starts fast. Each request already waits in
-Starlette's threadpool (anyio's default limit of 40), which caps the number of children at once.
-This is a time limit, not a sandbox.
+has threads. It preloads `ats.analyze`. Each child also runs the main script's top level again,
+which is why `ats.serve` stays light. At most `MAX_CONCURRENT_ANALYSES` children run at once,
+because each holds a PDFium document; a request waits for a slot before its clock starts. This is
+a time limit, not a sandbox.
 """
 
 import multiprocessing
+import os
+import threading
 from collections.abc import Callable
 from multiprocessing.connection import Connection
 from typing import Any
@@ -18,6 +21,9 @@ from ats.analyze import NotAPdfError
 from ats.extract import EncryptedPdfError, UnreadablePdfError
 
 multiprocessing.set_forkserver_preload(["ats.analyze"])
+
+MAX_CONCURRENT_ANALYSES = max(1, min(4, os.cpu_count() or 1))
+_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_ANALYSES)
 
 _TAGS: dict[type[Exception], str] = {
     NotAPdfError: "not-a-pdf",
@@ -49,6 +55,11 @@ def _child(analyser: Callable[[bytes], dict[str, Any]], pdf: bytes, send: Connec
 def run_with_time_limit(
     analyser: Callable[[bytes], dict[str, Any]], pdf: bytes, seconds: float
 ) -> dict[str, Any]:
+    with _SLOTS:
+        return _run(analyser, pdf, seconds)
+
+
+def _run(analyser: Callable[[bytes], dict[str, Any]], pdf: bytes, seconds: float) -> dict[str, Any]:
     ctx = multiprocessing.get_context("forkserver")
     recv, send = ctx.Pipe(duplex=False)
     child = ctx.Process(target=_child, args=(analyser, pdf, send), daemon=True)

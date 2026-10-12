@@ -1,3 +1,4 @@
+import pytest
 from starlette.types import Scope
 
 from ats.ratelimit import RateLimiter, client_key
@@ -80,3 +81,21 @@ def test_ipv6_is_grouped_by_64_and_mapped_ipv4_is_ipv4() -> None:
 def test_an_unparseable_peer_or_no_peer_still_gives_a_key() -> None:
     assert client_key(scope("testclient"), 0) == "testclient"
     assert client_key(scope(None), 0) == ""
+
+
+def test_a_trusted_entry_with_a_port_is_keyed_by_its_address(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert client_key(scope("10.0.0.5", "203.0.113.9:54321"), 1) == "203.0.113.9"
+    assert client_key(scope("10.0.0.5", "198.51.100.7:1111"), 1) == "198.51.100.7"
+    assert client_key(scope("10.0.0.5", "[2001:db8:1:2::1]:443"), 1) == "2001:db8:1:2::/64"
+    assert client_key(scope("10.0.0.5", "[2001:db8:1:2::1]"), 1) == "2001:db8:1:2::/64"
+    assert not caplog.records
+
+
+def test_falling_back_to_the_peer_behind_a_trusted_proxy_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING", logger="ats.ratelimit"):
+        assert client_key(scope("10.0.0.1", "unknown"), 1) == "10.0.0.1"
+    assert len(caplog.records) == 1

@@ -9,7 +9,6 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-import uvicorn
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,6 +33,7 @@ DEFAULT_ANALYZE_RATE_LIMIT_PER_MINUTE = 10
 DEFAULT_RATE_LIMIT_MAX_CLIENTS = 10_000
 DEFAULT_TRUSTED_PROXY_HOPS = 0
 DEFAULT_ANALYSIS_TIMEOUT_SECONDS = 10.0
+MAX_ANALYSIS_TIMEOUT_SECONDS = 3600.0
 
 # Room for the multipart boundaries and headers around the file in a request body.
 MULTIPART_OVERHEAD_BYTES = 64 * 1024
@@ -174,8 +174,8 @@ def env_number(name: str, default: float, cast: Callable[[str], Any], minimum: f
         value = default if raw is None else cast(raw)
     except ValueError:
         raise ValueError(f"{name} must be a number, not {raw!r}") from None
-    if not value >= minimum:
-        raise ValueError(f"{name} must be at least {minimum:g}, not {raw!r}")
+    if not math.isfinite(value) or not value >= minimum:
+        raise ValueError(f"{name} must be a finite number of at least {minimum:g}, not {raw!r}")
     return value
 
 
@@ -209,8 +209,11 @@ def create_app(
         analysis_timeout_seconds = env_number(
             "ATS_ANALYSIS_TIMEOUT_SECONDS", DEFAULT_ANALYSIS_TIMEOUT_SECONDS, float, 0
         )
-    if analysis_timeout_seconds <= 0:
-        raise ValueError("ATS_ANALYSIS_TIMEOUT_SECONDS must be greater than 0")
+    if not 0 < analysis_timeout_seconds <= MAX_ANALYSIS_TIMEOUT_SECONDS:
+        raise ValueError(
+            "ATS_ANALYSIS_TIMEOUT_SECONDS must be greater than 0 and at most "
+            f"{MAX_ANALYSIS_TIMEOUT_SECONDS:g}, not {analysis_timeout_seconds!r}"
+        )
     if max_upload_bytes is None:
         max_upload_bytes = int(os.environ.get("ATS_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES))
     if allowed_origins is None:
@@ -291,14 +294,3 @@ def create_app(
 
 
 app = create_app()
-
-
-def main() -> None:
-    """Run the service locally: `uv run ats-serve`."""
-    uvicorn.run(
-        "ats.service:app",
-        host=os.environ.get("ATS_HOST", "127.0.0.1"),
-        port=int(os.environ.get("ATS_PORT", "8000")),
-        # scope["client"] stays the TCP peer; only ATS_TRUSTED_PROXY_HOPS reads X-Forwarded-For.
-        proxy_headers=False,
-    )
