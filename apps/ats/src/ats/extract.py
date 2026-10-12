@@ -5,6 +5,8 @@ Extraction never logs, or puts into an exception message, any text taken from th
 must never leak resume content. `Document.producer` and `Document.creator` are the PDF's raw
 metadata strings; they exist only so `ats.producer.classify` can turn them into a `Producer`, and
 no caller may return or log them.
+
+The hidden-text facts (decision 0087) are counts only; nothing new reads or stores text.
 """
 
 import ctypes
@@ -65,6 +67,34 @@ _OBJECT_BUDGET = 100_000
 # count, so a hostile upload cannot stall every other request behind the lock.
 _CHAR_BUDGET = 200_000
 
+# Hidden-text signals (decision 0087). A character whose loose box (`FPDFText_GetLooseCharBox`, in
+# page space with every text, form and page matrix already applied) has `max(width, height)` under
+# this many points is unreadably small; `max` rather than height so rotated text is not mistaken
+# for tiny text.
+_TINY_TEXT_POINTS = 3.0
+# Text squashed along one axis (a tiny `Tz`, or a flat text matrix) is unreadable even when its
+# other side is long: a box under this many points on either side is a sliver. No real glyph is
+# this thin (a full stop at 8 pt has a loose box about 2 pt wide).
+_SLIVER_POINTS = 1.0
+
+# A painting colour with every channel at or above `255 - _BACKGROUND_TOLERANCE` counts as
+# near-white, the colour of an unpainted page.
+_BACKGROUND_TOLERANCE = 16
+
+# The most shapes (`_covers`) a page keeps as possible backgrounds, and the rectangle-containment
+# tests allowed across one document. Once the test budget is spent every later lookup answers
+# "covered", which fails open (no hidden count), so a hostile upload cannot make cover lookups
+# quadratic in its character and shape counts.
+_MAX_COVERS = 500
+# An image counts as a cover only at this resolution or better (see `_is_scan_like`).
+_MIN_IMAGE_PIXELS_PER_POINT = 0.5
+# The longest side, in pixels, of the page render `_HiddenReader` samples colours from.
+_RENDER_MAX_SIDE = 600
+_COVER_TEST_BUDGET = 100_000
+# The page renders one document may make for `_HiddenReader._inked`. A render decodes the page's
+# images and builds a table in Python, all under `_PDFIUM_LOCK`, so a document of many one-word
+# white pages must not buy one per page. Once spent, `_inked` answers "inked" (fails open).
+_RENDER_BUDGET = 10
 # PDFium replaces a hyphen that ends a line with U+0002 and joins the two lines with no break
 # ("distri\x02buted"), whatever the next line starts with. A letter, U+0002, then a letter is the
 # shape of a word split by hyphenation; `_hyphen_break_count` also requires the second letter to be
@@ -112,6 +142,22 @@ class Page:
     - `ligature_count`: characters that are a single Latin ligature glyph (ﬀ ﬁ ﬂ ﬃ ﬄ ﬅ ﬆ), which
       breaks plain keyword search on the extracted text.
 
+    `hidden_count` and its four reasons (decision 0087) are also counts within `char_count`, from
+    the same pass: `hidden_count` is the non-whitespace characters hidden for any reason (the
+    union, so a character with several reasons counts once), and each reason counts the characters
+    it applies to, so a character can be in several of them.
+
+    - `invisible_count`: drawn with an invisible or clip text render mode, or painted fully
+      transparent -- unless it sits over an image (an OCR text layer over a scan hides nothing).
+    - `background_colour_count`: painted near-white with no shape or image drawn under it to make
+      that colour visible.
+    - `tiny_count`: under `_TINY_TEXT_POINTS` points wide and high, or under `_SLIVER_POINTS` on
+      either side, once every matrix is applied.
+    - `off_page_count`: entirely outside the page's crop box.
+
+    All five are 0 on a page past `_CHAR_BUDGET`, for a character whose text object PDFium cannot
+    resolve, and whenever the cover-test budget is spent (they fail open).
+
     `text_objects`, `image_objects` and `path_objects` count every TEXT, IMAGE and PATH object on
     the page, recursing into any Form XObject to reach objects nested inside it (common in scanner
     and print-driver output): see `_count_objects`. A Form XObject itself is not tallied into any
@@ -137,6 +183,11 @@ class Page:
     text_objects: int
     image_objects: int
     path_objects: int
+    hidden_count: int = 0
+    invisible_count: int = 0
+    background_colour_count: int = 0
+    tiny_count: int = 0
+    off_page_count: int = 0
     text_rects: tuple[tuple[float, float, float, float], ...] = ()
     hyphen_break_count: int = 0
 
@@ -240,20 +291,351 @@ def _font_name_at(text_page: pdfium.PdfTextPage, index: int) -> str | None:
     return decode(memoryview(buffer)[: size - 1], "utf-8", errors="replace")
 
 
-def _char_stats(text_page: pdfium.PdfTextPage, text: str) -> tuple[int, int, int, int]:
+@dataclass
+class _Budget:
+    """What is left of `_COVER_TEST_BUDGET` (`remaining`) and of `_RENDER_BUDGET` (`renders`) for
+    one document, shared by every page."""
+
+    remaining: int
+    renders: int = 0
+
+
+@dataclass
+class _CharStats:
+    """The per-character counts `_char_stats` returns, documented on `Page`."""
+
+    char_count: int = 0
+    unmapped_count: int = 0
+    private_use_count: int = 0
+    ligature_count: int = 0
+    hidden_count: int = 0
+    invisible_count: int = 0
+    background_colour_count: int = 0
+    tiny_count: int = 0
+    off_page_count: int = 0
+
+
+_Colour = tuple[int, int, int, int]
+_Cover = tuple[float, float, float, float, bool]  # (left, bottom, right, top, is_image)
+
+
+def _paint(obj: object, getter: object) -> tuple[int, int, int, int] | None:
+    """`(r, g, b, a)` from `FPDFPageObj_GetFillColor`/`GetStrokeColor`, or `None` if unresolved."""
+    red, green, blue, alpha = (ctypes.c_uint() for _ in range(4))
+    if not getter(obj, red, green, blue, alpha):  # type: ignore[operator]
+        return None
+    return red.value, green.value, blue.value, alpha.value
+
+
+def _near_white(paint: tuple[int, int, int, int]) -> bool:
+    return all(channel >= 255 - _BACKGROUND_TOLERANCE for channel in paint[:3])
+
+
+def _bounds(obj: object) -> tuple[float, float, float, float] | None:
+    left, bottom, right, top = (ctypes.c_float() for _ in range(4))
+    if not pdfium.raw.FPDFPageObj_GetBounds(obj, left, bottom, right, top):
+        return None
+    return left.value, bottom.value, right.value, top.value
+
+
+def _through_matrix(
+    obj: object, rect: tuple[float, float, float, float]
+) -> tuple[float, float, float, float]:
+    """`rect` (in the space inside Form XObject `obj`) as the bounding box of its corners after
+    `obj`'s own matrix, which takes it one level out (towards page space)."""
+    matrix = pdfium.raw.FS_MATRIX()
+    if not pdfium.raw.FPDFPageObj_GetMatrix(obj, matrix):
+        return rect
+    xs, ys = [], []
+    for x in (rect[0], rect[2]):
+        for y in (rect[1], rect[3]):
+            xs.append(matrix.a * x + matrix.c * y + matrix.e)
+            ys.append(matrix.b * x + matrix.d * y + matrix.f)
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _form_image_covers(
+    form: object, depth: int, budget: int
+) -> tuple[list[tuple[float, float, float, float]], int]:
+    """The scan-like images inside Form XObject `form`, each as its own bounds in the space the
+    form is drawn in (the form's matrix applied), so a small photo inside a page-wrapping form
+    covers the photo, not the whole form. Recurses into nested forms like `_count_objects_in`,
+    with the same depth limit and a shared object `budget`; returns `(rects, budget_remaining)`."""
+    raw = pdfium.raw
+    rects: list[tuple[float, float, float, float]] = []
+    for index in range(raw.FPDFFormObj_CountObjects(form)):
+        if budget <= 0:
+            break
+        obj = raw.FPDFFormObj_GetObject(form, index)
+        if not obj:
+            continue
+        budget -= 1
+        obj_type = raw.FPDFPageObj_GetType(obj)
+        if obj_type == raw.FPDF_PAGEOBJ_IMAGE:
+            box = _bounds(obj)
+            if box is not None and _is_scan_like(obj, box[2] - box[0], box[3] - box[1]):
+                rects.append(_through_matrix(form, box))
+        elif obj_type == raw.FPDF_PAGEOBJ_FORM and depth < _FORM_RECURSION_LIMIT:
+            inner, budget = _form_image_covers(obj, depth + 1, budget)
+            rects.extend(_through_matrix(form, rect) for rect in inner)
+    return rects, budget
+
+
+def _covers(pdf_page: pdfium.PdfPage) -> list[_Cover]:
+    """Images on `pdf_page` that invisible text could be an OCR layer over: a picture or scan of
+    real resolution (`_is_scan_like`), or the same inside a Form XObject (a scanner's wrapped
+    image; the cover is that image, not the whole form). At most `_MAX_COVERS`, from at most
+    `_OBJECT_BUDGET` top-level objects, each as `(left, bottom, right, top, True)` in page space.
+    Colour covers (panels, gradients) are not listed: `_inked` reads those from a render.
+    """
+    covers: list[_Cover] = []
+    raw = pdfium.raw
+    count = min(raw.FPDFPage_CountObjects(pdf_page), _OBJECT_BUDGET)
+    walk_budget = _OBJECT_BUDGET  # shared by every form's inner walk
+    for index in range(count):
+        if len(covers) >= _MAX_COVERS:
+            break
+        obj = raw.FPDFPage_GetObject(pdf_page, index)
+        if not obj:
+            continue
+        obj_type = raw.FPDFPageObj_GetType(obj)
+        if obj_type == raw.FPDF_PAGEOBJ_FORM:
+            rects, walk_budget = _form_image_covers(obj, 1, walk_budget)
+            covers.extend((*rect, True) for rect in rects[: _MAX_COVERS - len(covers)])
+        elif obj_type == raw.FPDF_PAGEOBJ_IMAGE:
+            box = _bounds(obj)
+            if box is not None and _is_scan_like(obj, box[2] - box[0], box[3] - box[1]):
+                covers.append((*box, True))
+    return covers
+
+
+def _is_scan_like(image: object, width_points: float, height_points: float) -> bool:
+    """Whether an image has the resolution of a real picture or scan (at least 0.5 pixel per
+    point, 36 dpi, each way). A 1x1 image stretched across the page is a colour wash, not a cover
+    an OCR layer or a coloured panel could sit on."""
+    pixel_width, pixel_height = ctypes.c_uint(), ctypes.c_uint()
+    if not pdfium.raw.FPDFImageObj_GetImagePixelSize(image, pixel_width, pixel_height):
+        return True
+    return (
+        pixel_width.value >= _MIN_IMAGE_PIXELS_PER_POINT * width_points
+        and pixel_height.value >= _MIN_IMAGE_PIXELS_PER_POINT * height_points
+    )
+
+
+_INKED_TABLE = bytes(1 if value < 255 - _BACKGROUND_TOLERANCE else 0 for value in range(256))
+
+
+def _displayed_box(pdf_page: pdfium.PdfPage) -> tuple[float, float, float, float]:
+    """`(left, bottom, right, top)` of the box PDFium displays and renders: the CropBox clipped
+    to the MediaBox, in unrotated page space. A PDF rectangle may name any two opposite corners,
+    so each is ordered first."""
+
+    def ordered(box: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        return min(box[0], box[2]), min(box[1], box[3]), max(box[0], box[2]), max(box[1], box[3])
+
+    media = ordered(pdf_page.get_mediabox())
+    crop = pdf_page.get_cropbox()
+    crop_box = ordered(crop)
+    clipped = (
+        max(media[0], crop_box[0]),
+        max(media[1], crop_box[1]),
+        min(media[2], crop_box[2]),
+        min(media[3], crop_box[3]),
+    )
+    if clipped[2] <= clipped[0] or clipped[3] <= clipped[1]:
+        return media
+    return clipped
+
+
+def _inked_table(
+    data: bytes, width: int, height: int, stride: int, channels: int
+) -> list[list[int]]:
+    """A summed-area table of the render's inked pixels (any colour channel below the background
+    tolerance): `table[y][x]` counts the inked pixels above row `y` and left of column `x`. Built
+    once per page with whole-row byte operations, so its cost is bounded by the render size."""
+    from itertools import accumulate
+    from operator import add
+
+    table = [[0] * (width + 1)]
+    for row in range(height):
+        pixels = data[row * stride : row * stride + width * channels]
+        merged = 0
+        for channel in range(min(3, channels)):
+            merged |= int.from_bytes(pixels[channel::channels].translate(_INKED_TABLE), "big")
+        mask = merged.to_bytes(width, "big")
+        table.append(list(map(add, table[-1], (0, *accumulate(mask)))))
+    return table
+
+
+class _HiddenReader:
+    """Decides, per character, whether text is hidden from a reader (decision 0087). One per
+    page; it holds the page's lazily read covers and per-text-object caches."""
+
+    def __init__(
+        self,
+        pdf_page: pdfium.PdfPage,
+        text_page: pdfium.PdfTextPage,
+        budget: _Budget,
+    ) -> None:
+        self._pdf_page = pdf_page
+        self._text_page = text_page
+        self._budget = budget
+        # (left, bottom, right, top), unrotated page space. A PDF rectangle may name any two
+        # opposite corners, so order them.
+        self._crop = _displayed_box(pdf_page)
+        self._covers: list[_Cover] | None = None
+        self._objects: dict[int, tuple[int, tuple[_Colour | None, ...]]] = {}
+        self._rect = pdfium.raw.FS_RECTF()
+        self._render: tuple[list[list[int]], int, int, float] | None = None
+        self._render_failed = False
+
+    def _covered(self, centre: tuple[float, float]) -> bool:
+        """Whether `centre` lies inside an image cover, checked per character. Fails open (True)
+        once the document's budget cannot pay for the lookup."""
+        if self._covers is None:
+            self._covers = _covers(self._pdf_page)
+        covers = self._covers
+        if self._budget.remaining <= 0 or self._budget.remaining < len(covers):
+            self._budget.remaining = 0
+            return True
+        self._budget.remaining -= len(covers)
+        x, y = centre
+        return any(cover[0] <= x <= cover[2] and cover[1] <= y <= cover[3] for cover in covers)
+
+    def _inked(self, box: tuple[float, float, float, float]) -> bool:
+        """Whether the page, as PDFium draws it, shows something other than near-white inside
+        `box`. A low-resolution render is the ground truth for what a reader sees: it covers
+        gradients and other patterns, stroked bars and images, whose paint the object API cannot
+        report. Fails open (True) if the render cannot be made."""
+        if self._render is None and not self._render_failed:
+            if self._budget.renders <= 0:
+                self._render_failed = True
+                return True
+            self._budget.renders -= 1
+            self._render = self._make_render()
+            self._render_failed = self._render is None
+        if self._render is None:
+            return True
+        sat, width, height, scale = self._render
+        left, bottom, right, top = self._crop
+        x0 = max(0, int((box[0] - left) * scale))
+        x1 = min(width, int((box[2] - left) * scale) + 1)
+        y0 = max(0, int((top - box[3]) * scale))
+        y1 = min(height, int((top - box[1]) * scale) + 1)
+        if x0 >= x1 or y0 >= y1:
+            return False
+        # Inked pixels in the rectangle from the summed-area table: constant time per character
+        # however large the box, so a hostile page of huge glyphs costs no more than a normal one.
+        row_end, row_start = sat[y1], sat[y0]
+        return row_end[x1] - row_end[x0] - row_start[x1] + row_start[x0] > 0
+
+    def _make_render(self) -> tuple[list[list[int]], int, int, float] | None:
+        left, bottom, right, top = self._crop
+        longest = max(right - left, top - bottom)
+        if longest <= 0:
+            return None
+        scale = min(0.5, _RENDER_MAX_SIDE / longest)
+        try:
+            bitmap = self._pdf_page.render(
+                scale=scale,
+                rotation=(360 - self._pdf_page.get_rotation()) % 360,
+                may_draw_forms=False,
+            )
+            return (
+                _inked_table(
+                    bytes(bitmap.buffer),
+                    bitmap.width,
+                    bitmap.height,
+                    bitmap.stride,
+                    bitmap.n_channels,
+                ),
+                bitmap.width,
+                bitmap.height,
+                scale,
+            )
+        except Exception:
+            return None
+
+    def read(self, index: int) -> tuple[bool, bool, bool, bool]:
+        """`(invisible, background_colour, tiny, off_page)` for the character at `index`."""
+        raw = pdfium.raw
+        obj = raw.FPDFText_GetTextObject(self._text_page, index)
+        if not obj:
+            return False, False, False, False
+        key = ctypes.cast(obj, ctypes.c_void_p).value or 0
+        info = self._objects.get(key)
+        if info is None:
+            mode = raw.FPDFTextObj_GetTextRenderMode(obj)
+            fill = _paint(obj, raw.FPDFPageObj_GetFillColor)
+            stroke = _paint(obj, raw.FPDFPageObj_GetStrokeColor)
+            if mode in (raw.FPDF_TEXTRENDERMODE_STROKE, raw.FPDF_TEXTRENDERMODE_STROKE_CLIP):
+                paints = (stroke,)
+            elif mode in (
+                raw.FPDF_TEXTRENDERMODE_FILL_STROKE,
+                raw.FPDF_TEXTRENDERMODE_FILL_STROKE_CLIP,
+            ):
+                # Outlined text is readable if either the fill or the stroke can be seen.
+                paints = (fill, stroke)
+            else:
+                paints = (fill,)
+            info = (mode, paints)
+            self._objects[key] = info
+        mode, paints = info
+        if not raw.FPDFText_GetLooseCharBox(self._text_page, index, self._rect):
+            box = None
+        else:
+            rect = self._rect
+            box = (rect.left, rect.bottom, rect.right, rect.top)
+        centre = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2) if box else None
+
+        clip = mode == raw.FPDF_TEXTRENDERMODE_CLIP
+        invisible = (
+            clip
+            or mode == raw.FPDF_TEXTRENDERMODE_INVISIBLE
+            or all(paint is not None and paint[3] == 0 for paint in paints)
+        )
+        if invisible and centre is not None and box is not None:
+            # An OCR layer over an image hides nothing. Text used as a clipping path shows
+            # whatever is painted through it, which the render reveals.
+            if self._covered(centre) or (clip and self._inked(box)):
+                invisible = False
+        background = (
+            not invisible
+            and all(paint is not None and (paint[3] == 0 or _near_white(paint)) for paint in paints)
+            and box is not None
+            and not self._inked(box)
+        )
+        width_points, height_points = (box[2] - box[0], box[3] - box[1]) if box else (0.0, 0.0)
+        tiny = box is not None and (
+            max(width_points, height_points) < _TINY_TEXT_POINTS
+            or min(width_points, height_points) < _SLIVER_POINTS
+        )
+        left, bottom, right, top = self._crop
+        off_page = box is not None and (
+            box[2] < left or box[0] > right or box[3] < bottom or box[1] > top
+        )
+        return invisible, background, tiny, off_page
+
+
+def _char_stats(
+    pdf_page: pdfium.PdfPage,
+    text_page: pdfium.PdfTextPage,
+    text: str,
+    budget: _Budget,
+) -> _CharStats:
     """Classify every character on `text_page` in one linear pass over its character list.
 
-    Returns `(char_count, unmapped_count, private_use_count, ligature_count)`, as documented on
-    `Page`. Whitespace is not counted at all, so an inserted space or line break can never be
-    miscounted as an unmapped or private-use glyph.
+    Returns the counts documented on `Page`. Whitespace is not counted at all, so an inserted
+    space or line break can never be miscounted as an unmapped or private-use glyph.
 
     A character outside the Basic Multilingual Plane is one `str` character in `text` but two
     UTF-16 code units, and PDFium counts it as two entries in its character list, so `text` and the
     list no longer line up and the fallback runs: it joins a surrogate pair from `GetUnicode` back
     into one codepoint (so the supplementary Private Use Areas match) and skips the pair's second
-    half, and skips whitespace, so it counts exactly what the aligned path does.
+    half, and skips whitespace, so it counts exactly what the aligned path does. A skipped half is
+    never classified, so the hidden checks never run twice for one character.
 
-    The common case makes exactly one PDFium call per character, `FPDFText_HasUnicodeMapError`.
+    The glyph classification makes one PDFium call per character, `FPDFText_HasUnicodeMapError`.
     The Unicode value comes from `text` -- `get_text_bounded` already decoded it from this same
     character list -- and `text[i]` lines up with character-list index `i` (verified
     experimentally, including across a PDFium-generated space and a decomposed ligature). The
@@ -262,14 +644,13 @@ def _char_stats(text_page: pdfium.PdfTextPage, text: str) -> tuple[int, int, int
     unmapped, private-use or a ligature. The per-character `IsGenerated` and `GetUnicode` calls
     remain only as a fallback for `len(text) != count_chars()`, which a non-BMP character causes.
 
-    A third PDFium call, `FPDFText_GetFontInfo`, happens only for a character already identified as
-    Private Use Area, to tell an icon font's glyph (still counted) from a Symbol/Wingdings/Webdings
-    bullet glyph (not counted): see `_is_symbol_font`.
+    `FPDFText_GetFontInfo` is called only for a character already identified as Private Use Area,
+    to tell an icon font's glyph (still counted) from a Symbol/Wingdings/Webdings bullet glyph
+    (not counted): see `_is_symbol_font`. The hidden-text reads (`_HiddenReader`) add a text-object
+    lookup and a loose-box read per character; `budget` bounds the cover lookups they need.
     """
-    char_count = 0
-    unmapped_count = 0
-    private_use_count = 0
-    ligature_count = 0
+    stats = _CharStats()
+    hidden_reader = _HiddenReader(pdf_page, text_page, budget)
     total = text_page.count_chars()
     aligned = len(text) == total
     skip_until = 0
@@ -292,15 +673,21 @@ def _char_stats(text_page: pdfium.PdfTextPage, text: str) -> tuple[int, int, int
                     skip_until = index + 2
             if codepoint <= 0x10FFFF and chr(codepoint).isspace():
                 continue
-        char_count += 1
+        stats.char_count += 1
         has_map_error = pdfium.raw.FPDFText_HasUnicodeMapError(text_page, index) == 1
         if has_map_error or codepoint in _UNMAPPED_CODEPOINTS:
-            unmapped_count += 1
+            stats.unmapped_count += 1
         if _LIGATURE_RANGE[0] <= codepoint <= _LIGATURE_RANGE[1]:
-            ligature_count += 1
+            stats.ligature_count += 1
         if _is_private_use(codepoint) and not _is_symbol_font(_font_name_at(text_page, index)):
-            private_use_count += 1
-    return char_count, unmapped_count, private_use_count, ligature_count
+            stats.private_use_count += 1
+        invisible, background, tiny, off_page = hidden_reader.read(index)
+        stats.invisible_count += invisible
+        stats.background_colour_count += background
+        stats.tiny_count += tiny
+        stats.off_page_count += off_page
+        stats.hidden_count += invisible or background or tiny or off_page
+    return stats
 
 
 def _count_objects_in(
@@ -390,8 +777,11 @@ def _text_rects(text_page: pdfium.PdfTextPage) -> tuple[tuple[float, float, floa
     return tuple(rects)
 
 
-def _read_page(pdf_page: pdfium.PdfPage, number: int, char_budget: int) -> tuple[Page, int]:
-    """Read one page; returns it and how much of `char_budget` it used (see `_CHAR_BUDGET`)."""
+def _read_page(
+    pdf_page: pdfium.PdfPage, number: int, char_budget: int, cover_budget: _Budget
+) -> tuple[Page, int]:
+    """Read one page; returns it and how much of `char_budget` it used (see `_CHAR_BUDGET`).
+    `cover_budget` is shared by the whole document (see `_COVER_TEST_BUDGET`)."""
     width, height = pdf_page.get_size()
     text_page = pdf_page.get_textpage()
     try:
@@ -402,15 +792,12 @@ def _read_page(pdf_page: pdfium.PdfPage, number: int, char_budget: int) -> tuple
         text = text_page.get_text_bounded(-_UNBOUNDED, -_UNBOUNDED, _UNBOUNDED, _UNBOUNDED)
         total_chars = text_page.count_chars()
         if total_chars <= char_budget:
-            char_count, unmapped_count, private_use_count, ligature_count = _char_stats(
-                text_page, text
-            )
+            stats = _char_stats(pdf_page, text_page, text, cover_budget)
             text_rects = _text_rects(text_page)
             used = total_chars
         else:
             # Over budget: a C-speed count of non-whitespace characters, no per-character calls.
-            char_count = len("".join(text.split()))
-            unmapped_count = private_use_count = ligature_count = 0
+            stats = _CharStats(char_count=len("".join(text.split())))
             text_rects = ()
             used = 0
     finally:
@@ -421,13 +808,18 @@ def _read_page(pdf_page: pdfium.PdfPage, number: int, char_budget: int) -> tuple
         width=width,
         height=height,
         text=text,
-        char_count=char_count,
-        unmapped_count=unmapped_count,
-        private_use_count=private_use_count,
-        ligature_count=ligature_count,
+        char_count=stats.char_count,
+        unmapped_count=stats.unmapped_count,
+        private_use_count=stats.private_use_count,
+        ligature_count=stats.ligature_count,
         text_objects=text_objects,
         image_objects=image_objects,
         path_objects=path_objects,
+        hidden_count=stats.hidden_count,
+        invisible_count=stats.invisible_count,
+        background_colour_count=stats.background_colour_count,
+        tiny_count=stats.tiny_count,
+        off_page_count=stats.off_page_count,
         text_rects=text_rects,
         hyphen_break_count=_hyphen_break_count(text),
     )
@@ -451,11 +843,12 @@ def extract(pdf: bytes) -> Document:
             page_count = len(document)
             pages = []
             char_budget = _CHAR_BUDGET
+            cover_budget = _Budget(_COVER_TEST_BUDGET, _RENDER_BUDGET)
             try:
                 for number in range(1, page_count + 1):
                     pdf_page = document.get_page(number - 1)
                     try:
-                        page, used = _read_page(pdf_page, number, char_budget)
+                        page, used = _read_page(pdf_page, number, char_budget, cover_budget)
                         char_budget -= used
                         pages.append(page)
                     finally:

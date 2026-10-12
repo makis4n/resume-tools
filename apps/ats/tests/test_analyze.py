@@ -16,11 +16,13 @@ from tests.pdfs import (
     date_column_pdf,
     dated_list_pdf,
     education_rows_pdf,
+    hidden_stuffing_resume_pdf,
     hyphenated_pdf,
     image_only_pdf,
     interleaved_two_column_pdf,
     label_value_table_pdf,
     minimal_pdf,
+    normal_resume_pdf,
     resume_pdf,
     single_column_with_dates_pdf,
     skills_grid_pdf,
@@ -95,6 +97,30 @@ def _layout_ids(result: dict) -> list[str]:  # type: ignore[type-arg]
     return [f["id"] for f in result["findings"] if f["origin"] == "layout"]
 
 
+def _ids_of(result: dict, *finding_ids: str) -> list[str]:  # type: ignore[type-arg]
+    # The hidden-text tests look only at the findings they are about, for the same reason.
+    return [f["id"] for f in result["findings"] if f["id"] in finding_ids]
+
+
+def test_a_resume_with_hidden_keywords_gets_a_critical_content_finding() -> None:
+    result = analyze(hidden_stuffing_resume_pdf())
+    (finding,) = [f for f in result["findings"] if f["id"] == "hidden-text"]
+    assert finding["severity"] == "critical"
+    assert finding["origin"] == "content"
+    assert result["score"] <= 40
+
+
+def test_a_normal_resume_has_no_hidden_text_or_repetition_findings() -> None:
+    result = analyze(normal_resume_pdf())
+    assert _ids_of(result, "hidden-text", "repeated-terms") == []
+    assert _layout_ids(result) == []
+    assert result["rubric_version"] == "readiness-1"
+
+
+def test_the_analyser_version_is_0_4_0() -> None:
+    assert analyze(minimal_pdf())["analyser_version"] == "0.4.0"
+
+
 def test_an_interleaved_two_column_pdf_gets_one_layout_finding() -> None:
     for offset in (0.0, 4.0):
         result = analyze(interleaved_two_column_pdf(offset))
@@ -132,7 +158,7 @@ def test_a_pdf_with_no_contact_details_or_headings_gets_content_findings() -> No
     assert "missing-section-experience" in ids
     assert result["score"] == 80
     assert result["rubric_version"] == "readiness-1"
-    assert result["analyser_version"] == "0.3.0"
+    assert result["analyser_version"] == "0.4.0"
 
 
 def test_the_analysis_carries_none_of_the_detected_contact_details() -> None:
