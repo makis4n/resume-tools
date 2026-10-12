@@ -24,11 +24,20 @@ stored, logged or returned.
   link (a scheme, `www.`, a known profile host, or a bare domain with a common TLD, `.net`, `.edu` or a two-letter country code (not file-extension-like names such as `node.js`), not part of an
   email); and section headings, matched on short lines (at most 6 words and 50 characters) against
   the documented synonym lists `EXPERIENCE_*`, `EDUCATION_*` and `SKILLS_*`, after NFKC
-  normalisation and with letter-spacing collapsed.
+  normalisation and with letter-spacing collapsed. A line is also searched for 1 to 3 words at
+  either end (lines up to 400 characters), because a two-column layout puts a heading beside the
+  other column's text, a phone number, an email or a link; ambiguous openers such as "Work" and
+  "Tools" do not count there. `_matches` accepts a heading joined by `and`, `&` or `/` when either
+  side matches, and a keyword inside a longer heading only when the surrounding words are ones
+  headings use ("Work Experience"), so "User Experience Designer" is not a section. A bare domain
+  counts as a profile link only in lowercase, so "JaneDoe.com" is not seen: a known limit.
 - **Text only.** Link annotations are not read, so a clickable word with no visible address is not
   seen. That is why the profile-link finding is info and its message conditional.
-- **Only when the document has text.** With no text layer, the critical text-layer finding is the
-  one that matters, as with the glyph checks.
+- **Only when the document has readable text.** With no text layer, the critical text-layer finding
+  is the one that matters, as with the glyph checks. The contact and section findings are also
+  skipped when more than 20% of the document's characters are unmapped, since that text is garbage
+  and `unmapped-glyphs` already says so. `detect` reads only the first 100,000 characters of the
+  joined page text.
 - **Privacy (§11).** `detect` returns a frozen dataclass of booleans. It never keeps, returns, logs
   or raises with a matched substring, and messages quote no resume text. Tests enforce it: the
   fact fields are all `bool`, and the serialised analysis of a resume with an email, phone and link

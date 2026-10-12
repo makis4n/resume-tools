@@ -188,7 +188,7 @@ def _heading(line: str) -> str | None:
     line = _SECTION_NUMBER.sub("", line)  # "01 Experience", "02. Education"
     if line.rstrip().endswith((".", ",", ";")) or any(ch.isdigit() for ch in line):
         return None  # a sentence or a dated line, not a heading
-    line = line.casefold().replace("&", " and ")
+    line = line.casefold().replace("&", " and ").replace("/", " / ")
     line = _EDGE_PUNCTUATION.sub("", line)
     tokens = line.split()
     if len(tokens) >= 2 and any(len(token) <= 3 for token in tokens):
@@ -259,6 +259,10 @@ def _is_contact_token(token: str) -> bool:
     return any(ch.isdigit() or ch in "@/" for ch in token)
 
 
+def _is_link_or_email(token: str) -> bool:
+    return "@" in token or "://" in token or token.casefold().startswith("www.")
+
+
 def _edge_headings(line: str) -> list[str]:
     """Headings at either end of a line that is not a heading as a whole: a two-column layout puts
     a heading on the same line as the other column's text or another heading. The other column's
@@ -280,7 +284,7 @@ def _edge_headings(line: str) -> list[str]:
         if has_digit and following.isalpha():
             pass
         elif all(t[:1].isupper() for t in lead) and not (
-            following.isalpha() and following.islower()
+            following.isalpha() and following.islower() and not _is_link_or_email(rest[0])
         ):
             heading = _heading(" ".join(lead))
             if heading is not None and heading not in _AMBIGUOUS_EDGE:

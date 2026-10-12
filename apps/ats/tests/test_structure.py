@@ -300,3 +300,25 @@ def test_file_extension_like_names_are_not_profile_links(text: str) -> None:
 )
 def test_a_phone_after_a_zip_code_is_found(text: str) -> None:
     assert detect(text).has_phone
+
+
+@pytest.mark.parametrize(
+    "line", ["Experience/Projects", "Education/Training", "Skills/Tools", "Experience/Education"]
+)
+def test_a_heading_joined_by_a_slash_is_found(line: str) -> None:
+    facts = detect(line)
+    assert facts.has_experience or facts.has_education or facts.has_skills
+
+
+def test_slash_joined_headings_find_each_side() -> None:
+    assert detect("Education/Training").has_education
+    assert detect("Skills/Tools").has_skills
+    assert detect("Experience/Projects").has_experience
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["EXPERIENCE ada@example.com", "Experience www.example.org", "Experience https://x.example"],
+)
+def test_a_heading_before_lowercase_contact_text_is_found(line: str) -> None:
+    assert detect(line).has_experience
