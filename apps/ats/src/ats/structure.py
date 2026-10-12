@@ -188,7 +188,7 @@ def _heading(line: str) -> str | None:
     line = _SECTION_NUMBER.sub("", line)  # "01 Experience", "02. Education"
     if line.rstrip().endswith((".", ",", ";")) or any(ch.isdigit() for ch in line):
         return None  # a sentence or a dated line, not a heading
-    line = line.casefold().replace("&", " and ").replace("/", " / ")
+    line = line.casefold().replace("&", " and ").replace("/", " and ")
     line = _EDGE_PUNCTUATION.sub("", line)
     tokens = line.split()
     if len(tokens) >= 2 and any(len(token) <= 3 for token in tokens):
