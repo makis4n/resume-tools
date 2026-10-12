@@ -81,12 +81,16 @@ def client_key(scope: Scope, trusted_proxy_hops: int) -> str:
         entries = [part.strip() for value in values for part in value.split(",")]
         if len(entries) >= trusted_proxy_hops:
             raw = _strip_port(entries[-trusted_proxy_hops])
-        if _parse(raw) is None:
+            usable = _parse(raw) is not None
+        else:
+            usable = False
+        if not usable:
             logger.warning(
                 "ATS_TRUSTED_PROXY_HOPS=%d but the X-Forwarded-For entry is not an IP address "
                 "or has too few entries; limiting by the TCP peer instead",
                 trusted_proxy_hops,
             )
+            raw = peer
     return _normalise(raw, peer)
 
 

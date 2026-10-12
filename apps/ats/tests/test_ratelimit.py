@@ -63,10 +63,14 @@ def test_one_trusted_proxy_uses_the_right_most_entry() -> None:
     assert client_key(scope("10.0.0.1", "1.2.3.4, 203.0.113.9, 192.0.2.7"), 2) == "203.0.113.9"
 
 
-def test_too_few_entries_or_a_non_ip_entry_falls_back_to_the_peer() -> None:
-    assert client_key(scope("10.0.0.1", "203.0.113.9"), 2) == "10.0.0.1"
-    assert client_key(scope("10.0.0.1"), 1) == "10.0.0.1"
-    assert client_key(scope("10.0.0.1", "not-an-ip"), 1) == "10.0.0.1"
+def test_too_few_entries_or_a_non_ip_entry_falls_back_to_the_peer(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    for headers, hops in ((("203.0.113.9",), 2), ((), 1), (("not-an-ip",), 1)):
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="ats.ratelimit"):
+            assert client_key(scope("10.0.0.1", *headers), hops) == "10.0.0.1"
+        assert "ATS_TRUSTED_PROXY_HOPS" in caplog.text
 
 
 def test_ipv6_is_grouped_by_64_and_mapped_ipv4_is_ipv4() -> None:
