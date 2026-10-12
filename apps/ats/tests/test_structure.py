@@ -215,6 +215,35 @@ def test_a_huge_line_is_rejected_quickly() -> None:
     assert not facts.has_experience
 
 
+def test_a_long_line_of_digit_groups_is_scanned_quickly() -> None:
+    import time
+
+    start = time.perf_counter()
+    detect("1234 56789012 x " * 6_000)
+    detect("12345678 x " * 9_000)
+    assert time.perf_counter() - start < 2
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "EXPERIENCE Software Engineer, Acme Corp Jan 2019 - Present",
+        "WORK EXPERIENCE Senior Analyst, Example Bank 2020 - Present",
+        "EXPERIENCE Phone: +65 9123 4567",
+    ],
+)
+def test_an_all_caps_heading_beside_a_dated_entry_is_found(line: str) -> None:
+    assert detect(line).has_experience
+
+
+def test_an_all_caps_education_heading_beside_a_dated_entry_is_found() -> None:
+    assert detect("EDUCATION Example University, BSc 2015 - 2019").has_education
+
+
+def test_a_title_case_dated_job_title_is_not_a_heading() -> None:
+    assert not detect("Experience Designer, Invented Co, 2019 - 2021").has_experience
+
+
 @pytest.mark.parametrize(
     "line",
     [

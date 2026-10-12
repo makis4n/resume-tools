@@ -65,6 +65,8 @@ _EMAIL_AT_FULL = re.compile(
 
 _PHONE = re.compile(r"\+?\(?\d[\d \t().-]{6,30}\d")
 _PHONE_LABEL = re.compile(r"(?:phone|mobile|tel|cell|whatsapp)[ \t]*:?[ \t]*$", re.IGNORECASE)
+# How far before a number a phone label may sit; bounds the label search on a very long line.
+_LABEL_WINDOW = 30
 _YEAR = re.compile(r"(?:19|20)\d\d")
 _DATE = re.compile(r"\d{4}[./-]\d{1,2}[./-]\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{4}")
 _PHONE_SEPARATORS = re.compile(r"[ \t().-]+")
@@ -147,7 +149,9 @@ def _has_phone(lines: list[str]) -> bool:
     for line in lines:
         pos = 0
         while (match := _PHONE.search(line, pos)) is not None:
-            if _is_phone_number(match.group(0), line[: match.start()]):
+            if _is_phone_number(
+                match.group(0), line[max(0, match.start() - _LABEL_WINDOW) : match.start()]
+            ):
                 return True
             # Rescan from the next group boundary, so a rejected ZIP code does not swallow the
             # phone number that follows it.
@@ -281,7 +285,10 @@ def _edge_headings(line: str) -> list[str]:
         # A dated line that opens with a keyword and a word ("Experience Designer, Acme, 2019")
         # is a job line; a digit is allowed only when the text after the heading starts with
         # something that is not a word (a phone number, a year).
-        if has_digit and following.isalpha():
+        # An all-capitals lead followed by a non-capitals word is a heading beside the first entry
+        # of its section, not a title-case job title.
+        caps_heading = all(t.isupper() for t in lead) and not rest[0].isupper()
+        if has_digit and following.isalpha() and not caps_heading:
             pass
         elif all(t[:1].isupper() for t in lead) and not (
             following.isalpha() and following.islower() and not _is_link_or_email(rest[0])
