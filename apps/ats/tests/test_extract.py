@@ -13,19 +13,44 @@ from ats.extract import (
 )
 from tests.pdfs import (
     build_pdf,
+    build_raw_pdf,
     form_wrapped_image_pdf,
     glyph_case_pdf,
+    gradient_clip_text_pdf,
+    hidden_stuffing_resume_pdf,
     hyphenated_pdf,
     icon_font_pua_pdf,
     image_only_pdf,
+    invisible_text_beside_a_photo_in_a_form_pdf,
+    invisible_text_in_form_pdf,
+    invisible_text_over_stretched_pixel_pdf,
+    invisible_text_pdf,
     malformed_page_tree_pdf,
     malformed_producer_metadata_pdf,
+    many_pages_of_white_text_pdf,
+    matrix_scaled_text_pdf,
     minimal_pdf,
+    normal_resume_pdf,
+    ocr_layer_pdf,
+    off_page_text_pdf,
+    outlined_white_text_pdf,
     postscript_named_symbol_bullet_pdf,
+    reversed_media_box_pdf,
+    squashed_text_pdf,
     supplementary_icon_font_pdf,
     symbol_font_bullet_pdf,
     text_as_outlines_pdf,
+    text_outside_crop_box_pdf,
     text_resume_with_form_wrapped_graphic_page_pdf,
+    tiny_text_pdf,
+    transparent_text_pdf,
+    white_and_tiny_text_pdf,
+    white_text_on_dark_panel_pdf,
+    white_text_on_gradient_band_pdf,
+    white_text_on_stroked_bar_pdf,
+    white_text_over_a_dark_speck_pdf,
+    white_text_over_image_pdf,
+    white_text_pdf,
     zero_page_pdf,
 )
 
@@ -281,7 +306,9 @@ def test_ligature_count_classifies_a_raw_ligature_codepoint(
             try:
                 text_page = pdf_page.get_textpage()
                 try:
-                    stats = extract_module._char_stats(text_page, text="")
+                    stats = extract_module._char_stats(
+                        pdf_page, text_page, "", extract_module._Budget(1000)
+                    )
                 finally:
                     text_page.close()
             finally:
@@ -289,11 +316,10 @@ def test_ligature_count_classifies_a_raw_ligature_codepoint(
         finally:
             document.close()
 
-    char_count, unmapped_count, private_use_count, ligature_count = stats
-    assert char_count == 1
-    assert ligature_count == 1
-    assert unmapped_count == 0
-    assert private_use_count == 0
+    assert stats.char_count == 1
+    assert stats.ligature_count == 1
+    assert stats.unmapped_count == 0
+    assert stats.private_use_count == 0
 
 
 def test_a_form_wrapped_image_is_counted_as_an_image() -> None:
@@ -368,6 +394,174 @@ def test_characters_over_the_budget_get_a_cheap_count_and_no_per_character_stats
     (page,) = document.pages
     assert page.char_count == 14
     assert page.unmapped_count == page.private_use_count == page.ligature_count == 0
+    assert page.hidden_count == page.invisible_count == page.background_colour_count == 0
+    assert page.tiny_count == page.off_page_count == 0
+
+
+# --- hidden text (decision 0087) ---
+
+
+def _hidden(pdf: bytes) -> tuple[int, int, int, int, int]:
+    (page,) = extract(pdf).pages
+    return (
+        page.hidden_count,
+        page.invisible_count,
+        page.background_colour_count,
+        page.tiny_count,
+        page.off_page_count,
+    )
+
+
+def test_plain_text_has_no_hidden_counts() -> None:
+    assert _hidden(minimal_pdf()) == (0, 0, 0, 0, 0)
+
+
+@pytest.mark.parametrize("mode", [3, 7])
+def test_invisible_render_modes_count_every_character(mode: int) -> None:
+    (page,) = extract(invisible_text_pdf(mode)).pages
+    assert page.char_count > 0
+    assert page.invisible_count == page.hidden_count == page.char_count
+
+
+def test_fully_transparent_text_is_invisible() -> None:
+    (page,) = extract(transparent_text_pdf()).pages
+    assert page.invisible_count == page.hidden_count == page.char_count > 0
+
+
+@pytest.mark.parametrize(("gray", "hidden"), [(1.0, True), (0.97, True), (0.85, False)])
+def test_near_white_text_on_a_bare_page_is_background_coloured(gray: float, hidden: bool) -> None:
+    (page,) = extract(white_text_pdf(gray)).pages
+    expected = page.char_count if hidden else 0
+    assert page.background_colour_count == page.hidden_count == expected
+
+
+def test_white_text_on_a_dark_panel_or_over_an_image_is_not_hidden() -> None:
+    assert _hidden(white_text_on_dark_panel_pdf()) == (0, 0, 0, 0, 0)
+    assert _hidden(white_text_over_image_pdf()) == (0, 0, 0, 0, 0)
+
+
+def test_tiny_text_by_size_or_by_matrix_counts_but_a_footer_does_not() -> None:
+    for pdf in (tiny_text_pdf(1), matrix_scaled_text_pdf(), matrix_scaled_text_pdf(use_cm=True)):
+        (page,) = extract(pdf).pages
+        assert page.tiny_count == page.hidden_count == page.char_count > 0
+    assert _hidden(tiny_text_pdf(7)) == (0, 0, 0, 0, 0)
+
+
+def test_text_off_the_page_or_outside_the_crop_box_counts_as_off_page() -> None:
+    (page,) = extract(off_page_text_pdf()).pages
+    assert page.off_page_count == page.hidden_count == page.char_count > 0
+    (page,) = extract(text_outside_crop_box_pdf()).pages
+    assert 0 < page.off_page_count == page.hidden_count < page.char_count
+
+
+def test_an_ocr_layer_over_an_image_is_not_hidden() -> None:
+    (page,) = extract(ocr_layer_pdf()).pages
+    assert page.char_count > 0
+    assert page.hidden_count == page.invisible_count == 0
+
+
+def test_invisible_text_inside_a_form_is_counted() -> None:
+    (page,) = extract(invisible_text_in_form_pdf()).pages
+    assert page.invisible_count == page.hidden_count == page.char_count > 0
+
+
+def test_a_white_tiny_character_counts_once_overall_and_once_per_reason() -> None:
+    (page,) = extract(white_and_tiny_text_pdf()).pages
+    assert page.char_count > 0
+    assert page.hidden_count == page.char_count
+    assert page.background_colour_count == page.tiny_count == page.char_count
+
+
+def test_a_normal_resume_has_nothing_hidden() -> None:
+    document = extract(normal_resume_pdf())
+    assert all(page.char_count > 0 and page.hidden_count == 0 for page in document.pages)
+
+
+def test_a_stuffed_resume_counts_only_the_hidden_block() -> None:
+    (page,) = extract(hidden_stuffing_resume_pdf()).pages
+    assert page.hidden_count >= 20
+    assert page.hidden_count < page.char_count
+
+
+def test_an_exhausted_cover_budget_fails_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ats.extract as extract_module
+
+    assert _hidden(invisible_text_pdf())[0] > 0
+    monkeypatch.setattr(extract_module, "_COVER_TEST_BUDGET", 0)
+    assert _hidden(invisible_text_pdf()) == (0, 0, 0, 0, 0)
+
+
+def test_white_text_on_a_gradient_band_or_stroked_bar_is_not_hidden() -> None:
+    assert _hidden(white_text_on_gradient_band_pdf()) == (0, 0, 0, 0, 0)
+    assert _hidden(white_text_on_stroked_bar_pdf()) == (0, 0, 0, 0, 0)
+
+
+def test_a_page_box_with_its_corners_reversed_is_not_off_page() -> None:
+    assert _hidden(reversed_media_box_pdf()) == (0, 0, 0, 0, 0)
+
+
+def test_outlined_text_with_a_white_fill_and_a_dark_stroke_is_not_hidden() -> None:
+    assert _hidden(outlined_white_text_pdf()) == (0, 0, 0, 0, 0)
+
+
+def test_a_dark_speck_under_the_first_character_does_not_excuse_the_run() -> None:
+    (page,) = extract(white_text_over_a_dark_speck_pdf()).pages
+    assert page.background_colour_count == page.hidden_count >= 20
+
+
+def test_a_stretched_one_pixel_image_does_not_excuse_invisible_text() -> None:
+    (page,) = extract(invisible_text_over_stretched_pixel_pdf()).pages
+    assert page.invisible_count == page.hidden_count == page.char_count > 0
+
+
+def test_text_used_as_a_clip_for_a_gradient_is_not_hidden() -> None:
+    assert _hidden(gradient_clip_text_pdf()) == (0, 0, 0, 0, 0)
+    assert _hidden(invisible_text_pdf(7))[0] > 0
+
+
+def test_white_text_on_a_dark_panel_with_a_crop_box_past_the_media_box_is_not_hidden() -> None:
+    text = b"BT 1 g /F1 12 Tf 20 %d Td (Invented Sidebar Text) Tj ET"
+    sidebar = b"0.1 0.1 0.3 rg 0 0 200 792 re f " + text % 700
+    band = b"0.1 0.1 0.3 rg 0 700 612 92 re f " + text % 740
+    assert _hidden(build_raw_pdf(sidebar, crop_box=(-150, 0, 612, 792))) == (0, 0, 0, 0, 0)
+    assert _hidden(build_raw_pdf(band, crop_box=(0, 0, 612, 1000))) == (0, 0, 0, 0, 0)
+
+
+def test_a_page_of_huge_white_glyphs_is_read_in_bounded_time() -> None:
+    content = b"BT 1 g /F1 700 Tf -389 Tc 20 0 Td (" + b"abdeghnopqu0" * 40 + b") Tj ET"
+    started = time.perf_counter()
+    (page,) = extract(build_raw_pdf(content)).pages
+    assert time.perf_counter() - started < 2.0
+    assert page.background_colour_count == page.hidden_count > 0
+
+
+def test_text_squashed_along_one_axis_counts_as_tiny() -> None:
+    for kind in ("vertical", "horizontal"):
+        (page,) = extract(squashed_text_pdf(kind)).pages
+        assert page.tiny_count == page.hidden_count == page.char_count >= 30
+
+
+def test_invisible_text_beside_a_photo_inside_a_form_is_hidden() -> None:
+    (page,) = extract(invisible_text_beside_a_photo_in_a_form_pdf()).pages
+    assert page.invisible_count == page.hidden_count == page.char_count > 0
+
+
+def test_page_renders_are_capped_per_document(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ats.extract as extract_module
+
+    renders = 0
+    original = extract_module._HiddenReader._make_render
+
+    def counting(self: object) -> object:
+        nonlocal renders
+        renders += 1
+        return original(self)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(extract_module._HiddenReader, "_make_render", counting)
+    document = extract(many_pages_of_white_text_pdf(extract_module._RENDER_BUDGET + 15))
+    assert renders == extract_module._RENDER_BUDGET
+    # Pages past the budget fail open: the character is not called hidden.
+    assert [page.hidden_count for page in document.pages][-1] == 0
 
 
 # --- text rects and hyphen breaks (decision 0086) ---

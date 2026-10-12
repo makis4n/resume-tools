@@ -31,6 +31,13 @@ _DEFAULTS: dict[str, str] = {
     "ligature-characters": (
         "Turn off font ligatures, or use a font that does not substitute them, before exporting."
     ),
+    "hidden-text": (
+        "Remove any text a reader cannot see, and keep each keyword in visible text where it is "
+        "true."
+    ),
+    "repeated-terms": (
+        "Mention each skill where it is true and fits naturally, rather than repeating it."
+    ),
     "column-interleaving": (
         "Use a single-column layout, or make sure each column's text is kept together rather than "
         "drawn line by line across the page."

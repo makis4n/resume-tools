@@ -32,9 +32,11 @@ decision 0030; the editor's side of the integration is decision 0031.
   glyph-mapping (unmapped and icon-font characters; the ligature check exists but cannot fire on
   real PDFs yet, see decision 0083), contact information (email, phone, profile link) and
   conventional sections (experience, education, skills), the last two under decision 0085, which
-  returns only whether each was found and never what was detected, plus column interleaving and
-  words split by hyphenation at line ends (decision 0086); each finding carries an origin, and the
-  producing tool is classified from the PDF's metadata. There is no job matching yet: that is
+  returns only whether each was found and never what was detected, column interleaving and words
+  split by hyphenation at line ends (decision 0086), and hidden text (invisible render mode,
+  transparent or background-coloured fill, sub-3pt text, off-page placement) and keyword
+  repetition (decision 0087); each finding carries an origin, and the producing tool is
+  classified from the PDF's metadata. There is no job matching yet: that is
   milestone 3.
 - Milestone 1's request limits have landed. `POST /v1/analyze` has a configurable per-IP rate
   limit (429 `rate-limited` with Retry-After) and a hard processing-time limit
