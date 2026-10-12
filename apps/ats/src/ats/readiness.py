@@ -1,11 +1,14 @@
 """Deterministic readiness checks for one extracted PDF (decision 0083); `ats.rubric` scores their
-output. `check` covers milestone 1's checks only: text layer, page count and glyph mapping.
-Contact/section checks, reading order and hidden text, and rate limits are later milestones.
+output. `check` covers milestone 1's checks so far: text layer, page count, glyph mapping, hidden
+text and keyword repetition (decision 0087). Contact/section checks, reading order and rate limits
+are later milestones.
 
 Every message and suggestion string these checks use lives here or in `ats.suggestions`; nothing
 here quotes resume text, and no message asserts a specific ATS behaviour this product cannot back
 up.
 """
+
+import re
 
 from ats.extract import Document
 from ats.findings import Finding, Origin, Severity
@@ -26,6 +29,29 @@ _MIN_OUTLINE_PATHS = 10
 # second threshold the page is unreadable enough to call it critical (decision 0083).
 _UNMAPPED_WARNING_THRESHOLD = 0.02
 _UNMAPPED_CRITICAL_THRESHOLD = 0.20
+
+# Hidden text (decision 0087): a page needs at least this many hidden characters to be reported,
+# which ignores stray artifacts such as a white bullet or one invisible anchor.
+_MIN_HIDDEN_CHARS = 20
+
+# Keyword repetition (decision 0087). The text read is cut to this many characters before it is
+# lowercased or tokenised, so a huge page cannot make the scan expensive.
+_REPETITION_TEXT_BUDGET = 200_000
+# Frequency rule: a word needs this many occurrences and this share of all words.
+_REPEAT_MIN_COUNT = 25
+_REPEAT_MIN_SHARE = 0.05
+# Run rule: the same 1-3 word sequence back to back this many times.
+_REPEAT_RUN = 5
+_MAX_RUN_LENGTH = 3
+
+# Words that repeat in any prose and say nothing about keyword stuffing.
+_STOPWORDS = frozenset(
+    """a an the of in on at to for from by with as into over under about between through during
+    and or but nor so yet if than then that this these those it its he she they them his her their
+    we our you your i me my us who whom which what when where while is was were be been are am
+    not no""".split()
+)
+_TOKEN = re.compile(r"[^\W_][\w+#.]*[\w+#]|[^\W_]")
 
 # More than this many pages triggers `page-count`; most resumes fit on one or two (PRD §8.3).
 _MAX_EXPECTED_PAGES = 2
@@ -53,6 +79,14 @@ ICON_FONT_GLYPHS_MESSAGE = (
     "This page uses icon or symbol glyphs with no real text behind them, which many ATSs cannot "
     "read."
 )
+HIDDEN_TEXT_MESSAGE = (
+    "Some text on this page cannot be seen by a reader ({reasons}). An ATS still reads it, and a "
+    "recruiter who sees the extracted text may take it as an attempt to game keyword matching."
+)
+REPEATED_TERMS_MESSAGE = (
+    "Some words or phrases on this resume are repeated far more often than resume text normally "
+    "repeats them. A recruiter may read this as keyword stuffing, and some ATSs may discount it."
+)
 LIGATURE_MESSAGE = (
     'This page contains ligature characters (letter pairs like "fi" or "fl" joined into a single '
     'glyph), so a word like "profile" may not be found by a keyword search that only looks for '
@@ -70,6 +104,8 @@ _ID_ORDER = (
     "unmapped-glyphs",
     "icon-font-glyphs",
     "ligature-characters",
+    "hidden-text",
+    "repeated-terms",
 )
 # A lookup, not `_ID_ORDER.index(...)` at sort time: an id a future check forgets to add here
 # then sorts after every listed one instead of crashing `check()` outright.
@@ -199,6 +235,106 @@ def _glyph_findings(document: Document, producer: Producer) -> list[Finding]:
     return findings
 
 
+# (Page attribute, phrase) in the fixed order the reasons are listed in a hidden-text message.
+_HIDDEN_REASONS = (
+    ("invisible_count", "drawn invisibly"),
+    ("background_colour_count", "coloured to match the background"),
+    ("tiny_count", "too small to read"),
+    ("off_page_count", "placed outside the page"),
+)
+
+
+def _join_reasons(phrases: list[str]) -> str:
+    if len(phrases) <= 1:
+        return "".join(phrases)
+    return ", ".join(phrases[:-1]) + " and " + phrases[-1]
+
+
+def _hidden_text_findings(document: Document, producer: Producer) -> list[Finding]:
+    """One `hidden-text` finding per page with enough hidden characters. Never names page text."""
+    findings: list[Finding] = []
+    for page in document.pages:
+        if page.hidden_count < _MIN_HIDDEN_CHARS:
+            continue
+        reasons = [phrase for attr, phrase in _HIDDEN_REASONS if getattr(page, attr) > 0]
+        findings.append(
+            Finding(
+                id="hidden-text",
+                severity=Severity.CRITICAL,
+                origin=Origin.CONTENT,
+                message=HIDDEN_TEXT_MESSAGE.format(reasons=_join_reasons(reasons)),
+                page=page.number,
+                suggestion=suggestion_for("hidden-text", producer),
+            )
+        )
+    return findings
+
+
+def _repetition_text(document: Document) -> str:
+    """The pages' text joined by newlines, cut to `_REPETITION_TEXT_BUDGET` characters while
+    joining, so a page with millions of characters is never fully copied."""
+    parts: list[str] = []
+    remaining = _REPETITION_TEXT_BUDGET
+    for page in document.pages:
+        if remaining <= 0:
+            break
+        piece = page.text[:remaining]
+        parts.append(piece)
+        remaining -= len(piece) + 1
+    return "\n".join(parts)
+
+
+def _is_content_token(token: str) -> bool:
+    return len(token) >= 2 and not token.isdigit() and token not in _STOPWORDS
+
+
+def _is_repeated(tokens: list[str]) -> bool:
+    if not tokens:
+        return False
+    counts: dict[str, int] = {}
+    for token in tokens:
+        counts[token] = counts.get(token, 0) + 1
+    total = len(tokens)
+    for token, count in counts.items():
+        if (
+            count >= _REPEAT_MIN_COUNT
+            and count / total >= _REPEAT_MIN_SHARE
+            and _is_content_token(token)
+        ):
+            return True
+
+    # Run rule: a sequence of `length` tokens repeated back to back `_REPEAT_RUN` times is
+    # `(_REPEAT_RUN - 1) * length` consecutive tokens equal to the token `length` places earlier.
+    for length in range(1, _MAX_RUN_LENGTH + 1):
+        needed = (_REPEAT_RUN - 1) * length
+        streak = 0
+        for index in range(length, total):
+            if tokens[index] == tokens[index - length]:
+                streak += 1
+            else:
+                streak = 0
+            if streak >= needed and any(
+                _is_content_token(token) for token in tokens[index - length + 1 : index + 1]
+            ):
+                return True
+    return False
+
+
+def _repeated_terms_findings(document: Document, producer: Producer) -> list[Finding]:
+    tokens = _TOKEN.findall(_repetition_text(document).lower())
+    if not _is_repeated(tokens):
+        return []
+    return [
+        Finding(
+            id="repeated-terms",
+            severity=Severity.WARNING,
+            origin=Origin.CONTENT,
+            message=REPEATED_TERMS_MESSAGE,
+            suggestion=suggestion_for("repeated-terms", producer),
+        )
+    ]
+
+
 def check(document: Document, producer: Producer) -> list[Finding]:
     """Run every milestone-1 readiness check against `document`, deterministically ordered by
     page (a document-level finding sorts first) and then by a fixed id order (`_ID_ORDER`).
@@ -215,6 +351,8 @@ def check(document: Document, producer: Producer) -> list[Finding]:
         findings.append(_no_text_layer_finding(document, producer))
     else:
         findings.extend(_glyph_findings(document, producer))
+        findings.extend(_hidden_text_findings(document, producer))
+        findings.extend(_repeated_terms_findings(document, producer))
     findings.extend(_page_count_findings(document))
     findings.extend(_blank_page_findings(document, has_text))
 

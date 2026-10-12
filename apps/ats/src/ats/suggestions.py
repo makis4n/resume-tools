@@ -30,6 +30,13 @@ _DEFAULTS: dict[str, str] = {
     "ligature-characters": (
         "Turn off font ligatures, or use a font that does not substitute them, before exporting."
     ),
+    "hidden-text": (
+        "Remove any text a reader cannot see, and keep each keyword in visible text where it is "
+        "true."
+    ),
+    "repeated-terms": (
+        "Mention each skill where it is true and fits naturally, rather than repeating it."
+    ),
 }
 
 # Suggestion text specific to the producing tool, keyed by finding id then by Producer. Only menu

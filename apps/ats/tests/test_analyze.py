@@ -3,7 +3,13 @@ import pytest
 from ats.analyze import CONTRACT, analyze
 from ats.extract import UnreadablePdfError
 from ats.rubric import RUBRIC_VERSION
-from tests.pdfs import build_pdf, image_only_pdf, minimal_pdf
+from tests.pdfs import (
+    build_pdf,
+    hidden_stuffing_resume_pdf,
+    image_only_pdf,
+    minimal_pdf,
+    normal_resume_pdf,
+)
 
 
 def test_returns_contract_shape() -> None:
@@ -60,3 +66,23 @@ def test_rejects_non_pdf() -> None:
 def test_rejects_a_pdf_signature_with_an_unreadable_body() -> None:
     with pytest.raises(UnreadablePdfError):
         analyze(b"%PDF-1.7 minimal")
+
+
+def test_a_resume_with_hidden_keywords_gets_a_critical_content_finding() -> None:
+    result = analyze(hidden_stuffing_resume_pdf())
+    (finding,) = [f for f in result["findings"] if f["id"] == "hidden-text"]
+    assert finding["severity"] == "critical"
+    assert finding["origin"] == "content"
+    assert result["score"] <= 40
+
+
+def test_a_normal_resume_still_scores_100_under_the_same_rubric() -> None:
+    result = analyze(normal_resume_pdf())
+    assert result["score"] == 100
+    assert result["findings"] == []
+    assert result["rubric_version"] == "readiness-1"
+    assert analyze(minimal_pdf())["score"] == 100
+
+
+def test_the_analyser_version_is_0_2_0() -> None:
+    assert analyze(minimal_pdf())["analyser_version"] == "0.2.0"
