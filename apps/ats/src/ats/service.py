@@ -225,6 +225,12 @@ def create_app(
             "ATS_ANALYSIS_TIMEOUT_SECONDS must be greater than 0 and at most "
             f"{MAX_ANALYSIS_TIMEOUT_SECONDS:g}, not {analysis_timeout_seconds!r}"
         )
+    # A semaphore wait far past this overflows the C timestamp and fails every request.
+    if not 0 <= slot_wait_seconds <= MAX_ANALYSIS_TIMEOUT_SECONDS:
+        raise ValueError(
+            "ATS_SLOT_WAIT_SECONDS must be at least 0 and at most "
+            f"{MAX_ANALYSIS_TIMEOUT_SECONDS:g}, not {slot_wait_seconds!r}"
+        )
     if max_upload_bytes is None:
         max_upload_bytes = int(os.environ.get("ATS_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES))
     if allowed_origins is None:

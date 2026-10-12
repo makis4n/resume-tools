@@ -47,11 +47,12 @@ analyse should not be able to hold a worker for as long as it likes.
   client's burst of slow PDFs cannot queue other users out indefinitely or pin every threadpool
   thread. The anyio threadpool of 40 alone would allow 40 PDFium processes.
 - **Settings are checked at start.** `ATS_ANALYSIS_TIMEOUT_SECONDS` must be finite, above 0 and at
-  most 3600; `inf` is refused by name rather than failing every analysis.
+  most 3600, and `ATS_SLOT_WAIT_SECONDS` from 0 to 3600; `inf` is refused by name rather than
+  failing every analysis.
 - **Forwarded entries.** A `:port` or `[v6]:port` suffix on the trusted entry is stripped before
   parsing. An entry that still is not an IP logs a warning and falls back to the peer.
-- Both new codes (`rate-limited`, `server-busy`) are added to the description in `packages/contracts/ats/v1/error.schema.json`,
-  an additive change within v1. The analyser version is not bumped: the analysis body does not
+- The three new codes (`rate-limited`, `analysis-timeout`, `server-busy`) are added to the
+  description in `packages/contracts/ats/v1/error.schema.json`, an additive change within v1. The analyser version is not bumped: the analysis body does not
   change.
 
 ## Consequences

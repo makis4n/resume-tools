@@ -324,6 +324,9 @@ def test_settings_are_read_from_the_environment(monkeypatch: pytest.MonkeyPatch)
         ("ATS_ANALYSIS_TIMEOUT_SECONDS", "inf"),
         ("ATS_ANALYSIS_TIMEOUT_SECONDS", "nan"),
         ("ATS_ANALYSIS_TIMEOUT_SECONDS", "1e9"),
+        ("ATS_SLOT_WAIT_SECONDS", "-1"),
+        ("ATS_SLOT_WAIT_SECONDS", "inf"),
+        ("ATS_SLOT_WAIT_SECONDS", "1e30"),
     ],
 )
 def test_an_invalid_setting_is_refused_naming_the_variable(

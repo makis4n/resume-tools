@@ -27,6 +27,7 @@ Settings come from the environment:
 | `ATS_RATE_LIMIT_MAX_CLIENTS` | `10000` | Clients the rate limiter remembers; the least recently seen is dropped first |
 | `ATS_TRUSTED_PROXY_HOPS` | `0` | Proxies in front of the service that append to `X-Forwarded-For`; `0` uses the connecting address |
 | `ATS_ANALYSIS_TIMEOUT_SECONDS` | `10` | Longest one analysis may run before it is stopped (`analysis-timeout`); must be above 0 |
+| `ATS_SLOT_WAIT_SECONDS` | `5` | Longest a request waits for a free analysis slot before it is refused (`server-busy`); `0` to `3600` |
 
 Requests are limited per client and each analysis has a hard time limit (decision 0088); the limits are per process. On the chosen host, set `ATS_TRUSTED_PROXY_HOPS` to the number of proxies in front of the service, or every client is counted as the proxy.
 
