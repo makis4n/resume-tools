@@ -369,3 +369,161 @@ def supplementary_icon_font_pdf() -> bytes:
     Material Design Icons and Nerd Fonts sit), drawn in a font named "MaterialDesignIcons". The
     ToUnicode value is the UTF-16 surrogate pair DB80 DC01."""
     return _pua_char_pdf(b"MaterialDesignIcons", 34, "DB80DC01")
+
+
+def build_raw_pdf(
+    content: bytes,
+    *,
+    resources: bytes = b"",
+    extra_objects: Sequence[bytes] = (),
+    width: float = 612,
+    height: float = 792,
+    crop_box: tuple[float, float, float, float] | None = None,
+) -> bytes:
+    """A one-page PDF drawing `content` (a raw content stream) with Helvetica as `/F1`.
+
+    `resources` is extra entries for the page's `/Resources` dictionary (e.g. `/XObject << ... >>`
+    or `/ExtGState << ... >>`). `extra_objects` are further numbered objects, starting at object
+    5, which `resources` can reference (4 is the font; 1-3 the catalog, page tree and page, with
+    the content stream last).
+    """
+    crop_box_entry = b" /CropBox [%g %g %g %g]" % crop_box if crop_box else b""
+    first_extra = 5
+    content_number = first_extra + len(extra_objects)
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %g %g]%s "
+        b"/Resources << /Font << /F1 4 0 R >> %s >> /Contents %d 0 R >>"
+        % (width, height, crop_box_entry, resources, content_number),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        *extra_objects,
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+    ]
+    return _assemble(objects)
+
+
+_GRAY_IMAGE = (
+    b"<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray "
+    b"/BitsPerComponent 8 /Length 1 >>\nstream\n\x80\nendstream"
+)
+
+
+def invisible_text_pdf(mode: int = 3) -> bytes:
+    """Invented text drawn with text render mode `mode` (3 invisible, 7 clip). pypdfium2 5.13.0
+    extracts it normally and reports the mode through `FPDFTextObj_GetTextRenderMode`."""
+    return build_raw_pdf(b"BT /F1 12 Tf %d Tr 72 700 Td (Invented Keyword Block) Tj ET" % mode)
+
+
+def transparent_text_pdf() -> bytes:
+    """Invented text under an ExtGState with `/ca 0`; pypdfium2 5.13.0 reports a fill alpha of 0."""
+    return build_raw_pdf(
+        b"/GS1 gs BT /F1 12 Tf 72 700 Td (Invented Keyword Block) Tj ET",
+        resources=b"/ExtGState << /GS1 << /ca 0 >> >>",
+    )
+
+
+def white_text_pdf(gray: float = 1.0) -> bytes:
+    """Invented text filled with gray level `gray` on a bare page. pypdfium2 5.13.0 reports a fill
+    of (255, 255, 255, 255) for 1.0; about (247, ...) for 0.97."""
+    return build_raw_pdf(b"BT %g g /F1 12 Tf 72 700 Td (Invented Keyword Block) Tj ET" % gray)
+
+
+def white_text_on_dark_panel_pdf() -> bytes:
+    """A dark filled sidebar rectangle with white invented text inside it, as in a two-column
+    template. The text's loose box lies inside the path's bounds, so it is not hidden."""
+    return build_raw_pdf(
+        b"0.1 0.1 0.3 rg 0 0 200 792 re f BT 1 g /F1 12 Tf 20 700 Td (Invented Sidebar Text) Tj ET"
+    )
+
+
+def white_text_over_image_pdf() -> bytes:
+    """White invented text drawn over a full-page image, which is a cover."""
+    return build_raw_pdf(
+        b"q 612 0 0 792 0 0 cm /Im1 Do Q BT 1 g /F1 12 Tf 72 700 Td (Invented Overlay Text) Tj ET",
+        resources=b"/XObject << /Im1 5 0 R >>",
+        extra_objects=[_GRAY_IMAGE],
+    )
+
+
+def tiny_text_pdf(size: float = 1) -> bytes:
+    """Invented text at `size` points; pypdfium2 5.13.0 reports a loose box about 1.1 high at 1."""
+    return build_raw_pdf(b"BT /F1 %g Tf 72 700 Td (Invented Keyword Block) Tj ET" % size)
+
+
+def matrix_scaled_text_pdf(*, use_cm: bool = False) -> bytes:
+    """12 pt invented text scaled by a 0.05 text matrix (or a 0.05 `cm` when `use_cm`). The font
+    size operand still says 12, but the loose box is about 0.67 high in page space."""
+    if use_cm:
+        return build_raw_pdf(
+            b"q 0.05 0 0 0.05 0 0 cm BT /F1 12 Tf 1440 14000 Td (Invented Keyword Block) Tj ET Q"
+        )
+    return build_raw_pdf(b"BT /F1 12 Tf 0.05 0 0 0.05 72 700 Tm (Invented Keyword Block) Tj ET")
+
+
+def off_page_text_pdf() -> bytes:
+    """Invented text at x=900 on a 612 pt page; pypdfium2 5.13.0 keeps its true coordinates."""
+    return build_raw_pdf(b"BT /F1 12 Tf 900 700 Td (Invented Keyword Block) Tj ET")
+
+
+def text_outside_crop_box_pdf() -> bytes:
+    """Invented text inside the MediaBox but outside a smaller CropBox."""
+    return build_raw_pdf(
+        b"BT /F1 12 Tf 72 700 Td (Visible Invented Line) Tj ET "
+        b"BT /F1 12 Tf 400 100 Td (Invented Keyword Block) Tj ET",
+        crop_box=(0, 400, 300, 792),
+    )
+
+
+def ocr_layer_pdf() -> bytes:
+    """A full-page image with invisible (3 Tr) invented text over it, as an OCR'd scan has."""
+    return build_raw_pdf(
+        b"q 612 0 0 792 0 0 cm /Im1 Do Q BT 3 Tr /F1 12 Tf 72 700 Td (Invented Scanned Line) Tj ET",
+        resources=b"/XObject << /Im1 5 0 R >>",
+        extra_objects=[_GRAY_IMAGE],
+    )
+
+
+def invisible_text_in_form_pdf() -> bytes:
+    """Invisible (3 Tr) invented text inside a Form XObject; PDFium resolves its text object."""
+    form_content = b"BT /F1 12 Tf 3 Tr 72 700 Td (Invented Keyword Block) Tj ET"
+    form = (
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Length %d >>\nstream\n%s\nendstream"
+        % (len(form_content), form_content)
+    )
+    return build_raw_pdf(
+        b"q 1 0 0 1 0 0 cm /Fm1 Do Q",
+        resources=b"/XObject << /Fm1 5 0 R >>",
+        extra_objects=[form],
+    )
+
+
+def white_and_tiny_text_pdf() -> bytes:
+    """Invented text that is both white and 1 pt, to show one character counting once overall."""
+    return build_raw_pdf(b"BT 1 g /F1 1 Tf 72 700 Td (Invented Keyword Block) Tj ET")
+
+
+def hidden_stuffing_resume_pdf() -> bytes:
+    """Normal visible invented resume lines plus a white 1 pt block of invented keywords."""
+    visible = (
+        b"BT /F1 12 Tf 72 740 Td (Invented Person) Tj "
+        b"0 -20 Td (Software Engineer at Example Co) Tj "
+        b"0 -20 Td (Built invented services and tools) Tj ET "
+    )
+    hidden = b"BT 1 g /F1 1 Tf 72 40 Td (python java golang kubernetes docker terraform) Tj ET"
+    return build_raw_pdf(visible + hidden)
+
+
+def normal_resume_pdf() -> bytes:
+    """A plausible invented resume: black body text, a 7 pt footer, a dark sidebar with white
+    text and a light-grey (0.6) date line. None of it is hidden."""
+    content = (
+        b"0.1 0.1 0.3 rg 0 0 180 792 re f "
+        b"BT 1 g /F1 11 Tf 20 700 Td (Invented Contact) Tj 0 -16 Td (Skills Column) Tj ET "
+        b"BT 0 g /F1 12 Tf 210 740 Td (Invented Person) Tj 0 -18 Td (Software Engineer) Tj "
+        b"0 -18 Td (Built invented services and tools) Tj ET "
+        b"BT 0.6 g /F1 10 Tf 210 660 Td (2020 to 2024) Tj ET "
+        b"BT 0 g /F1 7 Tf 210 30 Td (Invented footer note) Tj ET"
+    )
+    return build_raw_pdf(content)
