@@ -609,3 +609,46 @@ def normal_resume_pdf() -> bytes:
         b"BT 0 g /F1 7 Tf 210 30 Td (Invented footer note) Tj ET"
     )
     return build_raw_pdf(content)
+
+
+def squashed_text_pdf(kind: str) -> bytes:
+    """Invented 12 pt keyword text squashed along one axis: "vertical" with a flat text matrix,
+    "horizontal" with `Tz 1`. Each is a sliver the ATS still reads."""
+    text = b"(Invented Keyword Block For Squashing Tests) Tj ET"
+    if kind == "vertical":
+        return build_raw_pdf(b"BT /F1 12 Tf 1 0 0 0.01 72 700 Tm " + text)
+    return build_raw_pdf(b"BT /F1 12 Tf 1 Tz 72 700 Td " + text)
+
+
+def invisible_text_beside_a_photo_in_a_form_pdf() -> bytes:
+    """A page-wrapping Form XObject holding a small headshot image at the top right, drawn on
+    the page; invisible invented keywords sit far from the photo, so no scan lies under them."""
+    form_content = b"q 60 0 0 60 500 720 cm /Im1 Do Q 0 0 612 792 re S"
+    form = (
+        b"<< /Type /XObject /Subtype /Form /BBox [0 0 612 792] "
+        b"/Resources << /XObject << /Im1 6 0 R >> >> /Length %d >>\nstream\n%s\nendstream"
+        % (len(form_content), form_content)
+    )
+    return build_raw_pdf(
+        b"/Fm1 Do BT 3 Tr /F1 12 Tf 72 400 Td (Invented Keyword Block For Stuffing) Tj ET",
+        resources=b"/XObject << /Fm1 5 0 R >>",
+        extra_objects=[form, _scan_image(0x80, pixels=100)],
+    )
+
+
+def many_pages_of_white_text_pdf(pages: int) -> bytes:
+    """`pages` pages sharing one content stream of a single white invented character."""
+    content = b"BT 1 g /F1 10 Tf 72 700 Td (x) Tj ET"
+    kids = b" ".join(b"%d 0 R" % (5 + number) for number in range(pages))
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [%s] /Count %d >>" % (kids, pages),
+        b"<< /Length %d >>\nstream\n%s\nendstream" % (len(content), content),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"",
+    ]
+    objects[4:] = [
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 3 0 R >>"
+    ] * pages
+    return _assemble(objects)

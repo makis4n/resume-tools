@@ -25,12 +25,12 @@ sees the extracted text, harms the candidate. Decision 0083 left both checks for
     sees, so gradient and tiling patterns (which PDFium reports as a white fill), stroked bars,
     images and dark panels are all handled without reading their paint.
   - tiny: the character's loose box (`FPDFText_GetLooseCharBox`, page space with every matrix
-    applied) has `max(width, height)` under 3 pt. Plain font size is not used: it ignores
+    applied) has `max(width, height)` under 3 pt, or `min(width, height)` under 1 pt (text squashed along one axis by `Tz` or a flat matrix is a sliver). Plain font size is not used: it ignores
     text-matrix and `cm` scaling.
   - off page: the loose box does not intersect the crop box.
 - **Cover rule.** Only invisible text uses covers. A cover is a top-level image of real
   resolution (at least 0.5 pixel per point each way, so a 1x1 image stretched over the page is not
-  one) or a form with such an image inside (`_covers`, at most 500 per page). Invisible text whose
+  one) or such an image inside a form, where the cover is the image's own bounds carried through the form matrices, not the whole form (`_covers`, at most 500 per page). Invisible text whose
   box centre lies inside a cover is not hidden, since an OCR text layer over a scan hides
   nothing. The test is made per character. The crop box is read with its corners ordered, since a
   PDF rectangle may name any two opposite corners.
@@ -49,7 +49,7 @@ sees the extracted text, harms the candidate. Decision 0083 left both checks for
 - **Budgets fail open.** The existing 200,000 character budget also bounds the hidden checks (a
   page over it has all counts 0). Cover rectangle tests are limited to 100,000 per document; once spent
   every invisible-text lookup answers "covered", so a hostile upload gets no hidden count rather than quadratic
-  work.
+  work. Page renders are capped at 10 per document (`_RENDER_BUDGET`); a page after that answers "inked", so white text on it is not counted.
 - **Rubric unchanged.** `RUBRIC_VERSION` stays `readiness-1` (decision 0083: new checks silent on
   existing fixtures). The analyser version moves to 0.2.0.
 

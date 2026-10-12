@@ -20,11 +20,13 @@ from tests.pdfs import (
     hidden_stuffing_resume_pdf,
     icon_font_pua_pdf,
     image_only_pdf,
+    invisible_text_beside_a_photo_in_a_form_pdf,
     invisible_text_in_form_pdf,
     invisible_text_over_stretched_pixel_pdf,
     invisible_text_pdf,
     malformed_page_tree_pdf,
     malformed_producer_metadata_pdf,
+    many_pages_of_white_text_pdf,
     matrix_scaled_text_pdf,
     minimal_pdf,
     normal_resume_pdf,
@@ -33,6 +35,7 @@ from tests.pdfs import (
     outlined_white_text_pdf,
     postscript_named_symbol_bullet_pdf,
     reversed_media_box_pdf,
+    squashed_text_pdf,
     supplementary_icon_font_pdf,
     symbol_font_bullet_pdf,
     text_as_outlines_pdf,
@@ -529,3 +532,32 @@ def test_a_page_of_huge_white_glyphs_is_read_in_bounded_time() -> None:
     (page,) = extract(build_raw_pdf(content)).pages
     assert time.perf_counter() - started < 2.0
     assert page.background_colour_count == page.hidden_count > 0
+
+
+def test_text_squashed_along_one_axis_counts_as_tiny() -> None:
+    for kind in ("vertical", "horizontal"):
+        (page,) = extract(squashed_text_pdf(kind)).pages
+        assert page.tiny_count == page.hidden_count == page.char_count >= 30
+
+
+def test_invisible_text_beside_a_photo_inside_a_form_is_hidden() -> None:
+    (page,) = extract(invisible_text_beside_a_photo_in_a_form_pdf()).pages
+    assert page.invisible_count == page.hidden_count == page.char_count > 0
+
+
+def test_page_renders_are_capped_per_document(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ats.extract as extract_module
+
+    renders = 0
+    original = extract_module._HiddenReader._make_render
+
+    def counting(self: object) -> object:
+        nonlocal renders
+        renders += 1
+        return original(self)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(extract_module._HiddenReader, "_make_render", counting)
+    document = extract(many_pages_of_white_text_pdf(extract_module._RENDER_BUDGET + 15))
+    assert renders == extract_module._RENDER_BUDGET
+    # Pages past the budget fail open: the character is not called hidden.
+    assert [page.hidden_count for page in document.pages][-1] == 0

@@ -71,6 +71,10 @@ _CHAR_BUDGET = 200_000
 # this many points is unreadably small; `max` rather than height so rotated text is not mistaken
 # for tiny text.
 _TINY_TEXT_POINTS = 3.0
+# Text squashed along one axis (a tiny `Tz`, or a flat text matrix) is unreadable even when its
+# other side is long: a box under this many points on either side is a sliver. No real glyph is
+# this thin (a full stop at 8 pt has a loose box about 2 pt wide).
+_SLIVER_POINTS = 1.0
 
 # A painting colour with every channel at or above `255 - _BACKGROUND_TOLERANCE` counts as
 # near-white, the colour of an unpainted page.
@@ -86,6 +90,10 @@ _MIN_IMAGE_PIXELS_PER_POINT = 0.5
 # The longest side, in pixels, of the page render `_HiddenReader` samples colours from.
 _RENDER_MAX_SIDE = 600
 _COVER_TEST_BUDGET = 100_000
+# The page renders one document may make for `_HiddenReader._inked`. A render decodes the page's
+# images and builds a table in Python, all under `_PDFIUM_LOCK`, so a document of many one-word
+# white pages must not buy one per page. Once spent, `_inked` answers "inked" (fails open).
+_RENDER_BUDGET = 10
 
 
 class ExtractError(ValueError):
@@ -134,7 +142,8 @@ class Page:
       transparent -- unless it sits over an image (an OCR text layer over a scan hides nothing).
     - `background_colour_count`: painted near-white with no shape or image drawn under it to make
       that colour visible.
-    - `tiny_count`: under `_TINY_TEXT_POINTS` points wide and high once every matrix is applied.
+    - `tiny_count`: under `_TINY_TEXT_POINTS` points wide and high, or under `_SLIVER_POINTS` on
+      either side, once every matrix is applied.
     - `off_page_count`: entirely outside the page's crop box.
 
     All five are 0 on a page past `_CHAR_BUDGET`, for a character whose text object PDFium cannot
@@ -265,9 +274,11 @@ def _font_name_at(text_page: pdfium.PdfTextPage, index: int) -> str | None:
 
 @dataclass
 class _Budget:
-    """What is left of `_COVER_TEST_BUDGET` for one document, shared by every page."""
+    """What is left of `_COVER_TEST_BUDGET` (`remaining`) and of `_RENDER_BUDGET` (`renders`) for
+    one document, shared by every page."""
 
     remaining: int
+    renders: int = 0
 
 
 @dataclass
@@ -301,14 +312,62 @@ def _near_white(paint: tuple[int, int, int, int]) -> bool:
     return all(channel >= 255 - _BACKGROUND_TOLERANCE for channel in paint[:3])
 
 
+def _bounds(obj: object) -> tuple[float, float, float, float] | None:
+    left, bottom, right, top = (ctypes.c_float() for _ in range(4))
+    if not pdfium.raw.FPDFPageObj_GetBounds(obj, left, bottom, right, top):
+        return None
+    return left.value, bottom.value, right.value, top.value
+
+
+def _through_matrix(
+    obj: object, rect: tuple[float, float, float, float]
+) -> tuple[float, float, float, float]:
+    """`rect` (in the space inside Form XObject `obj`) as the bounding box of its corners after
+    `obj`'s own matrix, which takes it one level out (towards page space)."""
+    matrix = pdfium.raw.FS_MATRIX()
+    if not pdfium.raw.FPDFPageObj_GetMatrix(obj, matrix):
+        return rect
+    xs, ys = [], []
+    for x in (rect[0], rect[2]):
+        for y in (rect[1], rect[3]):
+            xs.append(matrix.a * x + matrix.c * y + matrix.e)
+            ys.append(matrix.b * x + matrix.d * y + matrix.f)
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _form_image_covers(
+    form: object, depth: int, budget: int
+) -> tuple[list[tuple[float, float, float, float]], int]:
+    """The scan-like images inside Form XObject `form`, each as its own bounds in the space the
+    form is drawn in (the form's matrix applied), so a small photo inside a page-wrapping form
+    covers the photo, not the whole form. Recurses into nested forms like `_count_objects_in`,
+    with the same depth limit and a shared object `budget`; returns `(rects, budget_remaining)`."""
+    raw = pdfium.raw
+    rects: list[tuple[float, float, float, float]] = []
+    for index in range(raw.FPDFFormObj_CountObjects(form)):
+        if budget <= 0:
+            break
+        obj = raw.FPDFFormObj_GetObject(form, index)
+        if not obj:
+            continue
+        budget -= 1
+        obj_type = raw.FPDFPageObj_GetType(obj)
+        if obj_type == raw.FPDF_PAGEOBJ_IMAGE:
+            box = _bounds(obj)
+            if box is not None and _is_scan_like(obj, box[2] - box[0], box[3] - box[1]):
+                rects.append(_through_matrix(form, box))
+        elif obj_type == raw.FPDF_PAGEOBJ_FORM and depth < _FORM_RECURSION_LIMIT:
+            inner, budget = _form_image_covers(obj, depth + 1, budget)
+            rects.extend(_through_matrix(form, rect) for rect in inner)
+    return rects, budget
+
+
 def _covers(pdf_page: pdfium.PdfPage) -> list[_Cover]:
     """Images on `pdf_page` that invisible text could be an OCR layer over: a picture or scan of
-    real resolution (`_is_scan_like`), or a Form XObject with one inside (a scanner's wrapped
-    image). At most `_MAX_COVERS`, from at most `_OBJECT_BUDGET` top-level objects, each as
-    `(left, bottom, right, top, True)` in page space (`FPDFPageObj_GetBounds`). It does not
-    recurse into forms: nested bounds are in form space, and a top-level form's own bounds are
-    already in page space. Colour covers (panels, gradients) are not listed: `_inked` reads those
-    from a render.
+    real resolution (`_is_scan_like`), or the same inside a Form XObject (a scanner's wrapped
+    image; the cover is that image, not the whole form). At most `_MAX_COVERS`, from at most
+    `_OBJECT_BUDGET` top-level objects, each as `(left, bottom, right, top, True)` in page space.
+    Colour covers (panels, gradients) are not listed: `_inked` reads those from a render.
     """
     covers: list[_Cover] = []
     raw = pdfium.raw
@@ -322,25 +381,12 @@ def _covers(pdf_page: pdfium.PdfPage) -> list[_Cover]:
             continue
         obj_type = raw.FPDFPageObj_GetType(obj)
         if obj_type == raw.FPDF_PAGEOBJ_FORM:
-            _, form_images, _, walk_budget = _count_objects_in(
-                obj,
-                raw.FPDFFormObj_CountObjects,
-                raw.FPDFFormObj_GetObject,
-                1,
-                walk_budget,
-            )
-            if form_images == 0:
-                continue
-        elif obj_type != raw.FPDF_PAGEOBJ_IMAGE:
-            continue
-        left, bottom, right, top = (ctypes.c_float() for _ in range(4))
-        if not raw.FPDFPageObj_GetBounds(obj, left, bottom, right, top):
-            continue
-        if obj_type == raw.FPDF_PAGEOBJ_IMAGE and not _is_scan_like(
-            obj, right.value - left.value, top.value - bottom.value
-        ):
-            continue
-        covers.append((left.value, bottom.value, right.value, top.value, True))
+            rects, walk_budget = _form_image_covers(obj, 1, walk_budget)
+            covers.extend((*rect, True) for rect in rects[: _MAX_COVERS - len(covers)])
+        elif obj_type == raw.FPDF_PAGEOBJ_IMAGE:
+            box = _bounds(obj)
+            if box is not None and _is_scan_like(obj, box[2] - box[0], box[3] - box[1]):
+                covers.append((*box, True))
     return covers
 
 
@@ -443,6 +489,10 @@ class _HiddenReader:
         gradients and other patterns, stroked bars and images, whose paint the object API cannot
         report. Fails open (True) if the render cannot be made."""
         if self._render is None and not self._render_failed:
+            if self._budget.renders <= 0:
+                self._render_failed = True
+                return True
+            self._budget.renders -= 1
             self._render = self._make_render()
             self._render_failed = self._render is None
         if self._render is None:
@@ -536,7 +586,11 @@ class _HiddenReader:
             and box is not None
             and not self._inked(box)
         )
-        tiny = box is not None and max(box[2] - box[0], box[3] - box[1]) < _TINY_TEXT_POINTS
+        width_points, height_points = (box[2] - box[0], box[3] - box[1]) if box else (0.0, 0.0)
+        tiny = box is not None and (
+            max(width_points, height_points) < _TINY_TEXT_POINTS
+            or min(width_points, height_points) < _SLIVER_POINTS
+        )
         left, bottom, right, top = self._crop
         off_page = box is not None and (
             box[2] < left or box[0] > right or box[3] < bottom or box[1] > top
@@ -749,7 +803,7 @@ def extract(pdf: bytes) -> Document:
             page_count = len(document)
             pages = []
             char_budget = _CHAR_BUDGET
-            cover_budget = _Budget(_COVER_TEST_BUDGET)
+            cover_budget = _Budget(_COVER_TEST_BUDGET, _RENDER_BUDGET)
             try:
                 for number in range(1, page_count + 1):
                     pdf_page = document.get_page(number - 1)
