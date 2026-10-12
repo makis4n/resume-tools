@@ -81,6 +81,10 @@ _BACKGROUND_TOLERANCE = 16
 # "covered", which fails open (no hidden count), so a hostile upload cannot make cover lookups
 # quadratic in its character and shape counts.
 _MAX_COVERS = 500
+# An image counts as a cover only at this resolution or better (see `_is_scan_like`).
+_MIN_IMAGE_PIXELS_PER_POINT = 0.5
+# The longest side, in pixels, of the page render `_HiddenReader` samples colours from.
+_RENDER_MAX_SIDE = 600
 _COVER_TEST_BUDGET = 100_000
 
 
@@ -281,6 +285,7 @@ class _CharStats:
     off_page_count: int = 0
 
 
+_Colour = tuple[int, int, int, int]
 _Cover = tuple[float, float, float, float, bool]  # (left, bottom, right, top, is_image)
 
 
@@ -297,12 +302,13 @@ def _near_white(paint: tuple[int, int, int, int]) -> bool:
 
 
 def _covers(pdf_page: pdfium.PdfPage) -> list[_Cover]:
-    """Shapes on `pdf_page` that could be what a piece of text is drawn on: an image, a Form
-    XObject (its contents are unknown, e.g. a scanner's wrapped image, so it counts as an image),
-    a shading, or a filled path whose fill is not near-white. At most `_MAX_COVERS`, from at most
-    `_OBJECT_BUDGET` top-level objects, each as `(left, bottom, right, top, is_image)` in page
-    space (`FPDFPageObj_GetBounds`). It does not recurse into forms: nested bounds are in form
-    space, and a top-level form's own bounds are already in page space.
+    """Images on `pdf_page` that invisible text could be an OCR layer over: a picture or scan of
+    real resolution (`_is_scan_like`), or a Form XObject with one inside (a scanner's wrapped
+    image). At most `_MAX_COVERS`, from at most `_OBJECT_BUDGET` top-level objects, each as
+    `(left, bottom, right, top, True)` in page space (`FPDFPageObj_GetBounds`). It does not
+    recurse into forms: nested bounds are in form space, and a top-level form's own bounds are
+    already in page space. Colour covers (panels, gradients) are not listed: `_inked` reads those
+    from a render.
     """
     covers: list[_Cover] = []
     raw = pdfium.raw
@@ -315,12 +321,7 @@ def _covers(pdf_page: pdfium.PdfPage) -> list[_Cover]:
         if not obj:
             continue
         obj_type = raw.FPDFPageObj_GetType(obj)
-        if obj_type == raw.FPDF_PAGEOBJ_IMAGE:
-            is_image = True
-        elif obj_type == raw.FPDF_PAGEOBJ_FORM:
-            # A form is always a cover, since what it draws is unknown, but it is an image-like one
-            # (what exempts an OCR layer) only if an image is really inside it: a form that holds
-            # only the hidden text itself must not excuse that text.
+        if obj_type == raw.FPDF_PAGEOBJ_FORM:
             _, form_images, _, walk_budget = _count_objects_in(
                 obj,
                 raw.FPDFFormObj_CountObjects,
@@ -328,24 +329,32 @@ def _covers(pdf_page: pdfium.PdfPage) -> list[_Cover]:
                 1,
                 walk_budget,
             )
-            is_image = form_images > 0
-        elif obj_type == raw.FPDF_PAGEOBJ_SHADING:
-            is_image = False
-        elif obj_type == raw.FPDF_PAGEOBJ_PATH:
-            fill_mode, stroke = ctypes.c_int(), ctypes.c_int()
-            if not raw.FPDFPath_GetDrawMode(obj, fill_mode, stroke) or fill_mode.value == 0:
+            if form_images == 0:
                 continue
-            fill = _paint(obj, raw.FPDFPageObj_GetFillColor)
-            if fill is None or fill[3] == 0 or _near_white(fill):
-                continue
-            is_image = False
-        else:
+        elif obj_type != raw.FPDF_PAGEOBJ_IMAGE:
             continue
         left, bottom, right, top = (ctypes.c_float() for _ in range(4))
         if not raw.FPDFPageObj_GetBounds(obj, left, bottom, right, top):
             continue
-        covers.append((left.value, bottom.value, right.value, top.value, is_image))
+        if obj_type == raw.FPDF_PAGEOBJ_IMAGE and not _is_scan_like(
+            obj, right.value - left.value, top.value - bottom.value
+        ):
+            continue
+        covers.append((left.value, bottom.value, right.value, top.value, True))
     return covers
+
+
+def _is_scan_like(image: object, width_points: float, height_points: float) -> bool:
+    """Whether an image has the resolution of a real picture or scan (at least 0.5 pixel per
+    point, 36 dpi, each way). A 1x1 image stretched across the page is a colour wash, not a cover
+    an OCR layer or a coloured panel could sit on."""
+    pixel_width, pixel_height = ctypes.c_uint(), ctypes.c_uint()
+    if not pdfium.raw.FPDFImageObj_GetImagePixelSize(image, pixel_width, pixel_height):
+        return True
+    return (
+        pixel_width.value >= _MIN_IMAGE_PIXELS_PER_POINT * width_points
+        and pixel_height.value >= _MIN_IMAGE_PIXELS_PER_POINT * height_points
+    )
 
 
 class _HiddenReader:
@@ -361,36 +370,75 @@ class _HiddenReader:
         self._pdf_page = pdf_page
         self._text_page = text_page
         self._budget = budget
-        self._crop = pdf_page.get_cropbox()  # (left, bottom, right, top), unrotated page space
+        # (left, bottom, right, top), unrotated page space. A PDF rectangle may name any two
+        # opposite corners, so order them.
+        crop = pdf_page.get_cropbox()
+        self._crop = (
+            min(crop[0], crop[2]),
+            min(crop[1], crop[3]),
+            max(crop[0], crop[2]),
+            max(crop[1], crop[3]),
+        )
         self._covers: list[_Cover] | None = None
-        self._objects: dict[int, tuple[int, tuple[int, int, int, int] | None]] = {}
-        self._lookups: dict[tuple[int, bool], bool] = {}
+        self._objects: dict[int, tuple[int, tuple[_Colour | None, ...]]] = {}
         self._rect = pdfium.raw.FS_RECTF()
+        self._render: tuple[object, int, int, int, int, float] | None = None
+        self._render_failed = False
 
-    def _covered(self, key: int, image_only: bool, centre: tuple[float, float]) -> bool:
-        """Whether `centre` lies inside a cover (an image-like one only if `image_only`), cached
-        per text object and question using its first character's centre. Fails open (True) once
-        the document's budget cannot pay for the lookup."""
-        cached = self._lookups.get((key, image_only))
-        if cached is not None:
-            return cached
+    def _covered(self, centre: tuple[float, float]) -> bool:
+        """Whether `centre` lies inside an image cover, checked per character. Fails open (True)
+        once the document's budget cannot pay for the lookup."""
         if self._covers is None:
             self._covers = _covers(self._pdf_page)
         covers = self._covers
         if self._budget.remaining <= 0 or self._budget.remaining < len(covers):
             self._budget.remaining = 0
-            result = True
-        else:
-            self._budget.remaining -= len(covers)
-            x, y = centre
-            result = any(
-                (cover[4] or not image_only)
-                and cover[0] <= x <= cover[2]
-                and cover[1] <= y <= cover[3]
-                for cover in covers
+            return True
+        self._budget.remaining -= len(covers)
+        x, y = centre
+        return any(cover[0] <= x <= cover[2] and cover[1] <= y <= cover[3] for cover in covers)
+
+    def _inked(self, box: tuple[float, float, float, float]) -> bool:
+        """Whether the page, as PDFium draws it, shows something other than near-white inside
+        `box`. A low-resolution render is the ground truth for what a reader sees: it covers
+        gradients and other patterns, stroked bars and images, whose paint the object API cannot
+        report. Fails open (True) if the render cannot be made."""
+        if self._render is None and not self._render_failed:
+            self._render = self._make_render()
+            self._render_failed = self._render is None
+        if self._render is None:
+            return True
+        buffer, width, height, stride, channels, scale = self._render
+        left, bottom, right, top = self._crop
+        x0 = max(0, int((box[0] - left) * scale))
+        x1 = min(width, int((box[2] - left) * scale) + 1)
+        y0 = max(0, int((top - box[3]) * scale))
+        y1 = min(height, int((top - box[1]) * scale) + 1)
+        data: bytes = buffer  # type: ignore[assignment]
+        for row in range(y0, y1):
+            base = row * stride
+            for column in range(x0, x1):
+                offset = base + column * channels
+                if any(value < 255 - _BACKGROUND_TOLERANCE for value in data[offset : offset + 3]):
+                    return True
+        return False
+
+    def _make_render(self) -> tuple[object, int, int, int, int, float] | None:
+        left, bottom, right, top = self._crop
+        longest = max(right - left, top - bottom)
+        if longest <= 0:
+            return None
+        scale = min(0.5, _RENDER_MAX_SIDE / longest)
+        try:
+            bitmap = self._pdf_page.render(
+                scale=scale,
+                rotation=(360 - self._pdf_page.get_rotation()) % 360,
+                may_draw_forms=False,
             )
-        self._lookups[(key, image_only)] = result
-        return result
+            data = bytes(bitmap.buffer)
+            return data, bitmap.width, bitmap.height, bitmap.stride, bitmap.n_channels, scale
+        except Exception:
+            return None
 
     def read(self, index: int) -> tuple[bool, bool, bool, bool]:
         """`(invisible, background_colour, tiny, off_page)` for the character at `index`."""
@@ -402,11 +450,21 @@ class _HiddenReader:
         info = self._objects.get(key)
         if info is None:
             mode = raw.FPDFTextObj_GetTextRenderMode(obj)
-            stroked = mode in (raw.FPDF_TEXTRENDERMODE_STROKE, raw.FPDF_TEXTRENDERMODE_STROKE_CLIP)
-            getter = raw.FPDFPageObj_GetStrokeColor if stroked else raw.FPDFPageObj_GetFillColor
-            info = (mode, _paint(obj, getter))
+            fill = _paint(obj, raw.FPDFPageObj_GetFillColor)
+            stroke = _paint(obj, raw.FPDFPageObj_GetStrokeColor)
+            if mode in (raw.FPDF_TEXTRENDERMODE_STROKE, raw.FPDF_TEXTRENDERMODE_STROKE_CLIP):
+                paints = (stroke,)
+            elif mode in (
+                raw.FPDF_TEXTRENDERMODE_FILL_STROKE,
+                raw.FPDF_TEXTRENDERMODE_FILL_STROKE_CLIP,
+            ):
+                # Outlined text is readable if either the fill or the stroke can be seen.
+                paints = (fill, stroke)
+            else:
+                paints = (fill,)
+            info = (mode, paints)
             self._objects[key] = info
-        mode, paint = info
+        mode, paints = info
         if not raw.FPDFText_GetLooseCharBox(self._text_page, index, self._rect):
             box = None
         else:
@@ -414,18 +472,22 @@ class _HiddenReader:
             box = (rect.left, rect.bottom, rect.right, rect.top)
         centre = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2) if box else None
 
-        invisible = mode in (raw.FPDF_TEXTRENDERMODE_INVISIBLE, raw.FPDF_TEXTRENDERMODE_CLIP) or (
-            paint is not None and paint[3] == 0
+        clip = mode == raw.FPDF_TEXTRENDERMODE_CLIP
+        invisible = (
+            clip
+            or mode == raw.FPDF_TEXTRENDERMODE_INVISIBLE
+            or all(paint is not None and paint[3] == 0 for paint in paints)
         )
-        if invisible and centre is not None and self._covered(key, True, centre):
-            invisible = False
+        if invisible and centre is not None and box is not None:
+            # An OCR layer over an image hides nothing. Text used as a clipping path shows
+            # whatever is painted through it, which the render reveals.
+            if self._covered(centre) or (clip and self._inked(box)):
+                invisible = False
         background = (
             not invisible
-            and paint is not None
-            and paint[3] > 0
-            and _near_white(paint)
-            and centre is not None
-            and not self._covered(key, False, centre)
+            and all(paint is not None and (paint[3] == 0 or _near_white(paint)) for paint in paints)
+            and box is not None
+            and not self._inked(box)
         )
         tiny = box is not None and max(box[2] - box[0], box[3] - box[1]) < _TINY_TEXT_POINTS
         left, bottom, right, top = self._crop

@@ -15,10 +15,12 @@ from tests.pdfs import (
     build_pdf,
     form_wrapped_image_pdf,
     glyph_case_pdf,
+    gradient_clip_text_pdf,
     hidden_stuffing_resume_pdf,
     icon_font_pua_pdf,
     image_only_pdf,
     invisible_text_in_form_pdf,
+    invisible_text_over_stretched_pixel_pdf,
     invisible_text_pdf,
     malformed_page_tree_pdf,
     malformed_producer_metadata_pdf,
@@ -27,7 +29,9 @@ from tests.pdfs import (
     normal_resume_pdf,
     ocr_layer_pdf,
     off_page_text_pdf,
+    outlined_white_text_pdf,
     postscript_named_symbol_bullet_pdf,
+    reversed_media_box_pdf,
     supplementary_icon_font_pdf,
     symbol_font_bullet_pdf,
     text_as_outlines_pdf,
@@ -37,6 +41,9 @@ from tests.pdfs import (
     transparent_text_pdf,
     white_and_tiny_text_pdf,
     white_text_on_dark_panel_pdf,
+    white_text_on_gradient_band_pdf,
+    white_text_on_stroked_bar_pdf,
+    white_text_over_a_dark_speck_pdf,
     white_text_over_image_pdf,
     white_text_pdf,
     zero_page_pdf,
@@ -474,6 +481,34 @@ def test_a_stuffed_resume_counts_only_the_hidden_block() -> None:
 def test_an_exhausted_cover_budget_fails_open(monkeypatch: pytest.MonkeyPatch) -> None:
     import ats.extract as extract_module
 
-    assert _hidden(white_text_pdf())[0] > 0
+    assert _hidden(invisible_text_pdf())[0] > 0
     monkeypatch.setattr(extract_module, "_COVER_TEST_BUDGET", 0)
-    assert _hidden(white_text_pdf()) == (0, 0, 0, 0, 0)
+    assert _hidden(invisible_text_pdf()) == (0, 0, 0, 0, 0)
+
+
+def test_white_text_on_a_gradient_band_or_stroked_bar_is_not_hidden() -> None:
+    assert _hidden(white_text_on_gradient_band_pdf()) == (0, 0, 0, 0, 0)
+    assert _hidden(white_text_on_stroked_bar_pdf()) == (0, 0, 0, 0, 0)
+
+
+def test_a_page_box_with_its_corners_reversed_is_not_off_page() -> None:
+    assert _hidden(reversed_media_box_pdf()) == (0, 0, 0, 0, 0)
+
+
+def test_outlined_text_with_a_white_fill_and_a_dark_stroke_is_not_hidden() -> None:
+    assert _hidden(outlined_white_text_pdf()) == (0, 0, 0, 0, 0)
+
+
+def test_a_dark_speck_under_the_first_character_does_not_excuse_the_run() -> None:
+    (page,) = extract(white_text_over_a_dark_speck_pdf()).pages
+    assert page.background_colour_count == page.hidden_count >= 20
+
+
+def test_a_stretched_one_pixel_image_does_not_excuse_invisible_text() -> None:
+    (page,) = extract(invisible_text_over_stretched_pixel_pdf()).pages
+    assert page.invisible_count == page.hidden_count == page.char_count > 0
+
+
+def test_text_used_as_a_clip_for_a_gradient_is_not_hidden() -> None:
+    assert _hidden(gradient_clip_text_pdf()) == (0, 0, 0, 0, 0)
+    assert _hidden(invisible_text_pdf(7))[0] > 0

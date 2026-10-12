@@ -409,6 +409,19 @@ _GRAY_IMAGE = (
 )
 
 
+def _scan_image(gray: int, *, pixels: int = 306) -> bytes:
+    """A DeviceGray image of `pixels` x `pixels` (0.5 pixel per point on a 612 pt page, the least
+    that counts as a scan), all one gray level."""
+    import zlib
+
+    data = zlib.compress(bytes([gray]) * (pixels * pixels))
+    return (
+        b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray "
+        b"/BitsPerComponent 8 /Filter /FlateDecode /Length %d >>\nstream\n%s\nendstream"
+        % (pixels, pixels, len(data), data)
+    )
+
+
 def invisible_text_pdf(mode: int = 3) -> bytes:
     """Invented text drawn with text render mode `mode` (3 invisible, 7 clip). pypdfium2 5.13.0
     extracts it normally and reports the mode through `FPDFTextObj_GetTextRenderMode`."""
@@ -480,7 +493,76 @@ def ocr_layer_pdf() -> bytes:
     return build_raw_pdf(
         b"q 612 0 0 792 0 0 cm /Im1 Do Q BT 3 Tr /F1 12 Tf 72 700 Td (Invented Scanned Line) Tj ET",
         resources=b"/XObject << /Im1 5 0 R >>",
-        extra_objects=[_GRAY_IMAGE],
+        extra_objects=[_scan_image(0xF0, pixels=612)],
+    )
+
+
+def invisible_text_over_stretched_pixel_pdf() -> bytes:
+    """Invisible invented keywords over a 1x1 white image stretched across the page: a colour
+    wash, not a scan, so it excuses nothing."""
+    return build_raw_pdf(
+        b"q 612 0 0 792 0 0 cm /Im1 Do Q "
+        b"BT 3 Tr /F1 12 Tf 72 700 Td (Invented Keyword Block) Tj ET",
+        resources=b"/XObject << /Im1 5 0 R >>",
+        extra_objects=[_GRAY_IMAGE.replace(b"\x80", b"\xff")],
+    )
+
+
+_SHADING_RESOURCES = (
+    b"/Pattern << /P1 << /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB "
+    b"/Coords [0 0 612 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0.1 0.1 0.3] "
+    b"/C1 [0.2 0.1 0.4] /N 1 >> >> >> >> "
+    b"/Shading << /Sh1 << /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 612 0] "
+    b"/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> >> >>"
+)
+
+
+def white_text_on_gradient_band_pdf() -> bytes:
+    """White invented text on a band filled with an axial shading pattern. PDFium reports that
+    path's fill colour as white, so only a render shows the band is dark."""
+    return build_raw_pdf(
+        b"/Pattern cs /P1 scn 0 680 612 60 re f "
+        b"BT 1 g /F1 12 Tf 20 700 Td (Invented Header Text On Band) Tj ET",
+        resources=_SHADING_RESOURCES,
+    )
+
+
+def white_text_on_stroked_bar_pdf() -> bytes:
+    """White invented text on a thick stroked (not filled) dark bar."""
+    return build_raw_pdf(
+        b"0 0 0.4 RG 60 w 0 710 m 612 710 l S "
+        b"BT 1 g /F1 12 Tf 20 704 Td (Invented Header Text On Band) Tj ET"
+    )
+
+
+def outlined_white_text_pdf() -> bytes:
+    """Invented heading with a white fill and a dark stroke (render mode 2): readable."""
+    return build_raw_pdf(
+        b"BT 1 g 0 0 0 RG 1 w 2 Tr /F1 24 Tf 72 700 Td (Invented Outlined Heading) Tj ET"
+    )
+
+
+def white_text_over_a_dark_speck_pdf() -> bytes:
+    """A run of white invented keywords with a small dark rectangle under only its first
+    character; the rest of the run is on a bare page."""
+    return build_raw_pdf(
+        b"0 g 72 698 6 8 re f BT 1 g /F1 12 Tf 72 700 Td "
+        b"(python java golang kubernetes docker terraform python java) Tj ET"
+    )
+
+
+def gradient_clip_text_pdf() -> bytes:
+    """A heading drawn as a clipping path (7 Tr) with a shading painted through it: visible."""
+    return build_raw_pdf(
+        b"q BT 7 Tr /F1 24 Tf 72 700 Td (Invented Person Fullname Here) Tj ET /Sh1 sh Q",
+        resources=_SHADING_RESOURCES,
+    )
+
+
+def reversed_media_box_pdf() -> bytes:
+    """Ordinary invented text on a page whose MediaBox names its corners top-right first."""
+    return build_raw_pdf(
+        b"BT /F1 12 Tf 72 700 Td (Invented Normal Text Line Here) Tj ET", crop_box=(612, 792, 0, 0)
     )
 
 
