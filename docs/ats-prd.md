@@ -2,7 +2,7 @@
 
 Status: Draft for review  
 Owner: @keaenlim  
-Last updated: 25 September 2026
+Last updated: 12 October 2026
 
 ## 1. Purpose
 
@@ -34,6 +34,10 @@ decision 0030; the editor's side of the integration is decision 0031.
   the producing tool is classified from the PDF's metadata. There are no contact, section or
   reading-order checks yet, and no job matching: those are later PRs within milestone 1 and
   milestone 3.
+- Milestone 1's request limits have landed. `POST /v1/analyze` has a configurable per-IP rate
+  limit (429 `rate-limited` with Retry-After) and a hard processing-time limit
+  (`analysis-timeout`), next to the existing upload-size limit (decision 0088). The
+  job-description-length limit and the daily model cap come with milestone 3.
 - The editor's milestone 2 has landed: three curated templates, the side panel, documents kept in
   the browser and PDF download. `Compiler.pdf()` in `apps/editor/src/editor/compiler.ts` returns the
   bytes the download button saves, which are the bytes the panel sends.
