@@ -1,6 +1,6 @@
 [project]
 name = "ats"
-version = "0.2.0"
+version = "0.3.0"
 description = "ATS simulator and resume optimiser"
 requires-python = ">=3.12"
 dependencies = [

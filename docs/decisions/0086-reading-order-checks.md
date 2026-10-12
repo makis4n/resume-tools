@@ -64,8 +64,8 @@ finding conventions: stable ids, `warning` severity for layout problems, "many A
 - **Findings.** Both are `warning`, origin `layout`, with a page, and both ids are stable (0083).
   Neither message quotes resume text. Both run only when the document has a text layer.
 - **Versions.** `RUBRIC_VERSION` stays `readiness-1`: these are new checks that were silent before
-  and do not change any existing fixture's result (0083). The analyser goes to 0.2.0, because a
-  new check changes the response.
+  and do not change any existing fixture's result (0083). The analyser goes to 0.3.0 (0.2.0 was decision
+  0085's contact and section checks), because a new check changes the response.
 
 ## Consequences
 
@@ -79,5 +79,3 @@ finding conventions: stable ids, `warning` severity for layout problems, "many A
   concern.
 - Under PRD §12.1, a curated LaTeX template that hyphenates or interleaves would now fail the
   validation gate. That is a follow-up for the editor's owner (@makis4n) and is not changed here.
-- `keaen/contact-sections` also moves the analyser to 0.2.0; whichever branch merges second takes
-  0.3.0 when it is rebased.

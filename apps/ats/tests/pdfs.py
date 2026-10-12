@@ -113,6 +113,29 @@ def minimal_pdf(text: str = "Invented Person") -> bytes:
     return build_pdf([[(text, 72, 720)]])
 
 
+RESUME_EMAIL = "ada.inventa@example.com"
+RESUME_PHONE = "+1 555 010 0199"
+RESUME_LINK = "github.com/ada-inventa-example"
+
+
+def resume_pdf() -> bytes:
+    """A one-page PDF with invented contact details and the three conventional headings."""
+    return build_pdf(
+        [
+            [
+                ("Ada Inventa", 72, 740),
+                (f"{RESUME_EMAIL} | {RESUME_PHONE} | {RESUME_LINK}", 72, 722),
+                ("Experience", 72, 690),
+                ("Engineer at Invented Works, 2019 to 2023", 72, 674),
+                ("Education", 72, 640),
+                ("BSc in Invention, Example University", 72, 624),
+                ("Skills", 72, 590),
+                ("Prototyping, soldering, documentation", 72, 574),
+            ]
+        ]
+    )
+
+
 def malformed_page_tree_pdf() -> bytes:
     """A PDF whose document loads, but whose one page reference does not point at a page.
 

@@ -4,6 +4,12 @@ from ats.extract import Document, Page
 from ats.producer import Producer
 from ats.readiness import Rect, _interleaved_lines, _join_markers, _segments, check
 
+_CLEAN_TEXT = (
+    "Ada Inventa\nada.inventa@example.com | +1 555 010 0199 | github.com/ada-inventa-example\n"
+    "Experience\nEngineer at Invented Works\nEducation\nBSc in Invention\n"
+    "Skills\nPrototyping and documentation"
+)
+
 
 def _page(
     number: int = 1,
@@ -17,12 +23,13 @@ def _page(
     path_objects: int = 0,
     text_rects: tuple[Rect, ...] = (),
     hyphen_break_count: int = 0,
+    text: str = _CLEAN_TEXT,
 ) -> Page:
     return Page(
         number=number,
         width=612,
         height=792,
-        text="invented placeholder text",
+        text=text,
         char_count=char_count,
         unmapped_count=unmapped_count,
         private_use_count=private_use_count,
@@ -513,3 +520,81 @@ def test_a_long_chain_with_distinct_starts_is_checked_in_near_linear_time() -> N
     elapsed = time.perf_counter() - began
     assert longest == rows  # one chain, so the alignment check ran on every segment
     assert elapsed < 2.0
+
+
+# --- contact and section findings (decision 0085) ---
+
+_NEW_IDS = [
+    "missing-contact-email",
+    "missing-contact-phone",
+    "missing-profile-link",
+    "missing-section-experience",
+    "missing-section-education",
+    "missing-section-skills",
+]
+
+
+def test_a_text_page_with_no_contact_or_headings_gets_every_content_finding() -> None:
+    document = _document(_page(text="Some invented words and nothing else"))
+    findings = check(document, Producer.OTHER)
+    assert [f.id for f in findings] == _NEW_IDS
+    assert [f.severity for f in findings] == [
+        "warning",
+        "info",
+        "info",
+        "warning",
+        "info",
+        "info",
+    ]
+    assert all(f.origin == "content" and f.page is None for f in findings)
+
+
+def test_an_email_candidate_alone_is_unrecognised_not_missing() -> None:
+    text = _CLEAN_TEXT.replace("ada.inventa@example.com", "ada@inventa")
+    ids = _ids(_document(_page(text=text)))
+    assert ids == ["unrecognised-contact-email"]
+    findings = check(_document(_page(text=text)), Producer.OTHER)
+    assert findings[0].severity == "warning"
+
+
+def test_no_contact_or_section_findings_without_a_text_layer() -> None:
+    document = _document(_page(char_count=0, text_objects=0, text=""))
+    assert _ids(document) == ["no-text-layer"]
+
+
+def test_content_findings_sort_before_per_page_findings_and_after_page_count() -> None:
+    pages = [_page(n, text="nothing useful") for n in (1, 2, 3)]
+    pages[0] = _page(1, text="nothing useful", private_use_count=1)
+    ids = _ids(_document(*pages))
+    assert ids[0] == "page-count"
+    assert ids[1] == "missing-contact-email"
+    assert ids[-1] == "icon-font-glyphs"
+
+
+def test_latex_content_findings_use_the_neutral_suggestion() -> None:
+    findings = check(_document(_page(text="nothing useful")), Producer.LATEX)
+    assert findings
+    for finding in findings:
+        assert finding.suggestion
+        assert "\\" not in finding.suggestion and "LaTeX" not in finding.suggestion
+        assert finding.suggestion != "This comes from the template's design."
+
+
+def test_detect_reads_a_bounded_amount_of_text(monkeypatch) -> None:
+    import ats.readiness as readiness
+
+    seen: list[int] = []
+    real = readiness.detect
+
+    def spy(text: str):
+        seen.append(len(text))
+        return real(text)
+
+    monkeypatch.setattr(readiness, "detect", spy)
+    check(_document(_page(text="a. " * 400_000)), Producer.OTHER)
+    assert seen == [readiness._DETECT_CHAR_LIMIT]
+
+
+def test_content_findings_are_skipped_when_the_text_is_mostly_unmapped() -> None:
+    document = _document(_page(text="nothing useful", char_count=800, unmapped_count=800))
+    assert _ids(document) == ["unmapped-glyphs"]

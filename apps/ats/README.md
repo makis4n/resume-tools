@@ -13,7 +13,7 @@ uv run ruff check . && uv run ruff format --check .
 
 For reloading on changes while developing, run `uv run uvicorn ats.service:app --reload` instead.
 
-`src/ats/service.py` is the HTTP layer, FastAPI served by Uvicorn (decision 0030): `POST /v1/analyze` takes multipart form data with a `file` field holding a PDF, and `GET /health` answers the host's checks. `src/ats/analyze.py` is the analysis itself: it extracts the PDF's text and layout facts (`src/ats/extract.py`), classifies the producing tool (`src/ats/producer.py`), runs the milestone-1 readiness checks (`src/ats/readiness.py`) and scores them under the versioned rubric (`src/ats/rubric.py`, decision 0083). Contact and section checks and job matching are later milestones; reading order is decision 0086.
+`src/ats/service.py` is the HTTP layer, FastAPI served by Uvicorn (decision 0030): `POST /v1/analyze` takes multipart form data with a `file` field holding a PDF, and `GET /health` answers the host's checks. `src/ats/analyze.py` is the analysis itself: it extracts the PDF's text and layout facts (`src/ats/extract.py`), classifies the producing tool (`src/ats/producer.py`), runs the milestone-1 readiness checks (`src/ats/readiness.py`) and scores them under the versioned rubric (`src/ats/rubric.py`, decision 0083). Contact and section checks (`src/ats/structure.py`, decision 0085) and reading order (decision 0086) are in; job matching is a later milestone.
 
 Settings come from the environment:
 

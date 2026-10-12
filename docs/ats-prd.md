@@ -28,12 +28,13 @@ decision 0030; the editor's side of the integration is decision 0031.
   contract, and a panel that nothing mounts yet.
 - Milestone 1's first slice has landed: `analyze` now returns a real, deterministic
   ATS-readiness score with findings, under the versioned rubric in decision 0083. The checks are
-  text layer (including text exported as outlines and image-only pages), page count and
+  text layer (including text exported as outlines and image-only pages), page count,
   glyph-mapping (unmapped and icon-font characters; the ligature check exists but cannot fire on
-  real PDFs yet, see decision 0083), plus column interleaving and words split by hyphenation at
-  line ends (decision 0086); each finding carries an origin, and
-  the producing tool is classified from the PDF's metadata. Contact and section checks are still
-  to come, and there is no job matching: those are later PRs within milestone 1 and
+  real PDFs yet, see decision 0083), contact information (email, phone, profile link) and
+  conventional sections (experience, education, skills), the last two under decision 0085, which
+  returns only whether each was found and never what was detected, plus column interleaving and
+  words split by hyphenation at line ends (decision 0086); each finding carries an origin, and the
+  producing tool is classified from the PDF's metadata. There is no job matching yet: that is
   milestone 3.
 - The editor's milestone 2 has landed: three curated templates, the side panel, documents kept in
   the browser and PDF download. `Compiler.pdf()` in `apps/editor/src/editor/compiler.ts` returns the
