@@ -32,8 +32,9 @@ decision 0030; the editor's side of the integration is decision 0031.
   glyph-mapping (unmapped and icon-font characters; the ligature check exists but cannot fire on
   real PDFs yet, see decision 0083), contact information (email, phone, profile link) and
   conventional sections (experience, education, skills), the last two under decision 0085, which
-  returns only whether each was found and never what was detected; each finding carries an origin, and
-  the producing tool is classified from the PDF's metadata. There are no reading-order checks yet, and no job matching: those are later PRs within milestone 1 and
+  returns only whether each was found and never what was detected, plus column interleaving and
+  words split by hyphenation at line ends (decision 0086); each finding carries an origin, and the
+  producing tool is classified from the PDF's metadata. There is no job matching yet: that is
   milestone 3.
 - The editor's milestone 2 has landed: three curated templates, the side panel, documents kept in
   the browser and PDF download. `Compiler.pdf()` in `apps/editor/src/editor/compiler.ts` returns the

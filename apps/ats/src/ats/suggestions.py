@@ -31,6 +31,14 @@ _DEFAULTS: dict[str, str] = {
     "ligature-characters": (
         "Turn off font ligatures, or use a font that does not substitute them, before exporting."
     ),
+    "column-interleaving": (
+        "Use a single-column layout, or make sure each column's text is kept together rather than "
+        "drawn line by line across the page."
+    ),
+    "hyphenated-line-breaks": (
+        "Turn off automatic hyphenation, and reword or adjust spacing so no word or hyphenated "
+        "compound (such as user-facing) is split at the end of a line."
+    ),
     "missing-contact-email": "Add your email address as plain text near the top of the first page.",
     "unrecognised-contact-email": (
         "Write your email address in full as plain text (name@example.com), not as an image, "
@@ -77,6 +85,25 @@ _BY_PRODUCER: dict[str, dict[Producer, str]] = {
     },
     "ligature-characters": {
         Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
+    },
+    "column-interleaving": {
+        Producer.WORD: (
+            "Place side-by-side text with Layout > Columns, or use a single-column layout."
+        ),
+        Producer.GOOGLE_DOCS: (
+            "Place side-by-side text with Format > Columns, or use a single-column layout."
+        ),
+        Producer.LATEX: _LATEX_TEMPLATE_SUGGESTION,
+    },
+    "hyphenated-line-breaks": {
+        Producer.WORD: (
+            "Turn off hyphenation with Layout > Hyphenation > None, and reword so a hyphenated "
+            "compound (such as full-stack) does not fall at the end of a line."
+        ),
+        Producer.LATEX: (
+            "Reword so a hyphenated compound (such as user-facing) does not fall at the end of "
+            "a line."
+        ),
     },
 }
 

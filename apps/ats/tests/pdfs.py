@@ -392,3 +392,181 @@ def supplementary_icon_font_pdf() -> bytes:
     Material Design Icons and Nerd Fonts sit), drawn in a font named "MaterialDesignIcons". The
     ToUnicode value is the UTF-16 surrogate pair DB80 DC01."""
     return _pua_char_pdf(b"MaterialDesignIcons", 34, "DB80DC01")
+
+
+_LEFT_PROSE = (
+    "Led a small team that rebuilt the invented",
+    "billing service for a fictional retailer and",
+    "cut its monthly processing costs by a third",
+    "while keeping the nightly reports on time.",
+    "Wrote the onboarding guide that new staff",
+    "still use, and mentored four junior people",
+    "through their first quarter on the project.",
+)
+_RIGHT_PROSE = (
+    "Designed a pretend scheduling tool for a made",
+    "up clinic, replacing a paper calendar that the",
+    "front desk had kept for many years, and ran a",
+    "weekly review of how patients used the tool.",
+    "Trained the clinic staff on every new release",
+    "and collected their comments so that the next",
+    "version fixed the problems they had reported.",
+)
+
+
+def interleaved_two_column_pdf(offset: float = 0.0) -> bytes:
+    """Two columns of ragged-right invented prose, written row by row (L1, R1, L2, R2, ...).
+
+    Left column at x=72, right at x=330, 7 lines each, 16pt apart; with `offset` > 0 the right
+    column's baselines sit `offset` points lower than the left's. pypdfium2 5.13.0 reports the
+    rects alternating left, right, left, right, one rect per line, and joins each pair of lines
+    into one text line.
+    """
+    lines: list[Line] = []
+    for row, (left, right) in enumerate(zip(_LEFT_PROSE, _RIGHT_PROSE, strict=True)):
+        y = 700 - 16 * row
+        lines.append((left, 72, y))
+        lines.append((right, 330, y - offset))
+    return build_pdf([lines])
+
+
+def clean_two_column_pdf() -> bytes:
+    """The same prose as `interleaved_two_column_pdf`, written as the whole left column and then
+    the whole right column. pypdfium2 5.13.0 reports the left rects first, then the right ones,
+    the move to the right column jumping back up the page."""
+    lines: list[Line] = [(text, 72, 700 - 16 * row) for row, text in enumerate(_LEFT_PROSE)]
+    lines += [(text, 330, 700 - 16 * row) for row, text in enumerate(_RIGHT_PROSE)]
+    return build_pdf([lines])
+
+
+def single_column_with_dates_pdf() -> bytes:
+    """Four role lines, each with a right-aligned date near x=450, each followed by two
+    full-width bullet lines. A date is a lateral step on its own, but the bullets between roles
+    break any alternation, so no run of lines is read across the page."""
+    lines: list[Line] = []
+    y = 720.0
+    for role, date in (
+        ("Operations Lead, Example Works", "2021 - 2024"),
+        ("Analyst, Sample Partners", "2018 - 2021"),
+        ("Coordinator, Invented Trading", "2016 - 2018"),
+        ("Assistant, Placeholder Group", "2014 - 2016"),
+    ):
+        lines.append((role, 72, y))
+        lines.append((date, 450, y))
+        y -= 16
+        for bullet in (
+            "Improved the invented process so that every request was handled in a day or less.",
+            "Kept clear records of each fictional project and shared them with the whole team.",
+        ):
+            lines.append((bullet, 72, y))
+            y -= 16
+        y -= 8
+    return build_pdf([lines])
+
+
+def skills_grid_pdf() -> bytes:
+    """Five rows of two short invented words, at x=72 and x=330, written row by row. The rects
+    alternate left, right like interleaved prose, but the left cells are short and mostly do not
+    reach the end of their column, so this is a skills grid and not columns of prose."""
+    rows = (
+        ("Writing", "Scheduling"),
+        ("Budgeting", "Planning"),
+        ("Coaching", "Estimating Costs Accurately"),
+        ("Auditing Records Carefully", "Reporting"),
+        ("Training", "Facilitation"),
+    )
+    lines: list[Line] = []
+    for row, (left, right) in enumerate(rows):
+        lines.append((left, 72, 700 - 16 * row))
+        lines.append((right, 330, 700 - 16 * row))
+    return build_pdf([lines])
+
+
+def _rows_pdf(rows: Sequence[tuple[str, str]], left_x: float, right_x: float) -> bytes:
+    lines: list[Line] = []
+    for row, (left, right) in enumerate(rows):
+        lines.append((left, left_x, 700 - 16 * row))
+        lines.append((right, right_x, 700 - 16 * row))
+    return build_pdf([lines])
+
+
+def dated_list_pdf() -> bytes:
+    """Four single-line entries at x=72, each with a right-aligned year at x=510 on the same
+    baseline, written row by row. Read line by line it is already in order."""
+    return _rows_pdf(
+        (
+            ("Certified Invented Cloud Architect", "2023"),
+            ("Professional Pretend Data Engineer", "2022"),
+            ("Associate Fictional Security Analyst", "2021"),
+            ("Practitioner of Made-up Project Methods", "2020"),
+        ),
+        72,
+        510,
+    )
+
+
+def label_value_table_pdf() -> bytes:
+    """A skills table drawn row by row: a short label at x=72 and its values at x=180."""
+    return _rows_pdf(
+        (
+            ("Languages", "Python, Java, Go"),
+            ("Frameworks", "Invented Web, Sample Test"),
+            ("Databases", "Placeholder SQL, Example Store"),
+            ("Platforms", "Pretend Cloud, Made-up Containers"),
+        ),
+        72,
+        180,
+    )
+
+
+def education_rows_pdf() -> bytes:
+    """Two education entries as four two-cell rows: name and place, then degree and dates."""
+    return _rows_pdf(
+        (
+            ("Example State University", "Sample City, ST"),
+            ("B.Sc. in Computer Science", "Aug 2016 - May 2020"),
+            ("Invented Community College", "Made-up Town, ST"),
+            ("A.A. in Liberal Arts Studies", "Aug 2014 - May 2016"),
+        ),
+        72,
+        420,
+    )
+
+
+def date_column_pdf() -> bytes:
+    """Four rows of a date range at x=72 beside a one-line role at x=160."""
+    return _rows_pdf(
+        (
+            ("2021 - 2024", "Operations Lead, Example Works"),
+            ("2018 - 2021", "Analyst, Sample Partners"),
+            ("2016 - 2018", "Coordinator, Invented Trading"),
+            ("2014 - 2016", "Assistant, Placeholder Group"),
+        ),
+        72,
+        160,
+    )
+
+
+def hyphenated_pdf() -> bytes:
+    """One line ending 'distri-' followed by a line starting 'buted ...', plus control lines.
+
+    The controls are a line-end hyphen followed by an uppercase letter ('Senior-' then 'Level'),
+    one followed by a digit ('2019-' then '2021'), a mid-line hyphen, and a hyphen followed by a
+    jump to the other column on the same line. pypdfium2 5.13.0 turns the first into 'distri'
+    U+0002 'buted' (with no line break) and, with the controls, `hyphen_break_count` is 1.
+    """
+    return build_pdf(
+        [
+            [
+                ("Maintained a distri-", 72, 700),
+                ("buted system for the invented team.", 72, 684),
+                ("Held a Senior-", 72, 660),
+                ("Level post at a made-up firm.", 72, 644),
+                ("Worked there from 2019-", 72, 620),
+                ("2021 on shared tooling.", 72, 604),
+                ("A well-known pretend client.", 72, 580),
+                ("Wrote a short distri-", 72, 556),
+                ("buted note", 330, 556),
+            ]
+        ]
+    )
