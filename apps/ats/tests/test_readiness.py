@@ -485,20 +485,31 @@ def test_interleaved_bullets_with_the_text_in_a_tight_hanging_indent_fire() -> N
 
 
 def test_two_unfilled_cells_in_a_row_do_not_count_as_filled() -> None:
+    # Wide, aligned columns with 6 of 8 segments filled (above the ratio), but two unfilled
+    # segments sit side by side, so the rule in `_filled` alone rejects them.
     rects: list[Rect] = []
-    for row, width in enumerate((200, 90, 80, 200, 90, 80)):
-        rects.append(_line(72, 72 + width, row))
-        rects.append(_line(330, 330 + width, row))
+    for row, full in enumerate((True, True, True, False, False, True, True, True)):
+        rects.append(_line(72, 283 if full else 232, row))
+        rects.append(_line(330, 540 if full else 490, row))
     assert _interleaved_lines(tuple(rects)) == 0
+    # The same columns with the unfilled segments apart are read as interleaved prose.
+    apart = []
+    for row, full in enumerate((True, True, False, True, True, False, True, True)):
+        apart.append(_line(72, 283 if full else 232, row))
+        apart.append(_line(330, 540 if full else 490, row))
+    assert _interleaved_lines(tuple(apart)) == 8
 
 
 def test_a_long_chain_with_distinct_starts_is_checked_in_near_linear_time() -> None:
+    rows = 20000
     rects: list[Rect] = []
-    for row in range(3000):
-        bottom = 14000.0 - 4 * row
-        start = 72.0 - 0.01 * row
+    for row in range(rows):
+        bottom = 400000.0 - 16 * row
+        start = 72.0 - 0.00001 * row
         rects.append((start, bottom, 283.0, bottom + _H))
         rects.append((330.0, bottom, 540.0, bottom + _H))
     began = time.perf_counter()
-    _interleaved_lines(tuple(rects))
-    assert time.perf_counter() - began < 2.0
+    longest = _interleaved_lines(tuple(rects))
+    elapsed = time.perf_counter() - began
+    assert longest == rows  # one chain, so the alignment check ran on every segment
+    assert elapsed < 2.0
