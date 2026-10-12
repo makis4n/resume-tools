@@ -1,3 +1,5 @@
+import time
+
 from ats.extract import Document, Page
 from ats.producer import Producer
 from ats.readiness import Rect, _interleaved_lines, _join_markers, _segments, check
@@ -475,7 +477,10 @@ def test_bullet_marks_are_merged_into_their_text() -> None:
 
 
 def test_interleaved_bullets_with_the_text_in_a_tight_hanging_indent_fire() -> None:
-    rects = _bulleted_rows(items=4, lines_per_item=3, indent=12.0, marker=False)
+    rects = _bulleted_rows(items=4, lines_per_item=3, indent=12.0, marker=True)
+    segments = _join_markers(_segments(rects))
+    # Two start positions per side: the bullet's x and the indent, so a one-x check fails.
+    assert len({round(seg[0]) for seg in segments if seg[0] < 200}) == 2
     assert _ids_for(rects) == ["column-interleaving"]
 
 
@@ -485,3 +490,15 @@ def test_two_unfilled_cells_in_a_row_do_not_count_as_filled() -> None:
         rects.append(_line(72, 72 + width, row))
         rects.append(_line(330, 330 + width, row))
     assert _interleaved_lines(tuple(rects)) == 0
+
+
+def test_a_long_chain_with_distinct_starts_is_checked_in_near_linear_time() -> None:
+    rects: list[Rect] = []
+    for row in range(3000):
+        bottom = 14000.0 - 4 * row
+        start = 72.0 - 0.01 * row
+        rects.append((start, bottom, 283.0, bottom + _H))
+        rects.append((330.0, bottom, 540.0, bottom + _H))
+    began = time.perf_counter()
+    _interleaved_lines(tuple(rects))
+    assert time.perf_counter() - began < 2.0

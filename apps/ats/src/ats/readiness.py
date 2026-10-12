@@ -9,6 +9,8 @@ here quotes resume text, and no message asserts a specific ATS behaviour this pr
 up.
 """
 
+from bisect import bisect_left, bisect_right
+
 from ats.extract import Document
 from ats.findings import Finding, Origin, Severity
 from ats.producer import Producer
@@ -116,8 +118,8 @@ _MARKER_JOIN_FACTOR = 2.0
 # and city) whose cells merely have similar widths.
 _MIN_COLUMN_WIDTH_PT = 150.0
 # Wrapped prose in a column starts every line at the same x. A right-aligned cell (a date, a city)
-# starts each line at a different x. A chain's segments on each side count only if at least
-# `_MIN_FILLED_RATIO` of them start within this many points of the side's median start.
+# starts each line at a different x. Starts within this many points of an anchor x count as one
+# position (see `_aligned`, which needs `_MIN_ALIGNED_RATIO` of a side's starts at two of them).
 _LEFT_EDGE_TOLERANCE_PT = 3.0
 # Alternating lateral steps needed to call a page interleaved. Four consecutive lines read
 # across a gutter is not a table row or a date: it is columns of prose read line by line.
@@ -344,20 +346,26 @@ def _filled(segs: list[Rect]) -> bool:
     return sum(flags) >= _MIN_FILLED_RATIO * len(segs)
 
 
+def _densest(starts: list[float]) -> tuple[int, int, int]:
+    """The anchor in sorted `starts` with the most starts within `_LEFT_EDGE_TOLERANCE_PT`, as
+    (count, low index, high index) of that run. O(n log n) with bisect."""
+    best = (0, 0, 0)
+    for anchor in starts:
+        low = bisect_left(starts, anchor - _LEFT_EDGE_TOLERANCE_PT)
+        high = bisect_right(starts, anchor + _LEFT_EDGE_TOLERANCE_PT)
+        if high - low > best[0]:
+            best = (high - low, low, high)
+    return best
+
+
 def _aligned(segs: list[Rect]) -> bool:
     """Whether most of the segments start at one of two x positions, as the lines of a wrapped
-    column or of a bulleted list with a hanging indent do and a right-aligned cell does not."""
-    starts = [seg[0] for seg in segs]
-    best = 0
-    for anchor in starts:
-        near = [s for s in starts if abs(s - anchor) <= _LEFT_EDGE_TOLERANCE_PT]
-        rest = [s for s in starts if abs(s - anchor) > _LEFT_EDGE_TOLERANCE_PT]
-        second = max(
-            (sum(1 for t in rest if abs(t - other) <= _LEFT_EDGE_TOLERANCE_PT) for other in rest),
-            default=0,
-        )
-        best = max(best, len(near) + second)
-    return best >= _MIN_ALIGNED_RATIO * len(segs)
+    column or of a bulleted list with a hanging indent do and a right-aligned cell does not.
+    Takes the densest cluster of starts, then the densest among the starts outside it."""
+    starts = sorted(seg[0] for seg in segs)
+    first, low, high = _densest(starts)
+    second, _, _ = _densest(starts[:low] + starts[high:])
+    return first + second >= _MIN_ALIGNED_RATIO * len(segs)
 
 
 def _wide(segs: list[Rect]) -> bool:
