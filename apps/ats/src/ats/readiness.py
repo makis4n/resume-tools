@@ -1,9 +1,9 @@
 """Deterministic readiness checks for one extracted PDF (decision 0083); `ats.rubric` scores their
-output. `check` covers milestone 1's checks so far: text layer, page count, glyph mapping,
+output. `check` covers milestone 1's checks: text layer, page count, glyph mapping,
 contact details and conventional sections (decision 0085), the two reading-order checks read from
 text positions (decision 0086: lines of side-by-side columns drawn alternately, and words split
-across lines by hyphenation), and hidden text and keyword repetition (decision 0087). Rate limits
-are a later milestone.
+across lines by hyphenation), and hidden text and keyword repetition (decision 0087). Rate and
+time limits are the HTTP layer's (decision 0088).
 
 Every message and suggestion string these checks use lives here or in `ats.suggestions`; nothing
 here quotes resume text, and no message asserts a specific ATS behaviour this product cannot back

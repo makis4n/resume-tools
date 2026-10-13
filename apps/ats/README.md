@@ -23,6 +23,13 @@ Settings come from the environment:
 | `ATS_PORT` | `8000` | Port `ats-serve` listens on |
 | `ATS_MAX_UPLOAD_BYTES` | `5242880` | Largest PDF accepted, in bytes |
 | `ATS_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated origins allowed to call the service from a browser |
+| `ATS_ANALYZE_RATE_LIMIT_PER_MINUTE` | `10` | Requests a client may make to `POST /v1/analyze` per minute; `0` turns the limit off |
+| `ATS_RATE_LIMIT_MAX_CLIENTS` | `10000` | Clients the rate limiter remembers; the least recently seen is dropped first |
+| `ATS_TRUSTED_PROXY_HOPS` | `0` | Proxies in front of the service that append to `X-Forwarded-For`; `0` uses the connecting address |
+| `ATS_ANALYSIS_TIMEOUT_SECONDS` | `10` | Longest one analysis may run before it is stopped (`analysis-timeout`); must be above 0 |
+| `ATS_SLOT_WAIT_SECONDS` | `5` | Longest a request waits for a free analysis slot before it is refused (`server-busy`); `0` to `3600` |
+
+Requests are limited per client and each analysis has a hard time limit (decision 0088); the limits are per process. On the chosen host, set `ATS_TRUSTED_PROXY_HOPS` to the number of proxies in front of the service, or every client is counted as the proxy.
 
 Where the service is hosted is still open; it needs a Python host. Whichever it is, it runs the container image CI publishes from `main` to `ghcr.io/makis4n/resume-tools-ats`, tagged `sha-<full commit SHA>` and `main` (decision 0029). `main` only ever moves forward: a run for an older commit, or a re-run of one, leaves it where it is. Only the five newest builds are kept, plus whichever build `main` holds, to stay inside the free plan's package storage, so a host pinned to a `sha-` tag has to move on before five more merges. The image listens on port 8000 on every interface, runs as an unprivileged user, and takes the settings above from its environment; set `ATS_ALLOWED_ORIGINS` to the editor's address. The package is private like the repository, so the host needs a token that can read packages. To build and check it locally, which is what CI does on every pull request:
 

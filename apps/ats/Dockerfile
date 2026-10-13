@@ -20,8 +20,8 @@ FROM python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4d
 RUN groupadd --system --gid 10001 ats \
   && useradd --system --no-create-home --uid 10001 --gid 10001 ats
 COPY --from=build /app/.venv /app/.venv
-# Listens on every interface inside the container. ATS_ALLOWED_ORIGINS and ATS_MAX_UPLOAD_BYTES
-# are set by the host (apps/ats/README.md).
+# Listens on every interface inside the container. ATS_ALLOWED_ORIGINS, ATS_MAX_UPLOAD_BYTES and
+# ATS_TRUSTED_PROXY_HOPS are set by the host (apps/ats/README.md).
 ENV PATH=/app/.venv/bin:$PATH ATS_HOST=0.0.0.0 ATS_PORT=8000 PYTHONUNBUFFERED=1
 # Numeric, so a host that requires a non-root user can tell without reading /etc/passwd.
 USER 10001:10001

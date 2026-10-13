@@ -1,5 +1,7 @@
 import json
 import logging
+import multiprocessing
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,7 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
 from ats.service import create_app, readable_size
+from tests import slow
 from tests.pdfs import (
     RESUME_EMAIL,
     RESUME_PHONE,
@@ -194,14 +197,15 @@ def test_unknown_paths_and_methods_follow_the_error_contract(client: TestClient)
 
 
 def test_an_unexpected_error_follows_the_contract_without_leaking(
-    client: TestClient, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    def fail(_: bytes) -> dict[str, Any]:
-        raise RuntimeError("Invented Person, 12 Invented Street")
-
-    monkeypatch.setattr("ats.service.analyze", fail)
+    app = create_app(
+        max_upload_bytes=MAX_UPLOAD_BYTES,
+        allowed_origins=[EDITOR_ORIGIN],
+        analyser=slow.raise_invented_error,
+    )
     with caplog.at_level(logging.DEBUG):
-        response = upload(client, minimal_pdf())
+        response = upload(TestClient(app), minimal_pdf())
     assert_error(response, 500, "internal-error")
     assert response.headers["access-control-allow-origin"] == EDITOR_ORIGIN
     assert "Invented Street" not in response.text
@@ -263,3 +267,131 @@ def test_an_error_keeps_safe_headers_but_not_framing_ones() -> None:
     assert_error(response, 429, "http-error")
     assert response.headers["retry-after"] == "5"
     assert response.headers["content-type"] == "application/json"
+
+
+def limited_client(per_minute: int = 2, **kwargs: Any) -> TestClient:
+    app = create_app(
+        max_upload_bytes=MAX_UPLOAD_BYTES,
+        allowed_origins=[EDITOR_ORIGIN],
+        analyze_rate_limit_per_minute=per_minute,
+        **kwargs,
+    )
+    return TestClient(app)
+
+
+def test_the_request_after_the_budget_is_rate_limited_with_cors_headers() -> None:
+    client = limited_client()
+    assert upload(client, minimal_pdf()).status_code == 200
+    assert upload(client, minimal_pdf()).status_code == 200
+    response = upload(client, minimal_pdf())
+    assert_error(response, 429, "rate-limited")
+    assert response.headers["retry-after"].isdigit()
+    assert int(response.headers["retry-after"]) >= 1
+    assert response.headers["access-control-allow-origin"] == EDITOR_ORIGIN
+    assert "retry-after" in response.headers["access-control-expose-headers"].lower()
+
+
+def test_a_rate_limited_request_is_refused_before_its_body_is_read() -> None:
+    client = limited_client(1)
+    assert upload(client, minimal_pdf()).status_code == 200
+    oversized = minimal_pdf() + b" " * (MAX_UPLOAD_BYTES + 128 * 1024)
+    assert_error(upload(client, oversized), 429, "rate-limited")
+
+
+def test_preflights_health_and_unknown_paths_do_not_use_the_budget() -> None:
+    client = limited_client(1)
+    for _ in range(3):
+        client.options(
+            "/v1/analyze",
+            headers={"Origin": EDITOR_ORIGIN, "Access-Control-Request-Method": "POST"},
+        )
+        assert client.get("/health").status_code == 200
+        assert client.post("/v1/nothing").status_code == 404
+    assert upload(client, minimal_pdf()).status_code == 200
+
+
+def test_a_limit_of_zero_turns_the_rate_limit_off() -> None:
+    client = limited_client(0)
+    assert all(upload(client, b"text").status_code == 415 for _ in range(15))
+
+
+def test_settings_are_read_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ATS_ANALYZE_RATE_LIMIT_PER_MINUTE", "1")
+    client = TestClient(create_app(allowed_origins=[EDITOR_ORIGIN]))
+    assert upload(client, minimal_pdf()).status_code == 200
+    assert_error(upload(client, minimal_pdf()), 429, "rate-limited")
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("ATS_ANALYZE_RATE_LIMIT_PER_MINUTE", "-1"),
+        ("ATS_ANALYZE_RATE_LIMIT_PER_MINUTE", "lots"),
+        ("ATS_RATE_LIMIT_MAX_CLIENTS", "0"),
+        ("ATS_TRUSTED_PROXY_HOPS", "-1"),
+        ("ATS_ANALYSIS_TIMEOUT_SECONDS", "0"),
+        ("ATS_ANALYSIS_TIMEOUT_SECONDS", "-2"),
+        ("ATS_ANALYSIS_TIMEOUT_SECONDS", "soon"),
+        ("ATS_ANALYSIS_TIMEOUT_SECONDS", "inf"),
+        ("ATS_ANALYSIS_TIMEOUT_SECONDS", "nan"),
+        ("ATS_ANALYSIS_TIMEOUT_SECONDS", "1e9"),
+        ("ATS_SLOT_WAIT_SECONDS", "-1"),
+        ("ATS_SLOT_WAIT_SECONDS", "inf"),
+        ("ATS_SLOT_WAIT_SECONDS", "1e30"),
+    ],
+)
+def test_an_invalid_setting_is_refused_naming_the_variable(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=name):
+        create_app()
+
+
+def test_an_analysis_over_the_time_limit_is_killed() -> None:
+    app = create_app(
+        max_upload_bytes=MAX_UPLOAD_BYTES,
+        allowed_origins=[EDITOR_ORIGIN],
+        analysis_timeout_seconds=0.5,
+        analyser=slow.sleep_forever,
+    )
+    started = time.monotonic()
+    response = upload(TestClient(app), minimal_pdf())
+    assert_error(response, 422, "analysis-timeout")
+    assert time.monotonic() - started < 5
+    assert multiprocessing.active_children() == []
+
+
+def test_a_crashing_analysis_is_a_500_and_the_service_carries_on() -> None:
+    app = create_app(
+        max_upload_bytes=MAX_UPLOAD_BYTES,
+        allowed_origins=[EDITOR_ORIGIN],
+        analyser=slow.hard_exit,
+    )
+    client = TestClient(app)
+    assert_error(upload(client, minimal_pdf()), 500, "internal-error")
+    assert client.get("/health").status_code == 200
+    assert_error(upload(client, minimal_pdf()), 500, "internal-error")
+
+
+def test_a_request_that_finds_every_analysis_slot_taken_is_told_the_service_is_busy() -> None:
+    from ats import timelimit
+
+    app = create_app(
+        max_upload_bytes=MAX_UPLOAD_BYTES,
+        allowed_origins=[EDITOR_ORIGIN],
+        analyze_rate_limit_per_minute=0,
+        slot_wait_seconds=0.2,
+    )
+    held = 0
+    try:
+        while timelimit._SLOTS.acquire(blocking=False):
+            held += 1
+        started = time.monotonic()
+        response = upload(TestClient(app), minimal_pdf())
+    finally:
+        for _ in range(held):
+            timelimit._SLOTS.release()
+    assert_error(response, 503, "server-busy")
+    assert response.headers["Retry-After"] == "5"
+    assert time.monotonic() - started < 3
