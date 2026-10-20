@@ -18,9 +18,18 @@ on 20 October 2026:
 2. **Development runs against local Supabase**: Supabase's own stack in Docker, started by its CLI.
    No Supabase account and no cloud project. The two-device proof is two browser profiles, or two
    clients in a test, against that stack. Hosting stays milestone 5.
-3. **Sign-in by email link, Google, and email and password**, all three.
+3. **Sign-in by email link, Google, and email and password**, all three (Google then moved to
+   milestone 5, point 5 below).
 4. **Dependencies are decided in the plan**, named below, and approved with it. The pull request
    that adds this plan adds none.
+
+On 21 October 2026, reading the first draft of this plan, the owner settled four more:
+
+5. **Google waits for milestone 5.** This milestone signs in by email link and by email and
+   password; Google comes with the production client at hosting.
+6. **A password is at least 8 characters.**
+7. **Deleting an account waits for milestone 5.** Its design is recorded now (decision 0095).
+8. **Signing out removes the account's documents from that browser**, as this plan proposed.
 
 ## Where milestone 3 left us
 
@@ -145,7 +154,7 @@ Decision 0091.
 
 ## Who can see what: row-level security and the two-account proof
 
-Decision 0093. Deleting an account, decision 0095.
+Decision 0093.
 
 - **The table**: row-level security on; one policy each for select, insert, update and delete, for
   `authenticated` only, requiring `(select auth.uid()) = owner_id`. Granted to `authenticated` and
@@ -165,37 +174,44 @@ Decision 0093. Deleting an account, decision 0095.
   same; A downloads the original byte for byte.
 - **Proof by hand**, at the end: two browser profiles, two accounts; the second never sees the
   first's documents or original.
-- **Deleting an account**: the browser deletes the person's files through Storage, then calls
-  `delete_my_account()`, a definer's-rights function with no argument that refuses while files
-  remain and deletes only `auth.uid()`; rows go with the user. Then the browser removes the
-  account's documents and signs out. No grace period.
+- **Deleting an account** is milestone 5's (the owner's decision of 21 October 2026). Decision
+  0095 records how: the browser deletes the person's files through Storage, then calls a
+  definer's-rights function with no argument that refuses while files remain and deletes only its
+  caller, whose rows go with the user. Until then an account can be removed only by hand on the
+  local stack, which holds no real person's data.
 
 ## Signing in
 
 Decision 0094.
 
+- **Two ways in this milestone**: a link sent by email, and an email with a password. Google, the
+  third way the owner chose, waits for milestone 5 (below).
 - **The client**: Supabase's browser client with the PKCE flow, the session kept in local storage
   and refreshed by the client. A link opened in another browser says so and offers to send a new
   one.
 - **Email link**: an email, then a link that signs in and makes the account if needed.
-- **Email and password**: signing up needs the email confirmed first. A password is 12 to 72
-  characters with no rule on which characters (NIST's current guidance). A failed sign-in does not
-  say whether the email or the password was wrong.
+- **Email and password**: signing up needs the email confirmed first. A password is 8 to 72
+  characters with no rule on which characters (the owner's choice of 21 October 2026, the common
+  minimum; NIST asks for 15 when a password is the only factor, and the email link is there for
+  anyone who wants no password at all). A failed sign-in does not say whether the email or the
+  password was wrong.
 - **Reset**: "Forgot your password?" sends a link whether or not the account exists, and says so.
   The link opens the editor in a recovery state to set a new password. Changing a password while
   signed in asks for the current one.
-- **Linking**: Supabase links a new identity to the existing user with the same verified email, so
-  email link, password and Google on one address are one account. Unconfirmed identities on that
-  address are dropped before linking, which stops someone claiming an account with another person's
-  address. Manual linking stays off.
-- **Google, and how it is tested locally**: the owner registers a Google OAuth client as a web
-  application, in testing mode, with the redirect address `http://127.0.0.1:54321/auth/v1/callback`
-  and the dev server's address as its origin, and adds their own Google accounts as test users. Its
-  id and secret go in an untracked environment file that `config.toml` reads through `env()`. With
-  them, "Continue with Google" works against the local stack and is checked by hand; without them
-  the button is hidden. CI, which has no Google account, checks only that the button leads to
-  Google's address with the right redirect. If no client exists when item 6 is reached, item 6 moves
-  to milestone 5, which needs a production client anyway.
+- **Linking**: an email link and a password on the same address are the same account in Supabase,
+  since both are its email identity. Supabase's automatic linking is kept for when Google arrives:
+  a Google identity with the same verified address joins the existing user, and unconfirmed
+  identities on that address are dropped first, which stops someone claiming an account with
+  another person's address. Manual linking stays off.
+- **Why Google waits for milestone 5**: Google needs an OAuth client that only the owner can
+  register, and hosting needs a production client with a verified consent screen anyway. The owner
+  chose on 21 October 2026 to register once, at hosting, rather than a testing client now and a
+  production one later. Decision 0094 records how it will be tested then: a web application client
+  whose redirect address is the project's `/auth/v1/callback` (on the local stack,
+  `http://127.0.0.1:54321/auth/v1/callback`), its secret read through `env()` from an untracked
+  file, a sign-in checked by hand, and CI checking only that the button leads to Google's address
+  with the right redirect.
+  Nothing of Google is built in this milestone.
 - **Mail**: locally every email lands in Mailpit, the stack's catcher, at `http://127.0.0.1:54324`,
   and the tests read sign-in and reset links from its HTTP API. Nothing is sent. A real mail
   provider is milestone 5's.
@@ -217,7 +233,7 @@ Decision 0096, which extends decision 0029.
   skip unless the stack's address is set. Two fake-indexeddb stores stand for two devices; Mailpit's
   API gives the links.
 - **No browser driver** and no Google or hosted Supabase in CI; no secrets, since the local stack's
-  keys are fixed development keys. The two-profile check is by hand, once, in item 12.
+  keys are fixed development keys. The two-profile check is by hand, once, in item 10.
 - Item 1 measures the stack's start time on a runner; over ten minutes for the workflow, and the
   plan is revised.
 
@@ -243,13 +259,11 @@ types package.
   imported `.tex` opens and compiles on the second profile.
 - **An original upload is visible only to its owner**: the pgTAP tests and the API test with two
   accounts and no session pass in CI, and the second profile's account sees nothing of the first's.
-- **Sign-in works three ways**: email link, email and password with confirmation and reset, both
-  through Mailpit in CI; and Google by hand with the owner's client, or moved to milestone 5 under
-  item 6.
+- **Sign-in works two ways**: email link, and email and password with confirmation and reset, both
+  through Mailpit in CI.
 - **No edit is lost**: a conflict and an offline edit each end in two documents, never one
   overwritten, which tests prove.
 - **Signing out leaves nothing of the account** in the browser; signing in elsewhere shows it all.
-- **Deleting an account** removes its rows, its files and its user, which a test proves.
 - **A signed-out person's editor is unchanged**: it sends no request to Supabase and does not load
   its client, which a test proves.
 - **`pnpm test` runs without Docker**, and the `accounts` workflow is green.
@@ -257,9 +271,12 @@ types package.
 
 ## Not in this milestone
 
+- Sign-in with Google: the button, the OAuth client, its consent screen and its test. Milestone 5
+  (the owner's decision of 21 October 2026); decision 0094 records the design.
+- Deleting an account. Milestone 5 (the owner's decision of 21 October 2026); decision 0095 records
+  the design.
 - Hosting: the hosted Supabase project, its region, its keys, a real mail provider, a custom domain,
   deploys. Milestone 5.
-- A production Google client and the Google consent screen's verification. Milestone 5.
 - Supabase's leaked-password check and a cap on sign-ups or on storage per account. Milestone 5.
 - A bot check on sign-up. Milestone 5, with the hosting.
 - Two-factor sign-in, and sign-in with Apple, GitHub or any other provider.
@@ -272,125 +289,116 @@ types package.
 ## The work, in order
 
 Stage 0 sets up the stack and its guard. Stage 1 signs people in. Stage 2 saves their documents.
-Stage 3 proves the milestone. Stages 1 and 2 share only item 4's client and can run side by side
-after it.
+Stage 3 proves the milestone. Stage 2's queue (item 6) needs nothing of Stage 1 and can run beside
+it; from item 7 on, Stage 2 uses item 4's client.
 
 ### Stage 0. The stack, the schema and its proof
 
-1. [ ] **The local stack.** Adds the pinned CLI as a development dependency, `apps/editor/supabase/`
-   with `config.toml` (the editor's address as `site_url`, the services left out, Mailpit on, the
-   `originals` bucket, sign-up and confirmations as decision 0094 says), scripts to start, stop and
-   reset the stack, and the stack's local address and public key in `.env.example` under the name
-   the pinned CLI prints for it. Amends AGENTS.md: the commands, and Docker's third use (decision
-   0089). Measures the stack's cold and warm start on this machine and on a runner, and its memory.
-   Done when, from a clean checkout and the README alone, the stack starts, `supabase db reset` runs
-   and the stack stops, and the times are written in the pull request.
+1. [ ] **The local stack.** Adds the pinned CLI as a development dependency,
+   `apps/editor/supabase/` with `config.toml` (the editor's address as `site_url`, the services left
+   out, Mailpit on, the `originals` bucket, sign-up and confirmations and the 8-character minimum as
+   decision 0094 says), scripts to start, stop and reset the stack, and the stack's local address
+   and public key in `.env.example` under the name the pinned CLI prints for it. Amends AGENTS.md:
+   the commands, and Docker's third use (decision 0089). Measures the stack's cold and warm start on
+   this machine and on a runner, and its memory. Done when, from a clean checkout and the README
+   alone, the stack starts, `supabase db reset` runs and the stack stops, and the times are written
+   in the pull request.
 2. [ ] **The schema and the policies.** One migration: the `documents` table, its grant, its four
-   policies, its trigger, its size check and its index; the bucket's four policies; and
-   `delete_my_account()`. pgTAP tests with two users, as decision 0093 lists. Gets an adversarial
-   review. Done when `supabase test db` passes every two-account case and `supabase db lint
-   --fail-on error` is clean.
+   policies, its trigger, its size check and its index; and the bucket's four policies. pgTAP tests
+   with two users, as decision 0093 lists. Gets an adversarial review. Done when `supabase test db`
+   passes every two-account case and `supabase db lint --fail-on error` is clean.
 3. [ ] **The `accounts` workflow.** As decision 0096 says. Done when it runs item 2's tests green on
    its own pull request and its run time is recorded, under ten minutes.
 
 ### Stage 1. Signing in
 
-4. [ ] **The client and the session.** A module that loads `@supabase/supabase-js` on demand with
-   PKCE, knows whether a session is stored without loading it, and signs out. A "Sign in" entry in
-   the editor's header and a panel with the email link. Done when a DOM test with the fake shows
+4. [ ] **The client and the email link.** A module that loads `@supabase/supabase-js` on demand
+   with PKCE, knows whether a session is stored without loading it, and signs out. A "Sign in" entry
+   in the editor's header and a panel with the email link. Done when a DOM test with the fake shows
    that a signed-out editor makes no request and loads no client, and an integration test signs in
    by email link read from Mailpit and signs out.
 5. [ ] **Email and password.** Sign up with confirmation, sign in, the one message for a failed
-   sign-in, the 12-character minimum in plain words, "Forgot your password?" and the recovery state,
+   sign-in, the 8-character minimum in plain words, "Forgot your password?" and the recovery state,
    and changing a password with the current one. Done when integration tests cover sign up, confirm
    and sign in; a short password refused; a wrong password; reset through Mailpit for an existing
    and a missing address, with the same reply; and a password change.
-6. [ ] **Google.** The button, hidden without a client; `config.toml`'s Google section reading
-   `env()`; linking left automatic. Needs the owner's OAuth client (see "What the owner does").
-   Done when a DOM test shows the button leads to Google's address with the right redirect, and,
-   with the owner's client, a sign-in with Google by hand on the local stack is recorded, and the
-   same address used by email link first and Google second leaves one user in the stack. Without a
-   client, done when this item is moved to milestone 5 in this file.
 
 ### Stage 2. Saving to the account
 
-7. [ ] **The queue, on a fake.** Store version 3 with `owner`, `serverRevision` and `pending`; the
+6. [ ] **The queue, on a fake.** Store version 3 with `owner`, `serverRevision` and `pending`; the
    queue against the server interface, with the Web Lock; and the in-memory fake. Done when unit
    tests cover each rule of decision 0092: send, revision check, conflict copy, bringing documents
    in, an open document changed elsewhere, offline and back, the first sign-in's question, sign-out
    with and without pending saves, another account on the same browser, deletion on another device
    with and without pending saves.
-8. [ ] **The queue, on Supabase.** The server interface over the client and the `documents` table.
-   Gets an adversarial review. Done when an integration test with two devices on one account shows a
-   built-in document and a PDF import saved on one open on the other, a conflict ending in two
+7. [ ] **The queue, on Supabase.** The server interface over the client and the `documents` table.
+   Gets an adversarial review. Done when an integration test with two devices on one account shows
+   a built-in document and a PDF import saved on one open on the other, a conflict ending in two
    documents, and a deletion reaching the other device.
-9. [ ] **Originals.** On saving a `.tex` import: `original.zip` and `import.bin` uploaded under the
+8. [ ] **Originals.** On saving a `.tex` import: `original.zip` and `import.bin` uploaded under the
    owner's folder; on opening it on another device: both downloaded and unpacked into the store's
-   package and import record. Deleting the document deletes both. Done when an integration test
-   shows a `.tex` import's original and import files arrive on the second device byte for byte and
-   the document opens there with its package, and the API test of decision 0093 passes: B and a
-   client with no session read nothing of A's.
-10. [ ] **The editor's account screens.** The account's state in the header; the list's three marks;
-    the first save's notice of what is sent; the first sign-in's question; the sign-out warning; the
-    conflict and changed-elsewhere messages; "cannot be opened until online". Done when DOM tests
-    cover each message and none shows LaTeX or Supabase's text.
-11. [ ] **Deleting an account.** The action, its confirmation with the counts, and the order of
-    decision 0095. Done when an integration test shows the files, rows and user gone, a new sign-in
-    refused, and the browser's account documents removed while documents only in this browser stay.
+   package and import record. Deleting the document deletes both. Gets an adversarial review. Done
+   when an integration test shows a `.tex` import's original and import files arrive on the second
+   device byte for byte and the document opens there with its package, and the API test of decision
+   0093 passes: B and a client with no session read nothing of A's.
+9. [ ] **The editor's account screens.** The account's state in the header; the list's three marks;
+   the first save's notice of what is sent; the first sign-in's question; the sign-out warning; the
+   conflict and changed-elsewhere messages; "cannot be opened until online". Done when DOM tests
+   cover each message and none shows LaTeX or Supabase's text.
 
 ### Stage 3. Close
 
-12. [ ] **The milestone, proven.** By hand, with two browser profiles against the dev server and the
-        local stack: one account saves a built-in document, a `.tex` import and a PDF import on the
-        first profile, and all three open on the second, the `.tex` one compiling; a second account
-        on the second profile sees none of them; the first account deletes a document and the other
-        profile loses it. One record measures the milestone: the workflow's time, the client's size
-        when loaded, and what the hand check showed. Done when that record is merged and every box
-        under "Done means" holds.
+10. [ ] **The milestone, proven.** By hand, with two browser profiles against the dev server and
+    the local stack: one account saves a built-in document, a `.tex` import and a PDF import on the
+    first profile, and all three open on the second, the `.tex` one compiling; a second account on
+    the second profile sees none of them; the first account deletes a document and the other
+    profile loses it. One record measures the milestone: the workflow's time, the client's size
+    when loaded, and what the hand check showed. Done when that record is merged and every box
+    under "Done means" holds.
 
 | Item | Size | Depends on |
 |---|---|---|
 | 1 The local stack | small | the owner's approval of this plan |
 | 2 Schema and policies | medium | 1 |
 | 3 The `accounts` workflow | small | 2 |
-| 4 Client and session | medium | 1 |
+| 4 Client and email link | medium | 1 |
 | 5 Email and password | medium | 4 |
-| 6 Google | small | 4, the owner's OAuth client |
-| 7 The queue, on a fake | large | 1 |
-| 8 The queue, on Supabase | medium | 2, 4, 7 |
-| 9 Originals | medium | 8 |
-| 10 Account screens | medium | 5, 8 |
-| 11 Deleting an account | small | 9, 10 |
-| 12 The milestone, proven | small | all |
+| 6 The queue, on a fake | large | 1 |
+| 7 The queue, on Supabase | medium | 2, 4, 6 |
+| 8 Originals | medium | 7 |
+| 9 Account screens | medium | 5, 7 |
+| 10 The milestone, proven | small | all |
 
 ## Decisions this milestone makes
 
-Each has its record in `docs/decisions/`, merged with this plan. The first and the sign-in methods
-are the owner's; the rest are proposed and approved with the plan.
+Each has its record in `docs/decisions/`, merged with this plan. The first, the ways to sign in, the
+password's length and what waits for milestone 5 are the owner's; the rest are proposed and
+approved with the plan.
 
 - **0089. Milestone 4 runs on local Supabase**, with Docker's third use, the stack in
   `apps/editor/supabase/`, and the stop at the plan.
 - **0090. Originals live in Supabase Storage**, private to their owner, with no signed links; R2
   keeps only what is the same for everyone.
-- **0091. What an account keeps for each kind of document**: a row for each, two private files for a
-  `.tex` import, and no PDF.
+- **0091. What an account keeps for each kind of document**: a row for each, two private files for
+  a `.tex` import, and no PDF.
 - **0092. Sync from the local store**: the browser writes first, one blob with a revision check, a
   copy on conflict, one tab sending, the sign-in question, sign-out clearing the browser, and no
   persistent-storage request.
-- **0093. Rows and files only their owner can reach**, and the two-account proof in the database and
-  through the API.
-- **0094. Signing in** by email link, Google and password: PKCE, confirmation, 12 characters,
-  reset, automatic linking by verified email, Google tested by hand with the owner's client.
-- **0095. Deleting an account**: files first, then a function that deletes only its caller.
+- **0093. Rows and files only their owner can reach**, and the two-account proof in the database
+  and through the API.
+- **0094. Signing in** by email link and password in this milestone, Google in milestone 5: PKCE,
+  confirmation, 8 characters, reset, automatic linking by verified email.
+- **0095. Deleting an account**, built in milestone 5: files first, then a function that deletes
+  only its caller.
 - **0096. How CI tests accounts**: a fake in `pnpm test`, the real stack in a workflow of its own.
 - **0097. Milestone 4's dependencies**: the client, the CLI, and a container runtime.
 
 ## Risks
 
 - **A policy mistake shows one person's resume to another.** The two-account tests in the database
-  and through the API, and an adversarial review of items 2, 8, 9 and 11.
+  and through the API, and an adversarial review of items 2, 7 and 8.
 - **Sync loses an edit.** The browser always writes first, a conflict always makes a copy, and
-  nothing pending is ever removed without asking. Item 7's tests cover each path before any network
+  nothing pending is ever removed without asking. Item 6's tests cover each path before any network
   code exists.
 - **The stack is heavy.** It wants about 2 GB of memory and Docker. Only accounts work needs it; the
   rest of the repository's checks do not. Leaving out unused services helps; item 1 measures it.
@@ -399,9 +407,9 @@ are the owner's; the rest are proposed and approved with the plan.
   the hosted project.
 - **Supabase changes under us.** The Data API stopped granting new tables on 30 May 2026, and the
   mail catcher's config was renamed. One pinned CLI version, upgraded on purpose, contains it.
-- **Google may wait.** Without the owner's client, item 6 moves to milestone 5.
-- **Email at launch.** Supabase's built-in sender is rate-limited and for trials; two of the three
-  ways in depend on email. Milestone 5 needs a mail provider.
+- **Google arrives late.** People who expect it get email link and password until milestone 5.
+- **Email at launch.** Supabase's built-in sender is rate-limited and for trials, and both ways in
+  this milestone depend on email. Milestone 5 needs a mail provider.
 - **Free-tier limits.** A hosted free project pauses after a week idle, storage is small and
   downloads are 5 GB a month; originals are larger than resumes. Milestone 5's question.
 - **The session sits in local storage**, readable by any script on the page. The editor runs no
@@ -409,31 +417,27 @@ are the owner's; the rest are proposed and approved with the plan.
 - **Copies may pile up** for a person who works offline on two devices. They are named and never
   silent; the person deletes them.
 - **Shared editor surface.** The ATS's milestone 2 (@keaenlim) adds a check page to the editor. Its
-  header and panels are the same ones item 10 changes, so whichever lands second rebases.
+  header and panels are the same ones item 9 changes, so whichever lands second rebases.
 
 ## What the owner does
 
 - **Approves this plan**, the proposed decisions 0090 to 0097, and the dependencies of decision
   0097, before item 1 starts.
 - **Approves AGENTS.md's change** in item 1: Docker also runs the local Supabase stack.
-- **Registers a Google OAuth client** before item 6, if Google is to be in this milestone: in Google
-  Cloud, a web application client in testing mode, the consent screen with `openid`, `email` and
-  `profile`, the redirect address `http://127.0.0.1:54321/auth/v1/callback`, the dev server's
-  address as an origin, and their own Google accounts as test users. The id and secret go in the
-  untracked environment file the item names, never in the repository or a message. Or leaves Google
-  to milestone 5.
 - **May revise the plan page**, docs/editor-plan.md, where this milestone departs from it: section
   8.1's Cloudflare row loses "uploads"; section 8.2 moves "uploaded originals" from Cloudflare to
   Supabase; section 8.3's Supabase line counts originals beside saved resumes; and section 5.3 or
   5.6 may name the sync as a queue of whole documents with a revision check.
-- **Settles at milestone 5**: the hosted project and its region, the mail provider, the production
-  Google client, the leaked-password check, and any cap on sign-ups or storage.
+- **At milestone 5**: registers the Google OAuth client (a web application client, the consent
+  screen with `openid`, `email` and `profile`, the project's callback address), its secret kept out
+  of the repository; and settles the hosted project and its region, the mail provider, the
+  leaked-password check, and any cap on sign-ups or storage.
 
 ## How the work is run
 
 As milestone 3 was: one branch and one worktree an item, checks run before the pull request, squash
-merge on green. Items 2, 8, 9 and 11 get one adversarial review before they are pushed: they decide
-who can read a resume, move it between devices, or delete at scale. The stack runs one at a time on
+merge on green. Items 2, 7 and 8 get one adversarial review before they are pushed: they decide
+who can read a resume or move it between devices. The stack runs one at a time on
 the machine. No item touches `apps/ats` or `packages/contracts`, and none needs a corpus run.
 
 ## Sources for the outside facts

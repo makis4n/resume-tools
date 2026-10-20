@@ -1,6 +1,7 @@
 # 0095. Deleting an account
 
-Date: 2026-10-21 · Status: proposed with docs/milestone-4.md
+Date: 2026-10-21 · Status: proposed with docs/milestone-4.md; built in milestone 5, the owner's
+decision of 21 October 2026
 
 ## Context
 
@@ -11,6 +12,9 @@ browser, and the plan has no server code of the editor's own beside Supabase.
 
 ## Decision
 
+- **Built in milestone 5**, not milestone 4, by the owner's choice of 21 October 2026. The design
+  below is recorded now so that milestone 4's schema leaves room for it: the rows already go with
+  the user by the foreign key (decision 0093), and the files already sit under the user's folder.
 - **A "Delete my account" action**, behind a confirmation that names how many documents and files go
   with it, deletes the account and everything it keeps.
 - **Files first, then the user.** The browser deletes every file under the person's folder in the
