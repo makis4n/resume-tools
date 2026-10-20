@@ -304,7 +304,7 @@ it; from item 7 on, Stage 2 uses item 4's client.
    alone, the stack starts, `supabase db reset` runs and the stack stops, and the times are written
    in the pull request. No workflow runs the stack before item 3, so item 1 writes this machine's
    times and item 3's pull request writes the runner's.
-2. [ ] **The schema and the policies.** One migration: the `documents` table, its grant, its four
+2. [x] **The schema and the policies.** One migration: the `documents` table, its grant, its four
    policies, its trigger, its size check and its index; and the bucket's four policies. pgTAP tests
    with two users, as decision 0093 lists. Gets an adversarial review. Done when `supabase test db`
    passes every two-account case and `supabase db lint --fail-on error` is clean.
