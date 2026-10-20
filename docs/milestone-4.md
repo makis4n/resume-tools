@@ -294,7 +294,7 @@ it; from item 7 on, Stage 2 uses item 4's client.
 
 ### Stage 0. The stack, the schema and its proof
 
-1. [ ] **The local stack.** Adds the pinned CLI as a development dependency,
+1. [x] **The local stack.** Adds the pinned CLI as a development dependency,
    `apps/editor/supabase/` with `config.toml` (the editor's address as `site_url`, the services left
    out, Mailpit on, the `originals` bucket, sign-up and confirmations and the 8-character minimum as
    decision 0094 says), scripts to start, stop and reset the stack, and the stack's local address
@@ -302,7 +302,8 @@ it; from item 7 on, Stage 2 uses item 4's client.
    the commands, and Docker's third use (decision 0089). Measures the stack's cold and warm start on
    this machine and on a runner, and its memory. Done when, from a clean checkout and the README
    alone, the stack starts, `supabase db reset` runs and the stack stops, and the times are written
-   in the pull request.
+   in the pull request. No workflow runs the stack before item 3, so item 1 writes this machine's
+   times and item 3's pull request writes the runner's.
 2. [ ] **The schema and the policies.** One migration: the `documents` table, its grant, its four
    policies, its trigger, its size check and its index; and the bucket's four policies. pgTAP tests
    with two users, as decision 0093 lists. Gets an adversarial review. Done when `supabase test db`
@@ -436,9 +437,10 @@ approved with the plan.
 ## How the work is run
 
 As milestone 3 was: one branch and one worktree an item, checks run before the pull request, squash
-merge on green. Items 2, 7 and 8 get one adversarial review before they are pushed: they decide
-who can read a resume or move it between devices. The stack runs one at a time on
-the machine. No item touches `apps/ats` or `packages/contracts`, and none needs a corpus run.
+merge on green. Items 2, 4, 5, 7 and 8 get one adversarial review before they are pushed: they
+decide who can sign in, who can read a resume, or move it between devices (items 4 and 5 added by
+the owner on 21 October 2026, under the standing policy for sign-in code). The stack runs one at a
+time on the machine. No item touches `apps/ats` or `packages/contracts`, and none needs a corpus run.
 
 ## Sources for the outside facts
 

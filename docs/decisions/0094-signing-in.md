@@ -2,7 +2,8 @@
 
 Date: 2026-10-21 · Status: accepted for the three ways in, the owner's decision of 5 October 2026,
 reconfirmed on 20 October 2026; Google moved to milestone 5 and the 8-character minimum are the
-owner's decisions of 21 October 2026; the other details are proposed with docs/milestone-4.md
+owner's decisions of 21 October 2026; the other details are accepted, approved with the plan by the
+owner on 21 October 2026
 
 ## Context
 

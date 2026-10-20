@@ -1,6 +1,6 @@
 # 0093. Rows and files only their owner can reach, and the proof
 
-Date: 2026-10-21 · Status: proposed with docs/milestone-4.md
+Date: 2026-10-21 · Status: accepted, approved with the plan by the owner on 21 October 2026
 
 ## Context
 

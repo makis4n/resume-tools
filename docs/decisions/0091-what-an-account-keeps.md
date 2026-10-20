@@ -1,6 +1,6 @@
 # 0091. What an account keeps for each kind of document
 
-Date: 2026-10-21 · Status: proposed with docs/milestone-4.md
+Date: 2026-10-21 · Status: accepted, approved with the plan by the owner on 21 October 2026
 
 ## Context
 

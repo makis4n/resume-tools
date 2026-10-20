@@ -67,6 +67,16 @@ pnpm test
 pnpm build
 ```
 
+Accounts work (`apps/editor/supabase/`, sign-in, sync), with a container runtime running, against
+the local Supabase stack (decision 0089). The `accounts` workflow runs the last three:
+
+```sh
+pnpm --filter @resume-tools/editor stack:start          # stop it with stack:stop
+pnpm --filter @resume-tools/editor exec supabase db lint --fail-on error
+pnpm --filter @resume-tools/editor exec supabase test db
+pnpm --filter @resume-tools/editor test:integration     # skips without the stack
+```
+
 Python, inside `apps/ats`:
 
 ```sh
@@ -152,8 +162,9 @@ These come from the plan and are not negotiable in code:
 - Committing `node_modules`, `dist`, `.venv` or caches.
 - Adding a dependency without naming it in the pull request description.
 - Changing the Node or Python version pins without a decision record.
-- Using Docker for development. It is for building the TeX engines and for deploying the ATS,
-  nothing else.
+- Using Docker for development. It is for building the TeX engines, for deploying the ATS, and for
+  the local Supabase stack that accounts work runs against, started and stopped only through the
+  pinned Supabase CLI (decision 0089); nothing else.
 - Editing `docs/editor-plan.md` beyond fixing a typo, unless the owner asked for the change. It
   is the plan (decision 0048), and substantive changes to it are the owner's to make or to ask
   for.

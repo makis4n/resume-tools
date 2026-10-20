@@ -1,7 +1,7 @@
 # 0097. Milestone 4's dependencies
 
-Date: 2026-10-21 · Status: proposed with docs/milestone-4.md; the owner approves them with the plan,
-and each is named again in the pull request that adds it
+Date: 2026-10-21 · Status: accepted, approved with the plan by the owner on 21 October 2026; the
+owner approves them with the plan, and each is named again in the pull request that adds it
 
 ## Context
 

@@ -1,6 +1,7 @@
 # 0096. How CI tests accounts
 
-Date: 2026-10-21 · Status: proposed with docs/milestone-4.md; extends decision 0029
+Date: 2026-10-21 · Status: accepted, approved with the plan by the owner on 21 October 2026; extends
+decision 0029
 
 ## Context
 

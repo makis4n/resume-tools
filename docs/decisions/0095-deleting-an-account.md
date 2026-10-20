@@ -1,7 +1,7 @@
 # 0095. Deleting an account
 
-Date: 2026-10-21 · Status: proposed with docs/milestone-4.md; built in milestone 5, the owner's
-decision of 21 October 2026
+Date: 2026-10-21 · Status: accepted, approved with the plan by the owner on 21 October 2026; built
+in milestone 5, the owner's decision of 21 October 2026
 
 ## Context
 
