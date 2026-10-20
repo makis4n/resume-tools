@@ -313,7 +313,7 @@ it; from item 7 on, Stage 2 uses item 4's client.
 
 ### Stage 1. Signing in
 
-4. [ ] **The client and the email link.** A module that loads `@supabase/supabase-js` on demand
+4. [x] **The client and the email link.** A module that loads `@supabase/supabase-js` on demand
    with PKCE, knows whether a session is stored without loading it, and signs out. A "Sign in" entry
    in the editor's header and a panel with the email link. Done when a DOM test with the fake shows
    that a signed-out editor makes no request and loads no client, and an integration test signs in
