@@ -308,7 +308,7 @@ it; from item 7 on, Stage 2 uses item 4's client.
    policies, its trigger, its size check and its index; and the bucket's four policies. pgTAP tests
    with two users, as decision 0093 lists. Gets an adversarial review. Done when `supabase test db`
    passes every two-account case and `supabase db lint --fail-on error` is clean.
-3. [ ] **The `accounts` workflow.** As decision 0096 says. Done when it runs item 2's tests green on
+3. [x] **The `accounts` workflow.** As decision 0096 says. Done when it runs item 2's tests green on
    its own pull request and its run time is recorded, under ten minutes.
 
 ### Stage 1. Signing in
