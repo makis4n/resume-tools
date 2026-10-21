@@ -29,7 +29,7 @@ docs/
 
 ## Getting started
 
-You need Node 24, pnpm 11 and uv. `.node-version` and `apps/ats/.python-version` pin the runtimes. `corepack enable` gives you the right pnpm, and uv fetches its Python by itself. Docker is not needed for development; it comes in later for building the TeX engines and for deploying the ATS service, and any Docker-compatible runtime works, such as Docker Desktop, OrbStack or Colima.
+You need Node 24, pnpm 11 and uv. `.node-version` and `apps/ats/.python-version` pin the runtimes. `corepack enable` gives you the right pnpm, and uv fetches its Python by itself. Docker is not needed for most development. It runs the local Supabase stack that accounts work needs (below), it comes in later for building the TeX engines and for deploying the ATS service, and any Docker-compatible runtime works, such as Docker Desktop, OrbStack or Colima.
 
 ### The editor
 
@@ -47,7 +47,7 @@ The dev server does more than serve the page. It serves the TeX engine's files f
 Every setting in `apps/editor/.env` is optional, and the editor runs with none:
 
 - `VITE_ATS_SERVICE_URL`: where the ATS panel will send PDFs, `http://localhost:8000` for the ATS service below. Nothing in the editor calls it yet.
-- `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`: for accounts, which come in milestone 4. Leave them empty.
+- `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`: for accounts (milestone 4), the local Supabase stack below and its fixed development key, as `.env.example` gives them. Empty, the editor runs without accounts.
 - The reading model's key and `PDF_LABEL_MODEL`, below. Without a key the label route refuses and the editor reads a PDF by its rules, and the dev server says so when it starts.
 
 After you pull, run `pnpm install` and the `fetch-engine` line again, then restart `pnpm dev`. The fetch does nothing when the engine is current and rebuilds it when its layout changed, and a dev server left running does not see new workspace packages: it fails with "Cannot find package '@resume-tools/…'".
@@ -61,6 +61,20 @@ pnpm typecheck
 pnpm test           # tests that run TeX skip without the engine
 pnpm build          # the production bundle in apps/editor/dist
 ```
+
+### Accounts: the local Supabase stack
+
+Accounts and cloud save (milestone 4) run against Supabase's own stack on your machine, started by its CLI in Docker: no Supabase account, no cloud project (decision 0089). Only accounts work needs it; every check above runs without it. You need a container runtime running and about 1 GB of memory free. The stack lives in `apps/editor/supabase/`: `config.toml`, the migrations and their tests. The CLI is a pinned development dependency, so `pnpm install` brings it. From the repository root:
+
+```sh
+pnpm --filter @resume-tools/editor stack:start         # start it; the first start downloads its images
+pnpm --filter @resume-tools/editor stack:reset         # rebuild the database from the migrations
+pnpm --filter @resume-tools/editor test:integration    # the tests that need the stack; they skip without it
+pnpm --filter @resume-tools/editor exec supabase test db   # the database's own tests
+pnpm --filter @resume-tools/editor stack:stop          # stop it; the data stays for the next start
+```
+
+`stack:start` starts the database, sign-in, file storage, the gateway at `http://127.0.0.1:54321` and Mailpit, which catches every email the stack sends, at `http://127.0.0.1:54324`; it leaves out the services the editor does not use. `pnpm --filter @resume-tools/editor exec supabase status` prints the addresses and the local keys, which are the same fixed development keys on every machine; `.env.example` has the two the editor reads. On an M4 Pro with OrbStack the first start took about a minute with its downloads, a later one about 25 seconds, a reset about 25 seconds, and the running stack used about 330 MB.
 
 ### Importing, and the reading model
 

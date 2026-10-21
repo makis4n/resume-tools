@@ -4,7 +4,7 @@ import { samplePdf } from "./sample-pdf";
 
 // Runs against a live ATS service when ATS_INTEGRATION_URL is set, for example:
 //   (cd apps/ats && uv run ats-serve)
-//   ATS_INTEGRATION_URL=http://localhost:8000 pnpm --filter @resume-tools/editor test
+//   ATS_INTEGRATION_URL=http://localhost:8000 pnpm --filter @resume-tools/editor test:integration
 const baseUrl = process.env.ATS_INTEGRATION_URL;
 
 describe.skipIf(!baseUrl)("analyzeResume against the ATS service", () => {
