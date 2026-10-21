@@ -71,6 +71,6 @@ layout's, not the labels'.
 - Anthropic's API, not only the school's gateway, now receives the text of the lines of a PDF whose
   owner said yes. The owner set aside what the gateway keeps (0103); what Anthropic's API keeps is
   set aside likewise, and the consent promises only what the editor's own service does.
-- The milestone 5 plan's provider (0103 and its question 2) still says SoCLaaS alone; it is to be
-  brought into line with this record on its own branch.
+- The milestone 5 plan's provider (0103 and its question 2) said SoCLaaS alone; the plan's own
+  pull request, #150, brings it into line with this record.
 - The route can be put back on the gateway alone by leaving `ANTHROPIC_API_KEY` unset.
