@@ -5,8 +5,9 @@
  * whose values are an enum of the roles, so that a reply in the schema's form is valid by
  * construction. A reply is still checked (`rolesOf`): one of another form is never taken.
  *
- * The model is any AI SDK model; the service makes SoCLaaS's from its key (`config.ts`), through
- * the first pass's provider code (`@resume-tools/naming/providers`). One call, no retry, at
+ * The model is any AI SDK model; the service makes Claude's and SoCLaaS's from their keys
+ * (`config.ts`, decision 0109), through the first pass's provider code
+ * (`@resume-tools/naming/providers`). One call, no retry, at
  * temperature 0, stopped by the signal its caller gives. Nothing here logs, keeps or caches what
  * it is given or what the model says.
  */

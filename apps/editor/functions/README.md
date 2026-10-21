@@ -16,10 +16,12 @@ label route's namespace is named for it alone.
 | Name | Kind | What it is |
 |---|---|---|
 | `LABEL_KV` | KV namespace | The label route's rate buckets under `label-rate:<address>`, which expire and hold counts alone |
-| `SOCLAAS_API_KEY` | Secret | The model's key, a SoCLaaS key (decision 0036), under the name `pdf-model` reads too. Without it the label route refuses with 503 and the page's rules read the PDF |
+| `ANTHROPIC_API_KEY` | Secret | Claude's key, asked first (decision 0109), under the name `pdf-model` reads too |
+| `PDF_LABEL_CLAUDE_MODEL` | Variable | The label route's Claude model's id, `claude-haiku-5-5` when unset |
+| `SOCLAAS_API_KEY` | Secret | SoCLaaS's key (decision 0036), asked behind Claude, or alone when Claude's key is not set, under the name `pdf-model` reads too. Without either key the label route refuses with 503 and the page's rules read the PDF |
 | `PDF_LABEL_MODEL` | Variable | The label route's model's SoCLaaS id, `qwen3.8:27b` when unset |
 
-Set the key as a secret, never as a plain variable, and never under the `VITE_` prefix, which
+Set the keys as secrets, never as a plain variable, and never under the `VITE_` prefix, which
 would put the key in the page. The client's address comes from `CF-Connecting-IP`; an IPv6 address
 is limited by its /48.
 

@@ -4,15 +4,22 @@
  * runs no second process and the page calls its own origin, as it will in production (decision
  * 0028).
  *
- * The key is read on the server side alone: `SOCLAAS_API_KEY` (decision 0036), from the editor's
- * `.env` files and environment by Vite's `loadEnv`, never under the `VITE_` prefix, which would
- * put it in the page; `PDF_LABEL_MODEL` picks the model. With no key the route refuses with 503 and
- * the page's rules read the PDF, and the dev server says so in one line when it starts. The rate
- * limit's buckets are kept in memory. Nothing the route is sent is kept or logged.
+ * The keys are read on the server side alone: `ANTHROPIC_API_KEY`, Claude's, asked first (decision
+ * 0109), and `SOCLAAS_API_KEY` (decision 0036), asked behind it, from the editor's `.env` files and
+ * environment by Vite's `loadEnv`, never under the `VITE_` prefix, which would put a key in the
+ * page; `PDF_LABEL_CLAUDE_MODEL` and `PDF_LABEL_MODEL` pick the models. With no key the route
+ * refuses with 503 and the page's rules read the PDF, and the dev server says so in one line when
+ * it starts. The rate limit's buckets are kept in memory. Nothing the route is sent is kept or
+ * logged.
  */
 
 import { loadEnv, type Plugin } from "vite";
-import { KEY_VARIABLE, type LabelEnv, labelModel } from "../src/service/config.ts";
+import {
+  CLAUDE_KEY_VARIABLE,
+  KEY_VARIABLE,
+  type LabelEnv,
+  labelModels,
+} from "../src/service/config.ts";
 import {
   handleLabel,
   LABEL_LIMITS,
@@ -23,17 +30,17 @@ import {
 import { MemoryRateStore, type RateStore } from "../src/service/rate.ts";
 import { type Incoming, send, toRequest } from "./serve-fetch.ts";
 
-/** The prefixes of the variables the route reads: its key's, and its model's. */
-const PREFIXES = ["SOCLAAS_", "PDF_LABEL_"];
+/** The prefixes of the variables the route reads: its keys', and its models'. */
+const PREFIXES = ["SOCLAAS_", "ANTHROPIC_", "PDF_LABEL_"];
 
 /** What the dev server says when it has no key. */
-export const NO_MODEL = `The label route, ${LABEL_ROUTE}, has no model: set ${KEY_VARIABLE} in apps/editor/.env for a PDF's lines to be read by the model; until then the rules read them.`;
+export const NO_MODEL = `The label route, ${LABEL_ROUTE}, has no model: set ${CLAUDE_KEY_VARIABLE} or ${KEY_VARIABLE} in apps/editor/.env for a PDF's lines to be read by the model; until then the rules read them.`;
 
 /** How the route is set up: each part is taken from the editor when not given, as by the tests. */
 export interface ServeLabelOptions {
   /** The variables the key and the model come from, in place of the editor's. */
   env?: LabelEnv;
-  /** The model, or null for none, in place of the one the variables make. */
+  /** The model, or null for none, in place of the ones the variables make, with no fallback. */
   model?: LabelDeps["model"] | null;
   rates?: RateStore;
   limits?: LabelLimits;
@@ -52,9 +59,13 @@ export function serveLabel(options: ServeLabelOptions = {}): Plugin {
     configureServer(server) {
       const { logger } = server.config;
       const env = options.env ?? loadEnv(server.config.mode, server.config.envDir, PREFIXES);
-      const model = options.model === undefined ? labelModel(env) : (options.model ?? undefined);
+      const { model, fallback } =
+        options.model === undefined
+          ? labelModels(env)
+          : { model: options.model ?? undefined, fallback: undefined };
       const deps: Omit<LabelDeps, "address"> = {
         model,
+        fallback,
         rates: options.rates ?? new MemoryRateStore(),
         limits: options.limits ?? LABEL_LIMITS,
         now: options.now ?? Date.now,
@@ -63,7 +74,7 @@ export function serveLabel(options: ServeLabelOptions = {}): Plugin {
       logger.info(
         model === undefined
           ? NO_MODEL
-          : `The label route, ${LABEL_ROUTE}, asks ${model.modelId} what a PDF's lines are.`,
+          : `The label route, ${LABEL_ROUTE}, asks ${model.modelId} what a PDF's lines are${fallback === undefined ? "" : `, then ${fallback.modelId} should it give no answer`}.`,
       );
       server.middlewares.use(LABEL_ROUTE, (req: Incoming, res, next) => {
         // Connect also hands a route such as "/v1/label" the paths "/v1/label/x" and "/v1/label.x".

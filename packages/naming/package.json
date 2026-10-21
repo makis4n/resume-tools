@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "4.0.82",
     "@ai-sdk/google": "^4.0.82",
     "@ai-sdk/openai-compatible": "3.0.57",
     "ai": "^7.0.116",
