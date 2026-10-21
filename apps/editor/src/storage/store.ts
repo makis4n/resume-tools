@@ -37,6 +37,11 @@
  * editor's saves never wait on it. The store shows only the documents of the account it is told is
  * signed in (`setAccount`), and those of none. Nothing is migrated: a row written before version 3
  * lacks the fields, and is a document only in this browser.
+ *
+ * An account's imported `.tex` document is fully in the account only once its two files are too
+ * (milestone 4 item 8): its row says so (`filesSent`), which the queue sets once it has uploaded
+ * them, and a row brought in from the account has. One brought in has no package or import here
+ * until it is opened, when its files are downloaded and kept (`keepImport`).
  */
 
 import { type OutlinePart, outlineNodes, type Resume } from "@resume-tools/resume-model";
@@ -87,6 +92,12 @@ interface DocumentRow {
    * 0098): the queue sends it no more until a save makes a new revision, which drops the mark.
    */
   refused?: number;
+  /**
+   * Whether the account holds an imported `.tex` document's two files (milestone 4 item 8): set
+   * once the queue has uploaded them, and on a row brought in from the account, whose files are
+   * there already. An account's `.tex` document without it waits for them to be sent.
+   */
+  filesSent?: boolean;
 }
 
 /**
@@ -98,6 +109,7 @@ interface Kept {
   owner?: string;
   serverRevision?: number;
   copy?: boolean;
+  filesSent?: boolean;
 }
 
 /** What a document row holds for the sync queue: the account's fields beside the whole row. */
@@ -117,6 +129,11 @@ export interface SyncRow {
   firstPass: boolean;
   /** The account refused this revision of it, and it waits for a save to be sent again (0098). */
   refused: boolean;
+  /**
+   * An account's `.tex` import whose two files the account does not hold yet (milestone 4 item 8):
+   * the queue sends them, and until it has, the document is not fully in the account.
+   */
+  filesOwed: boolean;
   document: unknown;
 }
 
@@ -282,6 +299,7 @@ const Change = z.discriminatedUnion("type", [
     owner: z.string().optional(),
     serverRevision: z.number().optional(),
     copy: z.boolean().optional(),
+    filesSent: z.boolean().optional(),
   }),
 ]);
 type Change = z.infer<typeof Change>;
@@ -884,6 +902,57 @@ export class DocumentStore {
   }
 
   /**
+   * The account holds an imported `.tex` document's two files now (milestone 4 item 8): the row is
+   * marked so, and is in the account once nothing else of it waits. A row gone meanwhile is left.
+   */
+  async markFilesSent(id: string): Promise<void> {
+    const documents = this.db.documents;
+    const kept = await this.db.transaction("rw", documents, async () => {
+      const row = await documents.get(id);
+      if (row === undefined || row.removed === true || row.filesSent === true) return undefined;
+      const marked = { ...row, filesSent: true };
+      await documents.put(marked);
+      return keptOf(marked);
+    });
+    if (kept !== undefined) this.keptMoved(id, kept);
+  }
+
+  /**
+   * Keep the package and the import record of a document brought in from the account, as its two
+   * files gave them (milestone 4 item 8), in one transaction: the package beside any other import
+   * of the same template, as `importDocument` keeps it, and the record under the document's id.
+   * Returns false, and keeps nothing, when the document is not here, or is set with another
+   * template. Throws `PackageRefused` as `importDocument` does.
+   */
+  async keepImport(documentId: string, pkg: unknown, record: ImportRecord): Promise<boolean> {
+    const read = TemplatePackage.safeParse(pkg);
+    if (!read.success)
+      throw new PackageRefused(
+        String((pkg as { id?: unknown } | null)?.id),
+        "the package's schema refuses it",
+        read.error,
+      );
+    const id = read.data.id;
+    const refused = refusedId(id);
+    if (refused !== undefined) throw new PackageRefused(id, refused);
+    const { documents, packages } = this.db;
+    return this.db.transaction("rw", documents, packages, async () => {
+      const row = await documents.get(documentId);
+      if (row === undefined || row.removed === true || row.template !== id) return false;
+      const now = Date.now();
+      const kept = await packages.get(id);
+      await packages.put({
+        id,
+        package: read.data,
+        made: kept?.made ?? now,
+        lastUsed: now,
+        imports: { ...(kept?.imports ?? {}), [documentId]: record },
+      });
+      return true;
+    });
+  }
+
+  /**
    * Give documents only in this browser to `account`, to be sent to it: those `ids` names, or every
    * one. An import the first pass of milestone 3 made is never uploaded (decision 0091), and stays.
    * Returns the ids given.
@@ -960,11 +1029,15 @@ export class DocumentStore {
       }
       const copy = row?.pending === true ? await this.copyIn(row, account) : undefined;
       const revision = (revisionOf(row) ?? 0) + 1;
+      // The account's document has its files there, sent by the device that made it, unless this
+      // browser made it and still owes them.
+      const filesSent = row === undefined || row.filesSent === true;
       const kept: Kept = {
         kind: doc.kind,
         owner: account,
         serverRevision: doc.revision,
         ...(doc.title.endsWith(COPY_SUFFIX) ? { copy: true } : {}),
+        ...(filesSent ? { filesSent: true } : {}),
       };
       const base = {
         id: doc.id,
@@ -1389,12 +1462,14 @@ function keptOf(row: DocumentRow): Kept {
     ...(row.owner === undefined ? {} : { owner: row.owner }),
     ...(row.serverRevision === undefined ? {} : { serverRevision: row.serverRevision }),
     ...(row.copy === true ? { copy: true } : {}),
+    ...(row.filesSent === true ? { filesSent: true } : {}),
   };
 }
 
 /**
  * The later of two readings of a row's account fields, whichever came first: an account's revision
- * only grows, and an owner, once given, stays (another account's rows are removed, never given).
+ * only grows, an owner, once given, stays (another account's rows are removed, never given), and
+ * files, once sent, stay sent.
  */
 function laterOf(a: Kept, b: Kept): Kept {
   const serverRevision = Math.max(a.serverRevision ?? 0, b.serverRevision ?? 0);
@@ -1404,6 +1479,7 @@ function laterOf(a: Kept, b: Kept): Kept {
     ...(owner === undefined ? {} : { owner }),
     ...(serverRevision === 0 ? {} : { serverRevision }),
     ...(a.copy === true || b.copy === true ? { copy: true } : {}),
+    ...(a.filesSent === true || b.filesSent === true ? { filesSent: true } : {}),
   };
 }
 
@@ -1411,7 +1487,8 @@ const sameKept = (a: Kept, b: Kept) =>
   a.kind === b.kind &&
   a.owner === b.owner &&
   a.serverRevision === b.serverRevision &&
-  (a.copy === true) === (b.copy === true);
+  (a.copy === true) === (b.copy === true) &&
+  (a.filesSent === true) === (b.filesSent === true);
 
 /**
  * A document row with its account fields: a copy's title ends in `COPY_SUFFIX`, whatever its
@@ -1448,17 +1525,36 @@ function syncRowOf(row: DocumentRow): SyncRow {
     firstPass: firstPassRow(row),
     // A deletion is always sent, whatever the account refused of the content.
     refused: row.removed !== true && row.refused !== undefined && row.refused === revisionOf(row),
+    filesOwed: owesFiles(row),
     document: row.document,
   };
 }
 
-/** Where a row is, as the list marks it (`Where`). */
+/** Whether a row is an account's `.tex` import whose files the account does not hold yet. */
+function owesFiles(row: DocumentRow): boolean {
+  return (
+    kindOf(row) === "tex" &&
+    row.owner !== undefined &&
+    row.removed !== true &&
+    row.filesSent !== true &&
+    !firstPassRow(row)
+  );
+}
+
+/**
+ * Where a row is, as the list marks it (`Where`): an imported `.tex` whose files the account lacks
+ * is not in the account yet, however its row is.
+ */
 export function whereOf(
-  row: Pick<SyncRow, "owner" | "pending" | "serverRevision"> & { refused?: boolean },
+  row: Pick<SyncRow, "owner" | "pending" | "serverRevision"> & {
+    refused?: boolean;
+    filesOwed?: boolean;
+  },
 ): Where {
   if (row.owner === undefined) return "only-here";
-  if (row.refused === true && row.pending) return "refused";
-  return row.pending || row.serverRevision === undefined ? "waiting" : "in-account";
+  const waiting = row.pending || row.filesOwed === true;
+  if (row.refused === true && waiting) return "refused";
+  return waiting || row.serverRevision === undefined ? "waiting" : "in-account";
 }
 
 /**

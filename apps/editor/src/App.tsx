@@ -69,6 +69,7 @@ import { KEPT_TIPS, Pages } from "./page/Page";
 import { TexLiveIndex } from "./page/texlive";
 import { isPdfFile, readPdfFile } from "./pdf";
 import { browserConsent } from "./pdf/consent";
+import { FilesUnavailable } from "./storage/originals";
 import {
   CANNOT_OPEN,
   canLeave,
@@ -449,11 +450,20 @@ function Editor({ sync }: { sync: AccountSync | undefined }) {
     if (request !== opening.current) return;
     if (found === undefined) return showList("That document is no longer in this browser.");
     const { revision } = found;
-    // Its template: a curated one, or an import's from the store (decision 0038).
+    // Its template: a curated one, or an import's from the store (decision 0038); one brought in
+    // from the account downloads its files first (item 8), which cannot be done offline.
     let template: Template | undefined;
     try {
-      template = await resolveTemplate(found.document.template, id, store.current);
+      template = await resolveTemplate(
+        found.document.template,
+        id,
+        sync?.originals ?? store.current,
+      );
     } catch (error) {
+      if (error instanceof FilesUnavailable) {
+        if (request === opening.current) await showList(error.message);
+        return;
+      }
       console.error("The document's template could not be read:", error);
     }
     if (request !== opening.current) return;
