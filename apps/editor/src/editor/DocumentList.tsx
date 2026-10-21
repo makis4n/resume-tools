@@ -21,14 +21,19 @@
  * refused offers, under its notice, to import a PDF of the same resume instead, the person's own,
  * which runs the ordinary PDF import; and a partial import under the bar offers, in its report, to
  * move its content onto a built-in template.
+ *
+ * With accounts (milestone 4 item 9, decision 0092), each document is marked with where it is: in
+ * the account, waiting to be saved to it, refused by it with why (decision 0098), or only in this
+ * browser, which a signed-in person can add to the account from here.
  */
 
 import type { DragEvent } from "react";
 import { useState } from "react";
+import { PLACE_MARKS, REFUSED_WHY } from "../account/messages";
 import { PRIVACY_NOTE } from "../import/privacy";
 import type { Report } from "../import/report";
 import type { PdfConsent } from "../pdf/consent";
-import type { Summary } from "../storage/store";
+import type { Summary, Where } from "../storage/store";
 import { CURATED } from "../templates/curated";
 import { ImportReport } from "./ImportReport";
 import { PdfReadingQuestion, PdfReadingSetting, PdfSendingNotice } from "./PdfReading";
@@ -87,6 +92,13 @@ export interface DocumentListProps {
    * resume, which the PDF import then reads.
    */
   pdfOffer?: { onChoose(file: File): void };
+  /**
+   * Where each document is, by its id, when the editor has accounts (milestone 4 item 9): each
+   * document listed is marked with it.
+   */
+  places?: ReadonlyMap<string, Where>;
+  /** Give a document only in this browser to the signed-in account; offered while signed in. */
+  onAddToAccount?(id: string): void;
 }
 
 const MINUTE = 60_000;
@@ -165,6 +177,8 @@ export function DocumentList({
   pdfReading,
   pdfQuestion,
   pdfOffer,
+  places,
+  onAddToAccount,
 }: DocumentListProps) {
   const [choosing, setChoosing] = useState(false);
   const [over, setOver] = useState(false);
@@ -304,6 +318,12 @@ export function DocumentList({
                 {summary.title}
               </button>{" "}
               {templateName(summary)}, edited {editedAgo(summary.updatedAt, now)}{" "}
+              <Place
+                where={places?.get(summary.id)}
+                {...(onAddToAccount === undefined
+                  ? {}
+                  : { onAdd: () => onAddToAccount(summary.id) })}
+              />
               <button type="button" disabled={busy} onClick={() => remove(summary)}>
                 Delete
               </button>
@@ -312,5 +332,26 @@ export function DocumentList({
         </ul>
       )}
     </main>
+  );
+}
+
+/**
+ * A document's mark of where it is, with why for one the account refused, and "Add to account" for
+ * one only in this browser while the person is signed in. Nothing while it is not known.
+ */
+function Place({ where, onAdd }: { where: Where | undefined; onAdd?: () => void }) {
+  if (where === undefined) return null;
+  return (
+    <>
+      <em>{PLACE_MARKS[where]}</em>
+      {where === "refused" && `. ${REFUSED_WHY}`}{" "}
+      {where === "only-here" && onAdd && (
+        <>
+          <button type="button" onClick={onAdd}>
+            Add to account
+          </button>{" "}
+        </>
+      )}
+    </>
   );
 }

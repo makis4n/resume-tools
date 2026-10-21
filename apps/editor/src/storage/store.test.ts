@@ -871,3 +871,22 @@ describe("DocumentStore's imported packages (decision 0038)", () => {
     expect(await store.remove("old-1")).toBeUndefined();
   });
 });
+
+describe("DocumentStore's memory of each account (milestone 4 item 9)", () => {
+  const ACCOUNT = "00000000-0000-4000-8000-0000000000c1";
+  const OTHER = "00000000-0000-4000-8000-0000000000c2";
+
+  it('keeps that the person was told what saving sends beside "Not now", for that account only', async () => {
+    const { store } = storeForTest();
+    expect(await store.wasTold(ACCOUNT)).toBe(false);
+    await store.notNow(ACCOUNT);
+    await store.markTold(ACCOUNT);
+    expect(await store.wasTold(ACCOUNT)).toBe(true);
+    // One remembered does not forget the other.
+    expect(await store.saidNotNow(ACCOUNT)).toBe(true);
+    await store.notNow(ACCOUNT);
+    expect(await store.wasTold(ACCOUNT)).toBe(true);
+    expect(await store.wasTold(OTHER)).toBe(false);
+    expect(await store.saidNotNow(OTHER)).toBe(false);
+  });
+});

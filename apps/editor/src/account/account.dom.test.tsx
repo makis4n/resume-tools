@@ -895,6 +895,8 @@ describe("the account's documents (item 7)", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(session()));
     const store = new DocumentStore();
     store.setAccount(USER);
+    // Told what saving to the account sends, on an earlier visit (item 9).
+    await store.markTold(USER);
     const id = await store.create("jake", curated("jake").sample);
     await store.close();
     const account = new Account({ load: fake({ session: session() }).load });
@@ -909,6 +911,8 @@ describe("the account's documents (item 7)", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(session()));
     const store = new DocumentStore();
     store.setAccount(USER);
+    // Told what saving to the account sends, on an earlier visit (item 9).
+    await store.markTold(USER);
     const id = await store.create("jake", curated("jake").sample);
     const title = (await store.syncRow(id))?.title ?? "";
     await store.close();
