@@ -27,6 +27,16 @@
  * first pass of milestone 3 made, a document fitted into the shared structure rather than an
  * outline, is not migrated (decision 0049): the store refuses to open or keep one, with a message
  * that says to import it again (`IMPORT_AGAIN`), and leaves it stored.
+ *
+ * Version 3 readies the store for accounts (milestone 4, decision 0092). Each document row says
+ * what it was made from (`kind`), whose account it belongs to (`owner`, none for a document only in
+ * this browser), the account's revision it was last in step with (`serverRevision`), and whether it
+ * has saves the account has not taken (`pending`), which every save of an owned document sets. The
+ * sync queue (`sync.ts`) reads and marks those fields through the methods below, and brings the
+ * account's documents in through the store's own writes, so that every tab hears of them; the
+ * editor's saves never wait on it. The store shows only the documents of the account it is told is
+ * signed in (`setAccount`), and those of none. Nothing is migrated: a row written before version 3
+ * lacks the fields, and is a document only in this browser.
  */
 
 import { type OutlinePart, outlineNodes, type Resume } from "@resume-tools/resume-model";
@@ -39,6 +49,7 @@ import type { Upload } from "../import/intake";
 import type { Imported, ImportJob, ImportReport } from "../import/run";
 import { CURATED } from "../templates/curated";
 import { IMPORTED_PREFIX, TemplatePackage } from "../templates/package";
+import type { DocumentKind, ServerDocument } from "./server";
 
 /** A document as stored: the list's columns beside the document, so listing parses nothing. */
 interface DocumentRow {
@@ -56,6 +67,80 @@ interface DocumentRow {
   revision?: number;
   /** The document as the editor holds it, checked against `Document` when it is read. */
   document: unknown;
+  /** What it was made from; a row written before version 3 has none (`kindOf`). */
+  kind?: DocumentKind;
+  /** The user id of the account it belongs to; none for a document only in this browser. */
+  owner?: string;
+  /** The account's revision this row was last in step with; none until it is first uploaded. */
+  serverRevision?: number;
+  /** Whether it has saves, or a deletion, that the account has not taken. */
+  pending?: boolean;
+  /**
+   * Deleted here, and waiting for the account to take the deletion; the list and `get` no longer
+   * show it, and the queue removes the row once the account has.
+   */
+  removed?: boolean;
+  /** A copy kept of this device's version after a conflict, whose title says so (`COPY_SUFFIX`). */
+  copy?: boolean;
+}
+
+/**
+ * The fields of a row that the editor's saves do not make and must carry over: what a write puts
+ * besides the document. `Held` keeps them so that a write's put can go without its read.
+ */
+interface Kept {
+  kind: DocumentKind;
+  owner?: string;
+  serverRevision?: number;
+  copy?: boolean;
+}
+
+/** What a document row holds for the sync queue: the account's fields beside the whole row. */
+export interface SyncRow {
+  id: string;
+  title: string;
+  template: string;
+  kind: DocumentKind;
+  createdAt: number;
+  updatedAt: number;
+  revision: number;
+  owner?: string;
+  serverRevision?: number;
+  pending: boolean;
+  removed: boolean;
+  /** An import the first pass of milestone 3 made, which is never uploaded (decision 0091). */
+  firstPass: boolean;
+  document: unknown;
+}
+
+/**
+ * Where a document is, as the list marks it (decision 0092): in the account and in step with it;
+ * in the account, or on its way there, with saves waiting to be sent; or only in this browser.
+ */
+export type Where = "in-account" | "waiting" | "only-here";
+
+/** What the title of a copy kept after a conflict ends in. */
+export const COPY_SUFFIX = " (from this device)";
+
+/** What bringing a document in from the account did to this browser's row of it. */
+export type BroughtIn =
+  /** Nothing: the row is as new, or not this account's to change. */
+  | { outcome: "none" }
+  /** The row held the same document already; only its account fields moved. */
+  | { outcome: "same" }
+  /** A new row, or the account's version written over one with nothing pending. */
+  | { outcome: "added" | "replaced" }
+  /** The row had saves the account had not taken: kept as `copy`, then written over. */
+  | { outcome: "copied"; copy: string; title: string };
+
+/** What the account no longer having a document did to this browser's row of it. */
+export interface Gone {
+  /** Whether the row went. */
+  removed: boolean;
+  /** The copy its pending saves were kept as, if it had any. */
+  copy?: { id: string; title: string };
+  /** The imported package that went with it, which the compiler lets go of. */
+  dropped?: string;
 }
 
 /**
@@ -154,17 +239,41 @@ export interface StoredTemplate {
   import?: ImportRecord;
 }
 
+/** What this browser remembers of an account: that its person said "Not now" to adding documents. */
+interface AccountRow {
+  id: string;
+  notNow: boolean;
+}
+
 type Database = Dexie & {
   documents: EntityTable<DocumentRow, "id">;
   formats: EntityTable<FormatRow, "key">;
   prefetch: EntityTable<PrefetchRow, "template">;
   packages: EntityTable<PackageRow, "id">;
+  accounts: EntityTable<AccountRow, "id">;
 };
 
-/** What a tab tells the others once it has written or deleted a document. */
+/**
+ * What a tab tells the others once it has written or deleted a document: `by` says the account
+ * brought the change in from another device; `kept`, that only the row's account fields moved,
+ * which a tab holding the document carries into its next write.
+ */
 const Change = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("changed"), id: z.string(), revision: z.number() }),
-  z.object({ type: z.literal("deleted"), id: z.string() }),
+  z.object({
+    type: z.literal("changed"),
+    id: z.string(),
+    revision: z.number(),
+    by: z.literal("device").optional(),
+  }),
+  z.object({ type: z.literal("deleted"), id: z.string(), by: z.literal("device").optional() }),
+  z.object({
+    type: z.literal("kept"),
+    id: z.string(),
+    kind: z.enum(["template", "tex", "pdf"]),
+    owner: z.string().optional(),
+    serverRevision: z.number().optional(),
+    copy: z.boolean().optional(),
+  }),
 ]);
 type Change = z.infer<typeof Change>;
 
@@ -180,6 +289,8 @@ interface Held {
   createdAt: number;
   /** Whether another tab has changed it since; nothing more of this reading is written. */
   stale: boolean;
+  /** The row's account fields as this tab last read, wrote or heard them. */
+  kept: Kept;
 }
 
 /**
@@ -295,6 +406,8 @@ export interface StoreOptions {
   name?: string;
   /** Where to listen for the page going away; the page's own, when there is one. */
   page?: PageEvents;
+  /** The IndexedDB to use; the browser's own by default. Tests give each device its own. */
+  idb?: { indexedDB: IDBFactory; IDBKeyRange: typeof IDBKeyRange };
 }
 
 /** The most characters of an imported resume's first line its title takes. */
@@ -357,13 +470,16 @@ export class DocumentStore {
   private closed = false;
   /** Where this tab and the others on the database announce their writes; none in old browsers. */
   private channel: BroadcastChannel | undefined;
-  private readonly changedListeners = new Set<(id: string) => void>();
+  private readonly changedListeners = new Set<(id: string, by?: "device") => void>();
   private readonly flushedListeners = new Set<(result: Flushed) => void>();
+  private readonly storedListeners = new Set<(id: string) => void>();
   private readonly stopListening: () => void;
+  /** The signed-in account, whose documents the store shows beside those of none. */
+  private account: string | undefined;
 
   constructor(options: StoreOptions = {}) {
     const name = options.name ?? "resume-tools";
-    this.db = new Dexie(name) as Database;
+    this.db = new Dexie(name, options.idb) as Database;
     this.db.version(1).stores({
       documents: "id, updatedAt",
       formats: "key, usedAt, tag",
@@ -375,6 +491,16 @@ export class DocumentStore {
       formats: "key, usedAt, tag",
       prefetch: "template",
       packages: "id, lastUsed",
+    });
+    // Version 3 gives each document its account's fields, and finds an account's documents by
+    // their owner (decision 0092); and remembers each account's answer to adding the documents
+    // only in this browser. Rows from before have no owner, and are only in this browser.
+    this.db.version(3).stores({
+      documents: "id, updatedAt, template, owner",
+      formats: "key, usedAt, tag",
+      prefetch: "template",
+      packages: "id, lastUsed",
+      accounts: "id",
     });
     // A browser without channels still refuses a write over another tab's; it only hears of the
     // change at its next write rather than at once.
@@ -402,7 +528,9 @@ export class DocumentStore {
    */
   async list(): Promise<Summary[]> {
     await this.flush();
-    const rows = await this.db.documents.orderBy("updatedAt").reverse().toArray();
+    const rows = (await this.db.documents.orderBy("updatedAt").reverse().toArray()).filter((row) =>
+      this.shows(row),
+    );
     const summaries = rows.flatMap((row) => {
       const read = Summary.safeParse(row);
       return read.success ? [read.data] : [];
@@ -437,7 +565,7 @@ export class DocumentStore {
   async get(id: string): Promise<Stored | undefined> {
     await this.flush();
     const row = await this.db.documents.get(id);
-    if (row === undefined) return undefined;
+    if (row === undefined || !this.shows(row)) return undefined;
     const read = Document.safeParse(row.document);
     if (!read.success) throw new DocumentRefused(id, read.error);
     if (madeByFirstPass(read.data))
@@ -449,32 +577,45 @@ export class DocumentStore {
       issued: revision,
       createdAt: row.createdAt,
       stale: false,
+      kept: keptOf(row),
     });
     return { document: read.data, revision };
   }
 
   /**
-   * Store a new document for a curated template (`newDocument`), and return its id. Throws for a
-   * template no curated package has.
+   * Store a new document for a curated template (`newDocument`), and return its id: `kind` says
+   * whether it is a template's sample or a PDF import's draft. While an account is signed in, the
+   * document is the account's, and waits to be sent to it. Throws for a template no curated package
+   * has.
    */
-  async create(template: string, resume: Resume, locale?: string): Promise<string> {
+  async create(
+    template: string,
+    resume: Resume,
+    locale?: string,
+    kind: "template" | "pdf" = "template",
+  ): Promise<string> {
     const document = newDocument(template, resume, locale);
     const id = crypto.randomUUID();
     const now = Date.now();
-    const row: DocumentRow = {
-      id,
-      title: titleOf(document.resume),
-      template: document.template,
-      createdAt: now,
-      updatedAt: now,
-      revision: 1,
-      document,
-    };
+    const kept: Kept = { kind, ...(this.account === undefined ? {} : { owner: this.account }) };
+    const row = rowOf(
+      {
+        id,
+        title: titleOf(document.resume),
+        template: document.template,
+        createdAt: now,
+        updatedAt: now,
+        revision: 1,
+        document,
+      },
+      kept,
+    );
     // Every write to the documents makes a transaction of its own, as `write` has to, so that
     // they reach the database in the order they were asked for.
     await this.db.transaction("rw", this.db.documents, () => this.db.documents.add(row));
-    this.held.set(id, { opened: 1, revision: 1, issued: 1, createdAt: now, stale: false });
+    this.held.set(id, { opened: 1, revision: 1, issued: 1, createdAt: now, stale: false, kept });
     this.announce({ type: "changed", id, revision: 1 });
+    this.stored(id);
     return id;
   }
 
@@ -527,15 +668,22 @@ export class DocumentStore {
       report: imported.report,
       made: now,
     };
-    const row: DocumentRow = {
-      id: documentId,
-      title: titleOf(document.resume),
-      template: id,
-      createdAt: now,
-      updatedAt: now,
-      revision: 1,
-      document,
+    const kept: Kept = {
+      kind: "tex",
+      ...(this.account === undefined ? {} : { owner: this.account }),
     };
+    const row = rowOf(
+      {
+        id: documentId,
+        title: titleOf(document.resume),
+        template: id,
+        createdAt: now,
+        updatedAt: now,
+        revision: 1,
+        document,
+      },
+      kept,
+    );
     const { documents, packages } = this.db;
     await this.db.transaction("rw", documents, packages, async () => {
       const kept = await packages.get(id);
@@ -548,8 +696,16 @@ export class DocumentStore {
       });
       await documents.add(row);
     });
-    this.held.set(documentId, { opened: 1, revision: 1, issued: 1, createdAt: now, stale: false });
+    this.held.set(documentId, {
+      opened: 1,
+      revision: 1,
+      issued: 1,
+      createdAt: now,
+      stale: false,
+      kept,
+    });
     this.announce({ type: "changed", id: documentId, revision: 1 });
+    this.stored(documentId);
     return documentId;
   }
 
@@ -586,42 +742,50 @@ export class DocumentStore {
     this.newest.delete(id);
     this.held.delete(id);
     const { documents, packages, formats, prefetch } = this.db;
-    const dropped = await this.db.transaction(
-      "rw",
-      [documents, packages, formats, prefetch],
-      async () => {
-        const template = (await documents.get(id))?.template;
-        await documents.delete(id);
-        if (template === undefined || refusedId(template) !== undefined) return undefined;
-        const row = await packages.get(template);
-        const left = await documents.where("template").equals(template).count();
-        if (left > 0) {
-          if (row?.imports?.[id] !== undefined) {
-            const { [id]: _gone, ...imports } = row.imports;
-            await packages.put({ ...row, imports });
-          }
-          return undefined;
-        }
-        await packages.delete(template);
-        await prefetch.delete(template);
-        // Every format of a package is named after its id and a hash (`generateFormat`).
-        const named = `${template}-`;
-        await formats.bulkDelete(
-          await formats.filter((format) => format.name.startsWith(named)).primaryKeys(),
-        );
-        return template;
-      },
+    const dropped = await this.db.transaction("rw", [documents, packages, formats, prefetch], () =>
+      this.removeIn(id),
     );
     this.announce({ type: "deleted", id });
+    this.stored(id);
     return dropped;
   }
 
   /**
+   * Delete a document in the transaction under way, which spans the documents, the packages, the
+   * formats and the prefetch: `remove`'s work. Returns the id of the package that went, or
+   * undefined.
+   */
+  private async removeIn(id: string): Promise<string | undefined> {
+    const { documents, packages, formats, prefetch } = this.db;
+    const template = (await documents.get(id))?.template;
+    await documents.delete(id);
+    if (template === undefined || refusedId(template) !== undefined) return undefined;
+    const row = await packages.get(template);
+    const left = await documents.where("template").equals(template).count();
+    if (left > 0) {
+      if (row?.imports?.[id] !== undefined) {
+        const { [id]: _gone, ...imports } = row.imports;
+        await packages.put({ ...row, imports });
+      }
+      return undefined;
+    }
+    await packages.delete(template);
+    await prefetch.delete(template);
+    // Every format of a package is named after its id and a hash (`generateFormat`).
+    const named = `${template}-`;
+    await formats.bulkDelete(
+      await formats.filter((format) => format.name.startsWith(named)).primaryKeys(),
+    );
+    return template;
+  }
+
+  /**
    * Call `listener` with the id of a document this store holds when another tab changes or
-   * deletes it: when that tab says so, or when a save here meets the change. It is called once
+   * deletes it: when that tab says so, or when a save here meets the change; and with `"device"`
+   * when the change came from the account, another device's (decision 0092). It is called once
    * for each reading, which takes no more saves. Returns a function that stops the calls.
    */
-  onChanged(listener: (id: string) => void): () => void {
+  onChanged(listener: (id: string, by?: "device") => void): () => void {
     this.changedListeners.add(listener);
     return () => this.changedListeners.delete(listener);
   }
@@ -633,6 +797,260 @@ export class DocumentStore {
   onFlushed(listener: (result: Flushed) => void): () => void {
     this.flushedListeners.add(listener);
     return () => this.flushedListeners.delete(listener);
+  }
+
+  // The sync queue's side (decision 0092). The queue reads the rows with their account fields,
+  // marks what the account took, and writes what it brings in, each in a transaction of the store's
+  // own, so that the editor's saves and the other tabs see every change as they see a save.
+
+  /**
+   * Show the documents of `account`, the signed-in one, beside those of no account, or only the
+   * latter when it is undefined. A document created or imported meanwhile is the account's.
+   */
+  setAccount(account: string | undefined): void {
+    this.account = account;
+  }
+
+  /**
+   * Call `listener` with a document's id whenever its row is written or deleted, by this tab or,
+   * as it says, another. Returns a function that stops the calls.
+   */
+  onStored(listener: (id: string) => void): () => void {
+    this.storedListeners.add(listener);
+    return () => this.storedListeners.delete(listener);
+  }
+
+  /** Every document row, whichever account it belongs to, with the account's fields. */
+  async syncRows(): Promise<SyncRow[]> {
+    return (await this.db.documents.toArray()).map(syncRowOf);
+  }
+
+  /** One document row with the account's fields, or undefined. */
+  async syncRow(id: string): Promise<SyncRow | undefined> {
+    const row = await this.db.documents.get(id);
+    return row === undefined ? undefined : syncRowOf(row);
+  }
+
+  /** Where each document the list shows is (`Where`), by its id. */
+  async places(): Promise<Map<string, Where>> {
+    const rows = (await this.db.documents.toArray()).filter((row) => this.shows(row));
+    return new Map(rows.map((row) => [row.id, whereOf(syncRowOf(row))]));
+  }
+
+  /**
+   * The account took a document as its row was at revision `sent`, and is now at `serverRevision`:
+   * the row is in step with it, and has nothing pending unless a save came since. An answer older
+   * than what the row already holds changes nothing.
+   */
+  async markSent(id: string, sent: number, serverRevision: number): Promise<void> {
+    const documents = this.db.documents;
+    const kept = await this.db.transaction("rw", documents, async () => {
+      const row = await documents.get(id);
+      if (row === undefined || row.removed === true) return undefined;
+      if (row.serverRevision !== undefined && row.serverRevision >= serverRevision)
+        return undefined;
+      const marked = { ...row, serverRevision, pending: revisionOf(row) !== sent };
+      await documents.put(marked);
+      return keptOf(marked);
+    });
+    if (kept !== undefined) this.keptMoved(id, kept);
+  }
+
+  /**
+   * Give documents only in this browser to `account`, to be sent to it: those `ids` names, or every
+   * one. An import the first pass of milestone 3 made is never uploaded (decision 0091), and stays.
+   * Returns the ids given.
+   */
+  async adopt(account: string, ids?: readonly string[]): Promise<string[]> {
+    const documents = this.db.documents;
+    const adopted = await this.db.transaction("rw", documents, async () => {
+      const rows =
+        ids === undefined
+          ? await documents.filter((row) => row.owner === undefined).toArray()
+          : (await documents.bulkGet([...ids])).filter((row) => row !== undefined);
+      const taken = rows
+        .filter((row) => row.owner === undefined && row.removed !== true && !firstPassRow(row))
+        .map((row) => ({ ...row, owner: account, pending: true }));
+      await documents.bulkPut(taken);
+      return taken;
+    });
+    for (const row of adopted) this.keptMoved(row.id, keptOf(row));
+    return adopted.map((row) => row.id);
+  }
+
+  /**
+   * Delete an account's document from this browser at once, as the list and `get` see it, and keep
+   * its row, hidden and pending, until the account has taken the deletion; the queue then `remove`s
+   * it. Returns false, and does nothing, for a document of no account, which `remove` deletes.
+   */
+  async markRemoved(id: string): Promise<boolean> {
+    this.pending.delete(id);
+    this.newest.delete(id);
+    this.held.delete(id);
+    const documents = this.db.documents;
+    const marked = await this.db.transaction("rw", documents, async () => {
+      const row = await documents.get(id);
+      if (row?.owner === undefined) return false;
+      await documents.put({ ...row, removed: true, pending: true });
+      return true;
+    });
+    if (marked) {
+      this.announce({ type: "deleted", id });
+      this.stored(id);
+    }
+    return marked;
+  }
+
+  /**
+   * Write a document the account holds into this browser, as `account`'s, unless the row is as new
+   * already. A row with saves the account has not taken is first kept as a copy whose title says it
+   * is this device's (`COPY_SUFFIX`), pending to be sent; a row holding the same document only
+   * takes the account's revision. A tab holding the document hears it changed on another device.
+   */
+  async bringIn(doc: ServerDocument, account: string): Promise<BroughtIn> {
+    const { documents, packages } = this.db;
+    type Done =
+      | { outcome: "none" }
+      | { outcome: "same"; kept: Kept }
+      | {
+          outcome: "added" | "replaced" | "copied";
+          revision: number;
+          copy?: { id: string; title: string };
+        };
+    const done = await this.db.transaction("rw", documents, packages, async (): Promise<Done> => {
+      const row = await documents.get(doc.id);
+      if (row !== undefined && (row.owner !== account || row.removed === true))
+        return { outcome: "none" };
+      if (row?.serverRevision !== undefined && row.serverRevision >= doc.revision)
+        return { outcome: "none" };
+      if (row !== undefined && sameJson(row.document, doc.document)) {
+        const same = { ...row, serverRevision: doc.revision, pending: false };
+        await documents.put(same);
+        return { outcome: "same", kept: keptOf(same) };
+      }
+      const copy = row?.pending === true ? await this.copyIn(row, account) : undefined;
+      const revision = (revisionOf(row) ?? 0) + 1;
+      const kept: Kept = {
+        kind: doc.kind,
+        owner: account,
+        serverRevision: doc.revision,
+        ...(doc.title.endsWith(COPY_SUFFIX) ? { copy: true } : {}),
+      };
+      const base = {
+        id: doc.id,
+        title: doc.title,
+        template: doc.templateId,
+        createdAt: doc.createdAt,
+        updatedAt: doc.updatedAt,
+        revision,
+        document: doc.document,
+      };
+      await documents.put(rowOf(base, kept, false));
+      const outcome = row === undefined ? "added" : copy === undefined ? "replaced" : "copied";
+      return { outcome, revision, ...(copy === undefined ? {} : { copy }) };
+    });
+    if (done.outcome === "none") return done;
+    if (done.outcome === "same") {
+      this.keptMoved(doc.id, done.kept);
+      return { outcome: "same" };
+    }
+    if (done.copy !== undefined) {
+      this.announce({ type: "changed", id: done.copy.id, revision: 1 });
+      this.stored(done.copy.id);
+    }
+    this.announce({ type: "changed", id: doc.id, revision: done.revision, by: "device" });
+    const held = this.held.get(doc.id);
+    if (held !== undefined) this.changedUnder(doc.id, held, "device");
+    this.stored(doc.id);
+    return done.copy === undefined
+      ? { outcome: done.outcome === "copied" ? "replaced" : done.outcome }
+      : { outcome: "copied", copy: done.copy.id, title: done.copy.title };
+  }
+
+  /**
+   * The account no longer has a document this browser was in step with at `serverRevision`:
+   * another device deleted it. The row goes, with its import, unless it changed meanwhile; one
+   * with saves the account has not taken is first kept as a copy, as in a conflict (`bringIn`).
+   * Undefined names a row never in step, whose id the account refused as taken: it goes the same
+   * way, to be sent again as a copy under a new id.
+   */
+  async goneFromAccount(
+    id: string,
+    account: string,
+    serverRevision: number | undefined,
+  ): Promise<Gone> {
+    const { documents, packages, formats, prefetch } = this.db;
+    const gone = await this.db.transaction(
+      "rw",
+      [documents, packages, formats, prefetch],
+      async (): Promise<Gone> => {
+        const row = await documents.get(id);
+        if (row?.owner !== account || row.serverRevision !== serverRevision)
+          return { removed: false };
+        const copy =
+          row.pending === true && row.removed !== true
+            ? await this.copyIn(row, account)
+            : undefined;
+        const dropped = await this.removeIn(id);
+        return {
+          removed: true,
+          ...(copy === undefined ? {} : { copy }),
+          ...(dropped === undefined ? {} : { dropped }),
+        };
+      },
+    );
+    if (!gone.removed) return gone;
+    if (gone.copy !== undefined) {
+      this.announce({ type: "changed", id: gone.copy.id, revision: 1 });
+      this.stored(gone.copy.id);
+    }
+    this.pending.delete(id);
+    this.newest.delete(id);
+    const held = this.held.get(id);
+    if (held !== undefined) this.changedUnder(id, held, "device");
+    this.held.delete(id);
+    this.announce({ type: "deleted", id, by: "device" });
+    this.stored(id);
+    return gone;
+  }
+
+  /** Remember that `account`'s person said "Not now" to adding this browser's documents. */
+  async notNow(account: string): Promise<void> {
+    await this.db.accounts.put({ id: account, notNow: true });
+  }
+
+  /** Whether `account`'s person said "Not now" on this browser. */
+  async saidNotNow(account: string): Promise<boolean> {
+    return (await this.db.accounts.get(account))?.notNow === true;
+  }
+
+  /**
+   * Keep a row's document as a new document of `account`'s, pending to be sent, whose title says it
+   * is this device's version; in the transaction under way, which spans the documents and the
+   * packages. An imported document's copy shares its package, and its import's record.
+   */
+  private async copyIn(row: DocumentRow, account: string): Promise<{ id: string; title: string }> {
+    const { documents, packages } = this.db;
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    const title = row.title.endsWith(COPY_SUFFIX) ? row.title : `${row.title}${COPY_SUFFIX}`;
+    const base = {
+      id,
+      title,
+      template: row.template,
+      createdAt: now,
+      updatedAt: now,
+      revision: 1,
+      document: row.document,
+    };
+    await documents.add(rowOf(base, { kind: kindOf(row), owner: account, copy: true }));
+    if (refusedId(row.template) === undefined) {
+      const kept = await packages.get(row.template);
+      const record = kept?.imports?.[row.id];
+      if (kept !== undefined && record !== undefined)
+        await packages.put({ ...kept, imports: { ...kept.imports, [id]: record } });
+    }
+    return { id, title };
   }
 
   /**
@@ -744,6 +1162,13 @@ export class DocumentStore {
    * hidden or goes away (`final`) it may run no later task, to hear the read or to let the
    * transaction commit, so the put is committed at once, unchecked, and only what this tab has
    * heard from the others guards it.
+   *
+   * The put carries the row's account fields as this tab holds them, and marks an owned document
+   * pending. The sync queue may have moved them since, in this tab or another: the checked write
+   * finds that in its read and puts the row again with them, in the same transaction. The unchecked
+   * one has only what this tab has heard, so a queue's mark it has not heard yet can be put back to
+   * an older revision of the account; the next send then meets a conflict, which keeps a copy
+   * rather than lose anything (decision 0092).
    */
   private write(id: string, save: Save, final: boolean): Promise<Flushed> {
     const held = this.held.get(id);
@@ -754,7 +1179,7 @@ export class DocumentStore {
     const revision = Math.max(held.revision, held.issued) + 1;
     held.issued = revision;
     const { document } = save;
-    const row: DocumentRow = {
+    const base = {
       id,
       title: titleOf(document.resume),
       template: document.template,
@@ -763,29 +1188,39 @@ export class DocumentStore {
       revision,
       document,
     };
+    // What this put carries, which a message heard while it is on its way may change in `held`.
+    const putKept = held.kept;
+    const row = rowOf(base, putKept);
     const documents = this.db.documents;
     return this.db
-      .transaction("rw", documents, async (transaction) => {
+      .transaction("rw", documents, async (transaction): Promise<Kept> => {
         if (final) {
           const put = documents.put(row);
           // Browsers before `commit` commit once the page lets them, as it may.
           if (typeof transaction.idbtrans.commit === "function") transaction.idbtrans.commit();
           await put;
-          return;
+          return putKept;
         }
         // The read answers first, with the row as it was before the put.
         const before = documents.get(id);
         const put = documents.put(row);
         // A put the read refuses is rolled back with the transaction; its error says nothing new.
         put.catch(() => {});
-        if (revisionOf(await before) !== held.revision) throw new Conflict();
+        const was = await before;
+        if (revisionOf(was) !== held.revision || was?.removed === true) throw new Conflict();
         await put;
+        // The queue moved the account's fields since this tab last heard: they are kept.
+        const kept = was === undefined ? putKept : keptOf(was);
+        if (!sameKept(kept, putKept)) await documents.put(rowOf(base, kept));
+        return kept;
       })
       .then(
-        (): Flushed => {
+        (kept): Flushed => {
           held.revision = Math.max(held.revision, revision);
+          held.kept = laterOf(held.kept, kept);
           this.retryAt = 0;
           this.announce({ type: "changed", id, revision });
+          this.stored(id);
           return { written: 1, failed: [], conflicts: [] };
         },
         (error: unknown): Flushed => {
@@ -829,20 +1264,57 @@ export class DocumentStore {
     const change = Change.safeParse(data);
     if (!change.success) return;
     const { id } = change.data;
+    this.stored(id);
     const held = this.held.get(id);
     if (held === undefined) return;
+    if (change.data.type === "kept") {
+      const { type: _, id: __, ...kept } = change.data;
+      held.kept = laterOf(held.kept, kept);
+      return;
+    }
     // A write this tab has read already, or one before it, changes nothing here.
     if (change.data.type === "changed" && change.data.revision <= held.revision) return;
-    this.changedUnder(id, held);
+    this.changedUnder(id, held, change.data.by);
   }
 
-  /** Another tab has changed a document this one holds: nothing more of this reading is written. */
-  private changedUnder(id: string, held: Held) {
+  /**
+   * Another tab, or the account (`by`), has changed a document this one holds: nothing more of
+   * this reading is written.
+   */
+  private changedUnder(id: string, held: Held, by?: "device") {
     if (held.stale) return;
     held.stale = true;
     // A reading the store has since replaced is no one's concern.
     if (this.held.get(id) !== held) return;
-    tell(this.changedListeners, id);
+    for (const listener of this.changedListeners) {
+      try {
+        if (by === undefined) listener(id);
+        else listener(id, by);
+      } catch (error) {
+        console.error("A listener to the store failed", error);
+      }
+    }
+  }
+
+  /** Tell the store's own listeners, the sync queue's, that a document's row was written. */
+  private stored(id: string) {
+    tell(this.storedListeners, id);
+  }
+
+  /**
+   * The account fields of a row moved without its document: carry them into this tab's next write
+   * of it, and tell the other tabs to.
+   */
+  private keptMoved(id: string, kept: Kept) {
+    const held = this.held.get(id);
+    if (held !== undefined) held.kept = laterOf(held.kept, kept);
+    this.announce({ type: "kept", id, ...kept });
+    this.stored(id);
+  }
+
+  /** Whether the list and `get` show a row: one of no account's or the signed-in one's. */
+  private shows(row: DocumentRow): boolean {
+    return row.removed !== true && (row.owner === undefined || row.owner === this.account);
   }
 
   /** Tell the other tabs what this one did; a message that cannot be sent costs them only time. */
@@ -874,6 +1346,118 @@ export class DocumentStore {
 }
 
 const formatKey = (tag: string, engine: Engine, name: string) => `${tag}:${engine}:${name}`;
+
+/** What a document was made from: as its row says, or for an older row, as its template says. */
+function kindOf(row: DocumentRow): DocumentKind {
+  return row.kind ?? (row.template.startsWith(IMPORTED_PREFIX) ? "tex" : "template");
+}
+
+/** A row's account fields, without the ones it lacks. */
+function keptOf(row: DocumentRow): Kept {
+  return {
+    kind: kindOf(row),
+    ...(row.owner === undefined ? {} : { owner: row.owner }),
+    ...(row.serverRevision === undefined ? {} : { serverRevision: row.serverRevision }),
+    ...(row.copy === true ? { copy: true } : {}),
+  };
+}
+
+/**
+ * The later of two readings of a row's account fields, whichever came first: an account's revision
+ * only grows, and an owner, once given, stays (another account's rows are removed, never given).
+ */
+function laterOf(a: Kept, b: Kept): Kept {
+  const serverRevision = Math.max(a.serverRevision ?? 0, b.serverRevision ?? 0);
+  const owner = a.owner ?? b.owner;
+  return {
+    kind: a.kind,
+    ...(owner === undefined ? {} : { owner }),
+    ...(serverRevision === 0 ? {} : { serverRevision }),
+    ...(a.copy === true || b.copy === true ? { copy: true } : {}),
+  };
+}
+
+const sameKept = (a: Kept, b: Kept) =>
+  a.kind === b.kind &&
+  a.owner === b.owner &&
+  a.serverRevision === b.serverRevision &&
+  (a.copy === true) === (b.copy === true);
+
+/**
+ * A document row with its account fields: a copy's title ends in `COPY_SUFFIX`, whatever its
+ * header says, and an owned document is pending unless `pending` says otherwise.
+ */
+function rowOf(
+  base: Pick<
+    DocumentRow,
+    "id" | "title" | "template" | "createdAt" | "updatedAt" | "revision" | "document"
+  >,
+  kept: Kept,
+  pending = kept.owner !== undefined,
+): DocumentRow {
+  const title =
+    kept.copy === true && !base.title.endsWith(COPY_SUFFIX)
+      ? `${base.title}${COPY_SUFFIX}`
+      : base.title;
+  return { ...base, title, ...kept, pending };
+}
+
+function syncRowOf(row: DocumentRow): SyncRow {
+  return {
+    id: row.id,
+    title: row.title,
+    template: row.template,
+    kind: kindOf(row),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    revision: revisionOf(row) ?? 0,
+    ...(row.owner === undefined ? {} : { owner: row.owner }),
+    ...(row.serverRevision === undefined ? {} : { serverRevision: row.serverRevision }),
+    pending: row.pending === true,
+    removed: row.removed === true,
+    firstPass: firstPassRow(row),
+    document: row.document,
+  };
+}
+
+/** Where a row is, as the list marks it (`Where`). */
+export function whereOf(row: Pick<SyncRow, "owner" | "pending" | "serverRevision">): Where {
+  if (row.owner === undefined) return "only-here";
+  return row.pending || row.serverRevision === undefined ? "waiting" : "in-account";
+}
+
+/**
+ * Whether a row holds an import the first pass of milestone 3 made (`madeByFirstPass`), read as
+ * loosely as a row anything on the origin may have written must be.
+ */
+function firstPassRow(row: DocumentRow): boolean {
+  if (!row.template.startsWith(IMPORTED_PREFIX)) return false;
+  const sections = (row.document as { resume?: { sections?: unknown } } | undefined)?.resume
+    ?.sections;
+  return (
+    !Array.isArray(sections) ||
+    !sections.some((section) => (section as { kind?: unknown } | null)?.kind === "outline")
+  );
+}
+
+/**
+ * Whether two documents are the same as JSON: the same values, whatever the order of their keys,
+ * as a database that keeps JSON may give them back in another; a key whose value is undefined is
+ * none.
+ */
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((value, index) => sameJson(value, b[index]));
+  }
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left).filter((key) => left[key] !== undefined);
+  const others = Object.keys(right).filter((key) => right[key] !== undefined);
+  return keys.length === others.length && keys.every((key) => sameJson(left[key], right[key]));
+}
 
 /** A row's revision, 0 for a row written before revisions, and undefined for no row. */
 function revisionOf(row: DocumentRow | undefined): number | undefined {
