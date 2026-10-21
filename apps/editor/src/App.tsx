@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { AccountEntry } from "./account/AccountEntry";
+import { type Account, accountFromEnv } from "./account/account";
 import { Controls } from "./editor/Controls";
 import {
   COULD_NOT_MAKE_PDF,
@@ -260,7 +262,24 @@ function afterFlush(open: Open, { failed, conflicts }: Flushed): Open {
   return unsaved === open.unsaved && stale === open.stale ? open : { ...open, unsaved, stale };
 }
 
-export function App() {
+/**
+ * The editor, under its header: the account's entry, when the editor has accounts (milestone 4 item
+ * 4), and nothing above the editor when it has none. `account` replaces the one the build's
+ * variables give, for tests; `null` is none.
+ */
+export function App({ account }: { account?: Account | null }) {
+  const [entry] = useState(() =>
+    account === undefined ? accountFromEnv() : (account ?? undefined),
+  );
+  return (
+    <>
+      {entry && <AccountEntry account={entry} />}
+      <Editor />
+    </>
+  );
+}
+
+function Editor() {
   const store = useRef<DocumentStore | undefined>(undefined);
   const compiler = useRef<Compiler | undefined>(undefined);
   /** Counts requests to open a document, so that one overtaken by a later one is dropped. */
