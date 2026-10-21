@@ -39,8 +39,8 @@ people keep documents in the account, so a careless deploy can lose someone's wo
   on the account, R2's S3 access keys, Supabase's access token, the database password and the
   project's ref, the SMTP password, Google's client secret, and the Turnstile secret the account
   service checks tokens with. The reading route's own secrets, its Turnstile secret, the key that
-  hashes addresses and a provider's key where one is needed (decision 0103), are the Worker's,
-  set by the owner, never in GitHub. None is in the repository, and none has the `VITE_` prefix.
+  hashes addresses and the school's gateway's launch key (decision 0103), are the Worker's, set by
+  the owner, never in GitHub. None is in the repository, and none has the `VITE_` prefix.
 - **Rollback**: Cloudflare keeps the Worker's versions, and `wrangler rollback` or the dashboard
   returns to one; a bad migration is undone by a new migration.
 - **When Actions cannot run**, the owner runs the same commands from a clean checkout of `main`

@@ -22,18 +22,12 @@ request that adds this record.
   No wrapper library is added for it.
 - **The AWS CLI**, which GitHub's runners carry, uploads the engine's files to R2 through R2's S3
   API. It is not added to the repository.
-- **The provider's code.** SoCLaaS and Gemini come through `@ai-sdk/openai-compatible` and
-  `@ai-sdk/google`, already dependencies of `packages/naming`. If the owner picks Workers AI, as
-  decision 0103 recommends, **`workers-ai-provider`**, Cloudflare's AI SDK provider over the
-  Workers AI binding, MIT licensed, becomes a dependency of the Worker's code and never of the
-  page. If it does not fit the AI SDK version the code uses, Workers AI's OpenAI-compatible
-  endpoint goes through `@ai-sdk/openai-compatible` instead, with a token as the Worker's secret,
-  and nothing is added. Any other provider's package is named in item 5's pull request and
-  approved with question 2.
+- **The provider's code.** The school's gateway, the owner's choice for launch (decision 0103),
+  comes through `@ai-sdk/openai-compatible`, already a dependency of `packages/naming`, so nothing
+  is added for it.
 - **Services, not packages**, each in an account the owner opens: the domain, at Cloudflare's
-  registrar; Cloudflare's Workers, R2, Durable Objects, Turnstile and Workers AI; the hosted
-  Supabase project; the mail provider; Google's OAuth client; and, if it is not Workers AI, the
-  model's provider.
+  registrar; Cloudflare's Workers, R2, Durable Objects and Turnstile; the hosted Supabase project;
+  the mail provider; Google's OAuth client; and a launch key for the school's gateway.
 - **Already dependencies**: `@supabase/supabase-js`; the `supabase` CLI, whose `link`, `db push`,
   `config push` and `test db --linked` the `database` workflow and item 14 use;
   `@cloudflare/workers-types`; the AI SDK.
@@ -43,7 +37,6 @@ request that adds this record.
 
 ## Consequences
 
-- One development dependency for the whole milestone, and at most one more for the Worker, none
-  of them in the page's bundle.
+- One development dependency for the whole milestone, and none at runtime.
 - Every check in the repository still runs with none of the services; only the `deploy`, `files`
   and `database` jobs need them.
