@@ -1,8 +1,8 @@
 # 0098. What a saved row may hold
 
-Date: 2026-10-21 · Status: proposed, from the adversarial review of milestone 4 item 2; amends
-decision 0093's size bound and adds bounds beside it; tells decision 0092's queue which refusals it
-never retries
+Date: 2026-10-21 · Status: accepted, approved by the owner on 21 October 2026; from the adversarial
+review of milestone 4 item 2; amends decision 0093's size bound and adds bounds beside it; tells
+decision 0092's queue which refusals it never retries
 
 ## Context
 
