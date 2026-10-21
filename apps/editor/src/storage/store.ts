@@ -82,6 +82,11 @@ interface DocumentRow {
   removed?: boolean;
   /** A copy kept of this device's version after a conflict, whose title says so (`COPY_SUFFIX`). */
   copy?: boolean;
+  /**
+   * The revision of this row the account refused in a way sending again cannot change (decision
+   * 0098): the queue sends it no more until a save makes a new revision, which drops the mark.
+   */
+  refused?: number;
 }
 
 /**
@@ -110,14 +115,18 @@ export interface SyncRow {
   removed: boolean;
   /** An import the first pass of milestone 3 made, which is never uploaded (decision 0091). */
   firstPass: boolean;
+  /** The account refused this revision of it, and it waits for a save to be sent again (0098). */
+  refused: boolean;
   document: unknown;
 }
 
 /**
  * Where a document is, as the list marks it (decision 0092): in the account and in step with it;
- * in the account, or on its way there, with saves waiting to be sent; or only in this browser.
+ * in the account, or on its way there, with saves waiting to be sent; the account's, but refused by
+ * it as it now is, and kept only here until a save changes it (decision 0098); or only in this
+ * browser.
  */
-export type Where = "in-account" | "waiting" | "only-here";
+export type Where = "in-account" | "waiting" | "refused" | "only-here";
 
 /** What the title of a copy kept after a conflict ends in. */
 export const COPY_SUFFIX = " (from this device)";
@@ -849,11 +858,28 @@ export class DocumentStore {
       if (row === undefined || row.removed === true) return undefined;
       if (row.serverRevision !== undefined && row.serverRevision >= serverRevision)
         return undefined;
-      const marked = { ...row, serverRevision, pending: revisionOf(row) !== sent };
+      const { refused: _, ...taken } = row;
+      const marked = { ...taken, serverRevision, pending: revisionOf(row) !== sent };
       await documents.put(marked);
       return keptOf(marked);
     });
     if (kept !== undefined) this.keptMoved(id, kept);
+  }
+
+  /**
+   * The account refused a document as its row was at revision `refused`, in a way sending it again
+   * cannot change (decision 0098): the row is marked so, and the queue sends it no more until a
+   * save makes a new revision. A row that has moved on since is left for the queue to send.
+   */
+  async markRefused(id: string, refused: number): Promise<void> {
+    const documents = this.db.documents;
+    const marked = await this.db.transaction("rw", documents, async () => {
+      const row = await documents.get(id);
+      if (row === undefined || revisionOf(row) !== refused) return false;
+      await documents.put({ ...row, refused });
+      return true;
+    });
+    if (marked) this.stored(id);
   }
 
   /**
@@ -891,7 +917,9 @@ export class DocumentStore {
     const marked = await this.db.transaction("rw", documents, async () => {
       const row = await documents.get(id);
       if (row?.owner === undefined) return false;
-      await documents.put({ ...row, removed: true, pending: true });
+      // A deletion is sent whatever the account refused of the document's content.
+      const { refused: _, ...kept } = row;
+      await documents.put({ ...kept, removed: true, pending: true });
       return true;
     });
     if (marked) {
@@ -1416,13 +1444,17 @@ function syncRowOf(row: DocumentRow): SyncRow {
     pending: row.pending === true,
     removed: row.removed === true,
     firstPass: firstPassRow(row),
+    refused: row.refused !== undefined && row.refused === revisionOf(row),
     document: row.document,
   };
 }
 
 /** Where a row is, as the list marks it (`Where`). */
-export function whereOf(row: Pick<SyncRow, "owner" | "pending" | "serverRevision">): Where {
+export function whereOf(
+  row: Pick<SyncRow, "owner" | "pending" | "serverRevision"> & { refused?: boolean },
+): Where {
   if (row.owner === undefined) return "only-here";
+  if (row.refused === true && row.pending) return "refused";
   return row.pending || row.serverRevision === undefined ? "waiting" : "in-account";
 }
 

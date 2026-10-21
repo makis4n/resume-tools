@@ -4,12 +4,14 @@
  * `FakeAccounts` is the database every account's rows live in; `server(account)` is one device's
  * connection to it, signed in as that account, which can go offline. The fake does what the table
  * and its trigger do: each account sees only its own rows, an insert takes revision 1 and an update
- * one more, and the server stamps the time, whatever the device sent. `anotherDevice` changes a row
- * as a device the test does not drive would.
+ * one more, and the server stamps the time, whatever the device sent; and it refuses what the
+ * table's checks refuse (decision 0098): a string holding U+0000 or a lone surrogate, a title over
+ * 1000 characters or a template id over 100. `anotherDevice` changes a row as a device the test
+ * does not drive would, and `FakeServer.refuse` makes a device's writes refused.
  */
 
 import type { DocumentKind, ServerDocument, SyncServer, Upload, WriteResult } from "./server";
-import { ServerUnavailable } from "./server";
+import { cleanString, ServerRefused, ServerUnavailable } from "./server";
 
 interface Row {
   owner: string;
@@ -93,6 +95,7 @@ export class FakeAccounts {
 
   /** @internal */
   insert(account: string, upload: Upload): WriteResult {
+    refuseAsTheTable(upload);
     // The id is the table's key: taken by any account, the insert is refused.
     if (this.rows.has(upload.id)) return { ok: false, reason: "conflict" };
     const now = Date.now();
@@ -112,6 +115,7 @@ export class FakeAccounts {
     // Another account's row is out of sight, as the table's policies keep it.
     if (row === undefined || row.owner !== account) return { ok: false, reason: "missing" };
     if (row.revision !== expected) return { ok: false, reason: "conflict" };
+    refuseAsTheTable(upload);
     const updatedAt = Date.now();
     const revision = row.revision + 1;
     // The kind, the owner and when it was made stay as the insert set them.
@@ -130,6 +134,8 @@ export class FakeAccounts {
 export class FakeServer implements SyncServer {
   private online = true;
   private paused: Promise<void> | undefined;
+  /** The code every write is refused with, while `refuse` holds. */
+  private refusing: string | undefined;
   /** Every call this connection made, offline or not. */
   tries = 0;
 
@@ -146,6 +152,19 @@ export class FakeServer implements SyncServer {
 
   goOnline() {
     this.online = true;
+  }
+
+  /**
+   * Refuse every insert and update with `code`, as the table refuses what sending again cannot
+   * change (`ServerRefused`), until `accept`.
+   */
+  refuse(code = "23514") {
+    this.refusing = code;
+  }
+
+  /** Take writes again, after `refuse`. */
+  accept() {
+    this.refusing = undefined;
   }
 
   /**
@@ -175,11 +194,13 @@ export class FakeServer implements SyncServer {
 
   async insert(doc: Upload) {
     await this.reach({ method: "insert", id: doc.id });
+    if (this.refusing !== undefined) throw new ServerRefused(this.refusing);
     return this.accounts.insert(this.account, doc);
   }
 
   async update(doc: Upload, expectedRevision: number) {
     await this.reach({ method: "update", id: doc.id });
+    if (this.refusing !== undefined) throw new ServerRefused(this.refusing);
     return this.accounts.update(this.account, doc, expectedRevision);
   }
 
@@ -228,6 +249,24 @@ export class FakeLocks {
       } else run();
     });
   }
+}
+
+/**
+ * Refuse what the table cannot keep, as Postgres does (decision 0098): U+0000 or a lone surrogate
+ * in any string (`22P05`), and a title or a template id past its bound (`23514`).
+ */
+function refuseAsTheTable({ title, templateId, document }: Upload) {
+  if (!keepable([title, templateId, document])) throw new ServerRefused("22P05");
+  if (Array.from(title).length > 1000 || Array.from(templateId).length > 100)
+    throw new ServerRefused("23514");
+}
+
+/** Whether every string in a JSON value, keys included, is as cleaning leaves it (`cleanString`). */
+function keepable(value: unknown): boolean {
+  if (typeof value === "string") return cleanString(value) === value;
+  if (Array.isArray(value)) return value.every(keepable);
+  if (typeof value !== "object" || value === null) return true;
+  return Object.entries(value).every(([key, each]) => keepable(key) && keepable(each));
 }
 
 const documentOf = ({ owner: _, ...row }: Row): ServerDocument => structuredClone(row);

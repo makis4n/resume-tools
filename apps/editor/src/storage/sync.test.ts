@@ -7,6 +7,7 @@ import type { Imported, ImportReport } from "../import/run";
 import { curated } from "../templates/curated";
 import type { TemplatePackage } from "../templates/package";
 import { FakeAccounts, FakeLocks } from "./fake-server";
+import { cleanUpload, MAX_DOCUMENT_BYTES, MAX_SENT_TITLE, ServerRefused } from "./server";
 import { COPY_SUFFIX, DocumentStore, type PageEvents, type Stored } from "./store";
 import {
   type Locks,
@@ -735,5 +736,139 @@ describe("SyncQueue (decision 0092)", () => {
     await vi.advanceTimersByTimeAsync(SEND_INTERVAL);
     await eventually(() => accounts.documents(ADA).length === 0);
     expect(hooks.removing.mock.calls).toEqual([[tex]]);
+  });
+});
+
+/** `doc` with its first name set as it is, past the editor's commands and their bounds. */
+const withFirst = (doc: Document, first: string): Document => ({
+  ...doc,
+  resume: {
+    ...doc.resume,
+    header: { ...doc.resume.header, name: { ...doc.resume.header.name, first } },
+  },
+});
+
+/** Save `doc` with its first name set as it is, and write it at once. */
+async function saveFirst(store: DocumentStore, id: string, first: string) {
+  const { document, revision } = await read(store, id);
+  store.save(id, withFirst(document, first), revision);
+  await store.flush();
+}
+
+describe("what is sent, and what the account refuses (decision 0098)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  });
+
+  it("cleans every string of an upload: no U+0000, lone surrogates replaced, the title cut", () => {
+    const upload = {
+      id: "doc-1",
+      kind: "template" as const,
+      templateId: "ja\u0000ke",
+      title: `${"\u{1F600}".repeat(MAX_SENT_TITLE)}tail`,
+      document: {
+        "na\u0000me": ["Ada\u0000", "\uD800x", "y\uDC00", "\uD83D\uDE00"],
+        n: 1,
+        ok: true,
+      },
+    };
+    const cleaned = cleanUpload(upload);
+    expect(cleaned.templateId).toBe("jake");
+    // Characters, not UTF-16 units: no pair is split.
+    expect(Array.from(cleaned.title)).toHaveLength(MAX_SENT_TITLE);
+    expect(cleaned.title).toBe("\u{1F600}".repeat(MAX_SENT_TITLE));
+    expect(JSON.stringify(cleaned.document)).toBe(
+      JSON.stringify({ name: ["Ada", "\uFFFDx", "y\uFFFD", "\uD83D\uDE00"], n: 1, ok: true }),
+    );
+    // What it was given is left as it was.
+    expect(upload.templateId).toBe("ja\u0000ke");
+    // A document over the bound, as compact JSON in UTF-8 bytes, is refused unsent.
+    const large = { ...upload, document: "é".repeat(MAX_DOCUMENT_BYTES / 2) };
+    expect(() => cleanUpload(large)).toThrow(ServerRefused);
+    expect(() =>
+      cleanUpload({ ...upload, document: "é".repeat(MAX_DOCUMENT_BYTES / 2 - 2) }),
+    ).not.toThrow();
+  });
+
+  it("sends a document holding U+0000 and a lone surrogate cleaned, which the account takes", async () => {
+    const accounts = new FakeAccounts();
+    const { store, queue } = device().tab();
+    await queue.signIn(ADA, accounts.server(ADA));
+    const id = await store.create("jake", sample);
+    await eventually(() => accounts.count("insert") === 1);
+    await quiet(queue);
+    await vi.advanceTimersByTimeAsync(SEND_INTERVAL);
+    await saveFirst(store, id, "A\u0000da\uD800");
+    await eventually(() => accounts.document(ADA, id)?.revision === 2);
+    expect(firstName(accounts.document(ADA, id))).toBe("Ada\uFFFD");
+    expect(accounts.document(ADA, id)?.title).toBe("Ada\uFFFD Quist");
+    await eventually(async () => (await store.places()).get(id) === "in-account");
+  });
+
+  it("refuses a document too large without a request, and sends it again only once a save changes it", async () => {
+    const accounts = new FakeAccounts();
+    const { store, queue, events } = device().tab();
+    const server = accounts.server(ADA);
+    await queue.signIn(ADA, server);
+    const id = await store.create("jake", sample);
+    await eventually(() => accounts.count("insert") === 1);
+    await quiet(queue);
+    await vi.advanceTimersByTimeAsync(SEND_INTERVAL);
+    const tries = server.tries;
+    await saveFirst(store, id, "x".repeat(MAX_DOCUMENT_BYTES));
+    await eventually(() => events.some((event) => event.type === "refused"));
+    expect(events).toContainEqual({ type: "refused", id, title: expect.any(String) });
+    expect(server.tries).toBe(tries);
+    expect((await store.places()).get(id)).toBe("refused");
+    // Never tried again, however long it waits; the account keeps what it had.
+    await vi.advanceTimersByTimeAsync(MAX_WAIT * 3);
+    await quiet(queue);
+    expect(accounts.count("update")).toBe(0);
+    expect(firstName(accounts.document(ADA, id))).toBe("Mara");
+
+    // A save that brings it within the bound is sent.
+    await saveFirst(store, id, "Ada");
+    await eventually(() => accounts.count("update") === 1);
+    expect(firstName(accounts.document(ADA, id))).toBe("Ada");
+    await eventually(async () => (await store.places()).get(id) === "in-account");
+  });
+
+  it("takes the account's refusal as final: kept here, not retried, not by another tab, and named at sign-out", async () => {
+    const accounts = new FakeAccounts();
+    const browser = device();
+    const { store, queue, events } = browser.tab();
+    const server = accounts.server(ADA);
+    server.refuse("23514");
+    await queue.signIn(ADA, server);
+    const id = await store.create("jake", sample);
+    await eventually(() => events.some((event) => event.type === "refused"));
+    expect(accounts.count("insert")).toBe(1);
+    expect(accounts.documents(ADA)).toEqual([]);
+    expect((await store.places()).get(id)).toBe("refused");
+    expect(await titles(store)).toEqual(["Mara Quist"]);
+
+    await vi.advanceTimersByTimeAsync(REFRESH_INTERVAL);
+    await quiet(queue);
+    expect(accounts.count("insert")).toBe(1);
+    // Another tab, or the page loaded again, does not send it either: the mark is in the store.
+    const other = browser.tab();
+    await other.queue.signIn(ADA, accounts.server(ADA, "other"));
+    await quiet(queue, other.queue);
+    expect(accounts.count("insert")).toBe(1);
+    other.queue.stop();
+
+    // Signing out names it, since the account does not have it, and removes nothing.
+    expect(await queue.signOut()).toEqual({
+      done: false,
+      unsent: [{ id, title: "Mara Quist" }],
+    });
+    expect(accounts.count("insert")).toBe(1);
+
+    // A later save is sent again, and taken once the account takes it.
+    server.accept();
+    await rename(store, id, "Ada");
+    await eventually(() => firstName(accounts.document(ADA, id)) === "Ada");
+    expect(accounts.count("insert")).toBe(2);
+    await eventually(async () => (await store.places()).get(id) === "in-account");
   });
 });

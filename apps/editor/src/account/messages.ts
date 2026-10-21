@@ -239,3 +239,12 @@ export function messageFor(error: unknown, moment: Moment): string {
       }
   }
 }
+
+/**
+ * Signing out stopped before removing anything, since some documents' saves have not reached the
+ * account (decision 0092): it names them, and the person stays signed in. Item 9 asks whether to
+ * sign out all the same.
+ */
+export function unsentNotice(titles: readonly string[]): string {
+  return `You are still signed in: some changes have not been saved to your account yet, so nothing was removed from this browser. Not saved yet: ${titles.join(", ")}. Try again once you are online.`;
+}

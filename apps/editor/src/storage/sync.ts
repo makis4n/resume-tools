@@ -25,12 +25,17 @@
  *   uploaded until `answer("add")` or `addToAccount`.
  * - **Signing out** sends what is pending, and names what could not be sent before removing
  *   anything; then removes the account's documents and their imports from this browser.
+ * - **What is sent is cleaned, and a refusal is not tried again** (decision 0098). Every string
+ *   loses U+0000 and its lone surrogates and the title is cut to fit (`cleanUpload`); a document
+ *   too large is refused without a request. A refusal sending again cannot change
+ *   (`ServerRefused`) marks the document's revision in the store (`refused`): it stays in this
+ *   browser, a `refused` event says so, and it is sent again only once a save changes it.
  *
  * Originals (`original.zip`, `import.bin`, decision 0090) are item 8's: `OriginalsHooks` are where
  * it plugs in.
  */
 
-import { ServerUnavailable, type SyncServer, type Upload } from "./server";
+import { cleanUpload, ServerRefused, ServerUnavailable, type SyncServer } from "./server";
 import type { BroughtIn, DocumentStore, Gone, PageEvents, SyncRow, Where } from "./store";
 
 /** The Web Lock the tabs take the queue in turn with. */
@@ -82,6 +87,11 @@ export type SyncEvent =
   | { type: "changed"; id: string }
   /** A document went from the account and this browser; `dropped` is a package that went with it. */
   | { type: "removed"; id: string; dropped?: string }
+  /**
+   * The account refused the document as it now is, and sending it again cannot change that
+   * (decision 0098): it stays in this browser, not saved to the account, until a save changes it.
+   */
+  | { type: "refused"; id: string; title: string }
   /** Where documents are may have moved (`places`): the list's marks are worth reading again. */
   | { type: "places" };
 
@@ -342,7 +352,11 @@ export class SyncQueue {
    */
   private async sendRound(session: Session, urgent: boolean): Promise<void> {
     const rows = (await this.store.syncRows()).filter(
-      (row) => row.owner === session.account && (row.pending || row.removed) && !row.firstPass,
+      (row) =>
+        row.owner === session.account &&
+        (row.pending || row.removed) &&
+        !row.firstPass &&
+        !row.refused,
     );
     let next = Number.POSITIVE_INFINITY;
     let tried = false;
@@ -362,7 +376,15 @@ export class SyncQueue {
       this.lastSent.set(row.id, now);
       tried = true;
       try {
-        await this.send(row, session);
+        try {
+          await this.send(row, session);
+        } catch (error) {
+          if (!(error instanceof ServerRefused)) throw error;
+          // The account answered, and will answer the same to this revision whenever it is sent.
+          console.warn("The account refused a document; it stays in this browser", error.code);
+          await this.store.markRefused(row.id, row.revision);
+          this.emit({ type: "refused", id: row.id, title: row.title });
+        }
         this.failures = 0;
         this.blockedUntil = 0;
       } catch (error) {
@@ -396,13 +418,14 @@ export class SyncQueue {
       this.emit({ type: "removed", id: row.id, ...(dropped === undefined ? {} : { dropped }) });
       return;
     }
-    const upload: Upload = {
+    // Cleaned as the account can keep it; a document too large is refused here, unsent.
+    const upload = cleanUpload({
       id: row.id,
       kind: row.kind,
       templateId: row.template,
       title: row.title,
       document: row.document,
-    };
+    });
     const inserting = row.serverRevision === undefined;
     const result =
       row.serverRevision === undefined

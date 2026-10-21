@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AccountEntry } from "./account/AccountEntry";
 import { type Account, accountFromEnv } from "./account/account";
+import { AccountSync } from "./account/account-sync";
 import { Controls } from "./editor/Controls";
 import {
   COULD_NOT_MAKE_PDF,
@@ -265,21 +266,23 @@ function afterFlush(open: Open, { failed, conflicts }: Flushed): Open {
 /**
  * The editor, under its header: the account's entry, when the editor has accounts (milestone 4 item
  * 4), and nothing above the editor when it has none. `account` replaces the one the build's
- * variables give, for tests; `null` is none.
+ * variables give, for tests; `null` is none. With accounts, the editor's documents sync with the
+ * signed-in account (item 7) through the page's one queue, which the account's sign-out goes through.
  */
 export function App({ account }: { account?: Account | null }) {
   const [entry] = useState(() =>
     account === undefined ? accountFromEnv() : (account ?? undefined),
   );
+  const [sync] = useState(() => (entry === undefined ? undefined : new AccountSync(entry)));
   return (
     <>
-      {entry && <AccountEntry account={entry} />}
-      <Editor />
+      {entry && <AccountEntry account={entry} {...(sync === undefined ? {} : { sync })} />}
+      <Editor sync={sync} />
     </>
   );
 }
 
-function Editor() {
+function Editor({ sync }: { sync: AccountSync | undefined }) {
   const store = useRef<DocumentStore | undefined>(undefined);
   const compiler = useRef<Compiler | undefined>(undefined);
   /** Counts requests to open a document, so that one overtaken by a later one is dropped. */
@@ -511,6 +514,13 @@ function Editor() {
       ),
     );
     let owned: Compiler | undefined;
+    // The documents sync with the account through a queue beside the store (item 7); a document
+    // deleted on another device takes its package with it, which the compiler lets go of here.
+    const detach = sync?.attach(kept);
+    const stopSync = sync?.on((event) => {
+      if (event.type === "removed" && event.dropped !== undefined)
+        owned?.dropTemplate(event.dropped);
+    });
     /**
      * What became of a retype of a locked part's words (decision 0042): kept, its page shown and
      * the document saved, and its editor closed; or taken back, the document before it compiled
@@ -635,12 +645,14 @@ function Editor() {
     );
     return () => {
       live = false;
+      stopSync?.();
+      detach?.();
       owned?.close();
       void kept.close();
       if (compiler.current === owned) compiler.current = undefined;
       if (store.current === kept) store.current = undefined;
     };
-  }, []);
+  }, [sync]);
 
   useEffect(() => {
     if (!busy) {
@@ -747,7 +759,9 @@ function Editor() {
   const deleteDocument = async (id: string) => {
     let dropped: string | undefined;
     try {
-      dropped = await store.current?.remove(id);
+      const kept = store.current;
+      // An account's document is deleted from the account too, through the queue (item 7).
+      dropped = kept && (await (sync === undefined ? kept.remove(id) : sync.remove(id, kept)));
     } catch (error) {
       console.error("The document could not be deleted:", error);
       return showList(NO_STORAGE);
