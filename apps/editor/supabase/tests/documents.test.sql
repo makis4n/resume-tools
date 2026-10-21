@@ -6,7 +6,7 @@ begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(30);
+select plan(46);
 
 -- How many rows a statement touched, run as whoever is acting. An update or delete that RLS hides
 -- rows from does not fail, it touches nothing, so that is what the cases below count.
@@ -218,26 +218,124 @@ select throws_ok(
   $$ insert into public.documents (id, kind, template_id, title, document, revision, created_at,
        updated_at)
      values ('aaaaaaaa-0000-4000-8000-00000000000c', 'template', 'classic', 'Too big',
-       jsonb_build_object('padding', repeat('x', 2097152)), 1, now(), now()) $$,
+       jsonb_build_object('padding', repeat('x', 3145728)), 1, now(), now()) $$,
   '23514',
   'new row for relation "documents" violates check constraint "documents_document_size_check"',
-  'a document over 2 MB as JSON is refused on insert'
+  'a document over 3 MiB as Postgres renders it is refused on insert'
 );
 
 select throws_ok(
-  $$ update public.documents set document = jsonb_build_object('padding', repeat('x', 2097152))
+  $$ update public.documents set document = jsonb_build_object('padding', repeat('x', 3145728))
      where id = 'aaaaaaaa-0000-4000-8000-00000000000a' $$,
   '23514',
   'new row for relation "documents" violates check constraint "documents_document_size_check"',
-  'a document over 2 MB as JSON is refused on update'
+  'a document over 3 MiB as Postgres renders it is refused on update'
 );
 
 select lives_ok(
   $$ insert into public.documents (id, kind, template_id, title, document, revision, created_at,
        updated_at)
      values ('aaaaaaaa-0000-4000-8000-00000000000d', 'template', 'classic', 'Just under',
-       jsonb_build_object('padding', repeat('x', 2097152 - 20)), 1, now(), now()) $$,
-  'a document just under 2 MB as JSON is kept'
+       jsonb_build_object('padding', repeat('x', 3145728 - 20)), 1, now(), now()) $$,
+  'a document just under 3 MiB as Postgres renders it is kept'
+);
+
+-- The browser measures its own compact JSON (decision 0098). An array of 1,048,575 ones is
+-- 2,097,151 bytes written that way, just under 2 MB, and 3,145,725 bytes as Postgres renders it,
+-- with a space after every comma: the most a document within the browser's bound can grow here.
+select lives_ok(
+  $$ insert into public.documents (id, kind, template_id, title, document, revision, created_at,
+       updated_at)
+     values ('aaaaaaaa-0000-4000-8000-000000000010', 'template', 'classic', 'Compact 2 MB',
+       (select jsonb_agg(1) from generate_series(1, 1048575)), 1, now(), now()) $$,
+  'a document of 2 MB as the browser''s compact JSON is kept, however Postgres renders it'
+);
+
+select results_eq(
+  $$ select octet_length(document::text) from public.documents
+     where id = 'aaaaaaaa-0000-4000-8000-000000000010' $$,
+  $$ values (3145725) $$,
+  'that document measures half as much again as Postgres renders it'
+);
+
+select is(
+  pg_temp.touched($$ delete from public.documents
+                     where id = 'aaaaaaaa-0000-4000-8000-000000000010' $$),
+  1,
+  'A can delete the compact 2 MB row'
+);
+
+select throws_ok(
+  $$ insert into public.documents (id, kind, template_id, title, document, revision, created_at,
+       updated_at)
+     values ('aaaaaaaa-0000-4000-8000-000000000011', 'template', 'classic', repeat('x', 1001),
+       '{}', 1, now(), now()) $$,
+  '23514',
+  'new row for relation "documents" violates check constraint "documents_title_length_check"',
+  'a title over 1000 characters is refused'
+);
+
+select throws_ok(
+  $$ update public.documents set title = repeat('x', 50000000)
+     where id = 'aaaaaaaa-0000-4000-8000-00000000000a' $$,
+  '23514',
+  'new row for relation "documents" violates check constraint "documents_title_length_check"',
+  'a title cannot be used as free storage either'
+);
+
+select lives_ok(
+  $$ insert into public.documents (id, kind, template_id, title, document, revision, created_at,
+       updated_at)
+     values ('aaaaaaaa-0000-4000-8000-000000000012', 'template', 'classic', repeat('é', 1000),
+       '{}', 1, now(), now()) $$,
+  'a title of 1000 characters is kept'
+);
+
+select throws_ok(
+  $$ insert into public.documents (id, kind, template_id, title, document, revision, created_at,
+       updated_at)
+     values ('aaaaaaaa-0000-4000-8000-000000000013', 'template', repeat('x', 101), 'Long id',
+       '{}', 1, now(), now()) $$,
+  '23514',
+  'new row for relation "documents" violates check constraint "documents_template_id_length_check"',
+  'a template id over 100 characters is refused'
+);
+
+-- What jsonb and text cannot hold (decision 0098). A browser string can hold U+0000 and a lone
+-- surrogate, and JSON.stringify writes them as \u0000 and \ud800; Postgres refuses both, so the
+-- browser leaves them out of what it sends and never retries such a refusal. The rows below are
+-- read from a JSON body the way PostgREST reads one.
+select throws_ok(
+  $$ insert into public.documents
+     select * from jsonb_populate_record(null::public.documents,
+       '{"id":"aaaaaaaa-0000-4000-8000-000000000014","kind":"template","template_id":"classic",
+         "title":"Null","document":{"name":"Ada\u0000"},"revision":1,
+         "created_at":"2001-01-01","updated_at":"2001-01-01"}') $$,
+  '22P05',
+  NULL,
+  'a document holding U+0000 is refused'
+);
+
+select throws_ok(
+  $$ insert into public.documents
+     select * from json_populate_record(null::public.documents,
+       '{"id":"aaaaaaaa-0000-4000-8000-000000000015","kind":"template","template_id":"classic",
+         "title":"Ada\u0000","document":{},"revision":1,
+         "created_at":"2001-01-01","updated_at":"2001-01-01"}') $$,
+  '22P05',
+  NULL,
+  'a title holding U+0000 is refused'
+);
+
+select throws_ok(
+  $$ insert into public.documents
+     select * from jsonb_populate_record(null::public.documents,
+       '{"id":"aaaaaaaa-0000-4000-8000-000000000016","kind":"template","template_id":"classic",
+         "title":"Lone","document":{"name":"Ada\ud800"},"revision":1,
+         "created_at":"2001-01-01","updated_at":"2001-01-01"}') $$,
+  '22P02',
+  NULL,
+  'a document holding a lone surrogate is refused'
 );
 
 select throws_ok(
@@ -262,15 +360,54 @@ select is_empty(
   'A''s deleted row is gone'
 );
 
--- Deleting the account ---------------------------------------------------------------------------
+-- Who is granted what -------------------------------------------------------------------------
 
 reset role;
+
+-- Decision 0093: the four operations to `authenticated` and nothing to anyone else. The local
+-- stack's default privileges grant every new table to the API's roles, hosted Supabase does not,
+-- so these hold the two the same.
+select table_privs_are(
+  'public', 'documents', 'authenticated', array['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+  'authenticated may select, insert, update and delete documents, and nothing more'
+);
+
+select table_privs_are(
+  'public', 'documents', 'anon', array[]::text[],
+  'anon is granted nothing on documents'
+);
+
+select table_privs_are(
+  'public', 'documents', 'service_role', array[]::text[],
+  'service_role is granted nothing on documents, truncate included'
+);
+
+select function_privs_are(
+  'public', 'documents_keep_books', array[]::name[], 'service_role', array[]::text[],
+  'service_role cannot execute the bookkeeping trigger''s function'
+);
+
+select function_privs_are(
+  'public', 'documents_keep_books', array[]::name[], 'authenticated', array[]::text[],
+  'authenticated cannot execute the bookkeeping trigger''s function'
+);
+
+select throws_ok(
+  $$ set local role service_role; truncate public.documents $$,
+  '42501',
+  NULL,
+  'service_role cannot truncate documents'
+);
+
+reset role;
+
+-- Deleting the account ---------------------------------------------------------------------------
 
 select results_eq(
   $$ select count(*)::integer from public.documents
      where owner_id = '11111111-1111-4111-8111-111111111111' $$,
-  $$ values (2) $$,
-  'A has two rows before its account is deleted'
+  $$ values (3) $$,
+  'A has three rows before its account is deleted'
 );
 
 delete from auth.users where id = '11111111-1111-4111-8111-111111111111';

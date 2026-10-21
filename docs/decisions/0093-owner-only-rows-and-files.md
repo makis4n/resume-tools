@@ -1,6 +1,7 @@
 # 0093. Rows and files only their owner can reach, and the proof
 
-Date: 2026-10-21 · Status: accepted, approved with the plan by the owner on 21 October 2026
+Date: 2026-10-21 · Status: accepted, approved with the plan by the owner on 21 October 2026;
+amended by 0098: how the size bound is measured, bounds on the title and the template's id
 
 ## Context
 
